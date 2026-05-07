@@ -225,9 +225,12 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     'POST /v1/wechat/reply_voice': async (_q, body) => {
       if (!deps.voice) return { status: 503, body: { error: 'voice_not_wired' } }
       // Body is pre-validated by index.ts via WechatReplyVoiceRequest schema.
-      // The schema enforces text.max(500), so the legacy length check is now
-      // handled upstream and the handler always receives text within bounds.
       const { chat_id, text } = body as WechatReplyVoiceRequestT
+      // Business rule: enforce 500-char cap with structured reason, not schema validation.
+      // Schema is structural (shape), not business (value range).
+      if (text.length > 500) {
+        return { status: 200, body: { ok: false, reason: 'too_long', limit: 500 } }
+      }
       try {
         const r = await deps.voice.replyVoice(chat_id, text)
         return { status: 200, body: r }

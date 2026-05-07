@@ -311,7 +311,7 @@ describe('wechat-mcp stdio integration', () => {
     expect(calls[4]).toEqual(['broadcast', 'hi all', undefined])
   })
 
-  it('reply_voice with text > 500 chars surfaces error without crossing ilink (schema cap)', async () => {
+  it('reply_voice with text > 500 chars surfaces ok:false reason without crossing ilink (legacy cap)', async () => {
     const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
     const replyVoiceCalls: number[] = []
     const voice = {
@@ -338,12 +338,9 @@ describe('wechat-mcp stdio integration', () => {
       name: 'reply_voice',
       arguments: { chat_id: 'u@bot', text: 'x'.repeat(501) },
     })
-    // After T7: schema validation rejects text > 500 chars with 400 invalid_request
-    // before the handler runs. The MCP layer surfaces this as a transport error.
-    const text = (result.content as Array<{ text?: string }>)[0]?.text
-    const parsed = JSON.parse(text!)
-    expect(parsed.error).toMatch(/internal-api 400/)
-    expect(parsed.error).toContain('invalid_request')
+    expect(JSON.parse(((result.content as Array<{ text?: string }>)[0]?.text)!)).toEqual({
+      ok: false, reason: 'too_long', limit: 500,
+    })
     expect(replyVoiceCalls).toHaveLength(0)  // dep was NOT crossed
   })
 

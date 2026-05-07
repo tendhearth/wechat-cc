@@ -406,11 +406,9 @@ describe('WechatReplyResponse', () => {
 // ── POST /v1/wechat/reply_voice ──────────────────────────────────────────────
 
 describe('WechatReplyVoiceRequest', () => {
-  it('accepts text up to 500 chars', () => {
+  it('accepts text (no schema length cap)', () => {
     expect(WechatReplyVoiceRequest.safeParse({ chat_id: 'abc', text: 'a'.repeat(500) }).success).toBe(true)
-  })
-  it('rejects text over 500 chars', () => {
-    expect(WechatReplyVoiceRequest.safeParse({ chat_id: 'abc', text: 'a'.repeat(501) }).success).toBe(false)
+    expect(WechatReplyVoiceRequest.safeParse({ chat_id: 'abc', text: 'a'.repeat(501) }).success).toBe(true)
   })
   it('rejects missing chat_id', () => {
     expect(WechatReplyVoiceRequest.safeParse({ text: 'hello' }).success).toBe(false)

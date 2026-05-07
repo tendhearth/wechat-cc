@@ -227,7 +227,7 @@ export const WechatReplyResponse = z.union([
 
 export const WechatReplyVoiceRequest = z.object({
   chat_id: z.string(),
-  text: z.string().max(500),
+  text: z.string(),
 })
 export const WechatReplyVoiceResponse = z.union([
   z.object({ ok: z.literal(true), msgId: z.string() }),
