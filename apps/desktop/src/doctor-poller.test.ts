@@ -1,5 +1,4 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-// @ts-expect-error — vanilla JS sibling module; covered at runtime.
 import { createDoctorPoller } from './doctor-poller.js'
 
 beforeEach(() => { vi.useRealTimers() })
