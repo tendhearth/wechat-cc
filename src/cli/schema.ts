@@ -423,3 +423,66 @@ export const MilestonesListOutput = z.object({
   milestones: z.array(MilestoneEntry),
 })
 export type MilestonesListOutputT = z.infer<typeof MilestonesListOutput>
+
+// ── wechat-cc sessions list-projects --json ───────────────────────────────────
+// Emits { ok: true, projects: ProjectEntry[] }.
+// ProjectEntry fields: alias, session_id, last_used_at, summary (nullable),
+// summary_updated_at (nullable).
+
+const ProjectEntry = z.object({
+  alias: z.string(),
+  session_id: z.string(),
+  last_used_at: z.string(),
+  summary: z.string().nullable(),
+  summary_updated_at: z.string().nullable(),
+})
+
+export const SessionsListProjectsOutput = z.object({
+  ok: z.literal(true),
+  projects: z.array(ProjectEntry),
+})
+export type SessionsListProjectsOutputT = z.infer<typeof SessionsListProjectsOutput>
+
+// ── wechat-cc sessions read-jsonl --json ──────────────────────────────────────
+// Discriminated union: success emits { ok: true, alias, session_id, turns }
+// (codex sessions additionally carry provider:'codex'); error paths emit
+// { ok: false, error } with optional extra fields (path, codex_root).
+// turns/events are opaque — shape varies widely across claude/codex providers.
+
+export const SessionsReadJsonlOutput = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    alias: z.string(),
+    session_id: z.string(),
+    provider: z.string().optional(),
+    turns: z.array(z.unknown()),
+  }),
+  z.object({
+    ok: z.literal(false),
+    error: z.string(),
+    path: z.string().optional(),
+    codex_root: z.string().optional(),
+  }),
+])
+export type SessionsReadJsonlOutputT = z.infer<typeof SessionsReadJsonlOutput>
+
+// ── wechat-cc sessions delete --json ─────────────────────────────────────────
+// Always emits { ok: true, deleted: <alias> } — throws on unexpected failures.
+
+export const SessionsDeleteOutput = z.object({
+  ok: z.literal(true),
+  deleted: z.string(),
+})
+export type SessionsDeleteOutputT = z.infer<typeof SessionsDeleteOutput>
+
+// ── wechat-cc sessions search --json ─────────────────────────────────────────
+// Emits { ok: true, query, hits: HitEntry[] }.
+// HitEntry shape from searcher: { alias, snippet, ... } — extended fields are
+// opaque so the hit items are typed as unknown for forward-compatibility.
+
+export const SessionsSearchOutput = z.object({
+  ok: z.literal(true),
+  query: z.string(),
+  hits: z.array(z.unknown()),
+})
+export type SessionsSearchOutputT = z.infer<typeof SessionsSearchOutput>

@@ -20,6 +20,10 @@ import {
   ObservationsListOutput,
   ObservationsArchiveOutput,
   MilestonesListOutput,
+  SessionsListProjectsOutput,
+  SessionsReadJsonlOutput,
+  SessionsDeleteOutput,
+  SessionsSearchOutput,
 } from './schema'
 
 describe('DoctorOutput', () => {
@@ -513,5 +517,95 @@ describe('MilestonesListOutput', () => {
   })
   it('rejects when ok is missing', () => {
     expect(MilestonesListOutput.safeParse({ milestones: [] }).success).toBe(false)
+  })
+})
+
+// ── wechat-cc sessions list-projects --json ───────────────────────────────────
+
+describe('SessionsListProjectsOutput', () => {
+  it('accepts ok:true with a populated projects array', () => {
+    expect(SessionsListProjectsOutput.safeParse({
+      ok: true,
+      projects: [
+        {
+          alias: 'my-project',
+          session_id: 'sess_abc123',
+          last_used_at: '2026-05-01T10:00:00.000Z',
+          summary: 'Working on feature X',
+          summary_updated_at: '2026-05-01T10:05:00.000Z',
+        },
+      ],
+    }).success).toBe(true)
+  })
+  it('accepts ok:true with an empty projects array (summary fields null)', () => {
+    expect(SessionsListProjectsOutput.safeParse({
+      ok: true,
+      projects: [
+        {
+          alias: 'bare',
+          session_id: 'sess_xyz',
+          last_used_at: '2026-05-02T08:00:00.000Z',
+          summary: null,
+          summary_updated_at: null,
+        },
+      ],
+    }).success).toBe(true)
+  })
+  it('rejects when ok is missing', () => {
+    expect(SessionsListProjectsOutput.safeParse({ projects: [] }).success).toBe(false)
+  })
+})
+
+// ── wechat-cc sessions read-jsonl --json ─────────────────────────────────────
+
+describe('SessionsReadJsonlOutput', () => {
+  it('accepts ok:true success variant with turns array', () => {
+    expect(SessionsReadJsonlOutput.safeParse({
+      ok: true,
+      alias: 'my-project',
+      session_id: 'sess_abc123',
+      turns: [{ type: 'human', content: 'hello' }, { type: 'assistant', content: 'hi' }],
+    }).success).toBe(true)
+  })
+  it('accepts ok:false error variant (no such alias)', () => {
+    expect(SessionsReadJsonlOutput.safeParse({
+      ok: false,
+      error: 'no such alias',
+    }).success).toBe(true)
+  })
+  it('rejects when ok is missing', () => {
+    expect(SessionsReadJsonlOutput.safeParse({ alias: 'x', session_id: 'y', turns: [] }).success).toBe(false)
+  })
+})
+
+// ── wechat-cc sessions delete --json ─────────────────────────────────────────
+
+describe('SessionsDeleteOutput', () => {
+  it('accepts ok:true with deleted alias', () => {
+    expect(SessionsDeleteOutput.safeParse({ ok: true, deleted: 'my-project' }).success).toBe(true)
+  })
+  it('rejects when deleted field is missing', () => {
+    expect(SessionsDeleteOutput.safeParse({ ok: true }).success).toBe(false)
+  })
+  it('rejects when ok is missing', () => {
+    expect(SessionsDeleteOutput.safeParse({ deleted: 'my-project' }).success).toBe(false)
+  })
+})
+
+// ── wechat-cc sessions search --json ─────────────────────────────────────────
+
+describe('SessionsSearchOutput', () => {
+  it('accepts ok:true with query and populated hits array', () => {
+    expect(SessionsSearchOutput.safeParse({
+      ok: true,
+      query: 'feature X',
+      hits: [{ alias: 'my-project', snippet: '...working on feature X...' }],
+    }).success).toBe(true)
+  })
+  it('accepts ok:true with an empty hits array', () => {
+    expect(SessionsSearchOutput.safeParse({ ok: true, query: 'nothing', hits: [] }).success).toBe(true)
+  })
+  it('rejects when ok is missing', () => {
+    expect(SessionsSearchOutput.safeParse({ query: 'x', hits: [] }).success).toBe(false)
   })
 })
