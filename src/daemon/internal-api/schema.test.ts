@@ -9,6 +9,10 @@ import {
   ProjectsAddRequest, ProjectsAddResponse,
   ProjectsRemoveRequest, ProjectsRemoveResponse,
   UserSetNameRequest, UserSetNameResponse,
+  SharePageRequest, SharePageResponse,
+  ShareResurfaceRequest, ShareResurfaceResponse,
+  VoiceStatusResponse,
+  VoiceSaveConfigRequest, VoiceSaveConfigResponse,
 } from './schema'
 
 // ── health ──────────────────────────────────────────────────────────────────
@@ -173,5 +177,113 @@ describe('UserSetNameResponse', () => {
   })
   it('accepts ok=false with error', () => {
     expect(UserSetNameResponse.safeParse({ ok: false, error: 'failed' }).success).toBe(true)
+  })
+})
+
+// ── POST /v1/share/page ──────────────────────────────────────────────────────
+
+describe('SharePageRequest', () => {
+  it('accepts title + content only', () => {
+    expect(SharePageRequest.safeParse({ title: 'T', content: 'C' }).success).toBe(true)
+  })
+  it('accepts all optional fields', () => {
+    expect(SharePageRequest.safeParse({
+      title: 'T', content: 'C',
+      needs_approval: true, chat_id: 'abc', account_id: 'acct',
+    }).success).toBe(true)
+  })
+  it('rejects missing title', () => {
+    expect(SharePageRequest.safeParse({ content: 'C' }).success).toBe(false)
+  })
+})
+
+describe('SharePageResponse', () => {
+  it('accepts url + slug on success', () => {
+    expect(SharePageResponse.safeParse({ url: 'https://x.com/s/abc', slug: 'abc' }).success).toBe(true)
+  })
+  it('accepts ok=false with error', () => {
+    expect(SharePageResponse.safeParse({ ok: false, error: 'share failed' }).success).toBe(true)
+  })
+})
+
+// ── POST /v1/share/resurface ─────────────────────────────────────────────────
+
+describe('ShareResurfaceRequest', () => {
+  it('accepts slug', () => {
+    expect(ShareResurfaceRequest.safeParse({ slug: 'foo' }).success).toBe(true)
+  })
+  it('accepts title_fragment', () => {
+    expect(ShareResurfaceRequest.safeParse({ title_fragment: 'foo' }).success).toBe(true)
+  })
+  it('accepts empty object (server returns not-found)', () => {
+    expect(ShareResurfaceRequest.safeParse({}).success).toBe(true)
+  })
+})
+
+describe('ShareResurfaceResponse', () => {
+  it('accepts url + slug on success', () => {
+    expect(ShareResurfaceResponse.safeParse({ url: 'https://x.com/s/abc', slug: 'abc' }).success).toBe(true)
+  })
+  it('accepts ok=false reason=not found', () => {
+    expect(ShareResurfaceResponse.safeParse({ ok: false, reason: 'not found' }).success).toBe(true)
+  })
+  it('accepts ok=false with generic error', () => {
+    expect(ShareResurfaceResponse.safeParse({ ok: false, error: 'db error' }).success).toBe(true)
+  })
+})
+
+// ── GET /v1/voice/status ─────────────────────────────────────────────────────
+
+describe('VoiceStatusResponse', () => {
+  it('accepts configured=false', () => {
+    expect(VoiceStatusResponse.safeParse({ configured: false }).success).toBe(true)
+  })
+  it('accepts configured=true with full fields', () => {
+    expect(VoiceStatusResponse.safeParse({
+      configured: true,
+      provider: 'http_tts',
+      default_voice: 'zh-CN-XiaoxiaoNeural',
+      saved_at: '2026-05-07T10:00:00Z',
+    }).success).toBe(true)
+  })
+  it('accepts configured=true with optional base_url + model', () => {
+    expect(VoiceStatusResponse.safeParse({
+      configured: true,
+      provider: 'qwen',
+      default_voice: 'qwen-voice',
+      base_url: 'https://api.qwen.com',
+      model: 'qwen-tts-v1',
+      saved_at: '2026-05-07T10:00:00Z',
+    }).success).toBe(true)
+  })
+})
+
+// ── POST /v1/voice/save_config ───────────────────────────────────────────────
+
+describe('VoiceSaveConfigRequest', () => {
+  it('accepts http_tts provider', () => {
+    expect(VoiceSaveConfigRequest.safeParse({ provider: 'http_tts' }).success).toBe(true)
+  })
+  it('accepts qwen provider with api_key', () => {
+    expect(VoiceSaveConfigRequest.safeParse({ provider: 'qwen', api_key: 'sk-x' }).success).toBe(true)
+  })
+  it('rejects unknown provider', () => {
+    expect(VoiceSaveConfigRequest.safeParse({ provider: 'foo' }).success).toBe(false)
+  })
+})
+
+describe('VoiceSaveConfigResponse', () => {
+  it('accepts ok=true with tested_ms + provider + default_voice', () => {
+    expect(VoiceSaveConfigResponse.safeParse({
+      ok: true, tested_ms: 120, provider: 'http_tts', default_voice: 'zh-CN-XiaoxiaoNeural',
+    }).success).toBe(true)
+  })
+  it('accepts ok=false with reason', () => {
+    expect(VoiceSaveConfigResponse.safeParse({ ok: false, reason: 'bad_url' }).success).toBe(true)
+  })
+  it('accepts ok=false reason=unexpected_error with detail', () => {
+    expect(VoiceSaveConfigResponse.safeParse({
+      ok: false, reason: 'unexpected_error', detail: 'ECONNREFUSED',
+    }).success).toBe(true)
   })
 })
