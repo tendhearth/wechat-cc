@@ -31,6 +31,12 @@ import {
   UpdateCheckOutput,
   UpdateApplyOutput,
   ConversationsListOutput,
+  GuardStatusOutput,
+  GuardEnableOutput,
+  GuardDisableOutput,
+  AvatarInfoOutput,
+  AvatarSetOutput,
+  AvatarRemoveOutput,
 } from './schema'
 
 describe('DoctorOutput', () => {
@@ -796,5 +802,116 @@ describe('LogsOutput', () => {
   })
   it('rejects when ok is missing', () => {
     expect(LogsOutput.safeParse({ logFile: '/tmp/channel.log', totalLines: 0, entries: [] }).success).toBe(false)
+  })
+})
+
+// ── wechat-cc guard status --json ─────────────────────────────────────────────
+
+describe('GuardStatusOutput', () => {
+  it('accepts a fully-populated status snapshot', () => {
+    expect(GuardStatusOutput.safeParse({
+      enabled: true,
+      ip: '1.2.3.4',
+      reachable: true,
+      probe_url: 'https://probe.example.com',
+      ip_error: null,
+      probe_error: null,
+      probe_ms: 120,
+    }).success).toBe(true)
+  })
+  it('accepts a snapshot with ip_error and probe_error populated (probe failure)', () => {
+    expect(GuardStatusOutput.safeParse({
+      enabled: false,
+      ip: null,
+      reachable: false,
+      probe_url: 'https://probe.example.com',
+      ip_error: 'fetch timeout',
+      probe_error: 'connection refused',
+      probe_ms: null,
+    }).success).toBe(true)
+  })
+  it('rejects an empty object', () => {
+    expect(GuardStatusOutput.safeParse({}).success).toBe(false)
+  })
+})
+
+// ── wechat-cc guard enable --json ────────────────────────────────────────────
+
+describe('GuardEnableOutput', () => {
+  it('accepts ok:true with enabled:true', () => {
+    expect(GuardEnableOutput.safeParse({ ok: true, enabled: true }).success).toBe(true)
+  })
+  it('rejects when ok is missing', () => {
+    expect(GuardEnableOutput.safeParse({ enabled: true }).success).toBe(false)
+  })
+})
+
+// ── wechat-cc guard disable --json ───────────────────────────────────────────
+
+describe('GuardDisableOutput', () => {
+  it('accepts ok:true with enabled:false', () => {
+    expect(GuardDisableOutput.safeParse({ ok: true, enabled: false }).success).toBe(true)
+  })
+  it('rejects when enabled is missing', () => {
+    expect(GuardDisableOutput.safeParse({ ok: true }).success).toBe(false)
+  })
+})
+
+// ── wechat-cc avatar info --json ──────────────────────────────────────────────
+
+describe('AvatarInfoOutput', () => {
+  it('accepts ok:true with exists:true and a path', () => {
+    expect(AvatarInfoOutput.safeParse({
+      ok: true,
+      exists: true,
+      path: '/home/user/.local/share/wechat-cc/avatars/abc123.png',
+    }).success).toBe(true)
+  })
+  it('accepts ok:true with exists:false (no avatar stored)', () => {
+    expect(AvatarInfoOutput.safeParse({
+      ok: true,
+      exists: false,
+      path: '/home/user/.local/share/wechat-cc/avatars/abc123.png',
+    }).success).toBe(true)
+  })
+  it('rejects when ok is missing', () => {
+    expect(AvatarInfoOutput.safeParse({ exists: true, path: '/tmp/avatar.png' }).success).toBe(false)
+  })
+})
+
+// ── wechat-cc avatar set --json ───────────────────────────────────────────────
+
+describe('AvatarSetOutput', () => {
+  it('accepts ok:true success branch with path', () => {
+    expect(AvatarSetOutput.safeParse({
+      ok: true,
+      path: '/home/user/.local/share/wechat-cc/avatars/abc123.png',
+    }).success).toBe(true)
+  })
+  it('accepts ok:false error branch', () => {
+    expect(AvatarSetOutput.safeParse({
+      ok: false,
+      error: 'invalid base64: illegal character at position 4',
+    }).success).toBe(true)
+  })
+  it('rejects unknown discriminator', () => {
+    expect(AvatarSetOutput.safeParse({ ok: 'maybe' }).success).toBe(false)
+  })
+})
+
+// ── wechat-cc avatar remove --json ───────────────────────────────────────────
+
+describe('AvatarRemoveOutput', () => {
+  it('accepts ok:true with path (always succeeds — no-op if absent)', () => {
+    expect(AvatarRemoveOutput.safeParse({
+      ok: true,
+      path: '/home/user/.local/share/wechat-cc/avatars/abc123.png',
+    }).success).toBe(true)
+  })
+  it('rejects when path is missing', () => {
+    expect(AvatarRemoveOutput.safeParse({ ok: true }).success).toBe(false)
+  })
+  it('rejects when ok is missing', () => {
+    expect(AvatarRemoveOutput.safeParse({ path: '/tmp/avatar.png' }).success).toBe(false)
   })
 })

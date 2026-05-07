@@ -635,3 +635,69 @@ export const LogsOutput = z.object({
   entries: z.array(LogEntry),
 })
 export type LogsOutputT = z.infer<typeof LogsOutput>
+
+// ── wechat-cc guard status --json ─────────────────────────────────────────────
+// Live one-shot probe: current external IP + reachability check.
+// Output is the `out` object assembled in guardStatusCmd (cli.ts ~L622).
+// ip and probe_ms are nullable (null when probe failed or ip fetch errored).
+
+export const GuardStatusOutput = z.object({
+  enabled: z.boolean(),
+  ip: z.string().nullable(),
+  reachable: z.boolean(),
+  probe_url: z.string(),
+  ip_error: z.string().nullable(),
+  probe_error: z.string().nullable(),
+  probe_ms: z.number().nullable(),
+})
+export type GuardStatusOutputT = z.infer<typeof GuardStatusOutput>
+
+// ── wechat-cc guard enable --json ────────────────────────────────────────────
+// Emits { ok: true, enabled: true } after writing cfg.enabled = true.
+
+export const GuardEnableOutput = z.object({
+  ok: z.literal(true),
+  enabled: z.boolean(),
+})
+export type GuardEnableOutputT = z.infer<typeof GuardEnableOutput>
+
+// ── wechat-cc guard disable --json ───────────────────────────────────────────
+// Emits { ok: true, enabled: false } after writing cfg.enabled = false.
+
+export const GuardDisableOutput = z.object({
+  ok: z.literal(true),
+  enabled: z.boolean(),
+})
+export type GuardDisableOutputT = z.infer<typeof GuardDisableOutput>
+
+// ── wechat-cc avatar info --json ──────────────────────────────────────────────
+// Emits { ok: true, ...avatarInfo() } where avatarInfo returns { exists, path }.
+// `exists` is false when no avatar has been stored for the given key.
+
+export const AvatarInfoOutput = z.object({
+  ok: z.literal(true),
+  exists: z.boolean(),
+  path: z.string(),
+})
+export type AvatarInfoOutputT = z.infer<typeof AvatarInfoOutput>
+
+// ── wechat-cc avatar set --json ───────────────────────────────────────────────
+// Success: { ok: true, path } — setAvatar() return value.
+// Error  : { ok: false, error } — caught exception re-emitted as JSON (exit 1).
+
+export const AvatarSetOutput = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), path: z.string() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+export type AvatarSetOutputT = z.infer<typeof AvatarSetOutput>
+
+// ── wechat-cc avatar remove --json ───────────────────────────────────────────
+// Always emits { ok: true, path } — removeAvatar() is idempotent (no-op if
+// the file is already absent). No error branch: failures in removeAvatar are
+// not caught; the process exits without JSON output on fs errors.
+
+export const AvatarRemoveOutput = z.object({
+  ok: z.literal(true),
+  path: z.string(),
+})
+export type AvatarRemoveOutputT = z.infer<typeof AvatarRemoveOutput>
