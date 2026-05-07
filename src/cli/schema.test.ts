@@ -4,6 +4,12 @@ import {
   SetupPollOutput,
   SetupStatusOutput,
   SetupQrJsonOutput,
+  ServiceStatusOutput,
+  ServiceInstallOutput,
+  ServiceStartOutput,
+  ServiceStopOutput,
+  ServiceUninstallOutput,
+  InstallProgressOutput,
 } from './schema'
 
 describe('DoctorOutput', () => {
@@ -148,5 +154,137 @@ describe('SetupQrJsonOutput', () => {
   })
   it('rejects missing qrcode', () => {
     expect(SetupQrJsonOutput.safeParse({ qrcode_img_content: 'x', expires_in_ms: 480000 }).success).toBe(false)
+  })
+})
+
+// Shared ServicePlan fixture used across service tests.
+const samplePlan = {
+  kind: 'launchagent',
+  serviceName: 'wechat-cc',
+  serviceFile: '/Users/test/Library/LaunchAgents/com.wechat-cc.daemon.plist',
+  fileContent: '<?xml version="1.0"?>',
+  installCommands: [['launchctl', 'bootstrap', 'gui/501', '/path/plist']],
+  startCommands: [['launchctl', 'kickstart', '-k', 'gui/501/com.wechat-cc.daemon']],
+  stopCommands: [['launchctl', 'bootout', 'gui/501', '/path/plist']],
+  uninstallCommands: [['launchctl', 'bootout', 'gui/501', '/path/plist']],
+}
+
+const sampleAgentConfig = {
+  provider: 'claude',
+  dangerouslySkipPermissions: true,
+  autoStart: false,
+}
+
+describe('ServiceStatusOutput', () => {
+  it('accepts a status report', () => {
+    expect(ServiceStatusOutput.safeParse({
+      installed: true,
+      alive: true,
+      pid: 12345,
+      state: 'running',
+      plan: samplePlan,
+      agentConfig: sampleAgentConfig,
+    }).success).toBe(true)
+  })
+  it('rejects empty payload', () => {
+    expect(ServiceStatusOutput.safeParse({}).success).toBe(false)
+  })
+})
+
+describe('ServiceInstallOutput', () => {
+  it('accepts success branch', () => {
+    expect(ServiceInstallOutput.safeParse({
+      ok: true,
+      action: 'install',
+      plan: samplePlan,
+      agentConfig: sampleAgentConfig,
+      dryRun: false,
+    }).success).toBe(true)
+  })
+  it('accepts error branch', () => {
+    expect(ServiceInstallOutput.safeParse({
+      ok: false,
+      error: 'launchctl bootstrap failed with exit 1',
+    }).success).toBe(true)
+  })
+  it('rejects unknown discriminator', () => {
+    expect(ServiceInstallOutput.safeParse({ ok: 'maybe' }).success).toBe(false)
+  })
+})
+
+describe('ServiceStartOutput', () => {
+  it('accepts success branch', () => {
+    expect(ServiceStartOutput.safeParse({
+      ok: true,
+      action: 'start',
+      plan: samplePlan,
+      agentConfig: sampleAgentConfig,
+      dryRun: false,
+    }).success).toBe(true)
+  })
+  it('accepts error branch', () => {
+    expect(ServiceStartOutput.safeParse({
+      ok: false,
+      error: 'launchctl kickstart failed with exit 113',
+    }).success).toBe(true)
+  })
+  it('rejects unknown discriminator', () => {
+    expect(ServiceStartOutput.safeParse({ ok: 'maybe' }).success).toBe(false)
+  })
+})
+
+describe('ServiceStopOutput', () => {
+  it('accepts success branch', () => {
+    expect(ServiceStopOutput.safeParse({
+      ok: true,
+      action: 'stop',
+      plan: samplePlan,
+      agentConfig: sampleAgentConfig,
+      dryRun: false,
+    }).success).toBe(true)
+  })
+  it('accepts error branch', () => {
+    expect(ServiceStopOutput.safeParse({
+      ok: false,
+      error: 'launchctl bootout failed',
+    }).success).toBe(true)
+  })
+  it('rejects unknown discriminator', () => {
+    expect(ServiceStopOutput.safeParse({ ok: 'maybe' }).success).toBe(false)
+  })
+})
+
+describe('ServiceUninstallOutput', () => {
+  it('accepts success branch', () => {
+    expect(ServiceUninstallOutput.safeParse({
+      ok: true,
+      action: 'uninstall',
+      plan: samplePlan,
+      agentConfig: sampleAgentConfig,
+      dryRun: true,
+    }).success).toBe(true)
+  })
+  it('accepts error branch', () => {
+    expect(ServiceUninstallOutput.safeParse({
+      ok: false,
+      error: 'plist file removal failed',
+    }).success).toBe(true)
+  })
+  it('rejects unknown discriminator', () => {
+    expect(ServiceUninstallOutput.safeParse({ ok: 'maybe' }).success).toBe(false)
+  })
+})
+
+describe('InstallProgressOutput', () => {
+  it('accepts a progress event', () => {
+    expect(InstallProgressOutput.safeParse({
+      step: 2,
+      total: 4,
+      label: 'launchctl bootstrap',
+      ts: 1714900000000,
+    }).success).toBe(true)
+  })
+  it('rejects empty payload (no install in flight yields {}, not this schema)', () => {
+    expect(InstallProgressOutput.safeParse({}).success).toBe(false)
   })
 })

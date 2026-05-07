@@ -150,3 +150,106 @@ export const SetupQrJsonOutput = z.object({
   expires_in_ms: z.number(),
 })
 export type SetupQrJsonOutputT = z.infer<typeof SetupQrJsonOutput>
+
+// ── wechat-cc service <action> --json ─────────────────────────────────────────
+
+// Inline ServicePlan shape (mirrors ServicePlan interface in service-manager.ts).
+// Embedded in every service --json response so consumers can inspect commands.
+const ServicePlanSchema = z.object({
+  kind: ServiceKind,
+  serviceName: z.string(),
+  serviceFile: z.string().nullable(),
+  fileContent: z.string().nullable(),
+  installCommands: z.array(z.array(z.string())),
+  startCommands: z.array(z.array(z.string())),
+  stopCommands: z.array(z.array(z.string())),
+  uninstallCommands: z.array(z.array(z.string())),
+})
+
+// AgentConfig shape (mirrors AgentConfig interface in src/lib/agent-config.ts).
+const AgentConfigSchema = z.object({
+  provider: AgentProviderKind,
+  model: z.string().optional(),
+  dangerouslySkipPermissions: z.boolean(),
+  autoStart: z.boolean(),
+})
+
+// wechat-cc service status --json
+// Emits { ...ServiceStatusReport, plan, agentConfig } — always succeeds when
+// reached (failures exit non-zero without printing JSON).
+export const ServiceStatusOutput = z.object({
+  installed: z.boolean(),
+  alive: z.boolean(),
+  pid: z.number().nullable(),
+  state: z.enum(['missing', 'running', 'stale', 'stopped']),
+  plan: ServicePlanSchema,
+  agentConfig: AgentConfigSchema,
+})
+export type ServiceStatusOutputT = z.infer<typeof ServiceStatusOutput>
+
+// wechat-cc service install --json
+// Success: { ok: true, action: 'install', plan, agentConfig, dryRun }
+// (install throws on failure — ok: false arm reserved for future error output)
+export const ServiceInstallOutput = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    action: z.literal('install'),
+    plan: ServicePlanSchema,
+    agentConfig: AgentConfigSchema,
+    dryRun: z.boolean(),
+  }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+export type ServiceInstallOutputT = z.infer<typeof ServiceInstallOutput>
+
+// wechat-cc service start --json
+export const ServiceStartOutput = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    action: z.literal('start'),
+    plan: ServicePlanSchema,
+    agentConfig: AgentConfigSchema,
+    dryRun: z.boolean(),
+  }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+export type ServiceStartOutputT = z.infer<typeof ServiceStartOutput>
+
+// wechat-cc service stop --json
+export const ServiceStopOutput = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    action: z.literal('stop'),
+    plan: ServicePlanSchema,
+    agentConfig: AgentConfigSchema,
+    dryRun: z.boolean(),
+  }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+export type ServiceStopOutputT = z.infer<typeof ServiceStopOutput>
+
+// wechat-cc service uninstall --json
+export const ServiceUninstallOutput = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    action: z.literal('uninstall'),
+    plan: ServicePlanSchema,
+    agentConfig: AgentConfigSchema,
+    dryRun: z.boolean(),
+  }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+export type ServiceUninstallOutputT = z.infer<typeof ServiceUninstallOutput>
+
+// ── wechat-cc install-progress --json ────────────────────────────────────────
+// Reads install-progress.json from STATE_DIR (written by the service install
+// onProgress hook). Returns {} when no install is in flight — that empty-object
+// case is NOT matched by this schema; consumers should handle it separately.
+
+export const InstallProgressOutput = z.object({
+  step: z.number(),
+  total: z.number(),
+  label: z.string(),
+  ts: z.number(),
+})
+export type InstallProgressOutputT = z.infer<typeof InstallProgressOutput>
