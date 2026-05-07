@@ -19,7 +19,7 @@ import type { ConversationStore } from './conversation-store'
 import type { ProviderRegistry } from './provider-registry'
 import type { Mode, ProviderId } from './conversation'
 import type { InboundMsg } from './prompt-format'
-import { evaluateRound as evaluateModeratorRound, type ModeratorDecision } from './chatroom-moderator'
+import { evaluateRound as evaluateModeratorRound, type ModeratorDecision, type ChatroomEntry } from './chatroom-moderator'
 import { assertSupported, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
 
 export class ModeNotImplementedError extends Error {
@@ -122,11 +122,14 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
 
   const parallelProviders: ProviderId[] = deps.parallelProviders ?? ['claude', 'codex']
   const chatroomMaxRounds = deps.chatroomMaxRounds ?? 4
-  // Per-chat in-memory state for chatroom: who spoke last, used as the
-  // initial speaker for the next round. Volatile across daemon restart
-  // (small cost: first chatroom turn after restart goes to default).
-  // Cleared by setMode when the chat leaves chatroom mode (RFC 03 review #3).
-  const lastChatroomSpeaker = new Map<string, ProviderId>()
+  // v0.5.9 — chatroom is now a persistent session per chatId. History
+  // accumulates across user messages until the user switches mode away
+  // from chatroom (then we delete the entry). Lets the moderator see the
+  // full prior discussion when picking the next speaker / decision.
+  // In-memory only (Q4: not persisted across daemon restart — speakers'
+  // SDK sessions still continue, the moderator just observes a fresh
+  // chatroom from its perspective; minor inconsistency, low cost).
+  const chatroomHistories = new Map<string, ChatroomEntry[]>()
   // RFC 03 review #11 — per-chat AbortController for in-flight chatroom
   // loops. dispatchChatroom registers; coordinator.cancel() signals; /stop
   // in mode-commands triggers cancel before flipping mode.
@@ -230,10 +233,13 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     const aborter = new AbortController()
     inFlightAborters.set(msg.chatId, aborter)
 
-    const userMessage = deps.format(msg)
-    const history: Array<{ speaker: ProviderId; text: string }> = []
+    // v0.5.9 — chatroom is a persistent session. Pull existing history
+    // (from prior user msgs in this chatroom), append the new user msg,
+    // and let the moderator see the whole sequence.
+    const history: ChatroomEntry[] = chatroomHistories.get(msg.chatId) ?? []
+    history.push({ role: 'user', text: deps.format(msg) })
 
-    deps.log('COORDINATOR', `chatroom chat=${msg.chatId} → start participants=${providerA},${providerB} max=${chatroomMaxRounds}`)
+    deps.log('COORDINATOR', `chatroom chat=${msg.chatId} → start participants=${providerA},${providerB} max=${chatroomMaxRounds} history=${history.length}`)
 
     try {
     for (let round = 1; round <= chatroomMaxRounds; round++) {
@@ -254,7 +260,6 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       try {
         decision = await evaluateModeratorRound(
           {
-            userMessage,
             history,
             round,
             maxRounds: chatroomMaxRounds,
@@ -303,15 +308,13 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         break
       }
 
-      lastChatroomSpeaker.set(msg.chatId, speaker)
-
       // If the speaker called the reply tool despite chatroom mode, the
       // text already went out via internal-api with the [Display] prefix.
       // Skip our own forwarding (would double-send) but still record
       // their output in history so the next moderator round sees it.
       if (result.replyToolCalled) {
         deps.log('COORDINATOR_CHATROOM', `speaker=${speaker} round=${round} replyToolCalled — skipping our forward`)
-        history.push({ speaker, text: result.assistantText.join('\n').trim() || '(reply tool used)' })
+        history.push({ role: 'speaker', speaker, text: result.assistantText.join('\n').trim() || '(reply tool used)' })
         continue
       }
 
@@ -321,14 +324,20 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         break
       }
       const dn = deps.registry.get(speaker)?.opts.displayName ?? speaker
-      // Final-round prefix marks the synthesis turn so users can tell
-      // "this is the resolution" from "this is mid-debate".
-      const prefix = isFinalRound ? `[${dn} · 终局]` : `[${dn}]`
-      await deps.sendAssistantText?.(msg.chatId, `${prefix} ${allText}`)
-      history.push({ speaker, text: allText })
+      // Final-round visual marker: leading 🎯 if the speaker didn't add
+      // it themselves (the moderator's prompt asks them to). Single emoji
+      // signals "this turn is the synthesis / takeaway" without the heavy
+      // "[· 终局]" framing the user found dramatic.
+      const renderedText = isFinalRound && !allText.startsWith('🎯')
+        ? `🎯 ${allText}`
+        : allText
+      await deps.sendAssistantText?.(msg.chatId, `[${dn}] ${renderedText}`)
+      history.push({ role: 'speaker', speaker, text: allText })
     }
 
-    deps.log('COORDINATOR', `chatroom chat=${msg.chatId} → done after ${history.length} turn(s)`)
+    // Persist the (possibly extended) chatroom history back to the map.
+    chatroomHistories.set(msg.chatId, history)
+    deps.log('COORDINATOR', `chatroom chat=${msg.chatId} → done; history=${history.length}`)
     } finally {
       if (inFlightAborters.get(msg.chatId) === aborter) {
         inFlightAborters.delete(msg.chatId)
@@ -381,12 +390,14 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       validateMode(mode)
       const oldMode = getMode(chatId)
       deps.conversationStore.set(chatId, mode)
-      // RFC 03 review #3 (partial) — clear chatroom-specific per-chat
-      // memory when leaving chatroom. Cross-chat session release is left
-      // to LRU / idle eviction because the (alias, providerId) key is
-      // shared across chats; per-chat release would interfere.
+      // v0.5.9 — clear chatroom history when leaving chatroom mode.
+      // Switching back later starts a fresh chatroom session, matching
+      // the "left the room, came back" mental model. Cross-chat session
+      // release is left to LRU / idle eviction because the
+      // (alias, providerId) key is shared across chats; per-chat release
+      // would interfere.
       if (oldMode.kind === 'chatroom' && mode.kind !== 'chatroom') {
-        lastChatroomSpeaker.delete(chatId)
+        chatroomHistories.delete(chatId)
       }
     },
     cancel(chatId) {

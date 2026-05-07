@@ -1,7 +1,15 @@
 import { describe, it, expect, vi } from 'vitest'
-import { evaluateRound } from './chatroom-moderator'
+import { evaluateRound, type ChatroomEntry } from './chatroom-moderator'
 
 const PARTICIPANTS: ['claude', 'codex'] = ['claude', 'codex']
+
+// Helper: build a history with the latest user msg + optional speaker turns.
+function hist(userMsg: string, ...turns: Array<{ speaker: 'claude' | 'codex'; text: string }>): ChatroomEntry[] {
+  return [
+    { role: 'user' as const, text: userMsg },
+    ...turns.map(t => ({ role: 'speaker' as const, speaker: t.speaker, text: t.text })),
+  ]
+}
 
 describe('evaluateRound', () => {
   it('round 1: parses valid continue decision and returns it as-is', async () => {
@@ -9,20 +17,20 @@ describe('evaluateRound', () => {
       action: 'continue', speaker: 'claude', prompt: '先给初步看法', reasoning: '开场',
     }))
     const r = await evaluateRound(
-      { userMessage: '9-1 等于多少', history: [], round: 1, maxRounds: 4, participants: PARTICIPANTS },
+      { history: hist('9-1 等于多少'), round: 1, maxRounds: 4, participants: PARTICIPANTS },
       { haikuEval },
     )
     expect(r).toEqual({ action: 'continue', speaker: 'claude', prompt: '先给初步看法', reasoning: '开场' })
   })
 
-  it('round 2: forces alternation when moderator picks repeated speaker', async () => {
+  it('forces alternation when moderator picks repeated speaker', async () => {
     const haikuEval = vi.fn().mockResolvedValue(JSON.stringify({
       action: 'continue', speaker: 'claude', prompt: '继续说', reasoning: '同意',
     }))
     const r = await evaluateRound(
       {
-        userMessage: 'q', round: 2, maxRounds: 4, participants: PARTICIPANTS,
-        history: [{ speaker: 'claude', text: 'first take' }],
+        round: 2, maxRounds: 4, participants: PARTICIPANTS,
+        history: hist('q', { speaker: 'claude', text: 'first take' }),
       },
       { haikuEval },
     )
@@ -36,8 +44,8 @@ describe('evaluateRound', () => {
     }))
     const r = await evaluateRound(
       {
-        userMessage: 'q', round: 3, maxRounds: 4, participants: PARTICIPANTS,
-        history: [{ speaker: 'claude', text: 'a' }, { speaker: 'codex', text: 'b' }],
+        round: 3, maxRounds: 4, participants: PARTICIPANTS,
+        history: hist('q', { speaker: 'claude', text: 'a' }, { speaker: 'codex', text: 'b' }),
       },
       { haikuEval },
     )
@@ -45,14 +53,16 @@ describe('evaluateRound', () => {
   })
 
   it('forces end (defensive) when round > maxRounds', async () => {
-    // Normal loop bounds round to <= maxRounds, so this is defense-in-depth
-    // for callers that miscount. round = maxRounds itself goes through
-    // haiku normally (last allowed turn = synthesis turn).
     const haikuEval = vi.fn() // should not be called
     const r = await evaluateRound(
       {
-        userMessage: 'q', round: 5, maxRounds: 4, participants: PARTICIPANTS,
-        history: [{ speaker: 'claude', text: 'a' }, { speaker: 'codex', text: 'b' }, { speaker: 'claude', text: 'c' }, { speaker: 'codex', text: 'd' }],
+        round: 5, maxRounds: 4, participants: PARTICIPANTS,
+        history: hist('q',
+          { speaker: 'claude', text: 'a' },
+          { speaker: 'codex', text: 'b' },
+          { speaker: 'claude', text: 'c' },
+          { speaker: 'codex', text: 'd' },
+        ),
       },
       { haikuEval },
     )
@@ -63,7 +73,7 @@ describe('evaluateRound', () => {
   it('tolerates JSON wrapped in ```json fences', async () => {
     const haikuEval = vi.fn().mockResolvedValue('```json\n{"action":"continue","speaker":"codex","prompt":"x","reasoning":"y"}\n```')
     const r = await evaluateRound(
-      { userMessage: 'q', round: 1, maxRounds: 4, participants: PARTICIPANTS, history: [] },
+      { history: hist('q'), round: 1, maxRounds: 4, participants: PARTICIPANTS },
       { haikuEval },
     )
     expect(r.action).toBe('continue')
@@ -74,15 +84,15 @@ describe('evaluateRound', () => {
     const haikuEval = vi.fn().mockResolvedValue('this is not JSON at all')
     const r = await evaluateRound(
       {
-        userMessage: 'q', round: 2, maxRounds: 4, participants: PARTICIPANTS,
-        history: [{ speaker: 'claude', text: 'a' }],
+        round: 2, maxRounds: 4, participants: PARTICIPANTS,
+        history: hist('q', { speaker: 'claude', text: 'a' }),
       },
       { haikuEval },
     )
     expect(r.action).toBe('continue')
     if (r.action === 'continue') {
-      expect(r.speaker).toBe('codex') // forced alternation
-      expect(r.prompt.length).toBeGreaterThan(0) // generic prompt
+      expect(r.speaker).toBe('codex')
+      expect(r.prompt.length).toBeGreaterThan(0)
       expect(r.reasoning).toMatch(/fallback/)
     }
   })
@@ -91,8 +101,8 @@ describe('evaluateRound', () => {
     const haikuEval = vi.fn().mockRejectedValue(new Error('network down'))
     const r = await evaluateRound(
       {
-        userMessage: 'q', round: 2, maxRounds: 4, participants: PARTICIPANTS,
-        history: [{ speaker: 'claude', text: 'a' }],
+        round: 2, maxRounds: 4, participants: PARTICIPANTS,
+        history: hist('q', { speaker: 'claude', text: 'a' }),
       },
       { haikuEval },
     )
@@ -109,8 +119,8 @@ describe('evaluateRound', () => {
     }))
     const r = await evaluateRound(
       {
-        userMessage: 'q', round: 2, maxRounds: 4, participants: PARTICIPANTS,
-        history: [{ speaker: 'claude', text: 'a' }],
+        round: 2, maxRounds: 4, participants: PARTICIPANTS,
+        history: hist('q', { speaker: 'claude', text: 'a' }),
       },
       { haikuEval },
     )
@@ -124,8 +134,8 @@ describe('evaluateRound', () => {
     }))
     const r = await evaluateRound(
       {
-        userMessage: 'q', round: 2, maxRounds: 4, participants: PARTICIPANTS,
-        history: [{ speaker: 'claude', text: 'a' }],
+        round: 2, maxRounds: 4, participants: PARTICIPANTS,
+        history: hist('q', { speaker: 'claude', text: 'a' }),
       },
       { haikuEval },
     )
@@ -139,12 +149,55 @@ describe('evaluateRound', () => {
     }))
     const r = await evaluateRound(
       {
-        userMessage: 'q', round: 2, maxRounds: 4, participants: PARTICIPANTS,
-        history: [{ speaker: 'claude', text: 'a' }],
+        round: 2, maxRounds: 4, participants: PARTICIPANTS,
+        history: hist('q', { speaker: 'claude', text: 'a' }),
       },
       { haikuEval },
     )
     expect(r.action).toBe('continue')
-    if (r.action === 'continue') expect(r.prompt.length).toBeGreaterThan(20)
+    if (r.action === 'continue') {
+      expect(r.prompt.length).toBeGreaterThan(20)
+      // Fallback prompt is neutral — does NOT command "must rebut".
+      expect(r.prompt).not.toMatch(/必须找弱点|强制反驳|不许.*基本同意/)
+    }
+  })
+
+  it('history with multiple user msgs: last user msg is the trigger context', async () => {
+    const haikuEval = vi.fn().mockResolvedValue(JSON.stringify({
+      action: 'continue', speaker: 'codex', reasoning: '继续',
+    }))
+    await evaluateRound(
+      {
+        round: 1, maxRounds: 4, participants: PARTICIPANTS,
+        history: [
+          { role: 'user', text: '第一个问题' },
+          { role: 'speaker', speaker: 'claude', text: 'A1' },
+          { role: 'speaker', speaker: 'codex', text: 'B1' },
+          { role: 'user', text: '追问：然后呢？' },  // ← latest user msg
+        ],
+      },
+      { haikuEval },
+    )
+    const promptArg = haikuEval.mock.calls[0]?.[0] as string
+    expect(promptArg).toContain('追问：然后呢？')
+    expect(promptArg).toContain('第一个问题')  // older context still visible
+  })
+
+  it('round = maxRounds: moderator decides normally (no auto-end), expected to pick synthesis speaker', async () => {
+    const haikuEval = vi.fn().mockResolvedValue(JSON.stringify({
+      action: 'continue', speaker: 'codex', prompt: '🎯 综合', reasoning: '终轮综合',
+    }))
+    const r = await evaluateRound(
+      {
+        round: 4, maxRounds: 4, participants: PARTICIPANTS,
+        history: hist('q',
+          { speaker: 'claude', text: 'a' }, { speaker: 'codex', text: 'b' }, { speaker: 'claude', text: 'c' },
+        ),
+      },
+      { haikuEval },
+    )
+    expect(r.action).toBe('continue')
+    if (r.action === 'continue') expect(r.speaker).toBe('codex')
+    expect(haikuEval).toHaveBeenCalledTimes(1)
   })
 })
