@@ -1099,7 +1099,7 @@ describe('internal-api', () => {
       expect(replyVoice).toHaveBeenCalledWith('c', '念这一段')
     })
 
-    it('POST /v1/wechat/reply_voice rejects text > 500 chars (schema cap)', async () => {
+    it('POST /v1/wechat/reply_voice rejects text > 500 chars (handler business rule)', async () => {
       const replyVoice = vi.fn()
       const { port, token } = await startWithIlink({ replyVoice: replyVoice as never })
       const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply_voice`, {
@@ -1107,11 +1107,12 @@ describe('internal-api', () => {
         headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: JSON.stringify({ chat_id: 'c', text: 'x'.repeat(501) }),
       })
-      // After T7: schema validation rejects text > 500 chars before the handler runs.
-      // Returns 400 invalid_request (previously: 200 {ok:false, reason:'too_long'}).
-      expect(resp.status).toBe(400)
-      expect(await resp.json()).toMatchObject({ error: 'invalid_request' })
-      // dep was NOT called — input rejected before crossing the boundary
+      // 500-char cap is a handler business rule (not a schema constraint),
+      // so the wire contract is 200 with structured reason — preserves the
+      // agent client's ability to adapt vs a generic 400 invalid_request.
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: false, reason: 'too_long', limit: 500 })
+      // dep was NOT called — handler short-circuits before crossing the boundary
       expect(replyVoice).not.toHaveBeenCalled()
     })
 
