@@ -528,6 +528,93 @@ export const ReplyOutput = z.discriminatedUnion('ok', [
 ])
 export type ReplyOutputT = z.infer<typeof ReplyOutput>
 
+// ── wechat-cc update --check --json ──────────────────────────────────────────
+// Emits analyzeUpdate() result verbatim: UpdateProbe from src/cli/update.ts.
+// ok:true contains git state; ok:false contains reason + message + optional details.
+// All non-ok/mode fields are optional because the probe short-circuits on
+// early errors before the git state fields are populated.
+
+const UpdateReason = z.enum([
+  'dirty_tree',
+  'diverged',
+  'detached_head',
+  'fetch_failed',
+  'pull_conflict',
+  'install_failed',
+  'bun_missing',
+  'daemon_running_not_service',
+  'service_stop_failed',
+  'not_a_git_repo',
+])
+
+export const UpdateCheckOutput = z.object({
+  ok: z.boolean(),
+  mode: z.literal('check'),
+  currentCommit: z.string().optional(),
+  latestCommit: z.string().optional(),
+  updateAvailable: z.boolean().optional(),
+  behind: z.number().optional(),
+  aheadOfRemote: z.number().optional(),
+  lockfileWillChange: z.boolean().optional(),
+  dirty: z.boolean().optional(),
+  dirtyFiles: z.array(z.string()).optional(),
+  reason: UpdateReason.optional(),
+  message: z.string().optional(),
+  details: z.record(z.string(), z.unknown()).optional(),
+})
+export type UpdateCheckOutputT = z.infer<typeof UpdateCheckOutput>
+
+// ── wechat-cc update --json (apply path) ──────────────────────────────────────
+// Discriminated union on `ok` matching UpdateApplied | UpdateRejected.
+// Both arms carry mode: 'apply'. The ok:false arm also covers the synthetic
+// not_a_git_repo case emitted when running from a compiled desktop bundle.
+
+const DaemonAction = z.enum(['restarted', 'noop', 'restart_failed'])
+
+export const UpdateApplyOutput = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    mode: z.literal('apply'),
+    fromCommit: z.string(),
+    toCommit: z.string(),
+    lockfileChanged: z.boolean(),
+    installRan: z.boolean(),
+    daemonAction: DaemonAction,
+    elapsedMs: z.number(),
+  }),
+  z.object({
+    ok: z.literal(false),
+    mode: z.literal('apply'),
+    reason: UpdateReason,
+    message: z.string(),
+    details: z.record(z.string(), z.unknown()).optional(),
+  }),
+])
+export type UpdateApplyOutputT = z.infer<typeof UpdateApplyOutput>
+
+// ── wechat-cc conversations list --json ───────────────────────────────────────
+// Emits { ok: true, conversations: ConversationEntry[] }.
+// Per-entry: chat_id, plus nullable identity fields user_id/account_id/user_name
+// sourced from conversationStore.getIdentity (v0.6 PR5 Task 22).
+// `mode` is the Mode discriminated union from src/core/conversation.ts —
+// typed as z.unknown() so that adding new Mode.kind values (P3+) doesn't
+// require a schema update; the mode.kind string is validated at runtime
+// by the coordinator, not by this consumer-side schema.
+
+const ConversationEntry = z.object({
+  chat_id: z.string(),
+  user_id: z.string().nullable(),
+  account_id: z.string().nullable(),
+  user_name: z.string().nullable(),
+  mode: z.unknown(),
+})
+
+export const ConversationsListOutput = z.object({
+  ok: z.literal(true),
+  conversations: z.array(ConversationEntry),
+})
+export type ConversationsListOutputT = z.infer<typeof ConversationsListOutput>
+
 // ── wechat-cc logs [--tail N] --json ─────────────────────────────────────────
 // Emits tailLog() result when --json flag is set. Always the ok:true branch
 // (the ok:false LogTailError is only printed without --json, as process.exit(1)).

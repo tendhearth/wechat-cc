@@ -28,6 +28,9 @@ import {
   DemoUnseedOutput,
   ReplyOutput,
   LogsOutput,
+  UpdateCheckOutput,
+  UpdateApplyOutput,
+  ConversationsListOutput,
 } from './schema'
 
 describe('DoctorOutput', () => {
@@ -666,6 +669,102 @@ describe('ReplyOutput', () => {
   })
   it('rejects unknown discriminator', () => {
     expect(ReplyOutput.safeParse({ ok: 'maybe' }).success).toBe(false)
+  })
+})
+
+// ── wechat-cc update --check --json ──────────────────────────────────────────
+
+describe('UpdateCheckOutput', () => {
+  it('accepts ok:true probe with update available', () => {
+    expect(UpdateCheckOutput.safeParse({
+      ok: true,
+      mode: 'check',
+      currentCommit: 'abc1234',
+      latestCommit: 'def5678',
+      updateAvailable: true,
+      behind: 3,
+      aheadOfRemote: 0,
+      lockfileWillChange: true,
+      dirty: false,
+      dirtyFiles: [],
+    }).success).toBe(true)
+  })
+  it('accepts ok:false probe with reason (e.g. fetch_failed)', () => {
+    expect(UpdateCheckOutput.safeParse({
+      ok: false,
+      mode: 'check',
+      reason: 'fetch_failed',
+      message: 'git fetch origin failed',
+      details: { stderr: 'fatal: unable to access' },
+    }).success).toBe(true)
+  })
+  it('rejects when mode is missing', () => {
+    expect(UpdateCheckOutput.safeParse({ ok: true }).success).toBe(false)
+  })
+})
+
+// ── wechat-cc update --json (apply path) ──────────────────────────────────────
+
+describe('UpdateApplyOutput', () => {
+  it('accepts ok:true applied branch', () => {
+    expect(UpdateApplyOutput.safeParse({
+      ok: true,
+      mode: 'apply',
+      fromCommit: 'abc1234',
+      toCommit: 'def5678',
+      lockfileChanged: true,
+      installRan: true,
+      daemonAction: 'restarted',
+      elapsedMs: 4200,
+    }).success).toBe(true)
+  })
+  it('accepts ok:false rejected branch', () => {
+    expect(UpdateApplyOutput.safeParse({
+      ok: false,
+      mode: 'apply',
+      reason: 'dirty_tree',
+      message: 'working tree has uncommitted changes; commit/stash/discard then retry',
+      details: { dirtyFiles: ['src/foo.ts'] },
+    }).success).toBe(true)
+  })
+  it('rejects unknown ok discriminator', () => {
+    expect(UpdateApplyOutput.safeParse({ ok: 'maybe', mode: 'apply' }).success).toBe(false)
+  })
+})
+
+// ── wechat-cc conversations list --json ───────────────────────────────────────
+
+describe('ConversationsListOutput', () => {
+  it('accepts ok:true with a populated conversations array', () => {
+    expect(ConversationsListOutput.safeParse({
+      ok: true,
+      conversations: [
+        {
+          chat_id: 'o9cq80abc@im.wechat',
+          user_id: 'user-123',
+          account_id: 'bot-456',
+          user_name: 'Alice',
+          mode: { kind: 'solo', provider: 'claude' },
+        },
+      ],
+    }).success).toBe(true)
+  })
+  it('accepts ok:true with null identity fields (no getIdentity record)', () => {
+    expect(ConversationsListOutput.safeParse({
+      ok: true,
+      conversations: [
+        {
+          chat_id: 'group_xyz@chatroom',
+          user_id: null,
+          account_id: null,
+          user_name: null,
+          mode: { kind: 'chatroom' },
+        },
+      ],
+    }).success).toBe(true)
+  })
+  it('rejects when ok is missing', () => {
+    expect(ConversationsListOutput.safeParse({ conversations: [] }).success).toBe(false)
   })
 })
 
