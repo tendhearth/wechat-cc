@@ -208,3 +208,105 @@ export const CompanionSnoozeResponse = z.union([
   z.object({ ok: z.literal(true), until: z.string() }),
   z.object({ ok: z.literal(false), error: z.string() }),
 ])
+
+// ── POST /v1/wechat/reply ────────────────────────────────────────────────────
+
+export const WechatReplyRequest = z.object({
+  chat_id: z.string(),
+  text: z.string(),
+  participant_tag: z.string().optional(),
+})
+export const WechatReplyResponse = z.union([
+  z.object({ ok: z.literal(true), msg_id: z.string() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+
+// ── POST /v1/wechat/reply_voice ──────────────────────────────────────────────
+// text is capped at 500 chars (enforced by the route handler).
+// Response is from WechatVoiceDep.replyVoice() or the handler's own error shapes.
+
+export const WechatReplyVoiceRequest = z.object({
+  chat_id: z.string(),
+  text: z.string().max(500),
+})
+export const WechatReplyVoiceResponse = z.union([
+  z.object({ ok: z.literal(true), msgId: z.string() }),
+  z.object({ ok: z.literal(false), reason: z.literal('too_long'), limit: z.literal(500) }),
+  z.object({ ok: z.literal(false), reason: z.string(), detail: z.string().optional() }),
+])
+
+// ── POST /v1/wechat/send_file ────────────────────────────────────────────────
+
+export const WechatSendFileRequest = z.object({
+  chat_id: z.string(),
+  path: z.string(),
+})
+export const WechatSendFileResponse = z.union([
+  z.object({ ok: z.literal(true) }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+
+// ── POST /v1/wechat/edit_message ─────────────────────────────────────────────
+
+export const WechatEditMessageRequest = z.object({
+  chat_id: z.string(),
+  msg_id: z.string(),
+  text: z.string(),
+})
+export const WechatEditMessageResponse = z.union([
+  z.object({ ok: z.literal(true) }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+
+// ── POST /v1/wechat/broadcast ────────────────────────────────────────────────
+
+export const WechatBroadcastRequest = z.object({
+  text: z.string(),
+  account_id: z.string().optional(),
+})
+// deps.ilink.broadcast() returns {ok: number, failed: number} (counts).
+// Catch path returns {ok:false, error}.
+export const WechatBroadcastResponse = z.union([
+  z.object({ ok: z.number(), failed: z.number() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+
+// ── POST /v1/delegate ────────────────────────────────────────────────────────
+// cwd must start with '/' if provided (enforced by route handler).
+
+export const DelegateRequest = z.object({
+  peer: z.string(),
+  prompt: z.string(),
+  context_summary: z.string().optional(),
+  cwd: z.string().refine(s => s.startsWith('/'), { message: 'cwd_must_be_absolute' }).optional(),
+  depth: z.number().optional(),
+})
+export const DelegateResponse = z.union([
+  z.object({
+    ok: z.literal(true),
+    response: z.string(),
+    num_turns: z.number().optional(),
+    duration_ms: z.number().optional(),
+  }),
+  z.object({ ok: z.literal(false), reason: z.string() }),
+])
+
+// ── POST /v1/conversation/set-mode ──────────────────────────────────────────
+// chatId is camelCase — intentional divergence from other wechat routes.
+// Mode is a discriminated union matching the runtime Mode type in conversation.ts.
+
+const ModeSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('solo'), provider: z.string() }),
+  z.object({ kind: z.literal('parallel') }),
+  z.object({ kind: z.literal('primary_tool'), primary: z.string() }),
+  z.object({ kind: z.literal('chatroom') }),
+])
+
+export const ConversationSetModeRequest = z.object({
+  chatId: z.string(),
+  mode: ModeSchema,
+})
+export const ConversationSetModeResponse = z.union([
+  z.object({ ok: z.literal(true) }),
+  z.object({ error: z.string() }),
+])

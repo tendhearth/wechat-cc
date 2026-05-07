@@ -17,6 +17,13 @@ import {
   CompanionEnableResponse,
   CompanionDisableResponse,
   CompanionSnoozeRequest, CompanionSnoozeResponse,
+  WechatReplyRequest, WechatReplyResponse,
+  WechatReplyVoiceRequest, WechatReplyVoiceResponse,
+  WechatSendFileRequest, WechatSendFileResponse,
+  WechatEditMessageRequest, WechatEditMessageResponse,
+  WechatBroadcastRequest, WechatBroadcastResponse,
+  DelegateRequest, DelegateResponse,
+  ConversationSetModeRequest, ConversationSetModeResponse,
 } from './schema'
 
 // ── health ──────────────────────────────────────────────────────────────────
@@ -369,5 +376,198 @@ describe('CompanionSnoozeResponse', () => {
   })
   it('accepts ok=false with error (forward-compat)', () => {
     expect(CompanionSnoozeResponse.safeParse({ ok: false, error: 'failed' }).success).toBe(true)
+  })
+})
+
+// ── POST /v1/wechat/reply ────────────────────────────────────────────────────
+
+describe('WechatReplyRequest', () => {
+  it('accepts chat_id + text', () => {
+    expect(WechatReplyRequest.safeParse({ chat_id: 'abc', text: 'hi' }).success).toBe(true)
+  })
+  it('accepts participant_tag', () => {
+    expect(WechatReplyRequest.safeParse({ chat_id: 'abc', text: 'hi', participant_tag: 'claude' }).success).toBe(true)
+  })
+  it('rejects missing chat_id', () => {
+    expect(WechatReplyRequest.safeParse({ text: 'hi' }).success).toBe(false)
+  })
+})
+
+describe('WechatReplyResponse', () => {
+  it('accepts ok=true with msg_id', () => {
+    expect(WechatReplyResponse.safeParse({ ok: true, msg_id: 'msg123' }).success).toBe(true)
+  })
+  it('accepts ok=false with error', () => {
+    expect(WechatReplyResponse.safeParse({ ok: false, error: 'send failed' }).success).toBe(true)
+  })
+})
+
+// ── POST /v1/wechat/reply_voice ──────────────────────────────────────────────
+
+describe('WechatReplyVoiceRequest', () => {
+  it('accepts text up to 500 chars', () => {
+    expect(WechatReplyVoiceRequest.safeParse({ chat_id: 'abc', text: 'a'.repeat(500) }).success).toBe(true)
+  })
+  it('rejects text over 500 chars', () => {
+    expect(WechatReplyVoiceRequest.safeParse({ chat_id: 'abc', text: 'a'.repeat(501) }).success).toBe(false)
+  })
+  it('rejects missing chat_id', () => {
+    expect(WechatReplyVoiceRequest.safeParse({ text: 'hello' }).success).toBe(false)
+  })
+})
+
+describe('WechatReplyVoiceResponse', () => {
+  it('accepts ok=true with msgId', () => {
+    expect(WechatReplyVoiceResponse.safeParse({ ok: true, msgId: 'msg456' }).success).toBe(true)
+  })
+  it('accepts ok=false reason=too_long', () => {
+    expect(WechatReplyVoiceResponse.safeParse({ ok: false, reason: 'too_long', limit: 500 }).success).toBe(true)
+  })
+  it('accepts ok=false reason=unexpected_error with detail', () => {
+    expect(WechatReplyVoiceResponse.safeParse({ ok: false, reason: 'unexpected_error', detail: 'tts crashed' }).success).toBe(true)
+  })
+})
+
+// ── POST /v1/wechat/send_file ────────────────────────────────────────────────
+
+describe('WechatSendFileRequest', () => {
+  it('accepts chat_id + path', () => {
+    expect(WechatSendFileRequest.safeParse({ chat_id: 'abc', path: '/tmp/file.pdf' }).success).toBe(true)
+  })
+  it('rejects missing path', () => {
+    expect(WechatSendFileRequest.safeParse({ chat_id: 'abc' }).success).toBe(false)
+  })
+})
+
+describe('WechatSendFileResponse', () => {
+  it('accepts ok=true', () => {
+    expect(WechatSendFileResponse.safeParse({ ok: true }).success).toBe(true)
+  })
+  it('accepts ok=false with error', () => {
+    expect(WechatSendFileResponse.safeParse({ ok: false, error: 'file not found' }).success).toBe(true)
+  })
+})
+
+// ── POST /v1/wechat/edit_message ─────────────────────────────────────────────
+
+describe('WechatEditMessageRequest', () => {
+  it('accepts chat_id + msg_id + text', () => {
+    expect(WechatEditMessageRequest.safeParse({ chat_id: 'abc', msg_id: 'msg1', text: 'edited' }).success).toBe(true)
+  })
+  it('rejects missing msg_id', () => {
+    expect(WechatEditMessageRequest.safeParse({ chat_id: 'abc', text: 'hi' }).success).toBe(false)
+  })
+})
+
+describe('WechatEditMessageResponse', () => {
+  it('accepts ok=true', () => {
+    expect(WechatEditMessageResponse.safeParse({ ok: true }).success).toBe(true)
+  })
+  it('accepts ok=false with error', () => {
+    expect(WechatEditMessageResponse.safeParse({ ok: false, error: 'not found' }).success).toBe(true)
+  })
+})
+
+// ── POST /v1/wechat/broadcast ────────────────────────────────────────────────
+
+describe('WechatBroadcastRequest', () => {
+  it('accepts text only', () => {
+    expect(WechatBroadcastRequest.safeParse({ text: 'hello all' }).success).toBe(true)
+  })
+  it('accepts text + account_id', () => {
+    expect(WechatBroadcastRequest.safeParse({ text: 'hello all', account_id: 'acct1' }).success).toBe(true)
+  })
+  it('rejects missing text', () => {
+    expect(WechatBroadcastRequest.safeParse({}).success).toBe(false)
+  })
+})
+
+describe('WechatBroadcastResponse', () => {
+  it('accepts ok count + failed count', () => {
+    expect(WechatBroadcastResponse.safeParse({ ok: 3, failed: 1 }).success).toBe(true)
+  })
+  it('accepts ok=false with error', () => {
+    expect(WechatBroadcastResponse.safeParse({ ok: false, error: 'ilink down' }).success).toBe(true)
+  })
+})
+
+// ── POST /v1/delegate ────────────────────────────────────────────────────────
+
+describe('DelegateRequest', () => {
+  it('accepts minimal peer + prompt', () => {
+    expect(DelegateRequest.safeParse({ peer: 'codex', prompt: 'hi' }).success).toBe(true)
+  })
+  it('rejects missing peer', () => {
+    expect(DelegateRequest.safeParse({ prompt: 'hi' }).success).toBe(false)
+  })
+  it('accepts cwd absolute path', () => {
+    expect(DelegateRequest.safeParse({ peer: 'codex', prompt: 'hi', cwd: '/tmp' }).success).toBe(true)
+  })
+  it('rejects relative cwd', () => {
+    expect(DelegateRequest.safeParse({ peer: 'codex', prompt: 'hi', cwd: 'relative/path' }).success).toBe(false)
+  })
+  it('accepts all optional fields', () => {
+    expect(DelegateRequest.safeParse({
+      peer: 'codex', prompt: 'hi', context_summary: 'ctx', cwd: '/home', depth: 0,
+    }).success).toBe(true)
+  })
+})
+
+describe('DelegateResponse', () => {
+  it('accepts ok=true with response', () => {
+    expect(DelegateResponse.safeParse({ ok: true, response: 'done', num_turns: 3, duration_ms: 1200 }).success).toBe(true)
+  })
+  it('accepts ok=false with reason', () => {
+    expect(DelegateResponse.safeParse({ ok: false, reason: 'peer_unavailable' }).success).toBe(true)
+  })
+})
+
+// ── POST /v1/conversation/set-mode ──────────────────────────────────────────
+
+describe('ConversationSetModeRequest', () => {
+  it('accepts solo mode with provider (chatId camelCase)', () => {
+    expect(ConversationSetModeRequest.safeParse({
+      chatId: 'abc',
+      mode: { kind: 'solo', provider: 'claude' },
+    }).success).toBe(true)
+  })
+  it('accepts parallel mode', () => {
+    expect(ConversationSetModeRequest.safeParse({
+      chatId: 'abc',
+      mode: { kind: 'parallel' },
+    }).success).toBe(true)
+  })
+  it('accepts primary_tool mode', () => {
+    expect(ConversationSetModeRequest.safeParse({
+      chatId: 'abc',
+      mode: { kind: 'primary_tool', primary: 'claude' },
+    }).success).toBe(true)
+  })
+  it('accepts chatroom mode', () => {
+    expect(ConversationSetModeRequest.safeParse({
+      chatId: 'abc',
+      mode: { kind: 'chatroom' },
+    }).success).toBe(true)
+  })
+  it('rejects unknown mode kind', () => {
+    expect(ConversationSetModeRequest.safeParse({
+      chatId: 'abc',
+      mode: { kind: 'bogus' },
+    }).success).toBe(false)
+  })
+  it('rejects snake_case chat_id (must be chatId)', () => {
+    expect(ConversationSetModeRequest.safeParse({
+      chat_id: 'abc',
+      mode: { kind: 'parallel' },
+    }).success).toBe(false)
+  })
+})
+
+describe('ConversationSetModeResponse', () => {
+  it('accepts ok=true', () => {
+    expect(ConversationSetModeResponse.safeParse({ ok: true }).success).toBe(true)
+  })
+  it('accepts error string', () => {
+    expect(ConversationSetModeResponse.safeParse({ error: 'chat not found' }).success).toBe(true)
   })
 })
