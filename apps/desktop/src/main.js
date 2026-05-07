@@ -383,7 +383,7 @@ function wireEvents() {
     const archiveBtn = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target.closest("[data-action='archive-observation']") : null)
     if (archiveBtn) {
       e.stopPropagation()
-      await archiveObservation(deps, archiveBtn.dataset.id)
+      await archiveObservation(deps, archiveBtn.dataset.id || "")
     }
   })
 
