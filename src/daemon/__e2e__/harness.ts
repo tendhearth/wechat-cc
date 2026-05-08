@@ -18,7 +18,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { startFakeIlink, type FakeIlinkHandle, type OutboundMsg } from './fake-ilink-server'
-import { installFakeClaude, installFakeCodex, type FakeSdkScript } from './fake-sdk'
+import { installFakeClaude, installFakeCodex, installFakeModerator, type FakeSdkScript, type ModeratorScript } from './fake-sdk'
+// Side-effect import: registers vi.mock('../media') so attachments
+// materialize to local stub files instead of hitting the real ilink CDN.
+// MUST come before bootDaemon imports to take effect.
+import './fake-media'
 import type { RawUpdate } from '../poll-loop'
 
 export interface TestDaemonAccount {
@@ -33,6 +37,13 @@ export interface TestDaemonAccount {
 export interface TestDaemonOpts {
   claudeScript?: FakeSdkScript
   codexScript?: FakeSdkScript
+  /**
+   * Scripted decisions for the chatroom haiku moderator (single-shot
+   * `query({ prompt: string })` calls). Returns the JSON decision string
+   * the coordinator parses. Without this, single-shot queries fall back
+   * to claudeScript.onDispatch which yields the speaker reply path.
+   */
+  moderatorScript?: ModeratorScript
   /** --dangerously flag */
   dangerously?: boolean
   /** preset access.json — default: allowFrom: ['*'], admins: ['testadmin'] */
@@ -41,12 +52,21 @@ export interface TestDaemonOpts {
   companion?: { enabled?: boolean; default_chat_id?: string }
   /** preset bot accounts — default: 1 fake bot pointing at fake ilink */
   accounts?: TestDaemonAccount[]
+  /** Pre-set conversation modes (chatId → Mode). Persisted to conversations.json so coordinator picks them up. */
+  modes?: Record<string, { kind: 'solo' | 'parallel' | 'primary_tool' | 'chatroom'; provider?: string; primary?: string; secondary?: string; max_rounds?: number }>
   /**
    * Pre-known users (chatId → name). Populates user_names.json so onboarding
    * is skipped for these users. Default: { chat1: 'testuser' }.
    * Pass `{}` to disable all pre-population (for onboarding tests).
    */
   knownUsers?: Record<string, string>
+  /**
+   * When set, reuse this stateDir instead of creating a fresh tmp one.
+   * The harness will skip mkdtemp + skip cleanup on stop (caller owns it).
+   * Used by restart-persistence tests that boot daemon twice on the same
+   * on-disk SQLite db to verify state survives a stop+start cycle.
+   */
+  stateDirOverride?: string
 }
 
 export interface DaemonHandle {
@@ -54,8 +74,17 @@ export interface DaemonHandle {
   stateDir: string
   /** Enqueue a text inbound from chatId (default to_user_id is 'bot1'). */
   sendText(chatId: string, text: string, opts?: { contextToken?: string; createTimeMs?: number; toUserId?: string }): void
+  /**
+   * Enqueue an image inbound (RawUpdate type=2). The fake-media stub
+   * materializes a 3-byte stub file at <stateDir>/inbox/<chatId>/, and
+   * the inbound pipeline rewrites attachment.path to that local path
+   * before formatInbound emits the [image:/path] marker.
+   */
+  sendImage(chatId: string, opts?: { createTimeMs?: number; toUserId?: string; contextToken?: string }): void
   /** Wait until outbox has a sendmessage to this chatId. */
   waitForReplyTo(chatId: string, timeoutMs?: number): Promise<readonly OutboundMsg[]>
+  /** Wait until any predicate over the outbox is satisfied. */
+  waitForOutbound(predicate: (msgs: readonly OutboundMsg[]) => boolean, timeoutMs?: number): Promise<readonly OutboundMsg[]>
   /** Stop daemon (signals SIGTERM equivalent), clean up stateDir. */
   stop(): Promise<void>
 }
@@ -64,9 +93,11 @@ let messageIdCounter = 1
 function nextMessageId(): number { return messageIdCounter++ }
 
 export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<DaemonHandle> {
-  // 1. Set up fake ilink + temp stateDir
+  // 1. Set up fake ilink + stateDir (fresh tmp by default, or caller-provided
+  // for restart-persistence tests that need to share state across two boots).
   const ilink = await startFakeIlink()
-  const stateDir = mkdtempSync(join(tmpdir(), 'wechat-cc-e2e-'))
+  const stateDir = opts.stateDirOverride ?? mkdtempSync(join(tmpdir(), 'wechat-cc-e2e-'))
+  const ownsStateDir = opts.stateDirOverride === undefined
   mkdirSync(join(stateDir, 'inbox'), { recursive: true })
   mkdirSync(join(stateDir, 'memory'), { recursive: true })
   mkdirSync(join(stateDir, 'accounts'), { recursive: true })
@@ -124,6 +155,23 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
     const { uninstall } = installFakeCodex(opts.codexScript)
     cleanups.push(uninstall)
   }
+  if (opts.moderatorScript) {
+    const { uninstall } = installFakeModerator(opts.moderatorScript)
+    cleanups.push(uninstall)
+  }
+
+  // 5b. Pre-set conversation modes — written to conversations.json (legacy
+  // file) so the SQLite migration in conversation-store picks them up at
+  // boot. Without this, every chat defaults to solo+claude regardless of
+  // what the test wants to exercise. Shape mirrors the v0.x persistence:
+  // `{ conversations: { <chatId>: { mode: <mode> } } }`.
+  if (opts.modes && Object.keys(opts.modes).length > 0) {
+    const conversations: Record<string, { mode: unknown }> = {}
+    for (const [chatId, mode] of Object.entries(opts.modes)) {
+      conversations[chatId] = { mode }
+    }
+    writeFileSync(join(stateDir, 'conversations.json'), JSON.stringify({ conversations }, null, 2))
+  }
 
   // 6. Override env to point daemon at test stateDir.
   // WECHAT_CC_STATE_DIR is read by main.ts; WECHAT_STATE_DIR is read by
@@ -169,11 +217,36 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
       if (process.env.E2E_DEBUG_ILINK) console.log('[harness] sendText enqueue:', JSON.stringify(update).slice(0, 200))
       ilink.enqueueInbound(update)
     },
+    sendImage(chatId, sendOpts) {
+      // RawUpdate item.type=2 carries an image_item.media object that
+      // poll-loop JSON.stringifies into the attachment caption. The
+      // fake-media mock then rewrites <pending-cdn-ref> to a real local
+      // path before mw-attachments runs in the inbound pipeline.
+      const update: RawUpdate = {
+        message_id: nextMessageId(),
+        from_user_id: chatId,
+        to_user_id: sendOpts?.toUserId ?? defaultBotId,
+        create_time_ms: sendOpts?.createTimeMs ?? Date.now(),
+        message_type: 1,
+        message_state: 2,
+        item_list: [{
+          type: 2,
+          msg_id: `m${nextMessageId()}`,
+          image_item: { media: { full_url: 'fake://e2e-image' } },
+        }],
+        ...(sendOpts?.contextToken ? { context_token: sendOpts.contextToken } : {}),
+      }
+      if (process.env.E2E_DEBUG_ILINK) console.log('[harness] sendImage enqueue:', JSON.stringify(update).slice(0, 200))
+      ilink.enqueueInbound(update)
+    },
     waitForReplyTo(chatId, timeoutMs = 5000) {
       return ilink.waitForOutbound(
         msgs => msgs.some(m => m.endpoint === 'sendmessage' && m.chatId === chatId),
         timeoutMs,
       )
+    },
+    waitForOutbound(predicate, timeoutMs = 5000) {
+      return ilink.waitForOutbound(predicate, timeoutMs)
     },
     async stop() {
       // Shut down via DaemonHandle — no SIGTERM, safe in test runner.
@@ -188,7 +261,9 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
         if (idx >= 0) process.argv.splice(idx, 1)
       }
       try { await ilink.stop() } catch {}
-      try { rmSync(stateDir, { recursive: true, force: true }) } catch {}
+      if (ownsStateDir) {
+        try { rmSync(stateDir, { recursive: true, force: true }) } catch {}
+      }
     },
   }
 }

@@ -33,6 +33,8 @@
  *     turn.completed, turn.failed, error.
  */
 import { vi } from 'vitest'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 export interface FakeSdkScript {
   /**
@@ -45,8 +47,18 @@ export interface FakeSdkScript {
   }>
 }
 
+/**
+ * Single-shot moderator script. Used by chatroom haiku eval (per-round
+ * decision) and side-effects.ts isolated evals. Returns the assistant
+ * text the caller will parse — typically a JSON ModeratorDecision.
+ */
+export interface ModeratorScript {
+  onEval(prompt: string): Promise<string>
+}
+
 let claudeScript: FakeSdkScript | null = null
 let codexScript: FakeSdkScript | null = null
+let moderatorScript: ModeratorScript | null = null
 
 export function installFakeClaude(script: FakeSdkScript): { uninstall(): void } {
   claudeScript = script
@@ -56,6 +68,59 @@ export function installFakeClaude(script: FakeSdkScript): { uninstall(): void } 
 export function installFakeCodex(script: FakeSdkScript): { uninstall(): void } {
   codexScript = script
   return { uninstall() { codexScript = null } }
+}
+
+export function installFakeModerator(script: ModeratorScript): { uninstall(): void } {
+  moderatorScript = script
+  return { uninstall() { moderatorScript = null } }
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// Tool-call → internal-api bridge
+//
+// In production the SDK spawns the wechat-mcp child which POSTs to the
+// daemon's internal-api. Our fake yields the tool_use event but doesn't
+// run the MCP child, so without a bridge `reply` etc. never produces an
+// outbound sendmessage. Workaround: when the script returns toolCalls
+// matching the wechat reply family, we POST directly to the daemon's
+// internal-api using the token + baseUrl recorded in the test stateDir.
+// ───────────────────────────────────────────────────────────────────────
+const REPLY_TOOL_TO_ROUTE: Record<string, string | undefined> = {
+  reply: '/v1/wechat/reply',
+  reply_voice: '/v1/wechat/reply_voice',
+  send_file: '/v1/wechat/send_file',
+  edit_message: '/v1/wechat/edit_message',
+  broadcast: '/v1/wechat/broadcast',
+}
+
+async function bridgeToolCallToInternalApi(name: string, input: unknown): Promise<void> {
+  const route = REPLY_TOOL_TO_ROUTE[name]
+  if (!route) return
+  const stateDir = process.env.WECHAT_CC_STATE_DIR
+  if (!stateDir) return
+  const apiInfoPath = join(stateDir, 'internal-api-info.json')
+  const tokenPath = join(stateDir, 'internal-token')
+  if (!existsSync(apiInfoPath) || !existsSync(tokenPath)) return
+  let apiInfo: { baseUrl?: string }
+  try {
+    apiInfo = JSON.parse(readFileSync(apiInfoPath, 'utf8'))
+  } catch { return }
+  const baseUrl = apiInfo.baseUrl
+  if (!baseUrl) return
+  const token = readFileSync(tokenPath, 'utf8').trim()
+  try {
+    await fetch(`${baseUrl}${route}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+        'x-wechat-mcp-depth': '0',
+      },
+      body: JSON.stringify(input),
+    })
+  } catch (err) {
+    if (process.env.E2E_DEBUG_ILINK) console.log('[fake-sdk] bridge POST failed:', err)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -83,20 +148,33 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
    * Build a single dispatch cycle: tool-use blocks + final text + result event.
    * Returns the array of SDKMessage-shaped objects to yield.
    */
-  function buildCycle(
+  async function buildCycle(
     dispatchResult: { toolCalls: Array<{ name: string; input: unknown }>; finalText: string },
-  ): Array<Record<string, unknown>> {
+  ): Promise<Array<Record<string, unknown>>> {
     const msgs: Array<Record<string, unknown>> = []
 
-    // Emit tool_use + tool_result pairs for each tool call.
+    // Emit tool_use + tool_result pairs for each tool call AND fire the
+    // internal-api bridge so reply/send_file calls actually produce an
+    // outbound sendmessage in the fake-ilink outbox (mirrors the real
+    // wechat-mcp child's effect).
+    //
+    // Name shape: claude-agent-provider parses `mcp__<server>__<tool>` to
+    // populate AgentEvent.server. Tests pass the bare tool name (e.g.
+    // `reply`); we wrap with the wechat-mcp prefix here so isReplyToolCall
+    // detects it. Tests that genuinely want a non-MCP tool can pass a
+    // name with no `__` and bypass the prefix.
     for (const tc of dispatchResult.toolCalls) {
       const toolUseId = `tu${makeId()}`
+      const sdkToolName = REPLY_TOOL_TO_ROUTE[tc.name] && !tc.name.includes('__')
+        ? `mcp__wechat__${tc.name}`
+        : tc.name
       msgs.push({
         type: 'assistant',
         message: {
-          content: [{ type: 'tool_use', id: toolUseId, name: tc.name, input: tc.input }],
+          content: [{ type: 'tool_use', id: toolUseId, name: sdkToolName, input: tc.input }],
         },
       })
+      await bridgeToolCallToInternalApi(tc.name, tc.input)
       msgs.push({
         type: 'user',
         message: {
@@ -139,7 +217,24 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
       const { prompt } = opts
 
       if (typeof prompt === 'string') {
-        // Single-shot path (makeIsolatedSdkEval in side-effects.ts).
+        // Single-shot path: chatroom haiku moderator (bootstrap inline
+        // haikuEval) + side-effects.ts makeIsolatedSdkEval (companion
+        // introspect). Both consume only assistant text blocks. Prefer
+        // moderatorScript when installed; fall back to claudeScript.onDispatch
+        // for tests that don't distinguish.
+        if (moderatorScript) {
+          const decision = await moderatorScript.onEval(prompt)
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: decision }] } }
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: `sess_${makeId()}`,
+            num_turns: 1,
+            duration_ms: 1,
+            total_cost_usd: 0,
+          }
+          return
+        }
         const script = claudeScript
         if (!script) {
           // Emit empty assistant message so callers don't hang on an empty
@@ -148,7 +243,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
           return
         }
         const result = await script.onDispatch(prompt)
-        for (const msg of buildCycle(result)) yield msg
+        for (const msg of await buildCycle(result)) yield msg
         return
       }
 
@@ -179,7 +274,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
         }
 
         const result = await script.onDispatch(text)
-        for (const msg of buildCycle(result)) yield msg
+        for (const msg of await buildCycle(result)) yield msg
       }
     })()
   }
@@ -242,6 +337,9 @@ vi.mock('@openai/codex-sdk', () => {
           input: tc.input,
         },
       }
+      // Same internal-api bridge as Claude — turns reply/send_file tool
+      // calls into actual outbound sendmessage POSTs.
+      await bridgeToolCallToInternalApi(tc.name, tc.input)
     }
 
     // Emit the final text as an agent_message item.
