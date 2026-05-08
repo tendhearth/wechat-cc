@@ -103,6 +103,7 @@ What's still hard:
 - Auto-failover (if Claude API down, fall back to Cursor) — explicit user choice via slash commands is the model here, not opportunistic routing
 - Per-message provider routing ("send images to GPT-4V, code to Claude") — would require message-content classification, out of scope
 - Mode that mixes 2 providers in primary_tool style (e.g. claude+cursor) — supported as fallout from P1 but not designed for; primary_tool is a simple case of "set up delegate access to peer X" and works orthogonally
+- **Third-party provider plugin system** — explicitly NOT in scope. Providers are first-party code in this repo (`src/core/<vendor>-agent-provider.ts`); the SDK deps are optional (see Modular install below) so users can omit unused vendors, but writing a new provider means adding a file to this codebase, not loading an external plugin package. Reasoning: at N=3 providers + 0 external user requests, any plugin contract we lock in now will be wrong by the time a real third-party need surfaces. `AgentEvent` is one week old (P2 from 2026-05-07); `cancel()` / sub-message streaming are still future. Freezing this as a public extension API now would burn future flexibility for zero current value. Reconsider only when ALL of: N ≥ 5 providers, ≥ 2 external users actively asking, AgentEvent has been frozen for ≥ 6 months. None of those are close today.
 
 ---
 
@@ -194,36 +195,67 @@ function makeCursorSession(agent: Agent): AgentSession {
 }
 ```
 
-### Bootstrap wiring
+### Bootstrap wiring (with modular install)
+
+`@cursor/sdk` lives in `optionalDependencies` (alongside `@anthropic-ai/claude-agent-sdk` and `@openai/codex-sdk`, which migrate from `dependencies` as part of P1). Bootstrap probes via dynamic `import()` wrapped in try/catch — when the SDK isn't installed, the provider silently doesn't register (same shape as Codex's "binary not found" path):
 
 ```ts
 // src/daemon/bootstrap/index.ts (additions, after the codex registration block)
 const cursorKey = process.env.CURSOR_API_KEY ?? configuredAgent.cursorApiKey
 if (cursorKey) {
-  deps.log('BOOT', 'cursor: API key found, registering provider')
-  const cursorWechat = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'cursor') : null
-  const cursorDelegate = deps.internalApi ? delegateStdioMcpSpec(deps.internalApi, 'claude') : null
-  registry.register(
-    'cursor',
-    createCursorAgentProvider({
-      apiKey: cursorKey,
-      model: configuredAgent.cursorModel,
-      mcpServers: {
-        ...(cursorWechat ? { wechat: cursorWechat } : {}),
-        ...(cursorDelegate ? { delegate: cursorDelegate } : {}),
+  try {
+    // Dynamic import — throws synchronously inside the await if @cursor/sdk
+    // is not in node_modules (optionalDependencies skipped at install time).
+    const cursorMod = await import('@cursor/sdk')
+    const cursorWechat = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'cursor') : null
+    const cursorDelegate = deps.internalApi ? delegateStdioMcpSpec(deps.internalApi, 'claude') : null
+    registry.register(
+      'cursor',
+      createCursorAgentProvider({
+        sdk: cursorMod,  // pass the dynamically-imported namespace into the provider factory
+        apiKey: cursorKey,
+        model: configuredAgent.cursorModel,
+        mcpServers: {
+          ...(cursorWechat ? { wechat: cursorWechat } : {}),
+          ...(cursorDelegate ? { delegate: cursorDelegate } : {}),
+        },
+        runtime: 'local',
+      }),
+      {
+        displayName: 'Cursor',
+        // Cursor's Agent.resume(agentId) is documented; canResume can flip to true
+        // once we wire session-store persistence of agentId. P1 ships with false
+        // for safety (no persistence), enable in P1 follow-up after dogfood.
+        canResume: () => false,
       },
-      runtime: 'local',
-    }),
-    {
-      displayName: 'Cursor',
-      // Cursor's run-resume semantics TBD by spike; conservatively start with no-resume.
-      canResume: () => false,
-    },
-  )
+    )
+    deps.log('BOOT', 'cursor: SDK + API key present — provider registered')
+  } catch (err) {
+    deps.log('BOOT', `cursor: SDK not installed (run \`bun add @cursor/sdk\` to enable) — provider not registered`)
+  }
 } else {
   deps.log('BOOT', 'cursor: CURSOR_API_KEY not set — provider not registered')
 }
 ```
+
+The same try/catch pattern applies to the existing Claude / Codex registrations — both move to optional deps as part of this work, so a user who only wants Cursor doesn't pay the bundle-size cost of bundling the other two SDKs.
+
+### Modular install — explicit goal, not a plugin system
+
+To keep the architecture honest about what this is and isn't:
+
+**This IS**: SDK dependencies graduate from `dependencies` to `optionalDependencies` in `package.json`. Providers register conditionally based on dynamic import success + API key presence. Users `bun add @cursor/sdk` to enable Cursor (and rebuild the binary via `wechat-cc update`'s sentinel-detected rebuild path, already shipping in v0.5.14).
+
+**This is NOT**: a plugin loader, a public extension API, a third-party provider package convention, or anything that surfaces `AgentEvent`/`AgentSession` as an external contract. Provider code stays first-party in this repo; only the SDK deps that providers consume are optional. See the matching non-goal entry above for the full rationale.
+
+**Bundle size impact** (approximate, per-SDK install size on disk):
+- `@anthropic-ai/claude-agent-sdk` ~5 MB
+- `@openai/codex-sdk` ~20 MB
+- `@cursor/sdk` ~26 MB (238 transitive packages)
+
+A user with all three installed: ~50 MB delta in `node_modules`. A user with only Claude: ~5 MB. The compiled binary (via `bun build --compile`) only bundles what's reachable at compile time, so `wechat-cc-cli` shrinks proportionally when SDK deps are absent.
+
+**Rebuild discipline**: enabling/disabling a provider requires rebuilding the binary. v0.5.14's `wechat-cc update` sentinel-based rebuild path already handles this — installing/uninstalling the SDK changes `package.json` → `bun install` runs → next `wechat-cc update` detects the source change via the `.commit` sentinel and rebuilds. No new mechanism needed.
 
 ### Permission model
 
@@ -477,6 +509,7 @@ P1 is independently shippable; P3 only adds value once a third provider exists.
 - Cursor agent calls `share_page` → URL returned + dashboard shows the page
 - e2e `dispatch-solo-cursor.e2e.test.ts` passes
 - doctor probe surfaces Cursor as a registered provider
+- **Modular install verified**: removing `@cursor/sdk` from `node_modules` + rebuilding causes `cursor` to silently not-register (with a `[BOOT]` log line); existing claude/codex paths unaffected. Same path for `@anthropic-ai/claude-agent-sdk` and `@openai/codex-sdk` — all three SDKs now in `optionalDependencies`.
 
 **P2 acceptance**: deferred. Re-enable when reactivated.
 
