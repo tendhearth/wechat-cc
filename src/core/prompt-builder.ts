@@ -107,7 +107,9 @@ function delegateSection(peerProviderId: ProviderId): string {
 
 - \`delegate_${peerProviderId}({prompt, context_summary?})\` — 把一个具体问题交给 ${peerProviderId} 做一次性咨询。
   适用：用户明确要求二意见 / 你想做代码审计或对比不同视角 / 用户切到了 \`primary_tool\` 模式。
-  注意：${peerProviderId} 看不到当前对话历史 — context_summary 必须自包含；它在 read-only 沙盒里跑，不能改文件、不能发微信、不能再 delegate。冷启动 ~3-5s，不要滥用。`
+  注意：${peerProviderId} 看不到当前对话历史 — context_summary 必须自包含；它在 read-only 沙盒里跑，不能改文件、不能发微信、不能再 delegate。冷启动 ~3-5s，不要滥用。
+
+  **附件转发**：如果当前 user 消息里有 \`[image:/abs/path]\` / \`[file:/abs/path]\` / \`[voice:/abs/path]\` marker 且你希望 ${peerProviderId} 看到这个文件，**必须把整个 marker 字符串原样写进 \`prompt\` 字段**。${peerProviderId} 的 Read/Bash 工具会按 marker 里的绝对路径打开文件。如果你只用自然语言描述（"用户发了张图"），${peerProviderId} 拿不到路径就读不到——这跟 chatroom moderator 的 paraphrase bug 是同一个 trap。`
 }
 
 function memorySection(): string {

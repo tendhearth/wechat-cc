@@ -223,7 +223,14 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
       // which adds a round-trip every time Claude wants to call `reply`
       // (~10-15s per inbound). Extra ~2-4k tokens per turn is a fair trade.
       systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
-      settingSources: ['user', 'project', 'local'],
+      // Drop 'user' from settingSources (2026-05-08): user-global
+      // ~/.claude/settings.json is meant for the human's interactive CLI
+      // — its `effortLevel`, `alwaysThinkingEnabled`, custom mcpServers,
+      // model alias preferences (cf. opus[1m] / 404 incident driving
+      // commit e6f40f5) shouldn't bleed into a long-running headless
+      // daemon. project + local still load so a per-project .claude/
+      // setup the user wires in CWD continues to work.
+      settingSources: ['project', 'local'],
       ...(claudeBin ? { pathToClaudeCodeExecutable: claudeBin } : {}),
     }
     if (deps.dangerouslySkipPermissions) {

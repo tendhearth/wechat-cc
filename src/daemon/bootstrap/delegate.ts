@@ -53,7 +53,9 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
         // Plain claude_code preset — no wechat-specific append. Peer
         // doesn't see wechat conversation history; it's a clean slate.
         systemPrompt: { type: 'preset', preset: 'claude_code' },
-        settingSources: ['user', 'project', 'local'],
+        // Same rationale as bootstrap/index.ts: don't inherit user-global
+        // ~/.claude/settings.json into the daemon-spawned subprocess.
+        settingSources: ['project', 'local'],
         // Safer than bypassPermissions: delegate is read-mostly. Skip
         // the permission relay too — there's no human to ask, and
         // delegated peers shouldn't be writing to disk anyway.

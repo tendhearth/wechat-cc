@@ -50,6 +50,18 @@ describe('buildSystemPrompt', () => {
     expect(p).not.toContain('跨 AI 咨询')
   })
 
+  it('warns about forwarding [image:/path] markers verbatim through delegate (Bug B 2026-05-08)', () => {
+    // Symmetric to the chatroom moderator paraphrase fix (commits f7acca0
+    // + b69973f): the primary writes the delegate prompt itself, so it
+    // can drop attachment markers the same way haiku-4-5 does. The fix
+    // here is documentation-only — the prompt instructs the primary to
+    // copy markers verbatim instead of paraphrasing.
+    const p = buildSystemPrompt({ ...defaults(), providerId: 'claude', peerProviderId: 'codex' })
+    expect(p).toContain('附件转发')
+    expect(p).toContain('[image:/abs/path]')
+    expect(p).toContain('marker')
+  })
+
   it('mentions per-chat mode awareness (RFC 03 P2-P5)', () => {
     const p = buildSystemPrompt(defaults())
     for (const cmd of ['/cc', '/codex', '/both', '/chat', '/cc + codex', '/codex + cc']) {

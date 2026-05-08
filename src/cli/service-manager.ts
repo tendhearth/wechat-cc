@@ -436,12 +436,22 @@ function systemdUnit(opts: { bunPath: string; binaryPath?: string; cwd: string; 
   // Restart=always is unconditional now (used to be tied to a keepAlive
   // toggle). Crash-respawn is always-on; power users edit the unit by hand
   // if they really want crash-stays-dead semantics.
+  //
+  // Environment= clears (2026-05-08): systemd inherits the user session
+  // env unfiltered, so any *_MODEL / *_API_KEY / *_AGENT_PROVIDER set in
+  // the user's shell rc bleeds into the daemon. Explicitly unset the
+  // ones the daemon reads so agent-config.json stays the single source
+  // of truth — cf. the .claude.json `opus[1m]` 404 incident (e6f40f5).
+  // Other secrets (ANTHROPIC_API_KEY etc.) are intentionally inherited;
+  // we don't have a way to source them from agent-config.
   return `[Unit]
 Description=wechat-cc daemon
 
 [Service]
 Type=simple
 WorkingDirectory=${opts.cwd}
+Environment="CODEX_MODEL="
+Environment="WECHAT_AGENT_PROVIDER="
 ExecStart=${execStart}
 Restart=always
 RestartSec=5

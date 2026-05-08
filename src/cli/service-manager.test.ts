@@ -148,6 +148,18 @@ describe('service-manager', () => {
     expect(plan.fileContent).toContain('Restart=always')
   })
 
+  it('Linux unit clears CODEX_MODEL and WECHAT_AGENT_PROVIDER from inherited env (2026-05-08 audit)', () => {
+    // Daemon reads these from agent-config.json (commit e6f40f5 + sibling).
+    // The user's shell rc may export them for interactive Codex / wechat-cc
+    // CLI use; without explicit clears the systemd unit inherits them and
+    // the daemon's pinned config is overridden silently.
+    const plan = buildServicePlan({
+      platform: 'linux', homeDir: '/home/alice', cwd: '/home/alice/.wechat-cc', bunPath: '/home/alice/.bun/bin/bun',
+    })
+    expect(plan.fileContent).toContain('Environment="CODEX_MODEL="')
+    expect(plan.fileContent).toContain('Environment="WECHAT_AGENT_PROVIDER="')
+  })
+
   it('Linux install runs `start` (not `enable --now`) when autoStart=false', () => {
     const plan = buildServicePlan({
       platform: 'linux', homeDir: '/home/alice', cwd: '/home/alice/.wechat-cc', bunPath: '/home/alice/.bun/bin/bun',
