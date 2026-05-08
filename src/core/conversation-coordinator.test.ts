@@ -805,6 +805,69 @@ describe('ConversationCoordinator', () => {
       expect(dispatchedTexts[0]?.text).toContain('[image:/inbox/a/test.jpg]')
     })
 
+    it('injects [chat_id:xxx] so speaker can route memory_* / set_user_name correctly (chatroom 2026-05-08 audit)', async () => {
+      // Bug A from the post-incident audit: solo/parallel dispatch the
+      // verbatim <wechat chat_id="..."> envelope so memory_read('xxx/profile.md')
+      // and set_user_name(chat_id, ...) work. Chatroom funnels through the
+      // moderator which paraphrases the user msg and drops the chat_id.
+      // Without an injected [chat_id:...] header the speaker can't pick the
+      // right memory subdirectory or call chat-keyed tools at all.
+      const store = makeMockStore()
+      store.set('chat-abc', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+
+      const dispatchedTexts: Array<{ providerId: string; text: string }> = []
+      const acquire = vi.fn(async (_a: string, _p: string, providerId: string) => ({
+        alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+        dispatch: (text: string): AsyncIterable<AgentEvent> => {
+          dispatchedTexts.push({ providerId, text })
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+            },
+          }
+        },
+        close: async () => {},
+      }))
+
+      let modCall = 0
+      const decisions = [
+        // Moderator's prompt mentions the question but not the chat_id —
+        // the bug surface. Nothing in the haiku output forwards the
+        // structural identifier the speaker needs.
+        { action: 'continue', speaker: 'claude', prompt: '初步看法 + 抛球', reasoning: 'open' },
+        { action: 'end' },
+      ]
+      const haikuEval = vi.fn(async () => JSON.stringify(decisions[modCall++]))
+
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: formatInbound,
+        sendAssistantText: vi.fn(),
+        permissionMode: 'strict',
+        log: () => {},
+        haikuEval,
+      })
+
+      await c.dispatch({
+        chatId: 'chat-abc',
+        userId: 'u1',
+        text: '记一下我的偏好',
+        msgType: 'text',
+        createTimeMs: 1,
+        accountId: 'acct-x',
+      })
+
+      expect(dispatchedTexts).toHaveLength(1)
+      expect(dispatchedTexts[0]?.text).toContain('[chat_id:chat-abc]')
+    })
+
     it('does not duplicate attachment markers when moderator already includes them', async () => {
       // Defense against future reverse-bugs: if the moderator does
       // preserve the marker, we shouldn't append it twice.

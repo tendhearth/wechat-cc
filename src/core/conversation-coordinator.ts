@@ -297,19 +297,33 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         ? prompt
         : `${prompt}\n\n[chatroom 模式]：请用纯文本回复，不要调 reply 工具。daemon 会自动加 [Display] 前缀转发给用户。`
 
-      // Re-inject attachment markers from the original user msg. Solo and
-      // parallel modes dispatch format(msg) directly so [image:/path]
-      // survives, but chatroom funnels through a moderator (haiku-4-5)
-      // that paraphrases the user message and silently drops structural
-      // markers. Without this, the speaker has no path to load the image
-      // with Read/Bash and replies as if no attachment existed (bug
-      // reported 2026-05-08). Dedup against whatever the moderator did
-      // happen to keep so we never double-list.
+      // Re-inject the structural metadata moderator paraphrase tends to
+      // strip. Solo / parallel dispatch format(msg) directly so the
+      // <wechat chat_id="..."> envelope reaches the speaker, but chatroom
+      // funnels through haiku-4-5 which keeps the conversational meaning
+      // and drops the identifiers + attachment markers (2026-05-08 audit).
+      //
+      // Two pieces always matter to the speaker in chatroom mode:
+      //   1. chat_id — needed to namespace memory_*, set_user_name, etc.
+      //      The speaker session is per-(provider, alias) and may serve
+      //      multiple chats, so it can't infer this from session state.
+      //   2. attachment markers — the speaker has Read/Bash but no path
+      //      to open without an explicit `[image:/abs/path]` line.
+      //
+      // Dedup against whatever the moderator did happen to keep so we
+      // never double-print the same marker.
+      const contextLines: string[] = []
+      const chatHeader = `[chat_id:${msg.chatId}]`
+      if (!promptWithCoda.includes(chatHeader)) contextLines.push(chatHeader)
       const attachmentMarkers = (msg.attachments ?? [])
         .map(a => `[${a.kind}:${a.path}]`)
         .filter(m => !promptWithCoda.includes(m))
-      const dispatchedPrompt = attachmentMarkers.length > 0
-        ? `${promptWithCoda}\n\n附件（用户消息中带的，可用 Read/Bash 打开）：\n${attachmentMarkers.join('\n')}`
+      if (attachmentMarkers.length > 0) {
+        contextLines.push('附件（用户消息中带的，可用 Read/Bash 打开）：')
+        contextLines.push(...attachmentMarkers)
+      }
+      const dispatchedPrompt = contextLines.length > 0
+        ? `${promptWithCoda}\n\n${contextLines.join('\n')}`
         : promptWithCoda
 
       let result: TurnSummary
