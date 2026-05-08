@@ -28,5 +28,5 @@
     "apps/desktop/src/modules/memory.js",
     "apps/desktop/src/modules/qr.js"
   ],
-  "exclude": ["node_modules", "docs/spike/**", "apps/desktop/playwright/**", "apps/desktop/playwright.config.ts"]
+  "exclude": ["node_modules", "docs/spike/**", "apps/desktop/playwright/**", "apps/desktop/playwright.config.ts", "apps/desktop/src-tauri/target/**", ".claude/worktrees/**"]
 }
