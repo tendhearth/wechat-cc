@@ -26,12 +26,15 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
     const parsed = JSON.parse(raw) as Partial<AgentConfig> & { keepAlive?: boolean }
     const dangerouslySkipPermissions = parsed.dangerouslySkipPermissions ?? true
     const autoStart = parsed.autoStart ?? false
-    if (parsed.provider === 'codex') {
-      return parsed.model
-        ? { provider: 'codex', model: parsed.model, dangerouslySkipPermissions, autoStart }
-        : { provider: 'codex', dangerouslySkipPermissions, autoStart }
-    }
-    return { provider: 'claude', dangerouslySkipPermissions, autoStart }
+    const provider: AgentProviderKind = parsed.provider === 'codex' ? 'codex' : 'claude'
+    // Preserve `model` for both providers. Pre-2026-05-08 only codex
+    // honored it; claude inherited the spawned CLI's default which read
+    // `~/.claude/.claude.json` and broke daemons whenever the user's
+    // interactive alias was something the SDK subprocess couldn't resolve
+    // (e.g. fast-mode `opus[1m]` returning 404 from 2.1.133).
+    return parsed.model
+      ? { provider, model: parsed.model, dangerouslySkipPermissions, autoStart }
+      : { provider, dangerouslySkipPermissions, autoStart }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: false }
   }

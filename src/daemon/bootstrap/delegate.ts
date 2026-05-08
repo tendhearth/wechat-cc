@@ -37,10 +37,19 @@ export type DelegateDispatch = (
 export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch {
   const configuredAgent = loadAgentConfig(deps.stateDir)
 
+  // Pin Claude model from agent-config.json (or stable full ID fallback).
+  // Same rationale as the main bootstrap: don't inherit `~/.claude/.claude.json`
+  // model resolution into the daemon's spawned subprocess. See bootstrap/index.ts
+  // for the 2026-05-08 incident write-up.
+  const claudeModel = configuredAgent.provider === 'claude' && configuredAgent.model
+    ? configuredAgent.model
+    : 'claude-opus-4-7'
+
   const delegateClaude = createClaudeAgentProvider({
     sdkOptionsForProject: (_alias: string, path: string): Options => {
       const o: Options = {
         cwd: path,
+        model: claudeModel,
         // Plain claude_code preset — no wechat-specific append. Peer
         // doesn't see wechat conversation history; it's a clean slate.
         systemPrompt: { type: 'preset', preset: 'claude_code' },

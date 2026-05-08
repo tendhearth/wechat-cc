@@ -24,6 +24,22 @@ describe('agent-config', () => {
     }
   })
 
+  // Regression for 2026-05-08: daemon was inheriting `~/.claude/.claude.json`
+  // model alias (e.g. `opus[1m]` for fast mode) into spawned Claude Code
+  // subprocesses. The 2.1.133 CLI mis-resolved that alias under SDK mode and
+  // sent literal `"opus"` to Anthropic's API → 404. The framework fix is to
+  // let `agent-config.json` pin a Claude model independently of `.claude.json`,
+  // mirroring what Codex already does (loadAgentConfig + bootstrap).
+  it('persists claude provider with explicit model', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-'))
+    try {
+      saveAgentConfig(dir, { provider: 'claude', model: 'claude-opus-4-7', dangerouslySkipPermissions: true, autoStart: false })
+      expect(loadAgentConfig(dir)).toEqual({ provider: 'claude', model: 'claude-opus-4-7', dangerouslySkipPermissions: true, autoStart: false })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('persists dangerouslySkipPermissions=false when explicitly opted out', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agent-config-'))
     try {

@@ -186,6 +186,21 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
   const delegateStdioForClaude: McpStdioSpec | null = deps.internalApi ? delegateStdioMcpSpec(deps.internalApi, 'codex') : null  // Claude session → can delegate to Codex
   const delegateStdioForCodex: McpStdioSpec | null = deps.internalApi ? delegateStdioMcpSpec(deps.internalApi, 'claude') : null  // Codex session → can delegate to Claude
 
+  // Pin a Claude model from agent-config.json (or fall back to a stable
+  // full ID). Without this, the spawned Claude Code subprocess inherits
+  // whatever `~/.claude/.claude.json` says — which breaks the daemon
+  // whenever the user's interactive CLI uses an alias the SDK subprocess
+  // can't resolve. 2026-05-08 incident: user had fast-mode `opus[1m]`
+  // configured for interactive sessions; CLI 2.1.133 mis-parsed that
+  // under SDK mode and sent literal `"opus"` to the API → 404 on every
+  // inbound. The codex side already pinned model from config; Claude
+  // didn't, so this closes that asymmetry. Loaded once here (outside the
+  // per-project closure) to keep startup config visible at boot time.
+  const configuredAgent = loadAgentConfig(deps.stateDir)
+  const claudeModel = configuredAgent.provider === 'claude' && configuredAgent.model
+    ? configuredAgent.model
+    : 'claude-opus-4-7'
+
   const sdkOptionsForProject = (_alias: string, path: string): Options => {
     const cstatus = deps.ilink.companion.status()
     const systemPrompt = buildSystemPrompt({
@@ -198,6 +213,7 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
     })
     const common: Options = {
       cwd: path,
+      model: claudeModel,
       mcpServers: {
         ...(wechatStdioForClaude ? { wechat: { type: 'stdio' as const, ...wechatStdioForClaude } } : {}),
         ...(delegateStdioForClaude ? { delegate: { type: 'stdio' as const, ...delegateStdioForClaude } } : {}),
@@ -223,7 +239,6 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
   const sessionStore = makeSessionStore(deps.db, { migrateFromFile: join(deps.stateDir, 'sessions.json') })
   const HOME = homedir()
 
-  const configuredAgent = loadAgentConfig(deps.stateDir)
   const defaultProviderId: ProviderId = deps.agentProviderKind
     ?? (process.env.WECHAT_AGENT_PROVIDER === 'codex' ? 'codex' : configuredAgent.provider)
 
