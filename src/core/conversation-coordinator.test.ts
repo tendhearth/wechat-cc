@@ -5,7 +5,7 @@ import * as capabilityMatrix from './capability-matrix'
 import { makeFakeSession } from './test-helpers'
 import type { AgentEvent, AgentProvider } from './agent-provider'
 import type { Mode } from './conversation'
-import type { InboundMsg } from './prompt-format'
+import { formatInbound, type InboundMsg } from './prompt-format'
 
 /** Minimal AgentProvider whose spawn() returns a session that emits no events. */
 const dummyProvider: AgentProvider = {
@@ -735,6 +735,127 @@ describe('ConversationCoordinator', () => {
       })
       await c.dispatch(inbound('chat-1', 'q'))
       expect(dispatchedTexts).toHaveLength(2)
+    })
+
+    it('preserves [image:/path] marker in dispatched prompt when moderator paraphrases (chatroom image inbound)', async () => {
+      // Bug 2026-05-08: chatroom users sending an image saw the speaker
+      // reply as if no image was attached. Root cause: the moderator
+      // (haiku-4-5) sees [image:/abs/path] in history but generates a
+      // NEW prompt that paraphrases the user msg ("用户发了张图")
+      // and drops the structural marker. The speaker session then has
+      // no path to load via Read/Bash. solo / parallel are unaffected
+      // because they dispatch format(msg) directly with no moderator.
+      // Fix: coordinator re-injects msg.attachments markers into the
+      // dispatched prompt unconditionally (deduped if moderator did
+      // happen to preserve them).
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+
+      const dispatchedTexts: Array<{ providerId: string; text: string }> = []
+      const acquire = vi.fn(async (_a: string, _p: string, providerId: string) => ({
+        alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+        dispatch: (text: string): AsyncIterable<AgentEvent> => {
+          dispatchedTexts.push({ providerId, text })
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield { kind: 'text', text: 'ok' } as AgentEvent
+              yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+            },
+          }
+        },
+        close: async () => {},
+      }))
+
+      // Simulate the bug: moderator omits [image:...] in its generated prompt.
+      let modCall = 0
+      const decisions = [
+        { action: 'continue', speaker: 'claude', prompt: '描述一下用户发的图', reasoning: 'paraphrased' },
+        { action: 'end', reasoning: 'done' },
+      ]
+      const haikuEval = vi.fn(async () => JSON.stringify(decisions[modCall++]))
+
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: formatInbound,  // real formatter — emits [image:/path]
+        sendAssistantText: vi.fn(),
+        permissionMode: 'strict',
+        log: () => {},
+        haikuEval,
+      })
+
+      await c.dispatch({
+        chatId: 'chat-1',
+        userId: 'u1',
+        text: '这是什么',
+        msgType: 'image',
+        createTimeMs: 1,
+        accountId: 'a',
+        attachments: [{ kind: 'image', path: '/inbox/a/test.jpg' }],
+      })
+
+      expect(dispatchedTexts).toHaveLength(1)
+      // Marker must be visible to speaker even though moderator dropped it.
+      expect(dispatchedTexts[0]?.text).toContain('[image:/inbox/a/test.jpg]')
+    })
+
+    it('does not duplicate attachment markers when moderator already includes them', async () => {
+      // Defense against future reverse-bugs: if the moderator does
+      // preserve the marker, we shouldn't append it twice.
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+
+      const dispatchedTexts: Array<{ providerId: string; text: string }> = []
+      const acquire = vi.fn(async (_a: string, _p: string, providerId: string) => ({
+        alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+        dispatch: (text: string): AsyncIterable<AgentEvent> => {
+          dispatchedTexts.push({ providerId, text })
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+            },
+          }
+        },
+        close: async () => {},
+      }))
+
+      let modCall = 0
+      const decisions = [
+        { action: 'continue', speaker: 'claude', prompt: '看图：[image:/inbox/a/x.jpg]，描述', reasoning: 'preserved' },
+        { action: 'end' },
+      ]
+      const haikuEval = vi.fn(async () => JSON.stringify(decisions[modCall++]))
+
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: formatInbound,
+        sendAssistantText: vi.fn(),
+        permissionMode: 'strict',
+        log: () => {},
+        haikuEval,
+      })
+
+      await c.dispatch({
+        chatId: 'chat-1', userId: 'u1', text: '这是什么',
+        msgType: 'image', createTimeMs: 1, accountId: 'a',
+        attachments: [{ kind: 'image', path: '/inbox/a/x.jpg' }],
+      })
+
+      const occurrences = (dispatchedTexts[0]?.text.match(/\[image:\/inbox\/a\/x\.jpg\]/g) ?? []).length
+      expect(occurrences).toBe(1)
     })
 
     it('skips assistantText forwarding when speaker calls reply tool but still records history', async () => {

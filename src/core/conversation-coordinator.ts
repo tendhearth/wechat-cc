@@ -293,9 +293,24 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // through MODERATOR_INSTRUCTIONS) still pins the speaker to plain
       // text. Mixing reply-tool turns with plain-text turns produced the
       // visual inconsistency users flagged on 2026-05-06.
-      const dispatchedPrompt = prompt.includes('不要调 reply 工具')
+      const promptWithCoda = prompt.includes('不要调 reply 工具')
         ? prompt
         : `${prompt}\n\n[chatroom 模式]：请用纯文本回复，不要调 reply 工具。daemon 会自动加 [Display] 前缀转发给用户。`
+
+      // Re-inject attachment markers from the original user msg. Solo and
+      // parallel modes dispatch format(msg) directly so [image:/path]
+      // survives, but chatroom funnels through a moderator (haiku-4-5)
+      // that paraphrases the user message and silently drops structural
+      // markers. Without this, the speaker has no path to load the image
+      // with Read/Bash and replies as if no attachment existed (bug
+      // reported 2026-05-08). Dedup against whatever the moderator did
+      // happen to keep so we never double-list.
+      const attachmentMarkers = (msg.attachments ?? [])
+        .map(a => `[${a.kind}:${a.path}]`)
+        .filter(m => !promptWithCoda.includes(m))
+      const dispatchedPrompt = attachmentMarkers.length > 0
+        ? `${promptWithCoda}\n\n附件（用户消息中带的，可用 Read/Bash 打开）：\n${attachmentMarkers.join('\n')}`
+        : promptWithCoda
 
       let result: TurnSummary
       try {
