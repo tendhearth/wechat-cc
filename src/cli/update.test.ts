@@ -27,6 +27,9 @@ interface FakeOpts {
   installResult?: RunResult
   detached?: boolean
   extraGit?: GitRoute
+  /** Path returned by binary.detect(); null = dev mode (no rebuild). undefined = omit binary dep entirely (back-compat with pre-rebuild deps). */
+  detectedBinary?: string | null
+  rebuildResult?: RunResult
 }
 
 function makeFakeDeps(opts: FakeOpts = {}) {
@@ -44,6 +47,8 @@ function makeFakeDeps(opts: FakeOpts = {}) {
   const stop = vi.fn()
   const start = vi.fn()
   const install = vi.fn(() => opts.installResult ?? ok())
+  const rebuild = vi.fn((_path: string) => opts.rebuildResult ?? ok())
+  const detect = vi.fn(() => opts.detectedBinary ?? null)
 
   const runGit = vi.fn<(args: string[]) => RunResult>((args) => {
     const route = opts.extraGit?.(args)
@@ -71,9 +76,10 @@ function makeFakeDeps(opts: FakeOpts = {}) {
       stop,
       start,
     },
+    binary: { detect, rebuild },
     now: () => 0,
   }
-  return { deps, runGit, stop, start, install }
+  return { deps, runGit, stop, start, install, rebuild, detect }
 }
 
 describe('analyzeUpdate', () => {
@@ -339,6 +345,63 @@ describe('applyUpdate — completion paths', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.daemonAction).toBe('restart_failed')
+  })
+
+  // ─── binary rebuild step (2026-05-08 framework gap) ────────────────────
+  // Pre-2026-05-08 `update` only ran git pull + (optional) bun install.
+  // The compiled `wechat-cc-cli` binary that systemd / launchd / scheduled
+  // task points at was never refreshed, so any TypeScript fix landed in
+  // master but the running daemon kept executing the old compiled bytes.
+  // The framework fix detects binary mode and recompiles + atomically
+  // replaces the binary inside the same stop→pull→start window the rest
+  // of the update flow already owns.
+
+  it('binary mode → rebuild called with detected path, rebuildRan=true', async () => {
+    const { deps, rebuild, detect } = makeFakeDeps({
+      behind: 1, head: 'a', remoteHead: 'b',
+      daemon: { alive: true, pid: 1 },
+      serviceInstalled: true,
+      detectedBinary: '/home/u/.local/bin/wechat-cc-cli',
+    })
+    const result = await applyUpdate(deps)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.rebuildRan).toBe(true)
+    expect(detect).toHaveBeenCalledOnce()
+    expect(rebuild).toHaveBeenCalledWith('/home/u/.local/bin/wechat-cc-cli')
+  })
+
+  it('dev mode (detect returns null) → rebuild not called, rebuildRan=false', async () => {
+    const { deps, rebuild } = makeFakeDeps({
+      behind: 1, head: 'a', remoteHead: 'b',
+      daemon: { alive: true, pid: 1 },
+      serviceInstalled: true,
+      detectedBinary: null,
+    })
+    const result = await applyUpdate(deps)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.rebuildRan).toBe(false)
+    expect(rebuild).not.toHaveBeenCalled()
+  })
+
+  it('rebuild fails → reject rebuild_failed, install ran, daemon restored', async () => {
+    const { deps, rebuild, install, start } = makeFakeDeps({
+      behind: 1, head: 'a', remoteHead: 'b',
+      lockfileDiff: 'bun.lock\n',
+      daemon: { alive: true, pid: 1 },
+      serviceInstalled: true,
+      detectedBinary: '/home/u/.local/bin/wechat-cc-cli',
+      rebuildResult: fail('compile failed: type error in src/foo.ts', 1),
+    })
+    const result = await applyUpdate(deps)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toBe('rebuild_failed')
+    expect(result.details?.stderr).toContain('compile failed')
+    expect(install).toHaveBeenCalledOnce()  // install ran before rebuild
+    expect(rebuild).toHaveBeenCalledOnce()
+    expect(start).toHaveBeenCalledOnce()  // daemon brought back even on rebuild failure
   })
 
   it('no update available → fast path returns ok with daemonAction=noop', async () => {

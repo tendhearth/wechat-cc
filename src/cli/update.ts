@@ -2,7 +2,11 @@ import { buildServicePlan, isServiceInstalled, startService, stopService } from 
 import { loadAgentConfig } from '../lib/agent-config'
 import { findOnPath } from '../lib/util'
 import { readDaemon } from './doctor'
+import { detectServiceBinaryPath } from './binary-detect'
 import { spawnSync } from 'node:child_process'
+import { existsSync, readFileSync, renameSync, unlinkSync } from 'node:fs'
+import { homedir, platform } from 'node:os'
+import { join } from 'node:path'
 
 export type UpdateReason =
   | 'dirty_tree'
@@ -12,6 +16,7 @@ export type UpdateReason =
   | 'pull_conflict'
   | 'install_failed'
   | 'bun_missing'
+  | 'rebuild_failed'
   | 'daemon_running_not_service'
   | 'service_stop_failed'
   | 'not_a_git_repo'
@@ -34,6 +39,19 @@ export interface UpdateDeps {
     installed: () => boolean
     stop: () => void
     start: () => void
+  }
+  /**
+   * Binary refresh hook (2026-05-08). When the installed service points
+   * at a self-contained `wechat-cc-cli`, `detect()` returns its absolute
+   * path and `rebuild(path)` is called after pull+install to recompile +
+   * atomically replace the binary so the new code actually reaches the
+   * daemon. When `detect()` returns null (dev mode running `bun cli.ts`),
+   * the rebuild step is skipped. Optional for back-compat with callers
+   * that don't yet wire it up.
+   */
+  binary?: {
+    detect: () => string | null
+    rebuild: (binaryPath: string) => RunResult
   }
   now?: () => number
 }
@@ -61,6 +79,8 @@ export interface UpdateApplied {
   toCommit: string
   lockfileChanged: boolean
   installRan: boolean
+  /** True when binary mode was detected and `bun build --compile` ran successfully. */
+  rebuildRan: boolean
   daemonAction: DaemonAction
   elapsedMs: number
 }
@@ -151,6 +171,7 @@ export async function applyUpdate(deps: UpdateDeps): Promise<UpdateResult> {
       toCommit: probe.latestCommit!,
       lockfileChanged: false,
       installRan: false,
+      rebuildRan: false,
       daemonAction: 'noop',
       elapsedMs: ((deps.now ?? Date.now)() - startedAt),
     }
@@ -202,18 +223,20 @@ export async function applyUpdate(deps: UpdateDeps): Promise<UpdateResult> {
     toCommit: probe.latestCommit!,
     lockfileChanged: !!probe.lockfileWillChange,
     installRan: inner.installRan,
+    rebuildRan: inner.rebuildRan,
     daemonAction,
     elapsedMs: ((deps.now ?? Date.now)() - startedAt),
   }
 }
 
-// Run the actual upgrade steps (pull, optional bun install). No knowledge of
-// the daemon — caller (applyUpdate) handles stop/start/restore. Returns
-// either { ok:true, installRan } or a typed UpdateRejected.
+// Run the actual upgrade steps (pull, optional bun install, optional binary
+// rebuild). No knowledge of the daemon — caller (applyUpdate) handles
+// stop/start/restore. Returns either { ok:true, installRan, rebuildRan } or
+// a typed UpdateRejected.
 function runMutatingSteps(
   deps: UpdateDeps,
   probe: UpdateProbe,
-): { ok: true; installRan: boolean } | UpdateRejected {
+): { ok: true; installRan: boolean; rebuildRan: boolean } | UpdateRejected {
   const pulled = deps.runGit(['pull', '--ff-only'])
   if (pulled.code !== 0) {
     return {
@@ -241,7 +264,29 @@ function runMutatingSteps(
       }
     }
   }
-  return { ok: true, installRan }
+
+  // Binary refresh — only when service points at compiled `wechat-cc-cli`.
+  // detect() returns null in dev mode (bun cli.ts) so this is a no-op for
+  // source-checkout users. The rebuild helper handles atomic replace; if
+  // it fails we surface rebuild_failed and let the caller's bestEffortStart
+  // bring the daemon back on the OLD binary (better than leaving it down).
+  let rebuildRan = false
+  if (deps.binary) {
+    const binaryPath = deps.binary.detect()
+    if (binaryPath) {
+      const rebuilt = deps.binary.rebuild(binaryPath)
+      rebuildRan = rebuilt.code === 0
+      if (rebuilt.code !== 0) {
+        return {
+          ok: false, mode: 'apply', reason: 'rebuild_failed',
+          message: `bun build --compile failed for ${binaryPath}`,
+          details: { stderr: rebuilt.stderr, binaryPath },
+        }
+      }
+    }
+  }
+
+  return { ok: true, installRan, rebuildRan }
 }
 
 // Best-effort daemon restore — used after a failed mutating step. Swallows
@@ -289,5 +334,75 @@ export function defaultUpdateDeps(repoRoot: string, stateDir: string): UpdateDep
       stop: () => stopService(plan),
       start: () => startService(plan),
     },
+    binary: {
+      detect: () => detectServiceBinaryPath({
+        homeDir: homedir(),
+        platform: platform(),
+        readFile: (p) => existsSync(p) ? readFileSync(p, 'utf8') : null,
+        readSchTask: () => readWindowsScheduledTaskExecute(),
+      }),
+      rebuild: (binaryPath) => compileAndAtomicReplace({
+        bunPath,
+        repoRoot,
+        binaryPath,
+      }),
+    },
   }
+}
+
+// Spawn `bun build --compile` to a temp file in the same dir as the target
+// binary, then atomically rename. Atomic replace within the same filesystem
+// is safe even while the old binary is still memory-mapped by the running
+// daemon (POSIX semantics; Windows refuses, so we unlink first there).
+function compileAndAtomicReplace(opts: {
+  bunPath: string | null
+  repoRoot: string
+  binaryPath: string
+}): RunResult {
+  if (!opts.bunPath) {
+    return { stdout: '', stderr: '`bun` not on PATH; install Bun then retry', code: 127 }
+  }
+  const tmp = `${opts.binaryPath}.tmp-${process.pid}-${Date.now()}`
+  const r = spawnSync(
+    opts.bunPath,
+    ['build', '--compile', '--minify', '--sourcemap=inline', join(opts.repoRoot, 'cli.ts'), '--outfile', tmp],
+    { cwd: opts.repoRoot, encoding: 'utf8', windowsHide: true },
+  )
+  if (r.status !== 0) {
+    try { if (existsSync(tmp)) unlinkSync(tmp) } catch { /* best-effort tmp cleanup */ }
+    return { stdout: r.stdout ?? '', stderr: r.stderr ?? '', code: r.status ?? 1 }
+  }
+  try {
+    if (process.platform === 'win32' && existsSync(opts.binaryPath)) {
+      // Windows can't rename over a running PE image — unlink first. The
+      // service is stopped at this point in the update flow so the old
+      // binary is no longer locked.
+      unlinkSync(opts.binaryPath)
+    }
+    renameSync(tmp, opts.binaryPath)
+  } catch (err) {
+    try { if (existsSync(tmp)) unlinkSync(tmp) } catch { /* best-effort */ }
+    return {
+      stdout: r.stdout ?? '',
+      stderr: `atomic rename failed: ${err instanceof Error ? err.message : String(err)}`,
+      code: 1,
+    }
+  }
+  return { stdout: r.stdout ?? '', stderr: r.stderr ?? '', code: 0 }
+}
+
+// Windows-only probe: shell out to PowerShell to read the scheduled task's
+// Execute path. Safe-by-default — returns null when the task is missing,
+// PS isn't available, or anything else goes wrong (caller treats null as
+// "dev mode, skip rebuild" which is the correct fallback).
+function readWindowsScheduledTaskExecute(): string | null {
+  if (process.platform !== 'win32') return null
+  const r = spawnSync(
+    'powershell',
+    ['-NoProfile', '-Command', `try { (Get-ScheduledTask -TaskName 'wechat-cc' -ErrorAction Stop).Actions[0].Execute } catch { '' }`],
+    { encoding: 'utf8', windowsHide: true },
+  )
+  if (r.status !== 0) return null
+  const out = (r.stdout ?? '').trim()
+  return out.length > 0 ? out : null
 }
