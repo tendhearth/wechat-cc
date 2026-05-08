@@ -1,7 +1,7 @@
 {
   "name": "claude-channel-wechat",
   "version": "0.5.14",
-  "description": "WeChat channel plugin for Claude Code \u2014 bridge WeChat messages in and out of your Claude Code session via the ilink bot API.",
+  "description": "WeChat channel plugin for Claude Code — bridge WeChat messages in and out of your Claude Code session via the ilink bot API.",
   "keywords": [
     "claude-code",
     "claude-code-plugin",
@@ -43,6 +43,7 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@cursor/sdk": "^1.0.12",
     "@types/bun": "^1.3.0",
     "citty": "^0.2.2",
     "dependency-cruiser": "^17.0.0",
