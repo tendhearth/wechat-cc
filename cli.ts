@@ -365,12 +365,23 @@ const logsCmd = defineCommand({
   args: {
     tail: { type: 'string', description: 'Number of trailing entries (default 50)' },
     json: { type: 'boolean', description: 'JSON envelope (parsed entries)' },
+    'out-file': { type: 'string', description: 'Write JSON to a sibling file (avoids pipe buffer truncation in compiled binaries)' },
   },
   async run({ args }) {
     const tailNum = args.tail ? Number.parseInt(args.tail, 10) : 50
     const tail = Number.isFinite(tailNum) ? tailNum : 50
+    const outFile = args['out-file']
     const { tailLog, formatLogsForCli } = await import('./src/cli/logs.ts')
-    const out = formatLogsForCli(tailLog(STATE_DIR, tail), Boolean(args.json))
+    const { LogsOutput } = await import('./src/cli/schema.ts')
+    const result = tailLog(STATE_DIR, tail)
+    // JSON success path routes through emitJson so --out-file is honoured —
+    // bun --compile pipes drop bytes on MB-sized payloads (sessions hit the
+    // same wall and use this pattern; see lib.rs:22-26 for the rationale).
+    if (args.json && result.ok) {
+      emitJson(LogsOutput.parse(result), outFile)
+      return
+    }
+    const out = formatLogsForCli(result, Boolean(args.json))
     if (out.stdout) console.log(out.stdout)
     if (out.stderr) console.error(out.stderr)
     if (out.exitCode !== 0) process.exit(out.exitCode)

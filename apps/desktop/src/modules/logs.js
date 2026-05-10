@@ -70,7 +70,13 @@ export async function loadLogsPane(deps) {
   body.innerHTML = `<p class="empty-state">加载中…</p>`
   let result
   try {
-    result = await deps.invoke("wechat_cli_json", { args: ["logs", "--tail", String(tail), "--json"] })
+    // Route through wechat_cli_json_via_file: 200/500-line tails produce
+    // pretty-printed JSON in the hundreds-of-KB range, and bun --compile
+    // pipes silently drop bytes at that size (see lib.rs:22-26). Sessions
+    // already use this pattern; logs hit the same wall as soon as users pick
+    // a non-trivial tail count. The CLI honours --out-file and writes the
+    // payload to disk; lib.rs reads + parses + cleans up.
+    result = await deps.invoke("wechat_cli_json_via_file", { args: ["logs", "--tail", String(tail), "--json"] })
   } catch (err) {
     logsState.busy = false
     body.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`
