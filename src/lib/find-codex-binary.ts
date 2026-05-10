@@ -26,7 +26,11 @@
  */
 
 import { existsSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+// Pull both flavors so the `platform` dep can drive separator + join
+// semantics independently of the runner OS. Without this the Linux test
+// fixtures fail on the Windows CI runner because the host's `join` swaps
+// `/` for `\` even when the test explicitly passes platform: 'linux'.
+import { posix as posixPath, win32 as winPath } from 'node:path'
 import { homedir } from 'node:os'
 
 export interface FindCodexBinaryDeps {
@@ -48,11 +52,15 @@ export interface FindCodexBinaryDeps {
 // recommends `~/.claude/plugins/local/wechat/` for the desktop installer;
 // `~/.local/share/wechat-cc/` is the alternative the docs mention. Anything
 // else can be set via `WECHAT_CC_ROOT`.
-function wechatCcSourceProbeRoots(homeDir: string, override?: string): string[] {
+function wechatCcSourceProbeRoots(
+  homeDir: string,
+  override: string | undefined,
+  p: typeof posixPath,
+): string[] {
   const roots: string[] = []
   if (override) roots.push(override)
-  roots.push(join(homeDir, '.claude', 'plugins', 'local', 'wechat'))
-  roots.push(join(homeDir, '.local', 'share', 'wechat-cc'))
+  roots.push(p.join(homeDir, '.claude', 'plugins', 'local', 'wechat'))
+  roots.push(p.join(homeDir, '.local', 'share', 'wechat-cc'))
   return roots
 }
 
@@ -65,6 +73,10 @@ export function findCodexBinary(deps: FindCodexBinaryDeps = {}): string | null {
   const wechatCcRoot = 'wechatCcRoot' in deps ? deps.wechatCcRoot : process.env.WECHAT_CC_ROOT
   const exe = platform === 'win32' ? 'codex.exe' : 'codex'
   const sep = platform === 'win32' ? ';' : ':'
+  // Drive `join` off the `platform` dep, not the host. Otherwise tests
+  // that pass platform: 'linux' still get backslash-joined paths on a
+  // Windows runner and never match their forward-slash fixtures.
+  const platformPath = platform === 'win32' ? winPath : posixPath
 
   // 1. wechat-cc's bundled, SDK-version-matched JS shim (highest priority).
   // The Codex wire protocol changes across versions: a globally-installed
@@ -72,8 +84,8 @@ export function findCodexBinary(deps: FindCodexBinaryDeps = {}): string | null {
   // doesn't decode, so dispatch returns empty `assistantText` and no reply
   // gets sent. Preferring our own `node_modules/@openai/codex/bin/codex.js`
   // pins the codex CLI version to the SDK we ship with.
-  for (const root of wechatCcSourceProbeRoots(homeDir, wechatCcRoot)) {
-    const shim = join(root, 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
+  for (const root of wechatCcSourceProbeRoots(homeDir, wechatCcRoot, platformPath)) {
+    const shim = platformPath.join(root, 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
     if (exists(shim)) return shim
   }
 
@@ -82,7 +94,7 @@ export function findCodexBinary(deps: FindCodexBinaryDeps = {}): string | null {
   // that has nvm sourced before launching the daemon.
   for (const dir of pathEnv.split(sep)) {
     if (!dir) continue
-    const candidate = join(dir, exe)
+    const candidate = platformPath.join(dir, exe)
     if (exists(candidate)) return candidate
   }
 
@@ -92,12 +104,12 @@ export function findCodexBinary(deps: FindCodexBinaryDeps = {}): string | null {
   // newest-first so the most recently installed version wins. This covers
   // 90% of users running codex from npm.
   if (platform !== 'win32') {
-    const nvmRoot = join(homeDir, '.nvm', 'versions', 'node')
+    const nvmRoot = platformPath.join(homeDir, '.nvm', 'versions', 'node')
     if (exists(nvmRoot)) {
       let versions: string[] = []
       try { versions = readdir(nvmRoot).slice().sort().reverse() } catch { /* ignore */ }
       for (const v of versions) {
-        const candidate = join(nvmRoot, v, 'bin', exe)
+        const candidate = platformPath.join(nvmRoot, v, 'bin', exe)
         if (exists(candidate)) return candidate
       }
     }
