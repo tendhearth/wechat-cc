@@ -286,6 +286,88 @@ describe('SessionManager', () => {
     vi.useRealTimers()
   })
 
+  it('release() during an in-flight dispatch propagates close to the wrapper iterator (counter does not strand)', async () => {
+    // Contract: providers MUST propagate their session.close() to the
+    // dispatch iterator (so an awaited inner.next() resolves with done).
+    // Without that, the SessionManager wrapper's `finally` never runs and
+    // the in-flight counter is stranded at 1, defeating sweepIdle forever
+    // for that key. claude/codex providers both satisfy this today (claude
+    // via activeEventQueue.end(), codex via aborter.abort()); this test
+    // pins the contract so a future provider rewrite that violates it gets
+    // caught here instead of in production via a hung daemon.
+    let closeCount = 0
+    type ResolveNext = (v: IteratorResult<unknown>) => void
+    const pending: ResolveNext[] = []
+    const buffered: unknown[] = []
+    let ended = false
+    function push(ev: unknown) {
+      const r = pending.shift()
+      if (r) r({ value: ev, done: false })
+      else buffered.push(ev)
+    }
+    function end() {
+      ended = true
+      while (pending.length > 0) {
+        const r = pending.shift()!
+        r({ value: undefined, done: true })
+      }
+    }
+    const session = {
+      dispatch() {
+        return {
+          [Symbol.asyncIterator]() {
+            return {
+              next() {
+                if (buffered.length > 0) return Promise.resolve({ value: buffered.shift(), done: false }) as Promise<IteratorResult<unknown>>
+                if (ended) return Promise.resolve({ value: undefined, done: true }) as Promise<IteratorResult<unknown>>
+                return new Promise<IteratorResult<unknown>>(r => pending.push(r))
+              },
+            }
+          },
+        }
+      },
+      async close() {
+        closeCount++
+        // The contract: close() unblocks any in-flight dispatch iterator.
+        end()
+      },
+    }
+    const mgr = new SessionManager({
+      maxConcurrent: 10,
+      idleEvictMs: 1000,
+      registry: registryWithProvider({ async spawn() { return session as never } } as unknown as AgentProvider),
+    })
+    const h = await mgr.acquire('a', '/p', 'claude')
+    const iter = h.dispatch('hi')[Symbol.asyncIterator]()
+    const firstPromise = iter.next()
+    push({ kind: 'init', sessionId: 's1' })
+    await firstPromise
+    // Wrapper now awaiting next event — dispatch is in flight.
+    const pendingNext = iter.next()
+
+    await mgr.release('a', 'claude')
+    // close() above triggered end(), so the wrapper's `for await` resolves
+    // its inner.next() with done=true and finally fires.
+    const result = await pendingNext
+    expect(result.done).toBe(true)
+    expect(closeCount).toBe(1)
+
+    // The crucial assertion: the counter is now clean. Re-acquire (which
+    // spawns a fresh session under the same key) followed by a quick sweep
+    // proves the slot isn't stranded — if the previous wrapper's finally
+    // hadn't run, the counter would still be 1 and the new session would
+    // be untouchable by sweepIdle even when it's idle.
+    vi.useFakeTimers()
+    const h2 = await mgr.acquire('a', '/p', 'claude')
+    // h2 has had a dispatch wrapper applied lazily; never called .dispatch
+    // so its counter is 0 from inception. Advance time past idleEvictMs.
+    vi.advanceTimersByTime(60_000)
+    await mgr.sweepIdle()
+    expect(mgr.list()).toEqual([])
+    expect(h2).toBeDefined()
+    vi.useRealTimers()
+  })
+
   it('keeps independent sessions for the same alias under different providers (P2 multi-provider)', async () => {
     let claudeSpawn = 0
     let codexSpawn = 0

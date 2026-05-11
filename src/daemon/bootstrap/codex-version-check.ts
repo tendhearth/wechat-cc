@@ -38,7 +38,11 @@ export interface CheckCodexVersionResult {
   reason?: 'version_mismatch' | 'version_probe_failed'
 }
 
-const SEMVER_RE = /(\d+\.\d+\.\d+)/
+// Captures X.Y.Z plus an optional `-prerelease` tag (alphanumeric + dot + hyphen
+// per semver 2.0). Without the prerelease part, an rc CLI matched against a
+// stable expected version would falsely pass — the codex wire protocol can
+// still differ between e.g. 0.128.0 and 0.128.0-rc.1.
+const SEMVER_RE = /(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)/
 
 export function checkCodexVersion(input: CheckCodexVersionInput): CheckCodexVersionResult {
   const raw = input.probe(input.binary)
