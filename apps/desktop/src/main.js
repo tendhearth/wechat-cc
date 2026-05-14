@@ -35,6 +35,7 @@ import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisio
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { loadSessionsList, openProjectDetail, closeProjectDetail, toggleFavorite, exportProjectMarkdown, deleteProject, wireSearch, startSessionsAutoRefresh, stopSessionsAutoRefresh, stopDetailAutoRefresh, setSessionsDetailMode } from "./modules/sessions.js"
 import { loadUpdateProbe, applyUpdate } from "./modules/update.js"
+import { wireSettingsDrawer, openSettingsDrawer } from "./modules/settings-drawer.js"
 
 const state = {
   setup: /** @type {SetupQrJson | null} */ (null),
@@ -42,6 +43,7 @@ const state = {
   selectedProvider: "claude",
   unattended: true,
   autoStart: false,
+  closeStopsDaemon: false,
   qrTimer: /** @type {ReturnType<typeof setTimeout> | null} */ (null),
   qrErrors: 0,
   clockTimer: /** @type {ReturnType<typeof setInterval> | null} */ (null),
@@ -256,8 +258,11 @@ async function loadAgentConfig() {
   const config = /** @type {ProviderConfig} */ (await invoke("wechat_cli_json", { args: ["provider", "show", "--json"] }))
   state.unattended = config.dangerouslySkipPermissions !== false
   state.autoStart = config.autoStart === true
+  // closeStopsDaemon: optional field, default false. Task 10 adds it.
+  state.closeStopsDaemon = (/** @type {any} */ (config)).closeStopsDaemon === true
   setToggle("unattended-toggle", state.unattended)
   setToggle("autostart-toggle", state.autoStart)
+  setToggle("close-stops-daemon-toggle", state.closeStopsDaemon)
 }
 
 /**
@@ -341,28 +346,39 @@ function wireEvents() {
   // QR modal "重新生成" button — only useful while the modal is open.
   document.getElementById("qr-refresh")?.addEventListener("click", () => refreshQr({ invoke, mock }, state))
 
-  document.querySelectorAll("[data-toggle]").forEach(t => {
-    const el = /** @type {HTMLElement} */ (t)
-    el.addEventListener("click", async () => {
-      el.classList.toggle("on")
-      const on = el.classList.contains("on")
-      el.setAttribute("aria-pressed", on ? "true" : "false")
-      if (el.id === "unattended-toggle") state.unattended = on
-      if (el.id === "autostart-toggle") state.autoStart = on
-      if (el.id === "guard-toggle") {
-        // Persist immediately — guard config lives in its own JSON.
-        // The daemon's scheduler reads loadGuardConfig() each tick so
-        // the change takes effect on the next 30s poll. Refresh
-        // doctor too so the status line picks up the new probe.
+  wireSettingsDrawer({
+    onToggleChange: async (id, on) => {
+      if (id === "unattended-toggle") {
+        state.unattended = on
         try {
-          /** @type {GuardEnable | GuardDisable} */
-          const _guardResult = await invoke("wechat_cli_json", { args: ["guard", on ? "enable" : "disable", "--json"] })
-          void _guardResult
+          await invoke("wechat_cli_text", { args: ["provider", "set", state.selectedProvider || "claude", "--unattended", on ? "true" : "false"] })
+        } catch (err) { console.error("unattended set failed:", err) }
+      } else if (id === "autostart-toggle") {
+        state.autoStart = on
+        try {
+          await invoke("wechat_cli_text", { args: ["provider", "set", state.selectedProvider || "claude", "--auto-start", on ? "true" : "false"] })
+        } catch (err) { console.error("autoStart set failed:", err) }
+      } else if (id === "close-stops-daemon-toggle") {
+        // closeStopsDaemon: window-close kills daemon. Default false; advanced.
+        // Check if the provider config CLI supports this flag; if not, only
+        // update in-memory state (Task 10 will add the CLI flag).
+        state.closeStopsDaemon = on
+        try {
+          await invoke("wechat_cli_text", { args: ["provider", "set", state.selectedProvider || "claude", "--close-stops-daemon", on ? "true" : "false"] })
+        } catch (err) {
+          // Flag may not exist yet — non-fatal.
+          console.warn("close-stops-daemon flag not persisted:", err)
+        }
+      } else if (id === "guard-toggle") {
+        try {
+          await invoke("wechat_cli_json", { args: ["guard", on ? "enable" : "disable", "--json"] })
           refreshGuardStatus()
-        } catch { /* best-effort — toggle stays in the UI either way */ }
+        } catch (err) { console.error("guard toggle failed:", err) }
       }
-    })
+    },
   })
+
+  document.getElementById("settings-open")?.addEventListener("click", openSettingsDrawer)
 
   document.getElementById("qr-raw-toggle")?.addEventListener("click", () => {
     document.getElementById("qr-raw")?.classList.toggle("show")
