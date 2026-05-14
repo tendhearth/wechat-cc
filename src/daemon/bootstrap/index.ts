@@ -32,7 +32,7 @@ import { formatInbound } from '../../core/prompt-format'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import { findOnPath, probeBinaryVersion } from '../../lib/util'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
@@ -70,6 +70,37 @@ function resolveClaudeBinary(): string | undefined {
   const bundled = join(here, '..', '..', '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk-linux-x64', 'claude')
   if (existsSync(bundled)) return bundled
   return undefined
+}
+
+const CLAUDE_AUTH_ENV_KEYS = [
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_BASE_URL',
+] as const
+
+function hydrateClaudeAuthEnvFromUserSettings(log: BootstrapDeps['log']): void {
+  const settingsPath = join(homedir(), '.claude', 'settings.json')
+  if (!existsSync(settingsPath)) return
+
+  try {
+    const parsed = JSON.parse(readFileSync(settingsPath, 'utf8')) as { env?: Record<string, unknown> }
+    const env = parsed.env
+    if (!env || typeof env !== 'object') return
+
+    const copied: string[] = []
+    for (const key of CLAUDE_AUTH_ENV_KEYS) {
+      if (process.env[key]) continue
+      const value = env[key]
+      if (typeof value !== 'string' || value.length === 0) continue
+      process.env[key] = value
+      copied.push(key)
+    }
+    if (copied.length > 0) {
+      log('BOOT', `claude auth env loaded from ~/.claude/settings.json: ${copied.join(', ')}`)
+    }
+  } catch {
+    log('BOOT', 'claude auth env not loaded: failed to parse ~/.claude/settings.json')
+  }
 }
 
 export interface BootstrapDeps {
@@ -156,6 +187,8 @@ export interface Bootstrap {
 // the agent doesn't get confused by chatroom envelopes.
 
 export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
+  hydrateClaudeAuthEnvFromUserSettings(deps.log)
+
   const resolve = makeResolver({
     loadProjects: deps.loadProjects,
     fallback: deps.fallbackProject,

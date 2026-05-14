@@ -7,6 +7,7 @@
 
 import { spawnSync } from 'child_process'
 import { existsSync, readdirSync, statSync } from 'node:fs'
+import { delimiter } from 'node:path'
 import { homedir, platform } from 'os'
 import { join } from 'node:path'
 
@@ -48,6 +49,19 @@ export function findOnPath(cmd: string): string | null {
 function findInUserBinaryRoots(cmd: string): string | null {
   const home = homedir()
   const exe = platform() === 'win32' ? `${cmd}.exe` : cmd
+  const roots = userBinaryRoots(home)
+  for (const root of roots) {
+    const candidate = join(root, exe)
+    if (safeExecutable(candidate)) return candidate
+  }
+  for (const root of nvmBinaryRoots(home)) {
+    const candidate = join(root, exe)
+    if (safeExecutable(candidate)) return candidate
+  }
+  return null
+}
+
+function userBinaryRoots(home = homedir()): string[] {
   const roots: string[] = [
     join(home, '.bun', 'bin'),
     join(home, '.local', 'bin'),
@@ -61,10 +75,24 @@ function findInUserBinaryRoots(cmd: string): string | null {
   if (platform() === 'darwin') {
     roots.push('/opt/homebrew/bin', '/usr/local/bin')
   }
-  for (const root of roots) {
-    const candidate = join(root, exe)
-    if (safeExecutable(candidate)) return candidate
+  return roots
+}
+
+function augmentedPathEnv(): string {
+  const home = homedir()
+  const parts = (process.env.PATH ?? '').split(delimiter).filter(Boolean)
+  const seen = new Set(parts)
+  for (const root of [...userBinaryRoots(home), ...nvmBinaryRoots(home)]) {
+    if (!seen.has(root)) {
+      seen.add(root)
+      parts.push(root)
+    }
   }
+  return parts.join(delimiter)
+}
+
+function nvmBinaryRoots(home = homedir()): string[] {
+  const roots: string[] = []
   // nvm fan-out: ~/.nvm/versions/node/<version>/bin/<cmd>. nvm doesn't
   // symlink to a stable path, so we scan the versions dir and prefer the
   // most-recent (lexicographically last — nvm versions are all v-prefixed
@@ -74,12 +102,11 @@ function findInUserBinaryRoots(cmd: string): string | null {
     try {
       const versions = readdirSync(nvmVersions).sort().reverse()
       for (const v of versions) {
-        const candidate = join(nvmVersions, v, 'bin', exe)
-        if (safeExecutable(candidate)) return candidate
+        roots.push(join(nvmVersions, v, 'bin'))
       }
     } catch {}
   }
-  return null
+  return roots
 }
 
 function safeExecutable(path: string): boolean {
@@ -108,6 +135,7 @@ export function probeBinaryVersion(path: string): string | null {
       stdio: 'pipe',
       windowsHide: true,
       timeout: 3000,
+      env: { ...process.env, PATH: augmentedPathEnv() },
     })
     if (r.status !== 0) return null
     const out = (r.stdout?.toString() ?? '').split(/\r?\n/).find(l => l.trim().length > 0)
