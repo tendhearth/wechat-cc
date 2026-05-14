@@ -302,7 +302,7 @@ export function showPostStopAlert(pid) {
  * @param {(label: string) => void} onProgress
  */
 export async function silentInstallAndStart(deps, onProgress) {
-  const fail = (stage, error, details) => ({ ok: false, stage, error, details })
+  const fail = (/** @type {string} */ stage, /** @type {string} */ error, /** @type {string | null} */ details) => ({ ok: false, stage, error, details })
 
   try {
     onProgress("安装后台服务…")
@@ -334,6 +334,7 @@ export async function silentInstallAndStart(deps, onProgress) {
 /**
  * Poll `wechat-cli doctor --json` until daemon.alive is true or totalMs elapses.
  * @param {{ invoke: (cmd: string, args: { args: string[] }) => Promise<unknown> }} deps
+ * @param {number} totalMs
  */
 async function waitDaemonAlive(deps, totalMs) {
   const start = Date.now()
