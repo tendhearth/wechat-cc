@@ -373,4 +373,20 @@ describe('Codex agent provider', () => {
     expect(errs).toHaveLength(1)
     expect((errs[0] as { code?: string }).code).toBe('auth_failed')
   })
+
+  it('does not emit code=auth_failed for non-auth stream-level errors', async () => {
+    const fakeCodex = makeFakeCodex()
+    fakeCodex.fake.thread.pushTurn([
+      { type: 'thread.started', thread_id: 't1' },
+      { type: 'error', message: 'network timeout' } as unknown as ThreadEvent,
+    ])
+    const { provider: p } = provider({}, fakeCodex)
+    const session = await p.spawn({ alias: 'a', path: '/p' })
+
+    const events = await drain(session.dispatch('hi'))
+
+    const errs = events.filter((e) => e.kind === 'error')
+    expect(errs).toHaveLength(1)
+    expect((errs[0] as { code?: string }).code).toBeUndefined()
+  })
 })

@@ -27,7 +27,7 @@ import type { AgentEvent, AgentProject, AgentProvider, AgentSession } from './ag
 // only want to special-case the ones we're confident about, since
 // false positives mean the user gets "login expired" when their real
 // problem is something else.
-const AUTH_FAIL_RE = /(OPENAI_API_KEY|not authenticated|unauthorized|codex login|auth.*expired)/i
+const AUTH_FAIL_RE = /(OPENAI_API_KEY|not authenticated|401 unauthorized|codex login|auth.*expired)/i
 
 /** Test-time injection for the Codex constructor. */
 export type CodexFactory = (opts: ConstructorParameters<typeof Codex>[0]) => Codex
