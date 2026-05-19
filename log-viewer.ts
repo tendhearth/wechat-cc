@@ -67,12 +67,51 @@ function classify(line) {
   return 'system';
 }
 
-function formatLine(line) {
-  return line
-    .replace(/^(\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z?)/, '<span class="ts">$1</span>')
-    .replace(/\\[(\\w+)]/, (m, tag) => '<span class="tag-' + classify(line) + '">[' + tag + ']</span>')
-    .replace(/\\[([^\\]]+@im\\.wechat)]/, '<span class="user">[$1]</span>')
-    .replace(/\\[([\\u4e00-\\u9fff]+)]/, '<span class="user">[$1]</span>');
+// Build a colorised line as DOM nodes — every variable segment goes through
+// .textContent so log content (which comes from inbound WeChat messages and
+// is therefore attacker-controllable) cannot inject HTML / script into the
+// operator's browser. The earlier .innerHTML implementation was the same
+// idea but parsed strings as HTML, which is a classic XSS sink.
+function appendSpan(parent, cls, text) {
+  const s = document.createElement('span');
+  if (cls) s.className = cls;
+  s.textContent = text;
+  parent.appendChild(s);
+}
+
+function renderLine(line) {
+  const frag = document.createDocumentFragment();
+  const tag = classify(line);
+
+  // Pattern: <ts> [<TAG>] [<user-or-id>] <rest>
+  // Each group is optional; whatever doesn't match falls through as plain text.
+  const tsRe = /^(\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z?)/;
+  const tagRe = /\\[(\\w+)]/;
+  const userIdRe = /\\[([^\\]]+@im\\.wechat)]/;
+  const userZhRe = /\\[([\\u4e00-\\u9fff]+)]/;
+
+  let rest = line;
+
+  const ts = rest.match(tsRe);
+  if (ts) { appendSpan(frag, 'ts', ts[1]); rest = rest.slice(ts[0].length); }
+
+  const tagMatch = rest.match(tagRe);
+  if (tagMatch) {
+    appendSpan(frag, '', rest.slice(0, tagMatch.index));
+    appendSpan(frag, 'tag-' + tag, '[' + tagMatch[1] + ']');
+    rest = rest.slice(tagMatch.index + tagMatch[0].length);
+  }
+
+  // Apply only the first user match (matches original behavior).
+  const userMatch = rest.match(userIdRe) || rest.match(userZhRe);
+  if (userMatch) {
+    appendSpan(frag, '', rest.slice(0, userMatch.index));
+    appendSpan(frag, 'user', '[' + userMatch[1] + ']');
+    rest = rest.slice(userMatch.index + userMatch[0].length);
+  }
+
+  if (rest) appendSpan(frag, '', rest);
+  return frag;
 }
 
 function updateStats() {
@@ -94,14 +133,14 @@ async function poll() {
     if (!res.ok) throw new Error(res.status);
     const data = await res.json();
     if (data.lines.length > 0) {
-      if (lastLen === 0) logsEl.innerHTML = '';
+      if (lastLen === 0) logsEl.textContent = '';
       for (const line of data.lines) {
         if (!line.trim()) continue;
         const tag = classify(line);
         counts[tag] = (counts[tag] || 0) + 1;
         const div = document.createElement('div');
         div.className = 'log-entry';
-        div.innerHTML = formatLine(line);
+        div.appendChild(renderLine(line));
         logsEl.appendChild(div);
       }
       updateStats();
@@ -122,9 +161,13 @@ poll();
 </body>
 </html>`
 
-// Simple HTTP server
+// Simple HTTP server — bound to localhost. channel.log contains WeChat
+// message bodies, user IDs, and bot-token fragments; without the hostname
+// pin Bun.serve defaults to 0.0.0.0 and any host on the LAN could poll
+// /api/logs unauthenticated.
 Bun.serve({
   port: PORT,
+  hostname: '127.0.0.1',
   fetch(req) {
     const url = new URL(req.url)
 
