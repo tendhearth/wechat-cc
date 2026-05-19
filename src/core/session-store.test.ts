@@ -171,6 +171,26 @@ describe('SessionStore', () => {
       expect(s.get('compass', 'claude')).toBeNull()
       expect(s.get('compass', 'codex')).toBeNull()
     })
+
+    it('deleteOne removes only the specified provider row', () => {
+      // Regression guard: session-manager's stale-record cleanup must
+      // not collateral-damage the other provider's resume point. Before
+      // this, calling delete(alias) on a stale codex row also wiped the
+      // still-valid claude row, forcing a cold start on /cc.
+      const s = makeSessionStore(db)
+      s.set('compass', 'sid-claude', 'claude')
+      s.set('compass', 'sid-codex', 'codex')
+      s.deleteOne('compass', 'claude')
+      expect(s.get('compass', 'claude')).toBeNull()
+      expect(s.get('compass', 'codex')?.session_id).toBe('sid-codex')
+    })
+
+    it('deleteOne on a non-existent (alias, provider) pair is a no-op', () => {
+      const s = makeSessionStore(db)
+      s.set('compass', 'sid-codex', 'codex')
+      s.deleteOne('compass', 'claude')  // no claude row exists
+      expect(s.get('compass', 'codex')?.session_id).toBe('sid-codex')
+    })
   })
 
   describe('legacy file migration', () => {
