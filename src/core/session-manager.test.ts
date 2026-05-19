@@ -420,6 +420,9 @@ describe('SessionManager', () => {
         }),
         setSummary: vi.fn(),
         delete: vi.fn((alias: string) => { delete data[alias] }),
+        deleteOne: vi.fn((alias: string, provider: string) => {
+          if (data[alias]?.provider === provider) delete data[alias]
+        }),
         all: () => ({ ...data }),
         flush: async () => {},
       }
@@ -459,7 +462,10 @@ describe('SessionManager', () => {
       await mgr.acquire('compass', '/p', 'claude')
       const args = firstQueryArgs()
       expect(args.options.resume).toBeUndefined()
-      expect(store.delete).toHaveBeenCalledWith('compass')
+      // Stale-cleanup must target only the active provider's row, not
+      // sibling rows (e.g. a still-valid codex row for the same alias).
+      expect(store.deleteOne).toHaveBeenCalledWith('compass', 'claude')
+      expect(store.delete).not.toHaveBeenCalled()
       await mgr.shutdown()
     })
 
@@ -477,7 +483,31 @@ describe('SessionManager', () => {
       await mgr.acquire('compass', '/p', 'claude')
       const args = firstQueryArgs()
       expect(args.options.resume).toBeUndefined()
-      expect(store.delete).toHaveBeenCalledWith('compass')
+      expect(store.deleteOne).toHaveBeenCalledWith('compass', 'claude')
+      expect(store.delete).not.toHaveBeenCalled()
+      await mgr.shutdown()
+    })
+
+    it('stale resume on one provider does not wipe sibling provider row', async () => {
+      const ancient = new Date(Date.now() - 8 * 24 * 60 * 60_000).toISOString()
+      const store = makeMockStore({
+        compass: { session_id: 'sid-old-codex', last_used_at: ancient, provider: 'codex' },
+      })
+      // The codex row is stale. Acquire on the SAME alias under claude
+      // — must NOT touch the codex row (different provider, miss on get,
+      // no delete invoked).
+      const mgr = new SessionManager({
+        maxConcurrent: 4,
+        idleEvictMs: 60_000,
+        registry: singleClaudeRegistry((_alias, path) => ({ cwd: path } as Options)),
+        sessionStore: store,
+        resumeTTLMs: 7 * 24 * 60 * 60_000,
+      })
+      await mgr.acquire('compass', '/p', 'claude')
+      expect(store.deleteOne).not.toHaveBeenCalled()
+      expect(store.delete).not.toHaveBeenCalled()
+      // Sibling row still intact.
+      expect(store.get('compass', 'codex')?.session_id).toBe('sid-old-codex')
       await mgr.shutdown()
     })
 

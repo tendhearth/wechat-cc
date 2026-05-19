@@ -48,7 +48,15 @@ export interface SessionStore {
   get(alias: string, expectedProvider?: ProviderId): SessionRecord | null
   set(alias: string, sessionId: string, provider: ProviderId): void
   setSummary(alias: string, summary: string): void
+  /** Forget this chat entirely (e.g. /reset) — removes every provider row. */
   delete(alias: string): void
+  /**
+   * Forget just one (alias, provider) row — used when a single provider's
+   * resume point is stale (jsonl gone, TTL exceeded) while the other
+   * provider's row is still valid. Calling delete() here instead would
+   * also wipe the still-valid sibling row.
+   */
+  deleteOne(alias: string, provider: ProviderId): void
   all(): Record<string, SessionRecord>
   flush(): Promise<void>
 }
@@ -119,6 +127,7 @@ export function makeSessionStore(db: Db, opts: SessionStoreOpts = {}): SessionSt
     'UPDATE sessions SET summary = ?, summary_updated_at = ? WHERE alias = ? AND provider = ?',
   )
   const stmtDeleteAlias = db.query<unknown, [string]>('DELETE FROM sessions WHERE alias = ?')
+  const stmtDeleteOne = db.query<unknown, [string, string]>('DELETE FROM sessions WHERE alias = ? AND provider = ?')
   const stmtAll = db.query<Row, []>(
     'SELECT alias, provider, session_id, last_used_at, summary, summary_updated_at FROM sessions ORDER BY alias, last_used_at DESC, rowid DESC',
   )
@@ -155,6 +164,10 @@ export function makeSessionStore(db: Db, opts: SessionStoreOpts = {}): SessionSt
       // Remove ALL provider rows for this alias — `delete` is intended
       // as "forget this chat entirely".
       stmtDeleteAlias.run(alias)
+    },
+
+    deleteOne(alias, provider) {
+      stmtDeleteOne.run(alias, provider)
     },
 
     all() {

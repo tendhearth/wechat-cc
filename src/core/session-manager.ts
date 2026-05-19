@@ -102,8 +102,10 @@ export class SessionManager {
         resumeSessionId = record.session_id
         console.error(`wechat channel: [SESSION_RESUME] alias=${alias} sid=${record.session_id} provider=${providerId} age=${Math.round(age / 1000)}s`)
       } else {
-        // stale — forget so we don't keep retrying
-        this.opts.sessionStore?.delete(alias)
+        // stale — forget THIS provider's row only. delete(alias) would
+        // also wipe the sibling provider's still-valid resume point on
+        // a chat that uses both /cc and /codex.
+        this.opts.sessionStore?.deleteOne(alias, providerId)
       }
     }
 

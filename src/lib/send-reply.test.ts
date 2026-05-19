@@ -91,12 +91,21 @@ describe('sendReplyOnce — preflight checks (no network)', () => {
     }
   })
 
-  it('passes preflight when only userAccountIds is on record (recovers without contextToken)', async () => {
+  it('rejects at preflight when account routing exists but contextToken is missing', async () => {
+    // Regression guard: previously the guard was AND-joined
+    // (!ctxToken && !persistedAccountId), so this case fell through
+    // to ilink with a missing context_token and ate three retries
+    // before failing — invisible to the user and impossible to
+    // explain from logs. Now we surface the actionable cause early.
     seedOneAccount(tmpDir)
     writeFileSync(join(tmpDir, 'user_account_ids.json'), JSON.stringify({ 'known@chat': 'bot-1' }))
-    // Will fail at the network call but NOT at preflight — error is fetch-related, not preflight.
     const r = await sendReplyOnce('known@chat', 'hi', tmpDir)
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.error).not.toMatch(/unknown chat_id/)
+    if (!r.ok) {
+      expect(r.error).toMatch(/no context_token/)
+      expect(r.error).toMatch(/send a new WeChat message/)
+      // Should NOT report it as an unknown chat — the account IS on file.
+      expect(r.error).not.toMatch(/unknown chat_id/)
+    }
   })
 })
