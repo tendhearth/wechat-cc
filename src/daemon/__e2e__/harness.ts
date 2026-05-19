@@ -212,7 +212,11 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
         message_type: 1,
         message_state: 2,
         item_list: [{ type: 1, msg_id: `m${nextMessageId()}`, text_item: { text } }],
-        ...(sendOpts?.contextToken ? { context_token: sendOpts.contextToken } : {}),
+        // Mirror real ilink: every inbound carries context_token. Tests that
+        // want to exercise the missing-token path can pass `contextToken: ''`
+        // explicitly. Without a default, assertChatRoutable would reject
+        // every reply at preflight (fix/v0.5.18 tightened the guard).
+        context_token: sendOpts?.contextToken ?? `ctx-${chatId}`,
       }
       if (process.env.E2E_DEBUG_ILINK) console.log('[harness] sendText enqueue:', JSON.stringify(update).slice(0, 200))
       ilink.enqueueInbound(update)
@@ -234,7 +238,7 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
           msg_id: `m${nextMessageId()}`,
           image_item: { media: { full_url: 'fake://e2e-image' } },
         }],
-        ...(sendOpts?.contextToken ? { context_token: sendOpts.contextToken } : {}),
+        context_token: sendOpts?.contextToken ?? `ctx-${chatId}`,
       }
       if (process.env.E2E_DEBUG_ILINK) console.log('[harness] sendImage enqueue:', JSON.stringify(update).slice(0, 200))
       ilink.enqueueInbound(update)

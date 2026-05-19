@@ -14,9 +14,10 @@ import type { InboundMsg } from '../core/prompt-format'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from './wechat-tool-deps'
 import { parsePermissionReply } from './pending-permissions'
 import { buildMediaItemFromFile, assertSendable } from './media'
-import { ilinkSendMessage } from '../lib/ilink'
+import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
 import type { SessionStateStore } from './session-state'
-import { sendReplyOnce } from '../lib/send-reply'
+import { sendReplyOnce, chunk } from '../lib/send-reply'
+import { MAX_TEXT_CHUNK } from '../lib/config'
 import { log } from '../lib/log'
 import {
   addProject,
@@ -134,14 +135,27 @@ export function makeIlinkAdapter(opts: {
 
   const adapter: IlinkAdapter = {
     async sendMessage(chatId, text) {
-      const result = await sendReplyOnce(chatId, text, stateDir)
-      if (!result.ok) {
-        // Keep returning a dummy msgId for back-compat with callers that
-        // destructure blindly (e.g. askUser prompt send), but ALSO surface
-        // the error so tool handlers can tell Claude the send actually failed.
-        return { msgId: `err:${Date.now()}`, error: result.error ?? 'send failed' }
+      if (!text) return { msgId: `err:${Date.now()}`, error: 'empty text' }
+      try {
+        // Use the in-memory ctxStore / acctStore directly — sendReplyOnce
+        // re-reads context_tokens.json from disk and would miss tokens
+        // that were just captured (state-store debounces disk writes
+        // 500ms). The CLI fallback still uses sendReplyOnce since it
+        // runs out-of-process and has nothing in memory.
+        assertChatRoutable(chatId)
+        const acct = resolveAccount(chatId)
+        const ctxToken = ctxStore.get(chatId)
+        const chunks = chunk(text, MAX_TEXT_CHUNK)
+        for (const part of chunks) {
+          await ilinkSendMessage(acct.baseUrl, acct.token, botTextMessage(chatId, part, ctxToken))
+        }
+        return { msgId: `sent:${Date.now()}` }
+      } catch (err) {
+        return {
+          msgId: `err:${Date.now()}`,
+          error: err instanceof Error ? err.message : String(err),
+        }
       }
-      return { msgId: `sent:${Date.now()}` }
     },
 
     async sendFile(chatId, filePath) {
