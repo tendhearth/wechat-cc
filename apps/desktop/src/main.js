@@ -525,7 +525,17 @@ function openImageLightbox(src) {
   const lb = document.getElementById("lightbox")
   const body = document.getElementById("lightbox-body")
   if (!lb || !body) return
-  body.innerHTML = `<img class="lightbox-img" src="${src}" alt="image"/>`
+  // Build the <img> via DOM APIs instead of innerHTML interpolation —
+  // `src` originates from .wechat-image elements whose src is set from
+  // ilink-delivered attachment URLs (attacker-controllable). The old
+  // template-string sink let a crafted src with a `"` escape the
+  // attribute context and inject HTML/JS.
+  body.textContent = ""
+  const img = document.createElement("img")
+  img.className = "lightbox-img"
+  img.alt = "image"
+  img.src = src  // setter coerces; never parsed as HTML
+  body.appendChild(img)
   lb.hidden = false
   lb.setAttribute("aria-hidden", "false")
 }
