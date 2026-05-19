@@ -10,7 +10,7 @@ import { mkdirSync } from 'node:fs'
 import { makeStateStore, type StateStore } from '../state-store'
 import { makeSessionStateStore, type SessionStateStore } from '../session-state'
 import { PendingPermissions } from '../pending-permissions'
-import { unknownChatIdError } from '../../lib/send-reply'
+import { unknownChatIdError, missingContextTokenError } from '../../lib/send-reply'
 import type { Db } from '../../lib/db'
 import type { ConversationStore } from '../../core/conversation-store'
 
@@ -93,9 +93,13 @@ export function makeIlinkContext(opts: {
   }
 
   function assertChatRoutable(chatId: string): void {
-    if (!ctxStore.get(chatId) && !acctStore.get(chatId)) {
-      throw new Error(unknownChatIdError(chatId))
-    }
+    if (ctxStore.get(chatId)) return
+    // No context_token. Distinguish "totally unknown chat" from "account
+    // routing known but session token missing" — the latter is recoverable
+    // by the user sending a fresh inbound, the former needs first-contact.
+    throw new Error(
+      acctStore.get(chatId) ? missingContextTokenError(chatId) : unknownChatIdError(chatId),
+    )
   }
 
   return {

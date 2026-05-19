@@ -29,6 +29,17 @@ export function unknownChatIdError(chatId: string): string {
   return `unknown chat_id ${chatId} — no contextToken or account routing on record. The user must send a WeChat message to the bot first so the daemon can capture session state.`
 }
 
+/**
+ * Distinct from unknownChatIdError: account routing IS on record (we know
+ * which bot to send from), but no per-chat context_token is cached.
+ * ilink's sendmessage rejects without one, so retrying the network call
+ * just produces three timeouts before failing. Surface this at preflight
+ * so the caller sees the actual cause + the actionable fix.
+ */
+export function missingContextTokenError(chatId: string): string {
+  return `chat ${chatId} has account routing but no context_token cached — ilink requires the user to send a new WeChat message to the bot so the daemon can refresh the session token.`
+}
+
 function readJson<T>(path: string): T | null {
   try { return JSON.parse(readFileSync(path, 'utf8')) as T }
   catch { return null }
@@ -100,11 +111,19 @@ export async function sendReplyOnce(
 
   // ilink's sendmessage requires a per-chat context_token issued by the
   // server when the user last messaged the bot. Without it, ilink rejects
-  // the request with errcode != 0 — a confusing failure for callers that
-  // just want to send. Detect the missing token here so the error names
-  // the actual cause + the user-actionable fix.
-  if (!ctxToken && !persistedAccountId) {
-    return { ok: false, error: unknownChatIdError(chatId) }
+  // the request with errcode != 0 and a 3× retry burst before failing.
+  // Reject at preflight so the error names the actual cause + the
+  // user-actionable fix.
+  //
+  // Two preflight failure modes:
+  //   1. No account routing AND no token → totally unknown chat
+  //   2. Account routing on record but no token → session expired,
+  //      user needs to send a fresh message
+  if (!ctxToken) {
+    return {
+      ok: false,
+      error: persistedAccountId ? missingContextTokenError(chatId) : unknownChatIdError(chatId),
+    }
   }
 
   try {
