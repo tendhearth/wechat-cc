@@ -33,7 +33,12 @@ function setupDeps(opts: {
     ...(opts.defaultChatId ? { default_chat_id: opts.defaultChatId } : {}),
   })
   const logs: string[] = []
-  const dispatch = vi.fn(async () => {})
+  // dispatch returns AsyncIterable<AgentEvent>, not a Promise — the real
+  // contract. Mocking as `Promise<void>` would mask the bug that pushTick
+  // was awaiting the iterable directly without iterating (PR D fix).
+  const dispatch = vi.fn(() => ({
+    async *[Symbol.asyncIterator]() { /* empty turn — no events */ },
+  }))
   const acquire = vi.fn(async (_alias: string, _path: string, _providerId: string) => ({
     alias: 'a', path: '/p', providerId: 'claude', lastUsedAt: 0,
     dispatch, close: async () => {},

@@ -65,8 +65,17 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       `\n\n要 push：调 reply 工具，内容就是要发给用户的话。` +
       `\n不 push：直接结束这一轮，**不调用 reply**，**也不产生任何 assistant text**——不要解释你为什么不打扰、不要总结你看到的状态。沉默就是沉默。` +
       `\n不确定就选不 push（结束）。push 后写一条 memory 记下决策和意图（便于下次 tick 读到效果）。`
-    try { await handle.dispatch(tickText) }
-    catch (err) { deps.log('SCHED', `companion tick dispatch failed: ${errMsg(err)}`) }
+    // `handle.dispatch` returns AsyncIterable<AgentEvent>, not a Promise —
+    // `await` alone is a no-op (it resolves to the iterable itself without
+    // ever calling .next()). The wrapper's enter/finally hooks (inFlight
+    // counter increment, sessionStore.set on result, droppedAssistantChunks
+    // accounting) live inside the generator body and only run when the
+    // consumer iterates. Drain the iterable so those hooks fire.
+    try {
+      for await (const _ev of handle.dispatch(tickText)) { /* drain */ }
+    } catch (err) {
+      deps.log('SCHED', `companion tick dispatch failed: ${errMsg(err)}`)
+    }
   }
 
   async function introspectTick(): Promise<void> {
