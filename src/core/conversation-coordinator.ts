@@ -299,7 +299,14 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     // v0.5.9 — chatroom is a persistent session. Pull existing history
     // (from prior user msgs in this chatroom), append the new user msg,
     // and let the moderator see the whole sequence.
-    const history: ChatroomEntry[] = chatroomHistories.get(msg.chatId) ?? []
+    //
+    // PR C1 — shallow-copy the stored array before mutating: keeps each
+    // dispatch's view of history isolated from any other dispatch that
+    // happens to land in the same chat before this one writes back. The
+    // separate "lost-write across concurrent dispatches" hazard needs
+    // proper abort semantics (PR C2 — AgentSession.cancel + aborting the
+    // prior in-flight loop before overwriting inFlightAborters).
+    const history: ChatroomEntry[] = [...(chatroomHistories.get(msg.chatId) ?? [])]
     history.push({ role: 'user', text: deps.format(msg) })
 
     deps.log('COORDINATOR', `chatroom chat=${msg.chatId} → start participants=${providerA},${providerB} max=${chatroomMaxRounds} history=${history.length}`)
@@ -435,6 +442,17 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         : allText
       await deps.sendAssistantText?.(msg.chatId, `[${dn}] ${renderedText}`)
       history.push({ role: 'speaker', speaker, text: allText })
+    }
+
+    // PR C1 — if the loop ended before any speaker turn responded to this
+    // dispatch's user msg (early abort, auth_failed at round 1, speaker
+    // threw, etc.), drop the orphaned user entry so the next dispatch
+    // doesn't show the moderator a history that ends in two consecutive
+    // user entries.
+    const last = history[history.length - 1]
+    if (last && last.role === 'user') {
+      history.pop()
+      deps.log('COORDINATOR_CHATROOM', `chat=${msg.chatId} → dropped orphan user entry (no speaker turn produced)`)
     }
 
     // Persist the (possibly extended) chatroom history back to the map.
