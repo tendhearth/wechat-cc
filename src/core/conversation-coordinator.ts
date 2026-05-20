@@ -53,8 +53,8 @@ export interface ConversationCoordinatorDeps {
   /**
    * Maximum inter-agent rounds for chatroom mode (RFC 03 §4.4). Default 4.
    * Counts each speaker turn after the initial user turn. When hit, the
-   * loop forces termination and any remaining text gets the
-   * maxRoundsSuffix appended for the user.
+   * loop forces termination and the moderator's final-round prompt asks
+   * the last speaker to summarize with a 🎯 prefix.
    */
   chatroomMaxRounds?: number
   /**
