@@ -158,8 +158,14 @@ async function refreshGuardStatus() {
 
 /** @param {string} mode */
 function setMode(mode) {
+  const prevMode = state.mode
   state.mode = mode
   document.documentElement.dataset.mode = mode
+  // Show "← 返回控制台" only when wizard was entered FROM dashboard
+  // (rebind / re-scan flow). On fresh install there's nothing to go
+  // back to, so the button stays hidden.
+  const backBtn = document.getElementById("wz-back")
+  if (backBtn) backBtn.hidden = !(mode === "wizard" && prevMode === "dashboard")
   if (mode === "dashboard") {
     doctorPoller.start()
     conversationsPoller.start()
@@ -478,6 +484,7 @@ function wireEvents() {
   document.querySelectorAll("[data-action='open-wizard']").forEach(btn =>
     btn.addEventListener("click", () => setMode("wizard"))
   )
+  document.getElementById("wz-back")?.addEventListener("click", () => setMode("dashboard"))
   document.querySelectorAll("[data-action='open-dashboard']").forEach(btn =>
     btn.addEventListener("click", () => setMode("dashboard"))
   )
