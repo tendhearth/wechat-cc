@@ -12,7 +12,8 @@
  * Sessions are per-(provider, alias) and shared across chats with the
  * same alias. So the prompt is fixed-at-spawn-time and CANNOT depend on
  * a particular chat's mode. Per-chat mode-specific guidance is injected
- * into the user message envelope at dispatch time (see chatroom-protocol.ts).
+ * into the user message envelope at dispatch time (chatroom path: see
+ * dispatchChatroom in conversation-coordinator.ts).
  *
  * What we CAN customise per-session:
  *   - which provider this is (claude/codex) — affects tool naming
@@ -165,8 +166,9 @@ companion 现在的 persona（小助手 / 陪伴）影响你**怎么读 memory +
 
 function multiModeAwarenessSection(): string {
   // Per-chat mode is INJECTED into the user message envelope by the
-  // coordinator (see wrapChatroomTurn). Here we just give general
-  // awareness so the agent isn't confused when it sees those envelopes.
+  // coordinator (chatroom path: see dispatchChatroom). Here we just give
+  // general awareness so the agent isn't confused when it sees those
+  // envelopes.
   return `## 模式感知（每个 chat 独立）
 
 每个 chat_id 有自己的对话模式（用户用 \`/cc\` \`/codex\` \`/both\` \`/chat\` \`/cc + codex\` \`/codex + cc\` \`/solo\` 切换）：

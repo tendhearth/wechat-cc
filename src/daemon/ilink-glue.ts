@@ -10,7 +10,6 @@
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import type { InboundMsg } from '../core/prompt-format'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from './wechat-tool-deps'
 import { parsePermissionReply } from './pending-permissions'
 import { buildMediaItemFromFile, assertSendable } from './media'
@@ -323,10 +322,3 @@ export function makeIlinkAdapter(opts: {
 }
 
 export { parsePermissionReply }
-
-export function startLongPollLoops(_opts: {
-  accounts: Account[]
-  onInbound: (msg: InboundMsg) => Promise<void>
-}): () => Promise<void> {
-  throw new Error('startLongPollLoops: not yet implemented — sub-task 11-E')
-}

@@ -111,9 +111,3 @@ export function hideInstallStrip() {
   const strip = /** @type {HTMLElement | null} */ (document.getElementById("install-strip"))
   if (strip) strip.hidden = true
 }
-
-// Back-compat alias: any existing callsite of renderDoctorWizard
-// continues to work. Main.js will be updated to call renderSetupPage
-// directly in Task 7; do not delete this until that lands.
-/** @param {DoctorReport} report */
-export function renderDoctorWizard(report) { renderSetupPage(report) }
