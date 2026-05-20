@@ -224,4 +224,27 @@ describe('evaluateRound', () => {
     if (r.action === 'continue') expect(r.speaker).toBe('codex')
     expect(haikuEval).toHaveBeenCalledTimes(1)
   })
+
+  it('fallback at round = maxRounds still continues with synthesis prompt (🎯), not end', async () => {
+    // Moderator instructions guarantee round === maxRounds emits a synthesis
+    // turn from a speaker. When haiku fails at the last round the fallback
+    // must keep that contract — ending here would drop the synthesis the
+    // user is waiting for. The boundary is `round > maxRounds`, not `>=`.
+    const haikuEval = vi.fn().mockRejectedValue(new Error('haiku down on last round'))
+    const r = await evaluateRound(
+      {
+        round: 4, maxRounds: 4, participants: PARTICIPANTS,
+        history: hist('q',
+          { speaker: 'claude', text: 'a' }, { speaker: 'codex', text: 'b' }, { speaker: 'claude', text: 'c' },
+        ),
+      },
+      { haikuEval },
+    )
+    expect(r.action).toBe('continue')
+    if (r.action === 'continue') {
+      expect(r.speaker).toBe('codex') // alternates off lastSpeaker=claude
+      expect(r.prompt).toContain('🎯') // synthesis prompt asks for the marker
+      expect(r.reasoning).toMatch(/fallback:haiku_threw/)
+    }
+  })
 })

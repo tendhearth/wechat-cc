@@ -233,8 +233,11 @@ function peerOf(last: ProviderId | undefined, participants: [ProviderId, Provide
 
 function fallbackDecision(input: ModeratorRoundInput, lastSpeaker: ProviderId | undefined, reason: string): ModeratorDecision {
   // On any moderator failure, keep the loop progressing with forced
-  // alternation + a generic-but-functional prompt. End on max round.
-  if (input.round >= input.maxRounds) {
+  // alternation + a generic-but-functional prompt. Only force end past
+  // maxRounds; at round === maxRounds we still want a synthesis turn
+  // (genericContinuePrompt's isFinal branch emits the 🎯 ask) so the
+  // user sees the wrap-up they were waiting for.
+  if (input.round > input.maxRounds) {
     return { action: 'end', reasoning: `fallback:${reason}` }
   }
   const speaker = peerOf(lastSpeaker, input.participants)
