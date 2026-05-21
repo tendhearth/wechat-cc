@@ -9,13 +9,16 @@
  *     daemon/bootstrap/index.ts
  *   - daemon/internal-api/routes.ts     → lookup().replyPrefix for [Display] prefixing
  *
- * Module-load assertion: importing this module runs `assertMatrixComplete()`
- * at the bottom of the file. If the table is malformed (missing combination,
- * wrong row count) the import THROWS, refusing daemon boot. This is intentional
- * — it's better to fail at startup than route a wrong combination at runtime.
+ * Boot-time assertion: `assertMatrixComplete(providers)` is called from
+ * `buildBootstrap()` with the live `registry.list()` so the set of providers
+ * is derived at runtime. If any (mode × provider × permissionMode) row is
+ * missing for a registered provider, bootstrap throws — daemon refuses to
+ * start. This is intentional: better to fail at startup than route a wrong
+ * combination at runtime.
  *
- * Adding a provider: see the comment inside `assertMatrixComplete` — you
- * must edit BOTH the providers array there AND add 8 new rows to MATRIX.
+ * Adding a provider: register it on `ProviderRegistry`, then add 8 new rows
+ * to MATRIX (4 modes × 2 permission modes). The bootstrap assertion will
+ * catch any missing row at the next start.
  */
 // src/core/capability-matrix.ts
 
@@ -157,25 +160,37 @@ export function assertSupported(
   }
 }
 
-function assertMatrixComplete(): void {
+/**
+ * Verify the matrix has a row for every (mode × provider × permissionMode)
+ * combination. Called from bootstrap with the live `registry.list()` so the
+ * set of providers is derived at runtime instead of hardcoded — adding a
+ * new provider (gemini, cursor, …) to ProviderRegistry now only requires
+ * the matrix rows, not a parallel edit to this hardcoded list.
+ *
+ * Previously self-invoked at module load with `['claude','codex']`
+ * baked in. The foot-gun: a new provider would silently pass the
+ * module-load check (since the new id wasn't in the list) and only
+ * throw at first use of the missing combination — possibly in
+ * production. Moving the call to bootstrap fails-fast at boot.
+ */
+export function assertMatrixComplete(providers: ProviderId[]): void {
   const modes: Mode['kind'][] = ['solo', 'parallel', 'primary_tool', 'chatroom']
-  // IMPORTANT: This list is the canonical source of truth for "which providers
-  // have a capability row." ProviderId is an open `string` type, so TS cannot
-  // auto-detect missing rows for newly-registered providers. When you add a
-  // provider to provider-registry.ts (e.g. 'cursor', 'gemini'), you MUST:
-  //   1. Add it to this array, AND
-  //   2. Add 4 new rows to CAPABILITY_MATRIX (one per mode) × 2 (per perm) = 8 rows.
-  // Failure to update both will cause `lookup(...)` to throw at first use of the
-  // new combination instead of refusing daemon boot.
-  const providers: ProviderId[] = ['claude', 'codex']
   const perms: PermissionMode[] = ['strict', 'dangerously']
-  const expected = modes.length * providers.length * perms.length
-  if (CAPABILITY_MATRIX.length !== expected) {
-    throw new Error(`capability-matrix incomplete: have ${CAPABILITY_MATRIX.length} rows, expected ${expected}`)
-  }
+  // Note: CAPABILITY_MATRIX may contain rows for providers not in the
+  // `providers` arg (e.g., a provider added to the matrix in advance of
+  // its registry registration). We only fail if rows are MISSING for the
+  // registered providers, not if extra rows exist.
   for (const m of modes) for (const p of providers) for (const pm of perms) {
     const found = CAPABILITY_MATRIX.find(r => r.mode === m && r.provider === p && r.permissionMode === pm)
     if (!found) throw new Error(`capability-matrix missing row: mode=${m} provider=${p} perm=${pm}`)
   }
+  // Duplicate-key check: lookup() returns first match, so a duplicate
+  // would silently shadow the second copy. Defensive — catches a
+  // copy-paste error where two rows share the same (mode,provider,perm).
+  const seen = new Set<string>()
+  for (const r of CAPABILITY_MATRIX) {
+    const k = `${r.mode}|${r.provider}|${r.permissionMode}`
+    if (seen.has(k)) throw new Error(`capability-matrix duplicate row: ${k}`)
+    seen.add(k)
+  }
 }
-assertMatrixComplete()  // module-load
