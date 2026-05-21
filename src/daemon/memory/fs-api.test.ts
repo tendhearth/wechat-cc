@@ -112,20 +112,67 @@ describe('MemoryFS', () => {
       expect(() => fs.read('')).toThrow(MemoryPathError)
     })
 
-    it('rejects symlink escape via write', () => {
-      // Plant a symlink that points OUT of the sandbox, then try to write THROUGH it.
-      // Our path-based check should reject because resolve() follows the symlink.
-      // Actually, resolve() is lexical — doesn't follow symlinks. So we test that
-      // a symlink inside root pointing OUTside lets us read/write through it.
-      // Acceptable: our current impl doesn't follow symlinks for sanitization, so
-      // a malicious actor who can plant a symlink in root (i.e. already compromised)
-      // isn't what we're defending against. Document the threat model.
-      // This test just confirms normal symlink within root still works.
+    it('symlinks inside root pointing INSIDE root still work (normal use)', () => {
+      // Sanity: agent organising memory with a symlink between two
+      // sandbox subdirs is fine — neither read/write/delete should
+      // reject because both endpoints resolve to within real root.
       mkdirSync(join(root, 'real'), { recursive: true })
       symlinkSync(join(root, 'real'), join(root, 'link'))
       const fs = make()
       fs.write('link/x.md', 'hi')
       expect(fs.read('real/x.md')).toBe('hi')
+    })
+
+    it('rejects symlink ESCAPE — write/read/delete through a symlink pointing outside root (PR memfs realpath)', () => {
+      // Threat: agent with Bash (or pre-existing daemon footprint)
+      // plants a symlink inside memory/ pointing to /etc or similar.
+      // Lexical check passes (the path stays inside root after `resolve`),
+      // so the pre-PR impl silently let the write through. Now realpath
+      // check catches it.
+      const escape = mkdtempSync(join(tmpdir(), 'memfs-escape-target-'))
+      try {
+        symlinkSync(escape, join(root, 'leak'))
+        const fs = make()
+        expect(() => fs.write('leak/pwned.md', 'attacker payload')).toThrow(MemoryPathError)
+        // Plant a file via the bypass to test read/delete rejection.
+        writeFileSync(join(escape, 'pwned.md'), 'planted from outside', 'utf8')
+        expect(() => fs.read('leak/pwned.md')).toThrow(MemoryPathError)
+        expect(() => fs.delete('leak/pwned.md')).toThrow(MemoryPathError)
+      } finally {
+        rmSync(escape, { recursive: true, force: true })
+      }
+    })
+
+    it('rejects symlink escape — individual .md file IS the symlink', () => {
+      // Tighter variant: the .md path itself is a symlink to outside.
+      const escape = mkdtempSync(join(tmpdir(), 'memfs-escape-file-'))
+      const outside = join(escape, 'secret.txt')
+      writeFileSync(outside, 'secret content', 'utf8')
+      try {
+        symlinkSync(outside, join(root, 'leak.md'))
+        const fs = make()
+        expect(() => fs.read('leak.md')).toThrow(MemoryPathError)
+      } finally {
+        rmSync(escape, { recursive: true, force: true })
+      }
+    })
+
+    it('list() does not surface symlinks (escape candidates filtered out)', () => {
+      // Even if a symlink-escape is planted, list() shouldn't emit its
+      // path — agent would only get errors on subsequent read. Skipping
+      // at list time keeps the surface clean.
+      const escape = mkdtempSync(join(tmpdir(), 'memfs-escape-list-'))
+      writeFileSync(join(escape, 'a.md'), '#', 'utf8')
+      try {
+        symlinkSync(join(escape, 'a.md'), join(root, 'leak.md'))
+        const fs = make()
+        fs.write('real.md', 'hi')
+        const files = fs.list()
+        expect(files).toContain('real.md')
+        expect(files).not.toContain('leak.md')
+      } finally {
+        rmSync(escape, { recursive: true, force: true })
+      }
     })
   })
 
