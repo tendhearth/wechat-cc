@@ -429,10 +429,11 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
   // Per-chat conversation mode (RFC 03 P2). Default for new chats =
   // `conversationStore` is created earlier in this function (hoisted so
   // the canUseTool closure has a live reference). `/cc` `/codex` `/solo`
-  // commands flip individual chats; persisted in conversations.json.
-  // Caller may inject a shared instance so internal-api (which needs
-  // to look up modes for reply-prefixing in P3 parallel mode) sees
-  // the same flips. When absent, we own one rooted at <stateDir>.
+  // commands flip individual chats; persisted in `wechat-cc.db`'s
+  // `conversations` table (migrated from the legacy conversations.json
+  // in PR7). Caller may inject a shared instance so internal-api
+  // (which needs to look up modes for reply-prefixing in P3 parallel
+  // mode) sees the same flips. When absent, we own one rooted at <stateDir>.
 
   const coordinator = createConversationCoordinator({
     resolveProject: resolve,

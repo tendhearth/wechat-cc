@@ -18,6 +18,16 @@ describe('buildSystemPrompt', () => {
     expect(p).toContain('FALLBACK_REPLY')   // accurate fallback log tag (RFC 03 review #4)
   })
 
+  it('opens with `你是 ${providerId}` so the agent knows its own identity (chatroom mode peer disambiguation)', () => {
+    const pClaude = buildSystemPrompt({ ...defaults(), providerId: 'claude', peerProviderId: 'codex' })
+    expect(pClaude).toContain('你是 claude')
+    expect(pClaude).not.toContain('你是 codex')
+
+    const pCodex = buildSystemPrompt({ ...defaults(), providerId: 'codex', peerProviderId: 'claude' })
+    expect(pCodex).toContain('你是 codex')
+    expect(pCodex).not.toContain('你是 claude')
+  })
+
   it('lists every wechat-mcp tool surface (no v0.x staleness regression)', () => {
     const p = buildSystemPrompt(defaults())
     // The original v0.x prompt missed these. Verify they're back.

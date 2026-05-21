@@ -9,13 +9,16 @@
  *     daemon/bootstrap/index.ts
  *   - daemon/internal-api/routes.ts     → lookup().replyPrefix for [Display] prefixing
  *
- * Module-load assertion: importing this module runs `assertMatrixComplete()`
- * at the bottom of the file. If the table is malformed (missing combination,
- * wrong row count) the import THROWS, refusing daemon boot. This is intentional
- * — it's better to fail at startup than route a wrong combination at runtime.
+ * Boot-time assertion: `assertMatrixComplete(providers)` is called from
+ * `buildBootstrap()` with the live `registry.list()` so the set of providers
+ * is derived at runtime. If any (mode × provider × permissionMode) row is
+ * missing for a registered provider, bootstrap throws — daemon refuses to
+ * start. This is intentional: better to fail at startup than route a wrong
+ * combination at runtime.
  *
- * Adding a provider: see the comment inside `assertMatrixComplete` — you
- * must edit BOTH the providers array there AND add 8 new rows to MATRIX.
+ * Adding a provider: register it on `ProviderRegistry`, then add 8 new rows
+ * to MATRIX (4 modes × 2 permission modes). The bootstrap assertion will
+ * catch any missing row at the next start.
  */
 // src/core/capability-matrix.ts
 
@@ -173,7 +176,6 @@ export function assertSupported(
 export function assertMatrixComplete(providers: ProviderId[]): void {
   const modes: Mode['kind'][] = ['solo', 'parallel', 'primary_tool', 'chatroom']
   const perms: PermissionMode[] = ['strict', 'dangerously']
-  const expected = modes.length * providers.length * perms.length
   // Note: CAPABILITY_MATRIX may contain rows for providers not in the
   // `providers` arg (e.g., a provider added to the matrix in advance of
   // its registry registration). We only fail if rows are MISSING for the
@@ -182,7 +184,13 @@ export function assertMatrixComplete(providers: ProviderId[]): void {
     const found = CAPABILITY_MATRIX.find(r => r.mode === m && r.provider === p && r.permissionMode === pm)
     if (!found) throw new Error(`capability-matrix missing row: mode=${m} provider=${p} perm=${pm}`)
   }
-  if (CAPABILITY_MATRIX.length < expected) {
-    throw new Error(`capability-matrix incomplete: have ${CAPABILITY_MATRIX.length} rows, expected at least ${expected} for ${providers.length} provider(s)`)
+  // Duplicate-key check: lookup() returns first match, so a duplicate
+  // would silently shadow the second copy. Defensive — catches a
+  // copy-paste error where two rows share the same (mode,provider,perm).
+  const seen = new Set<string>()
+  for (const r of CAPABILITY_MATRIX) {
+    const k = `${r.mode}|${r.provider}|${r.permissionMode}`
+    if (seen.has(k)) throw new Error(`capability-matrix duplicate row: ${k}`)
+    seen.add(k)
   }
 }
