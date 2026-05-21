@@ -52,6 +52,7 @@ export const MemoryListResponse = z.union([
   z.object({ error: z.string() }),
 ])
 
+
 // ── GET /v1/projects/list ────────────────────────────────────────────────────
 // Legacy wire shape: array returned directly (not wrapped).
 // Element shape from WechatProjectsDep.list() in wechat-tool-deps.ts.

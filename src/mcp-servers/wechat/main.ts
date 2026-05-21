@@ -155,7 +155,6 @@ server.registerTool(
   },
 )
 
-
 // ─── projects + user name (RFC 03 P1.B B3) ───────────────────────────────
 // Legacy descriptions kept verbatim — agent's mental model unchanged.
 
@@ -511,14 +510,27 @@ function passthroughErrorResult(err: unknown, tool: string): { content: Array<{ 
   // block. Keeps the legacy "tool never throws" promise that the
   // in-process versions enforced — agent sees a structured failure
   // result, not an MCP exception.
-  const detail = formatError(err)
-  logErr(`${tool} transport failed: ${detail}`)
-  return { content: [{ type: 'text', text: JSON.stringify({ error: detail }) }] }
+  //
+  // STDERR log gets the short, body-free form (status + endpoint only)
+  // — Phase 4 polish. The downstream JSON returned to the agent still
+  // carries the full detail; we just don't spam channel-log readers
+  // with redacted-feeling response bodies.
+  logErr(`${tool} transport failed: ${formatErrorShort(err)}`)
+  return { content: [{ type: 'text', text: JSON.stringify({ error: formatError(err) }) }] }
 }
 
 function formatError(err: unknown): string {
   if (err instanceof InternalApiError) {
     return `internal-api ${err.status}: ${JSON.stringify(err.body).slice(0, 200)}`
+  }
+  return err instanceof Error ? err.message : String(err)
+}
+
+function formatErrorShort(err: unknown): string {
+  // Body-free form for stderr logging — omits response payload so
+  // sensitive content doesn't end up in operator log scrollback.
+  if (err instanceof InternalApiError) {
+    return `internal-api ${err.status} ${err.path}`
   }
   return err instanceof Error ? err.message : String(err)
 }
