@@ -55,15 +55,22 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
     }
   }
 
+  let lastQueryOptions: unknown = undefined
   return {
-    query: ({ prompt }: { prompt: AsyncIterable<unknown> }) => {
-      ;(async () => {
-        for await (const m of prompt) sentMessages.push(m)
-      })()
+    query: ({ prompt, options }: { prompt: AsyncIterable<unknown> | string; options?: unknown }) => {
+      lastQueryOptions = options
+      // cheapEval passes prompt as a string, not an iterable; only iterate
+      // when it actually has Symbol.asyncIterator.
+      if (typeof prompt !== 'string' && (prompt as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator]) {
+        ;(async () => {
+          for await (const m of prompt as AsyncIterable<unknown>) sentMessages.push(m)
+        })()
+      }
       return makeStream()
     },
     __test_yield: (msg: unknown) => yieldFn?.(msg),
     __test_end: () => endFn?.(),
+    __test_last_options: () => lastQueryOptions,
     __test_sent: () => sentMessages,
     __test_interrupt_count: () => interruptCount,
     __test_reset_interrupt: () => { interruptCount = 0 },
@@ -339,9 +346,32 @@ describe('claude-agent-provider', () => {
       })
       ;(sdk as unknown as { __test_end: () => void }).__test_end()
       expect(await cheapPromise).toBe('ok')
+      // Verify the env value actually reached query() — otherwise a
+      // regression that drops the env read would still pass.
+      const lastOpts = (sdk as unknown as { __test_last_options: () => unknown }).__test_last_options()
+      expect((lastOpts as { model?: string })?.model).toBe('claude-haiku-99-experimental')
     } finally {
       if (prior === undefined) delete process.env['WECHAT_CLAUDE_CHEAP_MODEL']
       else process.env['WECHAT_CLAUDE_CHEAP_MODEL'] = prior
+    }
+  })
+
+  it('cheapEval defaults to claude-haiku-4-5 when no env override (PR F)', async () => {
+    const prior = process.env['WECHAT_CLAUDE_CHEAP_MODEL']
+    delete process.env['WECHAT_CLAUDE_CHEAP_MODEL']
+    try {
+      const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+      const cheapPromise = provider.cheapEval?.('hi')
+      await new Promise(r => setTimeout(r, 0))
+      ;(sdk as unknown as { __test_yield: (m: unknown) => void }).__test_yield({
+        type: 'result', subtype: 'success', session_id: 'c3', num_turns: 1, duration_ms: 0,
+      })
+      ;(sdk as unknown as { __test_end: () => void }).__test_end()
+      await cheapPromise
+      const lastOpts = (sdk as unknown as { __test_last_options: () => unknown }).__test_last_options()
+      expect((lastOpts as { model?: string })?.model).toBe('claude-haiku-4-5')
+    } finally {
+      if (prior !== undefined) process.env['WECHAT_CLAUDE_CHEAP_MODEL'] = prior
     }
   })
 

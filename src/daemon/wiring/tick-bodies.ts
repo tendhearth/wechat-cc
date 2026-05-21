@@ -79,12 +79,17 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
   async function introspectTick(): Promise<void> {
     const chatId = resolveIntrospectChatId(deps.stateDir)
     if (!chatId) { deps.log('INTROSPECT', 'skip tick — no default_chat_id'); return }
-    // PR F — resolve cheap eval per tick via the registry. Picks the
-    // cheapest available provider (claude haiku, then codex-mini, then
-    // anything else registered). null if no registered provider
-    // implements cheapEval → skip the tick with a log line instead of
-    // hard-failing. Per-tick (not boot-time) so a user who installs
-    // claude after daemon boot picks it up on the next 24h tick.
+    // PR F — resolve cheap eval via the registry. Picks the cheapest
+    // available provider (claude haiku, then codex-mini, then anything
+    // else registered). null if no registered provider implements
+    // cheapEval → skip the tick with a log line instead of hard-failing.
+    //
+    // Per-tick resolution (not boot-time) is forward-looking for a
+    // future where ProviderRegistry supports hot registration; TODAY a
+    // user installing a new provider still needs to restart the daemon
+    // (registry is built once at bootstrap) AND the codex provider's
+    // cheapModel was resolved at provider construction so `codex login`
+    // unlocking a cheaper tier requires a restart too.
     const sdkEval = deps.boot.registry.getCheapEval()
     if (!sdkEval) {
       deps.log('INTROSPECT', 'skip tick — no registered provider implements cheapEval')

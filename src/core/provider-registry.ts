@@ -65,17 +65,20 @@ export function createProviderRegistry(): ProviderRegistry {
       return Array.from(entries.keys())
     },
     getCheapEval() {
-      // Preferred providers first
+      // Preferred providers first. Both shipped providers' cheapEval
+      // implementations are arrow-like (close over `opts` via closure,
+      // never reference `this`), so we return the function directly
+      // without binding. If a future provider needs `this`, wrap with
+      // `.bind(entry.provider)` at that callsite.
       for (const id of CHEAP_EVAL_PREFERENCE) {
-        const entry = entries.get(id)
-        const ce = entry?.provider.cheapEval
-        if (ce) return ce.bind(entry.provider)
+        const ce = entries.get(id)?.provider.cheapEval
+        if (ce) return ce
       }
       // Any other registered provider — order doesn't strictly matter,
       // we just need SOMETHING that works.
       for (const [id, entry] of entries) {
         if (CHEAP_EVAL_PREFERENCE.includes(id)) continue
-        if (entry.provider.cheapEval) return entry.provider.cheapEval.bind(entry.provider)
+        if (entry.provider.cheapEval) return entry.provider.cheapEval
       }
       return null
     },

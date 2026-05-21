@@ -379,9 +379,13 @@ describe('Codex agent provider', () => {
     const factory: CodexFactory = (args) => { factoryArgs.push(args); return fake.codex }
     const p = createCodexAgentProvider({ codexFactory: factory })
     await p.spawn({ alias: 'a', path: '/p' })
-    expect(factoryArgs).toHaveLength(1)
-    const a = factoryArgs[0] as Record<string, unknown>
-    expect(a.apiKey).toBeUndefined()
+    // PR F: factory is called twice — once at provider construction for
+    // the hoisted cheapEval Codex instance, once per spawn() call.
+    // Neither call should pass apiKey.
+    expect(factoryArgs.length).toBeGreaterThanOrEqual(1)
+    for (const args of factoryArgs) {
+      expect((args as Record<string, unknown>).apiKey).toBeUndefined()
+    }
   })
 
   it('forwards codexPathOverride when provided', async () => {
