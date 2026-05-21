@@ -53,8 +53,51 @@ export interface AgentSession {
   close(): Promise<void>
 }
 
+/**
+ * One-shot LLM eval used for routing / observation / decision flows that
+ * don't need a full session (no tools, no memory, no chat history).
+ *
+ * Each provider implements with its cheapest practical model + reasoning
+ * effort. Latency target ≤ 5 s for ~500-token prompts; cost target
+ * ≪ $0.01 per call. Replaces the prior hardcoded `claude-haiku-4-5`
+ * callsites in chatroom moderator + companion introspect.
+ */
+export type CheapEval = (prompt: string) => Promise<string>
+
 export interface AgentProvider {
   spawn(project: AgentProject, opts?: { resumeSessionId?: string }): Promise<AgentSession>
+  /**
+   * Optional one-shot eval. Coordinators that need cheap routing /
+   * decision LLM calls should resolve via `ProviderRegistry.getCheapEval()`
+   * instead of calling this directly — the registry picks the cheapest
+   * available provider's implementation. Missing implementation means
+   * the provider doesn't have a lightweight one-shot path; callers
+   * should fall back gracefully (skip the eval-driven feature).
+   */
+  cheapEval?: CheapEval
+}
+
+/**
+ * Shared sentinel detector for the Claude binary's "not logged in" /
+ * Codex's auth-failure markers when surfaced as the response text of a
+ * cheapEval call. Lifted out of bootstrap/haiku-eval so all callers
+ * (chatroom moderator + companion introspect) handle auth_failed
+ * consistently — throw, let the caller decide on fallback.
+ *
+ * Regex is INTENTIONALLY narrow — only the exact phrases the binaries
+ * emit on credential failure. Earlier draft included bare
+ * `OPENAI_API_KEY` but that fires on legitimate LLM responses that
+ * happen to quote the env-var name ("what does OPENAI_API_KEY do?" in
+ * the moderator's view, "remember: put OPENAI_API_KEY in .env" in an
+ * introspect memory snapshot). Stick to error-shape phrases only.
+ */
+const AUTH_FAIL_RE = /(Please run \/login|Not logged in|not authenticated|401 unauthorized|please run `?codex login|OPENAI_API_KEY (?:not|is not|missing|required)|auth(?:entication)?\s+(?:expired|failed))/i
+
+export function assertNotAuthFailed(text: string, log: (tag: string, line: string) => void, source: string): void {
+  if (AUTH_FAIL_RE.test(text)) {
+    log('AUTH_FAILED', `${source} credentials stale: ${text.slice(0, 160)}`)
+    throw new Error(`auth_failed: ${text.slice(0, 120)}`)
+  }
 }
 
 /**

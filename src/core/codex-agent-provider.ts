@@ -1,5 +1,7 @@
 import { Codex, type Thread, type ThreadEvent, type ThreadItem } from '@openai/codex-sdk'
+import { tmpdir } from 'node:os'
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession } from './agent-provider'
+import { resolveCodexCheapModel } from './codex-cheap-model'
 
 /**
  * codex-agent-provider — Codex SDK companion to claude-agent-provider, using
@@ -92,8 +94,47 @@ export interface CodexAgentProviderOptions {
 
 export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): AgentProvider {
   const factory: CodexFactory = opts.codexFactory ?? ((args) => new Codex(args))
+  // Resolve once at provider construction — auto-detect picks up new
+  // model cache entries on next daemon restart, matching how the user
+  // adds models (codex login → cache refreshes → restart daemon).
+  const cheapModel = resolveCodexCheapModel()
+  // Hoisted Codex instance reused across every cheapEval call. The
+  // Codex constructor itself does NOT spawn a CLI subprocess (only
+  // startThread + run/runStreamed do), so a single instance is safe to
+  // share. Without this hoist, the chatroom moderator's 3-5 cheapEval
+  // calls per /chat dispatch each constructed a fresh Codex →
+  // measurable cold-start overhead per round.
+  const cheapCodex = factory({
+    ...(opts.codexPathOverride ? { codexPathOverride: opts.codexPathOverride } : {}),
+  })
 
   return {
+    async cheapEval(prompt: string): Promise<string> {
+      // One-shot eval via an ephemeral thread. Minimal everything — no
+      // MCP, no network, no shell, no codebase context. Used by chatroom
+      // moderator + companion introspect via ProviderRegistry.getCheapEval().
+      const thread = cheapCodex.startThread({
+        model: cheapModel,
+        modelReasoningEffort: 'minimal',
+        sandboxMode: 'read-only',
+        approvalPolicy: 'never',
+        webSearchEnabled: false,
+        webSearchMode: 'disabled',
+        networkAccessEnabled: false,
+        workingDirectory: tmpdir(),
+        skipGitRepoCheck: true,
+      })
+      const turn = await thread.run(prompt)
+      // Concatenate agent_message items — that's the assistant's text
+      // output. Reasoning items and tool calls are filtered out.
+      const parts: string[] = []
+      for (const item of turn.items as ThreadItem[]) {
+        if (item.type === 'agent_message') {
+          parts.push((item as ThreadItem & { text: string }).text)
+        }
+      }
+      return parts.join('')
+    },
     async spawn(project: AgentProject, spawnOpts?: { resumeSessionId?: string }): Promise<AgentSession> {
       const config: Record<string, unknown> = {}
       if (opts.mcpServers) {
