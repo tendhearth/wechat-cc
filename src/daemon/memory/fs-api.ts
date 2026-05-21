@@ -16,7 +16,7 @@
  */
 
 import {
-  existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync,
+  existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
@@ -54,6 +54,12 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
 
   if (!existsSync(root)) mkdirSync(root, { recursive: true, mode: 0o700 })
 
+  // Resolve root through any symlinks ONCE at construction. All
+  // realpath-based checks compare against this anchor so that if the
+  // operator's memory/ dir is itself a symlink, files written through
+  // it still pass.
+  const realRoot = realpathSync(root)
+
   function resolveSafe(relPath: string): string {
     if (!relPath || typeof relPath !== 'string') throw new MemoryPathError('path is required')
     if (relPath.length > 500) throw new MemoryPathError('path too long (max 500 chars)')
@@ -77,6 +83,52 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
     return joined
   }
 
+  /**
+   * Symlink-aware second-stage check. Runs AFTER `resolveSafe` (which
+   * is purely lexical) to catch the case where the lexical path is
+   * inside root but resolves through a symlink to somewhere outside.
+   *
+   * Threat: an agent with Bash access (or a compromised account dir)
+   * plants `memory/leak.md → /etc/passwd`. Lexical resolve happily
+   * accepts the read; realpath check rejects it.
+   *
+   * `mustExist=false` is for the write path: the file doesn't exist
+   * yet, so we realpath the PARENT directory and rebuild the candidate
+   * full path against the real parent. If even the parent doesn't
+   * exist yet, walk up until we find an existing ancestor and
+   * realpath that.
+   */
+  function assertWithinRealRoot(joinedPath: string, mustExist: boolean): void {
+    let real: string
+    try {
+      if (mustExist || existsSync(joinedPath)) {
+        real = realpathSync(joinedPath)
+      } else {
+        // Walk up to the nearest existing ancestor, realpath it, then
+        // rebuild the candidate path. Handles arbitrarily deep
+        // not-yet-created subdirs in write paths.
+        let cursor = joinedPath
+        const suffixParts: string[] = []
+        while (!existsSync(cursor)) {
+          const parent = dirname(cursor)
+          if (parent === cursor) throw new MemoryPathError(`unable to resolve ancestor: ${joinedPath}`)
+          suffixParts.unshift(cursor.slice(parent.length + 1))
+          cursor = parent
+        }
+        const realAncestor = realpathSync(cursor)
+        real = suffixParts.length > 0 ? join(realAncestor, ...suffixParts) : realAncestor
+      }
+    } catch (err) {
+      if (err instanceof MemoryPathError) throw err
+      // ELOOP, EACCES, other realpath failures — treat as escape.
+      const code = (err as NodeJS.ErrnoException).code ?? 'UNKNOWN'
+      throw new MemoryPathError(`realpath failed (${code}): ${joinedPath}`)
+    }
+    if (real !== realRoot && !real.startsWith(realRoot + sep)) {
+      throw new MemoryPathError(`escape via symlink: ${joinedPath} → ${real}`)
+    }
+  }
+
   function extOf(p: string): string {
     const m = p.match(/\.[^./\\]+$/)
     return m ? m[0].toLowerCase() : ''
@@ -96,6 +148,7 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
       const full = resolveSafe(relPath)
       checkExt(full)
       if (!existsSync(full)) return null
+      assertWithinRealRoot(full, true)
       return readFileSync(full, 'utf8')
     },
 
@@ -109,6 +162,10 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
       }
       const dir = dirname(full)
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
+      // Symlink check AFTER mkdirSync so the parent definitely exists
+      // and realpathSync(parent) succeeds; check the candidate full
+      // path (which may not yet exist).
+      assertWithinRealRoot(full, false)
       const tmp = `${full}.tmp-${process.pid}-${Date.now()}`
       writeFileSync(tmp, content, { mode: 0o600, encoding: 'utf8' })
       renameSync(tmp, full)
@@ -117,6 +174,9 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
     list(relDir) {
       const full = relDir ? resolveSafe(relDir) : root
       if (!existsSync(full)) return []
+      // The starting directory must itself be within real root (handles
+      // `relDir` pointing at a symlinked escape dir).
+      try { assertWithinRealRoot(full, true) } catch { return [] }
       const out: string[] = []
       const stack: string[] = [full]
       while (stack.length > 0) {
@@ -127,6 +187,11 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
           // Skip hidden entries and tmp files from interrupted atomic writes
           if (entry.name.startsWith('.') || entry.name.includes('.tmp-')) continue
           const p = join(dir, entry.name)
+          // Don't follow symlinks during list — a symlink inside root
+          // pointing outside would surface paths that read() will
+          // (now) reject. Quietly skip the entry rather than emit a
+          // path that fails to fetch.
+          if (entry.isSymbolicLink()) continue
           if (entry.isDirectory()) stack.push(p)
           else if (entry.isFile() && exts.has(extOf(entry.name))) {
             // Normalize to POSIX so the public API (paths shown to Claude
@@ -141,7 +206,9 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
     delete(relPath) {
       const full = resolveSafe(relPath)
       checkExt(full)
-      if (existsSync(full)) unlinkSync(full)
+      if (!existsSync(full)) return
+      assertWithinRealRoot(full, true)
+      unlinkSync(full)
     },
   }
 }
