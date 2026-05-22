@@ -144,10 +144,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     shutdown,
     pollingReconcile: pollingLcRef ? () => pollingLcRef!.reconcile() : undefined,
     fireTick: async (kind, at) => {
-      if (!ticksRef) throw new Error('[wechat-cc] fireTick called before daemon startup completed')
       const nowIso = at.toISOString()
-      if (kind === 'push') await ticksRef.pushTick({ nowIso })
-      else await ticksRef.introspectTick({ nowIso })
+      if (kind === 'push') await ticksRef!.pushTick({ nowIso })
+      else await ticksRef!.introspectTick({ nowIso })
     },
   }
 }
