@@ -7,6 +7,7 @@ import { startEvalDaemon, type EvalDaemon } from './daemon-shim'
 import { parseIso } from './clock'
 import { captureSnapshot, type StateSnapshot } from './snapshot'
 import { captureProbe } from './probes'
+import { runAssertions } from './assertions'
 
 export interface EventResult {
   index: number
@@ -99,9 +100,17 @@ export async function replay(trajectory: Trajectory): Promise<EventResult[]> {
 
       const db = openDb({ path: join(daemon.stateDir, 'wechat-cc.db') })
       try {
-        result.snapshot = await captureSnapshot({
+        const snap = await captureSnapshot({
           stateDir: daemon.stateDir, db, chatId: trajectory.contact.chat_id, ilink: daemon.ilink,
         })
+        result.snapshot = snap
+        if (event.kind === 'probe' && result.actual !== undefined) {
+          result.assertions = runAssertions({
+            expected: event.expected,
+            actual: result.actual,
+            snapshot: snap,
+          })
+        }
       } finally { db.close() }
 
       results.push(result)
