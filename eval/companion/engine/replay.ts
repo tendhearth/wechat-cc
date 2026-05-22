@@ -6,6 +6,7 @@ import type { Trajectory } from './trajectory'
 import { startEvalDaemon, type EvalDaemon } from './daemon-shim'
 import { parseIso } from './clock'
 import { captureSnapshot, type StateSnapshot } from './snapshot'
+import { captureProbe } from './probes'
 
 export interface EventResult {
   index: number
@@ -90,7 +91,7 @@ export async function replay(trajectory: Trajectory): Promise<EventResult[]> {
             ? { decision: 'send', ...(newOnes[newOnes.length - 1]?.text !== undefined ? { text: newOnes[newOnes.length - 1]!.text! } : {}) }
             : { decision: 'silent' }
         } else if (event.kind === 'probe') {
-          result.actual = await capturedActualForProbe(event, ctx)
+          result.actual = await captureProbe(event, ctx)
         }
       } catch (err) {
         result.actual = { kind: 'state', error: err instanceof Error ? err.message : String(err) }
@@ -141,10 +142,3 @@ function seedObservations(stateDir: string, trajectory: Trajectory): void {
   } finally { db.close() }
 }
 
-// Placeholder — Task 10 replaces this with the real probe capture per probe_kind.
-async function capturedActualForProbe(
-  _event: Extract<Trajectory['events'][number], { kind: 'probe' }>,
-  _ctx: ReplayContext,
-): Promise<ProbeActual> {
-  return { kind: 'state' }
-}
