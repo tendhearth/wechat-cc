@@ -33,3 +33,32 @@ describe('registerCompanionIntrospect', () => {
     expect(lc.name).toBe('companion-introspect')
   })
 })
+
+describe('intervalMs override', () => {
+  it('honors an intervalMs override (push)', () => {
+    const onTick = vi.fn(async () => {})
+    // SAFE_INFINITY-style large value so the scheduler never fires within the test.
+    const lc = registerCompanionPush({
+      shouldRun: () => true,
+      log: () => {},
+      onTick,
+      intervalMs: 2 ** 31 - 1,
+    })
+    // No assertion on tick count — just verify the call doesn't crash and the
+    // scheduler accepts the override. setTimeout with INT32_MAX is well-formed.
+    expect(lc.name).toBe('companion-push')
+    return lc.stop()
+  })
+
+  it('honors an intervalMs override (introspect)', () => {
+    const onTick = vi.fn(async () => {})
+    const lc = registerCompanionIntrospect({
+      shouldRun: () => true,
+      log: () => {},
+      onTick,
+      intervalMs: 2 ** 31 - 1,
+    })
+    expect(lc.name).toBe('companion-introspect')
+    return lc.stop()
+  })
+})

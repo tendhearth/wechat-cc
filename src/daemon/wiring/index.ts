@@ -30,6 +30,8 @@ export interface WireMainOpts {
   /** `--dangerously` flag — read by startup-sweeps for notification text. */
   dangerously: boolean
   log: (tag: string, line: string, fields?: Record<string, unknown>) => void
+  /** Forwarded to buildLifecycleDeps — eval harness override. */
+  schedulerIntervalMs?: number
 }
 
 export interface WiredDeps {

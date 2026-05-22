@@ -22,7 +22,17 @@ import { buildInboundPipeline } from './inbound/build'
 import { runStartupSweeps } from './startup-sweeps'
 import { wireMain } from './wiring'
 
-export interface BootDaemonOpts { stateDir: string; dangerously: boolean }
+export interface BootDaemonOpts {
+  stateDir: string
+  dangerously: boolean
+  /**
+   * Eval-harness override — when set, both companion schedulers use this
+   * interval (ms) instead of the production defaults. Pass 2 ** 31 - 1 to
+   * suppress auto-fire so the engine drives ticks with fireTick().
+   * Production callers (cli `run`, signal handlers) never set this.
+   */
+  schedulerIntervalMs?: number
+}
 export interface DaemonHandle { shutdown(): Promise<void>; pollingReconcile?(): Promise<void> }
 
 export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
@@ -88,7 +98,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // deps.conversation at request time, so this late assignment is safe.
     internalApi.setConversation({ setMode: (chatId, mode) => boot.coordinator.setMode(chatId, mode) })
     // 3. main-wiring builds all deps for pipeline + lifecycles
-    const wired = wireMain({ stateDir, db, ilink, accounts, boot, dangerously, log: (t, l) => log(t, l) })
+    const wired = wireMain({
+      stateDir, db, ilink, accounts, boot, dangerously,
+      log: (t, l) => log(t, l),
+      ...(opts.schedulerIntervalMs !== undefined ? { schedulerIntervalMs: opts.schedulerIntervalMs } : {}),
+    })
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
     wireRef(wired.refs.pipeline, pipeline)
     // 4. register lifecycles (LIFO stop = startup order reversed)
