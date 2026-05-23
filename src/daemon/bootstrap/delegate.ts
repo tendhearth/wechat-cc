@@ -102,10 +102,18 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
     try {
       session = await provider.spawn(
         { alias: '_delegate', path: cwd ?? deps.stateDir },
-        // Hard-coded admin tier — delegate is daemon-initiated, not chat-initiated,
-        // so no chat-driven tier exists. Task 9/10 may revisit if delegate needs
-        // its own tighter posture.
-        { tierProfile: TIER_PROFILES.admin },
+        // Trusted tier preserves the pre-Task-6 delegate posture:
+        //   - Claude side: permissionMode='default' with no canUseTool wiring →
+        //     equivalent to the prior delegate (no per-tool prompts because the
+        //     delegate path never set canUseTool; auto-allow inside the SDK).
+        //   - Codex side: sandboxMode='workspace-write' + approvalPolicy='never'
+        //     → exactly the prior delegate codex config (writes constrained to
+        //     cwd, no UI prompts).
+        // Admin tier would have moved codex to danger-full-access — a regression
+        // from the original "read-mostly" delegate stance. If a future task
+        // wants a tighter delegate posture (e.g. read-only), add a dedicated
+        // DELEGATE_PROFILE alongside TIER_PROFILES.
+        { tierProfile: TIER_PROFILES.trusted },
       )
       const result = await collectTurn(session.dispatch(prompt))
       const response = result.assistantText.join('\n').trim()
