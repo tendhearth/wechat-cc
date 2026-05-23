@@ -38,3 +38,33 @@ export function tierProfileToCursorSdkOpts(tp: TierProfile): CursorTierSdkOpts {
   }
   return { sandboxOptions: { enabled: true } }
 }
+
+/**
+ * Parse Cursor's tool name into { server?, tool } for AgentEvent.
+ *
+ * Cursor SDK docs say "tool call schema is not stable" — the exact
+ * format of SDKToolUseMessage.name is unspecified. Handle multiple
+ * plausible formats; fall back to no-server if no known MCP server
+ * name appears as a prefix.
+ *
+ * First successful tool call from Cursor logs the observed format so
+ * the implementer notices if it diverges (see cursor provider's
+ * dispatch loop).
+ */
+export function mapCursorToolName(
+  rawName: string,
+  mcpServerNames: ReadonlySet<string>,
+): { server?: string; tool: string } {
+  // Anthropic-style: mcp__<server>__<tool>
+  const m = /^mcp__([^_]+)__(.+)$/.exec(rawName)
+  if (m && mcpServerNames.has(m[1]!)) return { server: m[1], tool: m[2]! }
+  // Alternate separator forms
+  for (const sep of ['__', ':', '/']) {
+    const i = rawName.indexOf(sep)
+    if (i > 0 && mcpServerNames.has(rawName.slice(0, i))) {
+      return { server: rawName.slice(0, i), tool: rawName.slice(i + sep.length) }
+    }
+  }
+  // Built-in tool or unrecognized — no server
+  return { tool: rawName }
+}
