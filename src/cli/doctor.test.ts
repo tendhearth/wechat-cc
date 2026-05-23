@@ -260,6 +260,110 @@ describe('doctor installer JSON', () => {
     expect(report.wslDetected).toBe(false)
   })
 
+  // ── Cursor SDK probe (Task 14 — Cursor agent backend support) ───────────
+  // Cursor has no PATH binary (unlike claude/codex CLIs); it's an SDK loaded
+  // via dynamic import. Doctor reports apiKeySet + sdkInstalled so the
+  // wizard and JSON consumers can mirror the gate that bootstrap actually
+  // applies before registering the cursor provider.
+
+  it('reports cursor with apiKeySet + sdkInstalled when both are present', () => {
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: (cmd) => `/bin/${cmd}`,
+      probeCursor: () => ({ apiKeySet: true, sdkInstalled: true }),
+      readAccounts: () => [],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }),
+      readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      daemon: () => ({ alive: false, pid: null }),
+      service: missingSystemd,
+    })
+    expect(report.checks.cursor.ok).toBe(true)
+    expect(report.checks.cursor.apiKeySet).toBe(true)
+    expect(report.checks.cursor.sdkInstalled).toBe(true)
+    expect(report.checks.cursor.fix).toBeUndefined()
+    // Non-active cursor (provider=claude) does NOT contribute install_cursor
+    expect(report.nextActions).not.toContain('install_cursor')
+  })
+
+  it('cursor.ok = false when API key is set but SDK is missing — fix hints at install', () => {
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: (cmd) => `/bin/${cmd}`,
+      probeCursor: () => ({ apiKeySet: true, sdkInstalled: false }),
+      readAccounts: () => [],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }),
+      readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      daemon: () => ({ alive: false, pid: null }),
+      service: missingSystemd,
+    })
+    expect(report.checks.cursor.ok).toBe(false)
+    expect(report.checks.cursor.severity).toBe('soft')  // not the active provider
+    expect(report.checks.cursor.fix?.command).toBe('bun add @cursor/sdk')
+  })
+
+  it('cursor.ok = false when SDK is installed but API key is missing — fix hints at env var', () => {
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: (cmd) => `/bin/${cmd}`,
+      probeCursor: () => ({ apiKeySet: false, sdkInstalled: true }),
+      readAccounts: () => [],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }),
+      readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      daemon: () => ({ alive: false, pid: null }),
+      service: missingSystemd,
+    })
+    expect(report.checks.cursor.ok).toBe(false)
+    expect(report.checks.cursor.fix?.action).toContain('CURSOR_API_KEY')
+  })
+
+  it('provider=cursor + cursorOk=false → provider check is hard, install_cursor in nextActions', () => {
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: () => null,  // no claude/codex on PATH — should be irrelevant for cursor
+      probeCursor: () => ({ apiKeySet: false, sdkInstalled: false }),
+      readAccounts: () => [],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }),
+      readAgentConfig: () => ({ provider: 'cursor', cursorModel: 'cursor-small', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      daemon: () => ({ alive: false, pid: null }),
+      service: missingSystemd,
+    })
+    expect(report.checks.cursor.severity).toBe('hard')
+    expect(report.checks.provider.ok).toBe(false)
+    expect(report.checks.provider.severity).toBe('hard')
+    expect(report.checks.provider.fix?.action).toContain('CURSOR_API_KEY')
+    expect(report.nextActions).toContain('install_cursor')
+    // install_claude / install_codex should NOT appear when cursor is selected
+    expect(report.nextActions).not.toContain('install_claude')
+    expect(report.nextActions).not.toContain('install_codex')
+  })
+
+  it('provider=cursor + cursorOk=true → provider check passes despite missing claude/codex binaries', () => {
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: () => null,
+      probeCursor: () => ({ apiKeySet: true, sdkInstalled: true }),
+      readAccounts: () => [{ id: 'b', botId: 'b', userId: 'u', baseUrl: 'x' }],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: ['u'] }),
+      readAgentConfig: () => ({ provider: 'cursor', cursorModel: 'cursor-small', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      daemon: () => ({ alive: true, pid: 1 }),
+      service: installedSystemd,
+    })
+    expect(report.checks.provider.ok).toBe(true)
+    expect(report.checks.provider.provider).toBe('cursor')
+    expect(report.checks.provider.binaryPath).toBeNull()
+    expect(report.nextActions).not.toContain('install_cursor')
+  })
+
   it('default runtime is "source" (back-compat for callers that omit it)', () => {
     const report = analyzeDoctor({
       stateDir: '/state',

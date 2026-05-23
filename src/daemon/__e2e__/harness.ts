@@ -18,7 +18,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { startFakeIlink, type FakeIlinkHandle, type OutboundMsg } from './fake-ilink-server'
-import { installFakeClaude, installClaudeSpawnRecorder, installFakeCodex, installCodexSpawnRecorder, installFakeModerator, type FakeSdkScript, type ModeratorScript } from './fake-sdk'
+import { installFakeClaude, installClaudeSpawnRecorder, installFakeCodex, installCodexSpawnRecorder, installFakeCursor, installCursorSpawnRecorder, installFakeModerator, type FakeSdkScript, type ModeratorScript } from './fake-sdk'
 // Side-effect import: registers vi.mock('../media') so attachments
 // materialize to local stub files instead of hitting the real ilink CDN.
 // MUST come before bootDaemon imports to take effect.
@@ -37,6 +37,7 @@ export interface TestDaemonAccount {
 export interface TestDaemonOpts {
   claudeScript?: FakeSdkScript
   codexScript?: FakeSdkScript
+  cursorScript?: FakeSdkScript
   /**
    * Scripted decisions for the chatroom haiku moderator (single-shot
    * `query({ prompt: string })` calls). Returns the JSON decision string
@@ -71,12 +72,38 @@ export interface TestDaemonOpts {
    * naturally only fires on the session-spawn path.
    */
   recordCodexSpawnOptions?: (options: Record<string, unknown>) => void
+  /**
+   * Optional callback fired with the AgentOptions object passed to
+   * `Agent.create()` / `Agent.resume()` for each spawned cursor
+   * AgentSession. Used by tier-permissions e2e tests to assert that
+   * admin / trusted / guest chats produce different sandboxOptions
+   * shapes on the cursor side.
+   *
+   * Unlike Claude and Codex, Cursor has no cheap-eval path — every
+   * cursor invocation goes through Agent.create / Agent.resume, so
+   * this recorder fires on all cursor spawns.
+   */
+  recordCursorSpawnOptions?: (options: Record<string, unknown>) => void
   /** preset companion config — default: disabled */
   companion?: { enabled?: boolean; default_chat_id?: string }
   /** preset bot accounts — default: 1 fake bot pointing at fake ilink */
   accounts?: TestDaemonAccount[]
   /** Pre-set conversation modes (chatId → Mode). Persisted to conversations.json so coordinator picks them up. */
   modes?: Record<string, { kind: 'solo' | 'parallel' | 'primary_tool' | 'chatroom'; provider?: string; primary?: string; secondary?: string; max_rounds?: number }>
+  /**
+   * Optional agent-config.json content to seed at stateDir/agent-config.json
+   * before booting. Tests that exercise provider-specific config (e.g. the
+   * cursor provider requires cursorModel to register) use this. Default:
+   * no file written — bootstrap's loadAgentConfig falls back to defaults.
+   */
+  agentConfig?: {
+    provider?: 'claude' | 'codex' | 'cursor'
+    model?: string
+    cursorModel?: string
+    dangerouslySkipPermissions?: boolean
+    autoStart?: boolean
+    closeStopsDaemon?: boolean
+  }
   /**
    * Pre-known users (chatId → name). Populates user_names.json so onboarding
    * is skipped for these users. Default: { chat1: 'testuser' }.
@@ -133,6 +160,20 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
   }
   writeFileSync(join(stateDir, 'access.json'), JSON.stringify(access, null, 2))
 
+  // 2b. Optional agent-config.json seed — used by tests that need
+  // provider-specific config (e.g. cursor's cursorModel requirement).
+  if (opts.agentConfig) {
+    const cfg = {
+      provider: opts.agentConfig.provider ?? 'claude',
+      ...(opts.agentConfig.model ? { model: opts.agentConfig.model } : {}),
+      ...(opts.agentConfig.cursorModel ? { cursorModel: opts.agentConfig.cursorModel } : {}),
+      dangerouslySkipPermissions: opts.agentConfig.dangerouslySkipPermissions ?? false,
+      autoStart: opts.agentConfig.autoStart ?? false,
+      closeStopsDaemon: opts.agentConfig.closeStopsDaemon ?? false,
+    }
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify(cfg, null, 2))
+  }
+
   // 3. Write fake bot account(s) — format: accounts/<id>/account.json + token
   const accounts: TestDaemonAccount[] = opts.accounts ?? [{
     id: 'bot1', botId: 'bot1', userId: 'owner1',
@@ -179,6 +220,10 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
     const { uninstall } = installFakeCodex(opts.codexScript)
     cleanups.push(uninstall)
   }
+  if (opts.cursorScript) {
+    const { uninstall } = installFakeCursor(opts.cursorScript)
+    cleanups.push(uninstall)
+  }
   if (opts.moderatorScript) {
     const { uninstall } = installFakeModerator(opts.moderatorScript)
     cleanups.push(uninstall)
@@ -189,6 +234,10 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
   }
   if (opts.recordCodexSpawnOptions) {
     const { uninstall } = installCodexSpawnRecorder(opts.recordCodexSpawnOptions)
+    cleanups.push(uninstall)
+  }
+  if (opts.recordCursorSpawnOptions) {
+    const { uninstall } = installCursorSpawnRecorder(opts.recordCursorSpawnOptions)
     cleanups.push(uninstall)
   }
 

@@ -238,7 +238,7 @@ export function resolveAdminChatId(access: Access, companion: CompanionConfig): 
   return access.admins?.[0] ?? null
 }
 
-export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
+export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   hydrateClaudeAuthEnvFromUserSettings(deps.log)
 
   const resolve = makeResolver({
@@ -321,6 +321,8 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
   // OTHER provider once. The peer is fixed per-spawn.
   const delegateStdioForClaude: McpStdioSpec | null = deps.internalApi ? delegateStdioMcpSpec(deps.internalApi, 'codex') : null  // Claude session → can delegate to Codex
   const delegateStdioForCodex: McpStdioSpec | null = deps.internalApi ? delegateStdioMcpSpec(deps.internalApi, 'claude') : null  // Codex session → can delegate to Claude
+  const wechatStdioForCursor: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'cursor') : null
+  const delegateStdioForCursor: McpStdioSpec | null = deps.internalApi ? delegateStdioMcpSpec(deps.internalApi, 'claude') : null  // Cursor session → can delegate to Claude
 
   // Pin a Claude model from agent-config.json (or fall back to a stable
   // full ID). Without this, the spawned Claude Code subprocess inherits
@@ -496,6 +498,61 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
     )
   } else {
     deps.log('BOOT', 'codex binary not found in PATH or ~/.nvm — codex provider not registered. Install `npm i -g @openai/codex` to enable /codex /both /chat modes.')
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // Cursor SDK provider — third registered provider.
+  //
+  // CURSOR_API_KEY is env-only — not stored in agent-config.json.
+  // (Secret-on-disk in plaintext is a worse posture than an env var
+  // in the operator's shell rc / systemd unit.) The SDK is loaded via
+  // dynamic import so wechat-cc remains installable without
+  // @cursor/sdk — operators who don't want Cursor can `bun remove
+  // @cursor/sdk` and the registration silently skips.
+  //
+  // See docs/superpowers/specs/2026-05-23-cursor-sdk-provider-design.md.
+  const cursorKey = process.env.CURSOR_API_KEY
+  if (cursorKey && !configuredAgent.cursorModel) {
+    // Cursor SDK's @cursor/sdk/dist/esm/options.d.ts says model is "required
+    // for local agents" — local is the only mode wechat-cc uses today.
+    // Fail-fast at boot with an actionable message rather than crash on
+    // first dispatch when Agent.create rejects without a model.
+    deps.log('BOOT',
+      'cursor: CURSOR_API_KEY is set but cursorModel is not configured. ' +
+      'Cursor SDK requires a model id for local agents. ' +
+      'Run `wechat-cc provider set cursor --model composer-2` (or another id from `Cursor.models.list()`). ' +
+      'Provider not registered.',
+    )
+  } else if (cursorKey) {
+    try {
+      const cursorMod = await import('@cursor/sdk') as unknown as import('../../core/cursor-agent-provider').CursorSdkNamespace
+      const { createCursorAgentProvider } = await import('../../core/cursor-agent-provider')
+      registry.register(
+        'cursor',
+        createCursorAgentProvider({
+          sdk: cursorMod,
+          apiKey: cursorKey,
+          model: configuredAgent.cursorModel!,
+          mcpServers: {
+            ...(wechatStdioForCursor ? { wechat: wechatStdioForCursor } : {}),
+            ...(delegateStdioForCursor ? { delegate: delegateStdioForCursor } : {}),
+          },
+        }),
+        {
+          displayName: 'Cursor',
+          // P1 ships with resume disabled — Agent.resume(agentId) is documented
+          // but unverified in the spike beyond static types. Enable in a P1.1
+          // follow-up after dogfooding.
+          canResume: () => false,
+        },
+      )
+      deps.log('BOOT', 'cursor: SDK + API key present — provider registered')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      deps.log('BOOT', `cursor: SDK not available (${msg}) — run \`bun add @cursor/sdk\` to enable; provider not registered`)
+    }
+  } else {
+    deps.log('BOOT', 'cursor: CURSOR_API_KEY not set — provider not registered')
   }
 
   // Fail-fast at boot if any registered provider is missing matrix rows.

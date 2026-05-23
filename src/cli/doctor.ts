@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { platform as osPlatform } from 'node:os'
+import { createRequire } from 'node:module'
 import { STATE_DIR } from '../lib/config'
 import { findOnPath, probeBinaryVersion } from '../lib/util'
 import { loadAgentConfig, type AgentConfig } from '../lib/agent-config'
@@ -52,6 +53,16 @@ export interface DoctorDeps {
    * implementation in `defaultDoctorDeps` uses `spawnSync` with a 3 s cap.
    */
   probeBinaryVersion?: (path: string) => string | null
+  /**
+   * Probe for the Cursor agent backend — Cursor has no PATH binary (unlike
+   * claude/codex CLI), it's a Node SDK. Reports whether CURSOR_API_KEY is
+   * set in the environment and whether `@cursor/sdk` resolves from
+   * node_modules. Both must be true for the daemon to register the cursor
+   * provider at boot (mirrors the gate in src/daemon/bootstrap/index.ts).
+   * Optional so test callers can inject deterministic states; defaults to
+   * a real env+resolve check in defaultDoctorDeps.
+   */
+  probeCursor?: () => { apiKeySet: boolean; sdkInstalled: boolean }
   readAccounts: () => BoundAccount[]
   readAccess: () => AccessSnapshot
   readAgentConfig: () => AgentConfig
@@ -108,6 +119,12 @@ export interface DoctorReport {
     // (see src/lib/find-codex-binary.ts for the codex 0.125/0.128 trap).
     claude: DoctorCheckBase & { path: string | null; version: string | null }
     codex: DoctorCheckBase & { path: string | null; version: string | null }
+    // Cursor has no PATH binary — it's a Node SDK loaded via dynamic import
+    // by the daemon's bootstrap. Both apiKeySet AND sdkInstalled must be true
+    // for cursor to register (see src/daemon/bootstrap/index.ts ~L514). The
+    // derived `ok` mirrors that AND so doctor's gating aligns with what the
+    // boot path will actually do.
+    cursor: DoctorCheckBase & { apiKeySet: boolean; sdkInstalled: boolean }
     accounts: DoctorCheckBase & { count: number; items: BoundAccount[] }
     access: DoctorCheckBase & { dmPolicy: string; allowFromCount: number }
     provider: DoctorCheckBase & { provider: AgentConfig['provider']; model?: string; binaryPath: string | null }
@@ -129,12 +146,23 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   const probe = deps.probeBinaryVersion ?? (() => null)
   const claudeVersion = claude ? probe(claude) : null
   const codexVersion = codex ? probe(codex) : null
+  const cursorProbe = (deps.probeCursor ?? defaultProbeCursor)()
   const accounts = deps.readAccounts()
   const access = deps.readAccess()
   const agent = deps.readAgentConfig()
   const daemon = deps.daemon()
   const service = deps.service()
-  const providerBinary = agent.provider === 'codex' ? codex : claude
+  // Cursor has no PATH binary — providerBinary stays null for cursor and the
+  // provider check below treats SDK+key presence as the "binary" equivalent.
+  const providerBinary = agent.provider === 'codex'
+    ? codex
+    : agent.provider === 'cursor'
+      ? null
+      : claude
+  const claudeIsActive = agent.provider === 'claude'
+  const codexIsActive = agent.provider === 'codex'
+  const cursorIsActive = agent.provider === 'cursor'
+  const cursorOk = cursorProbe.apiKeySet && cursorProbe.sdkInstalled
   // WSL is a Windows-only concept; checking findOnPath('wsl') on non-win32
   // would risk false positives (some Linux distros ship `wsl` as an unrelated
   // helper). Gate strictly on platform.
@@ -147,7 +175,15 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   // contract.
   if (!isBundle && !bun) nextActions.push('install_bun')
   if (!isBundle && !git) nextActions.push('install_git')
-  if (!providerBinary) nextActions.push(agent.provider === 'codex' ? 'install_codex' : 'install_claude')
+  // For cursor, "missing backend" = SDK/api-key absent. Existing JSON
+  // consumers don't know about `install_cursor`, so reuse the same hook
+  // name ('install_cursor') only when cursor is selected; claude/codex
+  // continue to emit their existing action strings unchanged.
+  if (!providerBinary && agent.provider !== 'cursor') {
+    nextActions.push(agent.provider === 'codex' ? 'install_codex' : 'install_claude')
+  } else if (agent.provider === 'cursor' && !cursorOk) {
+    nextActions.push('install_cursor')
+  }
   if (accounts.length === 0) nextActions.push('run_wechat_setup')
   if (accounts.length > 0 && access.allowFrom.length === 0) nextActions.push('fix_access_allowlist')
   if (!service.installed) nextActions.push('install_service')
@@ -164,8 +200,6 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   //     possible against a bundle anyway)
   //   - accounts/access missing → soft (daemon runs idle, fixable any
   //     time via setup)
-  const claudeIsActive = agent.provider === 'claude'
-  const codexIsActive = agent.provider === 'codex'
   const checks = {
     bun: {
       // Bundle mode: report ok=true regardless of system bun, since the
@@ -195,6 +229,21 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
         fix: { link: 'https://github.com/openai/codex#installation' },
       }),
     },
+    cursor: {
+      ok: cursorOk,
+      apiKeySet: cursorProbe.apiKeySet,
+      sdkInstalled: cursorProbe.sdkInstalled,
+      ...(cursorOk ? {} : {
+        severity: (cursorIsActive ? 'hard' : 'soft') as Severity,
+        // Fix hint picks the missing leg — env var or SDK install. When both
+        // are missing we surface the env var first (operators reading the
+        // doctor output left-to-right will fix that, then re-run to see
+        // the SDK leg).
+        fix: !cursorProbe.apiKeySet
+          ? { action: 'export CURSOR_API_KEY=<your-key>' }
+          : { command: 'bun add @cursor/sdk' },
+      }),
+    },
     accounts: {
       ok: accounts.length > 0,
       count: accounts.length,
@@ -214,15 +263,22 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
       }),
     },
     provider: {
-      ok: !!providerBinary,
+      // Cursor's "backend ready" check is SDK+key, not a PATH binary —
+      // fall through to cursorOk when the active provider is cursor so
+      // the gate aligns with what bootstrap will register at boot.
+      ok: cursorIsActive ? cursorOk : !!providerBinary,
       provider: agent.provider,
       ...(agent.model ? { model: agent.model } : {}),
       binaryPath: providerBinary,
-      ...(providerBinary ? {} : {
+      ...((cursorIsActive ? cursorOk : !!providerBinary) ? {} : {
         severity: 'hard' as const,
         fix: agent.provider === 'codex'
           ? { link: 'https://github.com/openai/codex#installation' }
-          : { command: 'npm install -g @anthropic-ai/claude-code', link: 'https://docs.claude.com/en/docs/claude-code/install' },
+          : agent.provider === 'cursor'
+            ? (!cursorProbe.apiKeySet
+                ? { action: 'export CURSOR_API_KEY=<your-key>' }
+                : { command: 'bun add @cursor/sdk' })
+            : { command: 'npm install -g @anthropic-ai/claude-code', link: 'https://docs.claude.com/en/docs/claude-code/install' },
       }),
     },
     daemon,
@@ -289,11 +345,29 @@ export function serviceStatus(deps: { daemon: () => DaemonSnapshot; service: () 
   return { installed: service.installed, alive: daemon.alive, pid: daemon.pid, state }
 }
 
+/**
+ * Real-environment cursor probe used by `defaultDoctorDeps`. Reports whether
+ * CURSOR_API_KEY is exported and whether `@cursor/sdk` resolves from
+ * node_modules — the two conditions bootstrap checks before registering the
+ * cursor provider. Uses `createRequire` so resolution works both under
+ * `bun cli.ts` (ESM) and the compiled-bundle sidecar.
+ */
+export function defaultProbeCursor(): { apiKeySet: boolean; sdkInstalled: boolean } {
+  const apiKeySet = !!process.env.CURSOR_API_KEY
+  let sdkInstalled = false
+  try {
+    createRequire(import.meta.url).resolve('@cursor/sdk')
+    sdkInstalled = true
+  } catch { /* @cursor/sdk not installed — operators can `bun add @cursor/sdk` */ }
+  return { apiKeySet, sdkInstalled }
+}
+
 export function defaultDoctorDeps(stateDir = STATE_DIR): DoctorDeps {
   return {
     stateDir,
     findOnPath,
     probeBinaryVersion,
+    probeCursor: defaultProbeCursor,
     readAccounts: () => readAccounts(stateDir),
     readAccess: () => readAccess(stateDir),
     readAgentConfig: () => loadAgentConfig(stateDir),
@@ -439,6 +513,7 @@ export function printDoctor(report: DoctorReport): void {
   }
   console.log(`claude: ${fmtWithVersion(report.checks.claude)}`)
   console.log(`codex: ${fmtWithVersion(report.checks.codex)}`)
+  console.log(`cursor: ${fmtCursor(report.checks.cursor)}`)
   console.log(`provider: ${report.checks.provider.provider}${report.checks.provider.model ? ` (${report.checks.provider.model})` : ''}`)
   console.log(`accounts: ${report.checks.accounts.count}`)
   console.log(`access: ${report.checks.access.dmPolicy}, allowed=${report.checks.access.allowFromCount}`)
@@ -455,4 +530,15 @@ function fmt(c: { ok: boolean; path: string | null }): string {
 function fmtWithVersion(c: { ok: boolean; path: string | null; version: string | null }): string {
   if (!c.ok) return 'missing'
   return c.version ? `ok (${c.path}, ${c.version})` : `ok (${c.path})`
+}
+
+// Cursor's status line shows which leg is missing so operators can spot
+// "API key set but SDK not installed" without parsing JSON. The 4 states
+// collapse to: ok / missing api key / missing sdk / missing api key + sdk.
+function fmtCursor(c: { ok: boolean; apiKeySet: boolean; sdkInstalled: boolean }): string {
+  if (c.ok) return 'ok'
+  const missing: string[] = []
+  if (!c.apiKeySet) missing.push('api key')
+  if (!c.sdkInstalled) missing.push('sdk')
+  return `missing ${missing.join(' + ')}`
 }

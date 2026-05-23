@@ -51,6 +51,7 @@ describe('DoctorOutput', () => {
         git: { ok: true, path: '/usr/bin/git' },
         claude: { ok: false, path: null, severity: 'hard', fix: { command: 'npm install -g @anthropic-ai/claude-code' } },
         codex: { ok: false, path: null, severity: 'soft' },
+        cursor: { ok: false, apiKeySet: false, sdkInstalled: false, severity: 'soft', fix: { action: 'export CURSOR_API_KEY=<your-key>' } },
         accounts: { ok: false, count: 0, items: [] },
         access: { ok: false, dmPolicy: 'allowlist', allowFromCount: 0 },
         provider: { ok: false, provider: 'claude', binaryPath: null, severity: 'hard' },
@@ -75,6 +76,7 @@ describe('DoctorOutput', () => {
         git: { ok: true, path: '/usr/bin/git' },
         claude: { ok: true, path: '/usr/local/bin/claude' },
         codex: { ok: false, path: null, severity: 'soft' },
+        cursor: { ok: true, apiKeySet: true, sdkInstalled: true },
         accounts: {
           ok: true,
           count: 1,
@@ -107,6 +109,7 @@ describe('DoctorOutput', () => {
         git: { ok: true, path: null },
         claude: { ok: true, path: null },
         codex: { ok: true, path: null },
+        cursor: { ok: false, apiKeySet: false, sdkInstalled: false, severity: 'soft' },
         accounts: { ok: true, count: 0, items: [] },
         access: { ok: true, dmPolicy: 'allowlist', allowFromCount: 0 },
         provider: { ok: true, provider: 'claude', binaryPath: null },

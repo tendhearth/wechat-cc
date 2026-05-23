@@ -1,11 +1,15 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-export type AgentProviderKind = 'claude' | 'codex'
+export type AgentProviderKind = 'claude' | 'codex' | 'cursor'
 
 export interface AgentConfig {
   provider: AgentProviderKind
   model?: string
+  // Cursor-specific model id (e.g. 'composer-2'). Mirrors `model?`'s
+  // optional-string shape so an operator can persist a Cursor model
+  // alongside the Claude one without overloading a single field.
+  cursorModel?: string
   // When true, the daemon spawned by `service install` runs with
   // `cli.ts run --dangerously` (Claude SDK permissionMode=bypassPermissions).
   // Wizard-installed daemons need this on by default — there is no human
@@ -31,15 +35,23 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
     const dangerouslySkipPermissions = parsed.dangerouslySkipPermissions ?? true
     const autoStart = parsed.autoStart ?? true
     const closeStopsDaemon = parsed.closeStopsDaemon ?? false
-    const provider: AgentProviderKind = parsed.provider === 'codex' ? 'codex' : 'claude'
+    const provider: AgentProviderKind =
+      parsed.provider === 'codex' ? 'codex'
+      : parsed.provider === 'cursor' ? 'cursor'
+      : 'claude'
     // Preserve `model` for both providers. Pre-2026-05-08 only codex
     // honored it; claude inherited the spawned CLI's default which read
     // `~/.claude/.claude.json` and broke daemons whenever the user's
     // interactive alias was something the SDK subprocess couldn't resolve
     // (e.g. fast-mode `opus[1m]` returning 404 from 2.1.133).
-    return parsed.model
-      ? { provider, model: parsed.model, dangerouslySkipPermissions, autoStart, closeStopsDaemon }
-      : { provider, dangerouslySkipPermissions, autoStart, closeStopsDaemon }
+    return {
+      provider,
+      ...(typeof parsed.model === 'string' ? { model: parsed.model } : {}),
+      ...(typeof parsed.cursorModel === 'string' ? { cursorModel: parsed.cursorModel } : {}),
+      dangerouslySkipPermissions,
+      autoStart,
+      closeStopsDaemon,
+    }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }
   }
