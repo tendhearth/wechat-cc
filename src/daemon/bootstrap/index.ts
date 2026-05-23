@@ -170,7 +170,7 @@ export interface Bootstrap {
   coordinator: ConversationCoordinator
   resolve: (chatId: string) => { alias: string; path: string } | null
   formatInbound: typeof formatInbound
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string) => Options
   /** Daemon-default provider id — what new chats get until user runs `/cc` or `/codex`. */
   defaultProviderId: ProviderId
   /** Backward-compat alias for defaultProviderId. Pre-P2 callers expected this name. */
@@ -257,9 +257,26 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
     { migrateFromFile: join(deps.stateDir, 'conversations.json') },
   )
 
-  const canUseTool = makeCanUseTool({
+  // Per-session canUseTool builder — closes over the boot-time deps
+  // (askUser, adminChatId resolver, log, provider, permissionMode,
+  // conversationStore) and bakes the session's OWN `chatId` into the
+  // tier/mode closures. Previously canUseTool was built once at bootstrap
+  // and read `deps.lastActiveChatId()` per call — a process-wide ref.
+  // Under concurrent dispatch (chat A mid-turn while chat B sends an
+  // inbound) the lastActiveChatId could flip to B's id between when A
+  // initiated a tool call and when canUseTool fired, cross-resolving
+  // A's tier as B's and either auto-allowing A's destructive Bash (if B
+  // is admin) or denying B's MCP call (if A is guest).
+  //
+  // Binding chatId at spawn time eliminates that race: each session's
+  // canUseTool closure resolves tier/mode for its OWN chatId, regardless
+  // of what arrived after.
+  const buildCanUseTool = (chatId: string) => makeCanUseTool({
     askUser: deps.ilink.askUser,
-    initiatingChatId: () => deps.lastActiveChatId(),
+    // initiatingChatId is the session's own chatId, baked in at spawn.
+    // (The relay only uses this for log correlation; prompts always route
+    // to adminChatId.)
+    initiatingChatId: () => chatId,
     // Task 13 — permission prompts route to a configured admin chat, NOT
     // the chat that initiated the dispatch. Closes a self-approval hole
     // where a guest who could trigger a tool call could also click 'allow'
@@ -268,25 +285,20 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
     // Task 13 — tier resolution rules:
     //   - dangerouslySkipPermissions=true  → every chat is admin tier
     //     (global override; old default-allow path's new spelling).
-    //   - no active chat → admin (system-initiated work has no caller to gate).
-    //   - otherwise → access.json-derived tier (admin/trusted/guest).
+    //   - otherwise → access.json-derived tier for THIS session's chatId
+    //     (admin/trusted/guest). chatId is captured at spawn time so the
+    //     resolution stays stable regardless of any concurrent inbound
+    //     activity on other chats.
     resolveTier: () => {
       if (deps.dangerouslySkipPermissions) return 'admin'
-      const cid = deps.lastActiveChatId()
-      if (!cid) return 'admin'
-      return resolveTier(cid, loadAccess())
+      return resolveTier(chatId, loadAccess())
     },
     log: deps.log,
-    // Per-dispatch mode lookup: read the chat's current mode from the
-    // conversation store at the moment the tool call arrives. Falls back
-    // to 'solo' if no chat is active or no mode persisted. Previously
-    // hardcoded to 'solo' at boot — wrong for chatroom / parallel /
-    // primary_tool chats which have different capability-matrix rows.
-    mode: () => {
-      const chatId = deps.lastActiveChatId()
-      if (!chatId) return 'solo'
-      return conversationStore.get(chatId)?.mode.kind ?? 'solo'
-    },
+    // Per-dispatch mode lookup: read THIS session's current mode from
+    // the conversation store at the moment the tool call arrives.
+    // chatId is bound at spawn; only the mode kind is dynamic (operator
+    // can flip /solo /cc /codex /both mid-session).
+    mode: () => conversationStore.get(chatId)?.mode.kind ?? 'solo',
     provider: 'claude',
     permissionMode,
   })
@@ -325,7 +337,7 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
     ? configuredAgent.model
     : 'claude-opus-4-7'
 
-  const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile): Options => {
+  const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string): Options => {
     const cstatus = deps.ilink.companion.status()
     const systemPrompt = buildSystemPrompt({
       providerId: 'claude',
@@ -369,6 +381,10 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
     // SDK won't fire canUseTool; under default mode canUseTool is what
     // gates everything not statically excluded via disallowedTools.
     const tierOpts = tierProfileToClaudeSdkOpts(tierProfile)
+    // Build canUseTool with this session's chatId baked in. Done per-call
+    // (not once at bootstrap) so concurrent sessions on different chats
+    // each get a closure resolving tier/mode for their OWN chatId.
+    const canUseTool = buildCanUseTool(chatId)
     return {
       ...common,
       permissionMode: tierOpts.permissionMode,

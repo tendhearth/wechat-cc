@@ -153,6 +153,9 @@ export class SessionManager {
     const session = await provider.spawn(project, {
       ...(resumeSessionId ? { resumeSessionId } : {}),
       tierProfile: req.tierProfile,
+      // Forward chatId so the Claude provider can bake it into a
+      // per-session canUseTool closure (see bootstrap/index.ts).
+      chatId: req.chatId,
     })
 
     const sessionStore = this.opts.sessionStore

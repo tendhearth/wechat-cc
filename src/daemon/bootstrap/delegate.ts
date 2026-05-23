@@ -47,7 +47,7 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
     : 'claude-opus-4-7'
 
   const delegateClaude = createClaudeAgentProvider({
-    sdkOptionsForProject: (_alias: string, path: string, _tierProfile: TierProfile): Options => {
+    sdkOptionsForProject: (_alias: string, path: string, _tierProfile: TierProfile, _chatId: string): Options => {
       const o: Options = {
         cwd: path,
         model: claudeModel,
@@ -112,7 +112,13 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
         // from the original "read-mostly" delegate stance. If a future task
         // wants a tighter delegate posture (e.g. read-only), add a dedicated
         // DELEGATE_PROFILE alongside TIER_PROFILES.
-        { tierProfile: TIER_PROFILES.trusted },
+        //
+        // chatId='_delegate' is a sentinel — delegate spawns are
+        // daemon-initiated (not tied to any real chat), so there's no
+        // chatId to forward. The delegate's sdkOptionsForProject ignores
+        // chatId anyway (no canUseTool wired), but the AgentProvider
+        // contract requires the field.
+        { tierProfile: TIER_PROFILES.trusted, chatId: '_delegate' },
       )
       const result = await collectTurn(session.dispatch(prompt))
       const response = result.assistantText.join('\n').trim()

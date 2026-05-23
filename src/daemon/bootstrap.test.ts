@@ -56,7 +56,7 @@ describe('bootstrap', () => {
       // expose any wechat tools — that's not a real production code path.
       internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
     })
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin)
+    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
     expect(opts.cwd).toBe('/p')
     expect(opts.mcpServers).toBeDefined()
     const wechatCfg = opts.mcpServers!['wechat']
@@ -103,7 +103,7 @@ describe('bootstrap', () => {
       log: () => {},
       dangerouslySkipPermissions: true,
     })
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin)
+    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
     expect(opts.permissionMode).toBe('bypassPermissions')
     // Task 13 — canUseTool wired even at admin tier; SDK won't fire it under
     // bypassPermissions, but production code paths should not rely on that.
@@ -120,7 +120,7 @@ describe('bootstrap', () => {
       log: () => {},
       dangerouslySkipPermissions: false,
     })
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.trusted)
+    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.trusted, '_test')
     expect(opts.permissionMode).toBe('default')
     expect(typeof opts.canUseTool).toBe('function')
     // Trusted's relay set is shell_destructive/memory_delete — both gated
@@ -138,7 +138,7 @@ describe('bootstrap', () => {
       log: () => {},
       dangerouslySkipPermissions: false,
     })
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.guest)
+    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.guest, '_test')
     expect(opts.permissionMode).toBe('default')
     expect(typeof opts.canUseTool).toBe('function')
     // Guest denies fs_write / shell / network / subagent — the SDK sees the
@@ -161,7 +161,7 @@ describe('bootstrap', () => {
     // With admin tier (the default for sdkOptionsForProject calls without
     // a tier resolver), the result is bypassPermissions regardless of the
     // flag. canUseTool is still wired.
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin)
+    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
     expect(opts.permissionMode).toBe('bypassPermissions')
     expect(typeof opts.canUseTool).toBe('function')
   })
@@ -270,7 +270,7 @@ describe('bootstrap', () => {
       log: () => {},
       internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
     })
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin)
+    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
     expect(opts.mcpServers!['wechat']).toBeDefined()
     expect(opts.mcpServers!['delegate']).toBeDefined()
     // Delegate child env declares peer=codex (since this is the claude session config).
@@ -290,7 +290,7 @@ describe('bootstrap', () => {
       log: () => {},
       // No internalApi
     })
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin)
+    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
     expect(opts.mcpServers).toEqual({})  // Both wechat and delegate skipped.
   })
 
@@ -343,7 +343,7 @@ describe('bootstrap', () => {
       log: () => {},
       internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
     })
-    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin)
+    const opts = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, '_test')
     const sp = opts.systemPrompt as { type: 'preset'; preset: string; append?: string } | string
     if (typeof sp === 'string') throw new Error('expected preset+append form')
     expect(sp.type).toBe('preset')
@@ -353,5 +353,82 @@ describe('bootstrap', () => {
     expect(sp.append).toContain('share_page')
     expect(sp.append).toContain('broadcast')
     expect(sp.append).toContain('chatroom_round')
+  })
+
+  // ── Per-session canUseTool (concurrent-dispatch tier hazard) ─────────
+  //
+  // Before this fix, the canUseTool closure was built ONCE at bootstrap
+  // and read `deps.lastActiveChatId()` per call — a process-wide ref
+  // updated by mw-capture-ctx on every inbound. Under concurrent
+  // dispatch (chat A mid-turn while chat B sends an inbound), the
+  // lastActiveChatId could flip to B's id between when A initiated a
+  // tool call and when canUseTool fired — cross-resolving A's tier as
+  // B's. The fix threads chatId through sdkOptionsForProject so each
+  // spawn builds its own canUseTool with chatId baked in.
+  //
+  // We can't easily exercise the SDK's canUseTool callback without a
+  // full Options-execution harness, so the test verifies closure
+  // identity + invokes the canUseTool functions directly.
+  it('per-session canUseTool: each chatId gets its own closure (no shared identity)', () => {
+    const b = buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: { P: { path: '/p', last_active: 0 } }, current: 'P' }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      dangerouslySkipPermissions: false,
+    })
+
+    const optsA = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, 'chatA')
+    const optsB = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.guest, 'chatB')
+
+    // Each spawn gets its OWN canUseTool — not the same instance. Pre-fix
+    // it was a single bootstrap-time closure shared across all sessions;
+    // post-fix sdkOptionsForProject builds one per call so the chatId
+    // bound into resolveTier/mode is per-session.
+    expect(optsA.canUseTool).toBeDefined()
+    expect(optsB.canUseTool).toBeDefined()
+    expect(optsA.canUseTool).not.toBe(optsB.canUseTool)
+  })
+
+  it('per-session canUseTool: guest chatId resolves guest tier even when lastActiveChatId flips to admin', async () => {
+    // The hazard scenario, demonstrated:
+    //   1. Daemon spawns canUseTool for chatB (guest)
+    //   2. Process-wide lastActiveChatId flips to chatA (admin) — happens
+    //      whenever any inbound arrives on chatA mid-turn
+    //   3. chatB's canUseTool fires; pre-fix it would read
+    //      lastActiveChatId → chatA → resolve as admin → would have
+    //      auto-allowed a destructive tool the guest matrix forbids
+    //
+    // Post-fix the chatId is baked in at spawn time, so step 3 still
+    // sees chatB and resolves guest tier (Bash → deny per TIER_PROFILES.guest.deny).
+    let lastActive: string | null = 'chatB'
+    const b = buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: { P: { path: '/p', last_active: 0 } }, current: 'P' }),
+      lastActiveChatId: () => lastActive,
+      log: () => {},
+      dangerouslySkipPermissions: false,
+    })
+
+    const optsB = b.sdkOptionsForProject('P', '/p', TIER_PROFILES.guest, 'chatB')
+
+    // Simulate the race: chatA's inbound flips lastActiveChatId mid-turn.
+    lastActive = 'chatA'
+
+    const ctl = new AbortController()
+    const result = await optsB.canUseTool!('Bash', { command: 'rm -rf /' }, {
+      signal: ctl.signal,
+      suggestions: [],
+      toolUseID: 't1',
+    } as any)
+
+    // The only way result.behavior could be 'allow' here is if chatB's
+    // closure read lastActiveChatId (= chatA) and resolved admin instead
+    // of being bound to its own chatId. The deny proves the binding holds.
+    expect(result.behavior).toBe('deny')
   })
 })

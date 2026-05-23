@@ -56,7 +56,14 @@ export function tierProfileToClaudeSdkOpts(tp: TierProfile): ClaudeTierSdkOpts {
 }
 
 export interface ClaudeAgentProviderOptions {
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile) => Options
+  /**
+   * Build the Options bag for this spawn. `chatId` is required so the
+   * builder can construct a canUseTool whose resolveTier/mode closures
+   * are bound to THIS session's chatId — not the process-wide
+   * `lastActiveChatId` ref, which under concurrent dispatch could read
+   * another chat's id mid-call and cross-resolve the tier.
+   */
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string) => Options
   /**
    * Path to the `claude` binary, threaded into cheapEval's query() call.
    * Optional — when omitted the SDK's bundled discovery runs. Used in
@@ -155,10 +162,13 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     },
     async spawn(
       project: AgentProject,
-      spawnOpts: { resumeSessionId?: string; tierProfile: TierProfile },
+      spawnOpts: { resumeSessionId?: string; tierProfile: TierProfile; chatId: string },
     ): Promise<AgentSession> {
       const sdkQueue = new AsyncQueue<SDKUserMessage>()
-      const options = opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile)
+      // chatId is threaded into sdkOptionsForProject so the builder can
+      // produce a canUseTool whose tier/mode closures are bound to THIS
+      // session — see bootstrap/index.ts:buildCanUseTool().
+      const options = opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId)
       if (spawnOpts.resumeSessionId) {
         ;(options as Options & { resume?: string }).resume = spawnOpts.resumeSessionId
       }

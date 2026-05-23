@@ -85,8 +85,8 @@ describe('SessionManager', () => {
 
     expect(spawn).toHaveBeenCalledWith(
       { alias: 'codex-proj', path: '/repo' },
-      // Caller (this test) passes admin tier — provider gets it verbatim.
-      { tierProfile: TIER_PROFILES.admin },
+      // Caller (this test) passes admin tier + chatId — provider gets both verbatim.
+      { tierProfile: TIER_PROFILES.admin, chatId: '_legacy' },
     )
     expect(dispatched).toEqual(['hello codex'])
     await mgr.shutdown()

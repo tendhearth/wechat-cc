@@ -164,7 +164,12 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
     },
     async spawn(
       project: AgentProject,
-      spawnOpts: { resumeSessionId?: string; tierProfile: TierProfile },
+      // `chatId` is part of the AgentProvider.spawn contract so the Claude
+      // provider can bake it into its per-session canUseTool closure. Codex
+      // has no per-tool callback equivalent (tier enforcement is coarser,
+      // via sandboxMode/approvalPolicy on the Thread), so we accept it for
+      // contract conformance but don't consume it.
+      spawnOpts: { resumeSessionId?: string; tierProfile: TierProfile; chatId: string },
     ): Promise<AgentSession> {
       const tierOpts = tierProfileToCodexSdkOpts(spawnOpts.tierProfile)
       const config: Record<string, unknown> = {}

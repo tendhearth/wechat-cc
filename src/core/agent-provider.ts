@@ -67,7 +67,16 @@ export interface AgentSession {
 export type CheapEval = (prompt: string) => Promise<string>
 
 export interface AgentProvider {
-  spawn(project: AgentProject, opts: { resumeSessionId?: string; tierProfile: TierProfile }): Promise<AgentSession>
+  /**
+   * `chatId` is required so the provider (Claude) can bake it into its
+   * per-session canUseTool closure — see permission-relay.ts. Process-wide
+   * "lastActiveChatId" was previously read inside the closure, which under
+   * concurrent dispatch could cross-resolve tiers (chat A's tool decision
+   * resolving with chat B's tier). Codex doesn't use canUseTool and treats
+   * chatId as informational only. Delegate path passes a sentinel like
+   * `'_delegate'` — the delegate has no real chat owner.
+   */
+  spawn(project: AgentProject, opts: { resumeSessionId?: string; tierProfile: TierProfile; chatId: string }): Promise<AgentSession>
   /**
    * Optional one-shot eval. Coordinators that need cheap routing /
    * decision LLM calls should resolve via `ProviderRegistry.getCheapEval()`
