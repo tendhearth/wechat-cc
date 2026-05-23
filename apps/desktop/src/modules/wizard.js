@@ -12,6 +12,14 @@
 
 import { daemonStatusLine } from "../view.js"
 
+// Track whether the scan button was disabled on the previous render so we
+// can flash it once when an agent first becomes available — gives the user
+// a visual cue that the page just unlocked after they installed an agent
+// in another terminal. Defaults to `true` so the very first paint of the
+// page (which always starts with the button disabled in HTML) is treated
+// as a no-op transition.
+let scanWasDisabled = true
+
 /** @typedef {{ ok?: boolean, path?: string | null, version?: string | null }} CheckLike */
 /** @typedef {{ wslDetected?: boolean, checks?: { claude?: CheckLike, codex?: CheckLike, daemon?: unknown } }} DoctorReport */
 
@@ -58,6 +66,19 @@ export function refreshScanButton(report) {
   btn.disabled = !anyAgent
   if (anyAgent) btn.removeAttribute("title")
   else btn.title = "先装一个 agent · 本页会自动检测"
+
+  // Inline hint sits below the button; visible only while disabled.
+  const hint = document.getElementById("scan-hint")
+  if (hint) hint.hidden = anyAgent
+
+  // Disabled → enabled transition: flash the button once. Restart the
+  // animation by toggling the class with a reflow in between.
+  if (scanWasDisabled && anyAgent) {
+    btn.classList.remove("flash")
+    void btn.offsetWidth
+    btn.classList.add("flash")
+  }
+  scanWasDisabled = !anyAgent
 }
 
 /** @param {unknown} daemon */

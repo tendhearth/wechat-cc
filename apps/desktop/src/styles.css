@@ -733,6 +733,19 @@ input { font: inherit; color: inherit; }
   min-width: 240px;
 }
 .scan-cta:disabled { opacity: 0.45; cursor: not-allowed; }
+.scan-cta.flash { animation: scan-flash 700ms ease-out 1; }
+@keyframes scan-flash {
+  0%   { box-shadow: 0 0 0 0 var(--green); }
+  60%  { box-shadow: 0 0 0 10px rgba(0, 0, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+}
+
+.scan-hint {
+  font-size: 12px;
+  color: var(--ink-3);
+  text-align: center;
+  margin: -12px 0 0 0;
+}
 
 .install-strip {
   display: flex; align-items: center; gap: 8px;
