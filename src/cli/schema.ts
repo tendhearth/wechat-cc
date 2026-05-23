@@ -78,6 +78,13 @@ export const DoctorOutput = z.object({
     git: DoctorCheckBase.extend({ path: z.string().nullable() }),
     claude: DoctorCheckBase.extend({ path: z.string().nullable() }),
     codex: DoctorCheckBase.extend({ path: z.string().nullable() }),
+    // Cursor has no PATH binary — SDK + API key are the install signals.
+    // Both must be true for the daemon's bootstrap to register cursor
+    // (see src/daemon/bootstrap/index.ts) so `ok` mirrors that AND.
+    cursor: DoctorCheckBase.extend({
+      apiKeySet: z.boolean(),
+      sdkInstalled: z.boolean(),
+    }),
     accounts: DoctorCheckBase.extend({
       count: z.number(),
       items: z.array(BoundAccount),
