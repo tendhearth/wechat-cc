@@ -40,6 +40,10 @@ describe('e2e: solo cursor text inbound → cursor dispatch + outbound reply', (
     daemon = await startTestDaemon({
       dangerously: true,
       modes: { chat1: { kind: 'solo', provider: 'cursor' } },
+      // cursorModel required for cursor provider registration (Cursor SDK
+      // demands a model id for local agents; bootstrap fails-fast at boot
+      // when unset).
+      agentConfig: { provider: 'cursor', cursorModel: 'composer-2' },
       claudeScript: {
         async onDispatch(_text) {
           claudeWasCalled = true

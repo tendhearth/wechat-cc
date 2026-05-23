@@ -234,13 +234,21 @@ describe('bootstrap', () => {
   // Cursor registration is gated on CURSOR_API_KEY + the @cursor/sdk
   // dynamic import succeeding. Both must hold; either missing → silent
   // skip with [BOOT] log entry. See bootstrap/index.ts cursor block.
-  it('registers cursor provider when CURSOR_API_KEY is set + @cursor/sdk available', async () => {
+  it('registers cursor provider when CURSOR_API_KEY is set + cursorModel configured + @cursor/sdk available', async () => {
     const prevKey = process.env.CURSOR_API_KEY
     process.env.CURSOR_API_KEY = 'test-cursor-key'
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-cursor-'))
+    saveAgentConfig(stateDir, {
+      provider: 'cursor',
+      cursorModel: 'composer-2',
+      dangerouslySkipPermissions: false,
+      autoStart: false,
+      closeStopsDaemon: false,
+    })
     try {
       const b = await buildBootstrap({
         db: openTestDb(),
-        stateDir: '/tmp/state',
+        stateDir,
         ilink: makeIlinkStub() as any,
         loadProjects: () => ({ projects: {}, current: null }),
         lastActiveChatId: () => null,
@@ -248,6 +256,29 @@ describe('bootstrap', () => {
       })
       expect(b.registry.list()).toContain('cursor')
       expect(b.registry.has('cursor')).toBe(true)
+    } finally {
+      if (prevKey === undefined) delete process.env.CURSOR_API_KEY
+      else process.env.CURSOR_API_KEY = prevKey
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does NOT register cursor when CURSOR_API_KEY is set but cursorModel is missing — Cursor SDK requires model for local agents', async () => {
+    const prevKey = process.env.CURSOR_API_KEY
+    process.env.CURSOR_API_KEY = 'test-cursor-key'
+    const logEntries: Array<{ tag: string; line: string }> = []
+    try {
+      const b = await buildBootstrap({
+        db: openTestDb(),
+        stateDir: '/tmp/state',  // no agent-config.json → cursorModel undefined
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: (tag, line) => { logEntries.push({ tag, line }) },
+      })
+      expect(b.registry.list()).not.toContain('cursor')
+      const boot = logEntries.filter(e => e.tag === 'BOOT' && e.line.includes('cursor'))
+      expect(boot.some(e => e.line.includes('cursorModel is not configured'))).toBe(true)
     } finally {
       if (prevKey === undefined) delete process.env.CURSOR_API_KEY
       else process.env.CURSOR_API_KEY = prevKey

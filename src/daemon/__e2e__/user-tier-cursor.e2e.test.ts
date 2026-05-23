@@ -76,6 +76,8 @@ describe('e2e: user-tier permissions (cursor)', () => {
         admins: ['admin_chat'],
       },
       knownUsers: { admin_chat: 'admin_user', guest_chat: 'guest_user' },
+      // cursorModel required — bootstrap refuses to register cursor without it.
+      agentConfig: { provider: 'cursor', cursorModel: 'composer-2' },
       // Pin both chats to solo+cursor so the coordinator routes them
       // through the cursor provider's spawn path (not claude or codex).
       modes: {

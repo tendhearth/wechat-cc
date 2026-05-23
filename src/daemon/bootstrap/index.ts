@@ -512,7 +512,18 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   //
   // See docs/superpowers/specs/2026-05-23-cursor-sdk-provider-design.md.
   const cursorKey = process.env.CURSOR_API_KEY
-  if (cursorKey) {
+  if (cursorKey && !configuredAgent.cursorModel) {
+    // Cursor SDK's @cursor/sdk/dist/esm/options.d.ts says model is "required
+    // for local agents" — local is the only mode wechat-cc uses today.
+    // Fail-fast at boot with an actionable message rather than crash on
+    // first dispatch when Agent.create rejects without a model.
+    deps.log('BOOT',
+      'cursor: CURSOR_API_KEY is set but cursorModel is not configured. ' +
+      'Cursor SDK requires a model id for local agents. ' +
+      'Run `wechat-cc provider set cursor --model composer-2` (or another id from `Cursor.models.list()`). ' +
+      'Provider not registered.',
+    )
+  } else if (cursorKey) {
     try {
       const cursorMod = await import('@cursor/sdk') as unknown as import('../../core/cursor-agent-provider').CursorSdkNamespace
       const { createCursorAgentProvider } = await import('../../core/cursor-agent-provider')
@@ -521,7 +532,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
         createCursorAgentProvider({
           sdk: cursorMod,
           apiKey: cursorKey,
-          ...(configuredAgent.cursorModel ? { model: configuredAgent.cursorModel } : {}),
+          model: configuredAgent.cursorModel!,
           mcpServers: {
             ...(wechatStdioForCursor ? { wechat: wechatStdioForCursor } : {}),
             ...(delegateStdioForCursor ? { delegate: delegateStdioForCursor } : {}),

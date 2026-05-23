@@ -91,6 +91,20 @@ export interface TestDaemonOpts {
   /** Pre-set conversation modes (chatId → Mode). Persisted to conversations.json so coordinator picks them up. */
   modes?: Record<string, { kind: 'solo' | 'parallel' | 'primary_tool' | 'chatroom'; provider?: string; primary?: string; secondary?: string; max_rounds?: number }>
   /**
+   * Optional agent-config.json content to seed at stateDir/agent-config.json
+   * before booting. Tests that exercise provider-specific config (e.g. the
+   * cursor provider requires cursorModel to register) use this. Default:
+   * no file written — bootstrap's loadAgentConfig falls back to defaults.
+   */
+  agentConfig?: {
+    provider?: 'claude' | 'codex' | 'cursor'
+    model?: string
+    cursorModel?: string
+    dangerouslySkipPermissions?: boolean
+    autoStart?: boolean
+    closeStopsDaemon?: boolean
+  }
+  /**
    * Pre-known users (chatId → name). Populates user_names.json so onboarding
    * is skipped for these users. Default: { chat1: 'testuser' }.
    * Pass `{}` to disable all pre-population (for onboarding tests).
@@ -145,6 +159,20 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
     ...(opts.access?.trusted ? { trusted: opts.access.trusted } : {}),
   }
   writeFileSync(join(stateDir, 'access.json'), JSON.stringify(access, null, 2))
+
+  // 2b. Optional agent-config.json seed — used by tests that need
+  // provider-specific config (e.g. cursor's cursorModel requirement).
+  if (opts.agentConfig) {
+    const cfg = {
+      provider: opts.agentConfig.provider ?? 'claude',
+      ...(opts.agentConfig.model ? { model: opts.agentConfig.model } : {}),
+      ...(opts.agentConfig.cursorModel ? { cursorModel: opts.agentConfig.cursorModel } : {}),
+      dangerouslySkipPermissions: opts.agentConfig.dangerouslySkipPermissions ?? false,
+      autoStart: opts.agentConfig.autoStart ?? false,
+      closeStopsDaemon: opts.agentConfig.closeStopsDaemon ?? false,
+    }
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify(cfg, null, 2))
+  }
 
   // 3. Write fake bot account(s) — format: accounts/<id>/account.json + token
   const accounts: TestDaemonAccount[] = opts.accounts ?? [{
