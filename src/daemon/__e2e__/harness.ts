@@ -18,7 +18,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { startFakeIlink, type FakeIlinkHandle, type OutboundMsg } from './fake-ilink-server'
-import { installFakeClaude, installClaudeSpawnRecorder, installFakeCodex, installFakeModerator, type FakeSdkScript, type ModeratorScript } from './fake-sdk'
+import { installFakeClaude, installClaudeSpawnRecorder, installFakeCodex, installCodexSpawnRecorder, installFakeModerator, type FakeSdkScript, type ModeratorScript } from './fake-sdk'
 // Side-effect import: registers vi.mock('../media') so attachments
 // materialize to local stub files instead of hitting the real ilink CDN.
 // MUST come before bootDaemon imports to take effect.
@@ -59,6 +59,18 @@ export interface TestDaemonOpts {
    * sdkOptionsForProject(alias, path, tierProfile).
    */
   recordClaudeSpawnOptions?: (options: Record<string, unknown>) => void
+  /**
+   * Optional callback fired with the thread options passed to
+   * `Codex.startThread()` / `resumeThread()` for each spawned codex
+   * AgentSession. Used by tier-permissions e2e tests to assert that
+   * admin / trusted / guest chats produce different `sandboxMode` +
+   * `approvalPolicy` shapes on the codex side.
+   *
+   * Not called for cheapEval — the cheap codex thread uses `thread.run()`
+   * (not runStreamed), which the fake doesn't implement, so the recorder
+   * naturally only fires on the session-spawn path.
+   */
+  recordCodexSpawnOptions?: (options: Record<string, unknown>) => void
   /** preset companion config — default: disabled */
   companion?: { enabled?: boolean; default_chat_id?: string }
   /** preset bot accounts — default: 1 fake bot pointing at fake ilink */
@@ -173,6 +185,10 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
   }
   if (opts.recordClaudeSpawnOptions) {
     const { uninstall } = installClaudeSpawnRecorder(opts.recordClaudeSpawnOptions)
+    cleanups.push(uninstall)
+  }
+  if (opts.recordCodexSpawnOptions) {
+    const { uninstall } = installCodexSpawnRecorder(opts.recordCodexSpawnOptions)
     cleanups.push(uninstall)
   }
 

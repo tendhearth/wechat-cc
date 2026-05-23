@@ -71,6 +71,18 @@ let moderatorScript: ModeratorScript | null = null
  */
 let claudeSpawnRecorder: ((options: Record<string, unknown>) => void) | null = null
 
+/**
+ * Optional recorder fired on every fake `Codex.startThread(opts)` and
+ * `Codex.resumeThread(id, opts)` call — i.e. the codex provider's spawn
+ * path (NOT cheapEval, which uses a hoisted Codex instance whose
+ * cheap-thread options are read-only/never and not interesting for tier
+ * tests). Tests use this to assert the spawn-time codex SDK options
+ * (`sandboxMode`, `approvalPolicy`, `model`) match the user's tier.
+ *
+ * Stays null unless a test calls installCodexSpawnRecorder().
+ */
+let codexSpawnRecorder: ((options: Record<string, unknown>) => void) | null = null
+
 export function installFakeClaude(script: FakeSdkScript): { uninstall(): void } {
   claudeScript = script
   return { uninstall() { claudeScript = null } }
@@ -92,6 +104,25 @@ export function installClaudeSpawnRecorder(
 export function installFakeCodex(script: FakeSdkScript): { uninstall(): void } {
   codexScript = script
   return { uninstall() { codexScript = null } }
+}
+
+/**
+ * Install a recorder that's called with the thread options passed to
+ * `Codex.startThread(opts)` / `Codex.resumeThread(id, opts)` for every
+ * spawned codex session. Returns an uninstaller. Tests that want to
+ * verify tier → codex SDK options translation (parallel to
+ * installClaudeSpawnRecorder) use this.
+ *
+ * Only the per-session spawn path fires this — the cheapEval Codex
+ * instance is constructed once at provider boot with hardcoded
+ * read-only / never options, and its startThread calls are NOT
+ * recorded (they don't reflect a user's tier).
+ */
+export function installCodexSpawnRecorder(
+  fn: (options: Record<string, unknown>) => void,
+): { uninstall(): void } {
+  codexSpawnRecorder = fn
+  return { uninstall() { codexSpawnRecorder = null } }
 }
 
 export function installFakeModerator(script: ModeratorScript): { uninstall(): void } {
@@ -387,9 +418,20 @@ vi.mock('@openai/codex-sdk', () => {
   class FakeCodexThread {
     readonly id: string | null
     private _firstRun = true
+    /**
+     * Thread options captured at startThread/resumeThread time. Surfaced
+     * to the spawn recorder on the FIRST runStreamed() call (mirrors the
+     * Claude fake, which fires its recorder inside `query()` — i.e. when
+     * the spawn is actually exercised, not just constructed).
+     *
+     * Held as `unknown` so the field works for the cheapEval path too
+     * (whose `run()` throws here so the recorder never fires anyway).
+     */
+    private readonly _threadOptions: Record<string, unknown> | null
 
-    constructor(id: string | null) {
+    constructor(id: string | null, threadOptions?: Record<string, unknown> | null) {
       this.id = id
+      this._threadOptions = threadOptions ?? null
     }
 
     async runStreamed(
@@ -399,6 +441,14 @@ vi.mock('@openai/codex-sdk', () => {
       const text = typeof input === 'string' ? input : JSON.stringify(input)
       const threadId = this.id ?? `thread_${makeId()}`
       const emitStarted = this._firstRun
+      // Fire the spawn recorder ONCE per thread on the first runStreamed
+      // — matches the Claude side, which records inside `query()` so
+      // cheapEval (single-shot string path) is naturally excluded.
+      // Codex's cheapEval uses `thread.run()` (which throws below), so
+      // this branch is only reachable from the provider's session spawn.
+      if (this._firstRun && codexSpawnRecorder && this._threadOptions) {
+        try { codexSpawnRecorder(this._threadOptions) } catch {}
+      }
       this._firstRun = false
 
       return { events: buildTurnEvents(threadId, text, emitStarted) }
@@ -413,12 +463,18 @@ vi.mock('@openai/codex-sdk', () => {
   class FakeCodex {
     constructor(_opts?: unknown) {}
 
-    startThread(_opts?: unknown): FakeCodexThread {
-      return new FakeCodexThread(`thread_${makeId()}`)
+    startThread(opts?: unknown): FakeCodexThread {
+      return new FakeCodexThread(
+        `thread_${makeId()}`,
+        (opts && typeof opts === 'object') ? opts as Record<string, unknown> : null,
+      )
     }
 
-    resumeThread(id: string, _opts?: unknown): FakeCodexThread {
-      return new FakeCodexThread(id)
+    resumeThread(id: string, opts?: unknown): FakeCodexThread {
+      return new FakeCodexThread(
+        id,
+        (opts && typeof opts === 'object') ? opts as Record<string, unknown> : null,
+      )
     }
   }
 
