@@ -21,6 +21,20 @@ export function doctorRows(report) {
   }
   rows.push(["Claude", report.checks.claude])
   rows.push(["Codex", report.checks.codex])
+  // Cursor's doctor check uses {ok, apiKeySet, sdkInstalled} — repack into
+  // the {ok, path} shape doctorRows consumers expect. Path string surfaces
+  // which leg is missing so the human-readable doctor output stays useful.
+  if (report.checks.cursor) {
+    const cursor = report.checks.cursor
+    const path = cursor.ok
+      ? "SDK + API key 就绪"
+      : cursor.sdkInstalled && !cursor.apiKeySet
+        ? "缺少 CURSOR_API_KEY"
+        : !cursor.sdkInstalled && cursor.apiKeySet
+          ? "缺少 @cursor/sdk"
+          : "未配置"
+    rows.push(["Cursor", { ok: !!cursor.ok, path }])
+  }
   rows.push(["微信账号", { ...accounts, path: `${accounts.count} 个账号` }])
   rows.push(["Allowlist", { ...access, path: `${access.allowFromCount} 个用户` }])
   rows.push(["Provider", { ...provider, path: provider.provider }])

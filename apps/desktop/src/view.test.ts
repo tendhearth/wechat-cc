@@ -59,6 +59,53 @@ describe('doctorRows', () => {
     expect(rows[7]![1]).toEqual({ ok: false, path: 'stopped' })
   })
 
+  it('appends Cursor row with composed path when checks.cursor is present', () => {
+    const rows = doctorRows({
+      checks: {
+        bun: { ok: true, path: '' }, git: { ok: true, path: '' },
+        claude: { ok: true, path: '/c' }, codex: { ok: true, path: '/x' },
+        cursor: { ok: false, apiKeySet: false, sdkInstalled: true },
+        accounts: { ok: true, count: 0, items: [] }, access: { ok: true, allowFromCount: 0 },
+        provider: { ok: true, provider: 'claude' },
+        daemon: { alive: false, pid: null },
+      },
+    })
+    // @ts-expect-error untyped .js return value; will be fixed when view.js gets // @ts-check
+    const cursorRow = rows.find((r: [string, unknown]) => r[0] === 'Cursor')
+    expect(cursorRow).toBeDefined()
+    expect(cursorRow![1]).toEqual({ ok: false, path: '缺少 CURSOR_API_KEY' })
+  })
+
+  it('Cursor row reports ready state when both legs satisfied', () => {
+    const rows = doctorRows({
+      checks: {
+        bun: { ok: true, path: '' }, git: { ok: true, path: '' },
+        claude: { ok: false, path: null }, codex: { ok: false, path: null },
+        cursor: { ok: true, apiKeySet: true, sdkInstalled: true },
+        accounts: { ok: true, count: 0, items: [] }, access: { ok: true, allowFromCount: 0 },
+        provider: { ok: true, provider: 'cursor' },
+        daemon: { alive: false, pid: null },
+      },
+    })
+    // @ts-expect-error untyped .js return value; will be fixed when view.js gets // @ts-check
+    const cursorRow = rows.find((r: [string, unknown]) => r[0] === 'Cursor')
+    expect(cursorRow![1]).toEqual({ ok: true, path: 'SDK + API key 就绪' })
+  })
+
+  it('omits Cursor row entirely when checks.cursor is absent (backwards compat)', () => {
+    const rows = doctorRows({
+      checks: {
+        bun: { ok: true, path: '' }, git: { ok: true, path: '' },
+        claude: { ok: true, path: '/c' }, codex: { ok: true, path: '/x' },
+        accounts: { ok: true, count: 0, items: [] }, access: { ok: true, allowFromCount: 0 },
+        provider: { ok: true, provider: 'claude' },
+        daemon: { alive: false, pid: null },
+      },
+    })
+    // @ts-expect-error untyped .js return value; will be fixed when view.js gets // @ts-check
+    expect(rows.find((r: [string, unknown]) => r[0] === 'Cursor')).toBeUndefined()
+  })
+
   it('shows live pid in Daemon row when alive', () => {
     const rows = doctorRows({
       checks: {

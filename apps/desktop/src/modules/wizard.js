@@ -21,7 +21,13 @@ import { daemonStatusLine } from "../view.js"
 let scanWasDisabled = true
 
 /** @typedef {{ ok?: boolean, path?: string | null, version?: string | null }} CheckLike */
-/** @typedef {{ wslDetected?: boolean, checks?: { claude?: CheckLike, codex?: CheckLike, daemon?: unknown } }} DoctorReport */
+/**
+ * Cursor's doctor probe doesn't use {ok, path, version} — it surfaces
+ * apiKeySet + sdkInstalled separately so the card can tell users
+ * exactly which leg is missing (env var vs npm install).
+ * @typedef {{ ok?: boolean, apiKeySet?: boolean, sdkInstalled?: boolean }} CursorCheckLike
+ */
+/** @typedef {{ wslDetected?: boolean, checks?: { claude?: CheckLike, codex?: CheckLike, cursor?: CursorCheckLike, daemon?: unknown } }} DoctorReport */
 
 /** @param {DoctorReport} report */
 export function renderSetupPage(report) {
@@ -33,6 +39,7 @@ export function renderSetupPage(report) {
 
 /** @param {DoctorReport} report */
 function renderAgentCards(report) {
+  // claude / codex use the binary-on-PATH probe shape {ok, path, version}
   for (const provider of /** @type {const} */ (["claude", "codex"])) {
     const check = report.checks?.[provider]
     const card = document.getElementById(`agent-card-${provider}`)
@@ -47,6 +54,33 @@ function renderAgentCards(report) {
     meta.textContent = installed ? (check?.path || "已检测到") : "未在 PATH 上"
     if (installLink) installLink.hidden = installed
   }
+  // cursor uses the SDK + API-key probe shape — meta reports which leg is missing
+  renderCursorCard(report.checks?.cursor)
+}
+
+/** @param {CursorCheckLike | undefined} check */
+function renderCursorCard(check) {
+  const card = document.getElementById("agent-card-cursor")
+  const state = document.getElementById("agent-state-cursor")
+  const meta = document.getElementById("cursor-meta")
+  const installLink = /** @type {HTMLElement | null} */ (card?.querySelector(".install-link") ?? null)
+  if (!card || !state || !meta) return
+  const installed = !!check?.ok
+  card.classList.toggle("installed", installed)
+  card.classList.toggle("missing", !installed)
+  state.textContent = installed ? "✓ 已就绪" : "✗ 未就绪"
+  if (installed) {
+    meta.textContent = "SDK + API key 就绪"
+  } else if (check?.sdkInstalled && !check?.apiKeySet) {
+    meta.textContent = "缺少 CURSOR_API_KEY（设到 shell / systemd 环境）"
+  } else if (!check?.sdkInstalled && check?.apiKeySet) {
+    meta.textContent = "缺少 @cursor/sdk（运行 bun add @cursor/sdk）"
+  } else {
+    meta.textContent = "未配置 — 需要 @cursor/sdk + CURSOR_API_KEY"
+  }
+  // Install link hidden only when fully ready; useful any time SDK isn't
+  // installed (the link points at Cursor SDK docs, which cover both steps).
+  if (installLink) installLink.hidden = installed
 }
 
 /** @param {DoctorReport} report */
@@ -62,7 +96,8 @@ export function refreshScanButton(report) {
   if (!btn) return
   const claudeOk = !!report.checks?.claude?.ok
   const codexOk = !!report.checks?.codex?.ok
-  const anyAgent = claudeOk || codexOk
+  const cursorOk = !!report.checks?.cursor?.ok
+  const anyAgent = claudeOk || codexOk || cursorOk
   btn.disabled = !anyAgent
   if (anyAgent) btn.removeAttribute("title")
   else btn.title = "先装一个 agent · 本页会自动检测"
