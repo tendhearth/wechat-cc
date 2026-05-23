@@ -14,7 +14,8 @@ import { makeEventsStore } from '../events/store'
 import { makeObservationsStore } from '../observations/store'
 import { runIntrospectTick } from '../companion/introspect'
 import { resolveIntrospectChatId, makeIntrospectAgent } from '../companion/introspect-runtime'
-import { TIER_PROFILES } from '../../core/user-tier'
+import { resolveTier, TIER_PROFILES } from '../../core/user-tier'
+import type { Access } from '../../lib/access'
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
@@ -23,6 +24,15 @@ export interface TickDeps {
   db: Db
   ilink: IlinkAdapter
   boot: Bootstrap
+  /**
+   * Task 11 — companion ticks aren't user-initiated, but the session
+   * they acquire is still keyed by `chatId` (the configured
+   * `default_chat_id`). Resolving the tier of that chat lets us reuse
+   * the same per-chat session isolation as user-initiated dispatch.
+   * Typically resolves to admin (operator's own chatId); a non-admin
+   * `default_chat_id` is a misconfiguration the tick surfaces via log.
+   */
+  loadAccess: () => Access
   log: (tag: string, line: string, fields?: Record<string, unknown>) => void
 }
 
@@ -64,7 +74,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       ? { alias: currentAlias, path: snapshot.projects[currentAlias]!.path }
       : { alias: '_default', path: launchCwd }
     // PR D — don't contend with an in-flight user-initiated dispatch on
-    // the same (alias, providerId) session. Companion pushes are
+    // the same (alias, providerId, chatId) session. Companion pushes are
     // best-effort background work — skipping a tick when the user is
     // mid-conversation is strictly better than queueing behind their
     // turn (push would land delayed and disrupt the user's flow) or
@@ -73,21 +83,27 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     // unpredictable interleaving). Plan recommends skip + warn over
     // abort because aborting the user's turn for a push tick is
     // user-hostile.
-    // TODO(Task 10/11): the companion push targets default_chat_id; once
-    // the coordinator threads real chatIds through acquire(), pass
-    // cfg.default_chat_id here so the companion shares its session with
-    // that chat's user-initiated turns (rather than running under a
-    // sibling '_legacy' bucket).
-    if (deps.boot.sessionManager.isInFlight({ alias: proj.alias, providerId: deps.boot.defaultProviderId, chatId: '_legacy' })) {
-      deps.log('SCHED', `[companion] skipping push tick: user session in-flight (alias=${proj.alias} provider=${deps.boot.defaultProviderId})`)
+    // Task 11 — chatId is now `cfg.default_chat_id`, so this isInFlight
+    // check shares the same per-chat session bucket as user-initiated
+    // dispatch for that chat. Tier comes from access.json so a
+    // misconfigured default_chat_id (pointing at a non-admin) runs with
+    // reduced capabilities rather than silently inheriting admin.
+    const chatId = cfg.default_chat_id
+    const tier = resolveTier(chatId, deps.loadAccess())
+    if (tier !== 'admin') {
+      deps.log('COMPANION', `default_chat_id=${chatId} is non-admin tier (${tier}); push tick will run with reduced capabilities`)
+    }
+    const tierProfile = TIER_PROFILES[tier]
+    if (deps.boot.sessionManager.isInFlight({ alias: proj.alias, providerId: deps.boot.defaultProviderId, chatId })) {
+      deps.log('SCHED', `[companion] skipping push tick: user session in-flight (alias=${proj.alias} provider=${deps.boot.defaultProviderId} chat=${chatId})`)
       return
     }
     const handle = await deps.boot.sessionManager.acquire({
       alias: proj.alias,
       path: proj.path,
       providerId: deps.boot.defaultProviderId,
-      chatId: '_legacy',
-      tierProfile: TIER_PROFILES.admin,
+      chatId,
+      tierProfile,
     })
     const tickText = buildPushTickText({
       nowIso: opts?.nowIso ?? new Date().toISOString(),

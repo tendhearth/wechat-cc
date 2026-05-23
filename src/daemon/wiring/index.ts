@@ -5,6 +5,7 @@
 import type { Db } from '../../lib/db'
 import type { IlinkAdapter, IlinkAccount } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
+import type { Access } from '../../lib/access'
 import { Ref } from '../../lib/lifecycle'
 import type { GuardLifecycle } from '../guard/lifecycle'
 import type { PollingLifecycle } from '../polling-lifecycle'
@@ -29,6 +30,12 @@ export interface WireMainOpts {
   boot: Bootstrap
   /** `--dangerously` flag — read by startup-sweeps for notification text. */
   dangerously: boolean
+  /**
+   * Task 11 — tick-bodies resolve `default_chat_id`'s tier from
+   * access.json on each tick. Threaded through wireMain so the eval
+   * harness can inject a fake `loadAccess` without touching disk.
+   */
+  loadAccess: () => Access
   log: (tag: string, line: string, fields?: Record<string, unknown>) => void
   /** Forwarded to buildLifecycleDeps — eval harness override. */
   schedulerIntervalMs?: number

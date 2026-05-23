@@ -129,6 +129,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({
       stateDir, db, ilink, accounts, boot, dangerously,
+      // Task 11 — tick-bodies pass this to resolveTier() when computing
+      // the companion's tierProfile. Same singleton import the bootstrap
+      // coordinator uses; 5s TTL cache inside `loadAccess` keeps the
+      // per-tick lookup cheap.
+      loadAccess,
       log: (t, l) => log(t, l),
       schedulerIntervalMs: opts.schedulerIntervalMs,
     })
