@@ -143,6 +143,7 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
     format: () => 'inbound text',
     sendAssistantText,
     permissionMode: 'dangerously',
+    loadAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [], admins: ['demo-chat'] }),
     log,
   })
 
@@ -261,6 +262,7 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
     format: () => 'parallel inbound',
     sendAssistantText: parallelSends,
     permissionMode: 'dangerously',
+    loadAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [], admins: ['par-chat'] }),
     log,
   })
   await parallelCoord.dispatch({ chatId: 'par-chat', userId: 'par-chat', text: 'hi', msgType: 'text', createTimeMs: Date.now(), accountId: 'acct' })
@@ -314,6 +316,7 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
     format: () => 'chatroom inbound',
     sendAssistantText: roomSends,
     permissionMode: 'dangerously',
+    loadAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [], admins: ['room-chat'] }),
     log,
     haikuEval: roomHaiku,
     chatroomMaxRounds: 4,

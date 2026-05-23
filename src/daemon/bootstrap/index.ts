@@ -41,6 +41,7 @@ import { makeSessionStore } from '../../core/session-store'
 import type { Db } from '../../lib/db'
 import { homedir } from 'node:os'
 import { loadAgentConfig } from '../../lib/agent-config'
+import { loadAccess } from '../../lib/access'
 import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { buildDelegateDispatch, type DelegateDispatch } from './delegate'
@@ -488,6 +489,11 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
     // {msgId, error?} envelope; an ilink RETRY_FAIL was invisible to the
     // dashboard logs panel + the inbound flow.
     sendAssistantText: makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log }),
+    // Task 10 — coordinator resolves per-chat tier on every dispatch.
+    // loadAccess() reads access.json with a 5s in-process TTL cache, so
+    // this is cheap to call per inbound. Admin/trusted/guest classification
+    // determines which TierProfile the session is spawned under.
+    loadAccess,
     log: deps.log,
     // PR F — chatroom moderator now resolves a provider-agnostic cheap
     // eval via ProviderRegistry.getCheapEval(). Each registered provider

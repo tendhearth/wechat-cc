@@ -7,7 +7,23 @@ import type { AgentEvent, AgentProvider } from './agent-provider'
 import type { Mode } from './conversation'
 import { formatInbound, type InboundMsg } from './prompt-format'
 import type { AcquireRequest } from './session-manager'
-import { TIER_PROFILES } from './user-tier'
+import { TIER_PROFILES, type TierProfile } from './user-tier'
+import type { Access } from '../lib/access'
+
+/**
+ * Default access fixture used by most coordinator tests: every chatId
+ * those tests touch is listed in `admins`, so `resolveTier()` returns
+ * 'admin' and acquire() receives `TIER_PROFILES.admin` — the behaviour
+ * pre-Task 10 tests were written against. Tests that need to exercise
+ * trusted/guest behaviour should construct their own access fixture.
+ */
+function adminAccess(): Access {
+  return {
+    dmPolicy: 'allowlist',
+    allowFrom: [],
+    admins: ['chat-1', 'chat-2', 'chat-p', 'chat-r', 'chat-abc'],
+  }
+}
 
 /** Minimal AgentProvider whose spawn() returns a session that emits no events. */
 const dummyProvider: AgentProvider = {
@@ -57,6 +73,7 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: () => 'x',
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     expect(c.getMode('chat-1')).toEqual({ kind: 'solo', provider: 'claude' })
@@ -76,6 +93,7 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: () => 'x',
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     expect(c.getMode('chat-1')).toEqual({ kind: 'solo', provider: 'codex' })
@@ -92,6 +110,7 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: () => 'x',
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     expect(() => c.setMode('chat-1', { kind: 'solo', provider: 'mystery' }))
@@ -111,6 +130,7 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: () => 'x',
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     c.setMode('chat-1', { kind: 'solo', provider: 'codex' })
@@ -130,6 +150,7 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: () => 'x',
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log,
     })
     await c.dispatch(inbound('chat-1', 'hi'))
@@ -159,6 +180,7 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: (m) => `[fmt]${m.text}`,
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     await c.dispatch(inbound('chat-1', 'hi codex'))
@@ -166,10 +188,51 @@ describe('ConversationCoordinator', () => {
       alias: 'a',
       path: '/p',
       providerId: 'codex',
-      chatId: '_legacy',
+      chatId: 'chat-1',
       tierProfile: TIER_PROFILES.admin,
     })
     expect(dispatched).toContain('[fmt]hi codex')
+  })
+
+  it('dispatch threads chatId into session acquire with resolved tier (admin lookup)', async () => {
+    // Task 10 — coordinator now uses the inbound's real chatId (not the
+    // pre-task '_legacy' placeholder) and computes the TierProfile from
+    // resolveTier(chatId, loadAccess()). adminChat ∈ access.admins so
+    // TIER_PROFILES.admin is passed; a different chatId (guestChat) not
+    // listed anywhere collapses to TIER_PROFILES.guest. This pins the
+    // chatId pass-through + per-chatId tier resolution in one test.
+    const acquireCalls: Array<{ alias: string; chatId: string; tierProfile: TierProfile }> = []
+    const session = makeFakeSession({
+      events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
+    })
+    const acquire = vi.fn(async (req: AcquireRequest) => {
+      acquireCalls.push({ alias: req.alias, chatId: req.chatId, tierProfile: req.tierProfile })
+      return makeHandle(req.providerId, session)
+    })
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      permissionMode: 'strict',
+      // adminChat is admin; guestChat is neither admin nor trusted → guest.
+      loadAccess: () => ({
+        dmPolicy: 'allowlist',
+        allowFrom: [],
+        admins: ['adminChat'],
+      }),
+      log: () => {},
+    })
+    await c.dispatch(inbound('adminChat', 'hi'))
+    expect(acquireCalls[0]).toMatchObject({ chatId: 'adminChat' })
+    expect(acquireCalls[0]?.tierProfile).toBe(TIER_PROFILES.admin)
+    await c.dispatch(inbound('guestChat', 'hi'))
+    expect(acquireCalls[1]).toMatchObject({ chatId: 'guestChat' })
+    expect(acquireCalls[1]?.tierProfile).toBe(TIER_PROFILES.guest)
   })
 
   it('dispatch falls back to default provider when persisted mode references unknown provider', async () => {
@@ -192,6 +255,7 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: () => 'x',
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log,
     })
     await c.dispatch(inbound('chat-1', 'hi'))
@@ -199,7 +263,7 @@ describe('ConversationCoordinator', () => {
       alias: 'a',
       path: '/p',
       providerId: 'claude',
-      chatId: '_legacy',
+      chatId: 'chat-1',
       tierProfile: TIER_PROFILES.admin,
     })
     expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining("provider 'gemini' not registered"))
@@ -227,6 +291,7 @@ describe('ConversationCoordinator', () => {
       format: () => 'x',
       sendAssistantText,
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     await c.dispatch(inbound('chat-1', 'hi'))
@@ -256,6 +321,7 @@ describe('ConversationCoordinator', () => {
       format: () => 'x',
       sendAssistantText,
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     await c.dispatch(inbound('chat-1', 'hi'))
@@ -292,6 +358,7 @@ describe('ConversationCoordinator', () => {
       format: () => 'x',
       sendAssistantText,
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     await c.dispatch(inbound('chat-1', 'hi'))
@@ -331,11 +398,12 @@ describe('ConversationCoordinator', () => {
       format: () => 'x',
       sendAssistantText: async () => {},
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     await c.dispatch(inbound('chat-1', 'hi'))
     expect(release).toHaveBeenCalledTimes(1)
-    expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: '_legacy' })
+    expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: 'chat-1' })
   })
 
   it('on auth_failed: throttles repeated notices for the same chat', async () => {
@@ -361,6 +429,7 @@ describe('ConversationCoordinator', () => {
       format: () => 'x',
       sendAssistantText,
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
       authFailNotifyThrottleMs: 1000,
       now: () => clock,
@@ -402,6 +471,7 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: () => 'x',
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     await c.dispatch(inbound('chat-1', 'hi'))
@@ -438,6 +508,7 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: () => 'x',
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log,
       })
       return { c, acquire, dispatched, log, store }
@@ -481,6 +552,7 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: () => 'x',
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log,
       })
       await c.dispatch(inbound('chat-1', 'hi'))
@@ -501,6 +573,7 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: () => 'x',
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
       })
       expect(() => c.setMode('chat-1', { kind: 'primary_tool', primary: 'claude' }))
@@ -576,6 +649,7 @@ describe('ConversationCoordinator', () => {
         format: (m) => m.text,
         sendAssistantText,
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
       })
       return { c, acquire, sendAssistantText, dispatchCalls }
@@ -615,12 +689,13 @@ describe('ConversationCoordinator', () => {
         format: (m) => m.text,
         sendAssistantText,
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
       })
       await c.dispatch(inbound('chat-p', 'hi'))
 
       // Failing provider was released; healthy one was not.
-      expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: '_legacy' })
+      expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: 'chat-p' })
       expect(release).not.toHaveBeenCalledWith('a', 'codex')
       // Codex's normal reply made it through with the parallel-mode prefix.
       const sent = sendAssistantText.mock.calls.map(call => call[1] as string)
@@ -721,6 +796,7 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: () => 'x',
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log,
       })
       await c.dispatch(inbound('chat-1', 'hi'))
@@ -743,6 +819,7 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: () => 'x',
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
       })
       expect(() => c.setMode('chat-1', { kind: 'parallel' }))
@@ -775,6 +852,7 @@ describe('ConversationCoordinator', () => {
         format: () => 'x',
         sendAssistantText,
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
       })
       await c.dispatch(inbound('chat-1', 'hi'))
@@ -842,6 +920,7 @@ describe('ConversationCoordinator', () => {
         format: (m) => `<wechat>${m.text}</wechat>`,
         sendAssistantText,
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log,
         haikuEval,
         ...(opts.maxRounds !== undefined ? { chatroomMaxRounds: opts.maxRounds } : {}),
@@ -910,6 +989,7 @@ describe('ConversationCoordinator', () => {
         format: (m) => m.text,
         sendAssistantText,
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
         haikuEval,
         chatroomMaxRounds: 4,
@@ -917,7 +997,7 @@ describe('ConversationCoordinator', () => {
       await c.dispatch(inbound('chat-r', '开始讨论'))
 
       // claude's session was released so the next inbound starts clean.
-      expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: '_legacy' })
+      expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: 'chat-r' })
       // Loop exited after the first speaker turn (moderator called once).
       expect(modCalls).toBe(1)
       // User got the neutral notice — NOT the raw sentinel or a "[Claude]" prefix.
@@ -1031,6 +1111,7 @@ describe('ConversationCoordinator', () => {
         format: formatInbound,  // real formatter — emits [image:/path]
         sendAssistantText: vi.fn(),
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
         haikuEval,
       })
@@ -1096,6 +1177,7 @@ describe('ConversationCoordinator', () => {
         format: formatInbound,
         sendAssistantText: vi.fn(),
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
         haikuEval,
       })
@@ -1152,6 +1234,7 @@ describe('ConversationCoordinator', () => {
         format: formatInbound,
         sendAssistantText: vi.fn(),
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
         haikuEval,
       })
@@ -1242,6 +1325,7 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: () => 'x',
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log,
       })
       await c.dispatch(inbound('chat-1', 'hi'))
@@ -1270,6 +1354,7 @@ describe('ConversationCoordinator', () => {
         format: () => 'x',
         sendAssistantText,
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
       })
       await c.dispatch(inbound('chat-1', 'hi'))
@@ -1340,6 +1425,7 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: (m) => m.text,
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
         haikuEval,
       })
@@ -1432,6 +1518,7 @@ describe('ConversationCoordinator', () => {
         format: (m) => m.text,
         sendAssistantText: async () => {},
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: (tag, line) => { logs.push(`${tag}|${line}`) },
         haikuEval,
       })
@@ -1520,6 +1607,7 @@ describe('ConversationCoordinator', () => {
         format: (m) => m.text,
         sendAssistantText: async () => {},
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
         haikuEval,
       })
@@ -1561,6 +1649,7 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: () => 'x',
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
       })
       expect(() => c.setMode('chat-1', { kind: 'chatroom' }))
