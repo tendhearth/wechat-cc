@@ -133,3 +133,42 @@ describe('agent-config', () => {
     }
   })
 })
+
+describe('loadAgentConfig — cursor provider', () => {
+  it('accepts provider="cursor" with cursorModel', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-'))
+    const fs = require('node:fs') as typeof import('node:fs')
+    fs.writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+      provider: 'cursor',
+      cursorModel: 'composer-2',
+      dangerouslySkipPermissions: false,
+      autoStart: false,
+      closeStopsDaemon: false,
+    }))
+    try {
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.provider).toBe('cursor')
+      expect(cfg.cursorModel).toBe('composer-2')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('cursorModel optional — defaults to undefined', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-'))
+    const fs = require('node:fs') as typeof import('node:fs')
+    fs.writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+      provider: 'cursor',
+      dangerouslySkipPermissions: false,
+      autoStart: false,
+      closeStopsDaemon: false,
+    }))
+    try {
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.provider).toBe('cursor')
+      expect(cfg.cursorModel).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
