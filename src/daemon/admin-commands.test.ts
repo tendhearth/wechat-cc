@@ -185,11 +185,12 @@ describe('admin-commands', () => {
       expect(await cmds.handle(msg('/reset'))).toBe(true)
       // One release call per registered provider, keyed to the chat's alias.
       expect(release).toHaveBeenCalledTimes(2)
-      expect(release).toHaveBeenCalledWith({ alias: 'foo', providerId: 'claude', chatId: '_legacy' })
-      expect(release).toHaveBeenCalledWith({ alias: 'foo', providerId: 'codex', chatId: '_legacy' })
-      // Persisted resume id is wiped so the next dispatch starts fresh.
-      // chatId='_legacy' is the placeholder until Tasks 10/11 thread the real chatId.
-      expect(del).toHaveBeenCalledWith({ alias: 'foo', chatId: '_legacy' })
+      // /reset releases the admin's own (alias, provider, chatId) sessions.
+      expect(release).toHaveBeenCalledWith({ alias: 'foo', providerId: 'claude', chatId: 'admin-chat' })
+      expect(release).toHaveBeenCalledWith({ alias: 'foo', providerId: 'codex', chatId: 'admin-chat' })
+      // Persisted resume ids for the admin's chat are wiped so the next
+      // dispatch from that chat starts fresh.
+      expect(del).toHaveBeenCalledWith({ alias: 'foo', chatId: 'admin-chat' })
       // User-facing confirmation mentions reset + the chat alias.
       const body = sentBody()
       expect(body).toMatch(/重置|reset/i)
@@ -205,7 +206,7 @@ describe('admin-commands', () => {
         sessionStore: { get: () => null, delete: () => {} },
       })
       expect(await cmds.handle(msg('/重置'))).toBe(true)
-      expect(release).toHaveBeenCalledWith({ alias: 'bar', providerId: 'claude', chatId: '_legacy' })
+      expect(release).toHaveBeenCalledWith({ alias: 'bar', providerId: 'claude', chatId: 'admin-chat' })
     })
 
     it('reports a clear message and no side effects when the chat has no project mapped', async () => {
@@ -232,9 +233,10 @@ describe('admin-commands', () => {
         registry: { list: () => ['claude', 'codex'] },
         sessionManager: { release: async () => {}, list: () => [] },
         sessionStore: {
-          get: ({ alias, provider }) => {
-            if (alias === 'foo' && provider === 'claude') {
-              return { alias, session_id: 'sid-1', last_used_at: fiveMinAgo, provider: 'claude', chat_id: '_legacy' }
+          get: ({ alias, provider, chatId }) => {
+            // /health ai now reads the admin's own session row.
+            if (alias === 'foo' && provider === 'claude' && chatId === 'admin-chat') {
+              return { alias, session_id: 'sid-1', last_used_at: fiveMinAgo, provider: 'claude', chat_id: chatId }
             }
             return null
           },

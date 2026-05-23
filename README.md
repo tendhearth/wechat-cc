@@ -573,6 +573,12 @@ Stable `obs_demo_*` / `ms_demo_*` ids make `unseed` reliable.
   `never` approval, which means destructive operations *within the workspace
   cwd* are still possible. The guest tier on Codex uses `read-only` sandbox,
   which is solid.
+- **v0.6 sessions table schema is one-way** — migration v10 adds a `chat_id`
+  column and rebuilds the primary key as `(alias, provider, chat_id)`. The
+  upgrade is safe; the downgrade isn't. A v0.5 binary opening a post-v0.6
+  database will see its old `(alias, provider)` query miss every new row,
+  because the data is keyed under a different shape. If you need to roll
+  back, restore the sessions table from a pre-upgrade backup.
 
 ---
 

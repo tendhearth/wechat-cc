@@ -195,10 +195,9 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
   })
 
   // Seed a stored session for the chat so /health ai has something to render.
-  // session-store is triple-keyed (alias, provider, chatId) as of Task 8;
-  // admin commands still use chat_id='_legacy' until Tasks 10/11 thread
-  // real chatIds through acquire().
-  boot.sessionStore.set({ alias: 'P', provider: 'claude', chatId: '_legacy', sessionId: 'sid-test' })
+  // session-store is triple-keyed (alias, provider, chatId); admin commands
+  // operate on the admin's own chatId.
+  boot.sessionStore.set({ alias: 'P', provider: 'claude', chatId: 'admin', sessionId: 'sid-test' })
 
   // /health ai
   await admin.handle({ chatId: 'admin', userId: 'admin', text: '/health ai', msgType: 'text', createTimeMs: Date.now(), accountId: 'acct' })
@@ -213,15 +212,15 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
   if (resetOut) pass(`/reset confirms: ${JSON.stringify(resetOut[1].slice(0, 120))}`)
   else fail('/reset did not send confirmation', adminSends)
   // sessionStore should now be empty for that alias
-  const afterReset = boot.sessionStore.get({ alias: 'P', provider: 'claude', chatId: '_legacy' })
+  const afterReset = boot.sessionStore.get({ alias: 'P', provider: 'claude', chatId: 'admin' })
   if (afterReset === null) pass('sessionStore row for the chat was cleared by /reset')
   else fail('sessionStore still has a row after /reset', afterReset)
 
   // /重置 alias
   adminSends.length = 0
-  boot.sessionStore.set({ alias: 'P', provider: 'claude', chatId: '_legacy', sessionId: 'sid-test2' })
+  boot.sessionStore.set({ alias: 'P', provider: 'claude', chatId: 'admin', sessionId: 'sid-test2' })
   await admin.handle({ chatId: 'admin', userId: 'admin', text: '/重置', msgType: 'text', createTimeMs: Date.now(), accountId: 'acct' })
-  if (boot.sessionStore.get({ alias: 'P', provider: 'claude', chatId: '_legacy' }) === null) pass('/重置 (Chinese alias) also clears sessionStore')
+  if (boot.sessionStore.get({ alias: 'P', provider: 'claude', chatId: 'admin' }) === null) pass('/重置 (Chinese alias) also clears sessionStore')
   else fail('/重置 did not clear the sessionStore row')
 
   // ───────────────────────────────────────────────────────────────

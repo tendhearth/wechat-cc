@@ -370,16 +370,15 @@ async function runReset(deps: AdminCommandsDeps, adminChatId: string): Promise<v
   const providers = deps.registry.list()
   for (const p of providers) {
     try {
-      // TODO(Task 10/11): adminChatId is the chatId for /reset; until
-      // coordinator + tick-bodies thread real chatIds through acquire(),
-      // every session lives under the '_legacy' bucket — so release that.
-      await deps.sessionManager.release({ alias: proj.alias, providerId: p, chatId: '_legacy' })
+      // /reset only touches the admin's own session — other chats on the
+      // same alias keep their independent sessions intact.
+      await deps.sessionManager.release({ alias: proj.alias, providerId: p, chatId: adminChatId })
     } catch (err) {
       deps.log('ADMIN_CMD', `/reset release ${proj.alias}/${p} failed: ${err instanceof Error ? err.message : err}`)
     }
   }
-  // Matches the release() bucket above — wipe the legacy chat_id row.
-  deps.sessionStore.delete({ alias: proj.alias, chatId: '_legacy' })
+  // Matches the release() bucket above — wipe the admin's chat_id rows.
+  deps.sessionStore.delete({ alias: proj.alias, chatId: adminChatId })
   deps.log('ADMIN_CMD', `/reset chat=${adminChatId} alias=${proj.alias} providers=${providers.join(',')}`)
   await deps.sendMessage(
     adminChatId,
@@ -399,10 +398,8 @@ async function sendAiHealthReport(deps: AdminCommandsDeps, adminChatId: string):
     lines.push('(无已注册的 provider — 检查 daemon 启动日志)')
   } else {
     for (const p of providers) {
-      // TODO(Task 10/11): adminChatId is the chatId for /health ai;
-      // until coordinator threads real chatIds through acquire(), every
-      // session lives under '_legacy' — so read from there.
-      const rec = deps.sessionStore.get({ alias: proj.alias, provider: p, chatId: '_legacy' })
+      // /health ai inspects the admin's own session row.
+      const rec = deps.sessionStore.get({ alias: proj.alias, provider: p, chatId: adminChatId })
       if (rec) {
         const age = humanAge(Date.parse(rec.last_used_at))
         lines.push(`  ${p}: 会话 ${rec.session_id.slice(0, 8)}… (${age} 前)`)
