@@ -498,6 +498,37 @@ prevents prompt-injection from a chat you've allowed):
 
 Users who scan the QR during `wechat-cc setup` are automatically allowed.
 
+### Permission tiers (v0.6+)
+
+Each chatId in `access.json` falls into one of three tiers:
+
+- `admins`: full access — the bot runs every tool unconditionally.
+- `trusted`: full access EXCEPT destructive operations (rm, git reset --hard,
+  git push --force, memory_delete). Destructive ops prompt the admin chat for
+  approval.
+- everyone else in `allowFrom`: guest tier — can chat, read their own memory,
+  and that's it. Bash/Edit/Write/Task/WebFetch/WebSearch are denied outright.
+
+Example `access.json`:
+
+```json
+{
+  "dmPolicy": "allowlist",
+  "allowFrom": ["wxid_owner", "wxid_friend", "wxid_acquaintance"],
+  "admins": ["wxid_owner"],
+  "trusted": ["wxid_friend"]
+}
+```
+
+Above: `wxid_owner` is admin (you), `wxid_friend` can drive most of the
+agent's tools (you'll get a prompt before they delete anything), and
+`wxid_acquaintance` can only chat.
+
+Caveat: destructive Bash detection is regex-based and conservative
+(matches `rm`, `git reset --hard`, `git push --force`, `git branch -D`,
+`dd if=… of=…`). A determined caller can obfuscate. Don't put untrusted
+people in `trusted` tier.
+
 ---
 
 ## Demo data (for screenshots / first impressions)
@@ -533,6 +564,15 @@ Stable `obs_demo_*` / `ms_demo_*` ids make `unseed` reliable.
   the new agent still knows *who you are*. But it won't know what the
   other agent just said two messages ago — if that context matters,
   paste it yourself.
+- **Permission tiering is best-effort, not a security boundary** — destructive
+  Bash detection is regex-based and can be bypassed by a determined caller
+  (e.g. `eval` chains). Use `trusted` tier for people you'd hand the keyboard
+  to. For people you wouldn't, leave them in default (guest) tier.
+- **Codex tier enforcement is coarser than Claude's** — the Codex SDK has no
+  per-tool callback. Trusted users on Codex get `workspace-write` sandbox +
+  `never` approval, which means destructive operations *within the workspace
+  cwd* are still possible. The guest tier on Codex uses `read-only` sandbox,
+  which is solid.
 
 ---
 
