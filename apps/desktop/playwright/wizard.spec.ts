@@ -28,9 +28,54 @@ test('setup page renders agent cards', async ({ page, shimUrl }) => {
     () => ['wizard', 'dashboard'].includes(document.documentElement.dataset.mode ?? ''),
     { timeout: 15_000 }
   )
-  // Both agent cards exist (regardless of installed state).
+  // All three agent cards exist (regardless of installed state). Cursor is
+  // the third provider added in the 2026-05-23 cursor SDK feature.
   await expect(page.locator('#agent-card-claude')).toBeAttached()
   await expect(page.locator('#agent-card-codex')).toBeAttached()
+  await expect(page.locator('#agent-card-cursor')).toBeAttached()
+})
+
+test('cursor card renders state + meta from doctor probe', async ({ page, shimUrl }) => {
+  await page.goto(shimUrl)
+  await page.waitForFunction(
+    () => ['wizard', 'dashboard'].includes(document.documentElement.dataset.mode ?? ''),
+    { timeout: 15_000 }
+  )
+  // Cursor card uses the {ok, apiKeySet, sdkInstalled} probe shape — unlike
+  // claude/codex which use {ok, path, version}. The renderer composes the
+  // human-readable meta string from those two bits. Verify state text uses
+  // the cursor-specific copy ("已就绪" / "未就绪"), not the binary copy.
+  const stateText = await page.locator('#agent-state-cursor').textContent()
+  expect(stateText).toMatch(/^(✓ 已就绪|✗ 未就绪|检测中…)$/)
+  const metaText = await page.locator('#cursor-meta').textContent()
+  // Meta should NEVER show 'PATH' wording — that's the claude/codex shape.
+  expect(metaText).not.toMatch(/PATH/)
+})
+
+test('scan-bind unlocks when cursor is the only ready provider', async ({ page, shimUrl }) => {
+  await page.goto(shimUrl)
+  await page.waitForFunction(
+    () => ['wizard', 'dashboard'].includes(document.documentElement.dataset.mode ?? ''),
+    { timeout: 15_000 }
+  )
+  // Inject a synthetic doctor report where only cursor is ready and call
+  // the wizard's refreshScanButton via the module already loaded by main.js.
+  // If the gate is correct, the button enables.
+  const enabled = await page.evaluate(async () => {
+    // The wizard module is imported as a side-effect by main.js. Re-import
+    // here for direct access to refreshScanButton — both URLs resolve to
+    // the same module so the shim setup is shared.
+    const mod = await import('./modules/wizard.js') as typeof import('../src/modules/wizard.js')
+    mod.refreshScanButton({
+      checks: {
+        claude: { ok: false },
+        codex: { ok: false },
+        cursor: { ok: true, apiKeySet: true, sdkInstalled: true },
+      },
+    })
+    return !(document.getElementById('scan-bind') as HTMLButtonElement | null)?.disabled
+  })
+  expect(enabled).toBe(true)
 })
 
 test('scan-bind button exists with the new id (single-page contract)', async ({ page, shimUrl }) => {
