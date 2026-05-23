@@ -203,7 +203,11 @@ const migrations: Migration[] = [
       CREATE TABLE sessions_v10 (
         alias TEXT NOT NULL,
         provider TEXT NOT NULL,
-        chat_id TEXT NOT NULL,
+        -- DEFAULT '_legacy' keeps callers that don't yet supply chat_id from
+        -- failing on INSERT. Task 8 rewrites session-store queries to always
+        -- pass an explicit chat_id; the default becomes vestigial then, but
+        -- harmless. Removing it later requires another migration.
+        chat_id TEXT NOT NULL DEFAULT '_legacy',
         session_id TEXT NOT NULL,
         last_used_at TEXT NOT NULL,
         summary TEXT,
