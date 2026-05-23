@@ -79,7 +79,7 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
   header('Booting an isolated daemon')
   const db = openTestDb()
   cleanup.push(() => db.close())
-  const boot = buildBootstrap({
+  const boot = await buildBootstrap({
     db,
     stateDir,
     // ilink stub is structurally close enough for the bootstrap surfaces

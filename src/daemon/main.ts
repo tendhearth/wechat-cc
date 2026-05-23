@@ -115,7 +115,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     })
     lc.register(internalApi)
     // 2. bootstrap composes provider registry / session manager / coordinator
-    const boot = buildBootstrap({
+    const boot = await buildBootstrap({
       stateDir, db, ilink, loadProjects: ilink.loadProjects,
       lastActiveChatId: ilink.lastActiveChatId, log: (t, l) => log(t, l),
       fallbackProject: () => ({ alias: '_default', path: process.cwd() }),

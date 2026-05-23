@@ -43,8 +43,8 @@ function makeIlinkStub() {
 }
 
 describe('bootstrap', () => {
-  it('sdkOptionsForProject returns cwd, wechat stdio mcpServer, canUseTool, systemPrompt', () => {
-    const b = buildBootstrap({
+  it('sdkOptionsForProject returns cwd, wechat stdio mcpServer, canUseTool, systemPrompt', async () => {
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -74,8 +74,8 @@ describe('bootstrap', () => {
     expect(ok).toBe(true)
   })
 
-  it('resolve uses projects.current', () => {
-    const b = buildBootstrap({
+  it('resolve uses projects.current', async () => {
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -93,8 +93,8 @@ describe('bootstrap', () => {
   // (via the makeCanUseTool closure), not the SDK options shape directly.
   // canUseTool is now always wired — under bypassPermissions the SDK simply
   // never fires it.
-  it('admin tier produces bypassPermissions (matches the legacy --dangerously path)', () => {
-    const b = buildBootstrap({
+  it('admin tier produces bypassPermissions (matches the legacy --dangerously path)', async () => {
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -110,8 +110,8 @@ describe('bootstrap', () => {
     expect(typeof opts.canUseTool).toBe('function')
   })
 
-  it('trusted tier produces permissionMode=default + canUseTool (no disallowedTools — relays via canUseTool)', () => {
-    const b = buildBootstrap({
+  it('trusted tier produces permissionMode=default + canUseTool (no disallowedTools — relays via canUseTool)', async () => {
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -128,8 +128,8 @@ describe('bootstrap', () => {
     expect(opts.disallowedTools).toBeUndefined()
   })
 
-  it('guest tier produces permissionMode=default + disallowedTools + canUseTool', () => {
-    const b = buildBootstrap({
+  it('guest tier produces permissionMode=default + disallowedTools + canUseTool', async () => {
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -149,8 +149,8 @@ describe('bootstrap', () => {
     expect(opts.disallowedTools).toContain('Edit')
   })
 
-  it('defaults dangerouslySkipPermissions to false when omitted', () => {
-    const b = buildBootstrap({
+  it('defaults dangerouslySkipPermissions to false when omitted', async () => {
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -166,8 +166,8 @@ describe('bootstrap', () => {
     expect(typeof opts.canUseTool).toBe('function')
   })
 
-  it('defaults to the Claude agent provider', () => {
-    const b = buildBootstrap({
+  it('defaults to the Claude agent provider', async () => {
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -178,8 +178,8 @@ describe('bootstrap', () => {
     expect(b.agentProviderKind).toBe('claude')
   })
 
-  it('can select the Codex agent provider explicitly', () => {
-    const b = buildBootstrap({
+  it('can select the Codex agent provider explicitly', async () => {
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -191,11 +191,11 @@ describe('bootstrap', () => {
     expect(b.agentProviderKind).toBe('codex')
   })
 
-  it('reads provider selection from agent-config.json', () => {
+  it('reads provider selection from agent-config.json', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'wechat-bootstrap-'))
     try {
       saveAgentConfig(stateDir, { provider: 'codex', model: 'gpt-5.3-codex', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false })
-      const b = buildBootstrap({
+      const b = await buildBootstrap({
       db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -211,8 +211,8 @@ describe('bootstrap', () => {
 
   // ── RFC 03 review #12 — registry / coordinator wiring coverage ────────
 
-  it('registers BOTH claude and codex providers regardless of default (RFC 03 P2)', () => {
-    const b = buildBootstrap({
+  it('registers BOTH claude and codex providers regardless of default (RFC 03 P2)', async () => {
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -223,13 +223,57 @@ describe('bootstrap', () => {
     })
     // P2 design: even when default is claude, codex is also registered
     // so /codex slash command works without daemon restart.
+    // Cursor only registers when CURSOR_API_KEY is set + @cursor/sdk
+    // imports; in this test env CURSOR_API_KEY is unset so the list
+    // remains ['claude', 'codex'].
     expect(b.registry.list().sort()).toEqual(['claude', 'codex'])
     expect(b.registry.has('claude')).toBe(true)
     expect(b.registry.has('codex')).toBe(true)
   })
 
-  it('exposes the conversation coordinator and dispatchDelegate', () => {
-    const b = buildBootstrap({
+  // Cursor registration is gated on CURSOR_API_KEY + the @cursor/sdk
+  // dynamic import succeeding. Both must hold; either missing → silent
+  // skip with [BOOT] log entry. See bootstrap/index.ts cursor block.
+  it('registers cursor provider when CURSOR_API_KEY is set + @cursor/sdk available', async () => {
+    const prevKey = process.env.CURSOR_API_KEY
+    process.env.CURSOR_API_KEY = 'test-cursor-key'
+    try {
+      const b = await buildBootstrap({
+        db: openTestDb(),
+        stateDir: '/tmp/state',
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(b.registry.list()).toContain('cursor')
+      expect(b.registry.has('cursor')).toBe(true)
+    } finally {
+      if (prevKey === undefined) delete process.env.CURSOR_API_KEY
+      else process.env.CURSOR_API_KEY = prevKey
+    }
+  })
+
+  it('skips cursor registration when CURSOR_API_KEY is unset', async () => {
+    const prevKey = process.env.CURSOR_API_KEY
+    delete process.env.CURSOR_API_KEY
+    try {
+      const b = await buildBootstrap({
+        db: openTestDb(),
+        stateDir: '/tmp/state',
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(b.registry.list()).not.toContain('cursor')
+    } finally {
+      if (prevKey !== undefined) process.env.CURSOR_API_KEY = prevKey
+    }
+  })
+
+  it('exposes the conversation coordinator and dispatchDelegate', async () => {
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -247,8 +291,8 @@ describe('bootstrap', () => {
     expect(b.dispatchDelegate.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('default mode for any chat is solo + agentProviderKind', () => {
-    const b = buildBootstrap({
+  it('default mode for any chat is solo + agentProviderKind', async () => {
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -260,8 +304,8 @@ describe('bootstrap', () => {
     expect(b.coordinator.getMode('any-new-chat')).toEqual({ kind: 'solo', provider: 'codex' })
   })
 
-  it('sdkOptionsForProject wires BOTH wechat AND delegate stdio servers (RFC 03 P4)', () => {
-    const b = buildBootstrap({
+  it('sdkOptionsForProject wires BOTH wechat AND delegate stdio servers (RFC 03 P4)', async () => {
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -280,8 +324,8 @@ describe('bootstrap', () => {
     expect(delegate.env?.WECHAT_INTERNAL_TOKEN_FILE).toBe('/tmp/token')
   })
 
-  it('omits stdio mcpServers entirely when internalApi is not wired (no leaks)', () => {
-    const b = buildBootstrap({
+  it('omits stdio mcpServers entirely when internalApi is not wired (no leaks)', async () => {
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -333,8 +377,8 @@ describe('bootstrap', () => {
     })
   })
 
-  it('system prompt is the prompt-builder output (mentions delegate_codex for claude sessions)', () => {
-    const b = buildBootstrap({
+  it('system prompt is the prompt-builder output (mentions delegate_codex for claude sessions)', async () => {
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -369,8 +413,8 @@ describe('bootstrap', () => {
   // We can't easily exercise the SDK's canUseTool callback without a
   // full Options-execution harness, so the test verifies closure
   // identity + invokes the canUseTool functions directly.
-  it('per-session canUseTool: each chatId gets its own closure (no shared identity)', () => {
-    const b = buildBootstrap({
+  it('per-session canUseTool: each chatId gets its own closure (no shared identity)', async () => {
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -404,7 +448,7 @@ describe('bootstrap', () => {
     // Post-fix the chatId is baked in at spawn time, so step 3 still
     // sees chatB and resolves guest tier (Bash → deny per TIER_PROFILES.guest.deny).
     let lastActive: string | null = 'chatB'
-    const b = buildBootstrap({
+    const b = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
