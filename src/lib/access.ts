@@ -164,9 +164,17 @@ export type GateResult =
   | { action: 'deliver' }
   | { action: 'drop' }
 
+/**
+ * Allowlist gate. Kept for callers that want a structured result rather
+ * than middleware-style flow control (the inbound pipeline uses
+ * `mw-access` directly). Wildcard `'*'` in `allowFrom` means "match every
+ * chat" — used by the e2e harness and by operators who explicitly opt
+ * into an open daemon. Default disk shape is `allowFrom: []` (closed).
+ */
 export function gate(fromUserId: string): GateResult {
   const access = loadAccess()
   if (access.dmPolicy === 'disabled') return { action: 'drop' }
+  if (access.allowFrom.includes('*')) return { action: 'deliver' }
   if (access.allowFrom.includes(fromUserId)) return { action: 'deliver' }
   return { action: 'drop' }
 }
