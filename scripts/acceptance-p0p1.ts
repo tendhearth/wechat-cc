@@ -28,6 +28,7 @@ import { buildBootstrap } from '../src/daemon/bootstrap'
 import { openTestDb } from '../src/lib/db'
 import { makeAdminCommands } from '../src/daemon/admin-commands'
 import { isAdmin } from '../src/lib/access'
+import type { AcquireRequest } from '../src/core/session-manager'
 
 function makeIlinkStub() {
   return {
@@ -121,7 +122,7 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
   // real claude provider's interceptor produces under the hood).
   const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
   const releaseSpy = vi.fn(async () => {})
-  const fakeAcquire = vi.fn(async (alias: string, _path: string, providerId: string) => {
+  const fakeAcquire = vi.fn(async ({ alias, providerId }: AcquireRequest) => {
     return {
       alias, path: '/p', providerId, lastUsedAt: Date.now(),
       async *dispatch() {
@@ -142,6 +143,7 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
     format: () => 'inbound text',
     sendAssistantText,
     permissionMode: 'dangerously',
+    loadAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [], admins: ['demo-chat'] }),
     log,
   })
 
@@ -193,7 +195,9 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
   })
 
   // Seed a stored session for the chat so /health ai has something to render.
-  boot.sessionStore.set('P', 'sid-test', 'claude')
+  // session-store is triple-keyed (alias, provider, chatId); admin commands
+  // operate on the admin's own chatId.
+  boot.sessionStore.set({ alias: 'P', provider: 'claude', chatId: 'admin', sessionId: 'sid-test' })
 
   // /health ai
   await admin.handle({ chatId: 'admin', userId: 'admin', text: '/health ai', msgType: 'text', createTimeMs: Date.now(), accountId: 'acct' })
@@ -208,15 +212,15 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
   if (resetOut) pass(`/reset confirms: ${JSON.stringify(resetOut[1].slice(0, 120))}`)
   else fail('/reset did not send confirmation', adminSends)
   // sessionStore should now be empty for that alias
-  const afterReset = boot.sessionStore.get('P', 'claude')
+  const afterReset = boot.sessionStore.get({ alias: 'P', provider: 'claude', chatId: 'admin' })
   if (afterReset === null) pass('sessionStore row for the chat was cleared by /reset')
   else fail('sessionStore still has a row after /reset', afterReset)
 
   // /重置 alias
   adminSends.length = 0
-  boot.sessionStore.set('P', 'sid-test2', 'claude')
+  boot.sessionStore.set({ alias: 'P', provider: 'claude', chatId: 'admin', sessionId: 'sid-test2' })
   await admin.handle({ chatId: 'admin', userId: 'admin', text: '/重置', msgType: 'text', createTimeMs: Date.now(), accountId: 'acct' })
-  if (boot.sessionStore.get('P', 'claude') === null) pass('/重置 (Chinese alias) also clears sessionStore')
+  if (boot.sessionStore.get({ alias: 'P', provider: 'claude', chatId: 'admin' }) === null) pass('/重置 (Chinese alias) also clears sessionStore')
   else fail('/重置 did not clear the sessionStore row')
 
   // ───────────────────────────────────────────────────────────────
@@ -232,7 +236,7 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
   const parallelRegistry = (await import('../src/core/provider-registry')).createProviderRegistry()
   parallelRegistry.register('claude', { spawn: async () => ({ dispatch: () => ({ async *[Symbol.asyncIterator]() {} }), close: async () => {} }) }, { displayName: 'Claude', canResume: () => true })
   parallelRegistry.register('codex', { spawn: async () => ({ dispatch: () => ({ async *[Symbol.asyncIterator]() {} }), close: async () => {} }) }, { displayName: 'Codex', canResume: () => true })
-  const parallelAcquire = vi.fn(async (_alias: string, _path: string, providerId: string) => {
+  const parallelAcquire = vi.fn(async ({ providerId }: AcquireRequest) => {
     return {
       alias: 'P', path: '/p', providerId, lastUsedAt: Date.now(),
       async *dispatch() {
@@ -257,12 +261,20 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
     format: () => 'parallel inbound',
     sendAssistantText: parallelSends,
     permissionMode: 'dangerously',
+    loadAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [], admins: ['par-chat'] }),
     log,
   })
   await parallelCoord.dispatch({ chatId: 'par-chat', userId: 'par-chat', text: 'hi', msgType: 'text', createTimeMs: Date.now(), accountId: 'acct' })
   const parallelTexts = parallelSends.mock.calls.map(c => (c as unknown as [string, string])[1])
-  const releasedClaude = parallelRelease.mock.calls.some(c => (c as unknown as [string, string])[0] === 'P' && (c as unknown as [string, string])[1] === 'claude')
-  const releasedCodex = parallelRelease.mock.calls.some(c => (c as unknown as [string, string])[0] === 'P' && (c as unknown as [string, string])[1] === 'codex')
+  type ReleaseArg = { alias: string; providerId: string; chatId: string }
+  const releasedClaude = parallelRelease.mock.calls.some(c => {
+    const arg = (c as unknown as [ReleaseArg])[0]
+    return arg?.alias === 'P' && arg?.providerId === 'claude'
+  })
+  const releasedCodex = parallelRelease.mock.calls.some(c => {
+    const arg = (c as unknown as [ReleaseArg])[0]
+    return arg?.alias === 'P' && arg?.providerId === 'codex'
+  })
   if (releasedClaude && !releasedCodex) pass('release fired ONLY for the failing provider (claude), not the healthy one')
   else fail(`release wiring wrong: claude=${releasedClaude} codex=${releasedCodex}`)
   if (parallelTexts.some(t => t === '[Codex] codex reply')) pass('healthy codex reply forwarded with [Codex] prefix')
@@ -284,7 +296,7 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
     modCalls++
     return JSON.stringify({ action: 'continue', speaker: 'claude', prompt: '开场', reasoning: '' })
   })
-  const roomAcquire = vi.fn(async (_alias: string, _path: string, providerId: string) => ({
+  const roomAcquire = vi.fn(async ({ providerId }: AcquireRequest) => ({
     alias: 'P', path: '/p', providerId, lastUsedAt: Date.now(),
     async *dispatch() {
       yield { kind: 'error' as const, code: 'auth_failed', message: 'stale moderator-picked speaker' }
@@ -303,6 +315,7 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
     format: () => 'chatroom inbound',
     sendAssistantText: roomSends,
     permissionMode: 'dangerously',
+    loadAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [], admins: ['room-chat'] }),
     log,
     haikuEval: roomHaiku,
     chatroomMaxRounds: 4,

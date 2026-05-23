@@ -4,6 +4,7 @@ import { createClaudeAgentProvider } from './claude-agent-provider'
 import { createProviderRegistry, type ProviderRegistry } from './provider-registry'
 import { makeFakeSession } from './test-helpers'
 import type { AgentProvider } from './agent-provider'
+import { TIER_PROFILES } from './user-tier'
 import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 
 // Module-level spy injected via vi.mock so SessionManager uses our fake query()
@@ -78,11 +79,15 @@ describe('SessionManager', () => {
       registry: registryWithProvider({ spawn } as unknown as AgentProvider),
     })
 
-    const h = await mgr.acquire('codex-proj', '/repo', 'claude')
+    const h = await mgr.acquire({ alias: 'codex-proj', path: '/repo', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
     // drain the iterable to trigger onDispatch spy
     for await (const _ of h.dispatch('hello codex')) { /* consume */ }
 
-    expect(spawn).toHaveBeenCalledWith({ alias: 'codex-proj', path: '/repo' })
+    expect(spawn).toHaveBeenCalledWith(
+      { alias: 'codex-proj', path: '/repo' },
+      // Caller (this test) passes admin tier — provider gets it verbatim.
+      { tierProfile: TIER_PROFILES.admin },
+    )
     expect(dispatched).toEqual(['hello codex'])
     await mgr.shutdown()
     expect(close).toHaveBeenCalledOnce()
@@ -105,9 +110,9 @@ describe('SessionManager', () => {
       idleEvictMs: 60_000,
       registry: singleClaudeRegistry((_alias, path) => ({ cwd: path } as Options)),
     })
-    const a = await mgr.acquire('proj-a', '/home/nate/proj-a', 'claude')
+    const a = await mgr.acquire({ alias: 'proj-a', path: '/home/nate/proj-a', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
     expect(fakeQuery).toHaveBeenCalledTimes(1)
-    const a2 = await mgr.acquire('proj-a', '/home/nate/proj-a', 'claude')
+    const a2 = await mgr.acquire({ alias: 'proj-a', path: '/home/nate/proj-a', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
     expect(a).toBe(a2)
     expect(fakeQuery).toHaveBeenCalledTimes(1)
     await mgr.shutdown()
@@ -130,8 +135,8 @@ describe('SessionManager', () => {
       registry: registryWithProvider(provider),
     })
     const [h1, h2] = await Promise.all([
-      mgr.acquire('shared', '/p', 'claude'),
-      mgr.acquire('shared', '/p', 'claude'),
+      mgr.acquire({ alias: 'shared', path: '/p', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin }),
+      mgr.acquire({ alias: 'shared', path: '/p', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin }),
     ])
     expect(spawnCount).toBe(1)
     expect(h1).toBe(h2)
@@ -165,7 +170,7 @@ describe('SessionManager', () => {
       idleEvictMs: 60_000,
       registry: singleClaudeRegistry(() => ({ cwd: '/tmp/x' } as Options)),
     })
-    const h = await mgr.acquire('a', '/tmp/x', 'claude')
+    const h = await mgr.acquire({ alias: 'a', path: '/tmp/x', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
     // Dispatch sequentially — each must complete before the next can start
     // (claude provider throws if a previous dispatch is still in flight).
     for await (const _ of h.dispatch('first')) { /* consume */ }
@@ -180,12 +185,12 @@ describe('SessionManager', () => {
       idleEvictMs: 60_000,
       registry: singleClaudeRegistry(() => ({ cwd: '/tmp/x' } as Options)),
     })
-    await mgr.acquire('a', '/a', 'claude')
-    await mgr.acquire('b', '/b', 'claude')
+    await mgr.acquire({ alias: 'a', path: '/a', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
+    await mgr.acquire({ alias: 'b', path: '/b', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
     await new Promise(r => setTimeout(r, 2))
-    const handleA = await mgr.acquire('a', '/a', 'claude')
+    const handleA = await mgr.acquire({ alias: 'a', path: '/a', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
     expect(handleA.alias).toBe('a')
-    await mgr.acquire('c', '/c', 'claude')
+    await mgr.acquire({ alias: 'c', path: '/c', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
     const aliases = mgr.list().map(s => s.alias).sort()
     expect(aliases).toEqual(['a', 'c'])
     await mgr.shutdown()
@@ -198,7 +203,7 @@ describe('SessionManager', () => {
       idleEvictMs: 1000,
       registry: singleClaudeRegistry(() => ({ cwd: '/tmp/x' } as Options)),
     })
-    await mgr.acquire('a', '/a', 'claude')
+    await mgr.acquire({ alias: 'a', path: '/a', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
     vi.advanceTimersByTime(2000)
     await mgr.sweepIdle()
     expect(mgr.list()).toEqual([])
@@ -250,10 +255,10 @@ describe('SessionManager', () => {
     })
 
     // No session yet → false.
-    expect(mgr.isInFlight('a', 'claude')).toBe(false)
-    const h = await mgr.acquire('a', '/p', 'claude')
+    expect(mgr.isInFlight({ alias: 'a', providerId: 'claude', chatId: '_legacy' })).toBe(false)
+    const h = await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
     // Session acquired, no dispatch in flight → still false.
-    expect(mgr.isInFlight('a', 'claude')).toBe(false)
+    expect(mgr.isInFlight({ alias: 'a', providerId: 'claude', chatId: '_legacy' })).toBe(false)
 
     // Begin a dispatch and consume one event so the iterator's finally
     // block hasn't fired yet.
@@ -261,7 +266,7 @@ describe('SessionManager', () => {
     const firstPromise = iter.next()
     push({ kind: 'init', sessionId: 's1' })
     await firstPromise
-    expect(mgr.isInFlight('a', 'claude')).toBe(true)
+    expect(mgr.isInFlight({ alias: 'a', providerId: 'claude', chatId: '_legacy' })).toBe(true)
 
     // Finish the turn → counter decrements via the wrapper's finally.
     const pendingNext = iter.next()
@@ -272,11 +277,11 @@ describe('SessionManager', () => {
       const r = await iter.next()
       if (r.done) break
     }
-    expect(mgr.isInFlight('a', 'claude')).toBe(false)
+    expect(mgr.isInFlight({ alias: 'a', providerId: 'claude', chatId: '_legacy' })).toBe(false)
 
-    // Different (alias, provider) is unaffected.
-    expect(mgr.isInFlight('a', 'codex')).toBe(false)
-    expect(mgr.isInFlight('b', 'claude')).toBe(false)
+    // Different (alias, provider, chatId) is unaffected.
+    expect(mgr.isInFlight({ alias: 'a', providerId: 'codex', chatId: '_legacy' })).toBe(false)
+    expect(mgr.isInFlight({ alias: 'b', providerId: 'claude', chatId: '_legacy' })).toBe(false)
 
     await mgr.shutdown()
   })
@@ -326,7 +331,7 @@ describe('SessionManager', () => {
       idleEvictMs: 1000,
       registry: registryWithProvider({ spawn } as unknown as AgentProvider),
     })
-    const h = await mgr.acquire('a', '/p', 'claude')
+    const h = await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
 
     // Begin draining — consume one event then PAUSE before the result.
     const drained: unknown[] = []
@@ -412,7 +417,7 @@ describe('SessionManager', () => {
       idleEvictMs: 1000,
       registry: registryWithProvider({ async spawn() { return session as never } } as unknown as AgentProvider),
     })
-    const h = await mgr.acquire('a', '/p', 'claude')
+    const h = await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
     const iter = h.dispatch('hi')[Symbol.asyncIterator]()
     const firstPromise = iter.next()
     push({ kind: 'init', sessionId: 's1' })
@@ -420,7 +425,7 @@ describe('SessionManager', () => {
     // Wrapper now awaiting next event — dispatch is in flight.
     const pendingNext = iter.next()
 
-    await mgr.release('a', 'claude')
+    await mgr.release({ alias: 'a', providerId: 'claude', chatId: '_legacy' })
     // close() above triggered end(), so the wrapper's `for await` resolves
     // its inner.next() with done=true and finally fires.
     const result = await pendingNext
@@ -433,7 +438,7 @@ describe('SessionManager', () => {
     // hadn't run, the counter would still be 1 and the new session would
     // be untouchable by sweepIdle even when it's idle.
     vi.useFakeTimers()
-    const h2 = await mgr.acquire('a', '/p', 'claude')
+    const h2 = await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
     // h2 has had a dispatch wrapper applied lazily; never called .dispatch
     // so its counter is 0 from inception. Advance time past idleEvictMs.
     vi.advanceTimersByTime(60_000)
@@ -453,8 +458,8 @@ describe('SessionManager', () => {
     r.register('codex', codex, { displayName: 'Codex', canResume: () => true })
     const mgr = new SessionManager({ maxConcurrent: 4, idleEvictMs: 60_000, registry: r })
 
-    const a = await mgr.acquire('compass', '/p', 'claude')
-    const b = await mgr.acquire('compass', '/p', 'codex')
+    const a = await mgr.acquire({ alias: 'compass', path: '/p', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
+    const b = await mgr.acquire({ alias: 'compass', path: '/p', providerId: 'codex', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
     expect(a).not.toBe(b)
     expect(a.providerId).toBe('claude')
     expect(b.providerId).toBe('codex')
@@ -469,36 +474,46 @@ describe('SessionManager', () => {
       maxConcurrent: 4, idleEvictMs: 60_000,
       registry: singleClaudeRegistry(() => ({ cwd: '/' } as Options)),
     })
-    await expect(mgr.acquire('a', '/p', 'gemini')).rejects.toThrow(/unknown provider: gemini/)
+    await expect(mgr.acquire({ alias: 'a', path: '/p', providerId: 'gemini', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })).rejects.toThrow(/unknown provider: gemini/)
     await mgr.shutdown()
   })
 
   describe('session resume', () => {
-    type MockRec = { session_id: string; last_used_at: string; provider: string }
-    // Test helper: SessionStore.provider is required as of PR7.8 — accept
-    // partial seeds without provider here and default to 'claude' so the
-    // existing tests stay terse. Real callers always pass provider.
-    function makeMockStore(initial: Record<string, { session_id: string; last_used_at: string; provider?: string }> = {}) {
-      const data: Record<string, MockRec> = {}
-      for (const [k, v] of Object.entries(initial)) {
-        data[k] = { ...v, provider: v.provider ?? 'claude' }
+    type MockRec = { alias: string; session_id: string; last_used_at: string; provider: string; chat_id: string }
+    // Test helper: existing single-chat tests pass chatId='_legacy' as
+    // the placeholder until Tasks 10/11 thread real chatIds through the
+    // coordinator + tick-bodies. The mock mirrors that — seeds default
+    // to provider='claude' and chatId='_legacy' so existing tests stay
+    // terse.
+    function makeMockStore(initial: Record<string, { session_id: string; last_used_at: string; provider?: string; chatId?: string }> = {}) {
+      const data = new Map<string, MockRec>()
+      const k = (alias: string, provider: string, chatId: string) => `${alias}|${provider}|${chatId}`
+      for (const [alias, v] of Object.entries(initial)) {
+        const provider = v.provider ?? 'claude'
+        const chatId = v.chatId ?? '_legacy'
+        data.set(k(alias, provider, chatId), {
+          alias, session_id: v.session_id, last_used_at: v.last_used_at, provider, chat_id: chatId,
+        })
       }
       return {
-        get: (alias: string, expectedProvider?: string): MockRec | null => {
-          const rec = data[alias]
-          if (!rec) return null
-          if (expectedProvider && rec.provider !== expectedProvider) return null
-          return rec
-        },
-        set: vi.fn((alias: string, sid: string, provider: string) => {
-          data[alias] = { session_id: sid, last_used_at: new Date().toISOString(), provider }
+        get: vi.fn(({ alias, provider, chatId }: { alias: string; provider: string; chatId: string }): MockRec | null => {
+          return data.get(k(alias, provider, chatId)) ?? null
+        }),
+        set: vi.fn(({ alias, provider, chatId, sessionId }: { alias: string; provider: string; chatId: string; sessionId: string }) => {
+          data.set(k(alias, provider, chatId), {
+            alias, session_id: sessionId, last_used_at: new Date().toISOString(), provider, chat_id: chatId,
+          })
         }),
         setSummary: vi.fn(),
-        delete: vi.fn((alias: string) => { delete data[alias] }),
-        deleteOne: vi.fn((alias: string, provider: string) => {
-          if (data[alias]?.provider === provider) delete data[alias]
+        delete: vi.fn(({ alias, chatId }: { alias: string; chatId: string }) => {
+          for (const [mapKey, rec] of data) {
+            if (rec.alias === alias && rec.chat_id === chatId) data.delete(mapKey)
+          }
         }),
-        all: () => ({ ...data }),
+        deleteOne: vi.fn(({ alias, provider, chatId }: { alias: string; provider: string; chatId: string }) => {
+          data.delete(k(alias, provider, chatId))
+        }),
+        all: () => Object.fromEntries(data),
         flush: async () => {},
       }
     }
@@ -514,7 +529,7 @@ describe('SessionManager', () => {
         registry: singleClaudeRegistry((_alias, path) => ({ cwd: path } as Options), canResume),
         sessionStore: store,
       })
-      await mgr.acquire('compass', '/p', 'claude')
+      await mgr.acquire({ alias: 'compass', path: '/p', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
       expect(fakeQuery).toHaveBeenCalledOnce()
       const args = firstQueryArgs()
       expect(args.options.resume).toBe('sid-abc')
@@ -534,12 +549,12 @@ describe('SessionManager', () => {
         sessionStore: store,
         resumeTTLMs: 7 * 24 * 60 * 60_000,
       })
-      await mgr.acquire('compass', '/p', 'claude')
+      await mgr.acquire({ alias: 'compass', path: '/p', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
       const args = firstQueryArgs()
       expect(args.options.resume).toBeUndefined()
       // Stale-cleanup must target only the active provider's row, not
       // sibling rows (e.g. a still-valid codex row for the same alias).
-      expect(store.deleteOne).toHaveBeenCalledWith('compass', 'claude')
+      expect(store.deleteOne).toHaveBeenCalledWith({ alias: 'compass', provider: 'claude', chatId: '_legacy' })
       expect(store.delete).not.toHaveBeenCalled()
       await mgr.shutdown()
     })
@@ -555,10 +570,10 @@ describe('SessionManager', () => {
         registry: singleClaudeRegistry((_alias, path) => ({ cwd: path } as Options), canResume),
         sessionStore: store,
       })
-      await mgr.acquire('compass', '/p', 'claude')
+      await mgr.acquire({ alias: 'compass', path: '/p', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
       const args = firstQueryArgs()
       expect(args.options.resume).toBeUndefined()
-      expect(store.deleteOne).toHaveBeenCalledWith('compass', 'claude')
+      expect(store.deleteOne).toHaveBeenCalledWith({ alias: 'compass', provider: 'claude', chatId: '_legacy' })
       expect(store.delete).not.toHaveBeenCalled()
       await mgr.shutdown()
     })
@@ -578,11 +593,11 @@ describe('SessionManager', () => {
         sessionStore: store,
         resumeTTLMs: 7 * 24 * 60 * 60_000,
       })
-      await mgr.acquire('compass', '/p', 'claude')
+      await mgr.acquire({ alias: 'compass', path: '/p', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
       expect(store.deleteOne).not.toHaveBeenCalled()
       expect(store.delete).not.toHaveBeenCalled()
       // Sibling row still intact.
-      expect(store.get('compass', 'codex')?.session_id).toBe('sid-old-codex')
+      expect(store.get({ alias: 'compass', provider: 'codex', chatId: '_legacy' })?.session_id).toBe('sid-old-codex')
       await mgr.shutdown()
     })
 
@@ -609,10 +624,10 @@ describe('SessionManager', () => {
         registry: singleClaudeRegistry(() => ({ cwd: '/p' } as Options)),
         sessionStore: store,
       })
-      const h = await mgr.acquire('compass', '/p', 'claude')
+      const h = await mgr.acquire({ alias: 'compass', path: '/p', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
       // Dispatch and drain so the result event is processed and session_id persisted.
       for await (const _ of h.dispatch('test')) { /* consume result */ }
-      expect(store.set).toHaveBeenCalledWith('compass', 'sid-new', 'claude')
+      expect(store.set).toHaveBeenCalledWith({ alias: 'compass', provider: 'claude', chatId: '_legacy', sessionId: 'sid-new' })
       await mgr.shutdown()
     })
 
@@ -623,11 +638,120 @@ describe('SessionManager', () => {
         registry: singleClaudeRegistry((_alias, path) => ({ cwd: path } as Options)),
         // sessionStore omitted
       })
-      await mgr.acquire('proj', '/p', 'claude')
+      await mgr.acquire({ alias: 'proj', path: '/p', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin })
       const args = firstQueryArgs()
       expect(args.options.resume).toBeUndefined()
       await mgr.shutdown()
     })
+  })
+})
+
+describe('SessionManager — per-chat isolation', () => {
+  // Two chats sharing the same (alias, provider) MUST hold independent
+  // sessions. Without this, chat A's tier policy bleeds into chat B's
+  // turn (admin sees a relay prompt the SDK already authorised for chat
+  // B's admin caller), and the two chats also share a jsonl transcript
+  // — admin gets to read guest history wholesale. Per-chat isolation
+  // forces both axes apart at the SessionManager layer.
+  it('acquire on same alias+provider but different chatId returns DIFFERENT handles', async () => {
+    let spawnCount = 0
+    const provider = {
+      async spawn() {
+        spawnCount++
+        return mockSession()
+      },
+    } as unknown as AgentProvider
+    const mgr = new SessionManager({
+      maxConcurrent: 4,
+      idleEvictMs: 60_000,
+      registry: registryWithProvider(provider),
+    })
+    const h1 = await mgr.acquire({ alias: '_default', path: '/tmp/x', providerId: 'claude', chatId: 'chatA', tierProfile: TIER_PROFILES.admin })
+    const h2 = await mgr.acquire({ alias: '_default', path: '/tmp/x', providerId: 'claude', chatId: 'chatB', tierProfile: TIER_PROFILES.admin })
+    expect(h1).not.toBe(h2)
+    expect(spawnCount).toBe(2)
+    expect(mgr.list()).toHaveLength(2)
+    await mgr.shutdown()
+  })
+
+  it('acquire on same triple returns CACHED handle', async () => {
+    let spawnCount = 0
+    const provider = {
+      async spawn() {
+        spawnCount++
+        return mockSession()
+      },
+    } as unknown as AgentProvider
+    const mgr = new SessionManager({
+      maxConcurrent: 4,
+      idleEvictMs: 60_000,
+      registry: registryWithProvider(provider),
+    })
+    const h1 = await mgr.acquire({ alias: '_default', path: '/tmp/x', providerId: 'claude', chatId: 'chatA', tierProfile: TIER_PROFILES.admin })
+    const h2 = await mgr.acquire({ alias: '_default', path: '/tmp/x', providerId: 'claude', chatId: 'chatA', tierProfile: TIER_PROFILES.admin })
+    expect(h1).toBe(h2)
+    expect(spawnCount).toBe(1)
+    await mgr.shutdown()
+  })
+
+  it('isInFlight is keyed by triple', async () => {
+    // A dispatch in flight for chatA does NOT mask the slot for chatB —
+    // the pushTick gate in tick-bodies relies on this so a companion
+    // push to default chat doesn't get suppressed by an unrelated chat's
+    // ongoing turn.
+    type ResolveNext = (v: IteratorResult<unknown>) => void
+    const pending: ResolveNext[] = []
+    const buffered: unknown[] = []
+    let ended = false
+    function push(ev: unknown) {
+      const r = pending.shift()
+      if (r) r({ value: ev, done: false })
+      else buffered.push(ev)
+    }
+    function end() {
+      ended = true
+      while (pending.length > 0) {
+        const r = pending.shift()!
+        r({ value: undefined, done: true })
+      }
+    }
+    const session = {
+      dispatch() {
+        return {
+          [Symbol.asyncIterator]() {
+            return {
+              next() {
+                if (buffered.length > 0) return Promise.resolve({ value: buffered.shift(), done: false }) as Promise<IteratorResult<unknown>>
+                if (ended) return Promise.resolve({ value: undefined, done: true }) as Promise<IteratorResult<unknown>>
+                return new Promise<IteratorResult<unknown>>(r => pending.push(r))
+              },
+            }
+          },
+        }
+      },
+      async close() {},
+    }
+    const mgr = new SessionManager({
+      maxConcurrent: 4,
+      idleEvictMs: 60_000,
+      registry: registryWithProvider({ async spawn() { return session as never } } as unknown as AgentProvider),
+    })
+    const h = await mgr.acquire({ alias: '_default', path: '/tmp/x', providerId: 'claude', chatId: 'chatA', tierProfile: TIER_PROFILES.admin })
+    const it = h.dispatch('hi')[Symbol.asyncIterator]()
+    // Kick the iterator forward one event so the wrapper's `try` block
+    // is active and the in-flight counter is incremented.
+    const firstPromise = it.next()
+    push({ kind: 'init', sessionId: 's1' })
+    await firstPromise
+    expect(mgr.isInFlight({ alias: '_default', providerId: 'claude', chatId: 'chatA' })).toBe(true)
+    expect(mgr.isInFlight({ alias: '_default', providerId: 'claude', chatId: 'chatB' })).toBe(false)
+    // Drain so the wrapper's finally fires and the test doesn't leak.
+    end()
+    while (true) {
+      const r = await it.next()
+      if (r.done) break
+    }
+    await mgr.shutdown()
   })
 })
 

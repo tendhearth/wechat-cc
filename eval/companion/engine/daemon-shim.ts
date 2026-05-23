@@ -46,8 +46,11 @@ export async function startEvalDaemon(opts: EvalDaemonOpts): Promise<EvalDaemon>
   mkdirSync(join(stateDir, 'memory'), { recursive: true })
   mkdirSync(join(stateDir, 'accounts', 'bot1'), { recursive: true })
 
+  const allChatIds = Object.keys(opts.knownUsers)
   writeFileSync(join(stateDir, 'access.json'), JSON.stringify({
-    allowFrom: ['*'], admins: ['evaladmin'],
+    dmPolicy: 'allowlist',
+    allowFrom: allChatIds,
+    admins: allChatIds, // every eval chat runs as admin so trajectories see the full tool set
   }, null, 2))
 
   writeFileSync(join(stateDir, 'accounts', 'bot1', 'account.json'), JSON.stringify({

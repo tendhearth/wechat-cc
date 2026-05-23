@@ -2,7 +2,42 @@ import { Codex, type Thread, type ThreadEvent, type ThreadItem } from '@openai/c
 import { tmpdir } from 'node:os'
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession } from './agent-provider'
 import { resolveCodexCheapModel } from './codex-cheap-model'
+import type { TierProfile } from './user-tier'
 import { log } from '../lib/log'
+
+export interface CodexTierSdkOpts {
+  sandboxMode: 'read-only' | 'workspace-write' | 'danger-full-access'
+  approvalPolicy: 'untrusted' | 'on-request' | 'never'
+}
+
+/**
+ * Pure translation from daemon TierProfile → Codex SDK options.
+ *
+ * Codex has no per-tool callback equivalent to Claude's canUseTool.
+ * Tier enforcement is therefore coarser:
+ *   - admin → full access
+ *   - trusted → workspace-write sandbox (no admin UI to field
+ *     'on-request' prompts, so we use 'never' approval — destructive
+ *     ops within the workspace cwd are still possible; documented
+ *     limitation)
+ *   - guest → read-only sandbox + untrusted approval (functionally
+ *     restricted to reading + replying)
+ *
+ * Distinguishing tiers by relay/deny size is a heuristic: a profile
+ * with no relay and no deny is treated as admin-equivalent; any deny
+ * presence means guest-equivalent; relay-only means trusted. This
+ * works for the three default profiles; if custom profiles get added
+ * later this needs revisiting.
+ */
+export function tierProfileToCodexSdkOpts(tp: TierProfile): CodexTierSdkOpts {
+  if (tp.relay.size === 0 && tp.deny.size === 0) {
+    return { sandboxMode: 'danger-full-access', approvalPolicy: 'never' }
+  }
+  if (tp.deny.size === 0) {
+    return { sandboxMode: 'workspace-write', approvalPolicy: 'never' }
+  }
+  return { sandboxMode: 'read-only', approvalPolicy: 'untrusted' }
+}
 
 /**
  * codex-agent-provider — Codex SDK companion to claude-agent-provider, using
@@ -47,15 +82,6 @@ export interface CodexAgentProviderOptions {
   codexPathOverride?: string
   /** Maps to ThreadOptions.model. Falsy → SDK default. */
   model?: string
-  /** Maps to ThreadOptions.sandboxMode. Default 'workspace-write' (matches old cli-provider behaviour). */
-  sandboxMode?: 'read-only' | 'workspace-write' | 'danger-full-access'
-  /**
-   * Maps to ThreadOptions.approvalPolicy. Default 'never' for daemon mode
-   * — RFC 03 §10 risk: `on-request` etc. likely hangs waiting for human
-   * input that never comes (Spike 3 will confirm); `never` is the only
-   * safe default for a long-running headless daemon.
-   */
-  approvalPolicy?: 'never' | 'on-request' | 'on-failure' | 'untrusted'
   /**
    * stdio MCP servers to load via SDK config flattening (RFC 03 §5.2).
    * Passed to `new Codex({ config: { mcp_servers: <this> } })`; the SDK
@@ -136,7 +162,11 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
       }
       return parts.join('')
     },
-    async spawn(project: AgentProject, spawnOpts?: { resumeSessionId?: string }): Promise<AgentSession> {
+    async spawn(
+      project: AgentProject,
+      spawnOpts: { resumeSessionId?: string; tierProfile: TierProfile },
+    ): Promise<AgentSession> {
+      const tierOpts = tierProfileToCodexSdkOpts(spawnOpts.tierProfile)
       const config: Record<string, unknown> = {}
       if (opts.mcpServers) {
         // Cast through `unknown` because CodexConfigValue forbids undefined
@@ -153,19 +183,22 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
         ...(opts.codexPathOverride ? { codexPathOverride: opts.codexPathOverride } : {}),
         ...(Object.keys(config).length > 0 ? { config: config as never } : {}),
       })
+      // Sandbox + approval policy come from the tier — no hardcoded fallback.
+      // admin → danger-full-access + never (matches old --dangerously behaviour),
+      // trusted → workspace-write + never, guest → read-only + untrusted.
       const threadOptions = {
         workingDirectory: project.path,
         skipGitRepoCheck: true,
-        sandboxMode: opts.sandboxMode ?? 'workspace-write',
-        approvalPolicy: opts.approvalPolicy ?? 'never',
+        sandboxMode: tierOpts.sandboxMode,
+        approvalPolicy: tierOpts.approvalPolicy,
         ...(opts.model ? { model: opts.model } : {}),
       } as const
 
-      const thread: Thread = spawnOpts?.resumeSessionId
+      const thread: Thread = spawnOpts.resumeSessionId
         ? codex.resumeThread(spawnOpts.resumeSessionId, threadOptions)
         : codex.startThread(threadOptions)
 
-      if (spawnOpts?.resumeSessionId) {
+      if (spawnOpts.resumeSessionId) {
         log('SESSION_RESUME', `alias=${project.alias} thread_id=${spawnOpts.resumeSessionId} provider=codex`)
       }
 

@@ -22,6 +22,8 @@ import type { InboundMsg } from './prompt-format'
 import { evaluateRound as evaluateModeratorRound, type ModeratorDecision, type ChatroomEntry } from './chatroom-moderator'
 import { assertSupported, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
 import { collectTurn, type TurnSummary } from './agent-provider'
+import { resolveTier, TIER_PROFILES } from './user-tier'
+import type { Access } from '../lib/access'
 
 export class ModeNotImplementedError extends Error {
   constructor(public readonly modeKind: Mode['kind']) {
@@ -98,6 +100,14 @@ export interface ConversationCoordinatorDeps {
    * `Date.now`.
    */
   now?: () => number
+  /**
+   * Loads the current access.json snapshot. Called once per dispatch to
+   * resolve the inbound chatId's tier (`resolveTier(chatId, access)`) →
+   * `TIER_PROFILES[tier]` → handed to `manager.acquire({tierProfile})`.
+   * The real impl (src/lib/access.ts) maintains a 5s TTL cache so this
+   * is cheap to call per message; tests can pass a constant lambda.
+   */
+  loadAccess: () => Access
 }
 
 /** User-facing notice when a provider reports auth_failed.
@@ -167,7 +177,11 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     // notice. release() being absent from the manager dep (e.g. in test
     // fixtures that don't exercise the recycle path) is also tolerated.
     try {
-      await deps.manager.release?.(alias, providerId)
+      // Release the same session triple that dispatchSolo/Parallel/Chatroom
+      // registered under (per-chat now since Task 10). A fresh dispatch in
+      // this chat re-acquires from a clean subprocess that re-reads
+      // keychain creds.
+      await deps.manager.release?.({ alias, providerId, chatId })
     } catch (err) {
       deps.log('AUTH_FAILED', `release ${alias}/${providerId} threw: ${err instanceof Error ? err.message : err}`)
     }
@@ -230,13 +244,22 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     proj: { alias: string; path: string },
     providerId: ProviderId,
   ): Promise<void> {
-    deps.log('COORDINATOR', `solo chat=${msg.chatId} → project=${proj.alias} provider=${providerId}`, {
+    const tier = resolveTier(msg.chatId, deps.loadAccess())
+    const tierProfile = TIER_PROFILES[tier]
+    deps.log('COORDINATOR', `solo chat=${msg.chatId} → project=${proj.alias} provider=${providerId} tier=${tier}`, {
       event: 'dispatch_solo',
       chat_id: msg.chatId,
       project_alias: proj.alias,
       provider: providerId,
+      tier,
     })
-    const handle = await deps.manager.acquire(proj.alias, proj.path, providerId)
+    const handle = await deps.manager.acquire({
+      alias: proj.alias,
+      path: proj.path,
+      providerId,
+      chatId: msg.chatId,
+      tierProfile,
+    })
     const text = deps.format(msg)
     const summary = await collectTurn(handle.dispatch(text))
     const assistantTexts = summary.assistantText
@@ -334,6 +357,14 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     const dispatchPromise = new Promise<void>(resolve => { dispatchResolve = resolve })
     inFlightDispatchPromises.set(msg.chatId, dispatchPromise)
 
+    // Tier is derived once at dispatch entry — both speaker turns within
+    // the same /chat originate from the same chatId so they share the
+    // same tier profile. (Re-resolving per round would let an access.json
+    // edit mid-loop take effect; we prefer consistency within one user
+    // turn.)
+    const tier = resolveTier(msg.chatId, deps.loadAccess())
+    const tierProfile = TIER_PROFILES[tier]
+
     // v0.5.9 — chatroom is a persistent session. Pull existing history
     // (from prior user msgs in this chatroom), append the new user msg,
     // and let the moderator see the whole sequence.
@@ -345,7 +376,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     const history: ChatroomEntry[] = [...(chatroomHistories.get(msg.chatId) ?? [])]
     history.push({ role: 'user', text: deps.format(msg) })
 
-    deps.log('COORDINATOR', `chatroom chat=${msg.chatId} → start participants=${providerA},${providerB} max=${chatroomMaxRounds} history=${history.length}`)
+    deps.log('COORDINATOR', `chatroom chat=${msg.chatId} → start participants=${providerA},${providerB} max=${chatroomMaxRounds} history=${history.length} tier=${tier}`)
 
     try {
     for (let round = 1; round <= chatroomMaxRounds; round++) {
@@ -433,7 +464,13 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
 
       let result: TurnSummary
       try {
-        const handle = await deps.manager.acquire(proj.alias, proj.path, speaker)
+        const handle = await deps.manager.acquire({
+          alias: proj.alias,
+          path: proj.path,
+          providerId: speaker,
+          chatId: msg.chatId,
+          tierProfile,
+        })
         // PR C2 — propagate the chatroom aborter into the speaker turn so
         // /stop (and "new dispatch preempts prior") interrupt mid-stream
         // rather than waiting for the current speaker turn to drain.
@@ -542,9 +579,17 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     msg: InboundMsg,
     proj: { alias: string; path: string },
   ): Promise<void> {
-    deps.log('COORDINATOR', `parallel chat=${msg.chatId} → project=${proj.alias} providers=${parallelProviders.join(',')}`)
+    const tier = resolveTier(msg.chatId, deps.loadAccess())
+    const tierProfile = TIER_PROFILES[tier]
+    deps.log('COORDINATOR', `parallel chat=${msg.chatId} → project=${proj.alias} providers=${parallelProviders.join(',')} tier=${tier}`)
     const handles = await Promise.all(
-      parallelProviders.map(p => deps.manager.acquire(proj.alias, proj.path, p)),
+      parallelProviders.map(p => deps.manager.acquire({
+        alias: proj.alias,
+        path: proj.path,
+        providerId: p,
+        chatId: msg.chatId,
+        tierProfile,
+      })),
     )
     const text = deps.format(msg)
     const settled = await Promise.allSettled(handles.map(h => collectTurn(h.dispatch(text))))

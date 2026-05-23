@@ -16,6 +16,7 @@ import { collectTurn } from '../../core/agent-provider'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { ProviderId } from '../../core/conversation'
 import { loadAgentConfig } from '../../lib/agent-config'
+import { TIER_PROFILES, type TierProfile } from '../../core/user-tier'
 
 export interface DelegateBuildDeps {
   /** State dir — used as the default cwd when caller doesn't pass one. */
@@ -46,7 +47,7 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
     : 'claude-opus-4-7'
 
   const delegateClaude = createClaudeAgentProvider({
-    sdkOptionsForProject: (_alias: string, path: string): Options => {
+    sdkOptionsForProject: (_alias: string, path: string, _tierProfile: TierProfile): Options => {
       const o: Options = {
         cwd: path,
         model: claudeModel,
@@ -70,10 +71,11 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
     ...(process.env.CODEX_MODEL || configuredAgent.model
       ? { model: process.env.CODEX_MODEL ?? configuredAgent.model }
       : {}),
-    approvalPolicy: 'never',
-    // Read-only sandbox: delegate is for "ask a question", not "do work".
-    // Spike 3 confirmed read-only blocks writes cleanly.
-    sandboxMode: 'read-only',
+    // sandboxMode + approvalPolicy moved out of CodexAgentProviderOptions in
+    // Task 6 — they're now derived per-spawn from spawnOpts.tierProfile inside
+    // the provider. See the dispatchDelegate call below for the tier choice
+    // and its rationale.
+    //
     // Deliberately NO mcpServers — bare-bones is the structural
     // recursion-prevention guarantee.
   })
@@ -97,7 +99,21 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
     const started = Date.now()
     let session: Awaited<ReturnType<typeof provider.spawn>> | null = null
     try {
-      session = await provider.spawn({ alias: '_delegate', path: cwd ?? deps.stateDir })
+      session = await provider.spawn(
+        { alias: '_delegate', path: cwd ?? deps.stateDir },
+        // Trusted tier preserves the pre-Task-6 delegate posture:
+        //   - Claude side: permissionMode='default' with no canUseTool wiring →
+        //     equivalent to the prior delegate (no per-tool prompts because the
+        //     delegate path never set canUseTool; auto-allow inside the SDK).
+        //   - Codex side: sandboxMode='workspace-write' + approvalPolicy='never'
+        //     → exactly the prior delegate codex config (writes constrained to
+        //     cwd, no UI prompts).
+        // Admin tier would have moved codex to danger-full-access — a regression
+        // from the original "read-mostly" delegate stance. If a future task
+        // wants a tighter delegate posture (e.g. read-only), add a dedicated
+        // DELEGATE_PROFILE alongside TIER_PROFILES.
+        { tierProfile: TIER_PROFILES.trusted },
+      )
       const result = await collectTurn(session.dispatch(prompt))
       const response = result.assistantText.join('\n').trim()
       return { ok: true, response, duration_ms: Date.now() - started }

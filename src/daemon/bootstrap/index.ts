@@ -18,8 +18,10 @@
  *   - src/daemon/bootstrap.test.ts (integration tests)
  */
 import { SessionManager } from '../../core/session-manager'
-import { createClaudeAgentProvider } from '../../core/claude-agent-provider'
+import { createClaudeAgentProvider, tierProfileToClaudeSdkOpts } from '../../core/claude-agent-provider'
 import { createCodexAgentProvider } from '../../core/codex-agent-provider'
+import type { TierProfile } from '../../core/user-tier'
+import { resolveTier } from '../../core/user-tier'
 import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
 import { createConversationCoordinator, type ConversationCoordinator } from '../../core/conversation-coordinator'
 import { makeConversationStore, type ConversationStore } from '../../core/conversation-store'
@@ -27,7 +29,7 @@ import { buildSystemPrompt } from '../../core/prompt-builder'
 import type { ProviderId } from '../../core/conversation'
 import { makeResolver } from '../../core/project-resolver'
 import { makeCanUseTool } from '../../core/permission-relay'
-import { lookup, assertMatrixComplete, type PermissionMode } from '../../core/capability-matrix'
+import { assertMatrixComplete, type PermissionMode } from '../../core/capability-matrix'
 import { formatInbound } from '../../core/prompt-format'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
@@ -40,6 +42,8 @@ import { makeSessionStore } from '../../core/session-store'
 import type { Db } from '../../lib/db'
 import { homedir } from 'node:os'
 import { loadAgentConfig } from '../../lib/agent-config'
+import { loadAccess, setSessionInvalidator, type Access } from '../../lib/access'
+import { loadCompanionConfig, type CompanionConfig } from '../companion/config'
 import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { buildDelegateDispatch, type DelegateDispatch } from './delegate'
@@ -166,7 +170,7 @@ export interface Bootstrap {
   coordinator: ConversationCoordinator
   resolve: (chatId: string) => { alias: string; path: string } | null
   formatInbound: typeof formatInbound
-  sdkOptionsForProject: (alias: string, path: string) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile) => Options
   /** Daemon-default provider id — what new chats get until user runs `/cc` or `/codex`. */
   defaultProviderId: ProviderId
   /** Backward-compat alias for defaultProviderId. Pre-P2 callers expected this name. */
@@ -212,6 +216,28 @@ function wrapCheapEvalWithAuthFailCheck(
   }
 }
 
+/**
+ * Resolve which chat receives permission-relay prompts. Pre-Task-13 the
+ * relay routed to `lastActiveChatId` — a security hole, since a guest who
+ * could trigger a tool call could then approve their own request. Now the
+ * relay target is always an admin:
+ *
+ *   1. If companion.default_chat_id is set AND that chat is admin, use it
+ *      (operator can explicitly direct prompts to their preferred chat).
+ *   2. Otherwise fall back to `access.admins[0]` — first admin in config.
+ *   3. If no admins exist at all, return null (relay denies the request).
+ *
+ * Called per-tool-call inside the makeCanUseTool closure, so changes to
+ * either access.json or companion config take effect within one read TTL
+ * (5s for access; instant for companion).
+ */
+export function resolveAdminChatId(access: Access, companion: CompanionConfig): string | null {
+  if (companion.default_chat_id && access.admins?.includes(companion.default_chat_id)) {
+    return companion.default_chat_id
+  }
+  return access.admins?.[0] ?? null
+}
+
 export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
   hydrateClaudeAuthEnvFromUserSettings(deps.log)
 
@@ -233,7 +259,23 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
 
   const canUseTool = makeCanUseTool({
     askUser: deps.ilink.askUser,
-    defaultChatId: () => deps.lastActiveChatId(),
+    initiatingChatId: () => deps.lastActiveChatId(),
+    // Task 13 — permission prompts route to a configured admin chat, NOT
+    // the chat that initiated the dispatch. Closes a self-approval hole
+    // where a guest who could trigger a tool call could also click 'allow'
+    // on their own request.
+    adminChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir)),
+    // Task 13 — tier resolution rules:
+    //   - dangerouslySkipPermissions=true  → every chat is admin tier
+    //     (global override; old default-allow path's new spelling).
+    //   - no active chat → admin (system-initiated work has no caller to gate).
+    //   - otherwise → access.json-derived tier (admin/trusted/guest).
+    resolveTier: () => {
+      if (deps.dangerouslySkipPermissions) return 'admin'
+      const cid = deps.lastActiveChatId()
+      if (!cid) return 'admin'
+      return resolveTier(cid, loadAccess())
+    },
     log: deps.log,
     // Per-dispatch mode lookup: read the chat's current mode from the
     // conversation store at the moment the tool call arrives. Falls back
@@ -283,7 +325,7 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
     ? configuredAgent.model
     : 'claude-opus-4-7'
 
-  const sdkOptionsForProject = (_alias: string, path: string): Options => {
+  const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile): Options => {
     const cstatus = deps.ilink.companion.status()
     const systemPrompt = buildSystemPrompt({
       providerId: 'claude',
@@ -315,10 +357,24 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
       settingSources: ['project', 'local'],
       ...(claudeBin ? { pathToClaudeCodeExecutable: claudeBin } : {}),
     }
-    if (deps.dangerouslySkipPermissions) {
-      return { ...common, permissionMode: 'bypassPermissions' }
+    // Task 13 — SDK permission knobs derived from the spawn-time tierProfile
+    // via the provider's pure translation helper. Pre-Task-13 this branched
+    // on `deps.dangerouslySkipPermissions`; post-Task-13 that flag only
+    // influences which tier is resolved (see the resolveTier closure in
+    // makeCanUseTool above), and the SDK options follow the tier.
+    //
+    // canUseTool is always wired — even at admin tier the relay may need
+    // to surface destructive-Bash or memory_delete prompts that the
+    // matrix's per-tool askUser flag asks for. Under bypassPermissions the
+    // SDK won't fire canUseTool; under default mode canUseTool is what
+    // gates everything not statically excluded via disallowedTools.
+    const tierOpts = tierProfileToClaudeSdkOpts(tierProfile)
+    return {
+      ...common,
+      permissionMode: tierOpts.permissionMode,
+      ...(tierOpts.disallowedTools ? { disallowedTools: tierOpts.disallowedTools } : {}),
+      canUseTool,
     }
-    return { ...common, permissionMode: 'default', canUseTool }
   }
 
   // Persistent session_id map — enables `resume` after daemon restart.
@@ -385,17 +441,14 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
         ...(process.env.CODEX_MODEL || configuredAgent.model
           ? { model: process.env.CODEX_MODEL ?? configuredAgent.model }
           : {}),
-        // RFC 03 §10 risk: daemon mode safe defaults — no user in the loop
-        // for individual tool approvals. Spike 3 confirms `on-request` likely
-        // hangs; `never` is the only viable headless setting.
-        // Use the capability matrix as the single source of truth for the policy.
-        approvalPolicy: lookup('solo', 'codex', permissionMode).approvalPolicy ?? 'never',
-        // v0.5.7 — when daemon runs --dangerously, mirror the same posture
-        // for codex: bypass MCP approval (else codex 0.128 cancels every
-        // mcp__wechat__reply with "user cancelled MCP tool call") and remove
-        // the workspace-write sandbox so the bypass is actually honoured.
-        // Without this combination the user sees "no reply" silently.
-        sandboxMode: permissionMode === 'dangerously' ? 'danger-full-access' : 'workspace-write',
+        // Task 6: sandboxMode + approvalPolicy moved out of CodexAgentProviderOptions —
+        // they're now derived per-spawn from spawnOpts.tierProfile inside the provider.
+        // admin tier maps to danger-full-access + never (matches the old --dangerously
+        // posture); trusted → workspace-write + never; guest → read-only + untrusted.
+        // The dangerouslyBypassApprovalsAndSandbox flag stays here because it's a
+        // provider-construction-time codex CLI config knob (not a per-thread option).
+        // v0.5.7 — when daemon runs --dangerously, bypass MCP approval (else codex 0.128
+        // cancels every mcp__wechat__reply with "user cancelled MCP tool call").
         dangerouslyBypassApprovalsAndSandbox: permissionMode === 'dangerously',
         // RFC 03 P5 review #4: Codex SDK has no system prompt slot, so we
         // inject the channel rules into the first user message of each
@@ -443,6 +496,19 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
     resumeTTLMs: 7 * 24 * 60 * 60_000,
   })
 
+  // Task 14 — when admins / trusted / allowFrom set membership changes in
+  // access.json, shut down all live sessions so the next acquire respawns
+  // under the new tier. Single-step rule: edit access.json → next inbound
+  // runs under new tier. Up to 5s lag while the in-process cache holds the
+  // old snapshot. Errors during shutdown are logged but swallowed (the
+  // access reader must never crash the caller).
+  setSessionInvalidator(() => {
+    deps.log('ACCESS', 'tier membership changed — invalidating all live sessions')
+    void sessionManager.shutdown().catch(err => {
+      deps.log('ACCESS', `invalidate shutdown error: ${err instanceof Error ? err.message : String(err)}`)
+    })
+  })
+
   // Periodic idle sweep — without this, idleEvictMs is dead config (the
   // method exists but was never called from production paths). 30 min of
   // inactivity is the limit before a session is dropped; the next dispatch
@@ -486,6 +552,11 @@ export function buildBootstrap(deps: BootstrapDeps): Bootstrap {
     // {msgId, error?} envelope; an ilink RETRY_FAIL was invisible to the
     // dashboard logs panel + the inbound flow.
     sendAssistantText: makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log }),
+    // Task 10 — coordinator resolves per-chat tier on every dispatch.
+    // loadAccess() reads access.json with a 5s in-process TTL cache, so
+    // this is cheap to call per inbound. Admin/trusted/guest classification
+    // determines which TierProfile the session is spawned under.
+    loadAccess,
     log: deps.log,
     // PR F — chatroom moderator now resolves a provider-agnostic cheap
     // eval via ProviderRegistry.getCheapEval(). Each registered provider

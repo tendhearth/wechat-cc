@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildTickBodies, buildPushTickText, type TickDeps } from './tick-bodies'
+import { TIER_PROFILES } from '../../core/user-tier'
+import type { Access } from '../../lib/access'
 
 describe('buildPushTickText', () => {
   it('formats a push tick envelope with the supplied nowIso + chatId', () => {
@@ -40,6 +42,9 @@ interface Setup {
 function setupDeps(opts: {
   defaultChatId: string | null
   inFlight: boolean
+  /** Optional Access stub. Defaults to admin tier for the configured chatId
+   * so existing PR D tests keep their original expectations. */
+  access?: Access
 }): Setup {
   const stateDir = makeStateDir({
     enabled: true,
@@ -52,11 +57,17 @@ function setupDeps(opts: {
   const dispatch = vi.fn(() => ({
     async *[Symbol.asyncIterator]() { /* empty turn — no events */ },
   }))
-  const acquire = vi.fn(async (_alias: string, _path: string, _providerId: string) => ({
+  const acquire = vi.fn(async () => ({
     alias: 'a', path: '/p', providerId: 'claude', lastUsedAt: 0,
     dispatch, close: async () => {},
   }))
   const isInFlight = vi.fn(() => opts.inFlight)
+  const defaultAccess: Access = {
+    dmPolicy: 'allowlist',
+    allowFrom: opts.defaultChatId ? [opts.defaultChatId] : [],
+    ...(opts.defaultChatId ? { admins: [opts.defaultChatId] } : {}),
+  }
+  const access = opts.access ?? defaultAccess
   const deps: TickDeps = {
     stateDir,
     db: {} as never,
@@ -70,6 +81,7 @@ function setupDeps(opts: {
       // override via deps.boot.registry directly.
       registry: { getCheapEval: () => null } as never,
     } as never,
+    loadAccess: () => access,
     log: (tag, line) => { logs.push(`${tag}|${line}`) },
   }
   return { stateDir, acquire, isInFlight, dispatch, logs, deps }
@@ -89,7 +101,7 @@ describe('buildTickBodies / pushTick — companion isolation (PR D)', () => {
     cleanup.push(s.stateDir)
     const { pushTick } = buildTickBodies(s.deps)
     await pushTick()
-    expect(s.isInFlight).toHaveBeenCalledWith('_default', 'claude')
+    expect(s.isInFlight).toHaveBeenCalledWith({ alias: '_default', providerId: 'claude', chatId: 'chat-1' })
     expect(s.acquire).not.toHaveBeenCalled()
     expect(s.dispatch).not.toHaveBeenCalled()
     expect(s.logs.some(l => l.includes('skipping push tick: user session in-flight'))).toBe(true)
@@ -100,7 +112,7 @@ describe('buildTickBodies / pushTick — companion isolation (PR D)', () => {
     cleanup.push(s.stateDir)
     const { pushTick } = buildTickBodies(s.deps)
     await pushTick()
-    expect(s.isInFlight).toHaveBeenCalledWith('_default', 'claude')
+    expect(s.isInFlight).toHaveBeenCalledWith({ alias: '_default', providerId: 'claude', chatId: 'chat-1' })
     expect(s.acquire).toHaveBeenCalledOnce()
     expect(s.dispatch).toHaveBeenCalledOnce()
   })
@@ -112,6 +124,70 @@ describe('buildTickBodies / pushTick — companion isolation (PR D)', () => {
     await pushTick()
     expect(s.isInFlight).not.toHaveBeenCalled()
     expect(s.acquire).not.toHaveBeenCalled()
+  })
+})
+
+describe('buildTickBodies / pushTick — companion default_chat_id + tier (Task 11)', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => {
+    for (const d of cleanup) {
+      try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ }
+    }
+  })
+
+  it('pushTick acquires with companion default_chat_id and admin tier resolved from access.json', async () => {
+    const access: Access = {
+      dmPolicy: 'allowlist',
+      allowFrom: ['ownerChat'],
+      admins: ['ownerChat'],
+    }
+    const s = setupDeps({ defaultChatId: 'ownerChat', inFlight: false, access })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick()
+    expect(s.acquire).toHaveBeenCalledOnce()
+    const req = s.acquire.mock.calls[0]?.[0] as { chatId: string; tierProfile: unknown }
+    expect(req.chatId).toBe('ownerChat')
+    expect(req.tierProfile).toBe(TIER_PROFILES.admin)
+    // Admin path: no COMPANION warning should fire.
+    expect(s.logs.some(l => l.startsWith('COMPANION|'))).toBe(false)
+  })
+
+  it('pushTick with non-admin default_chat_id resolves to guest tier and logs a COMPANION warning', async () => {
+    const access: Access = {
+      dmPolicy: 'allowlist',
+      allowFrom: ['nonadmin'],
+      admins: ['someone-else'],
+    }
+    const s = setupDeps({ defaultChatId: 'nonadmin', inFlight: false, access })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick()
+    expect(s.acquire).toHaveBeenCalledOnce()
+    const req = s.acquire.mock.calls[0]?.[0] as { chatId: string; tierProfile: unknown }
+    expect(req.chatId).toBe('nonadmin')
+    expect(req.tierProfile).toBe(TIER_PROFILES.guest)
+    // Non-admin tier surfaces a single COMPANION log line — a real
+    // operator-misconfiguration signal that the tick fires under reduced
+    // capabilities.
+    expect(s.logs.some(l => l.startsWith('COMPANION|') && l.includes('non-admin') && l.includes('guest'))).toBe(true)
+  })
+
+  it('pushTick with trusted default_chat_id resolves to trusted tier and logs a COMPANION warning', async () => {
+    const access: Access = {
+      dmPolicy: 'allowlist',
+      allowFrom: ['trustyChat'],
+      trusted: ['trustyChat'],
+    }
+    const s = setupDeps({ defaultChatId: 'trustyChat', inFlight: false, access })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick()
+    expect(s.acquire).toHaveBeenCalledOnce()
+    const req = s.acquire.mock.calls[0]?.[0] as { chatId: string; tierProfile: unknown }
+    expect(req.tierProfile).toBe(TIER_PROFILES.trusted)
+    expect(s.logs.some(l => l.startsWith('COMPANION|') && l.includes('trusted'))).toBe(true)
   })
 })
 

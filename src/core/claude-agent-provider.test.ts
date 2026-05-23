@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
-import { createClaudeAgentProvider } from './claude-agent-provider'
+import { createClaudeAgentProvider, tierProfileToClaudeSdkOpts } from './claude-agent-provider'
 import type { AgentEvent } from './agent-provider'
+import { TIER_PROFILES } from './user-tier'
 
 // Helper: drain an async iterable into an array for assertion.
 async function drain(events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
@@ -82,7 +83,7 @@ import * as sdk from '@anthropic-ai/claude-agent-sdk'
 describe('claude-agent-provider', () => {
   it('yields init then text then result for a simple turn', async () => {
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
-    const session = await provider.spawn({ alias: 'foo', path: '/tmp' })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin })
 
     const eventsPromise = drain(session.dispatch('hi'))
 
@@ -110,7 +111,7 @@ describe('claude-agent-provider', () => {
 
   it('yields tool_call for `mcp__wechat__reply` with `{server:"wechat", tool:"reply"}`', async () => {
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
-    const session = await provider.spawn({ alias: 'foo', path: '/tmp' })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin })
 
     const eventsPromise = drain(session.dispatch('reply please'))
 
@@ -136,7 +137,7 @@ describe('claude-agent-provider', () => {
 
   it('yields tool_call for built-in tools without server prefix', async () => {
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
-    const session = await provider.spawn({ alias: 'foo', path: '/tmp' })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin })
 
     const eventsPromise = drain(session.dispatch('read a file'))
 
@@ -162,7 +163,7 @@ describe('claude-agent-provider', () => {
 
   it('yields error event for non-success result subtype', async () => {
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
-    const session = await provider.spawn({ alias: 'foo', path: '/tmp' })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin })
 
     const eventsPromise = drain(session.dispatch('hi'))
 
@@ -188,7 +189,7 @@ describe('claude-agent-provider', () => {
     // The provider must intercept it and surface a structured error so the
     // coordinator can suppress the fallback path.
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
-    const session = await provider.spawn({ alias: 'foo', path: '/tmp' })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin })
 
     const eventsPromise = drain(session.dispatch('hi'))
 
@@ -221,7 +222,7 @@ describe('claude-agent-provider', () => {
     // The provider must catch the first chunk; otherwise that chunk flows to
     // the user as a normal reply before the second one trips the error path.
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
-    const session = await provider.spawn({ alias: 'foo', path: '/tmp' })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin })
 
     const eventsPromise = drain(session.dispatch('hi'))
     await new Promise(r => setTimeout(r, 0))
@@ -244,7 +245,7 @@ describe('claude-agent-provider', () => {
 
   it('returns an empty iterable after close()', async () => {
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
-    const session = await provider.spawn({ alias: 'foo', path: '/tmp' })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin })
     await session.close()
     const events = await drain(session.dispatch('after close'))
     expect(events).toEqual([])
@@ -252,7 +253,7 @@ describe('claude-agent-provider', () => {
 
   it('throws if dispatch is called while a previous dispatch is in flight', async () => {
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
-    const session = await provider.spawn({ alias: 'foo', path: '/tmp' })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin })
 
     // Start first dispatch — do NOT drain it yet (keep it in-flight)
     const first = session.dispatch('a')
@@ -280,7 +281,7 @@ describe('claude-agent-provider', () => {
   it('cancel() calls SDK interrupt without closing the session', async () => {
     ;(sdk as unknown as { __test_reset_interrupt: () => void }).__test_reset_interrupt()
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
-    const session = await provider.spawn({ alias: 'foo', path: '/tmp' })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin })
 
     // Start a dispatch and leave it in-flight.
     const eventsPromise = drain(session.dispatch('first'))
@@ -378,7 +379,7 @@ describe('claude-agent-provider', () => {
   it('cancel() is a no-op after close()', async () => {
     ;(sdk as unknown as { __test_reset_interrupt: () => void }).__test_reset_interrupt()
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
-    const session = await provider.spawn({ alias: 'foo', path: '/tmp' })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin })
     await session.close()
     // close() itself calls interrupt — record that baseline, then verify
     // cancel() does NOT add another call.
@@ -387,9 +388,55 @@ describe('claude-agent-provider', () => {
     expect((sdk as unknown as { __test_interrupt_count: () => number }).__test_interrupt_count()).toBe(baseline)
   })
 
+  describe('tierProfileToClaudeSdkOpts', () => {
+    it('admin → permissionMode=bypassPermissions, no disallowedTools', () => {
+      const out = tierProfileToClaudeSdkOpts(TIER_PROFILES.admin)
+      expect(out.permissionMode).toBe('bypassPermissions')
+      expect(out.disallowedTools).toBeUndefined()
+    })
+
+    it('trusted → permissionMode=default, no disallowedTools (canUseTool relays destructive)', () => {
+      const out = tierProfileToClaudeSdkOpts(TIER_PROFILES.trusted)
+      expect(out.permissionMode).toBe('default')
+      // shell_destructive is relayed via canUseTool, not via disallowedTools —
+      // because disallowedTools blocks at the tool name level and we'd lose
+      // the ability to allow non-destructive Bash.
+      expect(out.disallowedTools).toBeUndefined()
+    })
+
+    it('guest → permissionMode=default + disallowedTools blocks non-allowed built-ins', () => {
+      const out = tierProfileToClaudeSdkOpts(TIER_PROFILES.guest)
+      expect(out.permissionMode).toBe('default')
+      expect(out.disallowedTools).toBeDefined()
+      expect(out.disallowedTools).toContain('Bash')
+      expect(out.disallowedTools).toContain('Write')
+    })
+
+    it('guest disallowedTools is exactly the built-in tools mapped to non-allow ToolKinds', () => {
+      const out = tierProfileToClaudeSdkOpts(TIER_PROFILES.guest)
+      const set = new Set(out.disallowedTools ?? [])
+      expect(set.has('Bash')).toBe(true)
+      expect(set.has('KillShell')).toBe(true)
+      expect(set.has('Write')).toBe(true)
+      expect(set.has('Edit')).toBe(true)
+      expect(set.has('NotebookEdit')).toBe(true)
+      expect(set.has('Read')).toBe(true)
+      expect(set.has('Glob')).toBe(true)
+      expect(set.has('Grep')).toBe(true)
+      expect(set.has('LS')).toBe(true)
+      expect(set.has('WebFetch')).toBe(true)
+      expect(set.has('WebSearch')).toBe(true)
+      expect(set.has('Task')).toBe(true)
+      // MCP tools are NOT included in disallowedTools — they're filtered by
+      // canUseTool instead (because the wechat MCP server exposes them
+      // dynamically; we can't pre-enumerate the names here without
+      // double-maintaining a list).
+    })
+  })
+
   it('assistant text arriving with no active queue is dropped with [STREAM_DROP] warn', async () => {
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
-    const session = await provider.spawn({ alias: 'foo', path: '/tmp' })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin })
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 

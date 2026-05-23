@@ -36,6 +36,14 @@ export interface Access {
   dmPolicy: 'allowlist' | 'disabled'
   allowFrom: string[]
   admins?: string[]
+  /**
+   * Trusted users get every capability admin has EXCEPT destructive
+   * operations (rm / git reset --hard / memory_delete / etc.) — those
+   * trigger a permission prompt to the admin chat. Optional field;
+   * missing or empty means no users have trusted tier and the operator
+   * must explicitly opt people in.
+   */
+  trusted?: string[]
 }
 
 function defaultAccess(): Access {
@@ -49,7 +57,8 @@ function readAccessFile(): Access {
     return {
       dmPolicy: parsed.dmPolicy ?? 'allowlist',
       allowFrom: parsed.allowFrom ?? [],
-      admins: parsed.admins,
+      ...(parsed.admins ? { admins: parsed.admins } : {}),
+      ...(parsed.trusted ? { trusted: parsed.trusted } : {}),
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return defaultAccess()
@@ -73,10 +82,53 @@ export function saveAccess(a: Access): void {
 // Cache access in memory — re-read from disk every 5s max
 let _accessCache: Access | null = null
 let _accessCacheTime = 0
+
+// Last snapshot observed on a real disk read (post-TTL). Used to detect
+// tier-membership changes across reads; reset to null on _resetSnapshotForTest.
+// Note: when the cache is hit (within the 5s TTL), no comparison happens —
+// operator edits to access.json take effect on the next disk read after TTL
+// expiry. Documented behavior; 5s lag is acceptable for the "operator edits
+// access.json mid-conversation" case.
+let _lastSnapshot: Access | null = null
+let _invalidator: (() => void) | null = null
+
+/**
+ * Register a callback to fire when admins / trusted / allowFrom set membership
+ * changes between two consecutive disk reads of access.json. Bootstrap wires
+ * this to sessionManager.shutdown() so the next acquire respawns with the
+ * new tier. One-shot: setSessionInvalidator overwrites any previous callback;
+ * pass null to clear.
+ *
+ * dmPolicy changes do NOT fire the invalidator — only the tier-relevant
+ * sets do. Errors thrown by the callback are swallowed so a buggy
+ * invalidator can't crash the access reader.
+ */
+export function setSessionInvalidator(fn: (() => void) | null): void {
+  _invalidator = fn
+}
+
+function setEq(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false
+  const s = new Set(a)
+  for (const x of b) if (!s.has(x)) return false
+  return true
+}
+
+function tierMembershipChanged(prev: Access, next: Access): boolean {
+  return !setEq(prev.admins ?? [], next.admins ?? [])
+      || !setEq(prev.trusted ?? [], next.trusted ?? [])
+      || !setEq(prev.allowFrom, next.allowFrom)
+}
+
 export function loadAccess(): Access {
   const now = Date.now()
   if (_accessCache && now - _accessCacheTime < 5000) return _accessCache
-  _accessCache = readAccessFile()
+  const fresh = readAccessFile()
+  if (_lastSnapshot && tierMembershipChanged(_lastSnapshot, fresh)) {
+    try { _invalidator?.() } catch { /* invalidator errors must not crash the reader */ }
+  }
+  _lastSnapshot = fresh
+  _accessCache = fresh
   _accessCacheTime = now
   return _accessCache
 }
@@ -86,6 +138,13 @@ export function loadAccess(): Access {
 export function _clearCache(): void {
   _accessCache = null
   _accessCacheTime = 0
+}
+
+/** @internal — for tests only. Clears the last-snapshot so the next
+ * loadAccess() behaves as a first-load (no invalidator fire). Paired with
+ * setSessionInvalidator(null) in beforeEach to prevent test bleed-through. */
+export function _resetSnapshotForTest(): void {
+  _lastSnapshot = null
 }
 
 export function assertAllowedChat(chat_id: string): void {

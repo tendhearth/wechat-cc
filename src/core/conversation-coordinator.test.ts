@@ -6,6 +6,24 @@ import { makeFakeSession } from './test-helpers'
 import type { AgentEvent, AgentProvider } from './agent-provider'
 import type { Mode } from './conversation'
 import { formatInbound, type InboundMsg } from './prompt-format'
+import type { AcquireRequest } from './session-manager'
+import { TIER_PROFILES, type TierProfile } from './user-tier'
+import type { Access } from '../lib/access'
+
+/**
+ * Default access fixture used by most coordinator tests: every chatId
+ * those tests touch is listed in `admins`, so `resolveTier()` returns
+ * 'admin' and acquire() receives `TIER_PROFILES.admin` — the behaviour
+ * pre-Task 10 tests were written against. Tests that need to exercise
+ * trusted/guest behaviour should construct their own access fixture.
+ */
+function adminAccess(): Access {
+  return {
+    dmPolicy: 'allowlist',
+    allowFrom: [],
+    admins: ['chat-1', 'chat-2', 'chat-p', 'chat-r', 'chat-abc'],
+  }
+}
 
 /** Minimal AgentProvider whose spawn() returns a session that emits no events. */
 const dummyProvider: AgentProvider = {
@@ -55,6 +73,7 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: () => 'x',
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     expect(c.getMode('chat-1')).toEqual({ kind: 'solo', provider: 'claude' })
@@ -74,6 +93,7 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: () => 'x',
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     expect(c.getMode('chat-1')).toEqual({ kind: 'solo', provider: 'codex' })
@@ -90,6 +110,7 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: () => 'x',
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     expect(() => c.setMode('chat-1', { kind: 'solo', provider: 'mystery' }))
@@ -109,6 +130,7 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: () => 'x',
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     c.setMode('chat-1', { kind: 'solo', provider: 'codex' })
@@ -128,6 +150,7 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: () => 'x',
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log,
     })
     await c.dispatch(inbound('chat-1', 'hi'))
@@ -143,7 +166,7 @@ describe('ConversationCoordinator', () => {
       events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
       onDispatch: t => dispatched.push(t),
     })
-    const acquire = vi.fn(async (_alias: string, _path: string, _provider: string) =>
+    const acquire = vi.fn(async (_req: AcquireRequest) =>
       makeHandle('codex', session)
     )
     const registry = createProviderRegistry()
@@ -157,11 +180,59 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: (m) => `[fmt]${m.text}`,
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     await c.dispatch(inbound('chat-1', 'hi codex'))
-    expect(acquire).toHaveBeenCalledWith('a', '/p', 'codex')
+    expect(acquire).toHaveBeenCalledWith({
+      alias: 'a',
+      path: '/p',
+      providerId: 'codex',
+      chatId: 'chat-1',
+      tierProfile: TIER_PROFILES.admin,
+    })
     expect(dispatched).toContain('[fmt]hi codex')
+  })
+
+  it('dispatch threads chatId into session acquire with resolved tier (admin lookup)', async () => {
+    // Task 10 — coordinator now uses the inbound's real chatId (not the
+    // pre-task '_legacy' placeholder) and computes the TierProfile from
+    // resolveTier(chatId, loadAccess()). adminChat ∈ access.admins so
+    // TIER_PROFILES.admin is passed; a different chatId (guestChat) not
+    // listed anywhere collapses to TIER_PROFILES.guest. This pins the
+    // chatId pass-through + per-chatId tier resolution in one test.
+    const acquireCalls: Array<{ alias: string; chatId: string; tierProfile: TierProfile }> = []
+    const session = makeFakeSession({
+      events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
+    })
+    const acquire = vi.fn(async (req: AcquireRequest) => {
+      acquireCalls.push({ alias: req.alias, chatId: req.chatId, tierProfile: req.tierProfile })
+      return makeHandle(req.providerId, session)
+    })
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      permissionMode: 'strict',
+      // adminChat is admin; guestChat is neither admin nor trusted → guest.
+      loadAccess: () => ({
+        dmPolicy: 'allowlist',
+        allowFrom: [],
+        admins: ['adminChat'],
+      }),
+      log: () => {},
+    })
+    await c.dispatch(inbound('adminChat', 'hi'))
+    expect(acquireCalls[0]).toMatchObject({ chatId: 'adminChat' })
+    expect(acquireCalls[0]?.tierProfile).toBe(TIER_PROFILES.admin)
+    await c.dispatch(inbound('guestChat', 'hi'))
+    expect(acquireCalls[1]).toMatchObject({ chatId: 'guestChat' })
+    expect(acquireCalls[1]?.tierProfile).toBe(TIER_PROFILES.guest)
   })
 
   it('dispatch falls back to default provider when persisted mode references unknown provider', async () => {
@@ -170,7 +241,7 @@ describe('ConversationCoordinator', () => {
     const session = makeFakeSession({
       events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
     })
-    const acquire = vi.fn(async (_alias: string, _path: string, _providerId: string) =>
+    const acquire = vi.fn(async (_req: AcquireRequest) =>
       makeHandle('claude', session)
     )
     const registry = createProviderRegistry()
@@ -184,10 +255,17 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: () => 'x',
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log,
     })
     await c.dispatch(inbound('chat-1', 'hi'))
-    expect(acquire).toHaveBeenCalledWith('a', '/p', 'claude')
+    expect(acquire).toHaveBeenCalledWith({
+      alias: 'a',
+      path: '/p',
+      providerId: 'claude',
+      chatId: 'chat-1',
+      tierProfile: TIER_PROFILES.admin,
+    })
     expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining("provider 'gemini' not registered"))
   })
 
@@ -198,7 +276,7 @@ describe('ConversationCoordinator', () => {
         { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
       ],
     })
-    const acquire = vi.fn(async (_alias: string, _path: string, _providerId: string) =>
+    const acquire = vi.fn(async (_req: AcquireRequest) =>
       makeHandle('claude', session)
     )
     const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
@@ -213,6 +291,7 @@ describe('ConversationCoordinator', () => {
       format: () => 'x',
       sendAssistantText,
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     await c.dispatch(inbound('chat-1', 'hi'))
@@ -227,7 +306,7 @@ describe('ConversationCoordinator', () => {
         { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
       ],
     })
-    const acquire = vi.fn(async (_alias: string, _path: string, _providerId: string) =>
+    const acquire = vi.fn(async (_req: AcquireRequest) =>
       makeHandle('claude', session)
     )
     const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
@@ -242,6 +321,7 @@ describe('ConversationCoordinator', () => {
       format: () => 'x',
       sendAssistantText,
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     await c.dispatch(inbound('chat-1', 'hi'))
@@ -263,7 +343,7 @@ describe('ConversationCoordinator', () => {
         { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
       ],
     })
-    const acquire = vi.fn(async (_alias: string, _path: string, _providerId: string) =>
+    const acquire = vi.fn(async (_req: AcquireRequest) =>
       makeHandle('claude', session)
     )
     const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
@@ -278,6 +358,7 @@ describe('ConversationCoordinator', () => {
       format: () => 'x',
       sendAssistantText,
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     await c.dispatch(inbound('chat-1', 'hi'))
@@ -303,8 +384,8 @@ describe('ConversationCoordinator', () => {
         { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
       ],
     })
-    const acquire = vi.fn(async (_alias: string, _path: string, providerId: string) =>
-      makeHandle(providerId, session)
+    const acquire = vi.fn(async (req: AcquireRequest) =>
+      makeHandle(req.providerId, session)
     )
     const registry = createProviderRegistry()
     registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
@@ -317,11 +398,12 @@ describe('ConversationCoordinator', () => {
       format: () => 'x',
       sendAssistantText: async () => {},
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     await c.dispatch(inbound('chat-1', 'hi'))
     expect(release).toHaveBeenCalledTimes(1)
-    expect(release).toHaveBeenCalledWith('a', 'claude')
+    expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: 'chat-1' })
   })
 
   it('on auth_failed: throttles repeated notices for the same chat', async () => {
@@ -331,7 +413,7 @@ describe('ConversationCoordinator', () => {
         { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
       ],
     })
-    const acquire = vi.fn(async (_alias: string, _path: string, _providerId: string) =>
+    const acquire = vi.fn(async (_req: AcquireRequest) =>
       makeHandle('claude', session)
     )
     const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
@@ -347,6 +429,7 @@ describe('ConversationCoordinator', () => {
       format: () => 'x',
       sendAssistantText,
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
       authFailNotifyThrottleMs: 1000,
       now: () => clock,
@@ -375,7 +458,7 @@ describe('ConversationCoordinator', () => {
     const session = makeFakeSession({
       events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
     })
-    const acquire = vi.fn(async (_alias: string, _path: string, _providerId: string) =>
+    const acquire = vi.fn(async (_req: AcquireRequest) =>
       makeHandle('claude', session)
     )
     const registry = createProviderRegistry()
@@ -388,6 +471,7 @@ describe('ConversationCoordinator', () => {
       defaultProviderId: 'claude',
       format: () => 'x',
       permissionMode: 'strict',
+      loadAccess: adminAccess,
       log: () => {},
     })
     await c.dispatch(inbound('chat-1', 'hi'))
@@ -412,8 +496,8 @@ describe('ConversationCoordinator', () => {
         ],
         onDispatch: t => dispatched.push(t),
       })
-      const acquire = vi.fn(async (_alias: string, _path: string, providerId: string) =>
-        makeHandle(providerId, session)
+      const acquire = vi.fn(async (req: AcquireRequest) =>
+        makeHandle(req.providerId, session)
       )
       const log = vi.fn()
       const c = createConversationCoordinator({
@@ -424,6 +508,7 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: () => 'x',
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log,
       })
       return { c, acquire, dispatched, log, store }
@@ -433,14 +518,14 @@ describe('ConversationCoordinator', () => {
       const { c, acquire, dispatched } = setupPrimaryTool({ initialMode: { kind: 'primary_tool', primary: 'claude' } })
       await c.dispatch(inbound('chat-1', 'hi'))
       expect(acquire).toHaveBeenCalledTimes(1)
-      expect(acquire.mock.calls[0]?.[2]).toBe('claude')
+      expect(acquire.mock.calls[0]?.[0]?.providerId).toBe('claude')
       expect(dispatched).toHaveLength(1)
     })
 
     it('reverse — primary_tool with codex primary dispatches to codex', async () => {
       const { c, acquire } = setupPrimaryTool({ initialMode: { kind: 'primary_tool', primary: 'codex' } })
       await c.dispatch(inbound('chat-1', 'hi'))
-      expect(acquire.mock.calls[0]?.[2]).toBe('codex')
+      expect(acquire.mock.calls[0]?.[0]?.providerId).toBe('codex')
     })
 
     it('falls back to solo+default when persisted primary is no longer registered', async () => {
@@ -455,7 +540,7 @@ describe('ConversationCoordinator', () => {
           { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
         ],
       })
-      const acquire = vi.fn(async (_alias: string, _path: string, _providerId: string) =>
+      const acquire = vi.fn(async (_req: AcquireRequest) =>
         makeHandle('claude', session)
       )
       const log = vi.fn()
@@ -467,10 +552,11 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: () => 'x',
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log,
       })
       await c.dispatch(inbound('chat-1', 'hi'))
-      expect(acquire.mock.calls[0]?.[2]).toBe('claude')
+      expect(acquire.mock.calls[0]?.[0]?.providerId).toBe('claude')
       expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining("primary 'gemini' not registered"))
     })
 
@@ -487,6 +573,7 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: () => 'x',
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
       })
       expect(() => c.setMode('chat-1', { kind: 'primary_tool', primary: 'claude' }))
@@ -520,7 +607,8 @@ describe('ConversationCoordinator', () => {
       const claudeEvents = opts.claudeEvents ?? defaultReplyEvents
       const codexEvents = opts.codexEvents ?? defaultReplyEvents
 
-      const acquire = vi.fn(async (alias: string, path: string, providerId: string) => {
+      const acquire = vi.fn(async (req: AcquireRequest) => {
+        const { alias, path, providerId } = req
         if (providerId === 'claude' && opts.claudeThrows) {
           return {
             alias, path, providerId, lastUsedAt: 0,
@@ -561,6 +649,7 @@ describe('ConversationCoordinator', () => {
         format: (m) => m.text,
         sendAssistantText,
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
       })
       return { c, acquire, sendAssistantText, dispatchCalls }
@@ -577,7 +666,8 @@ describe('ConversationCoordinator', () => {
       registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
       registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
       const release = vi.fn(async () => {})
-      const acquire = vi.fn(async (_alias: string, _path: string, providerId: string) => {
+      const acquire = vi.fn(async (req: AcquireRequest) => {
+        const { providerId } = req
         const events: AgentEvent[] = providerId === 'claude'
           ? [
               { kind: 'error', code: 'auth_failed', message: 'claude reports not logged in' },
@@ -599,12 +689,13 @@ describe('ConversationCoordinator', () => {
         format: (m) => m.text,
         sendAssistantText,
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
       })
       await c.dispatch(inbound('chat-p', 'hi'))
 
       // Failing provider was released; healthy one was not.
-      expect(release).toHaveBeenCalledWith('a', 'claude')
+      expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: 'chat-p' })
       expect(release).not.toHaveBeenCalledWith('a', 'codex')
       // Codex's normal reply made it through with the parallel-mode prefix.
       const sent = sendAssistantText.mock.calls.map(call => call[1] as string)
@@ -623,7 +714,7 @@ describe('ConversationCoordinator', () => {
       await c.dispatch(inbound('chat-1', 'hello both'))
       // acquire called twice — once per provider
       expect(acquire).toHaveBeenCalledTimes(2)
-      expect(acquire.mock.calls.map(([, , p]) => p).sort()).toEqual(['claude', 'codex'])
+      expect(acquire.mock.calls.map(([req]) => req.providerId).sort()).toEqual(['claude', 'codex'])
       // dispatch called twice with same text
       expect(dispatchCalls).toHaveLength(2)
       expect(dispatchCalls[0]?.text).toBe('hello both')
@@ -693,7 +784,7 @@ describe('ConversationCoordinator', () => {
           { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
         ],
       })
-      const acquire = vi.fn(async (_alias: string, _path: string, _providerId: string) =>
+      const acquire = vi.fn(async (_req: AcquireRequest) =>
         makeHandle('claude', session)
       )
       const log = vi.fn()
@@ -705,12 +796,13 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: () => 'x',
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log,
       })
       await c.dispatch(inbound('chat-1', 'hi'))
       // Acquired ONCE under solo+default, not twice
       expect(acquire).toHaveBeenCalledTimes(1)
-      expect(acquire.mock.calls[0]?.[2]).toBe('claude')
+      expect(acquire.mock.calls[0]?.[0]?.providerId).toBe('claude')
       expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining('parallel mode missing providers'))
     })
 
@@ -727,6 +819,7 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: () => 'x',
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
       })
       expect(() => c.setMode('chat-1', { kind: 'parallel' }))
@@ -740,7 +833,7 @@ describe('ConversationCoordinator', () => {
       registry.register('alice', dummyProvider, { displayName: 'Alice', canResume: () => true })
       registry.register('bob', dummyProvider, { displayName: 'Bob', canResume: () => true })
       const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
-      const acquire = vi.fn(async (alias: string, path: string, providerId: string) => {
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => {
         const session = makeFakeSession({
           events: [
             { kind: 'text', text: `hi from ${providerId}` },
@@ -759,6 +852,7 @@ describe('ConversationCoordinator', () => {
         format: () => 'x',
         sendAssistantText,
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
       })
       await c.dispatch(inbound('chat-1', 'hi'))
@@ -790,7 +884,7 @@ describe('ConversationCoordinator', () => {
       registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
       const dispatchedTexts: Array<{ providerId: string; text: string }> = []
       const counters: Record<string, number> = {}
-      const acquire = vi.fn(async (_alias: string, _path: string, providerId: string) => {
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => {
         const list = opts.replies[providerId] ?? []
         return {
           alias: 'a', path: '/p', providerId, lastUsedAt: 0,
@@ -826,6 +920,7 @@ describe('ConversationCoordinator', () => {
         format: (m) => `<wechat>${m.text}</wechat>`,
         sendAssistantText,
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log,
         haikuEval,
         ...(opts.maxRounds !== undefined ? { chatroomMaxRounds: opts.maxRounds } : {}),
@@ -864,7 +959,7 @@ describe('ConversationCoordinator', () => {
       registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
       registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
       const release = vi.fn(async () => {})
-      const acquire = vi.fn(async (_alias: string, _path: string, providerId: string) => {
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => {
         const events: AgentEvent[] = providerId === 'claude'
           ? [
               { kind: 'error', code: 'auth_failed', message: 'stale claude' },
@@ -894,6 +989,7 @@ describe('ConversationCoordinator', () => {
         format: (m) => m.text,
         sendAssistantText,
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
         haikuEval,
         chatroomMaxRounds: 4,
@@ -901,7 +997,7 @@ describe('ConversationCoordinator', () => {
       await c.dispatch(inbound('chat-r', '开始讨论'))
 
       // claude's session was released so the next inbound starts clean.
-      expect(release).toHaveBeenCalledWith('a', 'claude')
+      expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: 'chat-r' })
       // Loop exited after the first speaker turn (moderator called once).
       expect(modCalls).toBe(1)
       // User got the neutral notice — NOT the raw sentinel or a "[Claude]" prefix.
@@ -984,7 +1080,7 @@ describe('ConversationCoordinator', () => {
       registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
 
       const dispatchedTexts: Array<{ providerId: string; text: string }> = []
-      const acquire = vi.fn(async (_a: string, _p: string, providerId: string) => ({
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => ({
         alias: 'a', path: '/p', providerId, lastUsedAt: 0,
         dispatch: (text: string): AsyncIterable<AgentEvent> => {
           dispatchedTexts.push({ providerId, text })
@@ -1015,6 +1111,7 @@ describe('ConversationCoordinator', () => {
         format: formatInbound,  // real formatter — emits [image:/path]
         sendAssistantText: vi.fn(),
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
         haikuEval,
       })
@@ -1048,7 +1145,7 @@ describe('ConversationCoordinator', () => {
       registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
 
       const dispatchedTexts: Array<{ providerId: string; text: string }> = []
-      const acquire = vi.fn(async (_a: string, _p: string, providerId: string) => ({
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => ({
         alias: 'a', path: '/p', providerId, lastUsedAt: 0,
         dispatch: (text: string): AsyncIterable<AgentEvent> => {
           dispatchedTexts.push({ providerId, text })
@@ -1080,6 +1177,7 @@ describe('ConversationCoordinator', () => {
         format: formatInbound,
         sendAssistantText: vi.fn(),
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
         haikuEval,
       })
@@ -1107,7 +1205,7 @@ describe('ConversationCoordinator', () => {
       registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
 
       const dispatchedTexts: Array<{ providerId: string; text: string }> = []
-      const acquire = vi.fn(async (_a: string, _p: string, providerId: string) => ({
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => ({
         alias: 'a', path: '/p', providerId, lastUsedAt: 0,
         dispatch: (text: string): AsyncIterable<AgentEvent> => {
           dispatchedTexts.push({ providerId, text })
@@ -1136,6 +1234,7 @@ describe('ConversationCoordinator', () => {
         format: formatInbound,
         sendAssistantText: vi.fn(),
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
         haikuEval,
       })
@@ -1214,7 +1313,7 @@ describe('ConversationCoordinator', () => {
           { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
         ],
       })
-      const acquire = vi.fn(async (_a: string, _p: string, _provider: string) =>
+      const acquire = vi.fn(async (_req: AcquireRequest) =>
         makeHandle('claude', session)
       )
       const log = vi.fn()
@@ -1226,12 +1325,13 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: () => 'x',
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log,
       })
       await c.dispatch(inbound('chat-1', 'hi'))
       // Solo dispatch — single acquire, claude.
       expect(acquire).toHaveBeenCalledTimes(1)
-      expect(acquire.mock.calls[0]?.[2]).toBe('claude')
+      expect(acquire.mock.calls[0]?.[0]?.providerId).toBe('claude')
       expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining('chatroom mode missing providers'))
     })
 
@@ -1254,6 +1354,7 @@ describe('ConversationCoordinator', () => {
         format: () => 'x',
         sendAssistantText,
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
       })
       await c.dispatch(inbound('chat-1', 'hi'))
@@ -1278,7 +1379,7 @@ describe('ConversationCoordinator', () => {
       registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
       registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
 
-      const acquire = vi.fn(async (_a: string, _p: string, providerId: string) => ({
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => ({
         alias: 'a', path: '/p', providerId, lastUsedAt: 0,
         dispatch: (_text: string): AsyncIterable<AgentEvent> => ({
           async *[Symbol.asyncIterator]() {
@@ -1324,6 +1425,7 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: (m) => m.text,
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
         haikuEval,
       })
@@ -1374,7 +1476,7 @@ describe('ConversationCoordinator', () => {
       registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
       registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
 
-      const acquire = vi.fn(async (_a: string, _p: string, providerId: string) => ({
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => ({
         alias: 'a', path: '/p', providerId, lastUsedAt: 0,
         dispatch: (_text: string): AsyncIterable<AgentEvent> => ({
           async *[Symbol.asyncIterator]() {
@@ -1416,6 +1518,7 @@ describe('ConversationCoordinator', () => {
         format: (m) => m.text,
         sendAssistantText: async () => {},
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: (tag, line) => { logs.push(`${tag}|${line}`) },
         haikuEval,
       })
@@ -1472,7 +1575,7 @@ describe('ConversationCoordinator', () => {
       registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
 
       let failOnce = true
-      const acquire = vi.fn(async (_a: string, _p: string, providerId: string) => {
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => {
         if (failOnce) {
           failOnce = false
           throw new Error('simulated speaker session crash')
@@ -1504,6 +1607,7 @@ describe('ConversationCoordinator', () => {
         format: (m) => m.text,
         sendAssistantText: async () => {},
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
         haikuEval,
       })
@@ -1545,6 +1649,7 @@ describe('ConversationCoordinator', () => {
         defaultProviderId: 'claude',
         format: () => 'x',
         permissionMode: 'strict',
+        loadAccess: adminAccess,
         log: () => {},
       })
       expect(() => c.setMode('chat-1', { kind: 'chatroom' }))
