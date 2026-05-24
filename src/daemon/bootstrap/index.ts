@@ -51,9 +51,14 @@ import { makeSendAssistantText } from './fallback-reply'
 import { findCodexBinary } from '../../lib/find-codex-binary'
 import { checkCodexVersion } from './codex-version-check'
 import { assertNotAuthFailed, type CheapEval } from '../../core/agent-provider'
+import { createA2ARegistry } from '../../core/a2a-registry'
+import { createA2AClient } from '../../core/a2a-client'
+import { createA2AServer, type NotifyEvent } from '../../core/a2a-server'
+import { makeA2AEventsStore, type AppendInput } from '../../core/a2a-events-store'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
+import selfPkg from '../../../package.json' with { type: 'json' }
 
 /**
  * Locate a working Claude Code binary. The SDK's own native-binary detection
@@ -181,6 +186,21 @@ export interface Bootstrap {
    * Optional `cwd` per RFC 03 review #10.
    */
   dispatchDelegate: DelegateDispatch
+  /**
+   * A2A deps — instantiated by bootstrap so main.ts can late-bind them
+   * into internal-api via setA2A(). Undefined when a2a_listen is not
+   * configured (a2aServer is null in that case too).
+   */
+  a2aDeps: {
+    registry: import('../../core/a2a-registry').A2ARegistry
+    client: import('../../core/a2a-client').A2AClient
+    recordEvent: (event: AppendInput) => void
+  }
+  /**
+   * Running A2A HTTP server — null when a2a_listen is not configured.
+   * main.ts calls a2aServer?.stop() in shutdown.
+   */
+  a2aServer: import('../../core/a2a-server').A2AServer | null
 }
 
 // buildChannelSystemPrompt() moved to src/core/prompt-builder.ts in
@@ -606,6 +626,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // (which needs to look up modes for reply-prefixing in P3 parallel
   // mode) sees the same flips. When absent, we own one rooted at <stateDir>.
 
+  // Extracted as a named variable so routeA2ANotify can also call it.
+  // v0.5.3 — extracted to fallback-reply.ts so the failure paths log
+  // [FALLBACK_REPLY_FAIL] / success path logs [FALLBACK_REPLY_SENT].
+  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log })
+
   const coordinator = createConversationCoordinator({
     resolveProject: resolve,
     manager: sessionManager,
@@ -618,13 +643,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // routeInbound used to take when the agent didn't call a reply tool.
     // main.ts injects a real ilink.sendMessage closure; bootstrap.ts only
     // wires the structural piece.
-    //
-    // v0.5.3 — extracted to fallback-reply.ts so the failure paths log
-    // [FALLBACK_REPLY_FAIL] / success path logs [FALLBACK_REPLY_SENT].
-    // The previous `await ilink.sendMessage()` discard masked the
-    // {msgId, error?} envelope; an ilink RETRY_FAIL was invisible to the
-    // dashboard logs panel + the inbound flow.
-    sendAssistantText: makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log }),
+    sendAssistantText,
     // Task 10 — coordinator resolves per-chat tier on every dispatch.
     // loadAccess() reads access.json with a 5s in-process TTL cache, so
     // this is cheap to call per inbound. Admin/trusted/guest classification
@@ -651,6 +670,68 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     ...(claudeBin ? { claudeBin } : {}),
   })
 
+  // ── A2A wiring ────────────────────────────────────────────────────────
+  // Instantiate registry, client, events store. These are cheap objects
+  // that don't require a2a_listen to be configured — they're also used
+  // by POST /v1/a2a/send (outbound calls from the MCP tool).
+  const a2aRegistry = createA2ARegistry({ stateDir: deps.stateDir })
+  const a2aClient = createA2AClient()
+  const a2aEventsStore = makeA2AEventsStore(deps.db)
+
+  // Helper: resolve operator chat. v1 = earliest-updated_at conversation
+  // row (first chat the operator ever used; most stable identity). Cached
+  // for the daemon's lifetime — operator binding doesn't shift mid-session.
+  let cachedOperatorChatId: string | null | undefined = undefined
+  function resolveOperatorChatId(): string | null {
+    if (cachedOperatorChatId !== undefined) return cachedOperatorChatId
+    const row = deps.db.query<{ chat_id: string }, []>(
+      'SELECT chat_id FROM conversations ORDER BY updated_at ASC LIMIT 1',
+    ).get()
+    cachedOperatorChatId = row?.chat_id ?? null
+    return cachedOperatorChatId
+  }
+
+  // onNotify: route inbound A2A notification → operator chat via sendAssistantText.
+  // Formats the message as `[A2A:<agentId>] <text>` so the operator can
+  // visually distinguish A2A pushes from regular assistant replies.
+  async function routeA2ANotify(event: NotifyEvent): Promise<void> {
+    const operatorChatId = resolveOperatorChatId()
+    if (!operatorChatId) {
+      deps.log('A2A_NOTIFY_IN', `dropping notify from ${event.agent.id}: no operator chat bound yet`)
+      return
+    }
+    const formatted = `[A2A:${event.agent.id}] ${event.text}`
+    if (sendAssistantText) {
+      await sendAssistantText(operatorChatId, formatted)
+    }
+    a2aEventsStore.append({
+      direction: 'in', agent_id: event.agent.id, text: event.text,
+      urgency: event.urgency, status: 'ok',
+    })
+  }
+
+  // Server only starts if a2a_listen is configured. When absent, the
+  // a2aServer handle is null and POST /v1/a2a/send still works (outbound
+  // only — the daemon won't receive inbound pushes without a listener).
+  let a2aServer: ReturnType<typeof createA2AServer> | null = null
+  if (configuredAgent.a2a_listen) {
+    a2aServer = createA2AServer({
+      host: configuredAgent.a2a_listen.host,
+      port: configuredAgent.a2a_listen.port,
+      registry: a2aRegistry,
+      onNotify: routeA2ANotify,
+      daemonInfo: { name: 'wechat-cc', version: selfPkg.version },
+    })
+    await a2aServer.start()
+    deps.log('A2A', `server listening on http://${configuredAgent.a2a_listen.host}:${a2aServer.port()}`)
+  }
+
+  const a2aDeps = {
+    registry: a2aRegistry,
+    client: a2aClient,
+    recordEvent: (event: AppendInput) => a2aEventsStore.append(event),
+  }
+
   return {
     sessionManager,
     sessionStore,
@@ -667,5 +748,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      * buildBootstrap returns. The route is 503 until that wiring lands.
      */
     dispatchDelegate,
+    a2aDeps,
+    a2aServer,
   }
 }

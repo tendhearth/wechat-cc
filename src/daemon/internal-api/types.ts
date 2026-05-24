@@ -183,6 +183,12 @@ export interface InternalApi {
    * returns 503 until this is called.
    */
   setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
+  /**
+   * Late-bind A2A deps after bootstrap has constructed the registry,
+   * client, and events store. POST /v1/a2a/send returns 503 until this
+   * is called (when a2a_listen is configured).
+   */
+  setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
 }
 
 /**

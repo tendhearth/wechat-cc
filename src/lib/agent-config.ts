@@ -99,6 +99,21 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
     // `~/.claude/.claude.json` and broke daemons whenever the user's
     // interactive alias was something the SDK subprocess couldn't resolve
     // (e.g. fast-mode `opus[1m]` returning 404 from 2.1.133).
+    // Parse a2a fields through the sub-schemas so we get validated types.
+    // safeParse: if the sub-field is malformed we silently drop it rather
+    // than crashing the entire config load (same lenient posture as the
+    // rest of this function).
+    const a2aListen = parsed.a2a_listen != null
+      ? A2AListen.safeParse(parsed.a2a_listen).data
+      : undefined
+    const a2aAgentsRaw = Array.isArray(parsed.a2a_agents) ? parsed.a2a_agents : undefined
+    const a2aAgents = a2aAgentsRaw != null
+      ? a2aAgentsRaw.flatMap(r => {
+          const result = A2AAgentRecord.safeParse(r)
+          return result.success ? [result.data] : []
+        })
+      : undefined
+
     return {
       provider,
       ...(typeof parsed.model === 'string' ? { model: parsed.model } : {}),
@@ -106,6 +121,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       dangerouslySkipPermissions,
       autoStart,
       closeStopsDaemon,
+      ...(a2aListen ? { a2a_listen: a2aListen } : {}),
+      ...(a2aAgents && a2aAgents.length > 0 ? { a2a_agents: a2aAgents } : {}),
     }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }

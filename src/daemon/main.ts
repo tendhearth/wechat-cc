@@ -92,11 +92,14 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   let shuttingDown = false; let didStartup = false
   let pollingLcRef: { reconcile(): Promise<void> } | null = null
   let ticksRef: TickBodies | null = null
+  let bootRef: import('./bootstrap').Bootstrap | null = null
 
   const shutdown = async () => {
     if (shuttingDown) return
     shuttingDown = true; log('DAEMON', 'shutdown initiated')
     if (didStartup) { try { await lc.stopAll() } catch { /* logged by lc */ } }
+    // Stop A2A server if it was started (a2a_listen was configured).
+    try { await bootRef?.a2aServer?.stop() } catch (err) { log('A2A', `server stop error: ${err instanceof Error ? err.message : String(err)}`) }
     try { db.close() } catch (err) { console.error('db close failed:', err) }
     releaseInstanceLock(PID_PATH)
   }
@@ -122,10 +125,13 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       dangerouslySkipPermissions: dangerously, conversationStore,
       internalApi: { baseUrl: internalApi.baseUrl, tokenFilePath: internalApi.tokenFilePath },
     })
+    bootRef = boot
     internalApi.setDelegate({ dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() })
     // Wire conversation dep now that coordinator is available. Routes access
     // deps.conversation at request time, so this late assignment is safe.
     internalApi.setConversation({ setMode: (chatId, mode) => boot.coordinator.setMode(chatId, mode) })
+    // Wire A2A deps — registry, client, recordEvent — so POST /v1/a2a/send works.
+    internalApi.setA2A(boot.a2aDeps)
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({
       stateDir, db, ilink, accounts, boot, dangerously,
