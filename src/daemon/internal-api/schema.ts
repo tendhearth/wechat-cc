@@ -292,6 +292,44 @@ export const DelegateResponse = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
 ])
 
+// ── A2A dashboard routes ─────────────────────────────────────────────────────
+
+export const A2APreviewRequest = z.object({ url: z.string().url() })
+export const A2APreviewResponse = z.union([
+  z.object({
+    name: z.string(),
+    description: z.string().optional(),
+    version: z.string().optional(),
+    auth: z.object({ type: z.string(), required: z.boolean() }).optional(),
+    capabilities: z.array(z.object({
+      name: z.string(),
+      description: z.string().optional(),
+      endpoint: z.string().optional(),
+      method: z.string().optional(),
+    })).optional(),
+  }),
+  z.object({ error: z.string() }),
+])
+
+export const A2AInstallRequest = z.object({
+  id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
+  name: z.string().min(1).max(128),
+  url: z.string().url(),
+  outbound_api_key: z.string().default(''),
+})
+export const A2AInstallResponse = z.union([
+  z.object({ ok: z.literal(true), inbound_api_key: z.string() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+
+export const A2ARemoveRequest = z.object({ id: z.string() })
+export const A2APauseRequest = z.object({ id: z.string(), paused: z.boolean() })
+
+export type A2APreviewRequestT = z.infer<typeof A2APreviewRequest>
+export type A2AInstallRequestT = z.infer<typeof A2AInstallRequest>
+export type A2ARemoveRequestT = z.infer<typeof A2ARemoveRequest>
+export type A2APauseRequestT = z.infer<typeof A2APauseRequest>
+
 // ── POST /v1/a2a/send ────────────────────────────────────────────────────────
 
 export const A2ASendRequest = z.object({
@@ -430,6 +468,10 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 
   // a2a
   'POST /v1/a2a/send': A2ASendRequest,
+  'POST /v1/a2a/preview': A2APreviewRequest,
+  'POST /v1/a2a/install': A2AInstallRequest,
+  'POST /v1/a2a/remove': A2ARemoveRequest,
+  'POST /v1/a2a/pause': A2APauseRequest,
 }
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
@@ -458,4 +500,6 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/delegate': DelegateResponse,
   'POST /v1/conversation/set-mode': ConversationSetModeResponse,
   'POST /v1/a2a/send': A2ASendResponse,
+  'POST /v1/a2a/preview': A2APreviewResponse,
+  'POST /v1/a2a/install': A2AInstallResponse,
 }

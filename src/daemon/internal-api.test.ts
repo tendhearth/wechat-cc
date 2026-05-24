@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import { createInternalApi, type InternalApi } from './internal-api'
 import { makeMemoryFS } from './memory/fs-api'
 import type { A2ARegistry } from '../core/a2a-registry'
-import type { A2AClient, SendResult } from '../core/a2a-client'
+import type { A2AClient, SendResult, AgentCard } from '../core/a2a-client'
+import type { A2AEventsStore, EventRow, AppendInput } from '../core/a2a-events-store'
 
 describe('internal-api', () => {
   let stateDir: string
@@ -1634,41 +1635,83 @@ describe('internal-api request validation', () => {
     function makeA2ADeps(opts: {
       agents?: Array<{ id: string; url: string; outbound_api_key: string; paused?: boolean }>
       sendResult?: SendResult
+      cardResult?: AgentCard | Error
+      serverEnabled?: boolean
+      baseUrl?: string | null
     } = {}) {
-      const agents = opts.agents ?? []
+      const agentsList = opts.agents ?? []
       const events: RecordedEvent[] = []
+      // In-memory events store backed by a simple array
+      const eventRows: EventRow[] = []
 
       const registry: A2ARegistry = {
-        list: () => agents.map(a => ({
+        list: () => agentsList.map(a => ({
           id: a.id,
           name: a.id,
           url: a.url,
           outbound_api_key: a.outbound_api_key,
           inbound_api_key: 'unused-inbound',
-          capabilities: [],
+          capabilities: [] as string[],
           paused: a.paused ?? false,
         })),
         get: (id) => {
-          const a = agents.find(x => x.id === id)
+          const a = agentsList.find(x => x.id === id)
           if (!a) return null
-          return { id: a.id, name: a.id, url: a.url, outbound_api_key: a.outbound_api_key, inbound_api_key: 'unused-inbound', capabilities: [], paused: a.paused ?? false }
+          return { id: a.id, name: a.id, url: a.url, outbound_api_key: a.outbound_api_key, inbound_api_key: 'unused-inbound', capabilities: [] as string[], paused: a.paused ?? false }
         },
         verifyBearer: () => null,
-        add: () => {},
+        add: () => { /* send tests don't exercise add */ },
         remove: () => {},
         setPaused: () => {},
       }
 
       const defaultSendResult: SendResult = opts.sendResult ?? { ok: true, http_status: 200, response: { received: true } }
+      const cardResult = opts.cardResult
 
       const client: A2AClient = {
-        fetchAgentCard: async () => ({ name: 'test-agent' }),
+        fetchAgentCard: async () => {
+          if (cardResult instanceof Error) throw cardResult
+          return cardResult ?? { name: 'test-agent' }
+        },
         send: async () => defaultSendResult,
       }
 
       const recordEvent = (event: RecordedEvent) => { events.push(event) }
 
-      return { registry, client, recordEvent, events }
+      const eventsStore: A2AEventsStore = {
+        append: (input: AppendInput) => {
+          eventRows.push({
+            id: crypto.randomUUID(),
+            ts: new Date().toISOString(),
+            direction: input.direction,
+            agent_id: input.agent_id,
+            text: input.text,
+            urgency: input.urgency ?? null,
+            status: input.status,
+            http_status: input.http_status ?? null,
+          })
+        },
+        recentForAgent: (agentId: string, limit: number) =>
+          eventRows.filter(r => r.agent_id === agentId).slice(-limit).reverse(),
+        counts: (agentId: string) => {
+          const rows = eventRows.filter(r => r.agent_id === agentId)
+          return {
+            inbound: rows.filter(r => r.direction === 'in').length,
+            outbound: rows.filter(r => r.direction === 'out').length,
+          }
+        },
+      }
+
+      return {
+        registry,
+        client,
+        recordEvent,
+        eventsStore,
+        serverEnabled: opts.serverEnabled ?? false,
+        baseUrl: opts.baseUrl !== undefined ? opts.baseUrl : null,
+        events,
+        eventRows,
+      }
     }
 
     it('returns 503 when a2a deps not wired', async () => {
@@ -1685,8 +1728,8 @@ describe('internal-api request validation', () => {
     })
 
     it('returns ok=false + registered list when agent_id unknown', async () => {
-      const { registry, client, recordEvent } = makeA2ADeps({ agents: [{ id: 'bot-a', url: 'http://a', outbound_api_key: 'k1' }] })
-      api = createInternalApi({ stateDir, daemonPid: 1, a2a: { registry, client, recordEvent } })
+      const a2aD = makeA2ADeps({ agents: [{ id: 'bot-a', url: 'http://a', outbound_api_key: 'k1' }] })
+      api = createInternalApi({ stateDir, daemonPid: 1, a2a: a2aD })
       const { port, tokenFilePath } = await api.start()
       const token = readFileSync(tokenFilePath, 'utf8').trim()
       const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/send`, {
@@ -1794,6 +1837,408 @@ describe('internal-api request validation', () => {
       })
       expect(resp.status).toBe(400)
       expect(await resp.json()).toMatchObject({ error: 'invalid_request' })
+    })
+  })
+
+  // ─── A2A dashboard routes ──────────────────────────────────────────────────
+
+  describe('internal-api A2A routes', () => {
+    // Shared helper to start with a2a deps wired
+    async function startWithA2A(
+      a2aDeps: ReturnType<typeof buildA2ADeps>,
+    ): Promise<{ port: number; token: string }> {
+      api = createInternalApi({ stateDir, daemonPid: 1, a2a: a2aDeps })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      return { port, token }
+    }
+
+    interface RecordedEventDash {
+      direction: 'in' | 'out'
+      agent_id: string
+      text: string
+      status: string
+      http_status?: number
+    }
+
+    function buildA2ADeps(opts: {
+      agents?: Array<{ id: string; name?: string; url: string; outbound_api_key: string; paused?: boolean }>
+      sendResult?: SendResult
+      cardResult?: AgentCard | Error
+      serverEnabled?: boolean
+      baseUrl?: string | null
+    } = {}) {
+      type AgentEntry = { id: string; name: string; url: string; outbound_api_key: string; inbound_api_key: string; capabilities: string[]; paused: boolean }
+      const agentsList: AgentEntry[] = (opts.agents ?? []).map(a => ({
+        id: a.id, name: a.name ?? a.id, url: a.url,
+        outbound_api_key: a.outbound_api_key, inbound_api_key: 'unused-inbound',
+        capabilities: [], paused: a.paused ?? false,
+      }))
+      const eventRows: EventRow[] = []
+
+      const registry: A2ARegistry = {
+        list: () => agentsList,
+        get: (id) => agentsList.find(x => x.id === id) ?? null,
+        verifyBearer: () => null,
+        add: (rec) => {
+          if (agentsList.some(a => a.id === rec.id)) throw new Error(`a2a agent '${rec.id}' already exists`)
+          agentsList.push({
+            id: rec.id, name: rec.name, url: rec.url,
+            outbound_api_key: rec.outbound_api_key ?? '',
+            inbound_api_key: rec.inbound_api_key,
+            capabilities: rec.capabilities ?? [],
+            paused: rec.paused ?? false,
+          })
+        },
+        remove: (id) => {
+          const ix = agentsList.findIndex(a => a.id === id)
+          if (ix < 0) throw new Error(`a2a agent '${id}' not found`)
+          agentsList.splice(ix, 1)
+        },
+        setPaused: (id, paused) => {
+          const a = agentsList.find(x => x.id === id)
+          if (!a) throw new Error(`a2a agent '${id}' not found`)
+          a.paused = paused
+        },
+      }
+
+      const cardResult = opts.cardResult
+      const client: A2AClient = {
+        fetchAgentCard: async () => {
+          if (cardResult instanceof Error) throw cardResult
+          return cardResult ?? { name: 'test-agent', description: 'A test agent' }
+        },
+        send: async () => opts.sendResult ?? { ok: true, http_status: 200 },
+      }
+
+      const recordEvent = (event: RecordedEventDash) => {
+        eventRows.push({
+          id: crypto.randomUUID(),
+          ts: new Date().toISOString(),
+          direction: event.direction,
+          agent_id: event.agent_id,
+          text: event.text,
+          urgency: null,
+          status: event.status as EventRow['status'],
+          http_status: event.http_status ?? null,
+        })
+      }
+
+      const eventsStore: A2AEventsStore = {
+        append: (input: AppendInput) => {
+          eventRows.push({
+            id: crypto.randomUUID(),
+            ts: new Date().toISOString(),
+            direction: input.direction,
+            agent_id: input.agent_id,
+            text: input.text,
+            urgency: input.urgency ?? null,
+            status: input.status,
+            http_status: input.http_status ?? null,
+          })
+        },
+        recentForAgent: (agentId: string, limit: number) =>
+          [...eventRows].filter(r => r.agent_id === agentId).slice(0, limit),
+        counts: (agentId: string) => {
+          const rows = eventRows.filter(r => r.agent_id === agentId)
+          return {
+            inbound: rows.filter(r => r.direction === 'in').length,
+            outbound: rows.filter(r => r.direction === 'out').length,
+          }
+        },
+      }
+
+      return {
+        registry,
+        client,
+        recordEvent,
+        eventsStore,
+        serverEnabled: opts.serverEnabled ?? false,
+        baseUrl: opts.baseUrl !== undefined ? opts.baseUrl : null,
+        eventRows,
+      }
+    }
+
+    it('GET /v1/a2a/list returns registered agents with counts', async () => {
+      const a2aDeps = buildA2ADeps({
+        agents: [
+          { id: 'agent-1', url: 'http://agent1.test', outbound_api_key: 'k1' },
+          { id: 'agent-2', url: 'http://agent2.test', outbound_api_key: 'k2', paused: true },
+        ],
+      })
+      // Seed two inbound events for agent-1
+      a2aDeps.eventsStore.append({ direction: 'in', agent_id: 'agent-1', text: 'hello', status: 'ok' })
+      a2aDeps.eventsStore.append({ direction: 'out', agent_id: 'agent-1', text: 'reply', status: 'ok' })
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/list`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { agents: Array<{ id: string; name: string; url: string; paused: boolean; counts: { inbound: number; outbound: number } }> }
+      expect(body.agents).toHaveLength(2)
+      const a1 = body.agents.find(a => a.id === 'agent-1')
+      expect(a1).toBeDefined()
+      expect(a1!.paused).toBe(false)
+      expect(a1!.counts).toEqual({ inbound: 1, outbound: 1 })
+      const a2 = body.agents.find(a => a.id === 'agent-2')
+      expect(a2!.paused).toBe(true)
+      expect(a2!.counts).toEqual({ inbound: 0, outbound: 0 })
+    })
+
+    it('GET /v1/a2a/list returns empty array when no agents registered', async () => {
+      const a2aDeps = buildA2ADeps()
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/list`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { agents: unknown[] }
+      expect(body.agents).toEqual([])
+    })
+
+    it('POST /v1/a2a/preview returns Agent Card metadata', async () => {
+      // Use a Bun.serve fake to expose /.well-known/agent.json
+      const card: AgentCard = {
+        name: 'My Agent',
+        description: 'Does stuff',
+        version: '1.0.0',
+        capabilities: [{ name: 'chat', endpoint: '/v1/chat', method: 'POST' }],
+      }
+      const fake = Bun.serve({
+        hostname: '127.0.0.1',
+        port: 0,
+        fetch(req) {
+          const url = new URL(req.url)
+          if (url.pathname === '/.well-known/agent.json') {
+            return Response.json(card)
+          }
+          return new Response('not found', { status: 404 })
+        },
+      })
+      try {
+        const baseUrl = `http://127.0.0.1:${fake.port}`
+        const a2aDeps = buildA2ADeps({ cardResult: card })
+        // Use a custom client that actually hits the fake server
+        const { createA2AClient } = await import('../core/a2a-client')
+        const realClient = createA2AClient({ timeoutMs: 2000 })
+        a2aDeps.client.fetchAgentCard = (url: string) => realClient.fetchAgentCard(url)
+
+        const { port, token } = await startWithA2A(a2aDeps)
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/preview`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ url: baseUrl }),
+        })
+        expect(resp.status).toBe(200)
+        const body = await resp.json() as AgentCard
+        expect(body.name).toBe('My Agent')
+        expect(body.description).toBe('Does stuff')
+      } finally {
+        await fake.stop()
+      }
+    })
+
+    it('POST /v1/a2a/preview returns { error } on fetch failure', async () => {
+      const a2aDeps = buildA2ADeps({ cardResult: new Error('ECONNREFUSED') })
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/preview`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ url: 'http://127.0.0.1:19999' }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { error: string }
+      expect(body.error).toBeDefined()
+      expect(typeof body.error).toBe('string')
+    })
+
+    it('POST /v1/a2a/install generates inbound_api_key and persists', async () => {
+      const a2aDeps = buildA2ADeps()
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/install`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'new-agent', name: 'New Agent', url: 'http://new.test', outbound_api_key: 'outkey' }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { ok: boolean; inbound_api_key: string }
+      expect(body.ok).toBe(true)
+      expect(body.inbound_api_key).toMatch(/^wc_[0-9a-f]{32}$/)
+      // Verify registry now has the agent
+      expect(a2aDeps.registry.get('new-agent')).not.toBeNull()
+      expect(a2aDeps.registry.get('new-agent')!.name).toBe('New Agent')
+      expect(a2aDeps.registry.get('new-agent')!.inbound_api_key).toBe(body.inbound_api_key)
+    })
+
+    it('POST /v1/a2a/install fails on duplicate id', async () => {
+      const a2aDeps = buildA2ADeps({ agents: [{ id: 'dup-agent', url: 'http://dup.test', outbound_api_key: 'k' }] })
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/install`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'dup-agent', name: 'Dup', url: 'http://dup2.test' }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { ok: boolean; error: string }
+      expect(body.ok).toBe(false)
+      expect(body.error).toMatch(/exists/)
+    })
+
+    it('POST /v1/a2a/install returns 400 on invalid id format', async () => {
+      const a2aDeps = buildA2ADeps()
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/install`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'INVALID ID', name: 'X', url: 'http://x.test' }),
+      })
+      expect(resp.status).toBe(400)
+      expect(await resp.json()).toMatchObject({ error: 'invalid_request' })
+    })
+
+    it('POST /v1/a2a/remove drops an agent', async () => {
+      const a2aDeps = buildA2ADeps({ agents: [{ id: 'rm-agent', url: 'http://rm.test', outbound_api_key: 'k' }] })
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/remove`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'rm-agent' }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { ok: boolean }
+      expect(body.ok).toBe(true)
+      expect(a2aDeps.registry.get('rm-agent')).toBeNull()
+    })
+
+    it('POST /v1/a2a/remove returns ok=false for unknown agent', async () => {
+      const a2aDeps = buildA2ADeps()
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/remove`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'no-such' }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { ok: boolean; error: string }
+      expect(body.ok).toBe(false)
+      expect(body.error).toMatch(/not found/)
+    })
+
+    it('POST /v1/a2a/pause flips the paused flag', async () => {
+      const a2aDeps = buildA2ADeps({ agents: [{ id: 'pausable', url: 'http://p.test', outbound_api_key: 'k', paused: false }] })
+      const { port, token } = await startWithA2A(a2aDeps)
+      // Pause it
+      const r1 = await fetch(`http://127.0.0.1:${port}/v1/a2a/pause`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'pausable', paused: true }),
+      })
+      expect(r1.status).toBe(200)
+      expect((await r1.json() as { ok: boolean }).ok).toBe(true)
+      expect(a2aDeps.registry.get('pausable')!.paused).toBe(true)
+      // Unpause it
+      const r2 = await fetch(`http://127.0.0.1:${port}/v1/a2a/pause`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'pausable', paused: false }),
+      })
+      expect(r2.status).toBe(200)
+      expect((await r2.json() as { ok: boolean }).ok).toBe(true)
+      expect(a2aDeps.registry.get('pausable')!.paused).toBe(false)
+    })
+
+    it('POST /v1/a2a/pause returns ok=false for unknown agent', async () => {
+      const a2aDeps = buildA2ADeps()
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/pause`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'ghost', paused: true }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { ok: boolean; error: string }
+      expect(body.ok).toBe(false)
+    })
+
+    it('GET /v1/a2a/activity returns recent events for agent', async () => {
+      const a2aDeps = buildA2ADeps({ agents: [{ id: 'ev-agent', url: 'http://ev.test', outbound_api_key: 'k' }] })
+      a2aDeps.eventsStore.append({ direction: 'in', agent_id: 'ev-agent', text: 'msg1', status: 'ok' })
+      a2aDeps.eventsStore.append({ direction: 'out', agent_id: 'ev-agent', text: 'msg2', status: 'ok' })
+      // event for different agent — should not appear
+      a2aDeps.eventsStore.append({ direction: 'in', agent_id: 'other-agent', text: 'other', status: 'ok' })
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/activity?agent_id=ev-agent&limit=10`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { events: EventRow[] }
+      expect(body.events).toHaveLength(2)
+      expect(body.events.every(e => e.agent_id === 'ev-agent')).toBe(true)
+    })
+
+    it('GET /v1/a2a/activity returns 400 when agent_id missing', async () => {
+      const a2aDeps = buildA2ADeps()
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/activity`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(400)
+      expect(await resp.json()).toMatchObject({ error: 'agent_id required' })
+    })
+
+    it('GET /v1/a2a/info returns server status when enabled', async () => {
+      const a2aDeps = buildA2ADeps({ serverEnabled: true, baseUrl: 'http://127.0.0.1:9876' })
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/info`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { enabled: boolean; base_url: string | null }
+      expect(body.enabled).toBe(true)
+      expect(body.base_url).toBe('http://127.0.0.1:9876')
+    })
+
+    it('GET /v1/a2a/info returns enabled=false when server disabled', async () => {
+      const a2aDeps = buildA2ADeps({ serverEnabled: false, baseUrl: null })
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/info`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { enabled: boolean; base_url: string | null }
+      expect(body.enabled).toBe(false)
+      expect(body.base_url).toBeNull()
+    })
+
+    it('All A2A routes return 503 when deps.a2a is undefined', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+
+      const routes: Array<{ method: string; path: string; body?: unknown }> = [
+        { method: 'GET', path: '/v1/a2a/list' },
+        { method: 'POST', path: '/v1/a2a/preview', body: { url: 'http://x.test' } },
+        { method: 'POST', path: '/v1/a2a/install', body: { id: 'x', name: 'X', url: 'http://x.test' } },
+        { method: 'POST', path: '/v1/a2a/remove', body: { id: 'x' } },
+        { method: 'POST', path: '/v1/a2a/pause', body: { id: 'x', paused: true } },
+        { method: 'GET', path: '/v1/a2a/activity?agent_id=x' },
+        { method: 'GET', path: '/v1/a2a/info' },
+      ]
+
+      for (const route of routes) {
+        const fetchOpts: RequestInit = {
+          method: route.method,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            ...(route.body ? { 'content-type': 'application/json' } : {}),
+          },
+          ...(route.body ? { body: JSON.stringify(route.body) } : {}),
+        }
+        const resp = await fetch(`http://127.0.0.1:${port}${route.path}`, fetchOpts)
+        expect(resp.status).toBe(503)
+        const body = await resp.json() as { error: string }
+        expect(body.error).toBe('a2a_not_wired')
+      }
     })
   })
 })

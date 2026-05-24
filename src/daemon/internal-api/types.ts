@@ -145,6 +145,8 @@ export interface InternalApiDeps {
   a2a?: {
     registry: import('../../core/a2a-registry').A2ARegistry
     client: import('../../core/a2a-client').A2AClient
+    /** Read/write events store — used by dashboard activity + counts routes. */
+    eventsStore: import('../../core/a2a-events-store').A2AEventsStore
     recordEvent: (event: {
       direction: 'in' | 'out'
       agent_id: string
@@ -153,6 +155,10 @@ export interface InternalApiDeps {
       status: 'ok' | 'auth_failed' | 'http_error' | 'timeout' | 'unknown_agent' | 'agent_paused'
       http_status?: number
     }) => void
+    /** True when the a2a HTTP listener is configured and running. */
+    serverEnabled: boolean
+    /** Base URL of the a2a listener, e.g. "http://0.0.0.0:9000". Null when disabled. */
+    baseUrl: string | null
   }
   /** Optional log hook so api activity surfaces in channel.log. */
   /**

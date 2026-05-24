@@ -194,7 +194,10 @@ export interface Bootstrap {
   a2aDeps: {
     registry: import('../../core/a2a-registry').A2ARegistry
     client: import('../../core/a2a-client').A2AClient
+    eventsStore: import('../../core/a2a-events-store').A2AEventsStore
     recordEvent: (event: AppendInput) => void
+    serverEnabled: boolean
+    baseUrl: string | null
   }
   /**
    * Running A2A HTTP server — null when a2a_listen is not configured.
@@ -729,7 +732,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const a2aDeps = {
     registry: a2aRegistry,
     client: a2aClient,
+    eventsStore: a2aEventsStore,
     recordEvent: (event: AppendInput) => a2aEventsStore.append(event),
+    serverEnabled: !!configuredAgent.a2a_listen,
+    baseUrl: a2aServer ? a2aServer.baseUrl() : null,
   }
 
   return {
