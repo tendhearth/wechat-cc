@@ -125,6 +125,15 @@ Usage:
                         Pull latest + reinstall deps + restart service.
                         --check probes only (no side effects); GUI calls
                         this on a timer to surface the Update button.
+  wechat-cc agent inspect <url>       Fetch Agent Card, print metadata
+  wechat-cc agent add <url> [--id ID] [--name-override N] [--outbound-key K]
+                        Register an external A2A agent; generates inbound API key.
+  wechat-cc agent list              List registered A2A agents
+  wechat-cc agent pause <id>        Pause inbound/outbound for an agent
+  wechat-cc agent resume <id>       Un-pause an agent
+  wechat-cc agent remove <id>       Drop agent registration
+  wechat-cc agent activity <id> [--limit N]
+                        Print recent A2A events (newest first, default 20)
   wechat-cc provider show [--json]  Show selected agent provider
   wechat-cc provider set <claude|codex> [--model MODEL] [--unattended true|false]
                         --unattended: when true (default for new installs), the
@@ -966,9 +975,43 @@ const daemonKillResidualCmd = defineCommand({
   },
 })
 
+const daemonApiInfoCmd = defineCommand({
+  meta: { name: 'api-info', description: 'Read internal-api-info.json (base URL + token) — used by the desktop GUI to call /v1/* endpoints' },
+  args: {
+    json: { type: 'boolean', description: 'JSON envelope (always emits JSON; flag is for CLI consistency)' },
+  },
+  async run() {
+    const { existsSync, readFileSync } = await import('node:fs')
+    const infoPath = join(STATE_DIR, 'internal-api-info.json')
+    if (!existsSync(infoPath)) {
+      console.log(JSON.stringify({ ok: false, error: 'daemon not running (internal-api-info.json not found)' }))
+      process.exit(1)
+    }
+    let info: { baseUrl?: string; tokenFilePath?: string }
+    try {
+      info = JSON.parse(readFileSync(infoPath, 'utf8'))
+    } catch (err) {
+      console.log(JSON.stringify({ ok: false, error: `could not read internal-api-info.json: ${err instanceof Error ? err.message : String(err)}` }))
+      process.exit(1)
+    }
+    if (!info.baseUrl || !info.tokenFilePath) {
+      console.log(JSON.stringify({ ok: false, error: 'internal-api-info.json is malformed (missing baseUrl or tokenFilePath)' }))
+      process.exit(1)
+    }
+    let token: string
+    try {
+      token = readFileSync(info.tokenFilePath, 'utf8').trim()
+    } catch (err) {
+      console.log(JSON.stringify({ ok: false, error: `could not read token file: ${err instanceof Error ? err.message : String(err)}` }))
+      process.exit(1)
+    }
+    console.log(JSON.stringify({ ok: true, baseUrl: info.baseUrl, token }))
+  },
+})
+
 const daemonCmd = defineCommand({
   meta: { name: 'daemon', description: 'Daemon process control' },
-  subCommands: { kill: daemonKillCmd, 'kill-residual': daemonKillResidualCmd },
+  subCommands: { kill: daemonKillCmd, 'kill-residual': daemonKillResidualCmd, 'api-info': daemonApiInfoCmd },
 })
 
 async function runDemo(verb: 'seed' | 'unseed', chatIdArg: string | undefined, json: boolean): Promise<void> {
@@ -1514,6 +1557,108 @@ const mcpServerCmd = defineCommand({
   },
 })
 
+// ── A2A agent management — wechat-cc agent {inspect,add,list,pause,resume,remove,activity} ──
+//
+// Pure wrappers over createA2ARegistry / createA2AClient / makeA2AEventsStore.
+// Heavy logic lives in src/cli/agent.ts (testable without a running daemon).
+
+const agentInspectCmd = defineCommand({
+  meta: { name: 'inspect', description: 'Fetch Agent Card and print metadata' },
+  args: {
+    url: { type: 'positional', required: true, description: 'Agent base URL (/.well-known/agent.json is appended)', valueHint: 'url' },
+  },
+  async run({ args }) {
+    const { cmdAgentInspect } = await import('./src/cli/agent.ts')
+    await cmdAgentInspect(args.url)
+  },
+})
+
+const agentAddCmd = defineCommand({
+  meta: { name: 'add', description: 'Register a new A2A agent (fetches Agent Card, generates inbound API key)' },
+  args: {
+    url: { type: 'positional', required: true, description: 'Agent base URL', valueHint: 'url' },
+    id: { type: 'string', description: 'Explicit agent id slug (default: slugified name from Agent Card)' },
+    'name-override': { type: 'string', description: 'Override the display name from the Agent Card' },
+    'outbound-key': { type: 'string', description: 'Bearer key to send when wechat-cc calls out to this agent' },
+  },
+  async run({ args }) {
+    const { cmdAgentAdd } = await import('./src/cli/agent.ts')
+    await cmdAgentAdd(STATE_DIR, args.url, {
+      id: args.id,
+      nameOverride: args['name-override'],
+      outboundKey: args['outbound-key'],
+    })
+  },
+})
+
+const agentListCmd = defineCommand({
+  meta: { name: 'list', description: 'List registered A2A agents' },
+  async run() {
+    const { cmdAgentList } = await import('./src/cli/agent.ts')
+    cmdAgentList(STATE_DIR)
+  },
+})
+
+const agentPauseCmd = defineCommand({
+  meta: { name: 'pause', description: 'Pause inbound/outbound for an agent' },
+  args: {
+    id: { type: 'positional', required: true, description: 'Agent id', valueHint: 'agent-id' },
+  },
+  async run({ args }) {
+    const { cmdAgentPause } = await import('./src/cli/agent.ts')
+    cmdAgentPause(STATE_DIR, args.id, true)
+  },
+})
+
+const agentResumeCmd = defineCommand({
+  meta: { name: 'resume', description: 'Un-pause an agent' },
+  args: {
+    id: { type: 'positional', required: true, description: 'Agent id', valueHint: 'agent-id' },
+  },
+  async run({ args }) {
+    const { cmdAgentPause } = await import('./src/cli/agent.ts')
+    cmdAgentPause(STATE_DIR, args.id, false)
+  },
+})
+
+const agentRemoveCmd = defineCommand({
+  meta: { name: 'remove', description: 'Drop agent registration' },
+  args: {
+    id: { type: 'positional', required: true, description: 'Agent id', valueHint: 'agent-id' },
+  },
+  async run({ args }) {
+    const { cmdAgentRemove } = await import('./src/cli/agent.ts')
+    cmdAgentRemove(STATE_DIR, args.id)
+  },
+})
+
+const agentActivityCmd = defineCommand({
+  meta: { name: 'activity', description: 'Print recent A2A events for an agent (newest first)' },
+  args: {
+    id: { type: 'positional', required: true, description: 'Agent id', valueHint: 'agent-id' },
+    limit: { type: 'string', description: 'Max events to show (default 20)' },
+  },
+  async run({ args }) {
+    const limitNum = args.limit ? Number.parseInt(args.limit, 10) : 20
+    const limit = Number.isFinite(limitNum) && limitNum > 0 ? limitNum : 20
+    const { cmdAgentActivity } = await import('./src/cli/agent.ts')
+    cmdAgentActivity(STATE_DIR, args.id, limit)
+  },
+})
+
+const agentCmd = defineCommand({
+  meta: { name: 'agent', description: 'A2A agent registry — register, inspect, pause, resume, remove, and view activity' },
+  subCommands: {
+    inspect: agentInspectCmd,
+    add: agentAddCmd,
+    list: agentListCmd,
+    pause: agentPauseCmd,
+    resume: agentResumeCmd,
+    remove: agentRemoveCmd,
+    activity: agentActivityCmd,
+  },
+})
+
 // Subcommands literal first → both `cittyRoot.subCommands` and
 // `MIGRATED_COMMANDS` derive from this single source of truth. Adding a new
 // citty subcommand only requires touching this object — the dispatch set
@@ -1553,6 +1698,8 @@ const SUBCOMMANDS = {
   'install-progress': installProgressCmd,
   mode: modeCmd,
   'mcp-server': mcpServerCmd,
+  // A2A agent management (Task 7).
+  agent: agentCmd,
 } as const
 
 export const cittyRoot = defineCommand({

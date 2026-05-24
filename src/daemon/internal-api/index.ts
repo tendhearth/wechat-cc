@@ -221,5 +221,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setConversation(c) {
       deps.conversation = c
     },
+
+    setA2A(a2a) {
+      deps.a2a = a2a
+    },
   }
 }

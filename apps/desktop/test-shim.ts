@@ -49,6 +49,26 @@ type DaemonConversation = {
   mode: DaemonMode
 }
 
+// A2A agent shape stored in mock state.
+type A2AAgent = {
+  id: string
+  name: string
+  url: string
+  paused: boolean
+  counts: { inbound: number; outbound: number }
+  inbound_api_key: string
+}
+
+// A2A activity event shape.
+type A2AEvent = {
+  agent_id: string
+  direction: 'in' | 'out'
+  text: string
+  ts: string
+  status: string
+  http_status?: number
+}
+
 const __mockState: {
   chats: Array<{ id: string; name: string; last_active: number; mode?: { kind: string; provider?: string } }>
   observations: Array<{ id: string; body: string; tone: string; archived: boolean }>
@@ -63,7 +83,19 @@ const __mockState: {
   // shape so dropdown writes (mode set) stay consistent with subsequent
   // poller reads. Lazily seeded from the real CLI on first read.
   conversations: DaemonConversation[] | null
-} = { chats: [], observations: [], milestones: [], sessions: [], installProgress: null, installSimulationStep: 0, conversations: null }
+  // A2A mock state — seeded by `a2a.seed` test-control command.
+  a2aAgents: A2AAgent[]
+  a2aEvents: A2AEvent[]
+} = { chats: [], observations: [], milestones: [], sessions: [], installProgress: null, installSimulationStep: 0, conversations: null, a2aAgents: [], a2aEvents: [] }
+
+// ─── A2A mock credentials ─────────────────────────────────────────────────────
+// The A2A routes (/v1/a2a/*) are served by the SAME Bun.serve instance as the
+// main shim (port 4174), avoiding cross-origin fetch restrictions in the
+// Playwright browser. The daemon api-info intercept returns baseUrl pointing
+// at the main shim, so api.js routes all fetch() calls through the same origin.
+const A2A_TOKEN = 'fake-shim-token'
+// A2A_BASE_URL is the main shim URL (resolved after PORT is known — used below
+// in the daemon api-info intercept).
 
 // Body served as /__tauri_polyfill.js so it works under CSP `script-src 'self'`
 // (inline scripts are blocked when WECHAT_CC_INJECT_CSP=1). The injected
@@ -211,9 +243,45 @@ Bun.serve({
           return Response.json({ ok: true })
         }
 
+        // ── A2A test-control: seed agents + events ──────────────────────────
+        // POST /__invoke { command: "a2a.seed", args: { agents: [...], events: [...] } }
+        // Playwright A2A tests call this before navigating to the A2A pane.
+        if (body.command === 'a2a.seed') {
+          const args = body.args as {
+            agents?: A2AAgent[]
+            events?: A2AEvent[]
+          } | undefined
+          __mockState.a2aAgents = args?.agents ?? []
+          __mockState.a2aEvents = args?.events ?? []
+          return Response.json({ ok: true, seeded: true })
+        }
+
+        // ── A2A test-control: reset state ───────────────────────────────────
+        if (body.command === 'a2a.reset') {
+          __mockState.a2aAgents = []
+          __mockState.a2aEvents = []
+          return Response.json({ ok: true })
+        }
+
         // ── Shim-native commands (not forwarded to CLI) ────────────────────
         if (body.command === 'wechat_cli_json' || body.command === 'wechat_cli_text') {
           const cliArgs = body.args?.args ?? []
+
+          // Intercept daemon api-info in DRY_RUN — return fake credentials
+          // pointing at the SAME shim origin so fetch() calls are same-origin
+          // (avoids CORS issues in Playwright's Chromium context).
+          // api.js calls this once to bootstrap all /v1/a2a/* fetch() calls.
+          // Frontend calls: ["daemon", "api-info", "--json"]
+          if (
+            dryRun &&
+            body.command === 'wechat_cli_json' &&
+            cliArgs[0] === 'daemon' &&
+            cliArgs[1] === 'api-info'
+          ) {
+            return Response.json({
+              result: { ok: true, baseUrl: `http://127.0.0.1:${PORT}`, token: A2A_TOKEN },
+            })
+          }
 
           // Intercept observations list in DRY_RUN when demo data has been seeded.
           // Frontend calls: ["observations", "list", <chatId>, "--json"]
@@ -475,6 +543,92 @@ Bun.serve({
       } catch (err) {
         return Response.json({ error: err instanceof Error ? err.message : String(err) })
       }
+    }
+
+    // ── A2A internal-API routes (DRY_RUN) ─────────────────────────────────────
+    // These routes mirror the daemon's /v1/a2a/* HTTP endpoints. They live on
+    // the SAME origin as the main shim (port 4174) so api.js fetch() calls are
+    // same-origin and never blocked by Chromium's CORS policy.
+    // The `daemon api-info` intercept above returns baseUrl=http://127.0.0.1:PORT
+    // and token=A2A_TOKEN, so api.js routes all fetch() here.
+    if (dryRun && url.pathname.startsWith('/v1/a2a/')) {
+      const authHeader = req.headers.get('authorization') ?? ''
+      if (authHeader !== `Bearer ${A2A_TOKEN}`) {
+        return Response.json({ error: 'unauthorized' }, { status: 401 })
+      }
+
+      // GET /v1/a2a/list
+      if (url.pathname === '/v1/a2a/list' && req.method === 'GET') {
+        return Response.json({ agents: __mockState.a2aAgents })
+      }
+
+      // GET /v1/a2a/info
+      if (url.pathname === '/v1/a2a/info' && req.method === 'GET') {
+        return Response.json({ base_url: `http://127.0.0.1:${PORT}`, token: A2A_TOKEN })
+      }
+
+      // POST /v1/a2a/preview — return synthetic agent card (no outbound network)
+      if (url.pathname === '/v1/a2a/preview' && req.method === 'POST') {
+        const body2 = (await req.json()) as { url?: string }
+        return Response.json({
+          name: 'Fake Agent',
+          description: 'A fake agent for testing',
+          capabilities: [{ name: 'chat', description: 'Basic chat' }],
+          url: body2?.url ?? 'https://fake.example.com/a2a',
+        })
+      }
+
+      // POST /v1/a2a/install
+      if (url.pathname === '/v1/a2a/install' && req.method === 'POST') {
+        const body2 = (await req.json()) as { id?: string; name?: string; url?: string; outbound_api_key?: string }
+        const id = body2?.id ?? 'unknown'
+        const name = body2?.name ?? id
+        const agentUrl = body2?.url ?? ''
+        const inbound_api_key = `wc_${id}_${Math.random().toString(36).slice(2, 10)}`
+        const agent: A2AAgent = {
+          id,
+          name,
+          url: agentUrl,
+          paused: false,
+          counts: { inbound: 0, outbound: 0 },
+          inbound_api_key,
+        }
+        __mockState.a2aAgents = __mockState.a2aAgents.filter(a => a.id !== id)
+        __mockState.a2aAgents.push(agent)
+        return Response.json({ ok: true, inbound_api_key })
+      }
+
+      // POST /v1/a2a/pause
+      if (url.pathname === '/v1/a2a/pause' && req.method === 'POST') {
+        const body2 = (await req.json()) as { id?: string; paused?: boolean }
+        const id = body2?.id
+        const paused = body2?.paused ?? true
+        __mockState.a2aAgents = __mockState.a2aAgents.map(a =>
+          a.id === id ? { ...a, paused } : a
+        )
+        return Response.json({ ok: true })
+      }
+
+      // POST /v1/a2a/remove
+      if (url.pathname === '/v1/a2a/remove' && req.method === 'POST') {
+        const body2 = (await req.json()) as { id?: string }
+        const id = body2?.id
+        __mockState.a2aAgents = __mockState.a2aAgents.filter(a => a.id !== id)
+        __mockState.a2aEvents = __mockState.a2aEvents.filter(e => e.agent_id !== id)
+        return Response.json({ ok: true })
+      }
+
+      // GET /v1/a2a/activity?agent_id=...&limit=...
+      if (url.pathname === '/v1/a2a/activity' && req.method === 'GET') {
+        const agentId = url.searchParams.get('agent_id') ?? ''
+        const limit = Number(url.searchParams.get('limit') ?? '50')
+        const events = __mockState.a2aEvents
+          .filter(e => e.agent_id === agentId)
+          .slice(-limit)
+        return Response.json({ events })
+      }
+
+      return Response.json({ error: 'a2a route not found' }, { status: 404 })
     }
 
     const path = url.pathname === '/' ? '/index.html' : url.pathname

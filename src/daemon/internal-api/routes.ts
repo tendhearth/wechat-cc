@@ -8,6 +8,7 @@
  * sections are kept in stable order to match the original file's layout
  * so blame survives the split.
  */
+import { randomBytes } from 'node:crypto'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
 import { lookup } from '../../core/capability-matrix'
 import type { Mode } from '../../core/conversation'
@@ -22,6 +23,11 @@ import type {
   WechatEditMessageRequestT, WechatBroadcastRequestT,
   DelegateRequestT,
   ConversationSetModeRequestT,
+  A2ASendRequestT,
+  A2APreviewRequestT,
+  A2AInstallRequestT,
+  A2ARemoveRequestT,
+  A2APauseRequestT,
 } from './schema'
 
 export interface MakeRoutesContext {
@@ -390,6 +396,127 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
         return { status: 200, body: r }
       } catch (err) {
         return { status: 200, body: { ok: false, reason: 'unexpected_error', detail: errMsg(err) } }
+      }
+    },
+
+    // ── a2a outbound send ────────────────────────────────────────────────────
+    'POST /v1/a2a/send': async (_q, body) => {
+      if (!deps.a2a) return { status: 503, body: { error: 'a2a_not_wired' } }
+      // Body is pre-validated by index.ts via A2ASendRequest schema.
+      const { agent_id, text } = body as A2ASendRequestT
+      const agent = deps.a2a.registry.get(agent_id)
+      if (!agent) {
+        return { status: 200, body: {
+          ok: false, error: 'unknown_agent',
+          registered: deps.a2a.registry.list().map(a => a.id),
+        } }
+      }
+      if (agent.paused) {
+        deps.a2a.recordEvent({ direction: 'out', agent_id, text, status: 'agent_paused' })
+        return { status: 200, body: { ok: false, error: 'agent_paused' } }
+      }
+      const r = await deps.a2a.client.send({
+        url: agent.url,
+        bearer: agent.outbound_api_key,
+        body: { text, source: { agent_id: 'wechat-cc' } },
+      })
+      const status: 'ok' | 'http_error' | 'timeout' =
+        r.ok ? 'ok'
+          : (r.error?.match(/timeout|aborted/i) ? 'timeout' : 'http_error')
+      deps.a2a.recordEvent({
+        direction: 'out', agent_id, text, status,
+        ...(r.http_status !== undefined ? { http_status: r.http_status } : {}),
+      })
+      return { status: 200, body: r.ok
+        ? { ok: true, ...(r.http_status !== undefined ? { http_status: r.http_status } : {}), ...(r.response !== undefined ? { response: r.response } : {}) }
+        : { ok: false, error: r.error ?? 'unknown_error', ...(r.http_status !== undefined ? { http_status: r.http_status } : {}) }
+      }
+    },
+
+    // ── a2a dashboard routes ─────────────────────────────────────────────────
+    'GET /v1/a2a/list': () => {
+      if (!deps.a2a) return { status: 503, body: { error: 'a2a_not_wired' } }
+      const agents = deps.a2a.registry.list().map(a => ({
+        id: a.id,
+        name: a.name,
+        url: a.url,
+        paused: a.paused,
+        counts: deps.a2a!.eventsStore.counts(a.id),
+      }))
+      return { status: 200, body: { agents } }
+    },
+
+    'POST /v1/a2a/preview': async (_q, body) => {
+      if (!deps.a2a) return { status: 503, body: { error: 'a2a_not_wired' } }
+      // Body is pre-validated via A2APreviewRequest schema.
+      const { url } = body as A2APreviewRequestT
+      try {
+        const card = await deps.a2a.client.fetchAgentCard(url)
+        return { status: 200, body: card }
+      } catch (err) {
+        return { status: 200, body: { error: errMsg(err) } }
+      }
+    },
+
+    'POST /v1/a2a/install': (_q, body) => {
+      if (!deps.a2a) return { status: 503, body: { error: 'a2a_not_wired' } }
+      // Body is pre-validated via A2AInstallRequest schema.
+      const { id, name, url, outbound_api_key } = body as A2AInstallRequestT
+      try {
+        const inboundKey = `wc_${randomBytes(16).toString('hex')}`
+        deps.a2a.registry.add({
+          id, name, url,
+          inbound_api_key: inboundKey,
+          outbound_api_key: outbound_api_key || '(none)',
+          capabilities: [],
+          paused: false,
+        })
+        return { status: 200, body: { ok: true, inbound_api_key: inboundKey } }
+      } catch (err) {
+        return { status: 200, body: { ok: false, error: errMsg(err) } }
+      }
+    },
+
+    'POST /v1/a2a/remove': (_q, body) => {
+      if (!deps.a2a) return { status: 503, body: { error: 'a2a_not_wired' } }
+      // Body is pre-validated via A2ARemoveRequest schema.
+      const { id } = body as A2ARemoveRequestT
+      try {
+        deps.a2a.registry.remove(id)
+        return { status: 200, body: { ok: true } }
+      } catch (err) {
+        return { status: 200, body: { ok: false, error: errMsg(err) } }
+      }
+    },
+
+    'POST /v1/a2a/pause': (_q, body) => {
+      if (!deps.a2a) return { status: 503, body: { error: 'a2a_not_wired' } }
+      // Body is pre-validated via A2APauseRequest schema.
+      const { id, paused } = body as A2APauseRequestT
+      try {
+        deps.a2a.registry.setPaused(id, paused)
+        return { status: 200, body: { ok: true } }
+      } catch (err) {
+        return { status: 200, body: { ok: false, error: errMsg(err) } }
+      }
+    },
+
+    'GET /v1/a2a/activity': (q) => {
+      if (!deps.a2a) return { status: 503, body: { error: 'a2a_not_wired' } }
+      const agentId = q.get('agent_id')
+      if (!agentId) return { status: 400, body: { error: 'agent_id required' } }
+      const limit = Number(q.get('limit') ?? '50')
+      return { status: 200, body: { events: deps.a2a.eventsStore.recentForAgent(agentId, limit) } }
+    },
+
+    'GET /v1/a2a/info': () => {
+      if (!deps.a2a) return { status: 503, body: { error: 'a2a_not_wired' } }
+      return {
+        status: 200,
+        body: {
+          enabled: deps.a2a.serverEnabled,
+          base_url: deps.a2a.baseUrl ?? null,
+        },
       }
     },
   }

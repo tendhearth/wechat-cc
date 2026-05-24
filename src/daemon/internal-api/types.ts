@@ -138,6 +138,28 @@ export interface InternalApiDeps {
   conversation?: {
     setMode(chatId: string, mode: import('../../core/conversation').Mode): void
   }
+  /**
+   * Optional A2A deps — undefined when a2a_listen is not configured.
+   * When absent, POST /v1/a2a/send returns 503.
+   */
+  a2a?: {
+    registry: import('../../core/a2a-registry').A2ARegistry
+    client: import('../../core/a2a-client').A2AClient
+    /** Read/write events store — used by dashboard activity + counts routes. */
+    eventsStore: import('../../core/a2a-events-store').A2AEventsStore
+    recordEvent: (event: {
+      direction: 'in' | 'out'
+      agent_id: string
+      text: string
+      urgency?: 'normal' | 'critical'
+      status: 'ok' | 'auth_failed' | 'http_error' | 'timeout' | 'unknown_agent' | 'agent_paused'
+      http_status?: number
+    }) => void
+    /** True when the a2a HTTP listener is configured and running. */
+    serverEnabled: boolean
+    /** Base URL of the a2a listener, e.g. "http://0.0.0.0:9000". Null when disabled. */
+    baseUrl: string | null
+  }
   /** Optional log hook so api activity surfaces in channel.log. */
   /**
    * Optional `fields` arg lands in channel.log.jsonl when wired (the
@@ -167,6 +189,12 @@ export interface InternalApi {
    * returns 503 until this is called.
    */
   setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
+  /**
+   * Late-bind A2A deps after bootstrap has constructed the registry,
+   * client, and events store. POST /v1/a2a/send returns 503 until this
+   * is called (when a2a_listen is configured).
+   */
+  setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
 }
 
 /**
