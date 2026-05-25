@@ -174,4 +174,135 @@ describe('a2a-server', () => {
       await server.stop()
     }
   })
+
+  describe('onAuthFailed observability', () => {
+    it('emits onAuthFailed with reason=missing_bearer when no Authorization header', async () => {
+      const onAuthFailed = vi.fn()
+      const server = createA2AServer({
+        host: '127.0.0.1', port: 0,
+        registry: fakeRegistry([rec('alpha')]),
+        onNotify: async () => {},
+        onAuthFailed,
+        daemonInfo: { name: 'wechat-cc', version: '0.6' },
+      })
+      await server.start()
+      try {
+        await fetch(`${server.baseUrl()}/a2a/notify`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agent_id: 'alpha', text: 'hi' }),
+        })
+        expect(onAuthFailed).toHaveBeenCalledWith({ agent_id_claimed: 'alpha', reason: 'missing_bearer' })
+      } finally { await server.stop() }
+    })
+
+    it('emits onAuthFailed with reason=wrong_bearer when bearer mismatches', async () => {
+      const onAuthFailed = vi.fn()
+      const alphaRec = rec('alpha')
+      const server = createA2AServer({
+        host: '127.0.0.1', port: 0,
+        registry: fakeRegistry([alphaRec]),
+        onNotify: async () => {},
+        onAuthFailed,
+        daemonInfo: { name: 'wechat-cc', version: '0.6' },
+      })
+      await server.start()
+      try {
+        await fetch(`${server.baseUrl()}/a2a/notify`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': 'Bearer totally-wrong-key' },
+          body: JSON.stringify({ agent_id: 'alpha', text: 'hi' }),
+        })
+        expect(onAuthFailed).toHaveBeenCalledWith({ agent_id_claimed: 'alpha', reason: 'wrong_bearer' })
+      } finally { await server.stop() }
+    })
+
+    it('emits onAuthFailed with reason=wrong_bearer when claimed agent_id is unknown (verifyBearer returns null)', async () => {
+      const onAuthFailed = vi.fn()
+      const server = createA2AServer({
+        host: '127.0.0.1', port: 0,
+        registry: fakeRegistry([rec('alpha')]),
+        onNotify: async () => {},
+        onAuthFailed,
+        daemonInfo: { name: 'wechat-cc', version: '0.6' },
+      })
+      await server.start()
+      try {
+        await fetch(`${server.baseUrl()}/a2a/notify`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': 'Bearer x' },
+          body: JSON.stringify({ agent_id: 'nonexistent', text: 'hi' }),
+        })
+        expect(onAuthFailed).toHaveBeenCalledWith({ agent_id_claimed: 'nonexistent', reason: 'wrong_bearer' })
+      } finally { await server.stop() }
+    })
+
+    it('does NOT emit onAuthFailed for malformed bodies (no agent_id to attribute)', async () => {
+      const onAuthFailed = vi.fn()
+      const server = createA2AServer({
+        host: '127.0.0.1', port: 0,
+        registry: fakeRegistry([rec('alpha')]),
+        onNotify: async () => {},
+        onAuthFailed,
+        daemonInfo: { name: 'wechat-cc', version: '0.6' },
+      })
+      await server.start()
+      try {
+        // Invalid JSON
+        await fetch(`${server.baseUrl()}/a2a/notify`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: 'not-json',
+        })
+        // Missing agent_id
+        await fetch(`${server.baseUrl()}/a2a/notify`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: 'hi' }),
+        })
+        expect(onAuthFailed).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('does NOT emit onAuthFailed on successful notify', async () => {
+      const onAuthFailed = vi.fn()
+      const alphaRec = rec('alpha')
+      const server = createA2AServer({
+        host: '127.0.0.1', port: 0,
+        registry: fakeRegistry([alphaRec]),
+        onNotify: async () => {},
+        onAuthFailed,
+        daemonInfo: { name: 'wechat-cc', version: '0.6' },
+      })
+      await server.start()
+      try {
+        const res = await fetch(`${server.baseUrl()}/a2a/notify`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', text: 'hi' }),
+        })
+        expect(res.status).toBe(200)
+        expect(onAuthFailed).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('swallows exceptions from onAuthFailed (response still 401)', async () => {
+      const server = createA2AServer({
+        host: '127.0.0.1', port: 0,
+        registry: fakeRegistry([rec('alpha')]),
+        onNotify: async () => {},
+        onAuthFailed: () => { throw new Error('observability blew up') },
+        daemonInfo: { name: 'wechat-cc', version: '0.6' },
+      })
+      await server.start()
+      try {
+        const res = await fetch(`${server.baseUrl()}/a2a/notify`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agent_id: 'alpha', text: 'hi' }),
+        })
+        expect(res.status).toBe(401)
+      } finally { await server.stop() }
+    })
+  })
 })

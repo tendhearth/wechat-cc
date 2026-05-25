@@ -76,6 +76,13 @@ Usage:
                         Force-kill a daemon process by pid. Verifies cmdline
                         contains cli.ts or src/daemon/main.ts before signaling.
                         SIGTERM (1.5s grace) then SIGKILL.
+  wechat-cc daemon a2a enable [--host HOST] [--port PORT]
+                        Enable the A2A inbound server (default 127.0.0.1:8717).
+                        Writes agent-config.json; restart the daemon to apply.
+  wechat-cc daemon a2a disable
+                        Remove the A2A inbound server config.
+  wechat-cc daemon a2a status
+                        Show on-disk config vs runtime; flags drift between them.
   wechat-cc memory list [--json]
                         List Companion v2 memory files (per user).
   wechat-cc memory read <user-id> <path> [--json]
@@ -135,8 +142,9 @@ Usage:
   wechat-cc agent activity <id> [--limit N]
                         Print recent A2A events (newest first, default 20)
   wechat-cc agent info              Show A2A server status (base URL + agent count)
-  wechat-cc agent test <id> [--text MSG]
-                        Send a synthetic notify from <id> to validate inbound→chat path
+  wechat-cc agent test <id> [--text MSG] [--outbound]
+                        Send a synthetic notify to validate inbound→chat path
+                        (default) or outbound (--outbound: send to external URL)
   wechat-cc provider show [--json]  Show selected agent provider
   wechat-cc provider set <claude|codex> [--model MODEL] [--unattended true|false]
                         --unattended: when true (default for new installs), the
@@ -1012,9 +1020,51 @@ const daemonApiInfoCmd = defineCommand({
   },
 })
 
+const daemonA2AEnableCmd = defineCommand({
+  meta: { name: 'enable', description: 'Enable the A2A inbound server (writes agent-config.json; restart needed)' },
+  args: {
+    host: { type: 'string', description: 'Bind host (default: 127.0.0.1)' },
+    port: { type: 'string', description: 'Bind port (default: 8717)' },
+  },
+  async run({ args }) {
+    const port = args.port ? Number.parseInt(args.port, 10) : 8717
+    if (!Number.isFinite(port)) {
+      console.error(`port must be a number; got ${JSON.stringify(args.port)}`)
+      process.exit(1)
+    }
+    const { cmdDaemonA2AEnable } = await import('./src/cli/agent.ts')
+    cmdDaemonA2AEnable(STATE_DIR, { host: args.host, port })
+  },
+})
+
+const daemonA2ADisableCmd = defineCommand({
+  meta: { name: 'disable', description: 'Disable the A2A inbound server (removes a2a_listen from agent-config.json; restart needed)' },
+  async run() {
+    const { cmdDaemonA2ADisable } = await import('./src/cli/agent.ts')
+    cmdDaemonA2ADisable(STATE_DIR)
+  },
+})
+
+const daemonA2AStatusCmd = defineCommand({
+  meta: { name: 'status', description: 'Show A2A server config (on-disk) vs runtime (currently bound); flags drift' },
+  async run() {
+    const { cmdDaemonA2AStatus } = await import('./src/cli/agent.ts')
+    cmdDaemonA2AStatus(STATE_DIR)
+  },
+})
+
+const daemonA2ACmd = defineCommand({
+  meta: { name: 'a2a', description: 'A2A inbound server config — enable, disable, status' },
+  subCommands: {
+    enable: daemonA2AEnableCmd,
+    disable: daemonA2ADisableCmd,
+    status: daemonA2AStatusCmd,
+  },
+})
+
 const daemonCmd = defineCommand({
   meta: { name: 'daemon', description: 'Daemon process control' },
-  subCommands: { kill: daemonKillCmd, 'kill-residual': daemonKillResidualCmd, 'api-info': daemonApiInfoCmd },
+  subCommands: { kill: daemonKillCmd, 'kill-residual': daemonKillResidualCmd, 'api-info': daemonApiInfoCmd, a2a: daemonA2ACmd },
 })
 
 async function runDemo(verb: 'seed' | 'unseed', chatIdArg: string | undefined, json: boolean): Promise<void> {
@@ -1658,15 +1708,16 @@ const agentInfoCmd = defineCommand({
 })
 
 const agentTestCmd = defineCommand({
-  meta: { name: 'test', description: 'Send a synthetic notify from the named agent to validate the full inbound→chat path' },
+  meta: { name: 'test', description: 'Send a synthetic notify to validate the inbound→chat path (default) or outbound (--outbound)' },
   args: {
     id: { type: 'positional', required: true, description: 'Registered agent id', valueHint: 'agent-id' },
     text: { type: 'string', description: 'Test message text (default: "test from <id> via wechat-cc")' },
+    outbound: { type: 'boolean', description: 'Test outbound (wechat-cc → external agent) instead of inbound' },
   },
   async run({ args }) {
     const text = args.text ?? `test from ${args.id} via wechat-cc`
     const { cmdAgentTest } = await import('./src/cli/agent.ts')
-    await cmdAgentTest(STATE_DIR, args.id, text)
+    await cmdAgentTest(STATE_DIR, args.id, text, { outbound: Boolean(args.outbound) })
   },
 })
 

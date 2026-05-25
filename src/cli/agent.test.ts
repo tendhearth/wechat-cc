@@ -20,6 +20,9 @@ import {
   cmdAgentRemove,
   cmdAgentInfo,
   cmdAgentTest,
+  cmdDaemonA2AEnable,
+  cmdDaemonA2ADisable,
+  cmdDaemonA2AStatus,
   readA2AInfo,
   slugify,
 } from './agent'
@@ -567,6 +570,93 @@ describe('cmdAgentTest', () => {
   })
 })
 
+// ── cmdAgentTest --outbound ──────────────────────────────────────────────
+
+describe('cmdAgentTest --outbound', () => {
+  let stateDir: string
+  let internalApi: ReturnType<typeof Bun.serve> | null = null
+  const apiReceived: Array<{ headers: Record<string, string>; body: string }> = []
+  let nextResponse: { status: number; body: string } = { status: 200, body: '{"ok":true,"http_status":200,"response":{"ack":true}}' }
+
+  beforeEach(() => {
+    stateDir = tempState()
+    apiReceived.length = 0
+    nextResponse = { status: 200, body: '{"ok":true,"http_status":200,"response":{"ack":true}}' }
+    internalApi = Bun.serve({
+      hostname: '127.0.0.1', port: 0,
+      async fetch(req) {
+        const body = await req.text()
+        apiReceived.push({
+          headers: Object.fromEntries(req.headers.entries()),
+          body,
+        })
+        return new Response(nextResponse.body, {
+          status: nextResponse.status,
+          headers: { 'content-type': 'application/json' },
+        })
+      },
+    })
+    // Write internal-api-info.json + a token file pointing at the fake server.
+    const tokenFilePath = join(stateDir, 'internal-api-token')
+    writeFileSync(tokenFilePath, 'fake-token-deadbeef')
+    writeFileSync(
+      join(stateDir, 'internal-api-info.json'),
+      JSON.stringify({
+        baseUrl: `http://127.0.0.1:${internalApi.port}`,
+        tokenFilePath,
+        pid: process.pid,
+        ts: Date.now(),
+      }),
+    )
+  })
+  afterEach(() => {
+    internalApi?.stop()
+    rmSync(stateDir, { recursive: true, force: true })
+  })
+
+  it('throws when agent not registered', async () => {
+    writeConfig(stateDir, [])
+    await expect(cmdAgentTest(stateDir, 'missing', 'hi', { outbound: true }))
+      .rejects.toThrow(/not registered/i)
+  })
+
+  it('throws when internal-api-info.json missing', async () => {
+    writeConfig(stateDir, [agentRec('alpha')])
+    rmSync(join(stateDir, 'internal-api-info.json'))
+    await expect(cmdAgentTest(stateDir, 'alpha', 'hi', { outbound: true }))
+      .rejects.toThrow(/daemon not running/i)
+  })
+
+  it('POSTs to /v1/a2a/send with the internal-api token and prints success', async () => {
+    writeConfig(stateDir, [agentRec('alpha')])
+    const out = await captureLog(() => cmdAgentTest(stateDir, 'alpha', 'hello out', { outbound: true }))
+    expect(apiReceived).toHaveLength(1)
+    expect(apiReceived[0]?.headers.authorization).toBe('Bearer fake-token-deadbeef')
+    const sent = JSON.parse(apiReceived[0]!.body)
+    expect(sent).toEqual({ agent_id: 'alpha', text: 'hello out' })
+    // Output mentions success + external HTTP status
+    expect(out.some(l => l.includes('outbound delivered'))).toBe(true)
+    expect(out.some(l => l.includes('HTTP 200'))).toBe(true)
+  })
+
+  it('reports failure with http_status when external agent returns non-2xx', async () => {
+    writeConfig(stateDir, [agentRec('alpha')])
+    nextResponse = { status: 200, body: '{"ok":false,"error":"http_403","http_status":403}' }
+    const out = await captureLog(() => cmdAgentTest(stateDir, 'alpha', 'hi', { outbound: true }))
+    expect(out.some(l => l.includes('outbound failed'))).toBe(true)
+    expect(out.some(l => l.includes('http_403'))).toBe(true)
+    expect(out.some(l => l.includes('HTTP 403'))).toBe(true)
+  })
+
+  it('reports failure on network error from internal-api', async () => {
+    writeConfig(stateDir, [agentRec('alpha')])
+    nextResponse = { status: 200, body: '{"ok":false,"error":"connection refused"}' }
+    const out = await captureLog(() => cmdAgentTest(stateDir, 'alpha', 'hi', { outbound: true }))
+    expect(out.some(l => l.includes('outbound failed'))).toBe(true)
+    expect(out.some(l => l.includes('connection refused'))).toBe(true)
+  })
+})
+
 // ── cmdAgentAdd URL substitution ─────────────────────────────────────────
 
 describe('cmdAgentAdd with a2a-info.json present', () => {
@@ -600,5 +690,136 @@ describe('cmdAgentAdd with a2a-info.json present', () => {
     const out = await captureLog(() => cmdAgentAdd(stateDir, fakeBaseUrl(), { id: 'alpha' }))
     expect(out.some(l => l.includes('<wechat-cc-base-url>'))).toBe(true)
     expect(out.some(l => /server disabled/i.test(l))).toBe(true)
+  })
+})
+
+// ── daemon a2a enable / disable / status ────────────────────────────────
+
+describe('cmdDaemonA2AEnable', () => {
+  let stateDir: string
+  beforeEach(() => { stateDir = tempState() })
+  afterEach(() => { rmSync(stateDir, { recursive: true, force: true }) })
+
+  it('writes a2a_listen to agent-config.json with defaults', async () => {
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
+    const out = await captureLog(() => cmdDaemonA2AEnable(stateDir))
+    const cfg = JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))
+    expect(cfg.a2a_listen).toEqual({ host: '127.0.0.1', port: 8717 })
+    expect(cfg.provider).toBe('claude')
+    expect(out.some(l => l.includes('enabled at 127.0.0.1:8717'))).toBe(true)
+    expect(out.some(l => /restart/i.test(l))).toBe(true)
+  })
+
+  it('honors --host and --port options', async () => {
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
+    await captureLog(() => cmdDaemonA2AEnable(stateDir, { host: '0.0.0.0', port: 9000 }))
+    const cfg = JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))
+    expect(cfg.a2a_listen).toEqual({ host: '0.0.0.0', port: 9000 })
+  })
+
+  it('warns when host is not loopback', async () => {
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
+    const out = await captureLog(() => cmdDaemonA2AEnable(stateDir, { host: '0.0.0.0', port: 9000 }))
+    expect(out.some(l => /not loopback/i.test(l) || /threat model/i.test(l))).toBe(true)
+  })
+
+  it('reports prev → new when updating an existing config', async () => {
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({ provider: 'claude', a2a_listen: { host: '127.0.0.1', port: 8000 } }),
+    )
+    const out = await captureLog(() => cmdDaemonA2AEnable(stateDir, { port: 9000 }))
+    expect(out.some(l => l.includes('8000') && l.includes('9000'))).toBe(true)
+  })
+
+  it('rejects out-of-range port', () => {
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
+    expect(() => cmdDaemonA2AEnable(stateDir, { port: 0 })).toThrow(/port/i)
+    expect(() => cmdDaemonA2AEnable(stateDir, { port: 70000 })).toThrow(/port/i)
+  })
+
+  it('creates agent-config.json if missing (operator first run)', async () => {
+    await captureLog(() => cmdDaemonA2AEnable(stateDir, { port: 8717 }))
+    const cfg = JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))
+    expect(cfg.a2a_listen).toEqual({ host: '127.0.0.1', port: 8717 })
+  })
+})
+
+describe('cmdDaemonA2ADisable', () => {
+  let stateDir: string
+  beforeEach(() => { stateDir = tempState() })
+  afterEach(() => { rmSync(stateDir, { recursive: true, force: true }) })
+
+  it('removes a2a_listen from agent-config.json', async () => {
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({ provider: 'claude', a2a_listen: { host: '127.0.0.1', port: 8717 } }),
+    )
+    const out = await captureLog(() => cmdDaemonA2ADisable(stateDir))
+    const cfg = JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))
+    expect('a2a_listen' in cfg).toBe(false)
+    expect(cfg.provider).toBe('claude')
+    expect(out.some(l => /disabled/i.test(l))).toBe(true)
+  })
+
+  it('idempotent: works when already disabled', async () => {
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
+    const out = await captureLog(() => cmdDaemonA2ADisable(stateDir))
+    expect(out.some(l => /already disabled/i.test(l))).toBe(true)
+  })
+})
+
+describe('cmdDaemonA2AStatus', () => {
+  let stateDir: string
+  beforeEach(() => { stateDir = tempState() })
+  afterEach(() => { rmSync(stateDir, { recursive: true, force: true }) })
+
+  it('shows disabled config + daemon-not-running', async () => {
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
+    const out = await captureLog(() => cmdDaemonA2AStatus(stateDir))
+    expect(out.some(l => /disabled.*no a2a_listen/i.test(l))).toBe(true)
+    expect(out.some(l => /daemon not running/i.test(l))).toBe(true)
+  })
+
+  it('shows config + running runtime', async () => {
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({ provider: 'claude', a2a_listen: { host: '127.0.0.1', port: 8717 } }),
+    )
+    writeFileSync(
+      join(stateDir, 'a2a-info.json'),
+      JSON.stringify({ enabled: true, base_url: 'http://127.0.0.1:8717', host: '127.0.0.1', port: 8717, pid: 42, ts: 0 }),
+    )
+    const out = await captureLog(() => cmdDaemonA2AStatus(stateDir))
+    expect(out.some(l => l.includes('127.0.0.1') && l.includes('8717'))).toBe(true)
+    expect(out.some(l => l.includes('pid 42'))).toBe(true)
+    // No drift warning when config matches runtime
+    expect(out.every(l => !/differs|drift|restart needed/i.test(l))).toBe(true)
+  })
+
+  it('flags drift when config differs from runtime', async () => {
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({ provider: 'claude', a2a_listen: { host: '127.0.0.1', port: 9000 } }),
+    )
+    writeFileSync(
+      join(stateDir, 'a2a-info.json'),
+      JSON.stringify({ enabled: true, base_url: 'http://127.0.0.1:8717', host: '127.0.0.1', port: 8717, pid: 42, ts: 0 }),
+    )
+    const out = await captureLog(() => cmdDaemonA2AStatus(stateDir))
+    expect(out.some(l => /restart.*daemon/i.test(l))).toBe(true)
+  })
+
+  it('flags drift when config has a2a_listen but runtime does not', async () => {
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({ provider: 'claude', a2a_listen: { host: '127.0.0.1', port: 8717 } }),
+    )
+    writeFileSync(
+      join(stateDir, 'a2a-info.json'),
+      JSON.stringify({ enabled: false, base_url: null, host: null, port: null, pid: 42, ts: 0 }),
+    )
+    const out = await captureLog(() => cmdDaemonA2AStatus(stateDir))
+    expect(out.some(l => /restart needed/i.test(l))).toBe(true)
   })
 })

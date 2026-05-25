@@ -27,11 +27,25 @@ export interface NotifyEvent {
   metadata?: Record<string, unknown>
 }
 
+export interface AuthFailedEvent {
+  /** The claimed agent_id from the request body. Only emitted when the
+   *  body is parseable AND has agent_id — pure noise (random scanners
+   *  hitting the port with no body) is dropped without recording. */
+  agent_id_claimed: string
+  reason: 'missing_bearer' | 'wrong_bearer' | 'agent_id_mismatch'
+}
+
 export interface A2AServerOpts {
   host: string
   port: number
   registry: A2ARegistry
   onNotify: (event: NotifyEvent) => Promise<void>
+  /** Optional hook called when a notify request is rejected with 401/403
+   *  AND we can identify which agent_id the caller claimed. Used by
+   *  bootstrap to write an `a2a_events` row with status='auth_failed' so
+   *  the operator sees "agent X tried with the wrong key" in the activity
+   *  drawer. Not called for malformed requests (no body / no agent_id). */
+  onAuthFailed?: (event: AuthFailedEvent) => void
   daemonInfo: { name: string; version: string }
 }
 
@@ -44,6 +58,13 @@ export interface A2AServer {
 
 export function createA2AServer(opts: A2AServerOpts): A2AServer {
   let server: ReturnType<typeof Bun.serve> | null = null
+
+  // Fire-and-forget wrapper — observability hook must not crash the response.
+  function emitAuthFailed(event: AuthFailedEvent): void {
+    if (!opts.onAuthFailed) return
+    try { opts.onAuthFailed(event) }
+    catch { /* swallow — never let observability break a 401 response */ }
+  }
 
   const agentCard = {
     name: opts.daemonInfo.name,
@@ -76,10 +97,12 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
     }
     if (url.pathname === '/a2a/notify') {
       if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
-      const auth = req.headers.get('authorization')
-      if (!auth?.startsWith('Bearer ')) return new Response(JSON.stringify({ error: 'missing_bearer' }), { status: 401 })
-      const bearer = auth.slice('Bearer '.length).trim()
 
+      // Parse body FIRST so auth-fail events can record the claimed agent_id.
+      // Malformed bodies don't get an event row (no agent_id to attribute it
+      // to — that's just port-scanner noise we shouldn't pollute the events
+      // log with). The slight info leak vs auth-first-ordering is acceptable
+      // because the server is localhost-only by default.
       let body: { agent_id?: unknown; text?: unknown; urgency?: unknown; metadata?: unknown }
       try {
         body = await req.json() as typeof body
@@ -89,11 +112,25 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       if (typeof body.agent_id !== 'string' || typeof body.text !== 'string' || body.text.length === 0) {
         return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
       }
+      const claimedId = body.agent_id
 
-      const agent = opts.registry.verifyBearer(body.agent_id, bearer)
-      if (!agent) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
+      const auth = req.headers.get('authorization')
+      if (!auth?.startsWith('Bearer ')) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'missing_bearer' })
+        return new Response(JSON.stringify({ error: 'missing_bearer' }), { status: 401 })
+      }
+      const bearer = auth.slice('Bearer '.length).trim()
+
+      const agent = opts.registry.verifyBearer(claimedId, bearer)
+      if (!agent) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'wrong_bearer' })
+        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
+      }
       // verifyBearer already binds the agent to its key, so this is defense-in-depth.
-      if (agent.id !== body.agent_id) return new Response(JSON.stringify({ error: 'agent_id_mismatch' }), { status: 403 })
+      if (agent.id !== claimedId) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'agent_id_mismatch' })
+        return new Response(JSON.stringify({ error: 'agent_id_mismatch' }), { status: 403 })
+      }
       if (agent.paused) return new Response(JSON.stringify({ ok: true, paused: true }), { status: 202 })
 
       const urgency: 'normal' | 'critical' | undefined =
