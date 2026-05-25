@@ -601,6 +601,10 @@ prompt, guest forbidden.
 ### CLI subcommands
 
 ```
+wechat-cc daemon a2a enable [--host H] [--port P]
+                                # enable inbound server (default 127.0.0.1:8717)
+wechat-cc daemon a2a disable    # disable inbound server
+wechat-cc daemon a2a status     # config vs runtime status (drift detection)
 wechat-cc agent info            # show A2A server status + base URL (share with external agents)
 wechat-cc agent inspect <url>   # fetch Agent Card, print metadata
 wechat-cc agent add <url>       # register agent, generate inbound API key
@@ -608,16 +612,18 @@ wechat-cc agent list            # list all registered agents
 wechat-cc agent pause <id>      # mute inbound + outbound for this agent
 wechat-cc agent resume <id>     # un-mute
 wechat-cc agent remove <id>     # drop registration
-wechat-cc agent activity <id>   # recent A2A events for this agent
-wechat-cc agent test <id>       # send a synthetic notify from <id> to validate the inbound→chat path
+wechat-cc agent activity <id>   # recent A2A events (includes auth_failed attempts)
+wechat-cc agent test <id>       # synthetic INBOUND notify → operator's WeChat chat
+wechat-cc agent test <id> --outbound
+                                # synthetic OUTBOUND call to <id>'s URL (verifies outbound_api_key)
 ```
 
 ### Quick start
 
 ```bash
-# 1. Enable the A2A inbound server. Edit agent-config.json:
-#    {"a2a_listen": {"host": "127.0.0.1", "port": 8717}, ...}
-#    Restart the daemon.
+# 1. Enable the A2A inbound server.
+wechat-cc daemon a2a enable
+# Restart the daemon to apply.
 
 # 2. Get your daemon's A2A base URL (share this with external agents):
 wechat-cc agent info

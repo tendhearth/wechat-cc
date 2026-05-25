@@ -724,6 +724,17 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       port: configuredAgent.a2a_listen.port,
       registry: a2aRegistry,
       onNotify: routeA2ANotify,
+      // Observability: 401/403 failures with an identifiable agent_id_claimed
+      // get a `status='auth_failed'` row so the operator sees auth attempts
+      // in the dashboard activity drawer + `wechat-cc agent activity <id>`.
+      onAuthFailed: (event) => {
+        a2aEventsStore.append({
+          direction: 'in',
+          agent_id: event.agent_id_claimed,
+          text: `<auth_failed: ${event.reason}>`,
+          status: 'auth_failed',
+        })
+      },
       daemonInfo: { name: 'wechat-cc', version: selfPkg.version },
     })
     await a2aServer.start()

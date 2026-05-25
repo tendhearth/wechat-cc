@@ -144,19 +144,37 @@ export function cmdAgentInfo(stateDir: string): void {
 }
 
 /**
- * `wechat-cc agent test <id>` — sends a synthetic inbound notify to the
- * daemon's own /a2a/notify endpoint as if it came from the registered agent.
- * Operator runs this to validate: server up + key matches + chat routing
- * works end-to-end. The notification lands in operator's WeChat chat as
- * a normal `[A2A:<id>]` line.
+ * `wechat-cc agent test <id>` — by default, sends a synthetic INBOUND notify
+ * to the daemon's own /a2a/notify endpoint as if it came from the registered
+ * agent. Operator runs this to validate: server up + key matches + chat
+ * routing works end-to-end. The notification lands in operator's WeChat chat
+ * as a normal `[A2A:<id>]` line.
+ *
+ * With `outbound: true`, instead calls the internal-api's POST /v1/a2a/send
+ * to push a message OUT to the registered agent's URL. Validates the
+ * outbound side: agent URL is reachable + outbound_api_key is correct.
+ * Doesn't touch the operator's WeChat chat — the external agent receives
+ * the test message instead.
  */
-export async function cmdAgentTest(stateDir: string, id: string, text: string): Promise<void> {
-  const info = readA2AInfo(stateDir)
-  if (!info) throw new Error('daemon not running — start it first')
-  if (!info.enabled) throw new Error('A2A inbound server is disabled — configure agent-config.json:a2a_listen and restart the daemon')
+export async function cmdAgentTest(
+  stateDir: string,
+  id: string,
+  text: string,
+  opts: { outbound?: boolean } = {},
+): Promise<void> {
   const reg = createA2ARegistry({ stateDir })
   const agent = reg.get(id)
   if (!agent) throw new Error(`agent '${id}' not registered`)
+
+  if (opts.outbound) {
+    await testOutbound(stateDir, id, text, agent)
+    return
+  }
+
+  // Inbound path (default).
+  const info = readA2AInfo(stateDir)
+  if (!info) throw new Error('daemon not running — start it first')
+  if (!info.enabled) throw new Error('A2A inbound server is disabled — configure agent-config.json:a2a_listen and restart the daemon')
   const res = await fetch(`${info.base_url}/a2a/notify`, {
     method: 'POST',
     headers: {
@@ -173,6 +191,54 @@ export async function cmdAgentTest(stateDir: string, id: string, text: string): 
   } else {
     console.log(`❌ delivery failed (HTTP ${res.status})`)
     console.log(`   ${body}`)
+  }
+}
+
+/**
+ * Outbound test: POST /v1/a2a/send to the daemon's internal-api so the
+ * daemon-side a2a-client makes the real HTTP call out to the agent's URL.
+ * Validates outbound_api_key + URL reachability without going through the
+ * operator's chat or claude/codex session.
+ */
+async function testOutbound(stateDir: string, id: string, text: string, agent: { url: string }): Promise<void> {
+  // Internal-api auth: read base URL from internal-api-info.json + token from tokenFilePath.
+  const infoPath = join(stateDir, 'internal-api-info.json')
+  if (!existsSync(infoPath)) {
+    throw new Error('daemon not running — internal-api-info.json not found')
+  }
+  let info: { baseUrl?: string; tokenFilePath?: string }
+  try { info = JSON.parse(readFileSync(infoPath, 'utf8')) }
+  catch (err) { throw new Error(`internal-api-info.json malformed: ${err instanceof Error ? err.message : err}`) }
+  if (!info.baseUrl || !info.tokenFilePath) throw new Error('internal-api-info.json missing baseUrl or tokenFilePath')
+  let token: string
+  try { token = readFileSync(info.tokenFilePath, 'utf8').trim() }
+  catch (err) { throw new Error(`could not read token file: ${err instanceof Error ? err.message : err}`) }
+
+  const res = await fetch(`${info.baseUrl}/v1/a2a/send`, {
+    method: 'POST',
+    headers: {
+      'authorization': `Bearer ${token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ agent_id: id, text }),
+  })
+  const responseText = await res.text()
+  let parsed: unknown = responseText
+  try { parsed = JSON.parse(responseText) } catch { /* keep raw */ }
+  const body = parsed as { ok?: boolean; http_status?: number; error?: string; response?: unknown }
+
+  if (body.ok) {
+    console.log(`✅ outbound delivered to ${agent.url}`)
+    if (body.http_status) console.log(`   external agent returned HTTP ${body.http_status}`)
+    if (body.response) console.log(`   response: ${JSON.stringify(body.response)}`)
+  } else {
+    console.log(`❌ outbound failed`)
+    if (body.error) console.log(`   error: ${body.error}`)
+    if (body.http_status) console.log(`   external agent returned HTTP ${body.http_status}`)
+    if (body.response) console.log(`   response: ${JSON.stringify(body.response)}`)
+    if (!body.error && !body.http_status) {
+      console.log(`   raw: ${responseText.slice(0, 500)}`)
+    }
   }
 }
 
@@ -230,4 +296,106 @@ export function slugify(s: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 64)
+}
+
+// ── daemon a2a {enable, disable, status} ────────────────────────────────
+//
+// Reads/writes agent-config.json's `a2a_listen` field directly, preserving
+// other top-level fields. Doesn't restart the daemon — operator's call.
+
+import { writeFileSync as _writeFileSync } from 'node:fs'  // re-export alias for clarity in tests
+
+function readAgentConfigRaw(stateDir: string): Record<string, unknown> {
+  const path = join(stateDir, 'agent-config.json')
+  if (!existsSync(path)) return {}
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf8'))
+    return (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeAgentConfigRaw(stateDir: string, cfg: Record<string, unknown>): void {
+  const path = join(stateDir, 'agent-config.json')
+  _writeFileSync(path, JSON.stringify(cfg, null, 2))
+}
+
+export interface DaemonA2AEnableOpts {
+  host?: string
+  port?: number
+}
+
+export function cmdDaemonA2AEnable(stateDir: string, opts: DaemonA2AEnableOpts = {}): void {
+  const host = opts.host ?? '127.0.0.1'
+  const port = opts.port ?? 8717
+  if (port < 1 || port > 65535) throw new Error(`port must be in [1, 65535]; got ${port}`)
+  const cfg = readAgentConfigRaw(stateDir)
+  const prev = (cfg.a2a_listen && typeof cfg.a2a_listen === 'object')
+    ? cfg.a2a_listen as { host?: string; port?: number }
+    : null
+  cfg.a2a_listen = { host, port }
+  writeAgentConfigRaw(stateDir, cfg)
+  if (prev) {
+    console.log(`✅ A2A server config updated: ${prev.host ?? '?'}:${prev.port ?? '?'} → ${host}:${port}`)
+  } else {
+    console.log(`✅ A2A server enabled at ${host}:${port}`)
+  }
+  if (host !== '127.0.0.1') {
+    console.log(`⚠ Binding to ${host} (not loopback) — make sure you understand the threat model (see README).`)
+  }
+  console.log('⟳ Restart the daemon to apply: kill it and re-launch (or use the desktop GUI restart).')
+}
+
+export function cmdDaemonA2ADisable(stateDir: string): void {
+  const cfg = readAgentConfigRaw(stateDir)
+  if (!('a2a_listen' in cfg)) {
+    console.log('A2A server already disabled (no a2a_listen in agent-config.json)')
+    return
+  }
+  delete cfg.a2a_listen
+  writeAgentConfigRaw(stateDir, cfg)
+  console.log('✅ A2A server disabled (a2a_listen removed from agent-config.json)')
+  console.log('⟳ Restart the daemon to apply.')
+}
+
+export function cmdDaemonA2AStatus(stateDir: string): void {
+  // Show BOTH the on-disk config (operator's stated intent) AND the
+  // runtime state (what the daemon actually has bound). Mismatches between
+  // the two = operator changed config but hasn't restarted yet.
+  const cfg = readAgentConfigRaw(stateDir)
+  const configured = (cfg.a2a_listen && typeof cfg.a2a_listen === 'object')
+    ? cfg.a2a_listen as { host?: string; port?: number }
+    : null
+  const runtime = readA2AInfo(stateDir)
+
+  console.log('Configuration (agent-config.json:a2a_listen):')
+  if (!configured) {
+    console.log('  disabled (no a2a_listen)')
+  } else {
+    console.log(`  host: ${configured.host ?? '?'}`)
+    console.log(`  port: ${configured.port ?? '?'}`)
+  }
+
+  console.log('Runtime (daemon a2a-info.json):')
+  if (!runtime) {
+    console.log('  daemon not running')
+    return
+  }
+  if (!runtime.enabled) {
+    console.log('  daemon running, A2A server NOT bound')
+  } else {
+    console.log(`  A2A server running at ${runtime.base_url}`)
+    console.log(`  bound to ${runtime.host}:${runtime.port}, daemon pid ${runtime.pid}`)
+  }
+  // Drift detection: configured but runtime differs.
+  if (configured && runtime?.enabled) {
+    if (configured.host !== runtime.host || configured.port !== runtime.port) {
+      console.log(`⚠ Config differs from runtime — restart the daemon to apply config (${configured.host}:${configured.port}).`)
+    }
+  } else if (configured && !runtime?.enabled) {
+    console.log(`⚠ Config has a2a_listen but daemon hasn't started the server — restart needed.`)
+  } else if (!configured && runtime?.enabled) {
+    console.log(`⚠ Daemon has A2A bound but config doesn't request it — config was removed; restart needed to disable.`)
+  }
 }
