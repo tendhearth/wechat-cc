@@ -489,42 +489,55 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     },
   )
   // Auto-fix codex SDK to match the user's PATH codex CLI version when
-  // they diverge. This lets a user-driven `npm i -g @openai/codex@X` propagate
-  // into wechat-cc's bundled SDK without waiting for a wechat-cc release.
-  // See src/lib/codex-autofix.ts for the safety constraints.
+  // they diverge. This lets a user-driven `npm i -g @openai/codex@X`
+  // propagate into wechat-cc's bundled SDK without waiting for a
+  // wechat-cc release. See src/lib/codex-autofix.ts for safety constraints.
   //
-  // The check runs BEFORE findCodexBinary() so the next boot picks up the
-  // realigned binary. (We don't restart this boot — the in-memory SDK has
-  // already been required() — instead we log "restart required" and let the
-  // operator / service manager pick a moment to restart.)
-  const repoRootForAutofix = wechatCcRepoRoot()
-  const autofixOutcome = await attemptCodexAutofix({
-    installDir: repoRootForAutofix,
+  // Fire-and-forget: we DO NOT await. A `bun add` against a slow npm
+  // registry can take many seconds (and was observed to hang outright);
+  // blocking daemon boot on it produces a daemon that appears dead. By
+  // detaching the promise, boot continues with the bundled SDK in
+  // memory and the on-disk node_modules realigns in the background. The
+  // SDK swap takes effect on the NEXT daemon restart (the in-memory
+  // SDK was already required() before this function ran, so even an
+  // awaited fix wouldn't swap it within this process).
+  //
+  // Inner timeout (default 90s) + spawn-hard-kill (100s) protect against
+  // a permanently hung `bun add` zombie.
+  void attemptCodexAutofix({
+    installDir: wechatCcRepoRoot(),
     bundledSdkVersion: codexCliPkg.version,
     detectUserCodex: () => detectUserCodexOnPath(),
     envDisabled: process.env.WECHAT_CC_DISABLE_CODEX_AUTOFIX === '1',
     log: (line) => deps.log('CODEX_AUTOFIX', line),
+  }).then((outcome) => {
+    switch (outcome.status) {
+      case 'fixed':
+        deps.log('CODEX_AUTOFIX',
+          `done: ${outcome.from} → ${outcome.to}. Restart daemon to use the new SDK.`)
+        break
+      case 'failed':
+        deps.log('CODEX_AUTOFIX',
+          `failed (${outcome.from} → ${outcome.to}): ${outcome.reason}. ` +
+          `Continuing with bundled v${outcome.from}.`)
+        break
+      case 'timed_out':
+        deps.log('CODEX_AUTOFIX',
+          `timed out after ${Math.floor(outcome.timeoutMs / 1000)}s (${outcome.from} → ${outcome.to}). ` +
+          `Bun add killed. Continuing with bundled v${outcome.from}; investigate npm/network.`)
+        break
+      case 'unsafe':
+        deps.log('CODEX_AUTOFIX', `skipped: ${outcome.reason}. Bundled SDK in use.`)
+        break
+      case 'disabled':
+      case 'matched':
+      case 'no_user_codex':
+        // Silent — these are the common "nothing to do" outcomes.
+        break
+    }
+  }).catch((err) => {
+    deps.log('CODEX_AUTOFIX', `unexpected error in background auto-fix: ${err}`)
   })
-  switch (autofixOutcome.status) {
-    case 'fixed':
-      deps.log('CODEX_AUTOFIX',
-        `done: ${autofixOutcome.from} → ${autofixOutcome.to}. ` +
-        `Restart daemon to use the new SDK in this process.`)
-      break
-    case 'failed':
-      deps.log('CODEX_AUTOFIX',
-        `failed (${autofixOutcome.from} → ${autofixOutcome.to}): ${autofixOutcome.reason}. ` +
-        `Continuing with bundled v${autofixOutcome.from}.`)
-      break
-    case 'unsafe':
-      deps.log('CODEX_AUTOFIX', `skipped: ${autofixOutcome.reason}. Bundled SDK in use.`)
-      break
-    case 'disabled':
-    case 'matched':
-    case 'no_user_codex':
-      // Silent — these are the common "nothing to do" outcomes.
-      break
-  }
 
   // Conditional codex registration (v0.5.6) — find a real codex CLI on disk.
   // The Codex SDK's internal `findCodexPath()` uses moduleRequire.resolve()

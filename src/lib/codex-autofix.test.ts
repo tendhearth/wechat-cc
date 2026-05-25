@@ -130,4 +130,31 @@ describe('attemptCodexAutofix', () => {
     }))
     expect(log).not.toHaveBeenCalled()
   })
+
+  it('returns "timed_out" when bun add exceeds the timeout', async () => {
+    type SpawnBun = NonNullable<CodexAutofixDeps['spawnBun']>
+    // spawn that never resolves — simulates a hung `bun add` (real-world:
+    // slow npm registry + cache lock contention).
+    const spawnBun = vi.fn<SpawnBun>(() => new Promise(() => {}))
+    const out = await attemptCodexAutofix(baseDeps({
+      spawnBun,
+      timeoutMs: 50,
+    }))
+    expect(out).toEqual({
+      status: 'timed_out',
+      from: '0.128.0',
+      to: '0.133.0',
+      timeoutMs: 50,
+    })
+  })
+
+  it('completes within the timeout when bun add is fast', async () => {
+    type SpawnBun = NonNullable<CodexAutofixDeps['spawnBun']>
+    const spawnBun = vi.fn<SpawnBun>(async () => ({ ok: true, stderr: '' }))
+    const out = await attemptCodexAutofix(baseDeps({
+      spawnBun,
+      timeoutMs: 5_000,
+    }))
+    expect(out.status).toBe('fixed')
+  })
 })

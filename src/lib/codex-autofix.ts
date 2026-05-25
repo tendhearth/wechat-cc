@@ -52,6 +52,12 @@ export interface CodexAutofixDeps {
   /** Caller's logger. Called with single-line messages tagged at the
    *  call site. */
   log: (line: string) => void
+  /** Cap on the bun-add wall-clock. Default 90s — long enough for slow
+   *  npm registry / first-time download, short enough that a hung
+   *  install doesn't block daemon boot indefinitely. The caller is
+   *  responsible for not awaiting this function in a blocking way; see
+   *  bootstrap's fire-and-forget invocation. */
+  timeoutMs?: number
 }
 
 export type CodexAutofixOutcome =
@@ -61,6 +67,9 @@ export type CodexAutofixOutcome =
   | { status: 'unsafe'; reason: string }
   | { status: 'fixed'; from: string; to: string }
   | { status: 'failed'; from: string; to: string; reason: string }
+  | { status: 'timed_out'; from: string; to: string; timeoutMs: number }
+
+const DEFAULT_TIMEOUT_MS = 90_000
 
 export async function attemptCodexAutofix(
   deps: CodexAutofixDeps,
@@ -87,23 +96,41 @@ export async function attemptCodexAutofix(
     return { status: 'unsafe', reason: `${deps.installDir} not writable` }
   }
 
+  const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
   deps.log(
     `local codex v${user.version} ≠ bundled SDK v${deps.bundledSdkVersion} — ` +
-    `running \`bun add @openai/codex-sdk@${user.version} @openai/codex@${user.version}\` in ${deps.installDir}`,
+    `running \`bun add @openai/codex-sdk@${user.version} @openai/codex@${user.version}\` in ${deps.installDir} ` +
+    `(timeout ${Math.floor(timeoutMs / 1000)}s; non-blocking — daemon boot continues)`,
   )
 
   const spawnBun = deps.spawnBun ?? defaultSpawnBun
-  const result = await spawnBun(
+  const timeoutSentinel = Symbol('timeout')
+  const installPromise = spawnBun(
     ['add', `@openai/codex-sdk@${user.version}`, `@openai/codex@${user.version}`],
     deps.installDir,
   )
+  const winner = await Promise.race([
+    installPromise,
+    new Promise<typeof timeoutSentinel>((resolve) =>
+      setTimeout(() => resolve(timeoutSentinel), timeoutMs),
+    ),
+  ])
 
-  if (!result.ok) {
+  if (winner === timeoutSentinel) {
+    return {
+      status: 'timed_out',
+      from: deps.bundledSdkVersion,
+      to: user.version,
+      timeoutMs,
+    }
+  }
+
+  if (!winner.ok) {
     return {
       status: 'failed',
       from: deps.bundledSdkVersion,
       to: user.version,
-      reason: result.stderr.trim() || '(no stderr)',
+      reason: winner.stderr.trim() || '(no stderr)',
     }
   }
 
@@ -119,6 +146,13 @@ function defaultIsWritable(path: string): boolean {
   }
 }
 
+// Wall-clock cap that the default spawner self-enforces — independent of
+// the caller's Promise.race timeout in attemptCodexAutofix. Without this
+// inner kill, a hung `bun add` would survive past the outer timeout and
+// keep modifying node_modules out of band. 100s gives a comfortable margin
+// over the 90s default outer cap.
+const SPAWN_HARD_KILL_MS = 100_000
+
 function defaultSpawnBun(
   args: ReadonlyArray<string>,
   cwd: string,
@@ -129,18 +163,32 @@ function defaultSpawnBun(
       stdio: ['ignore', 'pipe', 'pipe'],
       // Inherit PATH so spawning `bun` resolves the user's bun install.
       env: process.env,
+      // detached: false (the default) so the child dies with parent.
     })
     let stderr = ''
+    let resolved = false
+    const finalize = (result: { ok: boolean; stderr: string }) => {
+      if (resolved) return
+      resolved = true
+      clearTimeout(killer)
+      resolve(result)
+    }
+    const killer = setTimeout(() => {
+      // Outer Promise.race will have already returned 'timed_out' to the
+      // caller; kill the orphan so it doesn't keep writing to node_modules.
+      try { proc.kill('SIGKILL') } catch { /* already dead */ }
+      finalize({ ok: false, stderr: `bun add exceeded ${SPAWN_HARD_KILL_MS}ms internal cap, killed` })
+    }, SPAWN_HARD_KILL_MS)
     proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8') })
     proc.stdout?.on('data', () => { /* drain to prevent backpressure */ })
     proc.on('error', (err: NodeJS.ErrnoException) => {
       const detail = err.code === 'ENOENT'
         ? 'bun not found on PATH'
         : `spawn error: ${err.message}`
-      resolve({ ok: false, stderr: detail })
+      finalize({ ok: false, stderr: detail })
     })
     proc.on('exit', (code: number | null) => {
-      resolve({ ok: code === 0, stderr })
+      finalize({ ok: code === 0, stderr })
     })
   })
 }
