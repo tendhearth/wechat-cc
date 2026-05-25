@@ -43,6 +43,7 @@ import { makeSessionStore } from '../../core/session-store'
 import type { Db } from '../../lib/db'
 import { homedir } from 'node:os'
 import { loadAgentConfig } from '../../lib/agent-config'
+import type { AgentConfig } from '../../lib/agent-config'
 import { loadAccess, setSessionInvalidator, type Access } from '../../lib/access'
 import { loadCompanionConfig, type CompanionConfig } from '../companion/config'
 import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
@@ -205,6 +206,11 @@ export interface Bootstrap {
    * main.ts calls a2aServer?.stop() in shutdown.
    */
   a2aServer: import('../../core/a2a-server').A2AServer | null
+  /**
+   * Loaded agent config — the same in-memory reference used by wiring closures.
+   * Mutations (e.g. setBotName) are visible to all closures that hold this ref.
+   */
+  agentConfig: AgentConfig
 }
 
 // buildChannelSystemPrompt() moved to src/core/prompt-builder.ts in
@@ -794,5 +800,6 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     dispatchDelegate,
     a2aDeps,
     a2aServer,
+    agentConfig: configuredAgent,
   }
 }

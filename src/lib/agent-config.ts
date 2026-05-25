@@ -28,7 +28,7 @@ export interface AgentConfig {
   // false (advanced setting): the GUI is the daemon's launcher, not its
   // host — closing the window should not stop inbound message handling.
   closeStopsDaemon: boolean
-  // Admin-chosen self-name. Null/undefined → fall back to botNameForMode(mode).
+  // Admin-chosen self-name. Null/undefined → fall back to botNameFromModeFallback(mode).
   // Constrained to NICKNAME_RE (1-24 chars, CJK/Latin/digits/space/_/-).
   // Set via the daemon's onboarding flow (first admin scan) or `/name` command.
   bot_name?: string | null

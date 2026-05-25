@@ -7,12 +7,15 @@
  */
 import { join } from 'node:path'
 import type { Db } from '../../lib/db'
+import type { AgentConfig } from '../../lib/agent-config'
+import type { Mode } from '../../core/conversation'
 import { buildDetectorContext } from '../milestones/build-context'
 import { detectMilestones } from '../milestones/detector'
 import { makeMilestonesStore } from '../milestones/store'
 import { makeEventsStore } from '../events/store'
 import { makeActivityStore } from '../activity/store'
 import { makeObservationsStore } from '../observations/store'
+import { botName } from '../bot-name'
 
 export interface SideEffectDeps {
   stateDir: string
@@ -40,15 +43,20 @@ export function makeRecordInbound(deps: SideEffectDeps): (chatId: string, when: 
   }
 }
 
-export function makeMaybeWriteWelcomeObservation(deps: SideEffectDeps): (chatId: string) => Promise<void> {
+export function makeMaybeWriteWelcomeObservation(opts: {
+  stateDir: string
+  db: Db
+  agentConfig: AgentConfig
+  getMode: (chatId: string) => Mode
+}): (chatId: string) => Promise<void> {
   return async (chatId: string) => {
-    const memRoot = join(deps.stateDir, 'memory')
-    const obs = makeObservationsStore(deps.db, chatId, { migrateFromFile: join(memRoot, chatId, 'observations.jsonl') })
+    const memRoot = join(opts.stateDir, 'memory')
+    const obs = makeObservationsStore(opts.db, chatId, { migrateFromFile: join(memRoot, chatId, 'observations.jsonl') })
     const existing = await obs.listActive()
     const archived = await obs.listArchived()
     if (existing.length === 0 && archived.length === 0) {
       await obs.append({
-        body: '嗨，我是 Claude。我会慢慢理解你，把观察写在这里——你可以随时来翻、纠正、忽略。',
+        body: `嗨，我是 ${botName(opts.getMode(chatId), opts.agentConfig)}。我会慢慢理解你，把观察写在这里——你可以随时来翻、纠正、忽略。`,
         tone: 'playful',
       })
     }

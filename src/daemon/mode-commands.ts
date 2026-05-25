@@ -25,13 +25,16 @@ import type { ConversationCoordinator } from '../core/conversation-coordinator'
 import type { ProviderRegistry } from '../core/provider-registry'
 import type { Mode, ProviderId } from '../core/conversation'
 import type { InboundMsg } from '../core/prompt-format'
-import { botNameForMode } from './bot-name'
+import { botName } from './bot-name'
+import type { AgentConfig } from '../lib/agent-config'
 
 export interface ModeCommandsDeps {
   coordinator: Pick<ConversationCoordinator, 'getMode' | 'setMode' | 'cancel'>
   registry: Pick<ProviderRegistry, 'has' | 'get' | 'list'>
   /** Default provider id, surfaced by /mode + /solo for status messages. */
   defaultProviderId: ProviderId
+  /** Agent config — used to resolve the bot's self-name (override or fallback). */
+  agentConfig: AgentConfig
   sendMessage(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
   /** Persist a per-chat nickname. Used by /name. */
   setUserName(chatId: string, name: string): Promise<void>
@@ -289,7 +292,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         }
         const trunc = (s: string, n: number) => s.length > n ? `${s.slice(0, n)}…` : s
         const cur = deps.coordinator.getMode(msg.chatId)
-        const botName = botNameForMode(cur)
+        const botNameStr = botName(cur, deps.agentConfig)
         const wxLine = msg.userName
           ? `WeChat: ${msg.userName} (${trunc(msg.userId, 12)})`
           : `WeChat: ${trunc(msg.userId, 12)}`
@@ -297,7 +300,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           `🪪 你: ${nick}`,
           `   ${wxLine}`,
           `🤖 bot account: ${trunc(msg.accountId, 12)}`,
-          `   当前回应: ${botName} (${describeMode(cur)})`,
+          `   当前回应: ${botNameStr} (${describeMode(cur)})`,
           `💬 chat: ${trunc(msg.chatId, 12)}`,
         ]
         await reply(msg.chatId, lines.join('\n'))

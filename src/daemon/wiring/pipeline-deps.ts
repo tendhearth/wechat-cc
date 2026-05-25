@@ -17,7 +17,7 @@ import { isAdmin, loadAccess } from '../../lib/access'
 import { makeAdminCommands } from '../admin-commands'
 import { makeModeCommands } from '../mode-commands'
 import { makeOnboardingHandler } from '../onboarding'
-import { botNameForMode } from '../bot-name'
+import { botName } from '../bot-name'
 import { materializeAttachments } from '../media'
 import { loadGuardConfig } from '../guard/store'
 import { makeFireMilestonesFor, makeRecordInbound, makeMaybeWriteWelcomeObservation } from './side-effects'
@@ -44,7 +44,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
 
   const fireMilestonesFor = makeFireMilestonesFor({ stateDir, db })
   const recordInbound = makeRecordInbound({ stateDir, db })
-  const maybeWriteWelcomeObservation = makeMaybeWriteWelcomeObservation({ stateDir, db })
+  const maybeWriteWelcomeObservation = makeMaybeWriteWelcomeObservation({
+    stateDir,
+    db,
+    agentConfig: boot.agentConfig,
+    getMode: (cid) => boot.coordinator.getMode(cid),
+  })
 
   const adminCommandsHandler = makeAdminCommands({
     stateDir, isAdmin,
@@ -72,6 +77,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     coordinator: boot.coordinator,
     registry: boot.registry,
     defaultProviderId: boot.defaultProviderId,
+    agentConfig: boot.agentConfig,
     sendMessage: (cid, txt) => ilink.sendMessage(cid, txt),
     setUserName: (cid, name) => ilink.setUserName(cid, name),
     getUserName: (cid) => ilink.resolveUserName(cid) ?? null,
@@ -82,7 +88,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     isKnownUser: (uid) => ilink.resolveUserName(uid) !== undefined,
     setUserName: (cid, name) => ilink.setUserName(cid, name),
     sendMessage: async (cid, txt) => { await ilink.sendMessage(cid, txt) },
-    botName: (cid) => botNameForMode(boot.coordinator.getMode(cid)),
+    botName: (cid) => botName(boot.coordinator.getMode(cid), boot.agentConfig),
     dispatchInbound: async (msg) => {
       // Re-fire this inbound through the normal pipeline. Onboarding has
       // already cleared its awaiting state and persisted the nickname, so

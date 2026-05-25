@@ -35,6 +35,3 @@ export function botName(mode: Mode, cfg: { bot_name?: string | null }): string {
   if (override) return override
   return botNameFromModeFallback(mode)
 }
-
-/** @deprecated kept only between Tasks 2 and 3 of the bot-name spec rollout; removed in Task 3. */
-export const botNameForMode = botNameFromModeFallback
