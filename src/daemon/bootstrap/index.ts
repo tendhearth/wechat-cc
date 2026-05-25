@@ -599,15 +599,35 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       },
     )
   } else if (codexBinary && codexVersionCheck && !codexVersionCheck.ok) {
+    // VERSION MISMATCH: user has codex installed, but its protocol version
+    // doesn't match our bundled SDK. Three resolution paths:
+    //   - Wait for codex-autofix (running in background since boot start;
+    //     it'll `bun add @openai/codex-sdk@<userVer>` to realign).
+    //     Restart daemon after autofix completes.
+    //   - Manually downgrade global: `npm i -g @openai/codex@<expected>`.
+    //   - Manually upgrade wechat-cc: `bun add @openai/codex-sdk@<userVer>
+    //     @openai/codex@<userVer>` in the wechat-cc install dir.
     deps.log('BOOT',
-      `codex provider NOT registered — version check failed. ` +
-      `binary=${codexBinary} actual=${codexVersionCheck.actualSemver ?? codexVersionCheck.rawVersion ?? '(unreadable)'} ` +
-      `expected=${codexVersionCheck.expectedVersion} reason=${codexVersionCheck.reason}. ` +
-      `The codex SDK ↔ CLI protocol is version-locked; a mismatched CLI silently emits events the SDK can't decode (no reply ever reaches the user). ` +
-      `Run \`npm i -g @openai/codex@${codexVersionCheck.expectedVersion}\` or remove the older codex from PATH.`,
+      `codex provider NOT registered — version mismatch. ` +
+      `Your codex CLI at ${codexBinary} is ` +
+      `v${codexVersionCheck.actualSemver ?? codexVersionCheck.rawVersion ?? '(unreadable)'}, ` +
+      `but wechat-cc's bundled SDK expects v${codexVersionCheck.expectedVersion}. ` +
+      `The codex SDK ↔ CLI protocol is version-locked (silent fail otherwise). ` +
+      `Resolution: (a) wait for the background auto-fix to realign SDK to your CLI version, then restart daemon; ` +
+      `or (b) downgrade global codex: \`npm i -g @openai/codex@${codexVersionCheck.expectedVersion}\`.`,
     )
   } else {
-    deps.log('BOOT', 'codex binary not found in PATH or ~/.nvm — codex provider not registered. Install `npm i -g @openai/codex` to enable /codex /both /chat modes.')
+    // NOT INSTALLED: no codex on PATH or in ~/.nvm. Tell the user the
+    // exact one-time setup. We deliberately don't bundle codex (post
+    // Task #18) — `codex login` is required for auth anyway, and bundling
+    // hid which version was actually in use.
+    deps.log('BOOT',
+      `codex provider NOT registered — codex CLI not installed. ` +
+      `To enable codex / /both / /chat modes:\n` +
+      `  1. \`npm i -g @openai/codex@${codexCliPkg.version}\`\n` +
+      `  2. \`codex login\`  (one-time OAuth or API-key setup; auth lives in ~/.codex/)\n` +
+      `  3. Restart daemon.`,
+    )
   }
 
   // ──────────────────────────────────────────────────────────────
