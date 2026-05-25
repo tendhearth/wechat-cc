@@ -1,17 +1,24 @@
 /**
- * bot-name — derive the bot's user-facing self-name from the active
- * conversation mode. Used in onboarding greetings and `/whoami`.
+ * bot-name — derive the bot's user-facing self-name. Two-stage:
  *
- * Mapping is intentional: `claude` → `cc` (matches the slash command
- * `/cc` and the Claude Code CLI alias most users know). Other provider
- * ids pass through verbatim.
+ *   1. If agent-config has bot_name set (admin chose one), use it.
+ *   2. Otherwise derive from the active conversation mode
+ *      (claude → cc, codex → codex, parallel/chatroom → cc + codex).
  *
- * Keep this pure (no registry / network) so it's trivially testable
- * and safe to call from anywhere in the request hot path.
+ * The override is set via the daemon's first-scan onboarding flow or
+ * the `/name` admin command. Pass the agentConfig REFERENCE around so
+ * mutations (saveAgentConfig + in-place update) are visible to all
+ * callers without a per-message file read.
+ *
+ * Keep this pure (no I/O, no registry) so it's trivially testable and
+ * safe to call from anywhere in the request hot path.
  */
 import type { Mode } from '../core/conversation'
 
-export function botNameForMode(mode: Mode): string {
+/** Mode-derived fallback. Public for tests + the rare caller that
+ *  genuinely wants the mode-only name (e.g. the "回到默认" reply in
+ *  /name and the skip-word path in onboarding). */
+export function botNameFromModeFallback(mode: Mode): string {
   const nameOf = (id: string): string => (id === 'claude' ? 'cc' : id)
   switch (mode.kind) {
     case 'solo':         return nameOf(mode.provider)
@@ -20,3 +27,14 @@ export function botNameForMode(mode: Mode): string {
     case 'chatroom':     return 'cc + codex'
   }
 }
+
+/** Override (cfg.bot_name) wins; falls back to mode-derived name when
+ *  the override is null / undefined / empty / whitespace. */
+export function botName(mode: Mode, cfg: { bot_name?: string | null }): string {
+  const override = cfg.bot_name?.trim()
+  if (override) return override
+  return botNameFromModeFallback(mode)
+}
+
+/** @deprecated kept only between Tasks 2 and 3 of the bot-name spec rollout; removed in Task 3. */
+export const botNameForMode = botNameFromModeFallback
