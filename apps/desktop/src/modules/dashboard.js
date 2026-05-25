@@ -131,6 +131,8 @@ function demoSubUsers() {
 export function renderRestartButton(report) {
   const btn = document.getElementById("dash-restart")
   if (!btn) return
+  const hero = dashboardHero(report.checks.daemon, report.checks.accounts?.count ?? 0)
+  const showOnlineControls = hero.tone === "ok"
   const choice = restartButtonState(report.checks.daemon, report.checks.service)
   // Find the label text node (the one with non-whitespace content). The
   // button has whitespace text nodes between the icon span and the label,
@@ -151,13 +153,12 @@ export function renderRestartButton(report) {
   // (instead of clicking and getting an error toast).
   const stopBtn = document.getElementById("dash-stop")
   if (stopBtn) {
-    const alive = !!report.checks.daemon?.alive
-    stopBtn.hidden = !alive
-    stopBtn.disabled = !alive
-    if (alive) stopBtn.removeAttribute("title")
+    stopBtn.hidden = !showOnlineControls
+    stopBtn.disabled = false
+    if (showOnlineControls) stopBtn.removeAttribute("title")
     else stopBtn.title = "daemon 未运行"
   }
-  btn.hidden = !!report.checks.daemon?.alive
+  btn.hidden = showOnlineControls
 }
 
 export function setPending(msg) {
@@ -177,19 +178,34 @@ export function updateClock() {
 // state re-renders to show "启动" (since daemon is now offline).
 export async function stopDaemon(deps) {
   setPending("停止…")
+  let stopError = null
   try {
     await deps.invoke("wechat_cli_json", { args: ["service", "stop", "--json"] })
   } catch (err) {
-    setPending(`停止失败：${deps.formatInvokeError(err)}`)
-    return
+    stopError = err
   }
   // Same residual-kill rationale as restartDaemon: launchctl/systemd doesn't
   // touch manual `wechat-cc run` instances, so without this step "停止" can
   // leave a daemon polling silently in the background.
+  let killError = null
   try {
     await deps.invoke("wechat_cli_json", { args: ["daemon", "kill-residual", "--json"] })
-  } catch { /* best effort */ }
-  await deps.doctorPoller.refresh()
+  } catch (err) {
+    killError = err
+  }
+  const report = await deps.doctorPoller.refresh()
+  if (report && !report.checks.daemon?.alive) {
+    deps.markDisconnected?.()
+  }
+  if (report?.checks.daemon?.alive) {
+    setPending("断开失败：daemon 仍在运行")
+    return
+  }
+  if (stopError || killError) {
+    setPending("已断开；后台服务停止时有警告")
+    setTimeout(() => setPending(""), 3000)
+    return
+  }
   setPending("已停止")
   setTimeout(() => setPending(""), 2000)
 }
@@ -198,12 +214,13 @@ export async function stopDaemon(deps) {
 // step instead of shelling out to systemctl/launchctl which would fail
 // noisily. Refresh first to avoid acting on stale cache.
 export async function restartDaemon(deps) {
+  setPending("重新连接…")
   const cached = await deps.doctorPoller.refresh() ?? deps.doctorPoller.current
   if (cached) {
     const choice = restartButtonState(cached.checks.daemon, cached.checks.service)
     if (choice.action === "install") {
       deps.routeToWizardService()
-      setPending("")
+      setPending("需要先安装后台服务")
       return
     }
   }
@@ -229,18 +246,27 @@ export async function restartDaemon(deps) {
   try {
     await deps.invoke("wechat_cli_json", { args: ["service", "start", "--json"] })
   } catch (err) {
-    setPending(`启动失败：${deps.formatInvokeError(err)}`)
+    setPending("重新连接失败：后台服务启动失败")
     return
   }
 
-  // Wait 2s for the new daemon to register, then verify pid changed.
-  // Skip pid verification entirely on non-Windows (where the command
-  // returns null) — fall through to the existing OK message.
-  await new Promise(r => setTimeout(r, 2000))
+  // Wait for the daemon to register instead of trusting `service start`.
+  // launchctl/schtasks/systemctl can report command success even when the
+  // child exits immediately during bootstrap.
+  const refreshed = typeof deps.doctorPoller.waitForCondition === "function"
+    ? await deps.doctorPoller.waitForCondition(r => !!r.checks.daemon?.alive, 8000, 500)
+    : await deps.doctorPoller.refresh()
+  if (!refreshed?.checks?.daemon?.alive) {
+    setPending("重新连接失败：后台服务没起来")
+    return
+  }
+
+  // Verify pid changed when the platform can report it. Non-Windows returns
+  // null from wechat_daemon_pid, so the alive doctor result above is the
+  // source of truth there.
   let afterPid = null
   try { afterPid = await deps.invoke("wechat_daemon_pid") } catch { /* not registered */ }
-
-  await deps.doctorPoller.refresh()
+  deps.markConnected?.()
 
   if (beforePid !== null && afterPid !== null && beforePid === afterPid) {
     // pid didn't change — Stop-Process likely got Access Denied

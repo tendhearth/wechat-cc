@@ -52,6 +52,7 @@ const state = {
   mode: "loading",
   currentStep: "doctor",
   updateProbed: false,
+  connectionIntent: /** @type {"disconnected" | null} */ (null),
 }
 
 // window.__TAURI__ is injected by the Tauri runtime and not part of the
@@ -123,6 +124,22 @@ const deps = {
   routeToWizardBind: () => {
     setMode("wizard")
     showStep("wechat")
+  },
+  markDisconnected: () => {
+    state.connectionIntent = "disconnected"
+    const current = doctorPoller.current
+    if (current) {
+      renderDashboardIfActive(current)
+      renderRestartButtonIfActive(current)
+    }
+  },
+  markConnected: () => {
+    state.connectionIntent = null
+    const current = doctorPoller.current
+    if (current) {
+      renderDashboardIfActive(current)
+      renderRestartButtonIfActive(current)
+    }
   },
 }
 
@@ -217,7 +234,7 @@ function wireDoctorSubscribers() {
   doctorPoller.subscribe(refreshEnterDashboardButton)
   doctorPoller.subscribe(report => updateFooterStatus(report.checks.daemon))
   doctorPoller.subscribe(renderDashboardIfActive)
-  doctorPoller.subscribe(renderRestartButton)
+  doctorPoller.subscribe(renderRestartButtonIfActive)
   doctorPoller.subscribe(checkExpiredDiff)
   conversationsPoller.subscribe(report => {
     if (state.mode === "dashboard") renderConversations(report, { invoke })
@@ -253,9 +270,30 @@ function checkExpiredDiff(report) {
 }
 
 /** @param {any} report */
+function dashboardDisplayReport(report) {
+  if (report.checks.daemon?.alive) state.connectionIntent = null
+  return state.connectionIntent === "disconnected"
+    ? {
+        ...report,
+        checks: {
+          ...report.checks,
+          accounts: { ...report.checks.accounts, count: 0 },
+        },
+      }
+    : report
+}
+
+/** @param {any} report */
 function renderDashboardIfActive(report) {
   if (state.mode !== "dashboard") return
-  renderDashboard(report)
+  const displayReport = dashboardDisplayReport(report)
+  renderDashboard(displayReport)
+}
+
+/** @param {any} report */
+function renderRestartButtonIfActive(report) {
+  if (state.mode !== "dashboard") return
+  renderRestartButton(dashboardDisplayReport(report))
 }
 
 // ─── agent picker ────────────────────────────────────────────────────
