@@ -1,122 +1,69 @@
-// @ts-check
-/// <reference lib="dom" />
-// Setup-page renderer — single page, no step navigation.
+// Wizard UI module — environment check rendering, step navigation, and
+// the "进入控制台" gate.
 //
 // Owns:
-//   .agent-card * (cards + state + meta)
-//   #scan-bind (gated on ≥1 agent installed)
-//   #wsl-tip (folded; shown only if doctor reports WSL)
-//   #wizard-foot-dot / #wizard-foot-text (status pill)
-//   #install-strip + #setup-error (transient UI states for the
-//                                  install→scan flow)
+//   #checks (env-check list), #claude-meta, #codex-meta
+//   .wizard .screen + .steps .step (step 1-4 nav)
+//   #enter-dashboard (gated on daemon.alive)
+//   #wizard-foot-dot/text + #dash-rail-dot/text (footer status pills)
+// Subscribes to: doctorPoller (renders env list on each successful poll)
 
-import { daemonStatusLine } from "../view.js"
+import { doctorRows, daemonStatusLine, escapeHtml } from "../view.js"
 
-// Track whether the scan button was disabled on the previous render so we
-// can flash it once when an agent first becomes available — gives the user
-// a visual cue that the page just unlocked after they installed an agent
-// in another terminal. Defaults to `true` so the very first paint of the
-// page (which always starts with the button disabled in HTML) is treated
-// as a no-op transition.
-let scanWasDisabled = true
+const STEP_ORDER = ["doctor", "provider", "wechat", "service"]
 
-/** @typedef {{ ok?: boolean, path?: string | null, version?: string | null }} CheckLike */
-/**
- * Cursor's doctor probe doesn't use {ok, path, version} — it surfaces
- * apiKeySet + sdkInstalled separately so the card can tell users
- * exactly which leg is missing (env var vs npm install).
- * @typedef {{ ok?: boolean, apiKeySet?: boolean, sdkInstalled?: boolean }} CursorCheckLike
- */
-/** @typedef {{ wslDetected?: boolean, checks?: { claude?: CheckLike, codex?: CheckLike, cursor?: CursorCheckLike, daemon?: unknown } }} DoctorReport */
-
-/** @param {DoctorReport} report */
-export function renderSetupPage(report) {
-  renderAgentCards(report)
-  renderWslTip(report)
-  refreshScanButton(report)
-  updateFooterStatus(report.checks?.daemon)
-}
-
-/** @param {DoctorReport} report */
-function renderAgentCards(report) {
-  // claude / codex use the binary-on-PATH probe shape {ok, path, version}
-  for (const provider of /** @type {const} */ (["claude", "codex"])) {
-    const check = report.checks?.[provider]
-    const card = document.getElementById(`agent-card-${provider}`)
-    const state = document.getElementById(`agent-state-${provider}`)
-    const meta = document.getElementById(`${provider}-meta`)
-    const installLink = /** @type {HTMLElement | null} */ (card?.querySelector(".install-link") ?? null)
-    if (!card || !state || !meta) continue
-    const installed = !!check?.ok
-    card.classList.toggle("installed", installed)
-    card.classList.toggle("missing", !installed)
-    state.textContent = installed ? "✓ 已安装" : "✗ 未安装"
-    meta.textContent = installed ? (check?.path || "已检测到") : "未在 PATH 上"
-    if (installLink) installLink.hidden = installed
+export function renderDoctorWizard(report) {
+  const list = document.getElementById("checks")
+  if (list) {
+    const rowsHtml = doctorRows(report).map(([name, check]) => {
+      const ic = check.ok
+        ? '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8.5l3 3 7-7"/></svg>'
+        : '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4l8 8M12 4l-8 8"/></svg>'
+      const cls = check.ok ? "" : (check.severity === "hard" ? " bad bad-hard" : " bad")
+      return `
+        <div class="env-row${cls}">
+          <span class="ic">${ic}</span>
+          <span class="nm">${escapeHtml(name)}</span>
+          <span class="val">${escapeHtml(check.path || "missing")}</span>
+          ${!check.ok && check.fix ? renderFixHint(check.fix) : ""}
+        </div>
+      `
+    }).join("")
+    // WSL hint preempts the inevitable "I have Claude in WSL, why doesn't
+    // wechat-cc see it?" question. Honest about the v 当前 limitation; a
+    // proper Windows-GUI ↔ WSL-daemon integration is on the roadmap.
+    list.innerHTML = renderWslNotice(report) + rowsHtml
   }
-  // cursor uses the SDK + API-key probe shape — meta reports which leg is missing
-  renderCursorCard(report.checks?.cursor)
+  const claudeMeta = document.getElementById("claude-meta")
+  const codexMeta = document.getElementById("codex-meta")
+  if (claudeMeta) claudeMeta.textContent = report.checks.claude.ok ? report.checks.claude.path : "未检测到"
+  if (codexMeta) codexMeta.textContent = report.checks.codex.ok ? report.checks.codex.path : "未检测到"
+  renderProviderStatus("claude", report.checks.claude)
+  renderProviderStatus("codex", report.checks.codex)
+  updateFooterStatus(report.checks.daemon)
 }
 
-/** @param {CursorCheckLike | undefined} check */
-function renderCursorCard(check) {
-  const card = document.getElementById("agent-card-cursor")
-  const state = document.getElementById("agent-state-cursor")
-  const meta = document.getElementById("cursor-meta")
-  const installLink = /** @type {HTMLElement | null} */ (card?.querySelector(".install-link") ?? null)
-  if (!card || !state || !meta) return
-  const installed = !!check?.ok
-  card.classList.toggle("installed", installed)
-  card.classList.toggle("missing", !installed)
-  state.textContent = installed ? "✓ 已就绪" : "✗ 未就绪"
-  if (installed) {
-    meta.textContent = "SDK + API key 就绪"
-  } else if (check?.sdkInstalled && !check?.apiKeySet) {
-    meta.textContent = "缺少 CURSOR_API_KEY（设到 shell / systemd 环境）"
-  } else if (!check?.sdkInstalled && check?.apiKeySet) {
-    meta.textContent = "缺少 @cursor/sdk（运行 bun add @cursor/sdk）"
-  } else {
-    meta.textContent = "未配置 — 需要 @cursor/sdk + CURSOR_API_KEY"
-  }
-  // Install link hidden only when fully ready; useful any time SDK isn't
-  // installed (the link points at Cursor SDK docs, which cover both steps).
-  if (installLink) installLink.hidden = installed
+function renderProviderStatus(provider, check) {
+  const card = document.getElementById(`${provider}-status-card`)
+  const label = document.getElementById(`${provider}-status-label`)
+  if (card) card.classList.toggle("is-ok", !!check.ok)
+  if (label) label.textContent = check.ok ? "已链接" : "未链接"
 }
 
-/** @param {DoctorReport} report */
-function renderWslTip(report) {
-  const tip = /** @type {HTMLElement | null} */ (document.getElementById("wsl-tip"))
-  if (!tip) return
-  tip.hidden = !report.wslDetected
+function renderWslNotice(report) {
+  if (!report.wslDetected) return ""
+  // Tip-style: single muted line with click-to-expand details. Avoids
+  // dominating the doctor checklist for the 95% of users who don't have
+  // Claude in WSL — they don't need this lecture every time they open the
+  // wizard. The 5% who do can click for the full explanation.
+  return `
+    <details class="env-tip env-tip-wsl">
+      <summary><span class="ic">ⓘ</span>检测到 WSL · GUI 仅识别 Windows 端的 Claude / Codex</summary>
+      <div class="env-tip-body">装在 WSL 里的 Claude Code，这个 Windows GUI 客户端连不到 —— 需要在 Windows 端再装一份才能用。WSL 直连集成在路上。</div>
+    </details>
+  `
 }
 
-/** @param {DoctorReport} report */
-export function refreshScanButton(report) {
-  const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById("scan-bind"))
-  if (!btn) return
-  const claudeOk = !!report.checks?.claude?.ok
-  const codexOk = !!report.checks?.codex?.ok
-  const cursorOk = !!report.checks?.cursor?.ok
-  const anyAgent = claudeOk || codexOk || cursorOk
-  btn.disabled = !anyAgent
-  if (anyAgent) btn.removeAttribute("title")
-  else btn.title = "先装一个 agent · 本页会自动检测"
-
-  // Inline hint sits below the button; visible only while disabled.
-  const hint = document.getElementById("scan-hint")
-  if (hint) hint.hidden = anyAgent
-
-  // Disabled → enabled transition: flash the button once. Restart the
-  // animation by toggling the class with a reflow in between.
-  if (scanWasDisabled && anyAgent) {
-    btn.classList.remove("flash")
-    void btn.offsetWidth
-    btn.classList.add("flash")
-  }
-  scanWasDisabled = !anyAgent
-}
-
-/** @param {unknown} daemon */
 export function updateFooterStatus(daemon) {
   const line = daemonStatusLine(daemon)
   for (const id of ["wizard-foot-dot", "dash-rail-dot"]) {
@@ -129,41 +76,57 @@ export function updateFooterStatus(daemon) {
   }
 }
 
-// Setup error strip + install progress strip — transient UI used by
-// the scan-bind flow (handleScanClick in main.js).
+// Gate "进入控制台" on daemon.alive: it makes no sense to send the user to
+// a control panel that says "Daemon offline · press restart" — they came
+// from the wizard precisely to get the daemon UP. Disabled state with a
+// helper title gives them a clear reason instead of a dead-end click.
+export function refreshEnterDashboardButton(report) {
+  const btn = document.getElementById("enter-dashboard")
+  if (!btn) return
+  const alive = !!report?.checks?.daemon?.alive
+  btn.disabled = !alive
+  if (alive) btn.removeAttribute("title")
+  else btn.title = "daemon 还没启动 · 先点「安装并启动」"
+}
 
-/**
- * @param {string} message
- * @param {string | null | undefined} details
- */
-export function showSetupError(message, details) {
-  const strip = /** @type {HTMLElement | null} */ (document.getElementById("setup-error"))
-  const msgEl = document.getElementById("setup-error-msg")
-  const bodyEl = /** @type {HTMLElement | null} */ (document.getElementById("setup-error-details-body"))
-  if (!strip || !msgEl) return
-  msgEl.textContent = message
-  if (bodyEl) {
-    bodyEl.textContent = details || ""
-    bodyEl.hidden = true
+// Imperative step navigator. Caller (main.js) wires the .steps buttons
+// + continue-* buttons to this. Returns the resolved step name so callers
+// can persist it in their own state if needed.
+export function showStep(stepState, name) {
+  stepState.currentStep = name
+  document.querySelectorAll(".wizard .screen").forEach(el => el.classList.remove("active"))
+  document.querySelector(`#screen-${name}`)?.classList.add("active")
+  const idx = STEP_ORDER.indexOf(name)
+  document.querySelectorAll(".steps .step").forEach((el) => {
+    const stepIdx = STEP_ORDER.indexOf(el.dataset.step)
+    el.classList.remove("is-done", "is-active")
+    if (stepIdx < idx) el.classList.add("is-done")
+    else if (stepIdx === idx) el.classList.add("is-active")
+    const num = el.querySelector(".num")
+    if (num) num.textContent = stepIdx < idx ? "✓" : String(stepIdx + 1)
+  })
+  const stepOf = document.getElementById("wizard-step-of")
+  if (stepOf) stepOf.textContent = `step ${idx + 1} of ${STEP_ORDER.length}`
+  return name
+}
+
+export const STEP_ORDER_EXPORTED = STEP_ORDER
+
+// One-line fix hint under a failed env check. Renders ONE of:
+//   - command: monospace + a 复制 button
+//   - action: plain instructional sentence
+//   - link: opens externally — labelled "安装指南 ↗" so 小白 know where it
+//           goes (a lone "↗" looks like decoration).
+// Kept tight — no headings, no expandable detail, no long copy.
+function renderFixHint(fix) {
+  if (!fix) return ""
+  const parts = []
+  if (fix.command) {
+    const safe = escapeHtml(fix.command)
+    parts.push(`<code class="fix-cmd">${safe}</code><button class="fix-copy" data-copy="${safe}" type="button">复制</button>`)
   }
-  strip.hidden = false
-}
-
-export function clearSetupError() {
-  const strip = /** @type {HTMLElement | null} */ (document.getElementById("setup-error"))
-  if (strip) strip.hidden = true
-}
-
-/** @param {string} [label] */
-export function showInstallStrip(label) {
-  const strip = /** @type {HTMLElement | null} */ (document.getElementById("install-strip"))
-  const labelEl = document.getElementById("install-strip-label")
-  if (!strip) return
-  if (labelEl && label) labelEl.textContent = label
-  strip.hidden = false
-}
-
-export function hideInstallStrip() {
-  const strip = /** @type {HTMLElement | null} */ (document.getElementById("install-strip"))
-  if (strip) strip.hidden = true
+  if (fix.action) parts.push(`<span class="fix-act">${escapeHtml(fix.action)}</span>`)
+  if (fix.link) parts.push(`<a class="fix-link" href="${escapeHtml(fix.link)}" target="_blank" rel="noopener">安装指南 ↗</a>`)
+  if (parts.length === 0) return ""
+  return `<div class="fix">${parts.join("")}</div>`
 }

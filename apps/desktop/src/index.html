@@ -12,101 +12,211 @@
     <div id="dev-banner" class="dev-banner" hidden></div>
 
     <!-- ════ WIZARD MODE ═══════════════════════════════════════════════ -->
-    <!-- Single-page setup wizard from master. main.js wires up
-         #scan-bind, #setup-error*, #agent-card-{claude,codex,cursor}. -->
+    <!-- moxiuwen's 4-screen wizard: doctor → provider → wechat → service.
+         main.js drives showStep() which toggles .screen.active.
+         QR is rendered inline inside #screen-wechat (no modal). -->
     <main class="wizard">
       <div class="wizard-window">
-
-        <section id="wizard" class="wizard-single">
-          <button id="wz-back" class="wz-back" type="button" hidden>← 返回控制台</button>
-          <div class="wz-head">
-            <h1 class="wz-title">wechat-cc</h1>
-            <p class="wz-sub">把 AI agent 接到你的微信</p>
+        <div class="wz-top">
+          <div class="wz-brand">
+            <span class="mark"><img src="./wechat-cc-logo.png" alt="" /></span>
+            <span class="name">wechat-cc</span>
           </div>
+          <button class="wz-back" data-action="open-dashboard" title="关闭启动页" aria-label="关闭启动页">×</button>
+        </div>
 
-          <div class="setup-page">
-            <div class="agent-cards">
-              <div class="agent-card" data-provider="claude" id="agent-card-claude">
-                <div class="logo logo-img"><img src="./wechat-cc-logo.png" alt="" /></div>
-                <div class="name">Claude Code</div>
-                <div class="state" id="agent-state-claude">检测中…</div>
-                <div class="meta" id="claude-meta">—</div>
-                <a class="install-link" href="https://docs.claude.com/en/docs/claude-code/setup" target="_blank" rel="noopener" hidden>安装指南 ↗</a>
+        <div class="wz-body">
+
+          <!-- 01 检查 -->
+          <section id="screen-doctor" class="screen active">
+            <div class="launch-grid">
+              <div class="launch-hero">
+                <div class="launch-illus launch-illus-missing" aria-hidden="true">
+                  <img src="./assets/onboarding-missing.svg" alt="" />
+                </div>
+                <h2>还差一步就能见面了</h2>
+                <p>还没检测到 Claude Code 或 Codex，安装任意一个就能继续。</p>
               </div>
-              <div class="agent-card" data-provider="codex" id="agent-card-codex">
-                <div class="logo logo-img"><img src="./wechat-cc-logo.png" alt="" /></div>
-                <div class="name">Codex</div>
-                <div class="state" id="agent-state-codex">检测中…</div>
-                <div class="meta" id="codex-meta">—</div>
-                <a class="install-link" href="https://github.com/openai/codex#installation" target="_blank" rel="noopener" hidden>安装指南 ↗</a>
+              <div class="launch-panel">
+                <div class="launch-panel-title">
+                  <span>当前状态</span>
+                  <i></i>
+                </div>
+                <div class="provider-status-list">
+                  <div class="provider-status-card" id="claude-status-card">
+                    <span class="plug-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 2v6M16 2v6M6 8h12v5a6 6 0 0 1-12 0V8Z"/><path d="M12 19v3M4 13h16"/></svg>
+                    </span>
+                    <span class="provider-status-name">Claude Code <b id="claude-status-label">检测中</b></span>
+                    <a class="provider-install-btn" id="claude-install-link" href="https://docs.claude.com/en/docs/claude-code/install" target="_blank" rel="noopener">去安装 <span>›</span></a>
+                  </div>
+                  <div class="provider-status-card" id="codex-status-card">
+                    <span class="plug-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 2v6M16 2v6M6 8h12v5a6 6 0 0 1-12 0V8Z"/><path d="M12 19v3M4 13h16"/></svg>
+                    </span>
+                    <span class="provider-status-name">Codex <b id="codex-status-label">检测中</b></span>
+                    <a class="provider-install-btn" id="codex-install-link" href="https://github.com/openai/codex#installation" target="_blank" rel="noopener">去安装 <span>›</span></a>
+                  </div>
+                </div>
+                <button id="recheck-env" class="launch-primary-btn">重新检测</button>
+                <details class="launch-details">
+                  <summary>查看完整诊断</summary>
+                  <div id="checks" class="env-list"></div>
+                </details>
               </div>
-              <div class="agent-card" data-provider="cursor" id="agent-card-cursor">
-                <div class="logo logo-img"><img src="./wechat-cc-logo.png" alt="" /></div>
-                <div class="name">Cursor</div>
-                <div class="state" id="agent-state-cursor">检测中…</div>
-                <div class="meta" id="cursor-meta">—</div>
-                <a class="install-link" href="https://docs.cursor.com/en/cli/agent" target="_blank" rel="noopener" hidden>安装指南 ↗</a>
+            </div>
+          </section>
+
+          <!-- 02 Agent -->
+          <section id="screen-provider" class="screen">
+            <div class="card">
+              <div class="card-h">选择 Agent · Choose agent</div>
+              <div class="agent-grid">
+                <button class="agent" data-provider="claude">
+                  <div class="head">
+                    <div class="logo logo-img"><img src="./wechat-cc-logo.png" alt="" /></div>
+                    <div class="name">Claude Code</div>
+                    <span class="recommend">Recommended</span>
+                    <span class="pick"></span>
+                  </div>
+                  <div class="desc">深度思考、长上下文、复杂任务首选。</div>
+                  <div class="path" id="claude-meta">检测中</div>
+                </button>
+                <button class="agent" data-provider="codex">
+                  <div class="head">
+                    <div class="logo logo-img"><img src="./wechat-cc-logo.png" alt="" /></div>
+                    <div class="name">Codex</div>
+                    <span class="pick"></span>
+                  </div>
+                  <div class="desc">快速迭代、自动化场景。</div>
+                  <div class="path" id="codex-meta">检测中</div>
+                </button>
+              </div>
+            </div>
+            <div class="wz-foot" style="border:0; padding: 4px 0 0;">
+              <div class="left">模型由各自 CLI 自管。</div>
+              <div class="right">
+                <button id="continue-wechat" class="btn primary">继续</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- 03 微信 -->
+          <section id="screen-wechat" class="screen">
+            <div class="launch-grid">
+              <div class="launch-hero">
+                <div class="launch-illus launch-illus-ready" aria-hidden="true">
+                  <img src="./assets/onboarding-success.svg" alt="" />
+                </div>
+                <h2>环境检测成功</h2>
+                <p>一切准备就绪，开启你的体验之旅吧！</p>
+              </div>
+              <div class="qr-login-card">
+                <h3>微信二维码登录</h3>
+                <div id="qr-box" class="qr-box">正在生成</div>
+                <p id="qr-title">使用微信扫描二维码，激活应用</p>
+                <div class="poll" id="qr-poll" hidden>
+                  <span class="pip"></span>
+                  <span id="qr-message">轮询扫码状态…</span>
+                </div>
+                <div class="qr-ttl" id="qr-ttl">on demand</div>
+                <div class="qr-actions">
+                  <button id="qr-refresh" class="btn ghost">刷新二维码</button>
+                  <button id="continue-service" class="btn primary" disabled>继续</button>
+                </div>
+                <button id="qr-raw-toggle" class="qr-raw-toggle" type="button">显示原始响应</button>
+                <pre id="qr-raw"></pre>
+              </div>
+            </div>
+          </section>
+
+          <!-- 04 后台 -->
+          <section id="screen-service" class="screen">
+            <div class="card">
+              <div class="card-h">后台服务 · Background Service</div>
+              <div class="bg-body">
+                <div class="desc" id="service-summary"></div>
+                <div class="bg-actions">
+                  <button id="service-install" class="btn primary">
+                    <span class="ic"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.5l7 4.5-7 4.5z"/></svg></span>
+                    安装并启动
+                  </button>
+                </div>
+
+                <div class="toggle-row">
+                  <div>
+                    <div class="lab">开机自启 · Launch at login</div>
+                    <div class="sub">登录系统时自动启动 daemon。</div>
+                  </div>
+                  <button class="toggle" id="screen-autostart-toggle" data-toggle aria-pressed="false"></button>
+                </div>
+
+                <div class="toggle-row warn-edge">
+                  <div>
+                    <div class="lab">自动同意工具调用 · Auto-approve tool calls<span style="color: var(--green-ink); font-size: 10.5px; margin-left: 6px; font-weight: 500;">推荐</span></div>
+                    <div class="sub">关闭后，每次工具调用都需要在微信里回 y / n（10 分钟超时即拒绝）。日常会被刷屏，建议保留勾选。</div>
+                  </div>
+                  <button class="toggle on" id="screen-unattended-toggle" data-toggle aria-pressed="true"></button>
+                </div>
+
+                <div class="toggle-row">
+                  <div>
+                    <div class="lab">网络守护 · Network guard</div>
+                    <div class="sub">每 30 秒查公网 IP；变了就探一次 google.com。不通时关闭 Claude session，下条入站发"VPN 掉了"。<span id="screen-guard-status-line" class="guard-status-line">—</span></div>
+                  </div>
+                  <button class="toggle" id="screen-guard-toggle" data-toggle aria-pressed="false"></button>
+                </div>
               </div>
             </div>
 
-            <details class="env-tip env-tip-wsl" id="wsl-tip" hidden>
-              <summary><span class="ic">ⓘ</span>检测到 WSL · GUI 仅识别 Windows 端的 Claude / Codex</summary>
-              <div class="env-tip-body">装在 WSL 里的 Claude Code，这个 Windows GUI 客户端连不到 —— 需要在 Windows 端再装一份才能用。WSL 直连集成在路上。</div>
-            </details>
-
-            <button id="scan-bind" class="btn primary scan-cta" type="button" disabled>
-              <span class="ic"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><path d="M9 9h2v2H9zM13 9h1v1h-1zM9 13h1v1H9zM12 12h2v2h-2z"/></svg></span>
-              <span class="label">扫码绑定微信 →</span>
-            </button>
-            <p id="scan-hint" class="scan-hint" hidden>请先安装一个 agent（点上方卡片的安装指南）—— 装好后这里会自动检测。</p>
-
-            <div class="install-strip" id="install-strip" hidden>
-              <span class="pip"></span>
-              <span class="install-label" id="install-strip-label">安装后台服务…</span>
-            </div>
-
-            <div class="error-strip" id="setup-error" hidden>
-              <div class="error-row">
-                <span class="ic">!</span>
-                <span class="error-msg" id="setup-error-msg">—</span>
-                <button class="btn ghost mini" id="setup-error-details" type="button">详情</button>
-                <button class="btn primary mini" id="setup-error-retry" type="button">重试</button>
+            <div class="card">
+              <div class="plan-h">
+                技术详情 · Technical details
+                <span class="chev" id="service-plan-toggle">▾</span>
               </div>
-              <pre class="error-details" id="setup-error-details-body" hidden></pre>
+              <pre id="service-plan"></pre>
             </div>
 
-            <p class="wz-help">扫码后进入控制台。后台服务、开机自启等可在控制台「设置」里调整。</p>
-
-            <div class="wz-foot wz-foot-pill">
-              <span id="wizard-foot-dot" class="dot"></span>
-              <span id="wizard-foot-text">服务状态未知</span>
+            <div id="post-stop-alert" class="post-stop-alert" hidden>
+              <span class="ic">!</span>
+              <div>
+                <div class="h">停止未生效——daemon 仍在运行 (pid <span id="post-stop-pid">—</span>)</div>
+                <div class="body">可能原因：daemon 不是通过本 GUI 安装的，或 systemd unit 名不匹配。CLI 会先校验 cmdline 再发 SIGTERM。</div>
+              </div>
+              <button id="post-stop-kill" class="force-kill">强制 kill 进程</button>
             </div>
+
+            <div class="wz-foot" style="border:0; padding: 4px 0 0;">
+              <div class="left"></div>
+              <div class="right">
+                <button id="enter-dashboard" class="btn primary">进入控制台</button>
+              </div>
+            </div>
+          </section>
+
+        </div>
+
+        <div class="wz-foot wizard-status-foot">
+          <div class="left">
+            <span id="wizard-foot-dot" class="dot"></span>
+            <span id="wizard-foot-text" style="margin-left: 6px;">服务状态未知</span>
           </div>
-        </section>
-
+          <div class="right">
+            <button id="copy-diagnostics" class="btn ghost">复制诊断</button>
+          </div>
+        </div>
       </div>
     </main>
 
-    <!-- QR modal + settings drawer are top-level overlays: must live
-         OUTSIDE both <main class="wizard"> and <main class="dashboard"> so
-         the mode-switch display:none on one main doesn't collapse them
-         when invoked from the other (e.g. dashboard's "+ 绑定新账号"
-         opens the QR dialog while data-mode stays "dashboard"). -->
-    <dialog id="qr-modal" class="qr-modal" aria-labelledby="qr-modal-title">
-      <button class="qr-modal-close" id="qr-modal-close" type="button" aria-label="关闭">×</button>
-      <h2 class="qr-modal-title" id="qr-modal-title">扫码绑定微信</h2>
-      <div class="qr-modal-body">
-        <div id="qr-box" class="qr-box">生成中…</div>
-        <div class="qr-modal-side">
-          <div class="qr-modal-step" id="qr-message">轮询扫码状态…</div>
-          <div class="qr-modal-help">手机扫码后请在微信里点确认</div>
-          <button id="qr-refresh" class="btn ghost mini" type="button">重新生成</button>
-          <button id="qr-raw-toggle" class="qr-raw-toggle" type="button">显示原始响应</button>
-          <pre id="qr-raw"></pre>
-        </div>
-      </div>
-    </dialog>
-
+    <!-- Settings drawer is a top-level overlay: must live OUTSIDE both
+         <main class="wizard"> and <main class="dashboard"> so the mode-switch
+         display:none on one main doesn't collapse it when invoked from the
+         other. The drawer holds the canonical #autostart-toggle / #unattended-toggle /
+         #guard-toggle / #guard-status-line IDs. The wizard's #screen-service step
+         uses screen-* prefixed IDs (screen-autostart-toggle etc.) to avoid duplicate
+         IDs. wireSettingsDrawer scopes its querySelector to #settings-drawer so it
+         only binds the drawer copies; the wizard's [data-toggle] handler is scoped
+         to #screen-service and matches the screen-* IDs. -->
     <aside id="settings-drawer" class="settings-drawer">
       <header class="drawer-head">
         <h2>设置</h2>

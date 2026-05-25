@@ -85,23 +85,28 @@ describe('apps/desktop shim — HTML structure', () => {
     // presence here means a structural HTML regression fails CI fast
     // instead of surfacing as an empty wizard a user reports later.
     const requiredIds = [
-      // Single-page setup (replaces the old 4-step wizard env list)
-      'agent-card-claude', 'agent-card-codex',
-      'agent-state-claude', 'agent-state-codex',
-      'claude-meta', 'codex-meta',
-      'scan-bind',                                       // primary CTA
-      'install-strip', 'install-strip-label',            // transient install progress
-      'setup-error', 'setup-error-msg',                  // transient error strip
-      'setup-error-details', 'setup-error-retry', 'setup-error-details-body',
-      'wsl-tip',                                         // WSL notice
-      'wizard-foot-dot', 'wizard-foot-text',             // wizard status pill
-      // QR <dialog> (moved out of step 3)
-      'qr-modal', 'qr-modal-close', 'qr-modal-title',
-      'qr-box', 'qr-refresh', 'qr-message', 'qr-raw', 'qr-raw-toggle',
-      // Settings drawer (replaces step 4 toggles)
+      // 4-screen wizard (moxiuwen design)
+      'screen-doctor', 'screen-provider', 'screen-wechat', 'screen-service',
+      // screen-doctor — env probe + provider status cards + recheck
+      'checks', 'recheck-env',
+      'claude-status-card', 'claude-status-label',
+      'codex-status-card', 'codex-status-label',
+      // screen-provider — agent picker + continue
+      'claude-meta', 'codex-meta', 'continue-wechat',
+      // screen-wechat — inline QR + continue
+      'qr-box', 'qr-title', 'qr-poll', 'qr-message', 'qr-ttl',
+      'qr-refresh', 'continue-service',
+      'qr-raw', 'qr-raw-toggle',
+      // screen-service — install + toggles + plan + post-stop alert
+      'service-summary', 'service-install', 'enter-dashboard',
+      'autostart-toggle', 'unattended-toggle',
+      'guard-toggle', 'guard-status-line',
+      'service-plan-toggle', 'service-plan',
+      'post-stop-alert', 'post-stop-pid', 'post-stop-kill',
+      // wizard footer + diagnostics
+      'wizard-foot-dot', 'wizard-foot-text', 'copy-diagnostics',
+      // Settings drawer (dashboard-side)
       'settings-drawer', 'settings-close', 'settings-open',
-      'autostart-toggle',
-      'unattended-toggle', 'guard-toggle', 'guard-status-line',
       // Dashboard (unchanged by this refactor)
       'hero-card', 'hero-headline',
       'add-account-btn',                                 // + 绑定新账号 in accounts card
