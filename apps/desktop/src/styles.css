@@ -2297,6 +2297,25 @@ input { font: inherit; color: inherit; }
   margin-top: 14px;
 }
 
+/* A2A Test modal helpers (the test modal reuses .a2a-modal + .a2a-form-actions) */
+.a2a-test-help {
+  font-size: 12px;
+  color: var(--ink-3, #6b7280);
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
+.a2a-test-result {
+  margin-top: 12px;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 6px);
+  min-height: 1.4em;
+}
+.a2a-test-result:empty { display: none; }
+.a2a-test-result.pending { background: var(--paper-2, #f3f4f6); color: var(--ink-2, #4b5563); }
+.a2a-test-result.ok      { background: rgba(16, 185, 129, .08); color: var(--green, #10b981); }
+.a2a-test-result.fail    { background: rgba(239, 68, 68, .08);  color: var(--red, #ef4444); }
+
 /* A2A Activity drawer — full-height side panel */
 .a2a-drawer {
   position: fixed;

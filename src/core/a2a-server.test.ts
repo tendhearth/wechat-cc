@@ -20,7 +20,7 @@ function fakeRegistry(agents: A2AAgentRecord[]): A2ARegistry {
       const a = agents.find(x => x.id === id)
       return a && a.inbound_api_key === bearer ? a : null
     },
-    add: vi.fn(), remove: vi.fn(), setPaused: vi.fn(),
+    add: vi.fn(), remove: vi.fn(), setPaused: vi.fn(), update: vi.fn(),
   }
 }
 

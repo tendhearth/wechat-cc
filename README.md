@@ -612,7 +612,9 @@ wechat-cc agent list            # list all registered agents
 wechat-cc agent pause <id>      # mute inbound + outbound for this agent
 wechat-cc agent resume <id>     # un-mute
 wechat-cc agent remove <id>     # drop registration
-wechat-cc agent activity <id>   # recent A2A events (includes auth_failed attempts)
+wechat-cc agent edit <id> [--name N] [--url U] [--outbound-key K] [--rotate-inbound-key]
+                                # patch a registered agent (rotate keys / move URL) without remove + re-add
+wechat-cc agent activity <id>   # recent A2A events (includes auth_failed attempts + dropped_no_operator_chat)
 wechat-cc agent test <id>       # synthetic INBOUND notify → operator's WeChat chat
 wechat-cc agent test <id> --outbound
                                 # synthetic OUTBOUND call to <id>'s URL (verifies outbound_api_key)

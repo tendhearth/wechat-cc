@@ -142,6 +142,8 @@ Usage:
   wechat-cc agent activity <id> [--limit N]
                         Print recent A2A events (newest first, default 20)
   wechat-cc agent info              Show A2A server status (base URL + agent count)
+  wechat-cc agent edit <id> [--name N] [--url U] [--outbound-key K] [--rotate-inbound-key]
+                        Patch a registered agent in place (no remove + re-add)
   wechat-cc agent test <id> [--text MSG] [--outbound]
                         Send a synthetic notify to validate inbound→chat path
                         (default) or outbound (--outbound: send to external URL)
@@ -1707,6 +1709,26 @@ const agentInfoCmd = defineCommand({
   },
 })
 
+const agentEditCmd = defineCommand({
+  meta: { name: 'edit', description: 'Edit a registered A2A agent (rotate keys, rename, change URL) without remove + re-add' },
+  args: {
+    id: { type: 'positional', required: true, description: 'Agent id', valueHint: 'agent-id' },
+    name: { type: 'string', description: 'New display name' },
+    url: { type: 'string', description: 'New URL' },
+    'outbound-key': { type: 'string', description: 'Rotate outbound API key (we use this when calling the agent)' },
+    'rotate-inbound-key': { type: 'boolean', description: 'Generate a fresh inbound API key (external agent uses it to call us)' },
+  },
+  async run({ args }) {
+    const { cmdAgentEdit } = await import('./src/cli/agent.ts')
+    cmdAgentEdit(STATE_DIR, args.id, {
+      name: args.name,
+      url: args.url,
+      outboundKey: args['outbound-key'],
+      rotateInboundKey: Boolean(args['rotate-inbound-key']),
+    })
+  },
+})
+
 const agentTestCmd = defineCommand({
   meta: { name: 'test', description: 'Send a synthetic notify to validate the inbound→chat path (default) or outbound (--outbound)' },
   args: {
@@ -1732,6 +1754,7 @@ const agentCmd = defineCommand({
     remove: agentRemoveCmd,
     activity: agentActivityCmd,
     info: agentInfoCmd,
+    edit: agentEditCmd,
     test: agentTestCmd,
   },
 })

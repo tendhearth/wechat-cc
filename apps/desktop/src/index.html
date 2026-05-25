@@ -449,6 +449,26 @@
       </section>
     </dialog>
 
+    <!-- A2A Test modal — validate inbound (notify → WeChat chat) or outbound
+         (call external agent) without dropping to CLI. -->
+    <dialog id="a2a-test-modal" class="a2a-modal">
+      <h3 id="a2a-test-title">Test agent</h3>
+      <p class="a2a-test-help">
+        <strong>Inbound</strong>: send a synthetic notify to your own WeChat chat (validates server + key + routing).<br>
+        <strong>Outbound</strong>: call the external agent's URL (validates URL + outbound_api_key).
+      </p>
+      <label>
+        Message text
+        <input id="a2a-test-text" type="text" />
+      </label>
+      <div class="a2a-form-actions">
+        <button id="a2a-test-inbound" class="btn" type="button">Test Inbound</button>
+        <button id="a2a-test-outbound" class="btn" type="button">Test Outbound</button>
+        <button id="a2a-test-close" class="btn ghost" type="button">Close</button>
+      </div>
+      <div id="a2a-test-result" class="a2a-test-result"></div>
+    </dialog>
+
     <!-- A2A Activity drawer — top-level overlay, hidden by default. -->
     <aside id="a2a-activity-drawer" class="a2a-drawer" hidden>
       <header class="a2a-drawer-head">

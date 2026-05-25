@@ -269,6 +269,52 @@ export function cmdAgentRemove(stateDir: string, id: string): void {
   console.log(`agent '${id}' removed`)
 }
 
+export interface AgentEditOpts {
+  name?: string
+  url?: string
+  outboundKey?: string
+  rotateInboundKey?: boolean
+}
+
+/**
+ * `wechat-cc agent edit <id>` — patch one or more fields on a registered
+ * agent. Most common use: rotate `outbound_api_key` after the external
+ * agent rotated theirs. With `--rotate-inbound-key`, generates a new
+ * inbound key locally and prints it for the operator to share with the
+ * external agent.
+ *
+ * Doesn't restart the daemon — outbound calls pick up the new
+ * outbound_api_key on the next call (registry is read at request time).
+ * Inbound auth verification also reads the registry per-request, so
+ * rotated inbound keys take effect immediately too.
+ */
+export function cmdAgentEdit(stateDir: string, id: string, opts: AgentEditOpts): void {
+  const reg = createA2ARegistry({ stateDir })
+  if (!reg.get(id)) throw new Error(`agent '${id}' not registered`)
+
+  const patch: Parameters<typeof reg.update>[1] = {}
+  if (opts.name !== undefined) patch.name = opts.name
+  if (opts.url !== undefined) patch.url = opts.url
+  if (opts.outboundKey !== undefined) patch.outbound_api_key = opts.outboundKey
+  let newInboundKey: string | null = null
+  if (opts.rotateInboundKey) {
+    newInboundKey = `wc_${randomBytes(16).toString('hex')}`
+    patch.inbound_api_key = newInboundKey
+  }
+  if (Object.keys(patch).length === 0) {
+    throw new Error(`no fields to update — pass --name, --url, --outbound-key, or --rotate-inbound-key`)
+  }
+  const updated = reg.update(id, patch)
+  console.log(`✅ agent '${id}' updated`)
+  if (patch.name !== undefined) console.log(`   name → ${updated.name}`)
+  if (patch.url !== undefined) console.log(`   url → ${updated.url}`)
+  if (patch.outbound_api_key !== undefined) console.log(`   outbound_api_key → (rotated, ${patch.outbound_api_key.length} chars)`)
+  if (newInboundKey) {
+    console.log(`   inbound_api_key → ${newInboundKey}`)
+    console.log(`   ⚠ Share this new key with the external agent — the old key no longer works.`)
+  }
+}
+
 export function cmdAgentActivity(stateDir: string, id: string, limit: number): void {
   const db = openWechatDb(stateDir)
   const store = makeA2AEventsStore(db)
