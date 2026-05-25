@@ -163,13 +163,16 @@ export function restartButtonState(daemon, service) {
   return { action: "install", label: "去设置向导", helper: "尚未安装为后台服务；点这里走完设置向导。" }
 }
 
-// Hero block for the dashboard top: "DAEMON · running" with a sub-line.
+// Hero block for the dashboard top. In the user-facing dashboard, a bound
+// account means the companion relationship is established; transient daemon
+// downtime should keep the reconnect affordance without making the default
+// moment read as "AI lost".
 export function dashboardHero(daemon, accountCount) {
-  if (daemon.alive) {
+  if (daemon.alive || accountCount > 0) {
     return {
       headline: "running",
       tone: "ok",
-      meta1: `pid ${daemon.pid}`,
+      meta1: daemon.alive ? `pid ${daemon.pid}` : "waiting for daemon",
       meta2: accountCount === 1 ? "1 account live" : `${accountCount} accounts live`,
     }
   }

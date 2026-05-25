@@ -1,0 +1,43 @@
+<svg width="820" height="640" viewBox="0 0 820 640" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="cloud" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(406 318) rotate(90) scale(295 340)">
+      <stop offset="0" stop-color="#EEEEEE"/>
+      <stop offset="0.42" stop-color="#D8D8D8"/>
+      <stop offset="0.72" stop-color="#BEBEBE"/>
+      <stop offset="1" stop-color="#9D9D9D" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="rough" x="92" y="2" width="644" height="610" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.72" numOctaves="3" seed="13" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="22" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="grain" x="92" y="2" width="644" height="610" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="1.05" numOctaves="2" seed="4" result="noise"/>
+      <feColorMatrix in="noise" type="matrix" values="0 0 0 0 0.7 0 0 0 0 0.7 0 0 0 0 0.7 0 0 0 0.24 0"/>
+      <feComposite operator="in" in2="SourceGraphic"/>
+    </filter>
+  </defs>
+
+  <path d="M168 508C142 424 134 354 163 280C182 232 218 205 246 184C246 108 302 62 363 66C393 15 461 4 516 30C548 45 573 75 586 110C653 100 710 142 726 202C790 224 817 288 794 350C824 424 774 510 690 526C594 592 444 610 304 580C236 566 191 542 168 508Z" fill="url(#cloud)" filter="url(#rough)"/>
+  <path d="M168 508C142 424 134 354 163 280C182 232 218 205 246 184C246 108 302 62 363 66C393 15 461 4 516 30C548 45 573 75 586 110C653 100 710 142 726 202C790 224 817 288 794 350C824 424 774 510 690 526C594 592 444 610 304 580C236 566 191 542 168 508Z" fill="#D3D3D3" opacity="0.35" filter="url(#grain)"/>
+
+  <path d="M192 320C126 344 70 386 22 448C5 474 8 499 31 514C57 531 105 524 161 513" stroke="#2E2E31" stroke-width="6" stroke-linecap="round"/>
+  <path d="M131 487C176 486 224 497 262 509C280 514 289 488 311 493C334 498 340 515 363 516C384 517 398 494 419 497C441 500 451 517 474 513C498 509 505 490 532 488C617 484 718 430 792 356" stroke="#2E2E31" stroke-width="6" stroke-linecap="round"/>
+  <path d="M657 196C726 193 783 204 806 236C830 268 807 315 748 361" stroke="#2E2E31" stroke-width="6" stroke-linecap="round"/>
+
+  <circle cx="159" cy="515" r="10" fill="#2E2E31"/>
+  <circle cx="656" cy="195" r="12" fill="#F1F1F1" stroke="#2E2E31" stroke-width="7"/>
+
+  <circle cx="584" cy="384" r="42" fill="#050505"/>
+  <circle cx="565" cy="389" r="8" fill="#D8D8D8"/>
+  <circle cx="595" cy="389" r="8" fill="#D8D8D8"/>
+  <path d="M568 411C574 401 586 398 596 407" stroke="white" stroke-width="7" stroke-linecap="round"/>
+  <path d="M600 405C604 412 610 412 615 406" stroke="white" stroke-width="7" stroke-linecap="round"/>
+
+  <g stroke="#2E2E31" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M598 86C605 112 613 120 638 127C613 134 605 142 598 168C591 142 583 134 558 127C583 120 591 112 598 86Z"/>
+    <path d="M710 407C717 433 725 441 750 448C725 455 717 463 710 489C703 463 695 455 670 448C695 441 703 433 710 407Z"/>
+    <path d="M66 532C72 554 78 560 100 566C78 572 72 578 66 600C60 578 54 572 32 566C54 560 60 554 66 532Z"/>
+    <path d="M48 160C55 184 61 191 86 198C61 205 55 212 48 236C41 212 34 205 10 198C34 191 41 184 48 160Z"/>
+  </g>
+  <path d="M804 166C807 177 811 181 822 184C811 187 807 191 804 202C801 191 797 187 786 184C797 181 801 177 804 166Z" fill="#2E2E31"/>
+</svg>

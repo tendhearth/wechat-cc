@@ -335,6 +335,10 @@ describe('dashboardHero', () => {
   it('alive with single account → singular copy', () => {
     expect(dashboardHero({ alive: true, pid: 7 }, 1).meta2).toBe('1 account live')
   })
+  it('bound account with daemon temporarily down → still presents companion as active', () => {
+    expect(dashboardHero({ alive: false, pid: null }, 1))
+      .toEqual({ headline: 'running', tone: 'ok', meta1: 'waiting for daemon', meta2: '1 account live' })
+  })
   it('stale pid → warn tone', () => {
     expect(dashboardHero({ alive: false, pid: 99 }, 0).tone).toBe('warn')
     expect(dashboardHero({ alive: false, pid: 99 }, 0).headline).toBe('stale')
