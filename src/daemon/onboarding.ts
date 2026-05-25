@@ -41,7 +41,7 @@ export interface OnboardingDeps {
    *  (or the mode fallback if unset). */
   isAdmin(userId: string): boolean
   /** Current global bot self-name override. Null/empty = use fallback.
-   *  Read fresh each call: the underlying agentConfig is mutated by /name
+   *  Read fresh each call: the underlying agentConfig is mutated by /botname
    *  outside onboarding, so caching the value would go stale. */
   getBotName(): string | null
   /** Persist the new self-name (null = clear). Disk-first, then in-memory
@@ -127,7 +127,24 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
     msg: InboundMsg,
     aw: { since: number; triggerText: string; fromMessage: InboundMsg; phase: AwaitPhase },
   ): Promise<boolean> {
-    // /name (or any other code path) may have set bot_name out of band.
+    // I2 defensive check: tier may have changed between turn 2 (when the
+    // admin gate was evaluated) and turn 3. Re-checking isAdmin prevents
+    // a demoted-but-still-allowed user from globally renaming the bot.
+    // On false, exit awaiting cleanly + redispatch (same as the
+    // already-set-elsewhere path below).
+    if (!deps.isAdmin(msg.userId)) {
+      awaiting.delete(msg.chatId)
+      await deps.sendMessage(
+        msg.chatId,
+        `好的。刚才你说「${aw.fromMessage.text}」, 回答下：`,
+      )
+      void deps.dispatchInbound(aw.fromMessage).catch(err => {
+        deps.log('ONBOARDING', `echo dispatch failed chat=${msg.chatId}: ${err}`)
+      })
+      return true
+    }
+
+    // /botname (or any other code path) may have set bot_name out of band.
     // Exit awaiting cleanly + redispatch the original trigger.
     if (deps.getBotName()?.trim()) {
       awaiting.delete(msg.chatId)
@@ -147,7 +164,7 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
       try { await deps.setBotName(null) }
       catch (err) {
         deps.log('ONBOARDING', `setBotName(null) failed chat=${msg.chatId}: ${err}`)
-        await deps.sendMessage(msg.chatId, '我没记住，稍后再试 /name')
+        await deps.sendMessage(msg.chatId, '我没记住，稍后再试 /botname')
         return true
       }
       awaiting.delete(msg.chatId)
@@ -177,7 +194,7 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
     try { await deps.setBotName(proposed) }
     catch (err) {
       deps.log('ONBOARDING', `setBotName failed chat=${msg.chatId}: ${err}`)
-      await deps.sendMessage(msg.chatId, '我没记住，稍后再试 /name')
+      await deps.sendMessage(msg.chatId, '我没记住，稍后再试 /botname')
       return true
     }
     awaiting.delete(msg.chatId)

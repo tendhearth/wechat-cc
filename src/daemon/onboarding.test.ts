@@ -310,7 +310,7 @@ describe('makeOnboardingHandler', () => {
       expect(botNameSet).toEqual(['小希'])
     })
 
-    it('bot_name set mid-flow via /name → next inbound clears awaiting + redispatches', async () => {
+    it('bot_name set mid-flow via /botname → next inbound clears awaiting + redispatches', async () => {
       const { deps, sent, dispatched, botNameSet } = makeDeps({
         admins: new Set(['admin-1']),
       })
@@ -318,12 +318,12 @@ describe('makeOnboardingHandler', () => {
 
       await handler.handle(mkMsg({ userId: 'admin-1', chatId: 'admin-1', text: '你好' }))
       await handler.handle(mkMsg({ userId: 'admin-1', chatId: 'admin-1', text: 'Nate' }))
-      // Simulate /name being handled by mw-admin (deps.setBotName called outside onboarding).
+      // Simulate /botname being handled by mw-admin (deps.setBotName called outside onboarding).
       await deps.setBotName('小希')
       // Next inbound: onboarding should detect getBotName() !== null and exit awaiting cleanly.
       await handler.handle(mkMsg({ userId: 'admin-1', chatId: 'admin-1', text: 'whatever' }))
 
-      expect(botNameSet).toEqual(['小希'])  // only the /name call, not a second setBotName from onboarding
+      expect(botNameSet).toEqual(['小希'])  // only the /botname call, not a second setBotName from onboarding
       expect(dispatched).toHaveLength(1)
       expect(dispatched[0]!.text).toBe('你好')
       expect(sent.at(-1)).toMatch(/刚才你说「你好」/)
@@ -347,6 +347,29 @@ describe('makeOnboardingHandler', () => {
 
       expect(botNameSet).toEqual(['你好'])
       expect(dispatched).toHaveLength(1)
+      expect(sent.at(-1)).toMatch(/刚才你说「你好」/)
+    })
+
+    // Regression guard for final-review I2: admin can be removed from
+    // access.json between turn 2 (when askBotName was evaluated) and turn 3
+    // (when they reply with the bot name). Re-check isAdmin in handleBotName
+    // so a demoted-but-still-allowed user can't globally rename the bot.
+    it('admin demoted between turn 2 and turn 3 → bot_name NOT set', async () => {
+      const admins = new Set(['admin-1'])
+      const { deps, sent, botNameSet, dispatched } = makeDeps({ admins })
+      const handler = makeOnboardingHandler(deps)
+
+      await handler.handle(mkMsg({ userId: 'admin-1', chatId: 'admin-1', text: '你好' }))
+      await handler.handle(mkMsg({ userId: 'admin-1', chatId: 'admin-1', text: 'Nate' }))
+      // Admin gets removed from access.admins out-of-band.
+      admins.delete('admin-1')
+      // Turn 3: user replies '小希' — would have set bot_name pre-fix.
+      await handler.handle(mkMsg({ userId: 'admin-1', chatId: 'admin-1', text: '小希' }))
+
+      expect(botNameSet).toHaveLength(0)
+      // Awaiting cleared + original trigger redispatched (graceful exit).
+      expect(dispatched).toHaveLength(1)
+      expect(dispatched[0]!.text).toBe('你好')
       expect(sent.at(-1)).toMatch(/刚才你说「你好」/)
     })
   })

@@ -67,21 +67,30 @@ const RESET_RE = /^\s*\/(?:reset|重置)\s*$/
 // network) — just inspects the daemon's own bookkeeping.
 const HEALTH_AI_RE = /^\s*\/health\s+ai\s*$/
 
-// /name <new-name>  — set
-// /name 跳过 / 不用 / 没有 / skip / clear / 清除  — clear (fall back to mode-derived)
-// /name             — show current
-const NAME_RE = /^\s*\/name(?:\s+(.+?))?\s*$/
-const NAME_SKIP_WORDS = new Set(['跳过', '不用', '没有', 'skip', 'clear', '清除'])
+// /botname <new-name>  — set the bot's user-facing self-name (admin only)
+// /botname 跳过 / 不用 / 没有 / skip / clear / 清除  — clear (fall back to mode-derived)
+// /botname             — show current
+//
+// NOTE: this is intentionally NOT `/name`. /name is the pre-existing
+// user-self-rename command owned by mode-commands.ts:310-320 (PR2 #17 —
+// "this user wants to be called X" → setUserName per-chat). Confusing
+// the two would either silently swallow non-admin user-renames in
+// mw-admin or accidentally redefine /name's meaning for admins. The
+// rename to /botname is a deliberate disambiguation of the two scopes:
+//   /name <X>     → per-chat user nickname (any sender, via mode-commands)
+//   /botname <X>  → global bot self-name   (admin only, via this handler)
+const BOTNAME_RE = /^\s*\/botname(?:\s+(.+?))?\s*$/
+const BOTNAME_SKIP_WORDS = new Set(['跳过', '不用', '没有', 'skip', 'clear', '清除'])
 // Reuse the same nickname constraint onboarding applies to user_name.
-// Keep this regex in sync with onboarding.ts::NICKNAME_RE.
-const NAME_VALID_RE = /^[一-鿿_a-zA-Z0-9 \-]+$/
-const NAME_MAX_LEN = 24
+// Keep this regex in sync with onboarding.ts::NICKBOTNAME_RE.
+const BOTNAME_VALID_RE = /^[一-鿿_a-zA-Z0-9 \-]+$/
+const BOTNAME_MAX_LEN = 24
 
 export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
   return {
     async handle(msg) {
       const text = msg.text.trim()
-      const isCmd = text === '/health' || HEALTH_AI_RE.test(text) || RESET_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || NAME_RE.test(text)
+      const isCmd = text === '/health' || HEALTH_AI_RE.test(text) || RESET_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
       if (!isCmd) return false
 
       if (!deps.isAdmin(msg.chatId)) {
@@ -138,34 +147,34 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
         return true
       }
 
-      const nameMatch = text.match(NAME_RE)
-      if (nameMatch) {
-        const arg = nameMatch[1]?.trim()
-        // /name (no arg) — show current
+      const botnameMatch = text.match(BOTNAME_RE)
+      if (botnameMatch) {
+        const arg = botnameMatch[1]?.trim()
+        // /botname (no arg) — show current
         if (!arg) {
           const current = deps.getBotName()
           const display = current && current.trim() ? current.trim() : deps.botNameFallback(msg.chatId)
           await deps.sendMessage(msg.chatId, `我现在叫 ${display}`)
           return true
         }
-        // /name 跳过 — explicit clear
-        if (NAME_SKIP_WORDS.has(arg.toLowerCase())) {
+        // /botname 跳过 — explicit clear
+        if (BOTNAME_SKIP_WORDS.has(arg.toLowerCase())) {
           try {
             await deps.setBotName(null)
             const fallback = deps.botNameFallback(msg.chatId)
             await deps.sendMessage(msg.chatId, `好的，回到默认「${fallback}」`)
           } catch (err) {
-            deps.log('ADMIN_CMD', `/name clear failed: ${err}`)
-            await deps.sendMessage(msg.chatId, '我没记住，稍后再试 /name')
+            deps.log('ADMIN_CMD', `/botname clear failed: ${err}`)
+            await deps.sendMessage(msg.chatId, '我没记住，稍后再试 /botname')
           }
           return true
         }
-        // /name <new-name> — validate + set
-        if (arg.length > NAME_MAX_LEN) {
-          await deps.sendMessage(msg.chatId, `「${arg}」太长（最多 ${NAME_MAX_LEN} 字符）。再试一次?`)
+        // /botname <new-name> — validate + set
+        if (arg.length > BOTNAME_MAX_LEN) {
+          await deps.sendMessage(msg.chatId, `「${arg}」太长（最多 ${BOTNAME_MAX_LEN} 字符）。再试一次?`)
           return true
         }
-        if (!NAME_VALID_RE.test(arg)) {
+        if (!BOTNAME_VALID_RE.test(arg)) {
           await deps.sendMessage(msg.chatId, `「${arg}」不行：只支持中文/字母/数字/空格/_/- (1-24 字)`)
           return true
         }
@@ -173,8 +182,8 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
           await deps.setBotName(arg)
           await deps.sendMessage(msg.chatId, `好的，从现在开始我叫 ${arg}`)
         } catch (err) {
-          deps.log('ADMIN_CMD', `/name set failed: ${err}`)
-          await deps.sendMessage(msg.chatId, '我没记住，稍后再试 /name')
+          deps.log('ADMIN_CMD', `/botname set failed: ${err}`)
+          await deps.sendMessage(msg.chatId, '我没记住，稍后再试 /botname')
         }
         return true
       }

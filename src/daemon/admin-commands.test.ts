@@ -62,7 +62,7 @@ describe('admin-commands', () => {
       registry: { list: () => [] },
       sessionManager: { release: async () => {}, list: () => [] },
       sessionStore: { get: () => null, delete: () => {} },
-      // /name deps — no-op defaults so legacy tests don't need to care
+      // /botname deps — no-op defaults so legacy tests don't need to care
       getBotName: () => null,
       setBotName: async () => {},
       botNameFallback: () => 'cc',
@@ -269,7 +269,7 @@ describe('admin-commands', () => {
     })
   })
 
-  describe('/name command', () => {
+  describe('/botname command', () => {
     let getBotName: ReturnType<typeof vi.fn>
     let setBotName: ReturnType<typeof vi.fn>
     let botNameFallback: ReturnType<typeof vi.fn>
@@ -312,58 +312,58 @@ describe('admin-commands', () => {
       isAdmin.mockReturnValue(true)
     })
 
-    it('/name <valid> from admin → setBotName called + ack', async () => {
+    it('/botname <valid> from admin → setBotName called + ack', async () => {
       const handler = build()
-      const consumed = await handler.handle(mkMsg('/name 小希'))
+      const consumed = await handler.handle(mkMsg('/botname 小希'))
       expect(consumed).toBe(true)
       expect(setBotName).toHaveBeenCalledWith('小希')
       expect(sendMessage).toHaveBeenCalledWith('admin-1', expect.stringContaining('小希'))
     })
 
-    it('/name <valid> from non-admin → silently consumed, no setBotName', async () => {
+    it('/botname <valid> from non-admin → silently consumed, no setBotName', async () => {
       isAdmin.mockReturnValue(false)
       const handler = build()
-      const consumed = await handler.handle(mkMsg('/name 偷偷改'))
+      const consumed = await handler.handle(mkMsg('/botname 偷偷改'))
       expect(consumed).toBe(true)  // matches existing admin-cmd convention: drop silently
       expect(setBotName).not.toHaveBeenCalled()
       expect(sendMessage).not.toHaveBeenCalled()
     })
 
-    it('/name 跳过 → setBotName(null) + ack with fallback', async () => {
+    it('/botname 跳过 → setBotName(null) + ack with fallback', async () => {
       botNameFallback.mockReturnValue('cc')
       const handler = build()
-      await handler.handle(mkMsg('/name 跳过'))
+      await handler.handle(mkMsg('/botname 跳过'))
       expect(setBotName).toHaveBeenCalledWith(null)
       expect(sendMessage).toHaveBeenCalledWith('admin-1', expect.stringContaining('cc'))
     })
 
-    it('/name (bare, bot_name set) → show current', async () => {
+    it('/botname (bare, bot_name set) → show current', async () => {
       getBotName.mockReturnValue('小希')
       const handler = build()
-      await handler.handle(mkMsg('/name'))
+      await handler.handle(mkMsg('/botname'))
       expect(setBotName).not.toHaveBeenCalled()
       expect(sendMessage).toHaveBeenCalledWith('admin-1', expect.stringContaining('小希'))
     })
 
-    it('/name (bare, bot_name null) → show fallback', async () => {
+    it('/botname (bare, bot_name null) → show fallback', async () => {
       getBotName.mockReturnValue(null)
       botNameFallback.mockReturnValue('cc')
       const handler = build()
-      await handler.handle(mkMsg('/name'))
+      await handler.handle(mkMsg('/botname'))
       expect(sendMessage).toHaveBeenCalledWith('admin-1', expect.stringContaining('cc'))
     })
 
-    it('/name <too long> → validation reply, no setBotName', async () => {
+    it('/botname <too long> → validation reply, no setBotName', async () => {
       const longName = 'a'.repeat(25)
       const handler = build()
-      await handler.handle(mkMsg(`/name ${longName}`))
+      await handler.handle(mkMsg(`/botname ${longName}`))
       expect(setBotName).not.toHaveBeenCalled()
       expect(sendMessage).toHaveBeenCalledWith('admin-1', expect.stringContaining('太长'))
     })
 
-    it('/name <illegal chars> → validation reply, no setBotName', async () => {
+    it('/botname <illegal chars> → validation reply, no setBotName', async () => {
       const handler = build()
-      await handler.handle(mkMsg('/name 🌸emoji🌸'))
+      await handler.handle(mkMsg('/botname 🌸emoji🌸'))
       expect(setBotName).not.toHaveBeenCalled()
       expect(sendMessage).toHaveBeenCalledWith('admin-1', expect.stringContaining('不行'))
     })
@@ -371,9 +371,32 @@ describe('admin-commands', () => {
     it('setBotName throws → ack with retry hint, no crash', async () => {
       setBotName.mockRejectedValueOnce(new Error('disk full'))
       const handler = build()
-      const consumed = await handler.handle(mkMsg('/name 小希'))
+      const consumed = await handler.handle(mkMsg('/botname 小希'))
       expect(consumed).toBe(true)
       expect(sendMessage).toHaveBeenCalledWith('admin-1', expect.stringContaining('稍后再试'))
+    })
+
+    // Regression guard for the /name vs /botname collision (final-review C1):
+    // /name is mode-commands' pre-existing user-self-rename, and admin-commands
+    // must NOT consume it — otherwise it'd silently drop non-admin renames and
+    // hijack admin's own user-rename. The pipeline runs mw-admin before
+    // mw-mode, so admin-commands.handle() must return false for /name to let
+    // mw-mode see it.
+    it('/name <X> from admin → NOT consumed (falls through to mode-commands)', async () => {
+      const handler = build()
+      const consumed = await handler.handle(mkMsg('/name Nate'))
+      expect(consumed).toBe(false)
+      expect(setBotName).not.toHaveBeenCalled()
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+
+    it('/name <X> from non-admin → NOT consumed either', async () => {
+      isAdmin.mockReturnValue(false)
+      const handler = build()
+      const consumed = await handler.handle(mkMsg('/name 丸子'))
+      expect(consumed).toBe(false)
+      expect(setBotName).not.toHaveBeenCalled()
+      expect(sendMessage).not.toHaveBeenCalled()
     })
   })
 })
