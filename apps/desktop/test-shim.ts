@@ -269,7 +269,10 @@ Bun.serve({
 
           // Intercept daemon api-info in DRY_RUN — return fake credentials
           // pointing at the SAME shim origin so fetch() calls are same-origin
-          // (avoids CORS issues in Playwright's Chromium context).
+          // (avoids CORS issues in Playwright's Chromium context). The page
+          // may be reached as either localhost:PORT or 127.0.0.1:PORT — echo
+          // back the request's Host header so the baseUrl matches whichever
+          // origin the browser actually loaded.
           // api.js calls this once to bootstrap all /v1/a2a/* fetch() calls.
           // Frontend calls: ["daemon", "api-info", "--json"]
           if (
@@ -278,8 +281,9 @@ Bun.serve({
             cliArgs[0] === 'daemon' &&
             cliArgs[1] === 'api-info'
           ) {
+            const host = req.headers.get('host') ?? `127.0.0.1:${PORT}`
             return Response.json({
-              result: { ok: true, baseUrl: `http://127.0.0.1:${PORT}`, token: A2A_TOKEN },
+              result: { ok: true, baseUrl: `http://${host}`, token: A2A_TOKEN },
             })
           }
 
