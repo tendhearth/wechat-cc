@@ -52,6 +52,7 @@ import { buildDelegateDispatch, type DelegateDispatch } from './delegate'
 import { makeSendAssistantText } from './fallback-reply'
 import { findCodexBinary } from '../../lib/find-codex-binary'
 import { checkCodexVersion } from './codex-version-check'
+import { attemptCodexAutofix } from '../../lib/codex-autofix'
 import { assertNotAuthFailed, type CheapEval } from '../../core/agent-provider'
 import { createA2ARegistry } from '../../core/a2a-registry'
 import { createA2AClient } from '../../core/a2a-client'
@@ -81,6 +82,34 @@ function resolveClaudeBinary(): string | undefined {
   const bundled = join(here, '..', '..', '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk-linux-x64', 'claude')
   if (existsSync(bundled)) return bundled
   return undefined
+}
+
+// Locate the wechat-cc source-mode install root (where package.json lives).
+// Source mode: derived from this file's path. Compiled-binary mode (Bun's
+// /$bunfs/...): existsSync(repoRoot/package.json) returns false → return null.
+// Null → codex-autofix returns "unsafe" and the daemon falls back to bundled.
+function wechatCcRepoRoot(): string | null {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url))     // .../src/daemon/bootstrap
+    const root = join(here, '..', '..', '..')                // .../<repo>
+    if (existsSync(join(root, 'package.json'))) return root
+    return null
+  } catch {
+    return null
+  }
+}
+
+// Get the user's PATH-installed codex binary + version (skips wechat-cc's
+// own bundled probe — that would loop back to ourselves). Used by
+// codex-autofix to decide whether the bundled SDK needs realignment.
+function detectUserCodexOnPath(): { path: string | null; version: string | null } {
+  const path = findOnPath('codex')
+  if (!path) return { path: null, version: null }
+  const raw = probeBinaryVersion(path)
+  if (!raw) return { path, version: null }
+  // probeBinaryVersion returns "codex-cli 0.133.0" or similar; extract semver.
+  const m = /(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)/.exec(raw)
+  return { path, version: m?.[1] ?? null }
 }
 
 const CLAUDE_AUTH_ENV_KEYS = [
@@ -459,6 +488,44 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       canResume: (cwd, sid) => existsSync(claudeSessionJsonlPath(HOME, cwd, sid)),
     },
   )
+  // Auto-fix codex SDK to match the user's PATH codex CLI version when
+  // they diverge. This lets a user-driven `npm i -g @openai/codex@X` propagate
+  // into wechat-cc's bundled SDK without waiting for a wechat-cc release.
+  // See src/lib/codex-autofix.ts for the safety constraints.
+  //
+  // The check runs BEFORE findCodexBinary() so the next boot picks up the
+  // realigned binary. (We don't restart this boot — the in-memory SDK has
+  // already been required() — instead we log "restart required" and let the
+  // operator / service manager pick a moment to restart.)
+  const repoRootForAutofix = wechatCcRepoRoot()
+  const autofixOutcome = await attemptCodexAutofix({
+    installDir: repoRootForAutofix,
+    bundledSdkVersion: codexCliPkg.version,
+    detectUserCodex: () => detectUserCodexOnPath(),
+    envDisabled: process.env.WECHAT_CC_DISABLE_CODEX_AUTOFIX === '1',
+    log: (line) => deps.log('CODEX_AUTOFIX', line),
+  })
+  switch (autofixOutcome.status) {
+    case 'fixed':
+      deps.log('CODEX_AUTOFIX',
+        `done: ${autofixOutcome.from} → ${autofixOutcome.to}. ` +
+        `Restart daemon to use the new SDK in this process.`)
+      break
+    case 'failed':
+      deps.log('CODEX_AUTOFIX',
+        `failed (${autofixOutcome.from} → ${autofixOutcome.to}): ${autofixOutcome.reason}. ` +
+        `Continuing with bundled v${autofixOutcome.from}.`)
+      break
+    case 'unsafe':
+      deps.log('CODEX_AUTOFIX', `skipped: ${autofixOutcome.reason}. Bundled SDK in use.`)
+      break
+    case 'disabled':
+    case 'matched':
+    case 'no_user_codex':
+      // Silent — these are the common "nothing to do" outcomes.
+      break
+  }
+
   // Conditional codex registration (v0.5.6) — find a real codex CLI on disk.
   // The Codex SDK's internal `findCodexPath()` uses moduleRequire.resolve()
   // which can't see real node_modules from inside the bun-compiled bundle
