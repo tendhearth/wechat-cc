@@ -89,4 +89,72 @@ describe('a2a-registry', () => {
     reg.setPaused('alpha', false)
     expect(reg.get('alpha')?.paused).toBe(false)
   })
+
+  it('update() patches name and persists', () => {
+    const stateDir = makeTempStateDir()
+    writeConfig(stateDir, [rec('alpha')])
+    const reg = createA2ARegistry({ stateDir })
+    const updated = reg.update('alpha', { name: 'New Display' })
+    expect(updated.name).toBe('New Display')
+    expect(reg.get('alpha')?.name).toBe('New Display')
+    // Round-trip: reload from disk
+    const reg2 = createA2ARegistry({ stateDir })
+    expect(reg2.get('alpha')?.name).toBe('New Display')
+  })
+
+  it('update() patches outbound_api_key and persists', () => {
+    const stateDir = makeTempStateDir()
+    writeConfig(stateDir, [rec('alpha')])
+    const reg = createA2ARegistry({ stateDir })
+    reg.update('alpha', { outbound_api_key: 'new-rotated-key' })
+    expect(reg.get('alpha')?.outbound_api_key).toBe('new-rotated-key')
+  })
+
+  it('update() patches multiple fields atomically', () => {
+    const stateDir = makeTempStateDir()
+    writeConfig(stateDir, [rec('alpha')])
+    const reg = createA2ARegistry({ stateDir })
+    reg.update('alpha', { name: 'X', url: 'https://moved.example.com/a2a' })
+    const a = reg.get('alpha')
+    expect(a?.name).toBe('X')
+    expect(a?.url).toBe('https://moved.example.com/a2a')
+  })
+
+  it('update() preserves unchanged fields', () => {
+    const stateDir = makeTempStateDir()
+    const original = rec('alpha')
+    writeConfig(stateDir, [original])
+    const reg = createA2ARegistry({ stateDir })
+    reg.update('alpha', { name: 'Renamed' })
+    const after = reg.get('alpha')!
+    expect(after.id).toBe(original.id)
+    expect(after.url).toBe(original.url)
+    expect(after.inbound_api_key).toBe(original.inbound_api_key)
+    expect(after.outbound_api_key).toBe(original.outbound_api_key)
+    expect(after.capabilities).toEqual(original.capabilities)
+    expect(after.paused).toBe(original.paused)
+  })
+
+  it('update() throws on unknown id', () => {
+    const stateDir = makeTempStateDir()
+    writeConfig(stateDir, [rec('alpha')])
+    const reg = createA2ARegistry({ stateDir })
+    expect(() => reg.update('missing', { name: 'X' })).toThrow(/not found/)
+  })
+
+  it('update() rejects empty name / url / outbound_api_key', () => {
+    const stateDir = makeTempStateDir()
+    writeConfig(stateDir, [rec('alpha')])
+    const reg = createA2ARegistry({ stateDir })
+    expect(() => reg.update('alpha', { name: '' })).toThrow(/non-empty/)
+    expect(() => reg.update('alpha', { url: '' })).toThrow(/non-empty/)
+    expect(() => reg.update('alpha', { outbound_api_key: '' })).toThrow(/non-empty/)
+  })
+
+  it('update() rejects too-short inbound_api_key (matches schema min 16)', () => {
+    const stateDir = makeTempStateDir()
+    writeConfig(stateDir, [rec('alpha')])
+    const reg = createA2ARegistry({ stateDir })
+    expect(() => reg.update('alpha', { inbound_api_key: 'too-short' })).toThrow(/at least 16/)
+  })
 })

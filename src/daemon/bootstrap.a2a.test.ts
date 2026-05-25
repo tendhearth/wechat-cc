@@ -182,4 +182,58 @@ describe('bootstrap A2A wiring', () => {
       rmSync(stateDir, { recursive: true, force: true })
     }
   })
+
+  it('routeA2ANotify records status=dropped_no_operator_chat when no operator chat exists', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-a2a-drop-'))
+    const port = 19888
+    // Register one agent so a real notify call can authenticate.
+    const testKey = `wc_${'b'.repeat(32)}`
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        a2a_agents: [{
+          id: 'tester',
+          name: 'Tester',
+          url: 'https://tester.example.com/a2a',
+          inbound_api_key: testKey,
+          outbound_api_key: 'out',
+          capabilities: ['notify'],
+          paused: false,
+        }],
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),  // fresh test db → no conversation rows → no operator chat
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      // POST a real inbound notify; it should land in routeA2ANotify, which
+      // resolves no operator chat → records 'dropped_no_operator_chat'.
+      const res = await fetch(`http://127.0.0.1:${port}/a2a/notify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${testKey}` },
+        body: JSON.stringify({ agent_id: 'tester', text: 'lost in the void' }),
+      })
+      expect(res.status).toBe(200)
+      // Inspect the events store for the dropped event.
+      const events = boot.a2aDeps.eventsStore.recentForAgent('tester', 10)
+      expect(events).toHaveLength(1)
+      expect(events[0]?.status).toBe('dropped_no_operator_chat')
+      expect(events[0]?.direction).toBe('in')
+      expect(events[0]?.text).toBe('lost in the void')
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
 })

@@ -10,7 +10,17 @@ import type { Db } from '../lib/db'
 const MAX_TEXT = 8192
 
 export type EventDirection = 'in' | 'out'
-export type EventStatus = 'ok' | 'auth_failed' | 'http_error' | 'timeout' | 'unknown_agent' | 'agent_paused'
+export type EventStatus =
+  | 'ok'
+  | 'auth_failed'
+  | 'http_error'
+  | 'timeout'
+  | 'unknown_agent'
+  | 'agent_paused'
+  /** Inbound notify accepted (auth passed, agent registered, not paused) but
+   *  dropped because the daemon has no operator chat to route into yet
+   *  (fresh setup — operator hasn't sent the bot their first message). */
+  | 'dropped_no_operator_chat'
 
 export interface AppendInput {
   direction: EventDirection

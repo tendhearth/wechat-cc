@@ -1663,6 +1663,10 @@ describe('internal-api request validation', () => {
         add: () => { /* send tests don't exercise add */ },
         remove: () => {},
         setPaused: () => {},
+        update: (id, _patch) => ({
+          id, name: id, url: '', inbound_api_key: 'unused-inbound', outbound_api_key: '',
+          capabilities: [] as string[], paused: false,
+        }),
       }
 
       const defaultSendResult: SendResult = opts.sendResult ?? { ok: true, http_status: 200, response: { received: true } }
@@ -1899,6 +1903,15 @@ describe('internal-api request validation', () => {
           const a = agentsList.find(x => x.id === id)
           if (!a) throw new Error(`a2a agent '${id}' not found`)
           a.paused = paused
+        },
+        update: (id, patch) => {
+          const a = agentsList.find(x => x.id === id)
+          if (!a) throw new Error(`a2a agent '${id}' not found`)
+          if (patch.name !== undefined) a.name = patch.name
+          if (patch.url !== undefined) a.url = patch.url
+          if (patch.inbound_api_key !== undefined) a.inbound_api_key = patch.inbound_api_key
+          if (patch.outbound_api_key !== undefined) a.outbound_api_key = patch.outbound_api_key
+          return { ...a }
         },
       }
 

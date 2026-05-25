@@ -16,6 +16,11 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { A2AAgentRecord } from '../lib/agent-config'
 
+/** Subset of A2AAgentRecord that's safe to patch via update(). `id` is the
+ *  primary key and can't be changed; `capabilities` is derived from the
+ *  Agent Card; `paused` has its own toggle. */
+export type A2AAgentPatch = Partial<Pick<A2AAgentRecord, 'name' | 'url' | 'inbound_api_key' | 'outbound_api_key'>>
+
 export interface A2ARegistry {
   list(): readonly A2AAgentRecord[]
   get(id: string): A2AAgentRecord | null
@@ -23,6 +28,10 @@ export interface A2ARegistry {
   add(rec: A2AAgentRecord): void
   remove(id: string): void
   setPaused(id: string, paused: boolean): void
+  /** Patch one or more fields on an existing agent. Throws if id not found
+   *  or if the resulting record fails validation (e.g. empty key). Returns
+   *  the updated record. */
+  update(id: string, patch: A2AAgentPatch): A2AAgentRecord
 }
 
 export interface A2ARegistryOpts {
@@ -84,6 +93,24 @@ export function createA2ARegistry(opts: A2ARegistryOpts): A2ARegistry {
       if (ix < 0) throw new Error(`a2a agent '${id}' not found`)
       cache = cache.map((a, i) => i === ix ? { ...a, paused } : a)
       persistAll(cache)
+    },
+    update: (id, patch) => {
+      const ix = cache.findIndex(a => a.id === id)
+      if (ix < 0) throw new Error(`a2a agent '${id}' not found`)
+      // Validate before persist — mirrors the rules from A2AAgentRecord schema.
+      // inbound_api_key min 16 chars (matches the schema); other strings non-empty.
+      if (patch.name !== undefined && patch.name.length === 0) throw new Error(`name must be non-empty`)
+      if (patch.url !== undefined && patch.url.length === 0) throw new Error(`url must be non-empty`)
+      if (patch.inbound_api_key !== undefined && patch.inbound_api_key.length < 16) {
+        throw new Error(`inbound_api_key must be at least 16 chars`)
+      }
+      if (patch.outbound_api_key !== undefined && patch.outbound_api_key.length === 0) {
+        throw new Error(`outbound_api_key must be non-empty`)
+      }
+      const next = { ...cache[ix]!, ...patch }
+      cache = cache.map((a, i) => i === ix ? next : a)
+      persistAll(cache)
+      return next
     },
   }
 }

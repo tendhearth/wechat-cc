@@ -433,6 +433,75 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       }
     },
 
+    // ── a2a server-side smoke test (dashboard Test button) ──────────────────
+    // Outbound mode: same behavior as /v1/a2a/send (we already have the
+    // logic; could refactor to share but the path is short enough to inline).
+    // Inbound mode: daemon POSTs to its OWN /a2a/notify with the agent's
+    // inbound_api_key — the key never crosses the internal-api boundary, so
+    // dashboard clients can't extract it.
+    'POST /v1/a2a/test': async (_q, body) => {
+      if (!deps.a2a) return { status: 503, body: { error: 'a2a_not_wired' } }
+      // Body is pre-validated via A2ATestRequest schema.
+      const { agent_id, text, outbound } = body as { agent_id: string; text: string; outbound: boolean }
+      const agent = deps.a2a.registry.get(agent_id)
+      if (!agent) {
+        return { status: 200, body: {
+          ok: false, direction: outbound ? 'out' : 'in', error: 'unknown_agent',
+        } }
+      }
+      if (outbound) {
+        // Re-use the outbound path semantics from /v1/a2a/send.
+        if (agent.paused) {
+          deps.a2a.recordEvent({ direction: 'out', agent_id, text, status: 'agent_paused' })
+          return { status: 200, body: { ok: false, direction: 'out', error: 'agent_paused' } }
+        }
+        const r = await deps.a2a.client.send({
+          url: agent.url, bearer: agent.outbound_api_key,
+          body: { text, source: { agent_id: 'wechat-cc' } },
+        })
+        const eventStatus: 'ok' | 'http_error' | 'timeout' =
+          r.ok ? 'ok' : (r.error?.match(/timeout|aborted/i) ? 'timeout' : 'http_error')
+        deps.a2a.recordEvent({
+          direction: 'out', agent_id, text, status: eventStatus,
+          ...(r.http_status !== undefined ? { http_status: r.http_status } : {}),
+        })
+        return { status: 200, body: r.ok
+          ? { ok: true, direction: 'out',
+              ...(r.http_status !== undefined ? { http_status: r.http_status } : {}),
+              ...(r.response !== undefined ? { response: r.response } : {}) }
+          : { ok: false, direction: 'out', error: r.error ?? 'unknown_error',
+              ...(r.http_status !== undefined ? { http_status: r.http_status } : {}) }
+        }
+      }
+      // Inbound: POST to our own server. Requires A2A server to be running.
+      if (!deps.a2a.serverEnabled || !deps.a2a.baseUrl) {
+        return { status: 200, body: {
+          ok: false, direction: 'in', error: 'a2a_server_disabled',
+        } }
+      }
+      try {
+        const res = await fetch(`${deps.a2a.baseUrl}/a2a/notify`, {
+          method: 'POST',
+          headers: {
+            'authorization': `Bearer ${agent.inbound_api_key}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ agent_id, text }),
+        })
+        const responseText = await res.text()
+        let response: unknown = responseText
+        try { response = JSON.parse(responseText) } catch { /* keep raw */ }
+        return { status: 200, body: res.ok
+          ? { ok: true, direction: 'in', http_status: res.status, response }
+          : { ok: false, direction: 'in', error: `http_${res.status}`, http_status: res.status }
+        }
+      } catch (err) {
+        return { status: 200, body: {
+          ok: false, direction: 'in', error: errMsg(err),
+        } }
+      }
+    },
+
     // ── a2a dashboard routes ─────────────────────────────────────────────────
     'GET /v1/a2a/list': () => {
       if (!deps.a2a) return { status: 503, body: { error: 'a2a_not_wired' } }

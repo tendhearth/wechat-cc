@@ -259,3 +259,73 @@ test('Remove with confirmation drops the agent from the list', async ({ page, sh
   // List should show empty state
   await expect(page.locator('#a2a-agents-list .empty')).toBeVisible()
 })
+
+test('Test button opens modal and inbound/outbound both report success', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('a2a.seed', {
+    agents: [{
+      id: 'test-bot',
+      name: 'Test Bot',
+      url: 'https://test.example.com/a2a',
+      paused: false,
+      counts: { inbound: 0, outbound: 0 },
+      inbound_api_key: 'wc_test_testkey',
+    }],
+    events: [],
+  })
+
+  await gotoA2APane(page, shimUrl)
+
+  const card = page.locator('.a2a-agent-card[data-id="test-bot"]')
+  await expect(card).toBeVisible()
+
+  // Click Test → modal opens
+  await card.locator('button[data-action="test"]').click()
+  const modal = page.locator('#a2a-test-modal')
+  await expect(modal).toBeVisible()
+  await expect(page.locator('#a2a-test-title')).toContainText('test-bot')
+  // Prefilled message contains the agent id
+  await expect(page.locator('#a2a-test-text')).toHaveValue(/test-bot/)
+
+  // Inbound test → result reports inbound delivered
+  await page.locator('#a2a-test-inbound').click()
+  await expect(page.locator('#a2a-test-result.ok')).toBeVisible()
+  await expect(page.locator('#a2a-test-result')).toContainText(/inbound delivered/i)
+
+  // Outbound test → result reports outbound delivered
+  await page.locator('#a2a-test-outbound').click()
+  await expect(page.locator('#a2a-test-result')).toContainText(/outbound delivered/i)
+
+  // Close button shuts the modal
+  await page.locator('#a2a-test-close').click()
+  await expect(modal).not.toBeVisible()
+
+  // After 2 tests, counts should be ≥1 each (the shim bumps counts on test)
+  const card2 = page.locator('.a2a-agent-card[data-id="test-bot"]')
+  await expect(card2.locator('.a2a-card-counts')).toContainText(/↓ 1.*↑ 1/)
+})
+
+test('Test button reports failure for unknown_agent', async ({ page, shimUrl, shim }) => {
+  // Seed one agent, then test a different (nonexistent) id via UI manipulation.
+  // Direct manipulation: we'll cheat by injecting a card with a fake id then
+  // clicking its Test button — the shim's /v1/a2a/test will return unknown_agent.
+  await shim.invoke('a2a.seed', {
+    agents: [{
+      id: 'ghost-bot',
+      name: 'Ghost Bot',
+      url: 'https://ghost.example.com/a2a',
+      paused: false,
+      counts: { inbound: 0, outbound: 0 },
+      inbound_api_key: 'wc_ghost_key',
+    }],
+    events: [],
+  })
+  await gotoA2APane(page, shimUrl)
+  const card = page.locator('.a2a-agent-card[data-id="ghost-bot"]')
+  await expect(card).toBeVisible()
+  // Pre-remove the agent from shim state, then click Test (cache stale id)
+  await shim.invoke('a2a.seed', { agents: [], events: [] })
+  await card.locator('button[data-action="test"]').click()
+  await page.locator('#a2a-test-inbound').click()
+  await expect(page.locator('#a2a-test-result.fail')).toBeVisible()
+  await expect(page.locator('#a2a-test-result')).toContainText(/unknown_agent/)
+})

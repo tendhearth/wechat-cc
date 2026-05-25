@@ -342,6 +342,22 @@ export const A2ASendResponse = z.union([
 ])
 export type A2ASendRequestT = z.infer<typeof A2ASendRequest>
 
+// ── POST /v1/a2a/test ────────────────────────────────────────────────────────
+// Server-side smoke test for the dashboard's Test button. With outbound=false
+// (default), the daemon performs a synthetic inbound notify against its own
+// /a2a/notify (using the agent's inbound_api_key — never exposed to clients).
+// With outbound=true, behaves identically to /v1/a2a/send.
+export const A2ATestRequest = z.object({
+  agent_id: z.string().min(1).max(64),
+  text: z.string().min(1),
+  outbound: z.boolean().default(false),
+})
+export const A2ATestResponse = z.union([
+  z.object({ ok: z.literal(true), direction: z.enum(['in', 'out']), http_status: z.number().optional(), response: z.unknown().optional() }),
+  z.object({ ok: z.literal(false), direction: z.enum(['in', 'out']), error: z.string(), http_status: z.number().optional() }),
+])
+export type A2ATestRequestT = z.infer<typeof A2ATestRequest>
+
 // ── POST /v1/conversation/set-mode ──────────────────────────────────────────
 // chatId is camelCase — intentional divergence from other wechat routes.
 // Mode is a discriminated union matching the runtime Mode type in conversation.ts.
@@ -468,6 +484,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 
   // a2a
   'POST /v1/a2a/send': A2ASendRequest,
+  'POST /v1/a2a/test': A2ATestRequest,
   'POST /v1/a2a/preview': A2APreviewRequest,
   'POST /v1/a2a/install': A2AInstallRequest,
   'POST /v1/a2a/remove': A2ARemoveRequest,
@@ -500,6 +517,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/delegate': DelegateResponse,
   'POST /v1/conversation/set-mode': ConversationSetModeResponse,
   'POST /v1/a2a/send': A2ASendResponse,
+  'POST /v1/a2a/test': A2ATestResponse,
   'POST /v1/a2a/preview': A2APreviewResponse,
   'POST /v1/a2a/install': A2AInstallResponse,
 }

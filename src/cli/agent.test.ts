@@ -20,6 +20,7 @@ import {
   cmdAgentRemove,
   cmdAgentInfo,
   cmdAgentTest,
+  cmdAgentEdit,
   cmdDaemonA2AEnable,
   cmdDaemonA2ADisable,
   cmdDaemonA2AStatus,
@@ -690,6 +691,77 @@ describe('cmdAgentAdd with a2a-info.json present', () => {
     const out = await captureLog(() => cmdAgentAdd(stateDir, fakeBaseUrl(), { id: 'alpha' }))
     expect(out.some(l => l.includes('<wechat-cc-base-url>'))).toBe(true)
     expect(out.some(l => /server disabled/i.test(l))).toBe(true)
+  })
+})
+
+// ── cmdAgentEdit ────────────────────────────────────────────────────────
+
+describe('cmdAgentEdit', () => {
+  let stateDir: string
+  beforeEach(() => { stateDir = tempState() })
+  afterEach(() => { rmSync(stateDir, { recursive: true, force: true }) })
+
+  it('throws when agent not registered', () => {
+    writeConfig(stateDir, [])
+    expect(() => cmdAgentEdit(stateDir, 'missing', { name: 'X' })).toThrow(/not registered/i)
+  })
+
+  it('throws when no fields to update', () => {
+    writeConfig(stateDir, [agentRec('alpha')])
+    expect(() => cmdAgentEdit(stateDir, 'alpha', {})).toThrow(/no fields to update/i)
+  })
+
+  it('updates name and persists', async () => {
+    writeConfig(stateDir, [agentRec('alpha')])
+    const out = await captureLog(() => cmdAgentEdit(stateDir, 'alpha', { name: 'New Name' }))
+    expect(out.some(l => l.includes('updated'))).toBe(true)
+    expect(out.some(l => l.includes('New Name'))).toBe(true)
+    // Round-trip: reload registry
+    const reg = createA2ARegistry({ stateDir })
+    expect(reg.get('alpha')?.name).toBe('New Name')
+  })
+
+  it('rotates outbound_api_key', async () => {
+    writeConfig(stateDir, [agentRec('alpha')])
+    const newKey = 'new-outbound-key-rotated'
+    await captureLog(() => cmdAgentEdit(stateDir, 'alpha', { outboundKey: newKey }))
+    const reg = createA2ARegistry({ stateDir })
+    expect(reg.get('alpha')?.outbound_api_key).toBe(newKey)
+  })
+
+  it('rotates inbound_api_key with --rotate-inbound-key and prints the new key', async () => {
+    writeConfig(stateDir, [agentRec('alpha')])
+    const before = createA2ARegistry({ stateDir }).get('alpha')!.inbound_api_key
+    const out = await captureLog(() => cmdAgentEdit(stateDir, 'alpha', { rotateInboundKey: true }))
+    const after = createA2ARegistry({ stateDir }).get('alpha')!.inbound_api_key
+    expect(after).not.toBe(before)
+    expect(after).toMatch(/^wc_[0-9a-f]{32}$/)
+    expect(out.some(l => l.includes(after))).toBe(true)
+    expect(out.some(l => /share.*new key/i.test(l))).toBe(true)
+  })
+
+  it('updates url and preserves other fields', async () => {
+    writeConfig(stateDir, [agentRec('alpha')])
+    const original = createA2ARegistry({ stateDir }).get('alpha')!
+    await captureLog(() => cmdAgentEdit(stateDir, 'alpha', { url: 'https://moved.example.com/a2a' }))
+    const after = createA2ARegistry({ stateDir }).get('alpha')!
+    expect(after.url).toBe('https://moved.example.com/a2a')
+    expect(after.name).toBe(original.name)
+    expect(after.inbound_api_key).toBe(original.inbound_api_key)
+    expect(after.outbound_api_key).toBe(original.outbound_api_key)
+  })
+
+  it('combines multiple field updates in one call', async () => {
+    writeConfig(stateDir, [agentRec('alpha')])
+    await captureLog(() => cmdAgentEdit(stateDir, 'alpha', {
+      name: 'Renamed',
+      url: 'https://new.example.com/a2a',
+      outboundKey: 'rotated-key',
+    }))
+    const after = createA2ARegistry({ stateDir }).get('alpha')!
+    expect(after.name).toBe('Renamed')
+    expect(after.url).toBe('https://new.example.com/a2a')
+    expect(after.outbound_api_key).toBe('rotated-key')
   })
 })
 

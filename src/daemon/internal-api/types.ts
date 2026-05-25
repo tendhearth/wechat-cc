@@ -152,7 +152,7 @@ export interface InternalApiDeps {
       agent_id: string
       text: string
       urgency?: 'normal' | 'critical'
-      status: 'ok' | 'auth_failed' | 'http_error' | 'timeout' | 'unknown_agent' | 'agent_paused'
+      status: 'ok' | 'auth_failed' | 'http_error' | 'timeout' | 'unknown_agent' | 'agent_paused' | 'dropped_no_operator_chat'
       http_status?: number
     }) => void
     /** True when the a2a HTTP listener is configured and running. */

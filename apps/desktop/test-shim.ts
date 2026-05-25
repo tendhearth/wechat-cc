@@ -628,6 +628,30 @@ Bun.serve({
         return Response.json({ events })
       }
 
+      // POST /v1/a2a/test — synthetic smoke from dashboard. We don't actually
+      // do network here; just return a deterministic happy-path response so
+      // playwright can verify the UI flow + bump the counts.
+      if (url.pathname === '/v1/a2a/test' && req.method === 'POST') {
+        const body2 = (await req.json()) as { agent_id?: string; text?: string; outbound?: boolean }
+        const id = body2?.agent_id ?? ''
+        const text = body2?.text ?? ''
+        const outbound = body2?.outbound === true
+        const agent = __mockState.a2aAgents.find(a => a.id === id)
+        if (!agent) {
+          return Response.json({ ok: false, direction: outbound ? 'out' : 'in', error: 'unknown_agent' })
+        }
+        // Record a synthetic event + bump the count.
+        __mockState.a2aEvents.push({
+          ts: new Date().toISOString(),
+          agent_id: id, text,
+          direction: outbound ? 'out' : 'in',
+          status: 'ok',
+        })
+        if (outbound) agent.counts.outbound += 1
+        else agent.counts.inbound += 1
+        return Response.json({ ok: true, direction: outbound ? 'out' : 'in', http_status: 200 })
+      }
+
       return Response.json({ error: 'a2a route not found' }, { status: 404 })
     }
 

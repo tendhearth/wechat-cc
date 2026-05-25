@@ -702,6 +702,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     const operatorChatId = resolveOperatorChatId()
     if (!operatorChatId) {
       deps.log('A2A_NOTIFY_IN', `dropping notify from ${event.agent.id}: no operator chat bound yet`)
+      // Record the drop so operator sees it in the activity drawer instead
+      // of wondering "the test said delivered, why didn't I get anything?"
+      a2aEventsStore.append({
+        direction: 'in', agent_id: event.agent.id, text: event.text,
+        urgency: event.urgency, status: 'dropped_no_operator_chat',
+      })
       return
     }
     const formatted = `[A2A:${event.agent.id}] ${event.text}`

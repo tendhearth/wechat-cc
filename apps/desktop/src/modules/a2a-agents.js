@@ -37,6 +37,9 @@ export async function initA2AAgentsTab() {
     const drawer = document.getElementById('a2a-activity-drawer')
     if (drawer) drawer.hidden = true
   })
+  document.getElementById('a2a-test-inbound')?.addEventListener('click', () => runTest(false))
+  document.getElementById('a2a-test-outbound')?.addEventListener('click', () => runTest(true))
+  document.getElementById('a2a-test-close')?.addEventListener('click', closeTestModal)
   // Delegated click handler on the list container (attached ONCE; not per
   // refresh — duplicating would multiply calls per click).
   list.addEventListener('click', onCardAction)
@@ -84,6 +87,7 @@ export async function refresh() {
       <div class="a2a-card-counts">↓ ${a.counts?.inbound ?? 0} · ↑ ${a.counts?.outbound ?? 0}</div>
       <div class="a2a-card-actions">
         <button class="btn ghost" data-action="pause" data-id="${escapeHtml(a.id)}">${a.paused ? 'Resume' : 'Pause'}</button>
+        <button class="btn ghost" data-action="test" data-id="${escapeHtml(a.id)}">Test</button>
         <button class="btn ghost" data-action="activity" data-id="${escapeHtml(a.id)}">Activity</button>
         <button class="btn danger" data-action="remove" data-id="${escapeHtml(a.id)}">Remove</button>
       </div>
@@ -123,7 +127,72 @@ async function onCardAction(e) {
     await openActivityDrawer(id).catch(err =>
       alert(`Failed to load activity: ${err instanceof Error ? err.message : String(err)}`)
     )
+  } else if (action === 'test') {
+    await openTestModal(id).catch(err =>
+      alert(`Failed to open test dialog: ${err instanceof Error ? err.message : String(err)}`)
+    )
   }
+}
+
+// ── Test modal ────────────────────────────────────────────────────────────
+// Lets the operator validate either direction of the A2A loop without
+// dropping to the CLI. Inbound: posts via daemon to its own /a2a/notify
+// (notification lands in WeChat chat). Outbound: posts to the registered
+// agent's URL via /v1/a2a/send.
+
+let testAgentId = ''
+
+/** @param {string} id */
+async function openTestModal(id) {
+  testAgentId = id
+  const modal = document.getElementById('a2a-test-modal')
+  if (!(modal instanceof HTMLDialogElement)) return
+  const title = document.getElementById('a2a-test-title')
+  if (title) title.textContent = `Test '${id}'`
+  const textInput = /** @type {HTMLInputElement | null} */ (document.getElementById('a2a-test-text'))
+  if (textInput) textInput.value = `test from ${id} via wechat-cc`
+  const result = document.getElementById('a2a-test-result')
+  if (result) { result.textContent = ''; result.className = 'a2a-test-result' }
+  modal.showModal()
+}
+
+/** @param {boolean} outbound */
+async function runTest(outbound) {
+  const textInput = /** @type {HTMLInputElement | null} */ (document.getElementById('a2a-test-text'))
+  const result = document.getElementById('a2a-test-result')
+  if (!result) return
+  const text = textInput?.value || `test from ${testAgentId} via wechat-cc`
+  result.textContent = 'sending…'
+  result.className = 'a2a-test-result pending'
+  try {
+    const r = /** @type {Record<string, any>} */ (await invokeApi('POST', '/v1/a2a/test', {
+      agent_id: testAgentId, text, outbound,
+    }))
+    if (r?.ok) {
+      const dir = r.direction === 'in' ? 'inbound' : 'outbound'
+      const status = r.http_status ? ` (HTTP ${r.http_status})` : ''
+      result.textContent = `✅ ${dir} delivered${status}` +
+        (r.direction === 'in'
+          ? ` — check your WeChat chat for [A2A:${testAgentId}] ${text}`
+          : '')
+      result.className = 'a2a-test-result ok'
+    } else {
+      const errMsg = r?.error ?? 'unknown error'
+      const status = r?.http_status ? ` (HTTP ${r.http_status})` : ''
+      result.textContent = `❌ ${r?.direction ?? 'test'} failed: ${errMsg}${status}`
+      result.className = 'a2a-test-result fail'
+    }
+  } catch (err) {
+    result.textContent = `❌ request failed: ${err instanceof Error ? err.message : String(err)}`
+    result.className = 'a2a-test-result fail'
+  }
+  // Refresh the agent list (counts may have updated from this test).
+  refresh().catch(() => {})
+}
+
+function closeTestModal() {
+  const modal = document.getElementById('a2a-test-modal')
+  if (modal instanceof HTMLDialogElement) modal.close()
 }
 
 function openAddModal() {
