@@ -11,7 +11,7 @@
  * - Tauri config wires this in via `beforeDevCommand` + `devUrl`.
  */
 import { watch, existsSync, statSync, readFileSync } from 'node:fs'
-import { join, resolve, extname } from 'node:path'
+import { join, resolve, relative, isAbsolute, extname } from 'node:path'
 
 const ROOT = resolve(import.meta.dir, 'src')
 const PORT = Number(process.env.PORT ?? 4173)
@@ -132,8 +132,10 @@ Bun.serve({
     const pathname = url.pathname === '/' ? '/index.html' : url.pathname
     const filePath = join(ROOT, pathname)
 
-    // Path traversal guard
-    if (!filePath.startsWith(ROOT + '/') && filePath !== ROOT) {
+    // Path traversal guard. Uses path.relative so the check works on
+    // Windows (path.join produces '\\', not '/').
+    const rel = relative(ROOT, filePath)
+    if (rel.startsWith('..') || isAbsolute(rel)) {
       return new Response('Forbidden', { status: 403 })
     }
 
@@ -144,11 +146,15 @@ Bun.serve({
     const ext = extname(filePath).toLowerCase()
     const mime = MIME[ext] ?? 'application/octet-stream'
 
-    // Inject reload script into HTML responses.
+    // Inject reload script into HTML responses. Match only the last
+    // </body> via a greedy lookahead, so <body> mentioned inside string
+    // literals or comments doesn't grab the injection. Falls back to
+    // appending if no closing tag is found.
     if (ext === '.html') {
       let html = readFileSync(filePath, 'utf8')
-      if (html.includes('</body>')) {
-        html = html.replace('</body>', `  ${RELOAD_SCRIPT_TAG}\n  </body>`)
+      const bodyClose = /<\/body\s*>(?![\s\S]*<\/body\s*>)/i
+      if (bodyClose.test(html)) {
+        html = html.replace(bodyClose, (m) => `  ${RELOAD_SCRIPT_TAG}\n  ${m}`)
       } else {
         html += `\n${RELOAD_SCRIPT_TAG}\n`
       }
@@ -166,3 +172,9 @@ Bun.serve({
 console.log(`[dev-server] serving ${ROOT}`)
 console.log(`[dev-server] listening on http://127.0.0.1:${PORT}`)
 console.log(`[dev-server] watching for file changes; browser reloads on save`)
+
+// Clean exit when tauri's beforeDevCommand parent goes away, or on ctrl-C.
+// Without this, the port can stay bound for a few seconds on the next dev run.
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(sig, () => process.exit(0))
+}
