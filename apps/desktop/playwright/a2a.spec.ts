@@ -329,3 +329,64 @@ test('Test button reports failure for unknown_agent', async ({ page, shimUrl, sh
   await expect(page.locator('#a2a-test-result.fail')).toBeVisible()
   await expect(page.locator('#a2a-test-result')).toContainText(/unknown_agent/)
 })
+
+// ─── Add-modal close affordances (regression guard for fix 5ddeb72) ───────
+//
+// Pre-5ddeb72 the Add A2A Agent modal had no close button in its first
+// stage — users who opened the modal by accident or wanted to abort had
+// no escape hatch (only ESC, and only if showModal() was used). The fix
+// added a ✕ button + backdrop-click handler. These specs catch any
+// regression that removes them.
+
+test('Add modal: ✕ button closes the modal', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('a2a.reset')
+  await gotoA2APane(page, shimUrl)
+  await page.locator('#a2a-add-btn').click()
+  await expect(page.locator('dialog#a2a-add-modal[open]')).toBeVisible()
+  await page.locator('#a2a-add-modal-close').click()
+  await expect(page.locator('dialog#a2a-add-modal[open]')).toHaveCount(0)
+})
+
+test('Add modal: ESC closes (native <dialog> showModal behavior)', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('a2a.reset')
+  await gotoA2APane(page, shimUrl)
+  await page.locator('#a2a-add-btn').click()
+  await expect(page.locator('dialog#a2a-add-modal[open]')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('dialog#a2a-add-modal[open]')).toHaveCount(0)
+})
+
+test('Add modal: clicking backdrop closes the modal', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('a2a.reset')
+  await gotoA2APane(page, shimUrl)
+  await page.locator('#a2a-add-btn').click()
+  const dialog = page.locator('dialog#a2a-add-modal')
+  await expect(dialog).toBeVisible()
+  // Click outside the modal content (the dialog backdrop region).
+  // page.locator('dialog').click() with force fires on the dialog box
+  // itself; the handler in a2a-agents.js checks `e.target === dialog`
+  // and closes only when the click landed on the backdrop region.
+  // Use viewport coords near the corner — definitely outside the centered
+  // modal panel.
+  await page.mouse.click(20, 20)
+  await expect(page.locator('dialog#a2a-add-modal[open]')).toHaveCount(0)
+})
+
+test('Test modal: ✕ button closes the modal', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('a2a.seed', {
+    agents: [{
+      id: 'test-close-bot',
+      name: 'Close Test',
+      url: 'https://x.example.com/a2a',
+      paused: false,
+      counts: { inbound: 0, outbound: 0 },
+      inbound_api_key: 'wc_x',
+    }],
+    events: [],
+  })
+  await gotoA2APane(page, shimUrl)
+  await page.locator('.a2a-agent-card[data-id="test-close-bot"] button[data-action="test"]').click()
+  await expect(page.locator('dialog#a2a-test-modal[open]')).toBeVisible()
+  await page.locator('#a2a-test-modal-close').click()
+  await expect(page.locator('dialog#a2a-test-modal[open]')).toHaveCount(0)
+})
