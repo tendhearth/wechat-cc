@@ -616,7 +616,7 @@ async function renderPagePdf(pageUrl: string, outPath: string): Promise<void> {
       `--print-to-pdf=${outPath}`,
       pageUrl,
     ]
-    const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     let stderr = ''
     proc.stderr.on('data', (b) => { stderr += b.toString('utf8') })
     const timeout = setTimeout(() => {
@@ -774,6 +774,7 @@ async function startTunnel(port: number): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const proc = spawn(bin, ['tunnel', '--url', `http://localhost:${port}`, '--no-autoupdate'], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
     })
     tunnelProc = proc
 

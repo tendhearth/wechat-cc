@@ -164,6 +164,10 @@ function defaultSpawnBun(
       // Inherit PATH so spawning `bun` resolves the user's bun install.
       env: process.env,
       // detached: false (the default) so the child dies with parent.
+      // windowsHide:true — the daemon is compiled `--windows-hide-console`;
+      // CLAUDE.md mandates this on every spawn so codex-autofix doesn't
+      // flash a visible bun.exe console window at boot.
+      windowsHide: true,
     })
     let stderr = ''
     let resolved = false

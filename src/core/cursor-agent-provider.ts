@@ -16,6 +16,7 @@
  */
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession } from './agent-provider'
 import type { TierProfile } from './user-tier'
+import { log } from '../lib/log'
 
 export interface CursorTierSdkOpts {
   sandboxOptions: { enabled: boolean }
@@ -234,7 +235,26 @@ export function createCursorAgentProvider(opts: CursorAgentProviderOptions): Age
           sandboxOptions: tierOpts.sandboxOptions,
         },
       }
-      const agent = (await opts.sdk.Agent.create(createOptions)) as CursorAgentLike
+      // Resume an existing Cursor agent when the framework passes a
+      // persisted session id, matching the Claude / Codex providers.
+      // Pre-fix this branch was missing — Cursor sessions cold-started on
+      // every daemon restart and the user's chat history / context was
+      // silently lost. `Agent.resume` is declared optional in the SDK
+      // namespace; if a future SDK build drops it we fall back to create.
+      let agent: CursorAgentLike | null = null
+      if (spawnOpts.resumeSessionId && opts.sdk.Agent.resume) {
+        try {
+          agent = (await opts.sdk.Agent.resume(spawnOpts.resumeSessionId, createOptions)) as CursorAgentLike
+          log('SESSION_RESUME', `alias=${project.alias} agent_id=${spawnOpts.resumeSessionId} provider=cursor`)
+        } catch (err) {
+          // Resume can legitimately fail (agent expired, sdk-side delete);
+          // fall back to a fresh agent so the user still gets a reply.
+          log('SESSION_RESUME', `alias=${project.alias} agent_id=${spawnOpts.resumeSessionId} provider=cursor FAILED — fresh agent: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+      if (!agent) {
+        agent = (await opts.sdk.Agent.create(createOptions)) as CursorAgentLike
+      }
 
       return makeCursorSession(agent, mcpServerNames, (rawName) => {
         if (!firstToolNameLogged) {

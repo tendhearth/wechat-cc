@@ -332,4 +332,42 @@ describe('createCursorAgentProvider', () => {
     for await (const ev of session.dispatch('hi')) events.push(ev)
     expect(events).toContainEqual({ kind: 'error', message: 'auth_failed' })
   })
+
+  it('spawn with resumeSessionId calls Agent.resume instead of Agent.create', async () => {
+    // Regression: pre-fix the provider always called Agent.create even
+    // when spawnOpts.resumeSessionId was set, so Cursor sessions cold-
+    // started on every daemon restart and the user's chat history was
+    // silently lost.
+    const agent = makeFakeAgent([{ type: 'status', status: 'FINISHED' }])
+    const sdk = makeFakeSdk(agent)
+    const provider = createCursorAgentProvider({ sdk, apiKey: 'test-key' })
+    await provider.spawn(
+      { alias: 'P', path: '/tmp/proj' },
+      { tierProfile: TIER_PROFILES.admin, chatId: 'c', resumeSessionId: 'agent-prior' },
+    )
+    expect(sdk.Agent.resume).toHaveBeenCalledTimes(1)
+    expect(sdk.Agent.create).not.toHaveBeenCalled()
+    expect(sdk.Agent.resume.mock.calls[0]![0]).toBe('agent-prior')
+  })
+
+  it('spawn falls back to Agent.create when Agent.resume throws', async () => {
+    // Resume can fail legitimately (agent expired, sdk-side delete) — we
+    // must fall through to a fresh agent so the user still gets a reply.
+    const agent = makeFakeAgent([{ type: 'status', status: 'FINISHED' }])
+    const sdk = {
+      Agent: {
+        create: vi.fn(async (_opts: Record<string, unknown>) => agent),
+        resume: vi.fn(async (_agentId: string, _opts?: Record<string, unknown>) => {
+          throw new Error('agent expired')
+        }),
+      },
+    }
+    const provider = createCursorAgentProvider({ sdk, apiKey: 'test-key' })
+    await provider.spawn(
+      { alias: 'P', path: '/tmp/proj' },
+      { tierProfile: TIER_PROFILES.admin, chatId: 'c', resumeSessionId: 'agent-stale' },
+    )
+    expect(sdk.Agent.resume).toHaveBeenCalledTimes(1)
+    expect(sdk.Agent.create).toHaveBeenCalledTimes(1)
+  })
 })
