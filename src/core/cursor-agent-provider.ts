@@ -14,10 +14,22 @@
  *
  * See docs/superpowers/specs/2026-05-23-cursor-sdk-provider-design.md.
  */
-import type { AgentEvent, AgentProject, AgentProvider, AgentSession } from './agent-provider'
+import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities } from './agent-provider'
 import type { TierProfile } from './user-tier'
-import type { PermissionMode } from './capability-matrix'
 import { log } from '../lib/log'
+
+/**
+ * RFC 05 Phase 2 — Cursor's SDK has no per-tool callback and no
+ * read-only sandbox (only workspace-write / full), and no sub-agent
+ * surface (so it can't be a delegate peer in v1 — see RFC 05 §7 #3).
+ * Flip `supportsDelegation` when Cursor ships sub-agent support.
+ */
+export const CURSOR_CAPABILITIES: ProviderCapabilities = {
+  perToolCallback: false,
+  sandboxLevels: new Set(['workspace-write', 'full']),
+  supportsDelegation: false,
+  supportsResume: true,
+}
 
 export interface CursorTierSdkOpts {
   sandboxOptions: { enabled: boolean }

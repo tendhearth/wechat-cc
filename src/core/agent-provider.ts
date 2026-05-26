@@ -1,5 +1,9 @@
 import type { TierProfile } from './user-tier'
-import type { PermissionMode } from './capability-matrix'
+import type { PermissionMode } from './permission-mode'
+
+// Re-export so existing imports `import type { PermissionMode } from
+// './agent-provider'` keep working.
+export type { PermissionMode }
 
 export interface AgentProject {
   alias: string
@@ -97,6 +101,45 @@ export interface SpawnContext {
   /** When set, the provider should resume an existing session (claude
    *  jsonl, codex thread id, cursor agent id) instead of cold-starting. */
   resumeSessionId?: string
+}
+
+/**
+ * SDK-level sandbox granularity. Codex maps these directly; Cursor only
+ * supports a coarse subset; Claude has none (relies on per-tool callback).
+ * Used by capability-matrix derivation to decide what tier→sandbox
+ * translations are realisable for each provider.
+ */
+export type SandboxLevel = 'none' | 'read-only' | 'workspace-write' | 'full'
+
+/**
+ * Per-provider static capability declaration (RFC 05 Phase 2). Each
+ * provider exports a constant of this shape; capability-matrix derives
+ * the (mode × provider × permissionMode) row from it without a 24-row
+ * hand-written constant.
+ *
+ * Adding a new provider (gemini-cli, etc.) means filling these four
+ * fields, not authoring 8 new matrix rows.
+ */
+export interface ProviderCapabilities {
+  /**
+   * SDK supports per-tool callback (Claude's `canUseTool`). Decides:
+   *   - whether `askUser='per-tool'` is realisable in strict mode
+   *   - whether `runtime.buildCanUseTool` gets called at spawn
+   */
+  perToolCallback: boolean
+  /**
+   * Sandbox levels the SDK exposes. Decides which tier→sandbox
+   * translations are realisable. Empty set ⇒ no SDK sandbox (Claude).
+   */
+  sandboxLevels: ReadonlySet<SandboxLevel>
+  /**
+   * Can act as a `delegate_<peer>` target in primary_tool mode. Cursor
+   * is false in v1 (SDK has no sub-agent surface — see RFC 05 §7 #3);
+   * flip when it lands.
+   */
+  supportsDelegation: boolean
+  /** Can resume an existing session id across daemon restarts. */
+  supportsResume: boolean
 }
 
 export interface AgentProvider {

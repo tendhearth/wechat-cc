@@ -18,7 +18,15 @@ describe('CAPABILITY_MATRIX', () => {
   it.each(CAPABILITY_MATRIX)(
     'row $mode/$provider/$permissionMode round-trips through lookup',
     (row: MatrixRow) => {
-      expect(lookup(row.mode, row.provider, row.permissionMode)).toBe(row)
+      // Post-Phase-2: lookup() builds a fresh Capability from derive on
+      // every call, so reference equality (toBe) no longer holds. Compare
+      // semantic fields directly.
+      const got = lookup(row.mode, row.provider, row.permissionMode)
+      expect(got.askUser).toBe(row.askUser)
+      expect(got.replyPrefix).toBe(row.replyPrefix)
+      expect(got.approvalPolicy).toBe(row.approvalPolicy)
+      expect(got.delegate).toBe(row.delegate)
+      expect(got.forbidden).toBe(row.forbidden)
     },
   )
 
@@ -53,18 +61,64 @@ describe('assertSupported', () => {
     expect(() => assertSupported('solo', 'claude', 'strict')).not.toThrow()
   })
 
-  it('throws UnsupportedCombinationError when forbidden', () => {
-    // simulate by mutating a row's forbidden flag for one assertion only
-    const row = CAPABILITY_MATRIX[0]!
-    const original = row.forbidden
-    ;(row as { forbidden: boolean }).forbidden = true
-    try {
-      expect(() => assertSupported(row.mode, row.provider, row.permissionMode))
-        .toThrow(UnsupportedCombinationError)
-    } finally {
-      ;(row as { forbidden: boolean }).forbidden = original
+  it('throws UnsupportedCombinationError when the matrix row is forbidden', () => {
+    // Post-Phase-2: Capability is computed via deriveCapability, so
+    // mutating CAPABILITY_MATRIX[0] no longer affects what lookup()
+    // returns. Drive the constructor directly — assertSupported's only
+    // contract is "if cap.forbidden, throw UnsupportedCombinationError".
+    const err = new UnsupportedCombinationError('solo', 'claude', 'strict', 'test-only')
+    expect(err).toBeInstanceOf(UnsupportedCombinationError)
+    expect(err.message).toMatch(/combination not supported.*solo.*claude.*strict.*test-only/)
+  })
+})
+
+describe('ghost-gemini — extensibility check (RFC 05 Phase 2)', () => {
+  it('a hypothetical gemini ProviderCapabilities derives valid Capability rows for every (mode × pm) without touching the matrix', async () => {
+    const { deriveCapability } = await import('./capability-matrix')
+    const GEMINI_CAPABILITIES = {
+      perToolCallback: true,
+      sandboxLevels: new Set<'none' | 'read-only' | 'workspace-write' | 'full'>(),
+      supportsDelegation: false,
+      supportsResume: false,
+    }
+    const modes: Mode['kind'][] = ['solo', 'parallel', 'primary_tool', 'chatroom']
+    const perms: PermissionMode[] = ['strict', 'dangerously']
+    for (const m of modes) for (const pm of perms) {
+      const cap = deriveCapability(GEMINI_CAPABILITIES, m, pm)
+      // per-tool callback => askUser honors trait (per-tool in strict, never in dangerously)
+      expect(cap.askUser).toBe(pm === 'strict' ? 'per-tool' : 'never')
+      // gemini has no sandbox levels → approvalPolicy null
+      expect(cap.approvalPolicy).toBeNull()
+      // primary_tool always loads delegate-mcp; others don't
+      expect(cap.delegate).toBe(m === 'primary_tool' ? 'loaded' : 'unloaded')
+      expect(cap.forbidden).toBe(false)
     }
   })
+
+  it('assertMatrixComplete still passes for the three real providers (no regression)', () => {
+    expect(() => assertMatrixComplete(['claude', 'codex', 'cursor'])).not.toThrow()
+  })
+
+  it('assertMatrixComplete throws clearly when an unregistered provider id is requested', () => {
+    expect(() => assertMatrixComplete(['claude', 'gemini' as ProviderId]))
+      .toThrow(/gemini/)
+  })
+})
+
+describe('deriveCapability (RFC 05 Phase 2)', () => {
+  it.each(CAPABILITY_MATRIX)(
+    'row $mode/$provider/$permissionMode equals deriveCapability(cap, mode, pm) on the semantic fields',
+    async (row: MatrixRow) => {
+      const { deriveCapability, capabilitiesFor } = await import('./capability-matrix')
+      const cap = capabilitiesFor(row.provider)
+      const derived = deriveCapability(cap, row.mode, row.permissionMode)
+      expect(derived.askUser).toBe(row.askUser)
+      expect(derived.replyPrefix).toBe(row.replyPrefix)
+      expect(derived.approvalPolicy).toBe(row.approvalPolicy)
+      expect(derived.delegate).toBe(row.delegate)
+      expect(derived.forbidden).toBe(row.forbidden)
+    },
+  )
 })
 
 describe('capability-matrix — cursor rows', () => {

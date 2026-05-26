@@ -1,10 +1,21 @@
 import { Codex, type Thread, type ThreadEvent, type ThreadItem } from '@openai/codex-sdk'
 import { tmpdir } from 'node:os'
-import type { AgentEvent, AgentProject, AgentProvider, AgentSession, SpawnContext } from './agent-provider'
+import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
 import { resolveCodexCheapModel } from './codex-cheap-model'
 import type { TierProfile } from './user-tier'
-import type { PermissionMode } from './capability-matrix'
 import { log } from '../lib/log'
+
+/**
+ * RFC 05 Phase 2 — Codex SDK has no per-tool callback (every dispatch
+ * runs to completion against the SDK-level sandbox), so strict-mode
+ * gating maps to coarse sandbox levels. All three levels supported.
+ */
+export const CODEX_CAPABILITIES: ProviderCapabilities = {
+  perToolCallback: false,
+  sandboxLevels: new Set(['read-only', 'workspace-write', 'full']),
+  supportsDelegation: true,
+  supportsResume: true,
+}
 
 export interface CodexTierSdkOpts {
   sandboxMode: 'read-only' | 'workspace-write' | 'danger-full-access'

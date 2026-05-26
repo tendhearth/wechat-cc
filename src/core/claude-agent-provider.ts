@@ -1,8 +1,19 @@
 import { query, type Options, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { AgentEvent, AgentProject, AgentProvider, AgentSession, SpawnContext } from './agent-provider'
+import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
 import type { TierProfile, ToolKind } from './user-tier'
-import type { PermissionMode } from './capability-matrix'
 import { log } from '../lib/log'
+
+/**
+ * RFC 05 Phase 2 — static capabilities. Claude is the only provider with
+ * a per-tool callback SDK; sandbox levels are empty because Claude has
+ * no SDK-level sandbox knob (relies on canUseTool + disallowedTools).
+ */
+export const CLAUDE_CAPABILITIES: ProviderCapabilities = {
+  perToolCallback: true,
+  sandboxLevels: new Set(),
+  supportsDelegation: true,
+  supportsResume: true,
+}
 
 /**
  * Map ToolKind → the Claude Code built-in tool names that fall into it.

@@ -13,7 +13,7 @@
  * See docs/superpowers/specs/2026-05-22-user-tier-permissions-design.md.
  */
 import type { Access } from '../lib/access'
-import type { PermissionMode } from './capability-matrix'
+import type { PermissionMode } from './permission-mode'
 
 export type UserTier = 'admin' | 'trusted' | 'guest'
 

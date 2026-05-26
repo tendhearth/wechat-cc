@@ -85,3 +85,30 @@ describe('collectTurn', () => {
     expect(summary).toEqual({ assistantText: [], replyToolCalled: false, result: undefined, error: undefined })
   })
 })
+
+describe('ProviderCapabilities — per-provider self-declarations (RFC 05 Phase 2)', () => {
+  it('CLAUDE_CAPABILITIES has the four expected fields', async () => {
+    const { CLAUDE_CAPABILITIES } = await import('./claude-agent-provider')
+    expect(CLAUDE_CAPABILITIES.perToolCallback).toBe(true)
+    expect(CLAUDE_CAPABILITIES.supportsDelegation).toBe(true)
+    expect(CLAUDE_CAPABILITIES.supportsResume).toBe(true)
+    expect(CLAUDE_CAPABILITIES.sandboxLevels).toBeInstanceOf(Set)
+  })
+
+  it('CODEX_CAPABILITIES has the four expected fields', async () => {
+    const { CODEX_CAPABILITIES } = await import('./codex-agent-provider')
+    // codex SDK has no per-tool callback — that's the whole reason
+    // tier→sandbox translation is coarse-grained for codex.
+    expect(CODEX_CAPABILITIES.perToolCallback).toBe(false)
+    expect(CODEX_CAPABILITIES.supportsDelegation).toBe(true)
+    expect(CODEX_CAPABILITIES.supportsResume).toBe(true)
+  })
+
+  it('CURSOR_CAPABILITIES has the four expected fields', async () => {
+    const { CURSOR_CAPABILITIES } = await import('./cursor-agent-provider')
+    expect(CURSOR_CAPABILITIES.perToolCallback).toBe(false)
+    // cursor SDK doesn't expose sub-agents yet — see RFC 05 §7 decision 3
+    expect(CURSOR_CAPABILITIES.supportsDelegation).toBe(false)
+    expect(CURSOR_CAPABILITIES.supportsResume).toBe(true)
+  })
+})

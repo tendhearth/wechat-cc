@@ -23,8 +23,15 @@
 // src/core/capability-matrix.ts
 
 import type { Mode, ProviderId } from './conversation'
+import type { ProviderCapabilities, PermissionMode } from './agent-provider'
+import { CLAUDE_CAPABILITIES } from './claude-agent-provider'
+import { CODEX_CAPABILITIES } from './codex-agent-provider'
+import { CURSOR_CAPABILITIES } from './cursor-agent-provider'
 
-export type PermissionMode = 'strict' | 'dangerously'
+// Backwards-compat re-export: PermissionMode used to live here. Moved
+// to agent-provider.ts to break the cycle introduced by Phase 2's
+// matrix imports of CAPABILITIES from each provider module.
+export type { PermissionMode }
 
 export interface Capability {
   /** 'per-tool' = Claude canUseTool 回调；'never' = 无 per-tool 提示。 */
@@ -52,121 +59,145 @@ export interface MatrixRow extends Capability {
   permissionMode: PermissionMode
 }
 
-export const CAPABILITY_MATRIX: ReadonlyArray<MatrixRow> = [
-  // ─── solo · claude ──────────────────────────────────────────────
-  { mode: 'solo', provider: 'claude', permissionMode: 'strict',
-    askUser: 'per-tool', replyPrefix: 'never', approvalPolicy: null,
-    delegate: 'unloaded', forbidden: false,
-    notes: 'baseline single-voice; per-tool relay via canUseTool' },
-  { mode: 'solo', provider: 'claude', permissionMode: 'dangerously',
-    askUser: 'never', replyPrefix: 'never', approvalPolicy: null,
-    delegate: 'unloaded', forbidden: false,
-    notes: 'bypassPermissions; agent self-confirms destructive ops in chat' },
+/**
+ * Per (mode × permissionMode) trait — invariant across providers. The
+ * provider-specific bits (askUser actually realisable? approvalPolicy
+ * actually meaningful?) are layered on top inside `deriveCapability`.
+ *
+ * RFC 05 Phase 2: this replaces the 24-row hand-written CAPABILITY_MATRIX
+ * with 8 trait rows + per-provider Capability declarations. Adding a
+ * provider (gemini-cli, ...) now means declaring its `ProviderCapabilities`
+ * once, not authoring 8 matrix rows.
+ */
+interface ModeTrait {
+  /** Realisable askUser value when the provider has perToolCallback. */
+  askUser: 'per-tool' | 'never'
+  replyPrefix: 'always' | 'never' | 'on-fallback-only'
+  /** Coarse approval-policy value used by SDKs without perToolCallback
+   *  AND with a 'read-only' sandbox level (Codex). */
+  coarseApproval: 'untrusted' | 'never'
+  forbidden: boolean
+}
 
-  // ─── solo · codex ───────────────────────────────────────────────
-  { mode: 'solo', provider: 'codex', permissionMode: 'strict',
-    askUser: 'never', replyPrefix: 'never', approvalPolicy: 'untrusted',
-    delegate: 'unloaded', forbidden: false,
-    notes: 'codex SDK no per-tool callback; approval_policy gates; not surfaced to WeChat' },
-  { mode: 'solo', provider: 'codex', permissionMode: 'dangerously',
-    askUser: 'never', replyPrefix: 'never', approvalPolicy: 'never',
-    delegate: 'unloaded', forbidden: false,
-    notes: 'codex sandbox=workspace-write + approval=never' },
+const MODE_TRAITS: Record<Mode['kind'], Record<PermissionMode, ModeTrait>> = {
+  solo: {
+    strict:      { askUser: 'per-tool', replyPrefix: 'never',           coarseApproval: 'untrusted', forbidden: false },
+    dangerously: { askUser: 'never',    replyPrefix: 'never',           coarseApproval: 'never',     forbidden: false },
+  },
+  parallel: {
+    strict:      { askUser: 'per-tool', replyPrefix: 'always',          coarseApproval: 'untrusted', forbidden: false },
+    dangerously: { askUser: 'never',    replyPrefix: 'always',          coarseApproval: 'never',     forbidden: false },
+  },
+  primary_tool: {
+    strict:      { askUser: 'per-tool', replyPrefix: 'on-fallback-only', coarseApproval: 'untrusted', forbidden: false },
+    dangerously: { askUser: 'never',    replyPrefix: 'on-fallback-only', coarseApproval: 'never',     forbidden: false },
+  },
+  chatroom: {
+    strict:      { askUser: 'per-tool', replyPrefix: 'always',          coarseApproval: 'untrusted', forbidden: false },
+    dangerously: { askUser: 'never',    replyPrefix: 'always',          coarseApproval: 'never',     forbidden: false },
+  },
+}
 
-  // ─── parallel ───────────────────────────────────────────────────
-  { mode: 'parallel', provider: 'claude', permissionMode: 'strict',
-    askUser: 'per-tool', replyPrefix: 'always', approvalPolicy: null,
-    delegate: 'unloaded', forbidden: false,
-    notes: 'parallel: prefix [Claude] / [Codex] required to disambiguate' },
-  { mode: 'parallel', provider: 'claude', permissionMode: 'dangerously',
-    askUser: 'never', replyPrefix: 'always', approvalPolicy: null,
-    delegate: 'unloaded', forbidden: false, notes: '' },
-  { mode: 'parallel', provider: 'codex', permissionMode: 'strict',
-    askUser: 'never', replyPrefix: 'always', approvalPolicy: 'untrusted',
-    delegate: 'unloaded', forbidden: false, notes: '' },
-  { mode: 'parallel', provider: 'codex', permissionMode: 'dangerously',
-    askUser: 'never', replyPrefix: 'always', approvalPolicy: 'never',
-    delegate: 'unloaded', forbidden: false, notes: '' },
+/**
+ * Static registry of provider-id → capabilities. Adding a new provider
+ * = one row here + the CAPABILITIES export on the provider module. The
+ * `assertMatrixComplete` boot-time check still fails fast if a registered
+ * provider has no row.
+ */
+const CAPABILITIES_BY_PROVIDER: Record<ProviderId, ProviderCapabilities> = {
+  claude: CLAUDE_CAPABILITIES,
+  codex:  CODEX_CAPABILITIES,
+  cursor: CURSOR_CAPABILITIES,
+}
 
-  // ─── primary_tool ───────────────────────────────────────────────
-  { mode: 'primary_tool', provider: 'claude', permissionMode: 'strict',
-    askUser: 'per-tool', replyPrefix: 'on-fallback-only', approvalPolicy: null,
-    delegate: 'loaded', forbidden: false,
-    notes: 'primary=claude; codex callable via delegate_codex (always approval=never per RFC03 §4.2)' },
-  { mode: 'primary_tool', provider: 'claude', permissionMode: 'dangerously',
-    askUser: 'never', replyPrefix: 'on-fallback-only', approvalPolicy: null,
-    delegate: 'loaded', forbidden: false, notes: '' },
-  { mode: 'primary_tool', provider: 'codex', permissionMode: 'strict',
-    askUser: 'never', replyPrefix: 'on-fallback-only', approvalPolicy: 'untrusted',
-    delegate: 'loaded', forbidden: false,
-    notes: 'primary=codex; claude callable via delegate_claude' },
-  { mode: 'primary_tool', provider: 'codex', permissionMode: 'dangerously',
-    askUser: 'never', replyPrefix: 'on-fallback-only', approvalPolicy: 'never',
-    delegate: 'loaded', forbidden: false, notes: '' },
+/**
+ * Look up a provider's capability declaration. Throws on unknown id so
+ * `assertMatrixComplete` can surface missing registrations at boot.
+ */
+export function capabilitiesFor(provider: ProviderId): ProviderCapabilities {
+  const cap = CAPABILITIES_BY_PROVIDER[provider]
+  if (!cap) {
+    throw new Error(`capability-matrix: no ProviderCapabilities registered for provider=${provider}`)
+  }
+  return cap
+}
 
-  // ─── chatroom ───────────────────────────────────────────────────
-  { mode: 'chatroom', provider: 'claude', permissionMode: 'strict',
-    askUser: 'per-tool', replyPrefix: 'always', approvalPolicy: null,
-    delegate: 'unloaded', forbidden: false,
-    notes: 'chatroom: agents address each other via @-tag; reply tool discouraged but not blocked' },
-  { mode: 'chatroom', provider: 'claude', permissionMode: 'dangerously',
-    askUser: 'never', replyPrefix: 'always', approvalPolicy: null,
-    delegate: 'unloaded', forbidden: false, notes: '' },
-  { mode: 'chatroom', provider: 'codex', permissionMode: 'strict',
-    askUser: 'never', replyPrefix: 'always', approvalPolicy: 'untrusted',
-    delegate: 'unloaded', forbidden: false, notes: '' },
-  { mode: 'chatroom', provider: 'codex', permissionMode: 'dangerously',
-    askUser: 'never', replyPrefix: 'always', approvalPolicy: 'never',
-    delegate: 'unloaded', forbidden: false, notes: '' },
+/**
+ * Derive the full Capability for a (provider × mode × permissionMode)
+ * combination from the provider's static ProviderCapabilities plus the
+ * mode trait. This is the engine `lookup()` is built on; pure function,
+ * no I/O, no global state.
+ */
+export function deriveCapability(
+  cap: ProviderCapabilities,
+  mode: Mode['kind'],
+  pm: PermissionMode,
+): Capability {
+  const trait = MODE_TRAITS[mode][pm]
+  // askUser realisable only on SDKs with per-tool callback. Without it,
+  // strict mode still has trait.askUser='per-tool' nominally, but the
+  // provider can't honor it — flatten to 'never'.
+  const askUser = cap.perToolCallback ? trait.askUser : 'never'
+  // approvalPolicy is the codex-shaped coarse gate; meaningful only when
+  // the SDK has no per-tool callback AND exposes a read-only sandbox
+  // tier (so 'untrusted' has somewhere to land). Cursor lacks read-only
+  // and Claude has perToolCallback — both return null.
+  const approvalPolicy = !cap.perToolCallback && cap.sandboxLevels.has('read-only')
+    ? trait.coarseApproval
+    : null
+  // delegate-mcp is loaded for every primary_tool session regardless of
+  // whether the host provider itself can be a delegate target — the host
+  // delegates OUT to others. supportsDelegation controls whether THIS
+  // provider can be registered as a peer (consumed by ProviderRegistry,
+  // not by the matrix).
+  const delegate = mode === 'primary_tool' ? 'loaded' : 'unloaded'
+  return {
+    askUser,
+    replyPrefix: trait.replyPrefix,
+    approvalPolicy,
+    delegate,
+    forbidden: trait.forbidden,
+    notes: '',
+  }
+}
 
-  // ─── solo · cursor ──────────────────────────────────────────────
-  { mode: 'solo', provider: 'cursor', permissionMode: 'strict',
-    askUser: 'never', replyPrefix: 'never', approvalPolicy: null,
-    delegate: 'unloaded', forbidden: false,
-    notes: 'cursor SDK no per-tool callback; sandboxOptions is the only knob (per-spawn from tierProfile)' },
-  { mode: 'solo', provider: 'cursor', permissionMode: 'dangerously',
-    askUser: 'never', replyPrefix: 'never', approvalPolicy: null,
-    delegate: 'unloaded', forbidden: false, notes: '' },
+/**
+ * Backwards-compatible flat view of the matrix — computed from
+ * `deriveCapability` over every registered provider × all modes × both
+ * permissionModes. Pre-Phase-2 callers (and tests that iterate via
+ * `it.each(CAPABILITY_MATRIX)`) keep working without changes; the
+ * 24-row hand-written constant they used to import is gone.
+ */
+const ALL_MODES: Mode['kind'][] = ['solo', 'parallel', 'primary_tool', 'chatroom']
+const ALL_PERMS: PermissionMode[] = ['strict', 'dangerously']
 
-  // ─── parallel · cursor ──────────────────────────────────────────
-  { mode: 'parallel', provider: 'cursor', permissionMode: 'strict',
-    askUser: 'never', replyPrefix: 'always', approvalPolicy: null,
-    delegate: 'unloaded', forbidden: false, notes: '' },
-  { mode: 'parallel', provider: 'cursor', permissionMode: 'dangerously',
-    askUser: 'never', replyPrefix: 'always', approvalPolicy: null,
-    delegate: 'unloaded', forbidden: false, notes: '' },
+function buildMatrix(): ReadonlyArray<MatrixRow> {
+  const out: MatrixRow[] = []
+  for (const provider of Object.keys(CAPABILITIES_BY_PROVIDER) as ProviderId[]) {
+    const cap = CAPABILITIES_BY_PROVIDER[provider]!
+    for (const mode of ALL_MODES) for (const permissionMode of ALL_PERMS) {
+      out.push({ mode, provider, permissionMode, ...deriveCapability(cap, mode, permissionMode) })
+    }
+  }
+  return out
+}
 
-  // ─── primary_tool · cursor ──────────────────────────────────────
-  { mode: 'primary_tool', provider: 'cursor', permissionMode: 'strict',
-    askUser: 'never', replyPrefix: 'on-fallback-only', approvalPolicy: null,
-    delegate: 'loaded', forbidden: false,
-    notes: 'primary=cursor; claude callable via delegate_claude' },
-  { mode: 'primary_tool', provider: 'cursor', permissionMode: 'dangerously',
-    askUser: 'never', replyPrefix: 'on-fallback-only', approvalPolicy: null,
-    delegate: 'loaded', forbidden: false, notes: '' },
-
-  // ─── chatroom · cursor ──────────────────────────────────────────
-  { mode: 'chatroom', provider: 'cursor', permissionMode: 'strict',
-    askUser: 'never', replyPrefix: 'always', approvalPolicy: null,
-    delegate: 'unloaded', forbidden: false, notes: '' },
-  { mode: 'chatroom', provider: 'cursor', permissionMode: 'dangerously',
-    askUser: 'never', replyPrefix: 'always', approvalPolicy: null,
-    delegate: 'unloaded', forbidden: false, notes: '' },
-]
-// 4 modes × 3 providers × 2 permissionModes = 24 rows ✓
+export const CAPABILITY_MATRIX: ReadonlyArray<MatrixRow> = buildMatrix()
 
 export function lookup(
   mode: Mode['kind'],
   provider: ProviderId,
   permissionMode: PermissionMode,
 ): Capability {
-  const row = CAPABILITY_MATRIX.find(r =>
-    r.mode === mode && r.provider === provider && r.permissionMode === permissionMode
-  )
-  if (!row) {
+  // Resolve provider → capabilities first so an unknown provider id
+  // surfaces a precise error (was an opaque "no row for" pre-Phase-2).
+  let cap: ProviderCapabilities
+  try {
+    cap = capabilitiesFor(provider)
+  } catch {
     throw new Error(`capability-matrix: no row for mode=${mode} provider=${provider} perm=${permissionMode}`)
   }
-  return row
+  return deriveCapability(cap, mode, permissionMode)
 }
 
 export class UnsupportedCombinationError extends Error {
@@ -208,23 +239,26 @@ export function assertSupported(
  * production. Moving the call to bootstrap fails-fast at boot.
  */
 export function assertMatrixComplete(providers: ProviderId[]): void {
-  const modes: Mode['kind'][] = ['solo', 'parallel', 'primary_tool', 'chatroom']
-  const perms: PermissionMode[] = ['strict', 'dangerously']
-  // Note: CAPABILITY_MATRIX may contain rows for providers not in the
-  // `providers` arg (e.g., a provider added to the matrix in advance of
-  // its registry registration). We only fail if rows are MISSING for the
-  // registered providers, not if extra rows exist.
-  for (const m of modes) for (const p of providers) for (const pm of perms) {
-    const found = CAPABILITY_MATRIX.find(r => r.mode === m && r.provider === p && r.permissionMode === pm)
-    if (!found) throw new Error(`capability-matrix missing row: mode=${m} provider=${p} perm=${pm}`)
-  }
-  // Duplicate-key check: lookup() returns first match, so a duplicate
-  // would silently shadow the second copy. Defensive — catches a
-  // copy-paste error where two rows share the same (mode,provider,perm).
-  const seen = new Set<string>()
-  for (const r of CAPABILITY_MATRIX) {
-    const k = `${r.mode}|${r.provider}|${r.permissionMode}`
-    if (seen.has(k)) throw new Error(`capability-matrix duplicate row: ${k}`)
-    seen.add(k)
+  // Post-Phase-2: verify every (mode × provider × pm) derives without
+  // error, instead of searching a flat array. capabilitiesFor() throws
+  // on unknown provider ids; deriveCapability is pure on every input.
+  // (The legacy duplicate-row check is gone — the new model can't
+  // produce duplicates because each row is computed from its unique
+  // coordinate triple.)
+  for (const p of providers) for (const m of ALL_MODES) for (const pm of ALL_PERMS) {
+    let cap: ProviderCapabilities
+    try {
+      cap = capabilitiesFor(p)
+    } catch {
+      throw new Error(`capability-matrix missing row: mode=${m} provider=${p} perm=${pm}`)
+    }
+    // Surface any future deriveCapability throw with the offending coord
+    // so debugging stays as easy as the pre-Phase-2 "missing row" path.
+    try {
+      deriveCapability(cap, m, pm)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      throw new Error(`capability-matrix derive failed: mode=${m} provider=${p} perm=${pm}: ${msg}`)
+    }
   }
 }
