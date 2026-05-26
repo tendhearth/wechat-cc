@@ -2089,12 +2089,29 @@ describe('internal-api request validation', () => {
       const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/install`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ id: 'dup-agent', name: 'Dup', url: 'http://dup2.test' }),
+        body: JSON.stringify({ id: 'dup-agent', name: 'Dup', url: 'http://dup2.test', outbound_api_key: 'k' }),
       })
       expect(resp.status).toBe(200)
       const body = await resp.json() as { ok: boolean; error: string }
       expect(body.ok).toBe(false)
       expect(body.error).toMatch(/exists/)
+    })
+
+    it('POST /v1/a2a/install rejects empty outbound_api_key', async () => {
+      // Regression: pre-fix the route fell back to '(none)' which then
+      // went out as `Authorization: Bearer (none)` and 401'd silently.
+      // Reject up front with a clear error.
+      const a2aDeps = buildA2ADeps()
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/install`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'new-agent', name: 'New', url: 'http://new.test' }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { ok: boolean; error: string }
+      expect(body.ok).toBe(false)
+      expect(body.error).toMatch(/outbound_api_key/)
     })
 
     it('POST /v1/a2a/install returns 400 on invalid id format', async () => {

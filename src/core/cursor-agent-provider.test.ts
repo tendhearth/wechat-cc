@@ -66,6 +66,33 @@ describe('mapCursorToolName', () => {
       server: 'wechat', tool: 'memory__read',
     })
   })
+
+  it('accepts MCP server names that contain underscores', () => {
+    // Pre-fix the regex `^mcp__([^_]+)__` rejected any underscore in
+    // the server name; the fallback indexOf('__') then matched the
+    // literal `mcp` prefix instead of the server, so the call
+    // resolved to no server at all. Sort longest-first so
+    // `compass_sidecar` matches before `compass`.
+    const servers = new Set(['compass', 'compass_sidecar', 'delegate_v2'])
+    expect(mapCursorToolName('mcp__compass_sidecar__call', servers)).toEqual({
+      server: 'compass_sidecar', tool: 'call',
+    })
+    expect(mapCursorToolName('mcp__delegate_v2__lookup', servers)).toEqual({
+      server: 'delegate_v2', tool: 'lookup',
+    })
+    expect(mapCursorToolName('compass_sidecar__call', servers)).toEqual({
+      server: 'compass_sidecar', tool: 'call',
+    })
+  })
+
+  it('longer server name wins over shorter prefix', () => {
+    // `delegate_v2__x` must not be parsed as server `delegate` + tool
+    // `v2__x`; longest-first sort ensures the v2 server is tried first.
+    const servers = new Set(['delegate', 'delegate_v2'])
+    expect(mapCursorToolName('delegate_v2__x', servers)).toEqual({
+      server: 'delegate_v2', tool: 'x',
+    })
+  })
 })
 
 // mapCursorMessage uses the project's real AgentEvent shape (text /

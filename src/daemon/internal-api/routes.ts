@@ -531,12 +531,20 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       if (!deps.a2a) return { status: 503, body: { error: 'a2a_not_wired' } }
       // Body is pre-validated via A2AInstallRequest schema.
       const { id, name, url, outbound_api_key } = body as A2AInstallRequestT
+      // Require a non-empty outbound key. Pre-fix the route fell back to
+      // the literal string '(none)' which then went out over the wire as
+      // `Authorization: Bearer (none)` — the remote agent returned 401 and
+      // the operator only saw `http_error` in the activity drawer with no
+      // hint that the cause was a missing key at install time.
+      if (!outbound_api_key) {
+        return { status: 200, body: { ok: false, error: 'outbound_api_key is required' } }
+      }
       try {
         const inboundKey = `wc_${randomBytes(16).toString('hex')}`
         deps.a2a.registry.add({
           id, name, url,
           inbound_api_key: inboundKey,
-          outbound_api_key: outbound_api_key || '(none)',
+          outbound_api_key,
           capabilities: [],
           paused: false,
         })

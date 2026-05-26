@@ -65,13 +65,34 @@ export function createA2ARegistry(opts: A2ARegistryOpts): A2ARegistry {
     writeFileSync(configPath, JSON.stringify(raw, null, 2))
   }
 
-  let cache = loadAll()
+  // No in-memory cache: agent-config.json is shared with CLI / dashboard /
+  // sibling processes that may also mutate `a2a_agents`. A long-lived cache
+  // led to desync — a CLI `wechat-cc agent add` would write to disk while
+  // the daemon kept serving its boot-time snapshot, so verifyBearer 401'd
+  // until restart (or the daemon's own mutation would clobber the CLI's
+  // change). The file is small (a few hundred bytes per agent at most)
+  // and even hot-path reads (verifyBearer per A2A notify) are inexpensive.
+  function validatePatch(patch: A2AAgentPatch): void {
+    if (patch.name !== undefined && patch.name.length === 0) throw new Error(`name must be non-empty`)
+    if (patch.url !== undefined && patch.url.length === 0) throw new Error(`url must be non-empty`)
+    if (patch.inbound_api_key !== undefined && patch.inbound_api_key.length < 16) {
+      throw new Error(`inbound_api_key must be at least 16 chars`)
+    }
+    if (patch.outbound_api_key !== undefined && patch.outbound_api_key.length === 0) {
+      throw new Error(`outbound_api_key must be non-empty`)
+    }
+  }
+
+  function validateRecord(rec: A2AAgentRecord): void {
+    if (!rec.id) throw new Error(`id must be non-empty`)
+    validatePatch(rec)
+  }
 
   return {
-    list: () => cache,
-    get: (id) => cache.find(a => a.id === id) ?? null,
+    list: () => loadAll(),
+    get: (id) => loadAll().find(a => a.id === id) ?? null,
     verifyBearer: (agentId, bearer) => {
-      const agent = cache.find(a => a.id === agentId)
+      const agent = loadAll().find(a => a.id === agentId)
       if (!agent) return null
       // Constant-time string compare to mitigate timing side-channels on key check.
       // For 16-byte hex keys the timing leak is theoretical but cheap to defend.
@@ -79,37 +100,33 @@ export function createA2ARegistry(opts: A2ARegistryOpts): A2ARegistry {
       return agent
     },
     add: (rec) => {
-      if (cache.some(a => a.id === rec.id)) throw new Error(`a2a agent '${rec.id}' already exists`)
-      cache = [...cache, rec]
-      persistAll(cache)
+      // Validate before write — closes the install-route gap where
+      // /v1/a2a/install routed through add() (no validation) and could
+      // persist short/empty keys. add() and update() now enforce the
+      // same A2AAgentRecord schema rules.
+      validateRecord(rec)
+      const current = loadAll()
+      if (current.some(a => a.id === rec.id)) throw new Error(`a2a agent '${rec.id}' already exists`)
+      persistAll([...current, rec])
     },
     remove: (id) => {
-      if (!cache.some(a => a.id === id)) throw new Error(`a2a agent '${id}' not found`)
-      cache = cache.filter(a => a.id !== id)
-      persistAll(cache)
+      const current = loadAll()
+      if (!current.some(a => a.id === id)) throw new Error(`a2a agent '${id}' not found`)
+      persistAll(current.filter(a => a.id !== id))
     },
     setPaused: (id, paused) => {
-      const ix = cache.findIndex(a => a.id === id)
+      const current = loadAll()
+      const ix = current.findIndex(a => a.id === id)
       if (ix < 0) throw new Error(`a2a agent '${id}' not found`)
-      cache = cache.map((a, i) => i === ix ? { ...a, paused } : a)
-      persistAll(cache)
+      persistAll(current.map((a, i) => i === ix ? { ...a, paused } : a))
     },
     update: (id, patch) => {
-      const ix = cache.findIndex(a => a.id === id)
+      validatePatch(patch)
+      const current = loadAll()
+      const ix = current.findIndex(a => a.id === id)
       if (ix < 0) throw new Error(`a2a agent '${id}' not found`)
-      // Validate before persist — mirrors the rules from A2AAgentRecord schema.
-      // inbound_api_key min 16 chars (matches the schema); other strings non-empty.
-      if (patch.name !== undefined && patch.name.length === 0) throw new Error(`name must be non-empty`)
-      if (patch.url !== undefined && patch.url.length === 0) throw new Error(`url must be non-empty`)
-      if (patch.inbound_api_key !== undefined && patch.inbound_api_key.length < 16) {
-        throw new Error(`inbound_api_key must be at least 16 chars`)
-      }
-      if (patch.outbound_api_key !== undefined && patch.outbound_api_key.length === 0) {
-        throw new Error(`outbound_api_key must be non-empty`)
-      }
-      const next = { ...cache[ix]!, ...patch }
-      cache = cache.map((a, i) => i === ix ? next : a)
-      persistAll(cache)
+      const next = { ...current[ix]!, ...patch }
+      persistAll(current.map((a, i) => i === ix ? next : a))
       return next
     },
   }

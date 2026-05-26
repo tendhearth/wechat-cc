@@ -56,14 +56,25 @@ export function mapCursorToolName(
   rawName: string,
   mcpServerNames: ReadonlySet<string>,
 ): { server?: string; tool: string } {
-  // Anthropic-style: mcp__<server>__<tool>
-  const m = /^mcp__([^_]+)__(.+)$/.exec(rawName)
-  if (m && mcpServerNames.has(m[1]!)) return { server: m[1], tool: m[2]! }
-  // Alternate separator forms
-  for (const sep of ['__', ':', '/']) {
-    const i = rawName.indexOf(sep)
-    if (i > 0 && mcpServerNames.has(rawName.slice(0, i))) {
-      return { server: rawName.slice(0, i), tool: rawName.slice(i + sep.length) }
+  // Match against known server names (sorted longest-first so e.g.
+  // `delegate_v2` is tried before `delegate`). The previous regex
+  // `^mcp__([^_]+)__` rejected any server name containing `_`, and the
+  // fallback indexOf('__') matched the literal `mcp` prefix instead of
+  // the server — so `mcp__compass_sidecar__call` resolved to no server
+  // at all and the permission/log path lost attribution.
+  const names = [...mcpServerNames].sort((a, b) => b.length - a.length)
+  for (const name of names) {
+    // Anthropic-style with mcp prefix: mcp__<server>__<tool>
+    const prefixed = `mcp__${name}__`
+    if (rawName.startsWith(prefixed)) {
+      return { server: name, tool: rawName.slice(prefixed.length) }
+    }
+    // Alternate separator forms: <server>__<tool>, <server>:<tool>, <server>/<tool>
+    for (const sep of ['__', ':', '/']) {
+      const probe = `${name}${sep}`
+      if (rawName.startsWith(probe)) {
+        return { server: name, tool: rawName.slice(probe.length) }
+      }
     }
   }
   // Built-in tool or unrecognized — no server

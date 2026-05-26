@@ -229,10 +229,14 @@ ${participantsList.join(', ')}${lastSpeaker ? ` （上一发言是 ${lastSpeaker
 
 function peerOf(last: ProviderId | undefined, participants: ProviderId[]): ProviderId {
   if (!last) return participants[0]!
-  // Pick the first participant other than `last`. Coordinator forces a
-  // ≥2 cardinality so participants[0] or [1] always exists.
-  const next = participants.find(p => p !== last)
-  return next ?? participants[0]!
+  // Round-robin: next participant after `last`, wrapping past the end.
+  // Pre-fix used `find(p => p !== last)` which always returned
+  // participants[0] or [1], so any 3+-participant chatroom that fell
+  // into the moderator-failure path silenced participants[2+] forever.
+  // Coordinator forces a ≥2 cardinality so participants[0] is safe.
+  const i = participants.indexOf(last)
+  if (i < 0) return participants[0]!  // `last` no longer in list — degenerate to first
+  return participants[(i + 1) % participants.length]!
 }
 
 function fallbackDecision(input: ModeratorRoundInput, lastSpeaker: ProviderId | undefined, reason: string): ModeratorDecision {

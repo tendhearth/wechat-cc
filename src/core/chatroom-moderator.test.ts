@@ -291,8 +291,42 @@ describe('chatroom-moderator — N-way participants', () => {
       { haikuEval },
     )
     expect(decision.action).toBe('continue')
-    // peerOf(lastSpeaker='claude', participants=['claude','codex','cursor']) → first non-claude → 'codex'
+    // peerOf(lastSpeaker='claude', participants=[claude,codex,cursor]) →
+    // round-robin (i=0, next=1) → 'codex'
     expect(decision.action === 'continue' && decision.speaker).toBe('codex')
+  })
+
+  it('peerOf round-robins through all 3 participants over consecutive fallback rounds', async () => {
+    // Regression: pre-fix `peerOf` used `find(p =&gt; p !== last)` so
+    // participants[2+] was structurally silenced — the fallback path
+    // bounced between participants[0] and participants[1] forever.
+    // Round-robin (indexOf + 1 mod length) gives each participant a
+    // turn.
+    const haikuEval = async () => 'not-valid-json'  // every round → fallbackDecision
+    const participants = ['claude', 'codex', 'cursor'] as const
+    const speakers: string[] = []
+    let last: string | undefined = undefined
+    for (let round = 1; round <= 4; round++) {
+      const decision = await evaluateRound(
+        {
+          history: last
+            ? [{ role: 'user', text: 'x' }, { role: 'speaker', speaker: last as 'claude' | 'codex' | 'cursor', text: 'prior' }]
+            : [{ role: 'user', text: 'x' }],
+          round,
+          maxRounds: 4,
+          participants: [...participants],
+        },
+        { haikuEval },
+      )
+      if (decision.action !== 'continue') break
+      speakers.push(decision.speaker)
+      last = decision.speaker
+    }
+    // First fallback (no lastSpeaker) → participants[0]. Subsequent
+    // fallbacks round-robin (0 → 1 → 2 → 0). All three participants
+    // appear at least once across the run.
+    expect(new Set(speakers).size).toBe(3)
+    expect(speakers).toEqual(['claude', 'codex', 'cursor', 'claude'])
   })
 
   it('peerOf with no lastSpeaker on 3-way returns first participant', async () => {
