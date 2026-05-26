@@ -119,4 +119,25 @@ describe('events store', () => {
       expect(all.map(r => r.id)).toEqual(['evt_1', 'evt_2'])
     })
   })
+
+  describe('memory_deleted kind (soft-delete audit)', () => {
+    it('appends memory_deleted event with memory_path and reads it back', async () => {
+      const store = makeEventsStore(db, 'chat_x')
+      const id = await store.append({
+        kind: 'memory_deleted',
+        trigger: 'mcp_tool_call',
+        reasoning: 'user said "forget that"',
+        memory_path: 'profile.md.deleted-2026-05-26T08-00-00-000Z',
+      })
+      expect(id).toMatch(/^evt_/)
+      const [rec] = await store.list()
+      expect(rec).toMatchObject({
+        id,
+        kind: 'memory_deleted',
+        trigger: 'mcp_tool_call',
+        reasoning: 'user said "forget that"',
+        memory_path: 'profile.md.deleted-2026-05-26T08-00-00-000Z',
+      })
+    })
+  })
 })

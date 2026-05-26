@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createInternalApi, type InternalApi } from './internal-api'
 import { makeMemoryFS } from './memory/fs-api'
+import { makeEventsStore } from './events/store'
+import { openTestDb } from '../lib/db'
 import type { A2ARegistry } from '../core/a2a-registry'
 import type { A2AClient, SendResult, AgentCard } from '../core/a2a-client'
 import type { A2AEventsStore, EventRow, AppendInput } from '../core/a2a-events-store'
@@ -241,6 +243,75 @@ describe('internal-api', () => {
       })
       expect(resp.status).toBe(503)
       expect(await resp.json()).toEqual({ error: 'memory_fs_not_wired' })
+    })
+
+    describe('POST /v1/memory/delete (soft-delete + audit)', () => {
+      async function startWithMemoryAndDb(): Promise<{ port: number; token: string; db: ReturnType<typeof openTestDb> }> {
+        memoryRoot = join(stateDir, 'memory')
+        const memory = makeMemoryFS({ rootDir: memoryRoot })
+        const db = openTestDb()
+        api = createInternalApi({ stateDir, daemonPid: 999, memory, db })
+        const { port, tokenFilePath } = await api.start()
+        const token = readFileSync(tokenFilePath, 'utf8').trim()
+        return { port, token, db }
+      }
+
+      it('soft-deletes existing file and writes memory_deleted audit event', async () => {
+        const { port, token, db } = await startWithMemoryAndDb()
+        // Seed a memory file
+        await fetch(`http://127.0.0.1:${port}/v1/memory/write`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ path: 'profile.md', content: 'doomed' }),
+        })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/delete`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'chat_test', path: 'profile.md', reason: 'user said forget that' }),
+        })
+        expect(resp.status).toBe(200)
+        const body = await resp.json() as { ok: boolean; existed: boolean; tombstone: string }
+        expect(body.ok).toBe(true)
+        expect(body.existed).toBe(true)
+        expect(body.tombstone).toMatch(/^profile\.md\.deleted-/)
+
+        // Audit row landed in events for this chat
+        const events = await makeEventsStore(db, 'chat_test').list()
+        expect(events).toHaveLength(1)
+        expect(events[0]).toMatchObject({
+          kind: 'memory_deleted',
+          trigger: 'mcp_tool_call',
+          reasoning: 'user said forget that',
+          memory_path: body.tombstone,
+        })
+        db.close()
+      })
+
+      it('returns ok:true existed:false (no event) when target does not exist', async () => {
+        const { port, token, db } = await startWithMemoryAndDb()
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/delete`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'chat_test', path: 'nope.md', reason: 'user said remove it' }),
+        })
+        expect(resp.status).toBe(200)
+        expect(await resp.json()).toEqual({ ok: true, existed: false })
+        const events = await makeEventsStore(db, 'chat_test').list()
+        expect(events).toHaveLength(0)
+        db.close()
+      })
+
+      it('returns 400 when reason is shorter than 4 chars (schema validation)', async () => {
+        const { port, token, db } = await startWithMemoryAndDb()
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/delete`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'chat_test', path: 'a.md', reason: 'no' }),
+        })
+        expect(resp.status).toBe(400)
+        expect(await resp.json()).toMatchObject({ error: 'invalid_request' })
+        db.close()
+      })
     })
   })
 

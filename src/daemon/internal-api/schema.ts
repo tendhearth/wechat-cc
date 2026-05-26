@@ -52,6 +52,29 @@ export const MemoryListResponse = z.union([
   z.object({ error: z.string() }),
 ])
 
+// ── POST /v1/memory/delete (soft-delete + audit) ─────────────────────────────
+//
+// chat_id is required because the audit event lands in the per-chat events
+// store (see docs/specs/2026-05-21-memory-delete-safety-design.md). reason
+// is also required and capped — the agent must record why so the dashboard
+// audit view (or `wechat-cc events show`) can attribute the delete back to
+// what the user actually said.
+
+export const MemoryDeleteRequest = z.object({
+  chat_id: z.string(),
+  path: z.string()
+    .max(500, 'path must be <= 500 chars')
+    .refine(s => !s.includes('\0'), { message: 'path must not contain null bytes' }),
+  reason: z.string()
+    .min(4, 'reason must be at least 4 chars — quote the user or state your inference')
+    .max(500, 'reason must be <= 500 chars'),
+})
+export const MemoryDeleteResponse = z.union([
+  z.object({ ok: z.literal(true), existed: z.literal(false) }),
+  z.object({ ok: z.literal(true), existed: z.literal(true), tombstone: z.string() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+
 
 // ── GET /v1/projects/list ────────────────────────────────────────────────────
 // Legacy wire shape: array returned directly (not wrapped).
@@ -397,6 +420,8 @@ export type MemoryWriteRequestT = z.infer<typeof MemoryWriteRequest>
 export type MemoryWriteResponseT = z.infer<typeof MemoryWriteResponse>
 export type MemoryListQueryT = z.infer<typeof MemoryListQuery>
 export type MemoryListResponseT = z.infer<typeof MemoryListResponse>
+export type MemoryDeleteRequestT = z.infer<typeof MemoryDeleteRequest>
+export type MemoryDeleteResponseT = z.infer<typeof MemoryDeleteResponse>
 
 export type ProjectsListResponseT = z.infer<typeof ProjectsListResponse>
 export type ProjectsSwitchRequestT = z.infer<typeof ProjectsSwitchRequest>
@@ -457,6 +482,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/memory/read': MemoryReadRequest,
   'POST /v1/memory/write': MemoryWriteRequest,
   'GET /v1/memory/list': MemoryListQuery,
+  'POST /v1/memory/delete': MemoryDeleteRequest,
 
   // projects
   'POST /v1/projects/switch': ProjectsSwitchRequest,
@@ -503,6 +529,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/memory/read': MemoryReadResponse,
   'POST /v1/memory/write': MemoryWriteResponse,
   'GET /v1/memory/list': MemoryListResponse,
+  'POST /v1/memory/delete': MemoryDeleteResponse,
   'GET /v1/projects/list': ProjectsListResponse,
   'POST /v1/projects/switch': ProjectsSwitchResponse,
   'POST /v1/projects/add': ProjectsAddResponse,

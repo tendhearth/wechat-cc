@@ -7,6 +7,7 @@
  * ./routes.ts for the route handler implementations.
  */
 import type { MemoryFS } from '../memory/fs-api'
+import type { Db } from '../../lib/db'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
 import type { ConversationStore } from '../../core/conversation-store'
 import type { ProviderId } from '../../core/conversation'
@@ -87,6 +88,13 @@ export interface InternalApiDeps {
    * MCP server until B7 deletes it; both paths see the same files.
    */
   memory?: MemoryFS
+  /**
+   * SQLite handle — used by /v1/memory/delete to write per-chat audit
+   * events (see docs/specs/2026-05-21-memory-delete-safety-design.md).
+   * Optional so tests / partial wirings that don't need the audit path
+   * still construct the api.
+   */
+  db?: Db
   /** Project registry (RFC 03 P1.B B3). */
   projects?: WechatProjectsDep
   /** Persist a wechat user's display name (RFC 03 P1.B B3). */

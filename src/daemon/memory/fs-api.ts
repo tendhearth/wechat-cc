@@ -30,6 +30,17 @@ export interface MemoryFS {
   list(relDir?: string): string[]
   /** Delete a file. No-op if absent. */
   delete(relPath: string): void
+  /**
+   * Soft-delete: rename `relPath` to `relPath.deleted-<ISO>` in place.
+   * Returns the new tombstone path (POSIX-normalised, relative to root)
+   * on success, or null if the source file didn't exist.
+   *
+   * Like `delete`, runs the realpath sandbox check. Unlike `delete`,
+   * never destroys data — the operator can restore by `mv`-ing the
+   * tombstone back. `list()` skips `.deleted-*` so the agent doesn't
+   * see them on subsequent calls.
+   */
+  softDelete(relPath: string): string | null
   /** Absolute root dir — for diagnostics only, not for Claude. */
   rootDir(): string
 }
@@ -184,8 +195,10 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
         let entries: import('node:fs').Dirent[]
         try { entries = readdirSync(dir, { withFileTypes: true, encoding: 'utf8' }) } catch { continue }
         for (const entry of entries) {
-          // Skip hidden entries and tmp files from interrupted atomic writes
-          if (entry.name.startsWith('.') || entry.name.includes('.tmp-')) continue
+          // Skip hidden entries, tmp files from interrupted atomic writes,
+          // and soft-delete tombstones (recoverable by `mv` but invisible
+          // to the agent — see softDelete).
+          if (entry.name.startsWith('.') || entry.name.includes('.tmp-') || entry.name.includes('.deleted-')) continue
           const p = join(dir, entry.name)
           // Don't follow symlinks during list — a symlink inside root
           // pointing outside would surface paths that read() will
@@ -209,6 +222,17 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
       if (!existsSync(full)) return
       assertWithinRealRoot(full, true)
       unlinkSync(full)
+    },
+
+    softDelete(relPath) {
+      const full = resolveSafe(relPath)
+      checkExt(full)
+      if (!existsSync(full)) return null
+      assertWithinRealRoot(full, true)
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+      const tombstone = `${full}.deleted-${stamp}`
+      renameSync(full, tombstone)
+      return relative(root, tombstone).split(sep).join('/')
     },
   }
 }

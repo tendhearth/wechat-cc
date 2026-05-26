@@ -221,4 +221,54 @@ describe('MemoryFS', () => {
     fs.write('a.md', 'x')
     expect(existsSync(newRoot)).toBe(true)
   })
+
+  describe('softDelete', () => {
+    it('renames file to .deleted-<iso> sibling in place', () => {
+      const fs = make()
+      fs.write('profile.md', 'hello')
+      const tombstone = fs.softDelete('profile.md')
+      // Original gone
+      expect(fs.read('profile.md')).toBeNull()
+      // Tombstone path is returned, POSIX-relative, with .deleted- + ISO-ish stamp
+      expect(tombstone).toMatch(/^profile\.md\.deleted-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/)
+      // Content recoverable on disk
+      const onDisk = require('node:fs').readdirSync(root) as string[]
+      expect(onDisk.some(n => n.startsWith('profile.md.deleted-'))).toBe(true)
+    })
+
+    it('returns null when target does not exist', () => {
+      const fs = make()
+      expect(fs.softDelete('nope.md')).toBeNull()
+    })
+
+    it('rejects symlink escape (inherits realpath sandbox check)', () => {
+      const escape = mkdtempSync(join(tmpdir(), 'memfs-softdel-escape-'))
+      try {
+        // Plant a target outside, then symlink to it from inside root
+        writeFileSync(join(escape, 'pwned.md'), 'attacker payload', 'utf8')
+        symlinkSync(join(escape, 'pwned.md'), join(root, 'leak.md'))
+        const fs = make()
+        expect(() => fs.softDelete('leak.md')).toThrow(MemoryPathError)
+      } finally {
+        rmSync(escape, { recursive: true, force: true })
+      }
+    })
+
+    it('list() skips .deleted-* tombstones', () => {
+      const fs = make()
+      fs.write('a.md', 'alive')
+      fs.write('b.md', 'doomed')
+      fs.softDelete('b.md')
+      expect(fs.list()).toEqual(['a.md'])
+    })
+
+    it('is idempotent — second call on the now-missing path returns null', () => {
+      const fs = make()
+      fs.write('once.md', 'x')
+      const first = fs.softDelete('once.md')
+      expect(first).not.toBeNull()
+      const second = fs.softDelete('once.md')
+      expect(second).toBeNull()
+    })
+  })
 })

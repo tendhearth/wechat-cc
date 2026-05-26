@@ -12,8 +12,9 @@ import { randomBytes } from 'node:crypto'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
 import { lookup } from '../../core/capability-matrix'
 import type { Mode } from '../../core/conversation'
+import { makeEventsStore } from '../events/store'
 import type {
-  MemoryReadRequestT, MemoryWriteRequestT,
+  MemoryReadRequestT, MemoryWriteRequestT, MemoryDeleteRequestT,
   ProjectsSwitchRequestT, ProjectsAddRequestT, ProjectsRemoveRequestT,
   UserSetNameRequestT,
   SharePageRequestT, ShareResurfaceRequestT,
@@ -70,6 +71,29 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
         return { status: 200, body: { files: deps.memory.list(dir ?? undefined) } }
       } catch (err) {
         return { status: 200, body: { error: errMsg(err) } }
+      }
+    },
+    'POST /v1/memory/delete': async (_q, body) => {
+      if (!deps.memory) return { status: 503, body: { error: 'memory_fs_not_wired' } }
+      if (!deps.db) return { status: 503, body: { error: 'db_not_wired' } }
+      // Body is pre-validated by index.ts via MemoryDeleteRequest schema.
+      const { chat_id, path, reason } = body as MemoryDeleteRequestT
+      try {
+        const tombstone = deps.memory.softDelete(path)
+        if (tombstone === null) {
+          return { status: 200, body: { ok: true, existed: false } }
+        }
+        // Per-chat audit log. Constructed per-call — prepared-statement
+        // cache lives on db, not store, so this is cheap.
+        await makeEventsStore(deps.db, chat_id).append({
+          kind: 'memory_deleted',
+          trigger: 'mcp_tool_call',
+          reasoning: reason,
+          memory_path: tombstone,
+        })
+        return { status: 200, body: { ok: true, existed: true, tombstone } }
+      } catch (err) {
+        return { status: 200, body: { ok: false, error: errMsg(err) } }
       }
     },
 

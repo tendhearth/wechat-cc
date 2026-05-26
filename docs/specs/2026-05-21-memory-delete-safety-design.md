@@ -1,6 +1,6 @@
 # Spec — `memory_delete` Safety Design
 
-**Status**: Draft · 2026-05-21
+**Status**: Ready to implement · drafted 2026-05-21 · questions resolved 2026-05-26
 **Parent**: PR #50 (memory_delete pulled per Codex review finding A); builds on PR #51 (`MemoryFS` realpath sandbox)
 **Expected effort**: 1.5–2 h
 **Supersedes**: the hard-delete `memory_delete` tool removed in PR #50
@@ -119,7 +119,7 @@ export interface EventRecord {
 }
 ```
 
-### 4.2 DB migration v10
+### 4.2 DB migration v13
 
 ```ts
 // src/lib/db.ts migrations[]
@@ -189,6 +189,7 @@ server.registerTool(
       '必填 reason：写下用户说了什么 / 你为何认为该删。\n' +
       'reasoning 会进 audit 日志（dashboard 可查），方便事后追溯。',
     inputSchema: {
+      chat_id: z.string(),
       path: z.string()
         .max(500, 'path must be <= 500 chars')  // matches MemoryFS internal cap
         .refine(s => !s.includes('\0'), { message: 'path must not contain null bytes' }),
@@ -197,14 +198,14 @@ server.registerTool(
         .max(500, 'reason must be <= 500 chars'),
     },
   },
-  async ({ path, reason }) => {
+  async ({ chat_id, path, reason }) => {
     try {
       const resp = await client.request<{
         ok: boolean
         tombstone?: string  // POSIX relative
         existed?: boolean   // false if path didn't exist (no-op)
         error?: string
-      }>('POST', '/v1/memory/delete', { path, reason })
+      }>('POST', '/v1/memory/delete', { chat_id, path, reason })
       return { content: [{ type: 'text', text: JSON.stringify(resp) }] }
     } catch (err) {
       return passthroughErrorResult(err, 'memory_delete')
@@ -228,17 +229,19 @@ Three behavioral notes the description embeds:
 // src/daemon/internal-api/routes.ts
 'POST /v1/memory/delete': async (_q, body) => {
   if (!deps.memory) return { status: 503, body: { error: 'memory_fs_not_wired' } }
-  if (!deps.eventsFor) return { status: 503, body: { error: 'events_store_not_wired' } }
-  const { path, reason } = body as MemoryDeleteRequestT
+  if (!deps.db) return { status: 503, body: { error: 'db_not_wired' } }
+  const { chat_id, path, reason } = body as MemoryDeleteRequestT
   try {
     const tombstone = deps.memory.softDelete(path)
     if (tombstone === null) {
       return { status: 200, body: { ok: true, existed: false } }
     }
-    // Audit log lives in the per-chat events store. We pull the chat
-    // id from the request context (set by the daemon's auth middleware
-    // per the existing /v1/memory/read pattern).
-    await deps.eventsFor(_q.chatId).append({
+    // Per-chat audit log. chat_id is required by the MCP tool schema,
+    // mirroring wechat_reply / wechat_send_file / set_user_name — the
+    // agent always knows which chat it's acting on. Events store is
+    // cheap to construct (prepared-statement cache lives on db, not
+    // store), so we instantiate per-call instead of caching.
+    await makeEventsStore(deps.db, chat_id).append({
       kind: 'memory_deleted',
       trigger: 'mcp_tool_call',
       reasoning: reason,
@@ -250,6 +253,8 @@ Three behavioral notes the description embeds:
   }
 },
 ```
+
+`makeEventsStore` is imported from `../events/store`. `deps.db` needs to be added to `InternalApiDeps` if not already present.
 
 **No per-provider gating in v1.** Because the action is now soft and audited, the asymmetry between Claude (with `canUseTool` prompt) and Codex (without) is acceptable: even a silent Codex soft-delete is recoverable AND visible in the audit log. The trade is "Codex requires no prompt" (low friction) for "delete is reversible + auditable" (low blast radius).
 
@@ -267,10 +272,10 @@ If real-world dogfooding shows agents abusing the tool, a v2 follow-up can add p
 - `list() does NOT surface .deleted-* entries`
 - `softDelete is idempotent — second call on a missing target returns null`
 
-### 7.2 DB migration v10
+### 7.2 DB migration v13
 
-- `v10 migration extends events.kind CHECK to include memory_deleted`
-- `pre-v10 events are preserved through the table recreate`
+- `v13 migration extends events.kind CHECK to include memory_deleted`
+- `pre-v13 events are preserved through the table recreate`
 - `INSERT INTO events with kind=memory_deleted succeeds; INSERT with kind=foo fails`
 
 ### 7.3 Route + tool (integration)
@@ -280,19 +285,24 @@ If real-world dogfooding shows agents abusing the tool, a v2 follow-up can add p
 - `POST /v1/memory/delete with reason < 4 chars → 400 validation`
 - `memory_delete MCP tool → routes to daemon, returns ok with tombstone`
 
-### 7.4 Acceptance script (`scripts/acceptance-p0p1.ts`)
+### 7.4 Acceptance — end-to-end via stdio integration test
 
-Add a check that exercises the full path through fake-ilink + fake-sdk: agent calls `memory_delete`, file moves to tombstone, events table has the record.
+`scripts/acceptance-p0p1.ts` is a one-off PR harness (P0/P1 auth-fix branch); not the right extension point. The same end-to-end path is exercised by `src/mcp-servers/wechat/integration.test.ts` → "memory_delete soft-deletes via the stdio MCP chain and writes an audit event", which spawns the real wechat-mcp child over stdio, calls memory_delete, and asserts both the tombstone on disk and the audit row in events. This runs in `bun run test` (default suite) on every change.
 
 ---
 
-## 8. Open questions
+## 8. Resolved questions (was: open)
 
-1. **Where does `chatId` come from in the route?** The existing `/v1/memory/read` reads it from... actually it doesn't — it operates on a daemon-wide MemoryFS rooted at `memory/`, NOT per-chat. The `memory_path` in audit events would need a per-chat events store keyed off the calling session's chatId. Need to verify the daemon's internal-api transport surfaces chatId; if not, we pull it from the `WECHAT_CHAT_ID` env that the MCP stdio child carries (set when the daemon spawns the wechat-mcp child per session).
+Verified against actual code on `dev` (2026-05-26).
 
-2. **Tombstone path collision** if user deletes the same file twice within 1 ms (impossible in practice but worth a sanity guard). The ISO timestamp granularity is millis; the rename would fail with EEXIST and we'd want to retry with an extra suffix. Probably overkill.
+1. **chatId source → MCP tool input, NOT env, NOT request middleware.**
+   Verified `src/daemon/internal-api/index.ts` route signature is `(searchParams, body)` only — no per-request chat context. `MemoryFS` in `src/daemon/main.ts:90` is daemon-singleton rooted at `<stateDir>/memory`, not per-chat. `EventsStore` IS per-chat: `makeEventsStore(db, chatId)` in `src/daemon/events/store.ts:92`.
 
-3. **Should `list()` have an `includeTombstones` opt for operator tools?** Future dashboard might want to show "recently soft-deleted" so the operator can restore. Add later when there's a real consumer.
+   All existing chat-bound MCP tools (`wechat_reply`, `wechat_send_file`, `wechat_edit_message`, `set_user_name`) already make `chat_id` a required input on the MCP schema. `memory_delete` adopts the same pattern: `chat_id: z.string()` in inputSchema, daemon constructs `makeEventsStore(deps.db, chat_id)` on the fly inside the handler. `WECHAT_CHAT_ID` env idea **rejected** — would diverge from the established "agent declares the chat" pattern and create env↔runtime drift across long-lived MCP children.
+
+2. **Tombstone collision → no guard in v1.** ISO millisecond granularity + multi-tens-of-ms MCP round-trip means a real collision is physically impossible from a single agent. If it ever happens (mocked clock in a test), `renameSync` throws EEXIST and the route's existing `catch` returns `{ ok: false, error }` — the agent retries. Zero lines of code; failure mode is loud, not silent.
+
+3. **`list({ includeTombstones })` → not in v1.** No live consumer (dashboard "recently deleted" surface is not on the roadmap). YAGNI; add as a non-breaking opts addition when a real caller surfaces.
 
 ---
 
@@ -312,7 +322,7 @@ Add a check that exercises the full path through fake-ilink + fake-sdk: agent ca
 ## 10. Implementation order
 
 1. **`MemoryFS.softDelete` + `list()` filter** + 5 unit tests. Smallest, self-contained.
-2. **DB migration v10** extending `events.kind` CHECK + `memory_path` column + 3 migration tests.
+2. **DB migration v13** extending `events.kind` CHECK + `memory_path` column + 3 migration tests.
 3. **EventKind union update** in `src/daemon/events/store.ts` + EventRecord type + 1 store test.
 4. **Daemon route** `POST /v1/memory/delete` with Zod schemas + 4 route tests.
 5. **MCP tool** registration in `src/mcp-servers/wechat/main.ts` + 1 tool test.

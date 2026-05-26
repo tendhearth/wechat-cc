@@ -7,6 +7,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createInternalApi, type InternalApi } from '../../daemon/internal-api'
 import { makeMemoryFS } from '../../daemon/memory/fs-api'
+import { makeEventsStore } from '../../daemon/events/store'
+import { openTestDb, type Db } from '../../lib/db'
 
 /**
  * P1.A end-to-end: this test wires up the complete provider→stdio MCP→
@@ -160,6 +162,57 @@ describe('wechat-mcp stdio integration', () => {
     const parsed = JSON.parse(text!) as { ok: boolean; error?: string }
     expect(parsed.ok).toBe(false)
     expect(parsed.error).toMatch(/\.md/i)
+  })
+
+  async function bootChainWithDb(): Promise<{ client: Client; db: Db }> {
+    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
+    const db = openTestDb()
+    api = createInternalApi({ stateDir, daemonPid: 7777, memory, db })
+    const { port, tokenFilePath } = await api.start()
+    const transport = new StdioClientTransport({
+      command: RUNTIME,
+      args: [WECHAT_MCP_MAIN],
+      env: {
+        ...process.env as Record<string, string>,
+        WECHAT_INTERNAL_API: `http://127.0.0.1:${port}`,
+        WECHAT_INTERNAL_TOKEN_FILE: tokenFilePath,
+      },
+      stderr: 'pipe',
+    })
+    const c = new Client({ name: 'integration-test', version: '0.0.1' }, { capabilities: {} })
+    await c.connect(transport)
+    client = c
+    return { client: c, db }
+  }
+
+  it('memory_delete soft-deletes via the stdio MCP chain and writes an audit event', async () => {
+    const { client, db } = await bootChainWithDb()
+    // Seed a memory file first
+    await client.callTool({
+      name: 'memory_write',
+      arguments: { path: 'profile.md', content: 'doomed' },
+    })
+
+    const result = await client.callTool({
+      name: 'memory_delete',
+      arguments: { chat_id: 'chat_int', path: 'profile.md', reason: 'user said "forget that"' },
+    })
+    expect(result.isError).toBeFalsy()
+    const text = (result.content as Array<{ type: string; text?: string }>)[0]?.text
+    const parsed = JSON.parse(text!) as { ok: boolean; existed: boolean; tombstone?: string }
+    expect(parsed.ok).toBe(true)
+    expect(parsed.existed).toBe(true)
+    expect(parsed.tombstone).toMatch(/^profile\.md\.deleted-/)
+
+    // Audit row landed in the per-chat events store
+    const events = await makeEventsStore(db, 'chat_int').list()
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      kind: 'memory_deleted',
+      trigger: 'mcp_tool_call',
+      reasoning: 'user said "forget that"',
+    })
+    db.close()
   })
 
   // ── B3: projects + set_user_name end-to-end ─────────────────────────────

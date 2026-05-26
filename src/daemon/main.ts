@@ -107,7 +107,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   try {
     // 1. internal-api FIRST — bootstrap needs its baseUrl/token for MCP wiring
     const internalApi = await registerInternalApi({
-      stateDir, daemonPid: process.pid, memory: memoryFS, projects: ilink.projects,
+      stateDir, daemonPid: process.pid, memory: memoryFS, db, projects: ilink.projects,
       setUserName: (chatId, name) => ilink.setUserName(chatId, name),
       voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus() },
       sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),

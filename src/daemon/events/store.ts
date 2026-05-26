@@ -22,6 +22,7 @@ export type EventKind =
   | 'cron_eval_failed'
   | 'observation_written'
   | 'milestone'
+  | 'memory_deleted'
 
 export interface EventRecord {
   id: string                       // evt_<random>
@@ -33,6 +34,7 @@ export interface EventRecord {
   observation_id?: string          // for observation_written
   milestone_id?: string            // for milestone
   jsonl_session_id?: string        // for cron_eval_pushed (which session got the message)
+  memory_path?: string             // for memory_deleted — POSIX relative tombstone path
 }
 
 export interface EventsStore {
@@ -73,6 +75,7 @@ interface Row {
   observation_id: string | null
   milestone_id: string | null
   jsonl_session_id: string | null
+  memory_path: string | null
 }
 
 function rowToRecord(r: Row): EventRecord {
@@ -86,29 +89,30 @@ function rowToRecord(r: Row): EventRecord {
     ...(r.observation_id !== null ? { observation_id: r.observation_id } : {}),
     ...(r.milestone_id !== null ? { milestone_id: r.milestone_id } : {}),
     ...(r.jsonl_session_id !== null ? { jsonl_session_id: r.jsonl_session_id } : {}),
+    ...(r.memory_path !== null ? { memory_path: r.memory_path } : {}),
   }
 }
 
 export function makeEventsStore(db: Db, chatId: string, opts: EventsStoreOpts = {}): EventsStore {
   if (opts.migrateFromFile) maybeImportLegacy(db, chatId, opts.migrateFromFile)
 
-  const stmtInsert = db.query<unknown, [string, string, string, string, string, string, string | null, string | null, string | null, string | null]>(
-    'INSERT INTO events(id, chat_id, ts, kind, trigger, reasoning, push_text, observation_id, milestone_id, jsonl_session_id) ' +
-    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  const stmtInsert = db.query<unknown, [string, string, string, string, string, string, string | null, string | null, string | null, string | null, string | null]>(
+    'INSERT INTO events(id, chat_id, ts, kind, trigger, reasoning, push_text, observation_id, milestone_id, jsonl_session_id, memory_path) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   )
-  const stmtUpsertRaw = db.query<unknown, [string, string, string, string, string, string, string | null, string | null, string | null, string | null]>(
-    'INSERT OR REPLACE INTO events(id, chat_id, ts, kind, trigger, reasoning, push_text, observation_id, milestone_id, jsonl_session_id) ' +
-    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  const stmtUpsertRaw = db.query<unknown, [string, string, string, string, string, string, string | null, string | null, string | null, string | null, string | null]>(
+    'INSERT OR REPLACE INTO events(id, chat_id, ts, kind, trigger, reasoning, push_text, observation_id, milestone_id, jsonl_session_id, memory_path) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   )
   // list() ascending by ts to match legacy jsonl read order (append-order =
   // chronological). limit applied at the call site (slice tail) so since
   // and limit can be combined predictably.
   const stmtListAll = db.query<Row, [string]>(
-    'SELECT id, ts, kind, trigger, reasoning, push_text, observation_id, milestone_id, jsonl_session_id ' +
+    'SELECT id, ts, kind, trigger, reasoning, push_text, observation_id, milestone_id, jsonl_session_id, memory_path ' +
     'FROM events WHERE chat_id = ? ORDER BY ts ASC, rowid ASC',
   )
   const stmtListSince = db.query<Row, [string, string]>(
-    'SELECT id, ts, kind, trigger, reasoning, push_text, observation_id, milestone_id, jsonl_session_id ' +
+    'SELECT id, ts, kind, trigger, reasoning, push_text, observation_id, milestone_id, jsonl_session_id, memory_path ' +
     'FROM events WHERE chat_id = ? AND ts >= ? ORDER BY ts ASC, rowid ASC',
   )
 
@@ -133,6 +137,7 @@ export function makeEventsStore(db: Db, chatId: string, opts: EventsStoreOpts = 
         rec.observation_id ?? null,
         rec.milestone_id ?? null,
         rec.jsonl_session_id ?? null,
+        rec.memory_path ?? null,
       )
       return id
     },
@@ -149,6 +154,7 @@ export function makeEventsStore(db: Db, chatId: string, opts: EventsStoreOpts = 
         rec.observation_id ?? null,
         rec.milestone_id ?? null,
         rec.jsonl_session_id ?? null,
+        rec.memory_path ?? null,
       )
     },
 
@@ -186,8 +192,8 @@ function maybeImportLegacy(db: Db, chatId: string, file: string): void {
   // INSERT OR IGNORE — events are append-only; if a row with the same
   // id is somehow already there, keep the original.
   const insert = db.prepare(
-    'INSERT OR IGNORE INTO events(id, chat_id, ts, kind, trigger, reasoning, push_text, observation_id, milestone_id, jsonl_session_id) ' +
-    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT OR IGNORE INTO events(id, chat_id, ts, kind, trigger, reasoning, push_text, observation_id, milestone_id, jsonl_session_id, memory_path) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   )
   db.transaction(() => {
     for (const r of records) {
@@ -202,6 +208,7 @@ function maybeImportLegacy(db: Db, chatId: string, file: string): void {
         r.observation_id ?? null,
         r.milestone_id ?? null,
         r.jsonl_session_id ?? null,
+        r.memory_path ?? null,
       )
     }
   })()

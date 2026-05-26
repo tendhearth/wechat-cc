@@ -599,14 +599,14 @@ describe('ConversationSetModeResponse', () => {
 // ── schema lookup tables ─────────────────────────────────────────────────────
 
 describe('schema lookup tables', () => {
-  it('REQUEST_SCHEMAS has 24 entries (POST body + 1 GET query)', () => {
+  it('REQUEST_SCHEMAS has 25 entries (POST body + 1 GET query)', () => {
     // 19 original + 4 a2a dashboard routes (preview, install, remove, pause)
-    // + 1 a2a server-side test route (Test button)
-    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(24)
+    // + 1 a2a server-side test route (Test button) + 1 memory/delete
+    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(25)
   })
-  it('RESPONSE_SCHEMAS has 28 entries (one per route)', () => {
+  it('RESPONSE_SCHEMAS has 29 entries (one per route)', () => {
     // 25 original + 2 a2a dashboard response schemas (preview, install)
-    // + 1 a2a server-side test response
-    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(28)
+    // + 1 a2a server-side test response + 1 memory/delete
+    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(29)
   })
 })

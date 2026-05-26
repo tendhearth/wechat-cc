@@ -135,10 +135,10 @@ describe('migration v12 — a2a_events table', () => {
     expect(names).toEqual(['agent_id', 'direction', 'http_status', 'id', 'status', 'text', 'ts', 'urgency'])
   })
 
-  it('PRAGMA user_version = 12 after v12', () => {
+  it('PRAGMA user_version is at least 12 after v12 (latest migrations applied)', () => {
     const db = openDb({ path: ':memory:' })
     const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
-    expect(v).toBe(12)
+    expect(v).toBeGreaterThanOrEqual(12)
   })
 
   it('agent_ts index exists', () => {
@@ -147,6 +147,47 @@ describe('migration v12 — a2a_events table', () => {
       "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='a2a_events'"
     ).all()
     expect(idx.find(i => i.name === 'a2a_events_agent_ts')).toBeDefined()
+  })
+})
+
+describe('migration v13 — events.kind adds memory_deleted + memory_path column', () => {
+  it('extends events.kind CHECK to include memory_deleted', () => {
+    const db = openDb({ path: ':memory:' })
+    // Should succeed (kind allowed)
+    expect(() => db.exec(
+      "INSERT INTO events(id, chat_id, ts, kind, trigger, reasoning) " +
+      "VALUES ('evt_a', 'chat1', '2026-05-26T00:00:00.000Z', 'memory_deleted', 'mcp_tool_call', 'user said forget')"
+    )).not.toThrow()
+  })
+
+  it('rejects kind values outside the union (CHECK still active)', () => {
+    const db = openDb({ path: ':memory:' })
+    expect(() => db.exec(
+      "INSERT INTO events(id, chat_id, ts, kind, trigger, reasoning) " +
+      "VALUES ('evt_b', 'chat1', '2026-05-26T00:00:00.000Z', 'not_a_real_kind', 'mcp_tool_call', 'whatever')"
+    )).toThrow()
+  })
+
+  it('preserves pre-v13 rows through the table recreate, and adds memory_path nullable TEXT column', () => {
+    const db = openDb({ path: ':memory:' })
+    // Insert a row with a pre-existing kind
+    db.exec(
+      "INSERT INTO events(id, chat_id, ts, kind, trigger, reasoning) " +
+      "VALUES ('evt_legacy', 'chat1', '2026-05-25T00:00:00.000Z', 'milestone', 'manual', 'old row preserved')"
+    )
+    // The migration ran on openDb (all-in-one). Validate the schema:
+    const cols = db.query<{ name: string; type: string; notnull: number }, []>(
+      "SELECT name, type, [notnull] FROM pragma_table_info('events')"
+    ).all()
+    const mp = cols.find(c => c.name === 'memory_path')
+    expect(mp).toBeDefined()
+    expect(mp!.type).toBe('TEXT')
+    expect(mp!.notnull).toBe(0)
+    // And the legacy row survived
+    const row = db.query<{ reasoning: string }, []>(
+      "SELECT reasoning FROM events WHERE id = 'evt_legacy'"
+    ).get()
+    expect(row?.reasoning).toBe('old row preserved')
   })
 })
 

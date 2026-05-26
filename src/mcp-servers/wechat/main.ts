@@ -155,6 +155,40 @@ server.registerTool(
   },
 )
 
+server.registerTool(
+  'memory_delete',
+  {
+    title: 'Soft-delete a memory file',
+    description:
+      '把 memory/ 下的一个 .md 文件"软删除"——重命名为 .deleted-<时间> 后缀，不进入 memory_list() 结果；用户可在终端 mv 还原。\n' +
+      '何时调用：用户明确说"忘了/删掉/不要这个了"。不要因为"觉得过时了"主观删除。\n' +
+      '硬删除：本工具不提供。若需彻底擦除（隐私 / 法律原因），让用户手动 rm `~/.claude/channels/wechat/memory/<chat>/<path>.deleted-*`。\n' +
+      '必填 reason：写下用户说了什么 / 你为何认为该删，会进 audit 日志（dashboard 可查），方便事后追溯。',
+    inputSchema: {
+      chat_id: z.string(),
+      path: z.string()
+        .max(500, 'path must be <= 500 chars')
+        .refine(s => !s.includes('\0'), { message: 'path must not contain null bytes' }),
+      reason: z.string()
+        .min(4, 'reason must be at least 4 chars — quote the user or state your inference')
+        .max(500, 'reason must be <= 500 chars'),
+    },
+  },
+  async ({ chat_id, path, reason }) => {
+    try {
+      const resp = await client.request<{
+        ok: boolean
+        tombstone?: string
+        existed?: boolean
+        error?: string
+      }>('POST', '/v1/memory/delete', { chat_id, path, reason })
+      return { content: [{ type: 'text', text: JSON.stringify(resp) }] }
+    } catch (err) {
+      return passthroughErrorResult(err, 'memory_delete')
+    }
+  },
+)
+
 // ─── projects + user name (RFC 03 P1.B B3) ───────────────────────────────
 // Legacy descriptions kept verbatim — agent's mental model unchanged.
 
