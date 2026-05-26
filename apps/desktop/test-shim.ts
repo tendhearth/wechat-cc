@@ -643,6 +643,35 @@ Bun.serve({
           // that uses the via-file path (sessions detail, export markdown)
           // shows "读取失败：unknown command" instead of working.
           const cliArgs = body.args?.args ?? []
+
+          // Intercept `logs --tail N --json` in DRY_RUN unconditionally —
+          // the logs pane uses this via the via-file path. Without an
+          // intercept the shim falls through to the real CLI which reads
+          // the dev machine's actual channel.log, leaking real daemon
+          // output into tests. Returns synthetic entries for the seeded
+          // demo state; empty when unseeded.
+          if (dryRun && cliArgs[0] === 'logs') {
+            const tailIdx = cliArgs.indexOf('--tail')
+            const tail = tailIdx >= 0 ? Number.parseInt(cliArgs[tailIdx + 1] ?? '50', 10) : 50
+            const seeded = __mockState.chats.length > 0
+            const baseEntries = seeded ? [
+              { timestamp: new Date(Date.now() - 5_000).toISOString(), tag: 'BOOT', message: 'daemon started', raw: '[BOOT] daemon started' },
+              { timestamp: new Date(Date.now() - 4_000).toISOString(), tag: 'INBOUND', message: 'received message from test_chat', raw: '[INBOUND] received message from test_chat' },
+              { timestamp: new Date(Date.now() - 3_000).toISOString(), tag: 'SESSION_INIT', message: 'alias=_default provider=claude', raw: '[SESSION_INIT] alias=_default provider=claude' },
+              { timestamp: new Date(Date.now() - 2_000).toISOString(), tag: 'TYPING', message: 'sent', raw: '[TYPING] sent' },
+              { timestamp: new Date(Date.now() - 1_000).toISOString(), tag: 'REPLY', message: 'mocked reply dispatched', raw: '[REPLY] mocked reply dispatched' },
+            ] : []
+            const entries = baseEntries.slice(-tail)
+            return Response.json({
+              result: {
+                ok: true,
+                logFile: '/tmp/wechat-cc-shim/channel.log',
+                totalLines: baseEntries.length,
+                entries,
+              },
+            })
+          }
+
           const tmp = join(process.env.TMPDIR ?? '/tmp', `wechat-cc-shim-${Date.now()}-${process.pid}.json`)
           const r = await runCli([...cliArgs, '--out-file', tmp])
           if (r.code !== 0) return Response.json({ error: r.stderr.trim() || `cli exit ${r.code}` })
