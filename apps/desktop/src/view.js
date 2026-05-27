@@ -216,7 +216,6 @@ export function diagnose({ report, healthOk, lastError, lastRestart = null, plat
       title: "Windows 权限不够",
       hint: "上一次重启后进程 pid 没变，服务可能没有足够权限替换旧进程。",
       primary: { label: "以管理员身份运行", action: { kind: 'show-platform-hint', platform: 'win32' } },
-      secondary: { label: "停止计划任务", action: { kind: 'open-logs' } },
     }
   }
 
@@ -284,6 +283,19 @@ export function diagnose({ report, healthOk, lastError, lastRestart = null, plat
     }
   }
 
+  // ── 6: allowlist empty ─────────────────────────────────────────────────
+  // Checked before code 5 (accounts): if the user has no allowlist entries,
+  // pointing them at WeChat re-bind is premature — they have no users to talk
+  // to even after binding. Surface the access config first.
+  if (access.allowFromCount === 0) {
+    return {
+      code: 6,
+      title: "白名单是空的",
+      hint: "有绑定账号但没有任何用户在白名单，没人能用 bot。",
+      primary: { label: "去设置允许列表", action: { kind: 'route-to-settings', section: 'access' } },
+    }
+  }
+
   // ── 5: accounts empty or all expired ──────────────────────────────────
   if (accounts.count === 0) {
     return {
@@ -299,16 +311,6 @@ export function diagnose({ report, healthOk, lastError, lastRestart = null, plat
       title: "微信账号已过期",
       hint: "账号过期，bot 无法收发消息，重新扫码可恢复。",
       primary: { label: "重新扫码", action: { kind: 'route-to-wizard', step: 'wechat' } },
-    }
-  }
-
-  // ── 6: allowlist empty ─────────────────────────────────────────────────
-  if (access.allowFromCount === 0) {
-    return {
-      code: 6,
-      title: "白名单是空的",
-      hint: "有绑定账号但没有任何用户在白名单，没人能用 bot。",
-      primary: { label: "去设置允许列表", action: { kind: 'route-to-settings', section: 'access' } },
     }
   }
 

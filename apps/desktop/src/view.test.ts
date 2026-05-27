@@ -774,6 +774,7 @@ describe('diagnose', () => {
       expect(result.code).toBe(8)
       expect((result.primary.action as any).kind).toBe('show-platform-hint')
       expect((result.primary.action as any).platform).toBe('win32')
+      expect(result.secondary).toBeUndefined()
     })
   })
 
@@ -831,6 +832,27 @@ describe('diagnose', () => {
         lastError: null,
       })
       expect(result.code).toBe(3)
+    })
+
+    it('code 6 (allowlist empty) takes priority over code 5 (accounts empty/expired) when both fire', () => {
+      // Both code-5 signals (accounts.count=0) AND code-6 signal (allowFromCount=0)
+      // are active simultaneously. Code 6 must win: pointing the user at access
+      // config is more useful than WeChat re-bind when they have no allowlist users
+      // to talk to anyway.
+      const result = diagnose({
+        report: healthyReport({
+          expiredBots: [],
+          checks: {
+            accounts: { ok: false, count: 0, items: [] },
+            access: { ok: false, dmPolicy: 'allowlist', allowFromCount: 0 },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+      })
+      expect(result.code).toBe(6)
+      expect((result.primary.action as any).kind).toBe('route-to-settings')
+      expect((result.primary.action as any).section).toBe('access')
     })
 
     it('code 4 (provider hard) only fires when daemon is alive', () => {
