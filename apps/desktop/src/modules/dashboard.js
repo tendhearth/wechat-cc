@@ -154,7 +154,7 @@ export function renderRestartButton(report) {
   const labelNode = Array.from(btn.childNodes).find(
     n => n.nodeType === Node.TEXT_NODE && n.textContent.trim().length > 0,
   )
-  const visibleLabel = report.checks.daemon?.alive ? "重新连接" : "重新连接"
+  const visibleLabel = "重新连接"
   if (labelNode) labelNode.textContent = ` ${visibleLabel}`
   else btn.appendChild(document.createTextNode(` ${visibleLabel}`))
   btn.dataset.action = choice.action
@@ -454,10 +454,14 @@ export function handleDiagnoseAction(deps, action) {
       else if (action.section === "provider") deps.routeToProviderSettings?.()
       return
     case "restart-dashboard":
-      // Card hint already says "Cmd-Q / Alt-F4 重启" — informational only.
+      setPending("请用 Cmd-Q / Alt-F4 关闭后重新打开 Dashboard")
+      setTimeout(() => setPending(""), 3000)
+      hideDiagnoseCard()
       return
     case "show-platform-hint":
-      // Card hint already covers win32 admin instructions — informational only.
+      setPending("请以管理员身份重启 Dashboard")
+      setTimeout(() => setPending(""), 3000)
+      hideDiagnoseCard()
       return
     case "open-logs":
       hideDiagnoseCard()

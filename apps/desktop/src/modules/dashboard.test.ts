@@ -519,7 +519,10 @@ describe('restartDaemon (diagnose → card)', () => {
       const a = c[1] as any
       return a?.args?.[0] === 'service' && a?.args?.[1] === 'stop'
     })
-    expect(stopCall).toBeTruthy()
+    // Must find a concrete call — not just truthy (undefined passes toBeTruthy)
+    expect(stopCall).toBeDefined()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((stopCall![1] as any).args).toEqual(expect.arrayContaining(['service', 'stop']))
   })
 })
 
@@ -560,4 +563,60 @@ describe('handleDiagnoseAction open-logs', () => {
     expect(diagnosis.code).toBe(2)
     expect((diagnosis.secondary?.action as any)?.kind).toBe('open-logs')
   })
+})
+
+// ── handleDiagnoseAction: restart-dashboard and show-platform-hint ────────
+// Both actions are "informational only" — no async side-effects — but must
+// give the user visible feedback via setPending and hide the diagnose card.
+
+describe('handleDiagnoseAction button-feedback', () => {
+  it('restart-dashboard: setPending is called and card is hidden', () => {
+    const els = installDashboardDom()
+    // Show the card first
+    els.rdcCard.hidden = false
+
+    handleDiagnoseAction({}, { kind: 'restart-dashboard' })
+
+    expect(els.rdcCard.hidden).toBe(true)
+    expect(els.dashPending.textContent).toBe('请用 Cmd-Q / Alt-F4 关闭后重新打开 Dashboard')
+  })
+
+  it('show-platform-hint: setPending is called and card is hidden', () => {
+    const els = installDashboardDom()
+    // Show the card first
+    els.rdcCard.hidden = false
+
+    handleDiagnoseAction({}, { kind: 'show-platform-hint', platform: 'win32' })
+
+    expect(els.rdcCard.hidden).toBe(true)
+    expect(els.dashPending.textContent).toBe('请以管理员身份重启 Dashboard')
+  })
+})
+
+// ── renderDiagnoseCard: warn-class coverage ───────────────────────────────
+// The card gets the "warn" CSS class for codes that indicate active failures
+// (1, 2, 3, 4, 5, 8) and NOT for informational codes (0, 6, 7).
+// This test table catches future regressions if someone drops or reorders
+// a code in the warnCodes Set.
+
+describe('renderDiagnoseCard warn-class', () => {
+  const warnCodes = new Set([1, 2, 3, 4, 5, 8])
+
+  // Minimal fake diagnosis for each code: only code, title, hint and a
+  // no-op primary action are required by renderDiagnoseCard.
+  const fakeDiagnosis = (code: number) => ({
+    code,
+    title: `test-title-${code}`,
+    hint: `test-hint-${code}`,
+    primary: { label: 'OK', action: { kind: 'auto-dismiss' } },
+  })
+
+  for (const code of [0, 1, 2, 3, 4, 5, 6, 7, 8]) {
+    it(`code ${code}: warn class is ${warnCodes.has(code) ? 'present' : 'absent'}`, () => {
+      const els = installDashboardDom()
+      renderDiagnoseCard({}, fakeDiagnosis(code))
+      const hasWarn = els.rdcCard.classList.contains('warn')
+      expect(hasWarn).toBe(warnCodes.has(code))
+    })
+  }
 })

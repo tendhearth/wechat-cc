@@ -322,10 +322,17 @@ test.describe('reconnect-diagnose card', () => {
     await shim.invoke('mock.doctor', { report: REPORTS.allGreen })
     await page.locator('#rdc-primary').click()
 
-    // Allow time for the async restart chain to run
-    await page.waitForTimeout(2000)
+    // Poll until both stop + start have been recorded (max 5s) rather than
+    // sleeping a fixed 2s — faster on a fast machine, reliable on a slow one.
+    await expect.poll(
+      async () => {
+        const r = await shim.invoke('mock.get-service-invokes') as { result: { invokes: string[] } }
+        return r.result.invokes
+      },
+      { timeout: 5000 },
+    ).toEqual(expect.arrayContaining(['service stop', 'service start']))
 
-    // Verify stop + start were called
+    // Final verification (invokes already polled above, re-read for the assertion log)
     const invokes = await shim.invoke('mock.get-service-invokes') as { result: { invokes: string[] } }
     expect(invokes.result.invokes).toContain('service stop')
     expect(invokes.result.invokes).toContain('service start')
