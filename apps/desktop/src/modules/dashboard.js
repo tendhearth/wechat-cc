@@ -271,10 +271,14 @@ export async function runRestartSequence(deps) {
   deps.markConnected?.()
 
   if (beforePid !== null && afterPid !== null && beforePid === afterPid) {
-    // pid didn't change — Stop-Process likely got Access Denied
+    // pid didn't change — Stop-Process likely got Access Denied.
+    // Record for the next diagnose() call so code 8 can fire on win32.
+    _lastRestart = { pidUnchanged: true }
     setPending("未能重启 daemon — pid 没换。可能是权限问题（dashboard 不是管理员启动）。试试：彻底关闭 → 右键以管理员身份打开。")
     return
   }
+  // Any other outcome: clear the signal so the next diagnose has a fresh read.
+  _lastRestart = { pidUnchanged: false }
   if (beforePid !== null && afterPid === null) {
     setPending(`daemon 没起来 — 看 install-progress 或 logs 排查 (was pid ${beforePid})`)
     return
@@ -298,7 +302,14 @@ let _cardDeps = null
 let _cardDiagnosis = null
 // Wire the delegating listener once per module load. Fresh _cardDeps/_cardDiagnosis
 // on each renderDiagnoseCard() call means stale deps can never fire.
+// Test-only reset: call __resetDiagnoseCardState() in beforeEach to prevent
+// listener state from leaking across test cases.
 let _cardListenersWired = false
+
+// Carries the outcome of the most recent runRestartSequence call into the
+// next restartDaemon (diagnose) invocation. Cleared after consumption so
+// stale signals never linger across multiple clicks.
+let _lastRestart = null
 
 /**
  * Wire the card's click listeners once. Safe to call multiple times.
@@ -427,6 +438,18 @@ export function hideDiagnoseCard() {
 }
 
 /**
+ * TEST-ONLY: Reset all module-level card/restart state.
+ * Call in beforeEach so listener wiring and restart signals don't leak
+ * across test cases. The double-underscore prefix marks it as test-only.
+ */
+export function __resetDiagnoseCardState() {
+  _cardListenersWired = false
+  _cardDeps = null
+  _cardDiagnosis = null
+  _lastRestart = null
+}
+
+/**
  * Execute the action from a diagnose card button click.
  * @param {object} deps
  * @param {{ kind: string, step?: string, section?: string, command?: string, link?: string, platform?: string }} action
@@ -483,10 +506,13 @@ export async function restartDaemon(deps) {
   }
 
   const healthOk = deps.healthProbe ? await deps.healthProbe() : null
+  const capturedLastRestart = _lastRestart
+  _lastRestart = null  // consume: one observation per click, never lingers
   const diagnosis = diagnose({
     report,
     healthOk,
     lastError: deps.doctorPoller.lastError ?? null,
+    lastRestart: capturedLastRestart,
     platform: typeof navigator !== "undefined" ? (navigator.platform || "linux") : "linux",
   })
 
@@ -501,6 +527,7 @@ export async function restartDaemon(deps) {
     provider: report?.checks?.provider?.provider ?? "unknown",
     lastError_present: deps.doctorPoller.lastError != null,
     health_ok: healthOk,
+    platform: typeof navigator !== "undefined" ? (navigator.platform || "unknown") : "unknown",
   }
   Promise.resolve().then(() =>
     deps.invoke("wechat_cli_json", {

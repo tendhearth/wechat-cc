@@ -8,10 +8,12 @@ beforeEach(() => {
   globalThis.document = { getElementById: () => null }
   // @ts-expect-error provide the DOM constant used by renderRestartButton
   globalThis.Node = { TEXT_NODE: 3 }
+  // Reset card + restart module-level state so tests don't bleed into each other.
+  __resetDiagnoseCardState?.()
 })
 
 // Import AFTER document stub so setPending's getElementById doesn't crash
-const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, renderDiagnoseCard, hideDiagnoseCard, handleDiagnoseAction } = await import('./dashboard.js')
+const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, renderDiagnoseCard, hideDiagnoseCard, handleDiagnoseAction, __resetDiagnoseCardState } = await import('./dashboard.js')
 
 function textNode(text = '') {
   return { nodeType: 3, textContent: text }
@@ -363,6 +365,120 @@ describe('runRestartSequence', () => {
   })
 })
 
+// ── code-8 full flow: runRestartSequence sets _lastRestart, next restartDaemon ──
+// call produces code 8 on win32.
+//
+// Flow:
+//   1. restartDaemon click → report has dead daemon → card shows code-1
+//   2. User clicks primary → handleDiagnoseAction('run-restart-sequence')
+//      → runRestartSequence → same pid before/after → _lastRestart.pidUnchanged=true
+//   3. Second restartDaemon click → diagnose sees lastRestart + win32 → code 8
+
+describe('code-8 flow: _lastRestart wired through runRestartSequence → restartDaemon', () => {
+  // A report where daemon is alive, accounts+access+provider all healthy → code 0 normally.
+  // With _lastRestart.pidUnchanged + win32 it becomes code 8.
+  const aliveGreenReport = {
+    checks: {
+      daemon: { alive: true, pid: 1234 },
+      service: { installed: true },
+      accounts: { count: 1, items: [] },
+      access: { allowFromCount: 1 },
+      provider: { provider: 'claude' },
+      claude: { ok: true },
+    },
+    expiredBots: [],
+    userNames: {},
+  }
+
+  it('runRestartSequence with pid-unchanged sets _lastRestart, next restartDaemon on win32 shows code-8 card', async () => {
+    // Step 1: prime _lastRestart by running the sequence with same pid before/after
+    installDashboardDom()
+    const pidUnchangedInvoke = vi.fn(async (name: string, _args?: unknown) => {
+      if (name === 'wechat_daemon_pid') return 1234  // same pid both calls
+      return { ok: true }
+    })
+    await runRestartSequence({
+      invoke: pidUnchangedInvoke,
+      doctorPoller: fakeDoctorPoller(true),
+      formatInvokeError: (e: unknown) => String(e),
+    })
+    const pidCalls = pidUnchangedInvoke.mock.calls.filter(c => c[0] === 'wechat_daemon_pid')
+    expect(pidCalls.length).toBe(2)
+
+    // Step 2: restartDaemon on win32 — _lastRestart.pidUnchanged=true → code 8
+    const els = installDashboardDom()
+    // @ts-expect-error override navigator.platform for win32 path
+    globalThis.navigator = { platform: 'win32' }
+    try {
+      await restartDaemon({
+        invoke: vi.fn(async () => ({ ok: true })),
+        doctorPoller: {
+          refresh: vi.fn(async () => aliveGreenReport),
+          current: aliveGreenReport,
+          lastError: null,
+        },
+        formatInvokeError: (e: unknown) => String(e),
+        healthProbe: null,
+      })
+    } finally {
+      // @ts-expect-error restore
+      globalThis.navigator = undefined
+    }
+
+    // code 8: "Windows 权限不够"
+    expect(els.rdcCard.hidden).toBe(false)
+    expect(els.rdcTitle.textContent).toBe('Windows 权限不够')
+    expect(els.rdcPrimary.textContent).toBe('以管理员身份运行')
+  })
+
+  it('_lastRestart is cleared after restartDaemon consumes it (no stale signal on subsequent click)', async () => {
+    // Prime _lastRestart (pid unchanged)
+    installDashboardDom()
+    await runRestartSequence({
+      invoke: vi.fn(async (name: string) => {
+        if (name === 'wechat_daemon_pid') return 9999
+        return { ok: true }
+      }),
+      doctorPoller: fakeDoctorPoller(true),
+      formatInvokeError: (e: unknown) => String(e),
+    })
+
+    // First restartDaemon click on win32 — consumes _lastRestart → code 8
+    const els1 = installDashboardDom()
+    // @ts-expect-error set win32
+    globalThis.navigator = { platform: 'win32' }
+    await restartDaemon({
+      invoke: vi.fn(async () => ({ ok: true })),
+      doctorPoller: {
+        refresh: vi.fn(async () => aliveGreenReport),
+        current: aliveGreenReport,
+        lastError: null,
+      },
+      formatInvokeError: (e: unknown) => String(e),
+      healthProbe: null,
+    })
+    expect(els1.rdcTitle.textContent).toBe('Windows 权限不够')
+
+    // Second restartDaemon click — _lastRestart is null → code 0 (all green), no card
+    const els2 = installDashboardDom()
+    await restartDaemon({
+      invoke: vi.fn(async () => ({ ok: true })),
+      doctorPoller: {
+        refresh: vi.fn(async () => aliveGreenReport),
+        current: aliveGreenReport,
+        lastError: null,
+      },
+      formatInvokeError: (e: unknown) => String(e),
+      healthProbe: null,
+    })
+    // @ts-expect-error restore
+    globalThis.navigator = undefined
+
+    expect(els2.rdcCard.hidden).toBe(true)
+    expect(els2.dashPending.textContent).toBe('一切正常，无需操作')
+  })
+})
+
 // ── restartDaemon — diagnose → card or toast ──────────────────────────────
 // restartDaemon now calls diagnose() and renders the card (or shows a toast
 // for code 0). These tests cover all 9 diagnose code branches.
@@ -680,8 +796,8 @@ describe('restartDaemon RECONNECT_DIAGNOSE telemetry', () => {
     const fieldsIdx = logArgs.indexOf('--fields')
     expect(fieldsIdx).not.toBe(-1)
     const fields = JSON.parse(logArgs[fieldsIdx + 1]!)
-    // Verify all 6 expected keys are present
-    const EXPECTED_KEYS = ['code', 'daemon_alive', 'service_installed', 'provider', 'lastError_present', 'health_ok']
+    // Verify all 7 expected keys are present
+    const EXPECTED_KEYS = ['code', 'daemon_alive', 'service_installed', 'provider', 'lastError_present', 'health_ok', 'platform']
     for (const key of EXPECTED_KEYS) {
       expect(fields).toHaveProperty(key)
     }
