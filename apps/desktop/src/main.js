@@ -141,6 +141,23 @@ const deps = {
       renderRestartButtonIfActive(current)
     }
   },
+  // Diagnose-card callbacks: open the settings drawer at the relevant section.
+  // The drawer currently doesn't have separate provider/access deep-links —
+  // cheapest approach is just opening the drawer (no major refactor needed).
+  routeToAccessSettings: () => {
+    openSettingsDrawer()
+  },
+  routeToProviderSettings: () => {
+    openSettingsDrawer()
+    // Scroll to the wizard provider step if we can; otherwise the drawer
+    // at least puts the user in the right ballpark.
+    setTimeout(() => {
+      document.getElementById("screen-provider")?.scrollIntoView?.({ behavior: "smooth" })
+    }, 150)
+  },
+  // Health probe stub — Step 3 will wire real /v1/health polling here.
+  // Returning null means code 7 (frontend stuck) never fires in Step 2.
+  healthProbe: null,
 }
 
 // Live status line for the network guard toggle. Pulls fresh probe

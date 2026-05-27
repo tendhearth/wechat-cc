@@ -8,7 +8,7 @@
 // Subscribes to: doctorPoller (renderDashboard + renderRestartButton fire
 // on every successful poll automatically).
 
-import { dashboardHero, accountRows, formatRelativeTime, escapeHtml, restartButtonState, deleteAccountConfirmCopy } from "../view.js"
+import { dashboardHero, accountRows, formatRelativeTime, escapeHtml, restartButtonState, deleteAccountConfirmCopy, diagnose } from "../view.js"
 
 export function renderDashboard(report) {
   const hero = dashboardHero(report.checks.daemon, report.checks.accounts.count)
@@ -223,21 +223,10 @@ export async function stopDaemon(deps) {
   setTimeout(() => setPending(""), 2000)
 }
 
-// Smart restart: if no service is registered, route to the wizard service
-// step instead of shelling out to systemctl/launchctl which would fail
-// noisily. Refresh first to avoid acting on stale cache.
-export async function restartDaemon(deps) {
-  setPending("重新连接…")
-  const cached = await deps.doctorPoller.refresh() ?? deps.doctorPoller.current
-  if (cached) {
-    const choice = restartButtonState(cached.checks.daemon, cached.checks.service)
-    if (choice.action === "install") {
-      deps.routeToWizardService()
-      setPending("需要先安装后台服务")
-      return
-    }
-  }
-
+// The actual stop+kill+start chain. Called either by the old restartDaemon
+// fallback path (when diagnose returns code 0 / no card) or by the
+// diagnose-card's primary button click when action.kind === 'run-restart-sequence'.
+export async function runRestartSequence(deps) {
   // Capture pid BEFORE the stop step. May be null on non-Windows.
   let beforePid = null
   try { beforePid = await deps.invoke("wechat_daemon_pid") } catch { /* not registered */ }
@@ -299,6 +288,209 @@ export async function restartDaemon(deps) {
   // Non-Windows or daemon wasn't running before — existing path
   setPending("已重启")
   setTimeout(() => setPending(""), 2000)
+}
+
+// Module-level slot: the latest deps + diagnosis rendered into the card.
+// Event listeners on the card delegate through here so we never need
+// replaceWith (which requires a real DOM parent node and isn't available
+// in the jsdom-free test harness).
+let _cardDeps = null
+let _cardDiagnosis = null
+let _cardListenersWired = false
+
+/**
+ * Wire the card's click listeners once. Safe to call multiple times.
+ * Uses event delegation via the card container — avoids needing
+ * element.replaceWith() when re-rendering the card.
+ */
+function wireCardListeners() {
+  if (_cardListenersWired) return
+  const card = document.getElementById("reconnect-diagnose-card")
+  if (!card) return
+  _cardListenersWired = true
+
+  card.addEventListener("click", (ev) => {
+    if (!_cardDeps || !_cardDiagnosis) return
+    const target = ev.target
+    // Ignore clicks on the fix-section copy button (it handles its own stop)
+    if (target && target.closest && target.closest("#rdc-fix")) return
+    const primaryBtn = document.getElementById("rdc-primary")
+    const secondaryLink = document.getElementById("rdc-secondary")
+    if (primaryBtn && (target === primaryBtn || primaryBtn.contains?.(target))) {
+      handleDiagnoseAction(_cardDeps, _cardDiagnosis.primary.action)
+      return
+    }
+    if (secondaryLink && (target === secondaryLink || secondaryLink.contains?.(target))) {
+      ev.preventDefault()
+      handleDiagnoseAction(_cardDeps, _cardDiagnosis.secondary.action)
+    }
+  })
+}
+
+/**
+ * Render (or hide) the reconnect-diagnose card based on a diagnosis result.
+ * Pure DOM mutation — no state, no async. The caller is responsible for
+ * calling diagnose() and passing the result here.
+ *
+ * Dispatch table for primary button click (action.kind):
+ *   auto-dismiss        → hide card (should never reach card render; code 0 is handled earlier)
+ *   run-restart-sequence → runRestartSequence(deps)
+ *   route-to-wizard     → deps.routeToWizardService() | deps.routeToWizardBind()
+ *   show-fix            → copy command to clipboard / open link
+ *   route-to-settings   → deps.routeToAccessSettings() | deps.routeToProviderSettings()
+ *   restart-dashboard   → informational only (hint already says Cmd-Q/Alt-F4)
+ *   show-platform-hint  → informational only (hint already covers win32 instructions)
+ *
+ * @param {object} deps  The dashboard deps bag
+ * @param {{ code: number, title: string, hint: string,
+ *           primary: { label: string, action: object },
+ *           secondary?: { label: string, action: object } }} diagnosis
+ */
+export function renderDiagnoseCard(deps, diagnosis) {
+  const card = document.getElementById("reconnect-diagnose-card")
+  if (!card) return
+
+  const titleEl = document.getElementById("rdc-title")
+  const hintEl = document.getElementById("rdc-hint")
+  const fixEl = document.getElementById("rdc-fix")
+  const primaryBtn = document.getElementById("rdc-primary")
+  const secondaryLink = document.getElementById("rdc-secondary")
+  if (!titleEl || !hintEl || !fixEl || !primaryBtn || !secondaryLink) return
+
+  // Store latest deps + diagnosis so the delegating listener can dispatch
+  _cardDeps = deps
+  _cardDiagnosis = diagnosis
+  wireCardListeners()
+
+  // Populate title and hint
+  titleEl.textContent = diagnosis.title
+  hintEl.textContent = diagnosis.hint
+
+  // Warn tone for codes that indicate active failures (1, 2, 3, 4, 5, 8)
+  const warnCodes = new Set([1, 2, 3, 4, 5, 8])
+  card.classList.toggle("warn", warnCodes.has(diagnosis.code))
+
+  // code 4: show fix command / link inline
+  if (diagnosis.primary.action.kind === "show-fix") {
+    const action = diagnosis.primary.action
+    fixEl.innerHTML = ""
+    if (action.command) {
+      const codeEl = document.createElement("code")
+      codeEl.textContent = action.command
+      const copyBtn = document.createElement("button")
+      copyBtn.className = "rdc-btn-primary"
+      copyBtn.style.cssText = "font-size:11px;height:24px;padding:0 8px;margin-top:2px;"
+      copyBtn.textContent = "复制"
+      copyBtn.addEventListener("click", (e) => {
+        e.stopPropagation()
+        navigator.clipboard?.writeText(action.command).catch(() => {})
+      })
+      fixEl.appendChild(codeEl)
+      fixEl.appendChild(copyBtn)
+    }
+    if (action.link) {
+      const linkEl = document.createElement("a")
+      linkEl.href = action.link
+      linkEl.target = "_blank"
+      linkEl.rel = "noopener"
+      linkEl.textContent = action.link
+      fixEl.appendChild(linkEl)
+    }
+    fixEl.hidden = !(action.command || action.link)
+  } else {
+    fixEl.hidden = true
+    fixEl.innerHTML = ""
+  }
+
+  // Primary button label (click handled by delegating listener above)
+  primaryBtn.textContent = diagnosis.primary.label
+
+  // Secondary link (optional)
+  if (diagnosis.secondary) {
+    secondaryLink.textContent = diagnosis.secondary.label
+    secondaryLink.hidden = false
+  } else {
+    secondaryLink.hidden = true
+  }
+
+  card.hidden = false
+}
+
+/**
+ * Hide the reconnect-diagnose card.
+ */
+export function hideDiagnoseCard() {
+  const card = document.getElementById("reconnect-diagnose-card")
+  if (card) card.hidden = true
+}
+
+/**
+ * Execute the action from a diagnose card button click.
+ * @param {object} deps
+ * @param {{ kind: string, step?: string, section?: string, command?: string, link?: string, platform?: string }} action
+ */
+function handleDiagnoseAction(deps, action) {
+  const card = document.getElementById("reconnect-diagnose-card")
+  switch (action.kind) {
+    case "auto-dismiss":
+      if (card) card.hidden = true
+      return
+    case "run-restart-sequence":
+      if (card) card.hidden = true
+      runRestartSequence(deps)
+      return
+    case "route-to-wizard":
+      if (action.step === "service") deps.routeToWizardService?.()
+      else if (action.step === "wechat") deps.routeToWizardBind?.()
+      return
+    case "show-fix":
+      if (action.command) navigator.clipboard?.writeText(action.command).catch(() => {})
+      else if (action.link) window.open(action.link, "_blank")
+      return
+    case "route-to-settings":
+      if (action.section === "access") deps.routeToAccessSettings?.()
+      else if (action.section === "provider") deps.routeToProviderSettings?.()
+      return
+    case "restart-dashboard":
+      // Card hint already says "Cmd-Q / Alt-F4 重启" — informational only.
+      return
+    case "show-platform-hint":
+      // Card hint already covers win32 admin instructions — informational only.
+      return
+  }
+}
+
+// Smart restart: refresh → call diagnose() → show card or (code 0) show
+// a brief toast. The actual stop+kill+start chain lives in runRestartSequence
+// and is only invoked when the card's primary action says so.
+export async function restartDaemon(deps) {
+  setPending("重新连接…")
+  const report = await deps.doctorPoller.refresh() ?? deps.doctorPoller.current
+
+  if (!report) {
+    // No report at all — fall back to the direct restart sequence
+    return runRestartSequence(deps)
+  }
+
+  const healthOk = deps.healthProbe ? await deps.healthProbe() : null
+  const diagnosis = diagnose({
+    report,
+    healthOk,
+    lastError: deps.doctorPoller.lastError ?? null,
+    platform: typeof navigator !== "undefined" ? (navigator.platform || "linux") : "linux",
+  })
+
+  // Code 0: everything is fine — show a brief "all good" toast instead of card
+  if (diagnosis.code === 0) {
+    setPending("一切正常，无需操作")
+    setTimeout(() => setPending(""), 1500)
+    hideDiagnoseCard()
+    return
+  }
+
+  // Non-0: render the card. Clear any transient pending text first.
+  setPending("")
+  renderDiagnoseCard(deps, diagnosis)
 }
 
 // Account row inline two-step confirm handler. Wired by main.js to the
