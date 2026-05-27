@@ -94,7 +94,15 @@ const __mockState: {
   // A2A mock state — seeded by `a2a.seed` test-control command.
   a2aAgents: A2AAgent[]
   a2aEvents: A2AEvent[]
-} = { chats: [], observations: [], milestones: [], sessions: [], daemonAlive: true, installProgress: null, installSimulationStep: 0, conversations: null, a2aAgents: [], a2aEvents: [] }
+  // Reconnect-diagnose test support:
+  //   doctorOverride: when set, doctor --json returns this verbatim instead
+  //                   of the __mockState-derived shape. Lets tests inject
+  //                   specific DoctorReport shapes to drive diagnose() codes.
+  //   serviceInvokes: records ['service stop', 'service start', 'kill-residual']
+  //                   calls so Playwright tests can assert restart chains fired.
+  doctorOverride: object | null
+  serviceInvokes: string[]
+} = { chats: [], observations: [], milestones: [], sessions: [], daemonAlive: true, installProgress: null, installSimulationStep: 0, conversations: null, a2aAgents: [], a2aEvents: [], doctorOverride: null, serviceInvokes: [] }
 
 // ─── A2A mock credentials ─────────────────────────────────────────────────────
 // The A2A routes (/v1/a2a/*) are served by the SAME Bun.serve instance as the
@@ -243,7 +251,33 @@ Bun.serve({
           __mockState.conversations = null
           __mockState.a2aAgents = []
           __mockState.a2aEvents = []
+          __mockState.doctorOverride = null
+          __mockState.serviceInvokes = []
           return Response.json({ result: { ok: true } })
+        }
+
+        // ── Reconnect-diagnose test-control commands ────────────────────────
+        // mock.doctor: inject a verbatim DoctorReport that the next
+        //   doctor --json poll returns. Lets reconnect-diagnose tests drive
+        //   specific diagnosis codes (1, 4, 5, 0) without depending on
+        //   the implicit __mockState.chats / daemonAlive shape.
+        if (body.command === 'mock.doctor') {
+          __mockState.doctorOverride = (body.args as { report?: object } | undefined)?.report ?? null
+          return Response.json({ result: { ok: true } })
+        }
+
+        // mock.reset-service-invokes: clear the recorded service call log.
+        // Call before triggering an action you want to observe, then read
+        // back with mock.get-service-invokes.
+        if (body.command === 'mock.reset-service-invokes') {
+          __mockState.serviceInvokes = []
+          return Response.json({ result: { ok: true } })
+        }
+
+        // mock.get-service-invokes: return the list of service calls recorded
+        // since the last reset. Used to assert restart chains fired.
+        if (body.command === 'mock.get-service-invokes') {
+          return Response.json({ result: { invokes: __mockState.serviceInvokes } })
         }
 
         if (body.command === 'demo.seed') {
@@ -389,6 +423,28 @@ Bun.serve({
             return Response.json({ result: { milestones: __mockState.milestones } })
           }
 
+          // Record service stop / service start / kill-residual calls.
+          // Used by reconnect-diagnose Playwright tests to assert that the
+          // restart chain fired after clicking the card's primary button.
+          if (
+            dryRun &&
+            body.command === 'wechat_cli_json' &&
+            cliArgs[0] === 'service' &&
+            (cliArgs[1] === 'stop' || cliArgs[1] === 'start')
+          ) {
+            __mockState.serviceInvokes.push(`service ${cliArgs[1]}`)
+            return Response.json({ result: { ok: true } })
+          }
+          if (
+            dryRun &&
+            body.command === 'wechat_cli_json' &&
+            cliArgs[0] === 'daemon' &&
+            cliArgs[1] === 'kill-residual'
+          ) {
+            __mockState.serviceInvokes.push('kill-residual')
+            return Response.json({ result: { ok: true } })
+          }
+
           // Intercept doctor --json in DRY_RUN. Returns a minimal valid
           // DoctorOutput shape derived from __mockState.chats so playwright
           // tests can drive the dashboard's hero tone + accounts table
@@ -401,6 +457,12 @@ Bun.serve({
             body.command === 'wechat_cli_json' &&
             cliArgs[0] === 'doctor'
           ) {
+            // If a doctorOverride is set (by mock.doctor test-control),
+            // return it verbatim so reconnect-diagnose tests can inject
+            // specific DoctorReport shapes to drive diagnosis codes.
+            if (__mockState.doctorOverride !== null) {
+              return Response.json({ result: __mockState.doctorOverride })
+            }
             const seeded = __mockState.chats.length > 0
             const chat = seeded ? __mockState.chats[0]! : null
             const userNames: Record<string, string> = chat ? { [chat.id]: chat.name } : {}

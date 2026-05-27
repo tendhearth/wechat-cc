@@ -178,3 +178,219 @@ test('observations list reflects seeded data', async ({ shim }) => {
   const observations = result.result?.observations ?? []
   expect(observations.length).toBe(5)
 })
+
+// ── Reconnect-diagnose card ───────────────────────────────────────────────
+//
+// Pattern:
+//  1. Boot into dashboard mode (accounts + service seeded so initialMode
+//     returns 'dashboard').
+//  2. Inject a doctorOverride via mock.doctor so the NEXT doctor --json
+//     poll returns the desired DoctorReport shape.
+//  3. Click #dash-restart to trigger restartDaemon().
+//  4. Assert #reconnect-diagnose-card becomes visible with expected title.
+//
+// For "all-green" (code 0): assert card stays hidden (or a brief toast
+// appears on #dash-pending) instead of the card being shown.
+//
+// For "dead-daemon triggers restart chain": after clicking the card's
+// primary button, assert the shim recorded service stop + service start.
+
+// Helper: build a minimal DoctorReport that produces a given diagnosis code.
+// These shapes must match what diagnose() in view.js expects.
+const REPORTS = {
+  // code-1: daemon dead + pid≠null + service installed → "后台服务挂了"
+  deadDaemon: {
+    ready: true,
+    stateDir: '/tmp/wechat-cc-shim',
+    runtime: 'source',
+    wslDetected: false,
+    checks: {
+      bun:      { ok: true, path: '/usr/local/bin/bun' },
+      git:      { ok: true, path: '/usr/bin/git' },
+      claude:   { ok: true, path: '/usr/local/bin/claude' },
+      codex:    { ok: true, path: '/usr/local/bin/codex' },
+      cursor:   { ok: false, apiKeySet: false, sdkInstalled: true },
+      accounts: { ok: true, count: 1, items: [{ id: 'bot1-im-bot', botId: 'bot1', userId: 'u1', baseUrl: '' }] },
+      access:   { ok: true, dmPolicy: 'allowlist', allowFromCount: 1 },
+      provider: { ok: true, provider: 'claude', binaryPath: '/usr/local/bin/claude' },
+      daemon:   { alive: false, pid: 9999 },
+      service:  { installed: true, kind: 'launchagent' },
+    },
+    userNames: { u1: 'Test User' },
+    expiredBots: [],
+    nextActions: [],
+  },
+  // code-5 (expired): daemon alive + expiredBots non-empty → "微信账号已过期"
+  accountExpired: {
+    ready: true,
+    stateDir: '/tmp/wechat-cc-shim',
+    runtime: 'source',
+    wslDetected: false,
+    checks: {
+      bun:      { ok: true, path: '/usr/local/bin/bun' },
+      git:      { ok: true, path: '/usr/bin/git' },
+      claude:   { ok: true, path: '/usr/local/bin/claude' },
+      codex:    { ok: true, path: '/usr/local/bin/codex' },
+      cursor:   { ok: false, apiKeySet: false, sdkInstalled: true },
+      accounts: { ok: true, count: 1, items: [{ id: 'bot1-im-bot', botId: 'bot1', userId: 'u1', baseUrl: '' }] },
+      access:   { ok: true, dmPolicy: 'allowlist', allowFromCount: 1 },
+      provider: { ok: true, provider: 'claude', binaryPath: '/usr/local/bin/claude' },
+      daemon:   { alive: true, pid: 12345 },
+      service:  { installed: true, kind: 'launchagent' },
+    },
+    userNames: { u1: 'Test User' },
+    expiredBots: [{ botId: 'bot1', firstSeenExpiredAt: Date.now() - 3600000 }],
+    nextActions: [],
+  },
+  // code-4: daemon alive + claude.severity='hard' → "AI 工具缺失"
+  providerMissing: {
+    ready: true,
+    stateDir: '/tmp/wechat-cc-shim',
+    runtime: 'source',
+    wslDetected: false,
+    checks: {
+      bun:      { ok: true, path: '/usr/local/bin/bun' },
+      git:      { ok: true, path: '/usr/bin/git' },
+      claude:   { severity: 'hard', fix: { command: 'npm install -g @anthropic-ai/claude-code' } },
+      codex:    { ok: true, path: '/usr/local/bin/codex' },
+      cursor:   { ok: false, apiKeySet: false, sdkInstalled: true },
+      accounts: { ok: true, count: 1, items: [{ id: 'bot1-im-bot', botId: 'bot1', userId: 'u1', baseUrl: '' }] },
+      access:   { ok: true, dmPolicy: 'allowlist', allowFromCount: 1 },
+      provider: { ok: false, provider: 'claude' },
+      daemon:   { alive: true, pid: 12345 },
+      service:  { installed: true, kind: 'launchagent' },
+    },
+    userNames: { u1: 'Test User' },
+    expiredBots: [],
+    nextActions: [],
+  },
+  // code-0: all green → no card, toast "一切正常，无需操作"
+  allGreen: {
+    ready: true,
+    stateDir: '/tmp/wechat-cc-shim',
+    runtime: 'source',
+    wslDetected: false,
+    checks: {
+      bun:      { ok: true, path: '/usr/local/bin/bun' },
+      git:      { ok: true, path: '/usr/bin/git' },
+      claude:   { ok: true, path: '/usr/local/bin/claude' },
+      codex:    { ok: true, path: '/usr/local/bin/codex' },
+      cursor:   { ok: false, apiKeySet: false, sdkInstalled: true },
+      accounts: { ok: true, count: 1, items: [{ id: 'bot1-im-bot', botId: 'bot1', userId: 'u1', baseUrl: '' }] },
+      access:   { ok: true, dmPolicy: 'allowlist', allowFromCount: 1 },
+      provider: { ok: true, provider: 'claude', binaryPath: '/usr/local/bin/claude' },
+      daemon:   { alive: true, pid: 12345 },
+      service:  { installed: true, kind: 'launchagent' },
+    },
+    userNames: { u1: 'Test User' },
+    expiredBots: [],
+    nextActions: [],
+  },
+}
+
+test.describe('reconnect-diagnose card', () => {
+  test('dead-daemon click shows code-1 card and triggers restart on primary', async ({ page, shimUrl, shim }) => {
+    // Seed so dashboard mode is reached
+    await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+    await bootIntoDashboard(page, shimUrl)
+
+    // Inject the dead-daemon doctor shape BEFORE clicking restart
+    await shim.invoke('mock.doctor', { report: REPORTS.deadDaemon })
+    await shim.invoke('mock.reset-service-invokes')
+
+    // The restart button is visible only when hero.tone !== "ok".
+    // Our shim initially seeds daemon.alive=true (demo.seed default),
+    // so the restart button is hidden and the stop button is shown.
+    // Force-show the restart button for this test via evaluate.
+    await page.evaluate(() => {
+      const btn = document.getElementById('dash-restart')
+      if (btn) btn.hidden = false
+    })
+
+    // Click "重新连接" — triggers restartDaemon() → diagnose() → card shown
+    await page.locator('#dash-restart').click()
+
+    // Card should now be visible with the correct title
+    await expect(page.locator('#reconnect-diagnose-card')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('#rdc-title')).toHaveText('后台服务挂了')
+
+    // Click the primary button ("一键重启后台") to trigger the restart chain.
+    // The dead-daemon report makes daemon.alive false, so waitForCondition
+    // in runRestartSequence will time out and fall back to the non-alive branch.
+    // We just need to confirm the service stop/start calls were recorded.
+    // Inject an alive report so waitForCondition resolves.
+    await shim.invoke('mock.doctor', { report: REPORTS.allGreen })
+    await page.locator('#rdc-primary').click()
+
+    // Allow time for the async restart chain to run
+    await page.waitForTimeout(2000)
+
+    // Verify stop + start were called
+    const invokes = await shim.invoke('mock.get-service-invokes') as { result: { invokes: string[] } }
+    expect(invokes.result.invokes).toContain('service stop')
+    expect(invokes.result.invokes).toContain('service start')
+  })
+
+  test('account-expired click shows code-5 card', async ({ page, shimUrl, shim }) => {
+    await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+    await bootIntoDashboard(page, shimUrl)
+
+    await shim.invoke('mock.doctor', { report: REPORTS.accountExpired })
+
+    await page.evaluate(() => {
+      const btn = document.getElementById('dash-restart')
+      if (btn) btn.hidden = false
+    })
+    await page.locator('#dash-restart').click()
+
+    await expect(page.locator('#reconnect-diagnose-card')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('#rdc-title')).toHaveText('微信账号已过期')
+    // Primary action is "重新扫码" for expired accounts
+    await expect(page.locator('#rdc-primary')).toHaveText('重新扫码')
+  })
+
+  test('provider-missing click shows code-4 card with copy button', async ({ page, shimUrl, shim }) => {
+    await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+    await bootIntoDashboard(page, shimUrl)
+
+    await shim.invoke('mock.doctor', { report: REPORTS.providerMissing })
+
+    await page.evaluate(() => {
+      const btn = document.getElementById('dash-restart')
+      if (btn) btn.hidden = false
+    })
+    await page.locator('#dash-restart').click()
+
+    await expect(page.locator('#reconnect-diagnose-card')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('#rdc-title')).toHaveText('AI 工具缺失')
+    // The fix section with the install command should be visible
+    await expect(page.locator('#rdc-fix')).toBeVisible()
+    // A "复制" button should appear inside the fix section
+    await expect(page.locator('#rdc-fix button')).toHaveText('复制')
+    // Secondary action "切换 provider" should be shown
+    await expect(page.locator('#rdc-secondary')).toBeVisible()
+    await expect(page.locator('#rdc-secondary')).toHaveText('切换 provider')
+  })
+
+  test('all-green click shows nothing (card stays hidden, pending shows 一切正常)', async ({ page, shimUrl, shim }) => {
+    await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+    await bootIntoDashboard(page, shimUrl)
+
+    await shim.invoke('mock.doctor', { report: REPORTS.allGreen })
+
+    await page.evaluate(() => {
+      const btn = document.getElementById('dash-restart')
+      if (btn) btn.hidden = false
+    })
+    await page.locator('#dash-restart').click()
+
+    // Card should NOT become visible for code 0
+    // Give it a moment in case the async path completes quickly
+    await page.waitForTimeout(300)
+    const cardVisible = await page.locator('#reconnect-diagnose-card').isVisible()
+    expect(cardVisible).toBe(false)
+
+    // Pending text shows the "all green" message
+    await expect(page.locator('#dash-pending')).toHaveText('一切正常，无需操作', { timeout: 3000 })
+  })
+})
