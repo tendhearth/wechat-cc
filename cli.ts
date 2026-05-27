@@ -19,6 +19,7 @@ import {
   UpdateCheckOutput, UpdateApplyOutput, ConversationsListOutput,
   GuardStatusOutput, GuardEnableOutput, GuardDisableOutput,
   AvatarInfoOutput, AvatarSetOutput, AvatarRemoveOutput,
+  LogOutput,
 } from './src/cli/schema'
 
 // Write potentially-large JSON to a sibling file, return the small
@@ -128,6 +129,10 @@ Usage:
                         --json returns parsed entries (timestamp, tag,
                         message). Without --json, raw lines are printed
                         (equivalent to: tail -n N channel.log).
+  wechat-cc log <tag> <msg> [--fields <json>] [--json]
+                        Write a structured line to channel.log (frontend
+                        telemetry). --fields must be a JSON object string.
+                        Exits non-zero if --fields is malformed JSON.
   wechat-cc update [--check] [--json]
                         Pull latest + reinstall deps + restart service.
                         --check probes only (no side effects); GUI calls
@@ -407,6 +412,31 @@ const logsCmd = defineCommand({
     if (out.stdout) console.log(out.stdout)
     if (out.stderr) console.error(out.stderr)
     if (out.exitCode !== 0) process.exit(out.exitCode)
+  },
+})
+
+// ── wechat-cc log <tag> <msg> [--fields <json>] [--json] ─────────────────────
+// Fire-and-forget log writer for external callers (e.g. the desktop frontend).
+// Used by RECONNECT_DIAGNOSE telemetry (Step 4).
+const logCmd = defineCommand({
+  meta: { name: 'log', description: 'Write a structured log line to channel.log (for frontend telemetry)' },
+  args: {
+    tag: { type: 'positional', required: true, description: 'Log tag (e.g. RECONNECT_DIAGNOSE)', valueHint: 'tag' },
+    msg: { type: 'positional', required: true, description: 'Human-readable log message', valueHint: 'msg' },
+    fields: { type: 'string', description: 'Structured fields as a JSON object string (e.g. \'{"code":1}\')' },
+    json: { type: 'boolean', description: 'Emit { ok: true } JSON envelope on stdout' },
+  },
+  async run({ args }) {
+    const { runLogCommand } = await import('./src/cli/log.ts')
+    let result: { ok: true }
+    try {
+      result = runLogCommand({ tag: args.tag, msg: args.msg, fieldsJson: args.fields })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`log: ${msg}`)
+      process.exit(2)
+    }
+    if (args.json) console.log(JSON.stringify(LogOutput.parse(result)))
   },
 })
 
@@ -1777,6 +1807,7 @@ const SUBCOMMANDS = {
   milestones: milestonesCmd,
   conversations: conversationsCmd,
   logs: logsCmd,
+  log: logCmd,
   // PR4 batch 3a — sessions / avatar / guard / provider namespaces.
   sessions: sessionsCmd,
   avatar: avatarCmd,

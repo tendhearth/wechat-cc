@@ -37,6 +37,7 @@ import {
   AvatarInfoOutput,
   AvatarSetOutput,
   AvatarRemoveOutput,
+  LogOutput,
 } from './schema'
 
 describe('DoctorOutput', () => {
@@ -961,5 +962,19 @@ describe('AvatarRemoveOutput', () => {
   })
   it('rejects when ok is missing', () => {
     expect(AvatarRemoveOutput.safeParse({ path: '/tmp/avatar.png' }).success).toBe(false)
+  })
+})
+
+// ── wechat-cc log --json ──────────────────────────────────────────────────────
+
+describe('LogOutput', () => {
+  it('accepts { ok: true }', () => {
+    expect(LogOutput.safeParse({ ok: true }).success).toBe(true)
+  })
+  it('rejects { ok: false }', () => {
+    expect(LogOutput.safeParse({ ok: false }).success).toBe(false)
+  })
+  it('rejects an empty object', () => {
+    expect(LogOutput.safeParse({}).success).toBe(false)
   })
 })

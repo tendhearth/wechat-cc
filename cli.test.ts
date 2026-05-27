@@ -66,6 +66,7 @@ describe('citty migrated commands', () => {
       'install',
       'install-progress',
       'list',
+      'log',
       'logs',
       'mcp-server',
       'memory',

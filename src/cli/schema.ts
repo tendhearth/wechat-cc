@@ -724,3 +724,10 @@ export const AvatarRemoveOutput = z.object({
   path: z.string(),
 })
 export type AvatarRemoveOutputT = z.infer<typeof AvatarRemoveOutput>
+
+// ── wechat-cc log <tag> <msg> [--fields <json>] --json ────────────────────────
+// Emits { ok: true } on success.  No error branch: --fields JSON parse
+// failures exit non-zero without emitting JSON (process.exit(2) with stderr).
+
+export const LogOutput = z.object({ ok: z.literal(true) })
+export type LogOutputT = z.infer<typeof LogOutput>
