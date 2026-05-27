@@ -34,6 +34,7 @@ import { loadSessionsList, openProjectDetail, closeProjectDetail, toggleFavorite
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
 import { loadUpdateProbe, applyUpdate } from "./modules/update.js"
 import { wireSettingsDrawer, openSettingsDrawer } from "./modules/settings-drawer.js"
+import { pingHealth } from "./health-probe.js"
 
 const state = {
   setup: /** @type {SetupQrJson | null} */ (null),
@@ -160,9 +161,15 @@ const deps = {
       document.getElementById("screen-provider")?.scrollIntoView?.({ behavior: "smooth" })
     }, 150)
   },
-  // Health probe stub — Step 3 will wire real /v1/health polling here.
-  // Returning null means code 7 (frontend stuck) never fires in Step 2.
-  healthProbe: null,
+  // Health probe — pings /v1/health via the wechat_health_ping Tauri command.
+  // Returns true if daemon responds 200, false on any error (no daemon, timeout,
+  // token missing). Returns null when internal_api info is unavailable (daemon
+  // was dead when doctor last polled) so code 7 never misfires in that case.
+  healthProbe: async () => {
+    const internal_api = doctorPoller.current?.checks?.daemon?.internal_api
+    if (!internal_api) return null
+    return pingHealth(internal_api.port, internal_api.token_file_path)
+  },
 }
 
 // Live status line for the network guard toggle. Pulls fresh probe

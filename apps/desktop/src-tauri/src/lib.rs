@@ -267,6 +267,47 @@ fn notify_user(app: AppHandle, title: String, body: String) -> Result<(), String
         .map_err(|e| e.to_string())
 }
 
+// Direct /v1/health ping — reads the bearer token from the token file (0o600,
+// rotated every boot) and issues a GET to http://127.0.0.1:<port>/v1/health.
+// Returns true iff the response is HTTP 200. Returns an Err string on token
+// read failure, network error, or timeout so the JS wrapper can log it; the
+// caller always falls back to false.
+//
+// This must live in Rust (not JS) because the token file is mode 0o600 and
+// the Tauri `fs` allowlist is intentionally NOT granted to the renderer.
+// Pure HTTP — no subprocess spawned, no CREATE_NO_WINDOW needed.
+#[tauri::command]
+async fn wechat_health_ping(
+    token_file_path: String,
+    port: u16,
+    timeout_ms: u32,
+) -> Result<bool, String> {
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    let token = std::fs::read_to_string(&token_file_path)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| format!("token read error: {e}"))?;
+
+    let url = format!("http://127.0.0.1:{port}/v1/health");
+    let duration = Duration::from_millis(u64::from(timeout_ms));
+
+    let result = timeout(duration, async {
+        reqwest::Client::new()
+            .get(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+    })
+    .await;
+
+    match result {
+        Ok(Ok(resp)) => Ok(resp.status().as_u16() == 200),
+        Ok(Err(_)) => Ok(false),
+        Err(_) => Ok(false), // timeout — treat as probe failure, not a hard error
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -279,7 +320,8 @@ pub fn run() {
             save_text_file,
             render_qr_svg,
             wechat_daemon_pid,
-            notify_user
+            notify_user,
+            wechat_health_ping
         ])
         .run(tauri::generate_context!())
         .expect("error while running wechat-cc desktop");
