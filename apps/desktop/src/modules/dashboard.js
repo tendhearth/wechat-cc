@@ -296,6 +296,8 @@ export async function runRestartSequence(deps) {
 // in the jsdom-free test harness).
 let _cardDeps = null
 let _cardDiagnosis = null
+// Wire the delegating listener once per module load. Fresh _cardDeps/_cardDiagnosis
+// on each renderDiagnoseCard() call means stale deps can never fire.
 let _cardListenersWired = false
 
 /**
@@ -429,7 +431,7 @@ export function hideDiagnoseCard() {
  * @param {object} deps
  * @param {{ kind: string, step?: string, section?: string, command?: string, link?: string, platform?: string }} action
  */
-function handleDiagnoseAction(deps, action) {
+export function handleDiagnoseAction(deps, action) {
   const card = document.getElementById("reconnect-diagnose-card")
   switch (action.kind) {
     case "auto-dismiss":
@@ -456,6 +458,10 @@ function handleDiagnoseAction(deps, action) {
       return
     case "show-platform-hint":
       // Card hint already covers win32 admin instructions — informational only.
+      return
+    case "open-logs":
+      hideDiagnoseCard()
+      deps.routeToLogsPane?.()
       return
   }
 }

@@ -141,6 +141,11 @@ const deps = {
       renderRestartButtonIfActive(current)
     }
   },
+  // Diagnose-card callback: switch to the logs pane (secondary link on
+  // codes 1 + 2 — daemon dead / never started).
+  routeToLogsPane: () => {
+    switchPane("logs")
+  },
   // Diagnose-card callbacks: open the settings drawer at the relevant section.
   // The drawer currently doesn't have separate provider/access deep-links —
   // cheapest approach is just opening the drawer (no major refactor needed).

@@ -11,7 +11,7 @@ beforeEach(() => {
 })
 
 // Import AFTER document stub so setPending's getElementById doesn't crash
-const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, renderDiagnoseCard, hideDiagnoseCard } = await import('./dashboard.js')
+const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, renderDiagnoseCard, hideDiagnoseCard, handleDiagnoseAction } = await import('./dashboard.js')
 
 function textNode(text = '') {
   return { nodeType: 3, textContent: text }
@@ -520,5 +520,44 @@ describe('restartDaemon (diagnose → card)', () => {
       return a?.args?.[0] === 'service' && a?.args?.[1] === 'stop'
     })
     expect(stopCall).toBeTruthy()
+  })
+})
+
+// ── open-logs secondary link ──────────────────────────────────────────
+// Clicking the "查看日志" secondary link on a code-1 or code-2 card
+// should invoke deps.routeToLogsPane and hide the diagnose card.
+
+describe('handleDiagnoseAction open-logs', () => {
+  it('code-1: open-logs action hides card and calls routeToLogsPane', () => {
+    const els = installDashboardDom()
+    // Show the card first so we can verify hideDiagnoseCard fires
+    els.rdcCard.hidden = false
+
+    const deps = {
+      routeToLogsPane: vi.fn(),
+    }
+    handleDiagnoseAction(deps, { kind: 'open-logs' })
+
+    expect(els.rdcCard.hidden).toBe(true)
+    expect(deps.routeToLogsPane).toHaveBeenCalledTimes(1)
+  })
+
+  it('code-2 diagnosis has secondary action with kind open-logs', async () => {
+    const { diagnose } = await import('../view.js')
+    const report = {
+      checks: {
+        daemon: { alive: false, pid: null },
+        service: { installed: true },
+        accounts: { count: 1, items: [] },
+        access: { allowFromCount: 1 },
+        provider: { provider: 'claude' },
+        claude: { ok: true },
+      },
+      expiredBots: [],
+      userNames: {},
+    }
+    const diagnosis = diagnose({ report, healthOk: null, lastError: null, platform: 'linux' })
+    expect(diagnosis.code).toBe(2)
+    expect((diagnosis.secondary?.action as any)?.kind).toBe('open-logs')
   })
 })
