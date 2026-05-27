@@ -163,6 +163,164 @@ export function restartButtonState(daemon, service) {
   return { action: "install", label: "去设置向导", helper: "尚未安装为后台服务；点这里走完设置向导。" }
 }
 
+/**
+ * Analyse the current system state and return a reconnect-diagnosis card
+ * description, or a code-0 "auto-dismiss" signal when everything is healthy.
+ *
+ * Priority order (first matching rule wins):
+ *  8 — win pid-unchanged  only after a known restart attempt on win32
+ *  7 — frontend stuck     lastError non-null AND healthOk=true
+ *  3 — service not installed
+ *  1 — daemon dead + service installed + pid ≠ null (crashed/OOM)
+ *  2 — daemon dead + service installed + pid = null (never started)
+ *  4 — provider hard-missing  ONLY when daemon.alive=true
+ *  5 — accounts empty or expired
+ *  6 — allowlist empty
+ *  0 — all green (auto-dismiss, no card)
+ *
+ * See docs/plans/dashboard-reconnect-diagnose.md — Step 1.
+ *
+ * @param {{
+ *   report: import('../src/cli/doctor.ts').DoctorReport,
+ *   healthOk: boolean | null,
+ *   lastError: unknown | null,
+ *   lastRestart?: { pidUnchanged: boolean } | null,
+ *   platform?: string,
+ * }} input
+ * @returns {{
+ *   code: 0|1|2|3|4|5|6|7|8,
+ *   title: string,
+ *   hint: string,
+ *   primary: { label: string, action: object },
+ *   secondary?: { label: string, action: object },
+ * }}
+ */
+export function diagnose({ report, healthOk, lastError, lastRestart = null, platform = 'linux' }) {
+  const daemon = report.checks.daemon
+  const service = report.checks.service
+  const accounts = report.checks.accounts
+  const access = report.checks.access
+  const providerName = report.checks.provider?.provider ?? 'claude'
+  const providerCheck = report.checks[providerName]
+  const expiredBots = report.expiredBots ?? []
+
+  // ── 8: win32 pid-unchanged after a restart attempt ─────────────────
+  // Only fire if we actually attempted a restart AND the pid stayed the same
+  // (symptom: service start succeeded but the process token didn't change —
+  // usually a Windows UAC / permissions issue preventing the old process from
+  // dying). Requires an explicit lastRestart record so we don't misfire on
+  // first load.
+  if (lastRestart?.pidUnchanged === true && platform === 'win32') {
+    return {
+      code: 8,
+      title: "Windows 权限不够",
+      hint: "上一次重启后进程 pid 没变，服务可能没有足够权限替换旧进程。",
+      primary: { label: "以管理员身份运行", action: { kind: 'show-platform-hint', platform: 'win32' } },
+      secondary: { label: "停止计划任务", action: { kind: 'open-logs' } },
+    }
+  }
+
+  // ── 7: frontend stuck (dashboard poll error, but daemon itself is fine) ──
+  // lastError means the doctor-poller threw, yet healthOk=true means /v1/health
+  // responds — so the daemon is alive and the bug is in our frontend poll loop.
+  if (lastError != null && healthOk === true) {
+    return {
+      code: 7,
+      title: "Dashboard 自己卡了",
+      hint: "本地轮询出错，但 /v1/health 正常 — daemon 没问题，重启 Dashboard 可修复。",
+      primary: { label: "重启 Dashboard", action: { kind: 'restart-dashboard' } },
+    }
+  }
+
+  // ── daemon-state branch (3 / 1 / 2) ──────────────────────────────────
+  if (!service?.installed) {
+    // ── 3: service not installed ────────────────────────────────────
+    return {
+      code: 3,
+      title: "后台服务没安装",
+      hint: "尚未安装为后台服务，daemon 无法随系统启动。",
+      primary: { label: "去向导安装服务", action: { kind: 'route-to-wizard', step: 'service' } },
+    }
+  }
+
+  if (!daemon.alive) {
+    if (daemon.pid !== null) {
+      // ── 1: daemon dead + pid ≠ null (crashed / OOM) ─────────────
+      return {
+        code: 1,
+        title: "后台服务挂了",
+        hint: "Daemon 进程残留 pid 文件但已死，可能是 OOM 或 panic。",
+        primary: { label: "一键重启后台", action: { kind: 'run-restart-sequence' } },
+        secondary: { label: "查看日志", action: { kind: 'open-logs' } },
+      }
+    } else {
+      // ── 2: daemon dead + pid = null (never started after install) ─
+      return {
+        code: 2,
+        title: "后台服务从没启动过",
+        hint: "服务已安装但尚未启动，或启动后立刻退出。",
+        primary: { label: "启动后台服务", action: { kind: 'run-restart-sequence' } },
+        secondary: { label: "查看日志", action: { kind: 'open-logs' } },
+      }
+    }
+  }
+
+  // ── 4: provider hard-missing (only checked when daemon.alive=true) ─────
+  // Follow the active provider name to its per-provider check row — the
+  // aggregate `provider` check carries severity only when the binary is
+  // absent; the per-provider row (claude/codex/cursor) is the canonical
+  // severity source per the plan spec.
+  if (providerCheck?.severity === 'hard') {
+    const fix = providerCheck.fix ?? {}
+    return {
+      code: 4,
+      title: "AI 工具缺失",
+      hint: `选定的 provider "${providerName}" 不可用，daemon 启动但每次回复都会失败。`,
+      primary: {
+        label: "查看修复方法",
+        action: { kind: 'show-fix', ...(fix.command ? { command: fix.command } : {}), ...(fix.link ? { link: fix.link } : {}) },
+      },
+      secondary: { label: "切换 provider", action: { kind: 'route-to-settings', section: 'provider' } },
+    }
+  }
+
+  // ── 5: accounts empty or all expired ──────────────────────────────────
+  if (accounts.count === 0) {
+    return {
+      code: 5,
+      title: "没有绑定微信账号",
+      hint: "还没绑定微信账号，扫码后才能收发消息。",
+      primary: { label: "去扫码绑定", action: { kind: 'route-to-wizard', step: 'wechat' } },
+    }
+  }
+  if (expiredBots.length > 0) {
+    return {
+      code: 5,
+      title: "微信账号已过期",
+      hint: "账号过期，bot 无法收发消息，重新扫码可恢复。",
+      primary: { label: "重新扫码", action: { kind: 'route-to-wizard', step: 'wechat' } },
+    }
+  }
+
+  // ── 6: allowlist empty ─────────────────────────────────────────────────
+  if (access.allowFromCount === 0) {
+    return {
+      code: 6,
+      title: "白名单是空的",
+      hint: "有绑定账号但没有任何用户在白名单，没人能用 bot。",
+      primary: { label: "去设置允许列表", action: { kind: 'route-to-settings', section: 'access' } },
+    }
+  }
+
+  // ── 0: all green ───────────────────────────────────────────────────────
+  return {
+    code: 0,
+    title: "没事，只是 dashboard 没刷新",
+    hint: "Daemon 运行正常，无需操作。",
+    primary: { label: "好的", action: { kind: 'auto-dismiss' } },
+  }
+}
+
 // Hero block for the dashboard top. In the user-facing dashboard, a bound
 // account means the companion relationship is established; transient daemon
 // downtime should keep the reconnect affordance without making the default

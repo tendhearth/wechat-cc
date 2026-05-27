@@ -3,7 +3,7 @@ import {
   doctorRows, pollAdvance, daemonStatusLine, escapeHtml,
   initialMode, dashboardHero, accountRows, formatRelativeTime,
   updateProbeLine, updateApplyLine, restartButtonState, deleteAccountConfirmCopy,
-  UPDATE_REASON_COPY, modeBadge, conversationRows,
+  UPDATE_REASON_COPY, modeBadge, conversationRows, diagnose,
 } from './view.js'
 
 // Single source of truth for UpdateReason union — must stay in sync with
@@ -609,6 +609,370 @@ describe('UPDATE_REASON_COPY drift protection', () => {
       if (probe.tone === 'hide') expect(apply.tone).toBe('hide')
       if (apply.tone === 'hide') expect(probe.tone).toBe('hide')
     }
+  })
+})
+
+describe('diagnose', () => {
+  // ── helpers ──────────────────────────────────────────────────────────
+  // Build a "fully healthy" report: daemon alive, service installed,
+  // provider ok, 1 account, access allowlist populated.
+  function healthyReport(overrides: Record<string, any> = {}): any {
+    return fakeReport({
+      expiredBots: [],
+      checks: {
+        daemon: { alive: true, pid: 1234 },
+        service: { installed: true, kind: 'systemd-user' },
+        provider: { ok: true, provider: 'claude', binaryPath: '/usr/local/bin/claude' },
+        claude: { ok: true, path: '/usr/local/bin/claude' },
+        accounts: { ok: true, count: 1, items: [{ id: 'bot-im-bot', userId: 'u1' }] },
+        access: { ok: true, dmPolicy: 'allowlist', allowFromCount: 1 },
+        ...(overrides.checks ?? {}),
+      },
+      ...(overrides.expiredBots !== undefined ? { expiredBots: overrides.expiredBots } : {}),
+    })
+  }
+
+  // ── T1.1 — one test per code 0–8 ─────────────────────────────────────
+  describe('code rows', () => {
+    it('code 0 — all-green: daemon alive + no issues', () => {
+      const result = diagnose({
+        report: healthyReport(),
+        healthOk: true,
+        lastError: null,
+      })
+      expect(result.code).toBe(0)
+      expect((result.primary.action as any).kind).toBe('auto-dismiss')
+    })
+
+    it('code 1 — daemon dead + service installed + pid non-null (crashed/OOM)', () => {
+      const result = diagnose({
+        report: healthyReport({
+          checks: {
+            daemon: { alive: false, pid: 5678 },
+            service: { installed: true, kind: 'systemd-user' },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+      })
+      expect(result.code).toBe(1)
+      expect(result.title).toBeTruthy()
+      expect(result.hint).toBeTruthy()
+      expect((result.primary.action as any).kind).toBe('run-restart-sequence')
+    })
+
+    it('code 2 — daemon dead + service installed + pid null (never started)', () => {
+      const result = diagnose({
+        report: healthyReport({
+          checks: {
+            daemon: { alive: false, pid: null },
+            service: { installed: true, kind: 'systemd-user' },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+      })
+      expect(result.code).toBe(2)
+      expect((result.primary.action as any).kind).toBe('run-restart-sequence')
+    })
+
+    it('code 3 — service not installed', () => {
+      const result = diagnose({
+        report: healthyReport({
+          checks: {
+            daemon: { alive: false, pid: null },
+            service: { installed: false, kind: 'systemd-user' },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+      })
+      expect(result.code).toBe(3)
+      expect((result.primary.action as any).kind).toBe('route-to-wizard')
+      expect((result.primary.action as any).step).toBe('service')
+    })
+
+    it('code 4 — provider hard-missing (daemon alive, active provider binary absent)', () => {
+      const result = diagnose({
+        report: healthyReport({
+          checks: {
+            claude: { ok: false, path: null, severity: 'hard', fix: { command: 'npm install -g @anthropic-ai/claude-code' } },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+      })
+      expect(result.code).toBe(4)
+      expect((result.primary.action as any).kind).toBe('show-fix')
+    })
+
+    it('code 5 — accounts count = 0 (no account bound)', () => {
+      const result = diagnose({
+        report: healthyReport({
+          checks: {
+            accounts: { ok: false, count: 0, items: [] },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+      })
+      expect(result.code).toBe(5)
+      expect((result.primary.action as any).kind).toBe('route-to-wizard')
+      expect((result.primary.action as any).step).toBe('wechat')
+    })
+
+    it('code 5 — expiredBots non-empty (account expired)', () => {
+      const result = diagnose({
+        report: healthyReport({
+          expiredBots: [{ botId: 'bot-im-bot', firstSeenExpiredAt: '2026-05-01T00:00:00Z' }],
+        }),
+        healthOk: null,
+        lastError: null,
+      })
+      expect(result.code).toBe(5)
+      expect(result.hint).toMatch(/过期/)
+    })
+
+    it('code 6 — allowlist empty (accounts present but no allowed users)', () => {
+      const result = diagnose({
+        report: healthyReport({
+          checks: {
+            access: { ok: false, dmPolicy: 'allowlist', allowFromCount: 0 },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+      })
+      expect(result.code).toBe(6)
+      expect((result.primary.action as any).kind).toBe('route-to-settings')
+      expect((result.primary.action as any).section).toBe('access')
+    })
+
+    it('code 7 — lastError non-null AND healthOk=true (dashboard stuck)', () => {
+      const result = diagnose({
+        report: healthyReport(),
+        healthOk: true,
+        lastError: new Error('poll failed'),
+      })
+      expect(result.code).toBe(7)
+      expect((result.primary.action as any).kind).toBe('restart-dashboard')
+    })
+
+    it('code 8 — Windows + pid unchanged after restart attempt', () => {
+      const result = diagnose({
+        report: healthyReport({
+          checks: {
+            daemon: { alive: false, pid: 9999 },
+            service: { installed: true, kind: 'scheduled-task' },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+        lastRestart: { pidUnchanged: true },
+        platform: 'win32',
+      })
+      expect(result.code).toBe(8)
+      expect((result.primary.action as any).kind).toBe('show-platform-hint')
+      expect((result.primary.action as any).platform).toBe('win32')
+    })
+  })
+
+  // ── T1.2 — priority ordering ──────────────────────────────────────────
+  describe('priority ordering', () => {
+    it('code 8 (win pid-unchanged) takes priority over code 1 (daemon dead)', () => {
+      // Both conditions satisfied: daemon dead+pid≠null+service-installed (code 1)
+      // AND lastRestart.pidUnchanged=true on win32 (code 8).
+      // Code 8 must win.
+      const result = diagnose({
+        report: healthyReport({
+          checks: {
+            daemon: { alive: false, pid: 9999 },
+            service: { installed: true, kind: 'scheduled-task' },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+        lastRestart: { pidUnchanged: true },
+        platform: 'win32',
+      })
+      expect(result.code).toBe(8)
+    })
+
+    it('code 7 (frontend stuck) takes priority over provider/access issues', () => {
+      // lastError set + healthOk=true should return code 7 even if provider
+      // is soft-missing and access is empty — frontend-stuck is "rarest but
+      // most misleading" and must be surfaced first so user doesn't chase
+      // phantom provider issues when the real problem is the dashboard poll.
+      const result = diagnose({
+        report: healthyReport({
+          checks: {
+            claude: { ok: false, path: null, severity: 'hard', fix: { command: 'npm install -g @anthropic-ai/claude-code' } },
+            access: { ok: false, dmPolicy: 'allowlist', allowFromCount: 0 },
+          },
+        }),
+        healthOk: true,
+        lastError: new Error('fetch failed'),
+      })
+      expect(result.code).toBe(7)
+    })
+
+    it('code 3 (service not installed) takes priority over code 4 (provider hard-missing) when daemon dead', () => {
+      // Provider hard-missing is irrelevant if the service isn't even installed —
+      // daemon isn't running anyway. Code 3 must win.
+      const result = diagnose({
+        report: healthyReport({
+          checks: {
+            daemon: { alive: false, pid: null },
+            service: { installed: false, kind: 'systemd-user' },
+            claude: { ok: false, path: null, severity: 'hard', fix: { command: 'npm install -g @anthropic-ai/claude-code' } },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+      })
+      expect(result.code).toBe(3)
+    })
+
+    it('code 4 (provider hard) only fires when daemon is alive', () => {
+      // If daemon is dead, we return code 1/2/3 instead of code 4,
+      // because a dead daemon makes the provider check moot.
+      const deadDaemonResult = diagnose({
+        report: healthyReport({
+          checks: {
+            daemon: { alive: false, pid: 1111 },
+            service: { installed: true, kind: 'systemd-user' },
+            claude: { ok: false, path: null, severity: 'hard', fix: { command: 'npm install -g @anthropic-ai/claude-code' } },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+      })
+      // Daemon dead + service installed + pid≠null → code 1
+      expect(deadDaemonResult.code).toBe(1)
+      expect(deadDaemonResult.code).not.toBe(4)
+
+      // When daemon IS alive, code 4 fires
+      const aliveDaemonResult = diagnose({
+        report: healthyReport({
+          checks: {
+            daemon: { alive: true, pid: 1234 },
+            service: { installed: true, kind: 'systemd-user' },
+            claude: { ok: false, path: null, severity: 'hard', fix: { command: 'npm install -g @anthropic-ai/claude-code' } },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+      })
+      expect(aliveDaemonResult.code).toBe(4)
+    })
+  })
+
+  // ── T1.3 — edge cases ────────────────────────────────────────────────
+  describe('edge cases', () => {
+    it('(a) lastRestart=null + platform=win32 → no code 8', () => {
+      // pidUnchanged check requires a known restart attempt; null means
+      // no restart has been attempted yet, so code 8 cannot fire.
+      const result = diagnose({
+        report: healthyReport({
+          checks: {
+            daemon: { alive: false, pid: 9999 },
+            service: { installed: true, kind: 'scheduled-task' },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+        lastRestart: null,
+        platform: 'win32',
+      })
+      expect(result.code).not.toBe(8)
+    })
+
+    it('(b) lastError=null → no code 7, even if healthOk=true', () => {
+      // Code 7 requires lastError to be non-null — without a recorded error
+      // there's nothing to indicate the dashboard is stuck.
+      const result = diagnose({
+        report: healthyReport(),
+        healthOk: true,
+        lastError: null,
+      })
+      expect(result.code).not.toBe(7)
+    })
+
+    it('(c) expiredBots=[] + accounts.count>0 → no code 5', () => {
+      // Non-expired accounts with no expired entries → not a WeChat issue.
+      const result = diagnose({
+        report: healthyReport({
+          expiredBots: [],
+          checks: {
+            accounts: { ok: true, count: 2, items: [] },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+      })
+      expect(result.code).not.toBe(5)
+    })
+
+    it('(d) all-green report returns code 0 with auto-dismiss primary', () => {
+      const result = diagnose({
+        report: healthyReport(),
+        healthOk: null,
+        lastError: null,
+      })
+      expect(result.code).toBe(0)
+      expect((result.primary.action as any).kind).toBe('auto-dismiss')
+      expect(result.secondary).toBeUndefined()
+    })
+
+    it('code 5 hint says "没绑" when accounts.count=0 (distinct from expired)', () => {
+      const noAccountResult = diagnose({
+        report: healthyReport({
+          checks: { accounts: { ok: false, count: 0, items: [] } },
+        }),
+        healthOk: null,
+        lastError: null,
+      })
+      expect(noAccountResult.hint).toMatch(/没绑|未绑|没有账号|没有绑/)
+    })
+
+    it('code 4 fix.command surfaced in show-fix action when present', () => {
+      const result = diagnose({
+        report: healthyReport({
+          checks: {
+            claude: { ok: false, path: null, severity: 'hard', fix: { command: 'npm install -g @anthropic-ai/claude-code' } },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+      })
+      expect(result.code).toBe(4)
+      const action = result.primary.action as any
+      expect(action.kind).toBe('show-fix')
+      expect(action.command).toBe('npm install -g @anthropic-ai/claude-code')
+    })
+
+    it('code 4 fix.link surfaced when no fix.command (e.g. codex)', () => {
+      const result = diagnose({
+        report: fakeReport({
+          expiredBots: [],
+          checks: {
+            daemon: { alive: true, pid: 1234 },
+            service: { installed: true, kind: 'systemd-user' },
+            provider: { ok: false, provider: 'codex', binaryPath: null },
+            codex: { ok: false, path: null, severity: 'hard', fix: { link: 'https://github.com/openai/codex#installation' } },
+            claude: { ok: false, path: null, severity: 'soft' },
+            accounts: { ok: true, count: 1, items: [] },
+            access: { ok: true, dmPolicy: 'allowlist', allowFromCount: 1 },
+          },
+        }),
+        healthOk: null,
+        lastError: null,
+      })
+      expect(result.code).toBe(4)
+      const action = result.primary.action as any
+      expect(action.kind).toBe('show-fix')
+      expect(action.link).toBe('https://github.com/openai/codex#installation')
+    })
   })
 })
 
