@@ -490,6 +490,31 @@ export async function restartDaemon(deps) {
     platform: typeof navigator !== "undefined" ? (navigator.platform || "linux") : "linux",
   })
 
+  // Step 4 — RECONNECT_DIAGNOSE telemetry: fire-and-forget log write.
+  // Must be placed AFTER diagnose() so we capture every click (code 0 + non-0).
+  // The call is deliberately not awaited — a slow daemon or broken CLI must
+  // NOT delay the reconnect UI response.
+  const _fields = {
+    code: diagnosis.code,
+    daemon_alive: !!(report?.checks?.daemon?.alive),
+    service_installed: !!(report?.checks?.service?.installed),
+    provider: report?.checks?.provider?.provider ?? "unknown",
+    lastError_present: deps.doctorPoller.lastError != null,
+    health_ok: healthOk,
+  }
+  Promise.resolve().then(() =>
+    deps.invoke("wechat_cli_json", {
+      args: [
+        "log",
+        "RECONNECT_DIAGNOSE",
+        `code=${diagnosis.code} provider=${_fields.provider}`,
+        "--fields",
+        JSON.stringify(_fields),
+        "--json",
+      ],
+    }).catch(() => {/* telemetry is best-effort; ignore failures */})
+  )
+
   // Code 0: everything is fine — show a brief "all good" toast instead of card
   if (diagnosis.code === 0) {
     setPending("一切正常，无需操作")

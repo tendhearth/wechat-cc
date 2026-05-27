@@ -110,7 +110,10 @@ const __mockState: {
   doctorErrorOnce: boolean
   serviceInvokes: string[]
   healthProbeResult: boolean
-} = { chats: [], observations: [], milestones: [], sessions: [], daemonAlive: true, installProgress: null, installSimulationStep: 0, conversations: null, a2aAgents: [], a2aEvents: [], doctorOverride: null, doctorErrorOnce: false, serviceInvokes: [], healthProbeResult: true }
+  //   logCalls: records every `wechat_cli_json` call with args[0]==='log'
+  //             so Playwright tests can assert RECONNECT_DIAGNOSE telemetry fired.
+  logCalls: Array<{ tag: string; msg: string; fields: Record<string, unknown> | null }>
+} = { chats: [], observations: [], milestones: [], sessions: [], daemonAlive: true, installProgress: null, installSimulationStep: 0, conversations: null, a2aAgents: [], a2aEvents: [], doctorOverride: null, doctorErrorOnce: false, serviceInvokes: [], healthProbeResult: true, logCalls: [] }
 
 // ─── A2A mock credentials ─────────────────────────────────────────────────────
 // The A2A routes (/v1/a2a/*) are served by the SAME Bun.serve instance as the
@@ -263,6 +266,7 @@ Bun.serve({
           __mockState.doctorErrorOnce = false
           __mockState.serviceInvokes = []
           __mockState.healthProbeResult = true
+          __mockState.logCalls = []
           return Response.json({ result: { ok: true } })
         }
 
@@ -288,6 +292,13 @@ Bun.serve({
         // since the last reset. Used to assert restart chains fired.
         if (body.command === 'mock.get-service-invokes') {
           return Response.json({ result: { invokes: __mockState.serviceInvokes } })
+        }
+
+        // mock.get-log-calls: return the list of `wechat_cli_json log` calls
+        // recorded in DRY_RUN mode. Used by Playwright tests to assert
+        // RECONNECT_DIAGNOSE telemetry fired after a reconnect click.
+        if (body.command === 'mock.get-log-calls') {
+          return Response.json({ result: { calls: __mockState.logCalls } })
         }
 
         // mock.health-probe: set the return value for wechat_health_ping.
@@ -355,6 +366,7 @@ Bun.serve({
           __mockState.doctorOverride = null
           __mockState.doctorErrorOnce = false
           __mockState.serviceInvokes = []
+          __mockState.logCalls = []
           return Response.json({ ok: true, seeded: true })
         }
 
@@ -474,6 +486,27 @@ Bun.serve({
             cliArgs[1] === 'kill-residual'
           ) {
             __mockState.serviceInvokes.push('kill-residual')
+            return Response.json({ result: { ok: true } })
+          }
+
+          // Intercept `log` calls in DRY_RUN — record in __mockState.logCalls
+          // so Playwright tests can assert RECONNECT_DIAGNOSE telemetry fired.
+          // Frontend calls: ["log", <tag>, <msg>, "--fields", <json>, "--json"]
+          if (
+            dryRun &&
+            body.command === 'wechat_cli_json' &&
+            cliArgs[0] === 'log'
+          ) {
+            const tag = cliArgs[1] ?? ''
+            const msg = cliArgs[2] ?? ''
+            // --fields is the arg after the "--fields" flag
+            const flagIdx = cliArgs.indexOf('--fields')
+            let fields: Record<string, unknown> | null = null
+            const fieldsRaw = flagIdx !== -1 ? cliArgs[flagIdx + 1] : undefined
+            if (fieldsRaw) {
+              try { fields = JSON.parse(fieldsRaw) } catch {}
+            }
+            __mockState.logCalls.push({ tag, msg, fields })
             return Response.json({ result: { ok: true } })
           }
 

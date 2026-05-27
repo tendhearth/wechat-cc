@@ -620,3 +620,159 @@ describe('renderDiagnoseCard warn-class', () => {
     })
   }
 })
+
+// ── Step 4 — RECONNECT_DIAGNOSE telemetry ────────────────────────────────────
+// Every reconnect click must fire a fire-and-forget `wechat_cli_json` call
+// with args[0] === 'log' and tag 'RECONNECT_DIAGNOSE'.
+// We verify:
+//   1. The invoke is called with the correct subcommand args shape.
+//   2. The fields payload contains exactly the 6 expected keys.
+//   3. The call is non-blocking (restartDaemon returns promptly even if
+//      the invoke never resolves — tested via a never-resolving mock).
+
+describe('restartDaemon RECONNECT_DIAGNOSE telemetry', () => {
+  function makeReport(daemonAlive: boolean, provider = 'claude') {
+    return {
+      checks: {
+        daemon: { alive: daemonAlive, pid: daemonAlive ? 1234 : null },
+        service: { installed: true },
+        accounts: { count: 1, items: [] },
+        access: { allowFromCount: 1 },
+        provider: { provider },
+        claude: { ok: true },
+      },
+      expiredBots: [],
+      userNames: {},
+    }
+  }
+
+  it('fires a wechat_cli_json log call after diagnose() for non-zero code', async () => {
+    installDashboardDom()
+    const invoke = vi.fn(async (_name: string, _args?: unknown) => ({ ok: true }))
+    const report = makeReport(false)  // dead daemon → code-1
+    report.checks.daemon = { alive: false, pid: 1234 }
+
+    await restartDaemon({
+      invoke,
+      doctorPoller: {
+        refresh: vi.fn(async () => report),
+        current: report,
+        lastError: null,
+      },
+      formatInvokeError: (e: unknown) => String(e),
+      healthProbe: null,
+    })
+
+    // Give the fire-and-forget Promise a tick to run
+    await new Promise(r => setTimeout(r, 0))
+
+    const logCall = invoke.mock.calls.find(c => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const a = (c as any[])[1] as any
+      return a?.args?.[0] === 'log'
+    })
+    expect(logCall).toBeDefined()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const logArgs = ((logCall as any[])[1] as any).args as string[]
+    expect(logArgs[0]).toBe('log')
+    expect(logArgs[1]).toBe('RECONNECT_DIAGNOSE')
+    // fields JSON is at index 4 (after '--fields')
+    const fieldsIdx = logArgs.indexOf('--fields')
+    expect(fieldsIdx).not.toBe(-1)
+    const fields = JSON.parse(logArgs[fieldsIdx + 1]!)
+    // Verify all 6 expected keys are present
+    const EXPECTED_KEYS = ['code', 'daemon_alive', 'service_installed', 'provider', 'lastError_present', 'health_ok']
+    for (const key of EXPECTED_KEYS) {
+      expect(fields).toHaveProperty(key)
+    }
+  })
+
+  it('fires a wechat_cli_json log call for code-0 (all green) too', async () => {
+    installDashboardDom()
+    const invoke = vi.fn(async (_name: string, _args?: unknown) => ({ ok: true }))
+    const report = makeReport(true)  // alive → code-0
+
+    await restartDaemon({
+      invoke,
+      doctorPoller: {
+        refresh: vi.fn(async () => report),
+        current: report,
+        lastError: null,
+      },
+      formatInvokeError: (e: unknown) => String(e),
+      healthProbe: null,
+    })
+
+    await new Promise(r => setTimeout(r, 0))
+
+    const logCall = invoke.mock.calls.find(c => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const a = (c as any[])[1] as any
+      return a?.args?.[0] === 'log'
+    })
+    expect(logCall).toBeDefined()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const logArgs = ((logCall as any[])[1] as any).args as string[]
+    const fieldsIdx = logArgs.indexOf('--fields')
+    const fields = JSON.parse(logArgs[fieldsIdx + 1]!)
+    expect(fields.code).toBe(0)
+  })
+
+  it('does NOT fire a log call when report is null (no-report fallback path)', async () => {
+    installDashboardDom()
+    const invoke = vi.fn(async (name: string, _args?: unknown) => {
+      if (name === 'wechat_daemon_pid') return null
+      return { ok: true }
+    })
+
+    await restartDaemon({
+      invoke,
+      doctorPoller: {
+        refresh: vi.fn(async () => null),
+        current: null,
+        lastError: null,
+      },
+      formatInvokeError: (e: unknown) => String(e),
+      healthProbe: null,
+    })
+
+    await new Promise(r => setTimeout(r, 0))
+
+    const logCall = invoke.mock.calls.find(c => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const a = (c as any[])[1] as any
+      return a?.args?.[0] === 'log'
+    })
+    // The plan says: if report is null, skip telemetry entirely
+    expect(logCall).toBeUndefined()
+  })
+
+  it('does not block restartDaemon even if invoke never resolves', async () => {
+    installDashboardDom()
+    let _resolve!: (v: unknown) => void
+    const hangingPromise = new Promise(res => { _resolve = res })
+    const invoke = vi.fn(async (_name: string, args?: any) => {
+      if (args?.args?.[0] === 'log') return hangingPromise
+      return { ok: true }
+    })
+    const report = makeReport(true)
+
+    // restartDaemon must complete — the hanging log call must not block it
+    const start = Date.now()
+    await restartDaemon({
+      invoke,
+      doctorPoller: {
+        refresh: vi.fn(async () => report),
+        current: report,
+        lastError: null,
+      },
+      formatInvokeError: (e: unknown) => String(e),
+      healthProbe: null,
+    })
+    const elapsed = Date.now() - start
+    // Sanity: must complete well under 500ms (the hanging promise never resolves)
+    expect(elapsed).toBeLessThan(500)
+    // Resolve to avoid open-handle warnings
+    _resolve({ ok: true })
+  })
+})

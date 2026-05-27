@@ -432,3 +432,56 @@ test.describe('reconnect-diagnose card', () => {
     await expect(page.locator('#rdc-primary')).toHaveText('重启 Dashboard')
   })
 })
+
+// ── Step 4 — RECONNECT_DIAGNOSE telemetry Playwright test ────────────────────
+//
+// Verify that clicking "重新连接" causes a fire-and-forget
+// `wechat_cli_json { args: ['log', 'RECONNECT_DIAGNOSE', ...] }` call with
+// the 6 expected field keys present in the --fields JSON payload.
+
+test.describe('RECONNECT_DIAGNOSE telemetry', () => {
+  test('clicking reconnect records a RECONNECT_DIAGNOSE log call with 6 field keys', async ({ page, shimUrl, shim }) => {
+    // Seed so dashboard mode is reached and mock state is clean
+    await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+    await bootIntoDashboard(page, shimUrl)
+
+    // Inject a dead-daemon doctor report so restartDaemon goes through the
+    // diagnose() path (not the no-report fallback) — code-1 is a good choice
+    // because it produces a visible card AND reliably exercises the log path.
+    await shim.invoke('mock.doctor', { report: REPORTS.deadDaemon })
+
+    // Force-show the restart button (seeded daemon is alive → stop btn shown)
+    await page.evaluate(() => {
+      const btn = document.getElementById('dash-restart')
+      if (btn) btn.hidden = false
+    })
+
+    // Click "重新连接" — triggers restartDaemon() → diagnose() → telemetry
+    await page.locator('#dash-restart').click()
+
+    const EXPECTED_FIELD_KEYS = ['code', 'daemon_alive', 'service_installed', 'provider', 'lastError_present', 'health_ok']
+
+    // Poll until at least one log call with tag RECONNECT_DIAGNOSE is recorded
+    // (the fire-and-forget settle time is typically <100ms on local machines).
+    await expect.poll(
+      async () => {
+        const r = await shim.invoke('mock.get-log-calls') as { result: { calls: Array<{ tag: string; fields: Record<string, unknown> | null }> } }
+        return r.result.calls.filter(c => c.tag === 'RECONNECT_DIAGNOSE').length
+      },
+      { timeout: 5000 },
+    ).toBeGreaterThanOrEqual(1)
+
+    const r = await shim.invoke('mock.get-log-calls') as { result: { calls: Array<{ tag: string; msg: string; fields: Record<string, unknown> | null }> } }
+    const diagCalls = r.result.calls.filter(c => c.tag === 'RECONNECT_DIAGNOSE')
+
+    // At least one telemetry call was fired
+    expect(diagCalls.length).toBeGreaterThanOrEqual(1)
+
+    // The first call must have all 6 expected field keys
+    const firstFields = diagCalls[0]!.fields
+    expect(firstFields).not.toBeNull()
+    for (const key of EXPECTED_FIELD_KEYS) {
+      expect(firstFields).toHaveProperty(key)
+    }
+  })
+})
