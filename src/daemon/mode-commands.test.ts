@@ -12,6 +12,7 @@ function setup(opts: {
   defaultProviderId?: ProviderId
   initialMode?: Mode
   initialUserName?: string
+  isAdmin?: (userId: string) => boolean
 } = {}) {
   const registered = opts.registered ?? ['claude', 'codex']
   const set = vi.fn<(chatId: string, mode: Mode) => void>()
@@ -41,6 +42,7 @@ function setup(opts: {
     setUserName: vi.fn(async (chat: string, name: string) => { storedName = { chat, name } }),
     getUserName: vi.fn(() => opts.initialUserName ?? null),
     log: () => {},
+    isAdmin: opts.isAdmin,
   })
   return { cmds, set, sendMessage, sentMessages, getStored: () => stored, getStoredName: () => storedName }
 }
@@ -454,6 +456,42 @@ describe('makeModeCommands', () => {
       msgType: 'text', createTimeMs: 0,
     })
     expect(sentMessages[0]?.[1]).toMatch(/还没.*昵称|尚未.*告诉|\/name/)
+  })
+
+  // ── /help (= /帮助) — user-facing command reference ──────────────────
+
+  it('/help is consumed (returns true)', async () => {
+    const { cmds } = setup()
+    const consumed = await cmds.handle(inbound('/help'))
+    expect(consumed).toBe(true)
+  })
+
+  it('/help from non-admin contains mode-switch section but NOT admin section', async () => {
+    const { cmds, sentMessages } = setup({ isAdmin: () => false })
+    await cmds.handle(inbound('/help'))
+    const text = sentMessages[0]?.[1] ?? ''
+    expect(text).toContain('模式切换')
+    expect(text).not.toContain('管理员命令')
+  })
+
+  it('/help from admin contains both mode-switch and admin sections', async () => {
+    const { cmds, sentMessages } = setup({ isAdmin: () => true })
+    await cmds.handle(inbound('/help'))
+    const text = sentMessages[0]?.[1] ?? ''
+    expect(text).toContain('模式切换')
+    expect(text).toContain('管理员命令')
+    expect(text).toContain('/health')
+    expect(text).toContain('/reset')
+  })
+
+  it('/帮助 is an alias for /help and produces the same output', async () => {
+    const { cmds: cmdsAdmin, sentMessages: msgsAdmin } = setup({ isAdmin: () => true })
+    const { cmds: cmdsUser, sentMessages: msgsUser } = setup({ isAdmin: () => false })
+    await cmdsAdmin.handle(inbound('/帮助'))
+    await cmdsUser.handle(inbound('/帮助'))
+    expect(msgsAdmin[0]?.[1]).toContain('管理员命令')
+    expect(msgsUser[0]?.[1]).not.toContain('管理员命令')
+    expect(msgsUser[0]?.[1]).toContain('模式切换')
   })
 
   describe('N-way grammar', () => {

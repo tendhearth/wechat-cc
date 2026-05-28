@@ -106,6 +106,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     setUserName: (cid, name) => ilink.setUserName(cid, name),
     getUserName: (cid) => ilink.resolveUserName(cid) ?? null,
     log,
+    isAdmin,
   })
 
   const onboardingHandler = makeOnboardingHandler({

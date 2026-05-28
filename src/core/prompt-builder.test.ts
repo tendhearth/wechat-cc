@@ -82,9 +82,13 @@ describe('buildSystemPrompt', () => {
 
   it('mentions per-chat mode awareness (RFC 03 P2-P5)', () => {
     const p = buildSystemPrompt(defaults())
-    for (const cmd of ['/cc', '/codex', '/both', '/chat', '/cc + codex', '/codex + cc']) {
+    // Core per-chat mode switches are present (compact form since prompt-builder
+    // update; full command list is in /help, not the system prompt)
+    for (const cmd of ['/cc', '/codex', '/both', '/chat', '/solo', '/stop']) {
       expect(p, `missing slash command in mode awareness: ${cmd}`).toContain(cmd)
     }
+    // primary_tool pattern present (compact /<p> + <peer> form)
+    expect(p).toContain('/<p> + <peer>')
     // Also tells the agent that chatroom envelopes will explain themselves
     expect(p).toContain('chatroom_round')
     expect(p).toContain('不要调 reply')   // chatroom-specific guidance recap

@@ -183,7 +183,7 @@ function multiModeAwarenessSection(): string {
   // envelopes.
   return `## 模式感知（每个 chat 独立）
 
-每个 chat_id 有自己的对话模式（用户用 \`/cc\` \`/codex\` \`/both\` \`/chat\` \`/cc + codex\` \`/codex + cc\` \`/solo\` 切换）：
+每个 chat_id 有自己的对话模式（用户用 \`/cc\` \`/codex\` \`/cursor\` \`/both\` (= /parallel) \`/chat\` \`/<p> + <peer>\` \`/solo\` \`/stop\` 切换；详细命令用户可以打 /help）：
 - **solo** — 普通：你独自回答。
 - **parallel** — 并行：你和另一个 AI 同时收到相同消息，各自回各自的；你的回复会被自动加 \`[Display]\` 前缀，所以**不要**自己手动加。
 - **primary_tool** — 主从：你主导，需要时调 delegate_<peer>。

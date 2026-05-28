@@ -41,6 +41,8 @@ export interface ModeCommandsDeps {
   /** Lookup current nickname for this chat (null if none). Used by /whoami. */
   getUserName(chatId: string): string | null
   log: (tag: string, line: string) => void
+  /** Returns true when userId belongs to an admin. Used by /help to gate the admin section. */
+  isAdmin?: (userId: string) => boolean
 }
 
 export interface ModeCommands {
@@ -112,8 +114,53 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     }
   }
 
+  async function handleHelp(msg: InboundMsg, admin: boolean): Promise<boolean> {
+    const lines = [
+      '这里是微信通道，可以直接跟我对话。可用命令：',
+      '',
+      '**模式切换**',
+      '/cc /codex /cursor — 单 provider (solo)',
+      '/cc + codex — Claude 主答，Codex 当工具 (primary_tool)',
+      '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
+      '/chat [p1 p2 …] — 圆桌讨论',
+      '/solo /stop /mode — 回到默认 / 退出 / 显示当前模式',
+      '',
+      '**身份**',
+      '/whoami — 显示你的身份 + 当前模式',
+      '/name <昵称> — 设置或改昵称',
+      '',
+      '**项目切换 / 陪伴**',
+      '直接说"切到 <alias>"、"开启陪伴"、"别烦我" — 自然语言走得通，没做 slash 形式',
+      '',
+      '**文件**',
+      '拖图片/文件给我即可',
+      '',
+      '或者直接提问、丢代码、让我跑命令。',
+    ]
+    if (admin) {
+      lines.push(
+        '',
+        '**管理员命令**',
+        '/health · /health ai — bot / AI 健康',
+        '/reset (/重置) — 重置当前 chat',
+        '/botname [name] — 设置/查看 bot 显示名',
+        '/hearth help — vault 治理（hearth 子命令）',
+        '清理 <bot> / 清理 all-expired — 清理过期 bot',
+      )
+    }
+    await reply(msg.chatId, lines.join('\n'))
+    deps.log('MODE_CMD', `chat=${msg.chatId} → /help (admin=${admin})`)
+    return true
+  }
+
   return {
     async handle(msg) {
+      // /帮助 — Chinese alias for /help. Must be checked before COMMAND_REGEX
+      // since the regex only matches ASCII slash-words.
+      if (msg.text.trim() === '/帮助') {
+        return handleHelp(msg, deps.isAdmin?.(msg.userId) ?? false)
+      }
+
       const m = COMMAND_REGEX.exec(msg.text)
       if (!m) return false
       const slashWord = m[1]!
@@ -317,6 +364,11 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         await reply(msg.chatId, `✅ 好的，以后叫你 ${tail}。`)
         deps.log('MODE_CMD', `chat=${msg.chatId} → setUserName "${tail}"`)
         return true
+      }
+
+      // /help — user-facing command reference (/帮助 alias handled above COMMAND_REGEX)
+      if (slashWord.toLowerCase() === 'help' && tail === '') {
+        return handleHelp(msg, deps.isAdmin?.(msg.userId) ?? false)
       }
 
       // Not a mode command — let other handlers (admin-commands, onboarding,
