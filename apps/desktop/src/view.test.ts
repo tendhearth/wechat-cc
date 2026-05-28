@@ -371,6 +371,7 @@ describe('accountRows', () => {
       ],
       {},
       [{ botId: 'dead-im-bot', firstSeenExpiredAt: '2026-04-26T00:00:00Z' }],
+      [],
       Date.parse('2026-04-26T03:30:00Z'),
     )
     expect(rows[0]!.badge).toEqual({ tone: 'ok', label: 'active' })
@@ -378,6 +379,69 @@ describe('accountRows', () => {
     expect(rows[1]!.badge.tone).toBe('warn')
     expect(rows[1]!.badge.label).toMatch(/已过期/)
     expect(rows[1]!.badge.label).toMatch(/3 小时前/)
+  })
+
+  it('without admins param all rows have isAdmin=false and preserve original order', () => {
+    const items = [
+      { id: 'a-im-bot', botId: 'a@im.bot', userId: 'uA', baseUrl: '' },
+      { id: 'b-im-bot', botId: 'b@im.bot', userId: 'uB', baseUrl: '' },
+      { id: 'c-im-bot', botId: 'c@im.bot', userId: 'uC', baseUrl: '' },
+    ]
+    const rows = accountRows(items)
+    expect(rows.every((r: any) => r.isAdmin === false)).toBe(true)
+    expect(rows.map((r: any) => r.id)).toEqual(['a-im-bot', 'b-im-bot', 'c-im-bot'])
+  })
+
+  it('admin userId floats to top; isAdmin is set correctly', () => {
+    const items = [
+      { id: 'b-im-bot', botId: 'b@im.bot', userId: 'uB', baseUrl: '' },
+      { id: 'a-im-bot', botId: 'a@im.bot', userId: 'uA', baseUrl: '' },
+      { id: 'c-im-bot', botId: 'c@im.bot', userId: 'uC', baseUrl: '' },
+    ]
+    const rows = accountRows(items, {}, [], ['uA'])
+    expect(rows[0]!.id).toBe('a-im-bot')
+    expect(rows[0]!.isAdmin).toBe(true)
+    expect(rows[1]!.isAdmin).toBe(false)
+    expect(rows[2]!.isAdmin).toBe(false)
+    // non-admin rows preserve relative original order: B before C
+    expect(rows[1]!.id).toBe('b-im-bot')
+    expect(rows[2]!.id).toBe('c-im-bot')
+  })
+
+  it('multiple admins all float to top (stable within group)', () => {
+    const items = [
+      { id: 'c-im-bot', botId: 'c@im.bot', userId: 'uC', baseUrl: '' },
+      { id: 'a-im-bot', botId: 'a@im.bot', userId: 'uA', baseUrl: '' },
+      { id: 'b-im-bot', botId: 'b@im.bot', userId: 'uB', baseUrl: '' },
+      { id: 'd-im-bot', botId: 'd@im.bot', userId: 'uD', baseUrl: '' },
+    ]
+    const rows = accountRows(items, {}, [], ['uA', 'uC'])
+    expect(rows[0]!.isAdmin).toBe(true)
+    expect(rows[1]!.isAdmin).toBe(true)
+    // non-admins follow
+    expect(rows[2]!.isAdmin).toBe(false)
+    expect(rows[3]!.isAdmin).toBe(false)
+    // admin group stable: C was before A in original → C first
+    expect(rows[0]!.id).toBe('c-im-bot')
+    expect(rows[1]!.id).toBe('a-im-bot')
+    // non-admin group stable: B was before D → B first
+    expect(rows[2]!.id).toBe('b-im-bot')
+    expect(rows[3]!.id).toBe('d-im-bot')
+  })
+
+  it('admin userId not in items — no row marked admin, original order preserved', () => {
+    const items = [
+      { id: 'x-im-bot', botId: 'x@im.bot', userId: 'uX', baseUrl: '' },
+      { id: 'y-im-bot', botId: 'y@im.bot', userId: 'uY', baseUrl: '' },
+    ]
+    const rows = accountRows(items, {}, [], ['uZ'])
+    expect(rows.every((r: any) => r.isAdmin === false)).toBe(true)
+    expect(rows.map((r: any) => r.id)).toEqual(['x-im-bot', 'y-im-bot'])
+  })
+
+  it('exposes userId on each row', () => {
+    const rows = accountRows([{ id: 'a-im-bot', botId: 'a@im.bot', userId: 'theUserId', baseUrl: '' }])
+    expect(rows[0]!.userId).toBe('theUserId')
   })
 })
 

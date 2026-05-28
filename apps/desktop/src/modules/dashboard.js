@@ -27,15 +27,18 @@ export function renderDashboard(report) {
   const accounts = report.checks.accounts.items || []
   const expired = report.expiredBots || []
   const expiredById = Object.fromEntries(expired.map(b => [b.botId, b]))
-  const rows = accountRows(accounts, report.userNames || {}, expired)
+  const rows = accountRows(accounts, report.userNames || {}, expired, report.checks.access.admins || [])
   const tbody = document.getElementById("accounts-body")
   const current = document.getElementById("accounts-current")
 
   // Skip re-render if user has an inline confirm open (poll race — the 5s
   // tick would clobber the half-filled "确定删除?" UI otherwise).
   const hasOpenConfirm = tbody.querySelector(".confirm-inline")
+  // Pick the admin row for the "当前连接中的用户" slot. Falls back to first
+  // row if no admin is in the bound accounts (e.g. access.json admins[] is
+  // empty, or admin hasn't re-bound after a fresh install).
+  const currentRow = rows.find(r => r.isAdmin) || rows[0]
   if (!hasOpenConfirm && current) {
-    const currentRow = rows[0]
     if (!currentRow) {
       current.innerHTML = `
         <div class="user-avatar avatar-admin">?</div>
@@ -71,7 +74,7 @@ export function renderDashboard(report) {
   if (hasOpenConfirm) {
     /* skip */
   } else {
-    const subRows = rows.slice(1)
+    const subRows = currentRow ? rows.filter(r => r.id !== currentRow.id) : []
     const displayRows = subRows.length > 0 ? subRows : demoSubUsers()
     tbody.innerHTML = displayRows.map((row, index) => {
       const expEntry = expiredById[row.id]

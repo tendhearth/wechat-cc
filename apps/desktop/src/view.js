@@ -368,10 +368,13 @@ export function deleteAccountConfirmCopy(name, service) {
 // drives the badge. Account rows for which there is no expired entry are
 // shown as `active` (we don't have a positive heartbeat from ilink — only
 // the errcode=-14 negative signal).
-export function accountRows(items, userNames = {}, expiredBots = [], now = Date.now()) {
+// admins — list of wechat userIds from access.json admins[]. Rows whose
+// userId is in admins[] get isAdmin:true and sort to the front of the list
+// (stable within each group, so relative order of non-admin rows is preserved).
+export function accountRows(items, userNames = {}, expiredBots = [], admins = [], now = Date.now()) {
   const expiredById = Object.create(null)
   for (const b of expiredBots) expiredById[b.botId] = b
-  return items.map(item => {
+  const rows = items.map(item => {
     const friendly = userNames[item.userId]
     const shortId = (item.id || "").replace(/-im-bot$/, "")
     const expired = expiredById[item.id]
@@ -381,10 +384,14 @@ export function accountRows(items, userNames = {}, expiredBots = [], now = Date.
     return {
       name: friendly || shortId || item.id,
       id: item.id,
+      userId: item.userId,
+      isAdmin: Array.isArray(admins) && admins.includes(item.userId),
       badge,
       expired: !!expired,
     }
   })
+  // Stable sort: admin rows first, then non-admin rows in original order.
+  return rows.sort((a, b) => (b.isAdmin ? 1 : 0) - (a.isAdmin ? 1 : 0))
 }
 
 // Map a Mode discriminated-union (RFC 03) to a short user-facing badge.

@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from 'vitest'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { analyzeDoctor, setupStatus, serviceStatus, readDaemon } from './doctor'
+import { analyzeDoctor, setupStatus, serviceStatus, readDaemon, readAccess } from './doctor'
 
 const installedSystemd = () => ({ installed: true, kind: 'systemd-user' as const })
 const missingSystemd = () => ({ installed: false, kind: 'systemd-user' as const })
@@ -449,5 +449,68 @@ describe('readDaemon internal_api', () => {
     const snap = readDaemon(tmpDir)
     expect(snap.alive).toBe(true)
     expect(snap.internal_api).toBeUndefined()
+  })
+})
+
+// ── readAccess: admins[] pass-through ────────────────────────────────────────
+describe('readAccess admins[]', () => {
+  const tmpDir = join('/tmp', `readAccess-test-${process.pid}`)
+
+  afterEach(() => {
+    try { rmSync(tmpDir, { recursive: true, force: true }) } catch { /* ignore */ }
+  })
+
+  it('surfaces admins[] when present in access.json', () => {
+    mkdirSync(tmpDir, { recursive: true })
+    writeFileSync(join(tmpDir, 'access.json'), JSON.stringify({
+      dmPolicy: 'allowlist',
+      allowFrom: ['o9cq800sObd3lbrHBgiItB1pooDQ@im.wechat'],
+      admins: ['o9cq800sObd3lbrHBgiItB1pooDQ@im.wechat'],
+    }))
+    const snap = readAccess(tmpDir)
+    expect(snap.admins).toEqual(['o9cq800sObd3lbrHBgiItB1pooDQ@im.wechat'])
+  })
+
+  it('omits admins when access.json has no admins field', () => {
+    mkdirSync(tmpDir, { recursive: true })
+    writeFileSync(join(tmpDir, 'access.json'), JSON.stringify({
+      dmPolicy: 'allowlist',
+      allowFrom: ['u1'],
+    }))
+    const snap = readAccess(tmpDir)
+    expect(snap.admins).toBeUndefined()
+  })
+
+  it('omits admins when admins field is not an array', () => {
+    mkdirSync(tmpDir, { recursive: true })
+    writeFileSync(join(tmpDir, 'access.json'), JSON.stringify({
+      dmPolicy: 'allowlist',
+      allowFrom: ['u1'],
+      admins: 'not-an-array',
+    }))
+    const snap = readAccess(tmpDir)
+    expect(snap.admins).toBeUndefined()
+  })
+
+  it('admins surfaces through analyzeDoctor checks.access.admins', () => {
+    mkdirSync(tmpDir, { recursive: true })
+    writeFileSync(join(tmpDir, 'access.json'), JSON.stringify({
+      dmPolicy: 'allowlist',
+      allowFrom: ['uAdmin'],
+      admins: ['uAdmin'],
+    }))
+    const report = analyzeDoctor({
+      stateDir: tmpDir,
+      findOnPath: () => null,
+      readAccounts: () => [],
+      readAccess: () => readAccess(tmpDir),
+      readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      daemon: () => ({ alive: false, pid: null }),
+      service: missingSystemd,
+      runtime: 'source',
+    })
+    expect(report.checks.access.admins).toEqual(['uAdmin'])
   })
 })

@@ -21,6 +21,7 @@ export interface BoundAccount {
 export interface AccessSnapshot {
   dmPolicy: 'allowlist' | 'disabled'
   allowFrom: string[]
+  admins?: string[]
 }
 
 export interface DaemonSnapshot {
@@ -128,7 +129,7 @@ export interface DoctorReport {
     // boot path will actually do.
     cursor: DoctorCheckBase & { apiKeySet: boolean; sdkInstalled: boolean }
     accounts: DoctorCheckBase & { count: number; items: BoundAccount[] }
-    access: DoctorCheckBase & { dmPolicy: string; allowFromCount: number }
+    access: DoctorCheckBase & { dmPolicy: string; allowFromCount: number; admins?: string[] }
     provider: DoctorCheckBase & { provider: AgentConfig['provider']; model?: string; binaryPath: string | null }
     daemon: DaemonSnapshot
     service: ServiceSnapshot
@@ -259,6 +260,7 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
       ok: access.dmPolicy === 'allowlist' && access.allowFrom.length > 0,
       dmPolicy: access.dmPolicy,
       allowFromCount: access.allowFrom.length,
+      ...(Array.isArray(access.admins) ? { admins: access.admins } : {}),
       ...(access.dmPolicy === 'allowlist' && access.allowFrom.length > 0 ? {} : {
         severity: 'soft' as const,
         fix: { action: '扫码绑定后会自动加入' },
@@ -478,6 +480,7 @@ export function readAccess(stateDir: string): AccessSnapshot {
     return {
       dmPolicy: parsed.dmPolicy === 'disabled' ? 'disabled' : 'allowlist',
       allowFrom: Array.isArray(parsed.allowFrom) ? parsed.allowFrom : [],
+      ...(Array.isArray(parsed.admins) ? { admins: parsed.admins } : {}),
     }
   } catch {
     return { dmPolicy: 'allowlist', allowFrom: [] }

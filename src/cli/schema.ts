@@ -66,6 +66,7 @@ const DmPolicy = z.enum(['allowlist', 'disabled'])
 const AccessSnapshot = z.object({
   dmPolicy: DmPolicy,
   allowFrom: z.array(z.string()),
+  admins: z.array(z.string()).optional(),
 })
 
 // ── wechat-cc doctor --json ───────────────────────────────────────────────────
@@ -94,6 +95,7 @@ export const DoctorOutput = z.object({
     access: DoctorCheckBase.extend({
       dmPolicy: DmPolicy,
       allowFromCount: z.number(),
+      admins: z.array(z.string()).optional(),
     }),
     provider: DoctorCheckBase.extend({
       provider: AgentProviderKind,

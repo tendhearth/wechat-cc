@@ -320,6 +320,97 @@ describe('dashboard button state', () => {
   })
 })
 
+// ── renderDashboard: admin currentRow selection ───────────────────────────────
+// The "当前连接中的用户" slot should pick the account whose userId appears in
+// access.json admins[], not whichever lands at items[0] (filesystem order).
+
+describe('renderDashboard admin row selection', () => {
+  it('picks admin user as currentRow even when they are not at items[0]', () => {
+    const els = installDashboardDom()
+    const report = {
+      checks: {
+        daemon: { alive: true, pid: 1234 },
+        accounts: {
+          count: 2,
+          items: [
+            { id: 'wangzai-im-bot', botId: 'wz@im.bot', userId: 'o9cq80-cET4rsiJPGqDSGO5SpoU8@im.wechat', baseUrl: '' },
+            { id: 'gushirui-im-bot', botId: 'gsr@im.bot', userId: 'o9cq800sObd3lbrHBgiItB1pooDQ@im.wechat', baseUrl: '' },
+          ],
+        },
+        provider: { provider: 'claude' },
+        access: {
+          allowFromCount: 2,
+          admins: ['o9cq800sObd3lbrHBgiItB1pooDQ@im.wechat'],
+        },
+        service: { installed: true },
+      },
+      userNames: {
+        'o9cq80-cET4rsiJPGqDSGO5SpoU8@im.wechat': '旺仔',
+        'o9cq800sObd3lbrHBgiItB1pooDQ@im.wechat': '顾时瑞',
+      },
+      expiredBots: [],
+    }
+
+    renderDashboard(report)
+
+    // 顾时瑞 (admin, at items[1]) must appear in the current-user slot
+    expect(els.accountsCurrent.innerHTML).toContain('顾时瑞')
+    expect(els.accountsCurrent.innerHTML).toContain('管理员')
+    // 旺仔 (non-admin, at items[0]) must be in the sub-users table
+    expect(els.accountsBody.innerHTML).toContain('旺仔')
+    expect(els.accountsBody.innerHTML).not.toContain('管理员')
+  })
+
+  it('falls back to items[0] as currentRow when admins[] is empty', () => {
+    const els = installDashboardDom()
+    const report = {
+      checks: {
+        daemon: { alive: true, pid: 1234 },
+        accounts: {
+          count: 2,
+          items: [
+            { id: 'first-im-bot', botId: 'f@im.bot', userId: 'uFirst', baseUrl: '' },
+            { id: 'second-im-bot', botId: 's@im.bot', userId: 'uSecond', baseUrl: '' },
+          ],
+        },
+        provider: { provider: 'codex' },
+        access: { allowFromCount: 2, admins: [] },
+        service: { installed: true },
+      },
+      userNames: { uFirst: '第一人', uSecond: '第二人' },
+      expiredBots: [],
+    }
+
+    renderDashboard(report)
+
+    // No admins → falls back to items[0]
+    expect(els.accountsCurrent.innerHTML).toContain('第一人')
+    expect(els.accountsBody.innerHTML).toContain('第二人')
+  })
+
+  it('falls back to items[0] as currentRow when admins is absent', () => {
+    const els = installDashboardDom()
+    const report = {
+      checks: {
+        daemon: { alive: true, pid: 1234 },
+        accounts: {
+          count: 1,
+          items: [{ id: 'only-im-bot', botId: 'o@im.bot', userId: 'uOnly', baseUrl: '' }],
+        },
+        provider: { provider: 'claude' },
+        access: { allowFromCount: 1 },
+        service: { installed: true },
+      },
+      userNames: { uOnly: '唯一用户' },
+      expiredBots: [],
+    }
+
+    renderDashboard(report)
+
+    expect(els.accountsCurrent.innerHTML).toContain('唯一用户')
+  })
+})
+
 describe('stopDaemon', () => {
   it('continues residual kill after service stop warning and marks disconnected when daemon is down', async () => {
     const els = installDashboardDom()
