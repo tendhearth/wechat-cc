@@ -144,6 +144,27 @@ function extractText(content: AssistantContent | undefined): string {
 const AUTH_FAIL_RE = /(Please run \/login|Not logged in)/i
 
 /**
+ * Fire-and-forget invoker that survives both sync throws and async
+ * rejections from SDK lifecycle methods (`interrupt`, `close`). When the
+ * underlying claude subprocess has already exited (crash, OOM, abnormal
+ * end), the SDK's ProcessTransport rejects with "ProcessTransport is
+ * not ready for writing" — unhandled, Bun terminates the daemon.
+ * Crashed sessions caught the daemon down in 2026-05-28 PDT incident
+ * (sweepIdle → release → close → interrupt path).
+ */
+function swallowSdkLifecycleError(fn: (() => unknown) | undefined): void {
+  if (!fn) return
+  try {
+    const r = fn()
+    if (r && typeof (r as Promise<unknown>).then === 'function') {
+      ;(r as Promise<unknown>).catch(() => {})
+    }
+  } catch {
+    /* SDK transport already torn down — nothing to do */
+  }
+}
+
+/**
  * Parse a Claude SDK tool_use block's `name` (e.g. 'mcp__wechat__reply')
  * into our normalised `{ server, tool }` shape. Built-in tools (Read,
  * Bash) lack the prefix — those return `{ tool: name }` with no server.
@@ -329,13 +350,20 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           // call hanging until close() is invoked. Caller mitigates by
           // also wiring the abort signal at the coordinator level so the
           // next round-entry check still terminates the loop.
-          ;(q as unknown as { interrupt?: () => void }).interrupt?.()
+          //
+          // SDK lifecycle methods can synchronously throw OR return a
+          // rejected promise when the underlying claude subprocess is
+          // dead (ProcessTransport gone). `swallowSdkLifecycleError`
+          // shields the daemon from those — see helper doc for context.
+          const qIface = q as unknown as { interrupt?: () => unknown }
+          swallowSdkLifecycleError(qIface.interrupt?.bind(q))
         },
         async close() {
           closed = true
           sdkQueue.end()
-          ;(q as unknown as { close?: () => void }).close?.()
-          ;(q as unknown as { interrupt?: () => void }).interrupt?.()
+          const qIface = q as unknown as { close?: () => unknown; interrupt?: () => unknown }
+          swallowSdkLifecycleError(qIface.close?.bind(q))
+          swallowSdkLifecycleError(qIface.interrupt?.bind(q))
           if (activeEventQueue) {
             activeEventQueue.end()
             activeEventQueue = null

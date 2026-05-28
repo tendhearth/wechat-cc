@@ -22,6 +22,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let endFn: (() => void) | null = null
   let interruptCount = 0
+  let interruptFailureMode: 'none' | 'throw' | 'reject' = 'none'
 
   function makeStream() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -52,7 +53,15 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
           },
         }
       },
-      interrupt() { interruptCount++ },
+      interrupt() {
+        interruptCount++
+        if (interruptFailureMode === 'throw') {
+          throw new Error('ProcessTransport is not ready for writing')
+        }
+        if (interruptFailureMode === 'reject') {
+          return Promise.reject(new Error('ProcessTransport is not ready for writing'))
+        }
+      },
     }
   }
 
@@ -74,7 +83,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
     __test_last_options: () => lastQueryOptions,
     __test_sent: () => sentMessages,
     __test_interrupt_count: () => interruptCount,
-    __test_reset_interrupt: () => { interruptCount = 0 },
+    __test_reset_interrupt: () => { interruptCount = 0; interruptFailureMode = 'none' },
+    __test_set_interrupt_failure: (mode: 'none' | 'throw' | 'reject') => { interruptFailureMode = mode },
   }
 })
 
@@ -311,6 +321,51 @@ describe('claude-agent-provider', () => {
     const events2 = await eventsPromise2
     expect(events2.some(e => e.kind === 'text' && e.text === 'still alive')).toBe(true)
 
+    await session.close()
+  })
+
+  it('close() survives a dead SDK ProcessTransport (sync throw)', async () => {
+    // Regression: 2026-05-28 PDT — daemon crashed twice with exit 1.
+    // sweepIdle → release → close → SDK.interrupt() threw "ProcessTransport
+    // is not ready for writing" because the claude subprocess had already
+    // exited. The throw was inside a fire-and-forget call, so Bun killed
+    // the daemon on unhandled rejection. close() must absorb this.
+    ;(sdk as unknown as { __test_reset_interrupt: () => void }).__test_reset_interrupt()
+    ;(sdk as unknown as { __test_set_interrupt_failure: (m: 'throw') => void }).__test_set_interrupt_failure('throw')
+
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
+
+    await expect(session.close()).resolves.toBeUndefined()
+  })
+
+  it('close() survives a dead SDK ProcessTransport (async rejection)', async () => {
+    // Same regression — but SDK returns a rejected promise instead of
+    // throwing synchronously. Bun's default unhandled-rejection behaviour
+    // is fatal, so the fire-and-forget invoker must attach a .catch.
+    ;(sdk as unknown as { __test_reset_interrupt: () => void }).__test_reset_interrupt()
+    ;(sdk as unknown as { __test_set_interrupt_failure: (m: 'reject') => void }).__test_set_interrupt_failure('reject')
+
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
+
+    await expect(session.close()).resolves.toBeUndefined()
+    // Wait a tick so any unhandled rejection would surface before the
+    // test exits.
+    await new Promise(r => setTimeout(r, 10))
+  })
+
+  it('cancel() survives a dead SDK ProcessTransport', async () => {
+    ;(sdk as unknown as { __test_reset_interrupt: () => void }).__test_reset_interrupt()
+    ;(sdk as unknown as { __test_set_interrupt_failure: (m: 'reject') => void }).__test_set_interrupt_failure('reject')
+
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
+
+    await expect(session.cancel?.()).resolves.toBeUndefined()
+    await new Promise(r => setTimeout(r, 10))
+
+    // Tidy up — close() also must not crash.
     await session.close()
   })
 
