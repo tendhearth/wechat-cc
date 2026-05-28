@@ -769,9 +769,9 @@ const providerShowCmd = defineCommand({
 })
 
 const providerSetCmd = defineCommand({
-  meta: { name: 'set', description: 'Switch agent provider (claude|codex), optionally with --model + --unattended + --auto-start + --close-stops-daemon' },
+  meta: { name: 'set', description: 'Switch agent provider (claude|codex|cursor), optionally with --model + --unattended + --auto-start + --close-stops-daemon' },
   args: {
-    provider: { type: 'positional', required: true, description: 'claude | codex', valueHint: 'claude|codex' },
+    provider: { type: 'positional', required: true, description: 'claude | codex | cursor', valueHint: 'claude|codex|cursor' },
     model: { type: 'string', description: 'Override default model' },
     // String, not boolean: matches the legacy parseBoolFlag tri-state semantics
     // (true / false / undefined). Citty's boolean type can't represent
@@ -783,8 +783,8 @@ const providerSetCmd = defineCommand({
     'close-stops-daemon': { type: 'string', description: 'true | false (omit to leave unchanged) — when true, closing the GUI window stops the daemon', valueHint: 'true|false' },
   },
   run({ args }) {
-    if (args.provider !== 'claude' && args.provider !== 'codex') {
-      console.error(`provider must be 'claude' or 'codex' (got: ${args.provider})`)
+    if (args.provider !== 'claude' && args.provider !== 'codex' && args.provider !== 'cursor') {
+      console.error(`provider must be 'claude', 'codex', or 'cursor' (got: ${args.provider})`)
       process.exit(2)
     }
     const provider = args.provider as AgentProviderKind

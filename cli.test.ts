@@ -259,6 +259,14 @@ describe('citty migrated commands', () => {
     expect(r?.args.unattended).toBe('true')  // string, parsed to bool inside the run handler
   })
 
+  it('provider set accepts cursor as a valid provider', async () => {
+    const r = await runWithNestedStub(
+      ['provider', 'set', 'cursor'],
+      ['provider', 'set'],
+    )
+    expect(r?.args.provider).toBe('cursor')
+  })
+
   // ── PR4 batch 3b — memory / account / daemon / demo ─────────────────
 
   it('memory list parses --json', async () => {
