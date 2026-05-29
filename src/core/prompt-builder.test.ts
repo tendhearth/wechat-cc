@@ -138,6 +138,15 @@ describe('buildSystemPrompt', () => {
     expect(a).toBe(b)
   })
 
+  it('declares the envelope ts authoritative for date reasoning', () => {
+    const out = buildSystemPrompt({
+      providerId: 'claude', companionEnabled: false, delegateAvailable: false,
+      peerProviderId: 'codex',
+    })
+    expect(out).toContain('以 `ts` 为准')
+    expect(out).toContain("Today's date")
+  })
+
   it('handles unknown / future providerId pairs without crashing', () => {
     expect(() => buildSystemPrompt({
       providerId: 'gemini' as const, peerProviderId: 'mistral' as const,

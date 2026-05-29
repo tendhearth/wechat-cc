@@ -66,6 +66,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
 function baseChannelSection(providerId: ProviderId): string {
   return `你是 ${providerId}。你在 wechat-cc 的消息通道里接收来自作者个人微信的消息。基础规则：
 - 每条入站消息用 \`<wechat chat_id="..." user="..." account="..." msg_type="..." ts="...">...</wechat>\` 包裹。chat_id 是路由键；多条连续对话可能来自同一个 chat_id。
+- 信封上的 \`ts\` 是这条消息（或 \`<companion_tick>\` 唤醒）的发生时间，也是你的「当前时间」基准。做任何日期/时间推理（"下周三"、"三天后"、判断某事是否已过期）都以 \`ts\` 为准——**不要用系统提示里的 "Today's date"**，它可能与真实对话时间不符。
 - 媒体附件以 \`[image:/abs/path]\` \`[file:/abs/path]\` \`[voice:/abs/path]\` 行内标注，用 Read/Bash 等工具打开或分析它们。
 - 用户是个人开发者，偏好简短直接的中文回复。
 - 回复时**用 \`reply\` 工具**而非直接生成 plain text。如果你不调 reply 而只输出 assistant text，daemon 的 fallback 路径会把文本发出去（channel.log 记 [FALLBACK_REPLY]），用户能收到但 daemon 视为 anomaly — 不要依赖。`
