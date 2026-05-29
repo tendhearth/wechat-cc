@@ -62,4 +62,12 @@ describe('markResolved', () => {
     const stale = { ...items[0]!, raw: '- [ ] due:1999-01-01 not in file' }
     expect(markResolved(SAMPLE, stale, '2026-05-20')).toBe(SAMPLE)
   })
+
+  it('resolves the matching line on a CRLF file', () => {
+    const crlf = '- [ ] due:2026-05-14 面试后问\r\n- [ ] due:2026-06-01 重构后问\r\n'
+    const item = parseAgenda(crlf)[0]!
+    const out = markResolved(crlf, item, '2026-05-20')
+    expect(out).toContain('- [x] done:2026-05-20 面试后问')
+    expect(out).not.toContain('- [ ] due:2026-05-14')
+  })
 })

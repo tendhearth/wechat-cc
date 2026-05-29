@@ -50,7 +50,7 @@ export function selectDue(items: AgendaItem[], today: string): AgendaItem[] {
  * state.
  */
 export function markResolved(md: string, item: AgendaItem, date: string): string {
-  const lines = md.split('\n')
+  const lines = md.split(/\r?\n/)
   const idx = lines.indexOf(item.raw)
   if (idx === -1) return md
   lines[idx] = `- [x] done:${date} ${item.body}`
