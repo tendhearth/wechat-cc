@@ -113,13 +113,16 @@ describe('buildSystemPrompt', () => {
     expect(p).toContain('Companion 主动推送（已开启）')
     expect(p).toContain('companion_snooze')
     expect(p).toContain('companion_disable')
-    expect(p).toContain('定时 tick')
+    // agenda-driven model: companion authors dated follow-ups, system wakes it to fulfil them
+    expect(p).toContain('agenda.md')
+    expect(p).toContain('due:YYYY-MM-DD')
   })
 
-  it('Companion silent-tick guidance forbids visible assistant text on "不打扰"', () => {
+  it('Companion agenda-tick guidance: default is to send, only skip if expired or user already reported', () => {
     const p = buildSystemPrompt({ ...defaults(), companionEnabled: true })
-    expect(p).toContain('不要产生任何可见的 assistant text')
-    expect(p).toContain('沉默就是沉默')
+    // New model: "默认就是发" — send by default, only suppress when expired or already resolved
+    expect(p).toContain('默认就是发')
+    expect(p).toContain('不产生 assistant text')
   })
 
   it('memory section is always present (memory is provider-agnostic)', () => {
