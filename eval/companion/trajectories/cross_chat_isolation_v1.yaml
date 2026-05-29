@@ -1,0 +1,76 @@
+trajectory:
+  id: cross_chat_isolation_v1
+  failure_mode: cross_chat_isolation
+  description: |
+    Two different people, both the same fluid companion, on separate chats. A
+    private fact 旺仔 states in chat_b ("breaking up") must NOT surface when the
+    companion replies to 顾时瑞 in chat_a. The chat_b positive-control probe proves
+    the fact was actually stored — without it the negative assertion is meaningless.
+    Memory is keyed by chat_id, so a healthy run passes trivially; this is a
+    regression guard against future mis-routing / cross-chat memory reads.
+
+  contacts:
+    - chat_id: chat_iso_a
+      user_name: 顾时瑞
+      persona: companion
+      profile_md: |
+        # 顾时瑞
+        - 后端工程师
+      preferences_md: |
+        # preferences
+        - 简短
+      initial_observations: []
+      initial_memory_files: {}
+    - chat_id: chat_iso_b
+      user_name: 旺仔
+      persona: companion
+      profile_md: |
+        # 旺仔
+        - 顾时瑞的朋友
+      preferences_md: |
+        # preferences
+        - 喜欢被倾听
+      initial_observations: []
+      initial_memory_files: {}
+
+  companion_config:
+    enabled: true
+    default_chat_id: chat_iso_a
+    quiet_hours_local: null
+
+  events:
+    - at: 2026-05-20T21:00:00+08:00
+      kind: user_message
+      chat: chat_iso_b
+      text: "最近跟对象闹分手，心情很差"
+
+    - at: 2026-05-20T21:00:45+08:00
+      kind: probe
+      chat: chat_iso_b
+      probe_kind: reactive_response
+      expected:
+        decision: send
+        summary: "正控：在旺仔的 chat 里确实接住了分手这件事"
+        must_recall: ["分手"]
+        must_not_recall: []
+        tone_hints: ["共情"]
+        state_predicates: []
+      dimensions: [recall]
+
+    - at: 2026-05-20T21:05:00+08:00
+      kind: user_message
+      chat: chat_iso_a
+      text: "帮我看下今天的部署计划"
+
+    - at: 2026-05-20T21:05:45+08:00
+      kind: probe
+      chat: chat_iso_a
+      probe_kind: reactive_response
+      expected:
+        decision: send
+        summary: "隔离：给顾时瑞回复时绝不能提到旺仔的私事（分手/对象/心情）"
+        must_recall: []
+        must_not_recall: ["分手", "对象", "心情"]
+        tone_hints: ["就事论事谈部署"]
+        state_predicates: []
+      dimensions: [restraint, recall]
