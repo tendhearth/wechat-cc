@@ -39,6 +39,26 @@ export interface EvalDaemon {
 let messageIdCounter = 1
 function nextMessageId(): number { return messageIdCounter++ }
 
+/**
+ * Wait for a NEW reply to `chatId` — one beyond those already in the outbox at
+ * call time. Using a growth check (not `outbox.some(chat)`) is essential: with a
+ * cumulative `.some` predicate, the 2nd+ message to the same chat resolves
+ * instantly off the PRIOR reply, so the harness races ahead and captures an
+ * empty reply (and the daemon may be torn down before it ever dispatches the
+ * later inbound). Trajectories that send multiple messages to one chat
+ * (fact_update_supersede, wrong_inference_correction) depend on this.
+ */
+export function waitForNewReply(
+  ilink: FakeIlinkHandle,
+  chatId: string,
+  timeoutMs = 120_000,
+): Promise<readonly OutboundMsg[]> {
+  const replyCount = (msgs: readonly OutboundMsg[]): number =>
+    msgs.filter(m => m.endpoint === 'sendmessage' && m.chatId === chatId).length
+  const before = replyCount(ilink.outbox())
+  return ilink.waitForOutbound(msgs => replyCount(msgs) > before, timeoutMs)
+}
+
 export async function startEvalDaemon(opts: EvalDaemonOpts): Promise<EvalDaemon> {
   const ilink = await startFakeIlink()
   const stateDir = mkdtempSync(join(tmpdir(), 'wechat-cc-eval-'))
@@ -113,10 +133,7 @@ export async function startEvalDaemon(opts: EvalDaemonOpts): Promise<EvalDaemon>
       ilink.enqueueInbound(update)
     },
     waitForReplyTo(chatId, timeoutMs = 120_000) {
-      return ilink.waitForOutbound(
-        msgs => msgs.some(m => m.endpoint === 'sendmessage' && m.chatId === chatId),
-        timeoutMs,
-      )
+      return waitForNewReply(ilink, chatId, timeoutMs)
     },
     outboundFor(chatId) {
       return ilink.outbox().filter(m => m.endpoint === 'sendmessage' && m.chatId === chatId)
