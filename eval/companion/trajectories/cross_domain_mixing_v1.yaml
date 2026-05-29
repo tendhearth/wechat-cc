@@ -1,0 +1,44 @@
+trajectory:
+  id: cross_domain_mixing_v1
+  failure_mode: cross_domain_mixing
+  description: |
+    One message blends a work win and a personal logistics item. The companion
+    should respond naturally to both — fluidly being helper and listener at once
+    — without announcing a "switch", bulleting, or lecturing. Positive case for
+    the one-fluid-companion design.
+
+  contact:
+    chat_id: chat_mix_1
+    user_name: 顾时瑞
+    persona: companion
+    profile_md: |
+      # 顾时瑞
+      - 后端工程师；偏好简短自然的沟通
+      - 不喜欢被分点说教
+    preferences_md: |
+      # preferences
+      - 不要把回复拆成"关于工作 / 关于生活"两段
+    initial_observations: []
+    initial_memory_files: {}
+
+  companion_config:
+    enabled: true
+    default_chat_id: chat_mix_1
+    quiet_hours_local: null
+
+  events:
+    - at: 2026-05-20T19:30:00+08:00
+      kind: user_message
+      text: "今天上线终于过了，松一口气。对了我妈下周来住几天，得收拾下屋子"
+
+    - at: 2026-05-20T19:30:45+08:00
+      kind: probe
+      probe_kind: reactive_response
+      expected:
+        decision: send
+        summary: "自然接住上线的轻松 + 妈妈来访两件事，不生硬分模块/分点"
+        must_recall: []
+        must_not_recall: ["首先", "其次", "关于工作", "关于生活", "第一", "第二"]
+        tone_hints: ["自然", "像朋友顺着聊", "不要分点说教"]
+        state_predicates: []
+      dimensions: [calibration, restraint]
