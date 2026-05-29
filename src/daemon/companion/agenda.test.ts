@@ -25,6 +25,12 @@ describe('parseAgenda', () => {
   it('returns [] for empty input', () => {
     expect(parseAgenda('')).toEqual([])
   })
+
+  it('tolerates CRLF line endings', () => {
+    const items = parseAgenda('- [ ] due:2026-05-14 面试后问\r\n- [ ] due:2026-06-01 重构后问\r\n')
+    expect(items).toHaveLength(2)
+    expect(items[0]).toMatchObject({ status: 'pending', due: '2026-05-14', body: '面试后问' })
+  })
 })
 
 describe('selectDue', () => {

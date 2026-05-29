@@ -19,11 +19,11 @@ export interface AgendaItem {
 }
 
 const PENDING_RE = /^- \[ \] due:(\d{4}-\d{2}-\d{2})\s+(.*)$/
-const RESOLVED_RE = /^- \[x\] (?:done|fired|dropped):(\d{4}-\d{2}-\d{2})\s+(.*)$/
+const RESOLVED_RE = /^- \[x\] (?:done|fired|dropped):(?:\d{4}-\d{2}-\d{2})\s+(.*)$/
 
 export function parseAgenda(md: string): AgendaItem[] {
   const items: AgendaItem[] = []
-  for (const line of md.split('\n')) {
+  for (const line of md.split(/\r?\n/)) {
     const p = PENDING_RE.exec(line)
     if (p) {
       items.push({ raw: line, status: 'pending', due: p[1]!, body: p[2]!.trim() })
@@ -31,7 +31,7 @@ export function parseAgenda(md: string): AgendaItem[] {
     }
     const r = RESOLVED_RE.exec(line)
     if (r) {
-      items.push({ raw: line, status: 'resolved', due: null, body: r[2]!.trim() })
+      items.push({ raw: line, status: 'resolved', due: null, body: r[1]!.trim() })
     }
     // everything else: ignored
   }
