@@ -28,7 +28,7 @@ export function formatInbound(m: InboundMsg): string {
     `user_id="${escAttr(m.userId)}"`,
     `account="${escAttr(m.accountId)}"`,
     `msg_type="${escAttr(m.msgType)}"`,
-    `ts="${m.createTimeMs}"`,
+    `ts="${new Date(m.createTimeMs).toISOString()}"`,
     m.quoteTo ? `quote_to="${escAttr(m.quoteTo)}"` : '',
   ].filter(Boolean).join(' ')
 

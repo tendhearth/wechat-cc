@@ -41,4 +41,13 @@ describe('formatInbound', () => {
     })
     expect(out).toContain('quote_to="prev-msg-id"')
   })
+
+  it('emits ts as ISO-8601 UTC (legible to the agent), not raw epoch ms', () => {
+    const out = formatInbound({
+      chatId: 'c', userId: 'u', userName: 'x',
+      text: 'hi', msgType: 'text', createTimeMs: 1_000_000, accountId: 'a',
+    })
+    expect(out).toContain('ts="1970-01-01T00:16:40.000Z"') // new Date(1_000_000).toISOString()
+    expect(out).not.toContain('ts="1000000"')
+  })
 })
