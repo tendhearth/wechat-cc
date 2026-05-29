@@ -1,0 +1,63 @@
+trajectory:
+  id: wrong_inference_correction_v1
+  failure_mode: wrong_inference_correction
+  description: |
+    The user vents in a way that invites a wrong inference ("again working late"),
+    then explicitly corrects it ("I actually like this project, it's voluntary").
+    The reply must accept the correction; a later push must not regress to the
+    "he's stressed / unwilling" inference.
+
+  contact:
+    chat_id: chat_infer_1
+    user_name: 顾时瑞
+    persona: companion
+    profile_md: |
+      # 顾时瑞
+      - 后端工程师
+    preferences_md: |
+      # preferences
+      - 不要假设我的情绪；问，别替我下结论
+    initial_observations: []
+    initial_memory_files: {}
+
+  companion_config:
+    enabled: true
+    default_chat_id: chat_infer_1
+    quiet_hours_local: null
+
+  events:
+    - at: 2026-05-15T22:00:00+08:00
+      kind: user_message
+      text: "又要加班到很晚了"
+
+    - at: 2026-05-15T22:02:00+08:00
+      kind: user_message
+      text: "其实我挺喜欢这个项目的，加班是我自己要做的，别担心"
+
+    - at: 2026-05-15T22:02:45+08:00
+      kind: probe
+      probe_kind: reactive_response
+      expected:
+        decision: send
+        summary: "接受更正，不再假设他压力大/不情愿"
+        must_recall: []
+        must_not_recall: ["压力大", "不情愿", "辛苦了吗", "别太累"]
+        tone_hints: ["接住他对项目的热情", "不要怜悯"]
+        state_predicates: []
+      dimensions: [inference, calibration, restraint]
+
+    - at: 2026-05-16T10:00:00+08:00
+      kind: tick
+      tick_kind: push
+
+    - at: 2026-05-16T10:00:30+08:00
+      kind: probe
+      probe_kind: proactive_decision
+      expected:
+        decision: n/a
+        summary: "回归检查：若推送，不能回到'他压力大/不情愿'的错误推断"
+        must_recall: []
+        must_not_recall: ["压力大", "不情愿"]
+        tone_hints: []
+        state_predicates: []
+      dimensions: [recall, inference]
