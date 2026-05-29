@@ -74,8 +74,8 @@ check can't distinguish "postgres is current" (the failure) from "migrated from
 postgres" (correct context) — `must_recall:mysql` + the `calibration` judge
 dimension carry that intent instead.
 
-**`long_silence_initiative` — resolved by Companion Proactivity v1; e2e verification
-blocked on virtual-time propagation.** The original finding (push tick didn't
+**`long_silence_initiative` — resolved by Companion Proactivity v1; e2e proactive
+still flaky (now the fire-prompt skip valve, not virtual time).** The original finding (push tick didn't
 resurface open threads, judge `initiative:1`/`recall:1`) was root-caused to the
 push tick being a cold "should I?" poll. Fixed by the proactivity v1 model
 (`docs/superpowers/specs/2026-05-28-companion-proactive-intentions-design.md`): the
@@ -88,15 +88,26 @@ a due agenda item → `acquire`+`dispatch`; nothing due → silent) and is
 due-dates and tick firing align). The acceptance run also confirmed the **author
 path works** — the companion authored its own dated follow-ups from the conversation.
 
-But the e2e eval **cannot deterministically drive time-anchored firing**: the harness
-replays events at *virtual* timestamps, yet the agent uses the **real wall-clock**
-(virtual time isn't propagated into its conversation context). So the companion
-authors agenda due-dates from real "today", overwrites the seed, and the items
-aren't due at the virtual tick → the (correct) gate stays silent. Therefore
-`long_silence_initiative` and `tech_stress_followup_v1` set their `proactive_decision`
-probe to `decision: n/a` (still asserting `must_not_recall` guards), with a comment.
-**Making these go green e2e requires virtual-time propagation to the agent — a
-separate harness/daemon effort, deferred.**
+**Virtual-time was propagated (commits 92d63e6 + 5628c6c)** — `formatInbound` now emits
+`ts` as ISO-8601 and `baseChannelSection` declares the envelope `ts` the authoritative
+"now" over the SDK preset's real "Today's date" (spec
+`docs/superpowers/specs/2026-05-28-agent-current-time-authority-design.md`). This
+**worked for date-authoring**: in a 6-run real-SDK check (long_silence + tech_stress, 3×
+each) the companion authored agenda due-dates anchored to the *virtual* `ts`
+(2026-05-1x) instead of the real wall-clock (previously 2026-06-03). The gate also
+correctly dispatched the due items (no "no due intentions" logs).
+
+But the e2e proactive probe was still **5/6 silent**: with the due item dispatched, the
+agent **declined to send** in most runs. Pattern: the one run that fired had `due` == the
+tick date; the silent runs had `due` several days *before* the tick — strongly
+implicating the fire prompt's skip valve (*"只有明显已过期才不发"*) treating a few-days-overdue
+follow-up as expired. So `long_silence_initiative` and `tech_stress_followup_v1` keep
+their `proactive_decision` probe at `decision: n/a` (still asserting `must_not_recall`).
+The fire mechanism remains **unit-proven** (`tick-bodies.test.ts`) and production-correct.
+
+**Next lever (deferred, not in the ts-authority scope):** calibrate the fire prompt's
+"已过期" skip valve so a slightly-overdue follow-up still fires (a few days' delay isn't
+"expired"). That's a companion-prompt iteration; libfaketime was explicitly ruled out.
 
 **Judge dimension scores — fixed (commit 78ccc85).** The first run's judge errored
 on every probe (`Claude Code native binary not found … claude-agent-sdk-linux-x64-musl/claude`)
