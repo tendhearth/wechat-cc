@@ -24,6 +24,7 @@ Each trajectory boots a real daemon and dispatches real Claude SDK calls. Rough 
    - **Judge scores** (1–5): `summary`, `tone_hints`, and any `dimensions: [...]` you list.
 4. Smoke-load: `bun -e "import { loadTrajectory } from './eval/companion/engine/trajectory'; loadTrajectory('./eval/companion/trajectories/<file>.yaml')"`
 5. Run: `bun run eval:companion --trajectory <id>`
+6. **Multi-contact trajectories** (e.g. `cross_chat_isolation`): use `contacts:` (a list of contacts) instead of `contact:`. The first contact is the primary. Tag each `user_message` / `tick` / `probe` event with `chat: <chat_id>` to target a specific contact; events without `chat:` target the primary. Exactly one of `contact:` / `contacts:` must be present. Note: `tick` events always fire against `companion_config.default_chat_id` — a `chat:` on a tick is not honored.
 
 ## Judge config
 
@@ -43,7 +44,7 @@ Backends: `claude-sdk` (MVP), `codex-sdk` (stub), `anthropic-api` (stub). Adding
 
 ## What's NOT in MVP
 
-- Remaining 6 failure modes (cross_domain_mixing, fact_update_supersede, wrong_inference_correction, explicit_quiet, long_silence_initiative, cross_chat_isolation)
+- (All 8 failure modes now have at least one trajectory.)
 - Multi-seed judge averaging, pairwise blind comparison
 - CI integration — explicit manual run only
 - Codex / Anthropic-API judge backends (interfaces exist; bodies throw)
