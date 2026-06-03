@@ -47,9 +47,9 @@ describe('formatInbound', () => {
     const out = formatInbound({
       chatId: 'c', userId: 'u', userName: 'x',
       text: '回', msgType: 'text', createTimeMs: 1, accountId: 'a',
-      quote: { type: 'text', text: 'a < b\nsecond line' },
+      quote: { type: 'text', text: 'a < b & c\nsecond line' },
     })
-    expect(out).toContain('<quote type="text">a &lt; b\nsecond line</quote>')
+    expect(out).toContain('<quote type="text">a &lt; b &amp; c\nsecond line</quote>')
   })
 
   it('omits <quote> entirely when no quote present', () => {
