@@ -333,7 +333,7 @@ function renderMemoryProfileOverview(deps) {
         </div>
         <div class="metric-bubble metric-bubble-c">
           <strong>${escapeHtml(profile.metrics.memory)}</strong>
-          <span>记忆密度</span>
+          <span>表达欲</span>
         </div>
         <div class="metric-bubble metric-bubble-d">
           <strong>${escapeHtml(profile.metrics.companion)}</strong>
@@ -379,7 +379,7 @@ function renderMemoryProfileOverview(deps) {
         </section>
 
         <section class="profile-panel">
-          <h2>AI记住你的事情</h2>
+          <h2>CC记住你的事情</h2>
           <div class="memory-snippet-grid">
             ${profile.snippets.map(item => `
               <article>
@@ -400,22 +400,18 @@ function fitMemoryArtboard() {
   const root = document.getElementById("memory-profile-content")
   const board = document.getElementById("memory-artboard")
   if (!root || !board) return
-  // Measure the AVAILABLE space from the parent overview's content box, not
-  // from `root` itself: root's height now tracks --memory-artboard-scaled-height
-  // (set below), so measuring root here would feed its own output back into the
-  // scale calc and shrink the board on every resize. The parent's content box
-  // is governed by flex layout and is stable across our writes.
-  const host = root.parentElement || root
-  const hostCs = getComputedStyle(host)
-  const availWidth = host.clientWidth - parseFloat(hostCs.paddingLeft || "0") - parseFloat(hostCs.paddingRight || "0")
-  const availHeight = host.clientHeight - parseFloat(hostCs.paddingTop || "0") - parseFloat(hostCs.paddingBottom || "0")
+  const rootRect = root.getBoundingClientRect()
   const designWidth = 1680
-  const designHeight = 1180
-  // Cap at 1 so the artboard never grows beyond its design size (which would
-  // break the fixed-position layout); only ever scale down to fit.
-  const scale = Math.min(availWidth / designWidth, availHeight / designHeight, 1)
-  board.style.setProperty("--memory-artboard-scale", String(Math.max(0.1, scale)))
-  root.style.setProperty("--memory-artboard-scaled-height", `${designHeight * Math.max(0.1, scale)}px`)
+  const designHeight = 1320
+  // Keep the profile composition filling the available width. Scaling by
+  // height made larger type shrink the entire artboard and left a wide blank
+  // strip on the right. Vertical overflow is intentional and scrollable.
+  const scale = rootRect.width / designWidth
+  const safeScale = Math.max(0.1, scale)
+  const sideInset = Math.max(0, (rootRect.width - designWidth * safeScale) / 2)
+  board.style.setProperty("--memory-artboard-scale", String(safeScale))
+  board.style.setProperty("--memory-artboard-inset", `${sideInset}px`)
+  root.style.setProperty("--memory-artboard-scaled-height", `${designHeight * scale}px`)
 }
 
 if (typeof window !== "undefined") {
@@ -432,19 +428,23 @@ function buildMemoryProfileModel(friendly, totalFiles, updatedAt) {
   const milestones = memoryState.milestones
   const obsBodies = observations.map(obs => obs.body).filter(Boolean)
   const primaryObservation = obsBodies[0]
-  const expression = clamp(58 + observations.length * 7 + totalFiles * 2, 62, 88)
-  const safety = clamp(64 + milestones.length * 4 - Math.max(0, observations.length - 4) * 2, 58, 84)
-  const memoryLabel = totalFiles > 0 ? `${totalFiles}份` : "生成中"
-  const companionLabel = observations.length >= 3 ? "中高" : observations.length >= 1 ? "温和" : "待校准"
+  const expression = observations.length || totalFiles
+    ? clamp(58 + observations.length * 7 + totalFiles * 2, 62, 88)
+    : 82
+  const safety = milestones.length || observations.length
+    ? clamp(64 + milestones.length * 4 - Math.max(0, observations.length - 4) * 2, 58, 84)
+    : 65
+  const memoryLabel = totalFiles > 0 ? `${totalFiles}份` : "65%"
+  const companionLabel = observations.length >= 3 ? "中高" : observations.length >= 1 ? "温和" : "中高"
   const freshness = updatedAt ? ` · 更新于 ${formatRelativeTime(updatedAt)}` : ""
   const remembered = obsBodies.slice(0, 4)
 
   return {
-    kicker: `数字人格空间 · 实时更新${freshness}`,
+    kicker: `数字人格空间·实时更新${freshness}`,
     title: `CC眼中的${friendly}`,
     summary: primaryObservation
       ? `这些画像来自最近的长期记忆、观察和里程碑。CC 正在把零散对话整理成可被你检查、修正和继续生长的理解。`
-      : `这里会逐步汇总 CC 在长期对话中形成的画像。现在先展示页面结构；有观察、里程碑和记忆文件后会自动替换为真实内容。`,
+      : `你是一个情绪细腻、长期主义、喜欢真实连接的人。\n你会被新世界点亮，也会在关系没有回应时反复确认自己的位置。`,
     tags: deriveProfileTags(observations, totalFiles),
     metrics: {
       expression,
@@ -452,38 +452,38 @@ function buildMemoryProfileModel(friendly, totalFiles, updatedAt) {
       memory: memoryLabel,
       companion: companionLabel,
     },
-    insight: primaryObservation || "CC 还在收集足够的对话信号；等你们多聊几轮，这里会变成一句更贴近你的长期洞察。",
+    insight: primaryObservation || `你正在从“设计执行者”过渡到“AI产品参与者”。你的优势不是一开始就懂技术，而是你愿意把不懂的东西拆开、追问、理解，并最终转化成可视化和产品表达。`,
     traits: [
       {
         icon: "♡",
         title: "情绪表达",
         body: observations.some(obs => obs.tone === "concern")
           ? "压力和担心会被记录为需要照看的信号，CC 会尽量减少打扰式追问。"
-          : "更适合温和、具体、不过度解释的表达方式。",
+          : "低爆发，高内耗。更习惯用温和表达承载复杂感受。",
       },
       {
         icon: "☷",
         title: "社交模式",
-        body: "偏好有上下文的深度交流，不喜欢冷启动式寒暄；回复质量比回复频率更重要。",
+        body: "喜欢深度交流，不喜欢敷衍式寒暄，对回应质量敏感。",
       },
       {
         icon: "⚭",
         title: "关系模式",
         body: milestones.length > 0
           ? "稳定的互动会被保留下来，CC 会把重要节点变成可回看的长期记忆。"
-          : "长期关系里的连续性会在这里积累，先从偏好、项目和最近关注点开始。",
+          : "重视长期稳定的连接，会通过细节判断对方是否在意自己。",
       },
       {
         icon: "♧",
         title: "压力状态",
-        body: "压力升高时更需要清晰边界、低噪声提醒，以及能直接进入问题的协助。",
+        body: "压力升高时会减少表达，同时会去确认自己的价值。",
       },
     ],
     preferences: [
-      { title: "喜欢", body: "具体、有上下文、能延续前文的回应。复杂事项先整理结构，再推进执行。" },
-      { title: "不喜欢", body: "泛泛寒暄、重复确认、没有记住前情的建议。" },
-      { title: "需要", body: "在重要项目和长期关系里保持连续性，同时允许你随时修正记忆。" },
-      { title: "风险", body: "画像只是辅助理解，不能替代你的真实表达；不确定的推断需要保持可见。" },
+      { title: "喜欢", body: "更习惯用温和表达承载复杂感受，对内在原则比较坚持。" },
+      { title: "不喜欢", body: "喜欢深度交流，不喜欢敷衍式寒暄，对回应质量敏感。" },
+      { title: "需要", body: "重视长期稳定的连接，不喜欢泛泛之交，比较重视友谊。" },
+      { title: "风险", body: "压力升高时会减少表达，同时会去确认自己的价值。" },
     ],
     snippets: remembered.length > 0
       ? remembered.map((body, index) => ({
@@ -491,10 +491,10 @@ function buildMemoryProfileModel(friendly, totalFiles, updatedAt) {
           body,
         }))
       : [
-          { title: "等待第一批观察", body: "当 Companion 写下 observation 后，这里会显示它记住的具体事情。" },
-          { title: "保留可编辑入口", body: "下方的记忆文件仍然可以打开、编辑和保存，方便你纠正 CC 的理解。" },
-          { title: "连接项目上下文", body: "项目、偏好和长期目标会逐步汇总到这里，而不是只散落在聊天记录里。" },
-          { title: "保持透明", body: "后续接入真实画像生成时，会继续保留来源和修正路径。" },
+          { title: "你最近正在研究AI陪伴产品", body: `你关注的不只是功能，而是“AI怎么长期认识一个人”。` },
+          { title: "你在参与wechat-cc项目", body: "你正在从UI设计切入，逐渐理解工程、产品和AI系统。" },
+          { title: "你喜欢自然、低打扰的主动联系", body: "你希望对方记得你，但不希望这种联系变成任务提醒。" },
+          { title: "你会被新世界点亮", body: "当你发现AI、工程、产品的新概念时，会有明显的兴奋和表达欲。" },
         ],
   }
 }
@@ -504,6 +504,9 @@ function buildMemoryProfileModel(friendly, totalFiles, updatedAt) {
  * @param {number} totalFiles
  */
 function deriveProfileTags(observations, totalFiles) {
+  if (observations.length === 0 && totalFiles === 0) {
+    return ["温柔型表达者", "高敏感观察者", "长期关系型人格", "低攻击性", "重视被记住", "强探索欲"]
+  }
   const tags = ["长期关系型人格", "重视被记住", "偏好深度交流"]
   if (observations.some(obs => obs.tone === "curious")) tags.unshift("强探索欲")
   if (observations.some(obs => obs.tone === "concern")) tags.unshift("需要低打扰")

@@ -31,6 +31,7 @@ import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { loadSessionsList, loadSessionsChats, selectChat, openProjectDetail, closeProjectDetail, toggleFavorite, exportProjectMarkdown, deleteProject, wireSearch, startSessionsAutoRefresh, stopSessionsAutoRefresh, stopDetailAutoRefresh, setSessionsDetailMode } from "./modules/sessions.js"
+import { initDialoguePage } from "./modules/dialogue-page.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
 import { loadUpdateProbe, applyUpdate } from "./modules/update.js"
 import { wireSettingsDrawer, openSettingsDrawer } from "./modules/settings-drawer.js"
@@ -417,8 +418,7 @@ function switchPane(name) {
     loadMemoryTopZone(deps).catch(err => console.error("memory top zone failed", err))
   }
   if (name === "sessions") {
-    loadSessionsChats(deps).catch(err => console.error("sessions load failed", err))
-    startSessionsAutoRefresh(deps)
+    initDialoguePage()
   } else {
     stopSessionsAutoRefresh()
     stopDetailAutoRefresh()
@@ -431,6 +431,21 @@ function switchPane(name) {
 // ─── DOM event wiring ────────────────────────────────────────────────
 
 function wireEvents() {
+  // `data-tauri-drag-region` alone is not reliable with the macOS overlay
+  // titlebar in every Tauri/WebKit combination. Explicitly start a native
+  // window drag when the user presses the transparent frame handles.
+  document.querySelectorAll("[data-tauri-drag-region]").forEach(region => {
+    region.addEventListener("mousedown", event => {
+      if (!(event instanceof MouseEvent) || event.button !== 0) return
+      const currentWindow = /** @type {any} */ (window).__TAURI__?.window?.getCurrentWindow?.()
+      if (!currentWindow?.startDragging) return
+      event.preventDefault()
+      currentWindow.startDragging().catch(/** @param {unknown} err */ err => {
+        console.warn("window drag failed:", err)
+      })
+    })
+  })
+
   // Single delegated handler for any [data-copy] button — used by the
   // doctor row fix-hints (`复制` button next to npm install commands).
   // Delegated so newly-rendered rows stay live without re-binding.

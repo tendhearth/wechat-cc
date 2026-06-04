@@ -11,6 +11,34 @@
 
 import { test, expect } from './fixtures'
 
+test('hidden-titlebar window exposes four narrow drag edges', async ({ page, shimUrl }) => {
+  await page.goto(shimUrl)
+  await expect(page.locator('.window-drag-edge[data-tauri-drag-region]')).toHaveCount(4)
+  await expect(page.locator('.window-drag-titlebar[data-tauri-drag-region]')).toBeAttached()
+  await expect(page.locator('.window-drag-edge-top')).toBeAttached()
+  await expect(page.locator('.window-drag-edge-right')).toBeAttached()
+  await expect(page.locator('.window-drag-edge-bottom')).toBeAttached()
+  await expect(page.locator('.window-drag-edge-left')).toBeAttached()
+})
+
+test('pressing a drag region explicitly starts native window dragging', async ({ page, shimUrl }) => {
+  await page.goto(shimUrl)
+  await page.evaluate(() => {
+    // @ts-expect-error — injected by the shim
+    window.__dragCalls = 0
+    // @ts-expect-error — injected by the shim
+    window.__TAURI__.window.getCurrentWindow = () => ({
+      // @ts-expect-error — test-only counter
+      startDragging: async () => { window.__dragCalls += 1 },
+    })
+  })
+  await page.locator('.window-drag-titlebar').dispatchEvent('mousedown', { button: 0 })
+  await expect.poll(() => page.evaluate(() => {
+    // @ts-expect-error — test-only counter
+    return window.__dragCalls
+  })).toBe(1)
+})
+
 async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl: string) {
   await page.goto(shimUrl)
   await page.waitForFunction(

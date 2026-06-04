@@ -143,6 +143,8 @@ window.__TAURI__ = window.__TAURI__ ?? { core: {
     if (j.error !== undefined) throw new Error(j.error)
     return j.result
   }
+}, window: {
+  getCurrentWindow: () => ({ startDragging: async () => {} })
 }}
 window.__WECHAT_CC_SHIM__ = true
 window.__WECHAT_CC_DRY_RUN__ = ${dryRun ? 'true' : 'false'}
