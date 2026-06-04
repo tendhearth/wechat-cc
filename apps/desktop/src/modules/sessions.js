@@ -1275,6 +1275,9 @@ async function runSearch(deps, query) {
   }
   const body = document.getElementById("sessions-body")
   if (!body) return
+  // Search is global (across all contacts) — clear any per-contact filter so
+  // opening a search hit resolves the alias's session without a stale --chat.
+  body.dataset.chat = ''
   body.innerHTML = `<p class="empty-state">搜索中…</p>`
   try {
     const resp = /** @type {SessionsSearch} */ (await deps.invoke("wechat_cli_json", { args: ["sessions", "search", trimmed, "--json"] }))
