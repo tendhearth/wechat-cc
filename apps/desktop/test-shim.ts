@@ -334,6 +334,7 @@ Bun.serve({
             chat_id?: string
             daemonAlive?: boolean
             withSessions?: boolean
+            oneContact?: boolean
           } | undefined
           const chatId = args?.chat_id ?? 'test_chat'
           __mockState.daemonAlive = args?.daemonAlive ?? true
@@ -364,11 +365,14 @@ Bun.serve({
           // Sessions are opt-in so playwright can exercise the empty-state
           // path while still having accounts bound (state.mode must reach
           // 'dashboard', which requires accounts).
-          __mockState.sessions = args?.withSessions === false ? [] : [
+          __mockState.sessions = args?.withSessions === false ? [] : (args?.oneContact ? [
+            { id: 'sess_1', project: 'wechat-cc', created_at: Date.now(),           favorited: false, chat_id: 'chatA@im.wechat' },
+            { id: 'sess_2', project: 'compass',   created_at: Date.now() - 3600000, favorited: false, chat_id: 'chatA@im.wechat' },
+          ] : [
             { id: 'sess_1', project: 'wechat-cc', created_at: Date.now(),           favorited: false, chat_id: 'chatA@im.wechat' },
             { id: 'sess_2', project: 'compass',   created_at: Date.now() - 3600000, favorited: false, chat_id: 'chatA@im.wechat' },
             { id: 'sess_3', project: 'blog',      created_at: Date.now() - 7200000, favorited: false, chat_id: 'chatB@im.wechat' },
-          ]
+          ])
           // Reset QR + env-check state when re-seeding
           __mockState.qrScanComplete = false
           __mockState.qrScanFails = false
