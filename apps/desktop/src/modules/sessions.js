@@ -657,10 +657,9 @@ let selectedChatId = null
 /**
  * Render the contact sidebar from list-chats rows. Hides the sidebar when
  * there's <=1 contact (no navigation needed — pane looks like single-chat).
- * @param {Deps} deps
  * @param {Array<{chat_id:string,user_name:string|null,session_count:number}>} chats
  */
-function renderSessionsSidebar(deps, chats) {
+function renderSessionsSidebar(chats) {
   const sidebar = document.getElementById("sessions-sidebar")
   if (!sidebar) return
   if (chats.length <= 1) {
@@ -706,11 +705,16 @@ export async function loadSessionsChats(deps) {
     )
     const chats = resp.chats || []
     // list-chats is already sorted most-recent-first by the CLI.
-    selectedChatId = chats.length > 1 ? (chats[0]?.chat_id ?? null) : null
-    renderSessionsSidebar(deps, chats)
+    // Preserve the user's current selection across refreshes; only fall back to
+    // the most-recent contact when the selection is gone (or there's just one).
+    selectedChatId = (selectedChatId && chats.some(c => c.chat_id === selectedChatId))
+      ? selectedChatId
+      : (chats.length > 1 ? (chats[0]?.chat_id ?? null) : null)
+    renderSessionsSidebar(chats)
     await loadSessionsList(deps, selectedChatId)
   } catch (err) {
     console.error("sessions list-chats failed", err)
+    selectedChatId = null
     await loadSessionsList(deps, null)
   }
 }
