@@ -654,6 +654,67 @@ export function closeProjectDetail() {
 /** @type {string|null} — the contact whose sessions are shown. null = unfiltered (zero/one contact). */
 let selectedChatId = null
 
+/**
+ * Render the contact sidebar from list-chats rows. Hides the sidebar when
+ * there's <=1 contact (no navigation needed — pane looks like single-chat).
+ * @param {Deps} deps
+ * @param {Array<{chat_id:string,user_name:string|null,session_count:number}>} chats
+ */
+function renderSessionsSidebar(deps, chats) {
+  const sidebar = document.getElementById("sessions-sidebar")
+  if (!sidebar) return
+  if (chats.length <= 1) {
+    sidebar.hidden = true
+    sidebar.innerHTML = ''
+    return
+  }
+  sidebar.hidden = false
+  sidebar.innerHTML = chats.map(c => {
+    const name = c.user_name || c.chat_id.split("@")[0]
+    const active = c.chat_id === selectedChatId ? ' active' : ''
+    return `<button class="contact-row${active}" data-action="select-chat" data-chat="${escapeHtml(c.chat_id)}">
+      <span class="name">${escapeHtml(name)}</span>
+      <span class="count">${c.session_count}</span>
+    </button>`
+  }).join("")
+}
+
+/**
+ * Switch the active contact: update state, re-highlight, reload the list.
+ * @param {Deps} deps
+ * @param {string} chatId
+ */
+export async function selectChat(deps, chatId) {
+  selectedChatId = chatId
+  document.querySelectorAll("#sessions-sidebar .contact-row").forEach(el => {
+    const btn = /** @type {HTMLElement} */ (el)
+    el.classList.toggle("active", btn.dataset.chat === chatId)
+  })
+  closeProjectDetail()
+  await loadSessionsList(deps, chatId)
+}
+
+/**
+ * Pane entry point: load contacts, render the sidebar, auto-select the
+ * most-recent, then load that contact's session list.
+ * @param {Deps} deps
+ */
+export async function loadSessionsChats(deps) {
+  try {
+    const resp = /** @type {{ ok: boolean, chats?: Array<{chat_id:string,user_name:string|null,session_count:number,last_used_at:string}> }} */ (
+      await deps.invoke("wechat_cli_json", { args: ["sessions", "list-chats", "--json"] })
+    )
+    const chats = resp.chats || []
+    // list-chats is already sorted most-recent-first by the CLI.
+    selectedChatId = chats.length > 1 ? (chats[0]?.chat_id ?? null) : null
+    renderSessionsSidebar(deps, chats)
+    await loadSessionsList(deps, selectedChatId)
+  } catch (err) {
+    console.error("sessions list-chats failed", err)
+    await loadSessionsList(deps, null)
+  }
+}
+
 /** @type {ReturnType<typeof setInterval>|null} */
 let detailAutoTimer = null
 
@@ -1239,7 +1300,7 @@ export function startSessionsAutoRefresh(deps, intervalMs = 30000) {
     // a transcript, not the list.
     const detail = document.getElementById("sessions-detail")
     if (detail && !detail.classList.contains('dismissed')) return
-    loadSessionsList(deps).catch(err => console.error("sessions auto-refresh failed", err))
+    loadSessionsChats(deps).catch(err => console.error("sessions auto-refresh failed", err))
   }, intervalMs)
 }
 

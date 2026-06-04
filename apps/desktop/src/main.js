@@ -30,7 +30,7 @@ import { renderDashboard, renderRestartButton, setPending, updateClock, restartD
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
-import { loadSessionsList, openProjectDetail, closeProjectDetail, toggleFavorite, exportProjectMarkdown, deleteProject, wireSearch, startSessionsAutoRefresh, stopSessionsAutoRefresh, stopDetailAutoRefresh, setSessionsDetailMode } from "./modules/sessions.js"
+import { loadSessionsList, loadSessionsChats, selectChat, openProjectDetail, closeProjectDetail, toggleFavorite, exportProjectMarkdown, deleteProject, wireSearch, startSessionsAutoRefresh, stopSessionsAutoRefresh, stopDetailAutoRefresh, setSessionsDetailMode } from "./modules/sessions.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
 import { loadUpdateProbe, applyUpdate } from "./modules/update.js"
 import { wireSettingsDrawer, openSettingsDrawer } from "./modules/settings-drawer.js"
@@ -417,7 +417,7 @@ function switchPane(name) {
     loadMemoryTopZone(deps).catch(err => console.error("memory top zone failed", err))
   }
   if (name === "sessions") {
-    loadSessionsList(deps).catch(err => console.error("sessions load failed", err))
+    loadSessionsChats(deps).catch(err => console.error("sessions load failed", err))
     startSessionsAutoRefresh(deps)
   } else {
     stopSessionsAutoRefresh()
@@ -610,6 +610,12 @@ function wireEvents() {
       const opts = turnIdx !== undefined ? { focusTurn: Number(turnIdx), chatId } : { chatId }
       openProjectDetail(deps, alias, opts)
     }
+  })
+  document.getElementById("sessions-sidebar")?.addEventListener("click", (e) => {
+    const el = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target.closest("[data-action='select-chat']") : null)
+    if (!el) return
+    const chatId = el.dataset.chat
+    if (chatId) selectChat(deps, chatId).catch(err => console.error("select-chat failed", err))
   })
   document.getElementById("sessions-back")?.addEventListener("click", closeProjectDetail)
   document.getElementById("sessions-export")?.addEventListener("click", () => exportProjectMarkdown(deps))
