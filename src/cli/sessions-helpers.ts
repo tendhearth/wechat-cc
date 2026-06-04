@@ -83,3 +83,17 @@ export function pickReadRecord(
   }
   return best
 }
+
+/**
+ * The chat_ids whose (alias, chat) rows should be deleted. With chatId, just
+ * that one (so deleting one contact's session leaves other contacts' rows
+ * under the same alias intact). Without it, every chat under the alias (legacy).
+ */
+export function chatsToDelete(records: SessionRecord[], alias: string, chatId: string | undefined): string[] {
+  if (chatId) {
+    return records.some(r => r.alias === alias && r.chat_id === chatId) ? [chatId] : []
+  }
+  const chats = new Set<string>()
+  for (const r of records) if (r.alias === alias) chats.add(r.chat_id)
+  return [...chats]
+}

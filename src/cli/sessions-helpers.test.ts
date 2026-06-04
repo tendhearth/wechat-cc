@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { groupChats, filterProjectsByChat, pickReadRecord } from './sessions-helpers'
+import { groupChats, filterProjectsByChat, pickReadRecord, chatsToDelete } from './sessions-helpers'
 import type { SessionRecord } from '../core/session-store'
 
 function rec(p: Partial<SessionRecord>): SessionRecord {
@@ -65,5 +65,22 @@ describe('pickReadRecord', () => {
   it('returns null when no row matches', () => {
     expect(pickReadRecord(records, 'nope', undefined)).toBeNull()
     expect(pickReadRecord(records, 'wechat-cc', 'cX')).toBeNull()
+  })
+})
+
+describe('chatsToDelete', () => {
+  const records = [
+    rec({ chat_id: 'c1', alias: 'wechat-cc' }),
+    rec({ chat_id: 'c2', alias: 'wechat-cc' }),
+    rec({ chat_id: 'c1', alias: 'blog' }),
+  ]
+  it('with chatId, deletes only that chat under the alias (bug fix — others survive)', () => {
+    expect(chatsToDelete(records, 'wechat-cc', 'c1')).toEqual(['c1'])
+  })
+  it('without chatId, deletes every chat under the alias (legacy)', () => {
+    expect(chatsToDelete(records, 'wechat-cc', undefined).sort()).toEqual(['c1', 'c2'])
+  })
+  it('ignores other aliases', () => {
+    expect(chatsToDelete(records, 'blog', undefined)).toEqual(['c1'])
   })
 })

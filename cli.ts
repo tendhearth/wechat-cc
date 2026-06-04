@@ -588,6 +588,7 @@ const sessionsDeleteCmd = defineCommand({
   meta: { name: 'delete', description: 'Remove the sessions table entry (jsonl on disk untouched)' },
   args: {
     alias: { type: 'positional', required: true, description: 'Session alias', valueHint: 'alias' },
+    chat: { type: 'string', description: 'Delete only this contact\'s session under the alias' },
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
@@ -595,12 +596,8 @@ const sessionsDeleteCmd = defineCommand({
     const { openWechatDb } = await import('./src/lib/db')
     const db = openWechatDb(STATE_DIR)
     const store = makeSessionStore(db, { migrateFromFile: join(STATE_DIR, 'sessions.json') })
-    // v0.6 Task 8: store.delete needs (alias, chatId). The CLI deletes by
-    // alias only — walk every chat row matching this alias.
-    const chats = new Set<string>()
-    for (const rec of Object.values(store.all())) {
-      if (rec.alias === args.alias) chats.add(rec.chat_id)
-    }
+    const { chatsToDelete } = await import('./src/cli/sessions-helpers')
+    const chats = chatsToDelete(Object.values(store.all()), args.alias, args.chat)
     for (const chatId of chats) store.delete({ alias: args.alias, chatId })
     await store.flush()
     console.log(args.json ? JSON.stringify(SessionsDeleteOutput.parse({ ok: true, deleted: args.alias }), null, 2) : `deleted ${args.alias}`)
