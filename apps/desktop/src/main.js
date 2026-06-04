@@ -588,7 +588,9 @@ function wireEvents() {
     withRefreshFeedback(/** @type {HTMLButtonElement} */ (e.currentTarget), () => loadLogsPane(deps)),
   )
   document.getElementById("sessions-refresh")?.addEventListener("click", (e) =>
-    withRefreshFeedback(/** @type {HTMLButtonElement} */ (e.currentTarget), () => loadSessionsList(deps)),
+    // loadSessionsChats (not loadSessionsList) so a manual refresh also picks up
+    // a newly-arrived contact in the sidebar, matching the 30s auto-refresh.
+    withRefreshFeedback(/** @type {HTMLButtonElement} */ (e.currentTarget), () => loadSessionsChats(deps)),
   )
   // Sessions — list-row clicks. closest('[data-action]') routes to the
   // innermost match: clicking the star toggles favorite (and stops there);
@@ -910,7 +912,7 @@ function reopenCurrentSession(deps) {
   const detail = document.getElementById("sessions-detail")
   const alias = detail?.dataset.alias
   if (alias) {
-    import("./modules/sessions.js").then(m => m.openProjectDetail(deps, alias))
+    import("./modules/sessions.js").then(m => m.openProjectDetail(deps, alias, { chatId: detail?.dataset.chat || '' }))
   }
 }
 
