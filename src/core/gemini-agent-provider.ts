@@ -13,6 +13,7 @@
  */
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
 import type { TierProfile } from './user-tier'
+import { classifyToolUse } from './user-tier'
 
 /** RFC 05 Phase 2 capability declaration. We OWN the loop → per-tool gating is
  *  realisable (perToolCallback). No SDK sandbox (enforcement is the tool gate,
@@ -160,6 +161,57 @@ export interface McpConnection {
   listTools(): Promise<McpToolDef[]>
   callTool(name: string, args: Record<string, unknown>): Promise<{ content: unknown[]; isError?: boolean }>
   close(): Promise<void>
+}
+
+/** Minimal capability shape the gate needs from the matrix lookup.
+ *  Avoids importing capability-matrix (which imports THIS module → cycle). */
+export interface GateBaseCapability {
+  askUser: 'per-tool' | 'never'
+}
+
+/** Injected deps for the gate — bootstrap supplies the real ones; tests fake them.
+ *  Kept abstract so the provider module doesn't import bootstrap. */
+export interface GeminiGateDeps {
+  askUser: (adminChatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout'>
+  adminFor: (chatId: string) => string | null
+  modeFor: (chatId: string) => string
+  lookupBase: (mode: string, permissionMode: PermissionMode) => GateBaseCapability
+}
+
+/** Inline of effectivePolicy (permission-relay.ts) to avoid the
+ *  gemini-agent-provider → permission-relay → capability-matrix → gemini-agent-provider cycle. */
+function gateEffectivePolicy(
+  base: GateBaseCapability,
+  tp: TierProfile,
+  kind: ReturnType<typeof classifyToolUse>,
+): 'allow' | 'relay' | 'deny' {
+  if (tp.deny.has(kind)) return 'deny'
+  if (tp.relay.has(kind)) return 'relay'
+  if (tp.allow.has(kind)) return 'allow'
+  return base.askUser === 'per-tool' ? 'relay' : 'allow'
+}
+
+const GEMINI_RELAY_TIMEOUT_MS = 120_000
+
+/** Build the per-spawn tool gate. Replicates makeCanUseTool's allow/relay/deny
+ *  but returns ToolGateDecision and normalizes the wechat MCP server's BARE tool
+ *  names (`reply`) into the `mcp__wechat__reply` form classifyToolUse expects. */
+export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) => ToolGate {
+  return (ctx: SpawnContext): ToolGate => {
+    return async (toolName, input) => {
+      if (ctx.permissionMode === 'dangerously') return { allow: true }
+      const kind = classifyToolUse(`mcp__wechat__${toolName}`, input)
+      const base = deps.lookupBase(deps.modeFor(ctx.chatId), ctx.permissionMode)
+      const decision = gateEffectivePolicy(base, ctx.tierProfile, kind)
+      if (decision === 'allow') return { allow: true }
+      if (decision === 'deny') return { allow: false, message: `tool '${toolName}' (${kind}) not allowed for this tier` }
+      const admin = deps.adminFor(ctx.chatId)
+      if (!admin) return { allow: false, message: 'no admin configured to approve permission requests' }
+      const answer = await deps.askUser(admin, `Gemini wants to run ${toolName}`, toolName, GEMINI_RELAY_TIMEOUT_MS)
+      if (answer === 'allow') return { allow: true }
+      return { allow: false, message: answer === 'timeout' ? 'no reply in time; denied' : 'denied by operator' }
+    }
+  }
 }
 
 export interface GeminiAgentProviderOptions {

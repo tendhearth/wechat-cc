@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { GEMINI_CAPABILITIES, tierProfileToGeminiSdkOpts, mcpToolsToFunctionDeclarations, runDispatchLoop, createGeminiAgentProvider, type GenaiPort, type McpPort } from './gemini-agent-provider'
+import { GEMINI_CAPABILITIES, tierProfileToGeminiSdkOpts, mcpToolsToFunctionDeclarations, runDispatchLoop, createGeminiAgentProvider, makeGeminiToolGate, type GenaiPort, type McpPort, type GeminiGateDeps } from './gemini-agent-provider'
 import { TIER_PROFILES } from './user-tier'
 import { collectTurn } from './agent-provider'
 
@@ -160,5 +160,41 @@ describe('createGeminiAgentProvider', () => {
     expect(provider.cheapEval).toBeDefined()
     const ans = await provider.cheapEval!('rate 1-10')
     expect(ans).toBe('cheap answer')
+  })
+})
+
+describe('makeGeminiToolGate', () => {
+  function deps(over: Partial<GeminiGateDeps> = {}): GeminiGateDeps {
+    return {
+      askUser: async () => 'allow',
+      adminFor: () => 'admin-chat',
+      modeFor: () => 'solo',
+      lookupBase: () => ({ askUser: 'never' } as any),
+      ...over,
+    }
+  }
+  const ctx = (tier: 'admin'|'trusted'|'guest', perm: 'strict'|'dangerously' = 'strict') =>
+    ({ tierProfile: TIER_PROFILES[tier], permissionMode: perm, chatId: 'c1' }) as any
+
+  it('dangerously → always allow', async () => {
+    const gate = makeGeminiToolGate(deps())(ctx('guest', 'dangerously'))
+    expect(await gate('memory_delete', {})).toEqual({ allow: true })
+  })
+  it('guest: reply allowed, memory_delete denied', async () => {
+    const gate = makeGeminiToolGate(deps())(ctx('guest'))
+    expect((await gate('reply', { chat_id: 'c', text: 'x' })).allow).toBe(true)
+    expect((await gate('memory_delete', { path: 'p' })).allow).toBe(false)
+  })
+  it('trusted: a2a_send relays → askUser allow ⇒ allow', async () => {
+    const gate = makeGeminiToolGate(deps({ askUser: async () => 'allow' }))(ctx('trusted'))
+    expect((await gate('a2a_send', { agent_id: 'x', text: 't' })).allow).toBe(true)
+  })
+  it('trusted: a2a_send relays → askUser deny ⇒ deny', async () => {
+    const gate = makeGeminiToolGate(deps({ askUser: async () => 'deny' }))(ctx('trusted'))
+    expect((await gate('a2a_send', { agent_id: 'x', text: 't' })).allow).toBe(false)
+  })
+  it('relay but no admin ⇒ deny', async () => {
+    const gate = makeGeminiToolGate(deps({ adminFor: () => null }))(ctx('trusted'))
+    expect((await gate('a2a_send', {})).allow).toBe(false)
   })
 })
