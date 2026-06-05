@@ -155,7 +155,7 @@ Usage:
                         Send a synthetic notify to validate inbound→chat path
                         (default) or outbound (--outbound: send to external URL)
   wechat-cc provider show [--json]  Show selected agent provider
-  wechat-cc provider set <claude|codex> [--model MODEL] [--unattended true|false]
+  wechat-cc provider set <claude|codex|cursor|gemini> [--model MODEL] [--unattended true|false]
                         --unattended: when true (default for new installs), the
                           installed daemon runs the daemon with --dangerously so
                           inbound WeChat messages don't hang waiting for human
@@ -797,9 +797,9 @@ const providerShowCmd = defineCommand({
 })
 
 const providerSetCmd = defineCommand({
-  meta: { name: 'set', description: 'Switch agent provider (claude|codex|cursor), optionally with --model + --unattended + --auto-start + --close-stops-daemon' },
+  meta: { name: 'set', description: 'Switch agent provider (claude|codex|cursor|gemini), optionally with --model + --unattended + --auto-start + --close-stops-daemon' },
   args: {
-    provider: { type: 'positional', required: true, description: 'claude | codex | cursor', valueHint: 'claude|codex|cursor' },
+    provider: { type: 'positional', required: true, description: 'claude | codex | cursor | gemini', valueHint: 'claude|codex|cursor|gemini' },
     model: { type: 'string', description: 'Override default model' },
     // String, not boolean: matches the legacy parseBoolFlag tri-state semantics
     // (true / false / undefined). Citty's boolean type can't represent
@@ -811,8 +811,8 @@ const providerSetCmd = defineCommand({
     'close-stops-daemon': { type: 'string', description: 'true | false (omit to leave unchanged) — when true, closing the GUI window stops the daemon', valueHint: 'true|false' },
   },
   run({ args }) {
-    if (args.provider !== 'claude' && args.provider !== 'codex' && args.provider !== 'cursor') {
-      console.error(`provider must be 'claude', 'codex', or 'cursor' (got: ${args.provider})`)
+    if (args.provider !== 'claude' && args.provider !== 'codex' && args.provider !== 'cursor' && args.provider !== 'gemini') {
+      console.error(`provider must be 'claude', 'codex', 'cursor', or 'gemini' (got: ${args.provider})`)
       process.exit(2)
     }
     const provider = args.provider as AgentProviderKind

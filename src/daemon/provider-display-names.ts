@@ -16,6 +16,7 @@ import type { ProviderId } from '../core/conversation'
 const KNOWN_NAMES: Readonly<Record<string, string>> = Object.freeze({
   claude: 'Claude',
   codex: 'Codex',
+  gemini: 'Gemini',
 })
 
 export function providerDisplayName(id: ProviderId): string {

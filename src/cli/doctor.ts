@@ -66,6 +66,7 @@ export interface DoctorDeps {
    * a real env+resolve check in defaultDoctorDeps.
    */
   probeCursor?: () => { apiKeySet: boolean; sdkInstalled: boolean }
+  probeGemini?: () => { apiKeySet: boolean; sdkInstalled: boolean }
   readAccounts: () => BoundAccount[]
   readAccess: () => AccessSnapshot
   readAgentConfig: () => AgentConfig
@@ -128,6 +129,10 @@ export interface DoctorReport {
     // derived `ok` mirrors that AND so doctor's gating aligns with what the
     // boot path will actually do.
     cursor: DoctorCheckBase & { apiKeySet: boolean; sdkInstalled: boolean }
+    // Gemini also has no PATH binary — GEMINI_API_KEY (or GOOGLE_API_KEY) +
+    // @google/genai SDK are the two install signals. Both must be present for
+    // bootstrap to register the gemini provider.
+    gemini: DoctorCheckBase & { apiKeySet: boolean; sdkInstalled: boolean }
     accounts: DoctorCheckBase & { count: number; items: BoundAccount[] }
     access: DoctorCheckBase & { dmPolicy: string; allowFromCount: number; admins?: string[] }
     provider: DoctorCheckBase & { provider: AgentConfig['provider']; model?: string; binaryPath: string | null }
@@ -150,22 +155,26 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   const claudeVersion = claude ? probe(claude) : null
   const codexVersion = codex ? probe(codex) : null
   const cursorProbe = (deps.probeCursor ?? defaultProbeCursor)()
+  const geminiProbe = (deps.probeGemini ?? defaultProbeGemini)()
   const accounts = deps.readAccounts()
   const access = deps.readAccess()
   const agent = deps.readAgentConfig()
   const daemon = deps.daemon()
   const service = deps.service()
-  // Cursor has no PATH binary — providerBinary stays null for cursor and the
-  // provider check below treats SDK+key presence as the "binary" equivalent.
+  // Cursor and Gemini have no PATH binary — providerBinary stays null for
+  // them and the provider check below treats SDK+key presence as the
+  // "binary" equivalent.
   const providerBinary = agent.provider === 'codex'
     ? codex
-    : agent.provider === 'cursor'
+    : (agent.provider === 'cursor' || agent.provider === 'gemini')
       ? null
       : claude
   const claudeIsActive = agent.provider === 'claude'
   const codexIsActive = agent.provider === 'codex'
   const cursorIsActive = agent.provider === 'cursor'
+  const geminiIsActive = agent.provider === 'gemini'
   const cursorOk = cursorProbe.apiKeySet && cursorProbe.sdkInstalled
+  const geminiOk = geminiProbe.apiKeySet && geminiProbe.sdkInstalled
   // WSL is a Windows-only concept; checking findOnPath('wsl') on non-win32
   // would risk false positives (some Linux distros ship `wsl` as an unrelated
   // helper). Gate strictly on platform.
@@ -182,10 +191,12 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   // consumers don't know about `install_cursor`, so reuse the same hook
   // name ('install_cursor') only when cursor is selected; claude/codex
   // continue to emit their existing action strings unchanged.
-  if (!providerBinary && agent.provider !== 'cursor') {
+  if (!providerBinary && agent.provider !== 'cursor' && agent.provider !== 'gemini') {
     nextActions.push(agent.provider === 'codex' ? 'install_codex' : 'install_claude')
   } else if (agent.provider === 'cursor' && !cursorOk) {
     nextActions.push('install_cursor')
+  } else if (agent.provider === 'gemini' && !geminiOk) {
+    nextActions.push('install_gemini')
   }
   if (accounts.length === 0) nextActions.push('run_wechat_setup')
   if (accounts.length > 0 && access.allowFrom.length === 0) nextActions.push('fix_access_allowlist')
@@ -247,6 +258,21 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
           : { command: 'bun add @cursor/sdk' },
       }),
     },
+    gemini: {
+      ok: geminiOk,
+      apiKeySet: geminiProbe.apiKeySet,
+      sdkInstalled: geminiProbe.sdkInstalled,
+      ...(geminiOk ? {} : {
+        severity: (geminiIsActive ? 'hard' : 'soft') as Severity,
+        // Fix hint picks the missing leg — env var or SDK install. When both
+        // are missing we surface the env var first (operators reading the
+        // doctor output left-to-right will fix that, then re-run to see
+        // the SDK leg).
+        fix: !geminiProbe.apiKeySet
+          ? { action: 'export GEMINI_API_KEY=<your-key>' }
+          : { command: 'bun add @google/genai' },
+      }),
+    },
     accounts: {
       ok: accounts.length > 0,
       count: accounts.length,
@@ -267,14 +293,14 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
       }),
     },
     provider: {
-      // Cursor's "backend ready" check is SDK+key, not a PATH binary —
-      // fall through to cursorOk when the active provider is cursor so
-      // the gate aligns with what bootstrap will register at boot.
-      ok: cursorIsActive ? cursorOk : !!providerBinary,
+      // Cursor and Gemini's "backend ready" check is SDK+key, not a PATH
+      // binary — fall through to their respective Ok when the active provider
+      // is cursor/gemini so the gate aligns with what bootstrap will register.
+      ok: cursorIsActive ? cursorOk : geminiIsActive ? geminiOk : !!providerBinary,
       provider: agent.provider,
       ...(agent.model ? { model: agent.model } : {}),
       binaryPath: providerBinary,
-      ...((cursorIsActive ? cursorOk : !!providerBinary) ? {} : {
+      ...((cursorIsActive ? cursorOk : geminiIsActive ? geminiOk : !!providerBinary) ? {} : {
         severity: 'hard' as const,
         fix: agent.provider === 'codex'
           ? { link: 'https://github.com/openai/codex#installation' }
@@ -282,7 +308,11 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
             ? (!cursorProbe.apiKeySet
                 ? { action: 'export CURSOR_API_KEY=<your-key>' }
                 : { command: 'bun add @cursor/sdk' })
-            : { command: 'npm install -g @anthropic-ai/claude-code', link: 'https://docs.claude.com/en/docs/claude-code/install' },
+            : agent.provider === 'gemini'
+              ? (!geminiProbe.apiKeySet
+                  ? { action: 'export GEMINI_API_KEY=<your-key>' }
+                  : { command: 'bun add @google/genai' })
+              : { command: 'npm install -g @anthropic-ai/claude-code', link: 'https://docs.claude.com/en/docs/claude-code/install' },
       }),
     },
     daemon,
@@ -366,12 +396,30 @@ export function defaultProbeCursor(): { apiKeySet: boolean; sdkInstalled: boolea
   return { apiKeySet, sdkInstalled }
 }
 
+/**
+ * Real-environment gemini probe used by `defaultDoctorDeps`. Reports whether
+ * GEMINI_API_KEY (or GOOGLE_API_KEY) is exported and whether `@google/genai`
+ * resolves from node_modules — the two conditions bootstrap checks before
+ * registering the gemini provider. Uses `createRequire` so resolution works
+ * both under `bun cli.ts` (ESM) and the compiled-bundle sidecar.
+ */
+export function defaultProbeGemini(): { apiKeySet: boolean; sdkInstalled: boolean } {
+  const apiKeySet = !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)
+  let sdkInstalled = false
+  try {
+    createRequire(import.meta.url).resolve('@google/genai')
+    sdkInstalled = true
+  } catch { /* @google/genai not installed — operators can `bun add @google/genai` */ }
+  return { apiKeySet, sdkInstalled }
+}
+
 export function defaultDoctorDeps(stateDir = STATE_DIR): DoctorDeps {
   return {
     stateDir,
     findOnPath,
     probeBinaryVersion,
     probeCursor: defaultProbeCursor,
+    probeGemini: defaultProbeGemini,
     readAccounts: () => readAccounts(stateDir),
     readAccess: () => readAccess(stateDir),
     readAgentConfig: () => loadAgentConfig(stateDir),

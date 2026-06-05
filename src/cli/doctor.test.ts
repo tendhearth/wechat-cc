@@ -366,6 +366,37 @@ describe('doctor installer JSON', () => {
     expect(report.nextActions).not.toContain('install_cursor')
   })
 
+  // ── Gemini SDK probe (Task 7 — Gemini provider Phase B) ─────────────────
+  // Gemini has no PATH binary (like Cursor); it's an SDK loaded via dynamic
+  // import. Doctor reports apiKeySet + sdkInstalled so the wizard and JSON
+  // consumers can mirror the gate that bootstrap applies before registering
+  // the gemini provider.
+
+  it('provider=gemini + geminiOk=false → provider check is hard, install_gemini in nextActions', () => {
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: () => null,  // no claude/codex on PATH — irrelevant for gemini
+      probeGemini: () => ({ apiKeySet: false, sdkInstalled: false }),
+      readAccounts: () => [],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }),
+      readAgentConfig: () => ({ provider: 'gemini', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      daemon: () => ({ alive: false, pid: null }),
+      service: missingSystemd,
+    })
+    expect(report.checks.gemini.ok).toBe(false)
+    expect(report.checks.gemini.severity).toBe('hard')
+    expect(report.checks.provider.ok).toBe(false)
+    expect(report.checks.provider.severity).toBe('hard')
+    expect(report.checks.provider.fix?.action).toContain('GEMINI_API_KEY')
+    expect(report.nextActions).toContain('install_gemini')
+    // install_claude / install_codex / install_cursor should NOT appear
+    expect(report.nextActions).not.toContain('install_claude')
+    expect(report.nextActions).not.toContain('install_codex')
+    expect(report.nextActions).not.toContain('install_cursor')
+  })
+
   it('default runtime is "source" (back-compat for callers that omit it)', () => {
     const report = analyzeDoctor({
       stateDir: '/state',
