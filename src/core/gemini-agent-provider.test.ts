@@ -32,6 +32,14 @@ describe('mcpToolsToFunctionDeclarations', () => {
       { name: 'ping', description: 'ping', parameters: { type: 'object', properties: {} } },
     ])
   })
+
+  it('strips $schema/additionalProperties recursively (nested objects too)', () => {
+    const fns = mcpToolsToFunctionDeclarations([{ name: 't', inputSchema: { type: 'object', additionalProperties: false, properties: { addr: { type: 'object', additionalProperties: false, properties: { city: { type: 'string' } } } }, $schema: 'x' } }])
+    const json = JSON.stringify(fns[0]!.parameters)
+    expect(json).not.toContain('additionalProperties')
+    expect(json).not.toContain('$schema')
+    expect(json).toContain('city')
+  })
 })
 
 function fakeGenai(responses: Array<{ text?: string; functionCalls?: Array<{ name: string; args: Record<string, unknown> }> }>): GenaiPort {
@@ -123,6 +131,70 @@ describe('runDispatchLoop', () => {
     expect(summary.result || summary.error).toBeTruthy()
     // multi-dispatch safety: capped history must end on a model turn, not user
     expect((history.at(-1) as any).role).toBe('model')
+  })
+
+  it('on generateContent error: yields error AND leaves history alternating (no trailing user turn)', async () => {
+    const history: any[] = [{ role: 'user', parts: [{ text: 'prev' }] }, { role: 'model', parts: [{ text: 'ok' }] }]
+    const genai: GenaiPort = { async generateContent() { throw new Error('503 overloaded') } }
+    const events = runDispatchLoop({ genai, mcp: fakeMcp({}), gate: async () => ({ allow: true }), model: 'm', systemInstruction: 's', functionDeclarations: [], history, sessionId: 's', userText: 'hi' })
+    const evs: any[] = []
+    for await (const e of events) evs.push(e)
+    expect(evs.some(e => e.kind === 'error')).toBe(true)
+    // the user turn we pushed for 'hi' must be rolled back (history ends on a model turn)
+    expect((history.at(-1) as any).role).toBe('model')
+  })
+
+  it('empty-text terminal response still pushes a model turn (alternation preserved)', async () => {
+    const history: any[] = []
+    const events = runDispatchLoop({ genai: fakeGenai([{ text: '' }]), mcp: fakeMcp({}), gate: async () => ({ allow: true }), model: 'm', systemInstruction: 's', functionDeclarations: [], history, sessionId: 's', userText: 'hi' })
+    await collectTurn(events)
+    expect(history.length).toBe(2)
+    expect((history.at(-1) as any).role).toBe('model')
+  })
+
+  it('skips a functionCall with no name (synthesizes an error, no crash)', async () => {
+    const history: any[] = []
+    let executed = false
+    const events = runDispatchLoop({
+      genai: fakeGenai([{ functionCalls: [{ name: undefined as any, args: undefined as any }] }, { text: 'done' }]),
+      mcp: { async callTool() { executed = true; return { content: [] } } },
+      gate: async () => ({ allow: true }),
+      model: 'm', systemInstruction: 's', functionDeclarations: [], history, sessionId: 's', userText: 'x',
+    })
+    const evs: any[] = []
+    for await (const e of events) evs.push(e)
+    expect(executed).toBe(false)
+    expect(evs.some(e => e.kind === 'text' && e.text === 'done')).toBe(true)
+    // the functionResponse for the nameless call is an error
+    expect(JSON.stringify(history)).toContain('no name')
+  })
+
+  it('MCP isError result becomes an error functionResponse (model sees failure)', async () => {
+    const history: any[] = []
+    const events = runDispatchLoop({
+      genai: fakeGenai([{ functionCalls: [{ name: 'reply', args: { x: 1 } }] }, { text: 'ack' }]),
+      mcp: { async callTool() { return { content: [{ type: 'text', text: 'chat not found' }], isError: true } } },
+      gate: async () => ({ allow: true }),
+      model: 'm', systemInstruction: 's', functionDeclarations: [{ name: 'reply' }], history, sessionId: 's', userText: 'x',
+    })
+    for await (const _ of events) { /* drain */ }
+    const fr = (history[2] as any).parts[0].functionResponse
+    expect(fr.response.error).toBeDefined()
+    expect(fr.response.content).toBeUndefined()
+  })
+
+  it('keeps assistant text in the model turn when text accompanies a functionCall', async () => {
+    const history: any[] = []
+    const events = runDispatchLoop({
+      genai: fakeGenai([{ text: 'let me check', functionCalls: [{ name: 'reply', args: {} }] }, { text: 'done' }]),
+      mcp: fakeMcp({}), gate: async () => ({ allow: true }),
+      model: 'm', systemInstruction: 's', functionDeclarations: [{ name: 'reply' }], history, sessionId: 's', userText: 'x',
+    })
+    for await (const _ of events) { /* drain */ }
+    const modelTurn = history[1] as any
+    expect(modelTurn.role).toBe('model')
+    expect(modelTurn.parts.some((p: any) => p.text === 'let me check')).toBe(true)
+    expect(modelTurn.parts.some((p: any) => p.functionCall?.name === 'reply')).toBe(true)
   })
 })
 

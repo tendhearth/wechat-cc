@@ -51,16 +51,28 @@ export interface GeminiFunctionDeclaration {
   parameters?: Record<string, unknown>
 }
 
+/** Recursively drop JSON-Schema meta keys Gemini rejects ($schema,
+ *  additionalProperties) from a schema node and all nested objects/arrays. */
+function stripSchemaMeta(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(stripSchemaMeta)
+  if (node && typeof node === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      if (k === '$schema' || k === 'additionalProperties') continue
+      out[k] = stripSchemaMeta(v)
+    }
+    return out
+  }
+  return node
+}
+
 /** Strip JSON-Schema meta keys Gemini rejects ($schema, additionalProperties)
  *  and reshape an MCP tool's inputSchema into a Gemini FunctionDeclaration. */
 export function mcpToolsToFunctionDeclarations(tools: McpToolDef[]): GeminiFunctionDeclaration[] {
   return tools.map(t => {
     const fn: GeminiFunctionDeclaration = { name: t.name }
     if (t.description) fn.description = t.description
-    if (t.inputSchema) {
-      const { $schema: _s, additionalProperties: _a, ...rest } = t.inputSchema as Record<string, unknown>
-      fn.parameters = rest
-    }
+    if (t.inputSchema) fn.parameters = stripSchemaMeta(t.inputSchema) as Record<string, unknown>
     return fn
   })
 }
@@ -71,7 +83,7 @@ export interface GenaiPort {
     model: string
     contents: unknown[]
     config?: { systemInstruction?: string; tools?: Array<{ functionDeclarations: GeminiFunctionDeclaration[] }> }
-  }): Promise<{ text?: string; functionCalls?: Array<{ name: string; args: Record<string, unknown> }> }>
+  }): Promise<{ text?: string; functionCalls?: Array<{ name?: string; args?: Record<string, unknown> }> }>
 }
 /** Minimal MCP surface the loop needs (real: @modelcontextprotocol/sdk Client). */
 export interface McpPort {
@@ -113,24 +125,41 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
       if (text) yield { kind: 'text', text }
 
       if (calls.length === 0) {
-        if (text) args.history.push({ role: 'model', parts: [{ text }] })
+        // ALWAYS push a model turn (even on empty text) to preserve user/model
+        // alternation — Flash routinely returns empty text after a tool chain.
+        args.history.push({ role: 'model', parts: text ? [{ text }] : [{ text: '' }] })
         yield { kind: 'result', sessionId: args.sessionId, numTurns: rounds, durationMs: Date.now() - startMs }
         return
       }
 
-      args.history.push({ role: 'model', parts: calls.map(c => ({ functionCall: { name: c.name, args: c.args } })) })
+      // Model turn: keep the assistant's reasoning text alongside the calls, and
+      // drop any nameless functionCall (the genai FunctionCall.name is optional).
+      args.history.push({ role: 'model', parts: [
+        ...(text ? [{ text }] : []),
+        ...calls.filter(c => c.name).map(c => ({ functionCall: { name: c.name, args: c.args ?? {} } })),
+      ] })
 
       const responseParts: unknown[] = []
       for (const call of calls) {
+        if (!call.name) {
+          responseParts.push({ functionResponse: { name: '', response: { error: 'model returned a function call with no name' } } })
+          continue
+        }
+        const callArgs = call.args ?? {}
         yield { kind: 'tool_call', server: 'wechat', tool: call.name }
-        const decision = await args.gate(call.name, call.args)
+        const decision = await args.gate(call.name, callArgs)
         if (!decision.allow) {
           responseParts.push({ functionResponse: { name: call.name, response: { error: decision.message } } })
           continue
         }
         try {
-          const result = await args.mcp.callTool(call.name, call.args)
-          responseParts.push({ functionResponse: { name: call.name, response: { content: result.content } } })
+          const result = await args.mcp.callTool(call.name, callArgs)
+          if (result.isError) {
+            const msg = result.content.map((c: any) => c?.text ?? '').join(' ') || 'tool reported an error'
+            responseParts.push({ functionResponse: { name: call.name, response: { error: msg } } })
+          } else {
+            responseParts.push({ functionResponse: { name: call.name, response: { content: result.content } } })
+          }
         } catch (err) {
           responseParts.push({ functionResponse: { name: call.name, response: { error: err instanceof Error ? err.message : String(err) } } })
         }
@@ -147,6 +176,10 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
       }
     }
   } catch (err) {
+    // Preserve alternation: if we error out with the loop's user turn still
+    // trailing (e.g. generateContent threw), roll it back so the next dispatch
+    // doesn't push a second consecutive user turn → API 400.
+    if ((args.history.at(-1) as any)?.role === 'user') args.history.pop()
     yield { kind: 'error', message: err instanceof Error ? err.message : String(err) }
   }
 }
