@@ -197,6 +197,7 @@ const GEMINI_RELAY_TIMEOUT_MS = 120_000
  *  but returns ToolGateDecision and normalizes the wechat MCP server's BARE tool
  *  names (`reply`) into the `mcp__wechat__reply` form classifyToolUse expects. */
 export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) => ToolGate {
+  let relaySeq = 0
   return (ctx: SpawnContext): ToolGate => {
     return async (toolName, input) => {
       if (ctx.permissionMode === 'dangerously') return { allow: true }
@@ -207,7 +208,7 @@ export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) =>
       if (decision === 'deny') return { allow: false, message: `tool '${toolName}' (${kind}) not allowed for this tier` }
       const admin = deps.adminFor(ctx.chatId)
       if (!admin) return { allow: false, message: 'no admin configured to approve permission requests' }
-      const answer = await deps.askUser(admin, `Gemini wants to run ${toolName}`, toolName, GEMINI_RELAY_TIMEOUT_MS)
+      const answer = await deps.askUser(admin, `Gemini wants to run ${toolName}`, `${toolName}-${++relaySeq}`, GEMINI_RELAY_TIMEOUT_MS)
       if (answer === 'allow') return { allow: true }
       return { allow: false, message: answer === 'timeout' ? 'no reply in time; denied' : 'denied by operator' }
     }
