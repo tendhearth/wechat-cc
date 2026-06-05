@@ -59,7 +59,7 @@ const ServiceSnapshot = z.object({
   kind: ServiceKind,
 })
 
-const AgentProviderKind = z.enum(['claude', 'codex', 'cursor'])
+const AgentProviderKind = z.enum(['claude', 'codex', 'cursor', 'gemini'])
 
 const DmPolicy = z.enum(['allowlist', 'disabled'])
 
@@ -88,6 +88,9 @@ export const DoctorOutput = z.object({
       apiKeySet: z.boolean(),
       sdkInstalled: z.boolean(),
     }),
+    // Gemini has no PATH binary either — SDK + API key are the install
+    // signals (GEMINI_API_KEY or GOOGLE_API_KEY + @google/genai package).
+    gemini: DoctorCheckBase.extend({ apiKeySet: z.boolean(), sdkInstalled: z.boolean() }),
     accounts: DoctorCheckBase.extend({
       count: z.number(),
       items: z.array(BoundAccount),
@@ -185,6 +188,7 @@ const AgentConfigSchema = z.object({
   provider: AgentProviderKind,
   model: z.string().optional(),
   cursorModel: z.string().optional(),
+  geminiModel: z.string().optional(),
   dangerouslySkipPermissions: z.boolean(),
   autoStart: z.boolean(),
   closeStopsDaemon: z.boolean(),

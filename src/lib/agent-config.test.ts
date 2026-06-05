@@ -227,6 +227,38 @@ describe('agent-config — A2A fields', () => {
   })
 })
 
+describe('loadAgentConfig — gemini provider', () => {
+  it('resolves provider=gemini + geminiModel', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agentcfg-'))
+    writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ provider: 'gemini', geminiModel: 'gemini-flash-latest' }))
+    const cfg = loadAgentConfig(dir)
+    expect(cfg.provider).toBe('gemini')
+    expect(cfg.geminiModel).toBe('gemini-flash-latest')
+  })
+
+  // Regression for Fix 1: provider set gemini --model X must write geminiModel,
+  // not the generic model field, so bootstrap can register the gemini provider.
+  it('round-trips gemini + geminiModel via saveAgentConfig → loadAgentConfig (mirrors provider set routing)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agentcfg-gemini-set-'))
+    try {
+      saveAgentConfig(dir, {
+        provider: 'gemini',
+        geminiModel: 'gemini-flash-latest',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+      })
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.provider).toBe('gemini')
+      expect(cfg.geminiModel).toBe('gemini-flash-latest')
+      // Must NOT bleed into the generic model field
+      expect(cfg.model).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('loadAgentConfig — cursor provider', () => {
   it('accepts provider="cursor" with cursorModel', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-'))

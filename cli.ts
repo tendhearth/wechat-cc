@@ -155,7 +155,7 @@ Usage:
                         Send a synthetic notify to validate inbound→chat path
                         (default) or outbound (--outbound: send to external URL)
   wechat-cc provider show [--json]  Show selected agent provider
-  wechat-cc provider set <claude|codex> [--model MODEL] [--unattended true|false]
+  wechat-cc provider set <claude|codex|cursor|gemini> [--model MODEL] [--unattended true|false]
                         --unattended: when true (default for new installs), the
                           installed daemon runs the daemon with --dangerously so
                           inbound WeChat messages don't hang waiting for human
@@ -797,9 +797,9 @@ const providerShowCmd = defineCommand({
 })
 
 const providerSetCmd = defineCommand({
-  meta: { name: 'set', description: 'Switch agent provider (claude|codex|cursor), optionally with --model + --unattended + --auto-start + --close-stops-daemon' },
+  meta: { name: 'set', description: 'Switch agent provider (claude|codex|cursor|gemini), optionally with --model + --unattended + --auto-start + --close-stops-daemon' },
   args: {
-    provider: { type: 'positional', required: true, description: 'claude | codex | cursor', valueHint: 'claude|codex|cursor' },
+    provider: { type: 'positional', required: true, description: 'claude | codex | cursor | gemini', valueHint: 'claude|codex|cursor|gemini' },
     model: { type: 'string', description: 'Override default model' },
     // String, not boolean: matches the legacy parseBoolFlag tri-state semantics
     // (true / false / undefined). Citty's boolean type can't represent
@@ -811,8 +811,8 @@ const providerSetCmd = defineCommand({
     'close-stops-daemon': { type: 'string', description: 'true | false (omit to leave unchanged) — when true, closing the GUI window stops the daemon', valueHint: 'true|false' },
   },
   run({ args }) {
-    if (args.provider !== 'claude' && args.provider !== 'codex' && args.provider !== 'cursor') {
-      console.error(`provider must be 'claude', 'codex', or 'cursor' (got: ${args.provider})`)
+    if (args.provider !== 'claude' && args.provider !== 'codex' && args.provider !== 'cursor' && args.provider !== 'gemini') {
+      console.error(`provider must be 'claude', 'codex', 'cursor', or 'gemini' (got: ${args.provider})`)
       process.exit(2)
     }
     const provider = args.provider as AgentProviderKind
@@ -823,23 +823,32 @@ const providerSetCmd = defineCommand({
     const next = {
       ...existing,
       provider,
-      ...(args.model !== undefined ? { model: args.model } : {}),
+      ...(args.model !== undefined
+        ? provider === 'gemini' ? { geminiModel: args.model }
+        : provider === 'cursor' ? { cursorModel: args.model }
+        : { model: args.model }
+        : {}),
       ...(unattended !== undefined ? { dangerouslySkipPermissions: unattended } : {}),
       ...(autoStart !== undefined ? { autoStart } : {}),
       ...(closeStopsDaemon !== undefined ? { closeStopsDaemon } : {}),
     }
-    // When switching provider, drop a stale model from the previous provider
-    // unless the caller explicitly set one.
+    // When switching provider, drop stale provider-specific model fields
+    // from the previous provider unless the caller explicitly set one.
     if (existing.provider !== provider && args.model === undefined) {
       delete (next as Partial<typeof next>).model
+      delete (next as Partial<typeof next>).cursorModel
+      delete (next as Partial<typeof next>).geminiModel
     }
     saveAgentConfig(STATE_DIR, next)
-    console.log(`provider set: ${next.provider}${next.model ? ` (${next.model})` : ''} unattended=${next.dangerouslySkipPermissions} autoStart=${next.autoStart} closeStopsDaemon=${next.closeStopsDaemon}`)
+    const modelLabel = provider === 'gemini' ? next.geminiModel
+      : provider === 'cursor' ? next.cursorModel
+      : next.model
+    console.log(`provider set: ${next.provider}${modelLabel ? ` (${modelLabel})` : ''} unattended=${next.dangerouslySkipPermissions} autoStart=${next.autoStart} closeStopsDaemon=${next.closeStopsDaemon}`)
   },
 })
 
 const providerCmd = defineCommand({
-  meta: { name: 'provider', description: 'Agent provider config (claude / codex)' },
+  meta: { name: 'provider', description: 'Agent provider config (claude / codex / cursor / gemini)' },
   subCommands: {
     show: providerShowCmd,
     set: providerSetCmd,

@@ -1,0 +1,200 @@
+import { describe, it, expect } from 'vitest'
+import { GEMINI_CAPABILITIES, tierProfileToGeminiSdkOpts, mcpToolsToFunctionDeclarations, runDispatchLoop, createGeminiAgentProvider, makeGeminiToolGate, type GenaiPort, type McpPort, type GeminiGateDeps } from './gemini-agent-provider'
+import { TIER_PROFILES } from './user-tier'
+import { collectTurn } from './agent-provider'
+
+describe('GEMINI_CAPABILITIES', () => {
+  it('declares per-tool gating, no SDK sandbox, no delegation/resume in v1', () => {
+    expect(GEMINI_CAPABILITIES.perToolCallback).toBe(true)
+    expect([...GEMINI_CAPABILITIES.sandboxLevels]).toEqual([])
+    expect(GEMINI_CAPABILITIES.supportsDelegation).toBe(false)
+    expect(GEMINI_CAPABILITIES.supportsResume).toBe(false)
+  })
+})
+
+describe('tierProfileToGeminiSdkOpts', () => {
+  it('dangerously → gate disabled; strict → gate enabled (all tiers)', () => {
+    expect(tierProfileToGeminiSdkOpts(TIER_PROFILES.admin, 'dangerously')).toEqual({ gateEnabled: false })
+    expect(tierProfileToGeminiSdkOpts(TIER_PROFILES.admin, 'strict')).toEqual({ gateEnabled: true })
+    expect(tierProfileToGeminiSdkOpts(TIER_PROFILES.guest, 'strict')).toEqual({ gateEnabled: true })
+  })
+})
+
+describe('mcpToolsToFunctionDeclarations', () => {
+  it('maps MCP tools to Gemini functionDeclarations, stripping JSON-Schema meta keys', () => {
+    const mcpTools = [
+      { name: 'reply', description: 'reply to the user', inputSchema: { type: 'object', properties: { chat_id: { type: 'string' }, text: { type: 'string' } }, required: ['chat_id', 'text'], $schema: 'http://json-schema.org/draft-07/schema#', additionalProperties: false } },
+      { name: 'ping', description: 'ping', inputSchema: { type: 'object', properties: {}, $schema: 'http://json-schema.org/draft-07/schema#' } },
+    ]
+    const fns = mcpToolsToFunctionDeclarations(mcpTools)
+    expect(fns).toEqual([
+      { name: 'reply', description: 'reply to the user', parameters: { type: 'object', properties: { chat_id: { type: 'string' }, text: { type: 'string' } }, required: ['chat_id', 'text'] } },
+      { name: 'ping', description: 'ping', parameters: { type: 'object', properties: {} } },
+    ])
+  })
+})
+
+function fakeGenai(responses: Array<{ text?: string; functionCalls?: Array<{ name: string; args: Record<string, unknown> }> }>): GenaiPort {
+  let i = 0
+  return {
+    async generateContent() {
+      const r = responses[i++] ?? { text: '' }
+      return { text: r.text ?? '', functionCalls: r.functionCalls }
+    },
+  }
+}
+function fakeMcp(results: Record<string, unknown>): McpPort {
+  return {
+    async callTool(name) {
+      return { content: [{ type: 'text', text: JSON.stringify(results[name] ?? { ok: true }) }] }
+    },
+  }
+}
+
+describe('runDispatchLoop', () => {
+  it('emits text then result for a no-tool turn', async () => {
+    const history: any[] = []
+    const events = runDispatchLoop({
+      genai: fakeGenai([{ text: 'hello there' }]),
+      mcp: fakeMcp({}),
+      gate: async () => ({ allow: true }),
+      model: 'gemini-flash-latest', systemInstruction: 'sys', functionDeclarations: [],
+      history, sessionId: 's1', userText: 'hi',
+    })
+    const summary = await collectTurn(events)
+    expect(summary.assistantText.join('')).toBe('hello there')
+    expect(summary.result?.sessionId).toBe('s1')
+    expect(history.length).toBe(2)
+    expect(history[0]).toEqual({ role: 'user', parts: [{ text: 'hi' }] })
+  })
+
+  it('runs a tool round: functionCall → tool_call event → execute → functionResponse → final text', async () => {
+    const history: any[] = []
+    const calls: string[] = []
+    const events = runDispatchLoop({
+      genai: fakeGenai([
+        { functionCalls: [{ name: 'reply', args: { chat_id: 'c', text: 'hi user' } }] },
+        { text: 'done' },
+      ]),
+      mcp: { async callTool(name, args) { calls.push(`${name}:${JSON.stringify(args)}`); return { content: [{ type: 'text', text: '{"ok":true}' }] } } },
+      gate: async () => ({ allow: true }),
+      model: 'm', systemInstruction: 'sys', functionDeclarations: [{ name: 'reply' }],
+      history, sessionId: 's2', userText: 'say hi',
+    })
+    const evs: any[] = []
+    for await (const e of events) evs.push(e)
+    expect(evs.find(e => e.kind === 'tool_call')).toEqual({ kind: 'tool_call', server: 'wechat', tool: 'reply' })
+    expect(calls).toEqual(['reply:{"chat_id":"c","text":"hi user"}'])
+    expect(evs.some(e => e.kind === 'text' && e.text === 'done')).toBe(true)
+    expect(evs.at(-1).kind).toBe('result')
+    expect(history.length).toBe(4)
+    expect(history[2]).toEqual({ role: 'user', parts: [{ functionResponse: { name: 'reply', response: { content: [{ type: 'text', text: '{"ok":true}' }] } } }] })
+  })
+
+  it('denied tool: no callTool, synthesizes an error functionResponse, model continues', async () => {
+    const history: any[] = []
+    let executed = false
+    const events = runDispatchLoop({
+      genai: fakeGenai([
+        { functionCalls: [{ name: 'memory_delete', args: { path: 'x' } }] },
+        { text: 'ok, I will not delete' },
+      ]),
+      mcp: { async callTool() { executed = true; return { content: [] } } },
+      gate: async (tool) => tool === 'memory_delete' ? { allow: false, message: 'denied by tier' } : { allow: true },
+      model: 'm', systemInstruction: 's', functionDeclarations: [{ name: 'memory_delete' }],
+      history, sessionId: 's3', userText: 'delete x',
+    })
+    const evs: any[] = []
+    for await (const e of events) evs.push(e)
+    expect(executed).toBe(false)
+    expect(history[2]).toEqual({ role: 'user', parts: [{ functionResponse: { name: 'memory_delete', response: { error: 'denied by tier' } } }] })
+    expect(evs.some(e => e.kind === 'text' && e.text === 'ok, I will not delete')).toBe(true)
+  })
+
+  it('caps tool rounds to avoid infinite loops', async () => {
+    const history: any[] = []
+    const genai: GenaiPort = { async generateContent() { return { text: '', functionCalls: [{ name: 'ping', args: {} }] } } }
+    const events = runDispatchLoop({
+      genai, mcp: fakeMcp({}), gate: async () => ({ allow: true }),
+      model: 'm', systemInstruction: 's', functionDeclarations: [{ name: 'ping' }],
+      history, sessionId: 's4', userText: 'loop', maxRounds: 3,
+    })
+    const summary = await collectTurn(events)
+    expect(summary.result || summary.error).toBeTruthy()
+    // multi-dispatch safety: capped history must end on a model turn, not user
+    expect((history.at(-1) as any).role).toBe('model')
+  })
+})
+
+describe('createGeminiAgentProvider', () => {
+  function deps(genaiResponses: any[], gate = async () => ({ allow: true as const })) {
+    const calls: string[] = []
+    const provider = createGeminiAgentProvider({
+      genai: (() => { let i = 0; return { models: { async generateContent() { return genaiResponses[i++] ?? { text: '' } } } } })() as any,
+      model: 'gemini-flash-latest',
+      systemInstruction: 'you are gemini',
+      async mcpConnect() {
+        return {
+          listTools: async () => ([{ name: 'reply', description: 'r', inputSchema: { type: 'object', properties: {} } }]),
+          callTool: async (name: string, _args: any) => { calls.push(name); return { content: [{ type: 'text', text: '{}' }] } },
+          close: async () => {},
+        }
+      },
+      buildGate: () => gate as any,
+    })
+    return { provider, calls }
+  }
+
+  it('spawn → dispatch streams text + result; uses listTools as functionDeclarations', async () => {
+    const { provider } = deps([{ text: 'hi from gemini' }])
+    const session = await provider.spawn({ alias: 'P', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c1' })
+    const out: any[] = []
+    for await (const e of session.dispatch('hello')) out.push(e)
+    expect(out.some(e => e.kind === 'text' && e.text === 'hi from gemini')).toBe(true)
+    expect(out.at(-1).kind).toBe('result')
+    await session.close()
+  })
+
+  it('cheapEval does a no-tools generateContent and returns text', async () => {
+    const { provider } = deps([{ text: 'cheap answer' }])
+    expect(provider.cheapEval).toBeDefined()
+    const ans = await provider.cheapEval!('rate 1-10')
+    expect(ans).toBe('cheap answer')
+  })
+})
+
+describe('makeGeminiToolGate', () => {
+  function deps(over: Partial<GeminiGateDeps> = {}): GeminiGateDeps {
+    return {
+      askUser: async () => 'allow',
+      adminFor: () => 'admin-chat',
+      modeFor: () => 'solo',
+      lookupBase: () => ({ askUser: 'never' } as any),
+      ...over,
+    }
+  }
+  const ctx = (tier: 'admin'|'trusted'|'guest', perm: 'strict'|'dangerously' = 'strict') =>
+    ({ tierProfile: TIER_PROFILES[tier], permissionMode: perm, chatId: 'c1' }) as any
+
+  it('dangerously → always allow', async () => {
+    const gate = makeGeminiToolGate(deps())(ctx('guest', 'dangerously'))
+    expect(await gate('memory_delete', {})).toEqual({ allow: true })
+  })
+  it('guest: reply allowed, memory_delete denied', async () => {
+    const gate = makeGeminiToolGate(deps())(ctx('guest'))
+    expect((await gate('reply', { chat_id: 'c', text: 'x' })).allow).toBe(true)
+    expect((await gate('memory_delete', { path: 'p' })).allow).toBe(false)
+  })
+  it('trusted: a2a_send relays → askUser allow ⇒ allow', async () => {
+    const gate = makeGeminiToolGate(deps({ askUser: async () => 'allow' }))(ctx('trusted'))
+    expect((await gate('a2a_send', { agent_id: 'x', text: 't' })).allow).toBe(true)
+  })
+  it('trusted: a2a_send relays → askUser deny ⇒ deny', async () => {
+    const gate = makeGeminiToolGate(deps({ askUser: async () => 'deny' }))(ctx('trusted'))
+    expect((await gate('a2a_send', { agent_id: 'x', text: 't' })).allow).toBe(false)
+  })
+  it('relay but no admin ⇒ deny', async () => {
+    const gate = makeGeminiToolGate(deps({ adminFor: () => null }))(ctx('trusted'))
+    expect((await gate('a2a_send', {})).allow).toBe(false)
+  })
+})
