@@ -26,9 +26,14 @@ export function renderDashboard(report) {
   const stopBtn = document.getElementById("dash-stop")
   const restartBtn = document.getElementById("dash-restart")
   const rebindBtn = document.getElementById("dash-rebind")
+  const testConnBtn = document.getElementById("dash-test-conn")
   if (stopBtn) stopBtn.hidden = hero.state !== "connected"
   if (restartBtn) restartBtn.hidden = hero.state !== "recovering"
   if (rebindBtn) rebindBtn.hidden = hero.state !== "taken_over"
+  // "测试本机连接" is only useful when the state is NOT already a confirmed
+  // connection — hide it when connected (the hero already says 陪伴中), show it
+  // in 暂时失联 / 本机未连接 so the user can verify or re-check ownership.
+  if (testConnBtn) testConnBtn.hidden = hero.state === "connected"
 
   const accounts = report.checks.accounts.items || []
   const expired = report.expiredBots || []

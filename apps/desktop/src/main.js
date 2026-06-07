@@ -573,14 +573,24 @@ function wireEvents() {
     try {
       const res = await invoke("wechat_cli_json", { args: ["connection", "probe", "--json"] })
       const parsed = typeof res === "string" ? JSON.parse(res) : res
-      // Verdict precedence: any taken_over wins, else any connected, else inconclusive.
-      const states = /** @type {string[]} */ ((parsed.accounts || []).map(/** @param {any} a */ a => a.state))
-      const verdict = states.includes("taken_over") ? "taken_over"
-        : states.includes("connected") ? "connected" : "inconclusive"
-      setLastProbe(verdict === "inconclusive" ? null : { state: verdict })
-      setPending(verdict === "taken_over" ? "本机未连接：连接在其他设备"
-        : verdict === "connected" ? "本机已连接 ✓" : "网络异常，稍后重试")
-      setTimeout(() => setPending(""), 3000)
+      const accounts = /** @type {any[]} */ (parsed.accounts || [])
+      const states = /** @type {string[]} */ (accounts.map(/** @param {any} a */ a => a.state))
+      // Four outcomes — tell the user WHAT happened + HOW to fix. Verdict
+      // precedence: no accounts → taken_over → connected → inconclusive.
+      let verdict, msg, ms
+      if (accounts.length === 0) {
+        verdict = "none"; msg = "还没绑定账号 — 请先扫码绑定"; ms = 4000
+      } else if (states.includes("taken_over")) {
+        verdict = "taken_over"; msg = "本机未连接：连接在另一台设备上。要在本机接管，点下方「重新扫码绑定」"; ms = 6000
+      } else if (states.includes("connected")) {
+        verdict = "connected"; msg = "✓ 本机已连接，正常收发消息"; ms = 3500
+      } else {
+        verdict = "inconclusive"; msg = "无法确认连接 — 网络异常或服务器无响应，请检查网络后重试"; ms = 5000
+      }
+      // Only a definitive verdict drives the hero; inconclusive/none leave it as-is.
+      setLastProbe(verdict === "connected" || verdict === "taken_over" ? { state: verdict } : null)
+      setPending(msg)
+      setTimeout(() => setPending(""), ms)
       await doctorPoller.refresh()
     } catch (err) {
       setPending(`测试失败：${formatInvokeError(err)}`)

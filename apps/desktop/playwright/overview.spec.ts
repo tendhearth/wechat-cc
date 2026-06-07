@@ -159,31 +159,46 @@ test('demo sub-user cards have no delete button (row.demo flag)', async ({ page,
 // Default probe state in the shim is 'taken_over'; tests set it explicitly for
 // clarity and isolation.
 
-test('测试本机连接 button is present on the overview hero', async ({ page, shimUrl, shim }) => {
-  // Seed a bound account so the app boots into dashboard mode.
+test('测试本机连接 is hidden when connected, shown when not connected', async ({ page, shimUrl, shim }) => {
+  // Connected (daemon alive + account, no expiry/probe) → the hero already
+  // says 陪伴中, so the test button is redundant and hidden.
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
   await bootAndForceDashboardRender(page, shimUrl)
-  // The button must be present in the hero regardless of current probe state.
-  await expect(page.locator('#dash-test-conn')).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('#hero-headline')).toHaveText(/AI 正在陪伴中/, { timeout: 10_000 })
+  await expect(page.locator('#dash-test-conn')).toBeHidden()
+})
+
+test('测试本机连接 is shown when not connected (recovering)', async ({ page, shimUrl, shim }) => {
+  // Daemon dead + bound account → recovering → the button is available so the
+  // user can verify / re-check ownership.
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: false })
+  await bootAndForceDashboardRender(page, shimUrl)
+  await expect(page.locator('#hero-headline')).toHaveText('暂时失联', { timeout: 10_000 })
+  await expect(page.locator('#dash-test-conn')).toBeVisible()
 })
 
 test('probe verdict taken_over flips hero to 本机未连接 and shows rebind', async ({ page, shimUrl, shim }) => {
-  // Seed a bound, alive account so the app starts in "connected" hero state
-  // (daemonAlive=true + accountCount>0 + no prior probe result → connected).
-  await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
-  // Explicitly set probe state to taken_over (it's the shim default, but set
-  // it here for test clarity and isolation from any prior worker state).
+  // Start NOT connected (daemon dead → recovering) so the test button is
+  // visible to click. Probe returns taken_over → hero flips + rebind shows.
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: false })
   await shim.invoke('mock.connection-probe', { state: 'taken_over' })
   await bootAndForceDashboardRender(page, shimUrl)
-  // Hero should start in "connected" state (AI 正在陪伴中) before clicking.
-  await expect(page.locator('#hero-headline')).toHaveText(/AI 正在陪伴中/, { timeout: 10_000 })
-  // Click the probe button — handler calls connection probe → setLastProbe →
-  // doctorPoller.refresh() which re-renders the hero synchronously.
+  await expect(page.locator('#hero-headline')).toHaveText('暂时失联', { timeout: 10_000 })
   await page.locator('#dash-test-conn').click()
-  // After the probe resolves to taken_over, the hero should flip.
   await expect(page.locator('#hero-headline')).toHaveText('本机未连接', { timeout: 10_000 })
-  // The rebind button must appear; stop/restart must be hidden.
   await expect(page.locator('#dash-rebind')).toBeVisible({ timeout: 10_000 })
   await expect(page.locator('#dash-stop')).toBeHidden()
   await expect(page.locator('#dash-restart')).toBeHidden()
+})
+
+test('probe verdict connected flips hero to 陪伴中 and hides the test button', async ({ page, shimUrl, shim }) => {
+  // From recovering, a connected probe verdict promotes the hero and the now-
+  // redundant test button hides itself.
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: false })
+  await shim.invoke('mock.connection-probe', { state: 'connected' })
+  await bootAndForceDashboardRender(page, shimUrl)
+  await expect(page.locator('#hero-headline')).toHaveText('暂时失联', { timeout: 10_000 })
+  await page.locator('#dash-test-conn').click()
+  await expect(page.locator('#hero-headline')).toHaveText(/AI 正在陪伴中/, { timeout: 10_000 })
+  await expect(page.locator('#dash-test-conn')).toBeHidden()
 })
