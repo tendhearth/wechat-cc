@@ -61,13 +61,13 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  it('opens a fresh db with PRAGMA user_version = 13 and the 8 tables', () => {
+  it('opens a fresh db with PRAGMA user_version = 14 and the 9 tables', () => {
     const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
-    // v13 (memory_delete audit): events.kind extended with memory_deleted + memory_path column added.
-    expect(v).toBe(13)
+    // v14 (connection_heartbeat): per-account last-successful-poll timestamp table added.
+    expect(v).toBe(14)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
-      'a2a_events', 'activity', 'conversations', 'events', 'milestones', 'observations', 'session_state', 'sessions',
+      'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'events', 'milestones', 'observations', 'session_state', 'sessions',
     ])
   })
 
