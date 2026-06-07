@@ -147,3 +147,43 @@ test('demo sub-user cards have no delete button (row.demo flag)', async ({ page,
   const deleteBtns = page.locator('#accounts-body .sub-user-card .mini-action[data-action="ask-delete"]')
   await expect(deleteBtns).toHaveCount(0)
 })
+
+// ── Connection-probe button + hero flip ────────────────────────────────────
+//
+// #dash-test-conn calls `connection probe --json`, reads the verdict from
+// the returned accounts array, then calls setLastProbe + doctorPoller.refresh().
+// After refresh(), renderDashboard fires synchronously so the hero re-renders
+// before the button handler returns. Playwright's auto-retry expect (5 s) covers
+// the refresh latency without an explicit sleep.
+//
+// Default probe state in the shim is 'taken_over'; tests set it explicitly for
+// clarity and isolation.
+
+test('测试本机连接 button is present on the overview hero', async ({ page, shimUrl, shim }) => {
+  // Seed a bound account so the app boots into dashboard mode.
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
+  await bootAndForceDashboardRender(page, shimUrl)
+  // The button must be present in the hero regardless of current probe state.
+  await expect(page.locator('#dash-test-conn')).toBeVisible({ timeout: 10_000 })
+})
+
+test('probe verdict taken_over flips hero to 本机未连接 and shows rebind', async ({ page, shimUrl, shim }) => {
+  // Seed a bound, alive account so the app starts in "connected" hero state
+  // (daemonAlive=true + accountCount>0 + no prior probe result → connected).
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
+  // Explicitly set probe state to taken_over (it's the shim default, but set
+  // it here for test clarity and isolation from any prior worker state).
+  await shim.invoke('mock.connection-probe', { state: 'taken_over' })
+  await bootAndForceDashboardRender(page, shimUrl)
+  // Hero should start in "connected" state (AI 正在陪伴中) before clicking.
+  await expect(page.locator('#hero-headline')).toHaveText(/AI 正在陪伴中/, { timeout: 10_000 })
+  // Click the probe button — handler calls connection probe → setLastProbe →
+  // doctorPoller.refresh() which re-renders the hero synchronously.
+  await page.locator('#dash-test-conn').click()
+  // After the probe resolves to taken_over, the hero should flip.
+  await expect(page.locator('#hero-headline')).toHaveText('本机未连接', { timeout: 10_000 })
+  // The rebind button must appear; stop/restart must be hidden.
+  await expect(page.locator('#dash-rebind')).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('#dash-stop')).toBeHidden()
+  await expect(page.locator('#dash-restart')).toBeHidden()
+})
