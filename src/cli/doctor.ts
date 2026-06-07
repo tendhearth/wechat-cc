@@ -473,9 +473,16 @@ export function readExpiredBots(stateDir: string): ExpiredBotEntry[] {
   // poll loop (transport.ts errcode=-14) and the connection probe write to.
   let db: ReturnType<typeof openWechatDb> | undefined
   try {
+    // Only report expiry for currently-bound accounts. Re-scanning supersedes
+    // the old account dir (renamed `.superseded.`) but leaves its session_state
+    // row behind — an orphan. Likewise `account remove` may race the cleanup.
+    // An orphan must NOT inflate the dashboard's expiredCount, or the hero
+    // stays `taken_over` even though the live account is connected. Mirrors
+    // readAccounts/readHeartbeats, which already skip superseded dirs.
+    const liveIds = new Set(readAccounts(stateDir).map(a => a.id))
     db = openWechatDb(stateDir)
     const rows = makeSessionStateStore(db).listExpired()
-    return rows.map(r => ({
+    return rows.filter(r => liveIds.has(r.id)).map(r => ({
       // r.id is the account dir id (account.id) — the dashboard's
       // expiredById lookup uses item.id (=account.id) as the key, so
       // botId MUST carry account.id here (not the @im.bot botId field).

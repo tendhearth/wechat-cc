@@ -585,6 +585,15 @@ describe('analyzeDoctor — heartbeats field', () => {
 describe('readExpiredBots', () => {
   const tmpDir = join('/tmp', `readExpiredBots-test-${process.pid}`)
 
+  // An expired row only counts if its account dir is currently bound (the
+  // dashboard's expiredCount drives the taken_over hero). Create a live
+  // account dir so the row isn't filtered out as an orphan.
+  const mkAccount = (id: string) => {
+    const d = join(tmpDir, 'accounts', id)
+    mkdirSync(d, { recursive: true })
+    writeFileSync(join(d, 'account.json'), JSON.stringify({ botId: `${id}@im.bot`, userId: 'u', baseUrl: 'https://x' }))
+  }
+
   afterEach(() => {
     try { rmSync(tmpDir, { recursive: true, force: true }) } catch { /* ignore */ }
   })
@@ -603,6 +612,7 @@ describe('readExpiredBots', () => {
   it('reads expired rows written via SessionStateStore (SQLite round-trip)', () => {
     // Write an expired entry through the same store the daemon uses.
     mkdirSync(tmpDir, { recursive: true })
+    mkAccount('some-account-id')
     const db = openWechatDb(tmpDir)
     makeSessionStateStore(db).markExpired('some-account-id', 'test-reason')
     db.close()
@@ -615,8 +625,30 @@ describe('readExpiredBots', () => {
     expect(entries[0]!.lastReason).toBe('test-reason')
   })
 
+  it('filters out orphan rows whose account dir no longer exists (superseded / removed)', () => {
+    // Regression: re-scanning supersedes the old account dir but leaves its
+    // session_state row. That orphan must NOT appear in expiredBots, else the
+    // dashboard hero is stuck in taken_over even though the live account is fine.
+    mkdirSync(tmpDir, { recursive: true })
+    mkAccount('live-acct')           // currently bound
+    // 'gone-acct' has an expired row but NO account dir (superseded/removed).
+    const db = openWechatDb(tmpDir)
+    const store = makeSessionStateStore(db)
+    store.markExpired('live-acct', 'real')
+    store.markExpired('gone-acct', 'orphan')
+    db.close()
+
+    const entries = readExpiredBots(tmpDir)
+    const ids = entries.map(e => e.botId)
+    expect(ids).toContain('live-acct')
+    expect(ids).not.toContain('gone-acct')
+    expect(entries).toHaveLength(1)
+  })
+
   it('returns entries sorted ascending by firstSeenExpiredAt', () => {
     mkdirSync(tmpDir, { recursive: true })
+    mkAccount('acct-a')
+    mkAccount('acct-b')
     const db = openWechatDb(tmpDir)
     const store = makeSessionStateStore(db)
     // Insert in reverse chronological order to verify sort.
@@ -635,6 +667,7 @@ describe('readExpiredBots', () => {
 
   it('omits lastReason when markExpired was called without a reason', () => {
     mkdirSync(tmpDir, { recursive: true })
+    mkAccount('acct-no-reason')
     const db = openWechatDb(tmpDir)
     makeSessionStateStore(db).markExpired('acct-no-reason')
     db.close()
