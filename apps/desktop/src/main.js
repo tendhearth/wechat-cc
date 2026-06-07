@@ -26,7 +26,7 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, closeProviderMenu } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, closeProviderMenu } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
@@ -531,6 +531,32 @@ function wireEvents() {
   )
   document.getElementById("dash-stop")?.addEventListener("click", () => stopDaemon(deps))
   document.getElementById("dash-restart")?.addEventListener("click", () => restartDaemon(deps))
+  document.getElementById("dash-test-conn")?.addEventListener("click", async () => {
+    const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById("dash-test-conn"))
+    if (!btn) return
+    btn.disabled = true
+    btn.textContent = "测试中…"
+    try {
+      const res = await invoke("wechat_cli_json", { args: ["connection", "probe", "--json"] })
+      const parsed = typeof res === "string" ? JSON.parse(res) : res
+      // Verdict precedence: any taken_over wins, else any connected, else inconclusive.
+      const states = /** @type {string[]} */ ((parsed.accounts || []).map(/** @param {any} a */ a => a.state))
+      const verdict = states.includes("taken_over") ? "taken_over"
+        : states.includes("connected") ? "connected" : "inconclusive"
+      setLastProbe(verdict === "inconclusive" ? null : { state: verdict })
+      setPending(verdict === "taken_over" ? "本机未连接：连接在其他设备"
+        : verdict === "connected" ? "本机已连接 ✓" : "网络异常，稍后重试")
+      setTimeout(() => setPending(""), 3000)
+      await doctorPoller.refresh()
+    } catch (err) {
+      setPending(`测试失败：${formatInvokeError(err)}`)
+      setTimeout(() => setPending(""), 3000)
+    } finally {
+      btn.disabled = false
+      btn.textContent = "测试本机连接"
+    }
+  })
+  document.getElementById("dash-rebind")?.addEventListener("click", () => deps.routeToWizardBind())
   document.getElementById("memory-refresh")?.addEventListener("click", (e) =>
     withRefreshFeedback(/** @type {HTMLButtonElement} */ (e.currentTarget), async () => {
       await loadMemoryPane(deps)
