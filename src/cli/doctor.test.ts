@@ -545,3 +545,36 @@ describe('readAccess admins[]', () => {
     expect(report.checks.access.admins).toEqual(['uAdmin'])
   })
 })
+
+describe('analyzeDoctor — heartbeats field', () => {
+  it('includes heartbeats from readHeartbeats dep when provided', () => {
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: () => null,
+      readAccounts: () => [{ id: 'bot1-im-bot', botId: 'b1@im.bot', userId: 'u1', baseUrl: '' }],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: ['u1'] }),
+      readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      readHeartbeats: () => ({ 'bot1-im-bot': '2026-06-07T01:00:00.000Z' }),
+      daemon: () => ({ alive: true, pid: 1234 }),
+      service: () => ({ installed: true, kind: 'launchagent' as const }),
+    })
+    expect(report.heartbeats).toEqual({ 'bot1-im-bot': '2026-06-07T01:00:00.000Z' })
+  })
+
+  it('heartbeats defaults to {} when readHeartbeats dep is absent', () => {
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: () => null,
+      readAccounts: () => [],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }),
+      readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      daemon: () => ({ alive: false, pid: null }),
+      service: () => ({ installed: false, kind: 'launchagent' as const }),
+    })
+    expect(report.heartbeats).toEqual({})
+  })
+})

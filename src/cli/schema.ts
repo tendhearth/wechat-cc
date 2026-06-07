@@ -110,6 +110,7 @@ export const DoctorOutput = z.object({
   }),
   userNames: z.record(z.string(), z.string()),
   expiredBots: z.array(ExpiredBotEntry),
+  heartbeats: z.record(z.string(), z.string().nullable()),
   nextActions: z.array(z.string()),
 })
 export type DoctorOutputT = z.infer<typeof DoctorOutput>

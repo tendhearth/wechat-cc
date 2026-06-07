@@ -63,6 +63,7 @@ describe('DoctorOutput', () => {
       },
       userNames: {},
       expiredBots: [],
+      heartbeats: {},
       nextActions: ['install_claude', 'run_wechat_setup'],
     }
     expect(DoctorOutput.safeParse(sample).success).toBe(true)
@@ -93,6 +94,7 @@ describe('DoctorOutput', () => {
       },
       userNames: { 'chat-abc': 'Alice' },
       expiredBots: [{ botId: 'old-bot', firstSeenExpiredAt: '2026-01-01T00:00:00Z', lastReason: 'session expired' }],
+      heartbeats: { 'bot1': '2026-06-07T01:00:00.000Z' },
       nextActions: [],
     }
     expect(DoctorOutput.safeParse(sample).success).toBe(true)

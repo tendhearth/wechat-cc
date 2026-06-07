@@ -10,6 +10,7 @@ import { buildServicePlan, isServiceInstalled, type ServiceKind } from './servic
 import { compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from '../lib/runtime-info'
 import { openWechatDb } from '../lib/db'
 import { makeConversationStore } from '../core/conversation-store'
+import { makeHeartbeatStore } from '../daemon/connection-heartbeat'
 
 export interface BoundAccount {
   id: string
@@ -72,6 +73,11 @@ export interface DoctorDeps {
   readAgentConfig: () => AgentConfig
   readUserNames: () => Record<string, string>
   readExpiredBots: () => ExpiredBotEntry[]
+  /**
+   * Returns the last successful getUpdates timestamp for each bound account,
+   * keyed by account.id. Null for accounts that have never had a successful poll.
+   */
+  readHeartbeats?: () => Record<string, string | null>
   daemon: () => DaemonSnapshot
   service: () => ServiceSnapshot
   // 'compiled-bundle' = the bun-compiled wechat-cc-cli sidecar inside the
@@ -141,6 +147,13 @@ export interface DoctorReport {
   }
   userNames: Record<string, string>
   expiredBots: ExpiredBotEntry[]
+  /**
+   * Last successful ilink getUpdates timestamp per account, keyed by account.id.
+   * Null for accounts that have never had a successful poll since the daemon started
+   * recording (requires daemon restart after v14 migration for first data).
+   * Used by the dashboard to show "上次活动 X 前" on the connected card.
+   */
+  heartbeats: Record<string, string | null>
   nextActions: string[]
 }
 
@@ -335,6 +348,7 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
     checks,
     userNames: deps.readUserNames(),
     expiredBots: deps.readExpiredBots(),
+    heartbeats: deps.readHeartbeats ? deps.readHeartbeats() : {},
     nextActions,
   }
 }
@@ -425,6 +439,7 @@ export function defaultDoctorDeps(stateDir = STATE_DIR): DoctorDeps {
     readAgentConfig: () => loadAgentConfig(stateDir),
     readUserNames: () => readUserNames(stateDir),
     readExpiredBots: () => readExpiredBots(stateDir),
+    readHeartbeats: () => readHeartbeats(stateDir),
     daemon: () => readDaemon(stateDir),
     service: () => defaultServiceSnapshot(stateDir),
     runtime: isCompiledBundle() ? 'compiled-bundle' : 'source',
@@ -486,6 +501,30 @@ export function readUserNames(stateDir: string): Record<string, string> {
     for (const chatId of Object.keys(store.all())) {
       const id = store.getIdentity(chatId)
       if (id?.last_user_name) out[chatId] = id.last_user_name
+    }
+    return out
+  } catch {
+    return {}
+  } finally {
+    try { db?.close() } catch { /* best-effort */ }
+  }
+}
+
+/**
+ * Read the last successful getUpdates timestamp for each bound account from
+ * the SQLite db. Opens and CLOSES the db (Windows EBUSY: daemon is the writer,
+ * CLI path must close immediately after reading). Returns {} on any error.
+ */
+export function readHeartbeats(stateDir: string): Record<string, string | null> {
+  let db: ReturnType<typeof openWechatDb> | undefined
+  try {
+    const accounts = readAccounts(stateDir)
+    if (accounts.length === 0) return {}
+    db = openWechatDb(stateDir)
+    const store = makeHeartbeatStore(db)
+    const out: Record<string, string | null> = {}
+    for (const account of accounts) {
+      out[account.id] = store.lastOk(account.id)
     }
     return out
   } catch {
