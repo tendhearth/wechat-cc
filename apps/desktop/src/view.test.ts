@@ -327,24 +327,30 @@ describe('initialMode', () => {
   })
 })
 
-describe('dashboardHero', () => {
-  it('alive → running with pid + account count', () => {
-    expect(dashboardHero({ alive: true, pid: 4321 }, 3))
-      .toEqual({ headline: 'running', tone: 'ok', meta1: 'pid 4321', meta2: '3 accounts live' })
+describe('dashboardHero 3-state', () => {
+  it('daemon alive + accounts, no expiry → connected', () => {
+    const h = dashboardHero({ daemonAlive: true, accountCount: 1, expiredCount: 0 })
+    expect(h.state).toBe('connected')
+    expect(h.tone).toBe('ok')
   })
-  it('alive with single account → singular copy', () => {
-    expect(dashboardHero({ alive: true, pid: 7 }, 1).meta2).toBe('1 account live')
+  it('bound account but daemon NOT alive → recovering (was falsely "connected")', () => {
+    const h = dashboardHero({ daemonAlive: false, accountCount: 1, expiredCount: 0 })
+    expect(h.state).toBe('recovering')
+    expect(h.tone).not.toBe('ok')
   })
-  it('bound account with daemon temporarily down → still presents companion as active', () => {
-    expect(dashboardHero({ alive: false, pid: null }, 1))
-      .toEqual({ headline: 'running', tone: 'ok', meta1: 'waiting for daemon', meta2: '1 account live' })
+  it('expired account → taken_over regardless of daemon', () => {
+    const h = dashboardHero({ daemonAlive: true, accountCount: 1, expiredCount: 1 })
+    expect(h.state).toBe('taken_over')
   })
-  it('stale pid → warn tone', () => {
-    expect(dashboardHero({ alive: false, pid: 99 }, 0).tone).toBe('warn')
-    expect(dashboardHero({ alive: false, pid: 99 }, 0).headline).toBe('stale')
+  it('probe verdict taken_over wins even with no expiry recorded yet', () => {
+    // @ts-expect-error JS function infers lastProbe:null; the object is valid at runtime
+    const h = dashboardHero({ daemonAlive: true, accountCount: 1, expiredCount: 0, lastProbe: { state: 'taken_over' } })
+    expect(h.state).toBe('taken_over')
   })
-  it('no pid → stopped', () => {
-    expect(dashboardHero({ alive: false, pid: null }, 0).headline).toBe('stopped')
+  it('probe verdict connected promotes a daemon-down machine', () => {
+    // @ts-expect-error JS function infers lastProbe:null; the object is valid at runtime
+    const h = dashboardHero({ daemonAlive: false, accountCount: 1, expiredCount: 0, lastProbe: { state: 'connected' } })
+    expect(h.state).toBe('connected')
   })
 })
 

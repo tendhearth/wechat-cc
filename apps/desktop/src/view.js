@@ -323,33 +323,20 @@ export function diagnose({ report, healthOk, lastError, lastRestart = null, plat
   }
 }
 
-// Hero block for the dashboard top. In the user-facing dashboard, a bound
-// account means the companion relationship is established; transient daemon
-// downtime should keep the reconnect affordance without making the default
-// moment read as "AI lost".
-export function dashboardHero(daemon, accountCount) {
-  if (daemon.alive || accountCount > 0) {
-    return {
-      headline: "running",
-      tone: "ok",
-      meta1: daemon.alive ? `pid ${daemon.pid}` : "waiting for daemon",
-      meta2: accountCount === 1 ? "1 account live" : `${accountCount} accounts live`,
-    }
+// Connection verdict for the overview hero. Three honest states:
+//   connected   — this machine holds the live WeChat connection
+//   recovering  — transient: daemon down / not yet polling (auto-recovers)
+//   taken_over  — terminal: another device rebound the bot (errcode=-14);
+//                 needs a re-scan to reclaim, does NOT self-heal.
+// Inputs come from the doctor report + the last probe result (if any).
+export function dashboardHero({ daemonAlive, accountCount, expiredCount = 0, lastProbe = null }) {
+  if (lastProbe?.state === 'taken_over' || expiredCount > 0) {
+    return { state: 'taken_over', tone: 'warn', headline: '本机未连接', meta: '连接在其他设备 · 重新扫码可接管' }
   }
-  if (daemon.pid !== null) {
-    return {
-      headline: "stale",
-      tone: "warn",
-      meta1: `pid ${daemon.pid} · gone`,
-      meta2: "service may need a restart",
-    }
+  if (lastProbe?.state === 'connected' || (daemonAlive && accountCount > 0)) {
+    return { state: 'connected', tone: 'ok', headline: 'AI 正在陪伴中', meta: '连接正常' }
   }
-  return {
-    headline: "stopped",
-    tone: "warn",
-    meta1: "no daemon process",
-    meta2: "press restart to bring it up",
-  }
+  return { state: 'recovering', tone: 'warn', headline: '暂时失联', meta: '正在恢复连接…' }
 }
 
 // Choose post-account-delete confirmation copy. When the service is not
