@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   doctorRows, pollAdvance, daemonStatusLine, escapeHtml,
-  initialMode, dashboardHero, accountRows, formatRelativeTime,
+  initialMode, afterScanTarget, dashboardHero, accountRows, formatRelativeTime,
   updateProbeLine, updateApplyLine, restartButtonState, deleteAccountConfirmCopy,
   UPDATE_REASON_COPY, modeBadge, conversationRows, diagnose,
 } from './view.js'
@@ -33,6 +33,25 @@ function fakeReport(overrides: Record<string, any> = {}): any {
   }
   return { ...base, ...overrides, checks: { ...base.checks, ...(overrides.checks ?? {}) } }
 }
+
+describe('afterScanTarget', () => {
+  it('service installed + provider ok → dashboard (skip the install step)', () => {
+    const r = fakeReport({ checks: { service: { installed: true, kind: 'systemd-user' }, provider: { ok: true, provider: 'claude', binaryPath: '/c' } } })
+    expect(afterScanTarget(r)).toBe('dashboard')
+  })
+  it('service NOT installed → service step', () => {
+    const r = fakeReport({ checks: { service: { installed: false, kind: 'systemd-user' }, provider: { ok: true, provider: 'claude', binaryPath: '/c' } } })
+    expect(afterScanTarget(r)).toBe('service')
+  })
+  it('provider not ok → service step (even if service installed)', () => {
+    const r = fakeReport({ checks: { service: { installed: true, kind: 'systemd-user' }, provider: { ok: false, provider: 'claude', binaryPath: null } } })
+    expect(afterScanTarget(r)).toBe('service')
+  })
+  it('null/undefined report → service step (safe default)', () => {
+    expect(afterScanTarget(null)).toBe('service')
+    expect(afterScanTarget(undefined)).toBe('service')
+  })
+})
 
 describe('doctorRows', () => {
   it('flattens checks into [name, {ok, path}] tuples in display order', () => {

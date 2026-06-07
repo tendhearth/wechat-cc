@@ -135,6 +135,19 @@ export function initialMode(report) {
   return { mode: "wizard", step: "service" }
 }
 
+// After a QR scan confirms, decide where the 继续 button should land.
+// If this machine is ALREADY fully set up (background service installed +
+// provider ready), there's nothing to do on the "后台服务" step — go straight
+// to the dashboard. Otherwise show the service-install step. This mirrors
+// initialMode's "everything installed → dashboard" rule, extended to the
+// re-scan path (a returning user who re-scans on an already-configured
+// machine shouldn't be parked on the install screen again).
+export function afterScanTarget(report) {
+  const installed = !!report?.checks?.service?.installed
+  const providerOk = !!report?.checks?.provider?.ok
+  return installed && providerOk ? "dashboard" : "service"
+}
+
 // Determine the dashboard "restart daemon" button's mode + label given the
 // service+daemon state. The pre-existing button blindly invoked
 // `service stop` + `service start`, which fails noisily when no service unit

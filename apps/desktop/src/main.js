@@ -15,7 +15,7 @@
 // subscribers + invokes refresh from action handlers.
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
-import { initialMode, restartButtonState } from "./view.js"
+import { initialMode, restartButtonState, afterScanTarget } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
 import { createConversationsPoller } from "./conversations-poller.js"
 import {
@@ -450,7 +450,13 @@ function wireEvents() {
   // appeared since the user last saw the screen.
   document.getElementById("continue-provider")?.addEventListener("click", () => showStep("provider"))
   document.getElementById("continue-wechat")?.addEventListener("click", () => showStep("wechat"))
-  document.getElementById("continue-service")?.addEventListener("click", () => showStep("service"))
+  // Already fully set up (service installed + provider ok)? Skip the
+  // "后台服务" install step and go straight to the dashboard — a returning
+  // user re-scanning on a configured machine has nothing to install.
+  document.getElementById("continue-service")?.addEventListener("click", () => {
+    if (afterScanTarget(doctorPoller.current) === "dashboard") setMode("dashboard")
+    else showStep("service")
+  })
   document.getElementById("recheck-env")?.addEventListener("click", async () => {
     const report = await doctorPoller.refresh()
     if (!report) return
@@ -498,6 +504,24 @@ function wireEvents() {
       }
     })
   })
+
+  // TEMP DIAGNOSTIC (network-guard auto-enable hunt): log a stack trace
+  // whenever either guard toggle GAINS the `on` class, so we can see exactly
+  // what flipped it (a real user click logs from the handler above; anything
+  // else — refreshGuardStatus syncing a truthy `guard status`, or an unknown
+  // path — is the culprit). Remove once the root cause is confirmed.
+  for (const id of ["guard-toggle", "screen-guard-toggle"]) {
+    const el = document.getElementById(id)
+    if (!el) continue
+    let wasOn = el.classList.contains("on")
+    new MutationObserver(() => {
+      const on = el.classList.contains("on")
+      if (on && !wasOn) {
+        console.warn(`[guard-diag] #${id} → ON. mode=${state.mode} stack:`, new Error().stack)
+      }
+      wasOn = on
+    }).observe(el, { attributes: true, attributeFilter: ["class"] })
+  }
 
   wireSettingsDrawer({
     onToggleChange: async (id, on) => {
