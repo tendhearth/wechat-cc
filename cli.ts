@@ -759,6 +759,21 @@ const guardStatusCmd = defineCommand({
 async function setGuardEnabled(enabled: boolean, json: boolean): Promise<void> {
   const { loadGuardConfig, saveGuardConfig } = await import('./src/daemon/guard/store')
   const cfg = loadGuardConfig(STATE_DIR)
+  // TEMP DIAG (network-guard auto-enable hunt): persistently record WHO turned
+  // guard ON. The CLI is short-lived, so pid/ppid + the parent process command
+  // reveal whether it was the Tauri GUI (wechat_cc_desktop), a terminal `bun`,
+  // or something else. Written to channel.log so it survives even when no
+  // devtools console is open at the moment of the intermittent bug. Remove
+  // once the root cause is confirmed.
+  if (enabled) {
+    try {
+      const { log } = await import('./src/lib/log')
+      const { execSync } = await import('node:child_process')
+      let parent = '?'
+      try { parent = execSync(`ps -o comm= -p ${process.ppid}`, { encoding: 'utf8' }).trim() } catch { /* best-effort */ }
+      log('GUARD_DIAG', `guard ENABLE invoked (was ${cfg.enabled}) pid=${process.pid} ppid=${process.ppid} parent="${parent}" argv=${JSON.stringify(process.argv.slice(2))}`)
+    } catch { /* diagnostics must never break the command */ }
+  }
   cfg.enabled = enabled
   saveGuardConfig(STATE_DIR, cfg)
   if (json) console.log(JSON.stringify((enabled ? GuardEnableOutput : GuardDisableOutput).parse({ ok: true, enabled: cfg.enabled })))

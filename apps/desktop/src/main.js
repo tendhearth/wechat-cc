@@ -99,7 +99,17 @@ async function withRefreshFeedback(button, fn) {
  * @param {string} cmd
  * @param {Record<string, unknown>} args
  */
-const invoke = (cmd, args) => ipcInvoke(cmd, args, state)
+const invoke = (cmd, args) => {
+  // TEMP DIAG (guard auto-enable hunt): log a stack trace whenever `guard
+  // enable` is invoked from the frontend, revealing the exact trigger path
+  // (which handler, whether a real user gesture vs a programmatic call).
+  // Pairs with the backend GUARD_DIAG line in cli.ts. Remove once root-caused.
+  if (cmd === "wechat_cli_json" && Array.isArray(/** @type {any} */ (args)?.args)
+      && /** @type {any} */ (args).args[0] === "guard" && /** @type {any} */ (args).args[1] === "enable") {
+    console.warn("[guard-diag] invoke guard ENABLE — stack:\n", new Error().stack)
+  }
+  return ipcInvoke(cmd, args, state)
+}
 
 const doctorPoller = createDoctorPoller({ invoke, intervalMs: 5000 })
 const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 10000 })
