@@ -6,17 +6,44 @@ function deps(over: Partial<ProbeDeps> = {}): ProbeDeps {
     account: { id: 'b-im-bot', botId: 'b@im.bot', baseUrl: 'https://x.test', token: 'tok' },
     getUpdates: async () => ({ ret: 0, msgs: [] }),
     markExpired: () => true,
+    clearExpired: () => {},
     probeTimeoutMs: 5000,
     ...over,
   }
 }
 
 describe('probeConnection', () => {
-  it('connected result does not mark expired', async () => {
+  it('connected result does not mark expired, and clears any stale expired marker', async () => {
     let marked = false
-    const r = await probeConnection(deps({ markExpired: () => (marked = true) }))
+    let clearedId = ''
+    const r = await probeConnection(deps({
+      markExpired: () => (marked = true),
+      clearExpired: (id) => { clearedId = id },
+    }))
     expect(r).toEqual({ id: 'b-im-bot', state: 'connected' })
     expect(marked).toBe(false)
+    // A successful probe must drop a stale expired record (keyed by account.id)
+    // so the dashboard hero can leave the terminal taken_over state.
+    expect(clearedId).toBe('b-im-bot')
+  })
+  it('-14 marks expired and does NOT clear', async () => {
+    let cleared = false
+    await probeConnection(deps({
+      getUpdates: async () => ({ errcode: -14, errmsg: 'session timeout' }),
+      clearExpired: () => (cleared = true),
+    }))
+    expect(cleared).toBe(false)
+  })
+  it('inconclusive neither marks nor clears (ambiguous)', async () => {
+    let marked = false
+    let cleared = false
+    await probeConnection(deps({
+      getUpdates: async () => { throw new Error('ECONNREFUSED') },
+      markExpired: () => (marked = true),
+      clearExpired: () => (cleared = true),
+    }))
+    expect(marked).toBe(false)
+    expect(cleared).toBe(false)
   })
   it('-14 marks the bot expired and reports taken_over', async () => {
     let markedId = ''

@@ -217,6 +217,14 @@ export interface PollLoopOptions {
    * that don't care about it).
    */
   recordHeartbeat?: (accountId: string, iso: string) => void
+  /**
+   * Drop a stale expired marker on a successful poll — self-heals the
+   * dashboard's terminal `taken_over` state after a daemon restart on a
+   * machine that has re-acquired the connection. A non-owner never reaches
+   * this branch (it gets errcode=-14 and breaks the loop), so this only
+   * fires when the poll genuinely succeeds.
+   */
+  clearExpired?: (accountId: string) => void
 }
 
 const RETRY_DELAY_MS = 2_000
@@ -266,7 +274,7 @@ interface LoopRecord {
  * one (for cleanup).
  */
 export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
-  const { onInbound, ilink, parse, log = () => {}, recordHeartbeat } = opts
+  const { onInbound, ilink, parse, log = () => {}, recordHeartbeat, clearExpired } = opts
   const resolveUserName = opts.resolveUserName ?? (() => undefined)
 
   const loops = new Map<string, LoopRecord>()
@@ -314,6 +322,10 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
         // Placed after sync_buf update so the timestamp reflects a completed
         // poll cycle. Omitted on expired/error branches.
         recordHeartbeat?.(account.id, new Date().toISOString())
+        // Self-heal: a successful poll proves we hold the connection, so drop
+        // any stale expired marker left by a prior -14 (idempotent no-op when
+        // there's nothing to clear).
+        clearExpired?.(account.id)
       } catch (err) {
         if (sig.aborted) break
         log('ERROR', `getUpdates failed: ${err}`)

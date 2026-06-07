@@ -45,6 +45,14 @@ export interface ProbeDeps {
    * which forwards it to sessionState.markExpired unchanged.
    */
   markExpired: (accountId: string, reason?: string) => boolean
+  /**
+   * Reuse SessionStateStore.clear — called when a probe confirms we ARE
+   * connected, to drop a stale expired marker left by an earlier -14. Without
+   * this, a successful re-probe says "connected" but the dashboard hero stays
+   * `taken_over` because expiredCount > 0 still wins. Keyed by account.id, same
+   * as markExpired.
+   */
+  clearExpired: (accountId: string) => void
   probeTimeoutMs: number
 }
 
@@ -65,6 +73,11 @@ export async function probeConnection(deps: ProbeDeps): Promise<ProbeResult> {
     // `accountId` and passes it to sessionState.markExpired — so account.id
     // (the dir name) is the correct key, not account.botId.
     deps.markExpired(account.id, `connection probe errcode=-14: ${verdict.detail ?? ''}`)
+  } else if (verdict.state === 'connected') {
+    // We hold the connection now — drop any stale expired marker so the
+    // dashboard hero leaves the terminal `taken_over` state. inconclusive
+    // (network error) is ambiguous: leave the marker untouched.
+    deps.clearExpired(account.id)
   }
   return { id: account.id, state: verdict.state, ...(verdict.detail ? { detail: verdict.detail } : {}) }
 }

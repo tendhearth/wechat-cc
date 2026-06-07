@@ -15,6 +15,7 @@ import { loadCompanionConfig } from '../companion/config'
 import { loadGuardConfig } from '../guard/store'
 import { parseUpdates } from '../poll-loop'
 import { makeHeartbeatStore } from '../connection-heartbeat'
+import { makeSessionStateStore } from '../session-state'
 import type { TickBodies } from './tick-bodies'
 
 export interface LifecycleDepsOpts {
@@ -48,6 +49,9 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
   // Heartbeat store — single instance shared for the lifetime of the daemon.
   // Backed by the same db handle as all other stores.
   const heartbeatStore = makeHeartbeatStore(db)
+  // Same db handle / same session_state table the passive -14 path and the
+  // doctor's expiredBots read — used to self-heal (clear) on a successful poll.
+  const sessionStateStore = makeSessionStateStore(db)
 
   // Single combined gate — one config read answers both enabled +
   // not-snoozed, avoiding the prior two-call pattern that loaded
@@ -93,6 +97,7 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
       resolveUserName: (cid) => ilink.resolveUserName(cid),
       log,
       recordHeartbeat: heartbeatStore.recordOk.bind(heartbeatStore),
+      clearExpired: (id: string) => sessionStateStore.clear(id),
     },
     startupDeps: {
       stateDir, db, ilink, log,

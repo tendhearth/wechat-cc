@@ -1054,6 +1054,7 @@ const connectionProbeCmd = defineCommand({
           account: { id, botId: meta.botId, baseUrl: meta.baseUrl, token },
           getUpdates: (baseUrl, tok, timeoutMs) => ilinkGetUpdates(baseUrl, tok, '', timeoutMs),
           markExpired: (accountId, reason) => store ? store.markExpired(accountId, reason) : false,
+          clearExpired: (accountId) => store?.clear(accountId),
           probeTimeoutMs: PROBE_TIMEOUT_MS,
         })
         accounts.push(result)

@@ -309,6 +309,28 @@ describe('startLongPollLoops — recordHeartbeat', () => {
     expect(recordHeartbeat).toHaveBeenCalledWith('A1', expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/))
   })
 
+  it('calls clearExpired(account.id) on a successful poll (self-heal) but not on expired', async () => {
+    const okUpdates = vi.fn()
+      .mockResolvedValueOnce({ updates: [], sync_buf: 'buf1' })
+      .mockImplementation(async () => new Promise(r => setTimeout(() => r({ updates: [] }), 200)))
+    const clearedOk = vi.fn()
+    const h1 = startLongPollLoops({
+      accounts: [baseAcct], onInbound: async () => {}, ilink: { getUpdates: okUpdates }, parse: () => [], clearExpired: clearedOk,
+    })
+    await new Promise(r => setTimeout(r, 30))
+    await h1.stop()
+    expect(clearedOk).toHaveBeenCalledWith('A1')
+
+    const expiredUpdates = vi.fn().mockResolvedValue({ expired: true })
+    const clearedExpired = vi.fn()
+    const h2 = startLongPollLoops({
+      accounts: [baseAcct], onInbound: async () => {}, ilink: { getUpdates: expiredUpdates }, parse: () => [], clearExpired: clearedExpired,
+    })
+    await h2.stop()
+    await new Promise(r => setTimeout(r, 20))
+    expect(clearedExpired).not.toHaveBeenCalled()
+  })
+
   it('does NOT call recordHeartbeat when getUpdates returns expired=true', async () => {
     const getUpdates = vi.fn().mockResolvedValue({ expired: true })
     const recordHeartbeat = vi.fn()
