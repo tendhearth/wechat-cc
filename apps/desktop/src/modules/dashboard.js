@@ -11,18 +11,24 @@
 import { dashboardHero, accountRows, formatRelativeTime, escapeHtml, restartButtonState, deleteAccountConfirmCopy, diagnose } from "../view.js"
 
 export function renderDashboard(report) {
-  const hero = dashboardHero(report.checks.daemon, report.checks.accounts.count)
+  const expiredCount = (report.expiredBots || []).length
+  const hero = dashboardHero({
+    daemonAlive: !!report.checks.daemon.alive,
+    accountCount: report.checks.accounts.count,
+    expiredCount,
+    lastProbe: _lastProbe,
+  })
   const card = document.getElementById("hero-card")
   if (!card) return
   card.classList.toggle("warn", hero.tone !== "ok")
-  document.getElementById("hero-headline").textContent = hero.tone === "ok" ? "AI 正在陪伴中" : "暂时失去连接"
-  document.getElementById("hero-meta").textContent = hero.tone === "ok"
-    ? "一切正常，连接稳定"
-    : "当前连接不稳定，正在尝试重新恢复陪伴"
+  document.getElementById("hero-headline").textContent = hero.headline
+  document.getElementById("hero-meta").textContent = hero.meta
   const stopBtn = document.getElementById("dash-stop")
   const restartBtn = document.getElementById("dash-restart")
-  if (stopBtn) stopBtn.hidden = hero.tone !== "ok"
-  if (restartBtn) restartBtn.hidden = hero.tone === "ok"
+  const rebindBtn = document.getElementById("dash-rebind")
+  if (stopBtn) stopBtn.hidden = hero.state !== "connected"
+  if (restartBtn) restartBtn.hidden = hero.state !== "recovering"
+  if (rebindBtn) rebindBtn.hidden = hero.state !== "taken_over"
 
   const accounts = report.checks.accounts.items || []
   const expired = report.expiredBots || []
@@ -107,7 +113,6 @@ export function renderDashboard(report) {
       `
     }).join("")
   }
-  const expiredCount = expired.length
   const meta = expiredCount > 0
     ? `${accounts.length} 个 · ${expiredCount} 已过期`
     : `${accounts.length} 个 · ${report.checks.access.allowFromCount} 用户允许`
@@ -149,8 +154,13 @@ function demoSubUsers() {
 export function renderRestartButton(report) {
   const btn = document.getElementById("dash-restart")
   if (!btn) return
-  const hero = dashboardHero(report.checks.daemon, report.checks.accounts?.count ?? 0)
-  const showOnlineControls = hero.tone === "ok"
+  const hero = dashboardHero({
+    daemonAlive: !!report.checks.daemon?.alive,
+    accountCount: report.checks.accounts?.count ?? 0,
+    expiredCount: (report.expiredBots || []).length,
+    lastProbe: _lastProbe,
+  })
+  const showOnlineControls = hero.state === "connected"
   const choice = restartButtonState(report.checks.daemon, report.checks.service)
   // Find the label text node (the one with non-whitespace content). The
   // button has whitespace text nodes between the icon span and the label,
@@ -311,6 +321,12 @@ let _cardDiagnosis = null
 // listener state from leaking across test cases.
 let _cardListenersWired = false
 
+// Latest connection-probe verdict ({ state, detail } | null). Set by the
+// 「测试本机连接」button handler (main.js, Task 7), read on the next
+// renderDashboard so the hero keeps the probe result across the 5s doctor tick.
+export let _lastProbe = null
+export function setLastProbe(p) { _lastProbe = p }
+
 // Carries the outcome of the most recent runRestartSequence call into the
 // next restartDaemon (diagnose) invocation. Cleared after consumption so
 // stale signals never linger across multiple clicks.
@@ -462,6 +478,7 @@ export function __resetDiagnoseCardState() {
   _cardDeps = null
   _cardDiagnosis = null
   _lastRestart = null
+  _lastProbe = null
   _providerMenuOpen = false
   _providerSwitchInflight = false
   _providerMenuOutsideHandler = null
