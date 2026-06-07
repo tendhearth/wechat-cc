@@ -186,7 +186,7 @@ export function renderRestartButton(report) {
     if (showOnlineControls) stopBtn.removeAttribute("title")
     else stopBtn.title = "daemon 未运行"
   }
-  btn.hidden = showOnlineControls
+  btn.hidden = hero.state !== "recovering"
 }
 
 export function setPending(msg) {
