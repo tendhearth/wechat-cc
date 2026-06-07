@@ -20,6 +20,8 @@ export interface PollingDeps {
   resolveUserName(chatId: string): string | undefined
   log: (tag: string, line: string) => void
   runPipeline: PipelineRun
+  /** Optional — record a heartbeat on each successful poll. */
+  recordHeartbeat?: (accountId: string, iso: string) => void
 }
 
 export interface PollingLifecycle extends Lifecycle {
@@ -49,6 +51,7 @@ export function registerPolling(deps: PollingDeps): PollingLifecycle {
     parse: deps.parse,
     resolveUserName: deps.resolveUserName,
     log: deps.log,
+    recordHeartbeat: deps.recordHeartbeat,
     onInbound: async (msg) => {
       // CSPRNG-backed 8-char hex; Math.random().toString(16).slice(2,10) can
       // return shorter strings for round-binary outputs (0.5 → "0.8" → "8").

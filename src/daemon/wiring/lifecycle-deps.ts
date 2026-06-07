@@ -14,6 +14,7 @@ import type { StartupSweepDeps } from '../startup-sweeps'
 import { loadCompanionConfig } from '../companion/config'
 import { loadGuardConfig } from '../guard/store'
 import { parseUpdates } from '../poll-loop'
+import { makeHeartbeatStore } from '../connection-heartbeat'
 import type { TickBodies } from './tick-bodies'
 
 export interface LifecycleDepsOpts {
@@ -43,6 +44,10 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
   startupDeps: StartupSweepDeps
 } {
   const { stateDir, db, ilink, accounts, boot, dangerously, log } = opts
+
+  // Heartbeat store — single instance shared for the lifetime of the daemon.
+  // Backed by the same db handle as all other stores.
+  const heartbeatStore = makeHeartbeatStore(db)
 
   // Single combined gate — one config read answers both enabled +
   // not-snoozed, avoiding the prior two-call pattern that loaded
@@ -87,6 +92,7 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
       parse: parseUpdates,
       resolveUserName: (cid) => ilink.resolveUserName(cid),
       log,
+      recordHeartbeat: heartbeatStore.recordOk.bind(heartbeatStore),
     },
     startupDeps: {
       stateDir, db, ilink, log,
