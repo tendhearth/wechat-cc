@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { assertIlinkOk, isRetryableSendError } from './ilink'
+import { assertIlinkOk, isRetryableSendError, ilinkGetUpdates } from './ilink'
 
 describe('assertIlinkOk', () => {
   it('passes when response has no errcode', () => {
@@ -38,6 +38,27 @@ describe('assertIlinkOk', () => {
   it('tolerates missing errmsg with "no errmsg"', () => {
     expect(() => assertIlinkOk('sendmessage', '{"errcode":-14}')).toThrow(/no errmsg/)
   })
+})
+
+it('ilinkGetUpdates passes a custom timeoutMs through to the abort cap', async () => {
+  let seenSignalAbortedFast = false
+  const orig = globalThis.fetch
+  // Fake fetch that never resolves until aborted; record how quickly abort fires.
+  globalThis.fetch = ((_url: string, init: any) =>
+    new Promise((_resolve, reject) => {
+      const start = Date.now()
+      init.signal.addEventListener('abort', () => {
+        seenSignalAbortedFast = Date.now() - start < 1000
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+      })
+    })) as any
+  try {
+    const resp = await ilinkGetUpdates('https://x.test', 'tok', '', 200)
+    expect(resp).toEqual({ ret: 0, msgs: [], get_updates_buf: '' })
+    expect(seenSignalAbortedFast).toBe(true)
+  } finally {
+    globalThis.fetch = orig
+  }
 })
 
 describe('isRetryableSendError', () => {
