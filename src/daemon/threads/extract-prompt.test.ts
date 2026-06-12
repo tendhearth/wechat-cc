@@ -30,4 +30,54 @@ describe('extract prompt', () => {
     const ops = parseExtractResponse('{"ops":[{"op":"touch","id":"thr_1","episode":{"from_ts":"a","to_ts":"b"}},{"op":"update","id":"thr_1","status":"done"}]}')
     expect(ops?.length).toBe(2)
   })
+
+  // ── Edge-case tests (Part A follow-ups) ───────────────────────────────────
+
+  it('brace fallback: parses valid JSON object with prose before and after', () => {
+    const raw = 'Sure, here you go: {"ops":[{"op":"create","title":"测试","summary":"s","facets":["task"],"tags":[],"private":false,"episode":{"from_ts":"a","to_ts":"b"}}]} Hope that helps!'
+    const ops = parseExtractResponse(raw)
+    expect(ops).not.toBeNull()
+    expect(ops?.length).toBe(1)
+    expect(ops?.[0]).toMatchObject({ op: 'create', title: '测试' })
+  })
+
+  it('create with empty facets array → null (schema enforces min(1))', () => {
+    const raw = '{"ops":[{"op":"create","title":"无 facet","summary":"s","facets":[],"tags":[],"private":false,"episode":{"from_ts":"a","to_ts":"b"}}]}'
+    expect(parseExtractResponse(raw)).toBeNull()
+  })
+
+  it('extra unknown keys are stripped from the parsed op (not present in result)', () => {
+    const raw = '{"ops":[{"op":"touch","id":"thr_1","episode":{"from_ts":"a","to_ts":"b"},"unknownField":"should-be-gone"}]}'
+    const ops = parseExtractResponse(raw)
+    expect(ops).not.toBeNull()
+    expect(ops?.[0]).not.toHaveProperty('unknownField')
+  })
+
+  it('update with only id is parsed (documents the no-op contract)', () => {
+    const raw = '{"ops":[{"op":"update","id":"thr_abc"}]}'
+    const ops = parseExtractResponse(raw)
+    expect(ops).not.toBeNull()
+    expect(ops?.length).toBe(1)
+    expect(ops?.[0]).toMatchObject({ op: 'update', id: 'thr_abc' })
+  })
+
+  it('contextTail appears in prompt under the reappearance header', () => {
+    const p = buildExtractPrompt({
+      newMessages: [{ ts: '2026-06-11T02:00:00Z', direction: 'in', text: '排产又提了一次' }],
+      existingThreads: [],
+      tagVocabulary: [],
+      contextTail: [
+        { ts: '2026-06-10T20:00:00Z', direction: 'in', text: '上次说的排产问题' },
+        { ts: '2026-06-10T20:01:00Z', direction: 'out', text: '好的我记下了' },
+      ],
+    })
+    expect(p).toContain('近期历史(仅供判断话题是否"再次出现"')
+    expect(p).toContain('上次说的排产问题')
+    expect(p).toContain('好的我记下了')
+    // contextTail section must appear BEFORE 新增对话片段 section header
+    const tailPos = p.indexOf('近期历史')
+    const newMsgPos = p.indexOf('=== 新增对话片段 ===')
+    expect(tailPos).toBeGreaterThan(-1)
+    expect(tailPos).toBeLessThan(newMsgPos)
+  })
 })

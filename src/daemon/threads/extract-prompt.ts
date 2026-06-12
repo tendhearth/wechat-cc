@@ -16,7 +16,7 @@ import type { Facet, Episode, ThreadStatus } from './store'
 // ── Public types ──────────────────────────────────────────────────────────────
 
 export type ExtractOp =
-  | { op: 'create'; title: string; summary: string; facets: Facet[]; tags: string[]; private: boolean; episode: Episode }
+  | { op: 'create'; title: string; summary: string; facets: [Facet, ...Facet[]]; tags: string[]; private: boolean; episode: Episode }
   | { op: 'update'; id: string; title?: string; summary?: string; facets?: Facet[]; tags?: string[]; private?: boolean; status?: ThreadStatus }
   | { op: 'touch'; id: string; episode: Episode }
 
@@ -26,6 +26,12 @@ export interface ExtractPromptInput {
   newMessages: Array<{ ts: string; direction: 'in' | 'out'; text: string }>
   existingThreads: Array<{ id: string; title: string; facets: Facet[]; tags: string[]; summary: string }>
   tagVocabulary: string[]
+  /**
+   * Optional pre-watermark context tail. When present, rendered before the
+   * 新增对话片段 section so the model can judge whether a topic "reappeared"
+   * (condition D6) without having these messages counted as new ones.
+   */
+  contextTail?: Array<{ ts: string; direction: 'in' | 'out'; text: string }>
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -35,7 +41,7 @@ const TEXT_MAX = 500
 // ── Prompt builder ────────────────────────────────────────────────────────────
 
 export function buildExtractPrompt(input: ExtractPromptInput): string {
-  const { newMessages, existingThreads, tagVocabulary } = input
+  const { newMessages, existingThreads, tagVocabulary, contextTail } = input
 
   // ── Section 1: 任务说明 ────────────────────────────────────────────────────
   const taskDescription = `你是 Claude，负责从一段新增对话片段中提取或更新"话题线索"（threads）。
@@ -113,6 +119,24 @@ export function buildExtractPrompt(input: ExtractPromptInput): string {
       .join('\n')
   }
 
+  // ── Section 4b (optional): context tail ──────────────────────────────────
+  let tailSection: string | null = null
+  if (contextTail && contextTail.length > 0) {
+    tailSection = contextTail
+      .map(m => {
+        const dir = m.direction === 'in' ? '用户' : 'bot'
+        const text = m.text.length > TEXT_MAX
+          ? m.text.slice(0, TEXT_MAX) + '…'
+          : m.text
+        return `[${m.ts}] ${dir}: ${text}`
+      })
+      .join('\n')
+  }
+
+  const tailBlock = tailSection !== null
+    ? `\n## 近期历史(仅供判断话题是否"再次出现",不要为历史内容本身建线索)\n${tailSection}\n`
+    : ''
+
   return `${taskDescription}
 
 === 已有线索列表 ===
@@ -120,7 +144,7 @@ ${threadsSection}
 
 === 已有 tag 词表（请优先复用） ===
 ${vocabSection}
-
+${tailBlock}
 === 新增对话片段 ===
 ${messagesSection}
 
