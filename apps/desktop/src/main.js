@@ -900,6 +900,11 @@ function reopenCurrentSession(deps) {
   if (alias) {
     import("./modules/sessions.js").then(m => m.openProjectDetail(deps, alias, { chatId: detail?.dataset.chat || '' }))
   }
+  // If the dialogue pane is mounted, refresh its timeline so new avatars appear.
+  const dialogueRoot = document.getElementById("dialogue-root")
+  if (dialogueRoot?.dataset.ready === "true") {
+    import("./modules/dialogue-page.js").then(m => m.initDialoguePage(deps))
+  }
 }
 
 function closeLightbox() {

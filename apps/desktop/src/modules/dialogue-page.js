@@ -53,6 +53,9 @@ let oldestLoadedTs = null
 let timelineHasMore = false
 /** Guards concurrent upward-page fetches. */
 let pagingInFlight = false
+/** Monotonically-increasing load counter — each async loader snapshots this
+ *  at entry and bails before any DOM write when a newer load has started. */
+let loadSeq = 0
 
 const VIEWS = /** @type {Array<{id: ViewId, label: string}>} */ ([
   { id: "timeline", label: "时间线" },
@@ -112,13 +115,19 @@ function attachmentUrl(path) {
  * Render an avatar span — custom image when available, else a coloured
  * initial bubble. Reuses the mockup's dialogue-avatar / dialogue-avatar-*
  * classes so the existing CSS keeps working.
- * @param {{ kind: 'user'|'ai', name: string, src?: string|null }} arg0
+ *
+ * Also emits `wechat-avatar` + `data-avatar-key` so the body-level click
+ * handler in main.js can open the avatar-edit modal (same mechanism as the
+ * sessions pane).
+ * @param {{ kind: 'user'|'ai', name: string, src?: string|null, avatarKey?: string|null }} arg0
  */
-function avatarHtml({ kind, name, src }) {
+function avatarHtml({ kind, name, src, avatarKey }) {
+  const keyAttr = avatarKey ? ` data-avatar-key="${escapeHtml(avatarKey)}" title="点击修改头像"` : ""
+  const cls = `dialogue-avatar dialogue-avatar-${kind} wechat-avatar`
   if (src) {
-    return `<span class="dialogue-avatar dialogue-avatar-${kind}"><img src="${escapeHtml(src)}" alt="${escapeHtml(name)}" /></span>`
+    return `<span class="${cls}"${keyAttr}><img src="${escapeHtml(src)}" alt="${escapeHtml(name)}" /></span>`
   }
-  return `<span class="dialogue-avatar dialogue-avatar-${kind}">${escapeHtml(initial(name))}</span>`
+  return `<span class="${cls}"${keyAttr}>${escapeHtml(initial(name))}</span>`
 }
 
 // ── skeleton ───────────────────────────────────────────────────────────
@@ -221,7 +230,7 @@ async function loadChats(deps) {
  * mockup's dialogue-turn markup). command-kind messages render as a muted
  * single-line dialogue-cmd row.
  * @param {Message} m
- * @param {{ userName: string, userAvatar?: string|null, botAvatar?: string|null }} ctx
+ * @param {{ userName: string, userAvatar?: string|null, botAvatar?: string|null, userAvatarKey?: string|null, botAvatarKey?: string|null }} ctx
  */
 function messageHtml(m, ctx) {
   if (m.kind === "command") {
@@ -233,6 +242,7 @@ function messageHtml(m, ctx) {
     kind: isUser ? "user" : "ai",
     name,
     src: isUser ? ctx.userAvatar : ctx.botAvatar,
+    avatarKey: isUser ? ctx.userAvatarKey : ctx.botAvatarKey,
   })
   const author = isUser
     ? `<div class="dialogue-author">${escapeHtml(name)}</div>`
@@ -265,13 +275,16 @@ let loadedMessages = []
  * @param {{ beforeTs?: string, highlightId?: string }} [opts]
  */
 async function loadTimeline(deps, opts = {}) {
+  const seq = ++loadSeq
   const stage = document.getElementById("dialogue-timeline")
   if (!stage) return
   showTimelineView()
   if (!selectedChatId) {
+    if (seq !== loadSeq) return
     stage.innerHTML = `<p class="empty-state">还没有对话。</p>`
     return
   }
+  if (seq !== loadSeq) return
   stage.innerHTML = `<p class="empty-state">加载中…</p>`
 
   const args = ["dialogue", "timeline", "--chat-id", selectedChatId, "--limit", String(TIMELINE_PAGE), "--json"]
@@ -281,9 +294,11 @@ async function loadTimeline(deps, opts = {}) {
   let hasMore = false
   try {
     const resp = /** @type {any} */ (await cli(deps, args))
+    if (seq !== loadSeq) return
     messages = (resp && resp.messages) || []
     hasMore = !!(resp && resp.hasMore)
   } catch (err) {
+    if (seq !== loadSeq) return
     stage.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
     return
   }
@@ -303,10 +318,13 @@ async function loadTimeline(deps, opts = {}) {
     selectedChatId ? avatarInfo(deps, selectedChatId) : Promise.resolve(null),
     avatarInfo(deps, "claude"),
   ])
+  if (seq !== loadSeq) return
   const ctx = {
     userName,
     userAvatar: userInfo?.exists ? `${attachmentUrl(userInfo.path)}&v=${Date.now()}` : null,
     botAvatar: botInfo?.exists ? `${attachmentUrl(botInfo.path)}&v=${Date.now()}` : null,
+    userAvatarKey: selectedChatId,
+    botAvatarKey: "claude",
   }
 
   stage.innerHTML = messages.map(m => messageHtml(m, ctx)).join("")
@@ -417,6 +435,7 @@ async function switchView(deps, view) {
  * @param {Deps} deps @param {'task'|'knowledge'|'life'} facet
  */
 async function loadThreads(deps, facet) {
+  const seq = ++loadSeq
   const groups = document.getElementById("dialogue-groups")
   if (!groups) return
   // Facet views show the card list in the sidebar; the stage keeps the
@@ -428,9 +447,11 @@ async function loadThreads(deps, facet) {
   if (detail) detail.hidden = true
 
   if (!selectedChatId) {
+    if (seq !== loadSeq) return
     groups.innerHTML = `<p class="empty-state">还没有对话。</p>`
     return
   }
+  if (seq !== loadSeq) return
   groups.innerHTML = `<p class="empty-state">加载中…</p>`
 
   const args = ["dialogue", "threads", "--chat-id", selectedChatId, "--facet", facet, "--json"]
@@ -440,8 +461,10 @@ async function loadThreads(deps, facet) {
   let threads = []
   try {
     const resp = /** @type {any} */ (await cli(deps, args))
+    if (seq !== loadSeq) return
     threads = (resp && resp.threads) || []
   } catch (err) {
+    if (seq !== loadSeq) return
     groups.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
     return
   }
@@ -490,18 +513,22 @@ function threadCardHtml(t) {
  * @param {Deps} deps @param {string} threadId
  */
 async function openThreadDetail(deps, threadId) {
+  const seq = ++loadSeq
   const detail = document.getElementById("dialogue-thread-detail")
   if (!detail) return
   showThreadDetailView()
+  if (seq !== loadSeq) return
   detail.innerHTML = `<p class="empty-state">加载中…</p>`
 
   /** @type {{ thread: Thread, episodes: Episode[] }|null} */
   let data = null
   try {
     const resp = /** @type {any} */ (await cli(deps, ["dialogue", "thread-detail", threadId, "--json"]))
+    if (seq !== loadSeq) return
     if (resp && resp.ok === false) { data = null }
     else data = resp
   } catch (err) {
+    if (seq !== loadSeq) return
     detail.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
     return
   }
@@ -516,10 +543,13 @@ async function openThreadDetail(deps, threadId) {
     selectedChatId ? avatarInfo(deps, selectedChatId) : Promise.resolve(null),
     avatarInfo(deps, "claude"),
   ])
+  if (seq !== loadSeq) return
   const ctx = {
     userName,
     userAvatar: userInfo?.exists ? `${attachmentUrl(userInfo.path)}&v=${Date.now()}` : null,
     botAvatar: botInfo?.exists ? `${attachmentUrl(botInfo.path)}&v=${Date.now()}` : null,
+    userAvatarKey: selectedChatId,
+    botAvatarKey: "claude",
   }
 
   const lastEpisode = data.episodes[data.episodes.length - 1] || null
@@ -611,6 +641,7 @@ let searchTimer = null
  * @param {Deps} deps @param {string} query
  */
 async function runSearch(deps, query) {
+  const seq = ++loadSeq
   const trimmed = (query || "").trim()
   const stage = document.getElementById("dialogue-timeline")
   if (!stage) return
@@ -621,6 +652,7 @@ async function runSearch(deps, query) {
     return
   }
   if (!selectedChatId) return
+  if (seq !== loadSeq) return
   showTimelineView()
   const groups = document.getElementById("dialogue-groups")
   if (groups) groups.hidden = true
@@ -630,11 +662,14 @@ async function runSearch(deps, query) {
   let hits = []
   try {
     const resp = /** @type {any} */ (await cli(deps, ["dialogue", "search", "--chat-id", selectedChatId, trimmed, "--json"]))
+    if (seq !== loadSeq) return
     hits = (resp && resp.hits) || []
   } catch (err) {
+    if (seq !== loadSeq) return
     stage.innerHTML = `<p class="empty-state">搜索失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
     return
   }
+  if (seq !== loadSeq) return
   if (hits.length === 0) {
     stage.innerHTML = `<p class="empty-state">没找到「${escapeHtml(trimmed)}」。</p>`
     return
