@@ -1817,6 +1817,87 @@ const agentCmd = defineCommand({
   },
 })
 
+// ── dialogue — backfill + (future) query commands ────────────────────
+//
+// Task 5: `wechat-cc dialogue backfill` imports agent session JSONLs into
+// the messages table. Task 9 will add query/search subcommands here.
+
+const dialogueBackfillCmd = defineCommand({
+  meta: { name: 'backfill', description: 'Import history from agent session JSONLs into the messages table' },
+  args: {
+    'chat-id': { type: 'string', description: 'Attribute history to this chat (default: sole admin in access.json)' },
+    'dry-run': { type: 'boolean', default: false, description: 'Scan and count without writing' },
+  },
+  async run({ args }) {
+    // Resolve chat-id: use --chat-id if provided, else sole admin from access.json
+    let chatId = args['chat-id']
+    if (!chatId) {
+      const { readFileSync } = await import('node:fs')
+      const accessPath = join(STATE_DIR, 'access.json')
+      let access: { admins?: string[]; allowFrom?: string[] } = {}
+      try {
+        access = JSON.parse(readFileSync(accessPath, 'utf8'))
+      } catch {
+        // file missing or corrupt — will fail below
+      }
+      const admins = access.admins ?? []
+      if (admins.length === 1) {
+        chatId = admins[0]!
+      } else {
+        console.error(
+          admins.length === 0
+            ? 'No admins in access.json — pass --chat-id explicitly'
+            : `Multiple admins in access.json (${admins.join(', ')}) — pass --chat-id explicitly`,
+        )
+        process.exit(1)
+      }
+    }
+
+    const dryRun = Boolean(args['dry-run'])
+    const { homedir } = await import('node:os')
+    const home = homedir()
+
+    // Claude sessions root: walk all project dirs under ~/.claude/projects/
+    // and collect every *.jsonl file, passing each directory to backfillFromClaudeJsonl.
+    // (backfillFromClaudeJsonl accepts a directory of *.jsonl files — so we
+    // pass the whole ~/.claude/projects/ tree one project-dir at a time.)
+    const { backfillFromClaudeJsonl, backfillFromCodexJsonl } = await import('./src/cli/dialogue')
+    const { existsSync, readdirSync } = await import('node:fs')
+    const { openWechatDb } = await import('./src/lib/db')
+    const db = openWechatDb(STATE_DIR)
+
+    let claudeScanned = 0
+    let claudeInserted = 0
+    const projectsRoot = join(home, '.claude', 'projects')
+    if (existsSync(projectsRoot)) {
+      for (const entry of readdirSync(projectsRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue
+        const dirPath = join(projectsRoot, entry.name)
+        const r = await backfillFromClaudeJsonl(db, dirPath, chatId, dryRun)
+        claudeScanned += r.scanned
+        claudeInserted += r.inserted
+      }
+    }
+
+    const codexRoot = join(home, '.codex', 'sessions')
+    const { scanned: codexScanned, inserted: codexInserted } =
+      await backfillFromCodexJsonl(db, codexRoot, chatId, dryRun)
+
+    const result = {
+      chatId,
+      dryRun,
+      claude: { scanned: claudeScanned, inserted: claudeInserted },
+      codex: { scanned: codexScanned, inserted: codexInserted },
+    }
+    console.log(JSON.stringify(result, null, 2))
+  },
+})
+
+const dialogueCmd = defineCommand({
+  meta: { name: 'dialogue', description: 'Dialogue page data — backfill (queries come in a later task)' },
+  subCommands: { backfill: dialogueBackfillCmd },
+})
+
 // Subcommands literal first → both `cittyRoot.subCommands` and
 // `MIGRATED_COMMANDS` derive from this single source of truth. Adding a new
 // citty subcommand only requires touching this object — the dispatch set
@@ -1859,6 +1940,8 @@ const SUBCOMMANDS = {
   'mcp-server': mcpServerCmd,
   // A2A agent management (Task 7).
   agent: agentCmd,
+  // Dialogue backfill (Task 5). Query subcommands arrive in Task 9.
+  dialogue: dialogueCmd,
 } as const
 
 export const cittyRoot = defineCommand({
