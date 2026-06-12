@@ -1822,6 +1822,87 @@ const agentCmd = defineCommand({
 // Task 5: `wechat-cc dialogue backfill` imports agent session JSONLs into
 // the messages table. Task 9 will add query/search subcommands here.
 
+const dialogueTimelineCmd = defineCommand({
+  meta: { name: 'timeline', description: 'Paged conversation timeline for a chat' },
+  args: {
+    'chat-id': { type: 'string', required: true, description: 'WeChat chat id' },
+    limit: { type: 'string', description: 'page size (default 100)' },
+    before: { type: 'string', description: 'page upward: only messages strictly before this ISO ts' },
+    json: { type: 'boolean', default: false },
+  },
+  async run({ args }) {
+    const limitNum = args.limit ? Number.parseInt(args.limit, 10) : 100
+    const limit = Number.isFinite(limitNum) && limitNum > 0 ? limitNum : 100
+    const { dialogueTimeline } = await import('./src/cli/dialogue')
+    const { openWechatDb } = await import('./src/lib/db')
+    const db = openWechatDb(STATE_DIR)
+    const result = await dialogueTimeline(db, args['chat-id'], {
+      limit,
+      ...(args.before ? { beforeTs: args.before } : {}),
+    })
+    console.log(JSON.stringify(result))
+  },
+})
+
+const dialogueThreadsCmd = defineCommand({
+  meta: { name: 'threads', description: 'List topic threads for a chat' },
+  args: {
+    'chat-id': { type: 'string', required: true, description: 'WeChat chat id' },
+    facet: { type: 'string', description: 'Filter by facet: task | knowledge | life' },
+    'include-private': { type: 'boolean', default: false, description: 'Include private threads (default false)' },
+    json: { type: 'boolean', default: false },
+  },
+  async run({ args }) {
+    const { dialogueThreads } = await import('./src/cli/dialogue')
+    const { openWechatDb } = await import('./src/lib/db')
+    const db = openWechatDb(STATE_DIR)
+    const facetArg = args.facet as 'task' | 'knowledge' | 'life' | undefined
+    const result = await dialogueThreads(db, args['chat-id'], {
+      ...(facetArg ? { facet: facetArg } : {}),
+      includePrivate: Boolean(args['include-private']),
+    })
+    console.log(JSON.stringify(result))
+  },
+})
+
+const dialogueSearchCmd = defineCommand({
+  meta: { name: 'search', description: 'Substring search over messages for a chat' },
+  args: {
+    'chat-id': { type: 'string', required: true, description: 'WeChat chat id' },
+    query: { type: 'positional', required: true, description: 'Search query', valueHint: 'query' },
+    limit: { type: 'string', description: 'Max hits (default 50)' },
+    json: { type: 'boolean', default: false },
+  },
+  async run({ args }) {
+    const limitNum = args.limit ? Number.parseInt(args.limit, 10) : 50
+    const limit = Number.isFinite(limitNum) && limitNum > 0 ? limitNum : 50
+    const { dialogueSearch } = await import('./src/cli/dialogue')
+    const { openWechatDb } = await import('./src/lib/db')
+    const db = openWechatDb(STATE_DIR)
+    const result = await dialogueSearch(db, args['chat-id'], args.query, limit)
+    console.log(JSON.stringify(result))
+  },
+})
+
+const dialogueThreadDetailCmd = defineCommand({
+  meta: { name: 'thread-detail', description: 'Full thread detail with per-episode messages' },
+  args: {
+    id: { type: 'positional', required: true, description: 'Thread id (thr_…)', valueHint: 'id' },
+    json: { type: 'boolean', default: false },
+  },
+  async run({ args }) {
+    const { dialogueThreadDetail } = await import('./src/cli/dialogue')
+    const { openWechatDb } = await import('./src/lib/db')
+    const db = openWechatDb(STATE_DIR)
+    const result = await dialogueThreadDetail(db, args.id)
+    if (result === null) {
+      console.log(JSON.stringify({ ok: false, error: `thread not found: ${args.id}` }))
+      process.exit(1)
+    }
+    console.log(JSON.stringify(result))
+  },
+})
+
 const dialogueBackfillCmd = defineCommand({
   meta: { name: 'backfill', description: 'Import history from agent session JSONLs into the messages table' },
   args: {
@@ -1894,8 +1975,14 @@ const dialogueBackfillCmd = defineCommand({
 })
 
 const dialogueCmd = defineCommand({
-  meta: { name: 'dialogue', description: 'Dialogue page data — backfill (queries come in a later task)' },
-  subCommands: { backfill: dialogueBackfillCmd },
+  meta: { name: 'dialogue', description: 'Dialogue page data — backfill + query commands' },
+  subCommands: {
+    backfill: dialogueBackfillCmd,
+    timeline: dialogueTimelineCmd,
+    threads: dialogueThreadsCmd,
+    search: dialogueSearchCmd,
+    'thread-detail': dialogueThreadDetailCmd,
+  },
 })
 
 // Subcommands literal first → both `cittyRoot.subCommands` and

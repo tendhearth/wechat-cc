@@ -27,6 +27,7 @@ import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Db } from '../lib/db'
 import { makeMessagesStore, type MessageRecord } from '../daemon/messages/store'
+import { makeThreadsStore, type ThreadRecord, type Facet } from '../daemon/threads/store'
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -228,6 +229,127 @@ export async function backfillFromCodexJsonl(
     }
   }
   return { scanned, inserted }
+}
+
+// ── Query functions ───────────────────────────────────────────────────
+
+export interface TimelineOpts {
+  limit: number
+  /** Page upward: only messages strictly before this ISO ts. Omit = newest page. */
+  beforeTs?: string
+}
+
+export interface TimelineResult {
+  messages: MessageRecord[]
+  hasMore: boolean
+}
+
+/**
+ * Paged conversation timeline for a chat.
+ *
+ * Fetches `limit+1` rows from the messages store to detect whether there is a
+ * prior page, then returns at most `limit` rows. hasMore=true means the caller
+ * can page further by passing `messages[0].ts` as the next `beforeTs`.
+ */
+export async function dialogueTimeline(db: Db, chatId: string, opts: TimelineOpts): Promise<TimelineResult> {
+  const store = makeMessagesStore(db)
+  // Fetch one extra to detect hasMore without a separate COUNT query.
+  const rows = await store.listRange(chatId, { limit: opts.limit + 1, beforeTs: opts.beforeTs })
+  const hasMore = rows.length > opts.limit
+  // rows are in ascending order (newest page = last N rows, oldest = first N).
+  // We need to drop the extra row; for upward paging `listRange` with
+  // limit+1 returns the `limit+1` oldest matching rows ascending — so the
+  // first row is the overflow indicator.
+  const messages = hasMore ? rows.slice(1) : rows
+  return { messages, hasMore }
+}
+
+export interface ThreadsOpts {
+  facet?: Facet
+  includePrivate: boolean
+}
+
+export interface ThreadsResult {
+  threads: ThreadRecord[]
+}
+
+/**
+ * List topic threads for a chat, with optional facet filter and private exclusion.
+ *
+ * Per-chat thread lists are small so in-JS filtering over store.list() is used
+ * (simpler than json_each SQL, per task spec).
+ */
+export async function dialogueThreads(db: Db, chatId: string, opts: ThreadsOpts): Promise<ThreadsResult> {
+  const store = makeThreadsStore(db)
+  let threads = await store.list(chatId)
+  if (!opts.includePrivate) {
+    threads = threads.filter(t => !t.private)
+  }
+  if (opts.facet !== undefined) {
+    threads = threads.filter(t => t.facets.includes(opts.facet!))
+  }
+  return { threads }
+}
+
+export interface SearchResult {
+  hits: MessageRecord[]
+}
+
+/**
+ * Substring search over messages for a chat.
+ */
+export async function dialogueSearch(db: Db, chatId: string, q: string, limit: number): Promise<SearchResult> {
+  const store = makeMessagesStore(db)
+  const hits = await store.search(chatId, q, limit)
+  return { hits }
+}
+
+export interface EpisodeWithMessages {
+  from_ts: string
+  to_ts: string
+  messages: MessageRecord[]
+}
+
+export interface ThreadDetailResult {
+  thread: ThreadRecord
+  episodes: EpisodeWithMessages[]
+}
+
+/**
+ * Full thread detail: the thread record plus per-episode messages.
+ *
+ * Returns null when the thread id is unknown.
+ * Each episode's messages are fetched using a range query (ts BETWEEN from_ts AND to_ts),
+ * capped at 200 rows per episode.
+ */
+export async function dialogueThreadDetail(db: Db, id: string): Promise<ThreadDetailResult | null> {
+  const tStore = makeThreadsStore(db)
+  const thread = await tStore.get(id)
+  if (!thread) return null
+
+  const mStore = makeMessagesStore(db)
+  const MAX_PER_EPISODE = 200
+
+  const episodes: EpisodeWithMessages[] = []
+  for (const ep of thread.episodes) {
+    // listRange with beforeTs gives messages strictly < beforeTs, ascending.
+    // We want messages where ts >= from_ts AND ts <= to_ts. Use a direct
+    // SQL query approach: fetch messages with ts <= to_ts using beforeTs just
+    // above to_ts, then filter by >= from_ts in JS.
+    // To capture to_ts inclusive we need ts < (to_ts + 1ms). ISO strings are
+    // lexicographically comparable, so we add 1ms to to_ts.
+    const toTsMs = new Date(ep.to_ts).getTime()
+    const exclusiveAfter = new Date(toTsMs + 1).toISOString()
+    const rows = await mStore.listRange(thread.chatId, {
+      limit: MAX_PER_EPISODE,
+      beforeTs: exclusiveAfter,
+    })
+    // Filter to >= from_ts in JS; listRange returns ascending order.
+    const messages = rows.filter(m => m.ts >= ep.from_ts)
+    episodes.push({ from_ts: ep.from_ts, to_ts: ep.to_ts, messages })
+  }
+
+  return { thread, episodes }
 }
 
 // ── Private helpers ───────────────────────────────────────────────────
