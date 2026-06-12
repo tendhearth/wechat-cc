@@ -1674,6 +1674,9 @@ input { font: inherit; color: inherit; }
   position: relative;
   z-index: 15;
   padding: 28px 36px 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   background: #fff;
   border-bottom: 1px solid rgba(0, 0, 0, .04);
 }
@@ -3840,6 +3843,52 @@ input { font: inherit; color: inherit; }
   color: var(--ink-3);
   margin: 8px 0 0;
   line-height: 1.5;
+}
+
+/* ── 项目管理 list (settings drawer) ──────────────────────────────────────── */
+.projects-admin-list {
+  display: grid;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.project-admin-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-radius: 7px;
+}
+.project-admin-row:hover { background: var(--paper-2); }
+.project-admin-star {
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-3);
+  text-align: center;
+}
+.project-admin-row.is-favorite .project-admin-star { color: var(--amber, #d79020); }
+.project-admin-alias {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--ink);
+}
+.project-admin-del {
+  display: grid;
+  place-items: center;
+  color: var(--ink-3);
+  border-radius: 6px;
+  padding: 4px;
+}
+.project-admin-del:hover { color: var(--red, #d9433a); background: var(--paper-2); }
+.project-admin-del.is-confirming {
+  color: var(--red, #d9433a);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 /* ── A2A Agents tab ──────────────────────────────────────────────────────── */

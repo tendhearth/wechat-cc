@@ -1047,8 +1047,12 @@ export async function avatarInfo(deps, key) {
 // asset protocol does this via convertFileSrc; in the dev shim we route
 // through a /attachment endpoint. Keep both paths stub-tolerant — if
 // neither is available, the <img> fails gracefully (broken icon).
+//
+// Exported so dialogue-page.js shares the SAME implementation — production
+// Tauri has NO /attachment HTTP handler, so a bare /attachment builder
+// would silently break custom avatars in the packaged app.
 /** @param {string} path @returns {string} */
-function attachmentUrl(path) {
+export function attachmentUrl(path) {
   const safePath = String(path || '')
   const conv = typeof window !== 'undefined' && (/** @type {any} */ (window)).__TAURI__?.core?.convertFileSrc
   if (typeof conv === 'function') {
@@ -1258,6 +1262,22 @@ export async function deleteProject(deps) {
     btn.textContent = '删除'
     btn.classList.remove('is-confirming')
   }, 3000)
+}
+
+/**
+ * Delete a project session by alias — alias-parameterized variant of
+ * deleteProject() that doesn't depend on the (now-removed) #sessions-detail
+ * DOM. Used by the settings drawer's 项目管理 list.
+ * @param {Deps} deps
+ * @param {string} alias
+ * @param {string|null} [chatId]
+ * @returns {Promise<void>}
+ */
+export async function deleteProjectByAlias(deps, alias, chatId = null) {
+  if (!alias) return
+  await /** @type {Promise<SessionsDelete>} */ (
+    deps.invoke("wechat_cli_json", { args: withChat(["sessions", "delete", alias, "--json"], chatId) })
+  )
 }
 
 // Auto-refresh tick while sessions pane is active. 30s — slower than logs

@@ -22,6 +22,11 @@
 import { escapeHtml } from "../view.js"
 import { formatRelativeTimeShort } from "./observations.js"
 import { icon } from "./icons.js"
+// Shared, Tauri-safe helpers — single source of truth lives in sessions.js.
+// attachmentUrl routes through convertFileSrc in packaged Tauri (no
+// /attachment HTTP handler exists there); avatarInitial / avatarInfo were
+// duplicated here before this refactor.
+import { attachmentUrl, avatarInitial, avatarInfo } from "./sessions.js"
 
 /**
  * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> }} Deps
@@ -73,14 +78,6 @@ async function cli(deps, args) {
   return deps.invoke("wechat_cli_json", { args })
 }
 
-/** Initial-letter for an avatar bubble. @param {string|null|undefined} name */
-function initial(name) {
-  const t = String(name || "").trim()
-  if (!t) return "?"
-  const ch = t.charAt(0)
-  return /[a-zA-Z]/.test(ch) ? ch.toUpperCase() : ch
-}
-
 /**
  * Human-facing name for the inbound (direction 'in') author of a chat.
  * Falls back to '我' when the chat has no resolved display name.
@@ -89,26 +86,6 @@ function initial(name) {
 function humanName(chatId) {
   if (chatId && chatNames[chatId]) return chatNames[chatId]
   return "我"
-}
-
-/**
- * Look up a custom avatar (existence + path) via the daemon. Returns null on
- * any failure so the caller falls back to a letter bubble. Mirrors
- * sessions.js avatarInfo.
- * @param {Deps} deps @param {string} key
- * @returns {Promise<{exists:boolean,path:string}|null>}
- */
-async function avatarInfo(deps, key) {
-  try {
-    const r = /** @type {any} */ (await cli(deps, ["avatar", "info", key, "--json"]))
-    if (r && r.ok) return { exists: !!r.exists, path: String(r.path || "") }
-    return null
-  } catch { return null }
-}
-
-/** @param {string} path */
-function attachmentUrl(path) {
-  return "/attachment?path=" + encodeURIComponent(String(path || ""))
 }
 
 /**
@@ -127,7 +104,7 @@ function avatarHtml({ kind, name, src, avatarKey }) {
   if (src) {
     return `<span class="${cls}"${keyAttr}><img src="${escapeHtml(src)}" alt="${escapeHtml(name)}" /></span>`
   }
-  return `<span class="${cls}"${keyAttr}>${escapeHtml(initial(name))}</span>`
+  return `<span class="${cls}"${keyAttr}>${escapeHtml(avatarInitial(name))}</span>`
 }
 
 // ── skeleton ───────────────────────────────────────────────────────────
@@ -151,6 +128,9 @@ function renderSkeleton(root) {
         <div class="dialogue-document-head">
           <button class="dialogue-action-pill" id="dialogue-export" type="button">
             ${icon("download-01", { size: 16 })}<span>导出 Markdown</span>
+          </button>
+          <button class="dialogue-action-pill" id="dialogue-refresh" type="button" aria-label="刷新" title="刷新">
+            ${icon("refresh", { size: 16 })}<span>刷新</span>
           </button>
         </div>
         <div id="dialogue-timeline" class="dialogue-scroll"></div>
@@ -358,12 +338,21 @@ function wireUpwardPaging(deps, stage, ctx) {
         oldestLoadedTs = older[0]?.ts ?? oldestLoadedTs
         loadedMessages = [...older, ...loadedMessages]
         stage.insertAdjacentHTML("afterbegin", older.map(m => messageHtml(m, ctx)).join(""))
-        // Preserve scroll position so the view doesn't jump.
-        requestAnimationFrame(() => { stage.scrollTop = stage.scrollHeight - prevHeight })
+        // Preserve scroll position so the view doesn't jump, then release the
+        // paging lock INSIDE the rAF — clearing it before the queued frame
+        // ran let a rapid second scroll fire another fetch that mutated
+        // scrollHeight before this correction applied, snapping the view.
+        requestAnimationFrame(() => {
+          stage.scrollTop = stage.scrollHeight - prevHeight
+          pagingInFlight = false
+        })
+      } else {
+        // Nothing prepended — no rAF queued, so release here.
+        pagingInFlight = false
       }
     } catch (err) {
       console.error("dialogue upward paging failed", err)
-    } finally {
+      // Safety clear so an error never wedges paging permanently.
       pagingInFlight = false
     }
   })
@@ -427,6 +416,65 @@ async function switchView(deps, view) {
   await loadThreads(deps, view)
 }
 
+// ── refresh + auto-refresh ─────────────────────────────────────────────
+
+/** How close to the bottom (px) counts as "at bottom" for auto-refresh. */
+const SCROLL_BOTTOM_THRESHOLD = 80
+
+/**
+ * Re-run the current view's loader. `opts.auto` marks an auto-refresh tick:
+ * it skips while an upward-page fetch is in flight, and for the timeline
+ * only refreshes when the user is scrolled near the bottom (so we don't
+ * yank them away from older messages they're reading). Manual refresh
+ * (the button) always reloads.
+ * @param {Deps} deps @param {{ auto?: boolean }} [opts]
+ */
+async function refreshCurrentView(deps, opts = {}) {
+  if (opts.auto && pagingInFlight) return
+  if (currentView === "timeline") {
+    if (opts.auto) {
+      const stage = document.getElementById("dialogue-timeline")
+      // Skip when the search hit list is showing — a tick would clobber it.
+      const searchInput = /** @type {HTMLInputElement|null} */ (document.getElementById("dialogue-search"))
+      if ((searchInput?.value?.trim().length ?? 0) >= 2) return
+      if (stage) {
+        const distFromBottom = stage.scrollHeight - stage.scrollTop - stage.clientHeight
+        if (distFromBottom > SCROLL_BOTTOM_THRESHOLD) return
+      }
+    }
+    await loadTimeline(deps)
+    return
+  }
+  await loadThreads(deps, /** @type {any} */ (currentView))
+}
+
+/** @type {ReturnType<typeof setInterval>|null} */
+let dialogueAutoTimer = null
+
+/**
+ * Start the 30s auto-refresh tick. Only re-runs the current view's loader
+ * while the dialogue pane is actually visible (the pane is the
+ * data-pane="sessions" article). Idempotent — a second call is a no-op.
+ * @param {Deps} deps @param {number} [intervalMs]
+ */
+function startDialogueAutoRefresh(deps, intervalMs = 30000) {
+  if (dialogueAutoTimer) return
+  dialogueAutoTimer = setInterval(() => {
+    const pane = document.querySelector('.dash-pane[data-pane="sessions"]')
+    // Pane hidden (user switched away but stop somehow missed) → bail.
+    if (pane instanceof HTMLElement && pane.hidden) return
+    refreshCurrentView(deps, { auto: true }).catch(err => console.error("dialogue auto-refresh failed", err))
+  }, intervalMs)
+}
+
+/** Stop the auto-refresh tick. Called from main.js on pane switch-away. */
+export function stopDialogueAutoRefresh() {
+  if (dialogueAutoTimer) {
+    clearInterval(dialogueAutoTimer)
+    dialogueAutoTimer = null
+  }
+}
+
 // ── facet lenses (thread cards) ────────────────────────────────────────
 
 /**
@@ -469,14 +517,24 @@ async function loadThreads(deps, facet) {
     return
   }
 
-  // The lock affordance: shown when there's something private to unlock and
-  // we haven't unlocked yet. Hidden entirely when no lock is configured.
-  const lockRow = (!unlocked && !noLockConfigured)
-    ? `<button class="dialogue-locked-row" data-action="unlock">
-        <span>${icon("square-lock-01", { size: 20 })}</span>
-        <span>解锁私密话题</span>
-      </button>`
-    : ""
+  // The lock affordance: three states (hidden entirely when no lock is
+  // configured):
+  //   • not unlocked → "解锁私密话题" (opens the passphrase dialog)
+  //   • unlocked     → "重新锁定" (re-arms the session lock so private
+  //                     threads disappear again — mirrors the data-lock
+  //                     pattern of the original mockup)
+  let lockRow = ""
+  if (!noLockConfigured) {
+    lockRow = unlocked
+      ? `<button class="dialogue-locked-row" data-action="relock">
+          <span>${icon("square-unlock-01", { size: 20 })}</span>
+          <span>重新锁定</span>
+        </button>`
+      : `<button class="dialogue-locked-row" data-action="unlock">
+          <span>${icon("square-lock-01", { size: 20 })}</span>
+          <span>解锁私密话题</span>
+        </button>`
+  }
 
   if (threads.length === 0) {
     groups.innerHTML = `<section class="dialogue-group"><div class="dialogue-group-items">${
@@ -703,18 +761,71 @@ async function openHit(deps, hitId, hitTs) {
 
 // ── export ─────────────────────────────────────────────────────────────
 
+/** Hard cap on exported messages — guards against runaway loops / huge chats. */
+const EXPORT_MAX_MESSAGES = 5000
+
 /**
- * Build a Markdown transcript from the currently-loaded timeline page(s)
- * and trigger a download (Tauri save_text_file, else blob fallback — same
- * approach as sessions.js exportProjectMarkdown).
+ * Page through the FULL timeline for the selected chat (oldest→newest),
+ * independent of what's currently loaded in the DOM. Loops `dialogue
+ * timeline --before` until hasMore=false (or the cap is hit). Returns
+ * messages in ascending ts order.
+ * @param {Deps} deps @param {string} chatId
+ * @returns {Promise<Message[]>}
+ */
+async function fetchFullTimeline(deps, chatId) {
+  /** @type {Message[]} */
+  let all = []
+  /** @type {string|undefined} */
+  let beforeTs = undefined
+  // Loop newest-page → older-page; prepend each older page.
+  for (let guard = 0; guard < 1000; guard++) {
+    const args = ["dialogue", "timeline", "--chat-id", chatId, "--limit", String(TIMELINE_PAGE), "--json"]
+    if (beforeTs) args.push("--before", beforeTs)
+    const resp = /** @type {any} */ (await cli(deps, args))
+    const page = /** @type {Message[]} */ ((resp && resp.messages) || [])
+    const hasMore = !!(resp && resp.hasMore)
+    if (page.length === 0) break
+    all = [...page, ...all]
+    if (all.length >= EXPORT_MAX_MESSAGES) {
+      console.warn(`dialogue export: hit ${EXPORT_MAX_MESSAGES}-message cap; transcript truncated to the newest messages`)
+      all = all.slice(-EXPORT_MAX_MESSAGES)
+      break
+    }
+    if (!hasMore) break
+    beforeTs = page[0]?.ts
+    if (!beforeTs) break
+  }
+  return all
+}
+
+/**
+ * Build a Markdown transcript from the FULL timeline (paged independently
+ * of loadedMessages) and trigger a download (Tauri save_text_file, else
+ * blob fallback — same approach as sessions.js exportProjectMarkdown).
  * @param {Deps} deps
  */
 async function exportMarkdown(deps) {
-  if (!selectedChatId || loadedMessages.length === 0) return
-  const name = humanName(selectedChatId)
+  if (!selectedChatId) return
+  const exportBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById("dialogue-export"))
+  const chatId = selectedChatId
+  let messages
+  if (exportBtn) exportBtn.disabled = true
+  try {
+    messages = await fetchFullTimeline(deps, chatId)
+  } catch (err) {
+    console.error("dialogue export: timeline fetch failed", err)
+    alert(`导出失败：${err instanceof Error ? err.message : String(err)}`)
+    if (exportBtn) exportBtn.disabled = false
+    return
+  }
+  if (messages.length === 0) {
+    if (exportBtn) exportBtn.disabled = false
+    return
+  }
+  const name = humanName(chatId)
   const header = `# 对话 — ${name}\n\n`
   const lines = []
-  for (const m of loadedMessages) {
+  for (const m of messages) {
     if (m.kind === "command") continue
     if (m.direction === "in") {
       lines.push(m.text.split("\n").map(l => `> ${l}`).join("\n"))
@@ -740,6 +851,8 @@ async function exportMarkdown(deps) {
   } catch (err) {
     console.error("dialogue export failed", err)
     alert(`导出失败：${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    if (exportBtn) exportBtn.disabled = false
   }
 }
 
@@ -773,6 +886,16 @@ function wireEvents(root, deps) {
     if (!target) return
     const unlockBtn = target.closest("[data-action='unlock']")
     if (unlockBtn) { openPrivacyDialog(); return }
+    const relockBtn = target.closest("[data-action='relock']")
+    if (relockBtn) {
+      // Re-arm the session lock and re-render the current facet so private
+      // threads drop out again.
+      unlocked = false
+      if (currentView !== "timeline") {
+        loadThreads(deps, /** @type {any} */ (currentView)).catch(err => console.error("dialogue relock reload failed", err))
+      }
+      return
+    }
     const card = target.closest("[data-thread]")
     if (card instanceof HTMLElement && card.dataset.thread) {
       openThreadDetail(deps, card.dataset.thread).catch(err => console.error("dialogue thread detail failed", err))
@@ -814,6 +937,12 @@ function wireEvents(root, deps) {
     exportMarkdown(deps).catch(err => console.error("dialogue export failed", err))
   })
 
+  // Manual refresh — always reloads the current view (ignores the
+  // scroll-near-bottom guard the auto-tick uses).
+  root.querySelector("#dialogue-refresh")?.addEventListener("click", () => {
+    refreshCurrentView(deps).catch(err => console.error("dialogue refresh failed", err))
+  })
+
   // Privacy dialog: close / submit.
   const modal = root.querySelector("#privacy-dialog")
   modal?.addEventListener("click", (ev) => {
@@ -839,6 +968,9 @@ function wireEvents(root, deps) {
 export function initDialoguePage(deps) {
   const root = document.getElementById("dialogue-root")
   if (!root) return
+  // (Re)start the 30s auto-refresh tick on every entry into the pane.
+  // main.js stops it on switch-away via stopDialogueAutoRefresh().
+  startDialogueAutoRefresh(deps)
   if (root.dataset.ready === "true") {
     // Already mounted — just refresh the current view so re-entering the
     // pane picks up new messages.

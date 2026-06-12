@@ -785,6 +785,20 @@ Bun.serve({
             return Response.json({ result: { projects } })
           }
 
+          // sessions delete <alias> [--chat C] --json — used by the settings
+          // drawer 项目管理 list. Drop the matching session(s) from mock state.
+          if (
+            dryRun &&
+            body.command === 'wechat_cli_json' &&
+            cliArgs[0] === 'sessions' &&
+            cliArgs[1] === 'delete'
+          ) {
+            const alias = cliArgs[2]
+            const before = __mockState.sessions.length
+            __mockState.sessions = __mockState.sessions.filter(s => s.project !== alias)
+            return Response.json({ result: { ok: true, deleted: before - __mockState.sessions.length } })
+          }
+
           if (
             dryRun &&
             body.command === 'wechat_cli_json' &&
@@ -851,7 +865,11 @@ Bun.serve({
           ) {
             const facetIdx = cliArgs.indexOf('--facet')
             const facet = facetIdx >= 0 ? cliArgs[facetIdx + 1] : null
-            const includePrivate = cliArgs.includes('--include-private') || __mockState.dialogueUnlocked
+            // The CLIENT flag is authoritative — dialogue-page.js only sends
+            // --include-private while it considers the session unlocked, and
+            // drops it again on re-lock. (Don't OR in __mockState.dialogueUnlocked:
+            // that would leak private threads after the user re-locks.)
+            const includePrivate = cliArgs.includes('--include-private')
             let threads = __mockState.dialogueThreads
             if (facet) threads = threads.filter(t => t.facets.includes(facet))
             if (!includePrivate) threads = threads.filter(t => !t.private)

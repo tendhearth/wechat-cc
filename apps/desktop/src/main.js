@@ -30,7 +30,7 @@ import { renderDashboard, renderRestartButton, setPending, updateClock, restartD
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
-import { initDialoguePage } from "./modules/dialogue-page.js"
+import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
 import { loadUpdateProbe, applyUpdate } from "./modules/update.js"
 import { wireSettingsDrawer, openSettingsDrawer } from "./modules/settings-drawer.js"
@@ -419,6 +419,10 @@ function switchPane(name) {
   }
   if (name === "sessions") {
     initDialoguePage(deps)
+  } else {
+    // Stop the dialogue pane's 30s auto-refresh tick when leaving it
+    // (mirrors the logs/sessions auto-refresh lifecycle).
+    stopDialogueAutoRefresh()
   }
   if (name === "a2a-agents") {
     refreshA2AAgents().catch(err => console.error("a2a-agents refresh failed", err))
@@ -512,6 +516,7 @@ function wireEvents() {
   })
 
   wireSettingsDrawer({
+    deps: { invoke },
     onToggleChange: async (id, on) => {
       if (id === "unattended-toggle") {
         state.unattended = on
