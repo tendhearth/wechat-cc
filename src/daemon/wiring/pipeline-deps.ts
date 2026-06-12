@@ -22,6 +22,7 @@ import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
 import { loadGuardConfig } from '../guard/store'
 import { makeFireMilestonesFor, makeRecordInbound, makeMaybeWriteWelcomeObservation } from './side-effects'
+import { makeMessagesStore } from '../messages/store'
 
 export interface PipelineDepsOpts {
   stateDir: string
@@ -65,6 +66,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const getBotName = (): string | null => boot.agentConfig.bot_name ?? null
 
   const recordInbound = makeRecordInbound({ stateDir, db })
+  const messagesStore = makeMessagesStore(db)
   const maybeWriteWelcomeObservation = makeMaybeWriteWelcomeObservation({
     stateDir,
     db,
@@ -160,6 +162,10 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       log,
     },
     attachments: { materializeAttachments, inboxDir, log },
+    messages: {
+      append: rec => messagesStore.append(rec),
+      log,
+    },
     activity: { recordInbound, log },
     milestone: { fireMilestonesFor, log },
     welcome: { maybeWriteWelcomeObservation, log },

@@ -11,6 +11,7 @@ import { makeMwOnboarding, type OnboardingMwDeps } from './mw-onboarding'
 import { makeMwPermissionReply, type PermissionReplyMwDeps } from './mw-permission-reply'
 import { makeMwGuard, type GuardMwDeps } from './mw-guard'
 import { makeMwAttachments, type AttachmentsMwDeps } from './mw-attachments'
+import { makeMwMessages, type MessagesMwDeps } from './mw-messages'
 import { makeMwActivity, type ActivityMwDeps } from './mw-activity'
 import { makeMwMilestone, type MilestoneMwDeps } from './mw-milestone'
 import { makeMwWelcome, type WelcomeMwDeps } from './mw-welcome'
@@ -28,6 +29,7 @@ export interface InboundPipelineDeps {
   permissionReply: PermissionReplyMwDeps
   guard: GuardMwDeps
   attachments: AttachmentsMwDeps
+  messages: MessagesMwDeps
   activity: ActivityMwDeps
   milestone: MilestoneMwDeps
   welcome: WelcomeMwDeps
@@ -43,6 +45,7 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     // welcome — non-allowlisted senders must not trigger any downstream
     // side effects (no typing indicator, no welcome leak, no API tokens).
     makeMwAccess(d.access),
+    makeMwMessages(d.messages),
     makeMwCaptureCtx(d.capture),
     makeMwTyping(d.typing),
     makeMwAdmin(d.admin),
