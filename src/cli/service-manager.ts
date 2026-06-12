@@ -65,6 +65,7 @@ export function buildServicePlan(input: ServicePlanInput): ServicePlan {
     // is consumed by launchctl on macOS and must be POSIX regardless of where
     // buildServicePlan() runs.
     const serviceFile = posix.join(homeDir, 'Library', 'LaunchAgents', 'com.wechat-cc.daemon.plist')
+    const logDir = posix.join(homeDir, '.claude', 'channels', 'wechat')
     const gui = `gui/${input.uid ?? (typeof process.getuid === 'function' ? process.getuid() : 501)}`
     // autoStart=false: bootstrap+enable+kickstart still runs the daemon now
     // (user clicked "install AND start"), but plist omits RunAtLoad+KeepAlive
@@ -73,7 +74,7 @@ export function buildServicePlan(input: ServicePlanInput): ServicePlan {
       kind: 'launchagent',
       serviceName,
       serviceFile,
-      fileContent: launchAgentPlist({ bunPath, binaryPath, cwd: input.cwd, runArgs, runAtLoad: autoStart }),
+      fileContent: launchAgentPlist({ bunPath, binaryPath, cwd: input.cwd, runArgs, runAtLoad: autoStart, logDir }),
       installCommands: [['launchctl', 'bootstrap', gui, serviceFile], ['launchctl', 'enable', `${gui}/com.wechat-cc.daemon`], ['launchctl', 'kickstart', '-k', `${gui}/com.wechat-cc.daemon`]],
       startCommands: [['launchctl', 'kickstart', '-k', `${gui}/com.wechat-cc.daemon`]],
       stopCommands: [['launchctl', 'bootout', gui, serviceFile]],
@@ -403,7 +404,7 @@ function tryRunCommands(commands: string[][]): { ok: true } | { ok: false; exitC
   return { ok: true }
 }
 
-function launchAgentPlist(opts: { bunPath: string; binaryPath?: string; cwd: string; runArgs: string[]; runAtLoad: boolean }): string {
+function launchAgentPlist(opts: { bunPath: string; binaryPath?: string; cwd: string; runArgs: string[]; runAtLoad: boolean; logDir: string }): string {
   const argv = opts.binaryPath
     ? [opts.binaryPath, ...opts.runArgs]
     : [opts.bunPath, join(opts.cwd, 'cli.ts'), ...opts.runArgs]
@@ -424,6 +425,8 @@ function launchAgentPlist(opts: { bunPath: string; binaryPath?: string; cwd: str
 ${argsXml}
   </array>
   <key>WorkingDirectory</key><string>${escapeXml(opts.cwd)}</string>
+  <key>StandardOutPath</key><string>${escapeXml(posix.join(opts.logDir, 'launchd.out.log'))}</string>
+  <key>StandardErrorPath</key><string>${escapeXml(posix.join(opts.logDir, 'launchd.err.log'))}</string>
 ${autoLines}
 </dict></plist>
 `

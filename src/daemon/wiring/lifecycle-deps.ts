@@ -67,7 +67,14 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
       onStateChange: async (prev, next) => {
         if (prev.reachable && !next.reachable) {
           log('GUARD', `network DOWN — shutting down all sessions (was ${prev.ip}, now ${next.ip})`)
-          await boot.sessionManager.shutdown()
+          try {
+            log('GUARD', 'sessionManager.shutdown start')
+            await boot.sessionManager.shutdown()
+            log('GUARD', 'sessionManager.shutdown complete')
+          } catch (err) {
+            log('GUARD', `sessionManager.shutdown failed: ${err instanceof Error ? err.stack || err.message : String(err)}`)
+            throw err
+          }
         }
       },
     },

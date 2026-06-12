@@ -24,6 +24,11 @@ import { runStartupSweeps } from './startup-sweeps'
 import { wireMain } from './wiring'
 import type { TickBodies } from './wiring/tick-bodies'
 
+function errorDetails(err: unknown): string {
+  if (err instanceof Error) return err.stack || err.message
+  try { return JSON.stringify(err) } catch { return String(err) }
+}
+
 export interface BootDaemonOpts {
   stateDir: string
   dangerously: boolean
@@ -188,6 +193,16 @@ export async function main() {
   const dangerously = process.argv.includes('--dangerously')
   let handle: DaemonHandle
   try { handle = await bootDaemon({ stateDir, dangerously }) } catch (err) { console.error('[wechat-cc] fatal:', err); process.exit(1) }
+  process.on('beforeExit', (code) => log('DAEMON', `beforeExit code=${code}`))
+  process.on('exit', (code) => log('DAEMON', `exit code=${code}`))
+  process.on('uncaughtException', (err) => {
+    log('DAEMON', `uncaughtException: ${errorDetails(err)}`)
+    process.exit(1)
+  })
+  process.on('unhandledRejection', (reason) => {
+    log('DAEMON', `unhandledRejection: ${errorDetails(reason)}`)
+    process.exit(1)
+  })
   let alreadyShuttingDown = false
   const cliShutdown = async (sig: string) => {
     if (alreadyShuttingDown) { log('DAEMON', `${sig} during shutdown — forcing exit`); process.exit(130) }
