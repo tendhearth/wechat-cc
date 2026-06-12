@@ -187,22 +187,34 @@ export async function backfillFromCodexJsonl(
   for (const rolloutPath of rollouts) {
     // Use the file basename (without extension) as the stable session key
     const basename = rolloutPath.split('/').pop()!.replace(/\.jsonl$/, '')
+    // Parse filename anchor: rollout-YYYY-MM-DDTHH-MM-SS-*.jsonl → ISO ts
+    const filenameAnchor = parseRolloutFilenameTs(basename)
     const turns = readCodexJsonlAsClaudeTurns(rolloutPath)
     let idx = 0
     for (const turn of turns) {
       idx++
+      const text = turn.message.content.map(b => b.text).join('\n')
+      if (!text) continue // skip empty turns before counting
       scanned++
       if (dryRun) continue
-      // Build a MessageRecord from the claude-shaped turn.
-      // Codex turns have no timestamp in the ClaudeShapeTurn shape, so we
-      // use a synthetic ts based on idx (stable across reruns). The ts only
-      // needs to be consistent — it's not displayed as wall-clock time.
-      const text = turn.message.content.map(b => b.text).join('\n')
-      if (!text) continue
+      // Timestamp priority:
+      //   1. Envelope-level `timestamp` threaded through as turn.ts
+      //   2. Filename anchor (rollout-YYYY-MM-DDTHH-MM-SS-*) + microsecond idx offset
+      //   3. Skip the turn — no garbage year-0001 timestamps
+      let ts: string
+      if (turn.ts) {
+        ts = turn.ts
+      } else if (filenameAnchor) {
+        // Add idx microseconds so turns within the same file are sortable.
+        const anchorMs = new Date(filenameAnchor).getTime()
+        ts = new Date(anchorMs + idx).toISOString()
+      } else {
+        continue // neither source — skip rather than insert garbage
+      }
       const rec: MessageRecord = {
         id: `bf:codex:${basename}:${idx}`,
         chatId,
-        ts: `0001-01-01T00:00:00.${String(idx).padStart(6, '0')}Z`, // stable synthetic ts
+        ts,
         direction: turn.type === 'user' ? 'in' : 'out',
         kind: 'text',
         text,
@@ -234,4 +246,23 @@ function isDir(p: string): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * Parse the timestamp embedded in a codex rollout filename.
+ * Codex names rollouts as `rollout-YYYY-MM-DDTHH-MM-SS-<id>` where the
+ * dashes inside the time part replace colons (filesystem-safe). Returns an
+ * ISO 8601 string, or null if the filename doesn't match the expected pattern.
+ *
+ * Example: `rollout-2025-11-25T02-41-55-abc123` → `2025-11-25T02:41:55Z`
+ */
+function parseRolloutFilenameTs(basename: string): string | null {
+  // Match: rollout-YYYY-MM-DDTHH-MM-SS[-<rest>]
+  const m = basename.match(/^rollout-(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})(?:[-.]|$)/)
+  if (!m) return null
+  // m[1] = "YYYY-MM-DDTHH", m[2] = "MM", m[3] = "SS"
+  const iso = `${m[1]}:${m[2]}:${m[3]}Z`
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return null
+  return iso
 }

@@ -60,6 +60,7 @@ describe('citty migrated commands', () => {
       'conversations',
       'daemon',
       'demo',
+      'dialogue',
       'doctor',
       'events',
       'guard',

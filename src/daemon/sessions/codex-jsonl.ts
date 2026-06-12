@@ -27,6 +27,8 @@ import { join } from 'node:path'
 export interface ClaudeShapeTurn {
   type: 'user' | 'assistant'
   message: { content: Array<{ type: 'text'; text: string }> }
+  /** ISO 8601 timestamp from the rollout envelope, when present. */
+  ts?: string
 }
 
 /**
@@ -80,7 +82,7 @@ export function readCodexJsonlAsClaudeTurns(path: string): ClaudeShapeTurn[] {
 /** Visible-for-tests: convert one parsed codex line. Returns null to skip. */
 export function codexLineToClaudeTurn(line: unknown): ClaudeShapeTurn | null {
   if (!line || typeof line !== 'object') return null
-  const obj = line as { type?: unknown; payload?: unknown }
+  const obj = line as { type?: unknown; payload?: unknown; timestamp?: unknown }
   if (obj.type !== 'response_item') return null  // skip session_meta, event_msg, etc.
   const payload = obj.payload as { type?: unknown; role?: unknown; content?: unknown } | undefined
   if (!payload || payload.type !== 'message') return null
@@ -98,9 +100,13 @@ export function codexLineToClaudeTurn(line: unknown): ClaudeShapeTurn | null {
   }
   if (texts.length === 0) return null
 
+  // Thread through the envelope-level timestamp when present.
+  const ts = typeof obj.timestamp === 'string' ? obj.timestamp : undefined
+
   return {
     type: payload.role,
     message: { content: texts.map(text => ({ type: 'text' as const, text })) },
+    ...(ts !== undefined ? { ts } : {}),
   }
 }
 

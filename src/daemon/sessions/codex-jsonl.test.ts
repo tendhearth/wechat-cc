@@ -79,4 +79,22 @@ describe('codexLineToClaudeTurn', () => {
     expect(codexLineToClaudeTurn({ type: 'response_item' })).toBeNull()  // no payload
     expect(codexLineToClaudeTurn({ type: 'response_item', payload: { type: 'message' } })).toBeNull()  // no role
   })
+
+  it('threads envelope timestamp into turn.ts when present', () => {
+    const r = codexLineToClaudeTurn({
+      timestamp: '2025-11-25T02:41:55.984Z',
+      type: 'response_item',
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+    })
+    expect(r?.ts).toBe('2025-11-25T02:41:55.984Z')
+  })
+
+  it('does not set turn.ts when envelope has no timestamp', () => {
+    const r = codexLineToClaudeTurn({
+      type: 'response_item',
+      payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hi' }] },
+    })
+    expect(r).not.toBeNull()
+    expect(r?.ts).toBeUndefined()
+  })
 })
