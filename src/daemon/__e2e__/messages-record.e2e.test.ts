@@ -61,8 +61,9 @@ describe('e2e: ilink-glue records outbound into messages table', () => {
       expect(outbound[0]?.text).toBe(replyText)
       expect(outbound[0]?.kind).toBe('text')
       expect(outbound[0]?.source).toBe('live')
-      // provider may be undefined at the transport layer — just verify field exists
-      expect('provider' in outbound[0]!).toBeDefined()
+      // provider is not in scope at the transport layer (ilink-glue sendMessage);
+      // pin that so future plumbing that populates it must update this test.
+      expect(outbound[0]!.provider).toBeUndefined()
     } finally {
       db.close()
       await daemon.stop()

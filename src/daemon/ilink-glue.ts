@@ -37,7 +37,11 @@ import type { Db } from '../lib/db'
 import type { ConversationStore } from '../core/conversation-store'
 import { makeMessagesStore } from './messages/store'
 
-/** Monotonic counter to keep same-millisecond outbound IDs unique. */
+/**
+ * Monotonic counter to keep same-millisecond outbound IDs unique. Module
+ * scope is safe: makeIlinkAdapter is constructed once per daemon process
+ * (multi-account routing happens inside the single adapter).
+ */
 let outSeq = 0
 
 export type { Account } from './ilink/context'
