@@ -163,8 +163,15 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       recentInboundMessages: () => Promise.resolve([] as string[]),
       sdkEval,
     })
-    await runIntrospectTick({ events, observations, agent, chatId, log: deps.log })
-    await saveCompanionConfig(deps.stateDir, { ...loadCompanionConfig(deps.stateDir), last_introspect_at: new Date().toISOString() })
+    // Isolated so a rare introspect-side throw (e.g. events.append db error)
+    // cannot starve the threads extraction below — the two evals are
+    // independent by design (spec D3).
+    try {
+      await runIntrospectTick({ events, observations, agent, chatId, log: deps.log })
+      await saveCompanionConfig(deps.stateDir, { ...loadCompanionConfig(deps.stateDir), last_introspect_at: new Date().toISOString() })
+    } catch (err) {
+      deps.log('INTROSPECT', `tick failed: ${err instanceof Error ? err.message : err}`)
+    }
 
     // Threads extraction — independent eval, same cheap model, same tick.
     // Parse failure is swallowed: watermark stays, retried next tick.
