@@ -3,6 +3,7 @@
  *   /health                    — report active + expired bots, session pool, uptime
  *   清理 <bot-id>               — remove one expired bot
  *   清理所有过期                 — remove every bot currently flagged expired
+ *   整理记忆 / 重新整理你对我的理解  — re-synthesize the overview memory from local Claude memory
  *
  * Non-admin senders get silently dropped (matches the /project command
  * behaviour in the legacy server.ts). Admin check goes through
@@ -17,6 +18,7 @@ import type { SessionManager } from '../core/session-manager'
 import type { SessionStore } from '../core/session-store'
 import type { SessionStateStore, ExpiredBot } from './session-state'
 import { loadHearthApi, type HearthApi, type HearthLoadResult } from './hearth-adapter'
+import type { SynthesizeResult } from '../cli/memory-synthesis'
 
 export interface AdminCommandsDeps {
   stateDir: string
@@ -44,6 +46,12 @@ export interface AdminCommandsDeps {
   getBotName: () => string | null
   setBotName: (name: string | null) => Promise<void>
   botNameFallback: (chatId: string) => string  // mode-derived; shown when bot_name is null
+  /**
+   * Optional. Re-synthesize the admin's "overview memory" from their local
+   * Claude per-project memory, using the admin conversation's provider.
+   * Wired in pipeline-deps where the registry + coordinator are in scope.
+   */
+  synthesizeMemory?: (adminChatId: string) => Promise<SynthesizeResult>
 }
 
 export interface AdminCommands {
@@ -66,6 +74,10 @@ const RESET_RE = /^\s*\/(?:reset|重置)\s*$/
 // for the current chat. Does not run the underlying CLIs (zero token, zero
 // network) — just inspects the daemon's own bookkeeping.
 const HEALTH_AI_RE = /^\s*\/health\s+ai\s*$/
+// Re-synthesize the overview memory ("CC 眼中的你") from local Claude memory.
+// Natural-language Chinese phrasings + slash aliases — the admin just asks the
+// bot to refresh its understanding.
+const SYNTHESIZE_RE = /^\s*(?:\/(?:synthesize|整理记忆)|重新整理记忆|整理一下记忆|整理记忆|重新整理你对我的理解|更新你对我的理解|更新记忆)\s*$/
 
 // /botname <new-name>  — set the bot's user-facing self-name (admin only)
 // /botname 跳过 / 不用 / 没有 / skip / clear / 清除  — clear (fall back to mode-derived)
@@ -90,7 +102,7 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
   return {
     async handle(msg) {
       const text = msg.text.trim()
-      const isCmd = text === '/health' || HEALTH_AI_RE.test(text) || RESET_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
+      const isCmd = text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || RESET_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
       if (!isCmd) return false
 
       if (!deps.isAdmin(msg.chatId)) {
@@ -110,6 +122,13 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
 
       if (RESET_RE.test(text)) {
         await runReset(deps, msg.chatId)
+        return true
+      }
+
+      if (SYNTHESIZE_RE.test(text)) {
+        // Fire-and-forget: synthesis is a slow LLM call — don't block the
+        // message pipeline. We ack now and reply with the result when done.
+        void runSynthesize(deps, msg.chatId)
         return true
       }
 
@@ -337,6 +356,41 @@ async function sendHearthHelp(deps: AdminCommandsDeps, adminChatId: string): Pro
     '  /hearth                    显示这条 help',
   ]
   await deps.sendMessage(adminChatId, lines.join('\n'))
+}
+
+// Admin chats with a synthesis in flight — guards against a double-tap firing
+// a second (paid) LLM run before the first replies.
+const synthesizeInFlight = new Set<string>()
+
+async function runSynthesize(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {
+  // Whole body is guarded: runSynthesize is dispatched fire-and-forget (the
+  // pipeline doesn't await it), so ANY escaping rejection — including the
+  // "整理中" ack send — would surface as an unhandled rejection.
+  if (!deps.synthesizeMemory) {
+    await deps.sendMessage(adminChatId, '记忆整理暂不可用（daemon 未接线）。').catch(() => {})
+    return
+  }
+  if (synthesizeInFlight.has(adminChatId)) {
+    await deps.sendMessage(adminChatId, '还在整理上一次，稍等一下…').catch(() => {})
+    return
+  }
+  synthesizeInFlight.add(adminChatId)
+  try {
+    await deps.sendMessage(adminChatId, '🧠 正在重新整理我对你的理解…')
+    const r = await deps.synthesizeMemory(adminChatId)
+    const lines = r.written
+      ? ['✅ 整理完成，我对你的理解已更新。']
+      : ['没找到可整理的本机记忆（~/.claude/projects 下还没有项目记忆）。']
+    if (r.projectsFound > 0) lines.push(`读了 ${r.projectsFound} 个项目：${r.projectNames.join('、')}`)
+    await deps.sendMessage(adminChatId, lines.join('\n'))
+    deps.log('ADMIN_CMD', `synthesize chat=${adminChatId} projects=${r.projectsFound} written=${!!r.written}`)
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    await deps.sendMessage(adminChatId, `整理失败：${detail.slice(0, 160)}`).catch(() => {})
+    deps.log('ADMIN_CMD', `synthesize failed chat=${adminChatId}: ${detail}`)
+  } finally {
+    synthesizeInFlight.delete(adminChatId)
+  }
 }
 
 async function sendHealthReport(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {

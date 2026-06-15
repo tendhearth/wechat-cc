@@ -269,6 +269,70 @@ describe('admin-commands', () => {
     })
   })
 
+  describe('整理记忆 (memory synthesis)', () => {
+    // runSynthesize is fire-and-forget, so flush the macrotask queue before
+    // asserting on the async replies.
+    const flush = () => new Promise(r => setTimeout(r, 0))
+
+    it('admin triggers synthesis and replies with the result', async () => {
+      const synthesizeMemory = vi.fn().mockResolvedValue({
+        projectsFound: 3, projectNames: ['alpha', 'beta', 'gamma'], filesScanned: 9,
+        written: { path: '_overview.md', bytesWritten: 500 },
+      })
+      const cmds = make({ synthesizeMemory: synthesizeMemory as unknown as AdminCommandsDeps['synthesizeMemory'] })
+      expect(await cmds.handle(msg('整理记忆'))).toBe(true)
+      await flush()
+      expect(synthesizeMemory).toHaveBeenCalledWith('admin-chat')
+      expect(sendMessage).toHaveBeenCalledTimes(2)
+      expect(sentBody(0)).toContain('正在重新整理')
+      expect(sentBody(1)).toContain('整理完成')
+      expect(sentBody(1)).toContain('alpha')
+    })
+
+    it('matches natural-language phrasings and slash aliases', async () => {
+      const synthesizeMemory = vi.fn().mockResolvedValue({ projectsFound: 0, projectNames: [], filesScanned: 0 })
+      const cmds = make({ synthesizeMemory: synthesizeMemory as unknown as AdminCommandsDeps['synthesizeMemory'] })
+      // Distinct chats so the per-chat in-flight guard doesn't drop the later
+      // ones — we're only asserting the regex matches each phrasing here.
+      const phrases = ['重新整理你对我的理解', '更新记忆', '/synthesize']
+      for (let i = 0; i < phrases.length; i++) {
+        expect(await cmds.handle(msg(phrases[i]!, `admin-${i}`))).toBe(true)
+      }
+      await flush()
+      expect(synthesizeMemory).toHaveBeenCalledTimes(3)
+    })
+
+    it('double-tap is guarded: second trigger waits, only one LLM run', async () => {
+      // First run hangs until we release it, so the second tap lands while
+      // it's in flight.
+      let release: () => void = () => {}
+      const gate = new Promise<void>(r => { release = r })
+      const synthesizeMemory = vi.fn().mockImplementation(async () => {
+        await gate
+        return { projectsFound: 1, projectNames: ['x'], filesScanned: 1, written: { path: '_overview.md', bytesWritten: 1 } }
+      })
+      const cmds = make({ synthesizeMemory: synthesizeMemory as unknown as AdminCommandsDeps['synthesizeMemory'] })
+      expect(await cmds.handle(msg('整理记忆'))).toBe(true)
+      await flush()  // first run is now awaiting the gate
+      expect(await cmds.handle(msg('整理记忆'))).toBe(true)
+      await flush()  // second run hits the guard
+      expect(synthesizeMemory).toHaveBeenCalledTimes(1)
+      expect(sendMessage.mock.calls.some(c => String(c[1]).includes('稍等'))).toBe(true)
+      release()
+      await flush()
+    })
+
+    it('non-admin is consumed but does NOT synthesize or reply', async () => {
+      isAdmin.mockReturnValue(false)
+      const synthesizeMemory = vi.fn()
+      const cmds = make({ synthesizeMemory: synthesizeMemory as unknown as AdminCommandsDeps['synthesizeMemory'] })
+      expect(await cmds.handle(msg('整理记忆'))).toBe(true)
+      await flush()
+      expect(synthesizeMemory).not.toHaveBeenCalled()
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+  })
+
   describe('/botname command', () => {
     let getBotName: ReturnType<typeof vi.fn>
     let setBotName: ReturnType<typeof vi.fn>

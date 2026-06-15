@@ -97,6 +97,16 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     getBotName,
     setBotName,
     botNameFallback: (cid) => botNameFromModeFallback(boot.coordinator.getMode(cid)),
+    synthesizeMemory: async (adminChatId) => {
+      const { synthesizeOverview } = await import('../../cli/memory-synthesis')
+      // Follow the admin conversation's provider (decided design); fall back
+      // to the registry's cheapest eval when the mode isn't solo / unknown.
+      const mode = boot.coordinator.getMode(adminChatId)
+      const provider = mode && mode.kind === 'solo' ? mode.provider : undefined
+      const cheapEval = (provider ? boot.registry.get(provider)?.provider.cheapEval : null) ?? boot.registry.getCheapEval()
+      if (!cheapEval) throw new Error('no LLM provider available for synthesis')
+      return synthesizeOverview({ stateDir, adminChatId, sdkEval: (p) => cheapEval(p) })
+    },
   })
 
   const modeHandler = makeModeCommands({
