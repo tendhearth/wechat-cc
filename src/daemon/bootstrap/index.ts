@@ -57,6 +57,7 @@ import { assertNotAuthFailed, type CheapEval } from '../../core/agent-provider'
 import { createA2ARegistry } from '../../core/a2a-registry'
 import { createA2AClient } from '../../core/a2a-client'
 import { createA2AServer, type NotifyEvent } from '../../core/a2a-server'
+import { verifyAndConsumeInvite } from '../../cli/a2a-pairing'
 import { makeA2AEventsStore, type AppendInput } from '../../core/a2a-events-store'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
@@ -857,6 +858,38 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // /a2a/exec to run THIS machine's local agent on a task and get the
       // result, via the same one-shot delegate dispatcher used by /v1/delegate.
       onExec: (event) => dispatchDelegate(event.peer, event.prompt, event.cwd),
+      // Smooth pairing (一条命令配对): a brain that holds a fresh invite secret
+      // (from `hand invite` on this machine) POSTs /a2a/pair to auto-register
+      // itself as an allowed delegator. Verify+consume the one-time secret,
+      // then register the brain with the exec key it minted (re-pair refreshes
+      // the key). Same record shape as `hand accept`, just no manual token copy.
+      onPair: async ({ secret, brainId, execKey }) => {
+        if (!verifyAndConsumeInvite(deps.stateDir, secret, Date.now())) {
+          return { ok: false, error: 'invalid_or_expired_invite' }
+        }
+        const existing = a2aRegistry.get(brainId)
+        if (existing) {
+          a2aRegistry.update(brainId, { inbound_api_key: execKey })
+        } else {
+          a2aRegistry.add({
+            id: brainId,
+            name: brainId,
+            url: 'http://brain.local/a2a',   // placeholder; exec replies inline, no callback needed
+            inbound_api_key: execKey,        // brain presents this → hand verifies
+            outbound_api_key: 'unused',      // hand → brain unused for exec; schema needs ≥1
+            capabilities: [],
+            paused: false,
+          })
+        }
+        a2aEventsStore.append({
+          direction: 'in',
+          agent_id: brainId,
+          text: '<paired via invite code>',
+          status: 'ok',
+        })
+        deps.log('A2A', `paired with brain "${brainId}" via invite code`)
+        return { ok: true }
+      },
       // Observability: 401/403 failures with an identifiable agent_id_claimed
       // get a `status='auth_failed'` row so the operator sees auth attempts
       // in the dashboard activity drawer + `wechat-cc agent activity <id>`.

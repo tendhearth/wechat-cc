@@ -2307,9 +2307,79 @@ const handAcceptCmd = defineCommand({
   },
 })
 
+const handInviteCmd = defineCommand({
+  meta: { name: 'invite', description: 'Mint a one-time pairing code for a brain to join (run on the HAND)' },
+  args: {
+    url: { type: 'string', description: "Override this hand's A2A url (else read from the running daemon's a2a-info.json)" },
+    cancel: { type: 'boolean', description: 'Cancel any pending invite instead of minting one' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { mintInvite, clearInvite, INVITE_TTL_MS } = await import('./src/cli/a2a-pairing.ts')
+    if (args.cancel) {
+      clearInvite(STATE_DIR)
+      if (args.json) { console.log(JSON.stringify({ ok: true, cancelled: true })); return }
+      console.log('已取消待配对邀请。'); return
+    }
+    try {
+      let handUrl = args.url
+      if (!handUrl) {
+        const { readA2AInfo } = await import('./src/cli/agent.ts')
+        const info = readA2AInfo(STATE_DIR)
+        if (!info?.enabled || !info.base_url) {
+          throw new Error('A2A 未开启 —— 先跑 wechat-cc daemon a2a enable --host <本机 100.x.y.z> 并重启 daemon,或用 --url 指定')
+        }
+        handUrl = `${info.base_url.replace(/\/+$/, '')}/a2a`
+        if (/\/\/(127\.|localhost|0\.0\.0\.0)/.test(info.base_url)) {
+          console.warn(`⚠ A2A 绑在 ${info.base_url} —— 大脑那台多半连不上。请绑到 Tailscale IP(100.x.y.z)再 invite。`)
+        }
+      }
+      const { code, expiresMs } = mintInvite(STATE_DIR, { handUrl, nowMs: Date.now() })
+      if (args.json) { console.log(JSON.stringify({ ok: true, code, handUrl, expiresMs })); return }
+      const mins = Math.round(INVITE_TTL_MS / 60_000)
+      console.log(`配对码(${mins} 分钟内有效,只能用一次):\n`)
+      console.log(`  ${code}\n`)
+      console.log('在大脑那台机器上跑(给手起个 id 和名字):')
+      console.log(`  wechat-cc hand join ${code} --id home --name 家里`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (args.json) { console.log(JSON.stringify({ ok: false, error: msg })); return }
+      console.error(`hand invite failed: ${msg}`); process.exit(1)
+    }
+  },
+})
+
+const handJoinCmd = defineCommand({
+  meta: { name: 'join', description: 'Join a hand using its pairing code — auto-registers both sides (run on the BRAIN)' },
+  args: {
+    code: { type: 'positional', required: true, description: 'The pairing code from `hand invite`', valueHint: 'code' },
+    id: { type: 'string', required: true, description: 'Hand id — lowercase slug, e.g. home' },
+    name: { type: 'string', description: 'Display name (e.g. 家里) — used in 「让<name>执行 X」' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { joinHand } = await import('./src/cli/hand-pairing.ts')
+    const selfId = process.env.WECHAT_A2A_SELF_ID || 'wechat-cc'
+    try {
+      const r = await joinHand(STATE_DIR, { code: args.code, id: args.id, selfId, ...(args.name ? { name: args.name } : {}) })
+      if (args.json) { console.log(JSON.stringify(r)); return }
+      if (!r.ok) { console.error(`配对失败: ${r.error}`); process.exit(1) }
+      const label = args.name || args.id
+      console.log(`✅ 已配对手「${label}」(${r.id}) → ${r.url}`)
+      console.log(`微信里说: 让${label}执行 <任务>`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (args.json) { console.log(JSON.stringify({ ok: false, error: msg })); return }
+      console.error(`hand join failed: ${msg}`); process.exit(1)
+    }
+  },
+})
+
 const handCmd = defineCommand({
-  meta: { name: 'hand', description: 'Multi-machine (一个大脑多手): pair a brain with hands it can delegate tasks to' },
-  subCommands: { add: handAddCmd, accept: handAcceptCmd },
+  // Smooth path: `hand invite` on the hand → `hand join <code>` on the brain.
+  // Manual path (no daemon needed on the hand yet): `hand add` + `hand accept`.
+  meta: { name: 'hand', description: 'Multi-machine (一个大脑多手): pair a brain with hands. Smooth: hand invite → hand join <code>' },
+  subCommands: { invite: handInviteCmd, join: handJoinCmd, add: handAddCmd, accept: handAcceptCmd },
 })
 
 const SUBCOMMANDS = {

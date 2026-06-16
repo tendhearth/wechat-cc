@@ -16,6 +16,8 @@
  */
 import { randomBytes } from 'node:crypto'
 import { createA2ARegistry } from '../core/a2a-registry'
+import { createA2AClient } from '../core/a2a-client'
+import { decodeInvite, pairUrl } from './a2a-pairing'
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
 const MIN_TOKEN = 16
@@ -41,6 +43,45 @@ export function addHand(stateDir: string, opts: { id: string; url: string; name?
     capabilities: ['exec'],
     paused: false,
   })
+}
+
+export interface JoinResult { ok: boolean; id: string; url: string; error?: string }
+
+/**
+ * Run on the BRAIN: join a hand using its one-time invite code (the smooth
+ * path — no manual token copy). Mints a fresh exec key, registers the hand
+ * locally, then calls the hand's /a2a/pair to register this brain on the hand.
+ * Rolls back the local hand record if the callback fails, so a rejected pair
+ * doesn't leave a half-configured hand. Never throws on network error.
+ */
+export async function joinHand(stateDir: string, opts: {
+  code: string; id: string; selfId: string; name?: string; timeoutMs?: number
+}): Promise<JoinResult> {
+  assertSlug('hand id', opts.id)
+  assertSlug('brain self-id', opts.selfId)
+  const { handUrl, secret } = decodeInvite(opts.code)
+  const execKey = randomBytes(24).toString('hex')   // brain↔hand shared exec bearer (48 hex chars)
+
+  const registry = createA2ARegistry({ stateDir })
+  if (registry.get(opts.id)) registry.remove(opts.id)   // re-join overwrites
+  addHand(stateDir, { id: opts.id, url: handUrl, ...(opts.name ? { name: opts.name } : {}), token: execKey })
+
+  const client = createA2AClient({ timeoutMs: opts.timeoutMs ?? 15_000 })
+  const r = await client.send({
+    url: pairUrl(handUrl),
+    bearer: secret,   // endpoint authenticates on the body `secret`, not this header
+    body: { secret, brain_id: opts.selfId, exec_key: execKey },
+  })
+  const resp = r.response as { ok?: unknown; error?: unknown } | undefined
+  if (!r.ok || !resp || resp.ok !== true) {
+    registry.remove(opts.id)   // roll back — don't leave a half-paired hand
+    // Prefer the hand's structured reason (e.g. invalid_or_expired_invite),
+    // which the endpoint sends with a 401 — fall back to the transport error.
+    const bodyErr = resp && typeof resp.error === 'string' ? resp.error : undefined
+    const error = bodyErr ?? r.error ?? `http_${r.http_status ?? '?'}`
+    return { ok: false, id: opts.id, url: handUrl, error }
+  }
+  return { ok: true, id: opts.id, url: handUrl }
 }
 
 /** Run on the HAND: accept a brain that may delegate tasks to this machine. */

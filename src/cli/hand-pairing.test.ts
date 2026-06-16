@@ -1,9 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createA2ARegistry } from '../core/a2a-registry'
-import { acceptBrain, addHand } from './hand-pairing'
+import { createA2AServer } from '../core/a2a-server'
+import { mintInvite, verifyAndConsumeInvite } from './a2a-pairing'
+import { acceptBrain, addHand, joinHand } from './hand-pairing'
 
 let stateDir: string
 const TOKEN = 'shared-secret-0123456789'  // ≥16
@@ -58,5 +60,86 @@ describe('end-to-end record match', () => {
       rmSync(brainDir, { recursive: true, force: true })
       rmSync(handDir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('smooth pairing (invite code) end-to-end', () => {
+  let brainDir: string
+  let handDir: string
+  beforeEach(() => {
+    brainDir = mkdtempSync(join(tmpdir(), 'brain-'))
+    handDir = mkdtempSync(join(tmpdir(), 'hand-'))
+  })
+  afterEach(() => {
+    rmSync(brainDir, { recursive: true, force: true })
+    rmSync(handDir, { recursive: true, force: true })
+  })
+
+  /** Spin up a hand's A2A server with /a2a/pair wired exactly like bootstrap. */
+  async function startHand() {
+    const handRegistry = createA2ARegistry({ stateDir: handDir })
+    const server = createA2AServer({
+      host: '127.0.0.1', port: 0,
+      registry: handRegistry,
+      onNotify: vi.fn(async () => {}),
+      onPair: async ({ secret, brainId, execKey }) => {
+        if (!verifyAndConsumeInvite(handDir, secret, Date.now())) return { ok: false, error: 'invalid_or_expired_invite' }
+        const existing = handRegistry.get(brainId)
+        if (existing) handRegistry.update(brainId, { inbound_api_key: execKey })
+        else handRegistry.add({
+          id: brainId, name: brainId, url: 'http://brain.local/a2a',
+          inbound_api_key: execKey, outbound_api_key: 'unused', capabilities: [], paused: false,
+        })
+        return { ok: true }
+      },
+      daemonInfo: { name: 'wechat-cc', version: 'test' },
+    })
+    await server.start()
+    return { server, handRegistry, handUrl: `${server.baseUrl()}/a2a` }
+  }
+
+  it('mint on hand → join on brain auto-registers both sides with the same exec key', async () => {
+    const { server, handRegistry, handUrl } = await startHand()
+    try {
+      const { code } = mintInvite(handDir, { handUrl, nowMs: Date.now() })
+      const r = await joinHand(brainDir, { code, id: 'home', name: '家里', selfId: 'wechat-cc' })
+      expect(r.ok).toBe(true)
+
+      const brainSide = createA2ARegistry({ stateDir: brainDir }).get('home')
+      const handSide = handRegistry.get('wechat-cc')
+      expect(brainSide).toBeTruthy()
+      expect(handSide).toBeTruthy()
+      // The key the brain presents (outbound) === the key the hand verifies (inbound).
+      expect(brainSide!.outbound_api_key).toBe(handSide!.inbound_api_key)
+      expect(brainSide!.url).toBe(handUrl)
+      expect(brainSide!.name).toBe('家里')
+      expect(brainSide!.capabilities).toContain('exec')
+      // And that key actually authenticates an inbound exec call:
+      expect(handRegistry.verifyBearer('wechat-cc', brainSide!.outbound_api_key)).not.toBeNull()
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('rejects a second join with the same code (single-use) and rolls back the brain record', async () => {
+    const { server, handUrl } = await startHand()
+    try {
+      const { code } = mintInvite(handDir, { handUrl, nowMs: Date.now() })
+      expect((await joinHand(brainDir, { code, id: 'home', selfId: 'wechat-cc' })).ok).toBe(true)
+
+      const second = await joinHand(brainDir, { code, id: 'home2', selfId: 'wechat-cc' })
+      expect(second.ok).toBe(false)
+      expect(second.error).toMatch(/invalid_or_expired_invite/)
+      expect(createA2ARegistry({ stateDir: brainDir }).get('home2')).toBeNull()  // no half-paired record
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('fails cleanly when the hand is unreachable, leaving no brain record', async () => {
+    const { code } = mintInvite(handDir, { handUrl: 'http://127.0.0.1:1/a2a', nowMs: Date.now() })
+    const r = await joinHand(brainDir, { code, id: 'home', selfId: 'wechat-cc', timeoutMs: 1000 })
+    expect(r.ok).toBe(false)
+    expect(createA2ARegistry({ stateDir: brainDir }).get('home')).toBeNull()
   })
 })

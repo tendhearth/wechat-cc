@@ -42,6 +42,18 @@ export interface ExecEvent {
 
 export type ExecResult = { ok: true; response: string } | { ok: false; reason: string }
 
+/**
+ * A pairing handshake: a brain presents a one-time invite secret (minted by
+ * `hand invite`) plus the id + exec key it wants registered. The hand verifies
+ * the secret and, if valid, registers the brain so its later /a2a/exec calls
+ * authenticate. Auth here is the one-time secret itself, not a Bearer token.
+ */
+export interface PairEvent {
+  secret: string
+  brainId: string
+  execKey: string
+}
+
 export interface AuthFailedEvent {
   /** The claimed agent_id from the request body. Only emitted when the
    *  body is parseable AND has agent_id — pure noise (random scanners
@@ -60,6 +72,14 @@ export interface A2AServerOpts {
    * delegated task and return the result. Undefined → /a2a/exec returns 501.
    */
   onExec?: (event: ExecEvent) => Promise<ExecResult>
+  /**
+   * Optional. When wired, enables POST /a2a/pair — a brain completes the
+   * smooth-pairing handshake by presenting a one-time invite secret (minted
+   * by `hand invite`) plus the id + exec key it wants registered. Returns
+   * { ok } so the brain knows whether the secret was accepted. Undefined →
+   * /a2a/pair returns 501. Auth is the one-time secret, not a Bearer token.
+   */
+  onPair?: (event: PairEvent) => Promise<{ ok: boolean; error?: string }>
   /** Optional hook called when a notify request is rejected with 401/403
    *  AND we can identify which agent_id the caller claimed. Used by
    *  bootstrap to write an `a2a_events` row with status='auth_failed' so
@@ -219,6 +239,33 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         return new Response(JSON.stringify({ ok: false, reason: msg }), { status: 200 })
+      }
+    }
+    if (url.pathname === '/a2a/pair') {
+      if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
+      if (!opts.onPair) return new Response(JSON.stringify({ error: 'pair_not_supported' }), { status: 501 })
+
+      let body: { secret?: unknown; brain_id?: unknown; exec_key?: unknown }
+      try {
+        body = await req.json() as typeof body
+      } catch {
+        return new Response(JSON.stringify({ error: 'invalid_json' }), { status: 400 })
+      }
+      // The secret IS the auth here — verified against the pending invite by
+      // onPair. Shape-check the registration fields the brain wants applied.
+      if (typeof body.secret !== 'string' || !body.secret
+        || typeof body.brain_id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(body.brain_id)
+        || typeof body.exec_key !== 'string' || body.exec_key.length < 16) {
+        return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
+      }
+      try {
+        const result = await opts.onPair({ secret: body.secret, brainId: body.brain_id, execKey: body.exec_key })
+        return result.ok
+          ? new Response(JSON.stringify({ ok: true }), { status: 200 })
+          : new Response(JSON.stringify({ ok: false, error: result.error ?? 'pairing_rejected' }), { status: 401 })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return new Response(JSON.stringify({ ok: false, error: msg }), { status: 500 })
       }
     }
     return new Response('not found', { status: 404 })
