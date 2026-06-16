@@ -1035,9 +1035,10 @@ const memorySynthesizeCmd = defineCommand({
     }
 
     const { synthesizeOverview } = await import('./src/cli/memory-synthesis')
+    const { makeLifeStoresReader } = await import('./src/daemon/life-stores')
     let result
     try {
-      result = await synthesizeOverview({ stateDir: STATE_DIR, adminChatId: chatId, sdkEval, dryRun, db })
+      result = await synthesizeOverview({ stateDir: STATE_DIR, adminChatId: chatId, sdkEval, dryRun, lifeStores: makeLifeStoresReader(db, STATE_DIR) })
     } finally {
       db.close()
     }

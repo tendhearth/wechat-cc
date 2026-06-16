@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { openTestDb } from '../lib/db'
 import { makeObservationsStore } from '../daemon/observations/store'
 import { makeMilestonesStore } from '../daemon/milestones/store'
+import { makeLifeStoresReader } from '../daemon/life-stores'
 import { writeMemoryFile } from './memory'
 import {
   discoverProjectMemory,
@@ -173,7 +174,7 @@ describe('synthesizeOverview', () => {
 
     let prompt = ''
     const res = await synthesizeOverview({
-      stateDir, adminChatId, projectsRoot, db,
+      stateDir, adminChatId, projectsRoot, lifeStores: makeLifeStoresReader(db, stateDir),
       sdkEval: async (p) => { prompt = p; return '整理结果' },
     })
     db.close()
@@ -193,7 +194,7 @@ describe('synthesizeOverview', () => {
     const { makeObservationsStore } = await import('../daemon/observations/store')
     const store = makeObservationsStore(db, adminChatId, {})
     for (let i = 1; i <= 25; i++) await store.append({ body: `obs-${i}` })
-    const life = await gatherLifeContext({ db, stateDir, adminChatId })
+    const life = await gatherLifeContext({ stores: makeLifeStoresReader(db, stateDir), stateDir, adminChatId })
     db.close()
     expect(life.observations.length).toBe(20)
     expect(life.observations).toContain('obs-25')  // newest kept
@@ -206,7 +207,7 @@ describe('synthesizeOverview', () => {
     await makeObservationsStore(db, adminChatId, {}).append({ body: '生活观察一条' })
     let called = false
     const res = await synthesizeOverview({
-      stateDir, adminChatId, projectsRoot, db,  // projectsRoot is empty → 0 projects
+      stateDir, adminChatId, projectsRoot, lifeStores: makeLifeStoresReader(db, stateDir),  // projectsRoot empty → 0 projects
       sdkEval: async () => { called = true; return 'ok' },
     })
     db.close()

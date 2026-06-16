@@ -104,14 +104,16 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     botNameFallback: (cid) => botNameFromModeFallback(boot.coordinator.getMode(cid)),
     synthesizeMemory: async (adminChatId) => {
       const { synthesizeOverview } = await import('../../cli/memory-synthesis')
+      const { makeLifeStoresReader } = await import('../life-stores')
       // Follow the admin conversation's provider (decided design); fall back
       // to the registry's cheapest eval when the mode isn't solo / unknown.
       const mode = boot.coordinator.getMode(adminChatId)
       const provider = mode && mode.kind === 'solo' ? mode.provider : undefined
       const cheapEval = (provider ? boot.registry.get(provider)?.provider.cheapEval : null) ?? boot.registry.getCheapEval()
       if (!cheapEval) throw new Error('no LLM provider available for synthesis')
-      // Pass the daemon db so the overview also folds in the life-side memory.
-      return synthesizeOverview({ stateDir, adminChatId, sdkEval: (p) => cheapEval(p), db })
+      // Bridge the daemon db → life stores so the overview also folds in the
+      // life-side memory (kept on the daemon side of the cli/daemon boundary).
+      return synthesizeOverview({ stateDir, adminChatId, sdkEval: (p) => cheapEval(p), lifeStores: makeLifeStoresReader(db, stateDir) })
     },
     // Delegate a task to a registered "hand" (another machine running wechat-cc
     // with A2A exec). Resolves the hand by id or name, then calls its /a2a/exec

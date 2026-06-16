@@ -24,7 +24,17 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { Db } from '../lib/db'
+/**
+ * Injected accessor for the daemon-owned "life" stores. Declared here (the
+ * consumer) as a plain interface so this CLI module needs no `src/daemon`
+ * import — the daemon supplies the implementation via `makeLifeStoresReader`.
+ * Each method returns the raw bodies oldest→newest; gatherLifeContext filters
+ * + keeps the most recent.
+ */
+export interface LifeStoresReader {
+  listObservations(adminChatId: string): Promise<string[]>
+  listMilestones(adminChatId: string): Promise<string[]>
+}
 import { writeMemoryFile } from './memory'
 
 /** Default root for Claude Code's per-project memory dirs. */
@@ -269,23 +279,17 @@ function lifeIsEmpty(life: LifeContext | null): boolean {
  * missing table / file degrades to empty rather than failing the synthesis.
  * Excludes `_overview.md` (our own output — never feed it back in).
  */
-export async function gatherLifeContext(opts: { db: Db; stateDir: string; adminChatId: string }): Promise<LifeContext> {
-  const { db, stateDir, adminChatId } = opts
+export async function gatherLifeContext(opts: { stores?: LifeStoresReader | null; stateDir: string; adminChatId: string }): Promise<LifeContext> {
+  const { stores, stateDir, adminChatId } = opts
   const memoryRoot = join(stateDir, 'memory')
   const out: LifeContext = { observations: [], milestones: [], memoryNotes: [] }
   // Stores return oldest→newest (ORDER BY ts ASC), so take the LAST N — the
   // most RECENT life context is what makes the overview feel current ("懂你"
   // is about now, not the first things ever noticed).
-  try {
-    const { makeObservationsStore } = await import('../daemon/observations/store')
-    const store = makeObservationsStore(db, adminChatId, { migrateFromFile: join(memoryRoot, adminChatId, 'observations.jsonl') })
-    out.observations = (await store.listActive()).map(o => o.body).filter(Boolean).slice(-20)
-  } catch { /* best-effort */ }
-  try {
-    const { makeMilestonesStore } = await import('../daemon/milestones/store')
-    const store = makeMilestonesStore(db, adminChatId, { migrateFromFile: join(memoryRoot, adminChatId, 'milestones.jsonl') })
-    out.milestones = (await store.list()).map(m => m.body).filter(Boolean).slice(-20)
-  } catch { /* best-effort */ }
+  if (stores) {
+    try { out.observations = (await stores.listObservations(adminChatId)).filter(Boolean).slice(-20) } catch { /* best-effort */ }
+    try { out.milestones = (await stores.listMilestones(adminChatId)).filter(Boolean).slice(-20) } catch { /* best-effort */ }
+  }
   try {
     const dir = join(memoryRoot, adminChatId)
     for (const rel of listMd(dir)) {
@@ -308,10 +312,11 @@ export interface SynthesizeDeps {
   dryRun?: boolean
   /**
    * When provided, also fold in the "life" side (observations / milestones /
-   * admin memory notes) so the overview spans work AND life. Callers that have
-   * a db (CLI synthesize, daemon pipeline) pass it; unit tests omit it.
+   * admin memory notes) so the overview spans work AND life. Callers with a db
+   * (CLI synthesize, daemon pipeline) pass `makeLifeStoresReader(db, stateDir)`;
+   * unit tests omit it.
    */
-  db?: Db
+  lifeStores?: LifeStoresReader
 }
 
 export interface SynthesizeResult {
@@ -319,7 +324,7 @@ export interface SynthesizeResult {
   projectNames: string[]
   filesScanned: number
   promptChars: number
-  /** Life-side counts (0 when no db was passed). */
+  /** Life-side counts (0 when no lifeStores were passed). */
   observationsFound: number
   milestonesFound: number
   memoryNotesFound: number
@@ -338,7 +343,7 @@ export async function synthesizeOverview(deps: SynthesizeDeps): Promise<Synthesi
   const projectsRoot = deps.projectsRoot ?? defaultClaudeProjectsRoot()
   const projects = discoverProjectMemory(projectsRoot)
   const filesScanned = projects.reduce((n, p) => n + (p.index ? 1 : 0) + p.files.length, 0)
-  const life = deps.db ? await gatherLifeContext({ db: deps.db, stateDir: deps.stateDir, adminChatId: deps.adminChatId }) : null
+  const life = deps.lifeStores ? await gatherLifeContext({ stores: deps.lifeStores, stateDir: deps.stateDir, adminChatId: deps.adminChatId }) : null
   const prompt = formatSynthesisPrompt(projects, life)
   const base: SynthesizeResult = {
     projectsFound: projects.length,
