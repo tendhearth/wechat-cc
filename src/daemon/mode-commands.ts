@@ -146,6 +146,8 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         '/botname [name] — 设置/查看 bot 显示名',
         '/hearth help — vault 治理（hearth 子命令）',
         '清理 <bot> / 清理 all-expired — 清理过期 bot',
+        '整理记忆 / 看记忆 — 重新整理 / 查看 CC 对你的理解',
+        '让<名字>执行 <任务> — 派活给已配对的「手」电脑（一个大脑多手）',
       )
     }
     await reply(msg.chatId, lines.join('\n'))

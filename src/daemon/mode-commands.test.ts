@@ -482,6 +482,9 @@ describe('makeModeCommands', () => {
     expect(text).toContain('管理员命令')
     expect(text).toContain('/health')
     expect(text).toContain('/reset')
+    // Memory + delegation features are discoverable from /help, not just docs.
+    expect(text).toContain('整理记忆')
+    expect(text).toContain('让<名字>执行')
   })
 
   it('/帮助 is an alias for /help and produces the same output', async () => {
