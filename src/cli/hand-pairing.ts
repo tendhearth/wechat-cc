@@ -70,6 +70,37 @@ export function listPairings(stateDir: string): Pairings {
   return result
 }
 
+export interface PingResult { id: string; name: string; ok: boolean; detail: string }
+
+/** Strip the /a2a[/exec|/notify|/pair] suffix to recover the server base url. */
+function baseUrlOf(url: string): string {
+  return url.replace(/\/+$/, '').replace(/\/a2a(\/(exec|notify|pair))?$/, '')
+}
+
+/**
+ * Probe whether paired hands are reachable by fetching each one's Agent Card
+ * (unauthenticated, no side effects — never runs the hand's agent). Confirms
+ * the network path works AND that the peer is a wechat-cc A2A server that
+ * advertises exec. Run on the BRAIN. Probes run concurrently.
+ */
+export async function pingHands(stateDir: string, opts: { filter?: string; timeoutMs?: number } = {}): Promise<PingResult[]> {
+  const { hands } = listPairings(stateDir)
+  const targets = opts.filter ? hands.filter(h => h.id === opts.filter || h.name === opts.filter) : hands
+  const client = createA2AClient({ timeoutMs: opts.timeoutMs ?? 5_000 })
+  return Promise.all(targets.map(async (h): Promise<PingResult> => {
+    try {
+      const card = await client.fetchAgentCard(baseUrlOf(h.url))
+      const hasExec = (card.capabilities ?? []).some(c => c.name === 'exec')
+      return {
+        id: h.id, name: h.name, ok: true,
+        detail: hasExec ? `${card.name} v${card.version ?? '?'}` : `${card.name}(⚠ 未通告 exec 能力)`,
+      }
+    } catch (err) {
+      return { id: h.id, name: h.name, ok: false, detail: err instanceof Error ? err.message : String(err) }
+    }
+  }))
+}
+
 export interface JoinResult { ok: boolean; id: string; url: string; error?: string }
 
 /**

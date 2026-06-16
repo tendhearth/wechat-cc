@@ -2395,11 +2395,30 @@ const handListCmd = defineCommand({
   },
 })
 
+const handPingCmd = defineCommand({
+  meta: { name: 'ping', description: "Check whether paired hands are reachable (fetches each hand's Agent Card)" },
+  args: {
+    target: { type: 'positional', required: false, description: 'A specific hand id or name (default: all)', valueHint: 'id|name' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { pingHands } = await import('./src/cli/hand-pairing.ts')
+    const results = await pingHands(STATE_DIR, args.target ? { filter: args.target } : {})
+    if (args.json) { console.log(JSON.stringify(results)); return }
+    if (results.length === 0) {
+      console.log(args.target ? `没有叫「${args.target}」的手。` : '没有可派活的手(先 hand invite / hand join)。')
+      return
+    }
+    for (const r of results) console.log(`${r.ok ? '✅' : '❌'} ${r.name}  (${r.id})  ${r.detail}`)
+    if (results.some(r => !r.ok)) process.exitCode = 1
+  },
+})
+
 const handCmd = defineCommand({
   // Smooth path: `hand invite` on the hand → `hand join <code>` on the brain.
   // Manual path (no daemon needed on the hand yet): `hand add` + `hand accept`.
   meta: { name: 'hand', description: 'Multi-machine (一个大脑多手): pair a brain with hands. Smooth: hand invite → hand join <code>' },
-  subCommands: { invite: handInviteCmd, join: handJoinCmd, list: handListCmd, add: handAddCmd, accept: handAcceptCmd },
+  subCommands: { invite: handInviteCmd, join: handJoinCmd, list: handListCmd, ping: handPingCmd, add: handAddCmd, accept: handAcceptCmd },
 })
 
 const SUBCOMMANDS = {

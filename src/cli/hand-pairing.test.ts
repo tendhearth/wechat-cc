@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { createA2ARegistry } from '../core/a2a-registry'
 import { createA2AServer } from '../core/a2a-server'
 import { mintInvite, verifyAndConsumeInvite } from './a2a-pairing'
-import { acceptBrain, addHand, joinHand, listPairings } from './hand-pairing'
+import { acceptBrain, addHand, joinHand, listPairings, pingHands } from './hand-pairing'
 
 let stateDir: string
 const TOKEN = 'shared-secret-0123456789'  // ≥16
@@ -163,5 +163,44 @@ describe('smooth pairing (invite code) end-to-end', () => {
     const r = await joinHand(brainDir, { code, id: 'home', selfId: 'wechat-cc', timeoutMs: 1000 })
     expect(r.ok).toBe(false)
     expect(createA2ARegistry({ stateDir: brainDir }).get('home')).toBeNull()
+  })
+})
+
+describe('pingHands (reachability)', () => {
+  let brainDir: string
+  beforeEach(() => { brainDir = mkdtempSync(join(tmpdir(), 'brain-ping-')) })
+  afterEach(() => { rmSync(brainDir, { recursive: true, force: true }) })
+
+  it('reports a reachable, exec-advertising hand as ✅ and a dead one as ❌', async () => {
+    // A live hand whose Agent Card advertises exec (onExec wired).
+    const server = createA2AServer({
+      host: '127.0.0.1', port: 0,
+      registry: createA2ARegistry({ stateDir: mkdtempSync(join(tmpdir(), 'h-')) }),
+      onNotify: vi.fn(async () => {}),
+      onExec: vi.fn(async () => ({ ok: true as const, response: 'ok' })),
+      daemonInfo: { name: 'wechat-cc', version: '9.9.9' },
+    })
+    await server.start()
+    try {
+      addHand(brainDir, { id: 'home', url: `${server.baseUrl()}/a2a`, name: '家里', token: 'shared-secret-0123456789' })
+      addHand(brainDir, { id: 'dead', url: 'http://127.0.0.1:1/a2a', name: '死的', token: 'shared-secret-0123456789' })
+
+      const results = await pingHands(brainDir, { timeoutMs: 1500 })
+      const home = results.find(r => r.id === 'home')!
+      const dead = results.find(r => r.id === 'dead')!
+      expect(home.ok).toBe(true)
+      expect(home.detail).toContain('wechat-cc')
+      expect(home.detail).toContain('9.9.9')
+      expect(dead.ok).toBe(false)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('filters to a specific hand by name', async () => {
+    addHand(brainDir, { id: 'home', url: 'http://127.0.0.1:1/a2a', name: '家里', token: 'shared-secret-0123456789' })
+    addHand(brainDir, { id: 'office', url: 'http://127.0.0.1:1/a2a', name: '公司', token: 'shared-secret-0123456789' })
+    const results = await pingHands(brainDir, { filter: '公司', timeoutMs: 800 })
+    expect(results.map(r => r.id)).toEqual(['office'])
   })
 })
