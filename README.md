@@ -618,6 +618,15 @@ wechat-cc agent activity <id>   # recent A2A events (includes auth_failed attemp
 wechat-cc agent test <id>       # synthetic INBOUND notify → operator's WeChat chat
 wechat-cc agent test <id> --outbound
                                 # synthetic OUTBOUND call to <id>'s URL (verifies outbound_api_key)
+
+# One brain, many hands (delegation) — see the section below:
+wechat-cc hand invite           # HAND: mint a one-time pairing code
+wechat-cc hand join <code> --id <id> --name <name>
+                                # BRAIN: join a hand, auto-register both sides
+wechat-cc hand list             # show paired hands + brains
+wechat-cc hand ping [<id|name>] # check hand reachability
+wechat-cc hand add <id> <url> --token <T>   # manual pairing (BRAIN side)
+wechat-cc hand accept --token <T>           # manual pairing (HAND side)
 ```
 
 ### Quick start
@@ -648,6 +657,34 @@ wechat-cc agent test deploy-bot
 #    — the agent uses the `a2a_send` MCP tool to push your reply back.
 ```
 
+### One brain, many hands (delegate tasks to other machines)
+
+On top of notify, a wechat-cc can **delegate a task to another wechat-cc** and
+get the result back. One machine is the **brain** (holds the bot); the others
+are **hands** that run a full local agent (Read/Bash) on demand. From WeChat you
+say `让<name>执行 <task>` ("have <name> run <task>") and the brain dispatches it
+to that hand, returning the result to your chat — so from the office you can
+drive your home machine, or ask about a project that only lives there.
+
+Pairing is one command per side — no manual token copying:
+
+```bash
+# On the HAND (bind A2A to your private Tailscale IP first):
+wechat-cc daemon a2a enable --host <100.x.y.z> --port 8717   # then restart the daemon
+wechat-cc hand invite                # prints a one-time pairing code (10-min TTL, single-use)
+
+# On the BRAIN:
+wechat-cc hand join <code> --id home --name home   # auto-registers both sides
+wechat-cc hand ping                  # confirm the hand is reachable (fetches its Agent Card)
+wechat-cc hand list                  # hands you can delegate to / brains that can delegate here
+```
+
+Then from WeChat: `让home执行 summarize ~/proj/README`.
+
+The hand is the reachable party (it runs the A2A server); the brain only calls
+out, so the brain needs **no inbound listener**. Run this only over a private
+tailnet — `/a2a/exec` executes an agent on the hand.
+
 ### Threat model
 
 - The A2A server is **off by default**; opt-in by setting `a2a_listen` in
@@ -658,6 +695,11 @@ wechat-cc agent test deploy-bot
   request.
 - Outbound calls carry the agent-provided `outbound_api_key` from the Agent
   Card.
+- `/a2a/exec` (the "hand" capability) runs a full local agent on the hand —
+  treat the exec key as remote-code-execution power. Only enable it bound to a
+  private Tailscale IP (`100.x.y.z`), never `0.0.0.0` or a public interface.
+- Pairing codes (`hand invite`) are one-time and expire in 10 minutes; the key
+  they exchange is the delegation credential, so pair only over your tailnet.
 - TLS is the operator's responsibility — use a reverse proxy for HTTPS if you
   expose the endpoint publicly.
 
