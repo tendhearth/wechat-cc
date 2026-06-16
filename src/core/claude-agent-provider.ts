@@ -239,7 +239,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 const text = extractText(msg.message?.content)
                 if (text) {
                   droppedAssistantChunks++
-                  console.warn(`wechat channel: [STREAM_DROP] alias=${project.alias} count=${droppedAssistantChunks} preview=${JSON.stringify(text.slice(0, 80))}`)
+                  log('STREAM_DROP', `alias=${project.alias} count=${droppedAssistantChunks} preview=${JSON.stringify(text.slice(0, 80))}`)
                 }
               }
               continue
@@ -287,7 +287,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 const summary = typeof msg.result === 'string'
                   ? msg.result.slice(0, 400)
                   : JSON.stringify(msg).slice(0, 400)
-                console.error(`wechat channel: [SESSION_RESULT] alias=${project.alias} subtype=${msg.subtype} result=${summary}`)
+                log('SESSION_RESULT', `alias=${project.alias} subtype=${msg.subtype} result=${summary}`)
                 aq.push({ kind: 'error', message: `subtype=${msg.subtype}` })
               }
               aq.push({
@@ -301,7 +301,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
             }
           }
         } catch (e) {
-          console.error(`wechat channel: [SESSION_ERROR] alias=${project.alias} ${e instanceof Error ? `${e.name}: ${e.message}\n${e.stack}` : String(e)}`)
+          log('SESSION_ERROR', `alias=${project.alias} ${e instanceof Error ? `${e.name}: ${e.message}\n${e.stack}` : String(e)}`)
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const catchQueue = activeEventQueue as AsyncQueue<AgentEvent> | null
           if (catchQueue) {

@@ -17,6 +17,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { renameMigrated, type Db } from '../lib/db'
 import type { Mode, PersistedConversation, ProviderId } from './conversation'
+import { log } from '../lib/log'
 
 export interface ConversationIdentity {
   user_id: string | null
@@ -89,7 +90,7 @@ interface Row {
 }
 
 function rowToMode(r: Row): Mode | null {
-  const participants = r.participants ? parseParticipants(r.participants) : undefined
+  const participants = r.participants ? parseParticipants(r.participants, r.chat_id) : undefined
   switch (r.mode_kind) {
     case 'solo':
       return r.mode_provider ? { kind: 'solo', provider: r.mode_provider } : null
@@ -104,14 +105,15 @@ function rowToMode(r: Row): Mode | null {
   }
 }
 
-function parseParticipants(json: string): ProviderId[] | undefined {
+function parseParticipants(json: string, chatId?: string): ProviderId[] | undefined {
   try {
     const v = JSON.parse(json)
     if (!Array.isArray(v)) return undefined
     if (!v.every((p): p is string => typeof p === 'string')) return undefined
     return v
   } catch {
-    return undefined  // corrupt JSON → treat as legacy
+    log('DB', `corrupt participants JSON${chatId ? ` chat=${chatId}` : ''}: ${json.slice(0, 100)}`)
+    return undefined
   }
 }
 

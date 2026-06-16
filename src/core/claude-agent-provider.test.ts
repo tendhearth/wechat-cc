@@ -503,7 +503,7 @@ describe('claude-agent-provider', () => {
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
     const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
 
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 
     // Emit assistant text before any dispatch is in flight
     ;(sdk as unknown as { __test_yield: (m: unknown) => void }).__test_yield({
@@ -511,7 +511,7 @@ describe('claude-agent-provider', () => {
     })
     // Give the iterator loop a tick to consume the yielded message
     await new Promise(r => setTimeout(r, 10))
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('STREAM_DROP'))
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('STREAM_DROP'))
 
     // Now dispatch — the result must contain ONLY this turn's text, not the orphan
     const eventsPromise = drain(session.dispatch('hello'))
@@ -528,7 +528,7 @@ describe('claude-agent-provider', () => {
     const events = await eventsPromise
     const textEvents = events.filter(e => e.kind === 'text')
     expect(textEvents).toEqual([{ kind: 'text', text: 'fresh' }])
-    warnSpy.mockRestore()
+    stderrSpy.mockRestore()
     await session.close()
   })
 })
