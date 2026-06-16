@@ -397,10 +397,22 @@ async function runSynthesize(deps: AdminCommandsDeps, adminChatId: string): Prom
   try {
     await deps.sendMessage(adminChatId, '🧠 正在重新整理我对你的理解…')
     const r = await deps.synthesizeMemory(adminChatId)
-    const lines = r.written
-      ? ['✅ 整理完成，我对你的理解已更新。']
-      : ['没找到可整理的本机记忆（~/.claude/projects 下还没有项目记忆）。']
-    if (r.projectsFound > 0) lines.push(`读了 ${r.projectsFound} 个项目：${r.projectNames.join('、')}`)
+    let lines: string[]
+    if (r.written) {
+      lines = ['✅ 整理完成，我对你的理解已更新。']
+      // Reflect BOTH sides — synthesis spans work (项目) and life (微信观察),
+      // so show what got folded in, not just the project count.
+      const parts: string[] = []
+      if (r.projectsFound > 0) parts.push(`${r.projectsFound} 个项目（${r.projectNames.join('、')}）`)
+      const life: string[] = []
+      if (r.observationsFound > 0) life.push(`${r.observationsFound} 条观察`)
+      if (r.milestonesFound > 0) life.push(`${r.milestonesFound} 个里程碑`)
+      if (r.memoryNotesFound > 0) life.push(`${r.memoryNotesFound} 篇记忆笔记`)
+      if (life.length) parts.push(`生活侧 ${life.join('、')}`)
+      if (parts.length) lines.push(`综合了：${parts.join('；')}`)
+    } else {
+      lines = ['没找到可整理的记忆（本机项目记忆 + 微信生活观察都还是空的）。']
+    }
     await deps.sendMessage(adminChatId, lines.join('\n'))
     deps.log('ADMIN_CMD', `synthesize chat=${adminChatId} projects=${r.projectsFound} written=${!!r.written}`)
   } catch (err) {

@@ -289,6 +289,30 @@ describe('admin-commands', () => {
       expect(sentBody(1)).toContain('alpha')
     })
 
+    it('surfaces the life-side counts folded into the synthesis', async () => {
+      const synthesizeMemory = vi.fn().mockResolvedValue({
+        projectsFound: 1, projectNames: ['alpha'], filesScanned: 2,
+        observationsFound: 7, milestonesFound: 2, memoryNotesFound: 3,
+        written: { path: '_overview.md', bytesWritten: 500 },
+      })
+      const cmds = make({ synthesizeMemory: synthesizeMemory as unknown as AdminCommandsDeps['synthesizeMemory'] })
+      await cmds.handle(msg('整理记忆'))
+      await flush()
+      const body = sentBody(1)
+      expect(body).toContain('生活侧')
+      expect(body).toContain('7 条观察')
+      expect(body).toContain('2 个里程碑')
+      expect(body).toContain('3 篇记忆笔记')
+    })
+
+    it('reports nothing-to-synthesize when both work and life are empty', async () => {
+      const synthesizeMemory = vi.fn().mockResolvedValue({ projectsFound: 0, projectNames: [], filesScanned: 0 })
+      const cmds = make({ synthesizeMemory: synthesizeMemory as unknown as AdminCommandsDeps['synthesizeMemory'] })
+      await cmds.handle(msg('整理记忆'))
+      await flush()
+      expect(sentBody(1)).toContain('没找到可整理的记忆')
+    })
+
     it('matches natural-language phrasings and slash aliases', async () => {
       const synthesizeMemory = vi.fn().mockResolvedValue({ projectsFound: 0, projectNames: [], filesScanned: 0 })
       const cmds = make({ synthesizeMemory: synthesizeMemory as unknown as AdminCommandsDeps['synthesizeMemory'] })
