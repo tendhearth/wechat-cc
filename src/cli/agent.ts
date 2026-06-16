@@ -395,7 +395,10 @@ export function cmdDaemonA2AEnable(stateDir: string, opts: DaemonA2AEnableOpts =
     console.log(`✅ A2A server enabled at ${host}:${port}`)
   }
   if (host !== '127.0.0.1') {
-    console.log(`⚠ Binding to ${host} (not loopback) — make sure you understand the threat model (see README).`)
+    console.log(`⚠ Binding to ${host} (not loopback). A paired peer can call /a2a/exec, which runs a FULL local agent (Read/Bash) on THIS machine — treat the pairing token like a remote-shell key.`)
+    if (host === '0.0.0.0' || host === '::') {
+      console.log(`⚠ ${host} listens on EVERY network interface. For multi-machine (一个大脑多手), bind to your private Tailscale IP (100.x.y.z) instead — only your tailnet should be able to reach /a2a/exec, never an untrusted network.`)
+    }
   }
   console.log('⟳ Restart the daemon to apply: kill it and re-launch (or use the desktop GUI restart).')
 }

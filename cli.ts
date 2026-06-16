@@ -2296,7 +2296,9 @@ const handAcceptCmd = defineCommand({
       acceptBrain(STATE_DIR, { brainId: args['brain-id'], token: args.token, ...(args['brain-url'] ? { brainUrl: args['brain-url'] } : {}) })
       if (args.json) { console.log(JSON.stringify({ ok: true, brainId: args['brain-id'] })); return }
       console.log(`已接受大脑「${args['brain-id']}」—— 这台现在可被它派活。`)
-      console.log('确认本机 A2A 监听已开(daemon a2a enable + 绑 tailnet),且把本机地址填给了大脑的 hand add。')
+      console.log('还要:① 开 A2A 监听并绑到你的 Tailscale IP(别用 0.0.0.0):')
+      console.log('     wechat-cc daemon a2a enable --host <本机 100.x.y.z> --port 8717,然后重启 daemon')
+      console.log('   ② 把 http://<本机 100.x.y.z>:8717/a2a 填给大脑的 `hand add <url>`。')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (args.json) { console.log(JSON.stringify({ ok: false, error: msg })); return }
