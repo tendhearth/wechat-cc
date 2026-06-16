@@ -87,7 +87,7 @@ function listMd(dir: string): string[] {
   const out: string[] = []
   const walk = (sub: string): void => {
     const here = sub ? join(dir, sub) : dir
-    let entries: ReturnType<typeof readdirSync>
+    let entries: import('node:fs').Dirent[]
     try {
       entries = readdirSync(here, { withFileTypes: true })
     } catch {
