@@ -93,6 +93,7 @@ export function parseUpdates(
     const attachments: InboundMsg['attachments'] = []
     let quote: InboundMsg['quote']
 
+    let msgType = 'unknown'
     for (const item of msg.item_list ?? []) {
       // Capture the first quoted message as structured content. ilink inlines
       // the quoted text in ref_msg (no stable id), richest field first. A
@@ -108,14 +109,16 @@ export function parseUpdates(
         if (text !== '' || type !== 'unknown') {
           quote = { type, text }
         }
+        continue
       }
 
       if (item.type === 1) {
-        // Text item
+        if (msgType === 'unknown') msgType = 'text'
         if (item.text_item?.text) {
           textParts.push(item.text_item.text)
         }
       } else if (item.type === 2) {
+        if (msgType === 'unknown') msgType = 'image'
         // Image item — emit opaque CDN reference; caller downloads via media.ts
         const media = item.image_item?.media
         attachments.push({
@@ -124,6 +127,7 @@ export function parseUpdates(
           caption: JSON.stringify(media ?? {}),
         })
       } else if (item.type === 3) {
+        if (msgType === 'unknown') msgType = 'voice'
         // Voice item
         if (item.voice_item?.text) {
           textParts.push(`[语音] ${item.voice_item.text}`)
@@ -136,6 +140,7 @@ export function parseUpdates(
           })
         }
       } else if (item.type === 4) {
+        if (msgType === 'unknown') msgType = 'file'
         // File item
         const media = item.file_item?.media
         const fileName = item.file_item?.file_name ?? 'file.bin'
@@ -145,6 +150,7 @@ export function parseUpdates(
           caption: JSON.stringify({ media: media ?? {}, file_name: fileName }),
         })
       } else if (item.type === 5) {
+        if (msgType === 'unknown') msgType = 'video'
         // Video item
         const media = item.video_item?.media
         attachments.push({
@@ -153,17 +159,6 @@ export function parseUpdates(
           caption: JSON.stringify(media ?? {}),
         })
       }
-    }
-
-    // Determine msgType from first non-ref item type
-    let msgType = 'unknown'
-    for (const item of msg.item_list ?? []) {
-      if (item.ref_msg) continue
-      if (item.type === 1) { msgType = 'text'; break }
-      if (item.type === 2) { msgType = 'image'; break }
-      if (item.type === 3) { msgType = 'voice'; break }
-      if (item.type === 4) { msgType = 'file'; break }
-      if (item.type === 5) { msgType = 'video'; break }
     }
 
     const inbound: InboundMsg = {
