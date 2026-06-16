@@ -19,6 +19,7 @@
  */
 import type { A2ARegistry } from './a2a-registry'
 import type { A2AAgentRecord } from '../lib/agent-config'
+import type { ProviderId } from './conversation'
 
 export interface NotifyEvent {
   agent: A2AAgentRecord
@@ -26,6 +27,20 @@ export interface NotifyEvent {
   urgency?: 'normal' | 'critical'
   metadata?: Record<string, unknown>
 }
+
+/**
+ * A delegated task: the caller (a "brain" wechat-cc) asks THIS machine to run
+ * its local agent on `prompt` and return the result. The "hand" side of the
+ * one-brain-many-hands model — backed by the delegate one-shot dispatcher.
+ */
+export interface ExecEvent {
+  agent: A2AAgentRecord
+  peer: ProviderId
+  prompt: string
+  cwd?: string
+}
+
+export type ExecResult = { ok: true; response: string } | { ok: false; reason: string }
 
 export interface AuthFailedEvent {
   /** The claimed agent_id from the request body. Only emitted when the
@@ -40,6 +55,11 @@ export interface A2AServerOpts {
   port: number
   registry: A2ARegistry
   onNotify: (event: NotifyEvent) => Promise<void>
+  /**
+   * Optional. When wired, enables POST /a2a/exec — run the local agent on a
+   * delegated task and return the result. Undefined → /a2a/exec returns 501.
+   */
+  onExec?: (event: ExecEvent) => Promise<ExecResult>
   /** Optional hook called when a notify request is rejected with 401/403
    *  AND we can identify which agent_id the caller claimed. Used by
    *  bootstrap to write an `a2a_events` row with status='auth_failed' so
@@ -84,6 +104,19 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
           metadata: 'object (optional)',
         },
       },
+      // Advertised only when this machine is wired as a "hand" (onExec set).
+      ...(opts.onExec ? [{
+        name: 'exec',
+        description: 'Run this machine\'s local agent on a task and return the result (one-brain-many-hands: the caller delegates, this hand executes locally).',
+        endpoint: '/a2a/exec',
+        method: 'POST',
+        request_schema: {
+          agent_id: 'string (your registered id with this wechat-cc)',
+          prompt: 'string (the task)',
+          peer: 'string (optional, \'claude\'|\'codex\'; default claude)',
+          cwd: 'string (optional, working directory on this machine)',
+        },
+      }] : []),
     ],
   }
 
@@ -145,6 +178,47 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         return new Response(JSON.stringify({ error: 'notify_failed', detail: msg }), { status: 500 })
+      }
+    }
+    if (url.pathname === '/a2a/exec') {
+      if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
+      if (!opts.onExec) return new Response(JSON.stringify({ error: 'exec_not_supported' }), { status: 501 })
+
+      let body: { agent_id?: unknown; prompt?: unknown; peer?: unknown; cwd?: unknown }
+      try {
+        body = await req.json() as typeof body
+      } catch {
+        return new Response(JSON.stringify({ error: 'invalid_json' }), { status: 400 })
+      }
+      if (typeof body.agent_id !== 'string' || typeof body.prompt !== 'string' || body.prompt.length === 0) {
+        return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
+      }
+      const claimedId = body.agent_id
+
+      const auth = req.headers.get('authorization')
+      if (!auth?.startsWith('Bearer ')) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'missing_bearer' })
+        return new Response(JSON.stringify({ error: 'missing_bearer' }), { status: 401 })
+      }
+      const agent = opts.registry.verifyBearer(claimedId, auth.slice('Bearer '.length).trim())
+      if (!agent) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'wrong_bearer' })
+        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
+      }
+      if (agent.id !== claimedId) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'agent_id_mismatch' })
+        return new Response(JSON.stringify({ error: 'agent_id_mismatch' }), { status: 403 })
+      }
+      if (agent.paused) return new Response(JSON.stringify({ ok: false, reason: 'paused' }), { status: 202 })
+
+      const peer = (typeof body.peer === 'string' && body.peer ? body.peer : 'claude') as ProviderId
+      const cwd = typeof body.cwd === 'string' ? body.cwd : undefined
+      try {
+        const result = await opts.onExec({ agent, peer, prompt: body.prompt, cwd })
+        return new Response(JSON.stringify(result), { status: 200 })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return new Response(JSON.stringify({ ok: false, reason: msg }), { status: 200 })
       }
     }
     return new Response('not found', { status: 404 })

@@ -24,12 +24,17 @@ function fakeRegistry(agents: A2AAgentRecord[]): A2ARegistry {
   }
 }
 
-async function startServer(opts: { agents?: A2AAgentRecord[]; onNotify?: (event: import('./a2a-server').NotifyEvent) => Promise<void> } = {}) {
+async function startServer(opts: {
+  agents?: A2AAgentRecord[]
+  onNotify?: (event: import('./a2a-server').NotifyEvent) => Promise<void>
+  onExec?: (event: import('./a2a-server').ExecEvent) => Promise<import('./a2a-server').ExecResult>
+} = {}) {
   const onNotify: (event: import('./a2a-server').NotifyEvent) => Promise<void> = opts.onNotify ?? vi.fn(async () => {})
   const server = createA2AServer({
     host: '127.0.0.1', port: 0,
     registry: fakeRegistry(opts.agents ?? [rec('alpha')]),
     onNotify,
+    ...(opts.onExec ? { onExec: opts.onExec } : {}),
     daemonInfo: { name: 'wechat-cc', version: '0.6.x' },
   })
   await server.start()
@@ -173,6 +178,79 @@ describe('a2a-server', () => {
     } finally {
       await server.stop()
     }
+  })
+
+  describe('POST /a2a/exec (hand mode)', () => {
+    it('runs the local agent and returns the result when authed', async () => {
+      const onExec = vi.fn(async () => ({ ok: true as const, response: 'did the thing' }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onExec })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/exec`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', prompt: '看下家里的 README', peer: 'codex', cwd: '/home/me/proj' }),
+        })
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual({ ok: true, response: 'did the thing' })
+        expect(onExec).toHaveBeenCalledWith(expect.objectContaining({
+          agent: expect.objectContaining({ id: 'alpha' }),
+          peer: 'codex', prompt: '看下家里的 README', cwd: '/home/me/proj',
+        }))
+      } finally { await server.stop() }
+    })
+
+    it('defaults peer to claude when omitted', async () => {
+      const onExec = vi.fn(async () => ({ ok: true as const, response: 'r' }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onExec })
+      try {
+        await fetch(`${baseUrl}/a2a/exec`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', prompt: 'x' }),
+        })
+        expect(onExec).toHaveBeenCalledWith(expect.objectContaining({ peer: 'claude' }))
+      } finally { await server.stop() }
+    })
+
+    it('returns 501 when this machine is not wired as a hand (no onExec)', async () => {
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec] })  // no onExec
+      try {
+        const res = await fetch(`${baseUrl}/a2a/exec`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', prompt: 'x' }),
+        })
+        expect(res.status).toBe(501)
+      } finally { await server.stop() }
+    })
+
+    it('rejects exec without a valid Bearer → 401, onExec not called', async () => {
+      const onExec = vi.fn(async () => ({ ok: true as const, response: 'r' }))
+      const { server, baseUrl } = await startServer({ onExec })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/exec`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agent_id: 'alpha', prompt: 'x' }),
+        })
+        expect(res.status).toBe(401)
+        expect(onExec).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('advertises the exec capability in the Agent Card only when wired', async () => {
+      const withExec = await startServer({ onExec: async () => ({ ok: true, response: 'r' }) })
+      const without = await startServer()
+      try {
+        const a = await (await fetch(`${withExec.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        const b = await (await fetch(`${without.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        expect(a.capabilities.some(c => c.name === 'exec')).toBe(true)
+        expect(b.capabilities.some(c => c.name === 'exec')).toBe(false)
+      } finally { await withExec.server.stop(); await without.server.stop() }
+    })
   })
 
   describe('onAuthFailed observability', () => {

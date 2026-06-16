@@ -853,6 +853,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       port: configuredAgent.a2a_listen.port,
       registry: a2aRegistry,
       onNotify: routeA2ANotify,
+      // "Hand" capability (one-brain-many-hands): a registered peer can POST
+      // /a2a/exec to run THIS machine's local agent on a task and get the
+      // result, via the same one-shot delegate dispatcher used by /v1/delegate.
+      onExec: (event) => dispatchDelegate(event.peer, event.prompt, event.cwd),
       // Observability: 401/403 failures with an identifiable agent_id_claimed
       // get a `status='auth_failed'` row so the operator sees auth attempts
       // in the dashboard activity drawer + `wechat-cc agent activity <id>`.
