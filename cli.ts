@@ -1075,6 +1075,74 @@ const memoryProjectsCmd = defineCommand({
   },
 })
 
+const memoryStatusCmd = defineCommand({
+  meta: {
+    name: 'status',
+    description: "Show the synthesized overview's freshness + how much source memory is available to fold in",
+  },
+  args: {
+    'chat-id': { type: 'string', description: 'Admin chat_id (default: sole admin in access.json)' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { readFileSync, existsSync, statSync } = await import('node:fs')
+
+    // Resolve admin chat-id — same pattern as `memory synthesize`.
+    let chatId = args['chat-id']
+    if (!chatId) {
+      let access: { admins?: string[] } = {}
+      try { access = JSON.parse(readFileSync(join(STATE_DIR, 'access.json'), 'utf8')) } catch { /* handled below */ }
+      const admins = access.admins ?? []
+      if (admins.length === 1) chatId = admins[0]!
+      else {
+        const m = admins.length === 0 ? 'No admins in access.json — pass --chat-id' : `Multiple admins (${admins.join(', ')}) — pass --chat-id`
+        if (args.json) { console.log(JSON.stringify({ ok: false, error: m })); return }
+        console.error(m); process.exit(1)
+      }
+    }
+
+    const { OVERVIEW_FILENAME, summarizeProjectMemories } = await import('./src/cli/memory-synthesis')
+    const overviewPath = join(STATE_DIR, 'memory', chatId, OVERVIEW_FILENAME)
+    const stat = existsSync(overviewPath) ? statSync(overviewPath) : null
+    const ageDays = stat ? Math.floor((Date.now() - stat.mtimeMs) / 86_400_000) : null
+
+    // Source material available to fold in: work (project memory) + life (db).
+    const projects = summarizeProjectMemories().length
+    let observations = 0, milestones = 0
+    try {
+      const { openWechatDb } = await import('./src/lib/db')
+      const { makeLifeStoresReader } = await import('./src/daemon/life-stores')
+      const db = openWechatDb(STATE_DIR)
+      try {
+        const reader = makeLifeStoresReader(db, STATE_DIR)
+        observations = (await reader.listObservations(chatId)).length
+        milestones = (await reader.listMilestones(chatId)).length
+      } finally { db.close() }
+    } catch { /* db absent — life counts stay 0 */ }
+
+    if (args.json) {
+      console.log(JSON.stringify({
+        ok: true, chatId, exists: !!stat, path: overviewPath, bytes: stat?.size ?? 0,
+        lastSynthesized: stat ? new Date(stat.mtimeMs).toISOString() : null, ageDays,
+        source: { projects, observations, milestones },
+      }))
+      return
+    }
+
+    const sourceLine = `可整理来源: ${projects} 个项目 · ${observations} 条观察 · ${milestones} 个里程碑`
+    if (!stat) {
+      console.log(`还没整理过对你的理解（${overviewPath} 不存在）。`)
+      console.log(sourceLine)
+      console.log('跑 wechat-cc memory synthesize,或微信里说「整理记忆」。')
+      return
+    }
+    console.log(`记忆总览: ${overviewPath}`)
+    console.log(`上次整理: ${new Date(stat.mtimeMs).toLocaleString()}（${ageDays === 0 ? '今天' : `${ageDays} 天前`}）· ${stat.size}B`)
+    console.log(sourceLine)
+    if ((ageDays ?? 0) >= 7) console.log('⚠ 已超过一周,内容可能过时 —— 说「整理记忆」更新。')
+  },
+})
+
 const memoryCmd = defineCommand({
   meta: { name: 'memory', description: 'Companion v2 memory files (per user)' },
   subCommands: {
@@ -1083,6 +1151,7 @@ const memoryCmd = defineCommand({
     write: memoryWriteCmd,
     synthesize: memorySynthesizeCmd,
     projects: memoryProjectsCmd,
+    status: memoryStatusCmd,
   },
 })
 
