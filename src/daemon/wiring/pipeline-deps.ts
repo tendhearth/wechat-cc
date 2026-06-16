@@ -119,9 +119,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     delegateToHand: async (handName, task) => {
       const a2a = boot.a2aDeps
       if (!a2a) return { ok: false as const, reason: 'A2A 未启用(agent-config 没配 a2a_listen / 没注册手)' }
-      const agents = a2a.registry.list()
-      const hand = agents.find(a => a.id === handName || a.name === handName)
-      if (!hand) return { ok: false as const, reason: 'unknown_hand', knownHands: agents.map(a => a.name || a.id) }
+      // Only exec-capable agents are delegation targets — a notify-only agent
+      // has no /a2a/exec, so don't match it (and don't list it as a "known
+      // hand", which would mislead the discovery reply).
+      const hands = a2a.registry.list().filter(a => a.capabilities?.includes('exec'))
+      const hand = hands.find(a => a.id === handName || a.name === handName)
+      if (!hand) return { ok: false as const, reason: 'unknown_hand', knownHands: hands.map(a => a.name || a.id) }
       const { delegateToHand: doDelegate } = await import('../../core/a2a-delegate')
       const { createA2AClient } = await import('../../core/a2a-client')
       execA2AClient ??= createA2AClient({ timeoutMs: Number(process.env.WECHAT_A2A_EXEC_TIMEOUT_MS) || 300_000 })

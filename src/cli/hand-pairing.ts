@@ -45,6 +45,31 @@ export function addHand(stateDir: string, opts: { id: string; url: string; name?
   })
 }
 
+export interface Pairings {
+  /** Exec-capable peers THIS machine (as a brain) can delegate tasks to. */
+  hands: Array<{ id: string; name: string; url: string; paused: boolean }>
+  /** Peers that may delegate INTO this machine (the brain side of a pairing). */
+  brains: Array<{ id: string; name: string }>
+  /** Any other registered A2A agents (e.g. notify-only), for completeness. */
+  others: Array<{ id: string; name: string; capabilities: string[] }>
+}
+
+/**
+ * Classify the A2A registry into the 乙 roles, using our own record shapes:
+ *   - hand  → has the 'exec' capability (written by addHand/join)
+ *   - brain → outbound_api_key === 'unused' sentinel (written by acceptBrain/pair)
+ *   - other → everything else (notify agents, etc.)
+ */
+export function listPairings(stateDir: string): Pairings {
+  const result: Pairings = { hands: [], brains: [], others: [] }
+  for (const a of createA2ARegistry({ stateDir }).list()) {
+    if (a.capabilities?.includes('exec')) result.hands.push({ id: a.id, name: a.name, url: a.url, paused: a.paused })
+    else if (a.outbound_api_key === 'unused') result.brains.push({ id: a.id, name: a.name })
+    else result.others.push({ id: a.id, name: a.name, capabilities: a.capabilities ?? [] })
+  }
+  return result
+}
+
 export interface JoinResult { ok: boolean; id: string; url: string; error?: string }
 
 /**

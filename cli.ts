@@ -2375,11 +2375,31 @@ const handJoinCmd = defineCommand({
   },
 })
 
+const handListCmd = defineCommand({
+  meta: { name: 'list', description: 'Show paired hands (you can delegate to) and brains (can delegate here)' },
+  args: { json: { type: 'boolean', description: 'JSON envelope' } },
+  async run({ args }) {
+    const { listPairings } = await import('./src/cli/hand-pairing.ts')
+    const p = listPairings(STATE_DIR)
+    if (args.json) { console.log(JSON.stringify(p)); return }
+    console.log('可派活的手 (hands you can delegate to):')
+    if (p.hands.length === 0) console.log('  (无 —— 在手那台跑 wechat-cc hand invite,再在这台 hand join)')
+    for (const h of p.hands) console.log(`  ${h.name}  (${h.id})  →  ${h.url}${h.paused ? '  (paused)' : ''}`)
+    console.log('\n可向这台派活的大脑 (brains that can delegate here):')
+    if (p.brains.length === 0) console.log('  (无)')
+    for (const b of p.brains) console.log(`  ${b.name}  (${b.id})`)
+    if (p.others.length > 0) {
+      console.log('\n其他 A2A agents:')
+      for (const o of p.others) console.log(`  ${o.name}  (${o.id})  [${o.capabilities.join(', ') || '—'}]`)
+    }
+  },
+})
+
 const handCmd = defineCommand({
   // Smooth path: `hand invite` on the hand → `hand join <code>` on the brain.
   // Manual path (no daemon needed on the hand yet): `hand add` + `hand accept`.
   meta: { name: 'hand', description: 'Multi-machine (一个大脑多手): pair a brain with hands. Smooth: hand invite → hand join <code>' },
-  subCommands: { invite: handInviteCmd, join: handJoinCmd, add: handAddCmd, accept: handAcceptCmd },
+  subCommands: { invite: handInviteCmd, join: handJoinCmd, list: handListCmd, add: handAddCmd, accept: handAcceptCmd },
 })
 
 const SUBCOMMANDS = {

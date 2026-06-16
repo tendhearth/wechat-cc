@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { createA2ARegistry } from '../core/a2a-registry'
 import { createA2AServer } from '../core/a2a-server'
 import { mintInvite, verifyAndConsumeInvite } from './a2a-pairing'
-import { acceptBrain, addHand, joinHand } from './hand-pairing'
+import { acceptBrain, addHand, joinHand, listPairings } from './hand-pairing'
 
 let stateDir: string
 const TOKEN = 'shared-secret-0123456789'  // ≥16
@@ -27,6 +27,28 @@ describe('addHand (brain side)', () => {
   it('rejects a non-slug id and a short token', () => {
     expect(() => addHand(stateDir, { id: '家里', url: 'http://x/a2a', token: TOKEN })).toThrow(/slug/)
     expect(() => addHand(stateDir, { id: 'home', url: 'http://x/a2a', token: 'short' })).toThrow(/at least 16/)
+  })
+})
+
+describe('listPairings (role classification)', () => {
+  it('classifies hands (exec), brains (unused sentinel), and other agents', () => {
+    addHand(stateDir, { id: 'home', url: 'http://home/a2a', name: '家里', token: TOKEN })   // hand
+    acceptBrain(stateDir, { brainId: 'office-brain', token: TOKEN })                         // brain
+    // a plain notify-only agent
+    createA2ARegistry({ stateDir }).add({
+      id: 'pager', name: 'pager', url: 'https://pager/a2a',
+      inbound_api_key: TOKEN, outbound_api_key: 'real-key', capabilities: ['notify'], paused: false,
+    })
+    const p = listPairings(stateDir)
+    expect(p.hands.map(h => h.id)).toEqual(['home'])
+    expect(p.hands[0]!.name).toBe('家里')
+    expect(p.brains.map(b => b.id)).toEqual(['office-brain'])
+    expect(p.others.map(o => o.id)).toEqual(['pager'])
+  })
+
+  it('returns empty groups for an empty registry', () => {
+    const p = listPairings(stateDir)
+    expect(p).toEqual({ hands: [], brains: [], others: [] })
   })
 })
 
