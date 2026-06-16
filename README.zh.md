@@ -281,7 +281,7 @@ wechat-cc hand list                # 看「能派活的手」/「能向我派活
 | `/hearth ingest｜list｜show｜apply` | vault 治理 (admin，hearth 启用后) |
 | `让<名字>执行 <任务>` / `派<名字>跑 <任务>` | 把任务派给已配对的手 (admin，见[功能 9](#9--一个大脑多手人在公司让家里电脑干活))；名字不对会回已配对列表 |
 
-Companion + 记忆相关用自然语言配置（`开启 companion` / `切到陪伴` / `别烦我` 等），不是 slash 命令。
+Companion + 记忆相关用自然语言配置（`开启 companion` / `切到陪伴` / `别烦我` 等），不是 slash 命令。记忆：说 `整理记忆` 让 CC 重新整理对你的理解，说 `看记忆` / `你对我的理解` 看它目前怎么理解你（admin）。
 
 ---
 
