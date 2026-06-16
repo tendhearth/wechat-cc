@@ -357,6 +357,46 @@ describe('admin-commands', () => {
     })
   })
 
+  describe('看记忆 / 你对我的理解 (read back the overview)', () => {
+    it('replies with the synthesized overview', async () => {
+      const readOverview = vi.fn().mockResolvedValue('## 整体理解\n你是个设计师，喜欢猫。')
+      const cmds = make({ readOverview: readOverview as unknown as AdminCommandsDeps['readOverview'] })
+      expect(await cmds.handle(msg('你对我的理解'))).toBe(true)
+      expect(readOverview).toHaveBeenCalledWith('admin-chat')
+      expect(sentBody(0)).toContain('我目前对你的理解')
+      expect(sentBody(0)).toContain('喜欢猫')
+    })
+
+    it('matches several phrasings + the /overview alias', async () => {
+      const readOverview = vi.fn().mockResolvedValue('x')
+      const cmds = make({ readOverview: readOverview as unknown as AdminCommandsDeps['readOverview'] })
+      for (const p of ['看记忆', '你眼中的我', '你怎么理解我', '你记得我什么', '/overview']) {
+        expect(await cmds.handle(msg(p))).toBe(true)
+      }
+      expect(readOverview).toHaveBeenCalledTimes(5)
+    })
+
+    it('guides to synthesize when no overview exists yet', async () => {
+      const readOverview = vi.fn().mockResolvedValue(null)
+      const cmds = make({ readOverview: readOverview as unknown as AdminCommandsDeps['readOverview'] })
+      await cmds.handle(msg('看记忆'))
+      expect(sentBody(0)).toContain('整理记忆')
+    })
+
+    it('does NOT collide with synthesis phrasings (重新整理你对我的理解 → synthesize, not show)', async () => {
+      const readOverview = vi.fn().mockResolvedValue('x')
+      const synthesizeMemory = vi.fn().mockResolvedValue({ projectsFound: 0, projectNames: [], filesScanned: 0 })
+      const cmds = make({
+        readOverview: readOverview as unknown as AdminCommandsDeps['readOverview'],
+        synthesizeMemory: synthesizeMemory as unknown as AdminCommandsDeps['synthesizeMemory'],
+      })
+      await cmds.handle(msg('重新整理你对我的理解'))
+      await new Promise(r => setTimeout(r, 0))
+      expect(readOverview).not.toHaveBeenCalled()
+      expect(synthesizeMemory).toHaveBeenCalled()
+    })
+  })
+
   describe('让/派 <hand> 执行/跑 <task> (delegate to a hand)', () => {
     const flush = () => new Promise(r => setTimeout(r, 0))
 

@@ -115,6 +115,14 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // life-side memory (kept on the daemon side of the cli/daemon boundary).
       return synthesizeOverview({ stateDir, adminChatId, sdkEval: (p) => cheapEval(p), lifeStores: makeLifeStoresReader(db, stateDir) })
     },
+    // Read back the synthesized overview so the admin can see what the bot
+    // understands about them ("看记忆" / "你对我的理解" from WeChat).
+    readOverview: async (adminChatId) => {
+      const { readFile } = await import('node:fs/promises')
+      const { OVERVIEW_FILENAME } = await import('../../cli/memory-synthesis')
+      try { return await readFile(join(stateDir, 'memory', adminChatId, OVERVIEW_FILENAME), 'utf8') }
+      catch { return null }
+    },
     // Delegate a task to a registered "hand" (another machine running wechat-cc
     // with A2A exec). Resolves the hand by id or name, then calls its /a2a/exec
     // and returns the result (one-brain-many-hands).

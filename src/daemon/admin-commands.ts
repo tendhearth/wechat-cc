@@ -53,6 +53,12 @@ export interface AdminCommandsDeps {
    */
   synthesizeMemory?: (adminChatId: string) => Promise<SynthesizeResult>
   /**
+   * Optional. Read back the admin's synthesized overview ("CC 眼中的你") so they
+   * can see what the bot currently understands about them. Returns null when no
+   * overview has been synthesized yet. Wired in pipeline-deps.
+   */
+  readOverview?: (adminChatId: string) => Promise<string | null>
+  /**
    * Optional. Delegate a task to a registered "hand" (another machine running
    * wechat-cc with A2A exec). Returns the hand's result, or a list of known
    * hands when the name doesn't resolve. Wired in pipeline-deps.
@@ -86,6 +92,10 @@ const HEALTH_AI_RE = /^\s*\/health\s+ai\s*$/
 // Natural-language Chinese phrasings + slash aliases — the admin just asks the
 // bot to refresh its understanding.
 const SYNTHESIZE_RE = /^\s*(?:\/(?:synthesize|整理记忆)|重新整理记忆|整理一下记忆|整理记忆|重新整理你对我的理解|更新你对我的理解|更新记忆)\s*$/
+// READ BACK the synthesized overview — show the admin what the bot understands
+// about them. Distinct from SYNTHESIZE_RE (which *regenerates*): these are
+// "show me", anchored so they don't collide with the 重新整理/更新 phrasings.
+const SHOW_OVERVIEW_RE = /^\s*(?:\/overview|你对我的理解|看看你对我的理解|你眼中的我|你怎么(?:理解|看)我|你记得我(?:什么|啥)|查看记忆|看一下记忆|看下记忆|看记忆)\s*[?？]?\s*$/
 // 让/派 <hand> 执行/跑 <task> — delegate a task to another machine ("hand").
 // 让/派 (imperative) + 执行/跑 keeps casual speech from matching; an unknown
 // hand name still replies with the known list (doubles as discovery).
@@ -114,7 +124,7 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
   return {
     async handle(msg) {
       const text = msg.text.trim()
-      const isCmd = text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || DELEGATE_RE.test(text) || RESET_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
+      const isCmd = text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || DELEGATE_RE.test(text) || RESET_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
       if (!isCmd) return false
 
       if (!deps.isAdmin(msg.chatId)) {
@@ -134,6 +144,11 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
 
       if (RESET_RE.test(text)) {
         await runReset(deps, msg.chatId)
+        return true
+      }
+
+      if (SHOW_OVERVIEW_RE.test(text)) {
+        await runShowOverview(deps, msg.chatId)
         return true
       }
 
@@ -380,6 +395,26 @@ async function sendHearthHelp(deps: AdminCommandsDeps, adminChatId: string): Pro
 // Admin chats with a synthesis in flight — guards against a double-tap firing
 // a second (paid) LLM run before the first replies.
 const synthesizeInFlight = new Set<string>()
+
+async function runShowOverview(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {
+  if (!deps.readOverview) {
+    await deps.sendMessage(adminChatId, '记忆查看暂不可用（daemon 未接线）。').catch(() => {})
+    return
+  }
+  try {
+    const overview = (await deps.readOverview(adminChatId))?.trim()
+    if (!overview) {
+      await deps.sendMessage(adminChatId, '我还没整理过对你的理解。说「整理记忆」我就生成一份。')
+      return
+    }
+    await deps.sendMessage(adminChatId, `🧠 我目前对你的理解：\n\n${overview}`)
+    deps.log('ADMIN_CMD', `show-overview chat=${adminChatId} bytes=${overview.length}`)
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    await deps.sendMessage(adminChatId, `读取记忆失败：${detail.slice(0, 160)}`).catch(() => {})
+    deps.log('ADMIN_CMD', `show-overview failed chat=${adminChatId}: ${detail}`)
+  }
+}
 
 async function runSynthesize(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {
   // Whole body is guarded: runSynthesize is dispatched fire-and-forget (the
