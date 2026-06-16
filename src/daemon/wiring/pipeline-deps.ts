@@ -44,6 +44,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const { stateDir, db, ilink, boot, log } = opts
   const inboxDir = join(stateDir, 'inbox')
 
+  // A2A exec (delegate a task to a hand) runs a FULL agent on the hand —
+  // often tens of seconds to minutes. The shared a2aDeps.client's 10s timeout
+  // is tuned for notify/send; exec needs a long one. Lazily built + reused.
+  let execA2AClient: import('../../core/a2a-client').A2AClient | undefined
+
   const fireMilestonesFor = makeFireMilestonesFor({ stateDir, db })
 
   // Disk-first then mutate: if saveAgentConfig throws (EACCES, ENOSPC),
@@ -118,10 +123,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       const hand = agents.find(a => a.id === handName || a.name === handName)
       if (!hand) return { ok: false as const, reason: 'unknown_hand', knownHands: agents.map(a => a.name || a.id) }
       const { delegateToHand: doDelegate } = await import('../../core/a2a-delegate')
+      const { createA2AClient } = await import('../../core/a2a-client')
+      execA2AClient ??= createA2AClient({ timeoutMs: Number(process.env.WECHAT_A2A_EXEC_TIMEOUT_MS) || 300_000 })
       // The brain's id as the hand knows it (the hand registers the brain under
       // this id + a matching key). Configurable; defaults to a stable slug.
       const selfId = process.env.WECHAT_A2A_SELF_ID || 'wechat-cc'
-      return doDelegate(a2a.client, { hand, selfId, prompt: task })
+      return doDelegate(execA2AClient, { hand, selfId, prompt: task })
     },
   })
 

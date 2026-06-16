@@ -230,6 +230,11 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       server = Bun.serve({
         hostname: opts.host,
         port: opts.port,
+        // /a2a/exec runs a full local agent (tens of seconds to minutes) with
+        // no response bytes until it finishes — Bun's default 10s idleTimeout
+        // would drop the connection mid-run. Raise to Bun's max (255s). Longer
+        // tasks would need response streaming/heartbeat (future).
+        idleTimeout: 255,
         fetch: handle,
       })
     },
