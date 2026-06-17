@@ -879,6 +879,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
             outbound_api_key: 'unused',      // hand → brain unused for exec; schema needs ≥1
             capabilities: [],
             paused: false,
+            transport: 'push',
           })
         }
         a2aEventsStore.append({

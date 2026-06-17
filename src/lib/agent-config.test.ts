@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadAgentConfig, saveAgentConfig, parseAgentConfig } from './agent-config'
+import { loadAgentConfig, saveAgentConfig, parseAgentConfig, A2AAgentRecord } from './agent-config'
 
 describe('agent-config', () => {
   it('defaults to claude with unattended=true when no config exists', () => {
@@ -263,5 +263,22 @@ describe('loadAgentConfig — cursor provider', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('A2AAgentRecord.transport', () => {
+  it('defaults transport to "push" when absent', () => {
+    const rec = A2AAgentRecord.parse({
+      id: 'home', name: 'home', url: 'http://h/a2a',
+      inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o', capabilities: ['exec'],
+    })
+    expect(rec.transport).toBe('push')
+  })
+  it('accepts transport "ws"', () => {
+    const rec = A2AAgentRecord.parse({
+      id: 'home', name: 'home', url: 'http://h/a2a',
+      inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o', capabilities: ['exec'], transport: 'ws',
+    })
+    expect(rec.transport).toBe('ws')
   })
 })

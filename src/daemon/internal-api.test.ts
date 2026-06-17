@@ -1724,11 +1724,12 @@ describe('internal-api request validation', () => {
           inbound_api_key: 'unused-inbound',
           capabilities: [] as string[],
           paused: a.paused ?? false,
+          transport: 'push' as const,
         })),
         get: (id) => {
           const a = agentsList.find(x => x.id === id)
           if (!a) return null
-          return { id: a.id, name: a.id, url: a.url, outbound_api_key: a.outbound_api_key, inbound_api_key: 'unused-inbound', capabilities: [] as string[], paused: a.paused ?? false }
+          return { id: a.id, name: a.id, url: a.url, outbound_api_key: a.outbound_api_key, inbound_api_key: 'unused-inbound', capabilities: [] as string[], paused: a.paused ?? false, transport: 'push' as const }
         },
         verifyBearer: () => null,
         add: () => { /* send tests don't exercise add */ },
@@ -1736,7 +1737,7 @@ describe('internal-api request validation', () => {
         setPaused: () => {},
         update: (id, _patch) => ({
           id, name: id, url: '', inbound_api_key: 'unused-inbound', outbound_api_key: '',
-          capabilities: [] as string[], paused: false,
+          capabilities: [] as string[], paused: false, transport: 'push' as const,
         }),
       }
 
@@ -1943,11 +1944,11 @@ describe('internal-api request validation', () => {
       serverEnabled?: boolean
       baseUrl?: string | null
     } = {}) {
-      type AgentEntry = { id: string; name: string; url: string; outbound_api_key: string; inbound_api_key: string; capabilities: string[]; paused: boolean }
+      type AgentEntry = { id: string; name: string; url: string; outbound_api_key: string; inbound_api_key: string; capabilities: string[]; paused: boolean; transport: 'push' | 'ws' }
       const agentsList: AgentEntry[] = (opts.agents ?? []).map(a => ({
         id: a.id, name: a.name ?? a.id, url: a.url,
         outbound_api_key: a.outbound_api_key, inbound_api_key: 'unused-inbound',
-        capabilities: [], paused: a.paused ?? false,
+        capabilities: [], paused: a.paused ?? false, transport: 'push',
       }))
       const eventRows: EventRow[] = []
 
@@ -1963,6 +1964,7 @@ describe('internal-api request validation', () => {
             inbound_api_key: rec.inbound_api_key,
             capabilities: rec.capabilities ?? [],
             paused: rec.paused ?? false,
+            transport: rec.transport ?? 'push',
           })
         },
         remove: (id) => {
@@ -1982,7 +1984,7 @@ describe('internal-api request validation', () => {
           if (patch.url !== undefined) a.url = patch.url
           if (patch.inbound_api_key !== undefined) a.inbound_api_key = patch.inbound_api_key
           if (patch.outbound_api_key !== undefined) a.outbound_api_key = patch.outbound_api_key
-          return { ...a }
+          return a
         },
       }
 

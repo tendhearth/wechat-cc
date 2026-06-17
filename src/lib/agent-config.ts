@@ -52,6 +52,7 @@ export const A2AAgentRecord = z.object({
   outbound_api_key: z.string().min(1),
   capabilities: z.array(z.string()),
   paused: z.boolean().default(false),
+  transport: z.enum(['push', 'ws']).default('push'),
 })
 
 export const A2AListen = z.object({
@@ -70,6 +71,8 @@ const AgentConfigSchema = z.object({
   autoStart: z.boolean().default(true),
   closeStopsDaemon: z.boolean().default(false),
   a2a_listen: A2AListen.optional(),
+  yi_hub_listen: z.object({ host: z.string(), port: z.number() }).optional(),
+  yi_brain: z.object({ url: z.string(), handId: z.string(), authToken: z.string().min(16) }).optional(),
   a2a_agents: z.array(A2AAgentRecord).optional()
     .superRefine((arr, ctx) => {
       const ids = new Set<string>()

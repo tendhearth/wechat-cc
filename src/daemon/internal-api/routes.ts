@@ -571,6 +571,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
           outbound_api_key,
           capabilities: [],
           paused: false,
+          transport: 'push',
         })
         return { status: 200, body: { ok: true, inbound_api_key: inboundKey } }
       } catch (err) {
