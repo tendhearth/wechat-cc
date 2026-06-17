@@ -409,7 +409,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const configuredAgent = loadAgentConfig(deps.stateDir)
   const claudeModel = configuredAgent.provider === 'claude' && configuredAgent.model
     ? configuredAgent.model
-    : 'claude-opus-4-7'
+    : 'claude-opus-4-8'
 
   const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string): Options => {
     const cstatus = deps.ilink.companion.status()
