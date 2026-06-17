@@ -9,11 +9,11 @@ import type { ExecResult } from './a2a-server'
 
 export interface YiDispatch { peer: 'claude' | 'codex'; prompt: string; cwd?: string }
 
-interface Pending { resolve: (r: ExecResult) => void; timer: ReturnType<typeof setTimeout> }
+interface Pending { handId: string; resolve: (r: ExecResult) => void; timer: ReturnType<typeof setTimeout> }
 
 export interface YiHub {
   attach(handId: string, send: (raw: string) => void): void
-  detach(handId: string): void
+  detach(handId: string, send?: (raw: string) => void): void
   isConnected(handId: string): boolean
   onMessage(handId: string, raw: string): void
   dispatchTask(handId: string, task: YiDispatch, timeoutMs: number): Promise<ExecResult>
@@ -35,7 +35,16 @@ export function createYiHub(): YiHub {
 
   return {
     attach(handId, send) { conns.set(handId, send) },
-    detach(handId) { conns.delete(handId) },
+    detach(handId, send?) {
+      // If a specific send fn is provided, only evict the slot if the caller
+      // still owns it (guard against stale-socket close evicting a newer attach).
+      if (send !== undefined && conns.get(handId) !== send) return
+      conns.delete(handId)
+      // Settle all in-flight tasks for this hand immediately as hand_offline.
+      for (const [id, p] of pending) {
+        if (p.handId === handId) settle(id, { ok: false, reason: 'hand_offline' })
+      }
+    },
     isConnected(handId) { return conns.has(handId) },
     onMessage(_handId, raw) {
       const msg = parseMessage(raw)
@@ -55,7 +64,7 @@ export function createYiHub(): YiHub {
       const taskId = `t${nextTask++}`
       return new Promise<ExecResult>((resolve) => {
         const timer = setTimeout(() => settle(id, { ok: false, reason: 'timeout' }), timeoutMs)
-        pending.set(id, { resolve, timer })
+        pending.set(id, { handId, resolve, timer })
         try {
           send(buildRequest(id, 'task/dispatch', { taskId, peer: task.peer, prompt: task.prompt, ...(task.cwd ? { cwd: task.cwd } : {}) }))
         } catch (err) {

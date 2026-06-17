@@ -64,8 +64,13 @@ export const A2AListen = z.object({
   port: z.number().int().min(1).max(65535),
 })
 
+export const YiHubListen = z.object({ host: z.string(), port: z.number() })
+export const YiBrain = z.object({ url: z.string(), handId: z.string(), authToken: z.string().min(16) })
+
 export type A2AAgentRecord = z.infer<typeof A2AAgentRecord>
 export type A2AListen = z.infer<typeof A2AListen>
+export type YiHubListen = z.infer<typeof YiHubListen>
+export type YiBrain = z.infer<typeof YiBrain>
 
 const AgentConfigSchema = z.object({
   provider: z.enum(['claude', 'codex', 'cursor']).default('claude'),
@@ -75,8 +80,8 @@ const AgentConfigSchema = z.object({
   autoStart: z.boolean().default(true),
   closeStopsDaemon: z.boolean().default(false),
   a2a_listen: A2AListen.optional(),
-  yi_hub_listen: z.object({ host: z.string(), port: z.number() }).optional(),
-  yi_brain: z.object({ url: z.string(), handId: z.string(), authToken: z.string().min(16) }).optional(),
+  yi_hub_listen: YiHubListen.optional(),
+  yi_brain: YiBrain.optional(),
   a2a_agents: z.array(A2AAgentRecord).optional()
     .superRefine((arr, ctx) => {
       const ids = new Set<string>()
@@ -124,6 +129,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
     const a2aListen = parsed.a2a_listen != null
       ? A2AListen.safeParse(parsed.a2a_listen).data
       : undefined
+    const yiHubListen = parsed.yi_hub_listen != null ? YiHubListen.safeParse(parsed.yi_hub_listen).data : undefined
+    const yiBrain = parsed.yi_brain != null ? YiBrain.safeParse(parsed.yi_brain).data : undefined
     const a2aAgentsRaw = Array.isArray(parsed.a2a_agents) ? parsed.a2a_agents : undefined
     const a2aAgents = a2aAgentsRaw != null
       ? a2aAgentsRaw.flatMap(r => {
@@ -140,6 +147,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       autoStart,
       closeStopsDaemon,
       ...(a2aListen ? { a2a_listen: a2aListen } : {}),
+      ...(yiHubListen ? { yi_hub_listen: yiHubListen } : {}),
+      ...(yiBrain ? { yi_brain: yiBrain } : {}),
       ...(a2aAgents && a2aAgents.length > 0 ? { a2a_agents: a2aAgents } : {}),
       ...(parsed.bot_name === null ? { bot_name: null } : {}),
       ...(typeof parsed.bot_name === 'string' ? { bot_name: parsed.bot_name } : {}),

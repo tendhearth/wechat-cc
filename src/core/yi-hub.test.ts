@@ -51,4 +51,24 @@ describe('yi-hub', () => {
     hub.detach('home')
     expect(hub.isConnected('home')).toBe(false)
   })
+
+  it('settles in-flight tasks as hand_offline when the hand detaches', async () => {
+    const hub = createYiHub()
+    hub.attach('home', () => {})
+    const p = hub.dispatchTask('home', { peer: 'claude', prompt: 'x' }, 60_000)
+    hub.detach('home')
+    await expect(p).resolves.toEqual({ ok: false, reason: 'hand_offline' })
+  })
+
+  it('a stale send detaching does not evict a newer attach for the same handId', () => {
+    const hub = createYiHub()
+    const sendOld = () => {}
+    const sendNew = () => {}
+    hub.attach('home', sendOld)
+    hub.attach('home', sendNew)        // reconnect: new socket takes the slot
+    hub.detach('home', sendOld)        // stale socket's close fires late
+    expect(hub.isConnected('home')).toBe(true)   // newer attach survives
+    hub.detach('home', sendNew)
+    expect(hub.isConnected('home')).toBe(false)
+  })
 })

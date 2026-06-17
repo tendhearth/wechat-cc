@@ -266,6 +266,22 @@ describe('loadAgentConfig — cursor provider', () => {
   })
 })
 
+describe('loadAgentConfig preserves yi v2 fields', () => {
+  it('round-trips yi_hub_listen and yi_brain through save+load', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'yi-cfg-'))
+    try {
+      saveAgentConfig(dir, {
+        provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false,
+        yi_hub_listen: { host: '100.1.2.3', port: 8718 },
+        yi_brain: { url: 'ws://brain/yi', handId: 'home', authToken: 'k'.repeat(16) },
+      })
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.yi_hub_listen).toEqual({ host: '100.1.2.3', port: 8718 })
+      expect(loaded.yi_brain).toEqual({ url: 'ws://brain/yi', handId: 'home', authToken: 'k'.repeat(16) })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
+
 describe('A2AAgentRecord.transport', () => {
   it('defaults transport to "push" when absent', () => {
     const rec = A2AAgentRecord.parse({

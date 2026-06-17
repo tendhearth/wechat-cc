@@ -14,7 +14,7 @@ export interface YiWsServerOpts {
   verify: (handId: string, authToken: string) => boolean
 }
 
-interface SockData { handId: string | null }
+interface SockData { handId: string | null; send?: (raw: string) => void }
 
 export interface YiWsServer {
   start(): Promise<void>
@@ -43,7 +43,9 @@ export function createYiWsServer(opts: YiWsServerOpts): YiWsServer {
                 const p = msg.params as { handId?: unknown; authToken?: unknown }
                 if (typeof p.handId === 'string' && typeof p.authToken === 'string' && opts.verify(p.handId, p.authToken)) {
                   ws.data.handId = p.handId
-                  opts.hub.attach(p.handId, (out) => { try { ws.send(out) } catch { /* closed */ } })
+                  const send = (out: string) => { try { ws.send(out) } catch { /* closed */ } }
+                  ws.data.send = send
+                  opts.hub.attach(p.handId, send)
                   ws.send(buildResponse(msg.id, { sessionId: `s_${p.handId}` }))
                 } else {
                   ws.send(buildError(msg.kind === 'request' ? msg.id : null, -32600, 'unauthorized'))
@@ -58,7 +60,7 @@ export function createYiWsServer(opts: YiWsServerOpts): YiWsServer {
             opts.hub.onMessage(ws.data.handId, typeof raw === 'string' ? raw : Buffer.from(raw).toString('utf8'))
           },
           close(ws) {
-            if (ws.data.handId) opts.hub.detach(ws.data.handId)
+            if (ws.data.handId) opts.hub.detach(ws.data.handId, ws.data.send)
           },
         },
       })
