@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <img alt="version"  src="https://img.shields.io/badge/cli-v0.5.0-blue">
-  <img alt="desktop"  src="https://img.shields.io/badge/desktop-v0.5.0-blue">
+  <img alt="version"  src="https://img.shields.io/badge/cli-v0.6.2-blue">
+  <img alt="desktop"  src="https://img.shields.io/badge/desktop-v0.6.2-blue">
   <img alt="platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey">
   <img alt="runtime"  src="https://img.shields.io/badge/runtime-Bun-black">
   <img alt="license"  src="https://img.shields.io/badge/license-MIT-green">
@@ -397,6 +397,15 @@ allowlist.
 > ⚠️ Don't run `--dangerously` on a bot you share with less-trusted users
 > via `access.json.allowFrom[]` — any allowed chat gets bypass.
 
+> ℹ️ **Note on the recommended install.** The bare `wechat-cc run` is strict,
+> but the desktop wizard / `service install` path launches the daemon with
+> `--dangerously` by default — an unattended background service has no human to
+> answer per-tool prompts. This is safe because the allowlist is **empty by
+> default** (only chat IDs you add in `access.json.allowFrom[]` can reach the
+> bot at all), but be aware the installed service runs in bypass mode. Keep the
+> allowlist to people you trust, or run `wechat-cc run` in the foreground for
+> strict prompting.
+
 ### Provider × mode interaction
 
 The two SDKs expose permissions differently — Claude has a per-tool
@@ -447,9 +456,17 @@ for the SDK-level capability table this is derived from.
 | `/health ai` | AI provider status (admin) — per-provider session age, zero token |
 | `/reset` or `/重置` | Drop AI sessions for this chat (admin) — next message starts fresh from current keychain |
 | `/hearth ingest|list|show|apply` | Vault governance (admin, hearth-enabled) |
+| `让<name>执行 <task>` / `派<name>跑 <task>` | Delegate a task to a paired hand machine (admin) — see [A2A integration](#a2a-integration-p3-opt-in) |
 
-The Companion + memory features are configured via natural language, not
-slash commands (`开启 companion`, `切到陪伴`, `别烦我`, etc.).
+The Companion + memory features are configured via natural language, not slash
+commands (`开启 companion`, `切到陪伴`, `别烦我`, etc.).
+
+**Memory (admin).** Say `整理记忆` ("organize memory") and the bot synthesizes
+your local Claude per-project memory (work) plus its WeChat observations (life)
+into one overview it reads to understand you. Say `看记忆` / `你对我的理解`
+("what's your understanding of me") to read that overview back. From the
+terminal: `wechat-cc memory synthesize` regenerates it and `wechat-cc memory
+status` shows its freshness + how much source memory is available to fold in.
 
 ---
 
@@ -852,17 +869,14 @@ the OS package manager.
 
 ## Versions
 
-- **CLI / daemon**: see [`package.json`](./package.json). Latest shipped is
-  **v0.5.0** — architecture cleanup (`Ref` + `wireRef` helper, `wiring/` 5-file split,
-  `bootDaemon()` export, daemon e2e infra) + UX bundle (install wizard real-time
-  step progress, dashboard mode-switch dropdown with WeChat confirmation back to
-  the chat, clearer WSL hint). See [`docs/releases/2026-05-03-v0.5.md`](./docs/releases/2026-05-03-v0.5.md).
+- **CLI / daemon**: see [`package.json`](./package.json). Latest tagged release is
+  **v0.6.2** — multi-chat navigation + memory-profile overview. The `dev` branch
+  runs ahead with the one-brain-many-hands (乙) delegation system and the
+  work+life memory-synthesis feature documented above.
   Previous milestone: [RFC 03 multi-agent](./docs/releases/2026-05-02-rfc03.md)
   (Claude × Codex modes / stdio MCP / open provider registry).
 - **Desktop bundle**: latest signed release is
-  [`desktop-v0.5.0`](https://github.com/ggshr9/wechat-cc/releases/tag/desktop-v0.5.0).
-  Version-synced with CLI v0.5.0; brings install-progress display + mode-switch
-  dropdown to the dashboard. See [`docs/releases/desktop-v0.5.0.md`](./docs/releases/desktop-v0.5.0.md).
+  [`desktop-v0.6.2`](https://github.com/ggshr9/wechat-cc/releases/tag/desktop-v0.6.2).
 - **Per-version release notes**: [`docs/releases/`](./docs/releases/)
 - **Architecture / design specs**: [`docs/specs/`](./docs/specs/)
 - **Roadmap**: [`docs/rfc/02-post-v1.1-roadmap.md`](./docs/rfc/02-post-v1.1-roadmap.md)

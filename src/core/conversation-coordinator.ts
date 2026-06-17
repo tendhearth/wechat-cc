@@ -10,9 +10,10 @@
  *      (provider, alias).
  *   4. Dispatches per the mode's semantics.
  *
- * P2 implements `solo` only. The other Mode variants (parallel /
- * primary_tool / chatroom) parse and persist correctly via the store
- * but throw NotImplementedError on dispatch — to be filled in P3-P5.
+ * All Mode variants are implemented: `solo` (single provider), `parallel`
+ * (`/both` — concurrent replies), `primary_tool` (`/cc + codex` — one drives,
+ * the other is exposed as a tool), and `chatroom` (`/chat` — moderated
+ * round-table).
  */
 import type { SessionManager } from './session-manager'
 import type { ConversationStore } from './conversation-store'
@@ -24,13 +25,6 @@ import { assertSupported, UnsupportedCombinationError, type PermissionMode } fro
 import { collectTurn, type TurnSummary } from './agent-provider'
 import { resolveEffectiveTier, TIER_PROFILES } from './user-tier'
 import type { Access } from '../lib/access'
-
-export class ModeNotImplementedError extends Error {
-  constructor(public readonly modeKind: Mode['kind']) {
-    super(`mode '${modeKind}' is not yet implemented in this version of wechat-cc`)
-    this.name = 'ModeNotImplementedError'
-  }
-}
 
 export interface ConversationCoordinatorDeps {
   resolveProject(chatId: string): { alias: string; path: string } | null
