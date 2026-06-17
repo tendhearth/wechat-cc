@@ -59,6 +59,8 @@ import { createA2AClient } from '../../core/a2a-client'
 import { createA2AServer, type NotifyEvent } from '../../core/a2a-server'
 import { verifyAndConsumeInvite } from '../../cli/a2a-pairing'
 import { makeA2AEventsStore, type AppendInput } from '../../core/a2a-events-store'
+import { createYiHub, type YiHub } from '../../core/yi-hub'
+import { createYiWsServer } from '../yi-ws-server'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
@@ -236,6 +238,11 @@ export interface Bootstrap {
    * main.ts calls a2aServer?.stop() in shutdown.
    */
   a2aServer: import('../../core/a2a-server').A2AServer | null
+  /**
+   * 乙 v2 BRAIN hub — present only when yi_hub_listen is configured.
+   * pipeline-deps reads this to route ws-transport hands via the hub.
+   */
+  yiHub?: YiHub
   /**
    * Loaded agent config — the same in-memory reference used by wiring closures.
    * Mutations (e.g. setBotName) are visible to all closures that hold this ref.
@@ -937,6 +944,38 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     baseUrl: a2aServer ? a2aServer.baseUrl() : null,
   }
 
+  // ── 乙 v2 wiring (guarded — no-op when config absent) ────────────────────
+  // BRAIN side: start a WebSocket rendezvous that hands connect to.
+  let yiHub: YiHub | undefined
+  if ((configuredAgent as { yi_hub_listen?: { host: string; port: number } }).yi_hub_listen) {
+    const cfg = (configuredAgent as { yi_hub_listen: { host: string; port: number } }).yi_hub_listen
+    yiHub = createYiHub()
+    const yiServer = createYiWsServer({
+      host: cfg.host,
+      port: cfg.port,
+      hub: yiHub,
+      verify: (id, tok) => !!a2aRegistry.verifyBearer(id, tok),
+    })
+    await yiServer.start()
+    deps.log('YI', `hub listening on ws://${cfg.host}:${yiServer.port()}`)
+  }
+
+  // HAND side: connect outbound to a brain's rendezvous.
+  if ((configuredAgent as { yi_brain?: { url: string; handId: string; authToken: string } }).yi_brain) {
+    const cfg = (configuredAgent as { yi_brain: { url: string; handId: string; authToken: string } }).yi_brain
+    const { createYiWsClient } = await import('../yi-ws-client')
+    const yiClient = createYiWsClient({
+      brainUrl: cfg.url,
+      handId: cfg.handId,
+      authToken: cfg.authToken,
+      capabilities: ['exec'],
+      onExec: (t) => dispatchDelegate(t.peer, t.prompt, t.cwd),
+      log: (m) => deps.log('YI', m),
+    })
+    yiClient.start()
+    deps.log('YI', `hand connecting to brain at ${cfg.url}`)
+  }
+
   return {
     sessionManager,
     sessionStore,
@@ -955,6 +994,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     dispatchDelegate,
     a2aDeps,
     a2aServer,
+    yiHub,
     agentConfig: configuredAgent,
   }
 }

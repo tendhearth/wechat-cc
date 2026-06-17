@@ -40,6 +40,10 @@ export interface AgentConfig {
   // dialogue page hides its unlock affordance). Set/verified via the
   // `dialogue lock set` / `dialogue unlock` CLI commands.
   dialogue_lock_hash?: string
+  // 乙 v2 — BRAIN side: listen for hand WebSocket connections on this host:port.
+  yi_hub_listen?: { host: string; port: number }
+  // 乙 v2 — HAND side: connect outbound to this brain WebSocket URL.
+  yi_brain?: { url: string; handId: string; authToken: string }
 }
 
 // ── A2A sub-schemas ──────────────────────────────────────────────────────────
