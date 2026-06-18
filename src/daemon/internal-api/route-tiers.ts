@@ -47,6 +47,13 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/companion/snooze': 'trusted',
   'POST /v1/companion/import-local': 'trusted',
   'POST /v1/conversation/set-mode': 'trusted',
+  // reminders — mirrors the fs_read default that classifyToolUse gives the
+  // schedule_reminder / cancel_reminder / list_reminders MCP tools: trusted
+  // and admin may set reminders, guest may not. NOTE: chat_id is a free
+  // parameter, so a trusted caller can schedule delivery into another chat.
+  'POST /v1/reminders/schedule': 'trusted',
+  'POST /v1/reminders/cancel': 'trusted',
+  'GET /v1/reminders/list': 'trusted',
   'GET /v1/projects/list': 'trusted',
   'POST /v1/projects/add': 'trusted',
   'POST /v1/projects/remove': 'trusted',

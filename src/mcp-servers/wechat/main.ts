@@ -25,6 +25,7 @@ import { registerProjectTools } from './tools-projects'
 import { registerVoiceShareTools } from './tools-voice-share'
 import { registerMessagingTools } from './tools-messaging'
 import { registerCompanionTools } from './tools-companion'
+import { registerReminderTools } from './tools-reminders'
 import { registerA2ASendTool } from './tools-a2a'
 import { registerDaemonTools } from './tools-daemon'
 import { registerFileTools } from './tools-files'
@@ -97,6 +98,7 @@ registerProjectTools(server, client)
 registerVoiceShareTools(server, client)
 registerMessagingTools(server, client)
 registerCompanionTools(server, client)
+registerReminderTools(server, client)
 registerA2ASendTool(server, client)
 
 // Daemon self-diagnosis + remediation — admin-tier sessions only (the
