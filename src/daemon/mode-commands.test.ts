@@ -425,6 +425,22 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toMatch(/用法|usage/i)
   })
 
+  it('/name rejects an over-long nickname (does NOT persist)', async () => {
+    const { cmds, sentMessages, getStoredName } = setup()
+    const consumed = await cmds.handle(inbound('/name ' + 'x'.repeat(25)))  // > NICKNAME_MAX_LEN (24)
+    expect(consumed).toBe(true)
+    expect(getStoredName()).toBeNull()
+    expect(sentMessages[0]?.[1]).toMatch(/太长|最多|long/)
+  })
+
+  it('/name rejects a nickname with disallowed characters (does NOT persist)', async () => {
+    const { cmds, sentMessages, getStoredName } = setup()
+    const consumed = await cmds.handle(inbound('/name <script>'))
+    expect(consumed).toBe(true)
+    expect(getStoredName()).toBeNull()
+    expect(sentMessages[0]?.[1]).toMatch(/只支持|字符/)
+  })
+
   // ── /whoami — identity dump (PR2 #17) ────────────────────────────────
 
   it('/whoami dumps nickname + WeChat identity + bot name + chat id', async () => {
