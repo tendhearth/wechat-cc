@@ -47,6 +47,13 @@ export interface AcquireRequest {
    * (claude → bypassPermissions, codex → danger-full-access + never).
    */
   permissionMode: PermissionMode
+  /**
+   * Per-session internal-api token (env-only), minted by the coordinator from
+   * the chat's resolved tier. Forwarded into SpawnContext so providers inject
+   * it into their MCP children. Optional — omitted when the registry isn't
+   * wired (tests / minimal embeddings).
+   */
+  sessionToken?: string
 }
 
 /**
@@ -166,6 +173,7 @@ export class SessionManager {
       // Forward chatId so the Claude provider can bake it into a
       // per-session canUseTool closure (see bootstrap/index.ts).
       chatId: req.chatId,
+      ...(req.sessionToken ? { sessionToken: req.sessionToken } : {}),
     })
 
     const sessionStore = this.opts.sessionStore

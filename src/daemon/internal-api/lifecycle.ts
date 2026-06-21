@@ -9,6 +9,8 @@ export interface InternalApiLifecycle extends Lifecycle {
   setDelegate(d: InternalApiDelegateDep): void
   setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
   setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
+  mintSessionToken(tier: import('../../core/user-tier').UserTier, sessionKey: string): string
+  invalidateSession(sessionKey: string): void
 }
 
 /**
@@ -36,6 +38,8 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     setDelegate: (d) => api.setDelegate(d),
     setConversation: (c) => api.setConversation(c),
     setA2A: (a2a) => api.setA2A(a2a),
+    mintSessionToken: (tier, sessionKey) => api.mintSessionToken(tier, sessionKey),
+    invalidateSession: (sessionKey) => api.invalidateSession(sessionKey),
     stop: async () => {
       // Remove the discovery file on clean stop so stale info doesn't
       // mislead a subsequent CLI invocation after the daemon exits.

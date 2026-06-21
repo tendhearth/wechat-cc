@@ -174,6 +174,11 @@ export interface BootstrapDeps {
    * in tests / minimal embeddings — the JSONL log line still happens.
    */
   onTurnRecord?: (record: TurnRecord) => void
+  /** Mint/invalidate per-session internal-api tokens — main.ts wires these to
+   *  the internal-api token registry so each session's MCP children carry the
+   *  caller's tier. Omitted in tests / minimal embeddings. */
+  mintSessionToken?: (tier: import('../../core/user-tier').UserTier, sessionKey: string) => string
+  invalidateSession?: (sessionKey: string) => void
   /**
    * Used when projects.current is unset. Prevents silent message drops on
    * fresh installs — matches v0.x UX where messages routed to the daemon's
@@ -835,6 +840,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     permissionMode,
     turnTimeoutMs,
     recordTurn,
+    mintSessionToken: deps.mintSessionToken,
+    invalidateSession: deps.invalidateSession,
     // sendAssistantText fallback path: same fall-through the legacy
     // routeInbound used to take when the agent didn't call a reply tool.
     // main.ts injects a real ilink.sendMessage closure; bootstrap.ts only

@@ -23,7 +23,7 @@ import type { InboundMsg } from './prompt-format'
 import { evaluateRound as evaluateModeratorRound, type ModeratorDecision, type ChatroomEntry } from './chatroom-moderator'
 import { assertSupported, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
 import { collectTurn, TURN_TIMEOUT_CODE, type TurnSummary } from './agent-provider'
-import { resolveEffectiveTier, TIER_PROFILES } from './user-tier'
+import { resolveEffectiveTier, TIER_PROFILES, type UserTier } from './user-tier'
 import type { Access } from '../lib/access'
 
 /**
@@ -105,6 +105,16 @@ export interface ConversationCoordinatorDeps {
    * ring buffer surfaced on internal-api for diagnosis/self-healing.
    */
   recordTurn?: (record: TurnRecord) => void
+  /**
+   * Mint a per-session internal-api token for a (tier, sessionKey) — wired to
+   * the internal-api token registry. The minted token is forwarded through
+   * `acquire` into the session's MCP children so route calls carry the tier.
+   * Optional — omitted in tests / minimal embeddings (no token injected).
+   */
+  mintSessionToken?: (tier: UserTier, sessionKey: string) => string
+  /** Revoke a session's token(s) when its session is released (timeout /
+   *  auth-fail self-heal). Keyed by the same `provider/alias/chatId`. */
+  invalidateSession?: (sessionKey: string) => void
   format: (msg: InboundMsg) => string
   sendAssistantText?: (chatId: string, text: string) => Promise<void>
   /**
@@ -275,6 +285,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // this chat re-acquires from a clean subprocess that re-reads
       // keychain creds.
       await deps.manager.release?.({ alias, providerId, chatId })
+      deps.invalidateSession?.(`${providerId}/${alias}/${chatId}`)
     } catch (err) {
       deps.log('AUTH_FAILED', `release ${alias}/${providerId} threw: ${err instanceof Error ? err.message : err}`)
     }
@@ -300,6 +311,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     })
     try {
       await deps.manager.release?.({ alias, providerId, chatId })
+      deps.invalidateSession?.(`${providerId}/${alias}/${chatId}`)
     } catch (err) {
       deps.log('TURN_TIMEOUT', `release ${alias}/${providerId} threw: ${err instanceof Error ? err.message : err}`)
     }
@@ -396,6 +408,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         chatId: msg.chatId,
         tierProfile,
         permissionMode: deps.permissionMode,
+        sessionToken: deps.mintSessionToken?.(tier, `${providerId}/${proj.alias}/${msg.chatId}`),
       })
       const text = deps.format(msg)
       summary = await collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs })
@@ -645,6 +658,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
             chatId: msg.chatId,
             tierProfile,
             permissionMode: deps.permissionMode,
+            sessionToken: deps.mintSessionToken?.(tier, `${speaker}/${proj.alias}/${msg.chatId}`),
           })
           // PR C2 — propagate the chatroom aborter into the speaker turn so
           // /stop (and "new dispatch preempts prior") interrupt mid-stream
@@ -802,6 +816,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         chatId: msg.chatId,
         tierProfile,
         permissionMode: deps.permissionMode,
+        sessionToken: deps.mintSessionToken?.(tier, `${p}/${proj.alias}/${msg.chatId}`),
       })),
     )
     const text = deps.format(msg)

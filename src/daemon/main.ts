@@ -177,6 +177,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       fallbackProject: () => ({ alias: '_default', path: process.cwd() }),
       dangerouslySkipPermissions: dangerously, conversationStore,
       onTurnRecord: (r) => turnRecordStore.append(r),
+      mintSessionToken: internalApi.mintSessionToken,
+      invalidateSession: internalApi.invalidateSession,
       internalApi: { baseUrl: internalApi.baseUrl, tokenFilePath: internalApi.tokenFilePath },
     })
     bootRef = boot
