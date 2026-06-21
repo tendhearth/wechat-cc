@@ -106,6 +106,20 @@ function makeFakeCodex(initialThreadId: string | null = null): { codex: Codex; f
   return { codex, fake }
 }
 
+it('merges WECHAT_SESSION_TOKEN/TIER into its stdio MCP servers env on spawn', async () => {
+  const f = makeFakeCodex()
+  let captured: { config?: { mcp_servers?: Record<string, { env?: Record<string, string> }> } } | undefined
+  const factory: CodexFactory = (cfg) => { captured = cfg as typeof captured; return f.codex }
+  const p = createCodexAgentProvider({
+    codexFactory: factory,
+    mcpServers: { wechat: { command: 'bun', args: ['x'], env: { A: '1' } } },
+  })
+  await p.spawn({ alias: 'a', path: '/p' }, {
+    tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c', sessionToken: 'tok-1',
+  })
+  expect(captured?.config?.mcp_servers?.wechat?.env).toMatchObject({ A: '1', WECHAT_SESSION_TOKEN: 'tok-1', WECHAT_SESSION_TIER: 'admin' })
+})
+
 function provider(opts: Parameters<typeof createCodexAgentProvider>[0] = {}, fakeCodex?: { codex: Codex; fake: FakeCodex }) {
   const f = fakeCodex ?? makeFakeCodex()
   const factory: CodexFactory = () => f.codex
