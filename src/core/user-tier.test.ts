@@ -141,6 +141,16 @@ describe('TIER_PROFILES', () => {
   })
 })
 
+import { tierNameFromProfile } from './user-tier'
+
+describe('tierNameFromProfile', () => {
+  it('recovers admin / trusted / guest from the resolved profile', () => {
+    expect(tierNameFromProfile(TIER_PROFILES.admin)).toBe('admin')
+    expect(tierNameFromProfile(TIER_PROFILES.trusted)).toBe('trusted')
+    expect(tierNameFromProfile(TIER_PROFILES.guest)).toBe('guest')
+  })
+})
+
 import { classifyToolUse } from './user-tier'
 
 describe('classifyToolUse', () => {

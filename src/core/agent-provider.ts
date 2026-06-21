@@ -101,6 +101,13 @@ export interface SpawnContext {
   /** When set, the provider should resume an existing session (claude
    *  jsonl, codex thread id, cursor agent id) instead of cold-starting. */
   resumeSessionId?: string
+  /** Per-session internal-api token (env-only). Minted by the daemon from the
+   *  session's resolved tier; each provider injects it into its stdio MCP
+   *  children's env as `WECHAT_SESSION_TOKEN` (alongside the non-secret
+   *  `WECHAT_SESSION_TIER`) so route calls carry the caller's tier. Absent in
+   *  embeddings/tests that don't wire the registry — providers treat it as
+   *  "no token to inject". See docs/superpowers/specs/2026-06-21-internal-api-tier-authz-design.md. */
+  sessionToken?: string
 }
 
 /**
