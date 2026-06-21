@@ -50,15 +50,30 @@ function defaultAccess(): Access {
   return { dmPolicy: 'allowlist', allowFrom: [] }
 }
 
+/**
+ * Coerce a parsed access-list field to a clean string[]. A hand-edited
+ * access.json can carry a STRING where an array is expected (e.g.
+ * `"admins": "owner"`); without this, downstream `.includes(chatId)` runs
+ * String.prototype.includes and does SUBSTRING matching — a chatId that is a
+ * substring of the string would be wrongly allowed (allowFrom) or escalated to
+ * admin (admins/trusted). Non-arrays and non-string elements are dropped, so a
+ * malformed list fails CLOSED (denies) rather than open.
+ */
+function toStringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+}
+
 function readAccessFile(): Access {
   try {
     const raw = readFileSync(ACCESS_FILE, 'utf8')
     const parsed = JSON.parse(raw) as Partial<Access>
     return {
-      dmPolicy: parsed.dmPolicy ?? 'allowlist',
-      allowFrom: parsed.allowFrom ?? [],
-      ...(parsed.admins ? { admins: parsed.admins } : {}),
-      ...(parsed.trusted ? { trusted: parsed.trusted } : {}),
+      dmPolicy: parsed.dmPolicy === 'disabled' ? 'disabled' : 'allowlist',
+      allowFrom: toStringArray(parsed.allowFrom),
+      // Present-but-malformed (e.g. a string) coerces to [] (no admins =
+      // fail closed); genuinely absent omits the field (its own default).
+      ...(parsed.admins !== undefined ? { admins: toStringArray(parsed.admins) } : {}),
+      ...(parsed.trusted !== undefined ? { trusted: toStringArray(parsed.trusted) } : {}),
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return defaultAccess()
