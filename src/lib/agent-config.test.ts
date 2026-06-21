@@ -296,32 +296,43 @@ describe('makeMtimeCachedConfigReader', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 
-  it('re-reads after the file mtime changes (picks up a /model switch without restart)', () => {
-    let mtime = 1
+  it('re-reads after the file signature changes (picks up a /model switch without restart)', () => {
+    let sig = '1:100'
     const configs = [claudeCfg('claude-opus-4-8'), claudeCfg('claude-sonnet-4-6')]
     let i = 0
     const load = (): AgentConfig => configs[Math.min(i++, configs.length - 1)]!
-    const read = makeMtimeCachedConfigReader('/state', { statMtimeMs: () => mtime, load })
+    const read = makeMtimeCachedConfigReader('/state', { statSig: () => sig, load })
     expect(read().model).toBe('claude-opus-4-8')
-    mtime = 2 // operator ran /model -> agent-config.json rewritten
+    sig = '2:110' // operator ran /model -> agent-config.json rewritten
     expect(read().model).toBe('claude-sonnet-4-6')
   })
 
-  it('serves the cached config without re-loading while mtime is unchanged', () => {
+  it('re-reads when only the SIZE changes at the same mtime (same-ms collision)', () => {
+    let sig = '5:100'
+    const configs = [claudeCfg('claude-opus-4-8'), claudeCfg('claude-sonnet-4-6')]
+    let i = 0
+    const load = (): AgentConfig => configs[Math.min(i++, configs.length - 1)]!
+    const read = makeMtimeCachedConfigReader('/state', { statSig: () => sig, load })
+    expect(read().model).toBe('claude-opus-4-8')
+    sig = '5:118' // same mtime (5), different size → signature changes
+    expect(read().model).toBe('claude-sonnet-4-6')
+  })
+
+  it('serves the cached config without re-loading while the signature is unchanged', () => {
     let loads = 0
     const load = (): AgentConfig => { loads++; return claudeCfg('claude-opus-4-8') }
-    const read = makeMtimeCachedConfigReader('/state', { statMtimeMs: () => 7, load })
+    const read = makeMtimeCachedConfigReader('/state', { statSig: () => '7:100', load })
     read(); read(); read()
     expect(loads).toBe(1)
   })
 
-  it('treats a missing file (stat throws -> -1) as a stable cache key', () => {
+  it('treats a missing file (stat throws -> "absent") as a stable cache key', () => {
     let loads = 0
     const load = (): AgentConfig => { loads++; return claudeCfg('claude-opus-4-8') }
-    const read = makeMtimeCachedConfigReader('/state', { statMtimeMs: () => -1, load })
+    const read = makeMtimeCachedConfigReader('/state', { statSig: () => 'absent', load })
     expect(read().model).toBe('claude-opus-4-8')
     read()
-    expect(loads).toBe(1) // -1 == -1, no churn while the file stays absent
+    expect(loads).toBe(1) // 'absent' == 'absent', no churn while the file stays absent
   })
 })
 

@@ -159,16 +159,15 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       }
     }
 
-    const key = routeKey
-    const reqSchema = REQUEST_SCHEMAS[key]
+    const reqSchema = REQUEST_SCHEMAS[routeKey]
     if (reqSchema) {
       const input = method === 'POST'
         ? body
         : Object.fromEntries(url.searchParams.entries())
       const parsed = reqSchema.safeParse(input)
       if (!parsed.success) {
-        deps.log?.('INTERNAL_API', `400 ${key} schema mismatch`, {
-          path: key,
+        deps.log?.('INTERNAL_API', `400 ${routeKey} schema mismatch`, {
+          path: routeKey,
           issues: parsed.error.issues,
         })
         return send(res, 400, { error: 'invalid_request', detail: parsed.error.flatten() }, origin)

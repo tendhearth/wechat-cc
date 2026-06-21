@@ -163,10 +163,13 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
  *  the filesystem; tests stub both to drive cache behaviour deterministically
  *  (no reliance on millisecond-granular mtime between two writes). */
 export interface CachedConfigReaderDeps {
-  /** Modification time of the config file in ms, or `-1` if it can't be
-   *  stat'd (missing / unreadable). A stable `-1` keeps the cache warm while
+  /** Cache signature of the config file — `${mtimeMs}:${size}`, or `"absent"`
+   *  if it can't be stat'd (missing / unreadable). Including size as well as
+   *  mtime closes the same-millisecond / coarse-mtime collision: a `/model`
+   *  switch changes the serialized length, so the signature changes even when
+   *  two writes share an mtime. A stable `"absent"` keeps the cache warm while
    *  the file legitimately doesn't exist yet. */
-  statMtimeMs: (path: string) => number
+  statSig: (path: string) => string
   load: (stateDir: string) => AgentConfig
 }
 
@@ -187,17 +190,17 @@ export function makeMtimeCachedConfigReader(
   stateDir: string,
   deps?: Partial<CachedConfigReaderDeps>,
 ): () => AgentConfig {
-  const statMtimeMs = deps?.statMtimeMs ?? ((p: string) => {
-    try { return statSync(p).mtimeMs } catch { return -1 }
+  const statSig = deps?.statSig ?? ((p: string) => {
+    try { const st = statSync(p); return `${st.mtimeMs}:${st.size}` } catch { return 'absent' }
   })
   const load = deps?.load ?? loadAgentConfig
   const path = join(stateDir, CONFIG_FILE)
-  let cached: { mtimeMs: number; config: AgentConfig } | null = null
+  let cached: { sig: string; config: AgentConfig } | null = null
   return () => {
-    const mtimeMs = statMtimeMs(path)
-    if (cached && cached.mtimeMs === mtimeMs) return cached.config
+    const sig = statSig(path)
+    if (cached && cached.sig === sig) return cached.config
     const config = load(stateDir)
-    cached = { mtimeMs, config }
+    cached = { sig, config }
     return config
   }
 }
