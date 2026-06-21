@@ -186,6 +186,18 @@ export interface InternalApiDeps {
   /** Optional daemon-health probe — backs heartbeat_fresh in GET /v1/health.
    *  main.ts wires it to isHeartbeatFresh(server.heartbeat). */
   heartbeatFresh?: () => boolean
+  /**
+   * Optional session releaser — backs POST /v1/sessions/release (admin
+   * remediation: force-release a wedged session so the next message spawns a
+   * fresh subprocess). A thunk over bootRef.sessionManager. 503 when unwired.
+   */
+  releaseSession?: (k: { alias: string; providerId: string; chatId: string }) => Promise<void>
+  /**
+   * Optional restart trigger — backs POST /v1/daemon/restart. main.ts schedules
+   * a graceful shutdown + process.exit shortly after (so the HTTP response
+   * flushes first); launchd/systemd KeepAlive respawns. 503 when unwired.
+   */
+  requestRestart?: () => void
   /** Optional log hook so api activity surfaces in channel.log. */
   /**
    * Optional `fields` arg lands in channel.log.jsonl when wired (the

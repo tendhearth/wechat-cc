@@ -8,6 +8,7 @@ import { makeEventsStore } from './events/store'
 import { openTestDb } from '../lib/db'
 import { makeTurnRecordStore } from '../core/turn-record-store'
 import type { TurnRecord } from '../core/conversation-coordinator'
+import { loadAgentConfig, saveAgentConfig } from '../lib/agent-config'
 import type { A2ARegistry } from '../core/a2a-registry'
 import type { A2AClient, SendResult, AgentCard } from '../core/a2a-client'
 import type { A2AEventsStore, EventRow, AppendInput } from '../core/a2a-events-store'
@@ -2403,6 +2404,90 @@ describe('internal-api request validation', () => {
       expect(resp.status).toBe(200)
       const body = await resp.json() as { ok: boolean; daemon_pid: number; turns_store_wired: boolean; sessions_live: number; heartbeat_fresh: boolean }
       expect(body).toMatchObject({ ok: true, daemon_pid: 7, turns_store_wired: true, sessions_live: 1, heartbeat_fresh: true })
+    })
+
+    it('POST /v1/sessions/release calls the releaser and returns the post-release session list', async () => {
+      const released: Array<{ alias: string; providerId: string; chatId: string }> = []
+      let live = [{ alias: 'a', path: '/p', providerId: 'claude', chatId: 'c', lastUsedAt: 1 }]
+      api = createInternalApi({
+        stateDir, daemonPid: 1,
+        releaseSession: async (k) => { released.push(k); live = [] },
+        listSessions: () => live,
+      })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/sessions/release`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ alias: 'a', providerId: 'claude', chatId: 'c' }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { ok: boolean; sessions: unknown[] }
+      expect(body.ok).toBe(true)
+      expect(released).toEqual([{ alias: 'a', providerId: 'claude', chatId: 'c' }])
+      expect(body.sessions).toEqual([]) // read-back confirms it's gone
+    })
+
+    it('POST /v1/sessions/release 400 on missing fields, 503 when unwired', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const r503 = await fetch(`http://127.0.0.1:${port}/v1/sessions/release`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ alias: 'a', providerId: 'claude', chatId: 'c' }),
+      })
+      expect(r503.status).toBe(503)
+
+      const api2 = createInternalApi({ stateDir, daemonPid: 1, releaseSession: async () => {} })
+      try {
+        const s2 = await api2.start()
+        const t2 = readFileSync(s2.tokenFilePath, 'utf8').trim()
+        const r400 = await fetch(`http://127.0.0.1:${s2.port}/v1/sessions/release`, {
+          method: 'POST', headers: { Authorization: `Bearer ${t2}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ alias: 'a' }),
+        })
+        expect(r400.status).toBe(400)
+      } finally { await api2.stop() }
+    })
+
+    it('GET /v1/model reads and POST /v1/model persists the pinned model (read-back)', async () => {
+      saveAgentConfig(stateDir, { provider: 'claude', model: 'claude-opus-4-8', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const got = await (await fetch(`http://127.0.0.1:${port}/v1/model`, { headers: { Authorization: `Bearer ${token}` } })).json() as { model: string }
+      expect(got.model).toBe('claude-opus-4-8')
+      const set = await fetch(`http://127.0.0.1:${port}/v1/model`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-6' }),
+      })
+      expect(set.status).toBe(200)
+      expect((await set.json() as { model: string }).model).toBe('claude-sonnet-4-6')
+      // persisted on disk
+      expect(loadAgentConfig(stateDir).model).toBe('claude-sonnet-4-6')
+    })
+
+    it('POST /v1/daemon/restart triggers the restart hook; 503 when unwired', async () => {
+      let restarts = 0
+      api = createInternalApi({ stateDir, daemonPid: 1, requestRestart: () => { restarts++ } })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/daemon/restart`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}',
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toMatchObject({ ok: true, restarting: true })
+      expect(restarts).toBe(1)
+
+      const api2 = createInternalApi({ stateDir, daemonPid: 1 })
+      try {
+        const s2 = await api2.start()
+        const t2 = readFileSync(s2.tokenFilePath, 'utf8').trim()
+        const r503 = await fetch(`http://127.0.0.1:${s2.port}/v1/daemon/restart`, {
+          method: 'POST', headers: { Authorization: `Bearer ${t2}`, 'content-type': 'application/json' }, body: '{}',
+        })
+        expect(r503.status).toBe(503)
+      } finally { await api2.stop() }
     })
 
     it('GET /v1/turns returns 503 when the turns store is not wired', async () => {

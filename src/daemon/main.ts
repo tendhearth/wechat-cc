@@ -143,6 +143,15 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // (after this registration) — returns null until then, so the route 503s.
       listSessions: () => bootRef?.sessionManager?.list() ?? null,
       heartbeatFresh: () => isHeartbeatFresh(HEARTBEAT_PATH),
+      // Admin remediation hooks (POST /v1/sessions/release, /v1/daemon/restart).
+      releaseSession: (k) => bootRef?.sessionManager?.release(k) ?? Promise.resolve(),
+      // Restart: let the HTTP response flush, then graceful shutdown + exit so
+      // launchd/systemd KeepAlive respawns a fresh daemon (ThrottleInterval
+      // caps the respawn rate). exit(0) is fine — KeepAlive respawns regardless.
+      requestRestart: () => {
+        log('DAEMON', 'restart requested via internal-api — shutting down for KeepAlive respawn')
+        setTimeout(() => { void shutdown().finally(() => process.exit(0)) }, 500)
+      },
       log: (t, l) => log(t, l),
     })
     lc.register(internalApi)

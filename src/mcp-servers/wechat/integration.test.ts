@@ -89,6 +89,11 @@ describe('wechat-mcp stdio integration', () => {
     expect(names).toContain('diagnostic_turns')
     expect(names).toContain('diagnostic_sessions')
     expect(names).toContain('diagnostic_health')
+    // Remediation tools (admin-gated daemon-side).
+    expect(names).toContain('session_release')
+    expect(names).toContain('model_get')
+    expect(names).toContain('model_set')
+    expect(names).toContain('daemon_restart')
   })
 
   it('ping tool round-trips the daemon_pid through the full provider → stdio → HTTP → daemon chain', async () => {

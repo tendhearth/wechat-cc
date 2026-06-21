@@ -32,13 +32,14 @@ export type ToolKind =
   | 'network'
   | 'subagent'
   | 'a2a_send'
-  | 'daemon_introspect'  // admin-only read-only self-diagnosis (turns / sessions / health)
+  | 'daemon_introspect'  // admin-only read-only self-diagnosis (turns / sessions / health / model_get)
+  | 'daemon_remediate'   // admin-only mutating self-heal (session_release / model_set / daemon_restart)
 
 const ALL_KINDS: ReadonlySet<ToolKind> = new Set([
   'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
   'observations_read', 'observations_write',
   'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
-  'a2a_send', 'daemon_introspect',
+  'a2a_send', 'daemon_introspect', 'daemon_remediate',
 ])
 
 export interface TierProfile {
@@ -74,7 +75,7 @@ const GUEST_ALLOW = new Set<ToolKind>(['reply', 'share_page', 'memory_read', 'ob
 // tools (release session / restart) that build on this must never be reachable
 // from a non-admin chat. guest already denies it via difference below; trusted
 // would otherwise auto-allow (it's not destructive), so deny it explicitly.
-const ADMIN_ONLY = new Set<ToolKind>(['daemon_introspect'])
+const ADMIN_ONLY = new Set<ToolKind>(['daemon_introspect', 'daemon_remediate'])
 
 export const TIER_PROFILES: Record<UserTier, TierProfile> = {
   admin: {
@@ -172,7 +173,8 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     if (sub === 'observations_list' || sub === 'observations_read') return 'observations_read'
     if (sub === 'observations_write' || sub === 'observations_archive') return 'observations_write'
     if (sub === 'a2a_send') return 'a2a_send'
-    if (sub === 'diagnostic_turns' || sub === 'diagnostic_sessions' || sub === 'diagnostic_health') return 'daemon_introspect'
+    if (sub === 'diagnostic_turns' || sub === 'diagnostic_sessions' || sub === 'diagnostic_health' || sub === 'model_get') return 'daemon_introspect'
+    if (sub === 'session_release' || sub === 'model_set' || sub === 'daemon_restart') return 'daemon_remediate'
     // Other wechat tools: classify as fs_read (safest non-reply default
     // for new wechat MCP tools — they tend to be query-like).
     return 'fs_read'

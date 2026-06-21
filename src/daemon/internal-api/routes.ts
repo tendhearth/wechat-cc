@@ -11,6 +11,7 @@
 import { randomBytes } from 'node:crypto'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
 import { lookup } from '../../core/capability-matrix'
+import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
 import type { Mode } from '../../core/conversation'
 import { makeEventsStore } from '../events/store'
 import type {
@@ -641,6 +642,47 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       const sessions = deps.listSessions?.()
       if (sessions == null) return { status: 503, body: { error: 'sessions_not_wired' } }
       return { status: 200, body: { sessions } }
+    },
+
+    // Admin remediation — force-release a (possibly wedged) session so the
+    // next message in that chat spawns a fresh subprocess. Returns the live
+    // session list AFTER the release as a built-in verification read-back.
+    'POST /v1/sessions/release': async (_q, body) => {
+      if (!deps.releaseSession) return { status: 503, body: { error: 'release_not_wired' } }
+      const b = (body ?? {}) as { alias?: unknown; providerId?: unknown; chatId?: unknown }
+      if (typeof b.alias !== 'string' || typeof b.providerId !== 'string' || typeof b.chatId !== 'string') {
+        return { status: 400, body: { error: 'alias, providerId, chatId required (strings)' } }
+      }
+      await deps.releaseSession({ alias: b.alias, providerId: b.providerId, chatId: b.chatId })
+      return { status: 200, body: { ok: true, sessions: deps.listSessions?.() ?? null } }
+    },
+
+    // Current pinned agent model (read-back companion to POST /v1/model).
+    'GET /v1/model': () => {
+      const cfg = loadAgentConfig(deps.stateDir)
+      return { status: 200, body: { provider: cfg.provider, model: cfg.model ?? null } }
+    },
+
+    // Admin remediation — switch the pinned model. Takes effect on the next
+    // claude session spawn per chat (no restart; see the mtime-cached reader).
+    // Returns the persisted model as a verification read-back.
+    'POST /v1/model': (_q, body) => {
+      const b = (body ?? {}) as { model?: unknown }
+      if (typeof b.model !== 'string' || b.model.trim() === '') {
+        return { status: 400, body: { error: 'model required (non-empty string)' } }
+      }
+      const cfg = loadAgentConfig(deps.stateDir)
+      saveAgentConfig(deps.stateDir, { ...cfg, model: b.model })
+      const after = loadAgentConfig(deps.stateDir)
+      return { status: 200, body: { ok: true, provider: after.provider, model: after.model ?? null } }
+    },
+
+    // Admin remediation — graceful daemon restart. The trigger schedules the
+    // shutdown+exit AFTER this response flushes; launchd/systemd respawns.
+    'POST /v1/daemon/restart': () => {
+      if (!deps.requestRestart) return { status: 503, body: { error: 'restart_not_wired' } }
+      deps.requestRestart()
+      return { status: 200, body: { ok: true, restarting: true } }
     },
 
     // Per-turn outcome feed for diagnosis. With chatId → that chat's turns

@@ -101,10 +101,11 @@ describe('TIER_PROFILES', () => {
   it('trusted relays shell_destructive and memory_delete; denies only admin-only tools', () => {
     expect(TIER_PROFILES.trusted.relay.has('shell_destructive')).toBe(true)
     expect(TIER_PROFILES.trusted.relay.has('memory_delete')).toBe(true)
-    // trusted denies only the admin-exclusive daemon_introspect (was 0 before
-    // self-diagnosis tools existed).
-    expect(TIER_PROFILES.trusted.deny.size).toBe(1)
+    // trusted denies only the admin-exclusive daemon tools (was 0 before
+    // self-diagnosis / remediation tools existed).
+    expect(TIER_PROFILES.trusted.deny.size).toBe(2)
     expect(TIER_PROFILES.trusted.deny.has('daemon_introspect')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('daemon_remediate')).toBe(true)
   })
 
   it('guest allows only reply/share_page/memory_read/observations_read', () => {
@@ -124,6 +125,15 @@ describe('TIER_PROFILES', () => {
     expect(TIER_PROFILES.trusted.deny.has('daemon_introspect')).toBe(true)
     expect(TIER_PROFILES.trusted.allow.has('daemon_introspect')).toBe(false)
     expect(TIER_PROFILES.guest.deny.has('daemon_introspect')).toBe(true)
+  })
+
+  it('daemon_remediate (release/restart/model-set) is admin-only — denied for trusted and guest', () => {
+    // Remediation actions can release sessions, switch model, restart the
+    // daemon — strictly operator-only. Same gating as daemon_introspect.
+    expect(TIER_PROFILES.admin.allow.has('daemon_remediate')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('daemon_remediate')).toBe(true)
+    expect(TIER_PROFILES.trusted.allow.has('daemon_remediate')).toBe(false)
+    expect(TIER_PROFILES.guest.deny.has('daemon_remediate')).toBe(true)
   })
 })
 
@@ -155,10 +165,16 @@ describe('classifyToolUse', () => {
     expect(classifyToolUse('mcp__wechat__observations_write', {})).toBe('observations_write')
     expect(classifyToolUse('mcp__wechat__observations_archive', {})).toBe('observations_write')
   })
-  it('diagnostic_turns / diagnostic_sessions / diagnostic_health → daemon_introspect', () => {
+  it('diagnostic_turns / diagnostic_sessions / diagnostic_health / model_get → daemon_introspect', () => {
     expect(classifyToolUse('mcp__wechat__diagnostic_turns', {})).toBe('daemon_introspect')
     expect(classifyToolUse('mcp__wechat__diagnostic_sessions', {})).toBe('daemon_introspect')
     expect(classifyToolUse('mcp__wechat__diagnostic_health', {})).toBe('daemon_introspect')
+    expect(classifyToolUse('mcp__wechat__model_get', {})).toBe('daemon_introspect')
+  })
+  it('session_release / model_set / daemon_restart → daemon_remediate', () => {
+    expect(classifyToolUse('mcp__wechat__session_release', {})).toBe('daemon_remediate')
+    expect(classifyToolUse('mcp__wechat__model_set', {})).toBe('daemon_remediate')
+    expect(classifyToolUse('mcp__wechat__daemon_restart', {})).toBe('daemon_remediate')
   })
   it('Read / Glob / Grep / LS → fs_read', () => {
     expect(classifyToolUse('Read', {})).toBe('fs_read')
