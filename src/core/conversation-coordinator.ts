@@ -733,7 +733,15 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         const renderedText = isFinalRound && !allText.startsWith('🎯')
           ? `🎯 ${allText}`
           : allText
-        await deps.sendAssistantText?.(msg.chatId, `[${dn}] ${renderedText}`)
+        // If abort landed mid-stream and the provider's cancel() didn't actually
+        // interrupt it (providers without a real interrupt run to completion),
+        // the turn completed anyway — but the user already aborted it, so DON'T
+        // forward the now-stale reply. Still push to history: a preempting
+        // dispatch's moderator must see this partial progress (PR C2), and the
+        // round-entry abort check owns the user-facing /stop notice.
+        if (!aborter.signal.aborted) {
+          await deps.sendAssistantText?.(msg.chatId, `[${dn}] ${renderedText}`)
+        }
         history.push({ role: 'speaker', speaker, text: allText })
       } finally {
         if (!suppressRecord) {

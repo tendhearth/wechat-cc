@@ -1694,6 +1694,55 @@ describe('ConversationCoordinator', () => {
       expect(setup.sendAssistantText.mock.calls.some(([, t]) => t.includes('收到 /stop'))).toBe(true)
     })
 
+    it('suppresses a chatroom reply when the turn is aborted mid-stream but cancel() is a no-op', async () => {
+      // Regression: if /stop (or a preempt) aborts a speaker turn mid-stream but
+      // the provider's cancel() doesn't actually interrupt it (allowed by the
+      // contract — providers without a real interrupt run to completion),
+      // collectTurn RESOLVES cleanly. The only abort check was in the catch, so
+      // the resolved-cleanly path fell through and forwarded the now-stale
+      // [Display] reply for a turn the user already aborted.
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      let coordRef: ReturnType<typeof createConversationCoordinator>
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => ({
+        alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+        dispatch: (): AsyncIterable<AgentEvent> => ({
+          async *[Symbol.asyncIterator]() {
+            yield { kind: 'text', text: 'leaked reply' }
+            // Abort mid-stream — like /stop arriving while streaming. cancel()
+            // below is a no-op, so the turn runs to natural completion.
+            coordRef.cancel('chat-1')
+            yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }
+          },
+        }),
+        cancel: async () => {},  // no-op interrupt (provider without a real cancel)
+        close: async () => {},
+      }))
+      const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+      const haikuEval = vi.fn(async () => JSON.stringify({ action: 'continue', speaker: 'claude', prompt: 'go' }))
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        haikuEval,
+      })
+      coordRef = c
+      await c.dispatch(inbound('chat-1', 'hi'))
+      const sent = sendAssistantText.mock.calls.map(call => call[1] as string)
+      // The aborted turn's reply must NOT be forwarded.
+      expect(sent.some(t => t.includes('leaked reply'))).toBe(false)
+    })
+
     it('falls back to solo+default when chatroom resolves to a single participant', async () => {
       // P3 N-way: when the registry has only 1 provider, resolveParticipants
       // returns a 1-element list and dispatch degrades to solo (using that
