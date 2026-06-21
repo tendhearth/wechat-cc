@@ -60,6 +60,25 @@ function firstQueryArgs(): any {
 }
 
 describe('SessionManager', () => {
+  it('invalidateSessionToken fires on explicit release AND on LRU eviction (provider/alias/chatId key)', async () => {
+    const invalidated: string[] = []
+    const spawn = vi.fn(async () => makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] }))
+    const mgr = new SessionManager({
+      maxConcurrent: 1,
+      idleEvictMs: 30 * 60_000,
+      registry: registryWithProvider({ spawn } as unknown as AgentProvider),
+      invalidateSessionToken: (k) => invalidated.push(k),
+    })
+    // explicit release
+    await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'chat-1', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
+    await mgr.release({ alias: 'a', providerId: 'claude', chatId: 'chat-1' })
+    expect(invalidated).toContain('claude/a/chat-1')
+    // LRU eviction: maxConcurrent=1, second acquire evicts the first internally
+    await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'chat-2', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
+    await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'chat-3', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
+    expect(invalidated).toContain('claude/a/chat-2')
+  })
+
   it('uses an injected agent provider to spawn and dispatch project sessions', async () => {
     const dispatched: string[] = []
     const close = vi.fn()

@@ -112,9 +112,6 @@ export interface ConversationCoordinatorDeps {
    * Optional — omitted in tests / minimal embeddings (no token injected).
    */
   mintSessionToken?: (tier: UserTier, sessionKey: string) => string
-  /** Revoke a session's token(s) when its session is released (timeout /
-   *  auth-fail self-heal). Keyed by the same `provider/alias/chatId`. */
-  invalidateSession?: (sessionKey: string) => void
   format: (msg: InboundMsg) => string
   sendAssistantText?: (chatId: string, text: string) => Promise<void>
   /**
@@ -284,8 +281,9 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // registered under (per-chat now since Task 10). A fresh dispatch in
       // this chat re-acquires from a clean subprocess that re-reads
       // keychain creds.
+      // SessionManager.release revokes the session's auth token (every release
+      // path, incl. internal eviction) — no separate invalidate call here.
       await deps.manager.release?.({ alias, providerId, chatId })
-      deps.invalidateSession?.(`${providerId}/${alias}/${chatId}`)
     } catch (err) {
       deps.log('AUTH_FAILED', `release ${alias}/${providerId} threw: ${err instanceof Error ? err.message : err}`)
     }
@@ -310,8 +308,8 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       provider: providerId,
     })
     try {
+      // SessionManager.release revokes the session's auth token (see above).
       await deps.manager.release?.({ alias, providerId, chatId })
-      deps.invalidateSession?.(`${providerId}/${alias}/${chatId}`)
     } catch (err) {
       deps.log('TURN_TIMEOUT', `release ${alias}/${providerId} threw: ${err instanceof Error ? err.message : err}`)
     }

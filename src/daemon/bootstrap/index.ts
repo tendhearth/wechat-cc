@@ -754,6 +754,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     registry,
     sessionStore,
     resumeTTLMs: 7 * 24 * 60 * 60_000,
+    // Revoke a session's auth token on every release/eviction (closes the
+    // registry-leak + stale-token gap from the per-session-token work).
+    invalidateSessionToken: deps.invalidateSession,
   })
 
   // Task 14 — when admins / trusted / allowFrom set membership changes in
@@ -840,7 +843,6 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     turnTimeoutMs,
     recordTurn,
     mintSessionToken: deps.mintSessionToken,
-    invalidateSession: deps.invalidateSession,
     // sendAssistantText fallback path: same fall-through the legacy
     // routeInbound used to take when the agent didn't call a reply tool.
     // main.ts injects a real ilink.sendMessage closure; bootstrap.ts only

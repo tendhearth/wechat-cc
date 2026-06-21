@@ -23,6 +23,16 @@ export interface SessionManagerOptions {
   sessionStore?: SessionStore
   /** Stored session_id older than this is treated as stale. Default 7 d. */
   resumeTTLMs?: number
+  /**
+   * Called whenever a session is released — by the coordinator (timeout /
+   * auth-fail self-heal) OR internally (LRU `enforceCapacity`, idle
+   * `sweepIdle`, `shutdown`). Wired to the internal-api token registry so the
+   * session's per-session auth token is revoked, NOT just the coordinator's
+   * explicit releases. `sessionKey` is `provider/alias/chatId` (matches the
+   * coordinator's mint key). Centralising here is the single chokepoint that
+   * covers every eviction path. Optional — omitted when no registry is wired.
+   */
+  invalidateSessionToken?: (sessionKey: string) => void
 }
 
 /**
@@ -228,6 +238,10 @@ export class SessionManager {
     const s = this.sessions.get(key)
     if (!s) return
     this.sessions.delete(key)
+    // Revoke the session's auth token on EVERY release path (coordinator +
+    // internal LRU/idle/shutdown eviction). The token key matches what the
+    // coordinator minted: provider/alias/chatId (NOT the cache `sessionKey`).
+    this.opts.invalidateSessionToken?.(`${k.providerId}/${k.alias}/${k.chatId}`)
     await s.handle.close()
   }
 
