@@ -2,7 +2,7 @@
 if (!process.env.CLAUDE_CODE_ENTRYPOINT) { process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts' }
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { acquireInstanceLock, releaseInstanceLock } from './single-instance'
+import { acquireInstanceLock, releaseInstanceLock, isHeartbeatFresh, writeHeartbeat, HEARTBEAT_FILE } from './single-instance'
 import { openDb } from '../lib/db'
 import { LifecycleSet, wireRef } from '../lib/lifecycle'
 import { log } from '../lib/log'
@@ -58,8 +58,19 @@ export interface DaemonHandle {
 export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   const { stateDir, dangerously } = opts
   const PID_PATH = join(stateDir, 'server.pid')
-  const lock = acquireInstanceLock(PID_PATH)
+  const HEARTBEAT_PATH = join(stateDir, HEARTBEAT_FILE)
+  // Health-aware lock: refuse only if the existing holder is alive AND its
+  // heartbeat is fresh (it's actually serving). A wedged/half-started daemon
+  // — the desktop-launchd "holds the pidfile but never replies" case — lets
+  // its heartbeat go stale, so we take the lock over instead of forcing the
+  // user to kill it by hand. A holder with no heartbeat file (predates this,
+  // or just started) is treated as fresh, so we never steal an unproven lock.
+  const lock = acquireInstanceLock(PID_PATH, { isHealthy: () => isHeartbeatFresh(HEARTBEAT_PATH) })
   if (!lock.ok) throw new Error(`[wechat-cc] ${lock.reason} (pid=${lock.pid})`)
+  // Stamp an initial heartbeat immediately so this just-started daemon reads
+  // as healthy before its first poll cycle lands (the poll loop refreshes it
+  // on every round-trip thereafter — see lifecycle-deps onPollCycle).
+  writeHeartbeat(HEARTBEAT_PATH)
   // v0.5.6: collapse duplicate ilink bot bindings to one per wechat userId
   // BEFORE loading accounts. ilink only allows one active bot per user — when
   // the user re-scans, the old bot's session is invalidated server-side. The

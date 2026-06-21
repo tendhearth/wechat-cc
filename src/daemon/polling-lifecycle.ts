@@ -20,6 +20,9 @@ export interface PollingDeps {
   resolveUserName(chatId: string): string | undefined
   log: (tag: string, line: string) => void
   runPipeline: PipelineRun
+  /** Fired after each successful poll round-trip — main.ts stamps the
+   *  daemon-health heartbeat the instance lock reads. See poll-loop.ts. */
+  onPollCycle?: () => void
 }
 
 export interface PollingLifecycle extends Lifecycle {
@@ -65,6 +68,7 @@ export function registerPolling(deps: PollingDeps): PollingLifecycle {
     parse: deps.parse,
     resolveUserName: deps.resolveUserName,
     log: deps.log,
+    ...(deps.onPollCycle ? { onPollCycle: deps.onPollCycle } : {}),
     // Persist the advanced ilink poll cursor so a daemon restart resumes from
     // where it left off instead of replaying ilink's unacked backlog (each
     // replay re-runs the agent + re-sends a fallback that ilink rejects with

@@ -245,6 +245,32 @@ describe('startLongPollLoops', () => {
     await handle.stop()
   })
 
+  it('calls onPollCycle after a successful getUpdates (daemon-health heartbeat hook)', async () => {
+    // The poll loop is the daemon's "am I actually serving" signal. Each
+    // successful long-poll round-trip fires onPollCycle so main.ts can stamp
+    // the heartbeat the instance lock reads — a daemon whose poll loop stalls
+    // (or never starts) lets the heartbeat go stale and becomes stealable.
+    // Resolve the first round-trip, then yield via a real timer on subsequent
+    // calls. A bare mockResolvedValue would resolve instantly every iteration,
+    // starving the macrotask queue (the loop never awaits anything real) so
+    // the 30ms timer below — and handle.stop() — could never fire → hang.
+    const getUpdates = vi.fn()
+      .mockResolvedValueOnce({ updates: [], sync_buf: '' })
+      .mockImplementation(async () => { await new Promise(r => setTimeout(r, 50)); return { updates: [], sync_buf: '' } })
+    const onPollCycle = vi.fn()
+    const handle = startLongPollLoops({
+      accounts: [baseAcct],
+      onInbound: async () => {},
+      ilink: { getUpdates },
+      parse: (us, deps) => parseUpdates(us, deps),
+      resolveUserName: () => undefined,
+      onPollCycle,
+    })
+    await new Promise(r => setTimeout(r, 30))
+    await handle.stop()
+    expect(onPollCycle).toHaveBeenCalled()
+  })
+
   it('swallows getUpdates errors and retries', async () => {
     const getUpdates = vi.fn()
       .mockRejectedValueOnce(new Error('transient'))

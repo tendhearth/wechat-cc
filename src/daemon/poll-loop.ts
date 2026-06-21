@@ -212,6 +212,15 @@ export interface PollLoopOptions {
    * and every restart replays ilink's unacked backlog → duplicate fallback sends.
    */
   onSyncBuf?: (accountId: string, syncBuf: string) => void
+  /**
+   * Fired after every successful `getUpdates` round-trip (any account). This
+   * is the daemon's "I am actually serving" signal — main.ts stamps the
+   * heartbeat file the instance lock reads. A daemon whose poll loop stalls
+   * or never starts stops firing this, the heartbeat goes stale, and a fresh
+   * daemon may take over the lock instead of being refused by a dead
+   * placeholder. Best-effort; must never throw into the loop.
+   */
+  onPollCycle?: () => void
   log?: (tag: string, line: string) => void
 }
 
@@ -262,7 +271,7 @@ interface LoopRecord {
  * one (for cleanup).
  */
 export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
-  const { onInbound, ilink, parse, onSyncBuf, log = () => {} } = opts
+  const { onInbound, ilink, parse, onSyncBuf, onPollCycle, log = () => {} } = opts
   const resolveUserName = opts.resolveUserName ?? (() => undefined)
 
   const loops = new Map<string, LoopRecord>()
@@ -277,6 +286,10 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
         const resp = await ilink.getUpdates(account.id, account.baseUrl, account.token, syncBuf)
 
         if (sig.aborted) break
+
+        // Successful round-trip — stamp the daemon-health heartbeat. Guarded
+        // so a bad callback can't kill the poll loop.
+        try { onPollCycle?.() } catch { /* never throw into the loop */ }
 
         // Adapter has marked the bot session expired — self-terminate. The
         // ilink-glue wrapper has already written to SessionStateStore, so
