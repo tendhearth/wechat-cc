@@ -12,9 +12,13 @@ export interface YiWsServerOpts {
   port: number
   hub: YiHub
   verify: (handId: string, authToken: string) => boolean
+  /** Close a socket that hasn't completed the initialize handshake within this
+   *  window. Bounds resource held by a peer that connects but never authenticates
+   *  (idle / pre-auth slowloris). Default 10s. */
+  handshakeTimeoutMs?: number
 }
 
-interface SockData { handId: string | null; send?: (raw: string) => void }
+interface SockData { handId: string | null; send?: (raw: string) => void; handshakeTimer?: ReturnType<typeof setTimeout> }
 
 export interface YiWsServer {
   start(): Promise<void>
@@ -36,6 +40,14 @@ export function createYiWsServer(opts: YiWsServerOpts): YiWsServer {
           return new Response('expected websocket', { status: 426 })
         },
         websocket: {
+          open(ws) {
+            // Arm a handshake deadline — a peer that never sends `initialize`
+            // (idle / pre-auth slowloris) is force-closed instead of held open.
+            const ms = opts.handshakeTimeoutMs ?? 10_000
+            ws.data.handshakeTimer = setTimeout(() => {
+              if (ws.data.handId === null) { try { ws.close() } catch { /* already closed */ } }
+            }, ms)
+          },
           message(ws, raw) {
             const msg = parseMessage(typeof raw === 'string' ? raw : Buffer.from(raw))
             if (ws.data.handId === null) {
@@ -43,6 +55,9 @@ export function createYiWsServer(opts: YiWsServerOpts): YiWsServer {
                 const p = msg.params as { handId?: unknown; authToken?: unknown }
                 if (typeof p.handId === 'string' && typeof p.authToken === 'string' && opts.verify(p.handId, p.authToken)) {
                   ws.data.handId = p.handId
+                  // Authenticated — cancel the handshake deadline so this live
+                  // connection isn't force-closed later.
+                  if (ws.data.handshakeTimer) { clearTimeout(ws.data.handshakeTimer); ws.data.handshakeTimer = undefined }
                   const send = (out: string) => { try { ws.send(out) } catch { /* closed */ } }
                   ws.data.send = send
                   opts.hub.attach(p.handId, send)
@@ -60,6 +75,7 @@ export function createYiWsServer(opts: YiWsServerOpts): YiWsServer {
             opts.hub.onMessage(ws.data.handId, typeof raw === 'string' ? raw : Buffer.from(raw).toString('utf8'))
           },
           close(ws) {
+            if (ws.data.handshakeTimer) { clearTimeout(ws.data.handshakeTimer); ws.data.handshakeTimer = undefined }
             if (ws.data.handId) opts.hub.detach(ws.data.handId, ws.data.send)
           },
         },
