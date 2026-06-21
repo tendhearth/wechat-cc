@@ -552,6 +552,17 @@ describe('makeModeCommands', () => {
       expect(sentMessages[0]?.[1]).toMatch(/≥2|至少|need.*2/)
     })
 
+    it('/chat with the same provider twice is rejected (dedupes below the ≥2 minimum)', async () => {
+      // Regression: the ≥2 check ran on the RAW token count, but dedup happened
+      // after — so `/chat claude claude` (2 tokens, 1 distinct) passed the check
+      // then collapsed to a single-participant chatroom, violating the advertised
+      // ≥2 contract (it silently degraded to solo).
+      const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'cursor'] })
+      await cmds.handle(inbound('/chat claude claude'))
+      expect(set).not.toHaveBeenCalled()
+      expect(sentMessages[0]?.[1]).toMatch(/≥2|至少|不同|distinct/)
+    })
+
     it('/chat with unknown provider is rejected with helpful message', async () => {
       const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'cursor'] })
       await cmds.handle(inbound('/chat claude gemini'))

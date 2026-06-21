@@ -95,6 +95,12 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     // Deduplicate while preserving order (operator typed the same provider twice → silent dedupe).
     const seen = new Set<string>()
     const dedup = tokens.filter(t => seen.has(t) ? false : (seen.add(t), true))
+    // Re-check the minimum AFTER dedup: `/chat claude claude` is 2 raw tokens but
+    // 1 distinct provider, which would otherwise pass the raw-count check above
+    // and silently collapse to a single-participant (solo-degraded) chatroom.
+    if (dedup.length < 2) {
+      return { ok: false, error: `❓ /${modeName} 需要 ≥2 个不同的 participants（去重后只剩 ${dedup.length} 个）. 例：/${modeName} ${deps.registry.list().slice(0, 2).join(' ')}` }
+    }
     return { ok: true, participants: dedup }
   }
 
