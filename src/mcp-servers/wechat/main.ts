@@ -44,14 +44,15 @@ const server = new McpServer(
   { capabilities: { tools: {} } },
 )
 
-// Admin-session flag, baked into THIS MCP child's env by the daemon at spawn
-// time (bootstrap sets WECHAT_SESSION_ADMIN=1 only for an admin-tier session).
-// The agent runs in the LLM and cannot alter this env, so gating the
-// daemon-control tools (diagnostic_* / model_* / session_release /
-// daemon_restart) on it is robust on EVERY provider — including codex, which
+// Admin-session flag, derived from the non-secret WECHAT_SESSION_TIER the
+// daemon bakes into THIS MCP child's env at spawn (next to the secret
+// WECHAT_SESSION_TOKEN). The agent runs in the LLM and cannot alter this env,
+// so gating the daemon-control tools (diagnostic_* / model_* / session_release
+// / daemon_restart) on it is robust on EVERY provider — including codex, which
 // has no per-tool canUseTool callback. Non-admin sessions simply don't get the
-// tools registered, so they can't be called or even discovered.
-const SESSION_IS_ADMIN = process.env.WECHAT_SESSION_ADMIN === '1'
+// tools registered, AND the route layer rejects a non-admin token anyway
+// (defence in depth).
+const SESSION_IS_ADMIN = process.env.WECHAT_SESSION_TIER === 'admin'
 
 // ──────────────────────────────────────────────────────────────────────
 // Tools
