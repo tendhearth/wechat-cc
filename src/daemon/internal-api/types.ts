@@ -168,6 +168,11 @@ export interface InternalApiDeps {
     /** Base URL of the a2a listener, e.g. "http://0.0.0.0:9000". Null when disabled. */
     baseUrl: string | null
   }
+  /**
+   * Optional per-turn outcome store — backs GET /v1/turns. Undefined in
+   * minimal embeddings / tests, in which case the route returns 503.
+   */
+  turns?: import('../../core/turn-record-store').TurnRecordStore
   /** Optional log hook so api activity surfaces in channel.log. */
   /**
    * Optional `fields` arg lands in channel.log.jsonl when wired (the

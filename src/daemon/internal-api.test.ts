@@ -6,6 +6,8 @@ import { createInternalApi, type InternalApi } from './internal-api'
 import { makeMemoryFS } from './memory/fs-api'
 import { makeEventsStore } from './events/store'
 import { openTestDb } from '../lib/db'
+import { makeTurnRecordStore } from '../core/turn-record-store'
+import type { TurnRecord } from '../core/conversation-coordinator'
 import type { A2ARegistry } from '../core/a2a-registry'
 import type { A2AClient, SendResult, AgentCard } from '../core/a2a-client'
 import type { A2AEventsStore, EventRow, AppendInput } from '../core/a2a-events-store'
@@ -2311,6 +2313,62 @@ describe('internal-api request validation', () => {
       const body = await resp.json() as { enabled: boolean; base_url: string | null }
       expect(body.enabled).toBe(false)
       expect(body.base_url).toBeNull()
+    })
+
+    it('GET /v1/turns?chatId returns that chat\'s turns newest-first', async () => {
+      const db = openTestDb()
+      const store = makeTurnRecordStore(db)
+      const base: TurnRecord = {
+        chatId: 'chat-1', provider: 'claude', alias: 'a', mode: 'solo',
+        startedAt: 0, endedAt: 0, durationMs: 0, outcome: 'completed',
+        replyToolCalled: true, textChunks: 1,
+      }
+      store.append({ ...base, endedAt: 100 })
+      store.append({ ...base, endedAt: 300, outcome: 'timeout', error: 'stalled' })
+      store.append({ ...base, chatId: 'chat-2', endedAt: 200 }) // other chat — excluded
+      api = createInternalApi({ stateDir, daemonPid: 1, turns: store })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/turns?chatId=chat-1&limit=10`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { turns: Array<TurnRecord & { id: string }> }
+      expect(body.turns.map(t => t.endedAt)).toEqual([300, 100])
+      expect(body.turns.every(t => t.chatId === 'chat-1')).toBe(true)
+      expect(body.turns[0]).toMatchObject({ outcome: 'timeout', error: 'stalled', replyToolCalled: true })
+    })
+
+    it('GET /v1/turns without chatId returns recent turns across all chats', async () => {
+      const db = openTestDb()
+      const store = makeTurnRecordStore(db)
+      const base: TurnRecord = {
+        chatId: 'x', provider: 'codex', alias: 'a', mode: 'parallel',
+        startedAt: 0, endedAt: 0, durationMs: 0, outcome: 'completed',
+        replyToolCalled: false, textChunks: 0,
+      }
+      store.append({ ...base, chatId: 'chat-A', endedAt: 100 })
+      store.append({ ...base, chatId: 'chat-B', endedAt: 300 })
+      api = createInternalApi({ stateDir, daemonPid: 1, turns: store })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/turns`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { turns: Array<{ chatId: string }> }
+      expect(body.turns.map(t => t.chatId)).toEqual(['chat-B', 'chat-A'])
+    })
+
+    it('GET /v1/turns returns 503 when the turns store is not wired', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/turns`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toMatchObject({ error: 'turns_not_wired' })
     })
 
     it('All A2A routes return 503 when deps.a2a is undefined', async () => {

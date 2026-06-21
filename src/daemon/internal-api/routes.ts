@@ -621,6 +621,20 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
         },
       }
     },
+
+    // Per-turn outcome feed for diagnosis. With chatId → that chat's turns
+    // newest-first ("why did chat X stop replying"); without → the daemon's
+    // recent turns across all chats. limit defaults to 50, clamped to 500.
+    'GET /v1/turns': (q) => {
+      if (!deps.turns) return { status: 503, body: { error: 'turns_not_wired' } }
+      const chatId = q.get('chatId') ?? undefined
+      const rawLimit = Number(q.get('limit') ?? '50')
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(1, Math.trunc(rawLimit)), 500) : 50
+      const turns = chatId
+        ? deps.turns.recentForChat(chatId, limit)
+        : deps.turns.recent(limit)
+      return { status: 200, body: { turns } }
+    },
   }
 }
 

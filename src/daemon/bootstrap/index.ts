@@ -168,6 +168,13 @@ export interface BootstrapDeps {
    *  coordinator already relies on it for auth_failed + turn records. */
   log: (tag: string, line: string, fields?: Record<string, unknown>) => void
   /**
+   * Optional persistence sink for the coordinator's per-turn TurnRecord.
+   * main.ts wires this to the SQLite turn_records store so internal-api's
+   * GET /v1/turns can serve them and they survive a daemon restart. Omitted
+   * in tests / minimal embeddings — the JSONL log line still happens.
+   */
+  onTurnRecord?: (record: TurnRecord) => void
+  /**
    * Used when projects.current is unset. Prevents silent message drops on
    * fresh installs — matches v0.x UX where messages routed to the daemon's
    * launch cwd by default.
@@ -787,17 +794,22 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     return Number.isFinite(n) && n >= 0 ? n : 10 * 60_000
   })()
 
-  // recordTurn — emit the structured TurnRecord as a fields-bearing log line.
-  // deps.log routes the third arg into channel.log.jsonl, so every turn's
-  // outcome (completed / timeout / auth_failed / error) becomes queryable
-  // there immediately — the AI-legible trace that makes "why did this chat
-  // stop replying" a query, not a log dig. (A ring buffer surfaced on
-  // internal-api can layer on top of this same sink later.)
+  // recordTurn — emit the structured TurnRecord as a fields-bearing log line
+  // AND persist it via the optional onTurnRecord sink. deps.log routes the
+  // third arg into channel.log.jsonl, so every turn's outcome (completed /
+  // timeout / auth_failed / error) is greppable there; onTurnRecord (wired in
+  // main.ts to the SQLite turn_records store) makes it *queryable* on
+  // internal-api and survives the restart a hang/crash triggers — the
+  // AI-legible answer to "why did this chat stop replying", post-mortem-safe.
   const recordTurn = (record: TurnRecord): void => {
     deps.log('TURN', `chat=${record.chatId} provider=${record.provider} outcome=${record.outcome} dur=${record.durationMs}ms reply=${record.replyToolCalled} chunks=${record.textChunks}${record.error ? ` error=${JSON.stringify(record.error.slice(0, 160))}` : ''}`, {
       event: 'turn_record',
       ...record,
     })
+    // Persistence is best-effort: a store write must never break dispatch.
+    try { deps.onTurnRecord?.(record) } catch (err) {
+      deps.log('TURN', `onTurnRecord sink threw: ${err instanceof Error ? err.message : String(err)}`)
+    }
   }
 
   const coordinator = createConversationCoordinator({

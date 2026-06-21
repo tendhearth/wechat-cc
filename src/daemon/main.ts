@@ -11,6 +11,7 @@ import { loadAccess, AccessConfigCorruptError } from '../lib/access'
 import { buildBootstrap } from './bootstrap'
 import { makeMemoryFS } from './memory/fs-api'
 import { makeConversationStore } from '../core/conversation-store'
+import { makeTurnRecordStore } from '../core/turn-record-store'
 import { providerDisplayName } from './provider-display-names'
 import { loadAllAccounts, makeIlinkAdapter } from './ilink-glue'
 import { registerInternalApi } from './internal-api/lifecycle'
@@ -93,6 +94,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   const accounts = await loadAllAccounts(stateDir)
   if (accounts.length === 0) { releaseInstanceLock(PID_PATH); throw new Error('[wechat-cc] no accounts bound. Run `wechat-cc setup` first.') }
   const db = openDb({ path: join(stateDir, 'wechat-cc.db') })
+  // Per-turn observability store — written by the coordinator's recordTurn
+  // (via bootstrap onTurnRecord) and read by internal-api GET /v1/turns.
+  // Created here so both the internal-api registration and bootstrap below
+  // share the one instance.
+  const turnRecordStore = makeTurnRecordStore(db)
   // ConversationStore must be constructed BEFORE the ilink adapter —
   // PR5 Task 21 routes the adapter's setUserName/resolveUserName through
   // it, replacing the deprecated user_names.json store. Both legacy
@@ -130,6 +136,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       companion: { enable: () => ilink.companion.enable(), disable: () => ilink.companion.disable(), status: () => ilink.companion.status(), snooze: (m) => ilink.companion.snooze(m) },
       ilink: { sendReply: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string; error?: string }), sendFile: (c, p) => ilink.sendFile(c, p), editMessage: (c, m, t) => ilink.editMessage(c, m, t), broadcast: (t, a) => ilink.broadcast(t, a) },
       prefix: { conversationStore, providerDisplayName, permissionMode: dangerously ? 'dangerously' as const : 'strict' as const },
+      turns: turnRecordStore,
       log: (t, l) => log(t, l),
     })
     lc.register(internalApi)
@@ -139,6 +146,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       lastActiveChatId: ilink.lastActiveChatId, log: (t, l, f) => log(t, l, f),
       fallbackProject: () => ({ alias: '_default', path: process.cwd() }),
       dangerouslySkipPermissions: dangerously, conversationStore,
+      onTurnRecord: (r) => turnRecordStore.append(r),
       internalApi: { baseUrl: internalApi.baseUrl, tokenFilePath: internalApi.tokenFilePath },
     })
     bootRef = boot
