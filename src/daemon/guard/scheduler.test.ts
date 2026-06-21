@@ -32,6 +32,27 @@ describe('startGuardScheduler', () => {
     await sched.stop()
   })
 
+  it('a throwing probe does not reject tick / kill the scheduler', async () => {
+    // Regression: tick() rejecting (an injected probe, or a dep thunk like
+    // ipifyUrl/isEnabled, throwing) broke BOTH schedule paths — the startup
+    // `void tick().then(schedule)` and the recurring `await tick(); schedule()`
+    // — silently killing the guard (a stability feature) forever. tick() must
+    // swallow unexpected errors and resolve with the current state so polling
+    // continues.
+    let mode: 'throw' | 'ok' = 'throw'
+    const sched = startGuardScheduler(makeDeps({
+      fetchPublicIp: async () => { if (mode === 'throw') throw new Error('dns down'); return { ip: '1.2.3.4' } },
+      probeReachable: async () => ({ reachable: true, ms: 1 }),
+    }))
+    // pokeNow resolves (does NOT reject) despite the throw.
+    await expect(sched.pokeNow()).resolves.toBeDefined()
+    // The scheduler is still alive — a later poll with a working fetch succeeds.
+    mode = 'ok'
+    await sched.pokeNow()
+    expect(sched.current().ip).toBe('1.2.3.4')
+    await sched.stop()
+  })
+
   it('skips the probe when IP hasnt changed', async () => {
     const probeFn = vi.fn(async () => ({ reachable: true, ms: 12 }))
     const sched = startGuardScheduler(makeDeps({

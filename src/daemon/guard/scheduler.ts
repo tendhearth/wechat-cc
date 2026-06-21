@@ -64,29 +64,40 @@ export function startGuardScheduler(deps: SchedulerDeps): SchedulerHandle {
     if (stopped || !deps.isEnabled()) return state
     if (inFlightPromise) return inFlightPromise
     inFlightPromise = (async () => {
-      const ipRes = await fIp({ url: deps.ipifyUrl() })
-      const prevIp = state.ip
-      const ipChanged = ipRes.ip !== null && ipRes.ip !== prevIp
-      // First successful poll after enable / restart counts as a change
-      // so we always know reachable status before any inbound arrives.
-      const firstPoll = state.lastChecked === null && ipRes.ip !== null
-      if (!ipChanged && !firstPoll) return state
-      const probe = await fProbe(deps.probeUrl())
-      const next: GuardState = {
-        ip: ipRes.ip,
-        reachable: probe.reachable,
-        lastChecked: new Date().toISOString(),
-        lastError: probe.error ?? ipRes.error ?? null,
+      // Never let tick() REJECT. Both schedule paths await it — the startup
+      // `void tick().then(schedule)` and the recurring `await tick(); schedule()`
+      // — so a rejection (an injected probe or a dep thunk like ipifyUrl/
+      // isEnabled throwing) would skip schedule() and silently kill the guard
+      // forever. Swallow any unexpected error and resolve with the current state
+      // so polling continues to the next tick.
+      try {
+        const ipRes = await fIp({ url: deps.ipifyUrl() })
+        const prevIp = state.ip
+        const ipChanged = ipRes.ip !== null && ipRes.ip !== prevIp
+        // First successful poll after enable / restart counts as a change
+        // so we always know reachable status before any inbound arrives.
+        const firstPoll = state.lastChecked === null && ipRes.ip !== null
+        if (!ipChanged && !firstPoll) return state
+        const probe = await fProbe(deps.probeUrl())
+        const next: GuardState = {
+          ip: ipRes.ip,
+          reachable: probe.reachable,
+          lastChecked: new Date().toISOString(),
+          lastError: probe.error ?? ipRes.error ?? null,
+        }
+        const flipped = state.reachable !== next.reachable || state.ip !== next.ip
+        const prev = state
+        state = next
+        if (flipped) {
+          log('GUARD', `state ip=${prevIp ?? '?'} → ${next.ip ?? '?'} reachable=${prev.reachable} → ${next.reachable}${next.lastError ? ` err=${next.lastError}` : ''}`)
+          try { await deps.onStateChange?.(prev, next) }
+          catch (err) { log('GUARD', `onStateChange threw: ${err instanceof Error ? err.message : String(err)}`) }
+        }
+        return next
+      } catch (err) {
+        log('GUARD', `tick failed (keeping prior state, will retry next poll): ${err instanceof Error ? err.message : String(err)}`)
+        return state
       }
-      const flipped = state.reachable !== next.reachable || state.ip !== next.ip
-      const prev = state
-      state = next
-      if (flipped) {
-        log('GUARD', `state ip=${prevIp ?? '?'} → ${next.ip ?? '?'} reachable=${prev.reachable} → ${next.reachable}${next.lastError ? ` err=${next.lastError}` : ''}`)
-        try { await deps.onStateChange?.(prev, next) }
-        catch (err) { log('GUARD', `onStateChange threw: ${err instanceof Error ? err.message : String(err)}`) }
-      }
-      return next
     })()
     try { return await inFlightPromise }
     finally { inFlightPromise = null }
