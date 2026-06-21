@@ -2513,9 +2513,9 @@ describe('internal-api request validation', () => {
       // persisted on disk
       expect(loadAgentConfig(stateDir).model).toBe('claude-sonnet-4-6')
 
-      // Bare aliases / fast-mode tags are rejected (the 404-every-turn footgun)
-      // and must NOT overwrite the good pinned model.
-      for (const bad of ['opus', 'opus[1m]', 'sonnet', 'claude opus']) {
+      // Bare aliases (no version digit) + whitespace are rejected (the
+      // 404-every-turn footgun) and must NOT overwrite the good pinned model.
+      for (const bad of ['opus', 'sonnet', 'claude opus', 'opus 4']) {
         const r = await fetch(`http://127.0.0.1:${port}/v1/model`, {
           method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
           body: JSON.stringify({ model: bad }),
@@ -2523,6 +2523,32 @@ describe('internal-api request validation', () => {
         expect(r.status).toBe(400)
       }
       expect(loadAgentConfig(stateDir).model).toBe('claude-sonnet-4-6') // unchanged
+
+      // Legit ids that the OLD strict charset wrongly rejected are accepted now:
+      // bracketed 1M variant, provider-prefixed, ARN, bare 'o3'.
+      for (const good of ['claude-opus-4-8[1m]', 'anthropic/claude-opus-4', 'us.anthropic.claude-opus-4-8-v1:0', 'o3']) {
+        const r = await fetch(`http://127.0.0.1:${port}/v1/model`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ model: good }),
+        })
+        expect(r.status, good).toBe(200)
+      }
+    })
+
+    it('POST /v1/model writes cursorModel (not model) for a cursor-provider daemon', async () => {
+      saveAgentConfig(stateDir, { provider: 'cursor', cursorModel: 'composer-2', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'test')
+      const set = await fetch(`http://127.0.0.1:${port}/v1/model`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'composer-3' }),
+      })
+      expect(set.status).toBe(200)
+      expect(await set.json()).toMatchObject({ provider: 'cursor', model: 'composer-3' })
+      const after = loadAgentConfig(stateDir)
+      expect(after.cursorModel).toBe('composer-3') // the field cursor actually reads
+      expect(after.model).toBeUndefined() // NOT written to the claude/codex field
     })
 
     it('POST /v1/daemon/restart triggers the restart hook; 503 when unwired', async () => {

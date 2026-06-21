@@ -664,7 +664,7 @@ server.registerTool(
   'model_set',
   {
     title: 'Switch model',
-    description: '【管理员】切换固定的 agent 模型（写入 agent-config.json）。claude 下次 spawn 生效，不用重启；当前在飞的会话要等释放后才换。返回写入后的 model 作为核对。',
+    description: '【管理员】切换固定的 agent 模型（写入 agent-config.json，按当前 provider 写对应字段）。claude 下次 spawn 生效、不用重启；codex/cursor 会持久化但要重启 daemon 才生效。返回写入后的 model 作为核对。传完整带版本号的 id（如 claude-opus-4-8），不要传裸别名（opus/sonnet）。',
     inputSchema: { model: z.string().min(1).describe('完整模型 id，如 claude-opus-4-8 / claude-sonnet-4-6') },
   },
   async ({ model }) => {
