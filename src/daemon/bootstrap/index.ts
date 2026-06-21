@@ -21,7 +21,7 @@ import { SessionManager } from '../../core/session-manager'
 import { createClaudeAgentProvider, tierProfileToClaudeSdkOpts } from '../../core/claude-agent-provider'
 import { createCodexAgentProvider } from '../../core/codex-agent-provider'
 import type { TierProfile } from '../../core/user-tier'
-import { resolveTier } from '../../core/user-tier'
+import { resolveTier, tierNameFromProfile } from '../../core/user-tier'
 import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
 import { createConversationCoordinator, type ConversationCoordinator, type TurnRecord } from '../../core/conversation-coordinator'
 import { makeConversationStore, type ConversationStore } from '../../core/conversation-store'
@@ -224,7 +224,7 @@ export interface Bootstrap {
   coordinator: ConversationCoordinator
   resolve: (chatId: string) => { alias: string; path: string } | null
   formatInbound: typeof formatInbound
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, sessionToken?: string) => Options
   /** Daemon-default provider id — what new chats get until user runs `/cc` or `/codex`. */
   defaultProviderId: ProviderId
   /** Backward-compat alias for defaultProviderId. Pre-P2 callers expected this name. */
@@ -443,7 +443,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     return c.provider === 'claude' && c.model ? c.model : 'claude-opus-4-8'
   }
 
-  const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string): Options => {
+  const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string, sessionToken?: string): Options => {
     const cstatus = deps.ilink.companion.status()
     const systemPrompt = buildSystemPrompt({
       providerId: 'claude',
@@ -453,25 +453,24 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // wechat + delegate stdio MCP both loaded for regular sessions.
       delegateAvailable: !!delegateStdioForClaude,
     })
-    // Admin-only daemon-control tools (diagnostic_* / model_* / session_release
-    // / daemon_restart) are gated by the wechat MCP child registering them ONLY
-    // when WECHAT_SESSION_ADMIN=1. Bake that flag per-spawn for an admin-tier
-    // session — keyed on the read-only daemon_introspect kind, which only admin
-    // ALLOWS (trusted/guest deny it). NB daemon_remediate is in admin's RELAY
-    // set, not allow, so it can't be used as the admin signal. Codex sessions
-    // never get this flag (the codex provider's MCP spec is fixed at
-    // construction), so daemon tools are simply unavailable there — closing the
-    // no-canUseTool gap on codex.
-    const sessionIsAdmin = tierProfile.allow.has('daemon_introspect')
-    const wechatEnv = wechatStdioForClaude
-      ? { ...wechatStdioForClaude.env, ...(sessionIsAdmin ? { WECHAT_SESSION_ADMIN: '1' } : {}) }
-      : undefined
+    // Per-session internal-api auth: bake the env-only WECHAT_SESSION_TOKEN
+    // (the secret the MCP children send as their bearer) + WECHAT_SESSION_TIER
+    // (non-secret; the wechat child gates admin-tool registration on tier
+    // === 'admin'). The route layer enforces the token's tier server-side
+    // (route-tiers.ts), so this closes the cross-provider gap too — codex
+    // gets the same env via its own per-spawn merge.
+    const sessionEnv: Record<string, string> = {
+      ...(sessionToken ? { WECHAT_SESSION_TOKEN: sessionToken } : {}),
+      WECHAT_SESSION_TIER: tierNameFromProfile(tierProfile),
+    }
+    const wechatEnv = wechatStdioForClaude ? { ...wechatStdioForClaude.env, ...sessionEnv } : undefined
+    const delegateEnv = delegateStdioForClaude ? { ...delegateStdioForClaude.env, ...sessionEnv } : undefined
     const common: Options = {
       cwd: path,
       model: currentClaudeModel(),
       mcpServers: {
         ...(wechatStdioForClaude ? { wechat: { type: 'stdio' as const, ...wechatStdioForClaude, env: wechatEnv! } } : {}),
-        ...(delegateStdioForClaude ? { delegate: { type: 'stdio' as const, ...delegateStdioForClaude } } : {}),
+        ...(delegateStdioForClaude ? { delegate: { type: 'stdio' as const, ...delegateStdioForClaude, env: delegateEnv! } } : {}),
       },
       // Using preset+append (instead of raw string) keeps MCP tools inline in
       // the system prompt — otherwise they're deferred behind ToolSearch,
