@@ -145,7 +145,7 @@ describe('client prefers the per-session token env', () => {
         baseUrl: 'http://x',
         tokenFilePath: '/no/such/file',
         fetchImpl: (async (_u: unknown, init: { headers: Record<string, string> }) => {
-          seen.push(init.headers.Authorization)
+          seen.push(init.headers.Authorization ?? '(none)')
           return new Response('{}', { headers: { 'content-type': 'application/json' } })
         }) as unknown as typeof fetch,
       })
