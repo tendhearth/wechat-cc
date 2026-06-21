@@ -115,17 +115,18 @@ export function tierNameFromProfile(tp: TierProfile): UserTier {
 }
 
 /**
- * The per-session env every provider bakes into its stdio MCP children:
+ * The per-session env baked into a session's stdio MCP children:
  * `WECHAT_SESSION_TOKEN` (the env-only secret the children send as their
  * bearer; omitted when no token was minted) + `WECHAT_SESSION_TIER` (the
- * non-secret tier the wechat child gates admin-tool registration on). Built in
- * one place so the two var names and the token-presence guard don't drift
- * across the claude/codex/cursor spawn seams.
+ * non-secret tier the wechat child gates admin-tool registration on). Computed
+ * ONCE per spawn by the daemon (session-manager, which mints the token) and
+ * threaded to providers via `SpawnContext.mcpEnv` — providers merge it blindly,
+ * so a new provider carries the tier env for free and never re-derives it.
  */
-export function sessionAuthEnv(tp: TierProfile, sessionToken?: string): Record<string, string> {
+export function sessionAuthEnv(tier: UserTier, sessionToken?: string): Record<string, string> {
   return {
     ...(sessionToken ? { WECHAT_SESSION_TOKEN: sessionToken } : {}),
-    WECHAT_SESSION_TIER: tierNameFromProfile(tp),
+    WECHAT_SESSION_TIER: tier,
   }
 }
 

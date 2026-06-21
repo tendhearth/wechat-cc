@@ -2,7 +2,7 @@ import { Codex, type Thread, type ThreadEvent, type ThreadItem } from '@openai/c
 import { tmpdir } from 'node:os'
 import { mergeEnvIntoMcpServers, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type ProviderCapabilities, type SpawnContext } from './agent-provider'
 import { resolveCodexCheapModel } from './codex-cheap-model'
-import { sessionAuthEnv, type TierProfile } from './user-tier'
+import type { TierProfile } from './user-tier'
 import { log } from '../lib/log'
 
 /**
@@ -206,7 +206,7 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
         // MCP child's env at spawn — codex's MCP spec is fixed at construction,
         // so this per-spawn merge is how a codex session carries its tier (the
         // provider-agnostic seam; same env the claude side bakes in bootstrap).
-        const sessionEnv = sessionAuthEnv(spawnOpts.tierProfile, spawnOpts.sessionToken)
+        const sessionEnv = spawnOpts.mcpEnv ?? {}
         const withEnv = mergeEnvIntoMcpServers(
           opts.mcpServers as Record<string, { env?: Record<string, string> }>,
           sessionEnv,

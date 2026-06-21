@@ -266,13 +266,13 @@ describe('createCursorAgentProvider', () => {
     // Strict mode (any tier) always sandboxes — cursor has no per-tool gate.
     const session = await provider.spawn(
       { alias: 'P', path: '/tmp/proj' },
-      { tierProfile: TIER_PROFILES.admin, permissionMode: 'dangerously', chatId: 'admin-chat' },
+      { tierProfile: TIER_PROFILES.admin, permissionMode: 'dangerously', chatId: 'admin-chat', mcpEnv: { WECHAT_SESSION_TIER: 'admin' } },
     )
     expect(sdk.Agent.create).toHaveBeenCalledTimes(1)
     const createArgs = sdk.Agent.create.mock.calls[0]![0] as Record<string, unknown>
     expect(createArgs.apiKey).toBe('test-key')
     expect(createArgs.model).toEqual({ id: 'composer-2' })
-    // mcpServers now carries the per-session tier (no token here — none passed).
+    // mcpServers carries the daemon-supplied mcpEnv overlay (tier only here).
     expect(createArgs.mcpServers).toEqual({ wechat: { command: 'node', args: ['mcp.js'], env: { WECHAT_SESSION_TIER: 'admin' } } })
     expect((createArgs.local as Record<string, unknown>).cwd).toBe('/tmp/proj')
     expect((createArgs.local as { sandboxOptions: { enabled: boolean } }).sandboxOptions.enabled).toBe(false)
@@ -287,7 +287,7 @@ describe('createCursorAgentProvider', () => {
     })
     await provider.spawn(
       { alias: 'P', path: '/tmp/p' },
-      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c', sessionToken: 'tok-1' },
+      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c', mcpEnv: { WECHAT_SESSION_TOKEN: 'tok-1', WECHAT_SESSION_TIER: 'admin' } },
     )
     const createArgs = sdk.Agent.create.mock.calls[0]![0] as { mcpServers: Record<string, { env?: Record<string, string> }> }
     expect(createArgs.mcpServers.wechat!.env).toMatchObject({ A: '1', WECHAT_SESSION_TOKEN: 'tok-1', WECHAT_SESSION_TIER: 'admin' })

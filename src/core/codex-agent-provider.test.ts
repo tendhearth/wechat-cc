@@ -115,7 +115,8 @@ it('merges WECHAT_SESSION_TOKEN/TIER into its stdio MCP servers env on spawn', a
     mcpServers: { wechat: { command: 'bun', args: ['x'], env: { A: '1' } } },
   })
   await p.spawn({ alias: 'a', path: '/p' }, {
-    tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c', sessionToken: 'tok-1',
+    tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c',
+    mcpEnv: { WECHAT_SESSION_TOKEN: 'tok-1', WECHAT_SESSION_TIER: 'admin' },
   })
   expect(captured?.config?.mcp_servers?.wechat?.env).toMatchObject({ A: '1', WECHAT_SESSION_TOKEN: 'tok-1', WECHAT_SESSION_TIER: 'admin' })
 })

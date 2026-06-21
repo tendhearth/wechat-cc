@@ -64,8 +64,8 @@ describe('SessionManager', () => {
     const minted: Array<{ tier: string; key: string }> = []
     const invalidated: string[] = []
     const seenTokens: Array<string | undefined> = []
-    const spawn = vi.fn(async (_p: unknown, ctx: { sessionToken?: string }) => {
-      seenTokens.push(ctx.sessionToken)
+    const spawn = vi.fn(async (_p: unknown, ctx: { mcpEnv?: Record<string, string> }) => {
+      seenTokens.push(ctx.mcpEnv?.WECHAT_SESSION_TOKEN)
       return makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] })
     })
     const mgr = new SessionManager({
@@ -132,8 +132,10 @@ describe('SessionManager', () => {
 
     expect(spawn).toHaveBeenCalledWith(
       { alias: 'codex-proj', path: '/repo' },
-      // Caller (this test) passes admin tier + chatId — provider gets both verbatim.
-      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_legacy' },
+      // Caller passes admin tier + chatId — provider gets both verbatim, plus
+      // the daemon-computed mcpEnv overlay (always carries WECHAT_SESSION_TIER;
+      // no WECHAT_SESSION_TOKEN here since no mintSessionToken is wired).
+      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_legacy', mcpEnv: { WECHAT_SESSION_TIER: 'admin' } },
     )
     expect(dispatched).toEqual(['hello codex'])
     await mgr.shutdown()

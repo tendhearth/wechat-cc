@@ -1,7 +1,7 @@
 import type { ProviderId, SessionStore } from './session-store'
 import type { AgentEvent, AgentSession } from './agent-provider'
 import type { ProviderRegistry } from './provider-registry'
-import { tierNameFromProfile, type TierProfile, type UserTier } from './user-tier'
+import { tierNameFromProfile, sessionAuthEnv, type TierProfile, type UserTier } from './user-tier'
 import type { PermissionMode } from './capability-matrix'
 import { log } from '../lib/log'
 
@@ -182,7 +182,11 @@ export class SessionManager {
     // hit (acquire ignores it), leaking one registered-but-unused token per
     // dispatch into the registry.
     const tokenKey = `${req.providerId}/${req.alias}/${req.chatId}`
-    const sessionToken = this.opts.mintSessionToken?.(tierNameFromProfile(req.tierProfile), tokenKey)
+    const tier = tierNameFromProfile(req.tierProfile)
+    const sessionToken = this.opts.mintSessionToken?.(tier, tokenKey)
+    // Compute the per-spawn MCP env overlay ONCE here (the daemon owns the
+    // tier→env policy); providers merge it blindly into their MCP children.
+    const mcpEnv = sessionAuthEnv(tier, sessionToken)
     let session: AgentSession
     try {
       session = await provider.spawn(project, {
@@ -192,7 +196,7 @@ export class SessionManager {
         // Forward chatId so the Claude provider can bake it into a
         // per-session canUseTool closure (see bootstrap/index.ts).
         chatId: req.chatId,
-        ...(sessionToken ? { sessionToken } : {}),
+        mcpEnv,
       })
     } catch (err) {
       // spawn failed → the session is never cached, so release() never runs

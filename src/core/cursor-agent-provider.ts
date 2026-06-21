@@ -15,7 +15,7 @@
  * See docs/superpowers/specs/2026-05-23-cursor-sdk-provider-design.md.
  */
 import { mergeEnvIntoMcpServers, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type ProviderCapabilities } from './agent-provider'
-import { sessionAuthEnv, type TierProfile } from './user-tier'
+import type { TierProfile } from './user-tier'
 import { log } from '../lib/log'
 
 /**
@@ -248,7 +248,7 @@ export function createCursorAgentProvider(opts: CursorAgentProviderOptions): Age
       const tierOpts = tierProfileToCursorSdkOpts(spawnOpts.tierProfile, spawnOpts.permissionMode)
       // Per-session internal-api auth — merge the env-only token + tier into
       // each stdio MCP child's env (provider-agnostic seam; same as claude/codex).
-      const sessionEnv = sessionAuthEnv(spawnOpts.tierProfile, spawnOpts.sessionToken)
+      const sessionEnv = spawnOpts.mcpEnv ?? {}
       const mcpWithEnv = opts.mcpServers
         ? mergeEnvIntoMcpServers(opts.mcpServers, sessionEnv)
         : undefined
