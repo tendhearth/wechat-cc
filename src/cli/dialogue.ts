@@ -110,6 +110,7 @@ export async function backfillFromClaudeJsonl(
   dir: string,
   chatId: string,
   dryRun = false,
+  sinceMs?: number,
 ): Promise<{ scanned: number; inserted: number }> {
   const store = makeMessagesStore(db)
   let scanned = 0
@@ -123,8 +124,15 @@ export async function backfillFromClaudeJsonl(
   }
 
   for (const f of files) {
+    const filePath = join(dir, f)
+    // Incremental import: skip files untouched since the watermark. Reruns of
+    // the auto-importer thus only re-parse new / appended sessions instead of
+    // the whole history. mtime read failure → don't skip (fail open: import it).
+    if (sinceMs !== undefined) {
+      try { if (statSync(filePath).mtimeMs < sinceMs) continue } catch { /* import it */ }
+    }
     const sessionKey = f.replace(/\.jsonl$/, '')
-    const lines = readFileSync(join(dir, f), 'utf8')
+    const lines = readFileSync(filePath, 'utf8')
       .split('\n')
       .filter(Boolean)
     let idx = 0
@@ -156,6 +164,7 @@ export async function backfillFromCodexJsonl(
   codexRoot: string,
   chatId: string,
   dryRun = false,
+  sinceMs?: number,
 ): Promise<{ scanned: number; inserted: number }> {
   const { readCodexJsonlAsClaudeTurns } = await import('../lib/codex-jsonl')
   const store = makeMessagesStore(db)
@@ -187,6 +196,11 @@ export async function backfillFromCodexJsonl(
   } catch { /* fall through — partial results fine */ }
 
   for (const rolloutPath of rollouts) {
+    // Incremental import: skip rollouts untouched since the watermark (see
+    // backfillFromClaudeJsonl). mtime read failure → fail open (import it).
+    if (sinceMs !== undefined) {
+      try { if (statSync(rolloutPath).mtimeMs < sinceMs) continue } catch { /* import it */ }
+    }
     // Use the file basename (without extension) as the stable session key
     const basename = pathBasename(rolloutPath).replace(/\.jsonl$/, '')
     // Parse filename anchor: rollout-YYYY-MM-DDTHH-MM-SS-*.jsonl → ISO ts
