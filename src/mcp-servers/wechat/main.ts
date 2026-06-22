@@ -549,6 +549,23 @@ server.registerTool(
   },
 )
 
+server.registerTool(
+  'companion_import_local',
+  {
+    title: 'Toggle local history auto-import',
+    description: '开启/关闭"自动导入本机 claude/codex 的对话与记忆"。开启后：每次启动 + 每 24h 增量扫描本机历史入库（零 LLM 成本），并每 24h 重整一次"懂你"overview（约 1 次廉价调用/天）。用户说"导入我的本地记录/开启自动导入"→ enabled=true；"别再导入了"→ false。默认关。',
+    inputSchema: { enabled: z.boolean() },
+  },
+  async ({ enabled }) => {
+    try {
+      const r = await client.request<unknown>('POST', '/v1/companion/import-local', { enabled })
+      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
+    } catch (err) {
+      return passthroughErrorResult(err, 'companion_import_local')
+    }
+  },
+)
+
 // ─── a2a outbound send ────────────────────────────────────────────────────────
 
 server.registerTool(

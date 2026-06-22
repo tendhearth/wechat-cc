@@ -69,5 +69,12 @@ export function makeCompanion(ctx: IlinkContext): WechatCompanionDep {
       await saveCompanionConfig(stateDir, cfg)
       return { ok: true as const, until }
     },
+
+    async setImportLocal(enabled: boolean) {
+      const cfg = loadCompanionConfig(stateDir)
+      cfg.import_local_history = enabled
+      await saveCompanionConfig(stateDir, cfg)
+      return { ok: true as const, import_local_history: enabled }
+    },
   } satisfies WechatCompanionDep
 }

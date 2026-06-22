@@ -26,6 +26,7 @@ describe('route-tiers', () => {
     expect(minTierFor('POST /v1/memory/read')).toBe('guest')
     expect(minTierFor('POST /v1/wechat/broadcast')).toBe('trusted')
     expect(minTierFor('GET /v1/a2a/list')).toBe('trusted')
+    expect(minTierFor('POST /v1/companion/import-local')).toBe('trusted')
   })
 
   it('an unlisted route defaults to admin (fail-closed)', () => {

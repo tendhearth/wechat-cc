@@ -239,6 +239,17 @@ export const CompanionSnoozeResponse = z.union([
   z.object({ ok: z.literal(false), error: z.string() }),
 ])
 
+// ── POST /v1/companion/import-local ──────────────────────────────────────────
+
+export const CompanionImportLocalRequest = z.object({
+  enabled: z.boolean(),
+})
+// Pinned to WechatCompanionDep.setImportLocal() return shape + forward-compat error.
+export const CompanionImportLocalResponse = z.union([
+  z.object({ ok: z.literal(true), import_local_history: z.boolean() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+
 // ── POST /v1/wechat/reply ────────────────────────────────────────────────────
 
 export const WechatReplyRequest = z.object({
@@ -454,6 +465,8 @@ export type CompanionEnableResponseT = z.infer<typeof CompanionEnableResponse>
 export type CompanionDisableResponseT = z.infer<typeof CompanionDisableResponse>
 export type CompanionSnoozeRequestT = z.infer<typeof CompanionSnoozeRequest>
 export type CompanionSnoozeResponseT = z.infer<typeof CompanionSnoozeResponse>
+export type CompanionImportLocalRequestT = z.infer<typeof CompanionImportLocalRequest>
+export type CompanionImportLocalResponseT = z.infer<typeof CompanionImportLocalResponse>
 
 export type WechatReplyRequestT = z.infer<typeof WechatReplyRequest>
 export type WechatReplyResponseT = z.infer<typeof WechatReplyResponse>
@@ -507,6 +520,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 
   // companion
   'POST /v1/companion/snooze': CompanionSnoozeRequest,
+  'POST /v1/companion/import-local': CompanionImportLocalRequest,
 
   // wechat
   'POST /v1/wechat/reply': WechatReplyRequest,
@@ -549,6 +563,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/companion/enable': CompanionEnableResponse,
   'POST /v1/companion/disable': CompanionDisableResponse,
   'POST /v1/companion/snooze': CompanionSnoozeResponse,
+  'POST /v1/companion/import-local': CompanionImportLocalResponse,
   'POST /v1/wechat/reply': WechatReplyResponse,
   'POST /v1/wechat/reply_voice': WechatReplyVoiceResponse,
   'POST /v1/wechat/send_file': WechatSendFileResponse,

@@ -81,4 +81,6 @@ export interface WechatCompanionDep {
     import_local_history: boolean
   }
   snooze(minutes: number): Promise<{ ok: true; until: string }>
+  /** Toggle auto-import of local claude/codex history. Returns the new state. */
+  setImportLocal(enabled: boolean): Promise<{ ok: true; import_local_history: boolean }>
 }

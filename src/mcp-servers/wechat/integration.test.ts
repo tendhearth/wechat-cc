@@ -524,6 +524,7 @@ describe('wechat-mcp stdio integration', () => {
         snoozeUntil = new Date(Date.parse('2026-04-22T00:00:00Z') + minutes * 60_000).toISOString()
         return { ok: true as const, until: snoozeUntil }
       },
+      setImportLocal: async (enabled: boolean) => ({ ok: true as const, import_local_history: enabled }),
     }
     api = createInternalApi({ stateDir, daemonPid: 7777, memory, companion })
     const { port, tokenFilePath } = await api.start()

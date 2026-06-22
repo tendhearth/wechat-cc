@@ -38,6 +38,7 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/companion/enable': 'trusted',
   'POST /v1/companion/disable': 'trusted',
   'POST /v1/companion/snooze': 'trusted',
+  'POST /v1/companion/import-local': 'trusted',
   'POST /v1/conversation/set-mode': 'trusted',
   'GET /v1/projects/list': 'trusted',
   'POST /v1/projects/add': 'trusted',

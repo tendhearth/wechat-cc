@@ -890,6 +890,7 @@ describe('internal-api', () => {
         import_local_history: boolean
       }
       snooze: (minutes: number) => Promise<{ ok: true; until: string }>
+      setImportLocal: (enabled: boolean) => Promise<{ ok: true; import_local_history: boolean }>
     }
 
     function startWithCompanion(companion: MockCompanion): Promise<{ port: number; token: string }> {
@@ -905,6 +906,7 @@ describe('internal-api', () => {
         disable: async () => ({ ok: true, enabled: false }),
         status: () => ({ enabled: true, timezone: 'Asia/Shanghai', default_chat_id: 'c1', snooze_until: null, import_local_history: false }),
         snooze: async () => ({ ok: true, until: '2026-04-22T00:00:00Z' }),
+        setImportLocal: async () => ({ ok: true, import_local_history: false }),
       })
       const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/status`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -926,6 +928,7 @@ describe('internal-api', () => {
         enable, disable: async () => ({ ok: true, enabled: false }),
         status: () => ({ enabled: false, timezone: 'UTC', default_chat_id: null, snooze_until: null, import_local_history: false }),
         snooze: async () => ({ ok: true, until: '' }),
+        setImportLocal: async () => ({ ok: true, import_local_history: false }),
       })
       const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/enable`, {
         method: 'POST',
@@ -945,6 +948,7 @@ describe('internal-api', () => {
         disable: async () => ({ ok: true, enabled: false }),
         status: () => ({ enabled: true, timezone: 'UTC', default_chat_id: null, snooze_until: null, import_local_history: false }),
         snooze: async () => ({ ok: true, until: '' }),
+        setImportLocal: async () => ({ ok: true, import_local_history: false }),
       })
       const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/enable`, {
         method: 'POST',
@@ -961,6 +965,7 @@ describe('internal-api', () => {
         disable,
         status: () => ({ enabled: true, timezone: 'UTC', default_chat_id: null, snooze_until: null, import_local_history: false }),
         snooze: async () => ({ ok: true, until: '' }),
+        setImportLocal: async () => ({ ok: true, import_local_history: false }),
       })
       const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/disable`, {
         method: 'POST',
@@ -982,6 +987,7 @@ describe('internal-api', () => {
         disable: async () => ({ ok: true, enabled: false }),
         status: () => ({ enabled: true, timezone: 'UTC', default_chat_id: null, snooze_until: null, import_local_history: false }),
         snooze,
+        setImportLocal: async () => ({ ok: true, import_local_history: false }),
       })
       const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/snooze`, {
         method: 'POST',
@@ -995,12 +1001,48 @@ describe('internal-api', () => {
       expect(snooze).toHaveBeenCalledWith(90)
     })
 
+    it('POST /v1/companion/import-local forwards enabled + returns new state', async () => {
+      const setImportLocal = vi.fn(async (enabled: boolean) => ({ ok: true as const, import_local_history: enabled }))
+      const { port, token } = await startWithCompanion({
+        enable: async () => ({ ok: true, state_dir: '', welcome_message: '', cost_estimate_note: '' }),
+        disable: async () => ({ ok: true, enabled: false }),
+        status: () => ({ enabled: true, timezone: 'UTC', default_chat_id: null, snooze_until: null, import_local_history: false }),
+        snooze: async () => ({ ok: true, until: '' }),
+        setImportLocal,
+      })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/import-local`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true, import_local_history: true })
+      expect(setImportLocal).toHaveBeenCalledWith(true)
+    })
+
+    it('POST /v1/companion/import-local rejects a non-boolean enabled (400)', async () => {
+      const { port, token } = await startWithCompanion({
+        enable: async () => ({ ok: true, state_dir: '', welcome_message: '', cost_estimate_note: '' }),
+        disable: async () => ({ ok: true, enabled: false }),
+        status: () => ({ enabled: true, timezone: 'UTC', default_chat_id: null, snooze_until: null, import_local_history: false }),
+        snooze: async () => ({ ok: true, until: '' }),
+        setImportLocal: async () => ({ ok: true, import_local_history: false }),
+      })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/import-local`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: 'yes' }),
+      })
+      expect(resp.status).toBe(400)
+    })
+
     it('POST /v1/companion/snooze rejects out-of-range / non-int minutes (400)', async () => {
       const { port, token } = await startWithCompanion({
         enable: async () => ({ ok: true, state_dir: '', welcome_message: '', cost_estimate_note: '' }),
         disable: async () => ({ ok: true, enabled: false }),
         status: () => ({ enabled: true, timezone: 'UTC', default_chat_id: null, snooze_until: null, import_local_history: false }),
         snooze: async () => ({ ok: true, until: '' }),
+        setImportLocal: async () => ({ ok: true, import_local_history: false }),
       })
       const cases = [
         { minutes: 0 },          // below min
@@ -1027,6 +1069,7 @@ describe('internal-api', () => {
         disable: async () => ({ ok: true, enabled: false }),
         status: () => ({ enabled: false, timezone: 'UTC', default_chat_id: null, snooze_until: null, import_local_history: false }),
         snooze: async () => ({ ok: true, until: '' }),
+        setImportLocal: async () => ({ ok: true, import_local_history: false }),
       })
       const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/enable`, {
         method: 'POST',

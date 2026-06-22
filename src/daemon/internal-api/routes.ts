@@ -21,6 +21,7 @@ import type {
   SharePageRequestT, ShareResurfaceRequestT,
   VoiceSaveConfigRequestT,
   CompanionSnoozeRequestT,
+  CompanionImportLocalRequestT,
   WechatReplyRequestT, WechatReplyVoiceRequestT, WechatSendFileRequestT,
   WechatEditMessageRequestT, WechatBroadcastRequestT,
   DelegateRequestT,
@@ -234,6 +235,17 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       const { minutes } = body as CompanionSnoozeRequestT
       try {
         const r = await deps.companion.snooze(minutes)
+        return { status: 200, body: r }
+      } catch (err) {
+        return { status: 200, body: { ok: false, error: errMsg(err) } }
+      }
+    },
+    'POST /v1/companion/import-local': async (_q, body) => {
+      if (!deps.companion) return { status: 503, body: { error: 'companion_not_wired' } }
+      // Body is pre-validated by index.ts via CompanionImportLocalRequest schema.
+      const { enabled } = body as CompanionImportLocalRequestT
+      try {
+        const r = await deps.companion.setImportLocal(enabled)
         return { status: 200, body: r }
       } catch (err) {
         return { status: 200, body: { ok: false, error: errMsg(err) } }

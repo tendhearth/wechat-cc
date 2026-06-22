@@ -601,14 +601,16 @@ describe('ConversationSetModeResponse', () => {
 // ── schema lookup tables ─────────────────────────────────────────────────────
 
 describe('schema lookup tables', () => {
-  it('REQUEST_SCHEMAS has 25 entries (POST body + 1 GET query)', () => {
+  it('REQUEST_SCHEMAS has 26 entries (POST body + 1 GET query)', () => {
     // 19 original + 4 a2a dashboard routes (preview, install, remove, pause)
     // + 1 a2a server-side test route (Test button) + 1 memory/delete
-    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(25)
+    // + 1 companion/import-local
+    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(26)
   })
-  it('RESPONSE_SCHEMAS has 29 entries (one per route)', () => {
+  it('RESPONSE_SCHEMAS has 30 entries (one per route)', () => {
     // 25 original + 2 a2a dashboard response schemas (preview, install)
     // + 1 a2a server-side test response + 1 memory/delete
-    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(29)
+    // + 1 companion/import-local
+    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(30)
   })
 })

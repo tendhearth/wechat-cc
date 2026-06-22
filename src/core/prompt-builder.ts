@@ -100,7 +100,7 @@ function toolsSection(): string {
 - \`resurface_page({slug?, title_fragment?})\` — 根据 slug 或标题片段重新生成 URL。
 
 Companion / 主动推送（详见末尾段）：
-- \`companion_status()\` / \`companion_enable()\` / \`companion_disable()\` / \`companion_snooze({minutes})\``
+- \`companion_status()\` / \`companion_enable()\` / \`companion_disable()\` / \`companion_snooze({minutes})\` / \`companion_import_local({enabled})\`（开关本机历史自动导入）`
 }
 
 function delegateSection(peerProviderId: ProviderId): string {

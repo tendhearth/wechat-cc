@@ -324,6 +324,19 @@ describe('makeIlinkAdapter (composed)', () => {
     expect(adapter.companion.status().enabled).toBe(false)
   })
 
+  it('companion.setImportLocal flips import_local_history (reflected in status)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'wcc-comp-il-'))
+    const adapter = makeIlinkAdapter({ stateDir, accounts: [acct], ...newAdapterDeps() })
+    await adapter.companion.enable()
+    expect(adapter.companion.status().import_local_history).toBe(false)
+    const on = await adapter.companion.setImportLocal(true)
+    expect(on).toEqual({ ok: true, import_local_history: true })
+    expect(adapter.companion.status().import_local_history).toBe(true)
+    const off = await adapter.companion.setImportLocal(false)
+    expect(off).toEqual({ ok: true, import_local_history: false })
+    expect(adapter.companion.status().import_local_history).toBe(false)
+  })
+
   it('companion.status returns minimal v2 shape (enabled/tz/chat_id/snooze)', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'wcc-comp-'))
     const adapter = makeIlinkAdapter({ stateDir, accounts: [acct], ...newAdapterDeps() })
