@@ -44,7 +44,14 @@ export async function requestSetupQrCode(opts: {
   const botType = opts.botType ?? ILINK_BOT_TYPE
   const fetchText = opts.fetchText ?? ilinkGet
   const raw = await fetchText(baseUrl, `ilink/bot/get_bot_qrcode?bot_type=${botType}`)
-  const qrData = JSON.parse(raw) as { qrcode?: string; qrcode_img_content?: string }
+  let qrData: { qrcode?: string; qrcode_img_content?: string }
+  try {
+    qrData = JSON.parse(raw) as { qrcode?: string; qrcode_img_content?: string }
+  } catch {
+    // ilink down / behind a proxy returns HTML, not JSON. Surface the friendly
+    // retry message, not a raw SyntaxError.
+    throw new Error('无法获取二维码，请稍后重试。')
+  }
   if (!qrData.qrcode_img_content || !qrData.qrcode) {
     throw new Error('无法获取二维码，请稍后重试。')
   }
@@ -101,13 +108,20 @@ export async function pollSetupQrStatus(opts: {
     if (isAbort) return { status: 'wait' }
     throw err
   }
-  const status = JSON.parse(statusRaw) as {
+  let status: {
     status: 'wait' | 'scaned' | 'scaned_but_redirect' | 'expired' | 'confirmed'
     bot_token?: string
     ilink_bot_id?: string
     baseurl?: string
     ilink_user_id?: string
     redirect_host?: string
+  }
+  try {
+    status = JSON.parse(statusRaw)
+  } catch {
+    // Malformed response (ilink hiccup / proxy HTML) — transient, like an
+    // AbortError above; keep polling rather than crashing the wizard.
+    return { status: 'wait' }
   }
 
   if (status.status === 'scaned_but_redirect') {

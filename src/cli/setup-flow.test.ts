@@ -30,6 +30,15 @@ describe('setup-flow', () => {
     })).rejects.toThrow(/无法获取二维码/)
   })
 
+  it('throws a human-readable error when ilink returns a non-JSON response (not a raw SyntaxError)', async () => {
+    // ilink down / behind a proxy returns HTML, not JSON. The setup wizard's
+    // first call must surface the friendly retry message, not a raw
+    // "SyntaxError: Unexpected token <".
+    await expect(requestSetupQrCode({
+      fetchText: async () => '<html>502 Bad Gateway</html>',
+    })).rejects.toThrow(/无法获取二维码/)
+  })
+
   it('pollSetupQrStatus returns wait without writing account state', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'setup-poll-'))
     try {
