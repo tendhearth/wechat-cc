@@ -1,10 +1,35 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { parseAesKey, decryptAesEcb, encryptAesEcb, saveToInbox, buildInboundFilePreview, aesEcbPaddedSize, assertSendable, materializeAttachments, PENDING_CDN_REF } from './media'
+import { parseAesKey, decryptAesEcb, encryptAesEcb, saveToInbox, buildInboundFilePreview, aesEcbPaddedSize, assertSendable, materializeAttachments, parseWavHeader, PENDING_CDN_REF } from './media'
 import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync, truncateSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Buffer } from 'node:buffer'
 import type { InboundMsg } from '../core/prompt-format'
+
+describe('parseWavHeader', () => {
+  it('parses channels/sampleRate/bitsPerSample from a canonical 44-byte header', () => {
+    const buf = Buffer.alloc(44)
+    buf.writeUInt16LE(2, 22)      // channels
+    buf.writeUInt32LE(44100, 24)  // sampleRate
+    buf.writeUInt16LE(16, 34)     // bitsPerSample
+    buf.writeUInt32LE(0, 40)      // dataSize (0 → duration fallback)
+    const h = parseWavHeader(buf)
+    expect(h.channels).toBe(2)
+    expect(h.sampleRate).toBe(44100)
+    expect(h.bitsPerSample).toBe(16)
+  })
+
+  it('returns safe zeros for a truncated/empty buffer instead of throwing RangeError', () => {
+    // A partial TTS write / disk-full / non-WAV input is shorter than the
+    // 44-byte canonical header; reading fixed offsets would throw
+    // RangeError [ERR_OUT_OF_RANGE] and crash the voice-send.
+    const zeros = { sampleRate: 0, bitsPerSample: 0, channels: 0, durationMs: 0 }
+    expect(() => parseWavHeader(Buffer.alloc(10))).not.toThrow()
+    expect(parseWavHeader(Buffer.alloc(10))).toEqual(zeros)
+    expect(parseWavHeader(Buffer.alloc(0))).toEqual(zeros)
+    expect(parseWavHeader(Buffer.alloc(43))).toEqual(zeros) // one byte short of canonical
+  })
+})
 
 describe('parseAesKey', () => {
   it('accepts 16 raw bytes (base64-encoded)', () => {

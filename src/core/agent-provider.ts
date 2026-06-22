@@ -101,6 +101,34 @@ export interface SpawnContext {
   /** When set, the provider should resume an existing session (claude
    *  jsonl, codex thread id, cursor agent id) instead of cold-starting. */
   resumeSessionId?: string
+  /** Per-spawn env overlay the provider merges into every stdio MCP child's
+   *  env (via mergeEnvIntoMcpServers). Computed once by the daemon
+   *  (session-manager) from the session's resolved tier + minted token —
+   *  carries `WECHAT_SESSION_TOKEN` (the env-only bearer secret) and
+   *  `WECHAT_SESSION_TIER` (non-secret; the wechat child gates admin tools on
+   *  it) so route calls carry the caller's tier. The provider stays oblivious
+   *  to the var names — it just merges. Absent in embeddings/tests that don't
+   *  wire the registry (nothing to inject). See
+   *  docs/superpowers/specs/2026-06-21-internal-api-tier-authz-design.md. */
+  mcpEnv?: Record<string, string>
+}
+
+/**
+ * Merge `extra` env into EVERY stdio MCP child's `env`, returning a fresh map
+ * (inputs untouched). The per-spawn seam that carries a session's
+ * `WECHAT_SESSION_TOKEN`/`_TIER` into MCP children — codex's and cursor's MCP
+ * specs are fixed at provider construction, so each provider applies this at
+ * spawn. Generic over the server shape so both providers' spec types flow
+ * through; child env wins over `extra` only where keys don't collide (extra is
+ * spread last, so the injected auth env takes precedence by design).
+ */
+export function mergeEnvIntoMcpServers<T extends { env?: Record<string, string> }>(
+  servers: Record<string, T>,
+  extra: Record<string, string>,
+): Record<string, T> {
+  return Object.fromEntries(
+    Object.entries(servers).map(([name, srv]) => [name, { ...srv, env: { ...(srv.env ?? {}), ...extra } }]),
+  ) as Record<string, T>
 }
 
 /**

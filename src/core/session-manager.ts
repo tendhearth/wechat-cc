@@ -1,7 +1,7 @@
 import type { ProviderId, SessionStore } from './session-store'
 import type { AgentEvent, AgentSession } from './agent-provider'
 import type { ProviderRegistry } from './provider-registry'
-import type { TierProfile } from './user-tier'
+import { tierNameFromProfile, sessionAuthEnv, type TierProfile, type UserTier } from './user-tier'
 import type { PermissionMode } from './capability-matrix'
 import { log } from '../lib/log'
 
@@ -23,6 +23,22 @@ export interface SessionManagerOptions {
   sessionStore?: SessionStore
   /** Stored session_id older than this is treated as stale. Default 7 d. */
   resumeTTLMs?: number
+  /**
+   * Called whenever a session is released — by the coordinator (timeout /
+   * auth-fail self-heal) OR internally (LRU `enforceCapacity`, idle
+   * `sweepIdle`, `shutdown`). Wired to the internal-api token registry so the
+   * session's per-session auth token is revoked, NOT just the coordinator's
+   * explicit releases. `sessionKey` is `provider/alias/chatId` (matches the
+   * coordinator's mint key). Centralising here is the single chokepoint that
+   * covers every eviction path. Optional — omitted when no registry is wired.
+   */
+  invalidateSessionToken?: (sessionKey: string) => void
+  /**
+   * Mint a per-session internal-api token for (tier, sessionKey), wired to the
+   * token registry. Called once per real spawn; the tier is recovered from the
+   * acquire's tierProfile. Paired with `invalidateSessionToken` at release.
+   */
+  mintSessionToken?: (tier: UserTier, sessionKey: string) => string
 }
 
 /**
@@ -159,14 +175,36 @@ export class SessionManager {
     }
 
     const project = { alias: req.alias, path: req.path }
-    const session = await provider.spawn(project, {
-      ...(resumeSessionId ? { resumeSessionId } : {}),
-      tierProfile: req.tierProfile,
-      permissionMode: req.permissionMode,
-      // Forward chatId so the Claude provider can bake it into a
-      // per-session canUseTool closure (see bootstrap/index.ts).
-      chatId: req.chatId,
-    })
+    // Mint the per-session auth token HERE — once per real spawn (cache miss),
+    // not per dispatch. The token's tier is recovered from the resolved
+    // tierProfile; its key matches release-time invalidation (provider/alias/
+    // chatId). Minting in the coordinator instead would re-mint on every cache
+    // hit (acquire ignores it), leaking one registered-but-unused token per
+    // dispatch into the registry.
+    const tokenKey = `${req.providerId}/${req.alias}/${req.chatId}`
+    const tier = tierNameFromProfile(req.tierProfile)
+    const sessionToken = this.opts.mintSessionToken?.(tier, tokenKey)
+    // Compute the per-spawn MCP env overlay ONCE here (the daemon owns the
+    // tier→env policy); providers merge it blindly into their MCP children.
+    const mcpEnv = sessionAuthEnv(tier, sessionToken)
+    let session: AgentSession
+    try {
+      session = await provider.spawn(project, {
+        ...(resumeSessionId ? { resumeSessionId } : {}),
+        tierProfile: req.tierProfile,
+        permissionMode: req.permissionMode,
+        // Forward chatId so the Claude provider can bake it into a
+        // per-session canUseTool closure (see bootstrap/index.ts).
+        chatId: req.chatId,
+        mcpEnv,
+      })
+    } catch (err) {
+      // spawn failed → the session is never cached, so release() never runs
+      // and the just-minted token would leak in the registry forever. Revoke
+      // it on the error path before propagating.
+      this.opts.invalidateSessionToken?.(tokenKey)
+      throw err
+    }
 
     const sessionStore = this.opts.sessionStore
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
@@ -220,6 +258,10 @@ export class SessionManager {
     const s = this.sessions.get(key)
     if (!s) return
     this.sessions.delete(key)
+    // Revoke the session's auth token on EVERY release path (coordinator +
+    // internal LRU/idle/shutdown eviction). The token key matches what the
+    // coordinator minted: provider/alias/chatId (NOT the cache `sessionKey`).
+    this.opts.invalidateSessionToken?.(`${k.providerId}/${k.alias}/${k.chatId}`)
     await s.handle.close()
   }
 

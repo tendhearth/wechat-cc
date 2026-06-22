@@ -163,10 +163,13 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
  *  the filesystem; tests stub both to drive cache behaviour deterministically
  *  (no reliance on millisecond-granular mtime between two writes). */
 export interface CachedConfigReaderDeps {
-  /** Modification time of the config file in ms, or `-1` if it can't be
-   *  stat'd (missing / unreadable). A stable `-1` keeps the cache warm while
+  /** Cache signature of the config file — `${mtimeMs}:${size}`, or `"absent"`
+   *  if it can't be stat'd (missing / unreadable). Including size as well as
+   *  mtime closes the same-millisecond / coarse-mtime collision: a `/model`
+   *  switch changes the serialized length, so the signature changes even when
+   *  two writes share an mtime. A stable `"absent"` keeps the cache warm while
    *  the file legitimately doesn't exist yet. */
-  statMtimeMs: (path: string) => number
+  statSig: (path: string) => string
   load: (stateDir: string) => AgentConfig
 }
 
@@ -187,17 +190,17 @@ export function makeMtimeCachedConfigReader(
   stateDir: string,
   deps?: Partial<CachedConfigReaderDeps>,
 ): () => AgentConfig {
-  const statMtimeMs = deps?.statMtimeMs ?? ((p: string) => {
-    try { return statSync(p).mtimeMs } catch { return -1 }
+  const statSig = deps?.statSig ?? ((p: string) => {
+    try { const st = statSync(p); return `${st.mtimeMs}:${st.size}` } catch { return 'absent' }
   })
   const load = deps?.load ?? loadAgentConfig
   const path = join(stateDir, CONFIG_FILE)
-  let cached: { mtimeMs: number; config: AgentConfig } | null = null
+  let cached: { sig: string; config: AgentConfig } | null = null
   return () => {
-    const mtimeMs = statMtimeMs(path)
-    if (cached && cached.mtimeMs === mtimeMs) return cached.config
+    const sig = statSig(path)
+    if (cached && cached.sig === sig) return cached.config
     const config = load(stateDir)
-    cached = { mtimeMs, config }
+    cached = { sig, config }
     return config
   }
 }
@@ -208,4 +211,20 @@ export function saveAgentConfig(stateDir: string, config: AgentConfig): void {
   const tmp = `${file}.tmp`
   writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 })
   renameSync(tmp, file)
+}
+
+// The pinned model lives in a provider-specific field: cursor reads
+// `cursorModel`, claude/codex read `model`. These two accessors are the single
+// home for that rule so callers (e.g. the /v1/model routes) don't re-encode
+// `provider === 'cursor' ? cursorModel : model` at each read/write — writing the
+// wrong field is a silent no-op with a falsely-confirming read-back.
+
+/** The model id the configured provider actually reads (undefined if unset). */
+export function activeModel(config: AgentConfig): string | undefined {
+  return config.provider === 'cursor' ? config.cursorModel : config.model
+}
+
+/** A copy of `config` with the provider's active model field set to `model`. */
+export function withActiveModel(config: AgentConfig, model: string): AgentConfig {
+  return config.provider === 'cursor' ? { ...config, cursorModel: model } : { ...config, model }
 }

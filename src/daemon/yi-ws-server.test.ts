@@ -28,6 +28,21 @@ describe('yi-ws-server', () => {
     ws.close()
   })
 
+  it('closes a socket that never completes the handshake (pre-auth deadline)', async () => {
+    const hub = createYiHub()
+    const server = createYiWsServer({ host: '127.0.0.1', port: 0, hub, verify: () => true, handshakeTimeoutMs: 60 })
+    await server.start(); stop = () => void server.stop()
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port()}`)
+    await new Promise<void>((r) => { ws.onopen = () => r() })
+    // Send nothing — the server must close us after the handshake deadline.
+    const closed = await new Promise<boolean>((r) => {
+      ws.onclose = () => r(true)
+      setTimeout(() => r(false), 500)
+    })
+    expect(closed).toBe(true)
+    expect(hub.isConnected('home')).toBe(false)
+  })
+
   it('rejects a bad authToken (does not attach)', async () => {
     const hub = createYiHub()
     const server = createYiWsServer({ host: '127.0.0.1', port: 0, hub, verify: () => false })

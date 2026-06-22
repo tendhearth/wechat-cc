@@ -255,6 +255,12 @@ export async function buildMediaItemFromFile(
 export function parseWavHeader(buf: Buffer): {
   sampleRate: number; bitsPerSample: number; channels: number; durationMs: number
 } {
+  // A truncated / empty / non-WAV buffer (partial TTS write, disk-full,
+  // upstream error) is shorter than the 44-byte canonical header; reading the
+  // fixed offsets below would throw RangeError [ERR_OUT_OF_RANGE] and crash the
+  // voice-send. Degrade to safe zeros — the caller still uploads the file, it
+  // just loses the duration metadata.
+  if (buf.length < 44) return { sampleRate: 0, bitsPerSample: 0, channels: 0, durationMs: 0 }
   const channels = buf.readUInt16LE(22)
   const sampleRate = buf.readUInt32LE(24)
   const bitsPerSample = buf.readUInt16LE(34)

@@ -44,14 +44,15 @@ const server = new McpServer(
   { capabilities: { tools: {} } },
 )
 
-// Admin-session flag, baked into THIS MCP child's env by the daemon at spawn
-// time (bootstrap sets WECHAT_SESSION_ADMIN=1 only for an admin-tier session).
-// The agent runs in the LLM and cannot alter this env, so gating the
-// daemon-control tools (diagnostic_* / model_* / session_release /
-// daemon_restart) on it is robust on EVERY provider — including codex, which
+// Admin-session flag, derived from the non-secret WECHAT_SESSION_TIER the
+// daemon bakes into THIS MCP child's env at spawn (next to the secret
+// WECHAT_SESSION_TOKEN). The agent runs in the LLM and cannot alter this env,
+// so gating the daemon-control tools (diagnostic_* / model_* / session_release
+// / daemon_restart) on it is robust on EVERY provider — including codex, which
 // has no per-tool canUseTool callback. Non-admin sessions simply don't get the
-// tools registered, so they can't be called or even discovered.
-const SESSION_IS_ADMIN = process.env.WECHAT_SESSION_ADMIN === '1'
+// tools registered, AND the route layer rejects a non-admin token anyway
+// (defence in depth).
+const SESSION_IS_ADMIN = process.env.WECHAT_SESSION_TIER === 'admin'
 
 // ──────────────────────────────────────────────────────────────────────
 // Tools
@@ -571,7 +572,7 @@ server.registerTool(
 )
 
 // ─── daemon self-diagnosis + remediation (admin-only) ─────────────────────────
-// Registered ONLY for an admin-tier session (WECHAT_SESSION_ADMIN=1, set by the
+// Registered ONLY for an admin-tier session (WECHAT_SESSION_TIER=admin, set by the
 // daemon at spawn). This is the robust, provider-agnostic gate — for non-admin
 // sessions (including codex, which has no canUseTool) the tools don't exist.
 // The claude canUseTool layer (daemon_introspect/daemon_remediate denied for
@@ -663,7 +664,7 @@ server.registerTool(
   'model_set',
   {
     title: 'Switch model',
-    description: '【管理员】切换固定的 agent 模型（写入 agent-config.json）。claude 下次 spawn 生效，不用重启；当前在飞的会话要等释放后才换。返回写入后的 model 作为核对。',
+    description: '【管理员】切换固定的 agent 模型（写入 agent-config.json，按当前 provider 写对应字段）。claude 下次 spawn 生效、不用重启；codex/cursor 会持久化但要重启 daemon 才生效。返回写入后的 model 作为核对。传完整带版本号的 id（如 claude-opus-4-8），不要传裸别名（opus/sonnet）。',
     inputSchema: { model: z.string().min(1).describe('完整模型 id，如 claude-opus-4-8 / claude-sonnet-4-6') },
   },
   async ({ model }) => {
@@ -680,7 +681,7 @@ server.registerTool(
   'session_release',
   {
     title: 'Release a wedged session',
-    description: '【管理员】强制释放某个卡住/闲置的 agent 会话——该 chat 的下一条消息会重开一个干净子进程。用 diagnostic_sessions 拿到 alias/providerId/chatId。返回释放后的会话列表作为核对。',
+    description: '【管理员】强制释放某个卡住/闲置的 agent 会话——该 chat 的下一条消息会重开一个干净子进程。用 diagnostic_sessions 拿到 alias/providerId/chatId。返回 { ok, released, sessions }：released=false 表示没有匹配的活跃会话（key 不对/已经没了），不是真的释放了，要据此判断。',
     inputSchema: {
       alias: z.string(),
       providerId: z.string().describe('claude / codex / cursor'),

@@ -60,6 +60,34 @@ describe('gate', () => {
   })
 })
 
+describe('malformed (non-array) config is coerced — fail closed, no substring matching', () => {
+  it('treats a STRING allowFrom as empty (drops, never substring-matches)', () => {
+    // A hand-edited access.json with "allowFrom": "alice" (string, not array)
+    // would make allowFrom.includes(chatId) do SUBSTRING matching — any chatId
+    // that is a substring of the string would be wrongly delivered.
+    writeAccess({ dmPolicy: 'allowlist', allowFrom: 'alice@im.wechat' })
+    expect(gate('ali')).toEqual({ action: 'drop' })             // substring → MUST drop
+    expect(gate('alice@im.wechat')).toEqual({ action: 'drop' }) // fail closed even for the intended id
+  })
+
+  it('treats a STRING admins as no substring privilege escalation', () => {
+    writeAccess({ dmPolicy: 'allowlist', allowFrom: ['alice@im.wechat'], admins: 'alice@im.wechat' })
+    // Before: admins="alice@im.wechat" → "alice@im.wechat".includes('ali') →
+    // true (substring escalation). After: the malformed admins coerces to []
+    // so a substring fragment is never admin. (With no valid admin entries the
+    // daemon falls back to the documented "all allowlisted are admin" model —
+    // that's the allowlist's own trust, not a substring artifact.)
+    expect(isAdmin('ali')).toBe(false)
+    expect(isAdmin('lice@im.wechat')).toBe(false)
+  })
+
+  it('filters non-string entries out of allowFrom', () => {
+    writeAccess({ dmPolicy: 'allowlist', allowFrom: ['alice@im.wechat', 123, null] })
+    expect(gate('alice@im.wechat')).toEqual({ action: 'deliver' })
+    expect(gate('123')).toEqual({ action: 'drop' })
+  })
+})
+
 describe('isAdmin', () => {
   it('treats all allowlisted users as admin when admins not set', () => {
     writeAccess({ dmPolicy: 'allowlist', allowFrom: ['alice@im.wechat', 'bob@im.wechat'] })

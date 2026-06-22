@@ -22,6 +22,9 @@
  */
 
 import type { InboundMsg } from '../core/prompt-format'
+// Nickname constraint lives in one place (./nickname) — shared with /name and
+// /botname so the allowed set can't silently drift between them.
+import { NICKNAME_MAX_LEN, NICKNAME_MIN_LEN, NICKNAME_RE } from './nickname'
 
 export interface OnboardingDeps {
   isKnownUser(userId: string): boolean
@@ -58,14 +61,6 @@ export interface OnboardingHandler {
   handle(msg: InboundMsg): Promise<boolean>
 }
 
-const NICKNAME_MAX_LEN = 24
-const NICKNAME_MIN_LEN = 1
-// Hyphen ESCAPED because inside a character class, an unescaped `-`
-// between two range endpoints would be interpreted as a range (here
-// between ` ` (0x20) and the implicit class terminator). Today the
-// pattern still parses safely because ` -` is at the end, but a future
-// edit reordering chars could silently widen the allowed set.
-const NICKNAME_RE = /^[一-鿿_a-zA-Z0-9 \-]+$/
 const AWAIT_TIMEOUT_MS = 30 * 60_000  // 30 min
 const DEDUP_WINDOW_MS = 1500  // ilink re-delivery / user double-tap window — see #16
 

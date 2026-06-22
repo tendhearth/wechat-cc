@@ -2329,7 +2329,7 @@ describe('internal-api request validation', () => {
       store.append({ ...base, chatId: 'chat-2', endedAt: 200 }) // other chat — excluded
       api = createInternalApi({ stateDir, daemonPid: 1, turns: store })
       const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const token = api.mintSessionToken('admin', 'test')
       const resp = await fetch(`http://127.0.0.1:${port}/v1/turns?chatId=chat-1&limit=10`, {
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -2352,13 +2352,42 @@ describe('internal-api request validation', () => {
       store.append({ ...base, chatId: 'chat-B', endedAt: 300 })
       api = createInternalApi({ stateDir, daemonPid: 1, turns: store })
       const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const token = api.mintSessionToken('admin', 'test')
       const resp = await fetch(`http://127.0.0.1:${port}/v1/turns`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(resp.status).toBe(200)
       const body = await resp.json() as { turns: Array<{ chatId: string }> }
       expect(body.turns.map(t => t.chatId)).toEqual(['chat-B', 'chat-A'])
+    })
+
+    it('file token is trusted: 403 on an admin route, not-403 on a trusted route', async () => {
+      const db = openTestDb()
+      api = createInternalApi({ stateDir, daemonPid: 1, turns: makeTurnRecordStore(db), listSessions: () => [] })
+      const { port, tokenFilePath } = await api.start()
+      const fileToken = readFileSync(tokenFilePath, 'utf8').trim()
+      const r1 = await fetch(`http://127.0.0.1:${port}/v1/daemon/restart`, {
+        method: 'POST', headers: { Authorization: `Bearer ${fileToken}`, 'content-type': 'application/json' }, body: '{}',
+      })
+      expect(r1.status).toBe(403)
+      expect(await r1.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+      const r2 = await fetch(`http://127.0.0.1:${port}/v1/health`, { headers: { Authorization: `Bearer ${fileToken}` } })
+      expect(r2.status).not.toBe(403)
+    })
+
+    it('a minted admin session token reaches an admin route; invalidate revokes it', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1, requestRestart: () => {} })
+      const { port } = await api.start()
+      const adminTok = api.mintSessionToken('admin', 'claude/a/chat-1')
+      const ok = await fetch(`http://127.0.0.1:${port}/v1/daemon/restart`, {
+        method: 'POST', headers: { Authorization: `Bearer ${adminTok}`, 'content-type': 'application/json' }, body: '{}',
+      })
+      expect(ok.status).toBe(200)
+      api.invalidateSession('claude/a/chat-1')
+      const revoked = await fetch(`http://127.0.0.1:${port}/v1/daemon/restart`, {
+        method: 'POST', headers: { Authorization: `Bearer ${adminTok}`, 'content-type': 'application/json' }, body: '{}',
+      })
+      expect(revoked.status).toBe(401)
     })
 
     it('GET /v1/sessions lists live sessions when wired', async () => {
@@ -2368,7 +2397,7 @@ describe('internal-api request validation', () => {
       ]
       api = createInternalApi({ stateDir, daemonPid: 1, listSessions: () => sessions })
       const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const token = api.mintSessionToken('admin', 'test')
       const resp = await fetch(`http://127.0.0.1:${port}/v1/sessions`, {
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -2380,7 +2409,7 @@ describe('internal-api request validation', () => {
     it('GET /v1/sessions returns 503 when the session manager is not wired', async () => {
       api = createInternalApi({ stateDir, daemonPid: 1, listSessions: () => null })
       const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const token = api.mintSessionToken('admin', 'test')
       const resp = await fetch(`http://127.0.0.1:${port}/v1/sessions`, {
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -2397,7 +2426,7 @@ describe('internal-api request validation', () => {
         heartbeatFresh: () => true,
       })
       const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const token = api.mintSessionToken('admin', 'test')
       const resp = await fetch(`http://127.0.0.1:${port}/v1/health`, {
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -2415,23 +2444,41 @@ describe('internal-api request validation', () => {
         listSessions: () => live,
       })
       const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const token = api.mintSessionToken('admin', 'test')
       const resp = await fetch(`http://127.0.0.1:${port}/v1/sessions/release`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: JSON.stringify({ alias: 'a', providerId: 'claude', chatId: 'c' }),
       })
       expect(resp.status).toBe(200)
-      const body = await resp.json() as { ok: boolean; sessions: unknown[] }
+      const body = await resp.json() as { ok: boolean; released: boolean; sessions: unknown[] }
       expect(body.ok).toBe(true)
+      expect(body.released).toBe(true) // the session was actually live
       expect(released).toEqual([{ alias: 'a', providerId: 'claude', chatId: 'c' }])
       expect(body.sessions).toEqual([]) // read-back confirms it's gone
+    })
+
+    it('POST /v1/sessions/release reports released:false for a no-op (nothing matched)', async () => {
+      api = createInternalApi({
+        stateDir, daemonPid: 1,
+        releaseSession: async () => {}, // no-op
+        listSessions: () => [{ alias: 'a', path: '/p', providerId: 'claude', chatId: 'other', lastUsedAt: 1 }],
+      })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'test')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/sessions/release`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ alias: 'a', providerId: 'claude', chatId: 'nonexistent' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toMatchObject({ ok: true, released: false })
     })
 
     it('POST /v1/sessions/release 400 on missing fields, 503 when unwired', async () => {
       api = createInternalApi({ stateDir, daemonPid: 1 })
       const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const token = api.mintSessionToken('admin', 'test')
       const r503 = await fetch(`http://127.0.0.1:${port}/v1/sessions/release`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: JSON.stringify({ alias: 'a', providerId: 'claude', chatId: 'c' }),
@@ -2441,7 +2488,7 @@ describe('internal-api request validation', () => {
       const api2 = createInternalApi({ stateDir, daemonPid: 1, releaseSession: async () => {} })
       try {
         const s2 = await api2.start()
-        const t2 = readFileSync(s2.tokenFilePath, 'utf8').trim()
+        const t2 = api2.mintSessionToken('admin', 'test')
         const r400 = await fetch(`http://127.0.0.1:${s2.port}/v1/sessions/release`, {
           method: 'POST', headers: { Authorization: `Bearer ${t2}`, 'content-type': 'application/json' },
           body: JSON.stringify({ alias: 'a' }),
@@ -2454,7 +2501,7 @@ describe('internal-api request validation', () => {
       saveAgentConfig(stateDir, { provider: 'claude', model: 'claude-opus-4-8', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
       api = createInternalApi({ stateDir, daemonPid: 1 })
       const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const token = api.mintSessionToken('admin', 'test')
       const got = await (await fetch(`http://127.0.0.1:${port}/v1/model`, { headers: { Authorization: `Bearer ${token}` } })).json() as { model: string }
       expect(got.model).toBe('claude-opus-4-8')
       const set = await fetch(`http://127.0.0.1:${port}/v1/model`, {
@@ -2466,9 +2513,9 @@ describe('internal-api request validation', () => {
       // persisted on disk
       expect(loadAgentConfig(stateDir).model).toBe('claude-sonnet-4-6')
 
-      // Bare aliases / fast-mode tags are rejected (the 404-every-turn footgun)
-      // and must NOT overwrite the good pinned model.
-      for (const bad of ['opus', 'opus[1m]', 'sonnet', 'claude opus']) {
+      // Bare aliases (no version digit) + whitespace are rejected (the
+      // 404-every-turn footgun) and must NOT overwrite the good pinned model.
+      for (const bad of ['opus', 'sonnet', 'claude opus', 'opus 4']) {
         const r = await fetch(`http://127.0.0.1:${port}/v1/model`, {
           method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
           body: JSON.stringify({ model: bad }),
@@ -2476,13 +2523,39 @@ describe('internal-api request validation', () => {
         expect(r.status).toBe(400)
       }
       expect(loadAgentConfig(stateDir).model).toBe('claude-sonnet-4-6') // unchanged
+
+      // Legit ids that the OLD strict charset wrongly rejected are accepted now:
+      // bracketed 1M variant, provider-prefixed, ARN, bare 'o3'.
+      for (const good of ['claude-opus-4-8[1m]', 'anthropic/claude-opus-4', 'us.anthropic.claude-opus-4-8-v1:0', 'o3']) {
+        const r = await fetch(`http://127.0.0.1:${port}/v1/model`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ model: good }),
+        })
+        expect(r.status, good).toBe(200)
+      }
+    })
+
+    it('POST /v1/model writes cursorModel (not model) for a cursor-provider daemon', async () => {
+      saveAgentConfig(stateDir, { provider: 'cursor', cursorModel: 'composer-2', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'test')
+      const set = await fetch(`http://127.0.0.1:${port}/v1/model`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'composer-3' }),
+      })
+      expect(set.status).toBe(200)
+      expect(await set.json()).toMatchObject({ provider: 'cursor', model: 'composer-3' })
+      const after = loadAgentConfig(stateDir)
+      expect(after.cursorModel).toBe('composer-3') // the field cursor actually reads
+      expect(after.model).toBeUndefined() // NOT written to the claude/codex field
     })
 
     it('POST /v1/daemon/restart triggers the restart hook; 503 when unwired', async () => {
       let restarts = 0
       api = createInternalApi({ stateDir, daemonPid: 1, requestRestart: () => { restarts++ } })
       const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const token = api.mintSessionToken('admin', 'test')
       const resp = await fetch(`http://127.0.0.1:${port}/v1/daemon/restart`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}',
       })
@@ -2493,7 +2566,7 @@ describe('internal-api request validation', () => {
       const api2 = createInternalApi({ stateDir, daemonPid: 1 })
       try {
         const s2 = await api2.start()
-        const t2 = readFileSync(s2.tokenFilePath, 'utf8').trim()
+        const t2 = api2.mintSessionToken('admin', 'test')
         const r503 = await fetch(`http://127.0.0.1:${s2.port}/v1/daemon/restart`, {
           method: 'POST', headers: { Authorization: `Bearer ${t2}`, 'content-type': 'application/json' }, body: '{}',
         })
@@ -2504,7 +2577,7 @@ describe('internal-api request validation', () => {
     it('GET /v1/turns returns 503 when the turns store is not wired', async () => {
       api = createInternalApi({ stateDir, daemonPid: 1 })
       const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const token = api.mintSessionToken('admin', 'test')
       const resp = await fetch(`http://127.0.0.1:${port}/v1/turns`, {
         headers: { Authorization: `Bearer ${token}` },
       })

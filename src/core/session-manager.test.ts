@@ -60,6 +60,53 @@ function firstQueryArgs(): any {
 }
 
 describe('SessionManager', () => {
+  it('mints the session token ONCE per spawn (not per dispatch) and forwards it; invalidates on release + LRU evict', async () => {
+    const minted: Array<{ tier: string; key: string }> = []
+    const invalidated: string[] = []
+    const seenTokens: Array<string | undefined> = []
+    const spawn = vi.fn(async (_p: unknown, ctx: { mcpEnv?: Record<string, string> }) => {
+      seenTokens.push(ctx.mcpEnv?.WECHAT_SESSION_TOKEN)
+      return makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] })
+    })
+    const mgr = new SessionManager({
+      maxConcurrent: 1,
+      idleEvictMs: 30 * 60_000,
+      registry: registryWithProvider({ spawn } as unknown as AgentProvider),
+      mintSessionToken: (tier, key) => { minted.push({ tier, key }); return `tok-${minted.length}` },
+      invalidateSessionToken: (k) => invalidated.push(k),
+    })
+    // two acquires of the SAME session (cache hit on the 2nd) → mint ONCE
+    const h1 = await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'chat-1', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
+    const h2 = await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'chat-1', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
+    expect(h2).toBe(h1) // cache hit
+    expect(minted).toEqual([{ tier: 'admin', key: 'claude/a/chat-1' }]) // minted ONCE, not twice
+    expect(seenTokens).toEqual(['tok-1']) // spawn ran once with the token
+    // explicit release invalidates
+    await mgr.release({ alias: 'a', providerId: 'claude', chatId: 'chat-1' })
+    expect(invalidated).toContain('claude/a/chat-1')
+    // LRU eviction (maxConcurrent=1) also invalidates
+    await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'chat-2', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
+    await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'chat-3', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
+    expect(invalidated).toContain('claude/a/chat-2')
+  })
+
+  it('revokes the minted token when provider.spawn throws (no registry leak on the error path)', async () => {
+    const minted: string[] = []
+    const invalidated: string[] = []
+    const spawn = vi.fn(async () => { throw new Error('spawn boom') })
+    const mgr = new SessionManager({
+      maxConcurrent: 4,
+      idleEvictMs: 30 * 60_000,
+      registry: registryWithProvider({ spawn } as unknown as AgentProvider),
+      mintSessionToken: (_t, key) => { minted.push(key); return 'tok' },
+      invalidateSessionToken: (key) => invalidated.push(key),
+    })
+    await expect(mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'chat-1', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' }))
+      .rejects.toThrow('spawn boom')
+    expect(minted).toEqual(['claude/a/chat-1'])      // it was minted
+    expect(invalidated).toEqual(['claude/a/chat-1']) // ...and revoked on failure
+  })
+
   it('uses an injected agent provider to spawn and dispatch project sessions', async () => {
     const dispatched: string[] = []
     const close = vi.fn()
@@ -85,8 +132,10 @@ describe('SessionManager', () => {
 
     expect(spawn).toHaveBeenCalledWith(
       { alias: 'codex-proj', path: '/repo' },
-      // Caller (this test) passes admin tier + chatId — provider gets both verbatim.
-      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_legacy' },
+      // Caller passes admin tier + chatId — provider gets both verbatim, plus
+      // the daemon-computed mcpEnv overlay (always carries WECHAT_SESSION_TIER;
+      // no WECHAT_SESSION_TOKEN here since no mintSessionToken is wired).
+      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_legacy', mcpEnv: { WECHAT_SESSION_TIER: 'admin' } },
     )
     expect(dispatched).toEqual(['hello codex'])
     await mgr.shutdown()

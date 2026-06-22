@@ -64,10 +64,11 @@ describe('wechat-mcp stdio integration', () => {
     const { port, tokenFilePath } = await api.start()
 
     const baseEnv = { ...process.env as Record<string, string> }
-    // The daemon-control tools register only for an admin session; default the
-    // harness to admin so the existing round-trip tests see them, and ensure
-    // the flag is absent (not inherited) when admin is not requested.
-    delete baseEnv.WECHAT_SESSION_ADMIN
+    // The daemon-control tools register only for an admin session (tier baked
+    // into WECHAT_SESSION_TIER). Ensure no inherited tier leaks in; admin runs
+    // set tier=admin (+ a session token), non-admin runs set tier=trusted.
+    delete baseEnv.WECHAT_SESSION_TIER
+    delete baseEnv.WECHAT_SESSION_TOKEN
     const transport = new StdioClientTransport({
       command: RUNTIME,
       args: [WECHAT_MCP_MAIN],
@@ -75,7 +76,9 @@ describe('wechat-mcp stdio integration', () => {
         ...baseEnv,
         WECHAT_INTERNAL_API: `http://127.0.0.1:${port}`,
         WECHAT_INTERNAL_TOKEN_FILE: tokenFilePath,
-        ...(opts.admin ? { WECHAT_SESSION_ADMIN: '1' } : {}),
+        ...(opts.admin
+          ? { WECHAT_SESSION_TIER: 'admin', WECHAT_SESSION_TOKEN: 'integration-admin-tok' }
+          : { WECHAT_SESSION_TIER: 'trusted' }),
       },
       stderr: 'pipe',
     })
@@ -96,7 +99,7 @@ describe('wechat-mcp stdio integration', () => {
     expect(list.tools.map(t => t.name)).toContain('ping')
   })
 
-  it('registers the admin daemon-control tools ONLY for an admin session (WECHAT_SESSION_ADMIN)', async () => {
+  it('registers the admin daemon-control tools ONLY for an admin session (WECHAT_SESSION_TIER)', async () => {
     // The robust, provider-agnostic gate: a non-admin session's MCP child does
     // not register these tools, so they cannot be called or even discovered —
     // closing the gap that codex (no canUseTool) would otherwise leave open.

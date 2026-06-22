@@ -12,6 +12,8 @@
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { NICKNAME_RE, NICKNAME_MAX_LEN } from './nickname'
+import { isoFromMs } from '../lib/iso-time'
 import type { InboundMsg } from '../core/prompt-format'
 import type { ProviderRegistry } from '../core/provider-registry'
 import type { SessionManager } from '../core/session-manager'
@@ -123,10 +125,10 @@ export function isDelegateName(name: string): boolean {
 //   /botname <X>  → global bot self-name   (admin only, via this handler)
 const BOTNAME_RE = /^\s*\/botname(?:\s+(.+?))?\s*$/
 const BOTNAME_SKIP_WORDS = new Set(['跳过', '不用', '没有', 'skip', 'clear', '清除'])
-// Reuse the same nickname constraint onboarding applies to user_name.
-// Keep this regex in sync with onboarding.ts::NICKBOTNAME_RE.
-const BOTNAME_VALID_RE = /^[一-鿿_a-zA-Z0-9 \-]+$/
-const BOTNAME_MAX_LEN = 24
+// Same nickname constraint as onboarding + /name — sourced from ./nickname so
+// the allowed set can't drift between them (was a hand-maintained duplicate).
+const BOTNAME_VALID_RE = NICKNAME_RE
+const BOTNAME_MAX_LEN = NICKNAME_MAX_LEN
 
 export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
   return {
@@ -278,7 +280,7 @@ async function runHearthIngest(deps: AdminCommandsDeps, msg: InboundMsg, content
         message_id: `wechat-${msg.accountId}-${Date.now()}`,
         from: msg.chatId,
         text: trimmed,
-        received_at: new Date(msg.createTimeMs || Date.now()).toISOString(),
+        received_at: isoFromMs(msg.createTimeMs || Date.now(), Date.now()),
       },
       { vaultRoot: vault, agent, hearthStateDir: join(homedir(), '.hearth') },
     )

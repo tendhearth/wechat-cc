@@ -11,7 +11,7 @@
 import { randomBytes } from 'node:crypto'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
 import { lookup } from '../../core/capability-matrix'
-import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
+import { loadAgentConfig, saveAgentConfig, activeModel, withActiveModel } from '../../lib/agent-config'
 import type { Mode } from '../../core/conversation'
 import { makeEventsStore } from '../events/store'
 import type {
@@ -653,41 +653,56 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       if (typeof b.alias !== 'string' || typeof b.providerId !== 'string' || typeof b.chatId !== 'string') {
         return { status: 400, body: { error: 'alias, providerId, chatId required (strings)' } }
       }
+      // Was there actually a live session to release? Compute it from the
+      // session list so the read-back is honest — a no-op release (already
+      // gone / wrong key / pre-bootstrap) reports `released:false` instead of
+      // a misleading `ok:true`, so the agent's self-heal verification is real.
+      const before = deps.listSessions?.() ?? []
+      const released = before.some(s => s.alias === b.alias && s.providerId === b.providerId && s.chatId === b.chatId)
       await deps.releaseSession({ alias: b.alias, providerId: b.providerId, chatId: b.chatId })
-      return { status: 200, body: { ok: true, sessions: deps.listSessions?.() ?? null } }
+      return { status: 200, body: { ok: true, released, sessions: deps.listSessions?.() ?? null } }
     },
 
     // Current pinned agent model (read-back companion to POST /v1/model).
     'GET /v1/model': () => {
       const cfg = loadAgentConfig(deps.stateDir)
-      return { status: 200, body: { provider: cfg.provider, model: cfg.model ?? null } }
+      // Report the field the configured provider actually uses (activeModel
+      // owns the cursor-vs-claude/codex rule).
+      return { status: 200, body: { provider: cfg.provider, model: activeModel(cfg) ?? null } }
     },
 
-    // Admin remediation — switch the pinned model. Takes effect on the next
-    // claude session spawn per chat (no restart; see the mtime-cached reader).
-    // Returns the persisted model as a verification read-back.
+    // Admin remediation — switch the pinned model. For claude this takes effect
+    // on the next session spawn per chat (mtime-cached reader); for codex/cursor
+    // it persists but is applied at provider construction, so it needs a daemon
+    // restart to take effect. Returns the persisted model as a read-back.
     'POST /v1/model': (_q, body) => {
       const b = (body ?? {}) as { model?: unknown }
       if (typeof b.model !== 'string' || b.model.trim() === '') {
         return { status: 400, body: { error: 'model required (non-empty string)' } }
       }
       const model = b.model.trim()
-      // Validate the shape of a real, fully-qualified model id before pinning
-      // it — a bare alias or fast-mode tag (e.g. 'opus', 'opus[1m]', 'sonnet')
-      // gets mis-resolved by the CLI and 404s EVERY turn (the 2026-05-08
-      // incident this model-pinning exists to prevent). Require only the
-      // id-charset and a version digit; that rejects aliases without
-      // hard-coding a model allowlist that would rot as new models ship.
-      if (!/^[A-Za-z0-9._-]+$/.test(model) || !/[0-9]/.test(model)) {
+      // Reject obvious bare aliases — a model id with no version digit (e.g.
+      // 'opus', 'sonnet') gets mis-resolved by the CLI and 404s EVERY turn (the
+      // 2026-05-08 incident this guard exists to prevent). DELIBERATELY
+      // permissive on charset: real ids vary wildly across providers and
+      // gateways — claude-opus-4-8[1m], anthropic/claude-opus-4, o3,
+      // gpt-5.3-codex, us.anthropic.claude-opus-4-8-v1:0 — so the only universal
+      // syntactic signal of a real id (vs a bare family alias) is a digit.
+      // Whitespace is rejected too. An allowlist would rot as models ship.
+      if (/\s/.test(model) || !/[0-9]/.test(model)) {
         return {
           status: 400,
-          body: { error: `invalid model id '${model}' — use a full versioned id like 'claude-opus-4-8' or 'gpt-5.3-codex', not an alias` },
+          body: { error: `invalid model id '${model}' — use a full versioned id (e.g. 'claude-opus-4-8'), not a bare alias` },
         }
       }
       const cfg = loadAgentConfig(deps.stateDir)
-      saveAgentConfig(deps.stateDir, { ...cfg, model })
-      const after = loadAgentConfig(deps.stateDir)
-      return { status: 200, body: { ok: true, provider: after.provider, model: after.model ?? null } }
+      // Write the field the configured provider reads — writing `model` for a
+      // cursor daemon would be a silent no-op with a falsely-confirming read-back.
+      const updated = withActiveModel(cfg, model)
+      saveAgentConfig(deps.stateDir, updated)
+      // Read back from the just-persisted value (saveAgentConfig throws on write
+      // failure, so reaching here means it landed) — no second disk round-trip.
+      return { status: 200, body: { ok: true, provider: updated.provider, model: activeModel(updated) ?? null } }
     },
 
     // Admin remediation — graceful daemon restart. The trigger schedules the

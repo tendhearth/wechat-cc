@@ -1,6 +1,6 @@
 import { Codex, type Thread, type ThreadEvent, type ThreadItem } from '@openai/codex-sdk'
 import { tmpdir } from 'node:os'
-import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
+import { mergeEnvIntoMcpServers, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type ProviderCapabilities, type SpawnContext } from './agent-provider'
 import { resolveCodexCheapModel } from './codex-cheap-model'
 import type { TierProfile } from './user-tier'
 import { log } from '../lib/log'
@@ -201,12 +201,22 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
       const tierOpts = tierProfileToCodexSdkOpts(spawnOpts.tierProfile, spawnOpts.permissionMode)
       const config: Record<string, unknown> = {}
       if (opts.mcpServers) {
+        // Per-session internal-api auth: merge the env-only WECHAT_SESSION_TOKEN
+        // (secret bearer) + WECHAT_SESSION_TIER (non-secret) into EVERY stdio
+        // MCP child's env at spawn — codex's MCP spec is fixed at construction,
+        // so this per-spawn merge is how a codex session carries its tier (the
+        // provider-agnostic seam; same env the claude side bakes in bootstrap).
+        const sessionEnv = spawnOpts.mcpEnv ?? {}
+        const withEnv = mergeEnvIntoMcpServers(
+          opts.mcpServers as Record<string, { env?: Record<string, string> }>,
+          sessionEnv,
+        )
         // Cast through `unknown` because CodexConfigValue forbids undefined
         // and our optional fields (args?, env?) carry that variance through
         // the index signature even when always populated. SDK serialiser
         // (flattenConfigOverrides at dist/index.js:297) skips undefined
         // children so this is safe at runtime.
-        config.mcp_servers = opts.mcpServers as unknown as Record<string, never>
+        config.mcp_servers = withEnv as unknown as Record<string, never>
       }
       if (opts.dangerouslyBypassApprovalsAndSandbox) {
         config.dangerously_bypass_approvals_and_sandbox = true

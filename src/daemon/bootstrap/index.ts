@@ -174,6 +174,11 @@ export interface BootstrapDeps {
    * in tests / minimal embeddings — the JSONL log line still happens.
    */
   onTurnRecord?: (record: TurnRecord) => void
+  /** Mint/invalidate per-session internal-api tokens — main.ts wires these to
+   *  the internal-api token registry so each session's MCP children carry the
+   *  caller's tier. Omitted in tests / minimal embeddings. */
+  mintSessionToken?: (tier: import('../../core/user-tier').UserTier, sessionKey: string) => string
+  invalidateSession?: (sessionKey: string) => void
   /**
    * Used when projects.current is unset. Prevents silent message drops on
    * fresh installs — matches v0.x UX where messages routed to the daemon's
@@ -219,7 +224,7 @@ export interface Bootstrap {
   coordinator: ConversationCoordinator
   resolve: (chatId: string) => { alias: string; path: string } | null
   formatInbound: typeof formatInbound
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>) => Options
   /** Daemon-default provider id — what new chats get until user runs `/cc` or `/codex`. */
   defaultProviderId: ProviderId
   /** Backward-compat alias for defaultProviderId. Pre-P2 callers expected this name. */
@@ -438,7 +443,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     return c.provider === 'claude' && c.model ? c.model : 'claude-opus-4-8'
   }
 
-  const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string): Options => {
+  const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>): Options => {
     const cstatus = deps.ilink.companion.status()
     const systemPrompt = buildSystemPrompt({
       providerId: 'claude',
@@ -448,25 +453,21 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // wechat + delegate stdio MCP both loaded for regular sessions.
       delegateAvailable: !!delegateStdioForClaude,
     })
-    // Admin-only daemon-control tools (diagnostic_* / model_* / session_release
-    // / daemon_restart) are gated by the wechat MCP child registering them ONLY
-    // when WECHAT_SESSION_ADMIN=1. Bake that flag per-spawn for an admin-tier
-    // session — keyed on the read-only daemon_introspect kind, which only admin
-    // ALLOWS (trusted/guest deny it). NB daemon_remediate is in admin's RELAY
-    // set, not allow, so it can't be used as the admin signal. Codex sessions
-    // never get this flag (the codex provider's MCP spec is fixed at
-    // construction), so daemon tools are simply unavailable there — closing the
-    // no-canUseTool gap on codex.
-    const sessionIsAdmin = tierProfile.allow.has('daemon_introspect')
-    const wechatEnv = wechatStdioForClaude
-      ? { ...wechatStdioForClaude.env, ...(sessionIsAdmin ? { WECHAT_SESSION_ADMIN: '1' } : {}) }
-      : undefined
+    // Per-session internal-api auth: merge the daemon-computed env overlay
+    // (WECHAT_SESSION_TOKEN — the bearer the MCP children send — plus the
+    // non-secret WECHAT_SESSION_TIER the wechat child gates admin tools on)
+    // into the wechat + delegate children. session-manager builds this once;
+    // every provider merges the same overlay, so the route layer enforces a
+    // consistent tier across claude/codex/cursor.
+    const sessionEnv = mcpEnv ?? {}
+    const wechatEnv = wechatStdioForClaude ? { ...wechatStdioForClaude.env, ...sessionEnv } : undefined
+    const delegateEnv = delegateStdioForClaude ? { ...delegateStdioForClaude.env, ...sessionEnv } : undefined
     const common: Options = {
       cwd: path,
       model: currentClaudeModel(),
       mcpServers: {
         ...(wechatStdioForClaude ? { wechat: { type: 'stdio' as const, ...wechatStdioForClaude, env: wechatEnv! } } : {}),
-        ...(delegateStdioForClaude ? { delegate: { type: 'stdio' as const, ...delegateStdioForClaude } } : {}),
+        ...(delegateStdioForClaude ? { delegate: { type: 'stdio' as const, ...delegateStdioForClaude, env: delegateEnv! } } : {}),
       },
       // Using preset+append (instead of raw string) keeps MCP tools inline in
       // the system prompt — otherwise they're deferred behind ToolSearch,
@@ -750,6 +751,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     registry,
     sessionStore,
     resumeTTLMs: 7 * 24 * 60 * 60_000,
+    // Per-session auth token lifecycle — minted once per spawn, revoked on
+    // every release/eviction. Both keyed by provider/alias/chatId so they pair.
+    mintSessionToken: deps.mintSessionToken,
+    invalidateSessionToken: deps.invalidateSession,
   })
 
   // Task 14 — when admins / trusted / allowFrom set membership changes in

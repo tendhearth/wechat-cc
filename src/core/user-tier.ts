@@ -101,6 +101,36 @@ export const TIER_PROFILES: Record<UserTier, TierProfile> = {
 }
 
 /**
+ * Recover the tier NAME from a resolved TierProfile. Used by providers to bake
+ * `WECHAT_SESSION_TIER` into MCP child env (the non-secret companion to the
+ * per-session token). Keys on capability, not object identity: admin is the
+ * only tier that ALLOWS `daemon_introspect`; guest is the only one that DENIES
+ * `fs_write`; everything else is trusted. Stays correct if a profile object is
+ * reconstructed rather than referenced.
+ */
+export function tierNameFromProfile(tp: TierProfile): UserTier {
+  if (tp.allow.has('daemon_introspect')) return 'admin'
+  if (tp.deny.has('fs_write')) return 'guest'
+  return 'trusted'
+}
+
+/**
+ * The per-session env baked into a session's stdio MCP children:
+ * `WECHAT_SESSION_TOKEN` (the env-only secret the children send as their
+ * bearer; omitted when no token was minted) + `WECHAT_SESSION_TIER` (the
+ * non-secret tier the wechat child gates admin-tool registration on). Computed
+ * ONCE per spawn by the daemon (session-manager, which mints the token) and
+ * threaded to providers via `SpawnContext.mcpEnv` — providers merge it blindly,
+ * so a new provider carries the tier env for free and never re-derives it.
+ */
+export function sessionAuthEnv(tier: UserTier, sessionToken?: string): Record<string, string> {
+  return {
+    ...(sessionToken ? { WECHAT_SESSION_TOKEN: sessionToken } : {}),
+    WECHAT_SESSION_TIER: tier,
+  }
+}
+
+/**
  * Resolve a chatId's tier from access.json snapshot. Admin > trusted > guest.
  * A chatId not in any list still maps to guest — the assumption is the
  * upstream allowlist gate has already rejected outright-blocked users.

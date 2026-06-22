@@ -918,6 +918,49 @@ describe('ConversationCoordinator', () => {
       expect(sent.some(t => /超时|重发/.test(t))).toBe(true)
     }, 3000)
 
+    it('on acquire failure in parallel: the other provider still replies (allSettled acquire)', async () => {
+      // Regression: dispatchParallel used Promise.all for the ACQUIRE phase, so
+      // a single acquire rejection (spawn failure / pool exhausted) threw the
+      // whole batch — BOTH providers dropped with no reply and no TurnRecord,
+      // contradicting the documented "if one throws the other's reply still
+      // goes through" guarantee (which only held for the dispatch phase).
+      const store = makeMockStore()
+      store.set('chat-p', { kind: 'parallel' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const acquire = vi.fn(async (req: AcquireRequest) => {
+        if (req.providerId === 'claude') throw new Error('spawn failed: pool exhausted')
+        return makeHandle('codex', makeFakeSession({ events: [
+          { kind: 'text', text: 'codex reply' },
+          { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+        ] }))
+      })
+      const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+      const recordTurn = vi.fn()
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire, release: vi.fn(async () => {}) },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        recordTurn,
+      })
+      await c.dispatch(inbound('chat-p', 'hi'))
+      const sent = sendAssistantText.mock.calls.map(call => call[1] as string)
+      // Codex's reply still goes through despite claude's acquire failing.
+      expect(sent.some(t => t === '[Codex] codex reply')).toBe(true)
+      // A TurnRecord is emitted for BOTH providers — claude=error, codex=completed.
+      const byProvider = Object.fromEntries(recordTurn.mock.calls.map(([r]) => [r.provider, r]))
+      expect(byProvider['claude']).toMatchObject({ mode: 'parallel', outcome: 'error' })
+      expect(byProvider['codex']).toMatchObject({ mode: 'parallel', outcome: 'completed' })
+    })
+
     it('fans out the same inbound to both providers concurrently', async () => {
       const { c, acquire, dispatchCalls } = setupParallel()
       await c.dispatch(inbound('chat-1', 'hello both'))
@@ -1649,6 +1692,55 @@ describe('ConversationCoordinator', () => {
       // not dispatched OR dispatched but abort message follows.
       expect(setup.dispatchedTexts.length).toBeLessThanOrEqual(3)
       expect(setup.sendAssistantText.mock.calls.some(([, t]) => t.includes('收到 /stop'))).toBe(true)
+    })
+
+    it('suppresses a chatroom reply when the turn is aborted mid-stream but cancel() is a no-op', async () => {
+      // Regression: if /stop (or a preempt) aborts a speaker turn mid-stream but
+      // the provider's cancel() doesn't actually interrupt it (allowed by the
+      // contract — providers without a real interrupt run to completion),
+      // collectTurn RESOLVES cleanly. The only abort check was in the catch, so
+      // the resolved-cleanly path fell through and forwarded the now-stale
+      // [Display] reply for a turn the user already aborted.
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      let coordRef: ReturnType<typeof createConversationCoordinator>
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => ({
+        alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+        dispatch: (): AsyncIterable<AgentEvent> => ({
+          async *[Symbol.asyncIterator]() {
+            yield { kind: 'text', text: 'leaked reply' }
+            // Abort mid-stream — like /stop arriving while streaming. cancel()
+            // below is a no-op, so the turn runs to natural completion.
+            coordRef.cancel('chat-1')
+            yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }
+          },
+        }),
+        cancel: async () => {},  // no-op interrupt (provider without a real cancel)
+        close: async () => {},
+      }))
+      const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+      const haikuEval = vi.fn(async () => JSON.stringify({ action: 'continue', speaker: 'claude', prompt: 'go' }))
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        haikuEval,
+      })
+      coordRef = c
+      await c.dispatch(inbound('chat-1', 'hi'))
+      const sent = sendAssistantText.mock.calls.map(call => call[1] as string)
+      // The aborted turn's reply must NOT be forwarded.
+      expect(sent.some(t => t.includes('leaked reply'))).toBe(false)
     })
 
     it('falls back to solo+default when chatroom resolves to a single participant', async () => {

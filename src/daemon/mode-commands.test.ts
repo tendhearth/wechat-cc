@@ -425,6 +425,22 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toMatch(/用法|usage/i)
   })
 
+  it('/name rejects an over-long nickname (does NOT persist)', async () => {
+    const { cmds, sentMessages, getStoredName } = setup()
+    const consumed = await cmds.handle(inbound('/name ' + 'x'.repeat(25)))  // > NICKNAME_MAX_LEN (24)
+    expect(consumed).toBe(true)
+    expect(getStoredName()).toBeNull()
+    expect(sentMessages[0]?.[1]).toMatch(/太长|最多|long/)
+  })
+
+  it('/name rejects a nickname with disallowed characters (does NOT persist)', async () => {
+    const { cmds, sentMessages, getStoredName } = setup()
+    const consumed = await cmds.handle(inbound('/name <script>'))
+    expect(consumed).toBe(true)
+    expect(getStoredName()).toBeNull()
+    expect(sentMessages[0]?.[1]).toMatch(/只支持|字符/)
+  })
+
   // ── /whoami — identity dump (PR2 #17) ────────────────────────────────
 
   it('/whoami dumps nickname + WeChat identity + bot name + chat id', async () => {
@@ -550,6 +566,17 @@ describe('makeModeCommands', () => {
       await cmds.handle(inbound('/chat claude'))
       expect(set).not.toHaveBeenCalled()
       expect(sentMessages[0]?.[1]).toMatch(/≥2|至少|need.*2/)
+    })
+
+    it('/chat with the same provider twice is rejected (dedupes below the ≥2 minimum)', async () => {
+      // Regression: the ≥2 check ran on the RAW token count, but dedup happened
+      // after — so `/chat claude claude` (2 tokens, 1 distinct) passed the check
+      // then collapsed to a single-participant chatroom, violating the advertised
+      // ≥2 contract (it silently degraded to solo).
+      const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'cursor'] })
+      await cmds.handle(inbound('/chat claude claude'))
+      expect(set).not.toHaveBeenCalled()
+      expect(sentMessages[0]?.[1]).toMatch(/≥2|至少|不同|distinct/)
     })
 
     it('/chat with unknown provider is rejected with helpful message', async () => {

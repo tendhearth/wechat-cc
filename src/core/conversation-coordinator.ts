@@ -274,6 +274,8 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // registered under (per-chat now since Task 10). A fresh dispatch in
       // this chat re-acquires from a clean subprocess that re-reads
       // keychain creds.
+      // SessionManager.release revokes the session's auth token (every release
+      // path, incl. internal eviction) — no separate invalidate call here.
       await deps.manager.release?.({ alias, providerId, chatId })
     } catch (err) {
       deps.log('AUTH_FAILED', `release ${alias}/${providerId} threw: ${err instanceof Error ? err.message : err}`)
@@ -299,6 +301,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       provider: providerId,
     })
     try {
+      // SessionManager.release revokes the session's auth token (see above).
       await deps.manager.release?.({ alias, providerId, chatId })
     } catch (err) {
       deps.log('TURN_TIMEOUT', `release ${alias}/${providerId} threw: ${err instanceof Error ? err.message : err}`)
@@ -730,7 +733,15 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         const renderedText = isFinalRound && !allText.startsWith('🎯')
           ? `🎯 ${allText}`
           : allText
-        await deps.sendAssistantText?.(msg.chatId, `[${dn}] ${renderedText}`)
+        // If abort landed mid-stream and the provider's cancel() didn't actually
+        // interrupt it (providers without a real interrupt run to completion),
+        // the turn completed anyway — but the user already aborted it, so DON'T
+        // forward the now-stale reply. Still push to history: a preempting
+        // dispatch's moderator must see this partial progress (PR C2), and the
+        // round-entry abort check owns the user-facing /stop notice.
+        if (!aborter.signal.aborted) {
+          await deps.sendAssistantText?.(msg.chatId, `[${dn}] ${renderedText}`)
+        }
         history.push({ role: 'speaker', speaker, text: allText })
       } finally {
         if (!suppressRecord) {
@@ -794,7 +805,12 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     const tier = resolveEffectiveTier(msg.chatId, deps.loadAccess(), deps.permissionMode)
     const tierProfile = TIER_PROFILES[tier]
     deps.log('COORDINATOR', `parallel chat=${msg.chatId} → project=${proj.alias} providers=${participants.join(',')} tier=${tier}`)
-    const handles = await Promise.all(
+    // allSettled the ACQUIRE phase too (not just dispatch): a single provider's
+    // acquire rejection (spawn failure / pool exhausted) must NOT drop the other
+    // provider's reply. A failed acquire is propagated into the same per-
+    // participant settled shape below (as a rejected turn → recorded as an error
+    // TurnRecord), keeping index alignment with `participants`.
+    const acquired = await Promise.allSettled(
       participants.map(p => deps.manager.acquire({
         alias: proj.alias,
         path: proj.path,
@@ -806,7 +822,11 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     )
     const text = deps.format(msg)
     const startedAt = nowMs()
-    const settled = await Promise.allSettled(handles.map(h => collectTurn(h.dispatch(text), { timeoutMs: deps.turnTimeoutMs })))
+    const settled = await Promise.allSettled(acquired.map(a =>
+      a.status === 'fulfilled'
+        ? collectTurn(a.value.dispatch(text), { timeoutMs: deps.turnTimeoutMs })
+        : Promise.reject(a.reason),
+    ))
     // Batch end — all participants dispatched together and allSettled awaits
     // them all, so a single endedAt is the honest wall-clock for the round.
     const endedAt = nowMs()

@@ -26,6 +26,7 @@ import type { ProviderRegistry } from '../core/provider-registry'
 import type { Mode, ProviderId } from '../core/conversation'
 import type { InboundMsg } from '../core/prompt-format'
 import { botName } from './bot-name'
+import { validateNickname, NICKNAME_MAX_LEN } from './nickname'
 import type { AgentConfig } from '../lib/agent-config'
 
 export interface ModeCommandsDeps {
@@ -95,6 +96,12 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     // Deduplicate while preserving order (operator typed the same provider twice → silent dedupe).
     const seen = new Set<string>()
     const dedup = tokens.filter(t => seen.has(t) ? false : (seen.add(t), true))
+    // Re-check the minimum AFTER dedup: `/chat claude claude` is 2 raw tokens but
+    // 1 distinct provider, which would otherwise pass the raw-count check above
+    // and silently collapse to a single-participant (solo-degraded) chatroom.
+    if (dedup.length < 2) {
+      return { ok: false, error: `❓ /${modeName} 需要 ≥2 个不同的 participants（去重后只剩 ${dedup.length} 个）. 例：/${modeName} ${deps.registry.list().slice(0, 2).join(' ')}` }
+    }
     return { ok: true, participants: dedup }
   }
 
@@ -360,6 +367,18 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       if (slashWord.toLowerCase() === 'name') {
         if (!tail) {
           await reply(msg.chatId, '❓ 用法：/name <昵称>。例：/name 丸子')
+          return true
+        }
+        // Validate before persisting — same constraint onboarding + /botname
+        // apply. Without this, any chat user could store an unbounded / hostile
+        // nickname that later gets interpolated into prompts.
+        const nickErr = validateNickname(tail)
+        if (nickErr === 'too_long') {
+          await reply(msg.chatId, `❌ 昵称太长（最多 ${NICKNAME_MAX_LEN} 字符）。`)
+          return true
+        }
+        if (nickErr === 'bad_charset') {
+          await reply(msg.chatId, '❌ 昵称只支持中文 / 字母 / 数字 / 空格 / _ / -。')
           return true
         }
         await deps.setUserName(msg.chatId, tail)
