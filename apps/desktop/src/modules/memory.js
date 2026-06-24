@@ -29,6 +29,9 @@ import { icon } from "./icons.js"
 // flips the textarea/render visibility; `pristine` is the unsaved-content
 // snapshot used by the cancel path.
 /** @typedef {{ intro: string, projects: Array<{ name: string, summary: string }> }} OverviewModel */
+/** @typedef {'observation'|'milestone'|'file'|'overview'} EmbryoSourceKind */
+/** @typedef {{ kind: EmbryoSourceKind, text: string, ts: string, label: string, obsId?: string, userId?: string, path?: string }} EmbryoSourceItem */
+const MEMORY_EMBRYO_STORAGE_KEY = "wechat-cc:memory-embryo-enabled"
 /** @type {{ users: MemoryList, observations: ObservationsList["observations"], milestones: MilestonesList["milestones"], selected: { userId: string, path: string } | null, marked: { parse: (s: string) => string } | null, editing: boolean, pristine: string, dirtySwitchPending: string | null, overview: OverviewModel | null }} */
 const memoryState = {
   users: [],
@@ -45,6 +48,25 @@ const memoryState = {
   // tried to switch to while editing. Second click on the same file
   // within 3s commits the switch (§1.3 #8 绝不弹窗).
   dirtySwitchPending: null,
+}
+
+/** @returns {boolean} */
+export function isMemoryEmbryoEnabled() {
+  try {
+    const stored = localStorage.getItem(MEMORY_EMBRYO_STORAGE_KEY)
+    return stored === null ? true : stored === "true"
+  } catch {
+    return true
+  }
+}
+
+/** @param {boolean} on */
+export function setMemoryEmbryoEnabled(on) {
+  try {
+    localStorage.setItem(MEMORY_EMBRYO_STORAGE_KEY, on ? "true" : "false")
+  } catch {
+    /* ignore persistence errors */
+  }
 }
 
 async function loadMarked() {
@@ -368,7 +390,7 @@ async function loadOverview(deps, chatId) {
 }
 
 /** @param {Deps} deps */
-function renderMemoryProfileOverview(deps) {
+export function renderMemoryProfileOverview(deps) {
   const root = document.getElementById("memory-profile-content")
   if (!root) return
 
@@ -383,6 +405,8 @@ function renderMemoryProfileOverview(deps) {
   const latestObservation = memoryState.observations[0]?.ts
   const updatedAt = latestObservation || latestFileMtime
   const profile = buildMemoryProfileModel(friendly, totalFiles, updatedAt)
+  const embryo = buildMemoryEmbryoModel(totalFiles)
+  const embryoEnabled = isMemoryEmbryoEnabled()
 
   root.innerHTML = `
     <div class="memory-artboard" id="memory-artboard">
@@ -398,27 +422,7 @@ function renderMemoryProfileOverview(deps) {
           ${profile.tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join("")}
         </div>
       </div>
-      <div class="memory-profile-companion" aria-label="人格画像指标">
-        <div class="metric-bubble metric-bubble-a">
-          <strong>${escapeHtml(String(profile.metrics.expression))}%</strong>
-          <span>表达欲</span>
-        </div>
-        <div class="metric-bubble metric-bubble-b">
-          <strong>${escapeHtml(String(profile.metrics.safety))}%</strong>
-          <span>安全感</span>
-        </div>
-        <div class="memory-avatar-wrap">
-          <img src="./assets/memory-companion.png" alt="" />
-        </div>
-        <div class="metric-bubble metric-bubble-c">
-          <strong>${escapeHtml(profile.metrics.memory)}</strong>
-          <span>表达欲</span>
-        </div>
-        <div class="metric-bubble metric-bubble-d">
-          <strong>${escapeHtml(profile.metrics.companion)}</strong>
-          <span>陪伴需求</span>
-        </div>
-      </div>
+      ${embryoEnabled ? renderMemoryEmbryo(embryo) : renderMemoryEmbryoDisabled()}
     </div>
 
     <div class="memory-profile-grid">
@@ -473,7 +477,240 @@ function renderMemoryProfileOverview(deps) {
     </div>
     </div>
   `
-  requestAnimationFrame(fitMemoryArtboard)
+  requestAnimationFrame(() => {
+    fitMemoryArtboard()
+  })
+}
+
+/** @param {number} totalFiles */
+function buildMemoryEmbryoModel(totalFiles) {
+  const observations = memoryState.observations.filter(obs => !obs.archived && !isIntroObservation(obs.body))
+  const absorbed = observations.length + memoryState.milestones.length + totalFiles
+  const recent = buildRecentAbsorptions(observations)
+  const totalSources = observations.length + memoryState.milestones.length + totalFiles + (memoryState.overview?.intro ? 1 : 0)
+  const stage = "胚胎期"
+  let stageHint = "正在形成第一层记忆"
+  if (absorbed >= 24) stageHint = "已经形成持续共振"
+  else if (absorbed >= 10) stageHint = "正在沉淀长期理解"
+  else if (absorbed >= 3) stageHint = "开始长出稳定轮廓"
+  return {
+    stage,
+    stageHint,
+    absorbed,
+    totalSources,
+    recent,
+  }
+}
+
+/** @param {string | undefined} body */
+function isIntroObservation(body) {
+  const text = String(body || "")
+  return text.includes("嗨，我是 Claude") && text.includes("把观察写在这里")
+}
+
+/** @param {ObservationsList["observations"]} observations */
+function buildRecentAbsorptions(observations) {
+  /** @type {EmbryoSourceItem[]} */
+  const items = []
+  for (const obs of observations) {
+    if (!obs.body) continue
+    items.push({
+      kind: "observation",
+      text: obs.body,
+      ts: obs.ts || "",
+      label: "最近观察",
+      obsId: obs.id,
+    })
+  }
+  if (memoryState.overview?.intro) {
+    const first = firstSentence(memoryState.overview.intro)
+    if (first) {
+      items.push({
+        kind: "overview",
+        text: first,
+        ts: "",
+        label: "总体记忆",
+      })
+    }
+  }
+  const files = memoryState.users
+    .flatMap(u => u.files.map(f => ({ ...f, userId: u.userId })))
+    .filter(f => f.path !== OVERVIEW_PATH)
+    .sort((a, b) => String(b.mtime || "").localeCompare(String(a.mtime || "")))
+    .slice(0, 4)
+  for (const file of files) {
+    items.push({
+      kind: "file",
+      text: `更新了「${memoryFileLabel(file.path)}」相关记忆`,
+      ts: file.mtime || "",
+      label: "记忆文件",
+      userId: file.userId,
+      path: file.path,
+    })
+  }
+  for (const milestone of memoryState.milestones.slice().reverse()) {
+    if (!milestone.body) continue
+    items.push({
+      kind: "milestone",
+      text: milestone.body,
+      ts: milestone.ts || "",
+      label: "里程碑",
+      obsId: milestone.id,
+    })
+  }
+  const seen = new Set()
+  return items
+    .filter(item => {
+      const key = `${item.kind}:${(item.obsId || item.path || item.text).trim()}`
+      if (!key.trim() || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || "")))
+    .slice(0, 3)
+}
+
+/** @param {string} text */
+function firstSentence(text) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim()
+  return (clean.split(/(?<=[。！？!?])/)[0] || clean).slice(0, 80)
+}
+
+/** @param {string} path */
+function memoryFileLabel(path) {
+  const name = String(path || "").split("/").pop() || path
+  return name.replace(/\.md$/i, "")
+}
+
+function renderMemoryEmbryoDisabled() {
+  return `
+    <div class="memory-profile-companion memory-profile-companion--disabled">
+      <div class="memory-embryo-disabled">
+        <span class="memory-embryo-disabled-title">记忆胚胎已关闭</span>
+        <span class="memory-embryo-disabled-sub">在设置里可重新开启来源跳转。</span>
+      </div>
+    </div>
+  `
+}
+
+/** @param {ReturnType<typeof buildMemoryEmbryoModel>} embryo */
+function renderMemoryEmbryo(embryo) {
+  return `
+    <div class="memory-profile-companion">
+      <button class="memory-embryo" type="button" data-action="toggle-memory-embryo" aria-expanded="false">
+        <span class="embryo-orbit" aria-hidden="true">
+          <span class="embryo-core"></span>
+        </span>
+        <span class="embryo-copy">
+          <span class="embryo-stage">${escapeHtml(embryo.stage)}</span>
+          <span class="embryo-sub">${escapeHtml(embryo.stageHint)}</span>
+        </span>
+      </button>
+      <div class="memory-embryo-panel" id="memory-embryo-panel" hidden>
+        <div class="embryo-panel-head">
+          <span>最近吸收</span>
+          <span>${escapeHtml(String(embryo.recent.length))} 项</span>
+        </div>
+        ${embryo.recent.length
+          ? `<div class="embryo-observations">${embryo.recent.map(item => renderEmbryoSource(item)).join("")}</div>`
+          : `<p class="embryo-empty">还没有足够的稳定观察。</p>`}
+        ${embryo.totalSources > embryo.recent.length
+          ? `<button class="embryo-view-all" type="button" data-action="open-memory-observations">查看全部记忆</button>`
+          : ""}
+      </div>
+    </div>
+  `
+}
+
+/** @param {EmbryoSourceItem} item */
+function renderEmbryoSource(item) {
+  const attrs = [
+    `data-action="jump-memory-source"`,
+    `data-source-kind="${escapeHtml(item.kind)}"`,
+    item.obsId ? `data-source-id="${escapeHtml(item.obsId)}"` : "",
+    item.userId ? `data-source-user="${escapeHtml(item.userId)}"` : "",
+    item.path ? `data-source-path="${escapeHtml(item.path)}"` : "",
+  ].filter(Boolean).join(" ")
+  return `
+    <button type="button" class="embryo-source" ${attrs}>
+      <span class="embryo-source-kind">${escapeHtml(item.label)}</span>
+      <span class="embryo-source-text">${escapeHtml(item.text)}</span>
+    </button>
+  `
+}
+
+/**
+ * @param {Deps} deps
+ * @param {EmbryoSourceItem} item
+ */
+export function jumpToMemorySource(deps, item) {
+  const sourcesToggle = document.getElementById("memory-sources-toggle")
+  const sourcesPanel = document.getElementById("memory-sources-panel")
+  if (sourcesToggle && sourcesPanel) {
+    sourcesToggle.setAttribute("aria-expanded", "true")
+    sourcesPanel.hidden = false
+  }
+
+  if (item.kind === "overview") {
+    document.getElementById("memory-profile-overview")?.scrollIntoView?.({ behavior: "smooth", block: "start" })
+    return
+  }
+
+  /** @param {string} toggleId @param {string} bodyId */
+  const openFold = (toggleId, bodyId) => {
+    const toggle = document.getElementById(toggleId)
+    const body = document.getElementById(bodyId)
+    if (!toggle || !body) return
+    toggle.setAttribute("aria-expanded", "true")
+    body.hidden = false
+  }
+
+  if (item.kind === "observation" || item.kind === "milestone") {
+    openFold("memory-observations-toggle", "memory-observations-body")
+    const target = item.obsId ? findMemoryTarget(item.kind, item.obsId) : null
+    if (target instanceof HTMLElement) {
+      target.scrollIntoView({ behavior: "smooth", block: "center" })
+      pulseTarget(target)
+    } else {
+      document.getElementById("memory-top-zone")?.scrollIntoView?.({ behavior: "smooth", block: "start" })
+    }
+    return
+  }
+
+  if (item.kind === "file") {
+    openFold("memory-archive-toggle", "memory-archive-body")
+    const buttons = Array.from(document.querySelectorAll(".mem-file"))
+    const match = buttons.find(btn => {
+      const el = /** @type {HTMLElement} */ (btn)
+      return el.dataset.user === item.userId && el.dataset.path === item.path
+    })
+    if (match instanceof HTMLElement) {
+      match.click()
+      match.scrollIntoView({ behavior: "smooth", block: "center" })
+      pulseTarget(match)
+      setTimeout(() => {
+        document.getElementById("memory-content-head")?.scrollIntoView?.({ behavior: "smooth", block: "start" })
+      }, 220)
+    }
+  }
+}
+
+/**
+ * @param {"observation"|"milestone"} kind
+ * @param {string} id
+ */
+function findMemoryTarget(kind, id) {
+  const selector = kind === "observation" ? ".observation[data-id]" : ".milestone-card[data-id]"
+  const nodes = Array.from(document.querySelectorAll(selector))
+  return nodes.find(node => node instanceof HTMLElement && node.dataset.id === id) || null
+}
+
+/**
+ * @param {HTMLElement} el
+ */
+function pulseTarget(el) {
+  el.classList.add("is-source-target")
+  setTimeout(() => el.classList.remove("is-source-target"), 1600)
 }
 
 function fitMemoryArtboard() {

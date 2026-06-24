@@ -28,7 +28,7 @@ import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
 import { renderDashboard, renderRestartButton, setPending, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
-import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, loadProjectMemory } from "./modules/memory.js"
+import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
@@ -537,9 +537,19 @@ function wireEvents() {
           await invoke("wechat_cli_json", { args: ["guard", on ? "enable" : "disable", "--json"] })
           refreshGuardStatus()
         } catch (err) { console.error("guard toggle failed:", err) }
+      } else if (id === "memory-embryo-toggle") {
+        setMemoryEmbryoEnabled(on)
+        renderMemoryProfileOverview(deps)
       }
     },
   })
+
+  const embryoToggle = document.getElementById("memory-embryo-toggle")
+  if (embryoToggle) {
+    const on = isMemoryEmbryoEnabled()
+    embryoToggle.classList.toggle("on", on)
+    embryoToggle.setAttribute("aria-pressed", on ? "true" : "false")
+  }
 
   document.getElementById("settings-open")?.addEventListener("click", openSettingsDrawer)
 
@@ -628,6 +638,47 @@ function wireEvents() {
       e.stopPropagation()
       await archiveObservation(deps, archiveBtn.dataset.id || "")
     }
+  })
+  document.getElementById("memory-profile-content")?.addEventListener("click", (e) => {
+    const source = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target.closest("[data-action='jump-memory-source']") : null)
+    if (source) {
+      e.stopPropagation()
+      jumpToMemorySource(deps, {
+        kind: /** @type {any} */ (source.dataset.sourceKind || "observation"),
+        text: source.querySelector(".embryo-source-text")?.textContent || "",
+        ts: "",
+        label: source.querySelector(".embryo-source-kind")?.textContent || "",
+        obsId: source.dataset.sourceId || undefined,
+        userId: source.dataset.sourceUser || undefined,
+        path: source.dataset.sourcePath || undefined,
+      })
+      return
+    }
+    const openAll = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target.closest("[data-action='open-memory-observations']") : null)
+    if (openAll) {
+      e.stopPropagation()
+      const sourcesToggle = document.getElementById("memory-sources-toggle")
+      const sourcesPanel = document.getElementById("memory-sources-panel")
+      const obsToggle = document.getElementById("memory-observations-toggle")
+      const obsBody = document.getElementById("memory-observations-body")
+      if (sourcesToggle && sourcesPanel) {
+        sourcesToggle.setAttribute("aria-expanded", "true")
+        sourcesPanel.hidden = false
+      }
+      if (obsToggle && obsBody) {
+        obsToggle.setAttribute("aria-expanded", "true")
+        obsBody.hidden = false
+      }
+      document.getElementById("memory-top-zone")?.scrollIntoView?.({ behavior: "smooth", block: "nearest" })
+      return
+    }
+    const toggle = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target.closest("[data-action='toggle-memory-embryo']") : null)
+    if (!toggle) return
+    const panel = document.getElementById("memory-embryo-panel")
+    if (!panel) return
+    const wasOpen = toggle.getAttribute("aria-expanded") === "true"
+    toggle.setAttribute("aria-expanded", wasOpen ? "false" : "true")
+    panel.hidden = wasOpen
   })
 
   // Memory decisions — toggle folded zone, lazy-load on FIRST expand only.
