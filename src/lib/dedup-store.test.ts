@@ -34,4 +34,20 @@ describe('dedup store', () => {
     expect(s.isHandled('a')).toBe(true)
     expect(s.isHandled('b')).toBe(false)
   })
+
+  it('recordAttempt returns a monotonic per-id count (poison-message bound)', () => {
+    const s = makeDedupStore(openTestDb())
+    expect(s.recordAttempt('m', '2026-06-25T00:00:00Z')).toBe(1)
+    expect(s.recordAttempt('m', '2026-06-25T00:00:01Z')).toBe(2)
+    expect(s.recordAttempt('m', '2026-06-25T00:00:02Z')).toBe(3)
+    // independent per id
+    expect(s.recordAttempt('other', '2026-06-25T00:00:03Z')).toBe(1)
+  })
+
+  it('recordAttempt persists the count across store instances on the same db', () => {
+    const db = openTestDb()
+    makeDedupStore(db).recordAttempt('m', '2026-06-25T00:00:00Z')
+    makeDedupStore(db).recordAttempt('m', '2026-06-25T00:00:01Z')
+    expect(makeDedupStore(db).recordAttempt('m', '2026-06-25T00:00:02Z')).toBe(3)
+  })
 })

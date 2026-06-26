@@ -13,11 +13,13 @@ function ctx(text: string, createTimeMs = 1780000000000): InboundCtx {
   }
 }
 
-function wire() {
+function wire(maxAttempts?: number) {
   const store = makeDedupStore(openTestDb())
   const dedup = makeMwDedup({
     isHandled: id => store.isHandled(id),
     markHandled: id => store.markHandled(id, '2026-06-25T00:00:00Z'),
+    recordAttempt: id => store.recordAttempt(id, '2026-06-25T00:00:00Z'),
+    ...(maxAttempts !== undefined ? { maxAttempts } : {}),
     log: () => {},
   })
   return { dedup, store }
@@ -63,6 +65,27 @@ describe('mw-dedup', () => {
     await run(ctx('做个长任务'))
 
     expect(attempts).toBe(2)
+  })
+
+  it('gives up on a poison message after maxAttempts and marks it handled', async () => {
+    const { dedup, store } = wire(3)
+    let entered = 0
+    const terminal: Middleware = async () => { entered++; throw new Error('always poison') }
+    const run = compose([dedup, terminal])
+
+    // Simulate redeliveries across restarts: each one re-processes (crash
+    // recovery) until the attempt bound is hit.
+    for (let i = 0; i < 5; i++) {
+      try { await run(ctx('毒丸')) } catch { /* throws each time it's processed */ }
+    }
+    // maxAttempts=3 → processed on attempts 1,2,3 then given up (marked handled).
+    expect(entered).toBe(3)
+    expect(store.isHandled('u1:1780000000000')).toBe(true)
+
+    // A further redelivery is short-circuited (handled), downstream untouched.
+    let after = false
+    await compose([dedup, (async () => { after = true }) as Middleware])(ctx('毒丸'))
+    expect(after).toBe(false)
   })
 
   it('short-circuits a redelivery without invoking downstream at all', async () => {

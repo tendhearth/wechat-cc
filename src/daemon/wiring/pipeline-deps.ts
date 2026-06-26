@@ -243,6 +243,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     dedup: {
       isHandled: id => dedupStore.isHandled(id),
       markHandled: id => dedupStore.markHandled(id, new Date().toISOString()),
+      recordAttempt: id => dedupStore.recordAttempt(id, new Date().toISOString()),
       log,
     },
     messages: {

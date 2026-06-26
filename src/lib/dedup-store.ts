@@ -22,6 +22,13 @@ export interface DedupStore {
   isHandled(id: string): boolean
   /** Mark a message id as fully processed. Idempotent on id. */
   markHandled(id: string, atIso: string): void
+  /**
+   * Record one processing attempt for a message id, returning the new total
+   * attempt count (1 on first call). Persists across restarts so mw-dedup can
+   * give up on a "poison" message that keeps throwing instead of reprocessing
+   * it forever.
+   */
+  recordAttempt(id: string, atIso: string): number
 }
 
 export function makeDedupStore(db: Db): DedupStore {
@@ -31,12 +38,20 @@ export function makeDedupStore(db: Db): DedupStore {
   const stmtMark = db.query<unknown, [string, string]>(
     'INSERT OR IGNORE INTO handled_messages(id, handled_at) VALUES (?, ?)',
   )
+  const stmtAttempt = db.query<{ attempts: number }, [string, string]>(
+    `INSERT INTO message_attempts(id, attempts, first_seen) VALUES (?, 1, ?)
+       ON CONFLICT(id) DO UPDATE SET attempts = attempts + 1
+     RETURNING attempts`,
+  )
   return {
     isHandled(id) {
       return stmtHas.get(id) !== null
     },
     markHandled(id, atIso) {
       stmtMark.run(id, atIso)
+    },
+    recordAttempt(id, atIso) {
+      return stmtAttempt.get(id, atIso)?.attempts ?? 1
     },
   }
 }
