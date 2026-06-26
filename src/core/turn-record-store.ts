@@ -102,12 +102,18 @@ export function makeTurnRecordStore(db: Db): TurnRecordStore {
       const error = record.error != null && record.error.length > MAX_ERROR
         ? record.error.slice(0, MAX_ERROR)
         : (record.error ?? null)
-      stmtAppend.run(
-        id, ts, record.chatId, record.provider, record.alias, record.mode,
-        record.startedAt, record.endedAt, record.durationMs, record.outcome,
-        record.replyToolCalled ? 1 : 0, record.textChunks, error,
-      )
-      stmtPrune.run(record.chatId, record.chatId, TURN_RECORDS_MAX_PER_CHAT)
+      // Insert + per-chat prune in ONE transaction so a crash between them
+      // can't leave the row inserted but unpruned (the table would then grow
+      // past its bound unrepaired). Single-threaded bun:sqlite already makes
+      // this synchronous; the transaction adds crash atomicity.
+      db.transaction(() => {
+        stmtAppend.run(
+          id, ts, record.chatId, record.provider, record.alias, record.mode,
+          record.startedAt, record.endedAt, record.durationMs, record.outcome,
+          record.replyToolCalled ? 1 : 0, record.textChunks, error,
+        )
+        stmtPrune.run(record.chatId, record.chatId, TURN_RECORDS_MAX_PER_CHAT)
+      })()
     },
     recentForChat(chatId, limit) {
       return stmtRecentForChat.all(chatId, limit).map(toRecord)
