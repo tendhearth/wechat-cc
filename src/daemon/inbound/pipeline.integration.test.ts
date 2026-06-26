@@ -11,9 +11,15 @@ function fakeDeps(over: Partial<{
   const milestone = vi.fn(async () => {})
   const welcome = vi.fn(async () => {})
   const log = () => {}
+  const handled = new Set<string>()
   const deps: InboundPipelineDeps = {
     trace: { log },
     identity: { upsertIdentity: () => {} },
+    dedup: {
+      isHandled: id => handled.has(id),
+      markHandled: id => { handled.add(id) },
+      log,
+    },
     access: {
       // Integration test default: allowlist contains the test chatId, so the
       // gate passes. Individual tests can override via the deps if needed.
@@ -59,6 +65,17 @@ describe('inbound pipeline (integration)', () => {
     expect(spy.activity).toHaveBeenCalledOnce()
     expect(spy.milestone).toHaveBeenCalledOnce()
     expect(spy.welcome).toHaveBeenCalledOnce()
+  })
+
+  it('redelivered message is deduped: agent dispatched only once across two deliveries', async () => {
+    // The macOS sleep/wake bug: the long-poll cursor can redeliver an already-
+    // answered message, and without processing-level dedup the agent re-runs
+    // and re-replies. mw-dedup (wired right after access) must short-circuit.
+    const { deps, spy } = fakeDeps()
+    const run = buildInboundPipeline(deps)
+    await run(mkCtx())
+    await run(mkCtx()) // same message id (stable: no createTimeMs → content hash)
+    expect(spy.dispatch).toHaveBeenCalledOnce()
   })
 
   it('admin short-circuit: dispatch + W-tier all skipped', async () => {

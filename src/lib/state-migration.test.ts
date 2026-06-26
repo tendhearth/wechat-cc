@@ -61,16 +61,17 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  it('opens a fresh db with PRAGMA user_version = 15 and the 12 tables', () => {
+  it('opens a fresh db with PRAGMA user_version = 16 and the 13 tables', () => {
     const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
     // v14 (dialogue real data): messages / threads / thread_extract_state tables added;
     // events.kind widened with 'threads_extracted'.
     // v15 (turn observability): turn_records table added.
-    expect(v).toBe(15)
+    // v16 (sleep/wake dedup): handled_messages table added.
+    expect(v).toBe(16)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
-      'a2a_events', 'activity', 'conversations', 'events', 'messages', 'milestones', 'observations',
-      'session_state', 'sessions', 'thread_extract_state', 'threads', 'turn_records',
+      'a2a_events', 'activity', 'conversations', 'events', 'handled_messages', 'messages', 'milestones',
+      'observations', 'session_state', 'sessions', 'thread_extract_state', 'threads', 'turn_records',
     ])
   })
 

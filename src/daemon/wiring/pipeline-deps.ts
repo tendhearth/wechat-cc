@@ -24,6 +24,7 @@ import { materializeAttachments } from '../media'
 import { loadGuardConfig } from '../guard/store'
 import { makeFireMilestonesFor, makeRecordInbound, makeMaybeWriteWelcomeObservation } from './side-effects'
 import { makeMessagesStore } from '../../lib/messages-store'
+import { makeDedupStore } from '../../lib/dedup-store'
 import type { YiHub, YiDispatch } from '../../core/yi-hub'
 import type { ExecResult } from '../../core/a2a-server'
 
@@ -94,6 +95,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
 
   const recordInbound = makeRecordInbound({ stateDir, db })
   const messagesStore = makeMessagesStore(db)
+  const dedupStore = makeDedupStore(db)
   const maybeWriteWelcomeObservation = makeMaybeWriteWelcomeObservation({
     stateDir,
     db,
@@ -238,6 +240,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       log,
     },
     attachments: { materializeAttachments, inboxDir, log },
+    dedup: {
+      isHandled: id => dedupStore.isHandled(id),
+      markHandled: id => dedupStore.markHandled(id, new Date().toISOString()),
+      log,
+    },
     messages: {
       append: rec => messagesStore.append(rec),
       log,

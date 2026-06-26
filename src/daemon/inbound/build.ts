@@ -3,6 +3,7 @@ import { compose } from './compose'
 import { makeMwTrace, type TraceMwDeps } from './mw-trace'
 import { makeMwIdentity, type IdentityMwDeps } from './mw-identity'
 import { makeMwAccess, type AccessMwDeps } from './mw-access'
+import { makeMwDedup, type DedupMwDeps } from './mw-dedup'
 import { makeMwCaptureCtx, type CaptureCtxMwDeps } from './mw-capture-ctx'
 import { makeMwTyping, type TypingMwDeps } from './mw-typing'
 import { makeMwAdmin, type AdminMwDeps } from './mw-admin'
@@ -21,6 +22,7 @@ export interface InboundPipelineDeps {
   trace: TraceMwDeps
   identity: IdentityMwDeps
   access: AccessMwDeps
+  dedup: DedupMwDeps
   capture: CaptureCtxMwDeps
   typing: TypingMwDeps
   admin: AdminMwDeps
@@ -45,6 +47,13 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     // welcome — non-allowlisted senders must not trigger any downstream
     // side effects (no typing indicator, no welcome leak, no API tokens).
     makeMwAccess(d.access),
+    // Dedup runs immediately after access (only allow-listed senders are
+    // tracked) and BEFORE every side-effecting middleware below, so its
+    // `await next()` wraps the whole turn: a redelivered message that was
+    // already answered is short-circuited here, while one whose first turn
+    // crashed is left unmarked and reprocessed. See mw-dedup for the macOS
+    // sleep/wake re-reply bug this guards against.
+    makeMwDedup(d.dedup),
     makeMwMessages(d.messages),
     makeMwCaptureCtx(d.capture),
     makeMwTyping(d.typing),
