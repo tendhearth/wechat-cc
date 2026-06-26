@@ -19,6 +19,25 @@ describe('startCompanionScheduler', () => {
     await stop()
   })
 
+  it('does not stall scheduling when a tick hangs (bounded by tickTimeoutMs)', async () => {
+    let calls = 0
+    const onTick = vi.fn(() => {
+      calls++
+      // First tick never resolves (a wedged agenda read / dispatch). The
+      // scheduler must NOT wait forever — it should time the tick out and keep
+      // firing subsequent ticks.
+      return calls === 1 ? new Promise<void>(() => {}) : Promise.resolve()
+    })
+    const stop = startCompanionScheduler({
+      intervalMs: 1000, jitterRatio: 0, tickTimeoutMs: 500,
+      shouldRun: () => true, onTick, log: () => {},
+    })
+    // tick#1 fires @1000 (hangs) → tick timeout @1500 → reschedule → tick#2 @2500
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(onTick).toHaveBeenCalledTimes(2)
+    await stop()
+  })
+
   it('does not fire when disabled', async () => {
     const onTick = vi.fn()
     const stop = startCompanionScheduler({

@@ -29,7 +29,17 @@ export interface CompanionSchedulerDeps {
   log: (tag: string, line: string) => void
   /** Optional name for log disambiguation (e.g. 'push', 'introspect'). */
   name?: string
+  /**
+   * Max time to await a single onTick before giving up and scheduling the
+   * next one. A wedged tick (stuck agenda read / hung dispatch) must not stall
+   * the recursive scheduler forever — the orphaned tick is left to settle (or
+   * leak) on its own, but cadence is preserved. Default 11 min (just over the
+   * 10-min turn watchdog, so a legitimately slow dispatch isn't cut short).
+   */
+  tickTimeoutMs?: number
 }
+
+const DEFAULT_TICK_TIMEOUT_MS = 11 * 60_000
 
 export function startCompanionScheduler(deps: CompanionSchedulerDeps): () => Promise<void> {
   let stopped = false
@@ -46,13 +56,32 @@ export function startCompanionScheduler(deps: CompanionSchedulerDeps): () => Pro
       if (stopped) return
       try {
         if (deps.shouldRun()) {
-          await deps.onTick()
+          await runBoundedTick()
         }
       } catch (err) {
         deps.log('SCHED', `${deps.name ?? 'companion'} tick failed: ${err instanceof Error ? err.message : String(err)}`)
       }
       scheduleNext()
     }, wait)
+  }
+
+  // Await onTick but never longer than tickTimeoutMs — a wedged tick must not
+  // hold the recursive scheduler (which only re-arms AFTER onTick settles). The
+  // orphaned promise is left to resolve/leak on its own; we just stop waiting.
+  async function runBoundedTick(): Promise<void> {
+    const timeoutMs = deps.tickTimeoutMs ?? DEFAULT_TICK_TIMEOUT_MS
+    let t: ReturnType<typeof setTimeout> | undefined
+    const guard = new Promise<void>((resolve) => {
+      t = setTimeout(() => {
+        deps.log('SCHED', `${deps.name ?? 'companion'} tick exceeded ${timeoutMs}ms — proceeding without it`)
+        resolve()
+      }, timeoutMs)
+    })
+    try {
+      await Promise.race([deps.onTick(), guard])
+    } finally {
+      if (t) clearTimeout(t)
+    }
   }
 
   scheduleNext()
