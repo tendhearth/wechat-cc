@@ -149,4 +149,45 @@ describe('findCodexBinary', () => {
     expect(probed.some(p => p.includes('.claude/plugins/local/wechat'))).toBe(false)
     expect(probed.some(p => p.includes('.local/share/wechat-cc'))).toBe(false)
   })
+
+  // ── service-PATH fallbacks: a launchd/systemd daemon has a minimal PATH
+  //    (e.g. /usr/bin:/bin) that omits ~/.local/bin, and codex's standalone
+  //    installer lives outside PATH/nvm entirely. ──────────────────────────
+
+  it('falls back to ~/.local/bin/codex when not on PATH and no nvm', () => {
+    const fs = new Set([`${HOME}/.local/bin/codex`])
+    const result = findCodexBinary({
+      exists: (p) => fs.has(p),
+      readdir: () => [],
+      pathEnv: '/usr/bin:/bin',      // minimal launchd-style PATH
+      homeDir: HOME,
+      platform: 'linux',
+    })
+    expect(result).toBe(`${HOME}/.local/bin/codex`)
+  })
+
+  it('falls back to the codex standalone installer path (~/.codex/packages/standalone/current/bin/codex)', () => {
+    const p = `${HOME}/.codex/packages/standalone/current/bin/codex`
+    const fs = new Set([p])
+    const result = findCodexBinary({
+      exists: (q) => fs.has(q),
+      readdir: () => [],
+      pathEnv: '/usr/bin:/bin',
+      homeDir: HOME,
+      platform: 'linux',
+    })
+    expect(result).toBe(p)
+  })
+
+  it('PATH still wins over the ~/.local/bin / standalone fallbacks', () => {
+    const fs = new Set(['/usr/local/bin/codex', `${HOME}/.local/bin/codex`])
+    const result = findCodexBinary({
+      exists: (p) => fs.has(p),
+      readdir: () => [],
+      pathEnv: '/usr/local/bin:/usr/bin',
+      homeDir: HOME,
+      platform: 'linux',
+    })
+    expect(result).toBe('/usr/local/bin/codex')
+  })
 })

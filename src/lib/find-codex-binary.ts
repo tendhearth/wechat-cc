@@ -78,5 +78,23 @@ export function findCodexBinary(deps: FindCodexBinaryDeps = {}): string | null {
     }
   }
 
+  // 3. Service-PATH fallbacks (same rationale as nvm: a launchd/systemd daemon
+  //    runs with a minimal PATH — e.g. /usr/bin:/bin — that omits the per-user
+  //    bin, and codex's standalone installer lives outside PATH/nvm entirely).
+  //    - ~/.local/bin: the npm-prefix-to-home target + where the standalone
+  //      installer symlinks `codex`. On PATH in an interactive shell, absent
+  //      from a launchd service's PATH.
+  //    - ~/.codex/packages/standalone/current/bin: the standalone installer's
+  //      real binary (current → the active version).
+  if (platform !== 'win32') {
+    const fallbacks = [
+      platformPath.join(homeDir, '.local', 'bin', exe),
+      platformPath.join(homeDir, '.codex', 'packages', 'standalone', 'current', 'bin', exe),
+    ]
+    for (const candidate of fallbacks) {
+      if (exists(candidate)) return candidate
+    }
+  }
+
   return null
 }
