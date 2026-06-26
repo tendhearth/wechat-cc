@@ -2,24 +2,30 @@
 /**
  * wechat-mcp — standalone stdio MCP server (RFC 03 §5).
  *
- * Loaded by both the Claude Agent SDK and Codex SDK as a stdio MCP
- * server. Exposes the wechat tool family (P1.B will populate it: reply,
- * memory_*, voice_*, projects_*, ...). For P1.A there's only one tool —
- * `ping` — which calls daemon's internal-api `/v1/health` to prove the
- * full provider → stdio MCP → loopback HTTP → daemon round-trip works.
+ * Loaded by both the Claude Agent SDK and Codex SDK as a stdio MCP server.
+ * This file is the orchestrator: it sets up the client + server, registers the
+ * `ping` probe inline, then delegates each tool family to its own module
+ * (tools-memory / tools-projects / tools-voice-share / tools-messaging /
+ * tools-companion / tools-a2a, and tools-daemon for admin sessions). Shared
+ * error/log plumbing lives in tool-helpers.
  *
  * Two env vars must be set by the spawning daemon:
  *   WECHAT_INTERNAL_API        e.g. http://127.0.0.1:54321
  *   WECHAT_INTERNAL_TOKEN_FILE absolute path to mode-0600 token file
  *
- * Stdout is the MCP transport — DO NOT write logs there. All logs go
- * to stderr.
+ * Stdout is the MCP transport — DO NOT write logs there. All logs go to stderr.
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { createInternalApiClient } from './client'
-import { logErr, passthroughErrorResult, formatError } from './tool-helpers'
+import { logErr, formatError } from './tool-helpers'
+import { registerMemoryTools } from './tools-memory'
+import { registerProjectTools } from './tools-projects'
+import { registerVoiceShareTools } from './tools-voice-share'
+import { registerMessagingTools } from './tools-messaging'
+import { registerCompanionTools } from './tools-companion'
+import { registerA2ASendTool } from './tools-a2a'
 import { registerDaemonTools } from './tools-daemon'
 
 const baseUrl = process.env.WECHAT_INTERNAL_API
@@ -52,14 +58,8 @@ const server = new McpServer(
 // (defence in depth).
 const SESSION_IS_ADMIN = process.env.WECHAT_SESSION_TIER === 'admin'
 
-// ──────────────────────────────────────────────────────────────────────
-// Tools
-// ──────────────────────────────────────────────────────────────────────
-//
-// P1.A: just `ping`. Tool list will grow in P1.B. Each tool's
-// implementation is a thin wrapper over the internal-api client; the
-// real logic lives in src/features/tools.ts → bridged via internal-api.
-
+// `ping` stays inline — the canonical "is the MCP-over-stdio + internal-api
+// channel alive" probe that integration tests assert against.
 server.registerTool(
   'ping',
   {
@@ -88,513 +88,18 @@ server.registerTool(
   },
 )
 
-// ─── memory_* (RFC 03 P1.B B2) ──────────────────────────────────────────
-// Mirror legacy wire shapes (features/tools.ts:313-357) so the system
-// prompt's tool documentation continues to read true. These tools were
-// in the in-process `wechat` server before B2; now they live exclusively
-// here. P1.B keeps them sandboxed under `<stateDir>/memory/` via
-// MemoryFS — same instance as before, called over loopback.
+// Tool families — each module registers its own group (thin wrappers over the
+// internal-api client). Order is preserved from the original single-file table.
+registerMemoryTools(server, client)
+registerProjectTools(server, client)
+registerVoiceShareTools(server, client)
+registerMessagingTools(server, client)
+registerCompanionTools(server, client)
+registerA2ASendTool(server, client)
 
-server.registerTool(
-  'memory_read',
-  {
-    title: 'Read memory file',
-    description: '读 memory/ 下的一个文件。不存在返回 exists:false。相对路径，只允许 .md。',
-    inputSchema: { path: z.string() },
-  },
-  async ({ path }) => {
-    try {
-      const resp = await client.request<{ exists: boolean; content?: string; error?: string }>(
-        'POST', '/v1/memory/read', { path },
-      )
-      // Preserve legacy wire shape: agent sees the same JSON it always saw.
-      return { content: [{ type: 'text', text: JSON.stringify(resp) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'memory_read')
-    }
-  },
-)
-
-server.registerTool(
-  'memory_write',
-  {
-    title: 'Write memory file',
-    description: '写 memory/ 下的一个文件（atomic, 覆盖）。相对路径，只允许 .md。单文件 100KB 上限。父目录自动创建。',
-    inputSchema: { path: z.string(), content: z.string() },
-  },
-  async ({ path, content }) => {
-    try {
-      const resp = await client.request<{ ok: boolean; error?: string }>(
-        'POST', '/v1/memory/write', { path, content },
-      )
-      return { content: [{ type: 'text', text: JSON.stringify(resp) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'memory_write')
-    }
-  },
-)
-
-server.registerTool(
-  'memory_list',
-  {
-    title: 'List memory files',
-    description: '列 memory/ 下所有 .md 文件（递归）。传 dir 只列该子目录。返回相对路径数组。',
-    // Refine `dir`: cap length + reject null bytes. Defense-in-depth for
-    // the downstream /v1/memory/list URL — encodeURIComponent doesn't
-    // protect against URL-shape attacks at the daemon's HTTP layer if
-    // the daemon ever trusts the path beyond its sandboxed memory root.
-    inputSchema: {
-      dir: z.string()
-        .max(512, 'dir must be <= 512 chars')
-        .refine(s => !s.includes('\0'), { message: 'dir must not contain null bytes' })
-        .optional(),
-    },
-  },
-  async ({ dir }) => {
-    try {
-      const qs = dir ? `?dir=${encodeURIComponent(dir)}` : ''
-      const resp = await client.request<{ files: string[]; error?: string }>(
-        'GET', `/v1/memory/list${qs}`,
-      )
-      return { content: [{ type: 'text', text: JSON.stringify(resp) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'memory_list')
-    }
-  },
-)
-
-server.registerTool(
-  'memory_delete',
-  {
-    title: 'Soft-delete a memory file',
-    description:
-      '把 memory/ 下的一个 .md 文件"软删除"——重命名为 .deleted-<时间> 后缀，不进入 memory_list() 结果；用户可在终端 mv 还原。\n' +
-      '何时调用：用户明确说"忘了/删掉/不要这个了"。不要因为"觉得过时了"主观删除。\n' +
-      '硬删除：本工具不提供。若需彻底擦除（隐私 / 法律原因），让用户手动 rm `~/.claude/channels/wechat/memory/<chat>/<path>.deleted-*`。\n' +
-      '必填 reason：写下用户说了什么 / 你为何认为该删，会进 audit 日志（dashboard 可查），方便事后追溯。',
-    inputSchema: {
-      chat_id: z.string(),
-      path: z.string()
-        .max(500, 'path must be <= 500 chars')
-        .refine(s => !s.includes('\0'), { message: 'path must not contain null bytes' }),
-      reason: z.string()
-        .min(4, 'reason must be at least 4 chars — quote the user or state your inference')
-        .max(500, 'reason must be <= 500 chars'),
-    },
-  },
-  async ({ chat_id, path, reason }) => {
-    try {
-      const resp = await client.request<{
-        ok: boolean
-        tombstone?: string
-        existed?: boolean
-        error?: string
-      }>('POST', '/v1/memory/delete', { chat_id, path, reason })
-      return { content: [{ type: 'text', text: JSON.stringify(resp) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'memory_delete')
-    }
-  },
-)
-
-// ─── projects + user name (RFC 03 P1.B B3) ───────────────────────────────
-// Legacy descriptions kept verbatim — agent's mental model unchanged.
-
-server.registerTool(
-  'list_projects',
-  {
-    title: 'List projects',
-    description: '列出已注册的项目及当前项目。',
-    inputSchema: {},
-  },
-  async () => {
-    try {
-      const arr = await client.request<unknown>('GET', '/v1/projects/list')
-      return { content: [{ type: 'text', text: JSON.stringify(arr) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'list_projects')
-    }
-  },
-)
-
-server.registerTool(
-  'switch_project',
-  {
-    title: 'Switch project',
-    description: '切换到指定项目别名。',
-    inputSchema: { alias: z.string() },
-  },
-  async ({ alias }) => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/projects/switch', { alias })
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'switch_project')
-    }
-  },
-)
-
-server.registerTool(
-  'add_project',
-  {
-    title: 'Register a new project',
-    description: '注册一个新项目（别名 + 绝对路径）。',
-    inputSchema: { alias: z.string(), path: z.string() },
-  },
-  async ({ alias, path }) => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/projects/add', { alias, path })
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'add_project')
-    }
-  },
-)
-
-server.registerTool(
-  'remove_project',
-  {
-    title: 'Remove a project',
-    description: '移除一个已注册的项目。',
-    inputSchema: { alias: z.string() },
-  },
-  async ({ alias }) => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/projects/remove', { alias })
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'remove_project')
-    }
-  },
-)
-
-server.registerTool(
-  'set_user_name',
-  {
-    title: 'Persist a wechat user display name',
-    description: '记住新用户的显示名称。',
-    inputSchema: { chat_id: z.string(), name: z.string() },
-  },
-  async ({ chat_id, name }) => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/user/set_name', { chat_id, name })
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'set_user_name')
-    }
-  },
-)
-
-// ─── voice config (RFC 03 P1.B B4) ───────────────────────────────────────
-// Note: `reply_voice` lives in B1 — it crosses the ilink boundary to
-// actually send a voice message and is the riskier slice. These two
-// just read/write the local TTS config.
-
-server.registerTool(
-  'voice_config_status',
-  {
-    title: 'Get TTS config status',
-    description: '查询当前 TTS 配置状态。不返回 api_key，只返回 provider、默认音色、base_url/model（如果是 http_tts）、saved_at。',
-    inputSchema: {},
-  },
-  async () => {
-    try {
-      const r = await client.request<unknown>('GET', '/v1/voice/status')
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'voice_config_status')
-    }
-  },
-)
-
-server.registerTool(
-  'save_voice_config',
-  {
-    title: 'Save TTS config (with test-synth validation)',
-    description: '保存 TTS 配置。provider=http_tts 时必须提供 base_url + model（常见：VoxCPM2 通过本地 vllm serve --omni 部署）；provider=qwen 时必须提供 api_key。保存前会做一次 1 秒测试合成验证。',
-    inputSchema: {
-      provider: z.enum(['http_tts', 'qwen']),
-      base_url: z.string().url().optional(),
-      model: z.string().optional(),
-      api_key: z.string().optional(),
-      default_voice: z.string().optional(),
-    },
-  },
-  async (args) => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/voice/save_config', args)
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'save_voice_config')
-    }
-  },
-)
-
-// ─── share_page / resurface_page (RFC 03 P1.B B5) ────────────────────────
-
-server.registerTool(
-  'share_page',
-  {
-    title: 'Publish Markdown to a one-time URL',
-    description: '把 Markdown 内容发布为一次性 URL。返回 {url, slug}。needs_approval=true 时页面会渲染 ✓ Approve 按钮（默认 false，纯内容文档不带按钮）。chat_id 传入后页脚会出现"📄 发 PDF 到微信"按钮，点击会把 PDF 推到该 chat。',
-    inputSchema: {
-      title: z.string(),
-      content: z.string(),
-      needs_approval: z.boolean().optional(),
-      chat_id: z.string().optional(),
-      account_id: z.string().optional(),
-    },
-  },
-  async (args) => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/share/page', args)
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'share_page')
-    }
-  },
-)
-
-server.registerTool(
-  'resurface_page',
-  {
-    title: 'Resurface a previously shared page',
-    description: '根据 slug 或标题片段重新生成一个有效 URL。',
-    inputSchema: {
-      slug: z.string().optional(),
-      title_fragment: z.string().optional(),
-    },
-  },
-  async (args) => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/share/resurface', args)
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'resurface_page')
-    }
-  },
-)
-
-// ─── ilink-bound message family (RFC 03 P1.B B1) ─────────────────────────
-// reply / reply_voice / send_file / edit_message / broadcast — the
-// "reply-tool family" detected by both providers' replyToolCalled flag.
-// After B1 these are exposed by the stdio `wechat` server (renamed back
-// from `wechat_ipc`), matching what claude-agent-provider's REPLY_TOOL_NAMES
-// set and codex-agent-provider's WECHAT_MCP_SERVER='wechat' check expect.
-// Legacy 中文 descriptions kept verbatim so the system prompt stays accurate.
-
-// RFC 03 P3: when daemon spawns this MCP child it sets WECHAT_PARTICIPANT_TAG
-// to the providerId (e.g. 'claude' / 'codex'). The reply tool forwards
-// the tag in its body so internal-api can prefix `[Claude]` / `[Codex]`
-// in parallel + chatroom modes. In solo mode the tag is ignored.
-const PARTICIPANT_TAG = process.env.WECHAT_PARTICIPANT_TAG
-
-server.registerTool(
-  'reply',
-  {
-    title: 'Reply text to a wechat user',
-    description: '给当前微信用户回复文本。chat_id 必填。长文本会自动分段。',
-    inputSchema: { chat_id: z.string(), text: z.string() },
-  },
-  async ({ chat_id, text }) => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/wechat/reply', {
-        chat_id, text,
-        ...(PARTICIPANT_TAG ? { participant_tag: PARTICIPANT_TAG } : {}),
-      })
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'reply')
-    }
-  },
-)
-
-server.registerTool(
-  'reply_voice',
-  {
-    title: 'Reply via voice message',
-    description: '用语音回复用户。仅在用户明确要求语音回复时使用（"念一下"/"语音回复"/"speak it" 等）。文本 ≤ 500 字；不适合代码块、长 URL、结构化列表。',
-    inputSchema: { chat_id: z.string(), text: z.string() },
-  },
-  async ({ chat_id, text }) => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/wechat/reply_voice', { chat_id, text })
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'reply_voice')
-    }
-  },
-)
-
-server.registerTool(
-  'send_file',
-  {
-    title: 'Send a local file to a wechat user',
-    description: '给当前用户发送文件（本地绝对路径）。',
-    inputSchema: { chat_id: z.string(), path: z.string() },
-  },
-  async ({ chat_id, path }) => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/wechat/send_file', { chat_id, path })
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'send_file')
-    }
-  },
-)
-
-server.registerTool(
-  'edit_message',
-  {
-    title: 'Edit a previously-sent message',
-    description: '编辑已发送的消息（需要 msg_id）。',
-    inputSchema: { chat_id: z.string(), msg_id: z.string(), text: z.string() },
-  },
-  async ({ chat_id, msg_id, text }) => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/wechat/edit_message', { chat_id, msg_id, text })
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'edit_message')
-    }
-  },
-)
-
-server.registerTool(
-  'broadcast',
-  {
-    title: 'Broadcast text to all online users',
-    description: '向所有在线用户群发文本。account_id 可选（不填则默认主账号）。',
-    inputSchema: { text: z.string(), account_id: z.string().optional() },
-  },
-  async (args) => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/wechat/broadcast', args)
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'broadcast')
-    }
-  },
-)
-
-// ─── companion proactive tick (RFC 03 P1.B B6) ───────────────────────────
-
-server.registerTool(
-  'companion_enable',
-  {
-    title: 'Enable Companion proactive ticks',
-    description: '开启 Companion 主动关心：你在聊天里记下的待跟进（agenda.md）到点时系统会唤醒你来兑现。第一次调用会创建 config.json 并返回欢迎消息。幂等。',
-    inputSchema: {},
-  },
-  async () => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/companion/enable')
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'companion_enable')
-    }
-  },
-)
-
-server.registerTool(
-  'companion_disable',
-  {
-    title: 'Disable Companion proactive ticks',
-    description: '关闭 Companion 主动推送。下一次 scheduler tick 不再触发。',
-    inputSchema: {},
-  },
-  async () => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/companion/disable')
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'companion_disable')
-    }
-  },
-)
-
-server.registerTool(
-  'companion_status',
-  {
-    title: 'Companion status',
-    description: '查询 Companion 状态：是否开启、时区、默认 chat_id、snooze 截止时间。人格 / 触发器等历史详情请从 memory/ 读。',
-    inputSchema: {},
-  },
-  async () => {
-    try {
-      const r = await client.request<unknown>('GET', '/v1/companion/status')
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'companion_status')
-    }
-  },
-)
-
-server.registerTool(
-  'companion_snooze',
-  {
-    title: 'Snooze proactive pushes',
-    description: '暂停所有主动推送若干分钟。用户说 "别烦我"/"停"/"snooze N 小时"/"shut up" 等时调用。',
-    inputSchema: { minutes: z.number().int().min(1).max(24 * 60) },
-  },
-  async ({ minutes }) => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/companion/snooze', { minutes })
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'companion_snooze')
-    }
-  },
-)
-
-server.registerTool(
-  'companion_import_local',
-  {
-    title: 'Toggle local history auto-import',
-    description: '开启/关闭"自动导入本机 claude/codex 的对话与记忆"。开启后：每次启动 + 每 24h 增量扫描本机历史入库（零 LLM 成本），并每 24h 重整一次"懂你"overview（约 1 次廉价调用/天）。用户说"导入我的本地记录/开启自动导入"→ enabled=true；"别再导入了"→ false。默认关。',
-    inputSchema: { enabled: z.boolean() },
-  },
-  async ({ enabled }) => {
-    try {
-      const r = await client.request<unknown>('POST', '/v1/companion/import-local', { enabled })
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'companion_import_local')
-    }
-  },
-)
-
-// ─── a2a outbound send ────────────────────────────────────────────────────────
-
-server.registerTool(
-  'a2a_send',
-  {
-    title: 'Send to A2A agent',
-    description: '给已注册的外部 A2A agent 发送消息。用于操作者让你"回复 [A2A:xxx]"那条通知时——agent_id 就是 [A2A:<id>] 前缀里的 id。返回 { ok, http_status?, error?, registered? }。',
-    inputSchema: {
-      agent_id: z.string().describe('已注册的 agent id，例如 deploy-bot'),
-      text: z.string().describe('要发给该 agent 的消息正文'),
-    },
-  },
-  async ({ agent_id, text }) => {
-    try {
-      const resp = await client.request<unknown>('POST', '/v1/a2a/send', { agent_id, text })
-      return { content: [{ type: 'text', text: JSON.stringify(resp) }] }
-    } catch (err) {
-      return passthroughErrorResult(err, 'a2a_send')
-    }
-  },
-)
-
-// ─── daemon self-diagnosis + remediation (admin-only) ─────────────────────────
-// Registered ONLY for an admin-tier session (WECHAT_SESSION_TIER=admin, set by the
-// daemon at spawn). This is the robust, provider-agnostic gate — for non-admin
-// sessions (including codex, which has no canUseTool) the tools don't exist.
-// The claude canUseTool layer (daemon_introspect/daemon_remediate denied for
-// trusted/guest) is a second, defence-in-depth gate on top.
+// Daemon self-diagnosis + remediation — admin-tier sessions only (the
+// provider-agnostic gate; non-admin sessions never see these tools).
 if (SESSION_IS_ADMIN) {
-  // The self-diagnosis + remediation surface — its own file (privileged,
-  // auditable). Same gate; for non-admin sessions the tools never register.
   registerDaemonTools(server, client)
 }
 
