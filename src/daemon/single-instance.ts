@@ -76,6 +76,25 @@ export function writeHeartbeat(heartbeatPath: string, now: number = Date.now()):
   try { writeFileSync(heartbeatPath, String(now), 'utf8') } catch { /* best-effort */ }
 }
 
+/** How often the dedicated ticker stamps the heartbeat — well under
+ *  HEARTBEAT_STALE_MS so liveness is proven continuously. */
+export const HEARTBEAT_INTERVAL_MS = 30_000
+
+/**
+ * Stamp the heartbeat on a fixed interval, DECOUPLED from poll work. The poll
+ * loop runs each agent turn inline, so its per-cycle stamp can lag by a whole
+ * turn — long enough for a sibling daemon to judge this one wedged and steal the
+ * lock. This ticker fires on the event loop regardless (a turn `await` leaves it
+ * free), and on macOS wake the interval that was pending during sleep fires
+ * immediately, re-stamping before a just-respawned second daemon checks. Returns
+ * a stop() to clear it. Unref'd so it never keeps the process alive on its own.
+ */
+export function startHeartbeatTicker(heartbeatPath: string, intervalMs: number = HEARTBEAT_INTERVAL_MS): () => void {
+  const timer = setInterval(() => writeHeartbeat(heartbeatPath), intervalMs)
+  ;(timer as { unref?: () => void }).unref?.()
+  return () => clearInterval(timer)
+}
+
 /**
  * True if the heartbeat was refreshed within `staleMs`. A missing,
  * unreadable, or non-numeric heartbeat returns `true` (FRESH) on purpose:

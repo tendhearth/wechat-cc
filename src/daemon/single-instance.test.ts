@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest'
-import { acquireInstanceLock, releaseInstanceLock, writeHeartbeat, isHeartbeatFresh } from './single-instance'
+import { describe, it, expect, afterEach, vi } from 'vitest'
+import { acquireInstanceLock, releaseInstanceLock, writeHeartbeat, isHeartbeatFresh, startHeartbeatTicker } from './single-instance'
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +8,28 @@ const dir = mkdtempSync(join(tmpdir(), 'wcc-lock-'))
 const pidPath = join(dir, 'server.pid')
 
 afterEach(() => { releaseInstanceLock(pidPath) })
+
+describe('startHeartbeatTicker', () => {
+  it('stamps the heartbeat on each interval, independent of poll work, until stopped', () => {
+    vi.useFakeTimers()
+    try {
+      const hb = join(dir, 'ticker.heartbeat')
+      const stop = startHeartbeatTicker(hb, 1000)
+      vi.advanceTimersByTime(1000)
+      const t1 = readFileSync(hb, 'utf8')
+      vi.advanceTimersByTime(1000)
+      const t2 = readFileSync(hb, 'utf8')
+      // Keeps stamping on a fixed cadence (this is what survives a long inline
+      // turn that would otherwise delay the poll-loop's heartbeat stamp).
+      expect(Number(t2)).toBeGreaterThan(Number(t1))
+      stop()
+      vi.advanceTimersByTime(5000)
+      expect(readFileSync(hb, 'utf8')).toBe(t2) // no writes after stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
 
 describe('single-instance', () => {
   it('acquires when no pid file exists', () => {

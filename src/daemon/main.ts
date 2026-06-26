@@ -2,7 +2,7 @@
 if (!process.env.CLAUDE_CODE_ENTRYPOINT) { process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts' }
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { acquireInstanceLock, releaseInstanceLock, isHeartbeatFresh, writeHeartbeat, HEARTBEAT_FILE, HEARTBEAT_STALE_MS } from './single-instance'
+import { acquireInstanceLock, releaseInstanceLock, isHeartbeatFresh, writeHeartbeat, startHeartbeatTicker, HEARTBEAT_FILE, HEARTBEAT_STALE_MS } from './single-instance'
 import { openDb } from '../lib/db'
 import { LifecycleSet, wireRef } from '../lib/lifecycle'
 import { log } from '../lib/log'
@@ -84,9 +84,13 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   const lock = acquireInstanceLock(PID_PATH, { isHealthy: () => isHeartbeatFresh(HEARTBEAT_PATH, heartbeatStaleMs) })
   if (!lock.ok) throw new Error(`[wechat-cc] ${lock.reason} (pid=${lock.pid})`)
   // Stamp an initial heartbeat immediately so this just-started daemon reads
-  // as healthy before its first poll cycle lands (the poll loop refreshes it
-  // on every round-trip thereafter — see lifecycle-deps onPollCycle).
+  // as healthy before its first poll cycle lands. A dedicated ticker then
+  // refreshes it on a fixed cadence, DECOUPLED from poll work — so a long inline
+  // turn (or macOS sleep/wake) can't let the heartbeat go stale and invite a
+  // second daemon to steal the lock. The poll loop's per-cycle stamp stays as a
+  // belt-and-suspenders signal.
   writeHeartbeat(HEARTBEAT_PATH)
+  const stopHeartbeat = startHeartbeatTicker(HEARTBEAT_PATH)
   // v0.5.6: collapse duplicate ilink bot bindings to one per wechat userId
   // BEFORE loading accounts. ilink only allows one active bot per user — when
   // the user re-scans, the old bot's session is invalidated server-side. The
@@ -134,6 +138,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   const shutdown = async () => {
     if (shuttingDown) return
     shuttingDown = true; log('DAEMON', 'shutdown initiated')
+    stopHeartbeat()
     if (didStartup) { try { await lc.stopAll() } catch { /* logged by lc */ } }
     // Stop A2A server if it was started (a2a_listen was configured).
     try { await bootRef?.a2aServer?.stop() } catch (err) { log('A2A', `server stop error: ${err instanceof Error ? err.message : String(err)}`) }
