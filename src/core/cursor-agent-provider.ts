@@ -29,6 +29,7 @@ export const CURSOR_CAPABILITIES: ProviderCapabilities = {
   sandboxLevels: new Set(['workspace-write', 'full']),
   supportsDelegation: false,
   supportsResume: true,
+  defaultPeer: 'claude',
 }
 
 export interface CursorTierSdkOpts {

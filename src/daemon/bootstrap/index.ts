@@ -29,7 +29,7 @@ import { buildSystemPrompt } from '../../core/prompt-builder'
 import type { ProviderId } from '../../core/conversation'
 import { makeResolver } from '../../core/project-resolver'
 import { makeCanUseTool } from '../../core/permission-relay'
-import { assertMatrixComplete, type PermissionMode } from '../../core/capability-matrix'
+import { assertMatrixComplete, capabilitiesFor, capabilityProviderIds, type PermissionMode } from '../../core/capability-matrix'
 import { formatInbound } from '../../core/prompt-format'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
@@ -416,13 +416,23 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const wechatStdioForClaude: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'claude') : null
   const wechatStdioForCodex: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'codex') : null
 
-  // RFC 03 P4 — delegate-mcp stdio server. Loaded alongside wechat-mcp so
-  // the primary agent can call `delegate_<peer>(prompt)` to consult the
-  // OTHER provider once. The peer is fixed per-spawn.
-  const delegateStdioForClaude: McpStdioSpec | null = deps.internalApi ? delegateStdioMcpSpec(deps.internalApi, 'codex') : null  // Claude session → can delegate to Codex
-  const delegateStdioForCodex: McpStdioSpec | null = deps.internalApi ? delegateStdioMcpSpec(deps.internalApi, 'claude') : null  // Codex session → can delegate to Claude
+  // RFC 03 P4 — delegate-mcp stdio server. Loaded alongside wechat-mcp so the
+  // primary agent can call `delegate_<peer>(prompt)` to consult the OTHER
+  // provider once. The peer is fixed per-spawn AND sourced from each provider's
+  // ProviderCapabilities.defaultPeer — the single declaration site, so adding a
+  // provider needs no edit here (its delegate spec is built iff it declares a
+  // defaultPeer). Replaces the old per-provider literals + a 2-provider ternary.
+  const delegateStdioByProvider: Partial<Record<ProviderId, McpStdioSpec>> = {}
+  if (deps.internalApi) {
+    for (const p of capabilityProviderIds()) {
+      const peer = capabilitiesFor(p).defaultPeer
+      if (peer) delegateStdioByProvider[p] = delegateStdioMcpSpec(deps.internalApi, peer)
+    }
+  }
+  const delegateStdioForClaude: McpStdioSpec | null = delegateStdioByProvider.claude ?? null
+  const delegateStdioForCodex: McpStdioSpec | null = delegateStdioByProvider.codex ?? null
+  const delegateStdioForCursor: McpStdioSpec | null = delegateStdioByProvider.cursor ?? null
   const wechatStdioForCursor: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'cursor') : null
-  const delegateStdioForCursor: McpStdioSpec | null = deps.internalApi ? delegateStdioMcpSpec(deps.internalApi, 'claude') : null  // Cursor session → can delegate to Claude
 
   // Pin a Claude model from agent-config.json (or fall back to a stable
   // full ID). Without this, the spawned Claude Code subprocess inherits
@@ -744,19 +754,19 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // The single, provider-agnostic source of every session's system prompt.
   // SessionManager calls this once per spawn (like mcpEnv) and forwards the
   // result via SpawnContext; each provider injects it through its own
-  // transport. peerProviderId / delegateAvailable are provider-specific;
+  // transport. peerProviderId + delegateAvailable derive from the provider's
+  // ProviderCapabilities.defaultPeer + whether its delegate spec was actually
+  // wired (no per-provider ternary — adding a provider needs no edit here).
   // daemonOpsAvailable mirrors the admin predicate the wechat MCP server gates
   // its daemon-control tools on, so the self-heal section appears iff those
   // tools are actually registered for this spawn.
   const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile): string =>
     buildSystemPrompt({
       providerId,
-      peerProviderId: providerId === 'codex' ? 'claude' : 'codex',
+      // Unused when delegateAvailable is false; fall back to the daemon default.
+      peerProviderId: capabilitiesFor(providerId).defaultPeer ?? defaultProviderId,
       companionEnabled: deps.ilink.companion.status().enabled,
-      delegateAvailable:
-        providerId === 'claude' ? !!delegateStdioForClaude
-        : providerId === 'codex' ? !!delegateStdioForCodex
-        : false,
+      delegateAvailable: !!delegateStdioByProvider[providerId],
       daemonOpsAvailable: tierProfile.allow.has('daemon_introspect'),
     })
 

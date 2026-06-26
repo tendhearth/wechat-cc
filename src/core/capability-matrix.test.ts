@@ -4,11 +4,22 @@ import {
   lookup,
   assertSupported,
   assertMatrixComplete,
+  capabilitiesFor,
   UnsupportedCombinationError,
   type MatrixRow,
   type PermissionMode,
 } from './capability-matrix'
 import type { Mode, ProviderId } from './conversation'
+
+describe('ProviderCapabilities.defaultPeer', () => {
+  it('declares each provider\'s delegate_<peer> target (single source for primary_tool pairing)', () => {
+    // Removes the old 2-provider `=== "codex" ? "claude" : "codex"` ternary in
+    // bootstrap. Adding a provider = declare its defaultPeer, not edit a branch.
+    expect(capabilitiesFor('claude').defaultPeer).toBe('codex')
+    expect(capabilitiesFor('codex').defaultPeer).toBe('claude')
+    expect(capabilitiesFor('cursor').defaultPeer).toBe('claude')
+  })
+})
 
 describe('CAPABILITY_MATRIX', () => {
   it('contains exactly 24 rows (4 modes × 3 providers × 2 perms)', () => {

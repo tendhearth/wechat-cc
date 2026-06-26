@@ -13,6 +13,7 @@ export const CLAUDE_CAPABILITIES: ProviderCapabilities = {
   sandboxLevels: new Set(),
   supportsDelegation: true,
   supportsResume: true,
+  defaultPeer: 'codex',
 }
 
 /**

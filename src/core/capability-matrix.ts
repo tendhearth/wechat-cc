@@ -123,6 +123,16 @@ export function capabilitiesFor(provider: ProviderId): ProviderCapabilities {
 }
 
 /**
+ * All providers with a static capability declaration. Lets boot-time wiring
+ * iterate providers declaration-driven (e.g. build each provider's delegate
+ * spec from its `defaultPeer`) so adding a provider = add a capability entry,
+ * not edit a hand-written list.
+ */
+export function capabilityProviderIds(): ProviderId[] {
+  return Object.keys(CAPABILITIES_BY_PROVIDER) as ProviderId[]
+}
+
+/**
  * Derive the full Capability for a (provider × mode × permissionMode)
  * combination from the provider's static ProviderCapabilities plus the
  * mode trait. This is the engine `lookup()` is built on; pure function,

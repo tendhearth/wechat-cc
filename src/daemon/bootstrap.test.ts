@@ -468,7 +468,14 @@ describe('bootstrap', () => {
     // Admin tier → the self-heal section is present; the codex peer gets a
     // claude-peer prompt without the delegate_codex tool name.
     expect(prompt).toContain('自我诊断')
-    expect(b.buildInstructions('codex', TIER_PROFILES.admin)).not.toContain('delegate_codex')
+    const codexPrompt = b.buildInstructions('codex', TIER_PROFILES.admin)
+    expect(codexPrompt).not.toContain('delegate_codex')
+    expect(codexPrompt).toContain('delegate_claude')
+    // cursor's session IS wired with a delegate-claude child (bootstrap builds
+    // delegateStdioForCursor), so its prompt must advertise delegate_claude —
+    // peer + availability now both derive from ProviderCapabilities.defaultPeer,
+    // not the old 2-provider ternary that wrongly left cursor delegate-silent.
+    expect(b.buildInstructions('cursor', TIER_PROFILES.admin)).toContain('delegate_claude')
 
     // sdkOptionsForProject just forwards whatever appendInstructions it's given
     // into the SDK preset+append slot — no assembly of its own.

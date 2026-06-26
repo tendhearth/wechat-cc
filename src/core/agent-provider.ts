@@ -1,5 +1,6 @@
 import type { TierProfile } from './user-tier'
 import type { PermissionMode } from './permission-mode'
+import type { ProviderId } from './conversation'
 
 // Re-export so existing imports `import type { PermissionMode } from
 // './agent-provider'` keep working.
@@ -156,10 +157,19 @@ export type SandboxLevel = 'none' | 'read-only' | 'workspace-write' | 'full'
  * the (mode × provider × permissionMode) row from it without a 24-row
  * hand-written constant.
  *
- * Adding a new provider (gemini-cli, etc.) means filling these four
- * fields, not authoring 8 new matrix rows.
+ * Adding a new provider (gemini-cli, etc.) means filling these fields,
+ * not authoring 8 new matrix rows or editing per-provider branches in
+ * bootstrap (peer pairing / delegate availability derive from here).
  */
 export interface ProviderCapabilities {
+  /**
+   * In `primary_tool` mode this provider delegates to `delegate_<peer>`;
+   * the single source for provider pairing (replaces the old 2-provider
+   * `=== 'codex' ? 'claude' : 'codex'` ternary in bootstrap). Undefined ⇒
+   * no default delegation peer. NOTE: orthogonal to `supportsDelegation`,
+   * which is whether this provider can be a delegate TARGET.
+   */
+  defaultPeer?: ProviderId
   /**
    * SDK supports per-tool callback (Claude's `canUseTool`). Decides:
    *   - whether `askUser='per-tool'` is realisable in strict mode

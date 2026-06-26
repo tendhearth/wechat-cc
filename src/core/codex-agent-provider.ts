@@ -15,6 +15,7 @@ export const CODEX_CAPABILITIES: ProviderCapabilities = {
   sandboxLevels: new Set(['read-only', 'workspace-write', 'full']),
   supportsDelegation: true,
   supportsResume: true,
+  defaultPeer: 'claude',
 }
 
 export interface CodexTierSdkOpts {
