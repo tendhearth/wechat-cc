@@ -1,63 +1,65 @@
-# Self-heal capability nudge in the agent prompt
+# Unified per-spawn system-prompt seam (+ self-heal nudge as its first beneficiary)
 
 **Date:** 2026-06-25
-**Status:** approved
-**Related:** [[ai-native-self-healing]] memory — diagnostic_* + remediation tools
-(step 1/2) already shipped; this is the "optional next (a)" prompt nudge.
+**Status:** approved (revised after architecture review)
+**Related:** [[ai-native-self-healing]] — diagnostic_*/remediation tools already
+shipped; this adds the "when to use" nudge AND unifies how every provider
+receives its per-spawn system prompt.
 
-## Problem
+## Why this is an architecture change, not a one-off
 
-The daemon already exposes 7 admin-only self-heal MCP tools — `diagnostic_turns`,
-`diagnostic_sessions`, `diagnostic_health`, `model_get`, `model_set`,
-`session_release`, `daemon_restart` — registered on the wechat MCP child only
-when `WECHAT_SESSION_TIER === 'admin'` (provider-agnostic; injected into both
-claude and codex children). But nothing tells the agent *when* to reach for
-them. The system prompt (`src/core/prompt-builder.ts`) never mentions them, and
-the tool descriptions are "what it does", not "when to use". So when the owner
-reports a runtime symptom ("卡住了 / 不回我 / 变慢"), the agent tends to just
-apologize instead of running a diagnosis — the invested tooling sits idle.
+The immediate goal is small: tell the admin-tier agent it can self-diagnose/heal
+and when to reach for the `diagnostic_*` / remediation tools. But the agent's
+system prompt is delivered **differently per provider**, and the tier-gated
+nudge exposed that fragmentation:
 
-We are NOT adding keyword matching or an auto-trigger. The agent keeps reasoning
-freely; we only give it a short capability-awareness pointer so it knows the
-tools exist and the kind of situation they fit.
-
-## Both providers, gated by per-spawn admin tier
-
-The tools register on admin sessions for **both** claude and codex (verified:
-`src/mcp-servers/wechat/main.ts:55,597` gates on `WECHAT_SESSION_TIER==='admin'`;
-`src/core/codex-agent-provider.ts:209-219` merges that env into the codex wechat
-child via `mergeEnvIntoMcpServers`). A codex-only install with an admin chat can
-self-heal. So the nudge must reach both providers — and only when the session is
-admin tier, to stay consistent with which sessions actually have the tools.
-
-The two providers inject their prompt differently:
-
-- **claude** builds `systemPrompt` per spawn inside `sdkOptionsForProject`
-  (`bootstrap/index.ts:448`), which already receives `tierProfile`. Natural fit.
+- **claude** builds its prompt per spawn inside `sdkOptionsForProject`
+  (`bootstrap/index.ts:448`), which receives `tierProfile` — so a tier-gated
+  section is natural.
 - **codex** has no system-prompt slot; it prepends `appendInstructions` to the
-  first user message, and that base text is fixed at provider construction
-  (`bootstrap/index.ts:639`), tier-agnostic. But `createSession` receives
-  `spawnOpts.tierProfile` (`codex-agent-provider.ts:201`) and the first-message
-  injection happens there (`:270`), so the admin section can be appended
-  per-spawn.
+  first user message, and that text is fixed at **provider construction**
+  (`bootstrap/index.ts:639`), tier-agnostic.
+- **cursor** injects **no** prompt at all today (not even base channel rules).
 
-## Change
+Bolting the self-heal section onto each provider separately (per-spawn for
+claude, a new per-spawn branch inside the codex provider, …) would deepen that
+fragmentation — a new path per provider, and again for gemini next. Rejected.
 
-1. `src/core/prompt-builder.ts`:
-   - Export `daemonSelfHealSection(): string` (single source of truth).
-   - `BuildSystemPromptArgs` gains `daemonOpsAvailable?: boolean` (default false);
-     `buildSystemPrompt` appends the section only when true.
-2. `src/daemon/bootstrap/index.ts:448` (claude): pass
-   `daemonOpsAvailable: tierProfile.allow.has('daemon_introspect')` — the same
-   admin predicate used by tool registration and `tierNameFromProfile`.
-3. `src/core/codex-agent-provider.ts`: at `createSession`, compute
-   `daemonOps = spawnOpts.tierProfile.allow.has('daemon_introspect')`; the
-   first-dispatch injection uses `appendInstructions` plus, when `daemonOps`, the
-   `daemonSelfHealSection()` text. The construction-time call at
-   `bootstrap/index.ts:639` does NOT include the section (base stays
-   tier-agnostic).
+Instead we unify the seam, following the **existing precedent** in the very same
+interface: `SpawnContext.mcpEnv` is "computed once by the daemon
+(session-manager) from the resolved tier; the provider stays oblivious and just
+merges it." The system prompt should travel the same way.
 
-### Section content (~7 lines, "when to use", no rules/keywords)
+## Unified design
+
+**The per-spawn system prompt becomes a `SpawnContext` field, computed once by
+the daemon and injected by each provider through its own transport — no
+provider assembles sections or knows about tiers/tools.**
+
+1. **`SpawnContext.appendInstructions?: string`** (`core/agent-provider.ts`) —
+   doc mirrors `mcpEnv`: daemon-computed, provider stays oblivious to content.
+2. **One content assembler:** `buildSystemPrompt` (`core/prompt-builder.ts`)
+   stays the single, provider-agnostic source of every section. It gains
+   `daemonOpsAvailable?: boolean` → appends `daemonSelfHealSection()` when true.
+   All sections, including self-heal, are defined here once.
+3. **session-manager** computes `appendInstructions` per spawn exactly where it
+   already computes `mcpEnv`, via an injected thunk
+   `buildInstructions?: (providerId, tierProfile) => string`, and forwards it in
+   the `SpawnContext`.
+4. **bootstrap** supplies that thunk (it owns peer/companion/delegate config):
+   `buildInstructions(providerId, tierProfile) = buildSystemPrompt({ providerId,
+   peerProviderId, companionEnabled, delegateAvailable(provider),
+   daemonOpsAvailable: tierProfile.allow.has('daemon_introspect') })`. The two
+   scattered `buildSystemPrompt` calls (448, 639) are removed.
+5. **Providers only inject** `spawnOpts.appendInstructions` via their transport:
+   - claude → `systemPrompt: { preset:'claude_code', append }` (sdkOptionsForProject
+     gains an `appendInstructions` param; stops calling buildSystemPrompt).
+   - codex → prepend to the first dispatch (uses `spawnOpts.appendInstructions`
+     instead of construction-time `opts.appendInstructions`, which is removed).
+   - cursor → subscribes later (it injects no prompt today; a one-line follow-up
+     when its first-message injection is wired — the field is already there).
+
+### Self-heal section content (~7 lines, "when to use", no rules/keywords)
 
 > ## 自我诊断 / 自愈（管理员）
 > 你能检查并修复自己所在的 daemon。当主人反映「卡住 / 不回 / 变慢 / 这个对话没反应」这类**运行异常**（不是内容问题）时，主动排查而不是只道歉：
@@ -69,23 +71,31 @@ The two providers inject their prompt differently:
 ## Consistency guarantee
 
 The section appears iff `tierProfile.allow.has('daemon_introspect')` — exactly
-the condition under which the tools register, on both providers. Non-admin
-sessions (guest/trusted) get neither the tools nor the section. No tool the
-prompt mentions is ever absent from the session.
+the predicate the tools register under (`WECHAT_SESSION_TIER==='admin'`,
+provider-agnostic). Computed once in the daemon thunk, so claude and codex are
+identical by construction. Non-admin sessions get neither tools nor section.
 
-## Testing (TDD)
+## Blast radius & testing
 
-1. `prompt-builder.test.ts`: `daemonOpsAvailable:true` → output contains section
-   markers (`自我诊断`, `diagnostic_health`, `session_release`);
-   omitted/`false` → absent. Existing 17 tests unaffected.
-2. `codex-agent-provider.test.ts`: admin spawn → first-dispatch input contains
-   the section; guest/trusted spawn → does not. Second dispatch never re-injects
-   (existing once-only invariant holds).
+This changes how **every** session gets its prompt, not just admin. Covered by
+existing provider + session-manager + prompt-builder suites, plus:
+
+1. `prompt-builder.test.ts`: `daemonOpsAvailable` true → section markers present
+   (`自我诊断`, `diagnostic_health`, `session_release`); false/omitted → absent.
+2. `session-manager.test.ts`: when `buildInstructions` is wired, the value it
+   returns is forwarded as `spawnOpts.appendInstructions` to `provider.spawn`;
+   omitted → `appendInstructions` undefined (no crash).
+3. `codex-agent-provider.test.ts`: first dispatch prepends
+   `spawnOpts.appendInstructions`; second dispatch does not re-inject; absent →
+   no prefix. (Existing "appendInstructions" test migrates from construction-arg
+   to spawn-ctx.)
+4. `claude-agent-provider.test.ts`: `spawnOpts.appendInstructions` reaches the
+   SDK `systemPrompt.append`.
 
 ## Out of scope
 
-- No monitoring tick / proactive detection (user chose "report-driven only").
+- No monitoring tick / proactive detection (user: report-driven only).
 - No keyword classifier.
-- Tool descriptions left as-is; the "when" lives in this one section.
-- cursor provider: `buildSystemPrompt` doesn't serve it today; separate follow-up
-  if cursor ever needs admin self-heal.
+- Tool descriptions unchanged; the "when" lives in the one section.
+- cursor prompt injection wiring (it injects nothing today) — follow-up; the
+  unified field is ready for it.
