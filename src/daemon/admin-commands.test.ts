@@ -132,6 +132,16 @@ describe('admin-commands', () => {
       expect(sentBody()).toContain('pid=1234')
     })
 
+    it('accepts /updata as a typo-tolerant alias', async () => {
+      const updateSelf = vi.fn(async () => ({ ok: true as const, pid: 1234 }))
+      const cmds = make({ updateSelf })
+
+      expect(await cmds.handle(msg('/updata'))).toBe(true)
+
+      expect(updateSelf).toHaveBeenCalledOnce()
+      expect(sentBody()).toContain('开始更新 wechat-cc')
+    })
+
     it('reports updater startup failure without dispatching to the agent', async () => {
       const updateSelf = vi.fn(async () => ({ ok: false as const, reason: 'bun_not_found' }))
       const cmds = make({ updateSelf })

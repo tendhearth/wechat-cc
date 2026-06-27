@@ -92,7 +92,7 @@ const HEARTH_HELP_RE = /^\s*\/hearth(\s+help)?\s*$/
 // subprocess + clean keychain read. Emergency recovery hatch for the operator
 // when the desktop dashboard isn't reachable.
 const RESET_RE = /^\s*\/(?:reset|重置)\s*$/
-const UPDATE_RE = /^\s*\/update\s*$/
+const UPDATE_RE = /^\s*\/(?:update|updata)\s*$/
 // /health ai is the AI-side companion of /health: per-provider session state
 // for the current chat. Does not run the underlying CLIs (zero token, zero
 // network) — just inspects the daemon's own bookkeeping.
