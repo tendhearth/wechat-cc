@@ -6,6 +6,10 @@
  */
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
+import { spawn } from 'node:child_process'
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { existsSync } from 'node:fs'
 import type { Ref } from '../../lib/lifecycle'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
@@ -19,6 +23,7 @@ import { makeModeCommands } from '../mode-commands'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
 import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
+import { findOnPath } from '../../lib/util'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
 import { loadGuardConfig } from '../guard/store'
@@ -62,6 +67,9 @@ export interface PipelineDepsRefs {
 }
 
 const STARTED_AT_ISO = new Date().toISOString()
+const HERE = dirname(fileURLToPath(import.meta.url))
+const REPO_ROOT = join(HERE, '..', '..', '..')
+const CLI_ENTRY = join(REPO_ROOT, 'cli.ts')
 
 export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): { pipelineDeps: InboundPipelineDeps } {
   const { stateDir, db, ilink, boot, log } = opts
@@ -174,6 +182,20 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         selfId,
         timeoutMs,
       })(handName, task)
+    },
+    updateSelf: async () => {
+      if (!existsSync(CLI_ENTRY)) return { ok: false as const, reason: 'source_cli_not_found' }
+      const bun = findOnPath('bun')
+      if (!bun) return { ok: false as const, reason: 'bun_not_found' }
+      const child = spawn(bun, [CLI_ENTRY, 'update', '--json'], {
+        cwd: REPO_ROOT,
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        env: process.env,
+      })
+      child.unref()
+      return { ok: true as const, pid: child.pid }
     },
   })
 

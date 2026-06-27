@@ -119,6 +119,42 @@ describe('admin-commands', () => {
     expect(log).toHaveBeenCalledWith('ADMIN_CMD', expect.stringContaining('non-admin'))
   })
 
+  describe('/update', () => {
+    it('starts the external updater and replies with a restart notice', async () => {
+      const updateSelf = vi.fn(async () => ({ ok: true as const, pid: 1234 }))
+      const cmds = make({ updateSelf })
+
+      expect(await cmds.handle(msg('/update'))).toBe(true)
+
+      expect(updateSelf).toHaveBeenCalledOnce()
+      expect(sentBody()).toContain('开始更新 wechat-cc')
+      expect(sentBody()).toContain('短暂重启')
+      expect(sentBody()).toContain('pid=1234')
+    })
+
+    it('reports updater startup failure without dispatching to the agent', async () => {
+      const updateSelf = vi.fn(async () => ({ ok: false as const, reason: 'bun_not_found' }))
+      const cmds = make({ updateSelf })
+
+      expect(await cmds.handle(msg('/update'))).toBe(true)
+
+      expect(updateSelf).toHaveBeenCalledOnce()
+      expect(sentBody()).toContain('更新没有启动')
+      expect(sentBody()).toContain('bun_not_found')
+    })
+
+    it('non-admin /update is consumed but does not start the updater', async () => {
+      isAdmin.mockReturnValue(false)
+      const updateSelf = vi.fn(async () => ({ ok: true as const, pid: 1234 }))
+      const cmds = make({ updateSelf })
+
+      expect(await cmds.handle(msg('/update', 'guest-chat'))).toBe(true)
+
+      expect(updateSelf).not.toHaveBeenCalled()
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+  })
+
   it('清理 <bot-id> removes dir + stops poll + clears state', async () => {
     sessionState.markExpired('bot-dead-im-bot')
     const botDir = join(stateDir, 'accounts', 'bot-dead-im-bot')

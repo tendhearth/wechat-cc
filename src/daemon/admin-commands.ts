@@ -68,6 +68,12 @@ export interface AdminCommandsDeps {
   delegateToHand?: (handName: string, task: string) => Promise<
     { ok: true; response: string } | { ok: false; reason: string; knownHands?: string[] }
   >
+  /**
+   * Starts an external updater process. The updater must live outside this
+   * daemon process because a real update can stop/restart the service that is
+   * currently handling the WeChat message.
+   */
+  updateSelf?: () => Promise<{ ok: true; pid?: number } | { ok: false; reason: string }>
 }
 
 export interface AdminCommands {
@@ -86,6 +92,7 @@ const HEARTH_HELP_RE = /^\s*\/hearth(\s+help)?\s*$/
 // subprocess + clean keychain read. Emergency recovery hatch for the operator
 // when the desktop dashboard isn't reachable.
 const RESET_RE = /^\s*\/(?:reset|重置)\s*$/
+const UPDATE_RE = /^\s*\/update\s*$/
 // /health ai is the AI-side companion of /health: per-provider session state
 // for the current chat. Does not run the underlying CLIs (zero token, zero
 // network) — just inspects the daemon's own bookkeeping.
@@ -138,7 +145,7 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
       // the name isn't a pronoun, so "让我执行一下X" falls through to normal chat.
       const delegateMatch = DELEGATE_RE.exec(text)
       const isDelegate = !!delegateMatch && isDelegateName(delegateMatch[1]!)
-      const isCmd = text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || isDelegate || RESET_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
+      const isCmd = text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || isDelegate || RESET_RE.test(text) || UPDATE_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
       if (!isCmd) return false
 
       if (!deps.isAdmin(msg.chatId)) {
@@ -158,6 +165,11 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
 
       if (RESET_RE.test(text)) {
         await runReset(deps, msg.chatId)
+        return true
+      }
+
+      if (UPDATE_RE.test(text)) {
+        await runUpdate(deps, msg.chatId)
         return true
       }
 
@@ -256,6 +268,28 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
 
       return false
     },
+  }
+}
+
+async function runUpdate(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {
+  if (!deps.updateSelf) {
+    await deps.sendMessage(adminChatId, '❌ /update 暂不可用：daemon 没接 updater。')
+    return
+  }
+  try {
+    const r = await deps.updateSelf()
+    if (!r.ok) {
+      await deps.sendMessage(adminChatId, `❌ 更新没有启动：${r.reason}`)
+      deps.log('ADMIN_CMD', `/update failed-to-start chat=${adminChatId}: ${r.reason}`)
+      return
+    }
+    const pid = r.pid ? ` pid=${r.pid}` : ''
+    await deps.sendMessage(adminChatId, `收到，开始更新 wechat-cc。更新过程会短暂重启服务，微信回复可能中断。${pid}`)
+    deps.log('ADMIN_CMD', `/update started chat=${adminChatId}${pid}`)
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    await deps.sendMessage(adminChatId, `❌ 更新启动异常：${detail.slice(0, 160)}`)
+    deps.log('ADMIN_CMD', `/update threw chat=${adminChatId}: ${detail}`)
   }
 }
 
