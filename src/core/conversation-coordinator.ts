@@ -27,6 +27,16 @@ import { resolveEffectiveTier, TIER_PROFILES, type TierProfile } from './user-ti
 import type { Access } from '../lib/access'
 
 /**
+ * Per-agent timeout for a single /chat debate beat. Much shorter than the
+ * daemon-wide turn watchdog (default 10 min, tuned for long solo coding turns):
+ * a chatroom beat is one opening/rebuttal, and a wedged or silent agent must
+ * fail fast (→ self-heal + graceful degrade) rather than make the user wait
+ * minutes for a reply. Capped via Math.min so a smaller daemon turnTimeoutMs
+ * (e.g. in tests) still wins.
+ */
+const CHATROOM_BEAT_TIMEOUT_MS = 120_000
+
+/**
  * Structured, per-turn outcome record — the AI-native observability surface.
  * Emitted via `ConversationCoordinatorDeps.recordTurn`: once per solo dispatch,
  * once per participant in `parallel` mode, and once per speaker turn (round)
@@ -672,7 +682,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           alias: proj.alias, path: proj.path, providerId,
           chatId: msg.chatId, tierProfile, permissionMode: deps.permissionMode,
         })
-        summary = await collectTurn(handle.dispatch(promptFor(providerId)), { timeoutMs: deps.turnTimeoutMs })
+        summary = await collectTurn(handle.dispatch(promptFor(providerId)), { timeoutMs: Math.min(deps.turnTimeoutMs ?? CHATROOM_BEAT_TIMEOUT_MS, CHATROOM_BEAT_TIMEOUT_MS) })
       } catch (e) {
         err = e instanceof Error ? e.message : String(e)
       }
