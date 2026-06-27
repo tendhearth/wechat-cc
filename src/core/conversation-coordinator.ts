@@ -128,6 +128,13 @@ export interface ConversationCoordinatorDeps {
    */
   haikuEval?: (prompt: string) => Promise<string>
   /**
+   * Strong one-shot eval (the DEFAULT provider's main model) for beat ③'s
+   * verdict — synthesis quality matters more than cost there. Optional;
+   * falls back to {@link haikuEval} when absent. The cheaper haikuEval still
+   * powers the tiny beat ②b convergence check.
+   */
+  verdictEval?: (prompt: string) => Promise<string>
+  /**
    * Throttle window (ms) for the per-provider "登录已过期" notice the coordinator
    * emits when a provider reports `errorCode: 'auth_failed'`. The first
    * failure in a chat sends one notice; further failures within this
@@ -539,10 +546,12 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
 
       if (aborter.signal.aborted) { deps.log('COORDINATOR_CHATROOM', `chat=${msg.chatId} aborted mid-debate`); return }
 
-      // ── Beat ③: verdict — a judged synthesis. Plain text (no parse). Always emitted.
-      if (deps.haikuEval) {
+      // ── Beat ③: verdict — a judged synthesis on the STRONG model (default
+      // provider), falling back to the cheap eval. Plain text (no parse). Always emitted.
+      const verdictEval = deps.verdictEval ?? deps.haikuEval
+      if (verdictEval) {
         let verdict = ''
-        try { verdict = (await deps.haikuEval(buildVerdictPrompt(question, openings, rebuttals))).trim() }
+        try { verdict = (await verdictEval(buildVerdictPrompt(question, openings, rebuttals))).trim() }
         catch (e) { deps.log('COORDINATOR_CHATROOM', `verdict failed: ${e instanceof Error ? e.message : e}`) }
         if (verdict) {
           await deps.sendAssistantText?.(msg.chatId, verdict.startsWith('🎯') ? verdict : `🎯 ${verdict}`)

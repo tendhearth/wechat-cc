@@ -96,4 +96,28 @@ describe('ProviderRegistry', () => {
       expect(await ce!('prompt')).toBe('gemini-text')
     })
   })
+
+  describe('getStrongEval — the DEFAULT provider specifically (verdict)', () => {
+    const stubWithStrong = (label: string): AgentProvider => ({
+      spawn: async () => makeFakeSession({
+        events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
+      }),
+      strongEval: async () => label,
+    })
+
+    it('returns the named provider strongEval — no cross-provider picking', async () => {
+      const r = createProviderRegistry()
+      r.register('claude', stubWithStrong('claude-strong'), { displayName: 'Claude', canResume: () => true })
+      r.register('codex', stubWithStrong('codex-strong'), { displayName: 'Codex', canResume: () => true })
+      expect(await r.getStrongEval('codex')!('p')).toBe('codex-strong')
+      expect(await r.getStrongEval('claude')!('p')).toBe('claude-strong')
+    })
+
+    it('returns null when the provider is unregistered or lacks strongEval', () => {
+      const r = createProviderRegistry()
+      r.register('claude', stub, { displayName: 'Claude', canResume: () => true })
+      expect(r.getStrongEval('claude')).toBeNull()  // registered, no strongEval
+      expect(r.getStrongEval('codex')).toBeNull()   // unregistered
+    })
+  })
 })

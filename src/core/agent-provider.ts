@@ -227,6 +227,15 @@ export interface AgentProvider {
    * should fall back gracefully (skip the eval-driven feature).
    */
   cheapEval?: CheapEval
+  /**
+   * Optional one-shot eval on the provider's STRONG (main) model — same
+   * no-tools/no-session shape as cheapEval but a more capable model. Used
+   * for the /chat verdict, where synthesis quality matters more than cost.
+   * Resolve via `ProviderRegistry.getStrongEval(providerId)` for the DEFAULT
+   * provider specifically (unlike getCheapEval, which picks the cheapest).
+   * Missing → caller falls back to cheapEval.
+   */
+  strongEval?: CheapEval
 }
 
 /**

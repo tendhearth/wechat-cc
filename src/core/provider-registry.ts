@@ -41,6 +41,13 @@ export interface ProviderRegistry {
    * Anthropic's haiku to OpenAI's mini purely from interface metadata).
    */
   getCheapEval(): CheapEval | null
+  /**
+   * Resolve the STRONG one-shot eval of a SPECIFIC provider (the default
+   * provider, for the /chat verdict) — unlike getCheapEval, no cross-provider
+   * cost picking. Returns null if that provider isn't registered or doesn't
+   * implement strongEval; caller falls back to getCheapEval().
+   */
+  getStrongEval(id: ProviderId): CheapEval | null
 }
 
 // Cheapest known to most expensive. Claude haiku ≈ $0.001/1K input tokens
@@ -81,6 +88,9 @@ export function createProviderRegistry(): ProviderRegistry {
         if (entry.provider.cheapEval) return entry.provider.cheapEval
       }
       return null
+    },
+    getStrongEval(id) {
+      return entries.get(id)?.provider.strongEval ?? null
     },
   }
   return registry

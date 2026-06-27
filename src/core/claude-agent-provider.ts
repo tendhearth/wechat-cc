@@ -96,6 +96,12 @@ export interface ClaudeAgentProviderOptions {
    * history before its deletion in PR F).
    */
   claudeBin?: string
+  /**
+   * Resolve the STRONG model id for `strongEval` (the /chat verdict). Reads
+   * live so a model hot-reload is picked up per call — bootstrap passes
+   * `currentClaudeModel`. Omitted → strongEval is not offered.
+   */
+  strongModel?: () => string
 }
 
 const CLAUDE_CHEAP_MODEL_DEFAULT = 'claude-haiku-4-5'
@@ -181,30 +187,36 @@ function parseToolUseToEvent(block: { name?: string }): AgentEvent {
 }
 
 export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): AgentProvider {
-  return {
-    async cheapEval(prompt: string): Promise<string> {
-      // One-shot haiku-class eval with no tools, no MCP, no session
-      // continuation. Used by chatroom moderator + companion introspect
-      // via ProviderRegistry.getCheapEval(). Env override lets users
-      // pin to a newer haiku without a code change.
-      const model = process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || CLAUDE_CHEAP_MODEL_DEFAULT
-      const q = query({
-        prompt,
-        options: {
-          model,
-          maxTurns: 1,
-          ...(opts.claudeBin ? { pathToClaudeCodeExecutable: opts.claudeBin } : {}),
-        } as Options,
-      })
-      let text = ''
-      for await (const raw of q as AsyncGenerator<SDKMessage>) {
-        const msg = narrow(raw)
-        if (msg?.type === 'assistant') {
-          text += extractText(msg.message?.content)
-        }
+  // One-shot eval with no tools, no MCP, no session continuation — shared by
+  // cheapEval (haiku-class) and strongEval (the verdict's main model). Both
+  // pass an explicit model so the only difference is which model runs.
+  const oneShot = async (prompt: string, model: string): Promise<string> => {
+    const q = query({
+      prompt,
+      options: {
+        model,
+        maxTurns: 1,
+        ...(opts.claudeBin ? { pathToClaudeCodeExecutable: opts.claudeBin } : {}),
+      } as Options,
+    })
+    let text = ''
+    for await (const raw of q as AsyncGenerator<SDKMessage>) {
+      const msg = narrow(raw)
+      if (msg?.type === 'assistant') {
+        text += extractText(msg.message?.content)
       }
-      return text
-    },
+    }
+    return text
+  }
+  return {
+    // One-shot haiku-class eval. Used by chatroom convergence check +
+    // companion introspect via ProviderRegistry.getCheapEval(). Env override
+    // lets users pin to a newer haiku without a code change.
+    cheapEval: (prompt: string) =>
+      oneShot(prompt, process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || CLAUDE_CHEAP_MODEL_DEFAULT),
+    // One-shot on the STRONG/main model — only offered when bootstrap wires a
+    // strongModel resolver. Powers the /chat verdict (deps.verdictEval).
+    ...(opts.strongModel ? { strongEval: (prompt: string) => oneShot(prompt, opts.strongModel!()) } : {}),
     async spawn(
       project: AgentProject,
       spawnOpts: SpawnContext,

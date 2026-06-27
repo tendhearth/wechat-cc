@@ -1208,6 +1208,7 @@ describe('ConversationCoordinator', () => {
       recordTurn?: (r: import('./conversation-coordinator').TurnRecord) => void
       release?: () => Promise<void>
       turnTimeoutMs?: number
+      verdictEval?: (prompt: string) => Promise<string>
     } = {}) {
       const store = makeMockStore()
       store.set('chat-1', { kind: 'chatroom' })
@@ -1250,6 +1251,7 @@ describe('ConversationCoordinator', () => {
         loadAccess: adminAccess,
         log: () => {},
         haikuEval,
+        ...(opts.verdictEval ? { verdictEval: opts.verdictEval } : {}),
         ...(opts.recordTurn ? { recordTurn: opts.recordTurn } : {}),
         ...(opts.turnTimeoutMs !== undefined ? { turnTimeoutMs: opts.turnTimeoutMs } : {}),
       })
@@ -1268,6 +1270,23 @@ describe('ConversationCoordinator', () => {
       expect(sent.filter(s => s.startsWith('[')).length).toBeGreaterThanOrEqual(4)
       // Verdict always emitted.
       expect(sent.some(s => s.startsWith('🎯'))).toBe(true)
+    })
+
+    it('/chat verdict uses the STRONG verdictEval (not haikuEval) when provided', async () => {
+      // verdictEval (default provider's strong model) handles beat ③; haikuEval
+      // stays for the tiny convergence check only. The 🎯 message must be the
+      // strong eval's output, and verdictEval must have been called.
+      const verdictEval = vi.fn(async (_prompt: string) => '🎯 强模型裁决')
+      const { c, sent, haikuEval } = setupChatroom({ verdictEval })
+      await c.dispatch(inbound('chat-1', '选 A 还是 B?'))
+      expect(verdictEval).toHaveBeenCalledTimes(1)
+      expect(sent.some(s => s === '🎯 强模型裁决')).toBe(true)
+      // The strong eval's verdict prompt is the verdict structure, not convergence JSON.
+      expect(verdictEval.mock.calls[0]![0]).toMatch(/共识|分歧|结论/)
+      // haikuEval never produced the 🎯 line (its default '🎯 verdict' must be absent).
+      expect(sent.some(s => s === '🎯 verdict')).toBe(false)
+      // haikuEval may still run for convergence, but never for the verdict.
+      void haikuEval
     })
 
     it('/chat verdict is still produced when one agent fails every beat (graceful degrade)', async () => {

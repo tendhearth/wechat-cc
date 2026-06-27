@@ -556,6 +556,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // findClaudePath() trap doesn't bite the chatroom moderator path
       // (same protection the legacy haiku-eval helper provided).
       ...(claudeBin ? { claudeBin } : {}),
+      // strongEval (the /chat verdict) runs on the live default model, not
+      // haiku — synthesis quality matters more than cost there.
+      strongModel: currentClaudeModel,
     }),
     {
       displayName: 'Claude',
@@ -901,6 +904,13 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // error and the moderator's existing catch branch falls back to
     // forced alternation. Codex-only users no longer hard-fail here.
     haikuEval: wrapCheapEvalWithAuthFailCheck(registry.getCheapEval(), deps.log),
+    // /chat beat ③ verdict — the DEFAULT provider's STRONG model (not haiku).
+    // Falls back to the cheap eval if that provider has no strongEval, so
+    // codex-default deployments still get a verdict.
+    verdictEval: wrapCheapEvalWithAuthFailCheck(
+      registry.getStrongEval(defaultProviderId) ?? registry.getCheapEval(),
+      deps.log,
+    ),
   })
 
   // RFC 03 P4 — bare delegate providers + one-shot dispatcher.
