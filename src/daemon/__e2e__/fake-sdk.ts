@@ -48,9 +48,9 @@ export interface FakeSdkScript {
 }
 
 /**
- * Single-shot moderator script. Used by chatroom haiku eval (per-round
- * decision) and side-effects.ts isolated evals. Returns the assistant
- * text the caller will parse — typically a JSON ModeratorDecision.
+ * Single-shot haiku eval script. Used by the chatroom conductor (convergence
+ * check and verdict beats) and side-effects.ts isolated evals. Returns
+ * the assistant text the caller will parse or display.
  */
 export interface ModeratorScript {
   onEval(prompt: string): Promise<string>

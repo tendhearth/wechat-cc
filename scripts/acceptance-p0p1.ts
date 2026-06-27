@@ -322,7 +322,6 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
     loadAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [], admins: ['room-chat'] }),
     log,
     haikuEval: roomHaiku,
-    chatroomMaxRounds: 4,
   })
   await roomCoord.dispatch({ chatId: 'room-chat', userId: 'room-chat', text: '开始', msgType: 'text', createTimeMs: Date.now(), accountId: 'acct' })
   if (roomRelease.mock.calls.some(c => (c as unknown as [string, string])[1] === 'claude')) pass('chatroom speaker session released on auth_failed')

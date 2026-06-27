@@ -288,9 +288,7 @@ export interface Bootstrap {
  * alongside solo/parallel auth-failures (single vocabulary across paths).
  *
  * Returns undefined when the registry has no cheapEval — the coordinator
- * treats `haikuEval: undefined` as "use the always-throws stub" path,
- * which evaluateRound's catch branch handles by going straight to
- * fallback.
+ * treats `haikuEval: undefined` as absent, skipping beat ②b and beat ③.
  */
 function wrapCheapEvalWithAuthFailCheck(
   cheapEval: CheapEval | null,

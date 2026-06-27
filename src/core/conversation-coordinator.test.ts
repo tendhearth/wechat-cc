@@ -1895,7 +1895,6 @@ describe('ConversationCoordinator', () => {
         sendAssistantText: vi.fn(async () => {}),
         permissionMode: 'strict',
         loadAccess: adminAccess,
-        chatroomMaxRounds: 4,
         haikuEval,
         log: () => {},
       })
@@ -1927,7 +1926,6 @@ describe('ConversationCoordinator', () => {
         sendAssistantText: vi.fn(async () => {}),
         permissionMode: 'strict',
         loadAccess: adminAccess,
-        chatroomMaxRounds: 4,
         haikuEval,
         log: () => {},
       })
@@ -2020,7 +2018,6 @@ describe('ConversationCoordinator', () => {
         sendAssistantText,
         permissionMode: 'strict',
         loadAccess: adminAccess,
-        chatroomMaxRounds: 4,
         haikuEval,
         log: () => {},
       })

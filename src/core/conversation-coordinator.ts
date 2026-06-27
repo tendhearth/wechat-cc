@@ -20,7 +20,7 @@ import type { ConversationStore } from './conversation-store'
 import type { ProviderRegistry } from './provider-registry'
 import type { Mode, ProviderId } from './conversation'
 import type { InboundMsg } from './prompt-format'
-import { evaluateRound as evaluateModeratorRound, type ModeratorDecision, type ChatroomEntry } from './chatroom-moderator'
+import { type ChatroomEntry } from './chatroom-moderator'
 import { buildRebuttalPrompt, buildVerdictPrompt, buildConvergencePrompt, parseConvergence, type Opening } from './chatroom-conductor'
 import { assertSupported, capabilitiesFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
 import { collectTurn, TURN_TIMEOUT_CODE, type TurnSummary } from './agent-provider'
@@ -77,13 +77,6 @@ export interface ConversationCoordinatorDeps {
    */
   parallelProviders?: ProviderId[]
   /**
-   * Maximum inter-agent rounds for chatroom mode (RFC 03 §4.4). Default 4.
-   * Counts each speaker turn after the initial user turn. When hit, the
-   * loop forces termination and the moderator's final-round prompt asks
-   * the last speaker to summarize with a 🎯 prefix.
-   */
-  chatroomMaxRounds?: number
-  /**
    * Permission mode — 'strict' (default, per-tool relay) or 'dangerously'
    * (bypass all permission prompts). Computed once at bootstrap from
    * `dangerouslySkipPermissions`. Threaded into assertSupported() at
@@ -115,15 +108,14 @@ export interface ConversationCoordinatorDeps {
    */
   log: (tag: string, line: string, fields?: Record<string, unknown>) => void
   /**
-   * One-shot Claude Haiku eval used by the chatroom moderator (v0.5.8).
-   * Bootstrap wires this to `query()` from `@anthropic-ai/claude-agent-sdk`
-   * with model='claude-haiku-4-5' + maxTurns=1. Test stubs return mock
-   * decisions directly. Each /chat dispatch calls this 3-5×.
+   * One-shot Claude Haiku eval used by the chatroom conductor (beat ②b
+   * convergence check and beat ③ verdict). Bootstrap wires this to
+   * `query()` from `@anthropic-ai/claude-agent-sdk` with
+   * model='claude-haiku-4-5' + maxTurns=1.
    *
    * Optional so existing test fixtures (most don't exercise /chat) don't
-   * have to provide a stub. If the chatroom path runs without it, the
-   * moderator fallback always picks alternation + a generic prompt — the
-   * loop still functions, just without LLM-quality routing decisions.
+   * have to provide a stub. If omitted, beat ②b is skipped and beat ③
+   * verdict is not emitted.
    */
   haikuEval?: (prompt: string) => Promise<string>
   /**
@@ -195,7 +187,6 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
   }
 
   const parallelProviders: ProviderId[] = deps.parallelProviders ?? ['claude', 'codex']
-  const chatroomMaxRounds = deps.chatroomMaxRounds ?? 4
 
   /**
    * Resolve the active participant set for a parallel/chatroom dispatch.
@@ -456,28 +447,15 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
   }
 
   /**
-   * RFC 03 §4.4 chatroom mode (v0.5.8 rewrite — moderator-driven).
+   * RFC 03 §4.4 chatroom mode (conductor pipeline — three beats).
    *
-   * Through v0.5.7 the chatroom was self-routing via @-tags in speakers'
-   * outputs. That fought the model's training prior toward "give the
-   * user a complete answer", so both agents typically @user'd directly
-   * and /chat looked indistinguishable from /both. Now a separate
-   * claude-haiku-4-5 moderator (one-shot eval per round) decides who
-   * speaks next and crafts a targeted prompt — same architecture as
-   * AutoGen's GroupChatManager, CrewAI hierarchical mode, and Anthropic's
-   * orchestrator-worker pattern.
+   * Beat ①: parallel opening — all participants answer the raw question.
+   * Beat ②: parallel cross-talk — each engages the others' openings
+   *          (optional extra round if still materially split after the first).
+   * Beat ③: verdict — a judged haiku synthesis prefixed with 🎯.
    *
-   * Sequence per round:
-   *   1. moderator.evaluateRound(...) → {action, speaker, prompt}
-   *   2. If action='end' → break.
-   *   3. Else dispatch the prompt to the picked speaker's session.
-   *   4. Stream their output to user with [Display] prefix and append
-   *      to history.
-   *   5. Loop until end / max_rounds / abort.
-   *
-   * Costs ~3-5 haiku evals per /chat (~$0.01-0.05), latency overhead
-   * ~5-10s. The trade is worth it for actual back-and-forth instead of
-   * /both-with-extra-steps.
+   * The old per-round LLM moderator (evaluateRound) was retired; routing
+   * is now structural rather than LLM-decided per round.
    */
   async function dispatchChatroom(
     msg: InboundMsg,
