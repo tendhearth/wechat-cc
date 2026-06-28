@@ -34,12 +34,13 @@ export type ToolKind =
   | 'a2a_send'
   | 'daemon_introspect'  // admin-only read-only self-diagnosis (turns / sessions / health / model_get)
   | 'daemon_remediate'   // admin-only mutating self-heal (session_release / model_set / daemon_restart)
+  | 'file_locate'        // admin-only: locate files on the owner's computer (lib/locate-files)
 
 const ALL_KINDS: ReadonlySet<ToolKind> = new Set([
   'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
   'observations_read', 'observations_write',
   'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
-  'a2a_send', 'daemon_introspect', 'daemon_remediate',
+  'a2a_send', 'daemon_introspect', 'daemon_remediate', 'file_locate',
 ])
 
 export interface TierProfile {
@@ -80,7 +81,7 @@ const GUEST_ALLOW = new Set<ToolKind>(['reply', 'share_page', 'memory_read', 'ob
 // tools (release session / restart) that build on this must never be reachable
 // from a non-admin chat. guest already denies it via difference below; trusted
 // would otherwise auto-allow (it's not destructive), so deny it explicitly.
-const ADMIN_ONLY = new Set<ToolKind>(['daemon_introspect', 'daemon_remediate'])
+const ADMIN_ONLY = new Set<ToolKind>(['daemon_introspect', 'daemon_remediate', 'file_locate'])
 
 export const TIER_PROFILES: Record<UserTier, TierProfile> = {
   admin: {
@@ -214,6 +215,9 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     // permissive fs_read default below. Read-only vs mutating split by name.
     if (sub.startsWith('diagnostic_') || sub === 'model_get') return 'daemon_introspect'
     if (sub.startsWith('daemon_') || sub.startsWith('session_') || sub === 'model_set') return 'daemon_remediate'
+    // File-locate family — admin-only, classified by PREFIX so a sibling
+    // (locate_dir, …) fails CLOSED into file_locate, not the fs_read default.
+    if (sub.startsWith('locate_')) return 'file_locate'
     // Other wechat tools: classify as fs_read (safest non-reply default
     // for new wechat MCP tools — they tend to be query-like).
     return 'fs_read'

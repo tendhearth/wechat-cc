@@ -103,11 +103,12 @@ describe('TIER_PROFILES', () => {
   it('trusted relays shell_destructive and memory_delete; denies only admin-only tools', () => {
     expect(TIER_PROFILES.trusted.relay.has('shell_destructive')).toBe(true)
     expect(TIER_PROFILES.trusted.relay.has('memory_delete')).toBe(true)
-    // trusted denies only the admin-exclusive daemon tools (was 0 before
+    // trusted denies all admin-exclusive tools (was 0 before
     // self-diagnosis / remediation tools existed).
-    expect(TIER_PROFILES.trusted.deny.size).toBe(2)
+    expect(TIER_PROFILES.trusted.deny.size).toBe(3)
     expect(TIER_PROFILES.trusted.deny.has('daemon_introspect')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('daemon_remediate')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('file_locate')).toBe(true)
   })
 
   it('guest allows only reply/share_page/memory_read/observations_read', () => {
@@ -284,5 +285,18 @@ describe('user-tier — a2a_send', () => {
   it('guest tier denies a2a_send', () => {
     expect(TIER_PROFILES.guest.allow.has('a2a_send')).toBe(false)
     expect(TIER_PROFILES.guest.relay.has('a2a_send')).toBe(false)
+  })
+})
+
+describe('file_locate tier kind', () => {
+  it('classifies locate_* wechat tools as file_locate (admin-only, prefix fail-closed)', () => {
+    expect(classifyToolUse('mcp__wechat__locate_file', {})).toBe('file_locate')
+    expect(classifyToolUse('mcp__wechat__locate_anything', {})).toBe('file_locate')
+  })
+  it('admin allows file_locate; trusted and guest deny it', () => {
+    expect(TIER_PROFILES.admin.allow.has('file_locate')).toBe(true)
+    expect(TIER_PROFILES.admin.relay.has('file_locate')).toBe(false)
+    expect(TIER_PROFILES.trusted.deny.has('file_locate')).toBe(true)
+    expect(TIER_PROFILES.guest.deny.has('file_locate')).toBe(true)
   })
 })
