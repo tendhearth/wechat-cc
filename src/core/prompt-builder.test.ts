@@ -185,3 +185,16 @@ describe('buildSystemPrompt', () => {
     expect(p).toContain('delegate_mistral')
   })
 })
+
+describe('file-locate prompt section', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+  it('includes the locate section + locations.md guidance when fileLocateAvailable', () => {
+    const p = buildSystemPrompt({ ...base, fileLocateAvailable: true })
+    expect(p).toContain('locate_file')
+    expect(p).toContain('locations.md')
+  })
+  it('omits it otherwise', () => {
+    const p = buildSystemPrompt({ ...base })
+    expect(p).not.toContain('locate_file')
+  })
+})

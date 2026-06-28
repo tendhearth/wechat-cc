@@ -784,6 +784,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       companionEnabled: deps.ilink.companion.status().enabled,
       delegateAvailable: !!delegateStdioByProvider[providerId],
       daemonOpsAvailable: tierProfile.allow.has('daemon_introspect'),
+      fileLocateAvailable: tierProfile.allow.has('file_locate'),
     })
 
   const sessionManager = new SessionManager({

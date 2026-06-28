@@ -47,6 +47,13 @@ export interface BuildSystemPromptArgs {
    * predicate the wechat MCP server gates those tools on). Default false.
    */
   daemonOpsAvailable?: boolean
+  /**
+   * When true, this session is admin-tier and the wechat-mcp `locate_file` tool
+   * is registered. Adds the file-locate section so the agent knows to find the
+   * owner's files on demand and record locations. Pass
+   * `tierProfile.allow.has('file_locate')`. Default false.
+   */
+  fileLocateAvailable?: boolean
 }
 
 /**
@@ -63,6 +70,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     delegateAvailable ? delegateSection(peerProviderId) : '',
     a2aSection(),
     args.daemonOpsAvailable ? daemonSelfHealSection() : '',
+    args.fileLocateAvailable ? fileLocateSection() : '',
     memorySection(),
     multiModeAwarenessSection(),
     companionEnabled ? companionSection() : '',
@@ -154,6 +162,17 @@ export function daemonSelfHealSection(): string {
 - 再据情况：某回合 timeout/卡死 → \`session_release\`；模型固定错了 / 一直 404 → \`model_set\`；整体像卡死且前面都没用 → \`daemon_restart\`。
 - 修完用各自的读回（release 的 sessions、model_set 的 model、restart 的 ok）核对，再用自然语言把「查到什么、做了什么、好没好」简短汇报给主人。
 - 这些是高权限操作，会先要你确认（relay）；不确定就只诊断、把结果告诉主人。`
+}
+
+export function fileLocateSection(): string {
+  return `## 找主人电脑里的文件（管理员）
+
+当主人提到某个文件/文档（「那个预算表」「桌面上那个合同」），别说你看不到——你能找：
+- 先看记忆里的 \`locations.md\`：若已记过「这是什么 → 路径」，直接用 \`Read\` 打开。
+- 没记过就用 \`locate_file\`：query 给关键词，先 name 模式；文件名没命中再 \`mode=content\`；想看某目录大致有什么用 \`mode=browse\`。把 \`locations.md\` 里相关的目录用 \`roots\` 传进去会优先搜。
+- 找到并确认后，用 \`Read\` 打开来回答，并用 \`memory_write\` 往 \`locations.md\` 追一行「这是什么 → 绝对路径」，下次直接命中。
+- 实在找不到，就在微信问主人一句「X 一般放哪？」（只问这一次），拿到答案把那个目录记进 \`locations.md\`。
+范围是用出来的，不是让主人配置出来的。`
 }
 
 function memorySection(): string {
