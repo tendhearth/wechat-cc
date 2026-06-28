@@ -293,6 +293,9 @@ describe('file_locate tier kind', () => {
     expect(classifyToolUse('mcp__wechat__locate_file', {})).toBe('file_locate')
     expect(classifyToolUse('mcp__wechat__locate_anything', {})).toBe('file_locate')
   })
+  it('non-locate_ wechat tools still classify as fs_read (pin the prefix boundary)', () => {
+    expect(classifyToolUse('mcp__wechat__something_new', {})).toBe('fs_read')
+  })
   it('admin allows file_locate; trusted and guest deny it', () => {
     expect(TIER_PROFILES.admin.allow.has('file_locate')).toBe(true)
     expect(TIER_PROFILES.admin.relay.has('file_locate')).toBe(false)

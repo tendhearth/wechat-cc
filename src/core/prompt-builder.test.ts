@@ -196,5 +196,6 @@ describe('file-locate prompt section', () => {
   it('omits it otherwise', () => {
     const p = buildSystemPrompt({ ...base })
     expect(p).not.toContain('locate_file')
+    expect(p).not.toContain('locations.md')
   })
 })

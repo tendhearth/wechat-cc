@@ -638,6 +638,7 @@ describe('wechat-mcp stdio integration', () => {
     const nonAdmin = await bootChain() // no admin flag → trusted
     const nonAdminNames = (await nonAdmin.client.listTools()).tools.map(t => t.name)
     expect(nonAdminNames).not.toContain('locate_file')
+    await nonAdmin.client.close()
   })
 
   it('ping tool returns isError=true when internal-api is unreachable', async () => {
