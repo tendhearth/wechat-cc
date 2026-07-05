@@ -122,3 +122,46 @@ export function installPlugin(entry: CatalogEntry, stateDir: string): { ok: true
   }
   return { ok: true, dir }
 }
+
+/** Read the installed plugin's manifest version (or null). */
+function installedVersion(dir: string): string | null {
+  try {
+    const m = JSON.parse(readFileSync(join(dir, 'wechat-cc.plugin.json'), 'utf8'))
+    return typeof m?.version === 'string' ? m.version : null
+  } catch { return null }
+}
+
+export type UpgradeResult =
+  | { ok: true; upgraded: boolean; from: string | null; to: string }
+  | { ok: false; reason: string }
+
+/**
+ * Upgrade an installed plugin to the catalog's version by fetching its ref and
+ * checking it out over the existing checkout. Uses `fetch + checkout --force
+ * FETCH_HEAD` (NOT re-clone) so tracked code is updated while UNTRACKED data
+ * the plugin generated (e.g. wxvault's out/decrypted) is preserved. Only works
+ * on registry-installed (git) plugins — a symlinked/manual dir is left to the
+ * operator. No-ops (upgraded:false) when already at/above the catalog version.
+ */
+export function upgradePlugin(entry: CatalogEntry, stateDir: string): UpgradeResult {
+  const dir = join(userPluginsDir(stateDir), entry.name)
+  if (!existsSync(dir)) return { ok: false, reason: `"${entry.name}" is not installed` }
+  if (!existsSync(join(dir, '.git'))) {
+    return { ok: false, reason: 'not a git checkout (installed manually / symlinked) — update it yourself' }
+  }
+  if (entry.source.type !== 'git' || !entry.source.url.startsWith('https://')) {
+    return { ok: false, reason: 'only https git sources are supported' }
+  }
+  const from = installedVersion(dir)
+  if (from && cmpVersion(entry.version, from) !== 1) {
+    return { ok: true, upgraded: false, from, to: entry.version }   // already current
+  }
+  const ref = entry.source.ref ?? 'HEAD'
+  try {
+    execFileSync('git', ['-C', dir, 'fetch', '--depth', '1', '--', entry.source.url, ref], { stdio: 'pipe' })
+    execFileSync('git', ['-C', dir, 'checkout', '--force', 'FETCH_HEAD'], { stdio: 'pipe' })
+  } catch (e) {
+    return { ok: false, reason: `git upgrade failed: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}` }
+  }
+  return { ok: true, upgraded: true, from, to: entry.version }
+}

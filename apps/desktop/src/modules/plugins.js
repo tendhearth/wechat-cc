@@ -127,7 +127,7 @@ async function refreshMarket() {
     li.className = 'a2a-agent-card'
     let btn
     if (p.update_available) {
-      btn = `<button class="btn" data-action="install" data-name="${escapeHtml(p.name)}">更新 → v${escapeHtml(String(p.version))}</button>`
+      btn = `<button class="btn" data-action="upgrade" data-name="${escapeHtml(p.name)}">更新 → v${escapeHtml(String(p.version))}</button>`
     } else if (p.installed) {
       btn = `<button class="btn ghost" disabled>已安装</button>`
     } else {
@@ -150,21 +150,24 @@ async function refreshMarket() {
 async function onMarketAction(e) {
   const target = e.target
   if (!(target instanceof HTMLButtonElement)) return
-  if (target.dataset.action !== 'install') return
+  const action = target.dataset.action
   const name = target.dataset.name
-  if (!name) return
+  if ((action !== 'install' && action !== 'upgrade') || !name) return
+  const verb = action === 'upgrade' ? '更新' : '安装'
   target.disabled = true
-  target.textContent = '安装中…'
+  target.textContent = `${verb}中…`
   try {
-    const r = /** @type {Record<string, any>} */ (await invokeApi('POST', '/v1/plugins/install', { name }))
+    const r = /** @type {Record<string, any>} */ (await invokeApi('POST', `/v1/plugins/${action}`, { name }))
     if (r?.ok) {
-      showNote(`已安装 ${name} v${r.version ?? ''} — 默认停用，去上面「启用」并完成 setup 后重启 daemon`)
+      showNote(action === 'upgrade'
+        ? `已更新 ${name} ${r.from ?? ''}→${r.to ?? ''} — 重启 daemon 生效`
+        : `已安装 ${name} v${r.version ?? ''} — 默认停用，去上面「启用」并完成 setup 后重启 daemon`)
     } else {
-      alert(`安装失败：${r?.error ?? 'unknown'}`)
+      alert(`${verb}失败：${r?.error ?? 'unknown'}`)
     }
     await refresh()
   } catch (err) {
-    alert(`安装失败：${err instanceof Error ? err.message : String(err)}`)
+    alert(`${verb}失败：${err instanceof Error ? err.message : String(err)}`)
     await refresh()
   }
 }

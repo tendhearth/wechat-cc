@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest'
-import { parseCatalog, updateAvailable, fetchCatalog, type CatalogEntry } from './catalog'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { parseCatalog, updateAvailable, fetchCatalog, upgradePlugin, type CatalogEntry } from './catalog'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const entry = (over: Partial<CatalogEntry> = {}): CatalogEntry => ({
@@ -40,5 +42,31 @@ describe('plugin catalog', () => {
     const sample = join(import.meta.dirname, '..', '..', '..', 'docs', 'registry.example.json')
     const cat = await fetchCatalog(sample)
     expect(cat.plugins.find(p => p.name === 'wxvault')?.version).toBe('1.0.0')
+  })
+
+  describe('upgradePlugin guards (no git run)', () => {
+    let stateDir: string
+    beforeEach(() => { stateDir = mkdtempSync(join(tmpdir(), 'cat-upg-')) })
+    afterEach(() => { try { rmSync(stateDir, { recursive: true, force: true }) } catch { /* best effort */ } })
+
+    const pluginDir = (name: string) => join(stateDir, 'plugins', name)
+
+    it('refuses when not installed', () => {
+      expect(upgradePlugin(entry(), stateDir)).toEqual({ ok: false, reason: '"wxvault" is not installed' })
+    })
+
+    it('refuses a symlinked/manual dir (no .git)', () => {
+      const d = pluginDir('wxvault'); mkdirSync(d, { recursive: true })
+      writeFileSync(join(d, 'wechat-cc.plugin.json'), JSON.stringify({ name: 'wxvault', version: '1.0.0' }))
+      const r = upgradePlugin(entry({ version: '2.0.0' }), stateDir)
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.reason).toContain('not a git checkout')
+    })
+
+    it('no-ops (upgraded:false) when already at/above the catalog version', () => {
+      const d = pluginDir('wxvault'); mkdirSync(join(d, '.git'), { recursive: true })
+      writeFileSync(join(d, 'wechat-cc.plugin.json'), JSON.stringify({ name: 'wxvault', version: '1.0.0' }))
+      expect(upgradePlugin(entry({ version: '1.0.0' }), stateDir)).toEqual({ ok: true, upgraded: false, from: '1.0.0', to: '1.0.0' })
+    })
   })
 })

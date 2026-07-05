@@ -2615,9 +2615,49 @@ const pluginInstallCmd = defineCommand({
   },
 })
 
+const pluginUpgradeCmd = defineCommand({
+  meta: { name: 'upgrade', description: 'Upgrade an installed plugin to the registry version (preserves plugin data)' },
+  args: {
+    name: { type: 'positional', required: false, description: 'Plugin name (omit with --all)', valueHint: 'name' },
+    all: { type: 'boolean', description: 'Upgrade every installed plugin that has an update' },
+  },
+  async run({ args }) {
+    const { fetchCatalog, upgradePlugin, updateAvailable } = await import('./src/daemon/plugins/catalog')
+    const { loadPlugins } = await import('./src/daemon/plugins/registry')
+    const { bundledPluginsDir } = await import('./src/daemon/plugins/paths')
+    const catalog = await fetchCatalog().catch(err => {
+      console.error(`registry unavailable: ${err instanceof Error ? err.message : String(err)}`); process.exit(1)
+    })
+    const byName = new Map(catalog.plugins.map(p => [p.name, p]))
+    let targets: import('./src/daemon/plugins/catalog').CatalogEntry[] = []
+    if (args.all) {
+      const installed = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() })
+      for (const p of installed) {
+        const e = byName.get(p.name)
+        if (e && updateAvailable(p.manifest.version, e)) targets.push(e)
+      }
+    } else {
+      if (!args.name) { console.error('pass a plugin name or --all'); process.exit(1) }
+      const e = byName.get(args.name)
+      if (!e) { console.error(`"${args.name}" not in registry`); process.exit(1) }
+      targets = [e]
+    }
+    if (targets.length === 0) { console.log('everything is up to date'); return }
+    let failed = false
+    for (const e of targets) {
+      const r = upgradePlugin(e, STATE_DIR)
+      if (!r.ok) { console.error(`✗ ${e.name}: ${r.reason}`); failed = true }
+      else if (!r.upgraded) console.log(`= ${e.name} already at ${r.to}`)
+      else console.log(`⬆ ${e.name} ${r.from ?? '?'} → ${r.to}`)
+    }
+    console.log('restart the daemon to load upgraded plugins')
+    if (failed) process.exit(1)
+  },
+})
+
 const pluginCmd = defineCommand({
   meta: { name: 'plugin', description: 'Manage plugins (MCP tool providers like wxvault)' },
-  subCommands: { list: pluginListCmd, search: pluginSearchCmd, install: pluginInstallCmd, enable: pluginEnableCmd, disable: pluginDisableCmd },
+  subCommands: { list: pluginListCmd, search: pluginSearchCmd, install: pluginInstallCmd, upgrade: pluginUpgradeCmd, enable: pluginEnableCmd, disable: pluginDisableCmd },
 })
 
 const SUBCOMMANDS = {

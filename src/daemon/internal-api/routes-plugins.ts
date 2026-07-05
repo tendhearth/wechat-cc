@@ -10,7 +10,7 @@ import { type InternalApiDeps, type RouteTable } from './types'
 import type { PluginToggleRequestT, PluginInstallRequestT } from './schema'
 import { loadPlugins, setPluginEnabled } from '../plugins/registry'
 import { bundledPluginsDir } from '../plugins/paths'
-import { fetchCatalog, installPlugin, updateAvailable } from '../plugins/catalog'
+import { fetchCatalog, installPlugin, upgradePlugin, updateAvailable } from '../plugins/catalog'
 import selfPkg from '../../../package.json' with { type: 'json' }
 
 export function pluginRoutes(deps: InternalApiDeps): RouteTable {
@@ -86,6 +86,24 @@ export function pluginRoutes(deps: InternalApiDeps): RouteTable {
       return { status: 200, body: r.ok
         ? { ok: true, name, version: entry.version, note: 'installed (disabled). Enable it, finish setup, then restart the daemon.' }
         : { ok: false, error: r.reason } }
+    },
+
+    // Upgrade an installed plugin to the registry version (git fetch+checkout,
+    // preserving untracked plugin data). Restart-to-apply, like install/toggle.
+    'POST /v1/plugins/upgrade': async (_q, body) => {
+      const { name } = body as PluginInstallRequestT
+      let catalog
+      try { catalog = await fetchCatalog() } catch (e) {
+        return { status: 200, body: { ok: false, error: `registry unavailable: ${e instanceof Error ? e.message : String(e)}` } }
+      }
+      const entry = catalog.plugins.find(p => p.name === name)
+      if (!entry) return { status: 200, body: { ok: false, error: `"${name}" not in registry` } }
+      const r = upgradePlugin(entry, deps.stateDir)
+      if (!r.ok) return { status: 200, body: { ok: false, error: r.reason } }
+      return { status: 200, body: {
+        ok: true, name, upgraded: r.upgraded, from: r.from, to: r.to,
+        note: r.upgraded ? 'upgraded — restart the daemon to load it' : 'already up to date',
+      } }
     },
   }
 }
