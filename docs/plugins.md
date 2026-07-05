@@ -115,6 +115,37 @@ wechat-cc plugin enable <name>
 wechat-cc plugin disable <name>
 ```
 
+## The market (registry)
+
+A curated static JSON index — Obsidian community-plugins.json / Homebrew-tap
+style — lists installable plugins. The index holds only POINTERS: each entry
+names a git source; the plugin's files live in its own repo, versioned by tags.
+Format in `docs/registry.example.json`:
+
+```jsonc
+{ "plugins": [{
+  "name": "wxvault", "version": "1.0.0",
+  "minWechatCcVersion": "0.6.4",
+  "description": "…", "author": "you", "homepage": "…",
+  "source": { "type": "git", "url": "https://github.com/you/wxvault", "ref": "v1.0.0" }
+}]}
+```
+
+Point wechat-cc at your registry with `WECHAT_CC_PLUGIN_REGISTRY` (an https URL
+or a local path; read at call time). Then:
+
+```sh
+wechat-cc plugin search [query]       # browse; marks ✓ installed / ⬆ update
+wechat-cc plugin install <name>       # git clone into the plugins dir (DISABLED)
+wechat-cc plugin enable <name>        # then finish setup + restart the daemon
+```
+
+The dashboard「插件」pane shows the same market below the installed list, with
+安装 / 更新 / 已安装 buttons. Install = `git clone` the entry's tagged release
+into the user plugins dir; it lands **disabled** (trust gate unchanged), and
+`update_available` is a strict version-greater check against the installed
+manifest. Registry-unavailable degrades to a message, never a hard failure.
+
 ## How it wires in (for maintainers)
 
 `buildBootstrap()` calls `loadPlugins()` → `pluginMcpSpecs()` once, then spreads

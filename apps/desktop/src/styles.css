@@ -4215,6 +4215,13 @@ input { font: inherit; color: inherit; }
   font-size: 12.5px;
 }
 .plugins-note[hidden] { display: none; }
+.plugins-subhead {
+  margin: 20px 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  letter-spacing: .02em;
+}
 
 .plugin-name {
   font-family: var(--mono);

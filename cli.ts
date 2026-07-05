@@ -2568,9 +2568,56 @@ const pluginDisableCmd = defineCommand({
   },
 })
 
+const pluginSearchCmd = defineCommand({
+  meta: { name: 'search', description: 'Browse the plugin registry (the market)' },
+  args: {
+    query: { type: 'positional', required: false, description: 'Filter by name/description', valueHint: 'query' },
+    json: { type: 'boolean', description: 'JSON output' },
+  },
+  async run({ args }) {
+    const { fetchCatalog, updateAvailable } = await import('./src/daemon/plugins/catalog')
+    const { loadPlugins } = await import('./src/daemon/plugins/registry')
+    const { bundledPluginsDir } = await import('./src/daemon/plugins/paths')
+    const installed = new Map(loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() }).map(p => [p.name, p.manifest.version]))
+    let catalog
+    try { catalog = await fetchCatalog() } catch (err) {
+      console.error(`registry unavailable: ${err instanceof Error ? err.message : String(err)}`)
+      console.error('set WECHAT_CC_PLUGIN_REGISTRY to your registry URL (or a local path). See docs/registry.example.json')
+      process.exit(1)
+    }
+    const q = (args.query ?? '').toLowerCase()
+    const rows = catalog.plugins.filter(p =>
+      !q || p.name.toLowerCase().includes(q) || (p.description ?? '').toLowerCase().includes(q))
+    if (args.json) { console.log(JSON.stringify(rows, null, 2)); return }
+    if (rows.length === 0) { console.log('no matching plugins'); return }
+    for (const p of rows) {
+      const has = installed.has(p.name)
+      const tag = !has ? '' : updateAvailable(installed.get(p.name), p) ? `  ⬆ update ${installed.get(p.name)}→${p.version}` : '  ✓ installed'
+      console.log(`  ${p.name} v${p.version}${tag}\n    ${p.description ?? p.displayName ?? ''}`)
+    }
+  },
+})
+
+const pluginInstallCmd = defineCommand({
+  meta: { name: 'install', description: 'Install a plugin from the registry (git clone; stays disabled until you enable it)' },
+  args: { name: { type: 'positional', required: true, description: 'Plugin name from `plugin search`', valueHint: 'name' } },
+  async run({ args }) {
+    const { fetchCatalog, installPlugin } = await import('./src/daemon/plugins/catalog')
+    const catalog = await fetchCatalog().catch(err => {
+      console.error(`registry unavailable: ${err instanceof Error ? err.message : String(err)}`); process.exit(1)
+    })
+    const entry = catalog.plugins.find(p => p.name === args.name)
+    if (!entry) { console.error(`"${args.name}" not in registry — try \`plugin search\``); process.exit(1) }
+    console.log(`installing ${entry.name} v${entry.version} from ${entry.source.url}${entry.source.ref ? '#' + entry.source.ref : ''} …`)
+    const r = installPlugin(entry, STATE_DIR)
+    if (!r.ok) { console.error(`install failed: ${r.reason}`); process.exit(1) }
+    console.log(`installed to ${r.dir} (disabled). Next:\n  wechat-cc plugin enable ${entry.name}\n  # then finish any plugin-specific setup and restart the daemon`)
+  },
+})
+
 const pluginCmd = defineCommand({
   meta: { name: 'plugin', description: 'Manage plugins (MCP tool providers like wxvault)' },
-  subCommands: { list: pluginListCmd, enable: pluginEnableCmd, disable: pluginDisableCmd },
+  subCommands: { list: pluginListCmd, search: pluginSearchCmd, install: pluginInstallCmd, enable: pluginEnableCmd, disable: pluginDisableCmd },
 })
 
 const SUBCOMMANDS = {

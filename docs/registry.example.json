@@ -1,0 +1,14 @@
+{
+  "plugins": [
+    {
+      "name": "wxvault",
+      "version": "1.0.0",
+      "displayName": "微信历史 (wxvault)",
+      "description": "查询本地已解密的微信聊天记录：概览 / 列会话 / 取消息 / 全文检索；图片按需就地解密。让 agent 能对话你自己的微信历史。",
+      "author": "you",
+      "homepage": "https://github.com/YOUR-ORG/wxvault",
+      "minWechatCcVersion": "0.6.4",
+      "source": { "type": "git", "url": "https://github.com/YOUR-ORG/wxvault", "ref": "v1.0.0" }
+    }
+  ]
+}

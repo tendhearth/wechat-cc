@@ -23,11 +23,16 @@ export async function initPluginsTab() {
   document.getElementById('plugins-refresh-btn')?.addEventListener('click', () => {
     refresh().catch(err => console.error('plugins refresh failed', err))
   })
-  // Delegated click handler (attached ONCE — not per refresh).
+  // Delegated click handlers (attached ONCE — not per refresh).
   list.addEventListener('click', onCardAction)
+  document.getElementById('plugins-market-list')?.addEventListener('click', onMarketAction)
 }
 
 export async function refresh() {
+  await Promise.all([refreshInstalled(), refreshMarket()])
+}
+
+async function refreshInstalled() {
   const list = document.getElementById('plugins-list')
   if (!list) return
   list.innerHTML = '<li class="empty">加载中…</li>'
@@ -94,6 +99,73 @@ async function onCardAction(e) {
   } catch (err) {
     target.disabled = false
     alert(`切换失败：${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+async function refreshMarket() {
+  const list = document.getElementById('plugins-market-list')
+  const note = document.getElementById('plugins-market-note')
+  if (!list) return
+  list.innerHTML = '<li class="empty">加载市场中…</li>'
+  const resp = /** @type {{ plugins?: Array<any>, error?: string }} */ (
+    await invokeApi('GET', '/v1/plugins/registry').catch(err => ({ error: String(err?.message ?? err) }))
+  )
+  if (note) {
+    if (resp?.error) {
+      note.hidden = false
+      note.innerHTML = `市场暂不可用：${escapeHtml(resp.error)}<br>把 <code>WECHAT_CC_PLUGIN_REGISTRY</code> 指向你的 registry.json（见 docs/registry.example.json）。`
+    } else { note.hidden = true }
+  }
+  const plugins = resp?.plugins ?? []
+  list.innerHTML = ''
+  if (plugins.length === 0) {
+    if (!resp?.error) list.innerHTML = '<li class="empty">市场里还没有插件。</li>'
+    return
+  }
+  for (const p of plugins) {
+    const li = document.createElement('li')
+    li.className = 'a2a-agent-card'
+    let btn
+    if (p.update_available) {
+      btn = `<button class="btn" data-action="install" data-name="${escapeHtml(p.name)}">更新 → v${escapeHtml(String(p.version))}</button>`
+    } else if (p.installed) {
+      btn = `<button class="btn ghost" disabled>已安装</button>`
+    } else {
+      btn = `<button class="btn" data-action="install" data-name="${escapeHtml(p.name)}">安装</button>`
+    }
+    li.innerHTML = `
+      <header class="a2a-card-head">
+        <strong>${escapeHtml(String(p.display_name ?? p.name))}</strong>
+        <span class="plugin-ver">v${escapeHtml(String(p.version))}</span>
+        ${p.author ? `<span class="plugin-source">${escapeHtml(String(p.author))}</span>` : ''}
+      </header>
+      ${p.description ? `<div class="a2a-card-url">${escapeHtml(String(p.description))}</div>` : ''}
+      <div class="a2a-card-actions">${btn}</div>
+    `
+    list.appendChild(li)
+  }
+}
+
+/** @param {MouseEvent} e */
+async function onMarketAction(e) {
+  const target = e.target
+  if (!(target instanceof HTMLButtonElement)) return
+  if (target.dataset.action !== 'install') return
+  const name = target.dataset.name
+  if (!name) return
+  target.disabled = true
+  target.textContent = '安装中…'
+  try {
+    const r = /** @type {Record<string, any>} */ (await invokeApi('POST', '/v1/plugins/install', { name }))
+    if (r?.ok) {
+      showNote(`已安装 ${name} v${r.version ?? ''} — 默认停用，去上面「启用」并完成 setup 后重启 daemon`)
+    } else {
+      alert(`安装失败：${r?.error ?? 'unknown'}`)
+    }
+    await refresh()
+  } catch (err) {
+    alert(`安装失败：${err instanceof Error ? err.message : String(err)}`)
+    await refresh()
   }
 }
 

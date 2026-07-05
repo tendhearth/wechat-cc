@@ -7,9 +7,10 @@
  * hint rather than pretending it's live.
  */
 import { type InternalApiDeps, type RouteTable } from './types'
-import type { PluginToggleRequestT } from './schema'
+import type { PluginToggleRequestT, PluginInstallRequestT } from './schema'
 import { loadPlugins, setPluginEnabled } from '../plugins/registry'
 import { bundledPluginsDir } from '../plugins/paths'
+import { fetchCatalog, installPlugin, updateAvailable } from '../plugins/catalog'
 import selfPkg from '../../../package.json' with { type: 'json' }
 
 export function pluginRoutes(deps: InternalApiDeps): RouteTable {
@@ -42,6 +43,49 @@ export function pluginRoutes(deps: InternalApiDeps): RouteTable {
         ok: true, name, enabled,
         note: 'restart the daemon to apply (MCP servers are wired at spawn)',
       } }
+    },
+
+    // The "market": the curated registry, annotated with what's already
+    // installed + whether an update is available. Registry-unavailable is a
+    // 200 with an `error` field (not a 500) so the dashboard shows a message.
+    'GET /v1/plugins/registry': async () => {
+      const installed = new Map(
+        loadPlugins({ stateDir: deps.stateDir, bundledDir: bundledPluginsDir() }).map(p => [p.name, p.manifest.version]),
+      )
+      try {
+        const catalog = await fetchCatalog()
+        return { status: 200, body: {
+          host_version: selfPkg.version,
+          plugins: catalog.plugins.map(e => ({
+            name: e.name,
+            version: e.version,
+            display_name: e.displayName ?? e.name,
+            description: e.description ?? null,
+            author: e.author ?? null,
+            homepage: e.homepage ?? null,
+            installed: installed.has(e.name),
+            installed_version: installed.get(e.name) ?? null,
+            update_available: updateAvailable(installed.get(e.name), e),
+          })),
+        } }
+      } catch (e) {
+        return { status: 200, body: { error: e instanceof Error ? e.message : String(e), plugins: [] } }
+      }
+    },
+
+    // Install from the registry (git clone → user plugins dir, DISABLED).
+    'POST /v1/plugins/install': async (_q, body) => {
+      const { name } = body as PluginInstallRequestT
+      let catalog
+      try { catalog = await fetchCatalog() } catch (e) {
+        return { status: 200, body: { ok: false, error: `registry unavailable: ${e instanceof Error ? e.message : String(e)}` } }
+      }
+      const entry = catalog.plugins.find(p => p.name === name)
+      if (!entry) return { status: 200, body: { ok: false, error: `"${name}" not in registry` } }
+      const r = installPlugin(entry, deps.stateDir)
+      return { status: 200, body: r.ok
+        ? { ok: true, name, version: entry.version, note: 'installed (disabled). Enable it, finish setup, then restart the daemon.' }
+        : { ok: false, error: r.reason } }
     },
   }
 }
