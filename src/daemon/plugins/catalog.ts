@@ -26,9 +26,9 @@ export interface CatalogEntry {
 }
 export interface Catalog { plugins: CatalogEntry[] }
 
-/** Placeholder — replace with your real curated registry repo (or set the env var). */
-export const PLACEHOLDER_REGISTRY_URL =
-  'https://raw.githubusercontent.com/YOUR-ORG/wechat-cc-plugins/main/registry.json'
+/** The default curated registry (override per-user with the env var below). */
+export const DEFAULT_REGISTRY_URL =
+  'https://raw.githubusercontent.com/tendhearth/wechat-cc-plugins/main/registry.json'
 
 /**
  * Resolve the registry URL at call time (not module load) so WECHAT_CC_PLUGIN_REGISTRY
@@ -36,7 +36,7 @@ export const PLACEHOLDER_REGISTRY_URL =
  * honored without a restart.
  */
 export function registryUrl(): string {
-  return process.env.WECHAT_CC_PLUGIN_REGISTRY || PLACEHOLDER_REGISTRY_URL
+  return process.env.WECHAT_CC_PLUGIN_REGISTRY || DEFAULT_REGISTRY_URL
 }
 
 const NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/
