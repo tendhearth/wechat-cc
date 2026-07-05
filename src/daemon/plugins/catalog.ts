@@ -45,21 +45,27 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v)
 }
 
-/** Validate an untrusted registry document. Rejects the whole thing on any bad entry. */
-export function parseCatalog(raw: unknown): { ok: true; catalog: Catalog } | { ok: false; reason: string } {
+/**
+ * Validate an untrusted registry document. Structural problems (not an object /
+ * no `plugins` array) hard-fail. Individual bad entries are SKIPPED, not fatal —
+ * one malformed entry must not take the whole market offline (Obsidian/npm do
+ * the same). `skipped` lists why each was dropped.
+ */
+export function parseCatalog(raw: unknown): { ok: true; catalog: Catalog; skipped: string[] } | { ok: false; reason: string } {
   if (!isObject(raw) || !Array.isArray(raw.plugins)) {
     return { ok: false, reason: 'registry must be an object with a "plugins" array' }
   }
   const plugins: CatalogEntry[] = []
-  for (const e of raw.plugins) {
-    if (!isObject(e)) return { ok: false, reason: 'each plugin entry must be an object' }
+  const skipped: string[] = []
+  raw.plugins.forEach((e, i) => {
+    const label = isObject(e) && typeof e.name === 'string' ? e.name : `#${i}`
+    const drop = (reason: string) => { skipped.push(`${label}: ${reason}`); return undefined }
+    if (!isObject(e)) return drop('not an object')
     const { name, version, source } = e
-    if (typeof name !== 'string' || !NAME_RE.test(name)) return { ok: false, reason: `bad entry name ${JSON.stringify(name)}` }
-    if (typeof version !== 'string' || !version) return { ok: false, reason: `"${name}": version required` }
-    if (!isObject(source) || source.type !== 'git' || typeof source.url !== 'string') {
-      return { ok: false, reason: `"${name}": source must be { type:"git", url }` }
-    }
-    if (source.ref !== undefined && typeof source.ref !== 'string') return { ok: false, reason: `"${name}": source.ref must be a string` }
+    if (typeof name !== 'string' || !NAME_RE.test(name)) return drop(`bad name ${JSON.stringify(name)}`)
+    if (typeof version !== 'string' || !version) return drop('version required')
+    if (!isObject(source) || source.type !== 'git' || typeof source.url !== 'string') return drop('source must be { type:"git", url }')
+    if (source.ref !== undefined && typeof source.ref !== 'string') return drop('source.ref must be a string')
     plugins.push({
       name, version,
       source: { type: 'git', url: source.url, ...(source.ref ? { ref: source.ref } : {}) },
@@ -69,15 +75,16 @@ export function parseCatalog(raw: unknown): { ok: true; catalog: Catalog } | { o
       ...(typeof e.homepage === 'string' ? { homepage: e.homepage } : {}),
       ...(typeof e.minWechatCcVersion === 'string' ? { minWechatCcVersion: e.minWechatCcVersion } : {}),
     })
-  }
-  return { ok: true, catalog: { plugins } }
+  })
+  return { ok: true, catalog: { plugins }, skipped }
 }
 
 /** Fetch + parse the catalog. `url` may be an http(s) URL or a local file path. */
 export async function fetchCatalog(url = registryUrl()): Promise<Catalog> {
   let text: string
   if (/^https?:\/\//.test(url)) {
-    const resp = await fetch(url)
+    // 10s timeout so a hung/slow registry host can't wedge the CLI or a daemon request.
+    const resp = await fetch(url, { signal: AbortSignal.timeout(10_000) })
     if (!resp.ok) throw new Error(`registry fetch failed: HTTP ${resp.status} ${url}`)
     text = await resp.text()
   } else {
@@ -87,6 +94,10 @@ export async function fetchCatalog(url = registryUrl()): Promise<Catalog> {
   try { json = JSON.parse(text) } catch (e) { throw new Error(`registry is not valid JSON: ${e instanceof Error ? e.message : String(e)}`) }
   const parsed = parseCatalog(json)
   if (!parsed.ok) throw new Error(`registry invalid: ${parsed.reason}`)
+  if (parsed.skipped.length) {
+    // eslint-disable-next-line no-console
+    console.warn(`[plugins] registry: skipped ${parsed.skipped.length} bad entr${parsed.skipped.length === 1 ? 'y' : 'ies'}: ${parsed.skipped.join('; ')}`)
+  }
   return parsed.catalog
 }
 

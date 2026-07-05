@@ -24,11 +24,23 @@ describe('plugin catalog', () => {
     }
   })
 
-  it('rejects malformed entries (no server-of-truth trust)', () => {
-    expect(parseCatalog({}).ok).toBe(false)
-    expect(parseCatalog({ plugins: [{ name: 'x' }] }).ok).toBe(false)                      // no version/source
-    expect(parseCatalog({ plugins: [{ name: 'x', version: '1', source: { type: 'zip', url: 'u' } }] }).ok).toBe(false)
-    expect(parseCatalog({ plugins: [{ name: 'bad name', version: '1', source: { type: 'git', url: 'u' } }] }).ok).toBe(false)
+  it('hard-fails only on structural problems (not one bad entry)', () => {
+    expect(parseCatalog({}).ok).toBe(false)                 // no plugins array = structural
+    expect(parseCatalog({ plugins: 'nope' }).ok).toBe(false)
+  })
+
+  it('skips bad entries but keeps the good ones — one typo cannot down the market', () => {
+    const r = parseCatalog({ plugins: [
+      { name: 'good', version: '1.0.0', source: { type: 'git', url: 'https://x/good' } },
+      { name: 'x' },                                                   // no version/source
+      { name: 'zipsrc', version: '1', source: { type: 'zip', url: 'u' } },
+      { name: 'bad name', version: '1', source: { type: 'git', url: 'u' } },
+    ] })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.catalog.plugins.map(p => p.name)).toEqual(['good'])   // only the valid one survives
+      expect(r.skipped.length).toBe(3)
+    }
   })
 
   it('updateAvailable is true only for a strictly newer catalog version', () => {
