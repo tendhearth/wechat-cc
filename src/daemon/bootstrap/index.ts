@@ -47,6 +47,8 @@ import type { AgentConfig } from '../../lib/agent-config'
 import { loadAccess, setSessionInvalidator, type Access } from '../../lib/access'
 import { loadCompanionConfig, type CompanionConfig } from '../companion/config'
 import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
+import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
+import { bundledPluginsDir } from '../plugins/paths'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { buildDelegateDispatch, type DelegateDispatch } from './delegate'
 import { makeSendAssistantText } from './fallback-reply'
@@ -432,6 +434,26 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const delegateStdioForCursor: McpStdioSpec | null = delegateStdioByProvider.cursor ?? null
   const wechatStdioForCursor: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'cursor') : null
 
+  // Decoupled plugin lane — third-party MCP tool providers (e.g. wxvault)
+  // spawned as stdio children exactly like wechat/delegate, but discovered
+  // from `{stateDir}/plugins/<name>/` (drop-in, survives upgrades) or the
+  // bundled `plugins/` dir. wechat-cc never imports plugin code; the process
+  // boundary + MCP wire protocol are the only coupling, so a plugin can be
+  // any language. USER plugins default DISABLED (a manifest spawns a process
+  // = arbitrary code; enable via dashboard / plugins.json); BUNDLED default
+  // ENABLED. Unlike installUserMcp (which pollutes the human's global
+  // ~/.claude.json), this injects only into the daemon-spawned providers.
+  const pluginMcp = pluginMcpSpecs(loadPlugins({
+    stateDir: deps.stateDir,
+    bundledDir: bundledPluginsDir(),
+    log: (m) => deps.log('BOOT', `plugin: ${m}`),
+  }))
+  // Claude's SDK wants each server tagged `type: 'stdio'`; codex/cursor take
+  // the bare {command,args,env} shape (structurally identical to McpStdioSpec).
+  const pluginMcpForClaude = Object.fromEntries(
+    Object.entries(pluginMcp).map(([k, s]) => [k, { type: 'stdio' as const, ...s }]),
+  )
+
   // Pin a Claude model from agent-config.json (or fall back to a stable
   // full ID). Without this, the spawned Claude Code subprocess inherits
   // whatever `~/.claude/.claude.json` says — which breaks the daemon
@@ -488,6 +510,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       mcpServers: {
         ...(wechatStdioForClaude ? { wechat: { type: 'stdio' as const, ...wechatStdioForClaude, env: wechatEnv! } } : {}),
         ...(delegateStdioForClaude ? { delegate: { type: 'stdio' as const, ...delegateStdioForClaude, env: delegateEnv! } } : {}),
+        ...pluginMcpForClaude,
       },
       // Using preset+append (instead of raw string) keeps MCP tools inline in
       // the system prompt — otherwise they're deferred behind ToolSearch,
@@ -667,6 +690,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
         mcpServers: {
           ...(wechatStdioForCodex ? { wechat: wechatStdioForCodex } : {}),
           ...(delegateStdioForCodex ? { delegate: delegateStdioForCodex } : {}),
+          ...pluginMcp,
         },
       }),
       {
@@ -742,6 +766,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
           mcpServers: {
             ...(wechatStdioForCursor ? { wechat: wechatStdioForCursor } : {}),
             ...(delegateStdioForCursor ? { delegate: delegateStdioForCursor } : {}),
+            ...pluginMcp,
           },
         }),
         {

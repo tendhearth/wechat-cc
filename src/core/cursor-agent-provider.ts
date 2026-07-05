@@ -14,7 +14,7 @@
  *
  * See docs/superpowers/specs/2026-05-23-cursor-sdk-provider-design.md.
  */
-import { mergeEnvIntoMcpServers, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type ProviderCapabilities } from './agent-provider'
+import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type ProviderCapabilities } from './agent-provider'
 import type { TierProfile } from './user-tier'
 import { log } from '../lib/log'
 
@@ -249,10 +249,12 @@ export function createCursorAgentProvider(opts: CursorAgentProviderOptions): Age
     async spawn(project: AgentProject, spawnOpts) {
       const tierOpts = tierProfileToCursorSdkOpts(spawnOpts.tierProfile, spawnOpts.permissionMode)
       // Per-session internal-api auth — merge the env-only token + tier into
-      // each stdio MCP child's env (provider-agnostic seam; same as claude/codex).
+      // the CORE stdio MCP children's env (provider-agnostic seam; same as
+      // claude/codex). Scoped to CORE_MCP_SERVER_NAMES so third-party plugins
+      // never receive the bearer token.
       const sessionEnv = spawnOpts.mcpEnv ?? {}
       const mcpWithEnv = opts.mcpServers
-        ? mergeEnvIntoMcpServers(opts.mcpServers, sessionEnv)
+        ? mergeEnvIntoMcpServers(opts.mcpServers, sessionEnv, CORE_MCP_SERVER_NAMES)
         : undefined
       // Per-spawn model (daemon's /model pin) wins over the construction-time
       // default → a model switch applies on the next session, no restart.

@@ -1,0 +1,121 @@
+/**
+ * Plugin manifest — the ONLY thing wechat-cc reads from a plugin. It never
+ * imports plugin code; it spawns the declared process and speaks MCP to it
+ * over stdio. That process boundary is the whole decoupling: a plugin can be
+ * any language (wxvault is Python, the daemon is Bun), coupled only by the
+ * MCP wire protocol + this schema.
+ *
+ * Today only `kind: "mcp"` (a passive tool provider → `mcp__<name>__*` tools).
+ * Autonomous agent plugins will reuse this manifest with `kind: "a2a"` on a
+ * separate lane — one plugin concept, two contracts.
+ */
+export interface PluginSpawn {
+  /** Executable, e.g. "python3" or "node". Resolved via the daemon's PATH. */
+  command: string
+  /** Argv. `${pluginDir}` expands to the manifest's directory (absolute). */
+  args?: string[]
+  /** Extra env for the child. Values also get `${pluginDir}` expansion. */
+  env?: Record<string, string>
+}
+
+export interface PluginHealthcheck {
+  /**
+   * Paths that must ALL exist for the plugin to be "ready". `${pluginDir}`
+   * expands. Declarative (no command exec) on purpose — a not-ready plugin is
+   * discovered + toggleable but withheld from the agent, so a broken tool is
+   * never handed over (e.g. wxvault before `decrypt.py` has produced
+   * `out/decrypted`).
+   */
+  requiresPaths?: string[]
+}
+
+export interface PluginManifest {
+  /** Unique, becomes the MCP server key → tools appear as `mcp__<name>__*`. */
+  name: string
+  kind: 'mcp'
+  displayName?: string
+  description?: string
+  spawn: PluginSpawn
+  /** Readiness gate — see PluginHealthcheck. */
+  healthcheck?: PluginHealthcheck
+  /** Free-form host/setup hints shown to the operator (not enforced). */
+  requires?: Record<string, string>
+  /** Advertised tool names (documentation only; MCP is the source of truth). */
+  tools?: string[]
+}
+
+/** Names the daemon owns — a plugin may not shadow the core MCP children. */
+export const RESERVED_NAMES = new Set(['wechat', 'delegate'])
+
+const NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/
+
+export type ParseResult =
+  | { ok: true; manifest: PluginManifest }
+  | { ok: false; reason: string }
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === 'object' && !Array.isArray(v)
+}
+
+function isStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every(x => typeof x === 'string')
+}
+
+function isStringRecord(v: unknown): v is Record<string, string> {
+  return isObject(v) && Object.values(v).every(x => typeof x === 'string')
+}
+
+/** Validate an untrusted parsed manifest. Rejects with a human reason. */
+export function parseManifest(raw: unknown): ParseResult {
+  if (!isObject(raw)) return { ok: false, reason: 'manifest is not a JSON object' }
+
+  const { name, kind, spawn } = raw
+  if (typeof name !== 'string' || !NAME_RE.test(name)) {
+    return { ok: false, reason: `invalid name ${JSON.stringify(name)} (want ^[A-Za-z0-9][A-Za-z0-9_-]*$)` }
+  }
+  if (RESERVED_NAMES.has(name)) {
+    return { ok: false, reason: `name "${name}" is reserved by the daemon` }
+  }
+  if (kind !== 'mcp') {
+    return { ok: false, reason: `unsupported kind ${JSON.stringify(kind)} (only "mcp" today)` }
+  }
+  if (!isObject(spawn) || typeof spawn.command !== 'string' || !spawn.command) {
+    return { ok: false, reason: 'spawn.command missing or not a non-empty string' }
+  }
+  if (spawn.args !== undefined && !isStringArray(spawn.args)) {
+    return { ok: false, reason: 'spawn.args must be an array of strings' }
+  }
+  if (spawn.env !== undefined && !isStringRecord(spawn.env)) {
+    return { ok: false, reason: 'spawn.env must be a string→string map' }
+  }
+  if (raw.requires !== undefined && !isStringRecord(raw.requires)) {
+    return { ok: false, reason: 'requires must be a string→string map' }
+  }
+  if (raw.tools !== undefined && !isStringArray(raw.tools)) {
+    return { ok: false, reason: 'tools must be an array of strings' }
+  }
+  if (raw.healthcheck !== undefined) {
+    if (!isObject(raw.healthcheck)) return { ok: false, reason: 'healthcheck must be an object' }
+    if (raw.healthcheck.requiresPaths !== undefined && !isStringArray(raw.healthcheck.requiresPaths)) {
+      return { ok: false, reason: 'healthcheck.requiresPaths must be an array of strings' }
+    }
+  }
+
+  const manifest: PluginManifest = {
+    name,
+    kind: 'mcp',
+    spawn: {
+      command: spawn.command,
+      ...(spawn.args ? { args: spawn.args } : {}),
+      ...(spawn.env ? { env: spawn.env } : {}),
+    },
+    ...(typeof raw.displayName === 'string' ? { displayName: raw.displayName } : {}),
+    ...(typeof raw.description === 'string' ? { description: raw.description } : {}),
+    ...(isObject(raw.healthcheck) && isStringArray(raw.healthcheck.requiresPaths)
+      ? { healthcheck: { requiresPaths: raw.healthcheck.requiresPaths } }
+      : {}),
+    ...(isStringRecord(raw.requires) ? { requires: raw.requires } : {}),
+    ...(isStringArray(raw.tools) ? { tools: raw.tools } : {}),
+  }
+  return { ok: true, manifest }
+}

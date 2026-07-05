@@ -3,12 +3,36 @@ import {
   collectTurn,
   isReplyToolCall,
   isReplyToolName,
+  mergeEnvIntoMcpServers,
+  CORE_MCP_SERVER_NAMES,
   type AgentEvent,
 } from './agent-provider'
 
 async function* events(...e: AgentEvent[]): AsyncIterable<AgentEvent> {
   for (const ev of e) yield ev
 }
+
+describe('mergeEnvIntoMcpServers — session-token scoping (F2)', () => {
+  const servers: Record<string, { command: string; env?: Record<string, string> }> = {
+    wechat: { command: 'bun', env: { A: '1' } },
+    delegate: { command: 'bun' },
+    wxvault: { command: 'python3', env: { DATA: '/x' } },   // third-party plugin
+  }
+  const token = { WECHAT_SESSION_TOKEN: 'secret', WECHAT_SESSION_TIER: 'admin' }
+
+  it('without onlyNames, injects into every server (legacy behavior)', () => {
+    const out = mergeEnvIntoMcpServers(servers, token)
+    expect(out.wxvault!.env).toMatchObject(token)
+  })
+
+  it('scoped to CORE_MCP_SERVER_NAMES, the plugin gets NO bearer token', () => {
+    const out = mergeEnvIntoMcpServers(servers, token, CORE_MCP_SERVER_NAMES)
+    expect(out.wechat!.env).toMatchObject({ A: '1', ...token })   // core: token injected
+    expect(out.delegate!.env).toMatchObject(token)
+    expect(out.wxvault!.env).toEqual({ DATA: '/x' })              // plugin: untouched
+    expect(out.wxvault!.env).not.toHaveProperty('WECHAT_SESSION_TOKEN')
+  })
+})
 
 /**
  * Yields the given events, then hangs forever (never emits a result and

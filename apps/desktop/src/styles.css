@@ -4185,6 +4185,64 @@ input { font: inherit; color: inherit; }
   margin-top: 8px;
 }
 
+/* ── Plugins pane ─────────────────────────────────────────────────────────
+   Reuses the a2a card / .dot / .btn styling; only the plugin-specific chrome
+   is defined here. All colors come from the shared tokens so light/dark and
+   the paper theme are inherited automatically. */
+.plugins-hint {
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  border-radius: var(--radius-sm);
+  background: var(--paper-2);
+  border: 1px solid var(--hair);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+.plugins-hint code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--paper-3);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.plugins-note {
+  padding: 8px 12px;
+  margin: 0 0 12px;
+  border-radius: var(--radius-sm);
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 12.5px;
+}
+.plugins-note[hidden] { display: none; }
+
+.plugin-name {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+.plugin-source {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-3);
+  border: 1px solid var(--hair-2);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.plugin-tools {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  margin: 4px 0;
+}
+.plugin-warn {
+  color: var(--amber);
+  background: var(--amber-soft);
+  font-size: 12px;
+  padding: 6px 8px;
+  margin: 6px 0 2px;
+  border-radius: var(--radius-sm);
+}
+
 /* Server status banner at the top of the Agents (A2A) tab. */
 .a2a-server-banner {
   padding: 10px 12px;

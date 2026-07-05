@@ -2518,8 +2518,61 @@ const handCmd = defineCommand({
   subCommands: { invite: handInviteCmd, join: handJoinCmd, list: handListCmd, ping: handPingCmd, add: handAddCmd, accept: handAcceptCmd },
 })
 
+// Plugin management (MCP tool providers, e.g. wxvault). Discovery is not
+// consent — user-dir plugins stay disabled until `plugin enable`.
+const pluginListCmd = defineCommand({
+  meta: { name: 'list', description: 'List discovered plugins and their enable/ready state' },
+  args: { json: { type: 'boolean', description: 'JSON output' } },
+  async run({ args }) {
+    const { loadPlugins } = await import('./src/daemon/plugins/registry')
+    const { bundledPluginsDir } = await import('./src/daemon/plugins/paths')
+    const loaded = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() })
+    if (args.json) {
+      console.log(JSON.stringify(loaded.map(p => ({
+        name: p.name, source: p.source, enabled: p.enabled, ready: p.ready,
+        notReadyReason: p.notReadyReason ?? null, displayName: p.manifest.displayName ?? null,
+      })), null, 2))
+      return
+    }
+    if (loaded.length === 0) {
+      console.log('no plugins found — drop one into ~/.claude/channels/wechat/plugins/<name>/ (see docs/plugins.md)')
+      return
+    }
+    for (const p of loaded) {
+      const state = !p.enabled ? 'disabled' : p.ready ? 'enabled + ready' : `enabled but NOT READY (${p.notReadyReason})`
+      console.log(`${p.enabled && p.ready ? '●' : '○'} ${p.name}  [${p.source}]  ${state}`)
+    }
+  },
+})
+
+const pluginEnableCmd = defineCommand({
+  meta: { name: 'enable', description: 'Enable a plugin (agent gets its tools after a daemon restart)' },
+  args: { name: { type: 'positional', required: true, description: 'Plugin name', valueHint: 'name' } },
+  async run({ args }) {
+    const { setPluginEnabled } = await import('./src/daemon/plugins/registry')
+    setPluginEnabled(STATE_DIR, args.name, true)
+    console.log(`enabled "${args.name}" — restart the daemon to load it`)
+  },
+})
+
+const pluginDisableCmd = defineCommand({
+  meta: { name: 'disable', description: 'Disable a plugin' },
+  args: { name: { type: 'positional', required: true, description: 'Plugin name', valueHint: 'name' } },
+  async run({ args }) {
+    const { setPluginEnabled } = await import('./src/daemon/plugins/registry')
+    setPluginEnabled(STATE_DIR, args.name, false)
+    console.log(`disabled "${args.name}" — restart the daemon to unload it`)
+  },
+})
+
+const pluginCmd = defineCommand({
+  meta: { name: 'plugin', description: 'Manage plugins (MCP tool providers like wxvault)' },
+  subCommands: { list: pluginListCmd, enable: pluginEnableCmd, disable: pluginDisableCmd },
+})
+
 const SUBCOMMANDS = {
   status: statusCmd,
+  plugin: pluginCmd,
   hand: handCmd,
   list: listCmd,
   install: installCmd,

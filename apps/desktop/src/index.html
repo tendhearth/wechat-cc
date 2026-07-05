@@ -320,6 +320,10 @@
               <span class="ic" data-hg-icon="settings-01" data-hg-size="16"></span>
               <span>Agent</span>
             </button>
+            <button class="dash-nav-link" data-pane="plugins">
+              <span class="ic" data-hg-icon="plug-01" data-hg-size="16"></span>
+              <span>插件</span>
+            </button>
           </nav>
 
           <div class="dash-rail-foot">
@@ -555,6 +559,25 @@
                    through Add Agent flow. Populated by refresh(). -->
               <div id="a2a-server-banner" class="a2a-server-banner"></div>
               <ul id="a2a-agents-list" class="a2a-agents-list"></ul>
+            </div>
+          </article>
+
+          <!-- ── pane: plugins ─────────────────────────────────────────── -->
+          <article class="dash-pane" data-pane="plugins" hidden>
+            <div class="topbar">
+              <span class="crumb">插件</span>
+              <div class="actions">
+                <button id="plugins-refresh-btn" class="btn ghost"><span class="ic" data-hg-icon="refresh" data-hg-size="16"></span> 刷新</button>
+              </div>
+            </div>
+            <div class="a2a-agents-body">
+              <div class="plugins-hint">
+                插件给 agent 加能力（MCP 工具）。放进
+                <code>~/.claude/channels/wechat/plugins/</code> 的插件默认<strong>停用</strong>——
+                启用后<strong>重启 daemon</strong> 生效。
+              </div>
+              <div id="plugins-note" class="plugins-note" hidden></div>
+              <ul id="plugins-list" class="a2a-agents-list"></ul>
             </div>
           </article>
 

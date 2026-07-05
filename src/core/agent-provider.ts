@@ -143,12 +143,25 @@ export interface SpawnContext {
  * through; child env wins over `extra` only where keys don't collide (extra is
  * spread last, so the injected auth env takes precedence by design).
  */
+/**
+ * MCP servers that legitimately consume the per-session internal-api auth env
+ * (`WECHAT_SESSION_TOKEN`/`_TIER`). ONLY these get it — third-party plugins
+ * (any other server name) must never receive the daemon's bearer token, or
+ * enabled plugin code could impersonate the agent against the loopback API.
+ */
+export const CORE_MCP_SERVER_NAMES: ReadonlySet<string> = new Set(['wechat', 'delegate'])
+
 export function mergeEnvIntoMcpServers<T extends { env?: Record<string, string> }>(
   servers: Record<string, T>,
   extra: Record<string, string>,
+  onlyNames?: ReadonlySet<string>,
 ): Record<string, T> {
   return Object.fromEntries(
-    Object.entries(servers).map(([name, srv]) => [name, { ...srv, env: { ...(srv.env ?? {}), ...extra } }]),
+    Object.entries(servers).map(([name, srv]) =>
+      onlyNames && !onlyNames.has(name)
+        ? [name, srv]                                              // e.g. plugin — no auth env
+        : [name, { ...srv, env: { ...(srv.env ?? {}), ...extra } }],
+    ),
   ) as Record<string, T>
 }
 

@@ -53,6 +53,8 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/a2a/pause': 'trusted',
   'POST /v1/a2a/send': 'trusted',
   'POST /v1/a2a/test': 'trusted',
+  'GET /v1/plugins/list': 'trusted',
+  'POST /v1/plugins/toggle': 'trusted',
   'POST /v1/delegate': 'trusted',
   // admin — daemon-control (daemon_introspect / daemon_remediate)
   'GET /v1/turns': 'admin',
