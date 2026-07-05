@@ -35,6 +35,8 @@ wxvault/
 {
   "name": "wxvault",             // unique; becomes mcp__wxvault__*  (^[A-Za-z0-9][A-Za-z0-9_-]*$)
   "kind": "mcp",                 // only "mcp" today
+  "version": "1.0.0",            // semver; the registry compares it to detect updates
+  "minWechatCcVersion": "0.6.4", // host too old → plugin withheld (like engines.vscode)
   "displayName": "微信历史",
   "description": "…shown in the dashboard…",
   "spawn": {
@@ -66,7 +68,8 @@ to have produced `out/decrypted`). Declare the paths that must exist:
 If any path is missing the plugin is still **discovered and toggleable**, but
 withheld from the agent (`ready: false`) so a broken tool is never handed over.
 The `requires.setup` string is surfaced as the fix hint. It's declarative (no
-command exec) by design.
+command exec) by design. `minWechatCcVersion` is checked the same way — a host
+older than the plugin requires marks it not-ready with an upgrade hint.
 
 ## Where plugins live (and the trust model)
 

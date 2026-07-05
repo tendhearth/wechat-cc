@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadPlugins, pluginMcpSpecs, setPluginEnabled } from './registry'
+import { loadPlugins, pluginMcpSpecs, setPluginEnabled, cmpVersion } from './registry'
 import { MANIFEST_FILE } from './paths'
 
 function writePlugin(root: string, name: string, manifest: unknown): string {
@@ -107,6 +107,27 @@ describe('plugin registry', () => {
 
   it('missing dirs are a no-op, not a crash', () => {
     expect(loadPlugins({ stateDir: join(stateDir, 'nope'), bundledDir: null })).toEqual([])
+  })
+
+  it('cmpVersion orders dotted versions and returns null on garbage', () => {
+    expect(cmpVersion('1.2.0', '1.2.0')).toBe(0)
+    expect(cmpVersion('0.6.4', '1.0.0')).toBe(-1)
+    expect(cmpVersion('1.2.10', '1.2.2')).toBe(1)   // numeric, not lexical
+    expect(cmpVersion('1.2', '1.2.0')).toBe(0)      // missing segment = 0
+    expect(cmpVersion('1.0.0-beta', '1.0.0')).toBe(0) // pre-release suffix ignored
+    expect(cmpVersion('abc', '1.0.0')).toBe(null)
+  })
+
+  it('minWechatCcVersion: withholds a plugin when the host is too old', () => {
+    writePlugin(bundledDir, 'needsnew', { ...good('needsnew'), version: '2.0.0', minWechatCcVersion: '1.0.0' })
+    const old = loadPlugins({ stateDir, bundledDir, hostVersion: '0.6.4' })
+    expect(old[0]!.ready).toBe(false)
+    expect(old[0]!.notReadyReason).toContain('requires wechat-cc >= 1.0.0')
+    expect(pluginMcpSpecs(old)).toEqual({})
+    // Host new enough → ready, version surfaced via manifest.
+    const ok = loadPlugins({ stateDir, bundledDir, hostVersion: '1.2.0' })
+    expect(ok[0]!.ready).toBe(true)
+    expect(ok[0]!.manifest.version).toBe('2.0.0')
   })
 
   it('setPluginEnabled persists the toggle (round-trips through loadPlugins)', () => {

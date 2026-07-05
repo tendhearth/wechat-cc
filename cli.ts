@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { defineCommand, runMain } from 'citty'
+import selfPkg from './package.json' with { type: 'json' }
 import { STATE_DIR } from './src/lib/config'
 import { loadAgentConfig, saveAgentConfig, type AgentProviderKind } from './src/lib/agent-config'
 import { analyzeDoctor, defaultDoctorDeps, printDoctor, serviceStatus, setupStatus } from './src/cli/doctor'
@@ -2526,10 +2527,11 @@ const pluginListCmd = defineCommand({
   async run({ args }) {
     const { loadPlugins } = await import('./src/daemon/plugins/registry')
     const { bundledPluginsDir } = await import('./src/daemon/plugins/paths')
-    const loaded = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() })
+    const loaded = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir(), hostVersion: selfPkg.version })
     if (args.json) {
       console.log(JSON.stringify(loaded.map(p => ({
-        name: p.name, source: p.source, enabled: p.enabled, ready: p.ready,
+        name: p.name, source: p.source, version: p.manifest.version ?? null,
+        enabled: p.enabled, ready: p.ready,
         notReadyReason: p.notReadyReason ?? null, displayName: p.manifest.displayName ?? null,
       })), null, 2))
       return
@@ -2540,7 +2542,8 @@ const pluginListCmd = defineCommand({
     }
     for (const p of loaded) {
       const state = !p.enabled ? 'disabled' : p.ready ? 'enabled + ready' : `enabled but NOT READY (${p.notReadyReason})`
-      console.log(`${p.enabled && p.ready ? '●' : '○'} ${p.name}  [${p.source}]  ${state}`)
+      const ver = p.manifest.version ? ` v${p.manifest.version}` : ''
+      console.log(`${p.enabled && p.ready ? '●' : '○'} ${p.name}${ver}  [${p.source}]  ${state}`)
     }
   },
 })

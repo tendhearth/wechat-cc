@@ -34,8 +34,27 @@ export interface LoadPluginsDeps {
   stateDir: string
   /** First-party plugins dir; null in compiled bundles (nothing on disk). */
   bundledDir?: string | null
+  /** Running wechat-cc version (selfPkg.version) for `minWechatCcVersion` gating. */
+  hostVersion?: string
   /** Diagnostic sink; receives one line per skipped/loaded plugin. */
   log?: (msg: string) => void
+}
+
+/**
+ * Compare two dotted numeric versions ("1.2.3"). Returns -1/0/1, or null if
+ * either side isn't parseable (caller then skips the comparison). Pre-release
+ * suffixes are ignored — fine for the coarse min-version gate.
+ */
+export function cmpVersion(a: string, b: string): -1 | 0 | 1 | null {
+  const parse = (v: string) => (v.split('-')[0] ?? '').split('.').map(Number)
+  const pa = parse(a), pb = parse(b)
+  if (pa.length === 0 || pa.some(Number.isNaN) || pb.some(Number.isNaN)) return null
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? 0, y = pb[i] ?? 0
+    if (x < y) return -1
+    if (x > y) return 1
+  }
+  return 0
 }
 
 interface EnabledConfig {
@@ -116,8 +135,16 @@ function resolveSpec(manifest: PluginManifest, pluginDir: string): McpStdioSpec 
  * entry exists. `spec.command` is rewritten to the resolved absolute path.
  * Both failures return an actionable reason (with the `requires.setup` hint).
  */
-function checkReady(manifest: PluginManifest, spec: McpStdioSpec, pluginDir: string): { ready: true } | { ready: false; reason: string } {
+function checkReady(manifest: PluginManifest, spec: McpStdioSpec, pluginDir: string, hostVersion?: string): { ready: true } | { ready: false; reason: string } {
   const hint = manifest.requires?.setup ? ` — ${manifest.requires.setup}` : ''
+  // Host-version gate (like VS Code engines.vscode / Obsidian minAppVersion).
+  const min = manifest.minWechatCcVersion
+  if (min && hostVersion) {
+    const c = cmpVersion(hostVersion, min)
+    if (c !== null && c < 0) {
+      return { ready: false, reason: `requires wechat-cc >= ${min} (current ${hostVersion}) — upgrade wechat-cc` }
+    }
+  }
   const abs = resolveCommand(spec.command)
   if (!abs) return { ready: false, reason: `command "${spec.command}" not found on PATH${hint}` }
   spec.command = abs
@@ -182,7 +209,7 @@ export function loadPlugins(deps: LoadPluginsDeps): LoadedPlugin[] {
     const def = p.source === 'bundled'          // default enable-state by trust
     const enabled = p.name in enabledMap ? enabledMap[p.name]! : def
     const spec = resolveSpec(p.manifest, p.dir)
-    const health = checkReady(p.manifest, spec, p.dir)   // may rewrite spec.command → absolute
+    const health = checkReady(p.manifest, spec, p.dir, deps.hostVersion)   // may rewrite spec.command → absolute
     loaded.push({
       name: p.name,
       source: p.source,

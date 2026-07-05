@@ -446,6 +446,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const pluginMcp = pluginMcpSpecs(loadPlugins({
     stateDir: deps.stateDir,
     bundledDir: bundledPluginsDir(),
+    hostVersion: selfPkg.version,
     log: (m) => deps.log('BOOT', `plugin: ${m}`),
   }))
   // Claude's SDK wants each server tagged `type: 'stdio'`; codex/cursor take

@@ -59,6 +59,7 @@ export async function refresh() {
         <span class="dot ${live ? 'on' : 'off'}"></span>
         <strong>${escapeHtml(String(p.display_name ?? p.name))}</strong>
         <span class="plugin-name">${escapeHtml(p.name)}</span>
+        ${p.version ? `<span class="plugin-ver">v${escapeHtml(String(p.version))}</span>` : ''}
         <span class="plugin-source">${p.source === 'bundled' ? '内置' : '用户'}</span>
       </header>
       ${desc}

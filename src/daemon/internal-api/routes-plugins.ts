@@ -10,17 +10,20 @@ import { type InternalApiDeps, type RouteTable } from './types'
 import type { PluginToggleRequestT } from './schema'
 import { loadPlugins, setPluginEnabled } from '../plugins/registry'
 import { bundledPluginsDir } from '../plugins/paths'
+import selfPkg from '../../../package.json' with { type: 'json' }
 
 export function pluginRoutes(deps: InternalApiDeps): RouteTable {
   return {
     'GET /v1/plugins/list': () => {
-      const loaded = loadPlugins({ stateDir: deps.stateDir, bundledDir: bundledPluginsDir() })
+      const loaded = loadPlugins({ stateDir: deps.stateDir, bundledDir: bundledPluginsDir(), hostVersion: selfPkg.version })
       // Deliberately omit spec.env (could carry secrets a plugin declared) —
       // the dashboard only needs identity + state, not the spawn internals.
       return { status: 200, body: {
+        host_version: selfPkg.version,
         plugins: loaded.map(p => ({
           name: p.name,
           source: p.source,
+          version: p.manifest.version ?? null,
           enabled: p.enabled,
           ready: p.ready,
           not_ready_reason: p.notReadyReason ?? null,

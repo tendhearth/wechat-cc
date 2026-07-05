@@ -33,6 +33,14 @@ export interface PluginManifest {
   /** Unique, becomes the MCP server key → tools appear as `mcp__<name>__*`. */
   name: string
   kind: 'mcp'
+  /** Semver of the plugin. Compared against the registry to detect updates. */
+  version?: string
+  /**
+   * Minimum wechat-cc (host) version this plugin supports, semver. If the
+   * running host is older, the plugin is withheld as not-ready — same idea as
+   * VS Code `engines.vscode` / Obsidian `minAppVersion`.
+   */
+  minWechatCcVersion?: string
   displayName?: string
   description?: string
   spawn: PluginSpawn
@@ -100,6 +108,12 @@ export function parseManifest(raw: unknown): ParseResult {
       return { ok: false, reason: 'healthcheck.requiresPaths must be an array of strings' }
     }
   }
+  if (raw.version !== undefined && typeof raw.version !== 'string') {
+    return { ok: false, reason: 'version must be a semver string' }
+  }
+  if (raw.minWechatCcVersion !== undefined && typeof raw.minWechatCcVersion !== 'string') {
+    return { ok: false, reason: 'minWechatCcVersion must be a semver string' }
+  }
 
   const manifest: PluginManifest = {
     name,
@@ -109,6 +123,8 @@ export function parseManifest(raw: unknown): ParseResult {
       ...(spawn.args ? { args: spawn.args } : {}),
       ...(spawn.env ? { env: spawn.env } : {}),
     },
+    ...(typeof raw.version === 'string' ? { version: raw.version } : {}),
+    ...(typeof raw.minWechatCcVersion === 'string' ? { minWechatCcVersion: raw.minWechatCcVersion } : {}),
     ...(typeof raw.displayName === 'string' ? { displayName: raw.displayName } : {}),
     ...(typeof raw.description === 'string' ? { description: raw.description } : {}),
     ...(isObject(raw.healthcheck) && isStringArray(raw.healthcheck.requiresPaths)
