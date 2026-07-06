@@ -33,6 +33,7 @@ import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modul
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
 import { initPluginsTab, refresh as refreshPlugins } from "./modules/plugins.js"
+import { initLicense, refreshLicense } from "./modules/license.js"
 import { loadUpdateProbe, applyUpdate } from "./modules/update.js"
 import { wireSettingsDrawer, openSettingsDrawer } from "./modules/settings-drawer.js"
 import { mountHugeicons } from "./modules/icons.js"
@@ -555,7 +556,10 @@ function wireEvents() {
     embryoToggle.setAttribute("aria-pressed", on ? "true" : "false")
   }
 
-  document.getElementById("settings-open")?.addEventListener("click", openSettingsDrawer)
+  document.getElementById("settings-open")?.addEventListener("click", () => {
+    openSettingsDrawer()
+    refreshLicense().catch(err => console.error("license refresh failed", err))
+  })
 
   document.getElementById("qr-raw-toggle")?.addEventListener("click", () => {
     document.getElementById("qr-raw")?.classList.toggle("show")
@@ -1052,6 +1056,7 @@ async function boot() {
   // is deferred until the user actually switches to that pane).
   initA2AAgentsTab().catch(err => console.error("a2a-agents init failed", err))
   initPluginsTab().catch(err => console.error("plugins init failed", err))
+  initLicense().catch(err => console.error("license init failed", err))
   let report = await doctorPoller.refresh()
   if (!report) {
     setMode("wizard")

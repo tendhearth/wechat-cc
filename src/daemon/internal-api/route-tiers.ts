@@ -58,6 +58,9 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'GET /v1/plugins/registry': 'trusted',
   'POST /v1/plugins/install': 'trusted',
   'POST /v1/plugins/upgrade': 'trusted',
+  'GET /v1/license/status': 'trusted',
+  'POST /v1/license/activate': 'trusted',
+  'POST /v1/license/deactivate': 'trusted',
   'POST /v1/delegate': 'trusted',
   // admin — daemon-control (daemon_introspect / daemon_remediate)
   'GET /v1/turns': 'admin',

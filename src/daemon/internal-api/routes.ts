@@ -14,6 +14,7 @@ import type { Mode } from '../../core/conversation'
 import { makeEventsStore } from '../events/store'
 import { a2aRoutes } from './routes-a2a'
 import { pluginRoutes } from './routes-plugins'
+import { licenseRoutes } from './routes-license'
 import { daemonControlRoutes } from './routes-daemon-control'
 import { fileRoutes } from './routes-files'
 import type {
@@ -449,6 +450,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     //    / restart / turns) live in sibling files — spread in here. ──────────
     ...a2aRoutes(deps),
     ...pluginRoutes(deps),
+    ...licenseRoutes(deps),
     ...daemonControlRoutes(deps),
     ...fileRoutes(),
   }

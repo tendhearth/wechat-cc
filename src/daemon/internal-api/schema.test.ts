@@ -601,11 +601,12 @@ describe('ConversationSetModeResponse', () => {
 // ── schema lookup tables ─────────────────────────────────────────────────────
 
 describe('schema lookup tables', () => {
-  it('REQUEST_SCHEMAS has 29 entries (POST body + 1 GET query)', () => {
+  it('REQUEST_SCHEMAS has 30 entries (POST body + 1 GET query)', () => {
     // 19 original + 4 a2a dashboard routes (preview, install, remove, pause)
     // + 1 a2a server-side test route (Test button) + 1 memory/delete
     // + 1 companion/import-local + 3 plugins (toggle, install, upgrade)
-    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(29)
+    // + 1 license/activate
+    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(30)
   })
   it('RESPONSE_SCHEMAS has 30 entries (one per route)', () => {
     // 25 original + 2 a2a dashboard response schemas (preview, install)

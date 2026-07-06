@@ -371,6 +371,8 @@ export type PluginToggleRequestT = z.infer<typeof PluginToggleRequest>
 export const PluginInstallRequest = z.object({ name: z.string() })
 export type PluginInstallRequestT = z.infer<typeof PluginInstallRequest>
 // POST /v1/plugins/upgrade reuses the same { name } shape.
+export const LicenseActivateRequest = z.object({ key: z.string() })
+export type LicenseActivateRequestT = z.infer<typeof LicenseActivateRequest>
 
 export type A2APreviewRequestT = z.infer<typeof A2APreviewRequest>
 export type A2AInstallRequestT = z.infer<typeof A2AInstallRequest>
@@ -552,6 +554,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/plugins/toggle': PluginToggleRequest,
   'POST /v1/plugins/install': PluginInstallRequest,
   'POST /v1/plugins/upgrade': PluginInstallRequest,
+  'POST /v1/license/activate': LicenseActivateRequest,
 }
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
