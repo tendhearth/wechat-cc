@@ -32,6 +32,11 @@ chat-completions APIs. So we must supply the agent loop ourselves.
   NOT adopting Mastra (Approach C — Mastra wants to own memory/agent/MCP/approval,
   which overlaps and fights wechat-cc's existing session-manager / tier /
   wechat-MCP / memory).
+- **Own the tool-calling loop; isolate AI SDK behind a `ChatModelClient`
+  seam** (maintenance posture, see §3.6). The multi-step loop is small and
+  stable, so we write it; AI SDK is used only as a swappable transport, never
+  imported outside one adapter file. Transport of record:
+  `@ai-sdk/openai-compatible`.
 - **API key from env `WECHAT_OPENAI_API_KEY`** — key never lands in a config
   file. base_url + model live in agent-config.
 - **No spike** — direct build.
@@ -76,23 +81,36 @@ Lifted from veylin (rewritten small, no Mastra dep):
 
 ### 3.2 The runtime (inside `dispatch()`)
 
-- Model: `@ai-sdk/openai-compatible` →
-  `createOpenAICompatible({ baseURL, apiKey }).chatModel(modelId)`.
-- Loop: AI SDK `streamText({ model, messages, tools, stopWhen: stepCountIs(N) })`.
-  One `streamText` call IS the multi-step tool loop; `stopWhen` bounds it
-  (`maxSteps`, default e.g. 25, configurable).
-- Session state: the session object holds the running `messages` array (multi-
-  turn memory *within* a live session, analogous to claude's jsonl session).
-  `dispatch(text)` appends the user message, runs `streamText`, appends the
-  resulting assistant + tool messages back onto `messages`, and yields events.
-- Event mapping via `fullStream`:
-  - `text-delta` → `{ kind: 'text', text }`
-  - `tool-call` → `{ kind: 'tool_call', server?, tool }`
-  - `finish` → `{ kind: 'result', sessionId, numTurns, durationMs }`
-  - `error` → `{ kind: 'error', message, code? }`
-  - first dispatch also emits `{ kind: 'init', sessionId }`.
-  The idle-watchdog in `collectTurn` (agent-provider.ts) already bounds a
-  silent stall — no provider-side timeout needed.
+**We own the tool-calling loop.** It is a small, stable shape:
+
+```
+loop until no tool_calls or step budget hit:
+  deltas = chatModel.streamTurn(messages, tools)   // one model turn
+  for each delta: yield mapped AgentEvent (text / tool_call)
+  if the turn requested tool_calls:
+    for each: gate (§3.4) → execute → append tool result message
+  else: break
+```
+
+- `streamTurn` is the ONLY thing that touches the model transport, and it goes
+  through the `ChatModelClient` seam (§3.6) — not AI SDK directly. Under the
+  seam, the adapter uses `@ai-sdk/openai-compatible`
+  (`createOpenAICompatible({ baseURL, apiKey }).chatModel(modelId)`) + a
+  single-turn `streamText`. We do NOT use AI SDK's multi-step `stopWhen` /
+  agent machinery — that churny surface stays out of our loop.
+- Step budget: our own counter (default e.g. 25, configurable) bounds the loop.
+- Session state: the session holds the running `messages` array (multi-turn
+  memory *within* a live session, analogous to claude's jsonl session).
+  `dispatch(text)` appends the user message, runs the loop, appends assistant +
+  tool messages back onto `messages`, and yields events. A `sessionId` is minted
+  at spawn (no external id — AI SDK gives none).
+- Event mapping (`mapStreamPart`, pure/unit-tested): transport delta →
+  `{ kind: 'text', text }` / `{ kind: 'tool_call', server?, tool }`; loop end →
+  `{ kind: 'result', sessionId, numTurns, durationMs }`; thrown/stream error →
+  `{ kind: 'error', message, code? }`; first dispatch also emits
+  `{ kind: 'init', sessionId }`. The idle-watchdog in `collectTurn`
+  (agent-provider.ts) already bounds a silent stall — no provider-side timeout
+  needed.
 
 ### 3.3 Tools — two sources
 
@@ -141,6 +159,42 @@ this provider **also** cuts the cost of background routing / chatroom-moderator
 (agent-provider.ts) is applied to the eval output for consistent auth-fail
 handling.
 
+### 3.6 Maintenance posture — the `ChatModelClient` seam
+
+The `AgentProvider` interface already bounds the blast radius of any provider
+SDK's churn to one provider file (true today for claude-agent-sdk, the codex
+binary, and the cursor SDK). AI SDK is a fourth such isolated dependency — but
+because *we* own the loop here, our surface into AI SDK is larger and sits on
+its churniest parts (the multi-step `stopWhen` agent API, `experimental_`-
+prefixed MCP client). Two moves shrink that coupling to the minimum:
+
+1. **Own the loop** (§3.2) — the multi-step orchestration is ours and stable,
+   so we never depend on AI SDK's evolving agent machinery.
+2. **A narrow internal interface** the loop/tools/gate depend on:
+
+   ```ts
+   interface ChatModelClient {
+     streamTurn(messages: ChatMessage[], tools: ToolSpec[]): AsyncIterable<TurnDelta>
+   }
+   ```
+
+   AI SDK is imported in exactly ONE adapter file that implements this
+   interface via `@ai-sdk/openai-compatible`. Nothing else in the provider
+   (loop, tools, gate, event mapping) imports AI SDK. Consequences:
+   - An AI SDK breaking change is a one-file migration (the adapter).
+   - Swapping `@ai-sdk/openai-compatible` → the plain `openai` SDK later is
+     also a one-file change; the interface is the contract.
+
+**Why `@ai-sdk/openai-compatible` under the seam** (vs the plain `openai` SDK):
+it actively normalizes per-vendor quirks (tool-call dialects, streaming
+tool_call deltas, `deepseek-reasoner` lacking function-calling) — that is
+maintenance someone else carries for us. Its API churn is already fenced behind
+the adapter, so we take the vendor-adaptation benefit without the loop coupling.
+
+Net: AI SDK drops from "the runtime's load-bearing loop engine" to "a swappable
+transport behind one adapter." Maintenance burden ≈ any existing provider, and
+arguably lower since the loop is our own stable code.
+
 ## 4. Config & wiring
 
 - `src/lib/agent-config.ts`: add `'openai'` to the provider zod enum; add
@@ -178,11 +232,15 @@ handling.
 
 ## 7. Open items to resolve during planning
 
-- **AI SDK version + exact API surface** (`streamText` `stopWhen`/`stepCountIs`,
+- **AI SDK version + exact API surface** (single-turn `streamText`,
   `fullStream` part names, `experimental_createMCPClient` stdio transport,
   `@ai-sdk/openai-compatible` factory name) must be verified against the version
   we install — the names above are from the v5/v6 line and may need adjustment.
-  Verify via Context7 / the installed package before coding.
+  Verify via Context7 / the installed package before coding. All of this lives
+  behind the `ChatModelClient` adapter (§3.6), so a version surprise touches one
+  file. NOTE: `experimental_createMCPClient` is likewise confined to the MCP-tool
+  bridge (§3.3a); if its API is unstable, the bridge can fall back to the
+  `@modelcontextprotocol/sdk` client directly.
 - Confirm DeepSeek's function-calling dialect works through
   `@ai-sdk/openai-compatible` (tool_calls in the OpenAI shape) — spot-check
   against DeepSeek docs.
