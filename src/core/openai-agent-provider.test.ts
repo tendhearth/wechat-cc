@@ -51,9 +51,36 @@ describe('openai provider loop', () => {
     await session.close()
   })
 
-  it('cheapEval returns text and screens auth failures', async () => {
+  it('cheapEval returns text on success (happy path)', async () => {
     const provider = createOpenAiAgentProvider({ chatModel: scriptedModel(), makeMcpBridge: async () => fakeBridge([]) })
     expect(await provider.cheapEval!('ping')).toBe('ok')
+  })
+
+  it('cheapEval rejects when the model output matches the auth-failure sentinel', async () => {
+    // Scripted client whose `generate` returns text matching AUTH_FAIL_RE
+    // (see agent-provider.ts assertNotAuthFailed) — proves cheapEval actually
+    // screens auth failures rather than just passing through the happy path.
+    const authFailModel: ChatModelClient = {
+      streamTurn() { throw new Error('not used in this test') },
+      async generate() { return 'Please run /login to continue.' },
+      userMessage: (t) => ({ role: 'user', content: t } as any),
+      systemMessage: (t) => ({ role: 'system', content: t } as any),
+      toolResultMessage: (id, name, r) => ({ role: 'tool', content: `${name}:${JSON.stringify(r)}` } as any),
+    }
+    const provider = createOpenAiAgentProvider({ chatModel: authFailModel, makeMcpBridge: async () => fakeBridge([]) })
+    await expect(provider.cheapEval!('ping')).rejects.toThrow(/auth_failed/)
+  })
+
+  it('strongEval rejects when the model output matches the auth-failure sentinel', async () => {
+    const authFailModel: ChatModelClient = {
+      streamTurn() { throw new Error('not used in this test') },
+      async generate() { return 'Not logged in.' },
+      userMessage: (t) => ({ role: 'user', content: t } as any),
+      systemMessage: (t) => ({ role: 'system', content: t } as any),
+      toolResultMessage: (id, name, r) => ({ role: 'tool', content: `${name}:${JSON.stringify(r)}` } as any),
+    }
+    const provider = createOpenAiAgentProvider({ chatModel: authFailModel, makeMcpBridge: async () => fakeBridge([]) })
+    await expect(provider.strongEval!('ping')).rejects.toThrow(/auth_failed/)
   })
 })
 

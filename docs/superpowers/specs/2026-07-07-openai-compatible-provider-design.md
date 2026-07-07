@@ -1,7 +1,7 @@
 # Design: `openai-compatible` provider (AI SDK runtime)
 
 Date: 2026-07-07
-Status: approved design → writing-plans next
+Status: implemented (Tasks 1–10 complete, incl. end-to-end integration test + docs)
 
 ## 1. Motivation
 
