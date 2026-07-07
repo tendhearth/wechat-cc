@@ -120,21 +120,22 @@ async function onCardAction(e) {
  * @param {string} name @param {HTMLButtonElement} btn
  */
 async function runSetup(name, btn) {
-  if (!cliInvoke) { alert('此操作需在桌面 App 内进行'); return }
+  const invoke = cliInvoke   // capture (non-null) so closures don't re-widen to null
+  if (!invoke) { alert('此操作需在桌面 App 内进行'); return }
   btn.disabled = true
   const orig = btn.textContent
   btn.textContent = '进行中…'
   showNote(`正在连接微信并解密（会短暂关闭微信、抠密钥、解密）…`)
   const poll = setInterval(async () => {
     try {
-      const s = await cliInvoke('wechat_cli_json', { args: ['plugin', 'setup-status'] })
+      const s = await invoke('wechat_cli_json', { args: ['plugin', 'setup-status'] })
       if (s && s.running) showNote(`解密中… [${s.stage}/${s.total}] ${escapeHtml(String(s.label ?? ''))}`)
     } catch { /* transient */ }
   }, 700)
   try {
     // Long-running: streams stdout; resolves when setup exits. Text (not JSON) output.
-    await cliInvoke('wechat_cli_text', { args: ['plugin', 'setup', name] })
-    const s = await cliInvoke('wechat_cli_json', { args: ['plugin', 'setup-status'] }).catch(() => null)
+    await invoke('wechat_cli_text', { args: ['plugin', 'setup', name] })
+    const s = await invoke('wechat_cli_json', { args: ['plugin', 'setup-status'] }).catch(() => null)
     showNote(s?.ok
       ? `✓ ${name} 解密完成 — 现在可「启用」并重启 daemon 生效`
       : `连接失败：${escapeHtml(String(s?.error ?? '见日志'))}（微信是否已登录？）`)
