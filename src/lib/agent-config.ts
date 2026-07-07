@@ -5,7 +5,7 @@ import { join } from 'node:path'
 // runtime — this is a build-tool interop quirk, not a zod API difference).
 import z from 'zod'
 
-export type AgentProviderKind = 'claude' | 'codex' | 'cursor'
+export type AgentProviderKind = 'claude' | 'codex' | 'cursor' | 'openai'
 
 export interface AgentConfig {
   provider: AgentProviderKind
@@ -14,6 +14,12 @@ export interface AgentConfig {
   // optional-string shape so an operator can persist a Cursor model
   // alongside the Claude one without overloading a single field.
   cursorModel?: string
+  // OpenAI-compatible provider fields (also covers OpenAI-compatible
+  // endpoints like DeepSeek). Mirrors `cursorModel?`'s shape: kept separate
+  // from `model?` so switching providers doesn't clobber another
+  // provider's pinned model/endpoint.
+  openaiBaseUrl?: string
+  openaiModel?: string
   // When true, the daemon spawned by `service install` runs with
   // `cli.ts run --dangerously` (Claude SDK permissionMode=bypassPermissions).
   // Wizard-installed daemons need this on by default — there is no human
@@ -73,9 +79,11 @@ export type YiHubListen = z.infer<typeof YiHubListen>
 export type YiBrain = z.infer<typeof YiBrain>
 
 const AgentConfigSchema = z.object({
-  provider: z.enum(['claude', 'codex', 'cursor']).default('claude'),
+  provider: z.enum(['claude', 'codex', 'cursor', 'openai']).default('claude'),
   model: z.string().optional(),
   cursorModel: z.string().optional(),
+  openaiBaseUrl: z.string().optional(),
+  openaiModel: z.string().optional(),
   dangerouslySkipPermissions: z.boolean().default(true),
   autoStart: z.boolean().default(true),
   closeStopsDaemon: z.boolean().default(false),
@@ -116,6 +124,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
     const provider: AgentProviderKind =
       parsed.provider === 'codex' ? 'codex'
       : parsed.provider === 'cursor' ? 'cursor'
+      : parsed.provider === 'openai' ? 'openai'
       : 'claude'
     // Preserve `model` for both providers. Pre-2026-05-08 only codex
     // honored it; claude inherited the spawned CLI's default which read
@@ -143,6 +152,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       provider,
       ...(typeof parsed.model === 'string' ? { model: parsed.model } : {}),
       ...(typeof parsed.cursorModel === 'string' ? { cursorModel: parsed.cursorModel } : {}),
+      ...(typeof parsed.openaiBaseUrl === 'string' ? { openaiBaseUrl: parsed.openaiBaseUrl } : {}),
+      ...(typeof parsed.openaiModel === 'string' ? { openaiModel: parsed.openaiModel } : {}),
       dangerouslySkipPermissions,
       autoStart,
       closeStopsDaemon,

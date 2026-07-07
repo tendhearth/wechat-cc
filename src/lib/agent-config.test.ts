@@ -266,6 +266,61 @@ describe('loadAgentConfig — cursor provider', () => {
   })
 })
 
+describe('agent-config openai', () => {
+  it('accepts provider "openai" with base_url + model', () => {
+    const cfg = parseAgentConfig({
+      provider: 'openai',
+      openaiBaseUrl: 'https://api.deepseek.com/v1',
+      openaiModel: 'deepseek-chat',
+    })
+    expect(cfg.provider).toBe('openai')
+    expect(cfg.openaiBaseUrl).toBe('https://api.deepseek.com/v1')
+    expect(cfg.openaiModel).toBe('deepseek-chat')
+  })
+})
+
+describe('loadAgentConfig — openai provider', () => {
+  it('accepts provider="openai" with openaiBaseUrl and openaiModel', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-'))
+    const fs = require('node:fs') as typeof import('node:fs')
+    fs.writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+      provider: 'openai',
+      openaiBaseUrl: 'https://api.deepseek.com/v1',
+      openaiModel: 'deepseek-chat',
+      dangerouslySkipPermissions: false,
+      autoStart: false,
+      closeStopsDaemon: false,
+    }))
+    try {
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.provider).toBe('openai')
+      expect(cfg.openaiBaseUrl).toBe('https://api.deepseek.com/v1')
+      expect(cfg.openaiModel).toBe('deepseek-chat')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('openaiBaseUrl/openaiModel optional — default to undefined', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-'))
+    const fs = require('node:fs') as typeof import('node:fs')
+    fs.writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+      provider: 'openai',
+      dangerouslySkipPermissions: false,
+      autoStart: false,
+      closeStopsDaemon: false,
+    }))
+    try {
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.provider).toBe('openai')
+      expect(cfg.openaiBaseUrl).toBeUndefined()
+      expect(cfg.openaiModel).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('loadAgentConfig preserves yi v2 fields', () => {
   it('round-trips yi_hub_listen and yi_brain through save+load', () => {
     const dir = mkdtempSync(join(tmpdir(), 'yi-cfg-'))
