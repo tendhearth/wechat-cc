@@ -225,17 +225,22 @@ export function saveAgentConfig(stateDir: string, config: AgentConfig): void {
 }
 
 // The pinned model lives in a provider-specific field: cursor reads
-// `cursorModel`, claude/codex read `model`. These two accessors are the single
-// home for that rule so callers (e.g. the /v1/model routes) don't re-encode
-// `provider === 'cursor' ? cursorModel : model` at each read/write — writing the
-// wrong field is a silent no-op with a falsely-confirming read-back.
+// `cursorModel`, openai reads `openaiModel`, claude/codex read `model`. These
+// two accessors are the single home for that rule so callers (e.g. the
+// /v1/model routes) don't re-encode `provider === 'cursor' ? cursorModel :
+// model` at each read/write — writing the wrong field is a silent no-op with
+// a falsely-confirming read-back.
 
 /** The model id the configured provider actually reads (undefined if unset). */
 export function activeModel(config: AgentConfig): string | undefined {
-  return config.provider === 'cursor' ? config.cursorModel : config.model
+  if (config.provider === 'cursor') return config.cursorModel
+  if (config.provider === 'openai') return config.openaiModel
+  return config.model
 }
 
 /** A copy of `config` with the provider's active model field set to `model`. */
 export function withActiveModel(config: AgentConfig, model: string): AgentConfig {
-  return config.provider === 'cursor' ? { ...config, cursorModel: model } : { ...config, model }
+  if (config.provider === 'cursor') return { ...config, cursorModel: model }
+  if (config.provider === 'openai') return { ...config, openaiModel: model }
+  return { ...config, model }
 }

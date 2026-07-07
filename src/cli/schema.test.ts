@@ -387,6 +387,22 @@ describe('ProviderShowOutput', () => {
   it('rejects empty payload', () => {
     expect(ProviderShowOutput.safeParse({}).success).toBe(false)
   })
+  it('accepts provider: openai (added in Task 7)', () => {
+    expect(ProviderShowOutput.safeParse({
+      provider: 'openai',
+      dangerouslySkipPermissions: false,
+      autoStart: true,
+      closeStopsDaemon: false,
+    }).success).toBe(true)
+  })
+  it('rejects an unknown provider value', () => {
+    expect(ProviderShowOutput.safeParse({
+      provider: 'bogus',
+      dangerouslySkipPermissions: false,
+      autoStart: true,
+      closeStopsDaemon: false,
+    }).success).toBe(false)
+  })
 })
 
 describe('MemoryListOutput', () => {

@@ -402,6 +402,10 @@ describe('activeModel / withActiveModel — provider-specific model field', () =
     expect(activeModel({ ...base('cursor'), cursorModel: 'composer-2', model: 'ignored' })).toBe('composer-2')
   })
 
+  it('reads `openaiModel` for openai', () => {
+    expect(activeModel({ ...base('openai'), openaiModel: 'deepseek-chat', model: 'ignored' })).toBe('deepseek-chat')
+  })
+
   it('returns undefined when the provider\'s field is unset', () => {
     expect(activeModel(base('claude'))).toBeUndefined()
     // cursor reads cursorModel, so a stray `model` does not count as set
@@ -418,6 +422,11 @@ describe('activeModel / withActiveModel — provider-specific model field', () =
     expect(cursor.cursorModel).toBe('composer-2')
     expect(cursor.model).toBeUndefined()
     expect(activeModel(cursor)).toBe('composer-2')
+
+    const openai = withActiveModel(base('openai'), 'deepseek-chat')
+    expect(openai.openaiModel).toBe('deepseek-chat')
+    expect(openai.model).toBeUndefined()
+    expect(activeModel(openai)).toBe('deepseek-chat')
   })
 
   it('does not mutate the input config', () => {

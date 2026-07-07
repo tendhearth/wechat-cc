@@ -59,7 +59,7 @@ const ServiceSnapshot = z.object({
   kind: ServiceKind,
 })
 
-const AgentProviderKind = z.enum(['claude', 'codex', 'cursor'])
+const AgentProviderKind = z.enum(['claude', 'codex', 'cursor', 'openai'])
 
 const DmPolicy = z.enum(['allowlist', 'disabled'])
 
