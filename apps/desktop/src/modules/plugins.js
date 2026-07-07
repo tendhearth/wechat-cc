@@ -2,7 +2,7 @@
 /// <reference lib="dom" />
 /**
  * Dashboard module: "插件" (Plugins) tab.
- * Lists discovered plugins (MCP tool providers like wxvault) with their
+ * Lists discovered plugins (MCP tool providers) with their
  * enabled/ready state and an enable/disable toggle. Mirrors a2a-agents.js:
  * a single delegated click handler on the list (no per-refresh leaks), the
  * shared card / .btn / .dot styling, and invokeApi for daemon calls.

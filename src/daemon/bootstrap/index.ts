@@ -434,7 +434,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const delegateStdioForCursor: McpStdioSpec | null = delegateStdioByProvider.cursor ?? null
   const wechatStdioForCursor: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'cursor') : null
 
-  // Decoupled plugin lane — third-party MCP tool providers (e.g. wxvault)
+  // Decoupled plugin lane — third-party MCP tool providers
   // spawned as stdio children exactly like wechat/delegate, but discovered
   // from `{stateDir}/plugins/<name>/` (drop-in, survives upgrades) or the
   // bundled `plugins/` dir. wechat-cc never imports plugin code; the process

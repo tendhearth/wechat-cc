@@ -150,7 +150,7 @@ export type UpgradeResult =
  * Upgrade an installed plugin to the catalog's version by fetching its ref and
  * checking it out over the existing checkout. Uses `fetch + checkout --force
  * FETCH_HEAD` (NOT re-clone) so tracked code is updated while UNTRACKED data
- * the plugin generated (e.g. wxvault's out/decrypted) is preserved. Only works
+ * the plugin generated (e.g. its decrypted data dir) is preserved. Only works
  * on registry-installed (git) plugins — a symlinked/manual dir is left to the
  * operator. No-ops (upgraded:false) when already at/above the catalog version.
  */

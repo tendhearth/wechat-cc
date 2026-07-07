@@ -1,6 +1,6 @@
 /**
  * internal-api plugin routes — dashboard list + enable/disable toggle for
- * wechat-cc plugins (MCP tool providers like wxvault). Read model comes from
+ * wechat-cc plugins (MCP tool providers). Read model comes from
  * loadPlugins(); the toggle persists via setPluginEnabled(). Both take effect
  * on the NEXT daemon spawn (provider mcpServers are a boot-time snapshot), so
  * the toggle response says so — the dashboard surfaces a "restart to apply"

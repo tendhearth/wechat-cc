@@ -2,7 +2,7 @@
  * Plugin manifest — the ONLY thing wechat-cc reads from a plugin. It never
  * imports plugin code; it spawns the declared process and speaks MCP to it
  * over stdio. That process boundary is the whole decoupling: a plugin can be
- * any language (wxvault is Python, the daemon is Bun), coupled only by the
+ * any language (e.g. Python, while the daemon is Bun), coupled only by the
  * MCP wire protocol + this schema.
  *
  * Today only `kind: "mcp"` (a passive tool provider → `mcp__<name>__*` tools).
@@ -23,7 +23,7 @@ export interface PluginHealthcheck {
    * Paths that must ALL exist for the plugin to be "ready". `${pluginDir}`
    * expands. Declarative (no command exec) on purpose — a not-ready plugin is
    * discovered + toggleable but withheld from the agent, so a broken tool is
-   * never handed over (e.g. wxvault before `decrypt.py` has produced
+   * never handed over (e.g. a plugin before its setup step has produced
    * `out/decrypted`).
    */
   requiresPaths?: string[]

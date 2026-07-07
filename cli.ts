@@ -2519,7 +2519,7 @@ const handCmd = defineCommand({
   subCommands: { invite: handInviteCmd, join: handJoinCmd, list: handListCmd, ping: handPingCmd, add: handAddCmd, accept: handAcceptCmd },
 })
 
-// Plugin management (MCP tool providers, e.g. wxvault). Discovery is not
+// Plugin management (MCP tool providers). Discovery is not
 // consent — user-dir plugins stay disabled until `plugin enable`.
 const pluginListCmd = defineCommand({
   meta: { name: 'list', description: 'List discovered plugins and their enable/ready state' },
@@ -2656,7 +2656,7 @@ const pluginUpgradeCmd = defineCommand({
 })
 
 const pluginCmd = defineCommand({
-  meta: { name: 'plugin', description: 'Manage plugins (MCP tool providers like wxvault)' },
+  meta: { name: 'plugin', description: 'Manage plugins (MCP tool providers)' },
   subCommands: { list: pluginListCmd, search: pluginSearchCmd, install: pluginInstallCmd, upgrade: pluginUpgradeCmd, enable: pluginEnableCmd, disable: pluginDisableCmd },
 })
 
