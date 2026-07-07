@@ -10,7 +10,7 @@ name: Mirror v* tag → desktop-v* tag
 # any visible error. This workflow auto-creates the desktop tag from the
 # v* tag's commit so the desktop.yml workflow always fires.
 #
-# REQUIRES `RELEASE_PAT` secret (fine-grained PAT with contents:write +
+# REQUIRES `RELEASE_PAT_WECHAT_CC` secret (fine-grained PAT with contents:write +
 # workflows on this repo). The default GITHUB_TOKEN cannot be used here:
 # GitHub Actions intentionally suppresses downstream workflow triggers for
 # pushes made with GITHUB_TOKEN (anti-recursion). desktop-v0.5.17 hit
@@ -35,11 +35,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_PAT }}
+          token: ${{ secrets.RELEASE_PAT_WECHAT_CC }}
 
       - name: Create + push desktop-${{ github.ref_name }}
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT_WECHAT_CC }}
         run: |
           set -euo pipefail
           MIRROR="desktop-${GITHUB_REF_NAME}"
