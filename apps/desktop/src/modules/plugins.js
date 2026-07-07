@@ -14,7 +14,15 @@
 
 import { invokeApi } from '../api.js'
 
-export async function initPluginsTab() {
+/** CLI bridge (invoke("wechat_cli_text"/"wechat_cli_json", {args})) — set in init.
+ * Needed to run a plugin's setup via the CLI (`plugin setup <name>`), which
+ * streams progress; invokeApi (HTTP) is for the read/toggle routes.
+ * @type {((cmd: string, args: Record<string, unknown>) => Promise<any>) | null} */
+let cliInvoke = null
+
+/** @param {{ invoke?: (cmd: string, args: Record<string, unknown>) => Promise<any> }} [deps] */
+export async function initPluginsTab(deps) {
+  cliInvoke = deps?.invoke ?? null
   const list = document.getElementById('plugins-list')
   if (!list) return
   await refresh().catch(err => {
@@ -71,6 +79,8 @@ async function refreshInstalled() {
       ${tools}
       ${warn}
       <div class="a2a-card-actions">
+        ${(p.has_setup && !p.ready)
+          ? `<button class="btn" data-action="setup" data-name="${escapeHtml(p.name)}">连接微信并解密</button>` : ''}
         <button class="btn ${p.enabled ? 'ghost' : ''}" data-action="toggle"
                 data-name="${escapeHtml(p.name)}" data-enabled="${p.enabled}">
           ${p.enabled ? '停用' : '启用'}
@@ -85,9 +95,10 @@ async function refreshInstalled() {
 async function onCardAction(e) {
   const target = e.target
   if (!(target instanceof HTMLButtonElement)) return
-  if (target.dataset.action !== 'toggle') return
   const name = target.dataset.name
   if (!name) return
+  if (target.dataset.action === 'setup') { await runSetup(name, target); return }
+  if (target.dataset.action !== 'toggle') return
   const enable = target.dataset.enabled !== 'true'   // flip current state
   target.disabled = true
   try {
@@ -99,6 +110,41 @@ async function onCardAction(e) {
   } catch (err) {
     target.disabled = false
     alert(`切换失败：${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+/**
+ * Run a plugin's setup (`plugin setup <name>`) via the CLI bridge, streaming
+ * progress by polling `plugin setup-status` (same pattern as the service-install
+ * wizard). For wxvault this is the「连接微信」flow: resign → capture → decrypt.
+ * @param {string} name @param {HTMLButtonElement} btn
+ */
+async function runSetup(name, btn) {
+  if (!cliInvoke) { alert('此操作需在桌面 App 内进行'); return }
+  btn.disabled = true
+  const orig = btn.textContent
+  btn.textContent = '进行中…'
+  showNote(`正在连接微信并解密（会短暂关闭微信、抠密钥、解密）…`)
+  const poll = setInterval(async () => {
+    try {
+      const s = await cliInvoke('wechat_cli_json', { args: ['plugin', 'setup-status'] })
+      if (s && s.running) showNote(`解密中… [${s.stage}/${s.total}] ${escapeHtml(String(s.label ?? ''))}`)
+    } catch { /* transient */ }
+  }, 700)
+  try {
+    // Long-running: streams stdout; resolves when setup exits. Text (not JSON) output.
+    await cliInvoke('wechat_cli_text', { args: ['plugin', 'setup', name] })
+    const s = await cliInvoke('wechat_cli_json', { args: ['plugin', 'setup-status'] }).catch(() => null)
+    showNote(s?.ok
+      ? `✓ ${name} 解密完成 — 现在可「启用」并重启 daemon 生效`
+      : `连接失败：${escapeHtml(String(s?.error ?? '见日志'))}（微信是否已登录？）`)
+  } catch (err) {
+    showNote(`连接失败：${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    clearInterval(poll)
+    btn.disabled = false
+    btn.textContent = orig
+    await refresh()
   }
 }
 

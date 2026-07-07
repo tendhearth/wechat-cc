@@ -32,6 +32,7 @@ export function pluginRoutes(deps: InternalApiDeps): RouteTable {
           description: p.manifest.description ?? null,
           tools: p.manifest.tools ?? [],
           command: p.spec.command,
+          has_setup: !!p.manifest.setup,   // GUI shows a "run setup" button when true + not ready
         })),
       } }
     },

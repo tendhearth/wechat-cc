@@ -1055,7 +1055,7 @@ async function boot() {
   // Wire the A2A agents tab (event listeners attached once; first list load
   // is deferred until the user actually switches to that pane).
   initA2AAgentsTab().catch(err => console.error("a2a-agents init failed", err))
-  initPluginsTab().catch(err => console.error("plugins init failed", err))
+  initPluginsTab({ invoke }).catch(err => console.error("plugins init failed", err))
   initLicense().catch(err => console.error("license init failed", err))
   let report = await doctorPoller.refresh()
   if (!report) {

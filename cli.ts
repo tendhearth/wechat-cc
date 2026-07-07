@@ -2655,9 +2655,61 @@ const pluginUpgradeCmd = defineCommand({
   },
 })
 
+const pluginSetupCmd = defineCommand({
+  meta: { name: 'setup', description: "Run a plugin's one-time setup, streaming progress (desktop 「连接微信」 calls this)" },
+  args: { name: { type: 'positional', required: true, description: 'Plugin name', valueHint: 'name' } },
+  async run({ args }) {
+    const { loadPlugins } = await import('./src/daemon/plugins/registry')
+    const { bundledPluginsDir } = await import('./src/daemon/plugins/paths')
+    const { spawn } = await import('node:child_process')
+    const { writeFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const p = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() }).find(x => x.name === args.name)
+    if (!p) { console.error(`plugin "${args.name}" not found`); process.exit(1) }
+    if (!p.manifest.setup) { console.error(`plugin "${args.name}" declares no runnable setup`); process.exit(1) }
+    const sub = (s: string) => s.split('${pluginDir}').join(p.dir)
+    const setup = p.manifest.setup
+    const env = { ...process.env, ...Object.fromEntries(Object.entries(setup.env ?? {}).map(([k, v]) => [k, sub(v)])) }
+    // Progress file the desktop wizard polls (same pattern as install-progress.json).
+    const progressFile = join(STATE_DIR, 'plugin-setup-progress.json')
+    const writeProgress = (o: Record<string, unknown>) => {
+      try { writeFileSync(progressFile, JSON.stringify({ plugin: args.name, ...o })) } catch { /* best effort */ }
+    }
+    writeProgress({ running: true, stage: 0, total: 0, label: 'starting' })
+    const child = spawn(sub(setup.command), (setup.args ?? []).map(sub), { env, stdio: ['ignore', 'pipe', 'pipe'] })
+    let buf = ''
+    child.stdout.on('data', (chunk: Buffer) => {
+      buf += chunk.toString()
+      let i: number
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1)
+        process.stdout.write(line + '\n')                                  // live echo (CLI)
+        const m = line.replace(/\x1b\[[0-9;]*m/g, '').match(/\[(\d+)\/(\d+)\]\s*(.+)/) // parse "[N/M] label"
+        if (m) writeProgress({ running: true, stage: Number(m[1]), total: Number(m[2]), label: (m[3] ?? '').trim() })
+      }
+    })
+    child.stderr.on('data', (c: Buffer) => process.stderr.write(c))
+    const code: number = await new Promise(res => child.on('close', (c) => res(c ?? 1)))
+    writeProgress({ running: false, done: true, ok: code === 0, ...(code !== 0 ? { error: `exit ${code}` } : {}) })
+    process.exit(code)
+  },
+})
+
+const pluginSetupStatusCmd = defineCommand({
+  meta: { name: 'setup-status', description: 'Emit the last plugin-setup progress (JSON) — polled by the desktop wizard' },
+  async run() {
+    const { readFileSync, existsSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const f = join(STATE_DIR, 'plugin-setup-progress.json')
+    if (!existsSync(f)) { console.log(JSON.stringify({ running: false })); return }
+    try { console.log(readFileSync(f, 'utf8').trim() || '{}') }
+    catch { console.log(JSON.stringify({ running: false, error: 'unreadable progress' })) }
+  },
+})
+
 const pluginCmd = defineCommand({
   meta: { name: 'plugin', description: 'Manage plugins (MCP tool providers)' },
-  subCommands: { list: pluginListCmd, search: pluginSearchCmd, install: pluginInstallCmd, upgrade: pluginUpgradeCmd, enable: pluginEnableCmd, disable: pluginDisableCmd },
+  subCommands: { list: pluginListCmd, search: pluginSearchCmd, install: pluginInstallCmd, upgrade: pluginUpgradeCmd, setup: pluginSetupCmd, 'setup-status': pluginSetupStatusCmd, enable: pluginEnableCmd, disable: pluginDisableCmd },
 })
 
 // License / Pro entitlement. `activate DEV-anything` unlocks Pro locally for

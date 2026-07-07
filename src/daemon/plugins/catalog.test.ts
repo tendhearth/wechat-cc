@@ -53,7 +53,7 @@ describe('plugin catalog', () => {
   it('fetchCatalog reads a local file path (registry can be a file for testing)', async () => {
     const sample = join(import.meta.dirname, '..', '..', '..', 'docs', 'registry.example.json')
     const cat = await fetchCatalog(sample)
-    expect(cat.plugins.find(p => p.name === 'wxvault')?.version).toBe('1.0.0')
+    expect(cat.plugins.find(p => p.name === 'example-plugin')?.version).toBe('1.0.0')
   })
 
   describe('upgradePlugin guards (no git run)', () => {

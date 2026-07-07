@@ -44,6 +44,12 @@ export interface PluginManifest {
   displayName?: string
   description?: string
   spawn: PluginSpawn
+  /**
+   * Optional runnable one-time setup (e.g. decrypt WeChat). `wechat-cc plugin
+   * setup <name>` — and the desktop「连接微信」button — run this and stream its
+   * output. Distinct from the free-form `requires.setup` hint string.
+   */
+  setup?: PluginSpawn
   /** Readiness gate — see PluginHealthcheck. */
   healthcheck?: PluginHealthcheck
   /** Free-form host/setup hints shown to the operator (not enforced). */
@@ -71,6 +77,14 @@ function isStringArray(v: unknown): v is string[] {
 
 function isStringRecord(v: unknown): v is Record<string, string> {
   return isObject(v) && Object.values(v).every(x => typeof x === 'string')
+}
+
+/** Validate a spawn spec ({command, args?, env?}) → normalized PluginSpawn or null. */
+function parseSpawn(v: unknown): PluginSpawn | null {
+  if (!isObject(v) || typeof v.command !== 'string' || !v.command) return null
+  if (v.args !== undefined && !isStringArray(v.args)) return null
+  if (v.env !== undefined && !isStringRecord(v.env)) return null
+  return { command: v.command, ...(v.args ? { args: v.args } : {}), ...(v.env ? { env: v.env } : {}) }
 }
 
 /** Validate an untrusted parsed manifest. Rejects with a human reason. */
@@ -114,7 +128,11 @@ export function parseManifest(raw: unknown): ParseResult {
   if (raw.minWechatCcVersion !== undefined && typeof raw.minWechatCcVersion !== 'string') {
     return { ok: false, reason: 'minWechatCcVersion must be a semver string' }
   }
+  if (raw.setup !== undefined && parseSpawn(raw.setup) === null) {
+    return { ok: false, reason: 'setup must be a spawn spec { command, args?, env? }' }
+  }
 
+  const setupSpawn = parseSpawn(raw.setup)
   const manifest: PluginManifest = {
     name,
     kind: 'mcp',
@@ -130,6 +148,7 @@ export function parseManifest(raw: unknown): ParseResult {
     ...(isObject(raw.healthcheck) && isStringArray(raw.healthcheck.requiresPaths)
       ? { healthcheck: { requiresPaths: raw.healthcheck.requiresPaths } }
       : {}),
+    ...(setupSpawn ? { setup: setupSpawn } : {}),
     ...(isStringRecord(raw.requires) ? { requires: raw.requires } : {}),
     ...(isStringArray(raw.tools) ? { tools: raw.tools } : {}),
   }
