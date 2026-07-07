@@ -46,7 +46,7 @@ import { loadAgentConfig, makeMtimeCachedConfigReader } from '../../lib/agent-co
 import type { AgentConfig } from '../../lib/agent-config'
 import { loadAccess, setSessionInvalidator, type Access } from '../../lib/access'
 import { loadCompanionConfig, type CompanionConfig } from '../companion/config'
-import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
+import { wechatStdioMcpSpec, delegateStdioMcpSpec, buildOpenaiMcpSpecs, type McpStdioSpec } from './mcp-specs'
 import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
 import { bundledPluginsDir } from '../plugins/paths'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
@@ -813,13 +813,16 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
             apiKey: openaiKey,
             model: configuredAgent.openaiModel,
           }),
-          makeMcpBridge: async (sessionEnv) => {
-            const specs: Record<string, McpStdioSpec> = {}
-            if (wechatStdioForOpenai) specs.wechat = { ...wechatStdioForOpenai, env: { ...wechatStdioForOpenai.env, ...sessionEnv } }
-            if (delegateStdioForOpenai) specs.delegate = { ...delegateStdioForOpenai, env: { ...delegateStdioForOpenai.env, ...sessionEnv } }
-            for (const [name, spec] of Object.entries(pluginMcp)) specs[name] = { ...spec, env: { ...spec.env, ...sessionEnv } }
-            return createMcpToolBridge(specs)
-          },
+          // Gated via buildOpenaiMcpSpecs so only wechat/delegate ever see
+          // sessionEnv (WECHAT_SESSION_TOKEN) — third-party plugin MCP specs
+          // must never receive the daemon's loopback bearer token. See
+          // mcp-specs.ts buildOpenaiMcpSpecs doc comment.
+          makeMcpBridge: async (sessionEnv) => createMcpToolBridge(
+            buildOpenaiMcpSpecs(
+              { wechat: wechatStdioForOpenai, delegate: delegateStdioForOpenai, pluginMcp },
+              sessionEnv,
+            ),
+          ),
           log: deps.log,
         }),
         {
