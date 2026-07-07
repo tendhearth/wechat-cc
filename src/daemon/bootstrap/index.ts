@@ -433,6 +433,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const delegateStdioForCodex: McpStdioSpec | null = delegateStdioByProvider.codex ?? null
   const delegateStdioForCursor: McpStdioSpec | null = delegateStdioByProvider.cursor ?? null
   const wechatStdioForCursor: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'cursor') : null
+  const delegateStdioForOpenai: McpStdioSpec | null = delegateStdioByProvider.openai ?? null
+  const wechatStdioForOpenai: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'openai') : null
 
   // Decoupled plugin lane — third-party MCP tool providers
   // spawned as stdio children exactly like wechat/delegate, but discovered
@@ -785,6 +787,54 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     }
   } else {
     deps.log('BOOT', 'cursor: CURSOR_API_KEY not set — provider not registered')
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // OpenAI-compatible provider — fourth registered provider. Targets any
+  // OpenAI-Chat-Completions-shaped endpoint (DeepSeek/Kimi/Qwen/OpenRouter/
+  // Ollama, …) via the AI SDK. WECHAT_OPENAI_API_KEY is env-only (same
+  // rationale as CURSOR_API_KEY above); base_url + model live in
+  // agent-config.json (openaiBaseUrl/openaiModel) since they're not secret
+  // and vary per backend. All three must be present or the provider is
+  // skipped with a BOOT log line. The SDK modules are dynamic-imported so a
+  // registration failure (missing dep, bad config) degrades to a log line
+  // instead of crashing boot.
+  const openaiKey = process.env.WECHAT_OPENAI_API_KEY
+  if (openaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel) {
+    try {
+      const { createOpenAiAgentProvider } = await import('../../core/openai-agent-provider')
+      const { createAiSdkChatModel } = await import('../../core/openai-chat-model')
+      const { createMcpToolBridge } = await import('../../core/openai-mcp-bridge')
+      registry.register(
+        'openai',
+        createOpenAiAgentProvider({
+          chatModel: createAiSdkChatModel({
+            baseURL: configuredAgent.openaiBaseUrl,
+            apiKey: openaiKey,
+            model: configuredAgent.openaiModel,
+          }),
+          makeMcpBridge: async (sessionEnv) => {
+            const specs: Record<string, McpStdioSpec> = {}
+            if (wechatStdioForOpenai) specs.wechat = { ...wechatStdioForOpenai, env: { ...wechatStdioForOpenai.env, ...sessionEnv } }
+            if (delegateStdioForOpenai) specs.delegate = { ...delegateStdioForOpenai, env: { ...delegateStdioForOpenai.env, ...sessionEnv } }
+            for (const [name, spec] of Object.entries(pluginMcp)) specs[name] = { ...spec, env: { ...spec.env, ...sessionEnv } }
+            return createMcpToolBridge(specs)
+          },
+          log: deps.log,
+        }),
+        {
+          displayName: 'OpenAI-compatible',
+          // No resume support in v1 — same posture as cursor above.
+          canResume: () => false,
+        },
+      )
+      deps.log('BOOT', 'openai: base_url + model + WECHAT_OPENAI_API_KEY present — provider registered')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      deps.log('BOOT', `openai: registration failed (${msg}) — provider not registered`)
+    }
+  } else {
+    deps.log('BOOT', 'openai: not configured (need WECHAT_OPENAI_API_KEY + openaiBaseUrl + openaiModel) — provider not registered')
   }
 
   // Fail-fast at boot if any registered provider is missing matrix rows.

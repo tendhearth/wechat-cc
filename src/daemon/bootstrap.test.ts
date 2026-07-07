@@ -307,6 +307,79 @@ describe('bootstrap', () => {
     }
   })
 
+  // openai-compatible registration is gated on WECHAT_OPENAI_API_KEY +
+  // openaiBaseUrl + openaiModel all being present. See bootstrap/index.ts
+  // openai block.
+  it('registers openai provider when WECHAT_OPENAI_API_KEY + openaiBaseUrl + openaiModel are all set', async () => {
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-openai-'))
+    saveAgentConfig(stateDir, {
+      provider: 'openai',
+      openaiBaseUrl: 'https://api.deepseek.com/v1',
+      openaiModel: 'deepseek-chat',
+      dangerouslySkipPermissions: false,
+      autoStart: false,
+      closeStopsDaemon: false,
+    })
+    try {
+      const b = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(b.registry.list()).toContain('openai')
+      expect(b.registry.has('openai')).toBe(true)
+    } finally {
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does NOT register openai when WECHAT_OPENAI_API_KEY is set but openaiBaseUrl/openaiModel are missing', async () => {
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    const logEntries: Array<{ tag: string; line: string }> = []
+    try {
+      const b = await buildBootstrap({
+        db: openTestDb(),
+        stateDir: '/tmp/state',  // no agent-config.json → openaiBaseUrl/openaiModel undefined
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: (tag, line) => { logEntries.push({ tag, line }) },
+      })
+      expect(b.registry.list()).not.toContain('openai')
+      const boot = logEntries.filter(e => e.tag === 'BOOT' && e.line.includes('openai'))
+      expect(boot.some(e => e.line.includes('not configured'))).toBe(true)
+    } finally {
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
+  it('skips openai registration when WECHAT_OPENAI_API_KEY is unset', async () => {
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    delete process.env.WECHAT_OPENAI_API_KEY
+    try {
+      const b = await buildBootstrap({
+        db: openTestDb(),
+        stateDir: '/tmp/state',
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(b.registry.list()).not.toContain('openai')
+    } finally {
+      if (prevKey !== undefined) process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
   it('exposes the conversation coordinator and dispatchDelegate', async () => {
     const b = await buildBootstrap({
       db: openTestDb(),
