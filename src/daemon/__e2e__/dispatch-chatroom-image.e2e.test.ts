@@ -3,10 +3,14 @@
 //   1. f7acca0 — [image:/path] dropped by moderator paraphrase
 //   2. b69973f — [chat_id:xxx] dropped by moderator paraphrase
 //
-// Both share a root cause (haiku-4-5 generates a NEW prompt rather than
-// passing the user's <wechat> envelope through) and are fixed by
-// injecting structural metadata into dispatchedPrompt at the coordinator
-// layer. This test pins both behaviors at once.
+// Both originally shared a root cause (haiku-4-5 generated a NEW prompt
+// rather than passing the user's <wechat> envelope through). The LLM
+// moderator was deleted in a4101ca and replaced by the structural
+// conductor (chatroom-conductor.ts), which embeds deps.format(msg)
+// (the <wechat> envelope, [image:/path] included) directly as `question`
+// in every beat's prompt — but that refactor dropped the [chat_id:xxx]
+// bracket re-injection, reintroducing bug 2. This test pins both markers
+// in the conductor's shared opening prompt.
 import { describe, it, expect } from 'vitest'
 import { startTestDaemon } from './harness'
 
@@ -17,20 +21,18 @@ describe('e2e: chatroom mode image inbound → speaker prompt carries chat_id + 
     const daemon = await startTestDaemon({
       dangerously: true,
       modes: { chat1: { kind: 'chatroom' } },
+      // The LLM moderator that used to paraphrase per-speaker prompts was
+      // deleted in a4101ca — the conductor (chatroom-conductor.ts) now
+      // builds one shared opening/rebuttal prompt structurally for every
+      // beat, so this script only feeds the convergence-check (beat ②b)
+      // and verdict (beat ③) evals, neither of which shapes the beat ①
+      // prompt asserted on below.
       moderatorScript: {
         async onEval(_prompt) {
           modCall++
-          // Round 1: claude. Round 2: end. Crucially, the moderator's
-          // generated prompt does NOT include the [image:...] marker
-          // (simulating real haiku paraphrasing) — the coordinator's
-          // injection is what makes the speaker see the file path.
-          if (modCall === 1) {
-            return JSON.stringify({
-              action: 'continue', speaker: 'claude',
-              prompt: '描述一下用户发的内容', reasoning: 'open',
-            })
-          }
-          return JSON.stringify({ action: 'end', reasoning: 'done' })
+          return modCall === 1
+            ? JSON.stringify({ converged: true })
+            : '🎯 done'
         },
       },
       claudeScript: {
@@ -46,11 +48,9 @@ describe('e2e: chatroom mode image inbound → speaker prompt carries chat_id + 
       await daemon.waitForReplyTo('chat1', 8000)
       expect(claudeDispatchedTexts.length).toBeGreaterThan(0)
       const dispatched = claudeDispatchedTexts[0]!
-      // Both injections must be present even though the moderator stripped them.
+      // Both injections must be present in the conductor's shared opening prompt.
       expect(dispatched).toContain('[chat_id:chat1]')
       expect(dispatched).toMatch(/\[image:[^\]]+\.jpg\]/)
-      // The moderator-paraphrased prompt body should still be there.
-      expect(dispatched).toContain('描述一下用户发的内容')
     } finally {
       await daemon.stop()
     }

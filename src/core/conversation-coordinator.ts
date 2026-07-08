@@ -513,7 +513,21 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
 
     try {
       // ── Beat ①: parallel opening — every panel agent answers the raw question.
-      const question = deps.format(msg)
+      //
+      // Re-inject [chat_id:xxx] ahead of the formatted envelope. Solo /
+      // parallel dispatch deps.format(msg) verbatim, so the speaker sees the
+      // <wechat chat_id="..."> envelope directly and can namespace
+      // memory_*/set_user_name under it. Chatroom instead embeds
+      // deps.format(msg) as `question` inside the conductor's prompt
+      // builders (buildOpeningPrompt/buildRebuttalPrompt) — the envelope's
+      // chat_id="..." attribute is present there too, but only as XML, not
+      // the bracket form the speaker's tool-routing convention expects.
+      // This was fixed once for the old LLM moderator (b69973f) which
+      // paraphrased the envelope away entirely; deleting the moderator
+      // (a4101ca) dropped the injection along with it even though the
+      // bracket form was never restored. Prepending it here covers every
+      // beat that embeds `question` (opening, rebuttal, convergence, verdict).
+      const question = `[chat_id:${msg.chatId}]\n${deps.format(msg)}`
 
       const openings = await runBeat(msg, proj, tierProfile, participants, (p) => buildOpeningPrompt(question, participants, p))
       if (openings.length === 0) {
