@@ -42,7 +42,7 @@ import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../w
 import { makeSessionStore } from '../../core/session-store'
 import type { Db } from '../../lib/db'
 import { homedir } from 'node:os'
-import { loadAgentConfig, makeMtimeCachedConfigReader, activeModel } from '../../lib/agent-config'
+import { loadAgentConfig, makeMtimeCachedConfigReader, modelForProvider } from '../../lib/agent-config'
 import type { AgentConfig } from '../../lib/agent-config'
 import { loadAccess, setSessionInvalidator, type Access } from '../../lib/access'
 import { loadCompanionConfig, type CompanionConfig } from '../companion/config'
@@ -481,22 +481,15 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     const c = readAgentConfig()
     return c.provider === 'claude' && c.model ? c.model : 'claude-opus-4-8'
   }
-  // Per-spawn pinned model for codex/cursor (claude has currentClaudeModel
-  // above). Mirrors that rule: the pin only applies when the configured
-  // provider matches the spawning provider; otherwise undefined → the provider
-  // keeps its construction default. Read via the mtime-cached reader so a
-  // `/model` switch lands on the next session with NO daemon restart.
-  const currentModelFor = (providerId: ProviderId): string | undefined => {
-    const c = readAgentConfig()
-    if (c.provider !== providerId) return undefined
-    // activeModel owns the provider-specific field rule (cursor→cursorModel,
-    // openai→openaiModel, else→model) — see its doc comment. The previous
-    // inline ternary here only branched on cursor vs "else", so a pinned
-    // openai model (stored in `openaiModel`) was silently never delivered
-    // (this function returned the unset `c.model` instead) — the same class
-    // of "wrote/read the wrong field" bug activeModel exists to prevent.
-    return activeModel(c)
-  }
+  // Per-spawn pinned model, resolved PER provider id (not the global default).
+  // `modelForProvider` owns the field rule: openai→openaiModel and
+  // cursor→cursorModel resolve unconditionally (own field), while claude/codex
+  // share `model` so it only applies when the global provider matches. This is
+  // what lets `/api <model>` (which switches ONE chat to openai while the
+  // global default may stay claude) hot-reload the openai model on the next
+  // spawn with no restart. Read via the mtime-cached reader.
+  const currentModelFor = (providerId: ProviderId): string | undefined =>
+    modelForProvider(readAgentConfig(), providerId)
 
   const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string): Options => {
     // The per-session system prompt is assembled by the daemon's

@@ -244,3 +244,27 @@ export function withActiveModel(config: AgentConfig, model: string): AgentConfig
   if (config.provider === 'openai') return { ...config, openaiModel: model }
   return { ...config, model }
 }
+
+// activeModel/withActiveModel above answer "the GLOBAL default provider's
+// model" (keyed on config.provider) — correct for /v1/model, boot, desktop.
+// The pair below answers "a SPECIFIC provider's model" (keyed on the given
+// providerId) — needed when a chat runs a NON-default provider (e.g. `/api`
+// switches one chat to openai while the global default stays claude) and by
+// `currentModelFor(providerId)` on every spawn. openai/cursor have their OWN
+// field so they resolve per-id unconditionally; claude & codex SHARE the
+// generic `model` field, so it's only meaningful when the global provider is
+// that same one (can't tell a claude pin from a codex pin otherwise).
+
+/** The model id `providerId` should use, resolved per-provider (undefined if unset). */
+export function modelForProvider(config: AgentConfig, providerId: string): string | undefined {
+  if (providerId === 'openai') return config.openaiModel
+  if (providerId === 'cursor') return config.cursorModel
+  return config.provider === providerId ? config.model : undefined
+}
+
+/** A copy of `config` with `providerId`'s own model field set — regardless of the global default provider. */
+export function withModelForProvider(config: AgentConfig, providerId: string, model: string): AgentConfig {
+  if (providerId === 'openai') return { ...config, openaiModel: model }
+  if (providerId === 'cursor') return { ...config, cursorModel: model }
+  return { ...config, model }
+}

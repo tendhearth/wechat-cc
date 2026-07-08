@@ -22,7 +22,7 @@ import { makeAdminCommands } from '../admin-commands'
 import { makeModeCommands } from '../mode-commands'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
-import { loadAgentConfig, saveAgentConfig, withActiveModel } from '../../lib/agent-config'
+import { loadAgentConfig, saveAgentConfig, withModelForProvider } from '../../lib/agent-config'
 import { findOnPath } from '../../lib/util'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
@@ -207,14 +207,18 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     sendMessage: (cid, txt) => ilink.sendMessage(cid, txt),
     setUserName: (cid, name) => ilink.setUserName(cid, name),
     getUserName: (cid) => ilink.resolveUserName(cid) ?? null,
-    // `/api <model>` — mirrors the POST /v1/model route (see
-    // routes-daemon-control.ts): read-modify-write agent-config.json via
-    // withActiveModel/saveAgentConfig. The daemon's mtime-cached config
-    // reader (currentModelFor, bootstrap/index.ts) then delivers the new
-    // model to the next openai spawn with no restart.
-    pinModel: (_providerId, model) => {
+    // `/api <model>` — read-modify-write agent-config.json via
+    // withModelForProvider/saveAgentConfig (per-provider field, unlike the
+    // POST /v1/model route which pins the GLOBAL default provider's model).
+    // The daemon's mtime-cached config reader (currentModelFor,
+    // bootstrap/index.ts) then delivers it to the next openai spawn, no restart.
+    pinModel: (providerId, model) => {
+      // Write the TARGET provider's own model field (openai→openaiModel), NOT
+      // the global default provider's — so `/api <model>` pins openai even when
+      // the global default is claude. Mirrors currentModelFor's per-provider
+      // resolution (bootstrap/index.ts). mtime-cached reader delivers it next spawn.
       const current = loadAgentConfig(stateDir)
-      saveAgentConfig(stateDir, withActiveModel(current, model))
+      saveAgentConfig(stateDir, withModelForProvider(current, providerId, model))
     },
     log,
     isAdmin,

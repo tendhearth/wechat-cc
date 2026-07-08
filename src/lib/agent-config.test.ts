@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadAgentConfig, saveAgentConfig, parseAgentConfig, A2AAgentRecord, makeMtimeCachedConfigReader, activeModel, withActiveModel, type AgentConfig } from './agent-config'
+import { loadAgentConfig, saveAgentConfig, parseAgentConfig, A2AAgentRecord, makeMtimeCachedConfigReader, activeModel, withActiveModel, modelForProvider, withModelForProvider, type AgentConfig } from './agent-config'
 
 describe('agent-config', () => {
   it('defaults to claude with unattended=true when no config exists', () => {
@@ -433,6 +433,37 @@ describe('activeModel / withActiveModel — provider-specific model field', () =
     const cfg = base('claude')
     withActiveModel(cfg, 'claude-opus-4-8')
     expect(cfg.model).toBeUndefined()
+  })
+})
+
+describe('modelForProvider / withModelForProvider — per-provider (non-default) resolution', () => {
+  const base = (provider: AgentConfig['provider']): AgentConfig => ({
+    provider, dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false,
+  })
+
+  it('openai/cursor resolve their OWN field even when the global default is a different provider', () => {
+    // Global default is claude, but openai/cursor are used per-chat (e.g. via /api).
+    const cfg = { ...base('claude'), model: 'claude-opus-4-8', openaiModel: 'deepseek-chat', cursorModel: 'composer-2' }
+    expect(modelForProvider(cfg, 'openai')).toBe('deepseek-chat') // NOT gated on config.provider
+    expect(modelForProvider(cfg, 'cursor')).toBe('composer-2')
+    expect(modelForProvider(cfg, 'claude')).toBe('claude-opus-4-8') // matches global → applies
+  })
+
+  it('claude/codex share `model`, so it only applies when the global provider matches', () => {
+    const cfg = { ...base('claude'), model: 'claude-opus-4-8' }
+    expect(modelForProvider(cfg, 'claude')).toBe('claude-opus-4-8')
+    // codex would otherwise wrongly inherit claude's model — guarded to undefined.
+    expect(modelForProvider(cfg, 'codex')).toBeUndefined()
+  })
+
+  it('withModelForProvider writes the TARGET provider field regardless of the global default', () => {
+    // /api deepseek-chat while global default is claude → must land in openaiModel, not model.
+    const next = withModelForProvider(base('claude'), 'openai', 'deepseek-chat')
+    expect(next.openaiModel).toBe('deepseek-chat')
+    expect(next.model).toBeUndefined()
+    expect(modelForProvider(next, 'openai')).toBe('deepseek-chat')
+    // claude's own field untouched, so a claude spawn still uses its own model.
+    expect(modelForProvider({ ...next, model: 'claude-opus-4-8' }, 'claude')).toBe('claude-opus-4-8')
   })
 })
 
