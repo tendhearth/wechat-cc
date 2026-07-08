@@ -24,6 +24,16 @@ export function userPluginsDir(stateDir: string): string {
   return join(stateDir, 'plugins')
 }
 
+/**
+ * Per-plugin WRITABLE data dir `{stateDir}/plugin-data/<name>/`. A BUNDLED
+ * plugin's own dir is read-only/ephemeral (inside a signed .app, wiped on
+ * upgrade), so anything it must persist (decrypted output, captured keys) has
+ * to live here instead. Exposed to manifests as the `${dataDir}` template.
+ */
+export function pluginDataDir(stateDir: string, name: string): string {
+  return join(stateDir, 'plugin-data', name)
+}
+
 export function pluginsConfigPath(stateDir: string): string {
   return join(stateDir, 'plugins', 'plugins.json')
 }

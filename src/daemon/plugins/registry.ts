@@ -10,7 +10,7 @@
 import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync, renameSync } from 'node:fs'
 import { delimiter, dirname, join, sep } from 'node:path'
 import type { McpStdioSpec } from '../bootstrap/mcp-specs'
-import { MANIFEST_FILE, pluginsConfigPath } from './paths'
+import { MANIFEST_FILE, pluginsConfigPath, pluginDataDir } from './paths'
 import { parseManifest, type PluginManifest } from './manifest'
 
 export type PluginSource = 'bundled' | 'user'
@@ -78,8 +78,11 @@ function readEnabledMap(stateDir: string): Record<string, boolean> {
   return {}
 }
 
-const expandDir = (pluginDir: string) => (s: string): string =>
-  s.split('${pluginDir}').join(pluginDir)
+// Template substitution for manifest command/args/env/healthcheck paths.
+//   ${pluginDir} → the plugin's (possibly read-only) install dir
+//   ${dataDir}   → its per-user WRITABLE data dir (see pluginDataDir)
+const makeSub = (pluginDir: string, dataDir: string) => (s: string): string =>
+  s.split('${pluginDir}').join(pluginDir).split('${dataDir}').join(dataDir)
 
 /**
  * Resolve a command to an absolute path against the DAEMON's PATH at load time.
@@ -118,9 +121,9 @@ export function setPluginEnabled(stateDir: string, name: string, enabled: boolea
   renameSync(tmp, p)
 }
 
-/** Expand `${pluginDir}` in command/argv/env into a concrete stdio spec. */
-function resolveSpec(manifest: PluginManifest, pluginDir: string): McpStdioSpec {
-  const sub = expandDir(pluginDir)
+/** Expand `${pluginDir}`/`${dataDir}` in command/argv/env into a concrete stdio spec. */
+function resolveSpec(manifest: PluginManifest, pluginDir: string, dataDir: string): McpStdioSpec {
+  const sub = makeSub(pluginDir, dataDir)
   return {
     command: sub(manifest.spawn.command),
     args: (manifest.spawn.args ?? []).map(sub),
@@ -135,7 +138,7 @@ function resolveSpec(manifest: PluginManifest, pluginDir: string): McpStdioSpec 
  * entry exists. `spec.command` is rewritten to the resolved absolute path.
  * Both failures return an actionable reason (with the `requires.setup` hint).
  */
-function checkReady(manifest: PluginManifest, spec: McpStdioSpec, pluginDir: string, hostVersion?: string): { ready: true } | { ready: false; reason: string } {
+function checkReady(manifest: PluginManifest, spec: McpStdioSpec, pluginDir: string, dataDir: string, hostVersion?: string): { ready: true } | { ready: false; reason: string } {
   const hint = manifest.requires?.setup ? ` — ${manifest.requires.setup}` : ''
   // Host-version gate (like VS Code engines.vscode / Obsidian minAppVersion).
   const min = manifest.minWechatCcVersion
@@ -148,7 +151,7 @@ function checkReady(manifest: PluginManifest, spec: McpStdioSpec, pluginDir: str
   const abs = resolveCommand(spec.command)
   if (!abs) return { ready: false, reason: `command "${spec.command}" not found on PATH${hint}` }
   spec.command = abs
-  const sub = expandDir(pluginDir)
+  const sub = makeSub(pluginDir, dataDir)
   const missing = (manifest.healthcheck?.requiresPaths ?? []).map(sub).filter(p => !existsSync(p))
   if (missing.length > 0) return { ready: false, reason: `missing ${missing.join(', ')}${hint}` }
   return { ready: true }
@@ -208,8 +211,9 @@ export function loadPlugins(deps: LoadPluginsDeps): LoadedPlugin[] {
   for (const p of byName.values()) {
     const def = p.source === 'bundled'          // default enable-state by trust
     const enabled = p.name in enabledMap ? enabledMap[p.name]! : def
-    const spec = resolveSpec(p.manifest, p.dir)
-    const health = checkReady(p.manifest, spec, p.dir, deps.hostVersion)   // may rewrite spec.command → absolute
+    const dataDir = pluginDataDir(deps.stateDir, p.name)
+    const spec = resolveSpec(p.manifest, p.dir, dataDir)
+    const health = checkReady(p.manifest, spec, p.dir, dataDir, deps.hostVersion)   // may rewrite spec.command → absolute
     loaded.push({
       name: p.name,
       source: p.source,

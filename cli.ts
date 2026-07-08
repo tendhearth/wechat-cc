@@ -2660,14 +2660,18 @@ const pluginSetupCmd = defineCommand({
   args: { name: { type: 'positional', required: true, description: 'Plugin name', valueHint: 'name' } },
   async run({ args }) {
     const { loadPlugins } = await import('./src/daemon/plugins/registry')
-    const { bundledPluginsDir } = await import('./src/daemon/plugins/paths')
+    const { bundledPluginsDir, pluginDataDir } = await import('./src/daemon/plugins/paths')
     const { spawn } = await import('node:child_process')
-    const { writeFileSync } = await import('node:fs')
+    const { writeFileSync, mkdirSync } = await import('node:fs')
     const { join } = await import('node:path')
     const p = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() }).find(x => x.name === args.name)
     if (!p) { console.error(`plugin "${args.name}" not found`); process.exit(1) }
     if (!p.manifest.setup) { console.error(`plugin "${args.name}" declares no runnable setup`); process.exit(1) }
-    const sub = (s: string) => s.split('${pluginDir}').join(p.dir)
+    // ${dataDir} = the plugin's writable data dir; create it so setup can write
+    // there (a bundled plugin's own dir is read-only/wiped-on-upgrade).
+    const dataDir = pluginDataDir(STATE_DIR, p.name)
+    mkdirSync(dataDir, { recursive: true })
+    const sub = (s: string) => s.split('${pluginDir}').join(p.dir).split('${dataDir}').join(dataDir)
     const setup = p.manifest.setup
     const env = { ...process.env, ...Object.fromEntries(Object.entries(setup.env ?? {}).map(([k, v]) => [k, sub(v)])) }
     // Progress file the desktop wizard polls (same pattern as install-progress.json).
@@ -2689,7 +2693,16 @@ const pluginSetupCmd = defineCommand({
       }
     })
     child.stderr.on('data', (c: Buffer) => process.stderr.write(c))
-    const code: number = await new Promise(res => child.on('close', (c) => res(c ?? 1)))
+    // Settle on 'error' too: a missing interpreter (e.g. python3 not installed)
+    // emits 'error' with no 'error' listener → EventEmitter rethrows → the whole
+    // process crashes with a stack trace and leaves progress at {running:true}.
+    const code: number = await new Promise<number>((resolve) => {
+      child.on('error', (err) => {
+        process.stderr.write(`failed to start "${sub(setup.command)}": ${err instanceof Error ? err.message : String(err)}\n`)
+        resolve(127)   // conventional "command not found"
+      })
+      child.on('close', (c) => resolve(c ?? 1))
+    })
     writeProgress({ running: false, done: true, ok: code === 0, ...(code !== 0 ? { error: `exit ${code}` } : {}) })
     process.exit(code)
   },
