@@ -78,16 +78,15 @@ export function renderDashboard(report) {
     /* skip */
   } else {
     const subRows = currentRow ? rows.filter(r => r.id !== currentRow.id) : []
-    const displayRows = subRows.length > 0 ? subRows : demoSubUsers()
-    tbody.innerHTML = displayRows.map((row, index) => {
+    tbody.innerHTML = subRows.length === 0
+      ? `<div class="sub-user-empty">还没有其他子用户 — 在设置里扫码即可添加</div>`
+      : subRows.map((row, index) => {
       const expEntry = expiredById[row.id]
       // Active: honest "已连接" — daemon has no last-active heartbeat for
-      // real accounts. Demo rows (moxiuwen's placeholder set) get a more
-      // populated-looking "活跃中" so the empty-state mockup still reads
-      // alive without misrepresenting expired-vs-active for real users.
+      // real accounts, so we don't fake a last-active time.
       const expCell = expEntry
         ? `已过期 · ${formatRelativeTime(expEntry.firstSeenExpiredAt)}`
-        : row.demo ? "活跃中" : "已连接"
+        : "已连接"
       // Expired rows get a primary 重新扫码 affordance next to the (now
       // ghost) delete button — clicking 重新扫码 routes back into the
       // wizard's bind/QR step so the user can pair the same WeChat
@@ -96,12 +95,12 @@ export function renderDashboard(report) {
       const actCell = row.expired
         ? `<button class="mini-action" data-action="rebind">${icon("refresh", { size: 13 })}重新扫码</button>
            <button class="mini-action" data-action="ask-delete">${icon("delete-02", { size: 13 })}删除</button>`
-        : row.demo ? "" : `<button class="mini-action" data-action="ask-delete">${icon("delete-02", { size: 13 })}删除</button>`
+        : `<button class="mini-action" data-action="ask-delete">${icon("delete-02", { size: 13 })}删除</button>`
       const conversation = conversationForAccount(report?.conversations || [], row)
       const currentProvider = providerFromMode(conversation?.mode) || report.checks.provider.provider || "claude"
       const chatId = conversation?.chat_id || row.userId || row.id
       return `
-        <div class="sub-user-card" data-bot-id="${escapeHtml(row.id)}" data-chat-id="${escapeHtml(chatId)}" data-current-provider="${escapeHtml(currentProvider)}" data-name="${escapeHtml(row.name)}"${row.demo ? ` data-demo="true"` : ""}>
+        <div class="sub-user-card" data-bot-id="${escapeHtml(row.id)}" data-chat-id="${escapeHtml(chatId)}" data-current-provider="${escapeHtml(currentProvider)}" data-name="${escapeHtml(row.name)}">
           <button class="card-menu" aria-haspopup="true" aria-label="选择 Agent">${icon("more-horizontal", { size: 18 })}</button>
           <div class="user-avatar">${avatarSvg(row.avatar ?? index, row.name)}</div>
           <div class="user-copy">
@@ -170,17 +169,6 @@ function avatarSvg(seed, label) {
   const c2 = `hsl(${(hue + 18) % 360} 66% 48%)`
   const gid = `av-${hue}-${hash.toString(36)}`
   return `<svg viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/></linearGradient></defs><circle cx="24" cy="24" r="24" fill="url(#${gid})"/><text x="24" y="25" text-anchor="middle" dominant-baseline="central" font-size="20" font-weight="600" fill="#fff" font-family="-apple-system, system-ui, 'PingFang SC', sans-serif">${escapeHtml(glyph)}</text></svg>`
-}
-
-function demoSubUsers() {
-  return [
-    { id: "demo-1", name: "麦子熟了", demo: true, avatar: 0 },
-    { id: "demo-2", name: "小鱼", demo: true, avatar: 1 },
-    { id: "demo-3", name: "程", demo: true, avatar: 2 },
-    { id: "demo-4", name: "阿哲", demo: true, avatar: 3 },
-    { id: "demo-5", name: "Summer", demo: true, avatar: 4 },
-    { id: "demo-6", name: "设计师阿紫", demo: true, avatar: 5 },
-  ]
 }
 
 // Mutate the dashboard's restart + stop buttons to reflect daemon+service
@@ -731,7 +719,8 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
 
   const currentProvider = row.dataset.currentProvider || "claude"
   const chatId = row.dataset.chatId
-  const isDemo = row.dataset.demo === "true" || !chatId
+  // No chat_id yet (freshly bound, no conversation) → switch provider UI-only.
+  const noChat = !chatId
 
   menu.innerHTML = USER_CARD_PROVIDERS.map(p => {
     const active = p === currentProvider
@@ -754,7 +743,7 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
         closeProviderMenu()
         return
       }
-      if (isDemo) {
+      if (noChat) {
         row.dataset.currentProvider = name
         closeProviderMenu()
         return

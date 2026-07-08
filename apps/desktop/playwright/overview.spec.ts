@@ -119,24 +119,13 @@ test('current-user card renders bound account name + 管理员 pill', async ({ p
 
 // ── Sub-user grid ───────────────────────────────────────────────────────
 
-test('sub-user grid shows 6 demo cards when no real sub-users', async ({ page, shimUrl, shim }) => {
-  // demo.seed produces 1 real account → rows.slice(1) is empty → demo cards shown.
+test('sub-user grid shows an empty state when no real sub-users', async ({ page, shimUrl, shim }) => {
+  // demo.seed produces 1 real account → rows.slice(1) is empty → empty state
+  // (previously a set of placeholder "demo" cards; removed as misleading).
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await page.goto(shimUrl)
   await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 10_000 })
-  // demoSubUsers() returns 6 placeholder rows.
-  await expect(page.locator('#accounts-body .sub-user-card')).toHaveCount(6, { timeout: 10_000 })
-  // Each demo card has the data-bot-id attr set to demo-N.
-  await expect(page.locator('#accounts-body .sub-user-card[data-bot-id^="demo-"]')).toHaveCount(6)
-})
-
-test('demo sub-user cards have no delete button (row.demo flag)', async ({ page, shimUrl, shim }) => {
-  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
-  await page.goto(shimUrl)
-  await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 10_000 })
-  await expect(page.locator('#accounts-body .sub-user-card')).toHaveCount(6, { timeout: 10_000 })
-  // Demo cards skip the delete affordance — non-demo non-expired rows
-  // would have a .mini-action[data-action="ask-delete"] button.
-  const deleteBtns = page.locator('#accounts-body .sub-user-card .mini-action[data-action="ask-delete"]')
-  await expect(deleteBtns).toHaveCount(0)
+  await expect(page.locator('#accounts-body .sub-user-empty')).toBeVisible({ timeout: 10_000 })
+  // No fabricated cards.
+  await expect(page.locator('#accounts-body .sub-user-card')).toHaveCount(0)
 })
