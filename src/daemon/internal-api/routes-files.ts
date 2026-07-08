@@ -5,6 +5,7 @@
  * followed by the default life dirs. Returns metadata only — never file bodies.
  * Admin-tier per route-tiers.ts.
  */
+import { isAbsolute } from 'node:path'
 import { type RouteTable } from './types'
 import { locateFiles } from '../../lib/locate-files'
 import { defaultLifeDirs } from '../../lib/file-survey'
@@ -16,7 +17,11 @@ export function fileRoutes(): RouteTable {
       const raw = q.get('mode') ?? (query ? 'name' : 'browse')
       const VALID_MODES = new Set(['name', 'content', 'browse'])
       const mode = VALID_MODES.has(raw) ? (raw as 'name' | 'content' | 'browse') : 'name'
-      const extraRoots = q.getAll('root').filter(r => r.startsWith('/'))   // absolute only
+      // absolute only — isAbsolute() understands both POSIX ('/...') and
+      // Windows ('C:\...', '\\server\...') forms; a bare '/' check dropped
+      // every Windows root, so caller-supplied dirs never made it into the
+      // search on Windows.
+      const extraRoots = q.getAll('root').filter(r => isAbsolute(r))
       const roots = [...extraRoots, ...defaultLifeDirs()]
       const { candidates, truncated } = locateFiles({ roots, query, mode })
       return { status: 200, body: { candidates, truncated } }

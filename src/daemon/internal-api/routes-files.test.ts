@@ -37,7 +37,13 @@ describe('GET /v1/locate', () => {
   })
 
   it('default life dirs are Desktop/Documents/Downloads under home', () => {
-    expect(defaultLifeDirs('/home/me')).toEqual(['/home/me/Desktop', '/home/me/Documents', '/home/me/Downloads'])
+    // Same reasoning as file-survey.test.ts: native fs paths, so build the
+    // expectation via path.join rather than a '/'-literal (Windows → '\').
+    expect(defaultLifeDirs('/home/me')).toEqual([
+      join('/home/me', 'Desktop'),
+      join('/home/me', 'Documents'),
+      join('/home/me', 'Downloads'),
+    ])
   })
 
   it('route is admin-tier', () => {

@@ -8,7 +8,7 @@
  */
 import { readdirSync, statSync, type Dirent } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { SKIP_DIRS } from './locate-files'
 
 /** The zero-config default survey/search roots. Single source of truth. */
@@ -105,8 +105,12 @@ export function formatFileSurvey(
   if (survey.folders.length === 0) return ''
   const lines = survey.folders.map(f => {
     const shown = f.path.startsWith(home) ? `~${f.path.slice(home.length)}` : f.path
+    // Always render with '/' regardless of OS — this is an LLM-facing survey
+    // string, not a filesystem path, so it should look identical on Windows
+    // (native sep '\') and mac/linux (native sep '/').
+    const shownPosix = sep === '/' ? shown : shown.split(sep).join('/')
     const sample = f.sample.length ? `: ${f.sample.join(', ')}` : ''
-    return `- ${shown}/ (${f.fileCount} 个文件)${sample}`
+    return `- ${shownPosix}/ (${f.fileCount} 个文件)${sample}`
   })
   let body = lines.join('\n')
   let truncated = survey.truncated

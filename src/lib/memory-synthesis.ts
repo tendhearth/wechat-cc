@@ -23,7 +23,7 @@
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 /**
  * Injected accessor for the daemon-owned "life" stores. Declared here (the
  * consumer) as a plain interface so this CLI module needs no `src/daemon`
@@ -174,10 +174,14 @@ function parseLocationRoots(stateDir: string, adminChatId: string): string[] {
     const text = readFileSync(join(stateDir, 'memory', adminChatId, 'locations.md'), 'utf8')
     const out = new Set<string>()
     for (const line of text.split('\n')) {
-      const m = line.match(/(?:→|->|:)\s*(\/.+?)\s*$/)   // path = tail after delimiter; may contain spaces
+      // path = tail after delimiter; may contain spaces. Don't require a
+      // leading '/' here — Windows absolute paths start with a drive letter
+      // (C:\...) or a UNC prefix (\\server\...), not '/'. Validate with
+      // isAbsolute() instead so the parse works on every OS.
+      const m = line.match(/(?:→|->|:)\s*(.+?)\s*$/)
       const raw = m?.[1]
-      if (!raw) continue
-      out.add(/\.[^/]+$/.test(raw) ? dirname(raw) : raw.replace(/\/+$/, ''))
+      if (!raw || !isAbsolute(raw)) continue
+      out.add(/\.[^/\\]+$/.test(raw) ? dirname(raw) : raw.replace(/[/\\]+$/, ''))
     }
     return [...out]
   } catch { return [] }
