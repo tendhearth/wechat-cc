@@ -45,6 +45,9 @@
     "externalBin": [
       "binaries/wechat-cc-cli"
     ],
+    "resources": [
+      "../../../plugins/"
+    ],
     "linux": {
       "deb": {
         "postInstallScript": "scripts/postinst.sh"

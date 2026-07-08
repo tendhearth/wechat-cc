@@ -8,7 +8,8 @@
 // the .app/.exe/.deb bundle and is resolved by tauri-plugin-shell.
 
 use serde_json::Value;
-use tauri::{AppHandle, Emitter};
+use std::path::PathBuf;
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
@@ -98,6 +99,24 @@ fn render_qr_svg(text: String) -> Result<String, String> {
 // re-running `bun build --compile`. Release builds (cfg(not(debug_assertions)))
 // always use the sidecar so production has no path that depends on bun
 // being on PATH or on a writable repo checkout.
+// Where the bundled first-party plugins (e.g. wxvault) landed in the app's
+// resource dir. `resources: ["../../../plugins/"]` in tauri.conf maps each `..`
+// to `_up_`, so from $RESOURCE the dir is `_up_/_up_/_up_/plugins`. Probe the
+// likely spots and return the first that exists; if none do we leave the env
+// unset and the daemon falls back to its execPath logic (graceful, not a crash).
+// Passed to the sidecar as WECHAT_CC_BUNDLED_PLUGINS_DIR (read by paths.ts)
+// because the daemon can't portably derive the platform-specific resource path.
+fn bundled_plugins_dir(app: &AppHandle) -> Option<PathBuf> {
+    let base = app.path().resource_dir().ok()?;
+    for rel in ["_up_/_up_/_up_/plugins", "plugins"] {
+        let p = base.join(rel);
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+    None
+}
+
 async fn run_sidecar(app: &AppHandle, args: Vec<String>) -> Result<String, String> {
     #[cfg(debug_assertions)]
     if let Some(root) = resolve_dev_repo_root() {
@@ -108,6 +127,15 @@ async fn run_sidecar(app: &AppHandle, args: Vec<String>) -> Result<String, Strin
         .shell()
         .sidecar("wechat-cc-cli")
         .map_err(|err| format!("failed to resolve wechat-cc-cli sidecar: {err}"))?;
+
+    // Point the sidecar at the bundled plugins dir (see bundled_plugins_dir).
+    let sidecar = match bundled_plugins_dir(app) {
+        Some(dir) => sidecar.env(
+            "WECHAT_CC_BUNDLED_PLUGINS_DIR",
+            dir.to_string_lossy().to_string(),
+        ),
+        None => sidecar,
+    };
 
     let (mut rx, _child) = sidecar
         .args(args)

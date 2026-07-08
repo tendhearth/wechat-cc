@@ -34,8 +34,15 @@ export function pluginsConfigPath(stateDir: string): string {
  * daemon bootstrap and the CLI so repo-root resolution lives in one place.
  */
 export function bundledPluginsDir(): string | null {
+  // Desktop app: Tauri knows where it bundled resources (platform-specific:
+  // Contents/Resources on macOS, next to the exe on Windows, usr/lib on Linux)
+  // and passes the resolved plugins dir via this env when spawning the sidecar.
+  // Trusted first because the daemon can't portably derive it from execPath.
+  const fromEnv = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+  if (fromEnv && existsSync(fromEnv)) return fromEnv
+
   const root = isCompiledBundle()
-    ? compiledRepoRoot()
+    ? compiledRepoRoot()                                                // compiled: plugins ride next to the binary
     : join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')  // src/daemon/plugins → repo
   if (!root) return null
   const dir = join(root, 'plugins')
