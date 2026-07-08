@@ -27,6 +27,7 @@ import type { Mode, ProviderId } from '../core/conversation'
 import type { InboundMsg } from '../core/prompt-format'
 import { botName } from './bot-name'
 import { validateNickname, NICKNAME_MAX_LEN } from './nickname'
+import { capabilitiesFor } from '../core/capability-matrix'
 import type { AgentConfig } from '../lib/agent-config'
 
 export interface ModeCommandsDeps {
@@ -62,6 +63,12 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     if (lower === 'cc') return 'claude'
     if (lower === 'codex') return 'codex'
     if (lower === 'cursor') return 'cursor'
+    // Generic OpenAI-compatible backend (DeepSeek/Kimi/Qwen/…). Deliberately
+    // named `/api` rather than `/openai` — it's "the user's own API endpoint",
+    // not tied to a vendor. Only takes effect when the openai provider is
+    // registered (WECHAT_OPENAI_API_KEY + base_url + model); otherwise the
+    // registry.has() guard below replies "未注册".
+    if (lower === 'api') return 'openai'
     return null
   }
 
@@ -73,10 +80,12 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
   // We surface that asymmetry up-front rather than silently substituting the
   // wired peer behind the operator's back.
   function defaultDelegatePeer(primary: ProviderId): ProviderId | null {
-    if (primary === 'claude') return 'codex'
-    if (primary === 'codex') return 'claude'
-    if (primary === 'cursor') return 'claude'
-    return null
+    // Single source of truth per [[architecture-conventions]]: the peer comes
+    // from the provider's ProviderCapabilities.defaultPeer, not a hardcoded
+    // ternary — so a new provider (openai → claude, …) is covered without
+    // editing this function. Values match the prior hardcoded ones
+    // (claude→codex, codex→claude, cursor→claude).
+    return capabilitiesFor(primary).defaultPeer ?? null
   }
 
   /**
@@ -126,7 +135,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       '这里是微信通道，可以直接跟我对话。可用命令：',
       '',
       '**模式切换**',
-      '/cc /codex /cursor — 单 provider (solo)',
+      '/cc /codex /cursor /api — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)',
       '/cc + codex — Claude 主答，Codex 当工具 (primary_tool)',
       '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
       '/chat [p1 p2 …] — 圆桌讨论',
@@ -251,7 +260,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           `已注册 provider: ${deps.registry.list().join(', ')}`,
           `默认: ${deps.defaultProviderId}`,
           '',
-          '可用命令: /cc /codex /cursor /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',
+          '可用命令: /cc /codex /cursor /api /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',
         ]
         await reply(msg.chatId, lines.join('\n'))
         return true

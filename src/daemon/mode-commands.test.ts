@@ -79,6 +79,22 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toContain('solo')
   })
 
+  it('/api switches mode to solo+openai (the OpenAI-compatible backend)', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'openai'] })
+    const consumed = await cmds.handle(inbound('/api'))
+    expect(consumed).toBe(true)
+    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'openai' })
+    expect(sentMessages[0]?.[1]).toContain('solo')
+  })
+
+  it('/api replies 未注册 when the openai provider is not configured', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex'] })
+    const consumed = await cmds.handle(inbound('/api'))
+    expect(consumed).toBe(true)
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('未注册')
+  })
+
   it('/cursor rejects with helpful message when cursor is not registered', async () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex'] })
     const consumed = await cmds.handle(inbound('/cursor'))
