@@ -37,7 +37,7 @@ function writeThenDone(): ChatModelClient {
   }
 }
 
-const noMcp: McpToolBridge = { tools: [], async call() { return '' }, async close() {} }
+const noMcp: McpToolBridge = { tools: [], async call() { return '' }, async close() {}, serverOf() { return undefined } }
 
 let dir: string
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'oa-int-')) })

@@ -185,6 +185,8 @@ const AgentConfigSchema = z.object({
   provider: AgentProviderKind,
   model: z.string().optional(),
   cursorModel: z.string().optional(),
+  openaiBaseUrl: z.string().optional(),
+  openaiModel: z.string().optional(),
   dangerouslySkipPermissions: z.boolean(),
   autoStart: z.boolean(),
   closeStopsDaemon: z.boolean(),

@@ -20,6 +20,16 @@ describe('MCP tool bridge', () => {
     await bridge.close()
   })
 
+  it('serverOf returns the owning server for a listed tool and undefined for an unknown name', async () => {
+    const bridge = await createMcpToolBridge(
+      { wechat: { command: 'x', args: [] } },
+      { makeClient: async () => fakeClient([{ name: 'reply', description: 'r', inputSchema: { type: 'object' } }]) },
+    )
+    expect(bridge.serverOf('reply')).toBe('wechat')
+    expect(bridge.serverOf('nope')).toBeUndefined()
+    await bridge.close()
+  })
+
   it('defaults a missing inputSchema to an empty object schema', async () => {
     const bridge = await createMcpToolBridge(
       { wechat: { command: 'x', args: [] } },

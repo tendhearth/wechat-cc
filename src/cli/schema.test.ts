@@ -403,6 +403,22 @@ describe('ProviderShowOutput', () => {
       closeStopsDaemon: false,
     }).success).toBe(false)
   })
+  it('round-trips openaiBaseUrl/openaiModel (regression: these were previously stripped by the schema)', () => {
+    const sample = {
+      provider: 'openai',
+      openaiBaseUrl: 'https://api.deepseek.com/v1',
+      openaiModel: 'deepseek-chat',
+      dangerouslySkipPermissions: false,
+      autoStart: true,
+      closeStopsDaemon: false,
+    }
+    const parsed = ProviderShowOutput.safeParse(sample)
+    expect(parsed.success).toBe(true)
+    if (parsed.success) {
+      expect(parsed.data.openaiBaseUrl).toBe('https://api.deepseek.com/v1')
+      expect(parsed.data.openaiModel).toBe('deepseek-chat')
+    }
+  })
 })
 
 describe('MemoryListOutput', () => {

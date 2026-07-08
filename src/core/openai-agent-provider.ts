@@ -13,15 +13,6 @@ import type { McpToolBridge } from './openai-mcp-bridge'
 import { builtinTools, type BuiltinTool } from './openai-tools'
 import { gateTool } from './openai-gate'
 
-/** wechat MCP tool names that get server:'wechat' stamped on their event (used
- *  by isReplyToolCall to detect the reply tool). Kept small — extend if the
- *  wechat server adds reply-like tools. */
-const WECHAT_TOOL_NAMES = new Set([
-  'reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast',
-  'memory_read', 'memory_list', 'memory_write', 'memory_edit', 'memory_delete',
-  'observations_read', 'observations_list', 'observations_write', 'share_page', 'a2a_send',
-])
-
 export const OPENAI_CAPABILITIES: ProviderCapabilities = {
   // We own the loop, so per-tool gating IS realisable.
   perToolCallback: true,
@@ -33,13 +24,16 @@ export const OPENAI_CAPABILITIES: ProviderCapabilities = {
   authFailHint: 'openai: set WECHAT_OPENAI_API_KEY (and check base_url/model in agent config).',
 }
 
-export function mapDeltaToEvent(d: TurnDelta): AgentEvent {
-  if (d.kind === 'text') return { kind: 'text', text: d.text }
-  return {
-    kind: 'tool_call',
-    tool: d.name,
-    ...(WECHAT_TOOL_NAMES.has(d.name) ? { server: 'wechat' } : {}),
-  }
+/**
+ * Text-delta → event mapping only. `tool_call` deltas are NOT handled here:
+ * their `server` field depends on which MCP server actually owns the tool
+ * (`McpToolBridge.serverOf`), which this pure function has no access to —
+ * building that event is the loop's job (see `makeOpenAiSession`) so the
+ * `server` stamp reflects the real owning server instead of guessing
+ * `wechat` for every MCP tool.
+ */
+export function mapDeltaToEvent(d: Extract<TurnDelta, { kind: 'text' }>): AgentEvent {
+  return { kind: 'text', text: d.text }
 }
 
 export interface OpenAiAgentProviderOptions {
@@ -68,13 +62,12 @@ function makeOpenAiSession(args: {
   bridge: McpToolBridge
   builtinByName: Map<string, BuiltinTool>
   toolSpecs: ToolSpec[]
-  mcpNames: Set<string>
   ctx: SpawnContext
   maxSteps: number
   messages: ChatMessage[]
   firstRef: { first: boolean }
 }): AgentSession {
-  const { sessionId, chatModel, bridge, builtinByName, toolSpecs, mcpNames, ctx, maxSteps, messages, firstRef } = args
+  const { sessionId, chatModel, bridge, builtinByName, toolSpecs, ctx, maxSteps, messages, firstRef } = args
 
   return {
     dispatch(text: string): AsyncIterable<AgentEvent> {
@@ -88,15 +81,22 @@ function makeOpenAiSession(args: {
           const turn = chatModel.streamTurn(messages, toolSpecs)
           // MUST fully drain `deltas` before awaiting `finished` — see
           // function doc + Task 6 contract #1.
-          for await (const d of turn.deltas) yield mapDeltaToEvent(d)
+          for await (const d of turn.deltas) {
+            if (d.kind === 'text') { yield mapDeltaToEvent(d); continue }
+            // Stamp `server` from the REAL owning MCP server (never assume
+            // `wechat` for every MCP tool) — see McpToolBridge.serverOf doc
+            // and isReplyToolCall, which keys reply-detection on this field.
+            const mcpServer = bridge.serverOf(d.name)
+            yield { kind: 'tool_call', tool: d.name, ...(mcpServer !== undefined ? { server: mcpServer } : {}) }
+          }
           const { messages: assistantMsgs, toolCalls } = await turn.finished
           messages.push(...assistantMsgs)
           if (toolCalls.length === 0) break
           for (const tc of toolCalls) {
-            const isMcp = mcpNames.has(tc.name)
+            const mcpServer = bridge.serverOf(tc.name)
             const decision = gateTool({
               toolName: tc.name,
-              isMcp,
+              mcpServer,
               input: (tc.input ?? {}) as Record<string, unknown>,
               tierProfile: ctx.tierProfile,
               permissionMode: ctx.permissionMode,
@@ -106,7 +106,7 @@ function makeOpenAiSession(args: {
               result = `Permission denied: tool "${tc.name}" is not allowed for this chat.`
             } else {
               try {
-                result = isMcp
+                result = mcpServer !== undefined
                   ? await bridge.call(tc.name, tc.input)
                   : await builtinByName.get(tc.name)!.execute((tc.input ?? {}) as Record<string, unknown>)
               } catch (err) {
@@ -140,7 +140,6 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
       const bridge = await opts.makeMcpBridge(ctx.mcpEnv ?? {})
       const builtins = builtinTools(cwd)
       const builtinByName = new Map<string, BuiltinTool>(builtins.map(b => [b.spec.name, b]))
-      const mcpNames = new Set(bridge.tools.map(t => t.name))
       const toolSpecs: ToolSpec[] = [...bridge.tools, ...builtins.map(b => b.spec)]
 
       // Conversation history for this live session (in-memory; no resume in v1).
@@ -153,7 +152,6 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
         bridge,
         builtinByName,
         toolSpecs,
-        mcpNames,
         ctx,
         maxSteps,
         messages,

@@ -19,6 +19,14 @@ export interface McpToolBridge {
   tools: ToolSpec[]
   call(name: string, input: unknown): Promise<string>
   close(): Promise<void>
+  /**
+   * The MCP server that owns `name` (the spec key passed to
+   * `createMcpToolBridge`: `wechat`, `delegate`, or a plugin name), or
+   * `undefined` when `name` isn't an MCP tool at all. Callers use this to
+   * synthesize the real `mcp__<server>__<tool>` SDK name for tier
+   * classification instead of assuming every MCP tool belongs to `wechat`.
+   */
+  serverOf(name: string): string | undefined
 }
 
 const EMPTY_SCHEMA = { type: 'object', properties: {} } as const
@@ -40,15 +48,17 @@ export async function createMcpToolBridge(
 ): Promise<McpToolBridge> {
   const make = deps?.makeClient ?? connectStdio
   const owners = new Map<string, McpClientLike>() // toolName → client
+  const toolServer = new Map<string, string>() // toolName → owning server name (spec key)
   const clients: McpClientLike[] = []
   const tools: ToolSpec[] = []
 
-  for (const spec of Object.values(specs)) {
+  for (const [serverName, spec] of Object.entries(specs)) {
     const client = await make(spec)
     clients.push(client)
     const { tools: mcpTools } = await client.listTools()
     for (const t of mcpTools) {
       owners.set(t.name, client)
+      toolServer.set(t.name, serverName) // last-server-wins on duplicate tool names
       tools.push({
         name: t.name,
         description: t.description ?? t.name,
@@ -67,6 +77,9 @@ export async function createMcpToolBridge(
     },
     async close() {
       await Promise.all(clients.map(c => c.close().catch(() => {})))
+    },
+    serverOf(name) {
+      return toolServer.get(name)
     },
   }
 }

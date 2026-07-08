@@ -24,7 +24,15 @@ export type GateDecision = 'allow' | 'deny'
 
 export function gateTool(args: {
   toolName: string
-  isMcp: boolean
+  /**
+   * The REAL MCP server that owns this tool call (from
+   * `McpToolBridge.serverOf`), or `undefined` for a built-in tool. Must be
+   * the actual owning server — never assume `wechat` for every MCP tool,
+   * or a same-named tool from another server (a plugin, `delegate`, …)
+   * gets misclassified as the wechat tool of that name, which can
+   * escalate a guest-denied tool into a guest-allowed one.
+   */
+  mcpServer?: string
   input: Record<string, unknown>
   tierProfile: TierProfile
   permissionMode: PermissionMode
@@ -33,8 +41,10 @@ export function gateTool(args: {
 
   // classifyToolUse recognizes wechat MCP tools by their SDK-prefixed name
   // (`mcp__wechat__<name>`); built-in tools (Read/Write/Edit/Bash/...) pass
-  // through unchanged.
-  const sdkName = args.isMcp ? `mcp__wechat__${args.toolName}` : args.toolName
+  // through unchanged. Other MCP servers get their own `mcp__<server>__<name>`
+  // prefix, which classifyToolUse does NOT special-case — it falls through to
+  // the fail-safe default ('subagent'), never the wechat tool's kind.
+  const sdkName = args.mcpServer ? `mcp__${args.mcpServer}__${args.toolName}` : args.toolName
   const kind = classifyToolUse(sdkName, args.input)
 
   if (args.tierProfile.deny.has(kind)) return 'deny'
