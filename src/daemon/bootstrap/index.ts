@@ -42,7 +42,7 @@ import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../w
 import { makeSessionStore } from '../../core/session-store'
 import type { Db } from '../../lib/db'
 import { homedir } from 'node:os'
-import { loadAgentConfig, makeMtimeCachedConfigReader } from '../../lib/agent-config'
+import { loadAgentConfig, makeMtimeCachedConfigReader, activeModel } from '../../lib/agent-config'
 import type { AgentConfig } from '../../lib/agent-config'
 import { loadAccess, setSessionInvalidator, type Access } from '../../lib/access'
 import { loadCompanionConfig, type CompanionConfig } from '../companion/config'
@@ -489,7 +489,13 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const currentModelFor = (providerId: ProviderId): string | undefined => {
     const c = readAgentConfig()
     if (c.provider !== providerId) return undefined
-    return providerId === 'cursor' ? c.cursorModel : c.model
+    // activeModel owns the provider-specific field rule (cursor→cursorModel,
+    // openai→openaiModel, else→model) — see its doc comment. The previous
+    // inline ternary here only branched on cursor vs "else", so a pinned
+    // openai model (stored in `openaiModel`) was silently never delivered
+    // (this function returned the unset `c.model` instead) — the same class
+    // of "wrote/read the wrong field" bug activeModel exists to prevent.
+    return activeModel(c)
   }
 
   const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string): Options => {
@@ -801,6 +807,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // instead of crashing boot.
   const openaiKey = process.env.WECHAT_OPENAI_API_KEY
   if (openaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel) {
+    // Narrowed into locals: property access on `configuredAgent` doesn't
+    // stay narrowed inside the `makeChatModel` closure below (TS only
+    // preserves narrowing for local const bindings, not object properties).
+    const openaiBaseUrl = configuredAgent.openaiBaseUrl
+    const defaultOpenaiModel = configuredAgent.openaiModel
     try {
       const { createOpenAiAgentProvider } = await import('../../core/openai-agent-provider')
       const { createAiSdkChatModel } = await import('../../core/openai-chat-model')
@@ -808,10 +819,18 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       registry.register(
         'openai',
         createOpenAiAgentProvider({
-          chatModel: createAiSdkChatModel({
-            baseURL: configuredAgent.openaiBaseUrl,
+          // Built per-spawn (not once at construction) so an operator's
+          // `/api <model>` pin — re-read via the mtime-cached config reader
+          // through currentModelFor → SpawnContext.model — takes effect on
+          // the NEXT session without a daemon restart. `model` is undefined
+          // for background evals (cheapEval/strongEval) and for spawns before
+          // any pin exists; both fall back to the boot-time configured model.
+          // createAiSdkChatModel is cheap (just SDK client wiring, no
+          // network), so constructing one per spawn is fine.
+          makeChatModel: (model) => createAiSdkChatModel({
+            baseURL: openaiBaseUrl,
             apiKey: openaiKey,
-            model: configuredAgent.openaiModel,
+            model: model ?? defaultOpenaiModel,
           }),
           // Gated via buildOpenaiMcpSpecs so only wechat/delegate ever see
           // sessionEnv (WECHAT_SESSION_TOKEN) — third-party plugin MCP specs

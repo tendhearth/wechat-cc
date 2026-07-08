@@ -45,7 +45,7 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
 
 describe('openai provider integration', () => {
   it('trusted tier executes Write via the owned loop', async () => {
-    const provider = createOpenAiAgentProvider({ chatModel: writeThenDone(), makeMcpBridge: async () => noMcp, cwd: dir })
+    const provider = createOpenAiAgentProvider({ makeChatModel: () => writeThenDone(), makeMcpBridge: async () => noMcp, cwd: dir })
     const session = await provider.spawn({ alias: 'a', path: dir }, {
       tierProfile: { allow: new Set(['fs_write']), relay: new Set(), deny: new Set() } as any,
       permissionMode: 'strict', chatId: 'c',
@@ -57,7 +57,7 @@ describe('openai provider integration', () => {
   })
 
   it('guest tier denies Write (fs_write ∈ deny) — file is NOT written', async () => {
-    const provider = createOpenAiAgentProvider({ chatModel: writeThenDone(), makeMcpBridge: async () => noMcp, cwd: dir })
+    const provider = createOpenAiAgentProvider({ makeChatModel: () => writeThenDone(), makeMcpBridge: async () => noMcp, cwd: dir })
     const session = await provider.spawn({ alias: 'a', path: dir }, {
       tierProfile: { allow: new Set(), relay: new Set(), deny: new Set(['fs_write']) } as any,
       permissionMode: 'strict', chatId: 'c',

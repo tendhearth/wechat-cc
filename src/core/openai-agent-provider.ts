@@ -37,7 +37,14 @@ export function mapDeltaToEvent(d: Extract<TurnDelta, { kind: 'text' }>): AgentE
 }
 
 export interface OpenAiAgentProviderOptions {
-  chatModel: ChatModelClient
+  // Builds a ChatModelClient for a given model id (undefined → the
+  // provider's configured default). A thunk rather than a single instance so
+  // `spawn` can honor `ctx.model` per-session (the operator's pinned model,
+  // hot-reloaded via the daemon's mtime-cached config reader — see
+  // bootstrap/index.ts currentModelFor) instead of the model baked in at
+  // provider construction. `cheapEval`/`strongEval` are background calls with
+  // no per-chat pin, so they always pass `undefined` (the default model).
+  makeChatModel: (model?: string) => ChatModelClient
   makeMcpBridge: (mcpEnv: Record<string, string>) => Promise<McpToolBridge>
   cwd?: string
   maxSteps?: number
@@ -142,13 +149,19 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
       const builtinByName = new Map<string, BuiltinTool>(builtins.map(b => [b.spec.name, b]))
       const toolSpecs: ToolSpec[] = [...bridge.tools, ...builtins.map(b => b.spec)]
 
+      // Built once per spawn from ctx.model (the operator's per-chat pinned
+      // model, if any) — an in-flight session keeps this model until
+      // released, matching the codebase convention (claude/codex/cursor
+      // already hot-reload the SAME way: re-read per spawn, not per turn).
+      const chatModel = opts.makeChatModel(ctx.model)
+
       // Conversation history for this live session (in-memory; no resume in v1).
       const messages: ChatMessage[] = []
-      if (ctx.appendInstructions) messages.push(opts.chatModel.systemMessage(ctx.appendInstructions))
+      if (ctx.appendInstructions) messages.push(chatModel.systemMessage(ctx.appendInstructions))
 
       const session = makeOpenAiSession({
         sessionId,
-        chatModel: opts.chatModel,
+        chatModel,
         bridge,
         builtinByName,
         toolSpecs,
@@ -162,14 +175,17 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
     },
 
     async cheapEval(prompt: string): Promise<string> {
-      const text = await opts.chatModel.generate([opts.chatModel.userMessage(prompt)])
+      // Background eval, no per-chat pin — always the configured default model.
+      const chatModel = opts.makeChatModel(undefined)
+      const text = await chatModel.generate([chatModel.userMessage(prompt)])
       assertNotAuthFailed(text, log, 'openai')
       return text
     },
 
     async strongEval(prompt: string): Promise<string> {
       // v1: same model as cheapEval (DeepSeek is already the strong+cheap model).
-      const text = await opts.chatModel.generate([opts.chatModel.userMessage(prompt)])
+      const chatModel = opts.makeChatModel(undefined)
+      const text = await chatModel.generate([chatModel.userMessage(prompt)])
       assertNotAuthFailed(text, log, 'openai')
       return text
     },

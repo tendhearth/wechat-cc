@@ -46,7 +46,7 @@ describe('openai provider loop', () => {
   it('runs the tool loop: executes reply, then produces final text', async () => {
     const calls: string[] = []
     const provider = createOpenAiAgentProvider({
-      chatModel: scriptedModel(),
+      makeChatModel: () => scriptedModel(),
       makeMcpBridge: async () => fakeBridge(calls),
     })
     const session = await provider.spawn({ alias: 'a', path: '/tmp' }, guestSpawn as any)
@@ -86,7 +86,7 @@ describe('openai provider loop', () => {
     }
     const calls: string[] = []
     const provider = createOpenAiAgentProvider({
-      chatModel: alwaysToolCall,
+      makeChatModel: () => alwaysToolCall,
       makeMcpBridge: async () => fakeBridge(calls),
     })
     const session = await provider.spawn({ alias: 'a', path: '/tmp' }, guestSpawn as any)
@@ -106,7 +106,7 @@ describe('openai provider loop', () => {
   })
 
   it('cheapEval returns text on success (happy path)', async () => {
-    const provider = createOpenAiAgentProvider({ chatModel: scriptedModel(), makeMcpBridge: async () => fakeBridge([]) })
+    const provider = createOpenAiAgentProvider({ makeChatModel: () => scriptedModel(), makeMcpBridge: async () => fakeBridge([]) })
     expect(await provider.cheapEval!('ping')).toBe('ok')
   })
 
@@ -121,7 +121,7 @@ describe('openai provider loop', () => {
       systemMessage: (t) => ({ role: 'system', content: t } as any),
       toolResultMessage: (id, name, r) => ({ role: 'tool', content: `${name}:${JSON.stringify(r)}` } as any),
     }
-    const provider = createOpenAiAgentProvider({ chatModel: authFailModel, makeMcpBridge: async () => fakeBridge([]) })
+    const provider = createOpenAiAgentProvider({ makeChatModel: () => authFailModel, makeMcpBridge: async () => fakeBridge([]) })
     await expect(provider.cheapEval!('ping')).rejects.toThrow(/auth_failed/)
   })
 
@@ -133,8 +133,32 @@ describe('openai provider loop', () => {
       systemMessage: (t) => ({ role: 'system', content: t } as any),
       toolResultMessage: (id, name, r) => ({ role: 'tool', content: `${name}:${JSON.stringify(r)}` } as any),
     }
-    const provider = createOpenAiAgentProvider({ chatModel: authFailModel, makeMcpBridge: async () => fakeBridge([]) })
+    const provider = createOpenAiAgentProvider({ makeChatModel: () => authFailModel, makeMcpBridge: async () => fakeBridge([]) })
     await expect(provider.strongEval!('ping')).rejects.toThrow(/auth_failed/)
+  })
+
+  it('spawn builds its chatModel from ctx.model (per-chat pinned model); cheapEval always uses the default (undefined)', async () => {
+    // Proves the provider no longer bakes ONE model in at construction —
+    // `spawn` must honor `ctx.model` (the operator's per-chat pin, forwarded
+    // by session-manager via SpawnContext.model) instead of ignoring it, and
+    // background evals (no per-chat context) must request the default.
+    const calledWith: Array<string | undefined> = []
+    const makeChatModel = (model?: string) => {
+      calledWith.push(model)
+      return scriptedModel()
+    }
+    const provider = createOpenAiAgentProvider({ makeChatModel, makeMcpBridge: async () => fakeBridge([]) })
+
+    const session = await provider.spawn(
+      { alias: 'a', path: '/tmp' },
+      { ...guestSpawn, model: 'deepseek-x' } as any,
+    )
+    await collectTurn(session.dispatch('hi'))
+    await session.close()
+    expect(calledWith).toEqual(['deepseek-x'])
+
+    await provider.cheapEval!('ping')
+    expect(calledWith).toEqual(['deepseek-x', undefined])
   })
 })
 

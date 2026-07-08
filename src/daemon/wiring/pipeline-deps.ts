@@ -22,7 +22,7 @@ import { makeAdminCommands } from '../admin-commands'
 import { makeModeCommands } from '../mode-commands'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
-import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
+import { loadAgentConfig, saveAgentConfig, withActiveModel } from '../../lib/agent-config'
 import { findOnPath } from '../../lib/util'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
@@ -207,6 +207,15 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     sendMessage: (cid, txt) => ilink.sendMessage(cid, txt),
     setUserName: (cid, name) => ilink.setUserName(cid, name),
     getUserName: (cid) => ilink.resolveUserName(cid) ?? null,
+    // `/api <model>` — mirrors the POST /v1/model route (see
+    // routes-daemon-control.ts): read-modify-write agent-config.json via
+    // withActiveModel/saveAgentConfig. The daemon's mtime-cached config
+    // reader (currentModelFor, bootstrap/index.ts) then delivers the new
+    // model to the next openai spawn with no restart.
+    pinModel: (_providerId, model) => {
+      const current = loadAgentConfig(stateDir)
+      saveAgentConfig(stateDir, withActiveModel(current, model))
+    },
     log,
     isAdmin,
   })
