@@ -48,6 +48,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Pull the first-party wxvault plugin (private repo) into plugins/ so
+      # tauri.conf's `resources: ["../../../plugins/"]` bundles it into the app.
+      # Shell-guarded on the token (not an `if:` on secrets, which the Actions
+      # context doesn't allow) so forks/PRs without the secret still build —
+      # just without the bundled plugin. .git is dropped so it isn't bundled.
+      - name: Bundle first-party wxvault plugin (private)
+        shell: bash
+        env:
+          WXVAULT_PAT: ${{ secrets.RELEASE_PAT_WECHAT_CC }}
+        run: |
+          if [ -z "${WXVAULT_PAT}" ]; then
+            echo "::notice::no RELEASE_PAT_WECHAT_CC — building without bundled wxvault"
+            exit 0
+          fi
+          rm -rf plugins/wxvault
+          git clone --depth 1 "https://x-access-token:${WXVAULT_PAT}@github.com/tendhearth/wxvault.git" plugins/wxvault
+          rm -rf plugins/wxvault/.git
+          echo "bundled wxvault ($(ls plugins/wxvault | wc -l | tr -d ' ') files)"
+
       - name: Install Linux system deps
         if: matrix.os == 'ubuntu-latest'
         run: |

@@ -42,11 +42,13 @@ import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../w
 import { makeSessionStore } from '../../core/session-store'
 import type { Db } from '../../lib/db'
 import { homedir } from 'node:os'
-import { loadAgentConfig, makeMtimeCachedConfigReader } from '../../lib/agent-config'
+import { loadAgentConfig, makeMtimeCachedConfigReader, modelForProvider } from '../../lib/agent-config'
 import type { AgentConfig } from '../../lib/agent-config'
 import { loadAccess, setSessionInvalidator, type Access } from '../../lib/access'
 import { loadCompanionConfig, type CompanionConfig } from '../companion/config'
-import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
+import { wechatStdioMcpSpec, delegateStdioMcpSpec, buildOpenaiMcpSpecs, type McpStdioSpec } from './mcp-specs'
+import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
+import { bundledPluginsDir } from '../plugins/paths'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { buildDelegateDispatch, type DelegateDispatch } from './delegate'
 import { makeSendAssistantText } from './fallback-reply'
@@ -431,6 +433,29 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const delegateStdioForCodex: McpStdioSpec | null = delegateStdioByProvider.codex ?? null
   const delegateStdioForCursor: McpStdioSpec | null = delegateStdioByProvider.cursor ?? null
   const wechatStdioForCursor: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'cursor') : null
+  const delegateStdioForOpenai: McpStdioSpec | null = delegateStdioByProvider.openai ?? null
+  const wechatStdioForOpenai: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'openai') : null
+
+  // Decoupled plugin lane — third-party MCP tool providers
+  // spawned as stdio children exactly like wechat/delegate, but discovered
+  // from `{stateDir}/plugins/<name>/` (drop-in, survives upgrades) or the
+  // bundled `plugins/` dir. wechat-cc never imports plugin code; the process
+  // boundary + MCP wire protocol are the only coupling, so a plugin can be
+  // any language. USER plugins default DISABLED (a manifest spawns a process
+  // = arbitrary code; enable via dashboard / plugins.json); BUNDLED default
+  // ENABLED. Unlike installUserMcp (which pollutes the human's global
+  // ~/.claude.json), this injects only into the daemon-spawned providers.
+  const pluginMcp = pluginMcpSpecs(loadPlugins({
+    stateDir: deps.stateDir,
+    bundledDir: bundledPluginsDir(),
+    hostVersion: selfPkg.version,
+    log: (m) => deps.log('BOOT', `plugin: ${m}`),
+  }))
+  // Claude's SDK wants each server tagged `type: 'stdio'`; codex/cursor take
+  // the bare {command,args,env} shape (structurally identical to McpStdioSpec).
+  const pluginMcpForClaude = Object.fromEntries(
+    Object.entries(pluginMcp).map(([k, s]) => [k, { type: 'stdio' as const, ...s }]),
+  )
 
   // Pin a Claude model from agent-config.json (or fall back to a stable
   // full ID). Without this, the spawned Claude Code subprocess inherits
@@ -456,16 +481,15 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     const c = readAgentConfig()
     return c.provider === 'claude' && c.model ? c.model : 'claude-opus-4-8'
   }
-  // Per-spawn pinned model for codex/cursor (claude has currentClaudeModel
-  // above). Mirrors that rule: the pin only applies when the configured
-  // provider matches the spawning provider; otherwise undefined → the provider
-  // keeps its construction default. Read via the mtime-cached reader so a
-  // `/model` switch lands on the next session with NO daemon restart.
-  const currentModelFor = (providerId: ProviderId): string | undefined => {
-    const c = readAgentConfig()
-    if (c.provider !== providerId) return undefined
-    return providerId === 'cursor' ? c.cursorModel : c.model
-  }
+  // Per-spawn pinned model, resolved PER provider id (not the global default).
+  // `modelForProvider` owns the field rule: openai→openaiModel and
+  // cursor→cursorModel resolve unconditionally (own field), while claude/codex
+  // share `model` so it only applies when the global provider matches. This is
+  // what lets `/api <model>` (which switches ONE chat to openai while the
+  // global default may stay claude) hot-reload the openai model on the next
+  // spawn with no restart. Read via the mtime-cached reader.
+  const currentModelFor = (providerId: ProviderId): string | undefined =>
+    modelForProvider(readAgentConfig(), providerId)
 
   const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string): Options => {
     // The per-session system prompt is assembled by the daemon's
@@ -488,6 +512,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       mcpServers: {
         ...(wechatStdioForClaude ? { wechat: { type: 'stdio' as const, ...wechatStdioForClaude, env: wechatEnv! } } : {}),
         ...(delegateStdioForClaude ? { delegate: { type: 'stdio' as const, ...delegateStdioForClaude, env: delegateEnv! } } : {}),
+        ...pluginMcpForClaude,
       },
       // Using preset+append (instead of raw string) keeps MCP tools inline in
       // the system prompt — otherwise they're deferred behind ToolSearch,
@@ -667,6 +692,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
         mcpServers: {
           ...(wechatStdioForCodex ? { wechat: wechatStdioForCodex } : {}),
           ...(delegateStdioForCodex ? { delegate: delegateStdioForCodex } : {}),
+          ...pluginMcp,
         },
       }),
       {
@@ -742,6 +768,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
           mcpServers: {
             ...(wechatStdioForCursor ? { wechat: wechatStdioForCursor } : {}),
             ...(delegateStdioForCursor ? { delegate: delegateStdioForCursor } : {}),
+            ...pluginMcp,
           },
         }),
         {
@@ -759,6 +786,70 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     }
   } else {
     deps.log('BOOT', 'cursor: CURSOR_API_KEY not set — provider not registered')
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // OpenAI-compatible provider — fourth registered provider. Targets any
+  // OpenAI-Chat-Completions-shaped endpoint (DeepSeek/Kimi/Qwen/OpenRouter/
+  // Ollama, …) via the AI SDK. WECHAT_OPENAI_API_KEY is env-only (same
+  // rationale as CURSOR_API_KEY above); base_url + model live in
+  // agent-config.json (openaiBaseUrl/openaiModel) since they're not secret
+  // and vary per backend. All three must be present or the provider is
+  // skipped with a BOOT log line. The SDK modules are dynamic-imported so a
+  // registration failure (missing dep, bad config) degrades to a log line
+  // instead of crashing boot.
+  const openaiKey = process.env.WECHAT_OPENAI_API_KEY
+  if (openaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel) {
+    // Narrowed into locals: property access on `configuredAgent` doesn't
+    // stay narrowed inside the `makeChatModel` closure below (TS only
+    // preserves narrowing for local const bindings, not object properties).
+    const openaiBaseUrl = configuredAgent.openaiBaseUrl
+    const defaultOpenaiModel = configuredAgent.openaiModel
+    try {
+      const { createOpenAiAgentProvider } = await import('../../core/openai-agent-provider')
+      const { createAiSdkChatModel } = await import('../../core/openai-chat-model')
+      const { createMcpToolBridge } = await import('../../core/openai-mcp-bridge')
+      registry.register(
+        'openai',
+        createOpenAiAgentProvider({
+          // Built per-spawn (not once at construction) so an operator's
+          // `/api <model>` pin — re-read via the mtime-cached config reader
+          // through currentModelFor → SpawnContext.model — takes effect on
+          // the NEXT session without a daemon restart. `model` is undefined
+          // for background evals (cheapEval/strongEval) and for spawns before
+          // any pin exists; both fall back to the boot-time configured model.
+          // createAiSdkChatModel is cheap (just SDK client wiring, no
+          // network), so constructing one per spawn is fine.
+          makeChatModel: (model) => createAiSdkChatModel({
+            baseURL: openaiBaseUrl,
+            apiKey: openaiKey,
+            model: model ?? defaultOpenaiModel,
+          }),
+          // Gated via buildOpenaiMcpSpecs so only wechat/delegate ever see
+          // sessionEnv (WECHAT_SESSION_TOKEN) — third-party plugin MCP specs
+          // must never receive the daemon's loopback bearer token. See
+          // mcp-specs.ts buildOpenaiMcpSpecs doc comment.
+          makeMcpBridge: async (sessionEnv) => createMcpToolBridge(
+            buildOpenaiMcpSpecs(
+              { wechat: wechatStdioForOpenai, delegate: delegateStdioForOpenai, pluginMcp },
+              sessionEnv,
+            ),
+          ),
+          log: deps.log,
+        }),
+        {
+          displayName: 'OpenAI-compatible',
+          // No resume support in v1 — same posture as cursor above.
+          canResume: () => false,
+        },
+      )
+      deps.log('BOOT', 'openai: base_url + model + WECHAT_OPENAI_API_KEY present — provider registered')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      deps.log('BOOT', `openai: registration failed (${msg}) — provider not registered`)
+    }
+  } else {
+    deps.log('BOOT', 'openai: not configured (need WECHAT_OPENAI_API_KEY + openaiBaseUrl + openaiModel) — provider not registered')
   }
 
   // Fail-fast at boot if any registered provider is missing matrix rows.

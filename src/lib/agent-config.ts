@@ -5,7 +5,7 @@ import { join } from 'node:path'
 // runtime — this is a build-tool interop quirk, not a zod API difference).
 import z from 'zod'
 
-export type AgentProviderKind = 'claude' | 'codex' | 'cursor'
+export type AgentProviderKind = 'claude' | 'codex' | 'cursor' | 'openai'
 
 export interface AgentConfig {
   provider: AgentProviderKind
@@ -14,6 +14,12 @@ export interface AgentConfig {
   // optional-string shape so an operator can persist a Cursor model
   // alongside the Claude one without overloading a single field.
   cursorModel?: string
+  // OpenAI-compatible provider fields (also covers OpenAI-compatible
+  // endpoints like DeepSeek). Mirrors `cursorModel?`'s shape: kept separate
+  // from `model?` so switching providers doesn't clobber another
+  // provider's pinned model/endpoint.
+  openaiBaseUrl?: string
+  openaiModel?: string
   // When true, the daemon spawned by `service install` runs with
   // `cli.ts run --dangerously` (Claude SDK permissionMode=bypassPermissions).
   // Wizard-installed daemons need this on by default — there is no human
@@ -73,9 +79,11 @@ export type YiHubListen = z.infer<typeof YiHubListen>
 export type YiBrain = z.infer<typeof YiBrain>
 
 const AgentConfigSchema = z.object({
-  provider: z.enum(['claude', 'codex', 'cursor']).default('claude'),
+  provider: z.enum(['claude', 'codex', 'cursor', 'openai']).default('claude'),
   model: z.string().optional(),
   cursorModel: z.string().optional(),
+  openaiBaseUrl: z.string().optional(),
+  openaiModel: z.string().optional(),
   dangerouslySkipPermissions: z.boolean().default(true),
   autoStart: z.boolean().default(true),
   closeStopsDaemon: z.boolean().default(false),
@@ -116,6 +124,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
     const provider: AgentProviderKind =
       parsed.provider === 'codex' ? 'codex'
       : parsed.provider === 'cursor' ? 'cursor'
+      : parsed.provider === 'openai' ? 'openai'
       : 'claude'
     // Preserve `model` for both providers. Pre-2026-05-08 only codex
     // honored it; claude inherited the spawned CLI's default which read
@@ -143,6 +152,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       provider,
       ...(typeof parsed.model === 'string' ? { model: parsed.model } : {}),
       ...(typeof parsed.cursorModel === 'string' ? { cursorModel: parsed.cursorModel } : {}),
+      ...(typeof parsed.openaiBaseUrl === 'string' ? { openaiBaseUrl: parsed.openaiBaseUrl } : {}),
+      ...(typeof parsed.openaiModel === 'string' ? { openaiModel: parsed.openaiModel } : {}),
       dangerouslySkipPermissions,
       autoStart,
       closeStopsDaemon,
@@ -214,17 +225,46 @@ export function saveAgentConfig(stateDir: string, config: AgentConfig): void {
 }
 
 // The pinned model lives in a provider-specific field: cursor reads
-// `cursorModel`, claude/codex read `model`. These two accessors are the single
-// home for that rule so callers (e.g. the /v1/model routes) don't re-encode
-// `provider === 'cursor' ? cursorModel : model` at each read/write — writing the
-// wrong field is a silent no-op with a falsely-confirming read-back.
+// `cursorModel`, openai reads `openaiModel`, claude/codex read `model`. These
+// two accessors are the single home for that rule so callers (e.g. the
+// /v1/model routes) don't re-encode `provider === 'cursor' ? cursorModel :
+// model` at each read/write — writing the wrong field is a silent no-op with
+// a falsely-confirming read-back.
 
 /** The model id the configured provider actually reads (undefined if unset). */
 export function activeModel(config: AgentConfig): string | undefined {
-  return config.provider === 'cursor' ? config.cursorModel : config.model
+  if (config.provider === 'cursor') return config.cursorModel
+  if (config.provider === 'openai') return config.openaiModel
+  return config.model
 }
 
 /** A copy of `config` with the provider's active model field set to `model`. */
 export function withActiveModel(config: AgentConfig, model: string): AgentConfig {
-  return config.provider === 'cursor' ? { ...config, cursorModel: model } : { ...config, model }
+  if (config.provider === 'cursor') return { ...config, cursorModel: model }
+  if (config.provider === 'openai') return { ...config, openaiModel: model }
+  return { ...config, model }
+}
+
+// activeModel/withActiveModel above answer "the GLOBAL default provider's
+// model" (keyed on config.provider) — correct for /v1/model, boot, desktop.
+// The pair below answers "a SPECIFIC provider's model" (keyed on the given
+// providerId) — needed when a chat runs a NON-default provider (e.g. `/api`
+// switches one chat to openai while the global default stays claude) and by
+// `currentModelFor(providerId)` on every spawn. openai/cursor have their OWN
+// field so they resolve per-id unconditionally; claude & codex SHARE the
+// generic `model` field, so it's only meaningful when the global provider is
+// that same one (can't tell a claude pin from a codex pin otherwise).
+
+/** The model id `providerId` should use, resolved per-provider (undefined if unset). */
+export function modelForProvider(config: AgentConfig, providerId: string): string | undefined {
+  if (providerId === 'openai') return config.openaiModel
+  if (providerId === 'cursor') return config.cursorModel
+  return config.provider === providerId ? config.model : undefined
+}
+
+/** A copy of `config` with `providerId`'s own model field set — regardless of the global default provider. */
+export function withModelForProvider(config: AgentConfig, providerId: string, model: string): AgentConfig {
+  if (providerId === 'openai') return { ...config, openaiModel: model }
+  if (providerId === 'cursor') return { ...config, cursorModel: model }
+  return { ...config, model }
 }

@@ -365,6 +365,15 @@ export const A2AInstallResponse = z.union([
 export const A2ARemoveRequest = z.object({ id: z.string() })
 export const A2APauseRequest = z.object({ id: z.string(), paused: z.boolean() })
 
+// ── POST /v1/plugins/toggle ──────────────────────────────────────────────────
+export const PluginToggleRequest = z.object({ name: z.string(), enabled: z.boolean() })
+export type PluginToggleRequestT = z.infer<typeof PluginToggleRequest>
+export const PluginInstallRequest = z.object({ name: z.string() })
+export type PluginInstallRequestT = z.infer<typeof PluginInstallRequest>
+// POST /v1/plugins/upgrade reuses the same { name } shape.
+export const LicenseActivateRequest = z.object({ key: z.string() })
+export type LicenseActivateRequestT = z.infer<typeof LicenseActivateRequest>
+
 export type A2APreviewRequestT = z.infer<typeof A2APreviewRequest>
 export type A2AInstallRequestT = z.infer<typeof A2AInstallRequest>
 export type A2ARemoveRequestT = z.infer<typeof A2ARemoveRequest>
@@ -542,6 +551,10 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/a2a/install': A2AInstallRequest,
   'POST /v1/a2a/remove': A2ARemoveRequest,
   'POST /v1/a2a/pause': A2APauseRequest,
+  'POST /v1/plugins/toggle': PluginToggleRequest,
+  'POST /v1/plugins/install': PluginInstallRequest,
+  'POST /v1/plugins/upgrade': PluginInstallRequest,
+  'POST /v1/license/activate': LicenseActivateRequest,
 }
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {

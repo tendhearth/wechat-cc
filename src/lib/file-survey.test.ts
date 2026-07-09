@@ -100,6 +100,13 @@ describe('formatFileSurvey', () => {
 
 describe('defaultLifeDirs', () => {
   it('is Desktop/Documents/Downloads under home', () => {
-    expect(defaultLifeDirs('/home/me')).toEqual(['/home/me/Desktop', '/home/me/Documents', '/home/me/Downloads'])
+    // defaultLifeDirs returns native fs paths (correct — they're fed straight
+    // into readdirSync elsewhere), so build the expectation with path.join too
+    // rather than hardcoding '/' — on Windows path.join yields '\' separators.
+    expect(defaultLifeDirs('/home/me')).toEqual([
+      join('/home/me', 'Desktop'),
+      join('/home/me', 'Documents'),
+      join('/home/me', 'Downloads'),
+    ])
   })
 })

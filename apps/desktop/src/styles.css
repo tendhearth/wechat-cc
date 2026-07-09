@@ -2124,6 +2124,15 @@ input { font: inherit; color: inherit; }
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
+.sub-user-empty {
+  grid-column: 1 / -1;
+  padding: 16px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--ink-3);
+  border: 1px dashed var(--hair);
+  border-radius: 8px;
+}
 .sub-user-card {
   min-height: 72px;
   position: relative;
@@ -4183,6 +4192,109 @@ input { font: inherit; color: inherit; }
   display: flex;
   gap: 4px;
   margin-top: 8px;
+}
+
+/* ── Plugins pane ─────────────────────────────────────────────────────────
+   Reuses the a2a card / .dot / .btn styling; only the plugin-specific chrome
+   is defined here. All colors come from the shared tokens so light/dark and
+   the paper theme are inherited automatically. */
+.plugins-hint {
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  border-radius: var(--radius-sm);
+  background: var(--paper-2);
+  border: 1px solid var(--hair);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+.plugins-hint code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--paper-3);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.plugins-note {
+  padding: 8px 12px;
+  margin: 0 0 12px;
+  border-radius: var(--radius-sm);
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 12.5px;
+}
+.plugins-note[hidden] { display: none; }
+.plugins-subhead {
+  margin: 20px 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  letter-spacing: .02em;
+}
+
+/* ── License / Pro (settings drawer) ─────────────────────────────────────── */
+.license-status {
+  font-size: 13px;
+  color: var(--ink-3);
+  margin-bottom: 10px;
+}
+.license-status.pro { color: var(--green); }
+.license-status.pro strong { color: var(--green-ink); }
+.license-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.license-row input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--hair-2);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink);
+}
+.license-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.plugin-name {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+.plugin-ver {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  background: var(--paper-3);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.plugin-source {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-3);
+  border: 1px solid var(--hair-2);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.plugin-tools {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  margin: 4px 0;
+}
+.plugin-warn {
+  color: var(--amber);
+  background: var(--amber-soft);
+  font-size: 12px;
+  padding: 6px 8px;
+  margin: 6px 0 2px;
+  border-radius: var(--radius-sm);
 }
 
 /* Server status banner at the top of the Agents (A2A) tab. */

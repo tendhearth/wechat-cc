@@ -27,6 +27,7 @@ import type { Mode, ProviderId } from '../core/conversation'
 import type { InboundMsg } from '../core/prompt-format'
 import { botName } from './bot-name'
 import { validateNickname, NICKNAME_MAX_LEN } from './nickname'
+import { capabilitiesFor } from '../core/capability-matrix'
 import type { AgentConfig } from '../lib/agent-config'
 
 export interface ModeCommandsDeps {
@@ -41,6 +42,14 @@ export interface ModeCommandsDeps {
   setUserName(chatId: string, name: string): Promise<void>
   /** Lookup current nickname for this chat (null if none). Used by /whoami. */
   getUserName(chatId: string): string | null
+  /**
+   * Persist a pinned model for `providerId`. Used by `/api <model>` to pin
+   * the openai-compatible provider's model in the same command that switches
+   * to it. Mirrors the `POST /v1/model` route (writes via
+   * `withActiveModel`/`saveAgentConfig`) — the mtime-cached config reader
+   * then delivers it to the next spawn via `currentModelFor`, no restart.
+   */
+  pinModel(providerId: ProviderId, model: string): void | Promise<void>
   log: (tag: string, line: string) => void
   /** Returns true when userId belongs to an admin. Used by /help to gate the admin section. */
   isAdmin?: (userId: string) => boolean
@@ -62,6 +71,12 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     if (lower === 'cc') return 'claude'
     if (lower === 'codex') return 'codex'
     if (lower === 'cursor') return 'cursor'
+    // Generic OpenAI-compatible backend (DeepSeek/Kimi/Qwen/…). Deliberately
+    // named `/api` rather than `/openai` — it's "the user's own API endpoint",
+    // not tied to a vendor. Only takes effect when the openai provider is
+    // registered (WECHAT_OPENAI_API_KEY + base_url + model); otherwise the
+    // registry.has() guard below replies "未注册".
+    if (lower === 'api') return 'openai'
     return null
   }
 
@@ -73,10 +88,12 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
   // We surface that asymmetry up-front rather than silently substituting the
   // wired peer behind the operator's back.
   function defaultDelegatePeer(primary: ProviderId): ProviderId | null {
-    if (primary === 'claude') return 'codex'
-    if (primary === 'codex') return 'claude'
-    if (primary === 'cursor') return 'claude'
-    return null
+    // Single source of truth per [[architecture-conventions]]: the peer comes
+    // from the provider's ProviderCapabilities.defaultPeer, not a hardcoded
+    // ternary — so a new provider (openai → claude, …) is covered without
+    // editing this function. Values match the prior hardcoded ones
+    // (claude→codex, codex→claude, cursor→claude).
+    return capabilitiesFor(primary).defaultPeer ?? null
   }
 
   /**
@@ -126,7 +143,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       '这里是微信通道，可以直接跟我对话。可用命令：',
       '',
       '**模式切换**',
-      '/cc /codex /cursor — 单 provider (solo)',
+      '/cc /codex /cursor /api — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)',
       '/cc + codex — Claude 主答，Codex 当工具 (primary_tool)',
       '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
       '/chat [p1 p2 …] — 圆桌讨论',
@@ -226,6 +243,35 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           deps.log('MODE_CMD', `chat=${msg.chatId} → primary_tool primary=${providerId} peer=${peerProviderId}`)
           return true
         }
+        // /api <model> — for the openai-compatible provider ONLY, a
+        // non-"+peer" tail is interpreted as a model id: switch this chat to
+        // solo+openai AND pin the model in one command (e.g. `/api DeepSeek`,
+        // `/api kimi-k2.7-code`). Deliberately NOT extended to
+        // claude/codex/cursor — their tail keeps meaning "unsupported
+        // argument" below, unchanged.
+        if (providerId === 'openai') {
+          // Liberal on charset (letters/digits/./_/-//), just no whitespace —
+          // real model ids vary wildly across OpenAI-compatible backends
+          // (DeepSeek/Kimi/Qwen/OpenRouter/…) and some are bare names with no
+          // version digit (e.g. `Kimi`, `DeepSeek`), unlike the digit-required
+          // guard on /v1/model (claude/codex/cursor ids always carry a
+          // version digit; these don't).
+          const modelRe = /^[A-Za-z0-9._/-]+$/
+          if (!modelRe.test(tail)) {
+            await reply(msg.chatId, `❌ 无效的模型名 \`${tail}\`（只支持字母/数字/. _ / - /，不能有空格）。`)
+            return true
+          }
+          if (!deps.registry.has(providerId)) {
+            await reply(msg.chatId, `❌ provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
+            return true
+          }
+          await deps.pinModel(providerId, tail)
+          deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: providerId })
+          const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
+          await reply(msg.chatId, `✅ 这个对话切到 ${dn} (solo)，模型 = ${tail}。下条消息开始生效。`)
+          deps.log('MODE_CMD', `chat=${msg.chatId} → solo+${providerId} model=${tail}`)
+          return true
+        }
         await reply(msg.chatId, `❓ \`/${slashWord}\` 不支持参数 \`${tail}\`。试试 \`/${slashWord}\`、\`/${slashWord} + ${providerId === 'claude' ? 'codex' : 'cc'}\`、\`/solo\` 或 \`/mode\`。`)
         return true
       }
@@ -251,7 +297,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           `已注册 provider: ${deps.registry.list().join(', ')}`,
           `默认: ${deps.defaultProviderId}`,
           '',
-          '可用命令: /cc /codex /cursor /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',
+          '可用命令: /cc /codex /cursor /api /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',
         ]
         await reply(msg.chatId, lines.join('\n'))
         return true

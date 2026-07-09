@@ -1,0 +1,14 @@
+{
+  "plugins": [
+    {
+      "name": "example-plugin",
+      "version": "1.0.0",
+      "displayName": "Example",
+      "description": "示例插件条目。给 agent 提供一组 MCP 工具。",
+      "author": "you",
+      "homepage": "https://github.com/you/example-plugin",
+      "minWechatCcVersion": "0.6.4",
+      "source": { "type": "git", "url": "https://github.com/you/example-plugin", "ref": "v1.0.0" }
+    }
+  ]
+}

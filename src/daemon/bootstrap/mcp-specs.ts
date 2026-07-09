@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ProviderId } from '../../core/conversation'
 import { isCompiledBundle } from '../../lib/runtime-info'
+import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES } from '../../core/agent-provider'
 
 export interface McpStdioSpec {
   command: string
@@ -87,4 +88,32 @@ export function delegateStdioMcpSpec(
       WECHAT_DELEGATE_PEER: peer,
     },
   }
+}
+
+/**
+ * Build the openai provider's per-spawn MCP spec map, gating the per-session
+ * auth env (`WECHAT_SESSION_TOKEN`/`_TIER`) to the core wechat/delegate
+ * servers only. Third-party plugin specs (`parts.pluginMcp`) must NOT
+ * receive it — that bearer token authenticates against the daemon's
+ * loopback internal-api, and handing it to enabled plugin code would let
+ * plugin MCP servers impersonate the agent against admin/trusted routes.
+ *
+ * Extracted as a pure function (rather than inlined in the `makeMcpBridge`
+ * closure in bootstrap/index.ts) so the leak-guard regression test can
+ * exercise it directly without spinning up a full openai session.
+ */
+export function buildOpenaiMcpSpecs(
+  parts: {
+    wechat: McpStdioSpec | null
+    delegate: McpStdioSpec | null
+    pluginMcp: Record<string, McpStdioSpec>
+  },
+  sessionEnv: Record<string, string>,
+): Record<string, McpStdioSpec> {
+  const raw: Record<string, McpStdioSpec> = {
+    ...(parts.wechat ? { wechat: parts.wechat } : {}),
+    ...(parts.delegate ? { delegate: parts.delegate } : {}),
+    ...parts.pluginMcp,
+  }
+  return mergeEnvIntoMcpServers(raw, sessionEnv, CORE_MCP_SERVER_NAMES)
 }

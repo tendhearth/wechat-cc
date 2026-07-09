@@ -603,6 +603,50 @@ Tier behavior for Cursor follows the same [Permission tiers](#permission-tiers-v
 above, but with one caveat — see the "Cursor tier enforcement is the coarsest"
 entry under [Known limitations](#known-limitations).
 
+### OpenAI-compatible provider (opt-in)
+
+`openai` is a fourth provider id that talks to any **OpenAI-compatible
+chat-completions API** (DeepSeek, Kimi, Qwen, GLM, OpenRouter, local Ollama,
+…) via the [Vercel AI SDK](https://sdk.vercel.ai/). Unlike claude/codex/cursor
+it isn't a full agent host — wechat-cc owns the tool-calling loop itself
+(read/write/edit/bash + the same WeChat companion MCP tools), so it's a much
+lighter, pay-per-token chat backend.
+
+To enable it:
+
+1. Set `WECHAT_OPENAI_API_KEY` in your shell or systemd unit. The key is
+   env-only by design — it never lands in `agent-config.json`.
+2. Configure the endpoint + model in `agent-config.json` (under your state
+   dir — see [State layout](#state-layout)):
+   ```json
+   {
+     "provider": "openai",
+     "openaiBaseUrl": "https://api.deepseek.com/v1",
+     "openaiModel": "deepseek-chat"
+   }
+   ```
+   (`wechat-cc provider set` doesn't accept `openai` yet — edit
+   `agent-config.json`'s `provider` field directly alongside the two
+   `openai*` fields shown above.)
+3. Restart the daemon. The boot log prints `openai: base_url + model +
+   WECHAT_OPENAI_API_KEY present — provider registered` once it's live.
+
+**v1 limitations — read before trusting it with sensitive tiers:**
+
+- **No OS/SDK sandbox.** Claude/Codex/Cursor each have some sandboxing
+  underneath; `openai` has none — the [tier gate](#permission-tiers-v06) is
+  the *only* barrier between a chat and `fs_write`/shell. Treat `trusted`
+  tier on this provider exactly like handing someone a shell.
+- **Relay-classified tools are denied, not relayed, in strict mode.** The
+  owned loop doesn't yet support the mid-turn WeChat confirmation round-trip
+  (`y abc12` / `n abc12`) that Claude/Codex/Cursor use for `relay` tools —
+  a `relay`-tier tool call collapses to an outright deny.
+- **No session resume across a daemon restart.** Conversation history lives
+  in memory for the life of the process; restarting the daemon starts a
+  fresh session (same caveat as the "Conversation continuity" entry under
+  [Known limitations](#known-limitations), but `openai` has no
+  partial-resume path at all).
+
 ---
 
 ## A2A integration (P3, opt-in)
@@ -787,6 +831,10 @@ Stable `obs_demo_*` / `ms_demo_*` ids make `unseed` reliable.
   working directory. If you have guests you don't trust to write inside cwd, route
   them to Claude (whose `disallowedTools` array enforces strict per-tool blocks
   for guest tier).
+- **OpenAI-compatible provider has no sandbox at all** — see
+  [OpenAI-compatible provider](#openai-compatible-provider-opt-in) above.
+  The tier gate is the only barrier; there's no mid-turn relay confirmation
+  and no session resume across a restart in v1.
 - **3-participant cap** — chatroom and parallel are capped at 3
   participants in P1. The moderator's coherence with 4+ speakers is
   untested; the cap is a safety net. Raise it once we've seen real

@@ -23,6 +23,7 @@ function setup(opts: {
     sentMessages.push([chatId, text])
     return { msgId: 'm-1' }
   })
+  const pinModel = vi.fn<(providerId: ProviderId, model: string) => void>()
   const cmds = makeModeCommands({
     coordinator: {
       getMode: () => stored ?? { kind: 'solo', provider: opts.defaultProviderId ?? 'claude' },
@@ -41,10 +42,11 @@ function setup(opts: {
     sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
     setUserName: vi.fn(async (chat: string, name: string) => { storedName = { chat, name } }),
     getUserName: vi.fn(() => opts.initialUserName ?? null),
+    pinModel,
     log: () => {},
     isAdmin: opts.isAdmin,
   })
-  return { cmds, set, sendMessage, sentMessages, getStored: () => stored, getStoredName: () => storedName }
+  return { cmds, set, sendMessage, sentMessages, pinModel, getStored: () => stored, getStoredName: () => storedName }
 }
 
 describe('makeModeCommands', () => {
@@ -77,6 +79,74 @@ describe('makeModeCommands', () => {
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'cursor' })
     expect(sentMessages[0]?.[1]).toContain('Cursor')
     expect(sentMessages[0]?.[1]).toContain('solo')
+  })
+
+  it('/api switches mode to solo+openai (the OpenAI-compatible backend)', async () => {
+    const { cmds, set, sentMessages, pinModel } = setup({ registered: ['claude', 'codex', 'openai'] })
+    const consumed = await cmds.handle(inbound('/api'))
+    expect(consumed).toBe(true)
+    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'openai' })
+    expect(sentMessages[0]?.[1]).toContain('solo')
+    // Bare /api (no model tail) does NOT pin a model — only switches provider.
+    expect(pinModel).not.toHaveBeenCalled()
+  })
+
+  it('/api replies 未注册 when the openai provider is not configured', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex'] })
+    const consumed = await cmds.handle(inbound('/api'))
+    expect(consumed).toBe(true)
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('未注册')
+  })
+
+  // ── /api <model> — switch + pin the openai-compatible model in one go ──
+
+  it('/api deepseek-chat pins the model AND switches to solo+openai', async () => {
+    const { cmds, set, sentMessages, pinModel } = setup({ registered: ['claude', 'codex', 'openai'] })
+    const consumed = await cmds.handle(inbound('/api deepseek-chat'))
+    expect(consumed).toBe(true)
+    expect(pinModel).toHaveBeenCalledWith('openai', 'deepseek-chat')
+    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'openai' })
+    expect(sentMessages[0]?.[1]).toContain('deepseek-chat')
+  })
+
+  it('/api Kimi accepts a bare model name with no version digit', async () => {
+    // Unlike /v1/model (which rejects bare aliases), the openai-compatible
+    // backends this feature targets DO have bare names like `Kimi` /
+    // `DeepSeek` — the digit requirement would wrongly reject those.
+    const { cmds, set, pinModel, sentMessages } = setup({ registered: ['claude', 'codex', 'openai'] })
+    const consumed = await cmds.handle(inbound('/api Kimi'))
+    expect(consumed).toBe(true)
+    expect(pinModel).toHaveBeenCalledWith('openai', 'Kimi')
+    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'openai' })
+    expect(sentMessages[0]?.[1]).toContain('Kimi')
+  })
+
+  it('/api bad name rejects a model id containing a space — no switch, no pin', async () => {
+    const { cmds, set, pinModel, sentMessages } = setup({ registered: ['claude', 'codex', 'openai'] })
+    const consumed = await cmds.handle(inbound('/api bad name'))
+    expect(consumed).toBe(true)
+    expect(pinModel).not.toHaveBeenCalled()
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('无效')
+  })
+
+  it('/api <model> replies 未注册 when the openai provider is not configured — no pin', async () => {
+    const { cmds, set, pinModel, sentMessages } = setup({ registered: ['claude', 'codex'] })
+    const consumed = await cmds.handle(inbound('/api deepseek-chat'))
+    expect(consumed).toBe(true)
+    expect(pinModel).not.toHaveBeenCalled()
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('未注册')
+  })
+
+  it('/cc deepseek-chat (non-openai provider with a non-"+peer" tail) keeps the existing unsupported-argument error, does NOT pin', async () => {
+    const { cmds, set, pinModel, sentMessages } = setup({ registered: ['claude', 'codex'] })
+    const consumed = await cmds.handle(inbound('/cc deepseek-chat'))
+    expect(consumed).toBe(true)
+    expect(pinModel).not.toHaveBeenCalled()
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('不支持参数')
   })
 
   it('/cursor rejects with helpful message when cursor is not registered', async () => {
@@ -156,6 +226,7 @@ describe('makeModeCommands', () => {
       sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
       setUserName: async () => {},
       getUserName: () => null,
+      pinModel: async () => {},
       log: () => {},
     })
     await cmds.handle(inbound('/both'))
@@ -198,6 +269,7 @@ describe('makeModeCommands', () => {
       sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
       setUserName: async () => {},
       getUserName: () => null,
+      pinModel: async () => {},
       log: () => {},
     })
     await cmds.handle(inbound('/chat'))
@@ -241,6 +313,7 @@ describe('makeModeCommands', () => {
       sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
       setUserName: async () => {},
       getUserName: () => null,
+      pinModel: async () => {},
       log: () => {},
     })
     await cmds.handle(inbound('/stop'))
@@ -269,6 +342,7 @@ describe('makeModeCommands', () => {
       sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
       setUserName: async () => {},
       getUserName: () => null,
+      pinModel: async () => {},
       log: () => {},
     })
     await cmds.handle(inbound('/stop'))
@@ -353,6 +427,7 @@ describe('makeModeCommands', () => {
       sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
       setUserName: async () => {},
       getUserName: () => null,
+      pinModel: async () => {},
       log: () => {},
     })
     await cmds.handle(inbound('/cc + codex'))

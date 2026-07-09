@@ -58,6 +58,10 @@ export function buildServicePlan(input: ServicePlanInput): ServicePlan {
   const dangerously = input.dangerouslySkipPermissions ?? true
   const autoStart = input.autoStart ?? true
   const runArgs = dangerously ? ['run', '--dangerously'] : ['run']
+  // Baked into the service definition so the launchd/systemd-started daemon
+  // (which does NOT go through Tauri) can still discover bundled plugins. At
+  // install time this CLI runs via Tauri's run_sidecar, which sets this env.
+  const bundledPluginsDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR || undefined
 
   if (pf === 'darwin') {
     // posix.join so plan builds the correct path even when invoked from a
@@ -74,7 +78,7 @@ export function buildServicePlan(input: ServicePlanInput): ServicePlan {
       kind: 'launchagent',
       serviceName,
       serviceFile,
-      fileContent: launchAgentPlist({ bunPath, binaryPath, cwd: input.cwd, runArgs, runAtLoad: autoStart, logDir }),
+      fileContent: launchAgentPlist({ bunPath, binaryPath, cwd: input.cwd, runArgs, runAtLoad: autoStart, logDir, bundledPluginsDir }),
       installCommands: [['launchctl', 'bootstrap', gui, serviceFile], ['launchctl', 'enable', `${gui}/com.wechat-cc.daemon`], ['launchctl', 'kickstart', '-k', `${gui}/com.wechat-cc.daemon`]],
       startCommands: [['launchctl', 'kickstart', '-k', `${gui}/com.wechat-cc.daemon`]],
       stopCommands: [['launchctl', 'bootout', gui, serviceFile]],
@@ -138,7 +142,7 @@ export function buildServicePlan(input: ServicePlanInput): ServicePlan {
     kind: 'systemd-user',
     serviceName,
     serviceFile,
-    fileContent: systemdUnit({ bunPath, binaryPath, cwd: input.cwd, runArgs }),
+    fileContent: systemdUnit({ bunPath, binaryPath, cwd: input.cwd, runArgs, bundledPluginsDir }),
     installCommands,
     startCommands: [['systemctl', '--user', 'start', 'wechat-cc.service']],
     stopCommands: [['systemctl', '--user', 'stop', 'wechat-cc.service']],
@@ -404,7 +408,7 @@ function tryRunCommands(commands: string[][]): { ok: true } | { ok: false; exitC
   return { ok: true }
 }
 
-function launchAgentPlist(opts: { bunPath: string; binaryPath?: string; cwd: string; runArgs: string[]; runAtLoad: boolean; logDir: string }): string {
+function launchAgentPlist(opts: { bunPath: string; binaryPath?: string; cwd: string; runArgs: string[]; runAtLoad: boolean; logDir: string; bundledPluginsDir?: string }): string {
   const argv = opts.binaryPath
     ? [opts.binaryPath, ...opts.runArgs]
     : [opts.bunPath, join(opts.cwd, 'cli.ts'), ...opts.runArgs]
@@ -423,6 +427,12 @@ function launchAgentPlist(opts: { bunPath: string; binaryPath?: string; cwd: str
     `  <key>RunAtLoad</key><${opts.runAtLoad ? 'true' : 'false'}/>\n` +
     `  <key>KeepAlive</key><true/>\n` +
     `  <key>ThrottleInterval</key><integer>10</integer>`
+  // Persist the bundled-plugins dir into the plist: launchd starts the daemon
+  // directly (not via Tauri), so unless it's baked in here the daemon can't
+  // find first-party bundled plugins (e.g. wxvault) — see bundledPluginsDir().
+  const envDict = opts.bundledPluginsDir
+    ? `  <key>EnvironmentVariables</key><dict><key>WECHAT_CC_BUNDLED_PLUGINS_DIR</key><string>${escapeXml(opts.bundledPluginsDir)}</string></dict>\n`
+    : ''
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -430,7 +440,7 @@ function launchAgentPlist(opts: { bunPath: string; binaryPath?: string; cwd: str
   <key>ProgramArguments</key><array>
 ${argsXml}
   </array>
-  <key>WorkingDirectory</key><string>${escapeXml(opts.cwd)}</string>
+${envDict}  <key>WorkingDirectory</key><string>${escapeXml(opts.cwd)}</string>
   <key>StandardOutPath</key><string>${escapeXml(posix.join(opts.logDir, 'launchd.out.log'))}</string>
   <key>StandardErrorPath</key><string>${escapeXml(posix.join(opts.logDir, 'launchd.err.log'))}</string>
 ${autoLines}
@@ -438,7 +448,7 @@ ${autoLines}
 `
 }
 
-function systemdUnit(opts: { bunPath: string; binaryPath?: string; cwd: string; runArgs: string[] }): string {
+function systemdUnit(opts: { bunPath: string; binaryPath?: string; cwd: string; runArgs: string[]; bundledPluginsDir?: string }): string {
   const execStart = opts.binaryPath
     ? `${opts.binaryPath} ${opts.runArgs.join(' ')}`
     : `${opts.bunPath} ${join(opts.cwd, 'cli.ts')} ${opts.runArgs.join(' ')}`
@@ -461,7 +471,7 @@ Type=simple
 WorkingDirectory=${opts.cwd}
 Environment="CODEX_MODEL="
 Environment="WECHAT_AGENT_PROVIDER="
-ExecStart=${execStart}
+${opts.bundledPluginsDir ? `Environment="WECHAT_CC_BUNDLED_PLUGINS_DIR=${opts.bundledPluginsDir}"\n` : ''}ExecStart=${execStart}
 Restart=always
 RestartSec=5
 
