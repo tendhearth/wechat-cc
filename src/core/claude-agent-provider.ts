@@ -41,6 +41,7 @@ const TOOL_KIND_TO_CLAUDE_BUILTINS: Record<ToolKind, ReadonlyArray<string>> = {
   daemon_introspect: [],   // MCP-only (mcp__wechat__diagnostic_*), gated by canUseTool
   daemon_remediate: [],    // MCP-only (mcp__wechat__session_release / model_set / daemon_restart)
   file_locate: [],         // MCP-only (mcp__wechat__locate_file), gated by canUseTool
+  plugin_tool: [],         // MCP-only (mcp__<plugin>__*), admin-only, gated by canUseTool
 }
 
 export interface ClaudeTierSdkOpts {

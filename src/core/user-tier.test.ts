@@ -59,7 +59,7 @@ describe('TIER_PROFILES', () => {
     'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
     'observations_read', 'observations_write',
     'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
-    'a2a_send',
+    'a2a_send', 'plugin_tool',
   ]
 
   for (const tier of ['admin', 'trusted', 'guest'] as UserTier[]) {
@@ -104,11 +104,12 @@ describe('TIER_PROFILES', () => {
     expect(TIER_PROFILES.trusted.relay.has('shell_destructive')).toBe(true)
     expect(TIER_PROFILES.trusted.relay.has('memory_delete')).toBe(true)
     // trusted denies all admin-exclusive tools (was 0 before
-    // self-diagnosis / remediation tools existed).
-    expect(TIER_PROFILES.trusted.deny.size).toBe(3)
+    // self-diagnosis / remediation / plugin tools existed).
+    expect(TIER_PROFILES.trusted.deny.size).toBe(4)
     expect(TIER_PROFILES.trusted.deny.has('daemon_introspect')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('daemon_remediate')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('file_locate')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('plugin_tool')).toBe(true)
   })
 
   it('guest allows only reply/share_page/memory_read/observations_read', () => {
@@ -128,6 +129,17 @@ describe('TIER_PROFILES', () => {
     expect(TIER_PROFILES.trusted.deny.has('daemon_introspect')).toBe(true)
     expect(TIER_PROFILES.trusted.allow.has('daemon_introspect')).toBe(false)
     expect(TIER_PROFILES.guest.deny.has('daemon_introspect')).toBe(true)
+  })
+
+  it('plugin_tool (any third-party plugin MCP tool) is admin-only — denied for trusted and guest', () => {
+    // A plugin (e.g. wxvault = the owner's WeChat history) spawns arbitrary code
+    // and can expose owner-private data. Fail closed: only the owner (admin) can
+    // call a plugin's tools by default.
+    expect(TIER_PROFILES.admin.allow.has('plugin_tool')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('plugin_tool')).toBe(true)
+    expect(TIER_PROFILES.trusted.allow.has('plugin_tool')).toBe(false)
+    expect(TIER_PROFILES.guest.deny.has('plugin_tool')).toBe(true)
+    expect(TIER_PROFILES.guest.allow.has('plugin_tool')).toBe(false)
   })
 
   it('daemon_remediate (release/restart/model-set) is admin-only and relays even for admin', () => {
@@ -205,6 +217,17 @@ describe('classifyToolUse', () => {
     expect(classifyToolUse('mcp__wechat__session_evict', {})).toBe('daemon_remediate')
     // A non-daemon unknown wechat tool still uses the permissive query default.
     expect(classifyToolUse('mcp__wechat__some_query_tool', {})).toBe('fs_read')
+  })
+  it('third-party plugin MCP tools → plugin_tool (admin-only, fail-closed)', () => {
+    // Any non-wechat, non-delegate MCP server is a plugin; its tools must not
+    // reach trusted/guest by default (wxvault would leak the owner's WeChat DB).
+    expect(classifyToolUse('mcp__wxvault__get_messages', {})).toBe('plugin_tool')
+    expect(classifyToolUse('mcp__wxvault__search_messages', {})).toBe('plugin_tool')
+    expect(classifyToolUse('mcp__someplugin__anything', {})).toBe('plugin_tool')
+  })
+  it('delegate MCP tools stay subagent (owner cross-provider delegation, not a plugin)', () => {
+    expect(classifyToolUse('mcp__delegate__delegate_claude', {})).toBe('subagent')
+    expect(classifyToolUse('mcp__delegate__delegate_codex', {})).toBe('subagent')
   })
   it('Read / Glob / Grep / LS → fs_read', () => {
     expect(classifyToolUse('Read', {})).toBe('fs_read')
