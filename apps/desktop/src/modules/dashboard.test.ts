@@ -288,20 +288,38 @@ function allGreenReport() {
 }
 
 describe('dashboard button state', () => {
-  it('companion-active hero shows disconnect only, even while daemon is recovering', () => {
+  it('daemon alive + account → connected hero shows stop only', () => {
+    const els = installDashboardDom()
+    const report = dashboardReport({
+      checks: { daemon: { alive: true, pid: 1234 } },
+    })
+
+    renderDashboard(report)
+    renderRestartButton(report)
+
+    expect(els.heroHeadline.textContent).toBe('AI 正在陪伴中')
+    expect(els.heroMeta.textContent).toBe('连接正常')
+    expect(els.dashStop.hidden).toBe(false)
+    expect(els.dashRestart.hidden).toBe(true)
+  })
+
+  it('bound account but daemon NOT alive → recovering (was falsely "connected")', () => {
+    // dashboardReport() has daemon.alive=false, accounts.count=1.
+    // Old behaviour: tone "ok" → hero showed "AI 正在陪伴中" (false positive).
+    // New behaviour: state "recovering" → honest reconnect affordance shown.
     const els = installDashboardDom()
     const report = dashboardReport()
 
     renderDashboard(report)
     renderRestartButton(report)
 
-    expect(els.heroHeadline.textContent).toBe('AI 正在陪伴中')
-    expect(els.heroMeta.textContent).toBe('一切正常，连接稳定')
-    expect(els.dashStop.hidden).toBe(false)
-    expect(els.dashRestart.hidden).toBe(true)
+    expect(els.heroHeadline.textContent).toBe('暂时失联')
+    expect(els.heroMeta.textContent).toBe('正在恢复连接…')
+    expect(els.dashStop.hidden).toBe(true)
+    expect(els.dashRestart.hidden).toBe(false)
   })
 
-  it('offline hero shows reconnect only', () => {
+  it('no account + daemon offline → recovering hero shows reconnect only', () => {
     const els = installDashboardDom()
     const report = dashboardReport({
       checks: {
@@ -313,8 +331,8 @@ describe('dashboard button state', () => {
     renderDashboard(report)
     renderRestartButton(report)
 
-    expect(els.heroHeadline.textContent).toBe('暂时失去连接')
-    expect(els.heroMeta.textContent).toBe('当前连接不稳定，正在尝试重新恢复陪伴')
+    expect(els.heroHeadline.textContent).toBe('暂时失联')
+    expect(els.heroMeta.textContent).toBe('正在恢复连接…')
     expect(els.dashStop.hidden).toBe(true)
     expect(els.dashRestart.hidden).toBe(false)
   })
@@ -408,6 +426,86 @@ describe('renderDashboard admin row selection', () => {
     renderDashboard(report)
 
     expect(els.accountsCurrent.innerHTML).toContain('唯一用户')
+  })
+})
+
+// ── renderDashboard: heartbeat display ───────────────────────────────────────
+// When hero state is "connected" and report.heartbeats[account.id] exists,
+// the "当前连接中的用户" slot should show "连接正常 · 上次活动 X 前".
+// When heartbeat is absent or hero is not "connected", fall back to "已连接".
+
+describe('renderDashboard heartbeat display', () => {
+  it('shows heartbeat copy when connected and heartbeat present', () => {
+    const els = installDashboardDom()
+    const report = {
+      checks: {
+        daemon: { alive: true, pid: 1234 },
+        accounts: {
+          count: 1,
+          items: [{ id: 'bot1-im-bot', botId: 'b1@im.bot', userId: 'u1', baseUrl: '' }],
+        },
+        provider: { provider: 'claude' },
+        access: { allowFromCount: 1 },
+        service: { installed: true },
+      },
+      userNames: { u1: '小白' },
+      expiredBots: [],
+      heartbeats: { 'bot1-im-bot': new Date(Date.now() - 60_000).toISOString() },
+    }
+
+    renderDashboard(report)
+
+    // Should contain the heartbeat copy, not bare "已连接"
+    expect(els.accountsCurrent.innerHTML).toContain('连接正常')
+    expect(els.accountsCurrent.innerHTML).toContain('上次活动')
+  })
+
+  it('falls back to "已连接" when heartbeats field is absent', () => {
+    const els = installDashboardDom()
+    const report = {
+      checks: {
+        daemon: { alive: true, pid: 1234 },
+        accounts: {
+          count: 1,
+          items: [{ id: 'bot1-im-bot', botId: 'b1@im.bot', userId: 'u1', baseUrl: '' }],
+        },
+        provider: { provider: 'claude' },
+        access: { allowFromCount: 1 },
+        service: { installed: true },
+      },
+      userNames: { u1: '小白' },
+      expiredBots: [],
+      // no heartbeats field
+    }
+
+    renderDashboard(report)
+
+    expect(els.accountsCurrent.innerHTML).toContain('已连接')
+    expect(els.accountsCurrent.innerHTML).not.toContain('连接正常')
+  })
+
+  it('falls back to "已连接" when heartbeat for account is null', () => {
+    const els = installDashboardDom()
+    const report = {
+      checks: {
+        daemon: { alive: true, pid: 1234 },
+        accounts: {
+          count: 1,
+          items: [{ id: 'bot1-im-bot', botId: 'b1@im.bot', userId: 'u1', baseUrl: '' }],
+        },
+        provider: { provider: 'claude' },
+        access: { allowFromCount: 1 },
+        service: { installed: true },
+      },
+      userNames: { u1: '小白' },
+      expiredBots: [],
+      heartbeats: { 'bot1-im-bot': null },
+    }
+
+    renderDashboard(report)
+
+    expect(els.accountsCurrent.innerHTML).toContain('已连接')
+    expect(els.accountsCurrent.innerHTML).not.toContain('连接正常')
   })
 })
 

@@ -43,7 +43,7 @@ import { makeSessionStore } from '../../core/session-store'
 import type { Db } from '../../lib/db'
 import { homedir } from 'node:os'
 import { loadAgentConfig, makeMtimeCachedConfigReader } from '../../lib/agent-config'
-import type { AgentConfig } from '../../lib/agent-config'
+import type { AgentConfig, AgentProviderKind } from '../../lib/agent-config'
 import { loadAccess, setSessionInvalidator, type Access } from '../../lib/access'
 import { loadCompanionConfig, type CompanionConfig } from '../companion/config'
 import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
@@ -186,7 +186,7 @@ export interface BootstrapDeps {
    */
   fallbackProject?: () => { alias: string; path: string } | null
   dangerouslySkipPermissions?: boolean
-  agentProviderKind?: 'claude' | 'codex'
+  agentProviderKind?: AgentProviderKind
   /**
    * When provided, the standalone wechat-mcp stdio MCP server (RFC 03 §5)
    * is registered with both providers as `wechat`. The MCP child
@@ -431,6 +431,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const delegateStdioForCodex: McpStdioSpec | null = delegateStdioByProvider.codex ?? null
   const delegateStdioForCursor: McpStdioSpec | null = delegateStdioByProvider.cursor ?? null
   const wechatStdioForCursor: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'cursor') : null
+  const wechatStdioForGemini: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'gemini') : null
 
   // Pin a Claude model from agent-config.json (or fall back to a stable
   // full ID). Without this, the spawned Claude Code subprocess inherits
@@ -759,6 +760,64 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     }
   } else {
     deps.log('BOOT', 'cursor: CURSOR_API_KEY not set — provider not registered')
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // Gemini provider — fourth registered provider.
+  //
+  // GEMINI_API_KEY (or GOOGLE_API_KEY) is env-only — not stored in
+  // agent-config.json. The @google/genai SDK is loaded via dynamic
+  // import so wechat-cc remains installable without it — operators
+  // who don't want Gemini can `bun remove @google/genai` and the
+  // registration silently skips.
+  //
+  // geminiModel must be set via `wechat-cc provider set gemini
+  // --model gemini-flash-latest` before the key is useful.
+  const geminiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY
+  if (geminiKey && !configuredAgent.geminiModel) {
+    deps.log('BOOT',
+      'gemini: GEMINI_API_KEY is set but geminiModel is not configured. ' +
+      'Run `wechat-cc provider set gemini --model gemini-flash-latest`. Provider not registered.',
+    )
+  } else if (geminiKey) {
+    try {
+      const { GoogleGenAI } = await import('@google/genai')
+      const { createGeminiAgentProvider, makeGeminiToolGate, connectWechatMcp } = await import('../../core/gemini-agent-provider')
+      const { lookup } = await import('../../core/capability-matrix')
+      const genaiClient = new GoogleGenAI({ apiKey: geminiKey }) as unknown as import('../../core/gemini-agent-provider').GenaiClient
+      const buildGate = makeGeminiToolGate({
+        askUser: deps.ilink.askUser,
+        adminFor: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
+        modeFor: (chatId) => conversationStore.get(chatId)?.mode.kind ?? 'solo',
+        lookupBase: (mode, perm) => lookup(mode as never, 'gemini', perm),
+      })
+      registry.register(
+        'gemini',
+        createGeminiAgentProvider({
+          genai: genaiClient,
+          model: configuredAgent.geminiModel!,
+          systemInstruction: buildSystemPrompt({
+            providerId: 'gemini',
+            peerProviderId: 'claude',
+            companionEnabled: deps.ilink.companion.status().enabled,
+            delegateAvailable: false,
+          }),
+          mcpConnect: () => {
+            if (!wechatStdioForGemini) throw new Error('gemini: internalApi unavailable — cannot connect wechat MCP')
+            return connectWechatMcp(wechatStdioForGemini)
+          },
+          buildGate,
+          cheapModel: process.env.WECHAT_GEMINI_CHEAP_MODEL ?? 'gemini-flash-latest',
+        }),
+        { displayName: 'Gemini', canResume: () => false },
+      )
+      deps.log('BOOT', 'gemini: SDK + API key present — provider registered')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      deps.log('BOOT', `gemini: SDK not available (${msg}) — run \`bun add @google/genai\` to enable; provider not registered`)
+    }
+  } else {
+    deps.log('BOOT', 'gemini: GEMINI_API_KEY not set — provider not registered')
   }
 
   // Fail-fast at boot if any registered provider is missing matrix rows.

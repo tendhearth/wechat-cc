@@ -155,7 +155,7 @@ Usage:
                         Send a synthetic notify to validate inbound→chat path
                         (default) or outbound (--outbound: send to external URL)
   wechat-cc provider show [--json]  Show selected agent provider
-  wechat-cc provider set <claude|codex> [--model MODEL] [--unattended true|false]
+  wechat-cc provider set <claude|codex|cursor|gemini> [--model MODEL] [--unattended true|false]
                         --unattended: when true (default for new installs), the
                           installed daemon runs the daemon with --dangerously so
                           inbound WeChat messages don't hang waiting for human
@@ -759,6 +759,21 @@ const guardStatusCmd = defineCommand({
 async function setGuardEnabled(enabled: boolean, json: boolean): Promise<void> {
   const { loadGuardConfig, saveGuardConfig } = await import('./src/daemon/guard/store')
   const cfg = loadGuardConfig(STATE_DIR)
+  // TEMP DIAG (network-guard auto-enable hunt): persistently record WHO turned
+  // guard ON. The CLI is short-lived, so pid/ppid + the parent process command
+  // reveal whether it was the Tauri GUI (wechat_cc_desktop), a terminal `bun`,
+  // or something else. Written to channel.log so it survives even when no
+  // devtools console is open at the moment of the intermittent bug. Remove
+  // once the root cause is confirmed.
+  if (enabled) {
+    try {
+      const { log } = await import('./src/lib/log')
+      const { execSync } = await import('node:child_process')
+      let parent = '?'
+      try { parent = execSync(`ps -o comm= -p ${process.ppid}`, { encoding: 'utf8' }).trim() } catch { /* best-effort */ }
+      log('GUARD_DIAG', `guard ENABLE invoked (was ${cfg.enabled}) pid=${process.pid} ppid=${process.ppid} parent="${parent}" argv=${JSON.stringify(process.argv.slice(2))}`)
+    } catch { /* diagnostics must never break the command */ }
+  }
   cfg.enabled = enabled
   saveGuardConfig(STATE_DIR, cfg)
   if (json) console.log(JSON.stringify((enabled ? GuardEnableOutput : GuardDisableOutput).parse({ ok: true, enabled: cfg.enabled })))
@@ -797,9 +812,9 @@ const providerShowCmd = defineCommand({
 })
 
 const providerSetCmd = defineCommand({
-  meta: { name: 'set', description: 'Switch agent provider (claude|codex|cursor), optionally with --model + --unattended + --auto-start + --close-stops-daemon' },
+  meta: { name: 'set', description: 'Switch agent provider (claude|codex|cursor|gemini), optionally with --model + --unattended + --auto-start + --close-stops-daemon' },
   args: {
-    provider: { type: 'positional', required: true, description: 'claude | codex | cursor', valueHint: 'claude|codex|cursor' },
+    provider: { type: 'positional', required: true, description: 'claude | codex | cursor | gemini', valueHint: 'claude|codex|cursor|gemini' },
     model: { type: 'string', description: 'Override default model' },
     // String, not boolean: matches the legacy parseBoolFlag tri-state semantics
     // (true / false / undefined). Citty's boolean type can't represent
@@ -811,8 +826,8 @@ const providerSetCmd = defineCommand({
     'close-stops-daemon': { type: 'string', description: 'true | false (omit to leave unchanged) — when true, closing the GUI window stops the daemon', valueHint: 'true|false' },
   },
   run({ args }) {
-    if (args.provider !== 'claude' && args.provider !== 'codex' && args.provider !== 'cursor') {
-      console.error(`provider must be 'claude', 'codex', or 'cursor' (got: ${args.provider})`)
+    if (args.provider !== 'claude' && args.provider !== 'codex' && args.provider !== 'cursor' && args.provider !== 'gemini') {
+      console.error(`provider must be 'claude', 'codex', 'cursor', or 'gemini' (got: ${args.provider})`)
       process.exit(2)
     }
     const provider = args.provider as AgentProviderKind
@@ -823,23 +838,32 @@ const providerSetCmd = defineCommand({
     const next = {
       ...existing,
       provider,
-      ...(args.model !== undefined ? { model: args.model } : {}),
+      ...(args.model !== undefined
+        ? provider === 'gemini' ? { geminiModel: args.model }
+        : provider === 'cursor' ? { cursorModel: args.model }
+        : { model: args.model }
+        : {}),
       ...(unattended !== undefined ? { dangerouslySkipPermissions: unattended } : {}),
       ...(autoStart !== undefined ? { autoStart } : {}),
       ...(closeStopsDaemon !== undefined ? { closeStopsDaemon } : {}),
     }
-    // When switching provider, drop a stale model from the previous provider
-    // unless the caller explicitly set one.
+    // When switching provider, drop stale provider-specific model fields
+    // from the previous provider unless the caller explicitly set one.
     if (existing.provider !== provider && args.model === undefined) {
       delete (next as Partial<typeof next>).model
+      delete (next as Partial<typeof next>).cursorModel
+      delete (next as Partial<typeof next>).geminiModel
     }
     saveAgentConfig(STATE_DIR, next)
-    console.log(`provider set: ${next.provider}${next.model ? ` (${next.model})` : ''} unattended=${next.dangerouslySkipPermissions} autoStart=${next.autoStart} closeStopsDaemon=${next.closeStopsDaemon}`)
+    const modelLabel = provider === 'gemini' ? next.geminiModel
+      : provider === 'cursor' ? next.cursorModel
+      : next.model
+    console.log(`provider set: ${next.provider}${modelLabel ? ` (${modelLabel})` : ''} unattended=${next.dangerouslySkipPermissions} autoStart=${next.autoStart} closeStopsDaemon=${next.closeStopsDaemon}`)
   },
 })
 
 const providerCmd = defineCommand({
-  meta: { name: 'provider', description: 'Agent provider config (claude / codex)' },
+  meta: { name: 'provider', description: 'Agent provider config (claude / codex / cursor / gemini)' },
   subCommands: {
     show: providerShowCmd,
     set: providerSetCmd,
@@ -1306,6 +1330,67 @@ const companionPushCmd = defineCommand({
 const companionCmd = defineCommand({
   meta: { name: 'companion', description: 'Companion (proactive contact) controls' },
   subCommands: { push: companionPushCmd },
+})
+
+// ── connection probe — wechat-cc connection probe [--json] ─────────────────
+//
+// Walks STATE_DIR/accounts/<id>/{account.json,token}, calls probeConnection
+// for each bound account, and emits { accounts: ProbeResult[] }.
+// On taken_over the daemon's SQLite session_state row is written so the
+// dashboard's expiredBots list reflects it on next doctor poll.
+
+const connectionProbeCmd = defineCommand({
+  meta: { name: 'probe', description: 'Test whether THIS machine holds the live WeChat connection' },
+  args: { json: { type: 'boolean', description: 'machine-readable output' } },
+  async run({ args }) {
+    const { ilinkGetUpdates } = await import('./src/lib/ilink')
+    const { probeConnection } = await import('./src/daemon/connection-probe')
+    const { openWechatDb } = await import('./src/lib/db')
+    const { makeSessionStateStore } = await import('./src/daemon/session-state')
+    const { readFileSync, existsSync, readdirSync } = await import('node:fs')
+    const { join } = await import('node:path')
+
+    const PROBE_TIMEOUT_MS = 5000
+    const dir = join(STATE_DIR, 'accounts')
+    const ids = existsSync(dir) ? readdirSync(dir).filter(n => !n.includes('.superseded.')) : []
+
+    // Open db only when accounts exist to avoid creating an empty db in a
+    // non-existent STATE_DIR (the db file lives inside STATE_DIR).
+    let db: import('./src/lib/db').Db | null = null
+    const accounts: import('./src/daemon/connection-probe').ProbeResult[] = []
+    try {
+      if (ids.length > 0) db = openWechatDb(STATE_DIR)
+      const store = db ? makeSessionStateStore(db) : null
+      for (const id of ids) {
+        const acctDir = join(dir, id)
+        const metaPath = join(acctDir, 'account.json')
+        const tokenPath = join(acctDir, 'token')
+        if (!existsSync(metaPath) || !existsSync(tokenPath)) continue
+        const meta = JSON.parse(readFileSync(metaPath, 'utf8'))
+        const token = readFileSync(tokenPath, 'utf8').trim()
+        const result = await probeConnection({
+          account: { id, botId: meta.botId, baseUrl: meta.baseUrl, token },
+          getUpdates: (baseUrl, tok, timeoutMs) => ilinkGetUpdates(baseUrl, tok, '', timeoutMs),
+          markExpired: (accountId, reason) => store ? store.markExpired(accountId, reason) : false,
+          clearExpired: (accountId) => store?.clear(accountId),
+          probeTimeoutMs: PROBE_TIMEOUT_MS,
+        })
+        accounts.push(result)
+      }
+    } finally {
+      db?.close()
+    }
+
+    const out = { accounts }
+    if (args.json) console.log(JSON.stringify(out, null, 2))
+    else if (accounts.length === 0) console.log('no bound accounts found')
+    else for (const a of accounts) console.log(`${a.id}: ${a.state}${a.detail ? ` (${a.detail})` : ''}`)
+  },
+})
+
+const connectionCmd = defineCommand({
+  meta: { name: 'connection', description: "Inspect this machine's WeChat connection" },
+  subCommands: { probe: connectionProbeCmd },
 })
 
 const daemonKillCmd = defineCommand({
@@ -2541,6 +2626,8 @@ const SUBCOMMANDS = {
   memory: memoryCmd,
   account: accountCmd,
   companion: companionCmd,
+  // connection-owner detection (Task 4).
+  connection: connectionCmd,
   daemon: daemonCmd,
   demo: demoCmd,
   // PR4 batch 3c — heavy entry points. Completes the migration; legacy

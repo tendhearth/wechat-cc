@@ -22,8 +22,8 @@ describe('ProviderCapabilities.defaultPeer', () => {
 })
 
 describe('CAPABILITY_MATRIX', () => {
-  it('contains exactly 24 rows (4 modes × 3 providers × 2 perms)', () => {
-    expect(CAPABILITY_MATRIX).toHaveLength(24)
+  it('contains exactly 32 rows (4 modes × 4 providers × 2 perms)', () => {
+    expect(CAPABILITY_MATRIX).toHaveLength(32)
   })
 
   it.each(CAPABILITY_MATRIX)(
@@ -111,8 +111,21 @@ describe('ghost-gemini — extensibility check (RFC 05 Phase 2)', () => {
   })
 
   it('assertMatrixComplete throws clearly when an unregistered provider id is requested', () => {
-    expect(() => assertMatrixComplete(['claude', 'gemini' as ProviderId]))
-      .toThrow(/gemini/)
+    expect(() => assertMatrixComplete(['claude', 'unknown-provider' as ProviderId]))
+      .toThrow(/unknown-provider/)
+  })
+
+  it('has a gemini capability row; assertMatrixComplete accepts gemini', async () => {
+    const { GEMINI_CAPABILITIES } = await import('./gemini-agent-provider')
+    // deriveCapability must work for all (mode × pm) without throwing
+    const modes: Mode['kind'][] = ['solo', 'parallel', 'primary_tool', 'chatroom']
+    const perms: PermissionMode[] = ['strict', 'dangerously']
+    const { deriveCapability } = await import('./capability-matrix')
+    for (const m of modes) for (const pm of perms) {
+      expect(() => deriveCapability(GEMINI_CAPABILITIES, m, pm)).not.toThrow()
+    }
+    // assertMatrixComplete must not throw now that the row is registered
+    expect(() => assertMatrixComplete(['claude', 'codex', 'cursor', 'gemini'])).not.toThrow()
   })
 })
 

@@ -1,7 +1,9 @@
 import { describe, expect, it, afterEach } from 'vitest'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { analyzeDoctor, setupStatus, serviceStatus, readDaemon, readAccess } from './doctor'
+import { analyzeDoctor, setupStatus, serviceStatus, readDaemon, readAccess, readExpiredBots } from './doctor'
+import { openWechatDb } from '../lib/db'
+import { makeSessionStateStore } from '../daemon/session-state'
 
 const installedSystemd = () => ({ installed: true, kind: 'systemd-user' as const })
 const missingSystemd = () => ({ installed: false, kind: 'systemd-user' as const })
@@ -366,6 +368,37 @@ describe('doctor installer JSON', () => {
     expect(report.nextActions).not.toContain('install_cursor')
   })
 
+  // ── Gemini SDK probe (Task 7 — Gemini provider Phase B) ─────────────────
+  // Gemini has no PATH binary (like Cursor); it's an SDK loaded via dynamic
+  // import. Doctor reports apiKeySet + sdkInstalled so the wizard and JSON
+  // consumers can mirror the gate that bootstrap applies before registering
+  // the gemini provider.
+
+  it('provider=gemini + geminiOk=false → provider check is hard, install_gemini in nextActions', () => {
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: () => null,  // no claude/codex on PATH — irrelevant for gemini
+      probeGemini: () => ({ apiKeySet: false, sdkInstalled: false }),
+      readAccounts: () => [],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }),
+      readAgentConfig: () => ({ provider: 'gemini', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      daemon: () => ({ alive: false, pid: null }),
+      service: missingSystemd,
+    })
+    expect(report.checks.gemini.ok).toBe(false)
+    expect(report.checks.gemini.severity).toBe('hard')
+    expect(report.checks.provider.ok).toBe(false)
+    expect(report.checks.provider.severity).toBe('hard')
+    expect(report.checks.provider.fix?.action).toContain('GEMINI_API_KEY')
+    expect(report.nextActions).toContain('install_gemini')
+    // install_claude / install_codex / install_cursor should NOT appear
+    expect(report.nextActions).not.toContain('install_claude')
+    expect(report.nextActions).not.toContain('install_codex')
+    expect(report.nextActions).not.toContain('install_cursor')
+  })
+
   it('default runtime is "source" (back-compat for callers that omit it)', () => {
     const report = analyzeDoctor({
       stateDir: '/state',
@@ -512,5 +545,135 @@ describe('readAccess admins[]', () => {
       runtime: 'source',
     })
     expect(report.checks.access.admins).toEqual(['uAdmin'])
+  })
+})
+
+describe('analyzeDoctor — heartbeats field', () => {
+  it('includes heartbeats from readHeartbeats dep when provided', () => {
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: () => null,
+      readAccounts: () => [{ id: 'bot1-im-bot', botId: 'b1@im.bot', userId: 'u1', baseUrl: '' }],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: ['u1'] }),
+      readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      readHeartbeats: () => ({ 'bot1-im-bot': '2026-06-07T01:00:00.000Z' }),
+      daemon: () => ({ alive: true, pid: 1234 }),
+      service: () => ({ installed: true, kind: 'launchagent' as const }),
+    })
+    expect(report.heartbeats).toEqual({ 'bot1-im-bot': '2026-06-07T01:00:00.000Z' })
+  })
+
+  it('heartbeats defaults to {} when readHeartbeats dep is absent', () => {
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: () => null,
+      readAccounts: () => [],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }),
+      readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      daemon: () => ({ alive: false, pid: null }),
+      service: () => ({ installed: false, kind: 'launchagent' as const }),
+    })
+    expect(report.heartbeats).toEqual({})
+  })
+})
+
+// ── readExpiredBots: SQLite round-trip ───────────────────────────────────────
+describe('readExpiredBots', () => {
+  const tmpDir = join('/tmp', `readExpiredBots-test-${process.pid}`)
+
+  // An expired row only counts if its account dir is currently bound (the
+  // dashboard's expiredCount drives the taken_over hero). Create a live
+  // account dir so the row isn't filtered out as an orphan.
+  const mkAccount = (id: string) => {
+    const d = join(tmpDir, 'accounts', id)
+    mkdirSync(d, { recursive: true })
+    writeFileSync(join(d, 'account.json'), JSON.stringify({ botId: `${id}@im.bot`, userId: 'u', baseUrl: 'https://x' }))
+  }
+
+  afterEach(() => {
+    try { rmSync(tmpDir, { recursive: true, force: true }) } catch { /* ignore */ }
+  })
+
+  it('returns [] when stateDir does not exist', () => {
+    expect(readExpiredBots('/nonexistent-dir-xyzzy')).toEqual([])
+  })
+
+  it('returns [] for an empty (freshly-created) db', () => {
+    mkdirSync(tmpDir, { recursive: true })
+    const db = openWechatDb(tmpDir)
+    db.close()
+    expect(readExpiredBots(tmpDir)).toEqual([])
+  })
+
+  it('reads expired rows written via SessionStateStore (SQLite round-trip)', () => {
+    // Write an expired entry through the same store the daemon uses.
+    mkdirSync(tmpDir, { recursive: true })
+    mkAccount('some-account-id')
+    const db = openWechatDb(tmpDir)
+    makeSessionStateStore(db).markExpired('some-account-id', 'test-reason')
+    db.close()
+
+    const entries = readExpiredBots(tmpDir)
+    expect(entries).toHaveLength(1)
+    // botId MUST be the account dir id (account.id), not a @im.bot address.
+    expect(entries[0]!.botId).toBe('some-account-id')
+    expect(typeof entries[0]!.firstSeenExpiredAt).toBe('string')
+    expect(entries[0]!.lastReason).toBe('test-reason')
+  })
+
+  it('filters out orphan rows whose account dir no longer exists (superseded / removed)', () => {
+    // Regression: re-scanning supersedes the old account dir but leaves its
+    // session_state row. That orphan must NOT appear in expiredBots, else the
+    // dashboard hero is stuck in taken_over even though the live account is fine.
+    mkdirSync(tmpDir, { recursive: true })
+    mkAccount('live-acct')           // currently bound
+    // 'gone-acct' has an expired row but NO account dir (superseded/removed).
+    const db = openWechatDb(tmpDir)
+    const store = makeSessionStateStore(db)
+    store.markExpired('live-acct', 'real')
+    store.markExpired('gone-acct', 'orphan')
+    db.close()
+
+    const entries = readExpiredBots(tmpDir)
+    const ids = entries.map(e => e.botId)
+    expect(ids).toContain('live-acct')
+    expect(ids).not.toContain('gone-acct')
+    expect(entries).toHaveLength(1)
+  })
+
+  it('returns entries sorted ascending by firstSeenExpiredAt', () => {
+    mkdirSync(tmpDir, { recursive: true })
+    mkAccount('acct-a')
+    mkAccount('acct-b')
+    const db = openWechatDb(tmpDir)
+    const store = makeSessionStateStore(db)
+    // Insert in reverse chronological order to verify sort.
+    store.markExpired('acct-b', 'reason-b')
+    store.markExpired('acct-a', 'reason-a')
+    db.close()
+
+    const entries = readExpiredBots(tmpDir)
+    expect(entries).toHaveLength(2)
+    // listExpired is ORDER BY first_seen_expired_at ASC; both were inserted
+    // within the same millisecond so order is stable — just verify both present.
+    const ids = entries.map(e => e.botId)
+    expect(ids).toContain('acct-a')
+    expect(ids).toContain('acct-b')
+  })
+
+  it('omits lastReason when markExpired was called without a reason', () => {
+    mkdirSync(tmpDir, { recursive: true })
+    mkAccount('acct-no-reason')
+    const db = openWechatDb(tmpDir)
+    makeSessionStateStore(db).markExpired('acct-no-reason')
+    db.close()
+
+    const entries = readExpiredBots(tmpDir)
+    expect(entries).toHaveLength(1)
+    expect(entries[0]!.lastReason).toBeUndefined()
   })
 })

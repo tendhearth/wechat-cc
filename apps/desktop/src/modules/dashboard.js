@@ -14,18 +14,29 @@ import { icon } from "./icons.js"
 const USER_CARD_PROVIDERS = ["claude", "codex", "gemini"]
 
 export function renderDashboard(report) {
-  const hero = dashboardHero(report.checks.daemon, report.checks.accounts.count)
+  const expiredCount = (report.expiredBots || []).length
+  const hero = dashboardHero({
+    daemonAlive: !!report.checks.daemon.alive,
+    accountCount: report.checks.accounts.count,
+    expiredCount,
+    lastProbe: _lastProbe,
+  })
   const card = document.getElementById("hero-card")
   if (!card) return
   card.classList.toggle("warn", hero.tone !== "ok")
-  document.getElementById("hero-headline").textContent = hero.tone === "ok" ? "AI 正在陪伴中" : "暂时失去连接"
-  document.getElementById("hero-meta").textContent = hero.tone === "ok"
-    ? "一切正常，连接稳定"
-    : "当前连接不稳定，正在尝试重新恢复陪伴"
+  document.getElementById("hero-headline").textContent = hero.headline
+  document.getElementById("hero-meta").textContent = hero.meta
   const stopBtn = document.getElementById("dash-stop")
   const restartBtn = document.getElementById("dash-restart")
-  if (stopBtn) stopBtn.hidden = hero.tone !== "ok"
-  if (restartBtn) restartBtn.hidden = hero.tone === "ok"
+  const rebindBtn = document.getElementById("dash-rebind")
+  const testConnBtn = document.getElementById("dash-test-conn")
+  if (stopBtn) stopBtn.hidden = hero.state !== "connected"
+  if (restartBtn) restartBtn.hidden = hero.state !== "recovering"
+  if (rebindBtn) rebindBtn.hidden = hero.state !== "taken_over"
+  // "测试本机连接" is only useful when the state is NOT already a confirmed
+  // connection — hide it when connected (the hero already says 陪伴中), show it
+  // in 暂时失联 / 本机未连接 so the user can verify or re-check ownership.
+  if (testConnBtn) testConnBtn.hidden = hero.state === "connected"
 
   const accounts = report.checks.accounts.items || []
   const expired = report.expiredBots || []
@@ -53,13 +64,17 @@ export function renderDashboard(report) {
       `
       tbody.innerHTML = ""
     } else {
-      // Daemon doesn't expose last-active timestamps (see view.js notes —
-      // ilink gives us errcode=-14 expiry but no positive heartbeat).
-      // Show honest copy: "已连接" for active, "连接已过期" for expired.
+      // Show honest connection status. For connected state, surface the last
+      // successful getUpdates heartbeat when available. For expired, show
+      // the expiry timestamp. For taken_over / recovering, keep existing copy.
       const currentExp = expiredById[currentRow.id]
+      const heartbeats = report.heartbeats || {}
+      const hb = heartbeats[currentRow.id]
       const currentSub = currentRow.expired
         ? `连接已过期${currentExp ? ` · ${formatRelativeTime(currentExp.firstSeenExpiredAt)}` : ""}`
-        : "已连接"
+        : hero.state === "connected" && hb
+          ? `连接正常 · 上次活动 ${formatRelativeTime(hb)}`
+          : "已连接"
       current.innerHTML = `
         <div class="user-avatar avatar-admin">${avatarSvg("admin", currentRow.name)}</div>
         <div class="user-copy">
@@ -113,7 +128,6 @@ export function renderDashboard(report) {
       `
     }).join("")
   }
-  const expiredCount = expired.length
   const meta = expiredCount > 0
     ? `${accounts.length} 个 · ${expiredCount} 已过期`
     : `${accounts.length} 个 · ${report.checks.access.allowFromCount} 用户允许`
@@ -189,8 +203,13 @@ function demoSubUsers() {
 export function renderRestartButton(report) {
   const btn = document.getElementById("dash-restart")
   if (!btn) return
-  const hero = dashboardHero(report.checks.daemon, report.checks.accounts?.count ?? 0)
-  const showOnlineControls = hero.tone === "ok"
+  const hero = dashboardHero({
+    daemonAlive: !!report.checks.daemon?.alive,
+    accountCount: report.checks.accounts?.count ?? 0,
+    expiredCount: (report.expiredBots || []).length,
+    lastProbe: _lastProbe,
+  })
+  const showOnlineControls = hero.state === "connected"
   const choice = restartButtonState(report.checks.daemon, report.checks.service)
   // Find the label text node (the one with non-whitespace content). The
   // button has whitespace text nodes between the icon span and the label,
@@ -216,7 +235,7 @@ export function renderRestartButton(report) {
     if (showOnlineControls) stopBtn.removeAttribute("title")
     else stopBtn.title = "daemon 未运行"
   }
-  btn.hidden = showOnlineControls
+  btn.hidden = hero.state !== "recovering"
 }
 
 export function setPending(msg) {
@@ -350,6 +369,12 @@ let _cardDiagnosis = null
 // Test-only reset: call __resetDiagnoseCardState() in beforeEach to prevent
 // listener state from leaking across test cases.
 let _cardListenersWired = false
+
+// Latest connection-probe verdict ({ state, detail } | null). Set by the
+// 「测试本机连接」button handler (main.js, Task 7), read on the next
+// renderDashboard so the hero keeps the probe result across the 5s doctor tick.
+export let _lastProbe = null
+export function setLastProbe(p) { _lastProbe = p }
 
 // Carries the outcome of the most recent runRestartSequence call into the
 // next restartDaemon (diagnose) invocation. Cleared after consumption so
@@ -502,6 +527,7 @@ export function __resetDiagnoseCardState() {
   _cardDeps = null
   _cardDiagnosis = null
   _lastRestart = null
+  _lastProbe = null
   _providerMenuOpen = false
   _providerSwitchInflight = false
   _providerMenuOutsideHandler = null

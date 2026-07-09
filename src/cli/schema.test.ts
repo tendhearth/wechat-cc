@@ -54,6 +54,7 @@ describe('DoctorOutput', () => {
         claude: { ok: false, path: null, severity: 'hard', fix: { command: 'npm install -g @anthropic-ai/claude-code' } },
         codex: { ok: false, path: null, severity: 'soft' },
         cursor: { ok: false, apiKeySet: false, sdkInstalled: false, severity: 'soft', fix: { action: 'export CURSOR_API_KEY=<your-key>' } },
+        gemini: { ok: false, apiKeySet: false, sdkInstalled: false, severity: 'soft', fix: { action: 'export GEMINI_API_KEY=<your-key>' } },
         accounts: { ok: false, count: 0, items: [] },
         access: { ok: false, dmPolicy: 'allowlist', allowFromCount: 0 },
         provider: { ok: false, provider: 'claude', binaryPath: null, severity: 'hard' },
@@ -62,6 +63,7 @@ describe('DoctorOutput', () => {
       },
       userNames: {},
       expiredBots: [],
+      heartbeats: {},
       nextActions: ['install_claude', 'run_wechat_setup'],
     }
     expect(DoctorOutput.safeParse(sample).success).toBe(true)
@@ -79,6 +81,7 @@ describe('DoctorOutput', () => {
         claude: { ok: true, path: '/usr/local/bin/claude' },
         codex: { ok: false, path: null, severity: 'soft' },
         cursor: { ok: true, apiKeySet: true, sdkInstalled: true },
+        gemini: { ok: false, apiKeySet: false, sdkInstalled: false, severity: 'soft', fix: { action: 'export GEMINI_API_KEY=<your-key>' } },
         accounts: {
           ok: true,
           count: 1,
@@ -91,6 +94,7 @@ describe('DoctorOutput', () => {
       },
       userNames: { 'chat-abc': 'Alice' },
       expiredBots: [{ botId: 'old-bot', firstSeenExpiredAt: '2026-01-01T00:00:00Z', lastReason: 'session expired' }],
+      heartbeats: { 'bot1': '2026-06-07T01:00:00.000Z' },
       nextActions: [],
     }
     expect(DoctorOutput.safeParse(sample).success).toBe(true)

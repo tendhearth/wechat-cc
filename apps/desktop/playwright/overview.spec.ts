@@ -2,7 +2,7 @@
 //
 // Covers moxiuwen's redesigned hero card + current-user card + sub-user
 // grid (post merge 782268e):
-//   1. hero tone — daemon alive ("AI 正在陪伴中") vs dead ("暂时失去连接")
+//   1. hero tone — daemon alive ("AI 正在陪伴中") vs dead ("暂时失联")
 //   2. current-user card — populated when an account is bound, empty
 //      placeholder when not
 //   3. sub-user grid — 6 demo cards when no real sub-users; sub-rows
@@ -50,18 +50,20 @@ async function bootAndForceDashboardRender(page: import('@playwright/test').Page
   })
 }
 
-// NOTE on moxiuwen's 1bfb929 change to view.js::dashboardHero —
-// the new logic is `if (daemon.alive || accountCount > 0) tone = "ok"`,
-// so once an account is bound the hero ALWAYS shows "AI 正在陪伴中"
-// regardless of daemon liveness. The "暂时失去连接" copy is now only
-// reachable when accountCount=0 + daemon dead, but that state routes
-// to wizard mode (initialMode requires accounts), so the dashboard
-// never actually displays it through the natural boot flow.
+// NOTE on the 3-state dashboardHero logic in view.js::dashboardHero —
+// state is determined by these rules (in priority order):
+//   taken_over  — lastProbe.state === 'taken_over' OR expiredCount > 0
+//   connected   — lastProbe.state === 'connected' OR (daemonAlive && accountCount > 0)
+//   recovering  — everything else (daemon dead, no probe result)
 //
-// We cover both code branches via the daemon-alive arg (still affects
-// stop/restart button visibility through renderRestartButton's
-// independent daemonAlive check) but only assert the rendered hero
-// text in the realistic state.
+// Button visibility follows state:
+//   #dash-stop    visible only in "connected"
+//   #dash-restart visible only in "recovering"
+//   #dash-rebind  visible only in "taken_over"
+//
+// In the test scenarios below, demo.seed produces non-expired accounts.
+// daemonAlive=true  → connected  (#dash-stop visible, #dash-restart hidden)
+// daemonAlive=false → recovering (#dash-stop hidden,  #dash-restart visible)
 
 test('hero shows "AI 正在陪伴中" with bound account (daemon alive)', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
@@ -70,25 +72,28 @@ test('hero shows "AI 正在陪伴中" with bound account (daemon alive)', async 
   await expect(page.locator('#hero-card')).not.toHaveClass(/warn/)
 })
 
-test('hero still shows "AI 正在陪伴中" with bound account even when daemon is dead', async ({ page, shimUrl, shim }) => {
-  // Per 1bfb929: bound accounts override daemon liveness for the hero
-  // copy. The user's intent ("there ARE bound bots") is preserved even
-  // while daemon is restarting.
+test('hero shows "暂时失联" when daemon is dead (bound account, no probe)', async ({ page, shimUrl, shim }) => {
+  // daemon dead + account > 0 + no probe result → recovering state.
+  // The 3-state logic requires BOTH daemonAlive AND accountCount > 0 for
+  // "connected"; a dead daemon falls through to "recovering" regardless
+  // of bound account count.
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: false })
   await bootAndForceDashboardRender(page, shimUrl)
-  await expect(page.locator('#hero-headline')).toHaveText(/AI 正在陪伴中/, { timeout: 10_000 })
-  await expect(page.locator('#hero-card')).not.toHaveClass(/warn/)
+  await expect(page.locator('#hero-headline')).toHaveText(/暂时失联/, { timeout: 10_000 })
+  await expect(page.locator('#hero-card')).toHaveClass(/warn/)
 })
 
 // ── Stop/restart button visibility ─────────────────────────────────────
-// renderRestartButton (set in moxiuwen's 06c8c49) keys off the SAME
-// dashboardHero(daemon, count) tone, so a bound account always shows
-// the stop button — restart appears only with no accounts. Since accounts
-// must be present for dashboard mode at all, the dashboard's restart
-// button is effectively dead UI in normal user flow; we still verify
-// the bound-account = stop-visible path.
+// Both renderDashboard and renderRestartButton call dashboardHero() and
+// use hero.state to show/hide the three action buttons:
+//   #dash-stop    → visible only when state === "connected"
+//   #dash-restart → visible only when state === "recovering"
+//   #dash-rebind  → visible only when state === "taken_over"
+//
+// daemon alive + accounts > 0    → connected   → stop shown, restart hidden
+// daemon dead  + accounts > 0    → recovering  → restart shown, stop hidden
 
-test('stop button visible + restart hidden when account bound (regardless of daemon)', async ({ page, shimUrl, shim }) => {
+test('stop button visible + restart hidden when account bound and daemon alive', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
   await bootAndForceDashboardRender(page, shimUrl)
   await expect(page.locator('#hero-headline')).toHaveText(/AI 正在陪伴中/, { timeout: 10_000 })
@@ -96,11 +101,13 @@ test('stop button visible + restart hidden when account bound (regardless of dae
   await expect(page.locator('#dash-restart')).toBeHidden()
 })
 
-test('stop still visible when daemon dead but account bound', async ({ page, shimUrl, shim }) => {
+test('daemon dead + account bound → recovering: restart shown, stop hidden', async ({ page, shimUrl, shim }) => {
+  // daemon dead + accounts > 0, no probe → recovering state.
+  // #dash-stop is hidden (nothing to stop), #dash-restart is shown.
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: false })
   await bootAndForceDashboardRender(page, shimUrl)
-  await expect(page.locator('#dash-stop')).toBeVisible({ timeout: 10_000 })
-  await expect(page.locator('#dash-restart')).toBeHidden()
+  await expect(page.locator('#dash-stop')).toBeHidden({ timeout: 10_000 })
+  await expect(page.locator('#dash-restart')).toBeVisible()
 })
 
 // ── Current-user card ───────────────────────────────────────────────────
@@ -139,4 +146,59 @@ test('demo sub-user cards have no delete button (row.demo flag)', async ({ page,
   // would have a .mini-action[data-action="ask-delete"] button.
   const deleteBtns = page.locator('#accounts-body .sub-user-card .mini-action[data-action="ask-delete"]')
   await expect(deleteBtns).toHaveCount(0)
+})
+
+// ── Connection-probe button + hero flip ────────────────────────────────────
+//
+// #dash-test-conn calls `connection probe --json`, reads the verdict from
+// the returned accounts array, then calls setLastProbe + doctorPoller.refresh().
+// After refresh(), renderDashboard fires synchronously so the hero re-renders
+// before the button handler returns. Playwright's auto-retry expect (5 s) covers
+// the refresh latency without an explicit sleep.
+//
+// Default probe state in the shim is 'taken_over'; tests set it explicitly for
+// clarity and isolation.
+
+test('测试本机连接 is hidden when connected, shown when not connected', async ({ page, shimUrl, shim }) => {
+  // Connected (daemon alive + account, no expiry/probe) → the hero already
+  // says 陪伴中, so the test button is redundant and hidden.
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
+  await bootAndForceDashboardRender(page, shimUrl)
+  await expect(page.locator('#hero-headline')).toHaveText(/AI 正在陪伴中/, { timeout: 10_000 })
+  await expect(page.locator('#dash-test-conn')).toBeHidden()
+})
+
+test('测试本机连接 is shown when not connected (recovering)', async ({ page, shimUrl, shim }) => {
+  // Daemon dead + bound account → recovering → the button is available so the
+  // user can verify / re-check ownership.
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: false })
+  await bootAndForceDashboardRender(page, shimUrl)
+  await expect(page.locator('#hero-headline')).toHaveText('暂时失联', { timeout: 10_000 })
+  await expect(page.locator('#dash-test-conn')).toBeVisible()
+})
+
+test('probe verdict taken_over flips hero to 本机未连接 and shows rebind', async ({ page, shimUrl, shim }) => {
+  // Start NOT connected (daemon dead → recovering) so the test button is
+  // visible to click. Probe returns taken_over → hero flips + rebind shows.
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: false })
+  await shim.invoke('mock.connection-probe', { state: 'taken_over' })
+  await bootAndForceDashboardRender(page, shimUrl)
+  await expect(page.locator('#hero-headline')).toHaveText('暂时失联', { timeout: 10_000 })
+  await page.locator('#dash-test-conn').click()
+  await expect(page.locator('#hero-headline')).toHaveText('本机未连接', { timeout: 10_000 })
+  await expect(page.locator('#dash-rebind')).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('#dash-stop')).toBeHidden()
+  await expect(page.locator('#dash-restart')).toBeHidden()
+})
+
+test('probe verdict connected flips hero to 陪伴中 and hides the test button', async ({ page, shimUrl, shim }) => {
+  // From recovering, a connected probe verdict promotes the hero and the now-
+  // redundant test button hides itself.
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: false })
+  await shim.invoke('mock.connection-probe', { state: 'connected' })
+  await bootAndForceDashboardRender(page, shimUrl)
+  await expect(page.locator('#hero-headline')).toHaveText('暂时失联', { timeout: 10_000 })
+  await page.locator('#dash-test-conn').click()
+  await expect(page.locator('#hero-headline')).toHaveText(/AI 正在陪伴中/, { timeout: 10_000 })
+  await expect(page.locator('#dash-test-conn')).toBeHidden()
 })

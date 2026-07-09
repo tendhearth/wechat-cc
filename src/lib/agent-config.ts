@@ -5,7 +5,7 @@ import { join } from 'node:path'
 // runtime — this is a build-tool interop quirk, not a zod API difference).
 import z from 'zod'
 
-export type AgentProviderKind = 'claude' | 'codex' | 'cursor'
+export type AgentProviderKind = 'claude' | 'codex' | 'cursor' | 'gemini'
 
 export interface AgentConfig {
   provider: AgentProviderKind
@@ -14,6 +14,7 @@ export interface AgentConfig {
   // optional-string shape so an operator can persist a Cursor model
   // alongside the Claude one without overloading a single field.
   cursorModel?: string
+  geminiModel?: string
   // When true, the daemon spawned by `service install` runs with
   // `cli.ts run --dangerously` (Claude SDK permissionMode=bypassPermissions).
   // Wizard-installed daemons need this on by default — there is no human
@@ -73,9 +74,10 @@ export type YiHubListen = z.infer<typeof YiHubListen>
 export type YiBrain = z.infer<typeof YiBrain>
 
 const AgentConfigSchema = z.object({
-  provider: z.enum(['claude', 'codex', 'cursor']).default('claude'),
+  provider: z.enum(['claude', 'codex', 'cursor', 'gemini']).default('claude'),
   model: z.string().optional(),
   cursorModel: z.string().optional(),
+  geminiModel: z.string().optional(),
   dangerouslySkipPermissions: z.boolean().default(true),
   autoStart: z.boolean().default(true),
   closeStopsDaemon: z.boolean().default(false),
@@ -116,6 +118,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
     const provider: AgentProviderKind =
       parsed.provider === 'codex' ? 'codex'
       : parsed.provider === 'cursor' ? 'cursor'
+      : parsed.provider === 'gemini' ? 'gemini'
       : 'claude'
     // Preserve `model` for both providers. Pre-2026-05-08 only codex
     // honored it; claude inherited the spawned CLI's default which read
@@ -143,6 +146,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       provider,
       ...(typeof parsed.model === 'string' ? { model: parsed.model } : {}),
       ...(typeof parsed.cursorModel === 'string' ? { cursorModel: parsed.cursorModel } : {}),
+      ...(typeof parsed.geminiModel === 'string' ? { geminiModel: parsed.geminiModel } : {}),
       dangerouslySkipPermissions,
       autoStart,
       closeStopsDaemon,
