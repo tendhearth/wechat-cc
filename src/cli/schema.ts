@@ -365,6 +365,87 @@ export const MemoryWriteOutput = z.discriminatedUnion('ok', [
 ])
 export type MemoryWriteOutputT = z.infer<typeof MemoryWriteOutput>
 
+const MemoryProfileCard = z.object({
+  title: z.string(),
+  body: z.string(),
+  sources: z.array(z.string()).optional(),
+})
+
+const MemoryProfileSourceStats = z.object({
+  projectsFound: z.number(),
+  filesScanned: z.number(),
+  observationsFound: z.number(),
+  milestonesFound: z.number(),
+  memoryNotesFound: z.number(),
+  foldersScanned: z.number(),
+  promptChars: z.number(),
+})
+
+export const MemoryProfileDocument = z.object({
+  version: z.literal(1),
+  generatedAt: z.string(),
+  chatId: z.string(),
+  generatedBy: z.enum(['auto', 'manual']).optional(),
+  modelProvider: z.string().optional(),
+  minRefreshAfter: z.string().optional(),
+  sourceStats: MemoryProfileSourceStats.optional(),
+  sourceFingerprint: z.string().optional(),
+  insight: z.string(),
+  summary: z.string(),
+  tags: z.array(z.string()),
+  traits: z.array(MemoryProfileCard),
+  preferences: z.array(MemoryProfileCard),
+  rememberedEvents: z.array(MemoryProfileCard),
+})
+export type MemoryProfileDocumentT = z.infer<typeof MemoryProfileDocument>
+
+// ── wechat-cc memory profile <user-id> --json ────────────────────────────────
+// Generates/overwrites memory/<user-id>/_profile.json.
+
+export const MemoryProfileOutput = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    chatId: z.string(),
+    provider: z.string(),
+    dryRun: z.boolean(),
+    projectsFound: z.number(),
+    projectNames: z.array(z.string()),
+    filesScanned: z.number(),
+    promptChars: z.number(),
+    observationsFound: z.number(),
+    milestonesFound: z.number(),
+    memoryNotesFound: z.number(),
+    foldersScanned: z.number(),
+    sourceStats: MemoryProfileSourceStats.optional(),
+    sourceFingerprint: z.string().optional(),
+    profile: MemoryProfileDocument.optional(),
+    written: z.object({ path: z.string(), bytesWritten: z.number() }).optional(),
+  }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+export type MemoryProfileOutputT = z.infer<typeof MemoryProfileOutput>
+
+export const MemoryProfileStatusOutput = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    chatId: z.string(),
+    status: z.enum(['empty', 'ready', 'fresh', 'stale']),
+    exists: z.boolean(),
+    canGenerate: z.boolean(),
+    canAutoGenerate: z.boolean(),
+    reason: z.string(),
+    generatedAt: z.string().nullable(),
+    minRefreshAfter: z.string().nullable(),
+    sourceStats: MemoryProfileSourceStats,
+    sourceFingerprint: z.string(),
+    previousSourceFingerprint: z.string().nullable(),
+    changed: z.boolean(),
+    daysSinceGenerated: z.number().nullable(),
+  }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+export type MemoryProfileStatusOutputT = z.infer<typeof MemoryProfileStatusOutput>
+
 // ── wechat-cc events list --json ──────────────────────────────────────────────
 // Emits { ok: true, events: EventRecord[] }.
 // EventRecord fields: id, ts, kind (EventKind), trigger, reasoning,

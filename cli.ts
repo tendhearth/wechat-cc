@@ -12,7 +12,7 @@ import {
   DoctorOutput, SetupPollOutput, SetupStatusOutput, SetupQrJsonOutput,
   ServiceStatusOutput, ServiceInstallOutput, ServiceStartOutput, ServiceStopOutput, ServiceUninstallOutput,
   AccountRemoveOutput, DaemonKillOutput, ProviderShowOutput,
-  MemoryListOutput, MemoryReadOutput, MemoryWriteOutput,
+  MemoryListOutput, MemoryReadOutput, MemoryWriteOutput, MemoryProfileOutput, MemoryProfileStatusOutput,
   EventsListOutput, ObservationsListOutput, ObservationsArchiveOutput, MilestonesListOutput,
   SessionsListProjectsOutput, SessionsListChatsOutput, SessionsReadJsonlOutput, SessionsDeleteOutput, SessionsSearchOutput,
   DemoSeedOutput, DemoUnseedOutput, ReplyOutput,
@@ -94,6 +94,13 @@ Usage:
                         passed as base64 (avoids shell-quote pain with
                         multi-line markdown). Sandboxed: .md only,
                         ≤100KB, no traversal, atomic rename.
+  wechat-cc memory profile status [--chat-id <id>] [--json]
+                        Inspect whether _profile.json is empty/ready/fresh/stale.
+  wechat-cc memory profile generate [--chat-id <id>] [--provider claude|codex] [--dry-run] [--json]
+                        Generate memory/<chat-id>/_profile.json for the
+                        desktop memory page.
+  wechat-cc memory profile-read <user-id> [--json]
+                        Read memory/<user-id>/_profile.json.
   wechat-cc events list <chat-id> [--limit N] [--json]
                         Tail Companion decisions log (push/skip/observation/milestone).
   wechat-cc observations list <chat-id> [--include-archived] [--json]
@@ -970,6 +977,30 @@ const memoryWriteCmd = defineCommand({
   },
 })
 
+const memoryProfileReadCmd = defineCommand({
+  meta: { name: 'profile-read', description: 'Read memory/<user-id>/_profile.json (desktop profile data)' },
+  args: {
+    userId: { type: 'positional', required: true, description: 'User id', valueHint: 'user-id' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { readMemoryProfileFile } = await import('./src/lib/memory.ts')
+    try {
+      const content = readMemoryProfileFile(STATE_DIR, args.userId)
+      if (args.json) console.log(JSON.stringify(MemoryReadOutput.parse({ ok: true, userId: args.userId, path: '_profile.json', content }), null, 2))
+      else process.stdout.write(content)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (args.json) {
+        console.log(JSON.stringify(MemoryReadOutput.parse({ ok: false, error: msg })))
+        return
+      }
+      console.error(`memory profile-read failed: ${msg}`)
+      process.exit(1)
+    }
+  },
+})
+
 const memorySynthesizeCmd = defineCommand({
   meta: {
     name: 'synthesize',
@@ -1080,6 +1111,199 @@ const memorySynthesizeCmd = defineCommand({
   },
 })
 
+async function resolveProfileChatId(chatIdArg: string | undefined): Promise<string> {
+  if (chatIdArg) return chatIdArg
+  const { readFileSync } = await import('node:fs')
+  let access: { admins?: string[] } = {}
+  try {
+    access = JSON.parse(readFileSync(join(STATE_DIR, 'access.json'), 'utf8'))
+  } catch { /* missing/corrupt — fail below */ }
+  const admins = access.admins ?? []
+  if (admins.length === 1) return admins[0]!
+  throw new Error(admins.length === 0
+    ? 'No admins in access.json — pass --chat-id explicitly'
+    : `Multiple admins (${admins.join(', ')}) — pass --chat-id explicitly`)
+}
+
+async function profileProvider(chatId: string, requested: string | undefined, db: ReturnType<typeof import('./src/lib/db').openWechatDb>): Promise<string> {
+  if (requested) return requested
+  try {
+    const { makeConversationStore } = await import('./src/core/conversation-store')
+    const conv = makeConversationStore(db).get(chatId)
+    if (conv?.mode?.kind === 'solo') return conv.mode.provider
+  } catch { /* no conversation yet — default below */ }
+  return 'claude'
+}
+
+function makeProfileSdkEval(provider: string): (prompt: string) => Promise<string> {
+  return async (prompt: string): Promise<string> => {
+    if (provider === 'codex') {
+      const { Codex } = await import('@openai/codex-sdk')
+      const { resolveCodexCheapModel } = await import('./src/core/codex-cheap-model')
+      const { tmpdir } = await import('node:os')
+      const thread = new Codex().startThread({
+        model: resolveCodexCheapModel(),
+        sandboxMode: 'read-only',
+        approvalPolicy: 'never',
+        webSearchEnabled: false,
+        networkAccessEnabled: false,
+        workingDirectory: tmpdir(),
+        skipGitRepoCheck: true,
+      })
+      const turn = await thread.run(prompt)
+      return (turn.items as Array<{ type?: string; text?: string }>)
+        .filter(i => i.type === 'agent_message' && typeof i.text === 'string')
+        .map(i => i.text!)
+        .join('')
+    }
+    const { query } = await import('@anthropic-ai/claude-agent-sdk')
+    const model = process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || 'claude-haiku-4-5'
+    let text = ''
+    const q = query({ prompt, options: { model, maxTurns: 1 } })
+    for await (const raw of q as AsyncGenerator<import('@anthropic-ai/claude-agent-sdk').SDKMessage>) {
+      const msg = raw as unknown as { type: string; message?: { content?: unknown } }
+      if (msg.type === 'assistant' && Array.isArray(msg.message?.content)) {
+        for (const part of msg.message.content as Array<{ type?: string; text?: string }>) {
+          if (part.type === 'text' && typeof part.text === 'string') text += part.text
+        }
+      }
+    }
+    return text
+  }
+}
+
+async function runMemoryProfileGenerate(args: {
+  'chat-id'?: string
+  provider?: string
+  'dry-run'?: boolean
+  json?: boolean
+  auto?: boolean
+}) {
+  try {
+    const chatId = await resolveProfileChatId(args['chat-id'])
+    const { openWechatDb } = await import('./src/lib/db')
+    const db = openWechatDb(STATE_DIR)
+    let provider = 'claude'
+    let result
+    try {
+      provider = await profileProvider(chatId, args.provider, db)
+      const { synthesizeProfile } = await import('./src/lib/memory-synthesis')
+      const { makeLifeStoresReader } = await import('./src/daemon/life-stores')
+      const dryRun = Boolean(args['dry-run'])
+      result = await synthesizeProfile({
+        stateDir: STATE_DIR,
+        adminChatId: chatId,
+        sdkEval: makeProfileSdkEval(provider),
+        dryRun,
+        lifeStores: makeLifeStoresReader(db, STATE_DIR),
+        generatedBy: args.auto ? 'auto' : 'manual',
+        modelProvider: provider,
+      })
+    } finally {
+      db.close()
+    }
+
+    const dryRun = Boolean(args['dry-run'])
+    const output = MemoryProfileOutput.parse({
+      ok: true,
+      chatId,
+      provider,
+      dryRun,
+      sourceStats: result.profile?.sourceStats,
+      sourceFingerprint: result.profile?.sourceFingerprint,
+      ...result,
+    })
+    if (args.json) {
+      console.log(JSON.stringify(output, null, 2))
+      return
+    }
+    console.log(`画像对象: ${chatId}  ·  provider: ${provider}${dryRun ? '  ·  (dry-run)' : ''}`)
+    console.log(`工作侧: ${result.projectsFound} 个项目: ${result.projectNames.join(', ') || '(无)'}  ·  ${result.filesScanned} 文件`)
+    console.log(`生活侧: ${result.observationsFound} 观察 · ${result.milestonesFound} 里程碑 · ${result.memoryNotesFound} 记忆笔记  ·  prompt ${result.promptChars} 字`)
+    if (dryRun) { console.log('(dry-run — 未调用 LLM、未写入)'); return }
+    if (result.written) console.log(`已写入 ${result.written.path} (${result.written.bytesWritten}B)`)
+    else console.log('未写入(记忆不足或 LLM 返回无效 JSON)')
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (args.json) { console.log(JSON.stringify(MemoryProfileOutput.parse({ ok: false, error: msg }))); return }
+    console.error(msg); process.exit(1)
+  }
+}
+
+const memoryProfileGenerateCmd = defineCommand({
+  meta: {
+    name: 'generate',
+    description: 'Generate or refresh memory/<chat-id>/_profile.json for the desktop memory page',
+  },
+  args: {
+    'chat-id': { type: 'string', description: 'Admin chat_id (default: sole admin in access.json)' },
+    provider: { type: 'string', description: 'Force provider claude|codex (default: admin conversation provider)' },
+    'dry-run': { type: 'boolean', default: false, description: 'Discover + build prompt; make no LLM call and no write' },
+    auto: { type: 'boolean', default: false, description: 'Mark generatedBy as auto (for daemon/background callers)' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    await runMemoryProfileGenerate(args)
+  },
+})
+
+const memoryProfileStatusCmd = defineCommand({
+  meta: {
+    name: 'status',
+    description: 'Show whether memory/<chat-id>/_profile.json is missing, fresh, stale, or blocked by too little memory',
+  },
+  args: {
+    'chat-id': { type: 'string', description: 'Admin chat_id (default: sole admin in access.json)' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    try {
+      const chatId = await resolveProfileChatId(args['chat-id'])
+      const { openWechatDb } = await import('./src/lib/db')
+      const db = openWechatDb(STATE_DIR)
+      let status
+      try {
+        const { getMemoryProfileStatus } = await import('./src/lib/memory-synthesis')
+        const { makeLifeStoresReader } = await import('./src/daemon/life-stores')
+        status = await getMemoryProfileStatus({ stateDir: STATE_DIR, adminChatId: chatId, lifeStores: makeLifeStoresReader(db, STATE_DIR) })
+      } finally {
+        db.close()
+      }
+      const output = MemoryProfileStatusOutput.parse({ ok: true, ...status })
+      if (!output.ok) throw new Error(output.error)
+      if (args.json) {
+        console.log(JSON.stringify(output, null, 2))
+        return
+      }
+      console.log(`画像状态: ${output.status} · ${output.reason}`)
+      console.log(`来源: ${output.sourceStats.memoryNotesFound} 记忆笔记 · ${output.sourceStats.observationsFound} 观察 · ${output.sourceStats.milestonesFound} 里程碑 · ${output.sourceStats.projectsFound} 项目`)
+      if (output.generatedAt) console.log(`上次生成: ${new Date(output.generatedAt).toLocaleString()}`)
+      if (output.minRefreshAfter) console.log(`自动刷新最早: ${new Date(output.minRefreshAfter).toLocaleString()}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (args.json) { console.log(JSON.stringify(MemoryProfileStatusOutput.parse({ ok: false, error: msg }))); return }
+      console.error(msg); process.exit(1)
+    }
+  },
+})
+
+const memoryProfileCmd = defineCommand({
+  meta: {
+    name: 'profile',
+    description: 'User profile generation status and refresh commands',
+  },
+  args: {
+    'chat-id': { type: 'string', description: 'Admin chat_id (default: sole admin in access.json)' },
+    provider: { type: 'string', description: 'Force provider claude|codex (default: admin conversation provider)' },
+    'dry-run': { type: 'boolean', default: false, description: 'Compatibility: generate with dry-run' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  subCommands: {
+    status: memoryProfileStatusCmd,
+    generate: memoryProfileGenerateCmd,
+  },
+})
+
 const memoryProjectsCmd = defineCommand({
   meta: {
     name: 'projects',
@@ -1173,7 +1397,9 @@ const memoryCmd = defineCommand({
     list: memoryListCmd,
     read: memoryReadCmd,
     write: memoryWriteCmd,
+    'profile-read': memoryProfileReadCmd,
     synthesize: memorySynthesizeCmd,
+    profile: memoryProfileCmd,
     projects: memoryProjectsCmd,
     status: memoryStatusCmd,
   },

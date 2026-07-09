@@ -93,18 +93,14 @@ function humanName(chatId) {
  * initial bubble. Reuses the mockup's dialogue-avatar / dialogue-avatar-*
  * classes so the existing CSS keeps working.
  *
- * Also emits `wechat-avatar` + `data-avatar-key` so the body-level click
- * handler in main.js can open the avatar-edit modal (same mechanism as the
- * sessions pane).
  * @param {{ kind: 'user'|'ai', name: string, src?: string|null, avatarKey?: string|null }} arg0
  */
 function avatarHtml({ kind, name, src, avatarKey }) {
-  const keyAttr = avatarKey ? ` data-avatar-key="${escapeHtml(avatarKey)}" title="点击修改头像"` : ""
   const cls = `dialogue-avatar dialogue-avatar-${kind} wechat-avatar`
   if (src) {
-    return `<span class="${cls}"${keyAttr}><img src="${escapeHtml(src)}" alt="${escapeHtml(name)}" /></span>`
+    return `<span class="${cls}"><img src="${escapeHtml(src)}" alt="${escapeHtml(name)}" /></span>`
   }
-  return `<span class="${cls}"${keyAttr}>${escapeHtml(avatarInitial(name))}</span>`
+  return `<span class="${cls}">${escapeHtml(avatarInitial(name))}</span>`
 }
 
 // ── skeleton ───────────────────────────────────────────────────────────
@@ -226,7 +222,7 @@ function messageHtml(m, ctx) {
   })
   const author = isUser
     ? `<div class="dialogue-author">${escapeHtml(name)}</div>`
-    : `<div class="dialogue-author">${escapeHtml(name)} <span class="dialogue-ai-tag">AI</span></div>`
+    : `<div class="dialogue-author">${escapeHtml(name)}</div>`
   const body = m.text
     .split("\n")
     .filter(line => line.length > 0)
@@ -240,9 +236,7 @@ function messageHtml(m, ctx) {
 
 /** Bot display label — provider-aware. @param {Message} m */
 function botLabel(m) {
-  if (m.provider === "codex") return "Codex"
-  if (m.provider === "cursor") return "Cursor"
-  return "Claude"
+  return "wechat-cc"
 }
 
 /** @type {Message[]} loaded timeline messages (ascending), kept for export. */

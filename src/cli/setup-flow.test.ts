@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { determineScenario, pollSetupQrStatus, requestSetupQrCode } from './setup-flow'
+import { avatarInfo } from '../daemon/avatar/store'
 
 describe('setup-flow', () => {
   it('returns QR payload for desktop installers without printing terminal UI', async () => {
@@ -97,6 +98,30 @@ describe('setup-flow', () => {
       expect(readFileSync(join(stateDir, 'accounts', 'bot-1-im-bot', 'token'), 'utf8')).toBe('secret-token')
       const access = JSON.parse(readFileSync(join(stateDir, 'access.json'), 'utf8')) as { allowFrom: string[] }
       expect(access.allowFrom).toContain('user-1')
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('pollSetupQrStatus opportunistically saves the scanned user avatar when ilink returns one', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'setup-poll-avatar-'))
+    try {
+      const result = await pollSetupQrStatus({
+        stateDir,
+        qrcode: 'qr-token',
+        fetchText: async () => JSON.stringify({
+          status: 'confirmed',
+          bot_token: 'secret-token',
+          ilink_bot_id: 'bot:1/im-bot',
+          ilink_user_id: 'user-1',
+          headimgurl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+        }),
+      })
+
+      expect(result.status).toBe('confirmed')
+      const info = avatarInfo(stateDir, 'user-1')
+      expect(info.exists).toBe(true)
+      expect(info.path).toMatch(/\.jpg$/)
     } finally {
       rmSync(stateDir, { recursive: true, force: true })
     }

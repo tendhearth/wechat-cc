@@ -28,7 +28,7 @@ import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
 import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
-import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
+import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
@@ -663,6 +663,40 @@ function wireEvents() {
       }, 1600)
     }
   })
+  const runProfileGenerateButton = async (/** @type {HTMLButtonElement} */ btn) => {
+    const labelNode = Array.from(btn.childNodes).find(
+      n => n.nodeType === Node.TEXT_NODE && n.textContent !== null && n.textContent.trim().length > 0,
+    )
+    const original = labelNode ? labelNode.textContent : null
+    btn.disabled = true
+    if (labelNode) labelNode.textContent = " 检查中…"
+    let ok = false
+    let skippedReason = ""
+    try {
+      const res = await generateMemoryProfile(deps)
+      if (res && "skipped" in res && res.skipped) {
+        skippedReason = res.reason || "无需更新"
+      } else {
+        ok = !!(res && res.ok && "written" in res && res.written)
+      }
+    } catch (err) {
+      console.error("memory profile generate failed", err)
+    } finally {
+      if (labelNode) labelNode.textContent = skippedReason || (ok ? " 已更新 ✓" : " 生成失败")
+      setTimeout(() => {
+        if (labelNode && original !== null) labelNode.textContent = original
+        btn.disabled = false
+      }, 1600)
+    }
+  }
+  document.getElementById("memory-profile-generate-btn")?.addEventListener("click", async (e) => {
+    await runProfileGenerateButton(/** @type {HTMLButtonElement} */ (e.currentTarget))
+  })
+  document.getElementById("memory-profile-content")?.addEventListener("click", async (e) => {
+    const btn = /** @type {HTMLButtonElement | null} */ (e.target instanceof HTMLElement ? e.target.closest("#memory-profile-generate-quick") : null)
+    if (!btn) return
+    await runProfileGenerateButton(btn)
+  })
   wireMemoryButtons(deps)
 
   document.getElementById("memory-sources-toggle")?.addEventListener("click", () => {
@@ -710,6 +744,15 @@ function wireEvents() {
     }
   })
   document.getElementById("memory-profile-content")?.addEventListener("click", (e) => {
+    const closeEmbryo = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target.closest("[data-action='close-memory-embryo']") : null)
+    if (closeEmbryo) {
+      e.stopPropagation()
+      const panel = document.getElementById("memory-embryo-panel")
+      const toggle = document.querySelector("[data-action='toggle-memory-embryo']")
+      if (panel) panel.hidden = true
+      if (toggle instanceof HTMLElement) toggle.setAttribute("aria-expanded", "false")
+      return
+    }
     const source = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target.closest("[data-action='jump-memory-source']") : null)
     if (source) {
       e.stopPropagation()
@@ -746,9 +789,23 @@ function wireEvents() {
     if (!toggle) return
     const panel = document.getElementById("memory-embryo-panel")
     if (!panel) return
-    const wasOpen = toggle.getAttribute("aria-expanded") === "true"
-    toggle.setAttribute("aria-expanded", wasOpen ? "false" : "true")
-    panel.hidden = wasOpen
+    const host = toggle.closest(".memory-profile-companion")
+    if (host instanceof HTMLElement) {
+      const rect = host.getBoundingClientRect()
+      const board = document.getElementById("memory-artboard")
+      const boardScale = board instanceof HTMLElement
+        ? Number.parseFloat(getComputedStyle(board).getPropertyValue("--memory-artboard-scale")) || 1
+        : 1
+      const panelWidth = Number.parseFloat(getComputedStyle(panel).width) || 500
+      const hostWidth = rect.width / boardScale
+      const xRaw = (e.clientX - rect.left) / boardScale
+      const yRaw = (e.clientY - rect.top) / boardScale
+      const x = Math.min(Math.max(xRaw, panelWidth / 2), Math.max(panelWidth / 2, hostWidth - panelWidth / 2))
+      panel.style.setProperty("--memory-embryo-panel-x", `${x}px`)
+      panel.style.setProperty("--memory-embryo-panel-y", `${yRaw}px`)
+    }
+    toggle.setAttribute("aria-expanded", "true")
+    panel.hidden = false
   })
 
   // Memory decisions — toggle folded zone, lazy-load on FIRST expand only.
@@ -826,14 +883,8 @@ function wireEvents() {
     })
   })
 
-  // ─── Lightbox for chat-bubble image / file attachments + avatar edit ─
+  // ─── Lightbox for chat-bubble image / file attachments ─
   document.body.addEventListener("click", (ev) => {
-    const avatar = /** @type {HTMLElement | null} */ (ev.target instanceof HTMLElement ? ev.target.closest(".wechat-avatar[data-avatar-key]") : null)
-    if (avatar) {
-      ev.preventDefault()
-      openAvatarModal(deps, avatar.dataset.avatarKey)
-      return
-    }
     const img = /** @type {HTMLImageElement | null} */ (ev.target instanceof HTMLElement ? ev.target.closest(".wechat-image") : null)
     if (img) {
       ev.preventDefault()

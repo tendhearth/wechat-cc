@@ -153,37 +153,25 @@ function providerFromMode(mode) {
   return null
 }
 
-// Curated, evenly-spread avatar palette. Picking from a discrete set of
-// well-separated base hues (rather than `hash % 360`) keeps neighbouring
-// users visually distinct instead of clustering in one corner of the wheel
-// — 12 hues spaced ~30° apart so even small lists rarely collide.
-const AVATAR_HUES = [352, 18, 38, 62, 110, 142, 168, 196, 220, 248, 288, 320]
+const AVATAR_LINE_ICONS = [
+  `<path d="M24 33c-5 0-9-4-9-10s4-10 9-10 9 4 9 10-4 10-9 10Z"/><path d="M18 21c3-1 5-3 6-6 2 3 4 5 7 6"/><path d="M20 25h.1M28 25h.1"/><path d="M21 29c2 1 4 1 6 0"/>`,
+  `<path d="M24 12l3.6 7.1 7.9 1.2-5.7 5.6 1.3 7.9L24 30l-7.1 3.8 1.3-7.9-5.7-5.6 7.9-1.2L24 12Z"/><path d="M18 16l-1.5-3M31 17l2-2.3M34 29l3 1.1M13 29l-3 1.2"/>`,
+  `<path d="M16 20l-2-6 6 3M32 20l2-6-6 3"/><path d="M16 22c0-5 4-8 8-8s8 3 8 8v4c0 5-4 8-8 8s-8-3-8-8v-4Z"/><path d="M20 24h.1M28 24h.1M24 27v2M20 30c2 2 6 2 8 0"/>`,
+  `<rect x="15" y="17" width="18" height="15" rx="5"/><path d="M24 17v-5M20 12h8"/><path d="M20 24h.1M28 24h.1"/><path d="M20 29h8"/><path d="M12 24h3M33 24h3"/>`,
+  `<path d="M16 19h16c1 0 2 1 2 2v8c0 3-3 5-10 5s-10-2-10-5v-8c0-1 1-2 2-2Z"/><path d="M16 19c2-4 14-4 16 0"/><path d="M20 27c3-3 6-3 9 0-3 3-6 3-9 0Z"/><path d="M29 27l3-2v4l-3-2Z"/><path d="M19 15c0-2 2-3 5-3s5 1 5 3"/>`,
+  `<path d="M16 30h17c3 0 5-2 5-5s-2-5-5-5c-1-5-5-8-10-8-6 0-10 4-10 10-3 1-5 3-5 6s3 5 8 5"/><path d="M20 25h.1M28 25h.1"/><path d="M22 29c2 1 4 1 6 0"/><path d="M34 13l1.4-2.4M37 17l2.6-.7"/>`,
+]
 
-// Initial-on-gradient avatar. Renders a colored disc (hue picked from the
-// palette by a stable hash of the label, so each user keeps the same color
-// across renders) with the first grapheme of their name — far more
-// legible/finished-looking than the old monochrome line-art placeholders,
-// and needs no real avatar image files. `label` drives both color and
-// glyph; `seed` is the fallback when there's no name (e.g. demo rows
-// passing a numeric avatar index).
+// Hand-drawn default avatars. Real WeChat avatars can replace this later,
+// but the fallback should already match the current illustrated UI.
 function avatarSvg(seed, label) {
-  const name = (label == null ? "" : String(label)).trim()
-  const glyph = name ? Array.from(name)[0] : (String(seed) === "admin" ? "我" : "?")
-  const basis = name || String(seed)
-  const hash = Math.abs(basis.split("").reduce((h, ch) => ((h * 31 + ch.charCodeAt(0)) | 0), 7))
-  // When `seed` is a row index (sub-user / demo cards pass their position),
-  // walk the palette by index so a rendered list never repeats a color.
-  // Otherwise (admin slot passes "admin") fall back to a label hash for a
-  // stable per-user color.
   const seedNum = Number(seed)
-  const paletteIdx = Number.isFinite(seedNum)
-    ? Math.abs(Math.trunc(seedNum)) % AVATAR_HUES.length
-    : hash % AVATAR_HUES.length
-  const hue = AVATAR_HUES[paletteIdx]
-  const c1 = `hsl(${hue} 64% 62%)`
-  const c2 = `hsl(${(hue + 18) % 360} 66% 48%)`
-  const gid = `av-${hue}-${hash.toString(36)}`
-  return `<svg viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/></linearGradient></defs><circle cx="24" cy="24" r="24" fill="url(#${gid})"/><text x="24" y="25" text-anchor="middle" dominant-baseline="central" font-size="20" font-weight="600" fill="#fff" font-family="-apple-system, system-ui, 'PingFang SC', sans-serif">${escapeHtml(glyph)}</text></svg>`
+  const index = String(seed) === "admin"
+    ? 0
+    : Number.isFinite(seedNum)
+      ? Math.abs(Math.trunc(seedNum)) % AVATAR_LINE_ICONS.length
+      : Math.abs(String(label || seed).split("").reduce((h, ch) => ((h * 31 + ch.charCodeAt(0)) | 0), 7)) % AVATAR_LINE_ICONS.length
+  return `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="22.5" fill="#f8f4ea" stroke="#ebe1d2" stroke-width="1"/><g fill="none" stroke="#593F2C" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">${AVATAR_LINE_ICONS[index]}</g></svg>`
 }
 
 function demoSubUsers() {
