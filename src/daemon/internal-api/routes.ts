@@ -105,10 +105,18 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     },
     'GET /v1/memory/list': (q, _body, caller) => {
       if (!deps.memory) return { status: 503, body: { error: 'memory_fs_not_wired' } }
-      const dir = q.get('dir')
-      // Scope check on the dir prefix. A scoped session listing the root
-      // (no dir) would see every chat's files, so `dir ?? ''` fails closed
-      // — such callers must list their own subtree explicitly.
+      let dir = q.get('dir')
+      // The system prompt's default recall flow ("回复前: memory_list + 读相关
+      // .md") calls this with no `dir` at all. For a scoped (non-admin
+      // session) caller that used to fail scope-denial on the root — every
+      // trusted/guest chat's default recall silently 403'd. The correct
+      // meaning of "list my memory" for a scoped caller IS its own subtree,
+      // so default to that instead of evaluating the root. Explicit `dir`
+      // still goes through the normal scope check below (own subtree ok,
+      // others 403); unscoped callers (file token / admin) are unaffected.
+      if (dir === null && caller?.origin === 'session' && caller.tier !== 'admin' && caller.chatId) {
+        dir = caller.chatId
+      }
       if (memoryScopeDenied(dir ?? '', caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
       try {
         return { status: 200, body: { files: deps.memory.list(dir ?? undefined) } }

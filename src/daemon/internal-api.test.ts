@@ -384,7 +384,7 @@ describe('internal-api', () => {
         expect(await w.json()).toEqual({ ok: true })
       })
 
-      it('memory/list is scoped: own-chat dir 200, foreign dir + unscoped root 403', async () => {
+      it('memory/list is scoped: own-chat dir 200, foreign dir 403, bare (no dir) defaults to own subtree', async () => {
         const { port, token } = await startWithMemory()
         // Seed via the unrestricted file token
         for (const p of ['chat-1/a.md', 'ownerchat/persona.md']) await write(port, token, p)
@@ -399,12 +399,31 @@ describe('internal-api', () => {
         })
         expect(foreign.status).toBe(403)
         expect(await foreign.json()).toEqual({ error: 'memory_scope_denied' })
-        // No dir at all would enumerate every chat's files ⇒ fail closed
+        // No dir at all is the system prompt's default recall flow. It must
+        // keep working for a scoped session — defaults to the caller's own
+        // subtree rather than 403ing on the root. The no-cross-chat-leak
+        // intent is preserved: ownerchat's file must NOT appear here.
         const root = await fetch(`http://127.0.0.1:${port}/v1/memory/list`, {
           headers: { Authorization: `Bearer ${tok}` },
         })
-        expect(root.status).toBe(403)
-        expect(await root.json()).toEqual({ error: 'memory_scope_denied' })
+        expect(root.status).toBe(200)
+        const rootFiles = ((await root.json()) as { files: string[] }).files
+        expect(rootFiles).toEqual(['chat-1/a.md'])
+        expect(rootFiles).not.toContain('ownerchat/persona.md')
+      })
+
+      it('memory/list bare (no dir) for a scoped session returns only its own subtree, even with multiple chats seeded', async () => {
+        const { port, token } = await startWithMemory()
+        for (const p of ['chat-1/a.md', 'chat-1/sub/b.md', 'chat-2/c.md', 'ownerchat/persona.md']) {
+          await write(port, token, p)
+        }
+        const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/list`, {
+          headers: { Authorization: `Bearer ${tok}` },
+        })
+        expect(resp.status).toBe(200)
+        const body = await resp.json() as { files: string[] }
+        expect(body.files.sort()).toEqual(['chat-1/a.md', 'chat-1/sub/b.md'])
       })
 
       it('memory/delete is scoped: foreign path 403, own path succeeds', async () => {
