@@ -682,6 +682,24 @@ describe('buildTickBodies / pushTick — daily hunt branch (Task 3)', () => {
     expect(s.dispatch).not.toHaveBeenCalled()
     expect(s.logs.some(l => l.includes('CARE') && l.includes('kind=hunt') && l.includes('reason=paused_no_reply'))).toBe(true)
   })
+
+  it('(g) care:off + hunt:true ⇒ care=off is master switch, zero dispatches (hunt suppressed by care)', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1',
+      inFlight: false,
+      chatPrefsEntries: { 'chat-1': { care: 'off', hunt: true } },
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    // care=off early-return means ZERO dispatches: no hunt, no gap, no agenda.
+    expect(s.dispatch).not.toHaveBeenCalled()
+    // Hunt-specific log should not exist at all (the early-return prevents
+    // reaching the hunt branch).
+    expect(s.logs.some(l => l.includes('kind=hunt'))).toBe(false)
+    expect(s.logs.some(l => l.includes('kind=gap'))).toBe(false)
+    expect(s.careLedgerEntries['chat-1']?.lastHuntAtIso).toBeUndefined()
+  })
 })
 
 describe('buildTickBodies / introspectTick — provider-agnostic cheap eval (PR F)', () => {

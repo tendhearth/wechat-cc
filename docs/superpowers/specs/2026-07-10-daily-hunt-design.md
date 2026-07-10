@@ -13,6 +13,7 @@ silent if nothing is worth it. A gift, not a newsfeed.
 
 ## 2. Locked decisions
 
+- **care=off is the master switch**: a chat with care level off gets NO proactive sends at all (agenda/gap/hunt); the hunt pref only gates hunt within a care-enabled chat.
 - **Source = agent's own web search** (AI-native; no RSS/source-management
   infra). Interests come **from memory** (snapshot/tools); steering is
   conversational ("多看看 AI 圈的" → memory), no config surface.

@@ -204,7 +204,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
   ): Promise<void> {
     const { defaultChatId, nowIso, today, messagesStore } = ctx
     const level = careLevel(chatId, deps.chatPrefs.get(chatId), defaultChatId)
-    if (level === 'off') return // silent — never-opted chats shouldn't spam the log every tick
+    if (level === 'off') return // care off = master proactive kill-switch: no agenda/gap/hunt sends (別烦我 silences everything); hunt's own pref only gates hunt within a care-enabled chat
 
     const lastInboundAtIso = (await messagesStore.latestInboundTs(chatId)) ?? undefined
     const ledger = deps.careLedger.get(chatId)
