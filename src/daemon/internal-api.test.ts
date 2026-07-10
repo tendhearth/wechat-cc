@@ -1679,6 +1679,7 @@ describe('internal-api', () => {
         sendReply: (chatId: string, text: string) => Promise<{ msgId: string; error?: string }>
         getChatPrefs?: (chatId: string) => { split?: boolean }
         sleepMs?: (ms: number) => Promise<void>
+        log?: (tag: string, line: string, fields?: Record<string, unknown>) => void
         // When set, wires `prefix` deps the same way the "reply prefixing"
         // fixture above does, so maybePrefix() can be driven into prefixing.
         prefixMode?: { kind: 'solo' | 'parallel' | 'chatroom' | 'primary_tool'; provider?: string; primary?: string }
@@ -1696,6 +1697,7 @@ describe('internal-api', () => {
           },
           ...(opts.getChatPrefs ? { getChatPrefs: opts.getChatPrefs } : {}),
           ...(opts.sleepMs ? { sleepMs: opts.sleepMs } : {}),
+          ...(opts.log ? { log: opts.log } : {}),
           ...(opts.prefixMode ? {
             prefix: {
               conversationStore,
@@ -1790,10 +1792,12 @@ describe('internal-api', () => {
           if (n === 1) return { msgId: 'm-1' }
           return { msgId: '', error: 'boom' }
         })
+        const log = vi.fn()
         const { port, token } = await startWithSplit({
           sendReply,
           getChatPrefs: () => ({}),
           sleepMs: async () => {},
+          log,
         })
         const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
           method: 'POST',
@@ -1803,6 +1807,12 @@ describe('internal-api', () => {
         expect(resp.status).toBe(200)
         expect(await resp.json()).toEqual({ ok: false, error: 'boom', sent: 1 })
         expect(sendReply).toHaveBeenCalledTimes(2)
+        const wechatReplyLogs = log.mock.calls.filter(call => call[0] === 'WECHAT_REPLY')
+        expect(wechatReplyLogs).toHaveLength(1)
+        const [tag, line] = wechatReplyLogs[0]!
+        expect(tag).toBe('WECHAT_REPLY')
+        expect(line).toContain('split partial failure')
+        expect(line).toContain('sent=1')
       })
     })
   })

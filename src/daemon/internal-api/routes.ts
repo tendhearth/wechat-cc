@@ -283,6 +283,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
           // {ok:false,error}. Preserve verbatim so the agent's mental model
           // doesn't shift across this migration.
           if (r.error) {
+            if (sentCount > 0) deps.log?.('WECHAT_REPLY', `split partial failure chat=${chat_id} sent=${sentCount}/${chunks.length} err=${r.error}`)
             return { status: 200, body: { ok: false, error: r.error, ...(sentCount > 0 ? { sent: sentCount } : {}) } }
           }
           sentCount++
@@ -291,6 +292,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
         }
         return { status: 200, body: { ok: true, msg_id: lastMsgId } }
       } catch (err) {
+        if (sentCount > 0) deps.log?.('WECHAT_REPLY', `split partial failure chat=${chat_id} sent=${sentCount}/${chunks.length} err=${errMsg(err)}`)
         return { status: 200, body: { ok: false, error: errMsg(err), ...(sentCount > 0 ? { sent: sentCount } : {}) } }
       }
     },
