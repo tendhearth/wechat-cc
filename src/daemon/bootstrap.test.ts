@@ -696,6 +696,85 @@ describe('bootstrap', () => {
     expect(promptA).not.toContain('人设养成(persona.md)')
   })
 
+  it('buildInstructions includes the new-relationship section for a fresh chat at trusted+ tier when newRelationshipFor returns true (onboarding-curiosity design §2)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      newRelationshipFor: (chatId: string) => chatId === 'fresh-chat',
+    })
+    const trustedPrompt = b.buildInstructions('claude', TIER_PROFILES.trusted, 'fresh-chat')
+    expect(trustedPrompt).toContain('刚认识')
+    const adminPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'fresh-chat')
+    expect(adminPrompt).toContain('刚认识')
+  })
+
+  it('buildInstructions hides the new-relationship section for GUEST-tier chats even when newRelationshipFor is true, since guests cannot write memory (onboarding-curiosity design §2, mirrors proactive-care M1)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      newRelationshipFor: () => true,
+    })
+    const guestPrompt = b.buildInstructions('claude', TIER_PROFILES.guest, 'fresh-chat')
+    expect(guestPrompt).not.toContain('刚认识')
+  })
+
+  it('buildInstructions omits the new-relationship section when newRelationshipFor returns false (old chat past the message-count threshold)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      newRelationshipFor: () => false,
+    })
+    const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'old-chat')
+    expect(prompt).not.toContain('刚认识')
+  })
+
+  it('buildInstructions includes the empty-persona nudge when personaFor returns empty content and cultivate:true (onboarding-curiosity design §2)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      personaFor: () => ({ content: '', cultivate: true }),
+    })
+    const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(prompt).toContain('人设养成(persona.md)')
+    expect(prompt).toContain('现在还是空的')
+  })
+
+  it('buildInstructions omits the empty-persona nudge when personaFor returns non-empty content, even with cultivate:true', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      personaFor: () => ({ content: '毒舌但温柔', cultivate: true }),
+    })
+    const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(prompt).toContain('人设养成(persona.md)')
+    expect(prompt).not.toContain('现在还是空的')
+  })
+
   // ── Per-session canUseTool (concurrent-dispatch tier hazard) ─────────
   //
   // Before this fix, the canUseTool closure was built ONCE at bootstrap

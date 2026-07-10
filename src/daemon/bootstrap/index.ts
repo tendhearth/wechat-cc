@@ -248,6 +248,17 @@ export interface BootstrapDeps {
    * memory/persona.md read via `default_chat_id`) happens in main.ts.
    */
   personaFor?: (chatId: string) => { content?: string; cultivate?: boolean }
+  /**
+   * Resolve whether a chat is still in the "刚认识" (just-met) phase
+   * (onboarding-curiosity design §2). Read per-spawn (like `careLevelFor`'s
+   * siblings) so the section drops off mid-conversation once the message
+   * count crosses the threshold, with no daemon restart. Absent ⇒ the
+   * new-relationship prompt section is NEVER included for any chat — tests
+   * and minimal embeddings that don't wire this stay byte-identical to
+   * before this feature existed. Wiring the actual thunk (sync message
+   * count vs. NEW_RELATIONSHIP_MSG_COUNT) happens in main.ts.
+   */
+  newRelationshipFor?: (chatId: string) => boolean
 }
 
 export interface Bootstrap {
@@ -910,6 +921,14 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // the same way — absent thunk ⇒ [] ⇒ section never included. persona /
   // personaCultivate mirror `deps.personaFor` the same way — absent thunk
   // ⇒ both persona sections never included (persona design §2).
+  // newRelationship mirrors `deps.newRelationshipFor` the same way — absent
+  // thunk ⇒ section never included (onboarding-curiosity design §2). Like
+  // careEnabled it's also memory_write-gated: the section nudges the agent
+  // to jot notes/observations into memory, so a guest-tier owner chat must
+  // not get that instruction either. personaEmpty is passed through
+  // unconditionally — buildSystemPrompt only surfaces it nested inside the
+  // (already tier-gated) persona-cultivation section, so no extra gating
+  // is needed here.
   const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string): string => {
     const p = deps.personaFor?.(chatId)
     return buildSystemPrompt({
@@ -929,6 +948,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // its tier profile denies (burned turns on denied tool calls, and a
       // standing invitation to probe the memory surface).
       personaCultivate: p?.cultivate === true && tierProfile.allow.has('memory_write'),
+      newRelationship: (deps.newRelationshipFor?.(chatId) ?? false) && tierProfile.allow.has('memory_write'),
+      personaEmpty: !(p?.content && p.content.trim().length > 0),
     })
   }
 

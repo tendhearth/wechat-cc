@@ -44,6 +44,28 @@ export function inboundMessageId(userId: string, createTimeMs: number): string {
 }
 
 /**
+ * 关系新鲜度阈值 — below this message count the "刚认识" (just-met)
+ * new-relationship prompt section shows (onboarding-curiosity design §2).
+ * 50 messages is roughly the first few days of a normal-cadence chat.
+ */
+export const NEW_RELATIONSHIP_MSG_COUNT = 50
+
+/**
+ * Total message count (both directions) for a chat — SYNC, because
+ * buildInstructions (src/daemon/bootstrap/index.ts) is a synchronous
+ * function and can't await the async MessagesStore methods above.
+ * bun:sqlite's `.get()` is synchronous, so this bypasses the async
+ * MessagesStore entirely and queries the db directly. Cheap: chat_id is
+ * indexed, so this is an index-only COUNT.
+ */
+export function countMessagesSync(db: Db, chatId: string): number {
+  const row = db.query<{ n: number }, [string]>(
+    'SELECT COUNT(*) as n FROM messages WHERE chat_id = ?',
+  ).get(chatId)
+  return row?.n ?? 0
+}
+
+/**
  * Stable content-keyed id for messages where ilink provides no create_time_ms
  * (normalised to 0 by the poll loop). Using receivedAtMs for dedup would give
  * each at-least-once redelivery a different id → duplicate rows. Instead we
