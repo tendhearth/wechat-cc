@@ -13,9 +13,12 @@
  *  1. Original archived BEFORE overwrite, outside the agent-visible memory
  *     dir (so memory_list stays clean).
  *  2. Output validated: non-empty, byte-length <= original and <=
- *     MAX_GARDEN_CURATED_BYTES, not refusal-shaped, and shares enough
- *     vocabulary with the original (see validateCuration/contentOverlap) —
- *     a longer/invented/refused output is never trusted.
+ *     MAX_GARDEN_CURATED_BYTES, not below the shrink floor (curation
+ *     tightens, it doesn't obliterate — see the over_shrunk check), not
+ *     refusal-shaped (full-string scan, not just a prefix), and shares
+ *     enough max-normalized vocabulary with the original (see
+ *     validateCuration/contentOverlap) — a longer/invented/refused/
+ *     degenerate output is never trusted.
  *  3. Auth-fail screening via assertNotAuthFailed.
  *  4. Re-hashed immediately before the overwrite to catch a live
  *     memory_write racing the LLM call (see the concurrency re-check).
@@ -126,11 +129,17 @@ function tokenize(text: string): string[] {
 }
 
 /**
- * Fraction of `curated`'s distinct tokens that also appear somewhere in
- * `original`. Gardening is supposed to REUSE the original's words (merge,
- * trim, dedupe) — a curated output built mostly from unseen vocabulary is a
- * sign the model invented content (or refused and produced boilerplate)
- * rather than curating. Returns 0 for an empty curated input.
+ * Fraction of shared vocabulary between `original` and `curated`, normalized
+ * by the LARGER of the two distinct-token sets (not just `curated`'s).
+ * Gardening is supposed to REUSE the original's words (merge, trim, dedupe)
+ * — real curation keeps most of the original's vocabulary, so this ratio
+ * stays high whichever side it's normalized against. Normalizing by
+ * `curated` alone is gameable: a tiny, mostly-unrelated output (e.g. one
+ * short sentence) can still score high if every one of its FEW tokens
+ * happens to appear somewhere in a large original — max-normalization
+ * requires the curated output to actually cover a large fraction of the
+ * original's vocabulary too, not just avoid contradicting it. Returns 0 for
+ * an empty curated input.
  */
 export function contentOverlap(original: string, curated: string): number {
   const originalTokens = new Set(tokenize(original))
@@ -140,7 +149,7 @@ export function contentOverlap(original: string, curated: string): number {
   for (const t of curatedTokens) {
     if (originalTokens.has(t)) hits++
   }
-  return hits / curatedTokens.size
+  return hits / Math.max(originalTokens.size, curatedTokens.size)
 }
 
 function readState(stateFile: string): WatermarkState {
@@ -253,7 +262,27 @@ function validateCuration(original: string, curated: string): InvalidCuration | 
     return { reason: 'longer', detail: `output longer than original (${curatedBytes} > ${originalBytes} bytes) — possible invention` }
   }
 
-  if (REFUSAL_RE.test(curated.slice(0, 80))) {
+  // Shrink floor: curation TIGHTENS content, it doesn't obliterate it. A
+  // curated output far smaller than the original is more consistent with a
+  // refusal/degenerate output that also happened to pass the (gameable, see
+  // contentOverlap) vocabulary check than with real curation. The relative
+  // bound (20% of original) is a floor, not a ceiling, for aggressive-but-
+  // legitimate tightening; the absolute 512-byte bound keeps that relative
+  // bound from being trivially satisfied by near-MIN_GARDEN_BYTES originals.
+  const shrinkFloor = Math.min(512, 0.2 * originalBytes)
+  if (curatedBytes < shrinkFloor) {
+    return { reason: 'over_shrunk', detail: `output far smaller than original (${curatedBytes} < ${shrinkFloor.toFixed(0)} byte floor) — possible refusal/degenerate output` }
+  }
+
+  // Scan the FULL string, not just a prefix — a refusal appended after
+  // mostly-verbatim content (e.g. "<original text...> I'm sorry, I can't
+  // include some of the sensitive details.") would slip past a prefix-only
+  // scan. The false-positive risk (original content that legitimately
+  // contains a refusal-shaped phrase, e.g. "抱歉," in a quote, and survives
+  // curation) is acceptable: the failure mode here is SKIP, not corruption —
+  // worst case we retry/back off on legitimate content, we never write bad
+  // content. Slice to 80 chars only for the log line, not the check itself.
+  if (REFUSAL_RE.test(curated)) {
     return { reason: 'refusal_shape', detail: `output looks like a refusal: "${curated.slice(0, 80)}"` }
   }
 

@@ -28,17 +28,38 @@ function bigContent(seed: string, extraBytes = 500): string {
 /**
  * Derives a valid "curated" fixture straight from the prompt the gardener
  * actually sent — shorter than the original, and built only from words the
- * original contains (its first line + the shared "filler" pad word), so it
- * satisfies both the byte-shrink and vocabulary-overlap validation gates
- * the way a real curation would. Used by tests where the point is
- * "gardening succeeds", not "here's what the curated text says".
+ * original contains (its first line + a prefix of the shared "filler" pad),
+ * so it satisfies the byte-shrink, shrink-floor, and vocabulary-overlap
+ * validation gates the way a real curation would. Used by tests where the
+ * point is "gardening succeeds", not "here's what the curated text says".
+ *
+ * Keeps 60% of the post-first-line content (not just a token or two) —
+ * validateCuration's shrink floor rejects anything under
+ * `min(512, 0.2 * originalBytes)`, so a curated fixture that's nearly empty
+ * (as a bare "<firstLine> filler" used to be) would now be REJECTED as
+ * over_shrunk before ever reaching the overlap check.
  */
 function curatedFromPrompt(prompt: string): string {
   const marker = '--- 原文件内容 ---\n'
   const idx = prompt.indexOf(marker)
   const original = idx >= 0 ? prompt.slice(idx + marker.length) : prompt
   const firstLine = original.split('\n')[0] ?? ''
-  return `${firstLine} filler`.trim()
+  const rest = original.slice(firstLine.length + 1)
+  const kept = rest.slice(0, Math.ceil(rest.length * 0.6))
+  return `${firstLine}\n${kept}`.trim()
+}
+
+/**
+ * Like `curatedFromPrompt`, but keeps an arbitrary fraction of the
+ * post-first-line content instead of a fixed 60% — used to build a
+ * "legitimate aggressive curation" fixture (e.g. ~30% of original bytes)
+ * that's still built entirely from the original's own vocabulary.
+ */
+function curatedFromPromptRatio(original: string, ratio: number): string {
+  const firstLine = original.split('\n')[0] ?? ''
+  const rest = original.slice(firstLine.length + 1)
+  const kept = rest.slice(0, Math.ceil(rest.length * ratio))
+  return `${firstLine}\n${kept}`.trim()
 }
 
 describe('runGarden', () => {
@@ -151,7 +172,7 @@ describe('runGarden', () => {
     expect(untouched2).toBe(bigContent('notes/n2.md'))
 
     const touched = readFileSync(join(memoryRoot, 'chat-a', 'profile.md'), 'utf8')
-    expect(touched).toBe('profile.md filler')
+    expect(touched).toBe(curatedFromPrompt(bigContent('profile.md')))
   })
 
   it('exclusions: agenda.md, persona.md, _overview.md, archive/** are never touched', async () => {
@@ -200,7 +221,13 @@ describe('runGarden', () => {
   it('validation skip: LLM refusal text ⇒ skip (reason=refusal_shape), original intact', async () => {
     const original = bigContent('v1')
     writeMemoryFile('chat-1', 'profile.md', original)
-    const cheapEval = vi.fn(async () => '我不能帮助整理这份记忆文件，因为这可能涉及隐私信息。')
+    // Repeated (not single-sentence) so it clears the new shrink floor
+    // (min(512, 0.2 * originalBytes)) and the refusal check is reached at
+    // all, rather than being pre-empted by over_shrunk.
+    const refusal = '我不能帮助整理这份记忆文件，因为这可能涉及隐私信息。'.repeat(8)
+    expect(Buffer.byteLength(refusal, 'utf8')).toBeGreaterThan(0.2 * Buffer.byteLength(original, 'utf8'))
+    expect(Buffer.byteLength(refusal, 'utf8')).toBeLessThan(Buffer.byteLength(original, 'utf8'))
+    const cheapEval = vi.fn(async () => refusal)
     const result = await runGarden(makeDeps({ cheapEval }))
     expect(result).toEqual({ gardened: 0, skipped: 1 })
     expect(readFileSync(join(memoryRoot, 'chat-1', 'profile.md'), 'utf8')).toBe(original)
@@ -210,15 +237,85 @@ describe('runGarden', () => {
   it('validation skip: invented content with low vocabulary overlap ⇒ skip (reason=low_overlap)', async () => {
     const original = bigContent('用户喜欢喝咖啡，住在北京，是一名软件工程师')
     writeMemoryFile('chat-1', 'profile.md', original)
-    // Short enough to pass the length/byte checks, but shares essentially no
-    // vocabulary with the original — a hallmark of invention rather than
-    // curation of the existing content.
-    const invented = 'Completely unrelated fabricated text about spaceships and dinosaurs having a picnic on Mars.'
+    // Repeated (not single-sentence) so it clears the new shrink floor and
+    // the low_overlap check is actually the one that fires — but still
+    // shares essentially no vocabulary with the CJK original, a hallmark of
+    // invention rather than curation of the existing content.
+    const invented = 'Completely unrelated fabricated text about spaceships and dinosaurs having a picnic on Mars while wearing tiny hats. '.repeat(6)
+    expect(Buffer.byteLength(invented, 'utf8')).toBeGreaterThan(0.2 * Buffer.byteLength(original, 'utf8'))
+    expect(Buffer.byteLength(invented, 'utf8')).toBeLessThan(Buffer.byteLength(original, 'utf8'))
     const cheapEval = vi.fn(async () => invented)
     const result = await runGarden(makeDeps({ cheapEval }))
     expect(result).toEqual({ gardened: 0, skipped: 1 })
     expect(readFileSync(join(memoryRoot, 'chat-1', 'profile.md'), 'utf8')).toBe(original)
     expect(logs.some(l => l.includes('reason=low_overlap'))).toBe(true)
+  })
+
+  it('validation skip: output far smaller than original ⇒ skip (reason=over_shrunk), original intact', async () => {
+    const original = bigContent('用户喜欢喝咖啡，住在北京，是一名软件工程师')
+    writeMemoryFile('chat-1', 'profile.md', original)
+    // Tiny relative to the (large) original, so the shrink-floor guard fires
+    // before overlap is even considered — this is the exploit fixed here:
+    // a small output built ENTIRELY from the original's own vocabulary used
+    // to score overlap ~1.0 under curated-only normalization.
+    const curated = '我在北京。'
+    const cheapEval = vi.fn(async () => curated)
+    const result = await runGarden(makeDeps({ cheapEval }))
+    expect(result).toEqual({ gardened: 0, skipped: 1 })
+    expect(readFileSync(join(memoryRoot, 'chat-1', 'profile.md'), 'utf8')).toBe(original)
+    expect(logs.some(l => l.includes('reason=over_shrunk') || l.includes('reason=low_overlap'))).toBe(true)
+  })
+
+  it('refusal appended after mostly-verbatim content ⇒ skip (reason=refusal_shape) — full-string scan catches it past char 80', async () => {
+    // 10 sentences of varied prose (well past the old slice(0,80) cutoff),
+    // reused nearly verbatim, with a refusal tacked on at the very end. The
+    // old refusal check only scanned curated.slice(0, 80) — content this
+    // long would have hidden the refusal past the scanned prefix and been
+    // ACCEPTED. The full-string scan (fix #1) must catch it regardless of
+    // position.
+    const sentences = [
+      'The user is a software engineer based in Seattle who enjoys hiking on weekends.',
+      'They have two cats named Mochi and Biscuit and adopted both from a local shelter.',
+      'Their favorite programming language is TypeScript, though they started with Python.',
+      'They prefer tea over coffee in the morning and usually work from a standing desk.',
+      'On weekends they like to visit the farmers market near Pike Place for fresh produce.',
+      'They mentioned wanting to learn woodworking sometime next year as a new hobby.',
+      'Their partner works in healthcare and they often cook dinner together on Fridays.',
+      'They have a running goal of finishing a half marathon before the end of the year.',
+      'They keep a small vegetable garden on their apartment balcony during the summer.',
+      'They are currently reading a book about the history of the Pacific Northwest.',
+    ]
+    const original = bigContent(sentences.join(' '))
+    writeMemoryFile('chat-1', 'profile.md', original)
+    // Curated: keep the sentences nearly verbatim (real vocabulary reuse,
+    // comfortably above the shrink floor) but append a refusal clause after
+    // more than 80 characters of genuine content.
+    const curated = `${sentences.join(' ')} I'm sorry, I can't include some of the sensitive details.`
+    expect(curated.length).toBeGreaterThan(80)
+    expect(Buffer.byteLength(curated, 'utf8')).toBeGreaterThan(0.2 * Buffer.byteLength(original, 'utf8'))
+    expect(Buffer.byteLength(curated, 'utf8')).toBeLessThan(Buffer.byteLength(original, 'utf8'))
+    const cheapEval = vi.fn(async () => curated)
+    const result = await runGarden(makeDeps({ cheapEval }))
+    expect(result).toEqual({ gardened: 0, skipped: 1 })
+    expect(readFileSync(join(memoryRoot, 'chat-1', 'profile.md'), 'utf8')).toBe(original)
+    expect(logs.some(l => l.includes('reason=refusal_shape'))).toBe(true)
+  })
+
+  it('legit aggressive curation (~30% of original bytes, vocabulary drawn from original) ⇒ ACCEPTED, not blocked by the new guards', async () => {
+    // Guards must not block real tightening: a large profile genuinely
+    // condensed down to ~30% of its original size, using only words that
+    // appear in the original, should still be gardened successfully.
+    const original = bigContent('用户喜欢喝咖啡，住在北京，是一名软件工程师，喜欢徒步和摄影')
+    writeMemoryFile('chat-1', 'profile.md', original)
+    const originalBytes = Buffer.byteLength(original, 'utf8')
+    const curated = curatedFromPromptRatio(original, 0.3)
+    const curatedBytes = Buffer.byteLength(curated, 'utf8')
+    expect(curatedBytes).toBeLessThan(originalBytes)
+    expect(curatedBytes).toBeGreaterThan(0.2 * originalBytes) // clears the shrink floor
+    const cheapEval = vi.fn(async () => curated)
+    const result = await runGarden(makeDeps({ cheapEval }))
+    expect(result).toEqual({ gardened: 1, skipped: 0 })
+    expect(readFileSync(join(memoryRoot, 'chat-1', 'profile.md'), 'utf8')).toBe(curated)
   })
 
   it('validation skip: CJK output has fewer chars but MORE utf8 bytes than original ⇒ skip on byte length, not JS .length', async () => {
@@ -315,7 +412,7 @@ describe('runGarden', () => {
     const archived = readFileSync(join(archiveRoot, 'chat-1', `profile.md.${TODAY}.md`), 'utf8')
     expect(archived).toBe(original)
     const curated = readFileSync(join(memoryRoot, 'chat-1', 'profile.md'), 'utf8')
-    expect(curated).toBe('v1 filler')
+    expect(curated).toBe(curatedFromPrompt(bigContent('v1')))
   })
 
   it('watermark round-trip: second run with same (curated) content ⇒ 0 gardened', async () => {

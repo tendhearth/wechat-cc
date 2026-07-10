@@ -769,13 +769,21 @@ describe('buildTickBodies / introspectTick — memory gardener mount', () => {
     // gardener's vocabulary-overlap validation requires a curated output to
     // actually share word tokens with the original, which a giant run of
     // one repeated character can't satisfy in the same way real prose can.
-    writeFileSync(join(memDir, 'profile.md'), `seed\n${'filler '.repeat(500)}`)
-    const cheapEval = vi.fn(async () => 'seed filler')
+    const original = `seed\n${'filler '.repeat(500)}`
+    writeFileSync(join(memDir, 'profile.md'), original)
+    // Curated output must also clear the shrink floor (min(512, 0.2 *
+    // originalBytes)) — a bare "seed filler" (11 bytes) would now be
+    // rejected as over_shrunk before the gardener ever writes it, so keep
+    // enough of the original's filler tokens to pass.
+    const curated = `seed\n${'filler '.repeat(100)}`.trim()
+    expect(Buffer.byteLength(curated, 'utf8')).toBeGreaterThan(0.2 * Buffer.byteLength(original, 'utf8'))
+    expect(Buffer.byteLength(curated, 'utf8')).toBeLessThan(Buffer.byteLength(original, 'utf8'))
+    const cheapEval = vi.fn(async () => curated)
     s.deps.boot = { ...s.deps.boot, registry: { getCheapEval: () => cheapEval } as never }
     const { introspectTick } = buildTickBodies(s.deps)
     await introspectTick({ nowIso: '2026-07-10T00:00:00.000Z' })
     expect(s.logs.some(l => l.startsWith('GARDEN|'))).toBe(true)
     expect(existsSync(join(s.stateDir, 'memory-archive', 'chat-1', 'profile.md.2026-07-10.md'))).toBe(true)
-    expect(readFileSync(join(memDir, 'profile.md'), 'utf8')).toBe('seed filler')
+    expect(readFileSync(join(memDir, 'profile.md'), 'utf8')).toBe(curated)
   })
 })
