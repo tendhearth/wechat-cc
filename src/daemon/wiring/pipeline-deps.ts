@@ -37,6 +37,7 @@ import { makeMessagesStore } from '../../lib/messages-store'
 import { makeDedupStore } from '../../lib/dedup-store'
 import type { YiHub, YiDispatch } from '../../core/yi-hub'
 import type { ExecResult } from '../../core/a2a-server'
+import type { Mode, ProviderId } from '../../core/conversation'
 
 export interface DelegateDeps {
   listHands: () => readonly A2AAgentRecord[]
@@ -44,6 +45,43 @@ export interface DelegateDeps {
   pushDelegate: (hand: A2AAgentRecord, task: YiDispatch, selfId: string, timeoutMs: number) => Promise<ExecResult>
   selfId: string
   timeoutMs: number
+}
+
+export interface OwnerSessionKeyDeps {
+  resolveProject: (chatId: string) => { alias: string; path: string } | null
+  getMode: (chatId: string) => Mode
+  defaultProviderId: ProviderId
+}
+
+/**
+ * Resolves the (alias, providerId) session-manager key for a chat the SAME
+ * way ConversationCoordinator.dispatch resolves it internally (resolveProject
+ * + mode → provider), mirroring the provider-derivation chain tick-bodies.ts's
+ * dispatchToChat uses before its own isInFlight check. Exported/pure so the
+ * app-conversation-channel in-flight guard (companionConverse below) is unit
+ * testable without constructing a full Bootstrap.
+ *
+ * Used to check SessionManager.isInFlight with the EXACT key a real dispatch
+ * will acquire — so an app /converse turn (companionConverse) refuses to
+ * start while a WeChat turn is in flight on the owner's session. Without
+ * this, a WeChat message and an app /converse racing on the owner's
+ * default_chat_id both resolve the same SessionManager handle and dispatch
+ * concurrently on one AgentSession → corruption (e.g. the openai provider
+ * pushes to a shared mutable history array with no self-guard). Spec §3
+ * (app-conversation-channel Task 2, HIGH review finding).
+ *
+ * Returns null when the chat has no resolvable project — dispatch would
+ * drop the message in that case too, so there's nothing to guard.
+ */
+export function resolveOwnerSessionKey(chatId: string, deps: OwnerSessionKeyDeps): { alias: string; providerId: ProviderId } | null {
+  const proj = deps.resolveProject(chatId)
+  if (!proj) return null
+  const mode = deps.getMode(chatId)
+  const providerId =
+    mode.kind === 'solo' ? mode.provider
+    : mode.kind === 'primary_tool' ? mode.primary
+    : (mode.participants?.[0] ?? deps.defaultProviderId)
+  return { alias: proj.alias, providerId }
 }
 
 export function makeDelegateToHand(deps: DelegateDeps) {
@@ -341,8 +379,31 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const companionConverse = async (text: string): Promise<{ reply: string }> => {
     const ownerChatId = loadCompanionConfig(stateDir).default_chat_id
     if (!ownerChatId) throw new Error('companion_owner_chat_not_configured')
-    // Throws Error('reply_sink_busy') if a turn is already in flight for
-    // this chat — surfaces as 409 at the route layer.
+    // PRIMARY guard (spec §3, HIGH finding fix): refuse to start an app turn
+    // while a WeChat turn is already dispatching on the owner's session.
+    // replySinks.open() below only catches app-vs-app races (both go through
+    // this closure); a WeChat inbound never touches replySinks, so without
+    // this check a WeChat message and an app /converse racing on the same
+    // (alias, providerId, chatId) would both acquire the SAME SessionManager
+    // handle and dispatch concurrently on one AgentSession. Resolves the key
+    // the exact same way ConversationCoordinator.dispatch will (see
+    // resolveOwnerSessionKey above) and reuses SessionManager.isInFlight —
+    // the SAME in-flight guard the companion push tick checks before
+    // dispatching (tick-bodies.ts's dispatchToChat).
+    const ownerKey = resolveOwnerSessionKey(ownerChatId, {
+      resolveProject: boot.resolve,
+      getMode: (cid) => boot.coordinator.getMode(cid),
+      defaultProviderId: boot.defaultProviderId,
+    })
+    if (ownerKey && boot.sessionManager.isInFlight({ alias: ownerKey.alias, providerId: ownerKey.providerId, chatId: ownerChatId })) {
+      // Same error string as the replySinks guard below so the route's
+      // reply_sink_busy → 409 session_busy mapping (internal-api/routes.ts)
+      // stays unchanged.
+      throw new Error('reply_sink_busy')
+    }
+    // SECOND line of defense — app-turn-vs-app-turn. Throws
+    // Error('reply_sink_busy') if a turn is already in flight for this
+    // chat — surfaces as 409 at the route layer.
     const sink = replySinks.open(ownerChatId)
     try {
       const synthetic: InboundMsg = {
