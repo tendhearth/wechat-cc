@@ -891,7 +891,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // its daemon-control tools on, so the self-heal section appears iff those
   // tools are actually registered for this spawn. careEnabled mirrors
   // `deps.careLevelFor` the same way — absent thunk ⇒ 'off' ⇒ section never
-  // included (proactive-care design §7). stickerTags mirrors `deps.stickerTagsFor`
+  // included (proactive-care design §7). It also requires memory_write:
+  // guests can't author agenda.md entries or call set_chat_pref (both
+  // memory_write), so showing the care section would just burn turns on
+  // denied tool calls — gap check-ins (guest-allowed `reply`) work fine
+  // without it. stickerTags mirrors `deps.stickerTagsFor`
   // the same way — absent thunk ⇒ [] ⇒ section never included.
   const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string): string =>
     buildSystemPrompt({
@@ -902,7 +906,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       delegateAvailable: !!delegateStdioByProvider[providerId],
       daemonOpsAvailable: tierProfile.allow.has('daemon_introspect'),
       fileLocateAvailable: tierProfile.allow.has('file_locate'),
-      careEnabled: (deps.careLevelFor?.(chatId) ?? 'off') !== 'off',
+      careEnabled: (deps.careLevelFor?.(chatId) ?? 'off') !== 'off' && tierProfile.allow.has('memory_write'),
       stickerTags: deps.stickerTagsFor?.(chatId) ?? [],
     })
 

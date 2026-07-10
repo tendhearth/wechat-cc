@@ -580,6 +580,26 @@ describe('bootstrap', () => {
     expect(noCarePrompt).not.toContain('set_chat_pref')
   })
 
+  it('buildInstructions hides the care section for GUEST-tier chats even when careLevelFor is on, since guests cannot author agenda.md/set_chat_pref (memory_write denied) (proactive-care M1)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      careLevelFor: () => 'high',
+    })
+    const guestPrompt = b.buildInstructions('claude', TIER_PROFILES.guest, 'owner-chat')
+    expect(guestPrompt).not.toContain('set_chat_pref')
+    expect(guestPrompt).not.toContain('主动关心（agenda.md）')
+    const trustedPrompt = b.buildInstructions('claude', TIER_PROFILES.trusted, 'owner-chat')
+    expect(trustedPrompt).toContain('set_chat_pref')
+    const adminPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(adminPrompt).toContain('set_chat_pref')
+  })
+
   it('buildInstructions includes the sticker section only for chats whose stickerTagsFor returns tags (image-stickers design §5)', async () => {
     const b = await buildBootstrap({
       db: openTestDb(),
