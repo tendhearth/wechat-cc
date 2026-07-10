@@ -24,10 +24,10 @@ function setup(opts: {
     return { msgId: 'm-1' }
   })
   const pinModel = vi.fn<(providerId: ProviderId, model: string) => void>()
-  const prefsData = new Map<string, { split?: boolean }>()
+  const prefsData = new Map<string, { split?: boolean; care?: 'off' | 'low' | 'high' }>()
   const chatPrefs = {
     get: (c: string) => prefsData.get(c) ?? {},
-    set: (c: string, p: { split?: boolean }) => { const n = { ...(prefsData.get(c) ?? {}), ...p }; prefsData.set(c, n); return n },
+    set: (c: string, p: { split?: boolean; care?: 'off' | 'low' | 'high' }) => { const n = { ...(prefsData.get(c) ?? {}), ...p }; prefsData.set(c, n); return n },
   }
   const cmds = makeModeCommands({
     coordinator: {
@@ -717,5 +717,57 @@ describe('makeModeCommands', () => {
     await cmds.handle(inbound('/set volume 11'))
     expect(prefsData.size).toBe(0)
     expect(sentMessages[0]?.[1]).toContain('split')
+  })
+
+  // ── /set care|关心 — proactive care level (Task 3) ────────────────────
+
+  it('/set care high persists {care:"high"} and confirms', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    expect(await cmds.handle(inbound('/set care high'))).toBe(true)
+    expect(prefsData.get('chat-1')).toEqual({ care: 'high' })
+    expect(sentMessages[0]?.[1]).toContain('high')
+  })
+
+  it('/set 关心 关 (Chinese alias + value) maps to {care:"off"}', async () => {
+    const { cmds, prefsData } = setup()
+    await cmds.handle(inbound('/set 关心 关'))
+    expect(prefsData.get('chat-1')).toEqual({ care: 'off' })
+  })
+
+  it('/set 关心 低 maps to {care:"low"}', async () => {
+    const { cmds, prefsData } = setup()
+    await cmds.handle(inbound('/set 关心 低'))
+    expect(prefsData.get('chat-1')).toEqual({ care: 'low' })
+  })
+
+  it('/set care maybe is a usage error and does not write', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    await cmds.handle(inbound('/set care maybe'))
+    expect(prefsData.size).toBe(0)
+    expect(sentMessages[0]?.[1]).toContain('care')
+  })
+
+  it('/set care on is a usage error (care is 3-level, not on/off) and does not write', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    await cmds.handle(inbound('/set care on'))
+    expect(prefsData.size).toBe(0)
+    expect(sentMessages[0]?.[1]).toContain('care')
+  })
+
+  it('bare /set output contains both split and 关心 states', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/set'))
+    const text = sentMessages[0]?.[1] ?? ''
+    expect(text).toContain('split')
+    expect(text).toContain('关心')
+  })
+
+  it('bare /set shows 未设置 when care is unset, and the raw stored value when set', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[0]?.[1]).toContain('未设置')
+    await cmds.handle(inbound('/set care low'))
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[2]?.[1]).toContain('low')
   })
 })

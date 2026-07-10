@@ -34,4 +34,31 @@ describe('chat-prefs', () => {
       expect(prefs2.get('c1')).toEqual({})
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
+
+  it('list() is empty on a fresh store', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prefs-'))
+    try {
+      expect(makeChatPrefs(dir).list()).toEqual([])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('list() contains chat ids after set()', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prefs-'))
+    try {
+      const prefs = makeChatPrefs(dir)
+      prefs.set('c1', { split: false })
+      prefs.set('c2', { care: 'high' })
+      expect(prefs.list().sort()).toEqual(['c1', 'c2'])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('care round-trips and merges alongside split', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prefs-'))
+    try {
+      const prefs = makeChatPrefs(dir)
+      prefs.set('c1', { split: false })
+      prefs.set('c1', { care: 'high' })
+      expect(prefs.get('c1')).toEqual({ split: false, care: 'high' })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
 })

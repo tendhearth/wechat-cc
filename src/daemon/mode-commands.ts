@@ -51,7 +51,10 @@ export interface ModeCommandsDeps {
    */
   pinModel(providerId: ProviderId, model: string): void | Promise<void>
   /** Per-chat prefs (chat-prefs store). /set reads+writes THIS chat's entry. */
-  chatPrefs: { get(chatId: string): { split?: boolean }; set(chatId: string, patch: { split?: boolean }): { split?: boolean } }
+  chatPrefs: {
+    get(chatId: string): { split?: boolean; care?: 'off' | 'low' | 'high' }
+    set(chatId: string, patch: { split?: boolean; care?: 'off' | 'low' | 'high' }): { split?: boolean; care?: 'off' | 'low' | 'high' }
+  }
   log: (tag: string, line: string) => void
   /** Returns true when userId belongs to an admin. Used by /help to gate the admin section. */
   isAdmin?: (userId: string) => boolean
@@ -150,7 +153,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
       '/chat [p1 p2 …] — 圆桌讨论',
       '/solo /stop /mode — 回到默认 / 退出 / 显示当前模式',
-      '/set — 本对话偏好(拆分回复等)',
+      '/set — 本对话偏好(拆分回复、主动关心档位)',
       '',
       '**身份**',
       '/whoami — 显示你的身份 + 当前模式',
@@ -279,25 +282,62 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         return true
       }
 
-      // /set — per-chat preferences (the settings layer's first dial).
+      // /set — per-chat preferences (the settings layer's dials: split, care).
       if (slashWord.toLowerCase() === 'set') {
+        const SET_USAGE = '❓ 不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)'
         const p = deps.chatPrefs.get(msg.chatId)
         if (tail === '') {
-          const state = p.split === false ? 'off' : 'on'
-          await reply(msg.chatId, `当前设置(本对话):\n· split(拆分回复): ${state}\n\n用法: /set split on|off — 回复像真人一样分几条发`)
+          const splitState = p.split === false ? 'off' : 'on'
+          const careState = p.care ?? '未设置'
+          await reply(
+            msg.chatId,
+            `当前设置(本对话):\n· split(拆分回复): ${splitState}\n· 关心(主动关心档位): ${careState}\n\n用法: /set split on|off — 回复像真人一样分几条发\n用法: /set care off|low|high — 主动关心档位(别名: 关心 关|低|高)`,
+          )
           return true
         }
-        const m2 = /^(split|拆分)\s+(on|off|开|关)$/i.exec(tail)
+        const m2 = /^(split|拆分|care|关心)\s+(\S+)$/i.exec(tail)
         if (!m2) {
-          await reply(msg.chatId, '❓ 不认识这个设置。目前支持: /set split on|off(别名: 拆分 开|关)')
+          await reply(msg.chatId, SET_USAGE)
           return true
         }
-        const on = /^(on|开)$/i.test(m2[2]!)
-        deps.chatPrefs.set(msg.chatId, { split: on })
-        await reply(msg.chatId, on
-          ? '✅ 拆分回复已开启——回复会像真人一样分几条发。'
-          : '✅ 拆分回复已关闭——每次回复只发一条。')
-        deps.log('MODE_CMD', `chat=${msg.chatId} /set split=${on}`)
+        const key = m2[1]!.toLowerCase()
+        const rawValue = m2[2]!
+
+        if (key === 'split' || key === '拆分') {
+          if (!/^(on|off|开|关)$/i.test(rawValue)) {
+            await reply(msg.chatId, SET_USAGE)
+            return true
+          }
+          const on = /^(on|开)$/i.test(rawValue)
+          deps.chatPrefs.set(msg.chatId, { split: on })
+          await reply(msg.chatId, on
+            ? '✅ 拆分回复已开启——回复会像真人一样分几条发。'
+            : '✅ 拆分回复已关闭——每次回复只发一条。')
+          deps.log('MODE_CMD', `chat=${msg.chatId} /set split=${on}`)
+          return true
+        }
+
+        // care | 关心 — 3-level dial (off/low/high). Deliberately NOT
+        // on/off like split: "on"/"开" don't map to a level, so they fall
+        // through to the usage error below.
+        const CARE_VALUES: Record<string, 'off' | 'low' | 'high'> = {
+          off: 'off', '关': 'off',
+          low: 'low', '低': 'low',
+          high: 'high', '高': 'high',
+        }
+        const careVal = CARE_VALUES[rawValue.toLowerCase()]
+        if (!careVal) {
+          await reply(msg.chatId, SET_USAGE)
+          return true
+        }
+        deps.chatPrefs.set(msg.chatId, { care: careVal })
+        const careConfirm = careVal === 'high'
+          ? '✅ 主动关心已设为 high——会更主动地问候和关心。'
+          : careVal === 'low'
+            ? '✅ 主动关心已设为 low——偶尔主动问候。'
+            : '✅ 主动关心已设为 off——不会主动找你。'
+        await reply(msg.chatId, careConfirm)
+        deps.log('MODE_CMD', `chat=${msg.chatId} /set care=${careVal}`)
         return true
       }
 
