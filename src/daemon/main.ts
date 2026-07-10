@@ -29,7 +29,7 @@ import { makeStickerLib } from './stickers'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
-import { countMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
+import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -214,8 +214,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // loadCompanionConfig is a cheap file read; acceptable per-spawn cost.
       careLevelFor: (c) => careLevel(c, chatPrefs.get(c), loadCompanionConfig(stateDir).default_chat_id ?? undefined),
       // onboarding-curiosity design §2 — sync because buildInstructions is
-      // sync; cheap indexed COUNT per spawn (chat_id is indexed).
-      newRelationshipFor: (c) => countMessagesSync(db, c) < NEW_RELATIONSHIP_MSG_COUNT,
+      // sync; cheap indexed COUNT per spawn (chat_id, direction indexed).
+      newRelationshipFor: (c) => countInboundMessagesSync(db, c) < NEW_RELATIONSHIP_MSG_COUNT,
       // image-stickers plan §5 — per-chat opt-out (chatPrefs.stickers === false)
       // hides the sticker section from that chat's prompt; empty lib ⇒ [] ⇒
       // stickerSection omitted entirely (see prompt-builder.ts).
