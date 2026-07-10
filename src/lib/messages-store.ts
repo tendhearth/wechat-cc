@@ -44,6 +44,30 @@ export function inboundMessageId(userId: string, createTimeMs: number): string {
 }
 
 /**
+ * 关系新鲜度阈值 — below this message count the "刚认识" (just-met)
+ * new-relationship prompt section shows (onboarding-curiosity design §2).
+ * ~30 条用户消息 ≈ 头几天的量; only counts inbound, unaffected by reply-splitting bubbles.
+ */
+export const NEW_RELATIONSHIP_MSG_COUNT = 30
+
+/**
+ * Inbound message count for a chat — SYNC, because
+ * buildInstructions (src/daemon/bootstrap/index.ts) is a synchronous
+ * function and can't await the async MessagesStore methods above.
+ * Counts only 'in' direction (user-shared volume); reply-splitting's 'out'
+ * bubbles must not dilute the freshness signal. bun:sqlite's `.get()` is
+ * synchronous, so this bypasses the async MessagesStore entirely and queries
+ * the db directly. Cheap: (chat_id, direction) is indexed, so this is
+ * index-only COUNT.
+ */
+export function countInboundMessagesSync(db: Db, chatId: string): number {
+  const row = db.query<{ n: number }, [string]>(
+    "SELECT COUNT(*) as n FROM messages WHERE chat_id = ? AND direction = 'in'",
+  ).get(chatId)
+  return row?.n ?? 0
+}
+
+/**
  * Stable content-keyed id for messages where ilink provides no create_time_ms
  * (normalised to 0 by the poll loop). Using receivedAtMs for dedup would give
  * each at-least-once redelivery a different id → duplicate rows. Instead we

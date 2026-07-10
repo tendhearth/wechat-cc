@@ -1,6 +1,6 @@
 # Build Roadmap — 脊柱 + 情感陪伴 bundle
 
-> **状态:粗略排序(rough),按依赖关系推。** 日期:2026-07-09。
+> **状态:P1→P4a 已全部实现并合入 master(PR #61, 2026-07-10)。** 剩余:Phase 4b(bundle 组装,等 dogfood 反馈)+ onboarding。原排序记录保留如下。日期:2026-07-09。
 > 配套:`agent-social-network.md`(社交=倒刺)、`companion-liveness-layer.md`(活人感 + 设置=钥匙)。战略见 positioning 记忆。
 
 ## 排序三原则
