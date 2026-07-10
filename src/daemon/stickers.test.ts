@@ -74,8 +74,8 @@ describe('stickers', () => {
       writeFileSync(b, 'y')
       let r = 0
       const lib = makeStickerLib(dir, { random: () => r })
-      lib.save(a, ['smile'])
       lib.save(b, ['smile'])
+      lib.save(a, ['smile'])
       r = 0
       expect(lib.resolve('smile')).toBe(join(dir, 'stickers', 'a.png'))
       r = 0.99
