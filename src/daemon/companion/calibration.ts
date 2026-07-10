@@ -11,11 +11,13 @@
 
 export type CareLevel = 'off' | 'low' | 'high'
 
-export type CareKind = 'agenda' | 'gap'
+export type CareKind = 'agenda' | 'gap' | 'hunt'
 
 export interface CareLedgerEntry {
   /** ISO timestamp of the last proactive send claimed for this chat. */
   lastProactiveAtIso?: string
+  /** ISO timestamp of the last hunt claimed for this chat. */
+  lastHuntAtIso?: string
   /** Consecutive proactive sends with no user reply since. */
   noReplyCount: number
 }
@@ -25,6 +27,9 @@ const DAY = 24 * HOUR
 
 /** Max ~1 agenda-driven proactive send per chat per day. */
 const AGENDA_COOLDOWN_MS = 20 * HOUR
+
+/** Max ~1 hunt per chat per day. */
+const HUNT_COOLDOWN_MS = 20 * HOUR
 
 /** Gap check-in requires this many quiet days, by care level. */
 const GAP_DAYS: Record<'low' | 'high', number> = { low: 7, high: 2 }
@@ -50,7 +55,8 @@ export function careLevel(
 /**
  * The calibration gate. Every deny carries a stable, loggable `reason`
  * string: `care_off`, `agenda_cooldown`, `never_talked`, `paused_no_reply`,
- * `gap_inbound_recent`, `gap_proactive_recent`.
+ * `gap_inbound_recent`, `gap_proactive_recent`, `invalid_timestamp`,
+ * `hunt_cooldown`.
  */
 export function shouldSpeak(args: {
   kind: CareKind
@@ -79,10 +85,26 @@ export function shouldSpeak(args: {
     return { ok: false, reason: 'invalid_timestamp' }
   }
 
+  const lastHuntMs =
+    ledger.lastHuntAtIso !== undefined ? Date.parse(ledger.lastHuntAtIso) : undefined
+  if (lastHuntMs !== undefined && Number.isNaN(lastHuntMs)) {
+    return { ok: false, reason: 'invalid_timestamp' }
+  }
+
   if (kind === 'agenda') {
     if (lastProactiveMs !== undefined) {
       const sinceProactiveMs = nowMs - lastProactiveMs
       if (sinceProactiveMs < AGENDA_COOLDOWN_MS) return { ok: false, reason: 'agenda_cooldown' }
+    }
+    return { ok: true }
+  }
+
+  if (kind === 'hunt') {
+    // Hunt ignores lastInboundAtIso entirely — no never_talked, no gap-days.
+    if (ledger.noReplyCount >= PAUSE_AFTER_NO_REPLIES) return { ok: false, reason: 'paused_no_reply' }
+    if (lastHuntMs !== undefined) {
+      const sinceHuntMs = nowMs - lastHuntMs
+      if (sinceHuntMs < HUNT_COOLDOWN_MS) return { ok: false, reason: 'hunt_cooldown' }
     }
     return { ok: true }
   }

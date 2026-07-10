@@ -11,6 +11,7 @@ import type { CareLedgerEntry } from './calibration'
 export interface CareLedger {
   get(chatId: string): CareLedgerEntry
   claim(chatId: string, nowIso: string): void
+  claimHunt(chatId: string, nowIso: string): void
   resetNoReply(chatId: string): void
 }
 
@@ -32,7 +33,12 @@ export function makeCareLedger(stateDir: string, deps?: { store?: StateStore }):
     get: read,
     claim(chatId, nowIso) {
       const cur = read(chatId)
-      const next: CareLedgerEntry = { lastProactiveAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
+      const next: CareLedgerEntry = { ...cur, lastProactiveAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
+      store.set(chatId, JSON.stringify(next))
+    },
+    claimHunt(chatId, nowIso) {
+      const cur = read(chatId)
+      const next: CareLedgerEntry = { ...cur, lastHuntAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
       store.set(chatId, JSON.stringify(next))
     },
     resetNoReply(chatId) {

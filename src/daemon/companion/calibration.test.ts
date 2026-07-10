@@ -251,3 +251,59 @@ describe('shouldSpeak — gap', () => {
     ).toEqual({ ok: false, reason: 'gap_proactive_recent' })
   })
 })
+
+describe('shouldSpeak — hunt', () => {
+  it('level off ⇒ care_off', () => {
+    const ledger: CareLedgerEntry = { noReplyCount: 0 }
+    expect(shouldSpeak({ kind: 'hunt', level: 'off', nowIso: NOW, ledger })).toEqual({
+      ok: false,
+      reason: 'care_off',
+    })
+  })
+
+  it('noReplyCount:2 ⇒ paused_no_reply', () => {
+    const ledger: CareLedgerEntry = { noReplyCount: 2 }
+    expect(shouldSpeak({ kind: 'hunt', level: 'low', nowIso: NOW, ledger })).toEqual({
+      ok: false,
+      reason: 'paused_no_reply',
+    })
+  })
+
+  it('noReplyCount:1 ⇒ NOT paused, ok (no lastHuntAtIso so no cooldown)', () => {
+    const ledger: CareLedgerEntry = { noReplyCount: 1 }
+    expect(shouldSpeak({ kind: 'hunt', level: 'low', nowIso: NOW, ledger })).toEqual({ ok: true })
+  })
+
+  it('19h59m since lastHuntAtIso ⇒ deny hunt_cooldown', () => {
+    const ledger: CareLedgerEntry = { lastHuntAtIso: agoIso(19 * HOUR + 59 * 60_000), noReplyCount: 0 }
+    expect(shouldSpeak({ kind: 'hunt', level: 'low', nowIso: NOW, ledger })).toEqual({
+      ok: false,
+      reason: 'hunt_cooldown',
+    })
+  })
+
+  it('exactly 20h since lastHuntAtIso ⇒ ok (boundary is inclusive of the cooldown edge)', () => {
+    const ledger: CareLedgerEntry = { lastHuntAtIso: agoIso(20 * HOUR), noReplyCount: 0 }
+    expect(shouldSpeak({ kind: 'hunt', level: 'low', nowIso: NOW, ledger })).toEqual({ ok: true })
+  })
+
+  it('lastHuntAtIso unset ⇒ ok', () => {
+    const ledger: CareLedgerEntry = { noReplyCount: 0 }
+    expect(shouldSpeak({ kind: 'hunt', level: 'low', nowIso: NOW, ledger })).toEqual({ ok: true })
+  })
+
+  it('lastInboundAtIso absent ⇒ still ok — hunt ignores it entirely (no never_talked)', () => {
+    const ledger: CareLedgerEntry = { noReplyCount: 0 }
+    expect(
+      shouldSpeak({ kind: 'hunt', level: 'low', nowIso: NOW, ledger, lastInboundAtIso: undefined }),
+    ).toEqual({ ok: true })
+  })
+
+  it('malformed lastHuntAtIso ⇒ invalid_timestamp', () => {
+    const ledger: CareLedgerEntry = { lastHuntAtIso: 'not-an-iso-string', noReplyCount: 0 }
+    expect(shouldSpeak({ kind: 'hunt', level: 'low', nowIso: NOW, ledger })).toEqual({
+      ok: false,
+      reason: 'invalid_timestamp',
+    })
+  })
+})

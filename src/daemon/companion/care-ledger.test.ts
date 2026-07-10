@@ -75,4 +75,50 @@ describe('care-ledger', () => {
       expect(ledger.get('c1')).toEqual({ noReplyCount: 0 })
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
+
+  it('claimHunt() sets lastHuntAtIso and increments noReplyCount, and persists (fresh instance round-trip)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ledger-'))
+    try {
+      const ledger = makeCareLedger(dir)
+      ledger.claimHunt('c1', '2026-07-07T00:00:00.000Z')
+      expect(ledger.get('c1')).toEqual({ lastHuntAtIso: '2026-07-07T00:00:00.000Z', noReplyCount: 1 })
+
+      ledger.claimHunt('c1', '2026-07-08T00:00:00.000Z')
+      expect(ledger.get('c1')).toEqual({ lastHuntAtIso: '2026-07-08T00:00:00.000Z', noReplyCount: 2 })
+
+      // fresh instance reads the claim back from disk
+      expect(makeCareLedger(dir).get('c1')).toEqual({
+        lastHuntAtIso: '2026-07-08T00:00:00.000Z',
+        noReplyCount: 2,
+      })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('claimHunt() leaves lastProactiveAtIso untouched', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ledger-'))
+    try {
+      const ledger = makeCareLedger(dir)
+      ledger.claim('c1', '2026-07-07T00:00:00.000Z')
+      ledger.claimHunt('c1', '2026-07-08T00:00:00.000Z')
+      expect(ledger.get('c1')).toEqual({
+        lastProactiveAtIso: '2026-07-07T00:00:00.000Z',
+        lastHuntAtIso: '2026-07-08T00:00:00.000Z',
+        noReplyCount: 2,
+      })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('claim() leaves lastHuntAtIso untouched', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ledger-'))
+    try {
+      const ledger = makeCareLedger(dir)
+      ledger.claimHunt('c1', '2026-07-07T00:00:00.000Z')
+      ledger.claim('c1', '2026-07-08T00:00:00.000Z')
+      expect(ledger.get('c1')).toEqual({
+        lastHuntAtIso: '2026-07-07T00:00:00.000Z',
+        lastProactiveAtIso: '2026-07-08T00:00:00.000Z',
+        noReplyCount: 2,
+      })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
 })

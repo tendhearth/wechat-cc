@@ -28,7 +28,11 @@ function makeFakeCareLedger(entries: Record<string, CareLedgerEntry> = {}): Care
     get: (chatId) => entries[chatId] ?? { noReplyCount: 0 },
     claim: (chatId, nowIso) => {
       const cur = entries[chatId] ?? { noReplyCount: 0 }
-      entries[chatId] = { lastProactiveAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
+      entries[chatId] = { ...cur, lastProactiveAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
+    },
+    claimHunt: (chatId, nowIso) => {
+      const cur = entries[chatId] ?? { noReplyCount: 0 }
+      entries[chatId] = { ...cur, lastHuntAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
     },
     resetNoReply: (chatId) => {
       const cur = entries[chatId]
