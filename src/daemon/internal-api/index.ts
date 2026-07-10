@@ -271,6 +271,10 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       deps.conversation = c
     },
 
+    setCompanionConverse(fn) {
+      deps.companionConverse = fn
+    },
+
     setA2A(a2a) {
       deps.a2a = a2a
     },

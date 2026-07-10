@@ -488,6 +488,28 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       return { status: 200, body: { ok: true } }
     },
 
+    // ── companion converse (app-conversation-channel, voice arc Stage 0) ──
+    // Drives one real turn on the owner's own session and hands the reply
+    // back to the caller synchronously — the app channel's core primitive.
+    'POST /v1/companion/converse': async (_q, body) => {
+      if (!deps.companionConverse) return { status: 503, body: { error: 'companion_converse_not_wired' } }
+      const { text } = body as { text?: unknown }
+      if (typeof text !== 'string' || text.trim().length === 0) {
+        return { status: 400, body: { error: 'text required' } }
+      }
+      try {
+        const r = await deps.companionConverse(text)
+        return { status: 200, body: { ok: true, reply: r.reply } }
+      } catch (err) {
+        const msg = errMsg(err)
+        if (msg === 'reply_sink_busy') return { status: 409, body: { ok: false, error: 'session_busy' } }
+        if (msg === 'companion_owner_chat_not_configured') {
+          return { status: 503, body: { ok: false, error: msg } }
+        }
+        return { status: 500, body: { ok: false, error: msg } }
+      }
+    },
+
     'POST /v1/voice/save_config': async (_q, body) => {
       if (!deps.voice) return { status: 503, body: { error: 'voice_not_wired' } }
       // Body is pre-validated by index.ts via VoiceSaveConfigRequest schema.

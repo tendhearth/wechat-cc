@@ -156,6 +156,24 @@ export interface InternalApiDeps {
     setMode(chatId: string, mode: import('../../core/conversation').Mode): void
   }
   /**
+   * Optional app-conversation-channel converse dep (voice arc, Stage 0,
+   * Task 2). Encapsulates the whole owner-session turn — synthesizes an
+   * inbound message for the owner chat, dispatches it through the real
+   * coordinator, and captures the reply via a reply-sink (see
+   * ../reply-sinks.ts) instead of ilink-sending it — so the route table
+   * never has to import coordinator internals.
+   *
+   * Late-bound: main.ts wires this in after bootstrap constructs the
+   * coordinator (mirrors `conversation` above). POST /v1/companion/converse
+   * returns 503 until this is set.
+   *
+   * Throws `Error('reply_sink_busy')` when a turn is already in flight for
+   * the owner chat (route maps to 409), or a distinct error when the owner
+   * chat isn't configured yet (route maps to 503); any other rejection maps
+   * to 500.
+   */
+  companionConverse?: (text: string) => Promise<{ reply: string }>
+  /**
    * Optional A2A deps — undefined when a2a_listen is not configured.
    * When absent, POST /v1/a2a/send returns 503.
    */
@@ -263,6 +281,13 @@ export interface InternalApi {
    * returns 503 until this is called.
    */
   setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
+  /**
+   * Late-bind the companion converse dep (app-conversation-channel, Stage 0
+   * Task 2) after the wiring layer has built the closure over the
+   * coordinator + reply sinks. POST /v1/companion/converse returns 503
+   * until this is called.
+   */
+  setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
   /**
    * Late-bind A2A deps after bootstrap has constructed the registry,
    * client, and events store. POST /v1/a2a/send returns 503 until this

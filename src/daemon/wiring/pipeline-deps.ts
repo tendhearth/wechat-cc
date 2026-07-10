@@ -22,6 +22,9 @@ import { makeAdminCommands } from '../admin-commands'
 import { makeModeCommands } from '../mode-commands'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
+import type { ReplySinks } from '../reply-sinks'
+import { loadCompanionConfig } from '../companion/config'
+import type { InboundMsg } from '../../core/prompt-format'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider } from '../../lib/agent-config'
@@ -72,6 +75,14 @@ export interface PipelineDepsOpts {
    * no-reply streak through this SAME store on every inbound message.
    */
   careLedger: CareLedger
+  /**
+   * Shared reply-sink registry (app-conversation-channel, voice arc Stage
+   * 0, Task 1/2) — constructed once in main.ts, also fed to
+   * registerInternalApi's `replySinks` so the `POST /v1/wechat/reply`
+   * route captures into the SAME sink the converse closure below opens.
+   * A second instance would never see the capture.
+   */
+  replySinks: ReplySinks
 }
 
 export interface PipelineDepsRefs {
@@ -85,8 +96,21 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = join(HERE, '..', '..', '..')
 const CLI_ENTRY = join(REPO_ROOT, 'cli.ts')
 
-export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): { pipelineDeps: InboundPipelineDeps } {
-  const { stateDir, db, ilink, boot, log, chatPrefs, careLedger } = opts
+export interface BuildPipelineDepsResult {
+  pipelineDeps: InboundPipelineDeps
+  /**
+   * App-conversation-channel converse closure (voice arc Stage 0, Task 2).
+   * Late-bound onto internal-api by main.ts via setCompanionConverse()
+   * once this returns — bootstrap (boot.coordinator) isn't available until
+   * after buildPipelineDeps runs, so it can't be wired at internal-api
+   * registration time (see main.ts's staged startup: internal-api first,
+   * then bootstrap, then this wiring pass).
+   */
+  companionConverse: (text: string) => Promise<{ reply: string }>
+}
+
+export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): BuildPipelineDepsResult {
+  const { stateDir, db, ilink, boot, log, chatPrefs, careLedger, replySinks } = opts
   const inboxDir = join(stateDir, 'inbox')
 
   // A2A exec (delegate a task to a hand) runs a FULL agent on the hand —
@@ -306,5 +330,36 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     dispatch: { coordinator: { dispatch: (msg) => boot.coordinator.dispatch(msg) } },
   }
 
-  return { pipelineDeps }
+  // App-conversation-channel converse (voice arc Stage 0, Task 2) — drives
+  // one real turn on the owner's own chat session and hands the reply back
+  // synchronously. Synthesizes an InboundMsg the same shape a real WeChat
+  // inbound would have (userId==chatId is correct for a solo owner chat)
+  // and dispatches it straight through the coordinator — NOT through the
+  // poll-loop/inbound-pipeline middleware chain, since this isn't a WeChat
+  // inbound. The agent's `reply` tool still posts to POST /v1/wechat/reply
+  // as normal; the open sink captures it instead of ilink-sending.
+  const companionConverse = async (text: string): Promise<{ reply: string }> => {
+    const ownerChatId = loadCompanionConfig(stateDir).default_chat_id
+    if (!ownerChatId) throw new Error('companion_owner_chat_not_configured')
+    // Throws Error('reply_sink_busy') if a turn is already in flight for
+    // this chat — surfaces as 409 at the route layer.
+    const sink = replySinks.open(ownerChatId)
+    try {
+      const synthetic: InboundMsg = {
+        chatId: ownerChatId,
+        userId: ownerChatId,
+        text,
+        msgType: 'text',
+        createTimeMs: Date.now(),
+        accountId: ilink.resolveAccountId(ownerChatId),
+      }
+      await boot.coordinator.dispatch(synthetic)
+      return { reply: sink.close() }
+    } catch (err) {
+      sink.close()
+      throw err
+    }
+  }
+
+  return { pipelineDeps, companionConverse }
 }

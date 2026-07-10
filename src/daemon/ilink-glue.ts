@@ -57,6 +57,15 @@ export interface IlinkAdapter {
   resurfacePage(q: { slug?: string; title_fragment?: string }): Promise<{ url: string; slug: string } | null>
   setUserName(chatId: string, name: string): Promise<void>
   resolveUserName(chatId: string): string | undefined
+  /**
+   * Resolve the ilink account bound to a chat (persisted routing, falling
+   * back to the first configured account — mirrors the internal
+   * resolveAccount() used by sendMessage/sendFile). Exposed for the
+   * app-conversation-channel converse route (app-conversation-channel
+   * plan, Stage 0 Task 2), which synthesizes an InboundMsg for the owner
+   * chat and needs a valid accountId to dispatch it through the coordinator.
+   */
+  resolveAccountId(chatId: string): string
   projects: WechatProjectsDep
   voice: WechatVoiceDep
   companion: WechatCompanionDep
@@ -243,6 +252,10 @@ export function makeIlinkAdapter(opts: {
 
     resolveUserName(chatId) {
       return conversationStore.getIdentity(chatId)?.last_user_name ?? undefined
+    },
+
+    resolveAccountId(chatId) {
+      return resolveAccount(chatId).id
     },
 
     projects: {

@@ -26,6 +26,7 @@ import { wireMain } from './wiring'
 import type { TickBodies } from './wiring/tick-bodies'
 import { makeChatPrefs } from './chat-prefs'
 import { makeStickerLib } from './stickers'
+import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
@@ -168,12 +169,20 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // streak on every message. A second instance would have a stale
     // in-memory cache (write-through only protects its own writes).
     const careLedger = makeCareLedger(stateDir)
+    // Single shared reply-sink registry (app-conversation-channel, voice arc
+    // Stage 0) — the POST /v1/wechat/reply route captures into it when a
+    // sink is open (Task 1); the companion-converse closure below (built
+    // from wireMain's pipelineDeps) opens/closes it around a real turn
+    // (Task 2). Both MUST share this one instance — a second instance would
+    // never see the capture (same posture as chatPrefs/careLedger above).
+    const replySinks = makeReplySinks()
     // 1. internal-api FIRST — bootstrap needs its baseUrl/token for MCP wiring
     const internalApi = await registerInternalApi({
       stateDir, daemonPid: process.pid, memory: memoryFS, db, projects: ilink.projects,
       getChatPrefs: (c) => chatPrefs.get(c),
       setChatPref: (c, p) => chatPrefs.set(c, p),
       stickers: stickerLib,
+      replySinks,
       setUserName: (chatId, name) => ilink.setUserName(chatId, name),
       voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus() },
       sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),
@@ -252,7 +261,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setA2A(boot.a2aDeps)
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({
-      stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger,
+      stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,
       // Task 11 — tick-bodies pass this to resolveTier() when computing
       // the companion's tierProfile. Same singleton import the bootstrap
       // coordinator uses; 5s TTL cache inside `loadAccess` keeps the
@@ -261,6 +270,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       log: (t, l) => log(t, l),
       schedulerIntervalMs: opts.schedulerIntervalMs,
     })
+    // Wire companion-converse dep now that the coordinator (via boot) and
+    // the pipeline wiring are available. Routes access deps.companionConverse
+    // at request time, so this late assignment is safe (mirrors setConversation).
+    internalApi.setCompanionConverse(wired.companionConverse)
     ticksRef = wired.ticks
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
     wireRef(wired.refs.pipeline, pipeline)

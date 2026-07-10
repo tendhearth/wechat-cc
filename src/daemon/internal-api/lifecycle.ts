@@ -8,6 +8,7 @@ export interface InternalApiLifecycle extends Lifecycle {
   readonly tokenFilePath: string
   setDelegate(d: InternalApiDelegateDep): void
   setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
+  setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
   setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
   mintSessionToken(tier: import('../../core/user-tier').UserTier, sessionKey: string): string
   invalidateSession(sessionKey: string): void
@@ -37,6 +38,7 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     tokenFilePath,
     setDelegate: (d) => api.setDelegate(d),
     setConversation: (c) => api.setConversation(c),
+    setCompanionConverse: (fn) => api.setCompanionConverse(fn),
     setA2A: (a2a) => api.setA2A(a2a),
     mintSessionToken: (tier, sessionKey) => api.mintSessionToken(tier, sessionKey),
     invalidateSession: (sessionKey) => api.invalidateSession(sessionKey),

@@ -1231,6 +1231,151 @@ describe('internal-api', () => {
     })
   })
 
+  // ─── companion converse (app-conversation-channel, voice arc Stage 0) ─
+  // Route-contract tests only, against a MOCKED companionConverse. The real
+  // wiring closure (coordinator.dispatch + reply-sink open/close) is built
+  // in src/daemon/wiring/pipeline-deps.ts and is exercised at final review
+  // + manual daemon smoke, not here — spinning a real ConversationCoordinator
+  // is out of scope for this unit suite.
+  describe('POST /v1/companion/converse', () => {
+    // The route is admin-tier; the daemon-wide FILE token only carries
+    // 'trusted' (see index.ts's registerFileToken comment), so route-contract
+    // tests need a minted ADMIN session token, not the file token.
+    async function startWithConverse(
+      companionConverse: (text: string) => Promise<{ reply: string }>,
+    ): Promise<{ port: number; token: string }> {
+      api = createInternalApi({ stateDir, daemonPid: 1, companionConverse })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
+      return { port, token }
+    }
+
+    it('503 when companionConverse dep not wired', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      await api.start()
+      const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
+      const port = api.port()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'companion_converse_not_wired' })
+    })
+
+    it('400 when text is missing', async () => {
+      const { port, token } = await startWithConverse(async () => ({ reply: 'hey' }))
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: '{}',
+      })
+      expect(resp.status).toBe(400)
+    })
+
+    it('400 when text is empty/whitespace', async () => {
+      const { port, token } = await startWithConverse(async () => ({ reply: 'hey' }))
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '   ' }),
+      })
+      expect(resp.status).toBe(400)
+    })
+
+    it('happy path: 200 {ok:true, reply} from the mocked closure', async () => {
+      const companionConverse = vi.fn(async (text: string) => {
+        expect(text).toBe('how are you')
+        return { reply: 'hey' }
+      })
+      const { port, token } = await startWithConverse(companionConverse)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'how are you' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true, reply: 'hey' })
+      expect(companionConverse).toHaveBeenCalledWith('how are you')
+    })
+
+    it('409 session_busy when the closure throws reply_sink_busy', async () => {
+      const { port, token } = await startWithConverse(async () => {
+        throw new Error('reply_sink_busy')
+      })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(409)
+      expect(await resp.json()).toEqual({ ok: false, error: 'session_busy' })
+    })
+
+    it('503 companion_owner_chat_not_configured when the closure throws that error', async () => {
+      const { port, token } = await startWithConverse(async () => {
+        throw new Error('companion_owner_chat_not_configured')
+      })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ ok: false, error: 'companion_owner_chat_not_configured' })
+    })
+
+    it('500 with error detail on any other thrown error', async () => {
+      const { port, token } = await startWithConverse(async () => {
+        throw new Error('boom')
+      })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(500)
+      expect(await resp.json()).toEqual({ ok: false, error: 'boom' })
+    })
+
+    it('tier gate: a trusted session token gets 403 (admin-only route)', async () => {
+      const { port } = await startWithConverse(async () => ({ reply: 'hey' }))
+      const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(403)
+      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+    })
+
+    it('tier gate: a guest session token gets 403 (admin-only route)', async () => {
+      const { port } = await startWithConverse(async () => ({ reply: 'hey' }))
+      const tok = api!.mintSessionToken('guest', 'claude/a/chat-1')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(403)
+      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+    })
+
+    it('an admin session token reaches the route (not 403)', async () => {
+      const { port } = await startWithConverse(async () => ({ reply: 'hey' }))
+      const tok = api!.mintSessionToken('admin', 'claude/a/chat-1')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).not.toBe(403)
+      expect(resp.status).toBe(200)
+    })
+  })
+
   // ─── chat prefs (set_chat_pref tool backend) ──────────────────────────
 
   describe('POST /v1/chat-prefs', () => {

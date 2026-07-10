@@ -71,6 +71,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // POST /v1/stickers writes an arbitrary sourcePath into the lib — same
   // trust class as send_file, so it's trusted not guest.
   'POST /v1/stickers': 'trusted',
+  // admin — owner-only same-session power: drives a real turn on the
+  // owner's own chat session and returns the reply to the caller (app
+  // conversation channel, voice arc Stage 0). Same trust class as the
+  // other admin daemon-control routes below.
+  'POST /v1/companion/converse': 'admin',
   // admin — daemon-control (daemon_introspect / daemon_remediate)
   'GET /v1/turns': 'admin',
   'GET /v1/sessions': 'admin',
