@@ -24,6 +24,7 @@ import { buildInboundPipeline } from './inbound/build'
 import { runStartupSweeps } from './startup-sweeps'
 import { wireMain } from './wiring'
 import type { TickBodies } from './wiring/tick-bodies'
+import { makeChatPrefs } from './chat-prefs'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -147,9 +148,15 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   }
 
   try {
+    // Single shared chat-prefs instance for this daemon — both the reply
+    // route (split behavior) and the /set command read/write through it.
+    // A second instance would have a stale in-memory cache: the store's
+    // write-through only protects its own writes, not cross-instance reads.
+    const chatPrefs = makeChatPrefs(stateDir)
     // 1. internal-api FIRST — bootstrap needs its baseUrl/token for MCP wiring
     const internalApi = await registerInternalApi({
       stateDir, daemonPid: process.pid, memory: memoryFS, db, projects: ilink.projects,
+      getChatPrefs: (c) => chatPrefs.get(c),
       setUserName: (chatId, name) => ilink.setUserName(chatId, name),
       voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus() },
       sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),
@@ -195,7 +202,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setA2A(boot.a2aDeps)
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({
-      stateDir, db, ilink, accounts, boot, dangerously,
+      stateDir, db, ilink, accounts, boot, dangerously, chatPrefs,
       // Task 11 — tick-bodies pass this to resolveTier() when computing
       // the companion's tierProfile. Same singleton import the bootstrap
       // coordinator uses; 5s TTL cache inside `loadAccess` keeps the
