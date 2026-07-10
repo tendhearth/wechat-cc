@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSystemPrompt, careSection, daemonSelfHealSection, stickerSection } from './prompt-builder'
+import { buildSystemPrompt, careSection, daemonSelfHealSection, personaCultivationSection, personaSection, stickerSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
   function defaults() {
@@ -269,5 +269,61 @@ describe('sticker prompt section', () => {
     const withEmpty = buildSystemPrompt({ ...base, stickerTags: [] })
     expect(withEmpty).toBe(withoutKey)
     expect(withoutKey).not.toContain('send_sticker')
+  })
+})
+
+describe('persona prompt section', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+
+  it('personaSection() includes the 人设 heading + the given content', () => {
+    const s = personaSection('说话像个话痨,喜欢用叠词')
+    expect(s).toContain('人设')
+    expect(s).toContain('说话像个话痨,喜欢用叠词')
+  })
+
+  it('personaSection() caps content at 4000 chars', () => {
+    const long = 'x'.repeat(5000)
+    const s = personaSection(long)
+    expect(s.length).toBeLessThan(4200)
+    expect(s).not.toContain('x'.repeat(4001))
+  })
+
+  it('personaCultivationSection() mentions persona.md, memory_write, and 克制', () => {
+    const s = personaCultivationSection()
+    expect(s).toContain('persona.md')
+    expect(s).toContain('memory_write')
+    expect(s).toContain('克制')
+  })
+
+  it('buildSystemPrompt includes the persona section when persona is a non-empty string', () => {
+    const p = buildSystemPrompt({ ...base, persona: '喜欢用颜文字' })
+    expect(p).toContain('喜欢用颜文字')
+    expect(p).toContain('人设')
+  })
+
+  it('buildSystemPrompt is byte-identical whether persona is absent or whitespace-only, and omits the persona section', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withWhitespace = buildSystemPrompt({ ...base, persona: '  ' })
+    expect(withWhitespace).toBe(withoutKey)
+    expect(withoutKey).not.toContain('你的人设')
+  })
+
+  it('buildSystemPrompt includes the persona cultivation section when personaCultivate=true', () => {
+    const p = buildSystemPrompt({ ...base, personaCultivate: true })
+    expect(p).toContain('人设养成')
+    expect(p).toContain('memory_write')
+  })
+
+  it('buildSystemPrompt is byte-identical whether personaCultivate is false or simply absent, and omits the cultivation section', () => {
+    const withFalse = buildSystemPrompt({ ...base, personaCultivate: false })
+    const withoutKey = buildSystemPrompt({ ...base })
+    expect(withFalse).toBe(withoutKey)
+    expect(withoutKey).not.toContain('人设养成')
+  })
+
+  it('both persona sections appear together when both are enabled', () => {
+    const p = buildSystemPrompt({ ...base, persona: '话风活泼', personaCultivate: true })
+    expect(p).toContain('你的人设')
+    expect(p).toContain('人设养成')
   })
 })

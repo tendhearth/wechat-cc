@@ -73,6 +73,22 @@ export interface BuildSystemPromptArgs {
    * set it).
    */
   stickerTags?: string[]
+  /**
+   * This chat's persona.md content (persona design — "白纸养成" character
+   * sheet). When present and non-blank, adds the persona section right
+   * after the identity section so the agent stays in-character across the
+   * conversation. Sliced to 4000 chars to bound prompt cost. Absent or
+   * whitespace-only ⇒ output is byte-identical to before this field existed
+   * (mirrors `careEnabled`/`stickerTags`'s contract).
+   */
+  persona?: string
+  /**
+   * When true, this is an owner chat and the persona-cultivation section is
+   * added so the agent knows it may write persona.md updates via
+   * memory_write as the character forms through conversation. Default
+   * false/absent ⇒ output is byte-identical to before this field existed.
+   */
+  personaCultivate?: boolean
 }
 
 /**
@@ -85,12 +101,14 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
 
   const sections: string[] = [
     baseChannelSection(providerId),
+    args.persona && args.persona.trim().length > 0 ? personaSection(args.persona) : '',
     toolsSection(),
     delegateAvailable ? delegateSection(peerProviderId) : '',
     a2aSection(),
     args.daemonOpsAvailable ? daemonSelfHealSection() : '',
     args.fileLocateAvailable ? fileLocateSection() : '',
     args.careEnabled ? careSection() : '',
+    args.personaCultivate === true ? personaCultivationSection() : '',
     args.stickerTags && args.stickerTags.length > 0 ? stickerSection(args.stickerTags) : '',
     memorySection(),
     multiModeAwarenessSection(),
@@ -194,6 +212,35 @@ export function fileLocateSection(): string {
 - 找到并确认后，用 \`Read\` 打开来回答，并用 \`memory_write\` 往 \`locations.md\` 追一行「这是什么 → 绝对路径」，下次直接命中。
 - 实在找不到，就在微信问主人一句「X 一般放哪？」（只问这一次），拿到答案把那个目录记进 \`locations.md\`。
 范围是用出来的，不是让主人配置出来的。`
+}
+
+/**
+ * Persona identity section — appears when this chat has a non-blank
+ * persona.md (persona design). Placed right after baseChannelSection so
+ * identity (你是 ${providerId}) comes first and character/voice comes
+ * second. Content is sliced to 4000 chars to bound per-turn prompt cost
+ * (this file is appended on EVERY turn — see module header).
+ */
+export function personaSection(content: string): string {
+  return `## 你的人设(persona)
+
+下面是你自己维护的人设档案(persona.md)。这就是你的性格和说话方式——在所有对话里保持一致地做这个"人":
+
+${content.slice(0, 4000)}`
+}
+
+/**
+ * Persona-cultivation capability (owner chat only) — tells the agent WHEN
+ * and HOW to write persona.md: it's a "白纸养成" character sheet that forms
+ * out of the owner/agent relationship over time, not a spec to fill in
+ * eagerly. The "克制" framing exists because without it the agent tends to
+ * rewrite the whole file after every notable exchange, which defeats the
+ * slow-growth premise of the design.
+ */
+export function personaCultivationSection(): string {
+  return `## 人设养成(persona.md)
+
+persona.md 在你和主人的对话记忆里,是"白纸养成"的性格档案。随着相处,把逐渐形成的说话风格、性格特质、主人的调教(对标谁、什么语气、什么雷区)用 memory_write 写进去;简短、条目化。**改动要克制——人格是缓慢生长的,不是每天重写。** 主人说"对标 XXX / 以后这样说话"时,更新 persona.md 并口头确认。`
 }
 
 /**
