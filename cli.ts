@@ -797,8 +797,15 @@ const providerShowCmd = defineCommand({
   args: { json: { type: 'boolean', description: 'JSON envelope' } },
   run({ args }) {
     const config = loadAgentConfig(STATE_DIR)
+    // Read via activeModel(), not config.model directly: cursor/openai keep
+    // their pin in cursorModel/openaiModel, and the generic `model` field can
+    // hold a stale value left over from a previous claude/codex selection
+    // (intentionally retained on provider switch — see computeProviderSetOutcome
+    // — so switching back to claude/codex remembers its model). Reading
+    // config.model unconditionally would print that stale value for the
+    // wrong provider.
     if (args.json) console.log(JSON.stringify(ProviderShowOutput.parse(config), null, 2))
-    else console.log(`provider: ${config.provider}${config.model ? ` (${config.model})` : ''} unattended=${config.dangerouslySkipPermissions}`)
+    else console.log(`provider: ${config.provider}${activeModel(config) ? ` (${activeModel(config)})` : ''} unattended=${config.dangerouslySkipPermissions}`)
   },
 })
 
@@ -841,10 +848,18 @@ export function computeProviderSetOutcome(
   let next: AgentConfig = {
     ...existing,
     provider,
-    ...(args.model !== undefined && provider !== 'openai' ? { model: args.model } : {}),
     ...(unattended !== undefined ? { dangerouslySkipPermissions: unattended } : {}),
     ...(autoStart !== undefined ? { autoStart } : {}),
     ...(closeStopsDaemon !== undefined ? { closeStopsDaemon } : {}),
+  }
+  // Persist an explicit --model into the field the target provider actually
+  // reads (claude/codex share the generic `model`; cursor/openai each keep
+  // their own). withModelForProvider is the single source of truth for that
+  // mapping — writing straight into the generic `model` field for every
+  // provider (the old behavior) was a latent bug: it silently no-opped
+  // `provider set cursor --model ...` since cursor never reads `model`.
+  if (args.model !== undefined) {
+    next = withModelForProvider(next, provider, args.model)
   }
   // When switching provider, drop a stale model from the previous provider
   // unless the caller explicitly set one.
@@ -857,11 +872,10 @@ export function computeProviderSetOutcome(
     if (!baseUrl) {
       return { ok: false, error: 'provider set openai: 需要 --base-url,例如 https://api.deepseek.com/v1;API key 走环境变量 WECHAT_OPENAI_API_KEY' }
     }
-    const model = args.model ?? existing.openaiModel
-    if (!model) {
+    if (!(args.model ?? existing.openaiModel)) {
       return { ok: false, error: 'provider set openai: 需要 --model,例如 deepseek-chat 或 kimi-k2.7-code' }
     }
-    next = { ...withModelForProvider(next, 'openai', model), openaiBaseUrl: baseUrl }
+    next = { ...next, openaiBaseUrl: baseUrl }
   }
 
   let message = `provider set: ${next.provider}${activeModel(next) ? ` (${activeModel(next)})` : ''} unattended=${next.dangerouslySkipPermissions} autoStart=${next.autoStart} closeStopsDaemon=${next.closeStopsDaemon}`

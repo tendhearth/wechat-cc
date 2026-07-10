@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { runCommand } from 'citty'
 import { cittyRoot, computeProviderSetOutcome } from './cli'
-import type { AgentConfig } from './src/lib/agent-config'
+import { activeModel, type AgentConfig } from './src/lib/agent-config'
 
 // PR4 batch 3c removed parseCliArgs — every subcommand now flows through
 // citty. The legacy describe('parseCliArgs') block + per-subcommand parse
@@ -359,6 +359,34 @@ describe('citty migrated commands', () => {
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) throw new Error('expected ok')
     expect(outcome.warning).toContain('ignored')
+  })
+
+  it('provider set cursor with --model persists cursorModel, not the generic model field', () => {
+    const outcome = computeProviderSetOutcome({ provider: 'cursor', model: 'composer-2' }, baseConfig, {})
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) throw new Error('expected ok')
+    expect(outcome.config.cursorModel).toBe('composer-2')
+    expect(outcome.config.model).toBeUndefined()
+    expect(outcome.message).toContain('composer-2')
+    expect(activeModel(outcome.config)).toBe('composer-2')
+  })
+
+  it('provider set openai retains a prior claude/codex generic model as a stale-but-harmless field, while activeModel resolves to the new openai model', () => {
+    const existing: AgentConfig = { ...baseConfig, provider: 'claude', model: 'sonnet-x' }
+    const outcome = computeProviderSetOutcome(
+      { provider: 'openai', model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' },
+      existing,
+      {},
+    )
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) throw new Error('expected ok')
+    expect(outcome.config.openaiModel).toBe('deepseek-chat')
+    // Stale generic `model` from the previous (claude) provider is retained
+    // rather than deleted — harmless since `show`/activeModel() key off the
+    // current provider, and it means switching back to claude later still
+    // remembers 'sonnet-x'.
+    expect(outcome.config.model).toBe('sonnet-x')
+    expect(activeModel(outcome.config)).toBe('deepseek-chat')
   })
 
   // ── PR4 batch 3b — memory / account / daemon / demo ─────────────────
