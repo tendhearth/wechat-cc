@@ -32,6 +32,14 @@ describe('mwActivity', () => {
     expect(recordInbound).not.toHaveBeenCalled()
   })
 
+  it('calls resetCareNoReply(chatId) after next() when consumedBy unset and dep provided', async () => {
+    const recordInbound = vi.fn(async () => {})
+    const resetCareNoReply = vi.fn()
+    const mw = makeMwActivity({ recordInbound, resetCareNoReply, log: () => {} })
+    await mw(mkCtx(), async () => {})
+    expect(resetCareNoReply).toHaveBeenCalledWith('c1')
+  })
+
   it('catches recordInbound failure (does not throw)', async () => {
     const lines: string[] = []
     const mw = makeMwActivity({

@@ -25,6 +25,9 @@ import { runStartupSweeps } from './startup-sweeps'
 import { wireMain } from './wiring'
 import type { TickBodies } from './wiring/tick-bodies'
 import { makeChatPrefs } from './chat-prefs'
+import { makeCareLedger } from './companion/care-ledger'
+import { careLevel } from './companion/calibration'
+import { loadCompanionConfig } from './companion/config'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -153,10 +156,16 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // A second instance would have a stale in-memory cache: the store's
     // write-through only protects its own writes, not cross-instance reads.
     const chatPrefs = makeChatPrefs(stateDir)
+    // Single shared care-ledger instance for this daemon — mirrors chatPrefs
+    // above. pushTick claims/reads it; the inbound path resets the no-reply
+    // streak on every message. A second instance would have a stale
+    // in-memory cache (write-through only protects its own writes).
+    const careLedger = makeCareLedger(stateDir)
     // 1. internal-api FIRST — bootstrap needs its baseUrl/token for MCP wiring
     const internalApi = await registerInternalApi({
       stateDir, daemonPid: process.pid, memory: memoryFS, db, projects: ilink.projects,
       getChatPrefs: (c) => chatPrefs.get(c),
+      setChatPref: (c, p) => chatPrefs.set(c, p),
       setUserName: (chatId, name) => ilink.setUserName(chatId, name),
       voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus() },
       sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),
@@ -192,6 +201,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       mintSessionToken: internalApi.mintSessionToken,
       invalidateSession: internalApi.invalidateSession,
       internalApi: { baseUrl: internalApi.baseUrl, tokenFilePath: internalApi.tokenFilePath },
+      // Proactive-care design §5/§7 — resolve this chat's effective care
+      // level per-spawn (chat-prefs override ∪ default_chat_id fallback).
+      // loadCompanionConfig is a cheap file read; acceptable per-spawn cost.
+      careLevelFor: (c) => careLevel(c, chatPrefs.get(c), loadCompanionConfig(stateDir).default_chat_id ?? undefined),
     })
     bootRef = boot
     internalApi.setDelegate({ dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() })
@@ -202,7 +215,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setA2A(boot.a2aDeps)
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({
-      stateDir, db, ilink, accounts, boot, dangerously, chatPrefs,
+      stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger,
       // Task 11 — tick-bodies pass this to resolveTier() when computing
       // the companion's tierProfile. Same singleton import the bootstrap
       // coordinator uses; 5s TTL cache inside `loadAccess` keeps the
