@@ -109,6 +109,15 @@ export interface BuildSystemPromptArgs {
    * Absent or false ⇒ output is byte-identical to before this field existed.
    */
   personaEmpty?: boolean
+  /**
+   * When true, adds the bubble-replies section (行为流式气泡回复 design):
+   * teaches the agent to send each complete thought as its own `reply` call
+   * as it forms, instead of accumulating the whole answer into one big send.
+   * Placed right after `toolsSection()` — it's core reply mechanics, not a
+   * per-chat personality flourish. Absent or false ⇒ output is byte-identical
+   * to before this field existed (mirrors `careEnabled`'s contract).
+   */
+  bubbleReplies?: boolean
 }
 
 /**
@@ -123,6 +132,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     baseChannelSection(providerId),
     args.persona && args.persona.trim().length > 0 ? personaSection(args.persona) : '',
     toolsSection(),
+    args.bubbleReplies === true ? bubbleRepliesSection() : '',
     delegateAvailable ? delegateSection(peerProviderId) : '',
     a2aSection(),
     args.daemonOpsAvailable ? daemonSelfHealSection() : '',
@@ -179,6 +189,23 @@ function toolsSection(): string {
 
 Companion / 主动推送（详见末尾段）：
 - \`companion_status()\` / \`companion_enable()\` / \`companion_disable()\` / \`companion_snooze({minutes})\` / \`companion_import_local({enabled})\`（开关本机历史自动导入）`
+}
+
+/**
+ * Bubble-replies capability (行为流式气泡回复 design) — teaches behavioral
+ * streaming: since tool-call arguments only reach us fully generated (no
+ * transport-level partial-text flush), the agent has to fake the "typing
+ * out loud" feel itself by sending multiple `reply` calls as each complete
+ * thought forms, instead of one big reply at the end. Bubble boundaries are
+ * semantic (the model decides where a thought ends), so this is guidance,
+ * not a mechanical splitter — mechanical splitting still exists as the
+ * route-level fallback (splitReply) for whenever the agent sends one big
+ * text anyway.
+ */
+export function bubbleRepliesSection(): string {
+  return `## 气泡式回复(像真人一样分条发)
+
+长回答不要攒成一大段最后一次发。像真人打字那样:想好第一个意思就先调 reply 发出去(先说结论/直接回应),然后继续想、继续查,再把下一条发出去。每条一个完整的意思;一轮最多 2-4 条,短回答就一条——别为拆而拆。代码要完整地放在一条里发,永远不要把代码切开。补充/链接可以单独一条。`
 }
 
 function delegateSection(peerProviderId: ProviderId): string {

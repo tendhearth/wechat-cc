@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSystemPrompt, careSection, daemonSelfHealSection, newRelationshipSection, personaCultivationSection, personaSection, stickerSection } from './prompt-builder'
+import { buildSystemPrompt, bubbleRepliesSection, careSection, daemonSelfHealSection, newRelationshipSection, personaCultivationSection, personaSection, stickerSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
   function defaults() {
@@ -183,6 +183,32 @@ describe('buildSystemPrompt', () => {
       companionEnabled: false, delegateAvailable: true,
     })
     expect(p).toContain('delegate_mistral')
+  })
+})
+
+describe('bubble-replies prompt section', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+
+  it('bubbleRepliesSection() instructs sending the first thought immediately, caps at 2-4 bubbles, keeps code whole, and warns against splitting for its own sake', () => {
+    const s = bubbleRepliesSection()
+    expect(s).toContain('先')
+    expect(s).toContain('发出去')
+    expect(s).toContain('2-4')
+    expect(s).toContain('代码要完整')
+    expect(s).toContain('别为拆而拆')
+  })
+
+  it('buildSystemPrompt includes the bubble-replies section when bubbleReplies=true', () => {
+    const p = buildSystemPrompt({ ...base, bubbleReplies: true })
+    expect(p).toContain('气泡式回复')
+    expect(p).toContain('2-4')
+  })
+
+  it('buildSystemPrompt is byte-identical whether bubbleReplies is false or simply absent, and omits the section', () => {
+    const withFalse = buildSystemPrompt({ ...base, bubbleReplies: false })
+    const withoutKey = buildSystemPrompt({ ...base })
+    expect(withFalse).toBe(withoutKey)
+    expect(withoutKey).not.toContain('气泡式回复')
   })
 })
 

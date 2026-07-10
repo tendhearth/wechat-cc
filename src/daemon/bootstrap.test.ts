@@ -775,6 +775,56 @@ describe('bootstrap', () => {
     expect(prompt).not.toContain('现在还是空的')
   })
 
+  it('buildInstructions includes the bubble-replies section when bubbleRepliesFor returns true (bubble-replies design)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      bubbleRepliesFor: (chatId: string) => chatId === 'split-on-chat',
+    })
+    const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'split-on-chat')
+    expect(prompt).toContain('气泡式回复')
+    const otherPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'other-chat')
+    expect(otherPrompt).not.toContain('气泡式回复')
+  })
+
+  it('buildInstructions omits the bubble-replies section when bubbleRepliesFor returns false, and is byte-identical to the thunk being absent entirely', async () => {
+    const depsBase = {
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+    }
+    const bFalse = await buildBootstrap({ ...depsBase, bubbleRepliesFor: () => false })
+    const bAbsent = await buildBootstrap({ ...depsBase })
+    const promptFalse = bFalse.buildInstructions('claude', TIER_PROFILES.admin, 'any-chat')
+    const promptAbsent = bAbsent.buildInstructions('claude', TIER_PROFILES.admin, 'any-chat')
+    expect(promptFalse).not.toContain('气泡式回复')
+    expect(promptFalse).toBe(promptAbsent)
+  })
+
+  it('buildInstructions includes the bubble-replies section for GUEST-tier chats too — deliberately NO tier gate, since reply is guest-allowed (unlike careEnabled/newRelationship which require memory_write)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      bubbleRepliesFor: () => true,
+    })
+    const guestPrompt = b.buildInstructions('claude', TIER_PROFILES.guest, 'guest-chat')
+    expect(guestPrompt).toContain('气泡式回复')
+  })
+
   // ── Per-session canUseTool (concurrent-dispatch tier hazard) ─────────
   //
   // Before this fix, the canUseTool closure was built ONCE at bootstrap

@@ -216,6 +216,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // onboarding-curiosity design §2 — sync because buildInstructions is
       // sync; cheap indexed COUNT per spawn (chat_id, direction indexed).
       newRelationshipFor: (c) => countInboundMessagesSync(db, c) < NEW_RELATIONSHIP_MSG_COUNT,
+      // bubble-replies design (行为流式气泡回复) — same per-chat 拆分 pref
+      // that gates route-level mechanical splitting (getChatPrefs above)
+      // also gates the bubble-guidance prompt section: `/set split off`
+      // silences BOTH, matching the user-facing meaning of 拆分.
+      bubbleRepliesFor: (c) => chatPrefs.get(c).split !== false,
       // image-stickers plan §5 — per-chat opt-out (chatPrefs.stickers === false)
       // hides the sticker section from that chat's prompt; empty lib ⇒ [] ⇒
       // stickerSection omitted entirely (see prompt-builder.ts).
