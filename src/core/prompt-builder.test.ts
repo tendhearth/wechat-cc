@@ -235,6 +235,14 @@ describe('sticker prompt section', () => {
     expect(s).toContain('party')
   })
 
+  it('stickerSection() caps the rendered list at 30 tags and drops any tag containing a newline', () => {
+    const many = Array.from({ length: 35 }, (_, i) => `tag${i}`)
+    const s = stickerSection([...many, 'bad\ntag'])
+    expect(s).not.toContain('bad\ntag')
+    expect(s).not.toContain('tag34')
+    expect(s).toContain('tag29')
+  })
+
   it('buildSystemPrompt includes the sticker section when stickerTags is non-empty', () => {
     const p = buildSystemPrompt({ ...base, stickerTags: ['happy', 'sad'] })
     expect(p).toContain('send_sticker')

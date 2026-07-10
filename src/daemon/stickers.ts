@@ -18,7 +18,7 @@ export interface StickerEntry {
 }
 
 export interface StickerLib {
-  /** Copies sourcePath into the library. Throws Error('invalid_extension') / Error('empty_tags'). */
+  /** Copies sourcePath into the library. Throws Error('invalid_extension') / Error('empty_tags') / Error('invalid_tag'). */
   save(sourcePath: string, tags: string[], desc?: string): { file: string; tags: string[] }
   /** ABSOLUTE path of a random match; trim+case-insensitive tag compare. */
   resolve(tag: string): string | null
@@ -30,6 +30,28 @@ export interface StickerLib {
 interface IndexValue {
   tags: string[]
   desc?: string
+}
+
+// Forbidden anywhere in a (trimmed) tag: control chars (incl. newline/CR),
+// backtick, #, [, ], <, > — these are the characters that let a tag escape
+// its plain-text slot in stickerSection() and land as markdown/injection
+// inside a chat's system prompt. save_sticker is trusted-tier but the
+// resulting tags fan out into EVERY chat's prompt via allTags(), so a
+// malicious/careless trusted-tier tag would be a cross-tier injection.
+const FORBIDDEN_TAG_CHARS = /[`#[\]<>\x00-\x1f\x7f]/
+
+/**
+ * Normalizes a single tag: trim, collapse internal whitespace to single
+ * spaces, then reject (Error('invalid_tag')) if empty, >20 chars, or
+ * containing any forbidden character (checked pre-collapse so embedded
+ * newlines/control chars are never silently turned into spaces).
+ */
+function normalizeTag(raw: string): string {
+  const trimmed = raw.trim()
+  if (FORBIDDEN_TAG_CHARS.test(trimmed)) throw new Error('invalid_tag')
+  const normalized = trimmed.replace(/\s+/g, ' ')
+  if (normalized.length === 0 || normalized.length > 20) throw new Error('invalid_tag')
+  return normalized
 }
 
 function parseIndexValue(raw: string): IndexValue | null {
@@ -69,6 +91,9 @@ export function makeStickerLib(stateDir: string, deps?: { store?: StateStore; ra
       if (!Array.isArray(tags) || tags.length === 0 || !tags.every((t) => typeof t === 'string' && t.trim().length > 0)) {
         throw new Error('empty_tags')
       }
+      // Normalize + validate each tag at the source (before it ever reaches
+      // stickerSection()'s prompt injection), then dedupe.
+      const normalizedTags = [...new Set(tags.map(normalizeTag))]
 
       mkdirSync(dir, { recursive: true })
 
@@ -81,8 +106,8 @@ export function makeStickerLib(stateDir: string, deps?: { store?: StateStore; ra
       }
 
       copyFileSync(sourcePath, join(dir, candidate))
-      store.set(candidate, JSON.stringify({ tags, desc }))
-      return { file: candidate, tags }
+      store.set(candidate, JSON.stringify({ tags: normalizedTags, desc }))
+      return { file: candidate, tags: normalizedTags }
     },
 
     resolve(tag) {

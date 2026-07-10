@@ -118,6 +118,58 @@ describe('stickers', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 
+  it('save() rejects a tag containing a newline', () => {
+    const dir = tmp()
+    try {
+      const src = join(dir, 'a.png')
+      writeFileSync(src, 'x')
+      const lib = makeStickerLib(dir)
+      expect(() => lib.save(src, ['line1\nline2'])).toThrow('invalid_tag')
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('save() rejects a tag longer than 20 chars', () => {
+    const dir = tmp()
+    try {
+      const src = join(dir, 'a.png')
+      writeFileSync(src, 'x')
+      const lib = makeStickerLib(dir)
+      expect(() => lib.save(src, ['a'.repeat(21)])).toThrow('invalid_tag')
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('save() rejects a tag containing a backtick', () => {
+    const dir = tmp()
+    try {
+      const src = join(dir, 'a.png')
+      writeFileSync(src, 'x')
+      const lib = makeStickerLib(dir)
+      expect(() => lib.save(src, ['`rm -rf`'])).toThrow('invalid_tag')
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('save() trims and collapses internal whitespace in tags', () => {
+    const dir = tmp()
+    try {
+      const src = join(dir, 'a.png')
+      writeFileSync(src, 'x')
+      const lib = makeStickerLib(dir)
+      const entry = lib.save(src, [' 开 心 '])
+      expect(entry.tags).toEqual(['开 心'])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('save() dedupes normalized tags', () => {
+    const dir = tmp()
+    try {
+      const src = join(dir, 'a.png')
+      writeFileSync(src, 'x')
+      const lib = makeStickerLib(dir)
+      const entry = lib.save(src, ['happy', ' happy ', 'happy'])
+      expect(entry.tags).toEqual(['happy'])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
   it('allTags() returns unique, sorted tags across entries', () => {
     const dir = tmp()
     try {

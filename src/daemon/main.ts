@@ -25,6 +25,7 @@ import { runStartupSweeps } from './startup-sweeps'
 import { wireMain } from './wiring'
 import type { TickBodies } from './wiring/tick-bodies'
 import { makeChatPrefs } from './chat-prefs'
+import { makeStickerLib } from './stickers'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
@@ -156,6 +157,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // A second instance would have a stale in-memory cache: the store's
     // write-through only protects its own writes, not cross-instance reads.
     const chatPrefs = makeChatPrefs(stateDir)
+    // Single shared sticker-library instance for this daemon (image-stickers
+    // plan) — backs the /v1/stickers* routes and the stickerTagsFor thunk
+    // below. Mirrors chatPrefs above: a second instance would read a stale
+    // in-memory index (write-through only protects its own writes).
+    const stickerLib = makeStickerLib(stateDir)
     // Single shared care-ledger instance for this daemon — mirrors chatPrefs
     // above. pushTick claims/reads it; the inbound path resets the no-reply
     // streak on every message. A second instance would have a stale
@@ -166,6 +172,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       stateDir, daemonPid: process.pid, memory: memoryFS, db, projects: ilink.projects,
       getChatPrefs: (c) => chatPrefs.get(c),
       setChatPref: (c, p) => chatPrefs.set(c, p),
+      stickers: stickerLib,
       setUserName: (chatId, name) => ilink.setUserName(chatId, name),
       voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus() },
       sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),
@@ -205,6 +212,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // level per-spawn (chat-prefs override ∪ default_chat_id fallback).
       // loadCompanionConfig is a cheap file read; acceptable per-spawn cost.
       careLevelFor: (c) => careLevel(c, chatPrefs.get(c), loadCompanionConfig(stateDir).default_chat_id ?? undefined),
+      // image-stickers plan §5 — per-chat opt-out (chatPrefs.stickers === false)
+      // hides the sticker section from that chat's prompt; empty lib ⇒ [] ⇒
+      // stickerSection omitted entirely (see prompt-builder.ts).
+      stickerTagsFor: (c) => (chatPrefs.get(c).stickers !== false ? stickerLib.allTags() : []),
     })
     bootRef = boot
     internalApi.setDelegate({ dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() })
