@@ -618,6 +618,65 @@ describe('bootstrap', () => {
     expect(noStickerPrompt).not.toContain('send_sticker')
   })
 
+  it('buildInstructions includes the persona section (but not cultivation) when personaFor returns content with cultivate:false (persona design §2)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      personaFor: () => ({ content: '毒舌但温柔', cultivate: false }),
+    })
+    const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(prompt).toContain('毒舌但温柔')
+    expect(prompt).not.toContain('人设养成(persona.md)')
+  })
+
+  it('buildInstructions includes BOTH the persona section and the persona-cultivation section when personaFor returns cultivate:true (persona design §2)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      personaFor: () => ({ content: '毒舌但温柔', cultivate: true }),
+    })
+    const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(prompt).toContain('毒舌但温柔')
+    expect(prompt).toContain('人设养成(persona.md)')
+  })
+
+  it('buildInstructions is byte-identical whether or not other bootstraps wire personaFor, when this bootstrap omits it (persona design §2 inert default)', async () => {
+    const withoutPersonaDep = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+    })
+    const withUndefinedPersona = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      personaFor: () => ({}),
+    })
+    const promptA = withoutPersonaDep.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    const promptB = withUndefinedPersona.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(promptA).toBe(promptB)
+    expect(promptA).not.toContain('你的人设(persona)')
+    expect(promptA).not.toContain('人设养成(persona.md)')
+  })
+
   // ── Per-session canUseTool (concurrent-dispatch tier hazard) ─────────
   //
   // Before this fix, the canUseTool closure was built ONCE at bootstrap

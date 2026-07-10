@@ -237,6 +237,17 @@ export interface BootstrapDeps {
    * happens in main.ts (later task).
    */
   stickerTagsFor?: (chatId: string) => string[]
+  /**
+   * Resolve a chat's persona content + whether it may cultivate persona.md
+   * (persona design §2). Read per-spawn (like `careLevelFor`'s siblings) so
+   * a hand-edited persona.md shows up in the prompt without a daemon
+   * restart. Absent ⇒ BOTH the persona identity section and the
+   * persona-cultivation section are NEVER included for any chat — tests and
+   * minimal embeddings that don't wire this stay byte-identical to before
+   * the persona feature existed. Wiring the actual thunk (owner-chat
+   * memory/persona.md read via `default_chat_id`) happens in main.ts.
+   */
+  personaFor?: (chatId: string) => { content?: string; cultivate?: boolean }
 }
 
 export interface Bootstrap {
@@ -896,9 +907,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // memory_write), so showing the care section would just burn turns on
   // denied tool calls — gap check-ins (guest-allowed `reply`) work fine
   // without it. stickerTags mirrors `deps.stickerTagsFor`
-  // the same way — absent thunk ⇒ [] ⇒ section never included.
-  const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string): string =>
-    buildSystemPrompt({
+  // the same way — absent thunk ⇒ [] ⇒ section never included. persona /
+  // personaCultivate mirror `deps.personaFor` the same way — absent thunk
+  // ⇒ both persona sections never included (persona design §2).
+  const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string): string => {
+    const p = deps.personaFor?.(chatId)
+    return buildSystemPrompt({
       providerId,
       // Unused when delegateAvailable is false; fall back to the daemon default.
       peerProviderId: capabilitiesFor(providerId).defaultPeer ?? defaultProviderId,
@@ -908,7 +922,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       fileLocateAvailable: tierProfile.allow.has('file_locate'),
       careEnabled: (deps.careLevelFor?.(chatId) ?? 'off') !== 'off' && tierProfile.allow.has('memory_write'),
       stickerTags: deps.stickerTagsFor?.(chatId) ?? [],
+      persona: p?.content,
+      personaCultivate: p?.cultivate === true,
     })
+  }
 
   const sessionManager = new SessionManager({
     maxConcurrent: 6,

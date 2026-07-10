@@ -216,6 +216,19 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // hides the sticker section from that chat's prompt; empty lib ⇒ [] ⇒
       // stickerSection omitted entirely (see prompt-builder.ts).
       stickerTagsFor: (c) => (chatPrefs.get(c).stickers !== false ? stickerLib.allTags() : []),
+      // persona design §2 — owner chat's persona.md content, read fresh per
+      // spawn (hand-edit shows up with no daemon restart, like careLevelFor).
+      // makeMemoryFS's constructor is cheap (existsSync + maybe mkdirSync +
+      // one realpathSync) — same per-spawn-construction posture as
+      // loadCompanionConfig above. cultivate is true only for the owner's
+      // OWN chat, so the persona-cultivation write guidance never appears
+      // in chats the owner is delegating/observing from elsewhere.
+      personaFor: (c) => {
+        const ownerChat = loadCompanionConfig(stateDir).default_chat_id
+        if (!ownerChat) return {}
+        const fs = makeMemoryFS({ rootDir: join(stateDir, 'memory', ownerChat) })
+        return { content: fs.read('persona.md') ?? undefined, cultivate: c === ownerChat }
+      },
     })
     bootRef = boot
     internalApi.setDelegate({ dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() })
