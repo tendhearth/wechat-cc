@@ -2,9 +2,40 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildTickBodies, buildPushTickText, type TickDeps } from './tick-bodies'
+import { buildTickBodies, buildPushTickText, buildGapCheckinText, type TickDeps } from './tick-bodies'
 import { TIER_PROFILES } from '../../core/user-tier'
 import type { Access } from '../../lib/access'
+import { openTestDb, type Db } from '../../lib/db'
+import { makeMessagesStore } from '../../lib/messages-store'
+import type { CareLedgerEntry } from '../companion/calibration'
+import type { CareLedger } from '../companion/care-ledger'
+
+/** Minimal in-memory fake of the structural chatPrefs subset TickDeps needs. */
+function makeFakeChatPrefs(
+  entries: Record<string, { care?: 'off' | 'low' | 'high' }> = {},
+): { get(chatId: string): { care?: 'off' | 'low' | 'high' }; list(): string[] } {
+  return {
+    get: (chatId) => entries[chatId] ?? {},
+    list: () => Object.keys(entries),
+  }
+}
+
+/** Minimal in-memory fake CareLedger — mirrors makeCareLedger's semantics
+ * (claim increments noReplyCount; tests that need a specific noReplyCount
+ * pre-seed `entries` directly). */
+function makeFakeCareLedger(entries: Record<string, CareLedgerEntry> = {}): CareLedger {
+  return {
+    get: (chatId) => entries[chatId] ?? { noReplyCount: 0 },
+    claim: (chatId, nowIso) => {
+      const cur = entries[chatId] ?? { noReplyCount: 0 }
+      entries[chatId] = { lastProactiveAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
+    },
+    resetNoReply: (chatId) => {
+      const cur = entries[chatId]
+      if (cur) entries[chatId] = { ...cur, noReplyCount: 0 }
+    },
+  }
+}
 
 describe('buildPushTickText', () => {
   it('formats a push tick envelope with the supplied nowIso + chatId + intention', () => {
@@ -19,6 +50,21 @@ describe('buildPushTickText', () => {
     expect(out).toContain('memory_read')
     expect(out).toContain('不算过期')
     expect(out).toContain('晚了几天也照常发')
+  })
+})
+
+describe('buildGapCheckinText', () => {
+  it('formats a gap check-in envelope with the supplied nowIso + chatId + daysSinceContact', () => {
+    const out = buildGapCheckinText({
+      nowIso: '2026-05-16T01:30:00.000Z',
+      chatId: 'chat_test_1',
+      daysSinceContact: 3,
+    })
+    expect(out).toContain('<companion_tick ts="2026-05-16T01:30:00.000Z" chat_id="chat_test_1" kind="gap" />')
+    expect(out).toContain('主动问候')
+    expect(out).toContain('3 天')
+    expect(out).toContain('reply')
+    expect(out).toContain('这次不发')
   })
 })
 
@@ -40,6 +86,9 @@ interface Setup {
   dispatch: ReturnType<typeof vi.fn>
   logs: string[]
   deps: TickDeps
+  db: Db
+  chatPrefsEntries: Record<string, { care?: 'off' | 'low' | 'high' }>
+  careLedgerEntries: Record<string, CareLedgerEntry>
 }
 
 function setupDeps(opts: {
@@ -56,6 +105,16 @@ function setupDeps(opts: {
   /** The chat's persisted Mode, returned by coordinator.getMode. Defaults to
    * solo on defaultProviderId — i.e. the chat answers under the daemon default. */
   mode?: { kind: 'solo'; provider: string } | { kind: 'primary_tool'; primary: string } | { kind: 'parallel'; participants?: string[] } | { kind: 'chatroom'; participants?: string[] }
+  /** Task 6 — real sqlite db (all migrations applied) so pushTick's
+   * makeMessagesStore(deps.db) call works. Pass one pre-seeded with rows
+   * (via makeMessagesStore(db).append(...)) to drive the gap branch;
+   * otherwise a fresh empty db is opened. */
+  db?: Db
+  /** Task 6 — chat-prefs entries. Keys double as chatPrefs.list() — i.e.
+   * every chat that has ever set a preference (not just non-default ones). */
+  chatPrefsEntries?: Record<string, { care?: 'off' | 'low' | 'high' }>
+  /** Task 6 — care-ledger entries, keyed by chatId. */
+  careLedgerEntries?: Record<string, CareLedgerEntry>
 }): Setup {
   const stateDir = makeStateDir({
     enabled: true,
@@ -67,6 +126,9 @@ function setupDeps(opts: {
     writeFileSync(join(memDir, 'agenda.md'), opts.agendaMd)
   }
   const logs: string[] = []
+  const db = opts.db ?? openTestDb()
+  const chatPrefsEntries = opts.chatPrefsEntries ?? {}
+  const careLedgerEntries = opts.careLedgerEntries ?? {}
   // dispatch returns AsyncIterable<AgentEvent>, not a Promise — the real
   // contract. Mocking as `Promise<void>` would mask the bug that pushTick
   // was awaiting the iterable directly without iterating (PR D fix).
@@ -89,7 +151,7 @@ function setupDeps(opts: {
   const access = opts.access ?? defaultAccess
   const deps: TickDeps = {
     stateDir,
-    db: {} as never,
+    db,
     ilink: {
       loadProjects: () => ({ projects: {}, current: null }),
     } as never,
@@ -104,8 +166,10 @@ function setupDeps(opts: {
     loadAccess: () => access,
     permissionMode: 'strict',
     log: (tag, line) => { logs.push(`${tag}|${line}`) },
+    chatPrefs: makeFakeChatPrefs(chatPrefsEntries),
+    careLedger: makeFakeCareLedger(careLedgerEntries),
   }
-  return { stateDir, acquire, isInFlight, dispatch, logs, deps }
+  return { stateDir, acquire, isInFlight, dispatch, logs, deps, db, chatPrefsEntries, careLedgerEntries }
 }
 
 describe('buildTickBodies / pushTick — companion isolation (PR D)', () => {
@@ -189,7 +253,9 @@ describe('buildTickBodies / pushTick — companion isolation (PR D)', () => {
   })
 
   it('returns silently without an LLM call when no agenda.md exists', async () => {
-    // No agendaMd supplied → no agenda.md file → no due items → silent gate.
+    // No agendaMd supplied → no agenda.md file → no due items → falls
+    // through to the gap branch, which denies (no inbound message ever
+    // seen ⇒ 'never_talked') without touching session/dispatch.
     const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
     cleanup.push(s.stateDir)
     const { pushTick } = buildTickBodies(s.deps)
@@ -197,7 +263,7 @@ describe('buildTickBodies / pushTick — companion isolation (PR D)', () => {
     expect(s.isInFlight).not.toHaveBeenCalled()
     expect(s.acquire).not.toHaveBeenCalled()
     expect(s.dispatch).not.toHaveBeenCalled()
-    expect(s.logs.some(l => l.includes('no due intentions'))).toBe(true)
+    expect(s.logs.some(l => l.includes('CARE') && l.includes('reason=never_talked'))).toBe(true)
   })
 
   it('returns silently when agenda.md has only future items', async () => {
@@ -211,7 +277,7 @@ describe('buildTickBodies / pushTick — companion isolation (PR D)', () => {
     await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
     expect(s.isInFlight).not.toHaveBeenCalled()
     expect(s.acquire).not.toHaveBeenCalled()
-    expect(s.logs.some(l => l.includes('no due intentions'))).toBe(true)
+    expect(s.logs.some(l => l.includes('CARE') && l.includes('reason=never_talked'))).toBe(true)
   })
 })
 
@@ -382,6 +448,109 @@ describe('buildTickBodies / pushTick — at-most-once dedup on sleep/wake', () =
     await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
 
     expect(readFileSync(agendaPath(s.stateDir, 'chat-1'), 'utf8')).toBe(original)
+  })
+})
+
+describe('buildTickBodies / pushTick — multi-chat care sweep (Task 6)', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => {
+    for (const d of cleanup) {
+      try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ }
+    }
+  })
+
+  const agendaPath = (stateDir: string, chatId: string) =>
+    join(stateDir, 'memory', chatId, 'agenda.md')
+
+  it('(a) owner chat with a due agenda item is dispatched, agenda marked resolved, ledger claimed', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1',
+      inFlight: false,
+      agendaMd: '- [ ] due:2026-05-13 check in on project',
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).toHaveBeenCalledOnce()
+    expect(readFileSync(agendaPath(s.stateDir, 'chat-1'), 'utf8')).toContain('- [x] done:2026-05-13 check in on project')
+    expect(s.careLedgerEntries['chat-1']?.lastProactiveAtIso).toBe('2026-05-13T10:00:00.000Z')
+  })
+
+  it('(b) care:high chat with no agenda + lastInbound 3 days ago + no prior proactive ⇒ gap dispatched, text contains 天', async () => {
+    const db = openTestDb()
+    const ms = makeMessagesStore(db)
+    await ms.append({ id: 'm1', chatId: 'chat-2', ts: '2026-05-13T10:00:00.000Z', direction: 'in', kind: 'text', text: 'hi', source: 'live' })
+    const s = setupDeps({
+      defaultChatId: null,
+      inFlight: false,
+      db,
+      chatPrefsEntries: { 'chat-2': { care: 'high' } },
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-16T10:00:00.000Z' })
+    expect(s.dispatch).toHaveBeenCalledOnce()
+    expect(s.acquire.mock.calls[0]![0]).toMatchObject({ chatId: 'chat-2' })
+    const text = s.dispatch.mock.calls[0]![0] as string
+    expect(text).toContain('天')
+    expect(s.careLedgerEntries['chat-2']?.lastProactiveAtIso).toBe('2026-05-16T10:00:00.000Z')
+  })
+
+  it('(c) same chat with noReplyCount:2 is NOT dispatched, log contains paused_no_reply', async () => {
+    const db = openTestDb()
+    const ms = makeMessagesStore(db)
+    await ms.append({ id: 'm1', chatId: 'chat-2', ts: '2026-05-13T10:00:00.000Z', direction: 'in', kind: 'text', text: 'hi', source: 'live' })
+    const s = setupDeps({
+      defaultChatId: null,
+      inFlight: false,
+      db,
+      chatPrefsEntries: { 'chat-2': { care: 'high' } },
+      careLedgerEntries: { 'chat-2': { noReplyCount: 2 } },
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-16T10:00:00.000Z' })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.includes('CARE') && l.includes('paused_no_reply'))).toBe(true)
+  })
+
+  it('(d) chat with prefs set but care unset (non-owner) is untouched — no dispatch, no log', async () => {
+    const s = setupDeps({
+      defaultChatId: null,
+      inFlight: false,
+      chatPrefsEntries: { 'chat-3': {} },
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-16T10:00:00.000Z' })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.acquire).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.includes('chat-3'))).toBe(false)
+  })
+
+  it('(e) no default_chat_id + no care prefs ⇒ zero dispatches (e2e-silence invariant)', async () => {
+    const s = setupDeps({ defaultChatId: null, inFlight: false })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-16T10:00:00.000Z' })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.acquire).not.toHaveBeenCalled()
+    expect(s.isInFlight).not.toHaveBeenCalled()
+  })
+
+  it('(f) owner agenda item but ledger lastProactive 1h ago ⇒ skipped, log agenda_cooldown', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1',
+      inFlight: false,
+      agendaMd: '- [ ] due:2026-05-13 check in on project',
+      careLedgerEntries: { 'chat-1': { lastProactiveAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' }) // 1h after lastProactiveAtIso, < 20h cooldown
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.includes('CARE') && l.includes('agenda_cooldown'))).toBe(true)
   })
 })
 
