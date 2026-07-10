@@ -54,6 +54,15 @@ export interface BuildSystemPromptArgs {
    * `tierProfile.allow.has('file_locate')`. Default false.
    */
   fileLocateAvailable?: boolean
+  /**
+   * When true, this chat's effective care level (per proactive-care design
+   * §7) is not `off` — adds the care-authoring section so the agent knows
+   * to write care intentions into `agenda.md` during normal conversation
+   * and to honor presence-preference changes via `set_chat_pref`. Absent
+   * or false ⇒ output is byte-identical to before this field existed
+   * (default false; callers without a `careLevelFor` thunk never set it).
+   */
+  careEnabled?: boolean
 }
 
 /**
@@ -71,6 +80,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     a2aSection(),
     args.daemonOpsAvailable ? daemonSelfHealSection() : '',
     args.fileLocateAvailable ? fileLocateSection() : '',
+    args.careEnabled ? careSection() : '',
     memorySection(),
     multiModeAwarenessSection(),
     companionEnabled ? companionSection() : '',
@@ -173,6 +183,25 @@ export function fileLocateSection(): string {
 - 找到并确认后，用 \`Read\` 打开来回答，并用 \`memory_write\` 往 \`locations.md\` 追一行「这是什么 → 绝对路径」，下次直接命中。
 - 实在找不到，就在微信问主人一句「X 一般放哪？」（只问这一次），拿到答案把那个目录记进 \`locations.md\`。
 范围是用出来的，不是让主人配置出来的。`
+}
+
+/**
+ * Care-authoring capability — appears when this chat's effective care level
+ * (proactive-care design §7) is not `off`. Tells the agent WHEN to author a
+ * care intention (not a keyword rule — it still decides) and where it lands:
+ * the SAME agenda.md format the memory section already documents for
+ * follow-ups, so there's no new syntax for the agent to learn. Also covers
+ * the presence-preference escape hatch (`set_chat_pref`) so a "别烦我" isn't
+ * just apologised at — it changes actual future behavior.
+ */
+export function careSection(): string {
+  return `## 主动关心（agenda.md）
+
+平时聊天里，当用户提到即将发生的事、担忧或情绪（考试、面试、身体不舒服、重要日子……），把一条关心意向写进 \`agenda.md\`：\`- [ ] due:YYYY-MM-DD 关心…\`（跟长期记忆一节说的是同一个格式，不是新语法）。\`due\` 定在事情发生之后一个合适的时间点——不是记下事情本身，是记"到时候要不要问问看"。
+
+关心要自然、具体、有由头（这次聊天里确实提到的事），不要为了显得贴心而堆砌——同一个话题最多留一条关心意向，别重复记。
+
+当用户表达打扰偏好（"别烦我" / "多关心我" / "别拆分"这类），用 \`set_chat_pref\` 工具调整（\`care: off|low|high\`、\`split\`），改完口头确认一句，不要只是嘴上答应却不落实。`
 }
 
 function memorySection(): string {

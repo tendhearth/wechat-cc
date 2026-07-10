@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSystemPrompt, daemonSelfHealSection } from './prompt-builder'
+import { buildSystemPrompt, careSection, daemonSelfHealSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
   function defaults() {
@@ -197,5 +197,29 @@ describe('file-locate prompt section', () => {
     const p = buildSystemPrompt({ ...base })
     expect(p).not.toContain('locate_file')
     expect(p).not.toContain('locations.md')
+  })
+})
+
+describe('care prompt section', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+
+  it('careSection() instructs authoring care intentions into agenda.md with the due: format, and adjusting via set_chat_pref', () => {
+    const s = careSection()
+    expect(s).toContain('agenda.md')
+    expect(s).toContain('due:')
+    expect(s).toContain('set_chat_pref')
+  })
+
+  it('buildSystemPrompt includes the care section when careEnabled=true', () => {
+    const p = buildSystemPrompt({ ...base, careEnabled: true })
+    expect(p).toContain('agenda.md')
+    expect(p).toContain('set_chat_pref')
+  })
+
+  it('buildSystemPrompt is byte-identical whether careEnabled is false or simply absent, and omits the care section', () => {
+    const withFalse = buildSystemPrompt({ ...base, careEnabled: false })
+    const withoutKey = buildSystemPrompt({ ...base })
+    expect(withFalse).toBe(withoutKey)
+    expect(withoutKey).not.toContain('set_chat_pref')
   })
 })

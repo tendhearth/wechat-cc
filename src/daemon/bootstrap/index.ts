@@ -216,6 +216,17 @@ export interface BootstrapDeps {
    * file + one process-wide writer.
    */
   db: Db
+  /**
+   * Resolve a chat's effective proactive-care level (proactive-care design
+   * §5/§7): chat-prefs override ∪ default_chat_id fallback. Read per-spawn
+   * (like `careLevelFor`'s siblings `currentModelFor` / `buildInstructions`
+   * itself) so a `/set care` flip applies without a daemon restart. Absent
+   * ⇒ the care prompt section is NEVER included for any chat — tests and
+   * minimal embeddings that don't wire this stay byte-identical to before
+   * the care feature existed. Wiring the actual thunk (chat-prefs +
+   * companion default_chat_id) happens in main.ts (Task 7).
+   */
+  careLevelFor?: (chatId: string) => 'off' | 'low' | 'high'
 }
 
 export interface Bootstrap {
@@ -230,9 +241,11 @@ export interface Bootstrap {
   /**
    * The single provider-agnostic system-prompt assembler. SessionManager calls
    * it once per spawn and forwards the result via SpawnContext.appendInstructions;
-   * each provider injects it through its own transport. Exposed for tests.
+   * each provider injects it through its own transport. `chatId` gates the
+   * per-chat sections (currently: the care section, via `deps.careLevelFor`).
+   * Exposed for tests.
    */
-  buildInstructions: (providerId: ProviderId, tierProfile: TierProfile) => string
+  buildInstructions: (providerId: ProviderId, tierProfile: TierProfile, chatId: string) => string
   /** Daemon-default provider id — what new chats get until user runs `/cc` or `/codex`. */
   defaultProviderId: ProviderId
   /** Backward-compat alias for defaultProviderId. Pre-P2 callers expected this name. */
@@ -866,8 +879,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // wired (no per-provider ternary — adding a provider needs no edit here).
   // daemonOpsAvailable mirrors the admin predicate the wechat MCP server gates
   // its daemon-control tools on, so the self-heal section appears iff those
-  // tools are actually registered for this spawn.
-  const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile): string =>
+  // tools are actually registered for this spawn. careEnabled mirrors
+  // `deps.careLevelFor` the same way — absent thunk ⇒ 'off' ⇒ section never
+  // included (proactive-care design §7).
+  const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string): string =>
     buildSystemPrompt({
       providerId,
       // Unused when delegateAvailable is false; fall back to the daemon default.
@@ -876,6 +891,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       delegateAvailable: !!delegateStdioByProvider[providerId],
       daemonOpsAvailable: tierProfile.allow.has('daemon_introspect'),
       fileLocateAvailable: tierProfile.allow.has('file_locate'),
+      careEnabled: (deps.careLevelFor?.(chatId) ?? 'off') !== 'off',
     })
 
   const sessionManager = new SessionManager({

@@ -533,7 +533,7 @@ describe('bootstrap', () => {
     // Prompt assembly now lives in the single provider-agnostic buildInstructions
     // thunk (SessionManager calls it per spawn). The big things the v0.x prompt
     // missed — verify they're now in.
-    const prompt = b.buildInstructions('claude', TIER_PROFILES.admin)
+    const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, '_test')
     expect(prompt).toContain('delegate_codex')
     expect(prompt).toContain('share_page')
     expect(prompt).toContain('broadcast')
@@ -541,14 +541,17 @@ describe('bootstrap', () => {
     // Admin tier → the self-heal section is present; the codex peer gets a
     // claude-peer prompt without the delegate_codex tool name.
     expect(prompt).toContain('自我诊断')
-    const codexPrompt = b.buildInstructions('codex', TIER_PROFILES.admin)
+    // No careLevelFor wired in this bootstrap → care section never included,
+    // regardless of chatId (proactive-care design §7 opt-in-only invariant).
+    expect(prompt).not.toContain('set_chat_pref')
+    const codexPrompt = b.buildInstructions('codex', TIER_PROFILES.admin, '_test')
     expect(codexPrompt).not.toContain('delegate_codex')
     expect(codexPrompt).toContain('delegate_claude')
     // cursor's session IS wired with a delegate-claude child (bootstrap builds
     // delegateStdioForCursor), so its prompt must advertise delegate_claude —
     // peer + availability now both derive from ProviderCapabilities.defaultPeer,
     // not the old 2-provider ternary that wrongly left cursor delegate-silent.
-    expect(b.buildInstructions('cursor', TIER_PROFILES.admin)).toContain('delegate_claude')
+    expect(b.buildInstructions('cursor', TIER_PROFILES.admin, '_test')).toContain('delegate_claude')
 
     // sdkOptionsForProject just forwards whatever appendInstructions it's given
     // into the SDK preset+append slot — no assembly of its own.
@@ -557,6 +560,24 @@ describe('bootstrap', () => {
     if (typeof sp === 'string') throw new Error('expected preset+append form')
     expect(sp.type).toBe('preset')
     expect(sp.append).toBe('SEAM-PROMPT')
+  })
+
+  it('buildInstructions includes the care section only for chats whose careLevelFor is not off (proactive-care design §7)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      careLevelFor: (chatId: string) => (chatId === 'owner-chat' ? 'low' : 'off'),
+    })
+    const carePrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(carePrompt).toContain('agenda.md')
+    expect(carePrompt).toContain('set_chat_pref')
+    const noCarePrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'guest-chat')
+    expect(noCarePrompt).not.toContain('set_chat_pref')
   })
 
   // ── Per-session canUseTool (concurrent-dispatch tier hazard) ─────────
