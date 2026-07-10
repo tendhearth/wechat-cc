@@ -280,7 +280,7 @@ export function assertNotAuthFailed(text: string, log: (tag: string, line: strin
  * other consumer derives "did the agent call a reply tool this turn?" by
  * walking events and checking each `tool_call` event with this helper.
  */
-const REPLY_TOOLS = new Set(['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast'])
+const REPLY_TOOLS = new Set(['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast', 'send_sticker'])
 
 export function isReplyToolCall(ev: AgentEvent): boolean {
   return ev.kind === 'tool_call' && ev.server === 'wechat' && REPLY_TOOLS.has(ev.tool)

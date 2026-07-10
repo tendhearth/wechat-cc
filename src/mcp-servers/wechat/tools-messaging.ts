@@ -87,6 +87,23 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
   )
 
   server.registerTool(
+    'send_sticker',
+    {
+      title: 'Send a sticker from the local library',
+      description: '按 tag 从本地表情库随机选一张表情包图片发到对话(内联图片)。情绪强/庆祝/安慰的时刻用,一次最多一张;若 tag 无匹配会返回可用 tags,换个 tag 或改用文字。',
+      inputSchema: { chat_id: z.string(), tag: z.string() },
+    },
+    async ({ chat_id, tag }) => {
+      try {
+        const r = await client.request<unknown>('POST', '/v1/wechat/send_sticker', { chat_id, tag })
+        return { content: [{ type: 'text', text: JSON.stringify(r) }] }
+      } catch (err) {
+        return passthroughErrorResult(err, 'send_sticker')
+      }
+    },
+  )
+
+  server.registerTool(
     'broadcast',
     {
       title: 'Broadcast text to all online users',

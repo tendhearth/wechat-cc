@@ -201,6 +201,11 @@ describe('classifyToolUse', () => {
   it('set_chat_pref → memory_write (a write must not classify as a read)', () => {
     expect(classifyToolUse('mcp__wechat__set_chat_pref', {})).toBe('memory_write')
   })
+  it('send_sticker → reply, save_sticker → memory_write, list_stickers → memory_read', () => {
+    expect(classifyToolUse('mcp__wechat__send_sticker', {})).toBe('reply')
+    expect(classifyToolUse('mcp__wechat__save_sticker', {})).toBe('memory_write')
+    expect(classifyToolUse('mcp__wechat__list_stickers', {})).toBe('memory_read')
+  })
   it('diagnostic_turns / diagnostic_sessions / diagnostic_health / model_get → daemon_introspect', () => {
     expect(classifyToolUse('mcp__wechat__diagnostic_turns', {})).toBe('daemon_introspect')
     expect(classifyToolUse('mcp__wechat__diagnostic_sessions', {})).toBe('daemon_introspect')

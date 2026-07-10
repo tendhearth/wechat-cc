@@ -227,6 +227,13 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     // File-locate family — admin-only, classified by PREFIX so a sibling
     // (locate_dir, …) fails CLOSED into file_locate, not the fs_read default.
     if (sub.startsWith('locate_')) return 'file_locate'
+    // Sticker library — send_sticker is a reply-family tool (posts an inline
+    // image into the conversation, same tier as reply/send_file); save/list
+    // are library management over the sticker store, classified like the
+    // memory/ family they mirror.
+    if (sub === 'send_sticker') return 'reply'
+    if (sub === 'save_sticker') return 'memory_write'
+    if (sub === 'list_stickers') return 'memory_read'
     // Other wechat tools: classify as fs_read (safest non-reply default
     // for new wechat MCP tools — they tend to be query-like).
     return 'fs_read'
