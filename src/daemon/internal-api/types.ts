@@ -12,6 +12,7 @@ import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../w
 import type { ConversationStore } from '../../core/conversation-store'
 import type { ProviderId } from '../../core/conversation'
 import type { PermissionMode } from '../../core/capability-matrix'
+import type { UserTier } from '../../core/user-tier'
 
 /**
  * RFC 03 P3: when conversation mode is parallel (or chatroom), the
@@ -204,6 +205,33 @@ export interface InternalApiDeps {
    * daemon's real `log` impl supports it; test stubs may ignore).
    */
   log?: (tag: string, line: string, fields?: Record<string, unknown>) => void
+  /**
+   * Per-chat prefs read for reply splitting (活人感, spec 2026-07-09).
+   * ABSENT ⇒ splitting disabled (tests/embedded keep single-send
+   * behavior). Wired ⇒ split defaults ON unless the chat set split:false.
+   */
+  getChatPrefs?: (chatId: string) => { split?: boolean }
+  /** Injectable sleep for chunk pacing; absent ⇒ real setTimeout. */
+  sleepMs?: (ms: number) => Promise<void>
+  /**
+   * Shared chat-prefs writer for the set_chat_pref tool (POST /v1/chat-prefs).
+   * Absent ⇒ the route 503s chat_prefs_not_wired.
+   */
+  setChatPref?: (chatId: string, patch: { care?: 'off' | 'low' | 'high'; split?: boolean }) => { care?: 'off' | 'low' | 'high'; split?: boolean }
+  /**
+   * Shared sticker library (image-stickers plan) — backs
+   * POST /v1/wechat/send_sticker, POST /v1/stickers, GET /v1/stickers.
+   * Wired in main.ts over the shared StickerLib instance. Absent ⇒ the
+   * three routes 503 stickers_not_wired.
+   */
+  stickers?: {
+    /** ABSOLUTE path of a random match for `tag`; trim+case-insensitive; null if no match. */
+    resolve(tag: string): string | null
+    /** Copies sourcePath into the library. Throws Error('invalid_extension') / Error('empty_tags') / fs errors. */
+    save(sourcePath: string, tags: string[], desc?: string): { file: string; tags: string[] }
+    list(): { file: string; tags: string[]; desc?: string }[]
+    allTags(): string[]
+  }
 }
 
 export interface InternalApi {
@@ -245,10 +273,17 @@ export interface InternalApi {
  * Each route handler receives the parsed query (always present) and the
  * parsed JSON body (POST only; null on GET). Returns { status, body } —
  * no streaming, no manual res manipulation.
+ *
+ * The optional third param carries the resolved caller identity (tier +
+ * token origin + chatId when the token is a session token) — see index.ts's
+ * dispatcher. Optional so existing handlers that ignore it keep compiling
+ * unchanged; routes that need caller-scoped authorization (e.g. memory/*)
+ * read it explicitly.
  */
 export type RouteHandler = (
   query: URLSearchParams,
   body: unknown,
+  caller?: { tier: UserTier; origin: 'file' | 'session'; chatId?: string },
 ) => Promise<{ status: number; body: unknown }> | { status: number; body: unknown }
 
 export type RouteTable = Record<string, RouteHandler | undefined>

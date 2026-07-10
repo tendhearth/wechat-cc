@@ -20,6 +20,8 @@ import type { PipelineRun } from '../inbound/types'
 import { isAdmin, loadAccess } from '../../lib/access'
 import { makeAdminCommands } from '../admin-commands'
 import { makeModeCommands } from '../mode-commands'
+import type { ChatPrefsStore } from '../chat-prefs'
+import type { CareLedger } from '../companion/care-ledger'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider } from '../../lib/agent-config'
@@ -58,6 +60,18 @@ export interface PipelineDepsOpts {
   ilink: IlinkAdapter
   boot: Bootstrap
   log: (tag: string, line: string, fields?: Record<string, unknown>) => void
+  /**
+   * Shared chat-prefs instance — constructed once in main.ts and also fed
+   * to registerInternalApi's getChatPrefs, so the /set command and the
+   * reply-route split logic read/write the SAME in-memory-cached store.
+   */
+  chatPrefs: ChatPrefsStore
+  /**
+   * Shared care-ledger instance — constructed once in main.ts, also fed to
+   * pushTick (via WireMainOpts). The inbound activity middleware resets the
+   * no-reply streak through this SAME store on every inbound message.
+   */
+  careLedger: CareLedger
 }
 
 export interface PipelineDepsRefs {
@@ -72,7 +86,7 @@ const REPO_ROOT = join(HERE, '..', '..', '..')
 const CLI_ENTRY = join(REPO_ROOT, 'cli.ts')
 
 export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): { pipelineDeps: InboundPipelineDeps } {
-  const { stateDir, db, ilink, boot, log } = opts
+  const { stateDir, db, ilink, boot, log, chatPrefs, careLedger } = opts
   const inboxDir = join(stateDir, 'inbox')
 
   // A2A exec (delegate a task to a hand) runs a FULL agent on the hand —
@@ -220,6 +234,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       const current = loadAgentConfig(stateDir)
       saveAgentConfig(stateDir, withModelForProvider(current, providerId, model))
     },
+    chatPrefs,
     log,
     isAdmin,
   })
@@ -285,7 +300,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       append: rec => messagesStore.append(rec),
       log,
     },
-    activity: { recordInbound, log },
+    activity: { recordInbound, resetCareNoReply: (c) => careLedger.resetNoReply(c), log },
     milestone: { fireMilestonesFor, log },
     welcome: { maybeWriteWelcomeObservation, log },
     dispatch: { coordinator: { dispatch: (msg) => boot.coordinator.dispatch(msg) } },

@@ -93,4 +93,29 @@ export function registerCompanionTools(server: McpServer, client: InternalApiCli
       }
     },
   )
+
+  server.registerTool(
+    'set_chat_pref',
+    {
+      title: 'Set chat preferences',
+      description: '调整本对话的偏好——主动关心档位(off|low|high)和拆分回复。当用户表达"别烦我/多关心我/别拆分"这类偏好时使用,改完口头确认。',
+      inputSchema: {
+        chat_id: z.string(),
+        care: z.enum(['off', 'low', 'high']).optional(),
+        split: z.boolean().optional(),
+      },
+    },
+    async ({ chat_id, care, split }) => {
+      try {
+        const r = await client.request<unknown>('POST', '/v1/chat-prefs', {
+          chat_id,
+          ...(care !== undefined ? { care } : {}),
+          ...(split !== undefined ? { split } : {}),
+        })
+        return { content: [{ type: 'text', text: JSON.stringify(r) }] }
+      } catch (err) {
+        return passthroughErrorResult(err, 'set_chat_pref')
+      }
+    },
+  )
 }

@@ -533,7 +533,7 @@ describe('bootstrap', () => {
     // Prompt assembly now lives in the single provider-agnostic buildInstructions
     // thunk (SessionManager calls it per spawn). The big things the v0.x prompt
     // missed — verify they're now in.
-    const prompt = b.buildInstructions('claude', TIER_PROFILES.admin)
+    const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, '_test')
     expect(prompt).toContain('delegate_codex')
     expect(prompt).toContain('share_page')
     expect(prompt).toContain('broadcast')
@@ -541,14 +541,17 @@ describe('bootstrap', () => {
     // Admin tier → the self-heal section is present; the codex peer gets a
     // claude-peer prompt without the delegate_codex tool name.
     expect(prompt).toContain('自我诊断')
-    const codexPrompt = b.buildInstructions('codex', TIER_PROFILES.admin)
+    // No careLevelFor wired in this bootstrap → care section never included,
+    // regardless of chatId (proactive-care design §7 opt-in-only invariant).
+    expect(prompt).not.toContain('set_chat_pref')
+    const codexPrompt = b.buildInstructions('codex', TIER_PROFILES.admin, '_test')
     expect(codexPrompt).not.toContain('delegate_codex')
     expect(codexPrompt).toContain('delegate_claude')
     // cursor's session IS wired with a delegate-claude child (bootstrap builds
     // delegateStdioForCursor), so its prompt must advertise delegate_claude —
     // peer + availability now both derive from ProviderCapabilities.defaultPeer,
     // not the old 2-provider ternary that wrongly left cursor delegate-silent.
-    expect(b.buildInstructions('cursor', TIER_PROFILES.admin)).toContain('delegate_claude')
+    expect(b.buildInstructions('cursor', TIER_PROFILES.admin, '_test')).toContain('delegate_claude')
 
     // sdkOptionsForProject just forwards whatever appendInstructions it's given
     // into the SDK preset+append slot — no assembly of its own.
@@ -557,6 +560,140 @@ describe('bootstrap', () => {
     if (typeof sp === 'string') throw new Error('expected preset+append form')
     expect(sp.type).toBe('preset')
     expect(sp.append).toBe('SEAM-PROMPT')
+  })
+
+  it('buildInstructions includes the care section only for chats whose careLevelFor is not off (proactive-care design §7)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      careLevelFor: (chatId: string) => (chatId === 'owner-chat' ? 'low' : 'off'),
+    })
+    const carePrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(carePrompt).toContain('agenda.md')
+    expect(carePrompt).toContain('set_chat_pref')
+    const noCarePrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'guest-chat')
+    expect(noCarePrompt).not.toContain('set_chat_pref')
+  })
+
+  it('buildInstructions hides the care section for GUEST-tier chats even when careLevelFor is on, since guests cannot author agenda.md/set_chat_pref (memory_write denied) (proactive-care M1)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      careLevelFor: () => 'high',
+    })
+    const guestPrompt = b.buildInstructions('claude', TIER_PROFILES.guest, 'owner-chat')
+    expect(guestPrompt).not.toContain('set_chat_pref')
+    expect(guestPrompt).not.toContain('主动关心（agenda.md）')
+    const trustedPrompt = b.buildInstructions('claude', TIER_PROFILES.trusted, 'owner-chat')
+    expect(trustedPrompt).toContain('set_chat_pref')
+    const adminPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(adminPrompt).toContain('set_chat_pref')
+  })
+
+  it('buildInstructions includes the sticker section only for chats whose stickerTagsFor returns tags (image-stickers design §5)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      stickerTagsFor: (chatId: string) => (chatId === 'owner-chat' ? ['happy', 'sad'] : []),
+    })
+    const stickerPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(stickerPrompt).toContain('send_sticker')
+    expect(stickerPrompt).toContain('happy')
+    const noStickerPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'guest-chat')
+    expect(noStickerPrompt).not.toContain('send_sticker')
+  })
+
+  it('buildInstructions includes the persona section (but not cultivation) when personaFor returns content with cultivate:false (persona design §2)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      personaFor: () => ({ content: '毒舌但温柔', cultivate: false }),
+    })
+    const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(prompt).toContain('毒舌但温柔')
+    expect(prompt).not.toContain('人设养成(persona.md)')
+  })
+
+  it('buildInstructions includes BOTH the persona section and the persona-cultivation section when personaFor returns cultivate:true (persona design §2)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      personaFor: () => ({ content: '毒舌但温柔', cultivate: true }),
+    })
+    const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(prompt).toContain('毒舌但温柔')
+    expect(prompt).toContain('人设养成(persona.md)')
+  })
+
+  it('buildInstructions for a GUEST-tier chat still includes the persona section but never the cultivation section (persona is identity, not a capability; cultivation is memory_write-gated like careEnabled)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      personaFor: () => ({ content: '毒舌但温柔', cultivate: true }),
+    })
+    const guestPrompt = b.buildInstructions('claude', TIER_PROFILES.guest, 'owner-chat')
+    // Persona is the agent's identity — every tier speaks in character.
+    expect(guestPrompt).toContain('毒舌但温柔')
+    // But cultivation instructs memory_write calls, which guest denies —
+    // so the heading must be absent even though personaFor said cultivate:true.
+    expect(guestPrompt).not.toContain('人设养成(persona.md)')
+  })
+
+  it('buildInstructions is byte-identical whether or not other bootstraps wire personaFor, when this bootstrap omits it (persona design §2 inert default)', async () => {
+    const withoutPersonaDep = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+    })
+    const withUndefinedPersona = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      personaFor: () => ({}),
+    })
+    const promptA = withoutPersonaDep.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    const promptB = withUndefinedPersona.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(promptA).toBe(promptB)
+    expect(promptA).not.toContain('你的人设(persona)')
+    expect(promptA).not.toContain('人设养成(persona.md)')
   })
 
   // ── Per-session canUseTool (concurrent-dispatch tier hazard) ─────────

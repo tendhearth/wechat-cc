@@ -7,6 +7,7 @@ import { TIER_PROFILES } from './user-tier'
 // admin/guest profiles directly.
 const guest = TIER_PROFILES.guest
 const admin = TIER_PROFILES.admin
+const trusted = TIER_PROFILES.trusted
 
 describe('gateTool', () => {
   it('denies a deny-classified tool in strict mode', () => {
@@ -54,15 +55,13 @@ describe('gateTool', () => {
     // be classified — and allowed — as the guest-allowed wechat reply.
     //
     // With the real server threaded through, the synthesized name is
-    // `mcp__evilplugin__reply`. classifyToolUse only special-cases the
-    // `mcp__wechat__` prefix; anything else falls through to its fail-safe
-    // default, `subagent` (see classifyToolUse's final `return 'subagent'`).
-    // Verify against the REAL guest TIER_PROFILES: `subagent` is not in
-    // GUEST_ALLOW, so it lands in guest.deny (deny = ALL_KINDS minus
-    // GUEST_ALLOW) — the decision must be 'deny', not the 'allow' a wechat
-    // `reply` would get.
-    expect(guest.allow.has('subagent')).toBe(false)
-    expect(guest.deny.has('subagent')).toBe(true)
+    // `mcp__evilplugin__reply`. classifyToolUse special-cases `mcp__wechat__`
+    // and `mcp__delegate__`; any OTHER mcp prefix is a third-party plugin →
+    // classified as the admin-only `plugin_tool`. Verify against the REAL guest
+    // TIER_PROFILES: `plugin_tool` is admin-only (∈ guest.deny), so the decision
+    // must be 'deny', not the 'allow' a wechat `reply` would get.
+    expect(guest.allow.has('plugin_tool')).toBe(false)
+    expect(guest.deny.has('plugin_tool')).toBe(true)
     expect(
       gateTool({
         toolName: 'reply',
@@ -72,5 +71,20 @@ describe('gateTool', () => {
         permissionMode: 'strict',
       }),
     ).toBe('deny')
+  })
+
+  it('DENIES a plugin tool (wxvault) for a TRUSTED user, ALLOWS it for admin (fail-closed plugin gating)', () => {
+    // wxvault reads the owner's private WeChat history. A trusted non-admin
+    // must NOT reach it: mcp__wxvault__get_messages → plugin_tool → trusted.deny.
+    // Only the owner (admin) can call it.
+    expect(
+      gateTool({ toolName: 'get_messages', mcpServer: 'wxvault', input: {}, tierProfile: trusted, permissionMode: 'strict' }),
+    ).toBe('deny')
+    expect(
+      gateTool({ toolName: 'search_messages', mcpServer: 'wxvault', input: {}, tierProfile: trusted, permissionMode: 'strict' }),
+    ).toBe('deny')
+    expect(
+      gateTool({ toolName: 'get_messages', mcpServer: 'wxvault', input: {}, tierProfile: admin, permissionMode: 'strict' }),
+    ).toBe('allow')
   })
 })

@@ -31,6 +31,8 @@ export interface MessagesStore {
   listRange(chatId: string, opts: ListRangeOpts): Promise<MessageRecord[]>
   search(chatId: string, query: string, limit: number): Promise<MessageRecord[]>
   latestTs(chatId: string): Promise<string | null>
+  /** Latest INBOUND ('in') message ts only — the calibration gate's "last talked" signal. */
+  latestInboundTs(chatId: string): Promise<string | null>
   /** Extractor input: all messages after a watermark, ascending. */
   listSince(chatId: string, sinceTs: string, limit: number): Promise<MessageRecord[]>
   /** List distinct chat_ids that have at least one message. */
@@ -90,6 +92,9 @@ export function makeMessagesStore(db: Db): MessagesStore {
   const stmtLatestTs = db.query<{ ts: string }, [string]>(
     'SELECT ts FROM messages WHERE chat_id = ? ORDER BY ts DESC LIMIT 1',
   )
+  const stmtLatestInboundTs = db.query<{ ts: string }, [string]>(
+    "SELECT ts FROM messages WHERE chat_id = ? AND direction = 'in' ORDER BY ts DESC LIMIT 1",
+  )
   const stmtListSince = db.query<Row, [string, string, number]>(
     'SELECT * FROM messages WHERE chat_id = ? AND ts > ? ORDER BY ts ASC LIMIT ?',
   )
@@ -121,6 +126,9 @@ export function makeMessagesStore(db: Db): MessagesStore {
     },
     async latestTs(chatId) {
       return stmtLatestTs.get(chatId)?.ts ?? null
+    },
+    async latestInboundTs(chatId) {
+      return stmtLatestInboundTs.get(chatId)?.ts ?? null
     },
     async listSince(chatId, sinceTs, limit) {
       return stmtListSince.all(chatId, sinceTs, limit).map(rowToRecord)

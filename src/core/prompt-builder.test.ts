@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSystemPrompt, daemonSelfHealSection } from './prompt-builder'
+import { buildSystemPrompt, careSection, daemonSelfHealSection, personaCultivationSection, personaSection, stickerSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
   function defaults() {
@@ -197,5 +197,133 @@ describe('file-locate prompt section', () => {
     const p = buildSystemPrompt({ ...base })
     expect(p).not.toContain('locate_file')
     expect(p).not.toContain('locations.md')
+  })
+})
+
+describe('care prompt section', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+
+  it('careSection() instructs authoring care intentions into agenda.md with the due: format, and adjusting via set_chat_pref', () => {
+    const s = careSection()
+    expect(s).toContain('agenda.md')
+    expect(s).toContain('due:')
+    expect(s).toContain('set_chat_pref')
+  })
+
+  it('buildSystemPrompt includes the care section when careEnabled=true', () => {
+    const p = buildSystemPrompt({ ...base, careEnabled: true })
+    expect(p).toContain('agenda.md')
+    expect(p).toContain('set_chat_pref')
+  })
+
+  it('buildSystemPrompt is byte-identical whether careEnabled is false or simply absent, and omits the care section', () => {
+    const withFalse = buildSystemPrompt({ ...base, careEnabled: false })
+    const withoutKey = buildSystemPrompt({ ...base })
+    expect(withFalse).toBe(withoutKey)
+    expect(withoutKey).not.toContain('set_chat_pref')
+  })
+})
+
+describe('sticker prompt section', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+
+  it('stickerSection() mentions send_sticker + lists the given tags', () => {
+    const s = stickerSection(['happy', 'sad', 'party'])
+    expect(s).toContain('send_sticker')
+    expect(s).toContain('happy')
+    expect(s).toContain('sad')
+    expect(s).toContain('party')
+  })
+
+  it('stickerSection() caps the rendered list at 30 tags and drops any tag containing a newline', () => {
+    const many = Array.from({ length: 35 }, (_, i) => `tag${i}`)
+    const s = stickerSection([...many, 'bad\ntag'])
+    expect(s).not.toContain('bad\ntag')
+    expect(s).not.toContain('tag34')
+    expect(s).toContain('tag29')
+  })
+
+  it('stickerSection() filters out tags containing spaces', () => {
+    const s = stickerSection(['good', 'bad tag', 'also-good'])
+    expect(s).toContain('good')
+    expect(s).not.toContain('bad tag')
+    expect(s).toContain('also-good')
+  })
+
+  it('stickerSection() filters out tags longer than 20 characters', () => {
+    const s = stickerSection(['ok', 'tooshort', 'a'.repeat(21)])
+    expect(s).toContain('ok')
+    expect(s).toContain('tooshort')
+    expect(s).not.toContain('a'.repeat(21))
+  })
+
+  it('buildSystemPrompt includes the sticker section when stickerTags is non-empty', () => {
+    const p = buildSystemPrompt({ ...base, stickerTags: ['happy', 'sad'] })
+    expect(p).toContain('send_sticker')
+    expect(p).toContain('happy')
+    expect(p).toContain('sad')
+  })
+
+  it('buildSystemPrompt is byte-identical whether stickerTags is absent or an empty array, and omits the sticker section', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withEmpty = buildSystemPrompt({ ...base, stickerTags: [] })
+    expect(withEmpty).toBe(withoutKey)
+    expect(withoutKey).not.toContain('send_sticker')
+  })
+})
+
+describe('persona prompt section', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+
+  it('personaSection() includes the 人设 heading + the given content', () => {
+    const s = personaSection('说话像个话痨,喜欢用叠词')
+    expect(s).toContain('人设')
+    expect(s).toContain('说话像个话痨,喜欢用叠词')
+  })
+
+  it('personaSection() caps content at 4000 chars', () => {
+    const long = 'x'.repeat(5000)
+    const s = personaSection(long)
+    expect(s.length).toBeLessThan(4200)
+    expect(s).not.toContain('x'.repeat(4001))
+  })
+
+  it('personaCultivationSection() mentions persona.md, memory_write, and 克制', () => {
+    const s = personaCultivationSection()
+    expect(s).toContain('persona.md')
+    expect(s).toContain('memory_write')
+    expect(s).toContain('克制')
+  })
+
+  it('buildSystemPrompt includes the persona section when persona is a non-empty string', () => {
+    const p = buildSystemPrompt({ ...base, persona: '喜欢用颜文字' })
+    expect(p).toContain('喜欢用颜文字')
+    expect(p).toContain('人设')
+  })
+
+  it('buildSystemPrompt is byte-identical whether persona is absent or whitespace-only, and omits the persona section', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withWhitespace = buildSystemPrompt({ ...base, persona: '  ' })
+    expect(withWhitespace).toBe(withoutKey)
+    expect(withoutKey).not.toContain('你的人设')
+  })
+
+  it('buildSystemPrompt includes the persona cultivation section when personaCultivate=true', () => {
+    const p = buildSystemPrompt({ ...base, personaCultivate: true })
+    expect(p).toContain('人设养成')
+    expect(p).toContain('memory_write')
+  })
+
+  it('buildSystemPrompt is byte-identical whether personaCultivate is false or simply absent, and omits the cultivation section', () => {
+    const withFalse = buildSystemPrompt({ ...base, personaCultivate: false })
+    const withoutKey = buildSystemPrompt({ ...base })
+    expect(withFalse).toBe(withoutKey)
+    expect(withoutKey).not.toContain('人设养成')
+  })
+
+  it('both persona sections appear together when both are enabled', () => {
+    const p = buildSystemPrompt({ ...base, persona: '话风活泼', personaCultivate: true })
+    expect(p).toContain('你的人设')
+    expect(p).toContain('人设养成')
   })
 })

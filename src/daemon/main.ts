@@ -24,6 +24,11 @@ import { buildInboundPipeline } from './inbound/build'
 import { runStartupSweeps } from './startup-sweeps'
 import { wireMain } from './wiring'
 import type { TickBodies } from './wiring/tick-bodies'
+import { makeChatPrefs } from './chat-prefs'
+import { makeStickerLib } from './stickers'
+import { makeCareLedger } from './companion/care-ledger'
+import { careLevel } from './companion/calibration'
+import { loadCompanionConfig } from './companion/config'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -147,9 +152,27 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   }
 
   try {
+    // Single shared chat-prefs instance for this daemon — both the reply
+    // route (split behavior) and the /set command read/write through it.
+    // A second instance would have a stale in-memory cache: the store's
+    // write-through only protects its own writes, not cross-instance reads.
+    const chatPrefs = makeChatPrefs(stateDir)
+    // Single shared sticker-library instance for this daemon (image-stickers
+    // plan) — backs the /v1/stickers* routes and the stickerTagsFor thunk
+    // below. Mirrors chatPrefs above: a second instance would read a stale
+    // in-memory index (write-through only protects its own writes).
+    const stickerLib = makeStickerLib(stateDir)
+    // Single shared care-ledger instance for this daemon — mirrors chatPrefs
+    // above. pushTick claims/reads it; the inbound path resets the no-reply
+    // streak on every message. A second instance would have a stale
+    // in-memory cache (write-through only protects its own writes).
+    const careLedger = makeCareLedger(stateDir)
     // 1. internal-api FIRST — bootstrap needs its baseUrl/token for MCP wiring
     const internalApi = await registerInternalApi({
       stateDir, daemonPid: process.pid, memory: memoryFS, db, projects: ilink.projects,
+      getChatPrefs: (c) => chatPrefs.get(c),
+      setChatPref: (c, p) => chatPrefs.set(c, p),
+      stickers: stickerLib,
       setUserName: (chatId, name) => ilink.setUserName(chatId, name),
       voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus() },
       sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),
@@ -185,6 +208,31 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       mintSessionToken: internalApi.mintSessionToken,
       invalidateSession: internalApi.invalidateSession,
       internalApi: { baseUrl: internalApi.baseUrl, tokenFilePath: internalApi.tokenFilePath },
+      // Proactive-care design §5/§7 — resolve this chat's effective care
+      // level per-spawn (chat-prefs override ∪ default_chat_id fallback).
+      // loadCompanionConfig is a cheap file read; acceptable per-spawn cost.
+      careLevelFor: (c) => careLevel(c, chatPrefs.get(c), loadCompanionConfig(stateDir).default_chat_id ?? undefined),
+      // image-stickers plan §5 — per-chat opt-out (chatPrefs.stickers === false)
+      // hides the sticker section from that chat's prompt; empty lib ⇒ [] ⇒
+      // stickerSection omitted entirely (see prompt-builder.ts).
+      stickerTagsFor: (c) => (chatPrefs.get(c).stickers !== false ? stickerLib.allTags() : []),
+      // persona design §2 — owner chat's persona.md content, read fresh per
+      // spawn (hand-edit shows up with no daemon restart, like careLevelFor).
+      // makeMemoryFS's constructor is cheap (existsSync + maybe mkdirSync +
+      // one realpathSync) — same per-spawn-construction posture as
+      // loadCompanionConfig above. cultivate is true only for the owner's
+      // OWN chat, so the persona-cultivation write guidance never appears
+      // in chats the owner is delegating/observing from elsewhere.
+      personaFor: (c) => {
+        const ownerChat = loadCompanionConfig(stateDir).default_chat_id
+        if (!ownerChat) return {}
+        // ownerChat feeds a filesystem join below, so accept only
+        // chatId-shaped values — defense against a corrupted/hand-edited
+        // companion config steering the memory root outside memory/.
+        if (ownerChat.includes('..') || ownerChat.includes('/') || ownerChat.includes('\\')) return {}
+        const fs = makeMemoryFS({ rootDir: join(stateDir, 'memory', ownerChat) })
+        return { content: fs.read('persona.md') ?? undefined, cultivate: c === ownerChat }
+      },
     })
     bootRef = boot
     internalApi.setDelegate({ dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() })
@@ -195,7 +243,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setA2A(boot.a2aDeps)
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({
-      stateDir, db, ilink, accounts, boot, dangerously,
+      stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger,
       // Task 11 — tick-bodies pass this to resolveTier() when computing
       // the companion's tierProfile. Same singleton import the bootstrap
       // coordinator uses; 5s TTL cache inside `loadAccess` keeps the

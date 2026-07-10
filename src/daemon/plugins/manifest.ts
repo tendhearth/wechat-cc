@@ -9,6 +9,8 @@
  * Autonomous agent plugins will reuse this manifest with `kind: "a2a"` on a
  * separate lane — one plugin concept, two contracts.
  */
+import { CORE_MCP_SERVER_NAMES } from '../../core/agent-provider'
+
 export interface PluginSpawn {
   /** Executable, e.g. "python3" or "node". Resolved via the daemon's PATH. */
   command: string
@@ -58,8 +60,17 @@ export interface PluginManifest {
   tools?: string[]
 }
 
-/** Names the daemon owns — a plugin may not shadow the core MCP children. */
-export const RESERVED_NAMES = new Set(['wechat', 'delegate'])
+/**
+ * Names the daemon owns — a plugin may not shadow the core MCP children.
+ * Sourced from `CORE_MCP_SERVER_NAMES` (agent-provider.ts) — that's the set
+ * gated to receive the per-session `WECHAT_SESSION_TOKEN`, so a plugin
+ * claiming one of these names would both overwrite the core server spec
+ * (specs are merged with plugins last) AND inherit its auth env. Compared
+ * case-insensitively below since server-name matching elsewhere is exact but
+ * a near-miss name (e.g. "WeChat") is exactly the kind of thing an operator
+ * — or an adversarial plugin author — could get confused by.
+ */
+export const RESERVED_NAMES = new Set([...CORE_MCP_SERVER_NAMES].map(n => n.toLowerCase()))
 
 const NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/
 
@@ -95,8 +106,8 @@ export function parseManifest(raw: unknown): ParseResult {
   if (typeof name !== 'string' || !NAME_RE.test(name)) {
     return { ok: false, reason: `invalid name ${JSON.stringify(name)} (want ^[A-Za-z0-9][A-Za-z0-9_-]*$)` }
   }
-  if (RESERVED_NAMES.has(name)) {
-    return { ok: false, reason: `name "${name}" is reserved by the daemon` }
+  if (RESERVED_NAMES.has(name.toLowerCase())) {
+    return { ok: false, reason: `name "${name}" is reserved by the daemon (wechat/delegate get the session token — a plugin may not shadow them)` }
   }
   if (kind !== 'mcp') {
     return { ok: false, reason: `unsupported kind ${JSON.stringify(kind)} (only "mcp" today)` }

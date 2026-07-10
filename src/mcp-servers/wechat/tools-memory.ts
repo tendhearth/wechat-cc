@@ -3,6 +3,13 @@
  * sandboxed memory/ store (loopback to /v1/memory/*). Split out of main.ts;
  * behavior verbatim. Legacy wire shapes preserved so the system prompt's tool
  * docs stay true.
+ *
+ * Also home to the sticker library (save_sticker/list_stickers, loopback to
+ * /v1/stickers) — a different backend store than memory/, but the same shape
+ * of tool (write/read over a persistent library) and the same registration
+ * tier: ungated here, unlike tools-files.ts which main.ts only registers for
+ * admin sessions. send_sticker itself lives in tools-messaging.ts — it's a
+ * reply-family tool (posts into the conversation), not library management.
  */
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -108,6 +115,44 @@ export function registerMemoryTools(server: McpServer, client: InternalApiClient
         return { content: [{ type: 'text', text: JSON.stringify(resp) }] }
       } catch (err) {
         return passthroughErrorResult(err, 'memory_delete')
+      }
+    },
+  )
+
+  server.registerTool(
+    'save_sticker',
+    {
+      title: 'Save an image into the sticker library',
+      description: '把一张图片(用户发来的表情图的本地路径,或机器上的图片)存进表情库并打 tags(如 开心/无语/庆祝)。',
+      inputSchema: {
+        path: z.string(),
+        tags: z.array(z.string()),
+        desc: z.string().optional(),
+      },
+    },
+    async ({ path, tags, desc }) => {
+      try {
+        const r = await client.request<unknown>('POST', '/v1/stickers', { path, tags, desc })
+        return { content: [{ type: 'text', text: JSON.stringify(r) }] }
+      } catch (err) {
+        return passthroughErrorResult(err, 'save_sticker')
+      }
+    },
+  )
+
+  server.registerTool(
+    'list_stickers',
+    {
+      title: 'List the sticker library',
+      description: '列出表情库里的所有表情和可用 tags。',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const r = await client.request<unknown>('GET', '/v1/stickers')
+        return { content: [{ type: 'text', text: JSON.stringify(r) }] }
+      } catch (err) {
+        return passthroughErrorResult(err, 'list_stickers')
       }
     },
   )

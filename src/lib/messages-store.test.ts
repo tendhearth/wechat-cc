@@ -43,6 +43,20 @@ describe('messages store', () => {
     expect(await s.latestTs('c1')).toBe('2026-06-11T00:05:00Z')
   })
 
+  it('latestInboundTs returns the latest "in" row only, ignoring "out" rows', async () => {
+    const s = makeMessagesStore(openTestDb())
+    await s.append({ id: '1', chatId: 'c1', ts: '2026-06-11T00:00:00Z', direction: 'in', kind: 'text', text: 'hi', source: 'live' })
+    await s.append({ id: '2', chatId: 'c1', ts: '2026-06-11T00:10:00Z', direction: 'out', kind: 'text', text: 'reply', provider: 'claude', source: 'live' })
+    expect(await s.latestInboundTs('c1')).toBe('2026-06-11T00:00:00Z')
+  })
+
+  it('latestInboundTs returns null when the chat has no inbound messages', async () => {
+    const s = makeMessagesStore(openTestDb())
+    await s.append({ id: '1', chatId: 'c1', ts: '2026-06-11T00:00:00Z', direction: 'out', kind: 'text', text: 'hi', provider: 'claude', source: 'live' })
+    expect(await s.latestInboundTs('c1')).toBeNull()
+    expect(await s.latestInboundTs('nonexistent')).toBeNull()
+  })
+
   it('inboundMessageId mirrors the dedupe key', () => {
     expect(inboundMessageId('u@im.wechat', 1780000000000)).toBe('u@im.wechat:1780000000000')
   })

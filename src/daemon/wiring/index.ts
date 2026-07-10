@@ -17,6 +17,8 @@ import type { SessionsLifecycleDeps } from '../sessions-lifecycle'
 import type { IlinkLifecycleDeps } from '../ilink-lifecycle'
 import type { PollingDeps } from '../polling-lifecycle'
 import type { StartupSweepDeps } from '../startup-sweeps'
+import type { ChatPrefsStore } from '../chat-prefs'
+import type { CareLedger } from '../companion/care-ledger'
 import { buildPipelineDeps } from './pipeline-deps'
 import { buildLifecycleDeps } from './lifecycle-deps'
 import { buildTickBodies, type TickBodies } from './tick-bodies'
@@ -39,6 +41,20 @@ export interface WireMainOpts {
   log: (tag: string, line: string, fields?: Record<string, unknown>) => void
   /** Forwarded to buildLifecycleDeps — eval harness override. */
   schedulerIntervalMs?: number
+  /**
+   * Shared chat-prefs instance (constructed once in main.ts, also passed to
+   * registerInternalApi's getChatPrefs) — threaded through to buildPipelineDeps
+   * so the /set command reads/writes the SAME store the reply-route split
+   * logic reads. A second instance would have a stale in-memory cache.
+   */
+  chatPrefs: ChatPrefsStore
+  /**
+   * Shared care-ledger instance (constructed once in main.ts alongside
+   * chatPrefs) — threaded through so pushTick's claim/read and the inbound
+   * no-reply reset operate on the SAME store. A second instance would have
+   * a stale in-memory cache.
+   */
+  careLedger: CareLedger
 }
 
 export interface WiredDeps {

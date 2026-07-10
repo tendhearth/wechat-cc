@@ -26,6 +26,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/share/page': 'guest',
   'POST /v1/share/resurface': 'guest',
   'GET /v1/companion/status': 'guest',
+  // send_sticker draws only from the curated sticker lib (pre-approved
+  // images, no arbitrary-path read) and has no exfiltration surface —
+  // same trust class as reply/reply_voice, so it's guest not trusted.
+  'POST /v1/wechat/send_sticker': 'guest',
+  'GET /v1/stickers': 'guest',
   // trusted — operator/agent ops (also reachable by the CLI, capped at trusted)
   'POST /v1/wechat/broadcast': 'trusted',
   'POST /v1/wechat/send_file': 'trusted',
@@ -62,6 +67,10 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/license/activate': 'trusted',
   'POST /v1/license/deactivate': 'trusted',
   'POST /v1/delegate': 'trusted',
+  'POST /v1/chat-prefs': 'trusted',
+  // POST /v1/stickers writes an arbitrary sourcePath into the lib — same
+  // trust class as send_file, so it's trusted not guest.
+  'POST /v1/stickers': 'trusted',
   // admin — daemon-control (daemon_introspect / daemon_remediate)
   'GET /v1/turns': 'admin',
   'GET /v1/sessions': 'admin',

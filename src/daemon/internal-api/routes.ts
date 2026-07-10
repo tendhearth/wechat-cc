@@ -8,9 +8,12 @@
  * sections are kept in stable order to match the original file's layout
  * so blame survives the split.
  */
+import { basename } from 'node:path'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
+import { splitReply, paceMs } from '../reply-split'
 import { lookup } from '../../core/capability-matrix'
 import type { Mode } from '../../core/conversation'
+import type { UserTier } from '../../core/user-tier'
 import { makeEventsStore } from '../events/store'
 import { a2aRoutes } from './routes-a2a'
 import { pluginRoutes } from './routes-plugins'
@@ -37,6 +40,28 @@ export interface MakeRoutesContext {
   maybePrefix: (chatId: string, text: string, tag: string | undefined) => string
 }
 
+const defaultSleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
+
+/**
+ * Non-admin SESSION callers may only touch their own chat's memory subtree
+ * (`<chatId>/...`) — closes the cross-chat write path that let any trusted
+ * chat inject into another chat's persona.md (which broadcasts into every
+ * chat's system prompt — persona design §2). File-origin tokens (the
+ * operator CLI, which reads the daemon-wide token file) and admin sessions
+ * are unrestricted — same trust posture as before this hardening.
+ *
+ * This is an AUTHORIZATION layer on top of, not instead of, MemoryFS's own
+ * resolveSafe traversal guard (fs-api.ts) — that guard stops path escapes
+ * off the memory root; this stops in-bounds cross-chat access.
+ */
+function memoryScopeDenied(path: string, caller?: { tier: UserTier; origin: string; chatId?: string }): boolean {
+  if (!caller || caller.origin !== 'session' || caller.tier === 'admin') return false
+  if (!caller.chatId) return true                      // session with unknown chat ⇒ deny (fail closed)
+  const norm = path.replace(/\\/g, '/')
+  if (norm.split('/').some(seg => seg === '..')) return true
+  return !(norm === caller.chatId || norm.startsWith(`${caller.chatId}/`))
+}
+
 export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext): RouteTable {
   return {
     'GET /v1/health': () => ({
@@ -54,10 +79,11 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     }),
 
     // ── memory (RFC 03 P1.B B2) ─────────────────────────────────────────
-    'POST /v1/memory/read': (_q, body) => {
+    'POST /v1/memory/read': (_q, body, caller) => {
       if (!deps.memory) return { status: 503, body: { error: 'memory_fs_not_wired' } }
       // Body is pre-validated by index.ts via MemoryReadRequest schema.
       const { path } = body as MemoryReadRequestT
+      if (memoryScopeDenied(path, caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
       try {
         const content = deps.memory.read(path)
         return { status: 200, body: content === null ? { exists: false } : { exists: true, content } }
@@ -65,10 +91,11 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
         return { status: 200, body: { error: errMsg(err) } }
       }
     },
-    'POST /v1/memory/write': (_q, body) => {
+    'POST /v1/memory/write': (_q, body, caller) => {
       if (!deps.memory) return { status: 503, body: { error: 'memory_fs_not_wired' } }
       // Body is pre-validated by index.ts via MemoryWriteRequest schema.
       const { path, content } = body as MemoryWriteRequestT
+      if (memoryScopeDenied(path, caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
       try {
         deps.memory.write(path, content)
         return { status: 200, body: { ok: true } }
@@ -76,20 +103,33 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
         return { status: 200, body: { ok: false, error: errMsg(err) } }
       }
     },
-    'GET /v1/memory/list': (q) => {
+    'GET /v1/memory/list': (q, _body, caller) => {
       if (!deps.memory) return { status: 503, body: { error: 'memory_fs_not_wired' } }
-      const dir = q.get('dir')
+      let dir = q.get('dir')
+      // The system prompt's default recall flow ("回复前: memory_list + 读相关
+      // .md") calls this with no `dir` at all. For a scoped (non-admin
+      // session) caller that used to fail scope-denial on the root — every
+      // trusted/guest chat's default recall silently 403'd. The correct
+      // meaning of "list my memory" for a scoped caller IS its own subtree,
+      // so default to that instead of evaluating the root. Explicit `dir`
+      // still goes through the normal scope check below (own subtree ok,
+      // others 403); unscoped callers (file token / admin) are unaffected.
+      if (dir === null && caller?.origin === 'session' && caller.tier !== 'admin' && caller.chatId) {
+        dir = caller.chatId
+      }
+      if (memoryScopeDenied(dir ?? '', caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
       try {
         return { status: 200, body: { files: deps.memory.list(dir ?? undefined) } }
       } catch (err) {
         return { status: 200, body: { error: errMsg(err) } }
       }
     },
-    'POST /v1/memory/delete': async (_q, body) => {
+    'POST /v1/memory/delete': async (_q, body, caller) => {
       if (!deps.memory) return { status: 503, body: { error: 'memory_fs_not_wired' } }
       if (!deps.db) return { status: 503, body: { error: 'db_not_wired' } }
       // Body is pre-validated by index.ts via MemoryDeleteRequest schema.
       const { chat_id, path, reason } = body as MemoryDeleteRequestT
+      if (memoryScopeDenied(path, caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
       try {
         const tombstone = deps.memory.softDelete(path)
         if (tombstone === null) {
@@ -264,15 +304,33 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       // in a multi-participant mode AND the caller supplied its tag.
       // Solo mode (and absent prefix deps) → text passes through unchanged.
       const prefixed = maybePrefix(chat_id, text, participant_tag)
+      // Reply splitting (活人感, spec 2026-07-09): only un-prefixed replies —
+      // chunks 2+ of a prefixed send would lose their [Display] attribution.
+      // Absent getChatPrefs dep ⇒ disabled (tests/embedded unchanged);
+      // wired ⇒ default ON unless this chat set split:false.
+      const prefs = prefixed === text ? deps.getChatPrefs?.(chat_id) : undefined
+      const chunks = prefs !== undefined && prefs.split !== false ? splitReply(text) : [prefixed]
+      const sleep = deps.sleepMs ?? defaultSleep
+      let sentCount = 0
       try {
-        const r = await deps.ilink.sendReply(chat_id, prefixed)
-        // Legacy in-process wrapper reshaped {msgId,error?} → {ok,msg_id} or
-        // {ok:false,error}. Preserve verbatim so the agent's mental model
-        // doesn't shift across this migration.
-        if (r.error) return { status: 200, body: { ok: false, error: r.error } }
-        return { status: 200, body: { ok: true, msg_id: r.msgId } }
+        let lastMsgId = ''
+        for (let i = 0; i < chunks.length; i++) {
+          const r = await deps.ilink.sendReply(chat_id, chunks[i]!)
+          // Legacy in-process wrapper reshaped {msgId,error?} → {ok,msg_id} or
+          // {ok:false,error}. Preserve verbatim so the agent's mental model
+          // doesn't shift across this migration.
+          if (r.error) {
+            if (sentCount > 0) deps.log?.('WECHAT_REPLY', `split partial failure chat=${chat_id} sent=${sentCount}/${chunks.length} err=${r.error}`)
+            return { status: 200, body: { ok: false, error: r.error, ...(sentCount > 0 ? { sent: sentCount } : {}) } }
+          }
+          sentCount++
+          lastMsgId = r.msgId
+          if (i < chunks.length - 1) await sleep(paceMs(chunks[i]!))
+        }
+        return { status: 200, body: { ok: true, msg_id: lastMsgId } }
       } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
+        if (sentCount > 0) deps.log?.('WECHAT_REPLY', `split partial failure chat=${chat_id} sent=${sentCount}/${chunks.length} err=${errMsg(err)}`)
+        return { status: 200, body: { ok: false, error: errMsg(err), ...(sentCount > 0 ? { sent: sentCount } : {}) } }
       }
     },
     'POST /v1/wechat/reply_voice': async (_q, body) => {
@@ -444,6 +502,86 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       } catch (err) {
         return { status: 200, body: { ok: false, reason: 'unexpected_error', detail: errMsg(err) } }
       }
+    },
+
+    // ── chat prefs (主动关心档位 / 拆分偏好) ───────────────────────────────
+    // INLINE-validated deliberately (no REQUEST_SCHEMAS entry) — keeps the
+    // schema-table route count untouched. Backs the set_chat_pref MCP tool:
+    // the wechat-mcp child calls this when the user states a preference
+    // ("别烦我" / "多关心我" / "别拆分") mid-conversation.
+    'POST /v1/chat-prefs': (_q, body) => {
+      if (!deps.setChatPref) return { status: 503, body: { error: 'chat_prefs_not_wired' } }
+      const b = (body ?? {}) as { chat_id?: unknown; care?: unknown; split?: unknown }
+      if (typeof b.chat_id !== 'string' || b.chat_id.trim() === '') {
+        return { status: 400, body: { error: 'chat_id required (non-empty string)' } }
+      }
+      if (b.care !== undefined && b.care !== 'off' && b.care !== 'low' && b.care !== 'high') {
+        return { status: 400, body: { error: "care must be one of 'off' | 'low' | 'high'" } }
+      }
+      if (b.split !== undefined && typeof b.split !== 'boolean') {
+        return { status: 400, body: { error: 'split must be a boolean' } }
+      }
+      if (b.care === undefined && b.split === undefined) {
+        return { status: 400, body: { error: 'at least one of care or split is required' } }
+      }
+      const patch: { care?: 'off' | 'low' | 'high'; split?: boolean } = {}
+      if (b.care !== undefined) patch.care = b.care
+      if (b.split !== undefined) patch.split = b.split
+      const prefs = deps.setChatPref(b.chat_id, patch)
+      return { status: 200, body: { ok: true, prefs } }
+    },
+
+    // ── stickers (image-stickers plan) ─────────────────────────────────
+    // INLINE-validated deliberately (no REQUEST_SCHEMAS entry) — mirrors
+    // the /v1/chat-prefs pattern above. Backs the send_sticker MCP tool
+    // plus the curated-lib save/list surface used to seed it.
+    'POST /v1/wechat/send_sticker': async (_q, body) => {
+      if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
+      const b = (body ?? {}) as { chat_id?: unknown; tag?: unknown }
+      if (typeof b.chat_id !== 'string' || b.chat_id.trim() === '') {
+        return { status: 400, body: { error: 'chat_id required (non-empty string)' } }
+      }
+      if (typeof b.tag !== 'string' || b.tag.trim() === '') {
+        return { status: 400, body: { error: 'tag required (non-empty string)' } }
+      }
+      const path = deps.stickers.resolve(b.tag)
+      if (path === null) {
+        return { status: 200, body: { ok: false, reason: 'no_sticker_for_tag', tags: deps.stickers.allTags() } }
+      }
+      if (!deps.ilink) return { status: 503, body: { error: 'ilink_not_wired' } }
+      try {
+        await deps.ilink.sendFile(b.chat_id, path)
+        return { status: 200, body: { ok: true, file: basename(path) } }
+      } catch (err) {
+        return { status: 200, body: { ok: false, error: errMsg(err) } }
+      }
+    },
+    'POST /v1/stickers': (_q, body) => {
+      if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
+      const b = (body ?? {}) as { path?: unknown; tags?: unknown; desc?: unknown }
+      if (typeof b.path !== 'string' || b.path.trim() === '') {
+        return { status: 400, body: { error: 'path required (non-empty string)' } }
+      }
+      if (
+        !Array.isArray(b.tags) ||
+        b.tags.length === 0 ||
+        !b.tags.every((t) => typeof t === 'string' && t.trim() !== '')
+      ) {
+        return { status: 400, body: { error: 'tags required (non-empty array of non-empty strings)' } }
+      }
+      if (b.desc !== undefined && typeof b.desc !== 'string') {
+        return { status: 400, body: { error: 'desc must be a string' } }
+      }
+      try {
+        const saved = deps.stickers.save(b.path, b.tags as string[], b.desc as string | undefined)
+        return { status: 200, body: { ok: true, file: saved.file, tags: saved.tags } }
+      } catch (err) {
+        return { status: 400, body: { error: errMsg(err) } }
+      }
+    },
+    'GET /v1/stickers': () => {
+      if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
+      return { status: 200, body: { ok: true, stickers: deps.stickers.list(), tags: deps.stickers.allTags() } }
     },
 
     // ── a2a (send / test / dashboard CRUD) + daemon-control (sessions / model

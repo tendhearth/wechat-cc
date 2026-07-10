@@ -216,6 +216,38 @@ export interface BootstrapDeps {
    * file + one process-wide writer.
    */
   db: Db
+  /**
+   * Resolve a chat's effective proactive-care level (proactive-care design
+   * §5/§7): chat-prefs override ∪ default_chat_id fallback. Read per-spawn
+   * (like `careLevelFor`'s siblings `currentModelFor` / `buildInstructions`
+   * itself) so a `/set care` flip applies without a daemon restart. Absent
+   * ⇒ the care prompt section is NEVER included for any chat — tests and
+   * minimal embeddings that don't wire this stay byte-identical to before
+   * the care feature existed. Wiring the actual thunk (chat-prefs +
+   * companion default_chat_id) happens in main.ts (Task 7).
+   */
+  careLevelFor?: (chatId: string) => 'off' | 'low' | 'high'
+  /**
+   * Resolve a chat's local sticker library tags (image-stickers design §5).
+   * Read per-spawn (like `careLevelFor`'s siblings) so a newly-saved sticker
+   * shows up in the prompt without a daemon restart. Absent ⇒ the sticker
+   * prompt section is NEVER included for any chat — tests and minimal
+   * embeddings that don't wire this stay byte-identical to before the
+   * sticker feature existed. Wiring the actual thunk (sticker store lookup)
+   * happens in main.ts (later task).
+   */
+  stickerTagsFor?: (chatId: string) => string[]
+  /**
+   * Resolve a chat's persona content + whether it may cultivate persona.md
+   * (persona design §2). Read per-spawn (like `careLevelFor`'s siblings) so
+   * a hand-edited persona.md shows up in the prompt without a daemon
+   * restart. Absent ⇒ BOTH the persona identity section and the
+   * persona-cultivation section are NEVER included for any chat — tests and
+   * minimal embeddings that don't wire this stay byte-identical to before
+   * the persona feature existed. Wiring the actual thunk (owner-chat
+   * memory/persona.md read via `default_chat_id`) happens in main.ts.
+   */
+  personaFor?: (chatId: string) => { content?: string; cultivate?: boolean }
 }
 
 export interface Bootstrap {
@@ -230,9 +262,11 @@ export interface Bootstrap {
   /**
    * The single provider-agnostic system-prompt assembler. SessionManager calls
    * it once per spawn and forwards the result via SpawnContext.appendInstructions;
-   * each provider injects it through its own transport. Exposed for tests.
+   * each provider injects it through its own transport. `chatId` gates the
+   * per-chat sections (currently: the care section, via `deps.careLevelFor`).
+   * Exposed for tests.
    */
-  buildInstructions: (providerId: ProviderId, tierProfile: TierProfile) => string
+  buildInstructions: (providerId: ProviderId, tierProfile: TierProfile, chatId: string) => string
   /** Daemon-default provider id — what new chats get until user runs `/cc` or `/codex`. */
   defaultProviderId: ProviderId
   /** Backward-compat alias for defaultProviderId. Pre-P2 callers expected this name. */
@@ -866,9 +900,19 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // wired (no per-provider ternary — adding a provider needs no edit here).
   // daemonOpsAvailable mirrors the admin predicate the wechat MCP server gates
   // its daemon-control tools on, so the self-heal section appears iff those
-  // tools are actually registered for this spawn.
-  const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile): string =>
-    buildSystemPrompt({
+  // tools are actually registered for this spawn. careEnabled mirrors
+  // `deps.careLevelFor` the same way — absent thunk ⇒ 'off' ⇒ section never
+  // included (proactive-care design §7). It also requires memory_write:
+  // guests can't author agenda.md entries or call set_chat_pref (both
+  // memory_write), so showing the care section would just burn turns on
+  // denied tool calls — gap check-ins (guest-allowed `reply`) work fine
+  // without it. stickerTags mirrors `deps.stickerTagsFor`
+  // the same way — absent thunk ⇒ [] ⇒ section never included. persona /
+  // personaCultivate mirror `deps.personaFor` the same way — absent thunk
+  // ⇒ both persona sections never included (persona design §2).
+  const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string): string => {
+    const p = deps.personaFor?.(chatId)
+    return buildSystemPrompt({
       providerId,
       // Unused when delegateAvailable is false; fall back to the daemon default.
       peerProviderId: capabilitiesFor(providerId).defaultPeer ?? defaultProviderId,
@@ -876,7 +920,17 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       delegateAvailable: !!delegateStdioByProvider[providerId],
       daemonOpsAvailable: tierProfile.allow.has('daemon_introspect'),
       fileLocateAvailable: tierProfile.allow.has('file_locate'),
+      careEnabled: (deps.careLevelFor?.(chatId) ?? 'off') !== 'off' && tierProfile.allow.has('memory_write'),
+      stickerTags: deps.stickerTagsFor?.(chatId) ?? [],
+      persona: p?.content,
+      // Like careEnabled: cultivation guidance tells the agent to WRITE
+      // persona.md via memory_write, so it must also be tier-gated — a
+      // guest-tier owner chat would otherwise be prompted to make writes
+      // its tier profile denies (burned turns on denied tool calls, and a
+      // standing invitation to probe the memory surface).
+      personaCultivate: p?.cultivate === true && tierProfile.allow.has('memory_write'),
     })
+  }
 
   const sessionManager = new SessionManager({
     maxConcurrent: 6,

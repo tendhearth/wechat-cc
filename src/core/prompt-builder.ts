@@ -54,6 +54,41 @@ export interface BuildSystemPromptArgs {
    * `tierProfile.allow.has('file_locate')`. Default false.
    */
   fileLocateAvailable?: boolean
+  /**
+   * When true, this chat's effective care level (per proactive-care design
+   * §7) is not `off` — adds the care-authoring section so the agent knows
+   * to write care intentions into `agenda.md` during normal conversation
+   * and to honor presence-preference changes via `set_chat_pref`. Absent
+   * or false ⇒ output is byte-identical to before this field existed
+   * (default false; callers without a `careLevelFor` thunk never set it).
+   */
+  careEnabled?: boolean
+  /**
+   * Local sticker library tags available to this session (image-stickers
+   * design §5). When present and non-empty, adds the sticker section so the
+   * agent knows it can `send_sticker(tag)` on strong-emotion/celebration/
+   * comfort moments and `save_sticker` on a good incoming image. Absent or
+   * empty ⇒ output is byte-identical to before this field existed (mirrors
+   * `careEnabled`'s contract; callers without a `stickerTagsFor` thunk never
+   * set it).
+   */
+  stickerTags?: string[]
+  /**
+   * This chat's persona.md content (persona design — "白纸养成" character
+   * sheet). When present and non-blank, adds the persona section right
+   * after the identity section so the agent stays in-character across the
+   * conversation. Sliced to 4000 chars to bound prompt cost. Absent or
+   * whitespace-only ⇒ output is byte-identical to before this field existed
+   * (mirrors `careEnabled`/`stickerTags`'s contract).
+   */
+  persona?: string
+  /**
+   * When true, this is an owner chat and the persona-cultivation section is
+   * added so the agent knows it may write persona.md updates via
+   * memory_write as the character forms through conversation. Default
+   * false/absent ⇒ output is byte-identical to before this field existed.
+   */
+  personaCultivate?: boolean
 }
 
 /**
@@ -66,11 +101,15 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
 
   const sections: string[] = [
     baseChannelSection(providerId),
+    args.persona && args.persona.trim().length > 0 ? personaSection(args.persona) : '',
     toolsSection(),
     delegateAvailable ? delegateSection(peerProviderId) : '',
     a2aSection(),
     args.daemonOpsAvailable ? daemonSelfHealSection() : '',
     args.fileLocateAvailable ? fileLocateSection() : '',
+    args.careEnabled ? careSection() : '',
+    args.personaCultivate === true ? personaCultivationSection() : '',
+    args.stickerTags && args.stickerTags.length > 0 ? stickerSection(args.stickerTags) : '',
     memorySection(),
     multiModeAwarenessSection(),
     companionEnabled ? companionSection() : '',
@@ -173,6 +212,72 @@ export function fileLocateSection(): string {
 - 找到并确认后，用 \`Read\` 打开来回答，并用 \`memory_write\` 往 \`locations.md\` 追一行「这是什么 → 绝对路径」，下次直接命中。
 - 实在找不到，就在微信问主人一句「X 一般放哪？」（只问这一次），拿到答案把那个目录记进 \`locations.md\`。
 范围是用出来的，不是让主人配置出来的。`
+}
+
+/**
+ * Persona identity section — appears when this chat has a non-blank
+ * persona.md (persona design). Placed right after baseChannelSection so
+ * identity (你是 ${providerId}) comes first and character/voice comes
+ * second. Content is sliced to 4000 chars to bound per-turn prompt cost
+ * (this file is appended on EVERY turn — see module header).
+ */
+export function personaSection(content: string): string {
+  return `## 你的人设(persona)
+
+下面是你自己维护的人设档案(persona.md)。这就是你的性格和说话方式——在所有对话里保持一致地做这个"人":
+
+${content.slice(0, 4000)}`
+}
+
+/**
+ * Persona-cultivation capability (owner chat only) — tells the agent WHEN
+ * and HOW to write persona.md: it's a "白纸养成" character sheet that forms
+ * out of the owner/agent relationship over time, not a spec to fill in
+ * eagerly. The "克制" framing exists because without it the agent tends to
+ * rewrite the whole file after every notable exchange, which defeats the
+ * slow-growth premise of the design.
+ */
+export function personaCultivationSection(): string {
+  return `## 人设养成(persona.md)
+
+persona.md 在你和主人的对话记忆里,是"白纸养成"的性格档案。随着相处,把逐渐形成的说话风格、性格特质、主人的调教(对标谁、什么语气、什么雷区)用 memory_write 写进去;简短、条目化。**改动要克制——人格是缓慢生长的,不是每天重写。** 主人说"对标 XXX / 以后这样说话"时,更新 persona.md 并口头确认。`
+}
+
+/**
+ * Care-authoring capability — appears when this chat's effective care level
+ * (proactive-care design §7) is not `off`. Tells the agent WHEN to author a
+ * care intention (not a keyword rule — it still decides) and where it lands:
+ * the SAME agenda.md format the memory section already documents for
+ * follow-ups, so there's no new syntax for the agent to learn. Also covers
+ * the presence-preference escape hatch (`set_chat_pref`) so a "别烦我" isn't
+ * just apologised at — it changes actual future behavior.
+ */
+export function careSection(): string {
+  return `## 主动关心（agenda.md）
+
+平时聊天里，当用户提到即将发生的事、担忧或情绪（考试、面试、身体不舒服、重要日子……），把一条关心意向写进 \`agenda.md\`：\`- [ ] due:YYYY-MM-DD 关心…\`（跟长期记忆一节说的是同一个格式，不是新语法）。\`due\` 定在事情发生之后一个合适的时间点——不是记下事情本身，是记"到时候要不要问问看"。
+
+关心要自然、具体、有由头（这次聊天里确实提到的事），不要为了显得贴心而堆砌——同一个话题最多留一条关心意向，别重复记。
+
+当用户表达打扰偏好（"别烦我" / "多关心我" / "别拆分"这类），用 \`set_chat_pref\` 工具调整（\`care: off|low|high\`、\`split\`），改完口头确认一句，不要只是嘴上答应却不落实。`
+}
+
+/**
+ * Sticker-reply capability (image-stickers design §5) — appears when this
+ * session has a non-empty local sticker library. Gives the agent a
+ * when-to-use framing (strong emotion/celebration/comfort, at most one per
+ * turn, pairs with text rather than replacing it, skip when no tag fits)
+ * plus the reverse path (`save_sticker` on a good incoming image, asking
+ * first) so the library grows from real usage instead of being pre-seeded.
+ */
+export function stickerSection(tags: string[]): string {
+  // Defense in depth: stickers.ts save() already rejects/normalizes tags at
+  // the source, but this renders straight into every chat's system prompt,
+  // so backstop all line separators + 20-char cap for hand-edited index data.
+  const safeTags = tags.filter((t) => !/[\r\n  ]/.test(t) && t.length <= 20).slice(0, 30)
+  return `## 表情包
+
+本地表情库可用 tags: ${safeTags.join(', ')}。情绪强/庆祝/安慰的时刻可以用 \`send_sticker(tag)\` 发一张表情包，一次最多一张，配合文字而不是替代文字；没有合适的 tag 就不用，别硬凑；用户发来好的表情图时可以用 \`save_sticker\` 收进库（先问一句）。`
 }
 
 function memorySection(): string {

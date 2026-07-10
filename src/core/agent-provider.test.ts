@@ -66,6 +66,7 @@ describe('isReplyToolCall', () => {
     expect(isReplyToolCall({ kind: 'tool_call', server: 'wechat', tool: 'send_file' })).toBe(true)
     expect(isReplyToolCall({ kind: 'tool_call', server: 'wechat', tool: 'edit_message' })).toBe(true)
     expect(isReplyToolCall({ kind: 'tool_call', server: 'wechat', tool: 'broadcast' })).toBe(true)
+    expect(isReplyToolCall({ kind: 'tool_call', server: 'wechat', tool: 'send_sticker' })).toBe(true)
   })
   it('rejects non-wechat servers', () => {
     expect(isReplyToolCall({ kind: 'tool_call', server: 'other', tool: 'reply' })).toBe(false)
@@ -77,6 +78,7 @@ describe('isReplyToolCall', () => {
       expect(isReplyToolName('mcp__wechat__reply_voice')).toBe(true)
       expect(isReplyToolName('mcp__wechat__send_file')).toBe(true)
       expect(isReplyToolName('mcp__wechat__broadcast')).toBe(true)
+      expect(isReplyToolName('mcp__wechat__send_sticker')).toBe(true)
     })
     it('rejects other servers, non-reply wechat tools, and built-ins', () => {
       expect(isReplyToolName('mcp__other__reply')).toBe(false)
