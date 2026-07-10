@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, existsSync } from 'node:fs
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createInternalApi, type InternalApi } from './internal-api'
+import { makeReplySinks } from './reply-sinks'
 import { makeMemoryFS } from './memory/fs-api'
 import { makeEventsStore } from './events/store'
 import { openTestDb } from '../lib/db'
@@ -1661,6 +1662,49 @@ describe('internal-api', () => {
       const body = await resp.json() as { ok: boolean; error?: string }
       expect(body.ok).toBe(false)
       expect(body.error).toContain('ilink down')
+    })
+
+    it('POST /v1/wechat/reply captures into an open reply sink instead of ilink-sending', async () => {
+      const sendReply = vi.fn(async () => ({ msgId: 'm-123' }))
+      const replySinks = makeReplySinks()
+      const handle = replySinks.open('c1')
+      api = createInternalApi({
+        stateDir, daemonPid: 1,
+        ilink: { sendReply, sendFile: async () => {}, editMessage: async () => {}, broadcast: async () => ({ ok: 0, failed: 0 }) },
+        replySinks,
+      })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c1', text: 'hi' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true, captured: true })
+      expect(sendReply).not.toHaveBeenCalled()
+      expect(handle.close()).toBe('hi')
+    })
+
+    it('POST /v1/wechat/reply falls through to ilink when no sink is open for the chat', async () => {
+      const sendReply = vi.fn(async () => ({ msgId: 'm-123' }))
+      const replySinks = makeReplySinks()
+      replySinks.open('other-chat') // sink open, but not for c1
+      api = createInternalApi({
+        stateDir, daemonPid: 1,
+        ilink: { sendReply, sendFile: async () => {}, editMessage: async () => {}, broadcast: async () => ({ ok: 0, failed: 0 }) },
+        replySinks,
+      })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c1', text: 'hi' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true, msg_id: 'm-123' })
+      expect(sendReply).toHaveBeenCalledWith('c1', 'hi')
     })
 
     it('POST /v1/wechat/reply_voice forwards chat_id+text and returns voice result', async () => {

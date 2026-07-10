@@ -300,6 +300,12 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       if (!deps.ilink) return { status: 503, body: { error: 'ilink_not_wired' } }
       // Body is pre-validated by index.ts via WechatReplyRequest schema.
       const { chat_id, text, participant_tag } = body as WechatReplyRequestT
+      // App-conversation-channel, Stage 0: when a reply sink is open for
+      // this chat, capture the RAW text (whole, pre-split, pre-prefix — the
+      // app shows the whole reply) instead of ilink-sending it.
+      if (deps.replySinks?.capture(chat_id, text)) {
+        return { status: 200, body: { ok: true, captured: true } }
+      }
       // RFC 03 P3 — mode-aware prefixing. Only applies when the chat is
       // in a multi-participant mode AND the caller supplied its tag.
       // Solo mode (and absent prefix deps) → text passes through unchanged.

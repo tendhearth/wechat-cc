@@ -9,6 +9,7 @@
 import type { MemoryFS } from '../memory/fs-api'
 import type { Db } from '../../lib/db'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
+import type { ReplySinks } from '../reply-sinks'
 import type { ConversationStore } from '../../core/conversation-store'
 import type { ProviderId } from '../../core/conversation'
 import type { PermissionMode } from '../../core/capability-matrix'
@@ -124,6 +125,13 @@ export interface InternalApiDeps {
    * served. `voice.replyVoice` covers `reply_voice` separately.
    */
   ilink?: InternalApiIlinkDep
+  /**
+   * Optional reply-sink registry (app-conversation-channel, Stage 0). When
+   * a sink is open for a chat, `POST /v1/wechat/reply` captures the reply
+   * into it instead of ilink-sending — the app channel reads the turn's
+   * output back from the sink. Absent ⇒ WeChat reply path unchanged.
+   */
+  replySinks?: ReplySinks
   /**
    * Optional mode-aware reply prefixing (RFC 03 P3). When wired, the
    * `reply` route consults `conversationStore` for the chat's mode and
