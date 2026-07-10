@@ -20,6 +20,7 @@ import type { PipelineRun } from '../inbound/types'
 import { isAdmin, loadAccess } from '../../lib/access'
 import { makeAdminCommands } from '../admin-commands'
 import { makeModeCommands } from '../mode-commands'
+import { makeChatPrefs } from '../chat-prefs'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider } from '../../lib/agent-config'
@@ -220,6 +221,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       const current = loadAgentConfig(stateDir)
       saveAgentConfig(stateDir, withModelForProvider(current, providerId, model))
     },
+    // TEMPORARY: local construction — Task 5 replaces this with a shared
+    // chat-prefs instance (also consumed by the reply-route split logic).
+    chatPrefs: makeChatPrefs(stateDir),
     log,
     isAdmin,
   })

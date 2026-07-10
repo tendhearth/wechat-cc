@@ -24,6 +24,11 @@ function setup(opts: {
     return { msgId: 'm-1' }
   })
   const pinModel = vi.fn<(providerId: ProviderId, model: string) => void>()
+  const prefsData = new Map<string, { split?: boolean }>()
+  const chatPrefs = {
+    get: (c: string) => prefsData.get(c) ?? {},
+    set: (c: string, p: { split?: boolean }) => { const n = { ...(prefsData.get(c) ?? {}), ...p }; prefsData.set(c, n); return n },
+  }
   const cmds = makeModeCommands({
     coordinator: {
       getMode: () => stored ?? { kind: 'solo', provider: opts.defaultProviderId ?? 'claude' },
@@ -43,10 +48,11 @@ function setup(opts: {
     setUserName: vi.fn(async (chat: string, name: string) => { storedName = { chat, name } }),
     getUserName: vi.fn(() => opts.initialUserName ?? null),
     pinModel,
+    chatPrefs,
     log: () => {},
     isAdmin: opts.isAdmin,
   })
-  return { cmds, set, sendMessage, sentMessages, pinModel, getStored: () => stored, getStoredName: () => storedName }
+  return { cmds, set, sendMessage, sentMessages, pinModel, chatPrefs, prefsData, getStored: () => stored, getStoredName: () => storedName }
 }
 
 describe('makeModeCommands', () => {
@@ -227,6 +233,7 @@ describe('makeModeCommands', () => {
       setUserName: async () => {},
       getUserName: () => null,
       pinModel: async () => {},
+      chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
     })
     await cmds.handle(inbound('/both'))
@@ -270,6 +277,7 @@ describe('makeModeCommands', () => {
       setUserName: async () => {},
       getUserName: () => null,
       pinModel: async () => {},
+      chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
     })
     await cmds.handle(inbound('/chat'))
@@ -314,6 +322,7 @@ describe('makeModeCommands', () => {
       setUserName: async () => {},
       getUserName: () => null,
       pinModel: async () => {},
+      chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
     })
     await cmds.handle(inbound('/stop'))
@@ -343,6 +352,7 @@ describe('makeModeCommands', () => {
       setUserName: async () => {},
       getUserName: () => null,
       pinModel: async () => {},
+      chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
     })
     await cmds.handle(inbound('/stop'))
@@ -428,6 +438,7 @@ describe('makeModeCommands', () => {
       setUserName: async () => {},
       getUserName: () => null,
       pinModel: async () => {},
+      chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
     })
     await cmds.handle(inbound('/cc + codex'))
@@ -677,5 +688,34 @@ describe('makeModeCommands', () => {
         kind: 'chatroom', participants: ['claude', 'codex'],
       })
     })
+  })
+
+  // ── /set — per-chat preferences (settings layer seed) ────────────────
+
+  it('/set shows current prefs for this chat', async () => {
+    const { cmds, sentMessages } = setup()
+    expect(await cmds.handle(inbound('/set'))).toBe(true)
+    expect(sentMessages[0]?.[1]).toContain('split')
+    expect(sentMessages[0]?.[1]).toContain('on') // default ON when unset
+  })
+
+  it('/set split off persists and confirms', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    expect(await cmds.handle(inbound('/set split off'))).toBe(true)
+    expect(prefsData.get('chat-1')).toEqual({ split: false })
+    expect(sentMessages[0]?.[1]).toContain('关闭')
+  })
+
+  it('/set 拆分 开 (Chinese alias) turns it on', async () => {
+    const { cmds, prefsData } = setup()
+    await cmds.handle(inbound('/set 拆分 开'))
+    expect(prefsData.get('chat-1')).toEqual({ split: true })
+  })
+
+  it('/set with an unknown key replies usage, does not write', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    await cmds.handle(inbound('/set volume 11'))
+    expect(prefsData.size).toBe(0)
+    expect(sentMessages[0]?.[1]).toContain('split')
   })
 })

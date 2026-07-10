@@ -50,6 +50,8 @@ export interface ModeCommandsDeps {
    * then delivers it to the next spawn via `currentModelFor`, no restart.
    */
   pinModel(providerId: ProviderId, model: string): void | Promise<void>
+  /** Per-chat prefs (chat-prefs store). /set reads+writes THIS chat's entry. */
+  chatPrefs: { get(chatId: string): { split?: boolean }; set(chatId: string, patch: { split?: boolean }): { split?: boolean } }
   log: (tag: string, line: string) => void
   /** Returns true when userId belongs to an admin. Used by /help to gate the admin section. */
   isAdmin?: (userId: string) => boolean
@@ -148,6 +150,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
       '/chat [p1 p2 …] — 圆桌讨论',
       '/solo /stop /mode — 回到默认 / 退出 / 显示当前模式',
+      '/set — 本对话偏好(拆分回复等)',
       '',
       '**身份**',
       '/whoami — 显示你的身份 + 当前模式',
@@ -273,6 +276,28 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           return true
         }
         await reply(msg.chatId, `❓ \`/${slashWord}\` 不支持参数 \`${tail}\`。试试 \`/${slashWord}\`、\`/${slashWord} + ${providerId === 'claude' ? 'codex' : 'cc'}\`、\`/solo\` 或 \`/mode\`。`)
+        return true
+      }
+
+      // /set — per-chat preferences (the settings layer's first dial).
+      if (slashWord.toLowerCase() === 'set') {
+        const p = deps.chatPrefs.get(msg.chatId)
+        if (tail === '') {
+          const state = p.split === false ? 'off' : 'on'
+          await reply(msg.chatId, `当前设置(本对话):\n· split(拆分回复): ${state}\n\n用法: /set split on|off — 回复像真人一样分几条发`)
+          return true
+        }
+        const m2 = /^(split|拆分)\s+(on|off|开|关)$/i.exec(tail)
+        if (!m2) {
+          await reply(msg.chatId, '❓ 不认识这个设置。目前支持: /set split on|off(别名: 拆分 开|关)')
+          return true
+        }
+        const on = /^(on|开)$/i.test(m2[2]!)
+        deps.chatPrefs.set(msg.chatId, { split: on })
+        await reply(msg.chatId, on
+          ? '✅ 拆分回复已开启——回复会像真人一样分几条发。'
+          : '✅ 拆分回复已关闭——每次回复只发一条。')
+        deps.log('MODE_CMD', `chat=${msg.chatId} /set split=${on}`)
         return true
       }
 
