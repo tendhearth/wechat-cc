@@ -1158,6 +1158,262 @@ describe('internal-api', () => {
     })
   })
 
+  // ─── stickers (send_sticker / save / list) ─────────────────────────────
+
+  interface MockStickers {
+    resolve: (tag: string) => string | null
+    save: (sourcePath: string, tags: string[], desc?: string) => { file: string; tags: string[] }
+    list: () => { file: string; tags: string[]; desc?: string }[]
+    allTags: () => string[]
+  }
+
+  describe('POST /v1/wechat/send_sticker', () => {
+    it('503 when stickers dep not wired', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c@bot', tag: 'happy' }),
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'stickers_not_wired' })
+    })
+
+    it('400 on missing chat_id / missing tag', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => null),
+        save: vi.fn(),
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => []),
+      }
+      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+
+      const missingChatId = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ tag: 'happy' }),
+      })
+      expect(missingChatId.status).toBe(400)
+
+      const missingTag = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c@bot' }),
+      })
+      expect(missingTag.status).toBe(400)
+
+      expect(stickers.resolve).not.toHaveBeenCalled()
+    })
+
+    it('no matching sticker ⇒ ok:false with available tags', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => null),
+        save: vi.fn(),
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => ['happy', 'sad']),
+      }
+      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c@bot', tag: 'angry' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: false, reason: 'no_sticker_for_tag', tags: ['happy', 'sad'] })
+    })
+
+    it('ilink not wired ⇒ 503 when tag resolves', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => '/state/stickers/happy.png'),
+        save: vi.fn(),
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => []),
+      }
+      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c@bot', tag: 'happy' }),
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'ilink_not_wired' })
+    })
+
+    it('happy path calls ilink.sendFile(chat_id, resolvedPath) and returns basename', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => '/state/stickers/happy.png'),
+        save: vi.fn(),
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => []),
+      }
+      const sendFile = vi.fn(async () => {})
+      api = createInternalApi({
+        stateDir, daemonPid: 1, stickers,
+        ilink: { sendReply: async () => ({ msgId: 'm' }), sendFile, editMessage: async () => {}, broadcast: async () => ({ ok: 0, failed: 0 }) },
+      })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c@bot', tag: 'happy' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(sendFile).toHaveBeenCalledWith('c@bot', '/state/stickers/happy.png')
+      expect(await resp.json()).toEqual({ ok: true, file: 'happy.png' })
+    })
+
+    it('ilink.sendFile throws ⇒ ok:false+error', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => '/state/stickers/happy.png'),
+        save: vi.fn(),
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => []),
+      }
+      const sendFile = vi.fn(async () => { throw new Error('boom') })
+      api = createInternalApi({
+        stateDir, daemonPid: 1, stickers,
+        ilink: { sendReply: async () => ({ msgId: 'm' }), sendFile, editMessage: async () => {}, broadcast: async () => ({ ok: 0, failed: 0 }) },
+      })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c@bot', tag: 'happy' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: false, error: 'boom' })
+    })
+  })
+
+  describe('POST /v1/stickers', () => {
+    it('503 when stickers dep not wired', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ path: '/tmp/x.png', tags: ['happy'] }),
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'stickers_not_wired' })
+    })
+
+    it('400 on missing path / empty tags array', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => null),
+        save: vi.fn(),
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => []),
+      }
+      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+
+      const missingPath = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ tags: ['happy'] }),
+      })
+      expect(missingPath.status).toBe(400)
+
+      const emptyTags = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ path: '/tmp/x.png', tags: [] }),
+      })
+      expect(emptyTags.status).toBe(400)
+
+      const badTagType = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ path: '/tmp/x.png', tags: ['happy', ''] }),
+      })
+      expect(badTagType.status).toBe(400)
+
+      expect(stickers.save).not.toHaveBeenCalled()
+    })
+
+    it('lib throws invalid_extension ⇒ 400 with that message', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => null),
+        save: vi.fn(() => { throw new Error('invalid_extension') }),
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => []),
+      }
+      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ path: '/tmp/x.txt', tags: ['happy'] }),
+      })
+      expect(resp.status).toBe(400)
+      expect(await resp.json()).toEqual({ error: 'invalid_extension' })
+    })
+
+    it('happy path calls save(path, tags, desc) and returns ok+file+tags', async () => {
+      const save = vi.fn(() => ({ file: 'x.png', tags: ['happy'] }))
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => null),
+        save,
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => []),
+      }
+      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ path: '/tmp/x.png', tags: ['happy'], desc: 'a happy face' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(save).toHaveBeenCalledWith('/tmp/x.png', ['happy'], 'a happy face')
+      expect(await resp.json()).toEqual({ ok: true, file: 'x.png', tags: ['happy'] })
+    })
+  })
+
+  describe('GET /v1/stickers', () => {
+    it('503 when stickers dep not wired', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'stickers_not_wired' })
+    })
+
+    it('happy path returns stickers list + tags', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => null),
+        save: vi.fn(),
+        list: vi.fn(() => [{ file: 'x.png', tags: ['happy'], desc: 'a happy face' }]),
+        allTags: vi.fn(() => ['happy']),
+      }
+      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({
+        ok: true,
+        stickers: [{ file: 'x.png', tags: ['happy'], desc: 'a happy face' }],
+        tags: ['happy'],
+      })
+    })
+  })
+
   // ─── ilink-bound message family routes (RFC 03 P1.B B1) ──────────────
 
   describe('ilink message routes', () => {

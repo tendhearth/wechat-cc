@@ -8,6 +8,7 @@
  * sections are kept in stable order to match the original file's layout
  * so blame survives the split.
  */
+import { basename } from 'node:path'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
 import { splitReply, paceMs } from '../reply-split'
 import { lookup } from '../../core/capability-matrix'
@@ -492,6 +493,59 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       if (b.split !== undefined) patch.split = b.split
       const prefs = deps.setChatPref(b.chat_id, patch)
       return { status: 200, body: { ok: true, prefs } }
+    },
+
+    // ── stickers (image-stickers plan) ─────────────────────────────────
+    // INLINE-validated deliberately (no REQUEST_SCHEMAS entry) — mirrors
+    // the /v1/chat-prefs pattern above. Backs the send_sticker MCP tool
+    // plus the curated-lib save/list surface used to seed it.
+    'POST /v1/wechat/send_sticker': async (_q, body) => {
+      if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
+      const b = (body ?? {}) as { chat_id?: unknown; tag?: unknown }
+      if (typeof b.chat_id !== 'string' || b.chat_id.trim() === '') {
+        return { status: 400, body: { error: 'chat_id required (non-empty string)' } }
+      }
+      if (typeof b.tag !== 'string' || b.tag.trim() === '') {
+        return { status: 400, body: { error: 'tag required (non-empty string)' } }
+      }
+      const path = deps.stickers.resolve(b.tag)
+      if (path === null) {
+        return { status: 200, body: { ok: false, reason: 'no_sticker_for_tag', tags: deps.stickers.allTags() } }
+      }
+      if (!deps.ilink) return { status: 503, body: { error: 'ilink_not_wired' } }
+      try {
+        await deps.ilink.sendFile(b.chat_id, path)
+        return { status: 200, body: { ok: true, file: basename(path) } }
+      } catch (err) {
+        return { status: 200, body: { ok: false, error: errMsg(err) } }
+      }
+    },
+    'POST /v1/stickers': (_q, body) => {
+      if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
+      const b = (body ?? {}) as { path?: unknown; tags?: unknown; desc?: unknown }
+      if (typeof b.path !== 'string' || b.path.trim() === '') {
+        return { status: 400, body: { error: 'path required (non-empty string)' } }
+      }
+      if (
+        !Array.isArray(b.tags) ||
+        b.tags.length === 0 ||
+        !b.tags.every((t) => typeof t === 'string' && t.trim() !== '')
+      ) {
+        return { status: 400, body: { error: 'tags required (non-empty array of non-empty strings)' } }
+      }
+      if (b.desc !== undefined && typeof b.desc !== 'string') {
+        return { status: 400, body: { error: 'desc must be a string' } }
+      }
+      try {
+        const saved = deps.stickers.save(b.path, b.tags as string[], b.desc as string | undefined)
+        return { status: 200, body: { ok: true, file: saved.file, tags: saved.tags } }
+      } catch (err) {
+        return { status: 400, body: { error: errMsg(err) } }
+      }
+    },
+    'GET /v1/stickers': () => {
+      if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
+      return { status: 200, body: { ok: true, stickers: deps.stickers.list(), tags: deps.stickers.allTags() } }
     },
 
     // ── a2a (send / test / dashboard CRUD) + daemon-control (sessions / model

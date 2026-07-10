@@ -217,6 +217,20 @@ export interface InternalApiDeps {
    * Absent ⇒ the route 503s chat_prefs_not_wired.
    */
   setChatPref?: (chatId: string, patch: { care?: 'off' | 'low' | 'high'; split?: boolean }) => { care?: 'off' | 'low' | 'high'; split?: boolean }
+  /**
+   * Shared sticker library (image-stickers plan) — backs
+   * POST /v1/wechat/send_sticker, POST /v1/stickers, GET /v1/stickers.
+   * Wired in main.ts over the shared StickerLib instance. Absent ⇒ the
+   * three routes 503 stickers_not_wired.
+   */
+  stickers?: {
+    /** ABSOLUTE path of a random match for `tag`; trim+case-insensitive; null if no match. */
+    resolve(tag: string): string | null
+    /** Copies sourcePath into the library. Throws Error('invalid_extension') / Error('empty_tags') / fs errors. */
+    save(sourcePath: string, tags: string[], desc?: string): { file: string; tags: string[] }
+    list(): { file: string; tags: string[]; desc?: string }[]
+    allTags(): string[]
+  }
 }
 
 export interface InternalApi {
