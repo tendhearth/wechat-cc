@@ -243,6 +243,20 @@ describe('sticker prompt section', () => {
     expect(s).toContain('tag29')
   })
 
+  it('stickerSection() filters out tags containing spaces', () => {
+    const s = stickerSection(['good', 'bad tag', 'also-good'])
+    expect(s).toContain('good')
+    expect(s).not.toContain('bad tag')
+    expect(s).toContain('also-good')
+  })
+
+  it('stickerSection() filters out tags longer than 20 characters', () => {
+    const s = stickerSection(['ok', 'tooshort', 'a'.repeat(21)])
+    expect(s).toContain('ok')
+    expect(s).toContain('tooshort')
+    expect(s).not.toContain('a'.repeat(21))
+  })
+
   it('buildSystemPrompt includes the sticker section when stickerTags is non-empty', () => {
     const p = buildSystemPrompt({ ...base, stickerTags: ['happy', 'sad'] })
     expect(p).toContain('send_sticker')

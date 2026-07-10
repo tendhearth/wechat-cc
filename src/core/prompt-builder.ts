@@ -226,8 +226,8 @@ export function careSection(): string {
 export function stickerSection(tags: string[]): string {
   // Defense in depth: stickers.ts save() already rejects/normalizes tags at
   // the source, but this renders straight into every chat's system prompt,
-  // so cap the list and drop anything that still smuggled a newline through.
-  const safeTags = tags.filter((t) => !t.includes('\n')).slice(0, 30)
+  // so backstop all line separators + 20-char cap for hand-edited index data.
+  const safeTags = tags.filter((t) => !/[\r\n  ]/.test(t) && t.length <= 20).slice(0, 30)
   return `## 表情包
 
 本地表情库可用 tags: ${safeTags.join(', ')}。情绪强/庆祝/安慰的时刻可以用 \`send_sticker(tag)\` 发一张表情包，一次最多一张，配合文字而不是替代文字；没有合适的 tag 就不用，别硬凑；用户发来好的表情图时可以用 \`save_sticker\` 收进库（先问一句）。`
