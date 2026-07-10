@@ -105,6 +105,20 @@ describe('plugin registry', () => {
     expect(skipped.filter(m => m.startsWith('skip')).length).toBe(3)
   })
 
+  it('reserved-name check is case-insensitive but only matches exact names, not substrings', () => {
+    writePlugin(join(stateDir, 'plugins'), 'casedelegate', good('Delegate'))     // case variant — still reserved
+    writePlugin(join(stateDir, 'plugins'), 'wechat2', good('wechat2'))          // near-miss — allowed
+    writePlugin(join(stateDir, 'plugins'), 'mywechat', good('my-wechat'))       // near-miss — allowed
+    writeFileSync(
+      join(stateDir, 'plugins', 'plugins.json'),
+      JSON.stringify({ enabled: { wechat2: true, 'my-wechat': true } }),
+    )
+    const skipped: string[] = []
+    const loaded = loadPlugins({ stateDir, bundledDir, log: m => skipped.push(m) })
+    expect(loaded.map(p => p.manifest.name).sort()).toEqual(['my-wechat', 'wechat2'])
+    expect(skipped.filter(m => m.startsWith('skip')).length).toBe(1)
+  })
+
   it('missing dirs are a no-op, not a crash', () => {
     expect(loadPlugins({ stateDir: join(stateDir, 'nope'), bundledDir: null })).toEqual([])
   })
