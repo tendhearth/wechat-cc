@@ -198,6 +198,9 @@ describe('classifyToolUse', () => {
     expect(classifyToolUse('mcp__wechat__observations_write', {})).toBe('observations_write')
     expect(classifyToolUse('mcp__wechat__observations_archive', {})).toBe('observations_write')
   })
+  it('set_chat_pref → memory_write (a write must not classify as a read)', () => {
+    expect(classifyToolUse('mcp__wechat__set_chat_pref', {})).toBe('memory_write')
+  })
   it('diagnostic_turns / diagnostic_sessions / diagnostic_health / model_get → daemon_introspect', () => {
     expect(classifyToolUse('mcp__wechat__diagnostic_turns', {})).toBe('daemon_introspect')
     expect(classifyToolUse('mcp__wechat__diagnostic_sessions', {})).toBe('daemon_introspect')

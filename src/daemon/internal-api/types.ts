@@ -212,6 +212,11 @@ export interface InternalApiDeps {
   getChatPrefs?: (chatId: string) => { split?: boolean }
   /** Injectable sleep for chunk pacing; absent ⇒ real setTimeout. */
   sleepMs?: (ms: number) => Promise<void>
+  /**
+   * Shared chat-prefs writer for the set_chat_pref tool (POST /v1/chat-prefs).
+   * Absent ⇒ the route 503s chat_prefs_not_wired.
+   */
+  setChatPref?: (chatId: string, patch: { care?: 'off' | 'low' | 'high'; split?: boolean }) => { care?: 'off' | 'low' | 'high'; split?: boolean }
 }
 
 export interface InternalApi {

@@ -1094,6 +1094,70 @@ describe('internal-api', () => {
     })
   })
 
+  // ─── chat prefs (set_chat_pref tool backend) ──────────────────────────
+
+  describe('POST /v1/chat-prefs', () => {
+    it('503 when setChatPref dep not wired', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/chat-prefs`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'u@bot', care: 'high' }),
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'chat_prefs_not_wired' })
+    })
+
+    it('400 on missing chat_id / bad care value / empty patch', async () => {
+      const setChatPref = vi.fn()
+      api = createInternalApi({ stateDir, daemonPid: 1, setChatPref })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+
+      const missingChatId = await fetch(`http://127.0.0.1:${port}/v1/chat-prefs`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ care: 'high' }),
+      })
+      expect(missingChatId.status).toBe(400)
+
+      const badCare = await fetch(`http://127.0.0.1:${port}/v1/chat-prefs`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'u@bot', care: 'medium' }),
+      })
+      expect(badCare.status).toBe(400)
+
+      const badSplit = await fetch(`http://127.0.0.1:${port}/v1/chat-prefs`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'u@bot', split: 'yes' }),
+      })
+      expect(badSplit.status).toBe(400)
+
+      const emptyPatch = await fetch(`http://127.0.0.1:${port}/v1/chat-prefs`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'u@bot' }),
+      })
+      expect(emptyPatch.status).toBe(400)
+
+      expect(setChatPref).not.toHaveBeenCalled()
+    })
+
+    it('happy path calls setChatPref(chat_id, patch) and returns the read-back', async () => {
+      const setChatPref = vi.fn((_chatId: string, patch: { care?: 'off' | 'low' | 'high'; split?: boolean }) => ({ care: 'high' as const, split: patch.split }))
+      api = createInternalApi({ stateDir, daemonPid: 1, setChatPref })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/chat-prefs`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'u@bot', care: 'high', split: false }),
+      })
+      expect(resp.status).toBe(200)
+      expect(setChatPref).toHaveBeenCalledWith('u@bot', { care: 'high', split: false })
+      expect(await resp.json()).toEqual({ ok: true, prefs: { care: 'high', split: false } })
+    })
+  })
+
   // ─── ilink-bound message family routes (RFC 03 P1.B B1) ──────────────
 
   describe('ilink message routes', () => {

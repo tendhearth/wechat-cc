@@ -215,6 +215,9 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     if (sub === 'observations_list' || sub === 'observations_read') return 'observations_read'
     if (sub === 'observations_write' || sub === 'observations_archive') return 'observations_write'
     if (sub === 'a2a_send') return 'a2a_send'
+    // Explicit write mapping — must NOT fall through to the fs_read default
+    // below: set_chat_pref mutates chat_prefs.json (care level / split).
+    if (sub === 'set_chat_pref') return 'memory_write'
     // Daemon-control family — classified by PREFIX (not exact name) so a future
     // rename or sibling tool (e.g. diagnostic_foo, daemon_bar, session_baz)
     // fails CLOSED into an admin-only kind instead of dropping to the

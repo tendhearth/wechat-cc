@@ -62,6 +62,7 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/license/activate': 'trusted',
   'POST /v1/license/deactivate': 'trusted',
   'POST /v1/delegate': 'trusted',
+  'POST /v1/chat-prefs': 'trusted',
   // admin — daemon-control (daemon_introspect / daemon_remediate)
   'GET /v1/turns': 'admin',
   'GET /v1/sessions': 'admin',

@@ -467,6 +467,33 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       }
     },
 
+    // ── chat prefs (主动关心档位 / 拆分偏好) ───────────────────────────────
+    // INLINE-validated deliberately (no REQUEST_SCHEMAS entry) — keeps the
+    // schema-table route count untouched. Backs the set_chat_pref MCP tool:
+    // the wechat-mcp child calls this when the user states a preference
+    // ("别烦我" / "多关心我" / "别拆分") mid-conversation.
+    'POST /v1/chat-prefs': (_q, body) => {
+      if (!deps.setChatPref) return { status: 503, body: { error: 'chat_prefs_not_wired' } }
+      const b = (body ?? {}) as { chat_id?: unknown; care?: unknown; split?: unknown }
+      if (typeof b.chat_id !== 'string' || b.chat_id.trim() === '') {
+        return { status: 400, body: { error: 'chat_id required (non-empty string)' } }
+      }
+      if (b.care !== undefined && b.care !== 'off' && b.care !== 'low' && b.care !== 'high') {
+        return { status: 400, body: { error: "care must be one of 'off' | 'low' | 'high'" } }
+      }
+      if (b.split !== undefined && typeof b.split !== 'boolean') {
+        return { status: 400, body: { error: 'split must be a boolean' } }
+      }
+      if (b.care === undefined && b.split === undefined) {
+        return { status: 400, body: { error: 'at least one of care or split is required' } }
+      }
+      const patch: { care?: 'off' | 'low' | 'high'; split?: boolean } = {}
+      if (b.care !== undefined) patch.care = b.care
+      if (b.split !== undefined) patch.split = b.split
+      const prefs = deps.setChatPref(b.chat_id, patch)
+      return { status: 200, body: { ok: true, prefs } }
+    },
+
     // ── a2a (send / test / dashboard CRUD) + daemon-control (sessions / model
     //    / restart / turns) live in sibling files — spread in here. ──────────
     ...a2aRoutes(deps),
