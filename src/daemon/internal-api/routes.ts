@@ -9,6 +9,7 @@
  * so blame survives the split.
  */
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
+import { splitReply, paceMs } from '../reply-split'
 import { lookup } from '../../core/capability-matrix'
 import type { Mode } from '../../core/conversation'
 import { makeEventsStore } from '../events/store'
@@ -36,6 +37,8 @@ export interface MakeRoutesContext {
   getDelegate: () => InternalApiDelegateDep | null
   maybePrefix: (chatId: string, text: string, tag: string | undefined) => string
 }
+
+const defaultSleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 
 export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext): RouteTable {
   return {
@@ -264,15 +267,31 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       // in a multi-participant mode AND the caller supplied its tag.
       // Solo mode (and absent prefix deps) → text passes through unchanged.
       const prefixed = maybePrefix(chat_id, text, participant_tag)
+      // Reply splitting (活人感, spec 2026-07-09): only un-prefixed replies —
+      // chunks 2+ of a prefixed send would lose their [Display] attribution.
+      // Absent getChatPrefs dep ⇒ disabled (tests/embedded unchanged);
+      // wired ⇒ default ON unless this chat set split:false.
+      const prefs = prefixed === text ? deps.getChatPrefs?.(chat_id) : undefined
+      const chunks = prefs !== undefined && prefs.split !== false ? splitReply(text) : [prefixed]
+      const sleep = deps.sleepMs ?? defaultSleep
+      let sentCount = 0
       try {
-        const r = await deps.ilink.sendReply(chat_id, prefixed)
-        // Legacy in-process wrapper reshaped {msgId,error?} → {ok,msg_id} or
-        // {ok:false,error}. Preserve verbatim so the agent's mental model
-        // doesn't shift across this migration.
-        if (r.error) return { status: 200, body: { ok: false, error: r.error } }
-        return { status: 200, body: { ok: true, msg_id: r.msgId } }
+        let lastMsgId = ''
+        for (let i = 0; i < chunks.length; i++) {
+          const r = await deps.ilink.sendReply(chat_id, chunks[i]!)
+          // Legacy in-process wrapper reshaped {msgId,error?} → {ok,msg_id} or
+          // {ok:false,error}. Preserve verbatim so the agent's mental model
+          // doesn't shift across this migration.
+          if (r.error) {
+            return { status: 200, body: { ok: false, error: r.error, ...(sentCount > 0 ? { sent: sentCount } : {}) } }
+          }
+          sentCount++
+          lastMsgId = r.msgId
+          if (i < chunks.length - 1) await sleep(paceMs(chunks[i]!))
+        }
+        return { status: 200, body: { ok: true, msg_id: lastMsgId } }
       } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
+        return { status: 200, body: { ok: false, error: errMsg(err), ...(sentCount > 0 ? { sent: sentCount } : {}) } }
       }
     },
     'POST /v1/wechat/reply_voice': async (_q, body) => {

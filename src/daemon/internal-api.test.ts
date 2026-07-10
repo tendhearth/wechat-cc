@@ -1661,6 +1661,150 @@ describe('internal-api', () => {
         expect(await resp.json()).toEqual({ error: 'ilink_not_wired' })
       }
     })
+
+    // ── reply splitting (活人感, spec 2026-07-09) ────────────────────────
+
+    describe('POST /v1/wechat/reply — splitting (活人感)', () => {
+      // Three paragraphs: the first two are individually long enough to
+      // each cross splitReply's per-chunk target on their own (so they
+      // land in separate chunks instead of being greedily merged), the
+      // third is a short tail — this reliably yields 3 chunks under the
+      // real (non-mocked) splitReply implementation.
+      const P1 = '第一段说明这个问题的背景，内容足够长，细节丰富，超过最小长度阈值，需要多写一些内容才能保证触发拆分逻辑的判断条件呀哈哈这里再多加一些字数用来撑够长度到九十个字符左右这样才行喔喔喔喔喔'
+      const P2 = '第二段给出中间的分析过程，进一步展开论证，补充一些额外的说明文字，让这一段也达到足够的长度用于拆分成一条独立消息呀哈哈这里再多加一些字数用来撑够长度到九十个字符左右这样才行喔喔喔喔喔'
+      const P3 = '第三段简短总结一下就好了。'
+      const LONG = `${P1}\n\n${P2}\n\n${P3}`
+
+      function startWithSplit(opts: {
+        sendReply: (chatId: string, text: string) => Promise<{ msgId: string; error?: string }>
+        getChatPrefs?: (chatId: string) => { split?: boolean }
+        sleepMs?: (ms: number) => Promise<void>
+        // When set, wires `prefix` deps the same way the "reply prefixing"
+        // fixture above does, so maybePrefix() can be driven into prefixing.
+        prefixMode?: { kind: 'solo' | 'parallel' | 'chatroom' | 'primary_tool'; provider?: string; primary?: string }
+      }): Promise<{ port: number; token: string }> {
+        const conversationStore = {
+          get: (_chatId: string) => opts.prefixMode ? { mode: opts.prefixMode as never } : null,
+        }
+        api = createInternalApi({
+          stateDir, daemonPid: 1,
+          ilink: {
+            sendReply: opts.sendReply,
+            sendFile: async () => {},
+            editMessage: async () => {},
+            broadcast: async () => ({ ok: 0, failed: 0 }),
+          },
+          ...(opts.getChatPrefs ? { getChatPrefs: opts.getChatPrefs } : {}),
+          ...(opts.sleepMs ? { sleepMs: opts.sleepMs } : {}),
+          ...(opts.prefixMode ? {
+            prefix: {
+              conversationStore,
+              providerDisplayName: (id: string) => id === 'claude' ? 'Claude' : id,
+              permissionMode: 'strict' as const,
+            },
+          } : {}),
+        })
+        return api.start().then(({ port, tokenFilePath }) => ({
+          port, token: readFileSync(tokenFilePath, 'utf8').trim(),
+        }))
+      }
+
+      it('splits an un-prefixed reply into ordered chunks with paced sleeps; msg_id is the LAST chunk', async () => {
+        const sent: string[] = []
+        const delays: number[] = []
+        let n = 0
+        const sendReply = vi.fn(async (_c: string, text: string) => { sent.push(text); n++; return { msgId: `m-${n}` } })
+        const { port, token } = await startWithSplit({
+          sendReply,
+          getChatPrefs: () => ({}),
+          sleepMs: async (ms) => { delays.push(ms) },
+        })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'c@bot', text: LONG }),
+        })
+        expect(resp.status).toBe(200)
+        expect(sendReply.mock.calls.length).toBeGreaterThanOrEqual(2)
+        // Content order preserved — rejoining the sent chunks (ignoring the
+        // whitespace trimmed at chunk boundaries) reconstructs the source.
+        expect(sent.join('').replace(/\s+/g, '')).toBe(LONG.replace(/\s+/g, ''))
+        expect(await resp.json()).toEqual({ ok: true, msg_id: `m-${n}` })
+        expect(delays.length).toBe(n - 1)
+        for (const d of delays) {
+          expect(d).toBeGreaterThanOrEqual(600)
+          expect(d).toBeLessThanOrEqual(2000)
+        }
+      })
+
+      it('split:false pref → single send with the full text', async () => {
+        const sendReply = vi.fn(async () => ({ msgId: 'm-1' }))
+        const { port, token } = await startWithSplit({
+          sendReply,
+          getChatPrefs: () => ({ split: false }),
+        })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'c@bot', text: LONG }),
+        })
+        expect(resp.status).toBe(200)
+        expect(sendReply).toHaveBeenCalledTimes(1)
+        expect(sendReply).toHaveBeenCalledWith('c@bot', LONG)
+      })
+
+      it('absent getChatPrefs dep → single send (backwards compatible)', async () => {
+        const sendReply = vi.fn(async () => ({ msgId: 'm-1' }))
+        const { port, token } = await startWithSplit({ sendReply })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'c@bot', text: LONG }),
+        })
+        expect(resp.status).toBe(200)
+        expect(sendReply).toHaveBeenCalledTimes(1)
+        expect(sendReply).toHaveBeenCalledWith('c@bot', LONG)
+      })
+
+      it('prefixed reply (participant_tag in a multi-participant mode) → single send', async () => {
+        const sendReply = vi.fn(async () => ({ msgId: 'm-1' }))
+        const { port, token } = await startWithSplit({
+          sendReply,
+          getChatPrefs: () => ({}),
+          prefixMode: { kind: 'parallel' },
+        })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'c', text: LONG, participant_tag: 'claude' }),
+        })
+        expect(resp.status).toBe(200)
+        expect(sendReply).toHaveBeenCalledTimes(1)
+        expect(sendReply).toHaveBeenCalledWith('c', `[Claude] ${LONG}`)
+      })
+
+      it('mid-sequence failure stops and reports sent count', async () => {
+        let n = 0
+        const sendReply = vi.fn(async (): Promise<{ msgId: string; error?: string }> => {
+          n++
+          if (n === 1) return { msgId: 'm-1' }
+          return { msgId: '', error: 'boom' }
+        })
+        const { port, token } = await startWithSplit({
+          sendReply,
+          getChatPrefs: () => ({}),
+          sleepMs: async () => {},
+        })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'c@bot', text: LONG }),
+        })
+        expect(resp.status).toBe(200)
+        expect(await resp.json()).toEqual({ ok: false, error: 'boom', sent: 1 })
+        expect(sendReply).toHaveBeenCalledTimes(2)
+      })
+    })
   })
 })
 

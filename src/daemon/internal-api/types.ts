@@ -204,6 +204,14 @@ export interface InternalApiDeps {
    * daemon's real `log` impl supports it; test stubs may ignore).
    */
   log?: (tag: string, line: string, fields?: Record<string, unknown>) => void
+  /**
+   * Per-chat prefs read for reply splitting (活人感, spec 2026-07-09).
+   * ABSENT ⇒ splitting disabled (tests/embedded keep single-send
+   * behavior). Wired ⇒ split defaults ON unless the chat set split:false.
+   */
+  getChatPrefs?: (chatId: string) => { split?: boolean }
+  /** Injectable sleep for chunk pacing; absent ⇒ real setTimeout. */
+  sleepMs?: (ms: number) => Promise<void>
 }
 
 export interface InternalApi {
