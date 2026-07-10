@@ -227,6 +227,16 @@ export interface BootstrapDeps {
    * companion default_chat_id) happens in main.ts (Task 7).
    */
   careLevelFor?: (chatId: string) => 'off' | 'low' | 'high'
+  /**
+   * Resolve a chat's local sticker library tags (image-stickers design §5).
+   * Read per-spawn (like `careLevelFor`'s siblings) so a newly-saved sticker
+   * shows up in the prompt without a daemon restart. Absent ⇒ the sticker
+   * prompt section is NEVER included for any chat — tests and minimal
+   * embeddings that don't wire this stay byte-identical to before the
+   * sticker feature existed. Wiring the actual thunk (sticker store lookup)
+   * happens in main.ts (later task).
+   */
+  stickerTagsFor?: (chatId: string) => string[]
 }
 
 export interface Bootstrap {
@@ -881,7 +891,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // its daemon-control tools on, so the self-heal section appears iff those
   // tools are actually registered for this spawn. careEnabled mirrors
   // `deps.careLevelFor` the same way — absent thunk ⇒ 'off' ⇒ section never
-  // included (proactive-care design §7).
+  // included (proactive-care design §7). stickerTags mirrors `deps.stickerTagsFor`
+  // the same way — absent thunk ⇒ [] ⇒ section never included.
   const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string): string =>
     buildSystemPrompt({
       providerId,
@@ -892,6 +903,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       daemonOpsAvailable: tierProfile.allow.has('daemon_introspect'),
       fileLocateAvailable: tierProfile.allow.has('file_locate'),
       careEnabled: (deps.careLevelFor?.(chatId) ?? 'off') !== 'off',
+      stickerTags: deps.stickerTagsFor?.(chatId) ?? [],
     })
 
   const sessionManager = new SessionManager({

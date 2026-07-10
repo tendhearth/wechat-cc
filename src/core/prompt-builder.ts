@@ -63,6 +63,16 @@ export interface BuildSystemPromptArgs {
    * (default false; callers without a `careLevelFor` thunk never set it).
    */
   careEnabled?: boolean
+  /**
+   * Local sticker library tags available to this session (image-stickers
+   * design §5). When present and non-empty, adds the sticker section so the
+   * agent knows it can `send_sticker(tag)` on strong-emotion/celebration/
+   * comfort moments and `save_sticker` on a good incoming image. Absent or
+   * empty ⇒ output is byte-identical to before this field existed (mirrors
+   * `careEnabled`'s contract; callers without a `stickerTagsFor` thunk never
+   * set it).
+   */
+  stickerTags?: string[]
 }
 
 /**
@@ -81,6 +91,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     args.daemonOpsAvailable ? daemonSelfHealSection() : '',
     args.fileLocateAvailable ? fileLocateSection() : '',
     args.careEnabled ? careSection() : '',
+    args.stickerTags && args.stickerTags.length > 0 ? stickerSection(args.stickerTags) : '',
     memorySection(),
     multiModeAwarenessSection(),
     companionEnabled ? companionSection() : '',
@@ -202,6 +213,20 @@ export function careSection(): string {
 关心要自然、具体、有由头（这次聊天里确实提到的事），不要为了显得贴心而堆砌——同一个话题最多留一条关心意向，别重复记。
 
 当用户表达打扰偏好（"别烦我" / "多关心我" / "别拆分"这类），用 \`set_chat_pref\` 工具调整（\`care: off|low|high\`、\`split\`），改完口头确认一句，不要只是嘴上答应却不落实。`
+}
+
+/**
+ * Sticker-reply capability (image-stickers design §5) — appears when this
+ * session has a non-empty local sticker library. Gives the agent a
+ * when-to-use framing (strong emotion/celebration/comfort, at most one per
+ * turn, pairs with text rather than replacing it, skip when no tag fits)
+ * plus the reverse path (`save_sticker` on a good incoming image, asking
+ * first) so the library grows from real usage instead of being pre-seeded.
+ */
+export function stickerSection(tags: string[]): string {
+  return `## 表情包
+
+本地表情库可用 tags: ${tags.join(', ')}。情绪强/庆祝/安慰的时刻可以用 \`send_sticker(tag)\` 发一张表情包，一次最多一张，配合文字而不是替代文字；没有合适的 tag 就不用，别硬凑；用户发来好的表情图时可以用 \`save_sticker\` 收进库（先问一句）。`
 }
 
 function memorySection(): string {

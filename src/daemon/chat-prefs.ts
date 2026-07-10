@@ -16,6 +16,8 @@ export interface ChatPrefs {
    * store (chat-prefs doesn't know about owner/default_chat_id).
    */
   care?: 'off' | 'low' | 'high'
+  /** 表情包开关 (sticker replies). undefined ⇒ ON (default); false ⇒ off. */
+  stickers?: boolean
 }
 
 export interface ChatPrefsStore {

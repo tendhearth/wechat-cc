@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSystemPrompt, careSection, daemonSelfHealSection } from './prompt-builder'
+import { buildSystemPrompt, careSection, daemonSelfHealSection, stickerSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
   function defaults() {
@@ -221,5 +221,31 @@ describe('care prompt section', () => {
     const withoutKey = buildSystemPrompt({ ...base })
     expect(withFalse).toBe(withoutKey)
     expect(withoutKey).not.toContain('set_chat_pref')
+  })
+})
+
+describe('sticker prompt section', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+
+  it('stickerSection() mentions send_sticker + lists the given tags', () => {
+    const s = stickerSection(['happy', 'sad', 'party'])
+    expect(s).toContain('send_sticker')
+    expect(s).toContain('happy')
+    expect(s).toContain('sad')
+    expect(s).toContain('party')
+  })
+
+  it('buildSystemPrompt includes the sticker section when stickerTags is non-empty', () => {
+    const p = buildSystemPrompt({ ...base, stickerTags: ['happy', 'sad'] })
+    expect(p).toContain('send_sticker')
+    expect(p).toContain('happy')
+    expect(p).toContain('sad')
+  })
+
+  it('buildSystemPrompt is byte-identical whether stickerTags is absent or an empty array, and omits the sticker section', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withEmpty = buildSystemPrompt({ ...base, stickerTags: [] })
+    expect(withEmpty).toBe(withoutKey)
+    expect(withoutKey).not.toContain('send_sticker')
   })
 })

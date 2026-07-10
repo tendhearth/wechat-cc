@@ -52,8 +52,8 @@ export interface ModeCommandsDeps {
   pinModel(providerId: ProviderId, model: string): void | Promise<void>
   /** Per-chat prefs (chat-prefs store). /set reads+writes THIS chat's entry. */
   chatPrefs: {
-    get(chatId: string): { split?: boolean; care?: 'off' | 'low' | 'high' }
-    set(chatId: string, patch: { split?: boolean; care?: 'off' | 'low' | 'high' }): { split?: boolean; care?: 'off' | 'low' | 'high' }
+    get(chatId: string): { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean }
+    set(chatId: string, patch: { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean }): { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean }
   }
   log: (tag: string, line: string) => void
   /** Returns true when userId belongs to an admin. Used by /help to gate the admin section. */
@@ -153,7 +153,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
       '/chat [p1 p2 …] — 圆桌讨论',
       '/solo /stop /mode — 回到默认 / 退出 / 显示当前模式',
-      '/set — 本对话偏好(拆分回复、主动关心档位)',
+      '/set — 本对话偏好(拆分回复、主动关心档位、表情包)',
       '',
       '**身份**',
       '/whoami — 显示你的身份 + 当前模式',
@@ -284,18 +284,19 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
 
       // /set — per-chat preferences (the settings layer's dials: split, care).
       if (slashWord.toLowerCase() === 'set') {
-        const SET_USAGE = '❓ 不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)'
+        const SET_USAGE = '❓ 不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)'
         const p = deps.chatPrefs.get(msg.chatId)
         if (tail === '') {
           const splitState = p.split === false ? 'off' : 'on'
           const careState = p.care ?? '未设置'
+          const stickersState = p.stickers === undefined ? '未设置' : (p.stickers ? 'on' : 'off')
           await reply(
             msg.chatId,
-            `当前设置(本对话):\n· split(拆分回复): ${splitState}\n· 关心(主动关心档位): ${careState}\n\n用法: /set split on|off — 回复像真人一样分几条发\n用法: /set care off|low|high — 主动关心档位(别名: 关心 关|低|高)`,
+            `当前设置(本对话):\n· split(拆分回复): ${splitState}\n· 关心(主动关心档位): ${careState}\n· 表情(表情包): ${stickersState}\n\n用法: /set split on|off — 回复像真人一样分几条发\n用法: /set care off|low|high — 主动关心档位(别名: 关心 关|低|高)\n用法: /set stickers on|off — 表情包开关(别名: 表情 开|关)`,
           )
           return true
         }
-        const m2 = /^(split|拆分|care|关心)\s+(\S+)$/i.exec(tail)
+        const m2 = /^(split|拆分|care|关心|stickers|表情)\s+(\S+)$/i.exec(tail)
         if (!m2) {
           await reply(msg.chatId, SET_USAGE)
           return true
@@ -314,6 +315,20 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
             ? '✅ 拆分回复已开启——回复会像真人一样分几条发。'
             : '✅ 拆分回复已关闭——每次回复只发一条。')
           deps.log('MODE_CMD', `chat=${msg.chatId} /set split=${on}`)
+          return true
+        }
+
+        if (key === 'stickers' || key === '表情') {
+          if (!/^(on|off|开|关)$/i.test(rawValue)) {
+            await reply(msg.chatId, SET_USAGE)
+            return true
+          }
+          const on = /^(on|开)$/i.test(rawValue)
+          deps.chatPrefs.set(msg.chatId, { stickers: on })
+          await reply(msg.chatId, on
+            ? '✅ 表情包已开启。'
+            : '✅ 表情包已关闭。')
+          deps.log('MODE_CMD', `chat=${msg.chatId} /set stickers=${on}`)
           return true
         }
 

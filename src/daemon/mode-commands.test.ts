@@ -770,4 +770,54 @@ describe('makeModeCommands', () => {
     await cmds.handle(inbound('/set'))
     expect(sentMessages[2]?.[1]).toContain('low')
   })
+
+  // ── /set stickers|表情 — sticker-reply toggle (Task 4) ────────────────
+
+  it('/set stickers off persists {stickers:false} and confirms', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    expect(await cmds.handle(inbound('/set stickers off'))).toBe(true)
+    expect(prefsData.get('chat-1')).toEqual({ stickers: false })
+    expect(sentMessages[0]?.[1]).toContain('关闭')
+  })
+
+  it('/set stickers on persists {stickers:true} and confirms', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    expect(await cmds.handle(inbound('/set stickers on'))).toBe(true)
+    expect(prefsData.get('chat-1')).toEqual({ stickers: true })
+    expect(sentMessages[0]?.[1]).toContain('开启')
+  })
+
+  it('/set 表情 开 (Chinese alias) turns it on', async () => {
+    const { cmds, prefsData } = setup()
+    await cmds.handle(inbound('/set 表情 开'))
+    expect(prefsData.get('chat-1')).toEqual({ stickers: true })
+  })
+
+  it('/set 表情 关 (Chinese alias) turns it off', async () => {
+    const { cmds, prefsData } = setup()
+    await cmds.handle(inbound('/set 表情 关'))
+    expect(prefsData.get('chat-1')).toEqual({ stickers: false })
+  })
+
+  it('/set stickers maybe is a usage error and does not write', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    await cmds.handle(inbound('/set stickers maybe'))
+    expect(prefsData.size).toBe(0)
+    expect(sentMessages[0]?.[1]).toContain('stickers')
+  })
+
+  it('bare /set output contains 表情', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[0]?.[1]).toContain('表情')
+  })
+
+  it('bare /set shows 未设置 when stickers is unset, and the raw on|off when set', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[0]?.[1]).toContain('未设置')
+    await cmds.handle(inbound('/set stickers off'))
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[2]?.[1]).toContain('表情(表情包): off')
+  })
 })

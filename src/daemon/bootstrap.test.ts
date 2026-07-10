@@ -580,6 +580,24 @@ describe('bootstrap', () => {
     expect(noCarePrompt).not.toContain('set_chat_pref')
   })
 
+  it('buildInstructions includes the sticker section only for chats whose stickerTagsFor returns tags (image-stickers design §5)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      stickerTagsFor: (chatId: string) => (chatId === 'owner-chat' ? ['happy', 'sad'] : []),
+    })
+    const stickerPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(stickerPrompt).toContain('send_sticker')
+    expect(stickerPrompt).toContain('happy')
+    const noStickerPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'guest-chat')
+    expect(noStickerPrompt).not.toContain('send_sticker')
+  })
+
   // ── Per-session canUseTool (concurrent-dispatch tier hazard) ─────────
   //
   // Before this fix, the canUseTool closure was built ONCE at bootstrap

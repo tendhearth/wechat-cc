@@ -61,4 +61,15 @@ describe('chat-prefs', () => {
       expect(prefs.get('c1')).toEqual({ split: false, care: 'high' })
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
+
+  it('stickers round-trips and merges alongside split + care', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prefs-'))
+    try {
+      const prefs = makeChatPrefs(dir)
+      prefs.set('c1', { split: false })
+      prefs.set('c1', { care: 'high' })
+      prefs.set('c1', { stickers: false })
+      expect(prefs.get('c1')).toEqual({ split: false, care: 'high', stickers: false })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
 })
