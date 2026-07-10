@@ -650,6 +650,25 @@ describe('bootstrap', () => {
     expect(prompt).toContain('人设养成(persona.md)')
   })
 
+  it('buildInstructions for a GUEST-tier chat still includes the persona section but never the cultivation section (persona is identity, not a capability; cultivation is memory_write-gated like careEnabled)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      personaFor: () => ({ content: '毒舌但温柔', cultivate: true }),
+    })
+    const guestPrompt = b.buildInstructions('claude', TIER_PROFILES.guest, 'owner-chat')
+    // Persona is the agent's identity — every tier speaks in character.
+    expect(guestPrompt).toContain('毒舌但温柔')
+    // But cultivation instructs memory_write calls, which guest denies —
+    // so the heading must be absent even though personaFor said cultivate:true.
+    expect(guestPrompt).not.toContain('人设养成(persona.md)')
+  })
+
   it('buildInstructions is byte-identical whether or not other bootstraps wire personaFor, when this bootstrap omits it (persona design §2 inert default)', async () => {
     const withoutPersonaDep = await buildBootstrap({
       db: openTestDb(),

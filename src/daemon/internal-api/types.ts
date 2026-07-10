@@ -12,6 +12,7 @@ import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../w
 import type { ConversationStore } from '../../core/conversation-store'
 import type { ProviderId } from '../../core/conversation'
 import type { PermissionMode } from '../../core/capability-matrix'
+import type { UserTier } from '../../core/user-tier'
 
 /**
  * RFC 03 P3: when conversation mode is parallel (or chatroom), the
@@ -272,10 +273,17 @@ export interface InternalApi {
  * Each route handler receives the parsed query (always present) and the
  * parsed JSON body (POST only; null on GET). Returns { status, body } —
  * no streaming, no manual res manipulation.
+ *
+ * The optional third param carries the resolved caller identity (tier +
+ * token origin + chatId when the token is a session token) — see index.ts's
+ * dispatcher. Optional so existing handlers that ignore it keep compiling
+ * unchanged; routes that need caller-scoped authorization (e.g. memory/*)
+ * read it explicitly.
  */
 export type RouteHandler = (
   query: URLSearchParams,
   body: unknown,
+  caller?: { tier: UserTier; origin: 'file' | 'session'; chatId?: string },
 ) => Promise<{ status: number; body: unknown }> | { status: number; body: unknown }
 
 export type RouteTable = Record<string, RouteHandler | undefined>

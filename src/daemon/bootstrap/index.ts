@@ -923,7 +923,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       careEnabled: (deps.careLevelFor?.(chatId) ?? 'off') !== 'off' && tierProfile.allow.has('memory_write'),
       stickerTags: deps.stickerTagsFor?.(chatId) ?? [],
       persona: p?.content,
-      personaCultivate: p?.cultivate === true,
+      // Like careEnabled: cultivation guidance tells the agent to WRITE
+      // persona.md via memory_write, so it must also be tier-gated — a
+      // guest-tier owner chat would otherwise be prompted to make writes
+      // its tier profile denies (burned turns on denied tool calls, and a
+      // standing invitation to probe the memory surface).
+      personaCultivate: p?.cultivate === true && tierProfile.allow.has('memory_write'),
     })
   }
 

@@ -13,6 +13,7 @@ import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTa
 import { splitReply, paceMs } from '../reply-split'
 import { lookup } from '../../core/capability-matrix'
 import type { Mode } from '../../core/conversation'
+import type { UserTier } from '../../core/user-tier'
 import { makeEventsStore } from '../events/store'
 import { a2aRoutes } from './routes-a2a'
 import { pluginRoutes } from './routes-plugins'
@@ -41,6 +42,26 @@ export interface MakeRoutesContext {
 
 const defaultSleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 
+/**
+ * Non-admin SESSION callers may only touch their own chat's memory subtree
+ * (`<chatId>/...`) — closes the cross-chat write path that let any trusted
+ * chat inject into another chat's persona.md (which broadcasts into every
+ * chat's system prompt — persona design §2). File-origin tokens (the
+ * operator CLI, which reads the daemon-wide token file) and admin sessions
+ * are unrestricted — same trust posture as before this hardening.
+ *
+ * This is an AUTHORIZATION layer on top of, not instead of, MemoryFS's own
+ * resolveSafe traversal guard (fs-api.ts) — that guard stops path escapes
+ * off the memory root; this stops in-bounds cross-chat access.
+ */
+function memoryScopeDenied(path: string, caller?: { tier: UserTier; origin: string; chatId?: string }): boolean {
+  if (!caller || caller.origin !== 'session' || caller.tier === 'admin') return false
+  if (!caller.chatId) return true                      // session with unknown chat ⇒ deny (fail closed)
+  const norm = path.replace(/\\/g, '/')
+  if (norm.split('/').some(seg => seg === '..')) return true
+  return !(norm === caller.chatId || norm.startsWith(`${caller.chatId}/`))
+}
+
 export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext): RouteTable {
   return {
     'GET /v1/health': () => ({
@@ -58,10 +79,11 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     }),
 
     // ── memory (RFC 03 P1.B B2) ─────────────────────────────────────────
-    'POST /v1/memory/read': (_q, body) => {
+    'POST /v1/memory/read': (_q, body, caller) => {
       if (!deps.memory) return { status: 503, body: { error: 'memory_fs_not_wired' } }
       // Body is pre-validated by index.ts via MemoryReadRequest schema.
       const { path } = body as MemoryReadRequestT
+      if (memoryScopeDenied(path, caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
       try {
         const content = deps.memory.read(path)
         return { status: 200, body: content === null ? { exists: false } : { exists: true, content } }
@@ -69,10 +91,11 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
         return { status: 200, body: { error: errMsg(err) } }
       }
     },
-    'POST /v1/memory/write': (_q, body) => {
+    'POST /v1/memory/write': (_q, body, caller) => {
       if (!deps.memory) return { status: 503, body: { error: 'memory_fs_not_wired' } }
       // Body is pre-validated by index.ts via MemoryWriteRequest schema.
       const { path, content } = body as MemoryWriteRequestT
+      if (memoryScopeDenied(path, caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
       try {
         deps.memory.write(path, content)
         return { status: 200, body: { ok: true } }
@@ -80,20 +103,25 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
         return { status: 200, body: { ok: false, error: errMsg(err) } }
       }
     },
-    'GET /v1/memory/list': (q) => {
+    'GET /v1/memory/list': (q, _body, caller) => {
       if (!deps.memory) return { status: 503, body: { error: 'memory_fs_not_wired' } }
       const dir = q.get('dir')
+      // Scope check on the dir prefix. A scoped session listing the root
+      // (no dir) would see every chat's files, so `dir ?? ''` fails closed
+      // — such callers must list their own subtree explicitly.
+      if (memoryScopeDenied(dir ?? '', caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
       try {
         return { status: 200, body: { files: deps.memory.list(dir ?? undefined) } }
       } catch (err) {
         return { status: 200, body: { error: errMsg(err) } }
       }
     },
-    'POST /v1/memory/delete': async (_q, body) => {
+    'POST /v1/memory/delete': async (_q, body, caller) => {
       if (!deps.memory) return { status: 503, body: { error: 'memory_fs_not_wired' } }
       if (!deps.db) return { status: 503, body: { error: 'db_not_wired' } }
       // Body is pre-validated by index.ts via MemoryDeleteRequest schema.
       const { chat_id, path, reason } = body as MemoryDeleteRequestT
+      if (memoryScopeDenied(path, caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
       try {
         const tombstone = deps.memory.softDelete(path)
         if (tombstone === null) {

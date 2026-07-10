@@ -177,8 +177,19 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       // schema validation just gatekeeps.
     }
 
+    // Derive the caller's chatId from a session token's sessionKey
+    // (`provider/alias/chatId`) — chatId is everything after the SECOND
+    // `/` so a chatId that itself contains `/` survives intact. File-origin
+    // tokens (the daemon-wide operator token) never carry a sessionKey, so
+    // chatId stays undefined for them — routes that scope by chatId (e.g.
+    // memory/*) treat undefined + origin!=='session' as "unrestricted".
+    const callerChatId = caller.origin === 'session' && caller.sessionKey
+      ? caller.sessionKey.split('/').slice(2).join('/')
+      : undefined
+    const callerInfo = { tier: caller.tier, origin: caller.origin, chatId: callerChatId }
+
     try {
-      const out = await route(url.searchParams, body)
+      const out = await route(url.searchParams, body, callerInfo)
       send(res, out.status, out.body, origin)
     } catch (err) {
       deps.log?.('INTERNAL_API', `500 ${method} ${rawUrl}: ${errMsg(err)}`, {

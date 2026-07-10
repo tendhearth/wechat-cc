@@ -16,7 +16,13 @@ CC** (global, per positioning's don't-fragment rule).
 - **Global, owner-cultivated.** `persona.md` lives in the OWNER chat's memory
   dir (`memory/<default_chat_id>/persona.md`). Only the owner chat shapes it
   (existing `memory_write` — zero new tools; the owner can also edit the file
-  directly: visible, correctable, not a black box). ALL chats get the same
+  directly: visible, correctable, not a black box). This boundary is now
+  ENFORCED, not conventional: the memory routes are chat-scoped (this
+  hardening) — a non-admin session token can only read/write/list/delete
+  inside its OWN chat's memory subtree, so no other chat can inject into the
+  owner's `persona.md` (which broadcasts into every chat's prompt). The owner
+  chat (writing under its own subtree), the operator CLI (file-origin token),
+  and admin sessions remain unrestricted. ALL chats get the same
   persona injected. Per-relationship tone (对朋友活泼/对同事正经) is the
   agent's judgment via per-chat memory, NOT config.
 - **Emergence over template.** Cultivation guidance (owner chat only): keep a

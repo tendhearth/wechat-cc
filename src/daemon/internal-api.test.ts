@@ -316,6 +316,123 @@ describe('internal-api', () => {
         db.close()
       })
     })
+
+    // ── chat-scoping (persona injection hardening) ────────────────────
+    // Non-admin SESSION tokens may only touch their own chat's memory
+    // subtree; file-origin (operator CLI) and admin sessions stay
+    // unrestricted. Closes the cross-chat write path into the owner
+    // chat's persona.md (which broadcasts into every chat's prompt).
+    describe('chat-scoped authorization (non-admin session tokens)', () => {
+      const write = (port: number, token: string, path: string) =>
+        fetch(`http://127.0.0.1:${port}/v1/memory/write`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ path, content: 'x' }),
+        })
+
+      it('trusted session token can write/read within its OWN chat subtree', async () => {
+        const { port } = await startWithMemory()
+        const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+        const w = await write(port, tok, 'chat-1/notes.md')
+        expect(w.status).toBe(200)
+        expect(await w.json()).toEqual({ ok: true })
+        const r = await fetch(`http://127.0.0.1:${port}/v1/memory/read`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ path: 'chat-1/notes.md' }),
+        })
+        expect(r.status).toBe(200)
+        expect(await r.json()).toEqual({ exists: true, content: 'x' })
+      })
+
+      it('trusted session token gets 403 memory_scope_denied on ANOTHER chat\'s path (persona.md injection)', async () => {
+        const { port } = await startWithMemory()
+        const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+        const w = await write(port, tok, 'ownerchat/persona.md')
+        expect(w.status).toBe(403)
+        expect(await w.json()).toEqual({ error: 'memory_scope_denied' })
+        // read + delete of a foreign path are denied too
+        const r = await fetch(`http://127.0.0.1:${port}/v1/memory/read`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ path: 'ownerchat/persona.md' }),
+        })
+        expect(r.status).toBe(403)
+        expect(await r.json()).toEqual({ error: 'memory_scope_denied' })
+      })
+
+      it('`..` traversal in the path is 403 for a non-admin session even when it appears in-scope', async () => {
+        const { port } = await startWithMemory()
+        const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+        const w = await write(port, tok, 'chat-1/../ownerchat/persona.md')
+        expect(w.status).toBe(403)
+        expect(await w.json()).toEqual({ error: 'memory_scope_denied' })
+      })
+
+      it('file-origin token (operator CLI) stays unrestricted across chat subtrees', async () => {
+        const { port, token } = await startWithMemory()
+        const w = await write(port, token, 'ownerchat/persona.md')
+        expect(w.status).toBe(200)
+        expect(await w.json()).toEqual({ ok: true })
+      })
+
+      it('admin session token stays unrestricted across chat subtrees', async () => {
+        const { port } = await startWithMemory()
+        const tok = api!.mintSessionToken('admin', 'claude/a/admin-chat')
+        const w = await write(port, tok, 'ownerchat/persona.md')
+        expect(w.status).toBe(200)
+        expect(await w.json()).toEqual({ ok: true })
+      })
+
+      it('memory/list is scoped: own-chat dir 200, foreign dir + unscoped root 403', async () => {
+        const { port, token } = await startWithMemory()
+        // Seed via the unrestricted file token
+        for (const p of ['chat-1/a.md', 'ownerchat/persona.md']) await write(port, token, p)
+        const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+        const own = await fetch(`http://127.0.0.1:${port}/v1/memory/list?dir=chat-1`, {
+          headers: { Authorization: `Bearer ${tok}` },
+        })
+        expect(own.status).toBe(200)
+        expect(((await own.json()) as { files: string[] }).files).toEqual(['chat-1/a.md'])
+        const foreign = await fetch(`http://127.0.0.1:${port}/v1/memory/list?dir=ownerchat`, {
+          headers: { Authorization: `Bearer ${tok}` },
+        })
+        expect(foreign.status).toBe(403)
+        expect(await foreign.json()).toEqual({ error: 'memory_scope_denied' })
+        // No dir at all would enumerate every chat's files ⇒ fail closed
+        const root = await fetch(`http://127.0.0.1:${port}/v1/memory/list`, {
+          headers: { Authorization: `Bearer ${tok}` },
+        })
+        expect(root.status).toBe(403)
+        expect(await root.json()).toEqual({ error: 'memory_scope_denied' })
+      })
+
+      it('memory/delete is scoped: foreign path 403, own path succeeds', async () => {
+        memoryRoot = join(stateDir, 'memory')
+        const memory = makeMemoryFS({ rootDir: memoryRoot })
+        const db = openTestDb()
+        api = createInternalApi({ stateDir, daemonPid: 999, memory, db })
+        const { port, tokenFilePath } = await api.start()
+        const fileToken = readFileSync(tokenFilePath, 'utf8').trim()
+        for (const p of ['chat-1/a.md', 'ownerchat/persona.md']) await write(port, fileToken, p)
+        const tok = api.mintSessionToken('trusted', 'claude/a/chat-1')
+        const foreign = await fetch(`http://127.0.0.1:${port}/v1/memory/delete`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'chat-1', path: 'ownerchat/persona.md', reason: 'attempted cross-chat delete' }),
+        })
+        expect(foreign.status).toBe(403)
+        expect(await foreign.json()).toEqual({ error: 'memory_scope_denied' })
+        const own = await fetch(`http://127.0.0.1:${port}/v1/memory/delete`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'chat-1', path: 'chat-1/a.md', reason: 'user said forget it' }),
+        })
+        expect(own.status).toBe(200)
+        expect(await own.json()).toMatchObject({ ok: true, existed: true })
+        db.close()
+      })
+    })
   })
 
   it('returns 400 on malformed JSON body', async () => {
