@@ -58,6 +58,10 @@ let oldestLoadedTs = null
 let timelineHasMore = false
 /** Guards concurrent upward-page fetches. */
 let pagingInFlight = false
+/** Whether the rendered timeline page reaches the actual newest message. */
+let timelineShowsNewest = true
+/** Whether #dialogue-timeline currently contains the search result list. */
+let timelineShowingSearchResults = false
 /** Monotonically-increasing load counter — each async loader snapshots this
  *  at entry and bails before any DOM write when a newer load has started. */
 let loadSeq = 0
@@ -131,6 +135,9 @@ function renderSkeleton(root) {
         </div>
         <div id="dialogue-timeline" class="dialogue-scroll"></div>
         <div id="dialogue-thread-detail" class="dialogue-scroll" hidden></div>
+        <button class="dialogue-latest-button" id="dialogue-latest" type="button" hidden aria-label="回到最新消息">
+          ${icon("arrow-down-02", { size: 16 })}<span>回到最新</span>
+        </button>
       </div>
     </section>
     <div class="privacy-dialog" id="privacy-dialog" hidden>
@@ -181,20 +188,9 @@ async function loadChats(deps) {
     : (chats[0]?.chat_id ?? null)
 
   if (switcher) {
-    if (chats.length <= 1) {
-      // One (or zero) chat — no navigation needed, hide the switcher.
-      switcher.hidden = true
-      switcher.innerHTML = ""
-    } else {
-      switcher.hidden = false
-      switcher.innerHTML = chats.map(c => {
-        const active = c.chat_id === selectedChatId ? " is-active" : ""
-        return `<button class="dialogue-chat-row${active}" data-chat="${escapeHtml(c.chat_id)}">
-          <span class="dialogue-chat-name">${escapeHtml(chatNames[c.chat_id] || c.chat_id)}</span>
-          <span class="dialogue-chat-count">${c.session_count}</span>
-        </button>`
-      }).join("")
-    }
+    // The sidebar design no longer shows the chat switcher rows.
+    switcher.hidden = true
+    switcher.innerHTML = ""
   }
   return chats.length > 0
 }
@@ -252,6 +248,8 @@ async function loadTimeline(deps, opts = {}) {
   const seq = ++loadSeq
   const stage = document.getElementById("dialogue-timeline")
   if (!stage) return
+  timelineShowsNewest = !opts.beforeTs
+  timelineShowingSearchResults = false
   showTimelineView()
   if (!selectedChatId) {
     if (seq !== loadSeq) return
@@ -303,7 +301,10 @@ async function loadTimeline(deps, opts = {}) {
 
   stage.innerHTML = messages.map(m => messageHtml(m, ctx)).join("")
   // Newest at bottom — jump there on initial load.
-  requestAnimationFrame(() => { stage.scrollTop = stage.scrollHeight })
+  requestAnimationFrame(() => {
+    stage.scrollTop = stage.scrollHeight
+    updateLatestButton()
+  })
 
   if (opts.highlightId) flashHit(stage, opts.highlightId)
   wireUpwardPaging(deps, stage, ctx)
@@ -320,6 +321,7 @@ function wireUpwardPaging(deps, stage, ctx) {
   if (stage.dataset.pagingWired === "1") return
   stage.dataset.pagingWired = "1"
   stage.addEventListener("scroll", async () => {
+    updateLatestButton()
     if (stage.scrollTop > 80 || !timelineHasMore || pagingInFlight || !oldestLoadedTs || !selectedChatId) return
     pagingInFlight = true
     const prevHeight = stage.scrollHeight
@@ -378,6 +380,7 @@ function showTimelineView() {
   if (timeline) timeline.hidden = false
   if (detail) detail.hidden = true
   if (groups) groups.hidden = true
+  updateLatestButton()
 }
 
 function showThreadDetailView() {
@@ -385,6 +388,7 @@ function showThreadDetailView() {
   const detail = document.getElementById("dialogue-thread-detail")
   if (timeline) timeline.hidden = true
   if (detail) detail.hidden = false
+  updateLatestButton()
 }
 
 /** @param {ViewId} view */
@@ -414,6 +418,20 @@ async function switchView(deps, view) {
 
 /** How close to the bottom (px) counts as "at bottom" for auto-refresh. */
 const SCROLL_BOTTOM_THRESHOLD = 80
+
+/**
+ * Show the return affordance only while the plain timeline is visible and
+ * the user is away from its newest edge. An anchored search page is never
+ * the real newest page, even when its scrollbar is at the bottom.
+ */
+function updateLatestButton() {
+  const button = /** @type {HTMLButtonElement|null} */ (document.getElementById("dialogue-latest"))
+  const stage = /** @type {HTMLElement|null} */ (document.getElementById("dialogue-timeline"))
+  if (!button || !stage) return
+  const timelineVisible = currentView === "timeline" && !stage.hidden && !timelineShowingSearchResults
+  const distanceFromBottom = stage.scrollHeight - stage.scrollTop - stage.clientHeight
+  button.hidden = !timelineVisible || (timelineShowsNewest && distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD)
+}
 
 /**
  * Re-run the current view's loader. `opts.auto` marks an auto-refresh tick:
@@ -705,10 +723,12 @@ async function runSearch(deps, query) {
   }
   if (!selectedChatId) return
   if (seq !== loadSeq) return
+  timelineShowingSearchResults = true
   showTimelineView()
   const groups = document.getElementById("dialogue-groups")
   if (groups) groups.hidden = true
   stage.innerHTML = `<p class="empty-state">搜索中…</p>`
+  updateLatestButton()
 
   /** @type {Message[]} */
   let hits = []
@@ -935,6 +955,19 @@ function wireEvents(root, deps) {
   // scroll-near-bottom guard the auto-tick uses).
   root.querySelector("#dialogue-refresh")?.addEventListener("click", () => {
     refreshCurrentView(deps).catch(err => console.error("dialogue refresh failed", err))
+  })
+
+  // Return to the actual newest message. Search anchors can render an older
+  // page whose local bottom is not the conversation's real bottom, so those
+  // reload the newest page instead of merely scrolling the current page.
+  root.querySelector("#dialogue-latest")?.addEventListener("click", () => {
+    const stage = document.getElementById("dialogue-timeline")
+    if (!stage) return
+    if (!timelineShowsNewest) {
+      loadTimeline(deps).catch(err => console.error("dialogue latest load failed", err))
+      return
+    }
+    stage.scrollTo({ top: stage.scrollHeight, behavior: "smooth" })
   })
 
   // Privacy dialog: close / submit.

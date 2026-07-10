@@ -511,7 +511,7 @@ input { font: inherit; color: inherit; }
 }
 .launch-hero h2 {
   margin: 0 0 18px;
-  font-size: clamp(36px, 4vw, 52px);
+  font-size: clamp(32px, 3.7vw, 48px);
   line-height: 1.12;
   font-weight: 700;
   letter-spacing: 0;
@@ -1740,7 +1740,7 @@ input { font: inherit; color: inherit; }
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
   border-radius: 30px;
   background: transparent;
   box-shadow: none;
@@ -1756,39 +1756,38 @@ input { font: inherit; color: inherit; }
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
-  background: rgba(254, 249, 239, .04);
+  background: transparent;
   border-radius: 0;
   border-bottom: 0;
+}
+.dialogue-document-head::before {
+  content: "";
+  position: absolute;
+  top: -18px;
+  right: -70px;
+  bottom: -5px;
+  left: -12px;
+  z-index: 0;
+  pointer-events: none;
+  background: rgba(254, 249, 239, .04);
   backdrop-filter: blur(3px);
   -webkit-backdrop-filter: blur(3px);
   mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    #000 18%,
-    #000 72%,
+    #000 16%,
+    #000 66%,
+    rgba(0,0,0,.72) 82%,
     transparent 100%
   );
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    #000 18%,
-    #000 72%,
+    #000 16%,
+    #000 66%,
+    rgba(0,0,0,.72) 82%,
     transparent 100%
   );
-}
-.dialogue-document-head::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  bottom: -30px;
-  left: 0;
-  height: 30px;
-  pointer-events: none;
-  background: rgba(254, 249, 239, .02);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
-  mask-image: linear-gradient(to bottom, rgba(0,0,0,.72), transparent);
-  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,.72), transparent);
 }
 .dialogue-scroll {
   flex: 1;
@@ -1799,22 +1798,70 @@ input { font: inherit; color: inherit; }
   scrollbar-width: none;
 }
 .dialogue-scroll::-webkit-scrollbar { display: none; }
+.dialogue-latest-button {
+  position: absolute;
+  z-index: 14;
+  right: -14px;
+  bottom: 20px;
+  min-height: 36px;
+  padding: 0 14px 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(188, 128, 72, .34);
+  border-radius: 999px;
+  background: rgba(254, 249, 239, .94);
+  color: #593F2C;
+  box-shadow: 0 7px 22px rgba(89, 63, 44, .12);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 650;
+  cursor: pointer;
+  transition: transform 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+.dialogue-latest-button[hidden] { display: none; }
+.dialogue-latest-button:hover {
+  transform: translateY(-1px);
+  background: #F8EAD3;
+  box-shadow: 0 9px 24px rgba(89, 63, 44, .16);
+}
+.dialogue-latest-button:active { transform: translateY(0); }
+.dialogue-latest-button:focus-visible {
+  outline: 2px solid rgba(188, 128, 72, .62);
+  outline-offset: 2px;
+}
 .dialogue-action-pill {
+  position: relative;
+  z-index: 1;
+  left: 50px;
   width: fit-content;
   padding: 10px 9px;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  border-radius: 5px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   background: transparent;
   color: #593F2C;
   font-size: 13px;
   line-height: 1;
   font-weight: 600;
+  cursor: pointer;
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
 }
 .dialogue-action-pill:hover,
 .dialogue-action-pill:focus-visible {
   background: #F8EAD3;
+  border-color: rgba(188, 128, 72, .34);
+  box-shadow: 0 9px 24px rgba(89, 63, 44, .16);
+  transform: translateY(-1px);
+}
+.dialogue-action-pill:active { transform: translateY(0); }
+.dialogue-action-pill:focus-visible {
+  outline: 2px solid rgba(188, 128, 72, .62);
+  outline-offset: 2px;
 }
 .dialogue-action-pill img {
   width: 14px;
@@ -2078,6 +2125,7 @@ input { font: inherit; color: inherit; }
   .dialogue-sidebar { padding-left: 18px; }
   .dialogue-stage { padding-right: 18px; }
   .dialogue-scroll { padding-inline: 24px; }
+  .dialogue-latest-button { right: -26px; }
 }
 
 /* topbar */
