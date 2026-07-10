@@ -58,7 +58,7 @@ export interface TickDeps {
    * chat. Typed as a structural subset of ChatPrefsStore so tests can fake
    * it without a full store.
    */
-  chatPrefs: { get(chatId: string): { care?: 'off' | 'low' | 'high' }; list(): string[] }
+  chatPrefs: { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean }; list(): string[] }
   /**
    * Task 6 — the calibration gate's learning signal (last claimed proactive
    * send + no-reply streak per chat). shouldSpeak() reads it; pushTick
@@ -112,6 +112,21 @@ export function buildGapCheckinText(opts: BuildGapCheckinTextOpts): string {
     `这是一次主动问候（距离上次对话 ${opts.daysSinceContact} 天）；` +
     `结合你对这位用户的了解，如果有自然的话头，用 reply 发**一条**简短自然的问候；` +
     `如果实在没有自然的话头，可以这次不发（直接结束这轮，不调用 reply 也没关系）。`
+  )
+}
+
+/**
+ * Pure helper — assembles the daily-hunt envelope text (no due agenda item;
+ * the calibration gate decided a hunt is due for the owner's chat instead).
+ * Mirrors buildGapCheckinText's structure/extraction rationale.
+ */
+export function buildHuntText(opts: { nowIso: string }): string {
+  return (
+    `<companion_tick ts="${opts.nowIso}" kind="hunt" />\n` +
+    `每日打猎时间——回顾你记忆里主人的兴趣和最近关注，用网络工具（搜索/抓取）找新鲜的、他真会感兴趣的内容；` +
+    `只挑真正值得的 1-2 条，用 reply 分享，每条一句"为什么你会感兴趣" + 链接；` +
+    `如果今天没猎到值得分享的，可以不发（不调用 reply 直接结束）；` +
+    `别分享你们最近已经聊过的东西。`
   )
 }
 
@@ -217,6 +232,23 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         buildText: () => buildPushTickText({ nowIso, defaultChatId: chatId, intention: item.body }),
       })
       return
+    }
+
+    // No due agenda item → hunt branch: only the owner's chat, once/day
+    // (calibration cooldown). A cooling hunt must not block a legitimate
+    // gap check-in, so a deny here falls through to the gap branch below
+    // rather than returning.
+    if (chatId === defaultChatId) {
+      const huntLevel = deps.chatPrefs.get(chatId).hunt !== false ? 'low' as const : 'off' as const
+      const huntDecision = shouldSpeak({ kind: 'hunt', level: huntLevel, nowIso, ledger, lastInboundAtIso })
+      if (huntDecision.ok) {
+        await dispatchToChat(chatId, {
+          claim: () => { deps.careLedger.claimHunt(chatId, nowIso) },
+          buildText: () => buildHuntText({ nowIso }),
+        })
+        return
+      }
+      deps.log('CARE', `skip chat=${chatId} kind=hunt reason=${huntDecision.reason}`)
     }
 
     // No due item → gap branch: has it been quiet long enough (by care
