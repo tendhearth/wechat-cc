@@ -39,6 +39,28 @@ describe('careLevel', () => {
   })
 })
 
+describe('shouldSpeak — invalid timestamps (fail-closed)', () => {
+  it('malformed nowIso ⇒ invalid_timestamp', () => {
+    expect(
+      shouldSpeak({ kind: 'agenda', level: 'low', nowIso: 'not-an-iso-string', ledger: emptyLedger }),
+    ).toEqual({ ok: false, reason: 'invalid_timestamp' })
+  })
+
+  it('malformed ledger.lastProactiveAtIso on agenda check ⇒ invalid_timestamp', () => {
+    const ledger: CareLedgerEntry = { lastProactiveAtIso: 'malformed', noReplyCount: 0 }
+    expect(
+      shouldSpeak({ kind: 'agenda', level: 'low', nowIso: NOW, ledger }),
+    ).toEqual({ ok: false, reason: 'invalid_timestamp' })
+  })
+
+  it('malformed lastInboundAtIso on gap check ⇒ invalid_timestamp', () => {
+    const ledger: CareLedgerEntry = { noReplyCount: 0 }
+    expect(
+      shouldSpeak({ kind: 'gap', level: 'low', nowIso: NOW, ledger, lastInboundAtIso: 'bad-timestamp' }),
+    ).toEqual({ ok: false, reason: 'invalid_timestamp' })
+  })
+})
+
 describe('shouldSpeak — off level always denies', () => {
   it('agenda kind ⇒ care_off', () => {
     expect(

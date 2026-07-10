@@ -65,10 +65,23 @@ export function shouldSpeak(args: {
   if (level === 'off') return { ok: false, reason: 'care_off' }
 
   const nowMs = Date.parse(nowIso)
+  if (Number.isNaN(nowMs)) return { ok: false, reason: 'invalid_timestamp' }
+
+  const lastProactiveMs =
+    ledger.lastProactiveAtIso !== undefined ? Date.parse(ledger.lastProactiveAtIso) : undefined
+  if (lastProactiveMs !== undefined && Number.isNaN(lastProactiveMs)) {
+    return { ok: false, reason: 'invalid_timestamp' }
+  }
+
+  const lastInboundMs =
+    lastInboundAtIso !== undefined ? Date.parse(lastInboundAtIso) : undefined
+  if (lastInboundMs !== undefined && Number.isNaN(lastInboundMs)) {
+    return { ok: false, reason: 'invalid_timestamp' }
+  }
 
   if (kind === 'agenda') {
-    if (ledger.lastProactiveAtIso !== undefined) {
-      const sinceProactiveMs = nowMs - Date.parse(ledger.lastProactiveAtIso)
+    if (lastProactiveMs !== undefined) {
+      const sinceProactiveMs = nowMs - lastProactiveMs
       if (sinceProactiveMs < AGENDA_COOLDOWN_MS) return { ok: false, reason: 'agenda_cooldown' }
     }
     return { ok: true }
@@ -76,16 +89,16 @@ export function shouldSpeak(args: {
 
   // kind === 'gap' — order matters: never_talked → paused_no_reply →
   // gap_inbound_recent → gap_proactive_recent (tests pin this ordering).
-  if (lastInboundAtIso === undefined) return { ok: false, reason: 'never_talked' }
+  if (lastInboundMs === undefined) return { ok: false, reason: 'never_talked' }
   if (ledger.noReplyCount >= PAUSE_AFTER_NO_REPLIES) return { ok: false, reason: 'paused_no_reply' }
 
   const gapMs = GAP_DAYS[level] * DAY
 
-  const sinceInboundMs = nowMs - Date.parse(lastInboundAtIso)
+  const sinceInboundMs = nowMs - lastInboundMs
   if (sinceInboundMs < gapMs) return { ok: false, reason: 'gap_inbound_recent' }
 
-  if (ledger.lastProactiveAtIso !== undefined) {
-    const sinceProactiveMs = nowMs - Date.parse(ledger.lastProactiveAtIso)
+  if (lastProactiveMs !== undefined) {
+    const sinceProactiveMs = nowMs - lastProactiveMs
     if (sinceProactiveMs < gapMs) return { ok: false, reason: 'gap_proactive_recent' }
   }
 
