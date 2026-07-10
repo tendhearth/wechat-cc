@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildTickBodies, buildPushTickText, buildGapCheckinText, buildHuntText, type TickDeps } from './tick-bodies'
@@ -735,5 +735,43 @@ describe('buildTickBodies / introspectTick — provider-agnostic cheap eval (PR 
     const { introspectTick } = buildTickBodies(s.deps)
     await introspectTick()
     expect(getCheapEval).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('buildTickBodies / introspectTick — memory gardener mount', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => {
+    for (const d of cleanup) {
+      try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ }
+    }
+  })
+
+  it('cheapEval absent ⇒ gardener never runs (no GARDEN log, no archive dir created)', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    // Seed a large memory file that WOULD be eligible if the gardener ran.
+    const memDir = join(s.stateDir, 'memory', 'chat-1')
+    mkdirSync(memDir, { recursive: true })
+    writeFileSync(join(memDir, 'profile.md'), 'x'.repeat(3000))
+    const { introspectTick } = buildTickBodies(s.deps)
+    await introspectTick()
+    expect(s.logs.some(l => l.startsWith('GARDEN|'))).toBe(false)
+    expect(existsSync(join(s.stateDir, 'memory-archive'))).toBe(false)
+  })
+
+  it('cheapEval present ⇒ introspectTick invokes the gardener after the existing steps', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const memDir = join(s.stateDir, 'memory', 'chat-1')
+    mkdirSync(memDir, { recursive: true })
+    writeFileSync(join(memDir, 'profile.md'), 'x'.repeat(3000))
+    const cheapEval = vi.fn(async () => 'curated')
+    s.deps.boot = { ...s.deps.boot, registry: { getCheapEval: () => cheapEval } as never }
+    const { introspectTick } = buildTickBodies(s.deps)
+    await introspectTick({ nowIso: '2026-07-10T00:00:00.000Z' })
+    expect(s.logs.some(l => l.startsWith('GARDEN|'))).toBe(true)
+    expect(existsSync(join(s.stateDir, 'memory-archive', 'chat-1', 'profile.md.2026-07-10.md'))).toBe(true)
+    expect(readFileSync(join(memDir, 'profile.md'), 'utf8')).toBe('curated')
   })
 })
