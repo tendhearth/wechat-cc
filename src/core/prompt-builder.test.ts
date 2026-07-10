@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSystemPrompt, careSection, daemonSelfHealSection, personaCultivationSection, personaSection, stickerSection } from './prompt-builder'
+import { buildSystemPrompt, careSection, daemonSelfHealSection, newRelationshipSection, personaCultivationSection, personaSection, stickerSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
   function defaults() {
@@ -224,6 +224,30 @@ describe('care prompt section', () => {
   })
 })
 
+describe('new-relationship prompt section', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+
+  it('newRelationshipSection() instructs light, at-most-one-question curiosity and warns against interrogation', () => {
+    const s = newRelationshipSection()
+    expect(s).toContain('刚认识')
+    expect(s).toContain('一次最多一个问题')
+    expect(s).toContain('别像查户口')
+  })
+
+  it('buildSystemPrompt includes the new-relationship section when newRelationship=true', () => {
+    const p = buildSystemPrompt({ ...base, newRelationship: true })
+    expect(p).toContain('刚认识')
+    expect(p).toContain('一次最多一个问题')
+  })
+
+  it('buildSystemPrompt is byte-identical whether newRelationship is false or simply absent, and omits the section', () => {
+    const withFalse = buildSystemPrompt({ ...base, newRelationship: false })
+    const withoutKey = buildSystemPrompt({ ...base })
+    expect(withFalse).toBe(withoutKey)
+    expect(withoutKey).not.toContain('刚认识')
+  })
+})
+
 describe('sticker prompt section', () => {
   const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
 
@@ -325,5 +349,26 @@ describe('persona prompt section', () => {
     const p = buildSystemPrompt({ ...base, persona: '话风活泼', personaCultivate: true })
     expect(p).toContain('你的人设')
     expect(p).toContain('人设养成')
+  })
+
+  it('buildSystemPrompt includes the empty-persona seed nudge when personaCultivate=true and personaEmpty=true', () => {
+    const p = buildSystemPrompt({ ...base, personaCultivate: true, personaEmpty: true })
+    expect(p).toContain('人设养成')
+    expect(p).toContain('现在还是空的')
+    expect(p).toContain('有想对标的人也行')
+  })
+
+  it('buildSystemPrompt includes the cultivation section but NOT the nudge, byte-identical to cultivate-only output, when personaEmpty is false or absent', () => {
+    const cultivateOnly = buildSystemPrompt({ ...base, personaCultivate: true })
+    const withFalse = buildSystemPrompt({ ...base, personaCultivate: true, personaEmpty: false })
+    expect(withFalse).toBe(cultivateOnly)
+    expect(cultivateOnly).toContain('人设养成')
+    expect(cultivateOnly).not.toContain('现在还是空的')
+  })
+
+  it('buildSystemPrompt omits the cultivation section entirely when personaEmpty=true but personaCultivate is false/absent (nudge is nested)', () => {
+    const p = buildSystemPrompt({ ...base, personaEmpty: true })
+    expect(p).not.toContain('人设养成')
+    expect(p).not.toContain('现在还是空的')
   })
 })

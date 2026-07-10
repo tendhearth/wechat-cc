@@ -64,6 +64,16 @@ export interface BuildSystemPromptArgs {
    */
   careEnabled?: boolean
   /**
+   * When true, this chat is in the "刚认识" (just-met) phase of the
+   * relationship — adds a section nudging light, at-most-one-question
+   * curiosity about the person (what they do, what they care about,
+   * schedule, how they like to be addressed) so memory fills in without
+   * feeling like an interrogation. Absent or false ⇒ output is
+   * byte-identical to before this field existed (mirrors `careEnabled`'s
+   * contract).
+   */
+  newRelationship?: boolean
+  /**
    * Local sticker library tags available to this session (image-stickers
    * design §5). When present and non-empty, adds the sticker section so the
    * agent knows it can `send_sticker(tag)` on strong-emotion/celebration/
@@ -89,6 +99,16 @@ export interface BuildSystemPromptArgs {
    * false/absent ⇒ output is byte-identical to before this field existed.
    */
   personaCultivate?: boolean
+  /**
+   * When true (and `personaCultivate` is also true), persona.md is still
+   * blank — appends a one-line nudge to the cultivation section telling the
+   * agent to ask an early, natural seed question about desired style/
+   * personality so persona.md has something to grow from. Nested inside
+   * `personaCultivate`'s gate: if `personaCultivate` is false/absent, this
+   * flag has no effect (no cultivation section at all, so no nudge either).
+   * Absent or false ⇒ output is byte-identical to before this field existed.
+   */
+  personaEmpty?: boolean
 }
 
 /**
@@ -108,7 +128,8 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     args.daemonOpsAvailable ? daemonSelfHealSection() : '',
     args.fileLocateAvailable ? fileLocateSection() : '',
     args.careEnabled ? careSection() : '',
-    args.personaCultivate === true ? personaCultivationSection() : '',
+    args.newRelationship === true ? newRelationshipSection() : '',
+    args.personaCultivate === true ? personaCultivationSection({ personaEmpty: args.personaEmpty === true }) : '',
     args.stickerTags && args.stickerTags.length > 0 ? stickerSection(args.stickerTags) : '',
     memorySection(),
     multiModeAwarenessSection(),
@@ -237,10 +258,15 @@ ${content.slice(0, 4000)}`
  * rewrite the whole file after every notable exchange, which defeats the
  * slow-growth premise of the design.
  */
-export function personaCultivationSection(): string {
-  return `## 人设养成(persona.md)
+export function personaCultivationSection(opts?: { personaEmpty?: boolean }): string {
+  const base = `## 人设养成(persona.md)
 
 persona.md 在你和主人的对话记忆里,是"白纸养成"的性格档案。随着相处,把逐渐形成的说话风格、性格特质、主人的调教(对标谁、什么语气、什么雷区)用 memory_write 写进去;简短、条目化。**改动要克制——人格是缓慢生长的,不是每天重写。** 主人说"对标 XXX / 以后这样说话"时,更新 persona.md 并口头确认。`
+  if (opts?.personaEmpty) {
+    return `${base}
+persona.md 现在还是空的——找一个早期的自然时机问一句:「想要我是什么风格/性格吗?有想对标的人也行」,把答案整理进 persona.md(没答也没关系,从相处里慢慢长)。`
+  }
+  return base
 }
 
 /**
@@ -260,6 +286,21 @@ export function careSection(): string {
 关心要自然、具体、有由头（这次聊天里确实提到的事），不要为了显得贴心而堆砌——同一个话题最多留一条关心意向，别重复记。
 
 当用户表达打扰偏好（"别烦我" / "多关心我" / "别拆分"这类），用 \`set_chat_pref\` 工具调整（\`care: off|low|high\`、\`split\`），改完口头确认一句，不要只是嘴上答应却不落实。`
+}
+
+/**
+ * New-relationship curiosity section — appears while this chat is still in
+ * the "刚认识" (just-met) phase. Nudges light, at-most-one-question
+ * curiosity so the agent's memory of this person fills in naturally instead
+ * of staying blank forever, while explicitly warning against turning every
+ * reply into an interrogation. Once the agent knows the person well enough,
+ * the caller stops passing `newRelationship: true` and this section drops
+ * out on its own (no explicit "graduation" tool call needed).
+ */
+export function newRelationshipSection(): string {
+  return `## 刚认识(了解 ta)
+
+你们还在刚认识的阶段。回复之余,自然地带一点好奇——一次最多一个问题,了解 ta 是做什么的、在意什么、作息和忙闲、喜欢被怎么称呼和怎么说话。听到值得记的就写进 memory(notes/observations)。别像查户口:有自然话头才问,没有就不问;别每条回复都带问题。等你对 ta 足够了解,这个阶段就过去了。`
 }
 
 /**
