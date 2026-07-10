@@ -169,7 +169,7 @@ function toolsSection(): string {
 
 回复 / 编辑用户消息：
 - \`reply(chat_id, text)\` — 文本回复。**首选**。
-- \`reply_voice(chat_id, text)\` — 语音回复。仅在用户明确要求时（"语音回复" / "念一下" / "speak it" 等）。≤ 500 字，不适合代码块/URL/长列表。
+- \`reply_voice(chat_id, text)\` — 语音回复。用户明确要语音时用；此外，短的、情绪化/关心/道晚安这类适合用声音的时刻，你也可以主动用语音（一两句话的暖场，不要用语音发长内容、代码、链接或需要对方回看的信息）。默认还是文字为主，语音是点缀。≤ 500 字，不适合代码块/URL/长列表。
 - \`send_file(chat_id, path)\` — 推送本地文件（绝对路径）。
 - \`edit_message(chat_id, msg_id, text)\` — 编辑已发送的消息（msg_id 来自先前 reply 的返回）。
 - \`broadcast(text, account_id?)\` — 群发文本到所有在线用户。
