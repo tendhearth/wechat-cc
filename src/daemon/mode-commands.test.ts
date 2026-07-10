@@ -24,10 +24,10 @@ function setup(opts: {
     return { msgId: 'm-1' }
   })
   const pinModel = vi.fn<(providerId: ProviderId, model: string) => void>()
-  const prefsData = new Map<string, { split?: boolean; care?: 'off' | 'low' | 'high' }>()
+  const prefsData = new Map<string, { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean }>()
   const chatPrefs = {
     get: (c: string) => prefsData.get(c) ?? {},
-    set: (c: string, p: { split?: boolean; care?: 'off' | 'low' | 'high' }) => { const n = { ...(prefsData.get(c) ?? {}), ...p }; prefsData.set(c, n); return n },
+    set: (c: string, p: { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean }) => { const n = { ...(prefsData.get(c) ?? {}), ...p }; prefsData.set(c, n); return n },
   }
   const cmds = makeModeCommands({
     coordinator: {
@@ -819,5 +819,61 @@ describe('makeModeCommands', () => {
     await cmds.handle(inbound('/set stickers off'))
     await cmds.handle(inbound('/set'))
     expect(sentMessages[2]?.[1]).toContain('表情(表情包): off')
+  })
+
+  // ── /set hunt|打猎 — daily hunt toggle (Task 2) ────────────────────────
+
+  it('/set hunt off persists {hunt:false} and confirms', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    expect(await cmds.handle(inbound('/set hunt off'))).toBe(true)
+    expect(prefsData.get('chat-1')).toEqual({ hunt: false })
+    expect(sentMessages[0]?.[1]).toContain('关闭')
+  })
+
+  it('/set hunt on persists {hunt:true} and confirms', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    expect(await cmds.handle(inbound('/set hunt on'))).toBe(true)
+    expect(prefsData.get('chat-1')).toEqual({ hunt: true })
+    expect(sentMessages[0]?.[1]).toContain('开启')
+  })
+
+  it('/set 打猎 开 (Chinese alias) turns it on', async () => {
+    const { cmds, prefsData } = setup()
+    await cmds.handle(inbound('/set 打猎 开'))
+    expect(prefsData.get('chat-1')).toEqual({ hunt: true })
+  })
+
+  it('/set 打猎 关 (Chinese alias) turns it off', async () => {
+    const { cmds, prefsData } = setup()
+    await cmds.handle(inbound('/set 打猎 关'))
+    expect(prefsData.get('chat-1')).toEqual({ hunt: false })
+  })
+
+  it('/set hunt maybe is a usage error and does not write', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    await cmds.handle(inbound('/set hunt maybe'))
+    expect(prefsData.size).toBe(0)
+    expect(sentMessages[0]?.[1]).toContain('hunt')
+  })
+
+  it('bare /set output contains 打猎', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[0]?.[1]).toContain('打猎')
+  })
+
+  it('bare /set shows 未设置 when hunt is unset, and the raw on|off when set', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[0]?.[1]).toContain('未设置')
+    await cmds.handle(inbound('/set hunt off'))
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[2]?.[1]).toContain('打猎(每日打猎): off')
+  })
+
+  it('/help line mentions 每日打猎', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/help'))
+    expect(sentMessages[0]?.[1]).toContain('每日打猎')
   })
 })

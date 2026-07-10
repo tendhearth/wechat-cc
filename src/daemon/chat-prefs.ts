@@ -18,6 +18,8 @@ export interface ChatPrefs {
   care?: 'off' | 'low' | 'high'
   /** 表情包开关 (sticker replies). undefined ⇒ ON (default); false ⇒ off. */
   stickers?: boolean
+  /** 每日打猎开关 (daily hunt toggle). undefined ⇒ ON (default); false ⇒ off. */
+  hunt?: boolean
 }
 
 export interface ChatPrefsStore {
