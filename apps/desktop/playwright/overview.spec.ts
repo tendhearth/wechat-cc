@@ -2,7 +2,7 @@
 //
 // Covers moxiuwen's redesigned hero card + current-user card + sub-user
 // grid (post merge 782268e):
-//   1. hero tone — daemon alive ("AI 正在陪伴中") vs dead ("暂时失联")
+//   1. hero tone — daemon alive ("AI 正在陪伴中") vs dead ("CC 暂时失去连接")
 //   2. current-user card — populated when an account is bound, empty
 //      placeholder when not
 //   3. sub-user grid — 6 demo cards when no real sub-users; sub-rows
@@ -72,14 +72,14 @@ test('hero shows "AI 正在陪伴中" with bound account (daemon alive)', async 
   await expect(page.locator('#hero-card')).not.toHaveClass(/warn/)
 })
 
-test('hero shows "暂时失联" when daemon is dead (bound account, no probe)', async ({ page, shimUrl, shim }) => {
+test('hero shows "CC 暂时失去连接" when daemon is dead (bound account, no probe)', async ({ page, shimUrl, shim }) => {
   // daemon dead + account > 0 + no probe result → recovering state.
   // The 3-state logic requires BOTH daemonAlive AND accountCount > 0 for
   // "connected"; a dead daemon falls through to "recovering" regardless
   // of bound account count.
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: false })
   await bootAndForceDashboardRender(page, shimUrl)
-  await expect(page.locator('#hero-headline')).toHaveText(/暂时失联/, { timeout: 10_000 })
+  await expect(page.locator('#hero-headline')).toHaveText('CC 暂时失去连接', { timeout: 10_000 })
   await expect(page.locator('#hero-card')).toHaveClass(/warn/)
 })
 
@@ -173,7 +173,7 @@ test('测试本机连接 is shown when not connected (recovering)', async ({ pag
   // user can verify / re-check ownership.
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: false })
   await bootAndForceDashboardRender(page, shimUrl)
-  await expect(page.locator('#hero-headline')).toHaveText('暂时失联', { timeout: 10_000 })
+  await expect(page.locator('#hero-headline')).toHaveText('CC 暂时失去连接', { timeout: 10_000 })
   await expect(page.locator('#dash-test-conn')).toBeVisible()
 })
 
@@ -183,7 +183,7 @@ test('probe verdict taken_over flips hero to 本机未连接 and shows rebind', 
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: false })
   await shim.invoke('mock.connection-probe', { state: 'taken_over' })
   await bootAndForceDashboardRender(page, shimUrl)
-  await expect(page.locator('#hero-headline')).toHaveText('暂时失联', { timeout: 10_000 })
+  await expect(page.locator('#hero-headline')).toHaveText('CC 暂时失去连接', { timeout: 10_000 })
   await page.locator('#dash-test-conn').click()
   await expect(page.locator('#hero-headline')).toHaveText('本机未连接', { timeout: 10_000 })
   await expect(page.locator('#dash-rebind')).toBeVisible({ timeout: 10_000 })
@@ -197,7 +197,7 @@ test('probe verdict connected flips hero to 陪伴中 and hides the test button'
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: false })
   await shim.invoke('mock.connection-probe', { state: 'connected' })
   await bootAndForceDashboardRender(page, shimUrl)
-  await expect(page.locator('#hero-headline')).toHaveText('暂时失联', { timeout: 10_000 })
+  await expect(page.locator('#hero-headline')).toHaveText('CC 暂时失去连接', { timeout: 10_000 })
   await page.locator('#dash-test-conn').click()
   await expect(page.locator('#hero-headline')).toHaveText(/AI 正在陪伴中/, { timeout: 10_000 })
   await expect(page.locator('#dash-test-conn')).toBeHidden()

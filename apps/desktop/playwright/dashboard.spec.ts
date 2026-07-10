@@ -179,21 +179,8 @@ test('observations list reflects seeded data', async ({ shim }) => {
   expect(observations.length).toBe(5)
 })
 
-// ── Reconnect-diagnose card ───────────────────────────────────────────────
-//
-// Pattern:
-//  1. Boot into dashboard mode (accounts + service seeded so initialMode
-//     returns 'dashboard').
-//  2. Inject a doctorOverride via mock.doctor so the NEXT doctor --json
-//     poll returns the desired DoctorReport shape.
-//  3. Click #dash-restart to trigger restartDaemon().
-//  4. Assert #reconnect-diagnose-card becomes visible with expected title.
-//
-// For "all-green" (code 0): assert card stays hidden (or a brief toast
-// appears on #dash-pending) instead of the card being shown.
-//
-// For "dead-daemon triggers restart chain": after clicking the card's
-// primary button, assert the shim recorded service stop + service start.
+// ── Reconnect diagnosis fixtures ──────────────────────────────────────────
+// Diagnosis stays internal; the overview hero is the only recovery surface.
 
 // Helper: build a minimal DoctorReport that produces a given diagnosis code.
 // These shapes must match what diagnose() in view.js expects.
@@ -264,7 +251,7 @@ const REPORTS = {
     expiredBots: [],
     nextActions: [],
   },
-  // code-0: all green → no card, toast "一切正常，无需操作"
+  // code-0: all green → brief "连接正常" feedback
   allGreen: {
     ready: true,
     stateDir: '/tmp/wechat-cc-shim',
@@ -288,8 +275,8 @@ const REPORTS = {
   },
 }
 
-test.describe('reconnect-diagnose card', () => {
-  test('dead-daemon click shows code-1 card and triggers restart on primary', async ({ page, shimUrl, shim }) => {
+test.describe('single-surface reconnect flow', () => {
+  test('dead-daemon click starts recovery immediately without a second card', async ({ page, shimUrl, shim }) => {
     // Seed so dashboard mode is reached
     await shim.invoke('demo.seed', { chat_id: 'test_chat' })
     await bootIntoDashboard(page, shimUrl)
@@ -307,23 +294,14 @@ test.describe('reconnect-diagnose card', () => {
       if (btn) btn.hidden = false
     })
 
-    // Click "重新连接" — triggers restartDaemon() → diagnose() → card shown
+    // One click diagnoses internally and starts recovery immediately.
     await page.locator('#dash-restart').click()
 
-    // Card should now be visible with the correct title
-    await expect(page.locator('#reconnect-diagnose-card')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('#rdc-title')).toHaveText('后台服务挂了')
+    // The old duplicate diagnosis card no longer exists in the page.
+    await expect(page.locator('#reconnect-diagnose-card')).toHaveCount(0)
 
-    // Click the primary button ("一键重启后台") to trigger the restart chain.
-    // The dead-daemon report makes daemon.alive false, so waitForCondition
-    // in runRestartSequence will time out and fall back to the non-alive branch.
-    // We just need to confirm the service stop/start calls were recorded.
-    // Inject an alive report so waitForCondition resolves.
-    await shim.invoke('mock.doctor', { report: REPORTS.allGreen })
-    await page.locator('#rdc-primary').click()
-
-    // Poll until both stop + start have been recorded (max 5s) rather than
-    // sleeping a fixed 2s — faster on a fast machine, reliable on a slow one.
+    // Wait until the restart sequence reaches service start, then let the
+    // next health poll observe a live daemon.
     await expect.poll(
       async () => {
         const r = await shim.invoke('mock.get-service-invokes') as { result: { invokes: string[] } }
@@ -331,32 +309,12 @@ test.describe('reconnect-diagnose card', () => {
       },
       { timeout: 5000 },
     ).toEqual(expect.arrayContaining(['service stop', 'service start']))
+    await shim.invoke('mock.doctor', { report: REPORTS.allGreen })
 
-    // Final verification (invokes already polled above, re-read for the assertion log)
-    const invokes = await shim.invoke('mock.get-service-invokes') as { result: { invokes: string[] } }
-    expect(invokes.result.invokes).toContain('service stop')
-    expect(invokes.result.invokes).toContain('service start')
+    await expect(page.locator('#dash-pending')).toHaveText('连接已恢复', { timeout: 5000 })
   })
 
-  test('account-expired click shows code-5 card', async ({ page, shimUrl, shim }) => {
-    await shim.invoke('demo.seed', { chat_id: 'test_chat' })
-    await bootIntoDashboard(page, shimUrl)
-
-    await shim.invoke('mock.doctor', { report: REPORTS.accountExpired })
-
-    await page.evaluate(() => {
-      const btn = document.getElementById('dash-restart')
-      if (btn) btn.hidden = false
-    })
-    await page.locator('#dash-restart').click()
-
-    await expect(page.locator('#reconnect-diagnose-card')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('#rdc-title')).toHaveText('微信账号已过期')
-    // Primary action is "重新扫码" for expired accounts
-    await expect(page.locator('#rdc-primary')).toHaveText('重新扫码')
-  })
-
-  test('provider-missing click shows code-4 card with copy button', async ({ page, shimUrl, shim }) => {
+  test('provider-missing opens settings without a technical diagnosis card', async ({ page, shimUrl, shim }) => {
     await shim.invoke('demo.seed', { chat_id: 'test_chat' })
     await bootIntoDashboard(page, shimUrl)
 
@@ -368,18 +326,12 @@ test.describe('reconnect-diagnose card', () => {
     })
     await page.locator('#dash-restart').click()
 
-    await expect(page.locator('#reconnect-diagnose-card')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('#rdc-title')).toHaveText('AI 工具缺失')
-    // The fix section with the install command should be visible
-    await expect(page.locator('#rdc-fix')).toBeVisible()
-    // A "复制" button should appear inside the fix section
-    await expect(page.locator('#rdc-fix button')).toHaveText('复制')
-    // Secondary action "切换 provider" should be shown
-    await expect(page.locator('#rdc-secondary')).toBeVisible()
-    await expect(page.locator('#rdc-secondary')).toHaveText('切换 provider')
+    await expect(page.locator('#reconnect-diagnose-card')).toHaveCount(0)
+    await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/, { timeout: 3000 })
+    await expect(page.locator('#hero-meta')).toHaveText('AI 服务暂不可用，请检查设置')
   })
 
-  test('all-green click shows nothing (card stays hidden, pending shows 一切正常)', async ({ page, shimUrl, shim }) => {
+  test('all-green race returns to normal without rendering another surface', async ({ page, shimUrl, shim }) => {
     await shim.invoke('demo.seed', { chat_id: 'test_chat' })
     await bootIntoDashboard(page, shimUrl)
 
@@ -391,17 +343,11 @@ test.describe('reconnect-diagnose card', () => {
     })
     await page.locator('#dash-restart').click()
 
-    // Card should NOT become visible for code 0
-    // Give it a moment in case the async path completes quickly
-    await page.waitForTimeout(300)
-    const cardVisible = await page.locator('#reconnect-diagnose-card').isVisible()
-    expect(cardVisible).toBe(false)
-
-    // Pending text shows the "all green" message
-    await expect(page.locator('#dash-pending')).toHaveText('一切正常，无需操作', { timeout: 3000 })
+    await expect(page.locator('#reconnect-diagnose-card')).toHaveCount(0)
+    await expect(page.locator('#dash-pending')).toHaveText('连接正常', { timeout: 3000 })
   })
 
-  test('frontend-stuck click shows code-7 card (lastError non-null + healthOk=true)', async ({ page, shimUrl, shim }) => {
+  test('frontend-stuck keeps the failure in the hero and exposes details', async ({ page, shimUrl, shim }) => {
     // Seed so dashboard mode is reached with daemonAlive=true (generates a
     // report with internal_api in daemon.checks so healthProbe can fire).
     await shim.invoke('demo.seed', { chat_id: 'test_chat' })
@@ -426,10 +372,11 @@ test.describe('reconnect-diagnose card', () => {
     //   3. diagnose({ report, healthOk: true, lastError: non-null }) → code 7
     await page.locator('#dash-restart').click()
 
-    await expect(page.locator('#reconnect-diagnose-card')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('#rdc-title')).toContainText(/Dashboard 自己卡了|前端|本地轮询/i)
-    // Primary action is "重启 Dashboard"
-    await expect(page.locator('#rdc-primary')).toHaveText('重启 Dashboard')
+    await expect(page.locator('#reconnect-diagnose-card')).toHaveCount(0)
+    await expect(page.locator('#hero-headline')).toHaveText('CC 暂时失去连接')
+    await expect(page.locator('#hero-meta')).toHaveText('页面状态暂未更新，请重新打开应用')
+    await expect(page.locator('#dash-restart')).toContainText('再试一次')
+    await expect(page.locator('#dash-view-details')).toBeVisible()
   })
 })
 
@@ -502,7 +449,7 @@ test.describe('RECONNECT_DIAGNOSE telemetry', () => {
 
     // Inject a dead-daemon doctor report so restartDaemon goes through the
     // diagnose() path (not the no-report fallback) — code-1 is a good choice
-    // because it produces a visible card AND reliably exercises the log path.
+    // because it reliably exercises the diagnostic log path.
     await shim.invoke('mock.doctor', { report: REPORTS.deadDaemon })
 
     // Force-show the restart button (seeded daemon is alive → stop btn shown)

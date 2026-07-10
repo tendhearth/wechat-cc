@@ -153,16 +153,14 @@ const deps = {
       renderRestartButtonIfActive(current)
     }
   },
-  // True when the user reached the disconnected state by explicitly clicking
-  // 断开连接 (vs. an unexpected daemon crash). Lets 重新连接 skip the diagnose
-  // card and restart directly — a dead daemon is expected here, not a fault.
+  // True when the user explicitly clicked 断开连接. Both intentional and
+  // unexpected interruptions now recover through the same one-click surface.
   isDisconnectedIntent: () => state.connectionIntent === "disconnected",
-  // Diagnose-card callback: switch to the logs pane (secondary link on
-  // codes 1 + 2 — daemon dead / never started).
+  // Reconnect failure details stay in the existing logs pane.
   routeToLogsPane: () => {
     switchPane("logs")
   },
-  // Diagnose-card callbacks: open the settings drawer at the relevant section.
+  // Recovery callbacks open the settings drawer at the relevant section.
   // The drawer currently doesn't have separate provider/access deep-links —
   // cheapest approach is just opening the drawer (no major refactor needed).
   routeToAccessSettings: () => {
@@ -596,6 +594,7 @@ function wireEvents() {
   )
   document.getElementById("dash-stop")?.addEventListener("click", () => stopDaemon(deps))
   document.getElementById("dash-restart")?.addEventListener("click", () => restartDaemon(deps))
+  document.getElementById("dash-view-details")?.addEventListener("click", () => deps.routeToLogsPane())
   document.getElementById("dash-test-conn")?.addEventListener("click", async () => {
     const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById("dash-test-conn"))
     if (!btn) return

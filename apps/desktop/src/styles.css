@@ -2230,6 +2230,24 @@ input { font: inherit; color: inherit; }
   background: url("./assets/connect-button-bg.png") center / 100% 100% no-repeat;
   color: #5b4330;
 }
+.moment-connect-btn:disabled {
+  cursor: wait;
+  opacity: .72;
+}
+.moment-reconnect-details {
+  margin: 8px auto 0;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: rgba(89, 63, 44, .68);
+  font-size: 12px;
+  cursor: pointer;
+}
+.moment-reconnect-details:hover {
+  color: #593F2C;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .moment-connect-btn .ic,
 .moment-connect-btn .ic svg {
   width: 14px;
@@ -4753,94 +4771,6 @@ input { font: inherit; color: inherit; }
 
 .a2a-activity-list .event.in  { background: var(--tint); }
 .a2a-activity-list .event.out { background: var(--paper); }
-
-/* ── Reconnect-diagnose card ─────────────────────────────────────────────
-   Appears below the reconnect button after diagnose() returns a non-0
-   code. Uses HTML `hidden` attribute (display:none via the global rule)
-   so it costs nothing when not shown. Two tone variants: the default
-   neutral card, and .warn for codes that indicate active failure.      */
-#reconnect-diagnose-card {
-  margin-top: 14px;
-  padding: 14px 16px 12px;
-  border: 1px solid var(--hair-2);
-  border-radius: var(--radius-sm);
-  background: var(--paper-2);
-  width: min(274px, 100%);
-}
-#reconnect-diagnose-card.warn {
-  border-color: var(--amber);
-  background: var(--amber-soft);
-}
-#reconnect-diagnose-card h3 {
-  margin: 0 0 4px;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--ink);
-  line-height: 1.3;
-}
-#reconnect-diagnose-card p {
-  margin: 0 0 10px;
-  font-size: 11.5px;
-  color: var(--ink-3);
-  line-height: 1.5;
-}
-#rdc-fix {
-  margin-bottom: 10px;
-}
-#rdc-fix code {
-  display: block;
-  padding: 6px 8px;
-  background: var(--paper-3);
-  border-radius: var(--radius-sm);
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--ink-2);
-  word-break: break-all;
-  margin-bottom: 6px;
-}
-#rdc-fix a {
-  font-size: 11.5px;
-  color: var(--green);
-  text-decoration: underline;
-  text-decoration-color: transparent;
-}
-#rdc-fix a:hover {
-  text-decoration-color: var(--green);
-}
-.rdc-footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-}
-.rdc-btn-primary {
-  height: 28px;
-  padding: 0 12px;
-  border: 1.5px solid #191919;
-  border-radius: 4px;
-  background: #fff;
-  color: #593F2C;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.rdc-btn-primary:hover {
-  background: #191919;
-  color: #fff;
-}
-#rdc-secondary {
-  font-size: 11.5px;
-  color: var(--ink-3);
-  text-decoration: underline;
-  text-decoration-color: transparent;
-  cursor: pointer;
-  white-space: nowrap;
-}
-#rdc-secondary:hover {
-  color: var(--ink-2);
-  text-decoration-color: var(--ink-3);
-}
 
 /* ── sessions contact sidebar (multi-chat nav) ───────────────── */
 .sessions-main { display: flex; flex: 1; min-height: 0; }

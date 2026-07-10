@@ -177,8 +177,8 @@ export function restartButtonState(daemon, service) {
 }
 
 /**
- * Analyse the current system state and return a reconnect-diagnosis card
- * description, or a code-0 "auto-dismiss" signal when everything is healthy.
+ * Analyse the current system state and return the recovery action that the
+ * overview's single reconnect surface should execute.
  *
  * Priority order (first matching rule wins):
  *  8 — win pid-unchanged  only after a known restart attempt on win32
@@ -349,7 +349,12 @@ export function dashboardHero({ daemonAlive, accountCount, expiredCount = 0, las
   if (lastProbe?.state === 'connected' || (daemonAlive && accountCount > 0)) {
     return { state: 'connected', tone: 'ok', headline: 'AI 正在陪伴中', meta: '连接正常' }
   }
-  return { state: 'recovering', tone: 'warn', headline: '暂时失联', meta: '正在恢复连接…' }
+  return {
+    state: 'recovering',
+    tone: 'warn',
+    headline: 'CC 暂时失去连接',
+    meta: '可能暂时无法接收微信消息',
+  }
 }
 
 // Choose post-account-delete confirmation copy. When the service is not

@@ -15,12 +15,13 @@ const USER_CARD_PROVIDERS = ["claude", "codex", "gemini"]
 
 export function renderDashboard(report) {
   const expiredCount = (report.expiredBots || []).length
-  const hero = dashboardHero({
+  const baseHero = dashboardHero({
     daemonAlive: !!report.checks.daemon.alive,
     accountCount: report.checks.accounts.count,
     expiredCount,
     lastProbe: _lastProbe,
   })
+  const hero = reconnectHero(baseHero)
   const card = document.getElementById("hero-card")
   if (!card) return
   card.classList.toggle("warn", hero.tone !== "ok")
@@ -35,8 +36,9 @@ export function renderDashboard(report) {
   if (rebindBtn) rebindBtn.hidden = hero.state !== "taken_over"
   // "测试本机连接" is only useful when the state is NOT already a confirmed
   // connection — hide it when connected (the hero already says 陪伴中), show it
-  // in 暂时失联 / 本机未连接 so the user can verify or re-check ownership.
+  // in 失去连接 / 本机未连接 so the user can verify or re-check ownership.
   if (testConnBtn) testConnBtn.hidden = hero.state === "connected"
+  syncReconnectControls(hero)
 
   const accounts = report.checks.accounts.items || []
   const expired = report.expiredBots || []
@@ -191,12 +193,12 @@ function demoSubUsers() {
 export function renderRestartButton(report) {
   const btn = document.getElementById("dash-restart")
   if (!btn) return
-  const hero = dashboardHero({
+  const hero = reconnectHero(dashboardHero({
     daemonAlive: !!report.checks.daemon?.alive,
     accountCount: report.checks.accounts?.count ?? 0,
     expiredCount: (report.expiredBots || []).length,
     lastProbe: _lastProbe,
-  })
+  }))
   const showOnlineControls = hero.state === "connected"
   const choice = restartButtonState(report.checks.daemon, report.checks.service)
   // Find the label text node (the one with non-whitespace content). The
@@ -206,10 +208,15 @@ export function renderRestartButton(report) {
   const labelNode = Array.from(btn.childNodes).find(
     n => n.nodeType === Node.TEXT_NODE && n.textContent.trim().length > 0,
   )
-  const visibleLabel = "重新连接"
+  const visibleLabel = _reconnectPhase === "connecting"
+    ? "正在重新连接…"
+    : _reconnectPhase === "failed"
+      ? "再试一次"
+      : "重新连接"
   if (labelNode) labelNode.textContent = ` ${visibleLabel}`
   else btn.appendChild(document.createTextNode(` ${visibleLabel}`))
   btn.dataset.action = choice.action
+  btn.disabled = _reconnectPhase === "connecting"
   if (choice.helper) btn.title = choice.helper
   else btn.removeAttribute("title")
 
@@ -224,11 +231,76 @@ export function renderRestartButton(report) {
     else stopBtn.title = "daemon 未运行"
   }
   btn.hidden = hero.state !== "recovering"
+  const detailsBtn = document.getElementById("dash-view-details")
+  if (detailsBtn) detailsBtn.hidden = _reconnectPhase !== "failed"
 }
 
 export function setPending(msg) {
   const el = document.getElementById("dash-pending")
   if (el) el.textContent = msg
+}
+
+function setButtonLabel(button, label) {
+  if (!button) return
+  const labelNode = Array.from(button.childNodes).find(
+    node => node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0,
+  )
+  if (labelNode) labelNode.textContent = ` ${label}`
+  else button.appendChild(document.createTextNode(` ${label}`))
+}
+
+function reconnectHero(hero) {
+  if (hero.state === "taken_over") return hero
+  if (_reconnectPhase === "connecting") {
+    return {
+      state: "recovering",
+      tone: "warn",
+      headline: "正在重新连接",
+      meta: "请稍候…",
+    }
+  }
+  if (_reconnectPhase === "failed") {
+    return {
+      state: "recovering",
+      tone: "warn",
+      headline: "CC 暂时失去连接",
+      meta: _reconnectFailureMessage,
+    }
+  }
+  return hero
+}
+
+function syncReconnectControls(hero) {
+  const restartBtn = document.getElementById("dash-restart")
+  const detailsBtn = document.getElementById("dash-view-details")
+  if (restartBtn) {
+    restartBtn.hidden = hero.state !== "recovering"
+    restartBtn.disabled = _reconnectPhase === "connecting"
+    setButtonLabel(
+      restartBtn,
+      _reconnectPhase === "connecting"
+        ? "正在重新连接…"
+        : _reconnectPhase === "failed"
+          ? "再试一次"
+          : "重新连接",
+    )
+  }
+  if (detailsBtn) detailsBtn.hidden = _reconnectPhase !== "failed"
+}
+
+function setReconnectPhase(phase, message = "暂时无法恢复，请稍后再试") {
+  _reconnectPhase = phase
+  _reconnectFailureMessage = message
+  const headline = document.getElementById("hero-headline")
+  const meta = document.getElementById("hero-meta")
+  if (phase === "connecting") {
+    if (headline) headline.textContent = "正在重新连接"
+    if (meta) meta.textContent = "请稍候…"
+  } else if (phase === "failed") {
+    if (headline) headline.textContent = "CC 暂时失去连接"
+    if (meta) meta.textContent = message
+  }
+  syncReconnectControls({ state: phase === "idle" ? "connected" : "recovering" })
 }
 
 export function updateClock() {
@@ -275,15 +347,14 @@ export async function stopDaemon(deps) {
   setTimeout(() => setPending(""), 2000)
 }
 
-// The actual stop+kill+start chain. Called either by the old restartDaemon
-// fallback path (when diagnose returns code 0 / no card) or by the
-// diagnose-card's primary button click when action.kind === 'run-restart-sequence'.
+// The actual stop+kill+start chain used by the single-click reconnect flow.
 export async function runRestartSequence(deps) {
   // Capture pid BEFORE the stop step. May be null on non-Windows.
   let beforePid = null
   try { beforePid = await deps.invoke("wechat_daemon_pid") } catch { /* not registered */ }
 
-  setPending("停止…")
+  setReconnectPhase("connecting")
+  setPending("")
   try {
     await deps.invoke("wechat_cli_json", { args: ["service", "stop", "--json"] })
   } catch { /* tolerate */ }
@@ -292,16 +363,14 @@ export async function runRestartSequence(deps) {
   // run` started in a terminal is invisible to them and will refuse the
   // next `service start` with "another daemon already running", causing
   // a silent restart loop. This step closes that gap cross-platform.
-  setPending("清理残留…")
   try {
     await deps.invoke("wechat_cli_json", { args: ["daemon", "kill-residual", "--json"] })
   } catch { /* best effort — start step will surface real failures */ }
-  setPending("启动…")
   try {
     await deps.invoke("wechat_cli_json", { args: ["service", "start", "--json"] })
   } catch (err) {
-    setPending("重新连接失败：后台服务启动失败")
-    return
+    setReconnectPhase("failed")
+    return false
   }
 
   // Wait for the daemon to register instead of trusting `service start`.
@@ -311,8 +380,8 @@ export async function runRestartSequence(deps) {
     ? await deps.doctorPoller.waitForCondition(r => !!r.checks.daemon?.alive, 8000, 500)
     : await deps.doctorPoller.refresh()
   if (!refreshed?.checks?.daemon?.alive) {
-    setPending("重新连接失败：后台服务没起来")
-    return
+    setReconnectPhase("failed")
+    return false
   }
 
   // Verify pid changed when the platform can report it. Non-Windows returns
@@ -326,37 +395,27 @@ export async function runRestartSequence(deps) {
     // pid didn't change — Stop-Process likely got Access Denied.
     // Record for the next diagnose() call so code 8 can fire on win32.
     _lastRestart = { pidUnchanged: true }
-    setPending("未能重启 daemon — pid 没换。可能是权限问题（dashboard 不是管理员启动）。试试：彻底关闭 → 右键以管理员身份打开。")
-    return
+    setReconnectPhase("failed", "系统权限不足，请重新打开应用后再试")
+    return false
   }
   // Any other outcome: clear the signal so the next diagnose has a fresh read.
   _lastRestart = { pidUnchanged: false }
   if (beforePid !== null && afterPid === null) {
-    setPending(`daemon 没起来 — 看 install-progress 或 logs 排查 (was pid ${beforePid})`)
-    return
+    setReconnectPhase("failed")
+    return false
   }
+  setReconnectPhase("idle")
   if (beforePid !== null && afterPid !== null) {
-    setPending(`已重启 (pid ${beforePid} → ${afterPid})`)
+    setPending("连接已恢复")
     setTimeout(() => setPending(""), 3000)
-    return
+    return true
   }
 
   // Non-Windows or daemon wasn't running before — existing path
-  setPending("已重启")
+  setPending("连接已恢复")
   setTimeout(() => setPending(""), 2000)
+  return true
 }
-
-// Module-level slot: the latest deps + diagnosis rendered into the card.
-// Event listeners on the card delegate through here so we never need
-// replaceWith (which requires a real DOM parent node and isn't available
-// in the jsdom-free test harness).
-let _cardDeps = null
-let _cardDiagnosis = null
-// Wire the delegating listener once per module load. Fresh _cardDeps/_cardDiagnosis
-// on each renderDiagnoseCard() call means stale deps can never fire.
-// Test-only reset: call __resetDiagnoseCardState() in beforeEach to prevent
-// listener state from leaking across test cases.
-let _cardListenersWired = false
 
 // Latest connection-probe verdict ({ state, detail } | null). Set by the
 // 「测试本机连接」button handler (main.js, Task 7), read on the next
@@ -368,9 +427,10 @@ export function setLastProbe(p) { _lastProbe = p }
 // next restartDaemon (diagnose) invocation. Cleared after consumption so
 // stale signals never linger across multiple clicks.
 let _lastRestart = null
+let _reconnectPhase = "idle"
+let _reconnectFailureMessage = "暂时无法恢复，请稍后再试"
 
-// Provider-switch dropdown state. Separated from the diagnose-card state
-// so the two features don't interfere with each other.
+// Provider-switch dropdown state.
 let _providerMenuOpen = false
 let _providerSwitchInflight = false
 
@@ -380,204 +440,32 @@ let _providerMenuOutsideHandler = null
 let _providerMenuKeyHandler = null
 
 /**
- * Wire the card's click listeners once. Safe to call multiple times.
- * Uses event delegation via the card container — avoids needing
- * element.replaceWith() when re-rendering the card.
+ * TEST-ONLY: Reset all module-level dashboard state.
  */
-function wireCardListeners() {
-  if (_cardListenersWired) return
-  const card = document.getElementById("reconnect-diagnose-card")
-  if (!card) return
-  _cardListenersWired = true
-
-  card.addEventListener("click", (ev) => {
-    if (!_cardDeps || !_cardDiagnosis) return
-    const target = ev.target
-    // Ignore clicks on the fix-section copy button (it handles its own stop)
-    if (target && target.closest && target.closest("#rdc-fix")) return
-    const primaryBtn = document.getElementById("rdc-primary")
-    const secondaryLink = document.getElementById("rdc-secondary")
-    if (primaryBtn && (target === primaryBtn || primaryBtn.contains?.(target))) {
-      handleDiagnoseAction(_cardDeps, _cardDiagnosis.primary.action)
-      return
-    }
-    if (secondaryLink && (target === secondaryLink || secondaryLink.contains?.(target))) {
-      ev.preventDefault()
-      handleDiagnoseAction(_cardDeps, _cardDiagnosis.secondary.action)
-    }
-  })
-}
-
-/**
- * Render (or hide) the reconnect-diagnose card based on a diagnosis result.
- * Pure DOM mutation — no state, no async. The caller is responsible for
- * calling diagnose() and passing the result here.
- *
- * Dispatch table for primary button click (action.kind):
- *   auto-dismiss        → hide card (should never reach card render; code 0 is handled earlier)
- *   run-restart-sequence → runRestartSequence(deps)
- *   route-to-wizard     → deps.routeToWizardService() | deps.routeToWizardBind()
- *   show-fix            → copy command to clipboard / open link
- *   route-to-settings   → deps.routeToAccessSettings() | deps.routeToProviderSettings()
- *   restart-dashboard   → informational only (hint already says Cmd-Q/Alt-F4)
- *   show-platform-hint  → informational only (hint already covers win32 instructions)
- *
- * @param {object} deps  The dashboard deps bag
- * @param {{ code: number, title: string, hint: string,
- *           primary: { label: string, action: object },
- *           secondary?: { label: string, action: object } }} diagnosis
- */
-export function renderDiagnoseCard(deps, diagnosis) {
-  const card = document.getElementById("reconnect-diagnose-card")
-  if (!card) return
-
-  const titleEl = document.getElementById("rdc-title")
-  const hintEl = document.getElementById("rdc-hint")
-  const fixEl = document.getElementById("rdc-fix")
-  const primaryBtn = document.getElementById("rdc-primary")
-  const secondaryLink = document.getElementById("rdc-secondary")
-  if (!titleEl || !hintEl || !fixEl || !primaryBtn || !secondaryLink) return
-
-  // Store latest deps + diagnosis so the delegating listener can dispatch
-  _cardDeps = deps
-  _cardDiagnosis = diagnosis
-  wireCardListeners()
-
-  // Populate title and hint
-  titleEl.textContent = diagnosis.title
-  hintEl.textContent = diagnosis.hint
-
-  // Warn tone for codes that indicate active failures (1, 2, 3, 4, 5, 8)
-  const warnCodes = new Set([1, 2, 3, 4, 5, 8])
-  card.classList.toggle("warn", warnCodes.has(diagnosis.code))
-
-  // code 4: show fix command / link inline
-  if (diagnosis.primary.action.kind === "show-fix") {
-    const action = diagnosis.primary.action
-    fixEl.innerHTML = ""
-    if (action.command) {
-      const codeEl = document.createElement("code")
-      codeEl.textContent = action.command
-      const copyBtn = document.createElement("button")
-      copyBtn.className = "rdc-btn-primary"
-      copyBtn.style.cssText = "font-size:11px;height:24px;padding:0 8px;margin-top:2px;"
-      copyBtn.textContent = "复制"
-      copyBtn.addEventListener("click", (e) => {
-        e.stopPropagation()
-        navigator.clipboard?.writeText(action.command).catch(() => {})
-      })
-      fixEl.appendChild(codeEl)
-      fixEl.appendChild(copyBtn)
-    }
-    if (action.link) {
-      const linkEl = document.createElement("a")
-      linkEl.href = action.link
-      linkEl.target = "_blank"
-      linkEl.rel = "noopener"
-      linkEl.textContent = action.link
-      fixEl.appendChild(linkEl)
-    }
-    fixEl.hidden = !(action.command || action.link)
-  } else {
-    fixEl.hidden = true
-    fixEl.innerHTML = ""
-  }
-
-  // Primary button label (click handled by delegating listener above)
-  primaryBtn.textContent = diagnosis.primary.label
-
-  // Secondary link (optional)
-  if (diagnosis.secondary) {
-    secondaryLink.textContent = diagnosis.secondary.label
-    secondaryLink.hidden = false
-  } else {
-    secondaryLink.hidden = true
-  }
-
-  card.hidden = false
-}
-
-/**
- * Hide the reconnect-diagnose card.
- */
-export function hideDiagnoseCard() {
-  const card = document.getElementById("reconnect-diagnose-card")
-  if (card) card.hidden = true
-}
-
-/**
- * TEST-ONLY: Reset all module-level card/restart state.
- * Call in beforeEach so listener wiring and restart signals don't leak
- * across test cases. The double-underscore prefix marks it as test-only.
- */
-export function __resetDiagnoseCardState() {
-  _cardListenersWired = false
-  _cardDeps = null
-  _cardDiagnosis = null
+export function __resetDashboardState() {
   _lastRestart = null
   _lastProbe = null
+  _reconnectPhase = "idle"
+  _reconnectFailureMessage = "暂时无法恢复，请稍后再试"
   _providerMenuOpen = false
   _providerSwitchInflight = false
   _providerMenuOutsideHandler = null
   _providerMenuKeyHandler = null
 }
 
-/**
- * Execute the action from a diagnose card button click.
- * @param {object} deps
- * @param {{ kind: string, step?: string, section?: string, command?: string, link?: string, platform?: string }} action
- */
-export function handleDiagnoseAction(deps, action) {
-  const card = document.getElementById("reconnect-diagnose-card")
-  switch (action.kind) {
-    case "auto-dismiss":
-      if (card) card.hidden = true
-      return
-    case "run-restart-sequence":
-      if (card) card.hidden = true
-      runRestartSequence(deps)
-      return
-    case "route-to-wizard":
-      if (action.step === "service") deps.routeToWizardService?.()
-      else if (action.step === "wechat") deps.routeToWizardBind?.()
-      return
-    case "show-fix":
-      if (action.command) navigator.clipboard?.writeText(action.command).catch(() => {})
-      else if (action.link) window.open(action.link, "_blank")
-      return
-    case "route-to-settings":
-      if (action.section === "access") deps.routeToAccessSettings?.()
-      else if (action.section === "provider") deps.routeToProviderSettings?.()
-      return
-    case "restart-dashboard":
-      setPending("请用 Cmd-Q / Alt-F4 关闭后重新打开 Dashboard")
-      setTimeout(() => setPending(""), 3000)
-      hideDiagnoseCard()
-      return
-    case "show-platform-hint":
-      setPending("请以管理员身份重启 Dashboard")
-      setTimeout(() => setPending(""), 3000)
-      hideDiagnoseCard()
-      return
-    case "open-logs":
-      hideDiagnoseCard()
-      deps.routeToLogsPane?.()
-      return
-  }
-}
-
-// Smart restart: refresh → call diagnose() → show card or (code 0) show
-// a brief toast. The actual stop+kill+start chain lives in runRestartSequence
-// and is only invoked when the card's primary action says so.
+// Smart reconnect: diagnose internally, then execute the matching recovery
+// while keeping the overview hero as the only user-facing status surface.
 export async function restartDaemon(deps) {
+  if (_reconnectPhase === "connecting") return
   // If the user got here by explicitly clicking 断开连接, the daemon being
   // dead is the expected, self-inflicted state — not a fault to diagnose.
-  // Skip the diagnose card and go straight to a clean stop+kill+start so
-  // 断开 → 重连 is a single click instead of "进程挂了 → 再点重启后台".
+  // A user-requested disconnect should reconnect through the same one-click
+  // recovery path as an unexpected interruption.
   if (deps.isDisconnectedIntent?.()) {
     return runRestartSequence(deps)
   }
-  setPending("重新连接…")
+  setReconnectPhase("connecting")
+  setPending("")
   const report = await deps.doctorPoller.refresh() ?? deps.doctorPoller.current
 
   if (!report) {
@@ -624,15 +512,42 @@ export async function restartDaemon(deps) {
 
   // Code 0: everything is fine — show a brief "all good" toast instead of card
   if (diagnosis.code === 0) {
-    setPending("一切正常，无需操作")
+    setReconnectPhase("idle")
+    deps.markConnected?.()
+    setPending("连接正常")
     setTimeout(() => setPending(""), 1500)
-    hideDiagnoseCard()
     return
   }
 
-  // Non-0: render the card. Clear any transient pending text first.
-  setPending("")
-  renderDiagnoseCard(deps, diagnosis)
+  // Keep diagnostics internal. The existing hero is the only user-facing
+  // recovery surface, so the reconnect button performs the recommended
+  // action immediately instead of asking for a second click in another card.
+  switch (diagnosis.primary.action.kind) {
+    case "run-restart-sequence":
+      return runRestartSequence(deps)
+    case "route-to-wizard":
+      setReconnectPhase("idle")
+      if (diagnosis.primary.action.step === "service") deps.routeToWizardService?.()
+      else deps.routeToWizardBind?.()
+      return
+    case "show-fix":
+      setReconnectPhase("failed", "AI 服务暂不可用，请检查设置")
+      deps.routeToProviderSettings?.()
+      return
+    case "route-to-settings":
+      setReconnectPhase("failed", "连接设置需要调整")
+      if (diagnosis.primary.action.section === "access") deps.routeToAccessSettings?.()
+      else deps.routeToProviderSettings?.()
+      return
+    case "restart-dashboard":
+      setReconnectPhase("failed", "页面状态暂未更新，请重新打开应用")
+      return
+    case "show-platform-hint":
+      setReconnectPhase("failed", "系统权限不足，请重新打开应用后再试")
+      return
+    default:
+      setReconnectPhase("failed")
+  }
 }
 
 // Close the provider-switch dropdown and remove its one-shot listeners.
