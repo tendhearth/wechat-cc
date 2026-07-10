@@ -765,13 +765,17 @@ describe('buildTickBodies / introspectTick — memory gardener mount', () => {
     cleanup.push(s.stateDir)
     const memDir = join(s.stateDir, 'memory', 'chat-1')
     mkdirSync(memDir, { recursive: true })
-    writeFileSync(join(memDir, 'profile.md'), 'x'.repeat(3000))
-    const cheapEval = vi.fn(async () => 'curated')
+    // "seed\nfiller filler ..." rather than a single repeated-char run: the
+    // gardener's vocabulary-overlap validation requires a curated output to
+    // actually share word tokens with the original, which a giant run of
+    // one repeated character can't satisfy in the same way real prose can.
+    writeFileSync(join(memDir, 'profile.md'), `seed\n${'filler '.repeat(500)}`)
+    const cheapEval = vi.fn(async () => 'seed filler')
     s.deps.boot = { ...s.deps.boot, registry: { getCheapEval: () => cheapEval } as never }
     const { introspectTick } = buildTickBodies(s.deps)
     await introspectTick({ nowIso: '2026-07-10T00:00:00.000Z' })
     expect(s.logs.some(l => l.startsWith('GARDEN|'))).toBe(true)
     expect(existsSync(join(s.stateDir, 'memory-archive', 'chat-1', 'profile.md.2026-07-10.md'))).toBe(true)
-    expect(readFileSync(join(memDir, 'profile.md'), 'utf8')).toBe('curated')
+    expect(readFileSync(join(memDir, 'profile.md'), 'utf8')).toBe('seed filler')
   })
 })
