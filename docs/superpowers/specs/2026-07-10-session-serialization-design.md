@@ -11,7 +11,7 @@ Turns on ONE session (chatId) can run concurrently. `coordinator.dispatch` (solo
 ## 2. The fix — two parts
 
 ### A. Per-chat async mutex in the coordinator
-A shared per-chatId serialization primitive `runExclusive(chatId, fn)` (a chained-promise mutex map, keyed by chatId) in `conversation-coordinator.ts`. All turn entries funnel through `dispatch()`, which wraps its whole `switch(mode.kind)` body in `runExclusive`. Result: turns on one chat run strictly one-at-a-time; a second trigger WAITS for the first (bounded by `turnTimeoutMs`).
+A shared per-chatId serialization primitive `runExclusive(chatId, fn)` (a chained-promise mutex map, keyed by chatId) in `conversation-coordinator.ts`. WeChat inbound turns funnel through `dispatch()`, which wraps its whole `switch(mode.kind)` body in `runExclusive`. App converse turns (`companionConverse`) call the exposed `runExclusive` directly around their sink open→dispatch→close lifetime (see below). The companion push tick (`tick-bodies.ts`'s `dispatchToChat`, Task 3) also calls the same exposed `runExclusive` directly, around its acquire→claim→dispatch critical section — it never calls `coordinator.dispatch`/`dispatchInner` itself (it drives the `SessionManager` handle directly), so this cannot re-enter the mutex. All three turn entry points (WeChat inbound, app converse, tick) therefore share the SAME per-chatId mutex instance and serialize against each other; only chatroom mode is exempt (see below). Result: turns on one chat run strictly one-at-a-time; a second trigger WAITS for the first (bounded by `turnTimeoutMs`).
 
 **Reentrancy**: expose an internal `dispatchExclusive`-free path so `companionConverse` can compose the mutex + sink itself WITHOUT double-locking (calling the public `dispatch` from inside its own `runExclusive` would deadlock). Concretely: refactor to `dispatchInner(msg)` (no lock) + `dispatch(msg) = runExclusive(chatId, () => dispatchInner(msg))`; expose `runExclusive` + `dispatchInner` (or a single `dispatchWithinLock` helper) for the daemon.
 
@@ -33,12 +33,13 @@ The app-side fast-fail `isInFlight` pre-check STAYS (so the app UI gets an immed
 - Latency trade is INTENTIONAL: a slow turn blocks the next on the same chat (correctness over liveness). Only same-chat; different chats stay parallel.
 - Keep chatroom mode's existing abort-preempt behavior (don't double-serialize it — verify the mutex composes with it or exempt chatroom).
 - Do NOT fix the onboarding echo-dispatch WeChat-vs-WeChat case in this task unless it falls out for free (it's narrow + pre-existing); note it.
-- No change to different-chat parallelism, provider behavior, or the tick's own advisory pre-check (harmless belt-and-suspenders atop the mutex).
+- No change to different-chat parallelism or provider behavior. The tick's own `isInFlight` advisory pre-check (in `dispatchToChat`, ABOVE the mutex) stays as a cheap fast-skip for the common "session obviously busy" case — avoids waiting on the lock — but is no longer the only guard: the tick's acquire+claim+dispatch now also runs inside `runExclusive(chatId, ...)` (Task 3), which closes the TOCTOU window the pre-check alone left open (see §2A).
 
 ## 4. Testing
 
 - `runExclusive`: two overlapping calls on the same chatId serialize (second starts only after first resolves); different chatIds run concurrently; a throwing fn releases the lock (next proceeds).
 - Serialization integration: a `dispatchInner` that's slow + a second `dispatch` on the same chat ⇒ the second waits (assert ordering via timestamps/sequence in a fake). App converse holding the lock ⇒ a concurrent `coordinator.dispatch` for the same chat does not start until the app turn's sink is closed (assert the sink was closed before the WeChat turn's reply delivery — the WeChat reply goes to ilink, NOT the app sink).
 - Fallback sink-awareness: app turn whose fake agent emits assistantText + no reply tool ⇒ text captured into the sink (returned to app), `sendAssistantText`/ilink NOT called.
+- Tick serialization (Task 3, `tick-bodies.test.ts`): the tick's acquire+claim+dispatch runs inside `coordinator.runExclusive(chatId, ...)`; a same-chat `runExclusive` already held (simulating an in-flight app turn) blocks the tick's acquire/dispatch from starting until it's released. Existing `isInFlight` fast-skip tests stay green (pre-check is unchanged, only what happens after it is new).
 - Update the Stage-0 "Known residual (1)" in the app-conversation spec to RESOLVED (with a pointer here).
 - Full daemon suite + e2e green; WeChat inbound behavior unchanged for the non-concurrent common case.

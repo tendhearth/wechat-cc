@@ -108,10 +108,18 @@ owner session and have its reply-tool output captured into the open app
 replySinks sink and lost from WeChat instead of being ilink-sent. The
 session-serialization plan closed this: `companionConverse` now runs its
 entire sink open→dispatch→close lifetime inside the coordinator's per-chat
-mutex (`ConversationCoordinator.runExclusive`), so a same-chat WeChat/tick
-turn queued behind an app turn cannot start — and therefore cannot have its
-reply stolen by the still-open app sink — until the app turn's sink is
-closed. The `isInFlight` pre-check above remains as a fast, lock-free
+mutex (`ConversationCoordinator.runExclusive`), so a same-chat WeChat inbound
+turn (via `coordinator.dispatch`) queued behind an app turn cannot start —
+and therefore cannot have its reply stolen by the still-open app sink —
+until the app turn's sink is closed. The companion push tick was initially
+NOT covered (it doesn't call `coordinator.dispatch`; it drives the
+`SessionManager` handle directly and only checked the advisory
+`isInFlight`) — Task 3 (session-serialization final review) closed that gap
+by routing the tick's acquire+claim+dispatch through the SAME
+`coordinator.runExclusive(chatId, ...)` (see `dispatchToChat` in
+`src/daemon/wiring/tick-bodies.ts`), so this residual now correctly covers
+all three turn entry points: WeChat inbound, app converse, AND the tick.
+The `isInFlight` pre-check above remains as a fast, lock-free
 rejection for the common case (immediate 409 without waiting on the mutex).
 
 (2) Only `POST /v1/wechat/reply` is sink-captured — `reply_voice`,
