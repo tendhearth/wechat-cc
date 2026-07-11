@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadPlugins, pluginMcpSpecs, setPluginEnabled, cmpVersion } from './registry'
@@ -69,6 +69,26 @@ describe('plugin registry', () => {
     const loaded = loadPlugins({ stateDir, bundledDir })
     expect(loaded[0]!.ready).toBe(true)
     expect(loaded[0]!.spec.command).toMatch(/^\/.*\/sh$/)   // rewritten to absolute
+  })
+
+  it('creates an enabled plugin\'s ${dataDir} so a `..` healthcheck into a peer resolves', () => {
+    // peer output exists under plugin-data/wxvault/...; consumer probes it via ${dataDir}/../wxvault
+    mkdirSync(join(stateDir, 'plugin-data', 'wxvault', 'out', 'decrypted'), { recursive: true })
+    // consumer's OWN plugin-data dir does NOT exist yet → without the mkdir the `..`
+    // traversal fails existsSync and the plugin is wrongly NOT READY.
+    writePlugin(bundledDir, 'wxperson', {
+      ...good('wxperson'),
+      healthcheck: { requiresPaths: ['${dataDir}/../wxvault/out/decrypted'] },
+    })
+    const p = loadPlugins({ stateDir, bundledDir }).find(x => x.name === 'wxperson')!
+    expect(p.enabled).toBe(true)
+    expect(p.ready).toBe(true)   // dataDir auto-created → `..` resolves
+  })
+
+  it('does NOT create ${dataDir} for a disabled plugin (no discovery-time litter)', () => {
+    writePlugin(join(stateDir, 'plugins'), 'userpl', good('userpl'))   // user dir → disabled by default
+    loadPlugins({ stateDir, bundledDir })
+    expect(existsSync(join(stateDir, 'plugin-data', 'userpl'))).toBe(false)
   })
 
   it('a command not on PATH makes the plugin not-ready (no silent spawn ENOENT)', () => {
