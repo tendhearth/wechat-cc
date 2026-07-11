@@ -4640,7 +4640,7 @@ input { font: inherit; color: inherit; }
   gap: 12px;
 }
 .converse-scroll .empty-state { padding: 40px; text-align: center; color: var(--ink-3); font-size: 13px; }
-.converse-msg { display: flex; }
+.converse-msg { display: flex; align-items: flex-end; gap: 6px; }
 .converse-msg-user { justify-content: flex-end; }
 .converse-msg-cc { justify-content: flex-start; }
 .converse-bubble {
@@ -4664,6 +4664,21 @@ input { font: inherit; color: inherit; }
   border-bottom-left-radius: 4px;
 }
 .converse-msg-cc.is-pending .converse-bubble { color: var(--ink-3); }
+.voice-replay-btn {
+  flex: 0 0 auto;
+  width: 22px; height: 22px;
+  border: 1px solid var(--hair-2);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--ink-3);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.voice-replay-btn:hover { color: var(--ink); border-color: var(--hair); background: var(--paper-2); }
 .converse-error-line {
   align-self: center;
   max-width: 80%;
@@ -4710,3 +4725,20 @@ input { font: inherit; color: inherit; }
 .converse-textarea:focus { outline: none; border-color: var(--green-ink); box-shadow: 0 0 0 3px var(--green-soft); }
 .converse-textarea:disabled { opacity: .6; }
 .converse-send-btn { flex: 0 0 auto; height: 40px; }
+.converse-voice-toggle {
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--hair-2);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink-3);
+  font-size: 13px;
+  cursor: pointer;
+}
+.converse-voice-toggle:hover { color: var(--ink); }
+.converse-voice-toggle.is-on {
+  border-color: var(--green-ink);
+  background: var(--green-soft);
+  color: var(--green-ink);
+}

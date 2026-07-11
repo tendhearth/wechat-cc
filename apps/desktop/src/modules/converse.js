@@ -29,6 +29,13 @@ let messages = []
 let nextId = 1
 let sending = false
 
+// Voice-out (Stage 1): 🔊 toggle persisted across app restarts, default OFF.
+// `no_voice_config` is expected to fire on every reply once the daemon has
+// no voice configured, so we surface it once per pane session rather than
+// spamming a muted note after each turn.
+let voiceOut = localStorage.getItem("cc.voiceOut") === "1"
+let voiceConfigWarned = false
+
 // ── skeleton ───────────────────────────────────────────────────────────
 
 /** @param {HTMLElement} root */
@@ -36,10 +43,26 @@ function renderSkeleton(root) {
   root.innerHTML = `
     <div id="converse-scroll" class="converse-scroll"></div>
     <div class="converse-compose">
+      <button id="converse-voice-toggle" class="converse-voice-toggle" type="button" aria-pressed="false" title="自动朗读 CC 的回复">🔊 语音</button>
       <textarea id="converse-input" class="converse-textarea" placeholder="跟 CC 说点什么…" rows="1"></textarea>
       <button id="converse-send" class="btn primary converse-send-btn" type="button">发送</button>
     </div>
   `
+}
+
+/** Reflect `voiceOut` on the toggle button (class + aria-pressed). */
+function syncVoiceToggleUI() {
+  const btn = document.getElementById("converse-voice-toggle")
+  if (!btn) return
+  btn.classList.toggle("is-on", voiceOut)
+  btn.setAttribute("aria-pressed", String(voiceOut))
+}
+
+/** @param {boolean} v */
+function setVoiceOut(v) {
+  voiceOut = v
+  localStorage.setItem("cc.voiceOut", v ? "1" : "0")
+  syncVoiceToggleUI()
 }
 
 // ── rendering ──────────────────────────────────────────────────────────
@@ -54,9 +77,63 @@ function messageHtml(m) {
   }
   const roleCls = m.role === "user" ? "converse-msg-user" : "converse-msg-cc"
   const pendingCls = m.pending ? " is-pending" : ""
+  // Replay is only meaningful for a real CC reply — not the "…" placeholder
+  // and not the user's own bubble.
+  const replayBtn = m.role === "cc" && !m.pending
+    ? `<button class="voice-replay-btn" type="button" data-msg-id="${m.id}" title="朗读">▶</button>`
+    : ""
   return `<div class="converse-msg ${roleCls}${pendingCls}">
     <div class="converse-bubble">${escapeHtml(m.text)}</div>
+    ${replayBtn}
   </div>`
+}
+
+// ── voice-out (Stage 1) ───────────────────────────────────────────────
+
+/**
+ * Speak `text` via the `agent_speak` Tauri command and play the resulting
+ * audio. Used both for autoplay (toggle ON, after a reply renders) and for
+ * the per-bubble ▶ replay button (works regardless of the toggle).
+ *
+ * No path here throws: `agent_speak` failures surface as a muted system
+ * note (deduped for `no_voice_config`); a rejected `.play()` (e.g. browser
+ * autoplay policy) is swallowed silently — the ▶ button is the fallback.
+ * @param {Deps} deps @param {string} text
+ */
+async function speakAndPlay(deps, text) {
+  /** @type {any} */
+  let res
+  try {
+    res = await deps.invoke("agent_speak", { text })
+  } catch (err) {
+    const raw = formatInvokeError(err)
+    if (/no_voice_config/.test(raw)) {
+      if (voiceConfigWarned) return
+      voiceConfigWarned = true
+      messages.push({ id: nextId++, role: "system", text: "🔇 未配置语音" })
+    } else {
+      messages.push({ id: nextId++, role: "system", text: "🔇 语音失败" })
+    }
+    renderMessages()
+    return
+  }
+
+  try {
+    const audioB64 = String(res?.audio_b64 ?? "")
+    const mime = String(res?.mime ?? "audio/mpeg")
+    if (!audioB64) return
+    const bytes = Uint8Array.from(atob(audioB64), ch => ch.charCodeAt(0))
+    const blob = new Blob([bytes], { type: mime })
+    const url = URL.createObjectURL(blob)
+    const audio = new Audio(url)
+    const cleanup = () => URL.revokeObjectURL(url)
+    audio.addEventListener("ended", cleanup, { once: true })
+    audio.addEventListener("error", cleanup, { once: true })
+    await audio.play()
+  } catch {
+    // Decode failure or `.play()` rejection (autoplay policy) — no crash,
+    // no error note; the ▶ replay button remains as the manual fallback.
+  }
 }
 
 function renderMessages() {
@@ -98,6 +175,9 @@ async function sendMessage(deps) {
       messages.push({ id: nextId++, role: "system", text: "（CC 这轮没有用文字回复）" })
     } else {
       messages.push({ id: nextId++, role: "cc", text: replyText })
+      // Fire-and-forget: autoplay must not block clearing the "sending"
+      // state or the compose box. Errors are handled inside speakAndPlay.
+      if (voiceOut) speakAndPlay(deps, replyText).catch(() => {})
     }
     // Only clear the compose box on success — an error leaves the typed
     // text in place so the user doesn't lose it and can just retry.
@@ -133,6 +213,24 @@ function wireEvents(root, deps) {
       sendMessage(deps).catch(err => console.error("converse send failed", err))
     }
   })
+
+  root.querySelector("#converse-voice-toggle")?.addEventListener("click", () => {
+    setVoiceOut(!voiceOut)
+  })
+
+  // Delegated: bubbles (and their ▶ buttons) are re-created on every
+  // renderMessages(), so bind once on the scroll container rather than
+  // per-bubble.
+  root.querySelector("#converse-scroll")?.addEventListener("click", (ev) => {
+    const target = ev.target
+    if (!(target instanceof HTMLElement)) return
+    const btn = target.closest(".voice-replay-btn")
+    if (!(btn instanceof HTMLElement)) return
+    const id = Number(btn.dataset.msgId)
+    const msg = messages.find(m => m.id === id)
+    if (!msg) return
+    speakAndPlay(deps, msg.text).catch(() => {})
+  })
 }
 
 // ── entry point ────────────────────────────────────────────────────────
@@ -154,6 +252,7 @@ export function initConversePage(deps) {
   root.dataset.ready = "true"
   renderSkeleton(root)
   wireEvents(root, deps)
+  syncVoiceToggleUI()
   renderMessages()
   const input = document.getElementById("converse-input")
   if (input instanceof HTMLElement) input.focus()
