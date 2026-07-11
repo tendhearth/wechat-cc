@@ -111,3 +111,55 @@ export function parseFacts(text: string): Fact[] {
   }
   return out
 }
+
+export interface ExtractDeps {
+  /** MCP bridge `.call(tool, input) → text`. wxfacts replies are JSON strings. */
+  call: (tool: string, input?: unknown) => Promise<string>
+  cheapEval: (prompt: string) => Promise<string>
+  /** Max wxfacts batches to process this cycle (rate bound). */
+  cap: number
+  log?: (tag: string, msg: string) => void
+}
+
+/**
+ * Drain up to `cap` wxfacts extraction batches this cycle. Each batch:
+ * pull a message window → cheapEval extracts facts → record_facts writes them
+ * back AND advances the watermark. Resumable across cycles via the watermark.
+ *
+ * Failure handling (deliberate):
+ *  - unparseable/refusal cheapEval output → record_facts with `[]` so the
+ *    watermark still advances past the bad window (logged) — no stall, no garbage.
+ *  - cheapEval THROWS (model/network) → break WITHOUT record_facts, so the
+ *    watermark is preserved and the batch is retried next cycle.
+ */
+export async function runExtraction(d: ExtractDeps): Promise<{ batches: number; recorded: number }> {
+  let batches = 0
+  let recorded = 0
+  for (let i = 0; i < d.cap; i++) {
+    let batch: Batch & { done?: boolean }
+    try {
+      batch = JSON.parse(await d.call('extraction_batch', { limit: 40 }))
+    } catch (e) {
+      d.log?.('INGEST', `extraction_batch failed, stopping cycle: ${String(e)}`)
+      break
+    }
+    if (batch.done) break
+    let facts: Fact[]
+    try {
+      facts = parseFacts(await d.cheapEval(buildExtractionPrompt(batch)))
+    } catch (e) {
+      // model/network error → do NOT advance the watermark; retry next cycle.
+      d.log?.('INGEST', `extract eval error, deferring batch ${batch.batch_id}: ${String(e)}`)
+      break
+    }
+    try {
+      await d.call('record_facts', { batch_id: batch.batch_id, facts })
+    } catch (e) {
+      d.log?.('INGEST', `record_facts failed for ${batch.batch_id}: ${String(e)}`)
+      break
+    }
+    batches++
+    recorded += facts.length
+  }
+  return { batches, recorded }
+}
