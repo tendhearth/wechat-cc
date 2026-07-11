@@ -21,6 +21,7 @@
  * (same pattern as summarizer-runtime), so the CLI wires the admin's provider
  * (claude/codex) and tests pass a mock.
  */
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
@@ -35,7 +36,7 @@ export interface LifeStoresReader {
   listObservations(adminChatId: string): Promise<string[]>
   listMilestones(adminChatId: string): Promise<string[]>
 }
-import { writeMemoryFile } from './memory'
+import { readMemoryProfileFile, writeMemoryFile, writeMemoryProfileFile } from './memory'
 import { surveyFiles, formatFileSurvey, defaultLifeDirs, type SurveyResult } from './file-survey'
 
 /** Default root for Claude Code's per-project memory dirs. */
@@ -45,6 +46,7 @@ export function defaultClaudeProjectsRoot(): string {
 
 /** Filename of the synthesized overview written into the admin memory dir. */
 export const OVERVIEW_FILENAME = '_overview.md'
+export const PROFILE_FILENAME = '_profile.json'
 
 // Keep the prompt bounded: cap per-project content and total embedded bytes
 // so a project with a huge memory store can't blow up the eval. MEMORY.md
@@ -425,4 +427,309 @@ export async function synthesizeOverview(deps: SynthesizeDeps): Promise<Synthesi
   const stamped = `<!-- 由 wechat-cc 从本机 Claude 记忆整理生成 · ${new Date().toISOString()} -->\n\n${overview}\n`
   const written = writeMemoryFile(deps.stateDir, deps.adminChatId, OVERVIEW_FILENAME, stamped)
   return { ...base, overview, written: { path: OVERVIEW_FILENAME, bytesWritten: written.bytesWritten } }
+}
+
+export interface MemoryProfileCard {
+  title: string
+  body: string
+  sources?: string[]
+}
+
+export interface MemoryProfileSourceStats {
+  projectsFound: number
+  filesScanned: number
+  observationsFound: number
+  milestonesFound: number
+  memoryNotesFound: number
+  foldersScanned: number
+  promptChars: number
+}
+
+export interface MemoryProfileDoc {
+  version: 1
+  generatedAt: string
+  chatId: string
+  generatedBy?: 'auto' | 'manual'
+  modelProvider?: string
+  minRefreshAfter?: string
+  sourceStats?: MemoryProfileSourceStats
+  sourceFingerprint?: string
+  insight: string
+  summary: string
+  tags: string[]
+  traits: MemoryProfileCard[]
+  preferences: MemoryProfileCard[]
+  rememberedEvents: MemoryProfileCard[]
+}
+
+export interface SynthesizeProfileDeps extends SynthesizeDeps {
+  generatedBy?: 'auto' | 'manual'
+  modelProvider?: string
+}
+
+export interface SynthesizeProfileResult {
+  projectsFound: number
+  projectNames: string[]
+  filesScanned: number
+  promptChars: number
+  observationsFound: number
+  milestonesFound: number
+  memoryNotesFound: number
+  foldersScanned: number
+  profile?: MemoryProfileDoc
+  written?: { path: string; bytesWritten: number }
+}
+
+export type MemoryProfileStatusKind = 'empty' | 'ready' | 'fresh' | 'stale'
+
+export interface MemoryProfileStatusResult {
+  chatId: string
+  status: MemoryProfileStatusKind
+  exists: boolean
+  canGenerate: boolean
+  canAutoGenerate: boolean
+  reason: string
+  generatedAt: string | null
+  minRefreshAfter: string | null
+  sourceStats: MemoryProfileSourceStats
+  sourceFingerprint: string
+  previousSourceFingerprint: string | null
+  changed: boolean
+  daysSinceGenerated: number | null
+}
+
+const AUTO_REFRESH_DAYS = 7
+const MIN_MEMORY_NOTES_FOR_PROFILE = 3
+const MIN_LIFE_SIGNALS_FOR_PROFILE = 5
+const MIN_PROMPT_CHARS_FOR_PROFILE = 3_000
+
+function formatProfilePrompt(projects: ProjectMemory[], life: LifeContext | null, survey: SurveyResult | null): string {
+  const source = formatSynthesisPrompt(projects, life, survey)
+  return `${source}
+
+你现在要把上面的长期记忆整理成“数字人格画像”的结构化 JSON。
+
+只输出 JSON,不要 Markdown,不要代码块。字段必须完全符合:
+{
+  "insight": "一句话人格洞察，60-120字",
+  "summary": "给用户看的总体描述，80-160字",
+  "tags": ["2-8个短标签"],
+  "traits": [{"title":"情绪表达|社交模式|关系模式|压力状态或更贴切标题","body":"基于真实记忆的描述，35-90字","sources":["来源名"]}],
+  "preferences": [{"title":"喜欢|不喜欢|需要|风险或更贴切标题","body":"基于真实记忆的描述，35-90字","sources":["来源名"]}],
+  "rememberedEvents": [{"title":"用户能感到被记住的小标题","body":"具体事件/长期线索的抽象表达，35-90字","sources":["来源名"]}]
+}
+
+要求:
+- 只能根据来源里确实出现的长期记忆、观察、里程碑、项目记忆来写。
+- 所有给用户看的文字都必须使用第二人称“你”，不要用“他/她/用户/这个人”等第三人称称呼。
+- 不要写文件名本身，不要暴露系统实现。
+- rememberedEvents 要像“CC把你的事情放在心上”，不是列记忆文件。
+- 如果证据不足，少写，不要编造。
+- traits 最多 4 条，preferences 最多 4 条，rememberedEvents 最多 4 条。
+`
+}
+
+function parseProfileJson(raw: string, chatId: string): MemoryProfileDoc | null {
+  const trimmed = raw.trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '')
+  const start = trimmed.indexOf('{')
+  const end = trimmed.lastIndexOf('}')
+  if (start < 0 || end <= start) return null
+  let data: unknown
+  try {
+    data = JSON.parse(trimmed.slice(start, end + 1))
+  } catch {
+    return null
+  }
+  const obj = data && typeof data === 'object' ? data as Record<string, unknown> : {}
+  const secondPerson = (value: unknown): string => String(value || '')
+    .trim()
+    .replace(/^他(?=是|在|会|希望|更|长期|曾|明确|近期|已经|对|把|也)/, '你')
+    .replace(/^她(?=是|在|会|希望|更|长期|曾|明确|近期|已经|对|把|也)/, '你')
+    .replace(/这个用户/g, '你')
+  const cards = (value: unknown): MemoryProfileCard[] => Array.isArray(value)
+    ? value.map(item => {
+        const card = item && typeof item === 'object' ? item as Record<string, unknown> : {}
+        return {
+          title: secondPerson(card.title),
+          body: secondPerson(card.body),
+          sources: Array.isArray(card.sources) ? card.sources.map(s => String(s)).filter(Boolean).slice(0, 4) : [],
+        }
+      }).filter(item => item.title && item.body).slice(0, 4)
+    : []
+  const tags = Array.isArray(obj.tags) ? obj.tags.map(t => String(t).trim()).filter(Boolean).slice(0, 8) : []
+  const profile: MemoryProfileDoc = {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    chatId,
+    generatedBy: 'manual',
+    insight: secondPerson(obj.insight),
+    summary: secondPerson(obj.summary),
+    tags,
+    traits: cards(obj.traits),
+    preferences: cards(obj.preferences),
+    rememberedEvents: cards(obj.rememberedEvents),
+  }
+  if (!profile.insight && !profile.summary && profile.traits.length === 0 && profile.preferences.length === 0 && profile.rememberedEvents.length === 0) return null
+  return profile
+}
+
+function sourceFingerprint(prompt: string): string {
+  return createHash('sha256').update(prompt).digest('hex')
+}
+
+function profileSourceStats(opts: {
+  projects: ProjectMemory[]
+  filesScanned: number
+  life: LifeContext | null
+  survey: SurveyResult | null
+  promptChars: number
+}): MemoryProfileSourceStats {
+  return {
+    projectsFound: opts.projects.length,
+    filesScanned: opts.filesScanned,
+    observationsFound: opts.life?.observations.length ?? 0,
+    milestonesFound: opts.life?.milestones.length ?? 0,
+    memoryNotesFound: opts.life?.memoryNotes.length ?? 0,
+    foldersScanned: opts.survey?.folders.length ?? 0,
+    promptChars: opts.promptChars,
+  }
+}
+
+function hasEnoughProfileSource(stats: MemoryProfileSourceStats): boolean {
+  return stats.memoryNotesFound >= MIN_MEMORY_NOTES_FOR_PROFILE
+    || stats.observationsFound + stats.milestonesFound >= MIN_LIFE_SIGNALS_FOR_PROFILE
+    || stats.promptChars >= MIN_PROMPT_CHARS_FOR_PROFILE
+}
+
+function addDays(iso: string, days: number): string | null {
+  const t = Date.parse(iso)
+  if (!Number.isFinite(t)) return null
+  return new Date(t + days * 86_400_000).toISOString()
+}
+
+function daysSince(iso: string): number | null {
+  const t = Date.parse(iso)
+  if (!Number.isFinite(t)) return null
+  return Math.floor((Date.now() - t) / 86_400_000)
+}
+
+function readExistingProfile(stateDir: string, chatId: string): MemoryProfileDoc | null {
+  try {
+    const raw = readMemoryProfileFile(stateDir, chatId)
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed as MemoryProfileDoc : null
+  } catch {
+    return null
+  }
+}
+
+async function buildProfileSource(opts: {
+  stateDir: string
+  adminChatId: string
+  projectsRoot?: string
+  lifeStores?: LifeStoresReader
+  includeFileSurvey?: boolean
+  surveyRoots?: string[]
+}): Promise<{
+  projects: ProjectMemory[]
+  projectNames: string[]
+  filesScanned: number
+  life: LifeContext | null
+  survey: SurveyResult | null
+  prompt: string
+  stats: MemoryProfileSourceStats
+  fingerprint: string
+}> {
+  const projectsRoot = opts.projectsRoot ?? defaultClaudeProjectsRoot()
+  const projects = discoverProjectMemory(projectsRoot)
+  const filesScanned = projects.reduce((n, p) => n + (p.index ? 1 : 0) + p.files.length, 0)
+  const life = opts.lifeStores ? await gatherLifeContext({ stores: opts.lifeStores, stateDir: opts.stateDir, adminChatId: opts.adminChatId }) : null
+  const survey = opts.includeFileSurvey
+    ? gatherFileSurvey({ stateDir: opts.stateDir, adminChatId: opts.adminChatId, roots: opts.surveyRoots })
+    : null
+  const prompt = formatProfilePrompt(projects, life, survey)
+  const stats = profileSourceStats({ projects, filesScanned, life, survey, promptChars: prompt.length })
+  return {
+    projects,
+    projectNames: projects.map(p => p.displayName),
+    filesScanned,
+    life,
+    survey,
+    prompt,
+    stats,
+    fingerprint: sourceFingerprint(prompt),
+  }
+}
+
+export async function synthesizeProfile(deps: SynthesizeProfileDeps): Promise<SynthesizeProfileResult> {
+  const source = await buildProfileSource(deps)
+  const base: SynthesizeProfileResult = {
+    projectsFound: source.stats.projectsFound,
+    projectNames: source.projectNames,
+    filesScanned: source.filesScanned,
+    promptChars: source.stats.promptChars,
+    observationsFound: source.stats.observationsFound,
+    milestonesFound: source.stats.milestonesFound,
+    memoryNotesFound: source.stats.memoryNotesFound,
+    foldersScanned: source.stats.foldersScanned,
+  }
+  if (deps.dryRun || !hasEnoughProfileSource(source.stats) || (source.projects.length === 0 && lifeIsEmpty(source.life) && (!source.survey || source.survey.folders.length === 0))) return base
+
+  const raw = await deps.sdkEval(source.prompt)
+  const profile = parseProfileJson(raw, deps.adminChatId)
+  if (!profile) return base
+  profile.generatedBy = deps.generatedBy ?? 'manual'
+  profile.modelProvider = deps.modelProvider
+  profile.sourceStats = source.stats
+  profile.sourceFingerprint = source.fingerprint
+  profile.minRefreshAfter = addDays(profile.generatedAt, AUTO_REFRESH_DAYS) ?? undefined
+  const body = `${JSON.stringify(profile, null, 2)}\n`
+  const written = writeMemoryProfileFile(deps.stateDir, deps.adminChatId, body)
+  return { ...base, profile, written: { path: PROFILE_FILENAME, bytesWritten: written.bytesWritten } }
+}
+
+export async function getMemoryProfileStatus(opts: {
+  stateDir: string
+  adminChatId: string
+  projectsRoot?: string
+  lifeStores?: LifeStoresReader
+  includeFileSurvey?: boolean
+  surveyRoots?: string[]
+}): Promise<MemoryProfileStatusResult> {
+  const source = await buildProfileSource(opts)
+  const existing = readExistingProfile(opts.stateDir, opts.adminChatId)
+  const enough = hasEnoughProfileSource(source.stats)
+  const generatedAt = existing?.generatedAt ?? null
+  const minRefreshAfter = existing?.minRefreshAfter ?? (generatedAt ? addDays(generatedAt, AUTO_REFRESH_DAYS) : null)
+  const previousSourceFingerprint = existing?.sourceFingerprint ?? null
+  const changed = previousSourceFingerprint ? previousSourceFingerprint !== source.fingerprint : false
+  const days = generatedAt ? daysSince(generatedAt) : null
+  const oldEnough = days === null ? false : days >= AUTO_REFRESH_DAYS
+  let status: MemoryProfileStatusKind = 'empty'
+  let reason = '还没有足够的长期记忆'
+  if (!existing && enough) {
+    status = 'ready'
+    reason = '已有足够记忆，可以生成画像'
+  } else if (existing && (!changed || !oldEnough)) {
+    status = 'fresh'
+    reason = changed && !oldEnough ? '记忆有变化，但自动刷新间隔还没到' : '画像仍然新鲜'
+  } else if (existing && changed && oldEnough) {
+    status = 'stale'
+    reason = '画像已超过刷新周期，且来源记忆有变化'
+  }
+  return {
+    chatId: opts.adminChatId,
+    status,
+    exists: !!existing,
+    canGenerate: enough,
+    canAutoGenerate: enough && (status === 'ready' || status === 'stale'),
+    reason,
+    generatedAt,
+    minRefreshAfter,
+    sourceStats: source.stats,
+    sourceFingerprint: source.fingerprint,
+    previousSourceFingerprint,
+    changed,
+    daysSinceGenerated: days,
+  }
 }

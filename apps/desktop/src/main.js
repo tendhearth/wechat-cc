@@ -15,7 +15,7 @@
 // subscribers + invokes refresh from action handlers.
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
-import { initialMode, restartButtonState } from "./view.js"
+import { initialMode, restartButtonState, afterScanTarget } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
 import { createConversationsPoller } from "./conversations-poller.js"
 import {
@@ -26,9 +26,9 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
-import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
+import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initConversePage } from "./modules/converse.js"
@@ -103,7 +103,17 @@ async function withRefreshFeedback(button, fn) {
  * @param {string} cmd
  * @param {Record<string, unknown>} args
  */
-const invoke = (cmd, args) => ipcInvoke(cmd, args, state)
+const invoke = (cmd, args) => {
+  // TEMP DIAG (guard auto-enable hunt): log a stack trace whenever `guard
+  // enable` is invoked from the frontend, revealing the exact trigger path
+  // (which handler, whether a real user gesture vs a programmatic call).
+  // Pairs with the backend GUARD_DIAG line in cli.ts. Remove once root-caused.
+  if (cmd === "wechat_cli_json" && Array.isArray(/** @type {any} */ (args)?.args)
+      && /** @type {any} */ (args).args[0] === "guard" && /** @type {any} */ (args).args[1] === "enable") {
+    console.warn("[guard-diag] invoke guard ENABLE — stack:\n", new Error().stack)
+  }
+  return ipcInvoke(cmd, args, state)
+}
 
 const doctorPoller = createDoctorPoller({ invoke, intervalMs: 5000 })
 const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 10000 })
@@ -146,16 +156,14 @@ const deps = {
       renderRestartButtonIfActive(current)
     }
   },
-  // True when the user reached the disconnected state by explicitly clicking
-  // 断开连接 (vs. an unexpected daemon crash). Lets 重新连接 skip the diagnose
-  // card and restart directly — a dead daemon is expected here, not a fault.
+  // True when the user explicitly clicked 断开连接. Both intentional and
+  // unexpected interruptions now recover through the same one-click surface.
   isDisconnectedIntent: () => state.connectionIntent === "disconnected",
-  // Diagnose-card callback: switch to the logs pane (secondary link on
-  // codes 1 + 2 — daemon dead / never started).
+  // Reconnect failure details stay in the existing logs pane.
   routeToLogsPane: () => {
     switchPane("logs")
   },
-  // Diagnose-card callbacks: open the settings drawer at the relevant section.
+  // Recovery callbacks open the settings drawer at the relevant section.
   // The drawer currently doesn't have separate provider/access deep-links —
   // cheapest approach is just opening the drawer (no major refactor needed).
   routeToAccessSettings: () => {
@@ -479,7 +487,13 @@ function wireEvents() {
   // appeared since the user last saw the screen.
   document.getElementById("continue-provider")?.addEventListener("click", () => showStep("provider"))
   document.getElementById("continue-wechat")?.addEventListener("click", () => showStep("wechat"))
-  document.getElementById("continue-service")?.addEventListener("click", () => showStep("service"))
+  // Already fully set up (service installed + provider ok)? Skip the
+  // "后台服务" install step and go straight to the dashboard — a returning
+  // user re-scanning on a configured machine has nothing to install.
+  document.getElementById("continue-service")?.addEventListener("click", () => {
+    if (afterScanTarget(doctorPoller.current) === "dashboard") setMode("dashboard")
+    else showStep("service")
+  })
   document.getElementById("recheck-env")?.addEventListener("click", async () => {
     const report = await doctorPoller.refresh()
     if (!report) return
@@ -528,6 +542,24 @@ function wireEvents() {
     })
   })
 
+  // TEMP DIAGNOSTIC (network-guard auto-enable hunt): log a stack trace
+  // whenever either guard toggle GAINS the `on` class, so we can see exactly
+  // what flipped it (a real user click logs from the handler above; anything
+  // else — refreshGuardStatus syncing a truthy `guard status`, or an unknown
+  // path — is the culprit). Remove once the root cause is confirmed.
+  for (const id of ["guard-toggle", "screen-guard-toggle"]) {
+    const el = document.getElementById(id)
+    if (!el) continue
+    let wasOn = el.classList.contains("on")
+    new MutationObserver(() => {
+      const on = el.classList.contains("on")
+      if (on && !wasOn) {
+        console.warn(`[guard-diag] #${id} → ON. mode=${state.mode} stack:`, new Error().stack)
+      }
+      wasOn = on
+    }).observe(el, { attributes: true, attributeFilter: ["class"] })
+  }
+
   wireSettingsDrawer({
     deps: { invoke },
     onToggleChange: async (id, on) => {
@@ -574,6 +606,43 @@ function wireEvents() {
   )
   document.getElementById("dash-stop")?.addEventListener("click", () => stopDaemon(deps))
   document.getElementById("dash-restart")?.addEventListener("click", () => restartDaemon(deps))
+  document.getElementById("dash-view-details")?.addEventListener("click", () => deps.routeToLogsPane())
+  document.getElementById("dash-test-conn")?.addEventListener("click", async () => {
+    const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById("dash-test-conn"))
+    if (!btn) return
+    btn.disabled = true
+    btn.textContent = "测试中…"
+    try {
+      const res = await invoke("wechat_cli_json", { args: ["connection", "probe", "--json"] })
+      const parsed = typeof res === "string" ? JSON.parse(res) : res
+      const accounts = /** @type {any[]} */ (parsed.accounts || [])
+      const states = /** @type {string[]} */ (accounts.map(/** @param {any} a */ a => a.state))
+      // Four outcomes — tell the user WHAT happened + HOW to fix. Verdict
+      // precedence: no accounts → taken_over → connected → inconclusive.
+      let verdict, msg, ms
+      if (accounts.length === 0) {
+        verdict = "none"; msg = "还没绑定账号 — 请先扫码绑定"; ms = 4000
+      } else if (states.includes("taken_over")) {
+        verdict = "taken_over"; msg = "本机未连接：连接在另一台设备上。要在本机接管，点下方「重新扫码绑定」"; ms = 6000
+      } else if (states.includes("connected")) {
+        verdict = "connected"; msg = "✓ 本机已连接，正常收发消息"; ms = 3500
+      } else {
+        verdict = "inconclusive"; msg = "无法确认连接 — 网络异常或服务器无响应，请检查网络后重试"; ms = 5000
+      }
+      // Only a definitive verdict drives the hero; inconclusive/none leave it as-is.
+      setLastProbe(verdict === "connected" || verdict === "taken_over" ? { state: verdict } : null)
+      setPending(msg)
+      setTimeout(() => setPending(""), ms)
+      await doctorPoller.refresh()
+    } catch (err) {
+      setPending(`测试失败：${formatInvokeError(err)}`)
+      setTimeout(() => setPending(""), 3000)
+    } finally {
+      btn.disabled = false
+      btn.textContent = "测试本机连接"
+    }
+  })
+  document.getElementById("dash-rebind")?.addEventListener("click", () => deps.routeToWizardBind())
   document.getElementById("memory-refresh")?.addEventListener("click", (e) =>
     withRefreshFeedback(/** @type {HTMLButtonElement} */ (e.currentTarget), async () => {
       await loadMemoryPane(deps)
@@ -604,6 +673,40 @@ function wireEvents() {
         btn.disabled = false
       }, 1600)
     }
+  })
+  const runProfileGenerateButton = async (/** @type {HTMLButtonElement} */ btn) => {
+    const labelNode = Array.from(btn.childNodes).find(
+      n => n.nodeType === Node.TEXT_NODE && n.textContent !== null && n.textContent.trim().length > 0,
+    )
+    const original = labelNode ? labelNode.textContent : null
+    btn.disabled = true
+    if (labelNode) labelNode.textContent = " 检查中…"
+    let ok = false
+    let skippedReason = ""
+    try {
+      const res = await generateMemoryProfile(deps)
+      if (res && "skipped" in res && res.skipped) {
+        skippedReason = res.reason || "无需更新"
+      } else {
+        ok = !!(res && res.ok && "written" in res && res.written)
+      }
+    } catch (err) {
+      console.error("memory profile generate failed", err)
+    } finally {
+      if (labelNode) labelNode.textContent = skippedReason || (ok ? " 已更新 ✓" : " 生成失败")
+      setTimeout(() => {
+        if (labelNode && original !== null) labelNode.textContent = original
+        btn.disabled = false
+      }, 1600)
+    }
+  }
+  document.getElementById("memory-profile-generate-btn")?.addEventListener("click", async (e) => {
+    await runProfileGenerateButton(/** @type {HTMLButtonElement} */ (e.currentTarget))
+  })
+  document.getElementById("memory-profile-content")?.addEventListener("click", async (e) => {
+    const btn = /** @type {HTMLButtonElement | null} */ (e.target instanceof HTMLElement ? e.target.closest("#memory-profile-generate-quick") : null)
+    if (!btn) return
+    await runProfileGenerateButton(btn)
   })
   wireMemoryButtons(deps)
 
@@ -652,6 +755,15 @@ function wireEvents() {
     }
   })
   document.getElementById("memory-profile-content")?.addEventListener("click", (e) => {
+    const closeEmbryo = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target.closest("[data-action='close-memory-embryo']") : null)
+    if (closeEmbryo) {
+      e.stopPropagation()
+      const panel = document.getElementById("memory-embryo-panel")
+      const toggle = document.querySelector("[data-action='toggle-memory-embryo']")
+      if (panel) panel.hidden = true
+      if (toggle instanceof HTMLElement) toggle.setAttribute("aria-expanded", "false")
+      return
+    }
     const source = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target.closest("[data-action='jump-memory-source']") : null)
     if (source) {
       e.stopPropagation()
@@ -688,9 +800,23 @@ function wireEvents() {
     if (!toggle) return
     const panel = document.getElementById("memory-embryo-panel")
     if (!panel) return
-    const wasOpen = toggle.getAttribute("aria-expanded") === "true"
-    toggle.setAttribute("aria-expanded", wasOpen ? "false" : "true")
-    panel.hidden = wasOpen
+    const host = toggle.closest(".memory-profile-companion")
+    if (host instanceof HTMLElement) {
+      const rect = host.getBoundingClientRect()
+      const board = document.getElementById("memory-artboard")
+      const boardScale = board instanceof HTMLElement
+        ? Number.parseFloat(getComputedStyle(board).getPropertyValue("--memory-artboard-scale")) || 1
+        : 1
+      const panelWidth = Number.parseFloat(getComputedStyle(panel).width) || 500
+      const hostWidth = rect.width / boardScale
+      const xRaw = (e.clientX - rect.left) / boardScale
+      const yRaw = (e.clientY - rect.top) / boardScale
+      const x = Math.min(Math.max(xRaw, panelWidth / 2), Math.max(panelWidth / 2, hostWidth - panelWidth / 2))
+      panel.style.setProperty("--memory-embryo-panel-x", `${x}px`)
+      panel.style.setProperty("--memory-embryo-panel-y", `${yRaw}px`)
+    }
+    toggle.setAttribute("aria-expanded", "true")
+    panel.hidden = false
   })
 
   // Memory decisions — toggle folded zone, lazy-load on FIRST expand only.
@@ -768,14 +894,8 @@ function wireEvents() {
     })
   })
 
-  // ─── Lightbox for chat-bubble image / file attachments + avatar edit ─
+  // ─── Lightbox for chat-bubble image / file attachments ─
   document.body.addEventListener("click", (ev) => {
-    const avatar = /** @type {HTMLElement | null} */ (ev.target instanceof HTMLElement ? ev.target.closest(".wechat-avatar[data-avatar-key]") : null)
-    if (avatar) {
-      ev.preventDefault()
-      openAvatarModal(deps, avatar.dataset.avatarKey)
-      return
-    }
     const img = /** @type {HTMLImageElement | null} */ (ev.target instanceof HTMLElement ? ev.target.closest(".wechat-image") : null)
     if (img) {
       ev.preventDefault()

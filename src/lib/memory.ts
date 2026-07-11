@@ -56,6 +56,7 @@ export function readMemoryFile(stateDir: string, userId: string, relPath: string
 }
 
 const MAX_BYTES = 100 * 1024  // matches src/daemon/memory/fs-api.ts MemoryFS
+const PROFILE_FILENAME = '_profile.json'
 
 // Atomic write of a memory file. Body must be UTF-8 string (callers
 // decode base64 etc upstream). Mirrors the sandboxing of fs-api.ts:
@@ -70,6 +71,28 @@ const MAX_BYTES = 100 * 1024  // matches src/daemon/memory/fs-api.ts MemoryFS
 // MemoryFS per user.
 export function writeMemoryFile(stateDir: string, userId: string, relPath: string, body: string): { bytesWritten: number; created: boolean } {
   const target = resolveSafe(stateDir, userId, relPath)
+  const bytes = Buffer.byteLength(body, 'utf8')
+  if (bytes > MAX_BYTES) {
+    throw new Error(`body too large: ${bytes}B exceeds ${MAX_BYTES}B`)
+  }
+  const created = !existsSync(target)
+  mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
+  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
+  writeFileSync(tmp, body, { mode: 0o600 })
+  renameSync(tmp, target)
+  return { bytesWritten: bytes, created }
+}
+
+export function readMemoryProfileFile(stateDir: string, userId: string): string {
+  const target = resolveProfileSafe(stateDir, userId)
+  if (!existsSync(target)) {
+    throw new Error(`file not found: ${userId}/${PROFILE_FILENAME}`)
+  }
+  return readFileSync(target, 'utf8')
+}
+
+export function writeMemoryProfileFile(stateDir: string, userId: string, body: string): { bytesWritten: number; created: boolean } {
+  const target = resolveProfileSafe(stateDir, userId)
   const bytes = Buffer.byteLength(body, 'utf8')
   if (bytes > MAX_BYTES) {
     throw new Error(`body too large: ${bytes}B exceeds ${MAX_BYTES}B`)
@@ -101,6 +124,13 @@ function resolveSafe(stateDir: string, userId: string, relPath: string): string 
     throw new Error(`path escapes user memory root: ${relPath}`)
   }
   return target
+}
+
+function resolveProfileSafe(stateDir: string, userId: string): string {
+  if (!USER_ID_RE.test(userId)) {
+    throw new Error(`invalid user id: ${userId}`)
+  }
+  return resolve(join(stateDir, 'memory', userId, PROFILE_FILENAME))
 }
 
 function listMdFiles(root: string, sub: string): MemoryFileEntry[] {

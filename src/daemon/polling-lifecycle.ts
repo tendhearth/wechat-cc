@@ -23,6 +23,10 @@ export interface PollingDeps {
   /** Fired after each successful poll round-trip — main.ts stamps the
    *  daemon-health heartbeat the instance lock reads. See poll-loop.ts. */
   onPollCycle?: () => void
+  /** Optional — record a heartbeat on each successful poll. */
+  recordHeartbeat?: (accountId: string, iso: string) => void
+  /** Optional — clear a stale expired marker on each successful poll. */
+  clearExpired?: (accountId: string) => void
 }
 
 export interface PollingLifecycle extends Lifecycle {
@@ -86,6 +90,8 @@ export function registerPolling(deps: PollingDeps): PollingLifecycle {
         deps.log('POLL', `sync_buf persist failed for ${accountId}: ${err instanceof Error ? err.message : err}`)
       }
     },
+    recordHeartbeat: deps.recordHeartbeat,
+    clearExpired: deps.clearExpired,
     onInbound: async (msg) => {
       // CSPRNG-backed 8-char hex; Math.random().toString(16).slice(2,10) can
       // return shorter strings for round-binary outputs (0.5 → "0.8" → "8").

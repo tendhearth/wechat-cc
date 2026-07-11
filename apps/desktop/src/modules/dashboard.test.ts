@@ -12,12 +12,12 @@ beforeEach(() => {
   class NodeStub { static TEXT_NODE = 3 }
   // @ts-expect-error stub Node for test environment
   globalThis.Node = NodeStub
-  // Reset card + restart module-level state so tests don't bleed into each other.
-  __resetDiagnoseCardState?.()
+  // Reset dashboard module-level state so tests don't bleed into each other.
+  __resetDashboardState?.()
 })
 
 // Import AFTER document stub so setPending's getElementById doesn't crash
-const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, renderDiagnoseCard, hideDiagnoseCard, handleDiagnoseAction, __resetDiagnoseCardState, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu } = await import('./dashboard.js')
+const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, __resetDashboardState, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu } = await import('./dashboard.js')
 
 function textNode(text = '') {
   return { nodeType: 3, textContent: text }
@@ -59,16 +59,10 @@ function installDashboardDom() {
     dashPending: fakeEl(),
     dashStop: fakeEl(),
     dashRestart: { ...fakeEl(), childNodes: [textNode(' 重新连接')] },
+    dashViewDetails: { ...fakeEl(), hidden: true },
     accountsBody: fakeEl(),
     accountsCurrent: fakeEl(),
     accountsMeta: fakeEl(),
-    // Diagnose-card elements
-    rdcCard: { ...fakeEl(), hidden: true },
-    rdcTitle: fakeEl(),
-    rdcHint: fakeEl(),
-    rdcFix: { ...fakeEl(), hidden: true },
-    rdcPrimary: fakeEl(),
-    rdcSecondary: { ...fakeEl(), hidden: true },
   }
   const byId: Record<string, any> = {
     'hero-card': els.heroCard,
@@ -77,15 +71,10 @@ function installDashboardDom() {
     'dash-pending': els.dashPending,
     'dash-stop': els.dashStop,
     'dash-restart': els.dashRestart,
+    'dash-view-details': els.dashViewDetails,
     'accounts-body': els.accountsBody,
     'accounts-current': els.accountsCurrent,
     'accounts-meta': els.accountsMeta,
-    'reconnect-diagnose-card': els.rdcCard,
-    'rdc-title': els.rdcTitle,
-    'rdc-hint': els.rdcHint,
-    'rdc-fix': els.rdcFix,
-    'rdc-primary': els.rdcPrimary,
-    'rdc-secondary': els.rdcSecondary,
   }
   const fakeDocument = {
     getElementById: (id: string) => byId[id] ?? null,
@@ -288,20 +277,38 @@ function allGreenReport() {
 }
 
 describe('dashboard button state', () => {
-  it('companion-active hero shows disconnect only, even while daemon is recovering', () => {
+  it('daemon alive + account → connected hero shows stop only', () => {
+    const els = installDashboardDom()
+    const report = dashboardReport({
+      checks: { daemon: { alive: true, pid: 1234 } },
+    })
+
+    renderDashboard(report)
+    renderRestartButton(report)
+
+    expect(els.heroHeadline.textContent).toBe('AI 正在陪伴中')
+    expect(els.heroMeta.textContent).toBe('连接正常')
+    expect(els.dashStop.hidden).toBe(false)
+    expect(els.dashRestart.hidden).toBe(true)
+  })
+
+  it('bound account but daemon NOT alive → recovering (was falsely "connected")', () => {
+    // dashboardReport() has daemon.alive=false, accounts.count=1.
+    // Old behaviour: tone "ok" → hero showed "AI 正在陪伴中" (false positive).
+    // New behaviour: state "recovering" → honest reconnect affordance shown.
     const els = installDashboardDom()
     const report = dashboardReport()
 
     renderDashboard(report)
     renderRestartButton(report)
 
-    expect(els.heroHeadline.textContent).toBe('AI 正在陪伴中')
-    expect(els.heroMeta.textContent).toBe('一切正常，连接稳定')
-    expect(els.dashStop.hidden).toBe(false)
-    expect(els.dashRestart.hidden).toBe(true)
+    expect(els.heroHeadline.textContent).toBe('CC 暂时失去连接')
+    expect(els.heroMeta.textContent).toBe('可能暂时无法接收微信消息')
+    expect(els.dashStop.hidden).toBe(true)
+    expect(els.dashRestart.hidden).toBe(false)
   })
 
-  it('offline hero shows reconnect only', () => {
+  it('no account + daemon offline → recovering hero shows reconnect only', () => {
     const els = installDashboardDom()
     const report = dashboardReport({
       checks: {
@@ -313,8 +320,8 @@ describe('dashboard button state', () => {
     renderDashboard(report)
     renderRestartButton(report)
 
-    expect(els.heroHeadline.textContent).toBe('暂时失去连接')
-    expect(els.heroMeta.textContent).toBe('当前连接不稳定，正在尝试重新恢复陪伴')
+    expect(els.heroHeadline.textContent).toBe('CC 暂时失去连接')
+    expect(els.heroMeta.textContent).toBe('可能暂时无法接收微信消息')
     expect(els.dashStop.hidden).toBe(true)
     expect(els.dashRestart.hidden).toBe(false)
   })
@@ -411,6 +418,86 @@ describe('renderDashboard admin row selection', () => {
   })
 })
 
+// ── renderDashboard: heartbeat display ───────────────────────────────────────
+// When hero state is "connected" and report.heartbeats[account.id] exists,
+// the "当前连接中的用户" slot should show "连接正常 · 上次活动 X 前".
+// When heartbeat is absent or hero is not "connected", fall back to "已连接".
+
+describe('renderDashboard heartbeat display', () => {
+  it('shows heartbeat copy when connected and heartbeat present', () => {
+    const els = installDashboardDom()
+    const report = {
+      checks: {
+        daemon: { alive: true, pid: 1234 },
+        accounts: {
+          count: 1,
+          items: [{ id: 'bot1-im-bot', botId: 'b1@im.bot', userId: 'u1', baseUrl: '' }],
+        },
+        provider: { provider: 'claude' },
+        access: { allowFromCount: 1 },
+        service: { installed: true },
+      },
+      userNames: { u1: '小白' },
+      expiredBots: [],
+      heartbeats: { 'bot1-im-bot': new Date(Date.now() - 60_000).toISOString() },
+    }
+
+    renderDashboard(report)
+
+    // Should contain the heartbeat copy, not bare "已连接"
+    expect(els.accountsCurrent.innerHTML).toContain('连接正常')
+    expect(els.accountsCurrent.innerHTML).toContain('上次活动')
+  })
+
+  it('falls back to "已连接" when heartbeats field is absent', () => {
+    const els = installDashboardDom()
+    const report = {
+      checks: {
+        daemon: { alive: true, pid: 1234 },
+        accounts: {
+          count: 1,
+          items: [{ id: 'bot1-im-bot', botId: 'b1@im.bot', userId: 'u1', baseUrl: '' }],
+        },
+        provider: { provider: 'claude' },
+        access: { allowFromCount: 1 },
+        service: { installed: true },
+      },
+      userNames: { u1: '小白' },
+      expiredBots: [],
+      // no heartbeats field
+    }
+
+    renderDashboard(report)
+
+    expect(els.accountsCurrent.innerHTML).toContain('已连接')
+    expect(els.accountsCurrent.innerHTML).not.toContain('连接正常')
+  })
+
+  it('falls back to "已连接" when heartbeat for account is null', () => {
+    const els = installDashboardDom()
+    const report = {
+      checks: {
+        daemon: { alive: true, pid: 1234 },
+        accounts: {
+          count: 1,
+          items: [{ id: 'bot1-im-bot', botId: 'b1@im.bot', userId: 'u1', baseUrl: '' }],
+        },
+        provider: { provider: 'claude' },
+        access: { allowFromCount: 1 },
+        service: { installed: true },
+      },
+      userNames: { u1: '小白' },
+      expiredBots: [],
+      heartbeats: { 'bot1-im-bot': null },
+    }
+
+    renderDashboard(report)
+
+    expect(els.accountsCurrent.innerHTML).toContain('已连接')
+    expect(els.accountsCurrent.innerHTML).not.toContain('连接正常')
+  })
+})
+
 describe('stopDaemon', () => {
   it('continues residual kill after service stop warning and marks disconnected when daemon is down', async () => {
     const els = installDashboardDom()
@@ -468,7 +555,8 @@ describe('runRestartSequence', () => {
     const pidCalls = invoke.mock.calls.filter(c => c[0] === 'wechat_daemon_pid')
     expect(pidCalls.length).toBe(2)
     expect(markConnected).toHaveBeenCalled()
-    expect(els.dashPending.textContent).toBe('已重启 (pid 1234 → 5678)')
+    expect(els.dashPending.textContent).toBe('连接已恢复')
+    expect(els.dashViewDetails.hidden).toBe(true)
   })
 
   it('service start failure renders a short visible reconnect failure', async () => {
@@ -487,8 +575,9 @@ describe('runRestartSequence', () => {
       formatInvokeError: (e: unknown) => String(e),
     })
 
-    expect(els.dashPending.textContent).toBe('重新连接失败：后台服务启动失败')
-    expect(els.dashPending.textContent.includes('launchctl bootstrap')).toBe(false)
+    expect(els.heroHeadline.textContent).toBe('CC 暂时失去连接')
+    expect(els.heroMeta.textContent).toBe('暂时无法恢复，请稍后再试')
+    expect(els.dashViewDetails.hidden).toBe(false)
   })
 
   it('service start ok but daemon still down keeps offline state', async () => {
@@ -507,7 +596,9 @@ describe('runRestartSequence', () => {
     })
 
     expect(markConnected).not.toHaveBeenCalled()
-    expect(els.dashPending.textContent).toBe('重新连接失败：后台服务没起来')
+    expect(els.heroHeadline.textContent).toBe('CC 暂时失去连接')
+    expect(els.heroMeta.textContent).toBe('暂时无法恢复，请稍后再试')
+    expect(els.dashViewDetails.hidden).toBe(false)
   })
 
   it('pid unchanged → permission error message', async () => {
@@ -546,11 +637,8 @@ describe('runRestartSequence', () => {
 // ── code-8 full flow: runRestartSequence sets _lastRestart, next restartDaemon ──
 // call produces code 8 on win32.
 //
-// Flow:
-//   1. restartDaemon click → report has dead daemon → card shows code-1
-//   2. User clicks primary → handleDiagnoseAction('run-restart-sequence')
-//      → runRestartSequence → same pid before/after → _lastRestart.pidUnchanged=true
-//   3. Second restartDaemon click → diagnose sees lastRestart + win32 → code 8
+// Flow: a failed restart records pidUnchanged, and the next click converts
+// that signal into a concise permission message in the existing hero.
 
 describe('code-8 flow: _lastRestart wired through runRestartSequence → restartDaemon', () => {
   // A report where daemon is alive, accounts+access+provider all healthy → code 0 normally.
@@ -568,7 +656,7 @@ describe('code-8 flow: _lastRestart wired through runRestartSequence → restart
     userNames: {},
   }
 
-  it('runRestartSequence with pid-unchanged sets _lastRestart, next restartDaemon on win32 shows code-8 card', async () => {
+  it('runRestartSequence with pid-unchanged keeps the permission failure in the hero', async () => {
     // Step 1: prime _lastRestart by running the sequence with same pid before/after
     installDashboardDom()
     const pidUnchangedInvoke = vi.fn(async (name: string, _args?: unknown) => {
@@ -603,10 +691,9 @@ describe('code-8 flow: _lastRestart wired through runRestartSequence → restart
       globalThis.navigator = undefined
     }
 
-    // code 8: "Windows 权限不够"
-    expect(els.rdcCard.hidden).toBe(false)
-    expect(els.rdcTitle.textContent).toBe('Windows 权限不够')
-    expect(els.rdcPrimary.textContent).toBe('以管理员身份运行')
+    expect(els.heroHeadline.textContent).toBe('CC 暂时失去连接')
+    expect(els.heroMeta.textContent).toBe('系统权限不足，请重新打开应用后再试')
+    expect(els.dashViewDetails.hidden).toBe(false)
   })
 
   it('_lastRestart is cleared after restartDaemon consumes it (no stale signal on subsequent click)', async () => {
@@ -635,7 +722,7 @@ describe('code-8 flow: _lastRestart wired through runRestartSequence → restart
       formatInvokeError: (e: unknown) => String(e),
       healthProbe: null,
     })
-    expect(els1.rdcTitle.textContent).toBe('Windows 权限不够')
+    expect(els1.heroMeta.textContent).toBe('系统权限不足，请重新打开应用后再试')
 
     // Second restartDaemon click — _lastRestart is null → code 0 (all green), no card
     const els2 = installDashboardDom()
@@ -652,16 +739,13 @@ describe('code-8 flow: _lastRestart wired through runRestartSequence → restart
     // @ts-expect-error restore
     globalThis.navigator = undefined
 
-    expect(els2.rdcCard.hidden).toBe(true)
-    expect(els2.dashPending.textContent).toBe('一切正常，无需操作')
+    expect(els2.dashPending.textContent).toBe('连接正常')
   })
 })
 
-// ── restartDaemon — diagnose → card or toast ──────────────────────────────
-// restartDaemon now calls diagnose() and renders the card (or shows a toast
-// for code 0). These tests cover all 9 diagnose code branches.
+// ── restartDaemon — diagnose internally, act in the existing hero ─────────
 
-describe('restartDaemon (diagnose → card)', () => {
+describe('restartDaemon (single-surface recovery)', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function makeDeps(report: any, extra: Record<string, any> = {}) {
     return {
@@ -681,15 +765,19 @@ describe('restartDaemon (diagnose → card)', () => {
     }
   }
 
-  it('code-1 (dead daemon + pid): card is shown with title "后台服务挂了"', async () => {
+  it('code-1 (dead daemon + pid): immediately runs the restart sequence', async () => {
     const els = installDashboardDom()
-    await restartDaemon(makeDeps(deadDaemonReport()))
-    expect(els.rdcCard.hidden).toBe(false)
-    expect(els.rdcTitle.textContent).toBe('后台服务挂了')
-    expect(els.rdcPrimary.textContent).toBe('一键重启后台')
+    const deps = makeDeps(deadDaemonReport())
+    await restartDaemon(deps)
+    const serviceCalls = deps.invoke.mock.calls
+      .map((call: any[]) => call[1]?.args?.slice(0, 2))
+      .filter(Boolean)
+    expect(serviceCalls).toContainEqual(['service', 'stop'])
+    expect(serviceCalls).toContainEqual(['service', 'start'])
+    expect(els.heroMeta.textContent).toBe('暂时无法恢复，请稍后再试')
   })
 
-  it('disconnected-intent: skips the diagnose card and restarts directly (service start invoked, no card)', async () => {
+  it('disconnected-intent: restarts directly in one click', async () => {
     const els = installDashboardDom()
     const deps = makeDeps(deadDaemonReport(), { isDisconnectedIntent: () => true })
     await restartDaemon(deps)
@@ -700,42 +788,37 @@ describe('restartDaemon (diagnose → card)', () => {
         && (c[1] as { args: unknown[] }).args[1] === 'start',
     )
     expect(startCalled).toBe(true)
-    // ...and the diagnose card never appeared (a dead daemon would normally show code-1).
-    expect(els.rdcCard.hidden).toBe(true)
   })
 
-  it('default (no disconnected-intent): a dead daemon still shows the diagnose card', async () => {
+  it('default (no disconnected-intent): a dead daemon still restarts directly', async () => {
     const els = installDashboardDom()
-    await restartDaemon(makeDeps(deadDaemonReport(), { isDisconnectedIntent: () => false }))
-    expect(els.rdcCard.hidden).toBe(false)
-    expect(els.rdcTitle.textContent).toBe('后台服务挂了')
+    const deps = makeDeps(deadDaemonReport(), { isDisconnectedIntent: () => false })
+    await restartDaemon(deps)
+    expect(deps.invoke.mock.calls.some((call: any[]) => call[1]?.args?.[0] === 'service' && call[1]?.args?.[1] === 'start')).toBe(true)
   })
 
-  it('code-5 (account expired): card shows "微信账号已过期"', async () => {
+  it('code-5 (account expired): routes directly to rescan', async () => {
     const els = installDashboardDom()
-    await restartDaemon(makeDeps(expiredAccountReport()))
-    expect(els.rdcCard.hidden).toBe(false)
-    expect(els.rdcTitle.textContent).toBe('微信账号已过期')
+    const deps = makeDeps(expiredAccountReport())
+    await restartDaemon(deps)
+    expect(deps.routeToWizardBind).toHaveBeenCalledTimes(1)
   })
 
-  it('code-4 (provider missing): card shows "AI 工具缺失" and fix section is shown', async () => {
+  it('code-4 (provider missing): opens provider settings and keeps feedback in the hero', async () => {
     const els = installDashboardDom()
-    await restartDaemon(makeDeps(providerMissingReport()))
-    expect(els.rdcCard.hidden).toBe(false)
-    expect(els.rdcTitle.textContent).toBe('AI 工具缺失')
-    // fix div should be populated (hidden=false because command is present)
-    expect(els.rdcFix.hidden).toBe(false)
+    const deps = makeDeps(providerMissingReport())
+    await restartDaemon(deps)
+    expect(deps.routeToProviderSettings).toHaveBeenCalledTimes(1)
+    expect(els.heroMeta.textContent).toBe('AI 服务暂不可用，请检查设置')
   })
 
-  it('code-0 (all green): no card shown, pending shows "一切正常，无需操作" then clears', async () => {
+  it('code-0 (all green): no card shown and connection returns to normal', async () => {
     const els = installDashboardDom()
     await restartDaemon(makeDeps(allGreenReport()))
-    // Card stays hidden for code 0
-    expect(els.rdcCard.hidden).toBe(true)
-    expect(els.dashPending.textContent).toBe('一切正常，无需操作')
+    expect(els.dashPending.textContent).toBe('连接正常')
   })
 
-  it('code-3 (service not installed): card shows "后台服务没安装"', async () => {
+  it('code-3 (service not installed): routes directly to service setup', async () => {
     const els = installDashboardDom()
     const report = {
       checks: {
@@ -749,12 +832,12 @@ describe('restartDaemon (diagnose → card)', () => {
       expiredBots: [],
       userNames: {},
     }
-    await restartDaemon(makeDeps(report))
-    expect(els.rdcCard.hidden).toBe(false)
-    expect(els.rdcTitle.textContent).toBe('后台服务没安装')
+    const deps = makeDeps(report)
+    await restartDaemon(deps)
+    expect(deps.routeToWizardService).toHaveBeenCalledTimes(1)
   })
 
-  it('code-6 (empty allowlist): card shows "白名单是空的"', async () => {
+  it('code-6 (empty allowlist): opens access settings', async () => {
     const els = installDashboardDom()
     const report = {
       checks: {
@@ -768,12 +851,12 @@ describe('restartDaemon (diagnose → card)', () => {
       expiredBots: [],
       userNames: {},
     }
-    await restartDaemon(makeDeps(report))
-    expect(els.rdcCard.hidden).toBe(false)
-    expect(els.rdcTitle.textContent).toBe('白名单是空的')
+    const deps = makeDeps(report)
+    await restartDaemon(deps)
+    expect(deps.routeToAccessSettings).toHaveBeenCalledTimes(1)
   })
 
-  it('code-2 (daemon dead + pid=null): card shows "后台服务从没启动过"', async () => {
+  it('code-2 (daemon dead + pid=null): starts the service directly', async () => {
     const els = installDashboardDom()
     const report = {
       checks: {
@@ -787,12 +870,12 @@ describe('restartDaemon (diagnose → card)', () => {
       expiredBots: [],
       userNames: {},
     }
-    await restartDaemon(makeDeps(report))
-    expect(els.rdcCard.hidden).toBe(false)
-    expect(els.rdcTitle.textContent).toBe('后台服务从没启动过')
+    const deps = makeDeps(report)
+    await restartDaemon(deps)
+    expect(deps.invoke.mock.calls.some((call: any[]) => call[1]?.args?.[0] === 'service' && call[1]?.args?.[1] === 'start')).toBe(true)
   })
 
-  it('code-5 (no accounts): card shows "没有绑定微信账号"', async () => {
+  it('code-5 (no accounts): routes directly to binding', async () => {
     const els = installDashboardDom()
     const report = {
       checks: {
@@ -806,9 +889,9 @@ describe('restartDaemon (diagnose → card)', () => {
       expiredBots: [],
       userNames: {},
     }
-    await restartDaemon(makeDeps(report))
-    expect(els.rdcCard.hidden).toBe(false)
-    expect(els.rdcTitle.textContent).toBe('没有绑定微信账号')
+    const deps = makeDeps(report)
+    await restartDaemon(deps)
+    expect(deps.routeToWizardBind).toHaveBeenCalledTimes(1)
   })
 
   it('no doctor report falls back to runRestartSequence directly', async () => {
@@ -840,101 +923,6 @@ describe('restartDaemon (diagnose → card)', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((stopCall![1] as any).args).toEqual(expect.arrayContaining(['service', 'stop']))
   })
-})
-
-// ── open-logs secondary link ──────────────────────────────────────────
-// Clicking the "查看日志" secondary link on a code-1 or code-2 card
-// should invoke deps.routeToLogsPane and hide the diagnose card.
-
-describe('handleDiagnoseAction open-logs', () => {
-  it('code-1: open-logs action hides card and calls routeToLogsPane', () => {
-    const els = installDashboardDom()
-    // Show the card first so we can verify hideDiagnoseCard fires
-    els.rdcCard.hidden = false
-
-    const deps = {
-      routeToLogsPane: vi.fn(),
-    }
-    handleDiagnoseAction(deps, { kind: 'open-logs' })
-
-    expect(els.rdcCard.hidden).toBe(true)
-    expect(deps.routeToLogsPane).toHaveBeenCalledTimes(1)
-  })
-
-  it('code-2 diagnosis has secondary action with kind open-logs', async () => {
-    const { diagnose } = await import('../view.js')
-    const report = {
-      checks: {
-        daemon: { alive: false, pid: null },
-        service: { installed: true },
-        accounts: { count: 1, items: [] },
-        access: { allowFromCount: 1 },
-        provider: { provider: 'claude' },
-        claude: { ok: true },
-      },
-      expiredBots: [],
-      userNames: {},
-    }
-    const diagnosis = diagnose({ report, healthOk: null, lastError: null, platform: 'linux' })
-    expect(diagnosis.code).toBe(2)
-    expect((diagnosis.secondary?.action as any)?.kind).toBe('open-logs')
-  })
-})
-
-// ── handleDiagnoseAction: restart-dashboard and show-platform-hint ────────
-// Both actions are "informational only" — no async side-effects — but must
-// give the user visible feedback via setPending and hide the diagnose card.
-
-describe('handleDiagnoseAction button-feedback', () => {
-  it('restart-dashboard: setPending is called and card is hidden', () => {
-    const els = installDashboardDom()
-    // Show the card first
-    els.rdcCard.hidden = false
-
-    handleDiagnoseAction({}, { kind: 'restart-dashboard' })
-
-    expect(els.rdcCard.hidden).toBe(true)
-    expect(els.dashPending.textContent).toBe('请用 Cmd-Q / Alt-F4 关闭后重新打开 Dashboard')
-  })
-
-  it('show-platform-hint: setPending is called and card is hidden', () => {
-    const els = installDashboardDom()
-    // Show the card first
-    els.rdcCard.hidden = false
-
-    handleDiagnoseAction({}, { kind: 'show-platform-hint', platform: 'win32' })
-
-    expect(els.rdcCard.hidden).toBe(true)
-    expect(els.dashPending.textContent).toBe('请以管理员身份重启 Dashboard')
-  })
-})
-
-// ── renderDiagnoseCard: warn-class coverage ───────────────────────────────
-// The card gets the "warn" CSS class for codes that indicate active failures
-// (1, 2, 3, 4, 5, 8) and NOT for informational codes (0, 6, 7).
-// This test table catches future regressions if someone drops or reorders
-// a code in the warnCodes Set.
-
-describe('renderDiagnoseCard warn-class', () => {
-  const warnCodes = new Set([1, 2, 3, 4, 5, 8])
-
-  // Minimal fake diagnosis for each code: only code, title, hint and a
-  // no-op primary action are required by renderDiagnoseCard.
-  const fakeDiagnosis = (code: number) => ({
-    code,
-    title: `test-title-${code}`,
-    hint: `test-hint-${code}`,
-    primary: { label: 'OK', action: { kind: 'auto-dismiss' } },
-  })
-
-  for (const code of [0, 1, 2, 3, 4, 5, 6, 7, 8]) {
-    it(`code ${code}: warn class is ${warnCodes.has(code) ? 'present' : 'absent'}`, () => {
-      const els = installDashboardDom()
-      renderDiagnoseCard({}, fakeDiagnosis(code))
-      const hasWarn = els.rdcCard.classList.contains('warn')
-      expect(hasWarn).toBe(warnCodes.has(code))
-    })
-  }
 })
 
 // ── Step 4 — RECONNECT_DIAGNOSE telemetry ────────────────────────────────────

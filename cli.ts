@@ -13,7 +13,7 @@ import {
   DoctorOutput, SetupPollOutput, SetupStatusOutput, SetupQrJsonOutput,
   ServiceStatusOutput, ServiceInstallOutput, ServiceStartOutput, ServiceStopOutput, ServiceUninstallOutput,
   AccountRemoveOutput, DaemonKillOutput, ProviderShowOutput,
-  MemoryListOutput, MemoryReadOutput, MemoryWriteOutput,
+  MemoryListOutput, MemoryReadOutput, MemoryWriteOutput, MemoryProfileOutput, MemoryProfileStatusOutput,
   EventsListOutput, ObservationsListOutput, ObservationsArchiveOutput, MilestonesListOutput,
   SessionsListProjectsOutput, SessionsListChatsOutput, SessionsReadJsonlOutput, SessionsDeleteOutput, SessionsSearchOutput,
   DemoSeedOutput, DemoUnseedOutput, ReplyOutput,
@@ -95,6 +95,13 @@ Usage:
                         passed as base64 (avoids shell-quote pain with
                         multi-line markdown). Sandboxed: .md only,
                         ≤100KB, no traversal, atomic rename.
+  wechat-cc memory profile status [--chat-id <id>] [--json]
+                        Inspect whether _profile.json is empty/ready/fresh/stale.
+  wechat-cc memory profile generate [--chat-id <id>] [--provider claude|codex] [--dry-run] [--json]
+                        Generate memory/<chat-id>/_profile.json for the
+                        desktop memory page.
+  wechat-cc memory profile-read <user-id> [--json]
+                        Read memory/<user-id>/_profile.json.
   wechat-cc events list <chat-id> [--limit N] [--json]
                         Tail Companion decisions log (push/skip/observation/milestone).
   wechat-cc observations list <chat-id> [--include-archived] [--json]
@@ -156,7 +163,7 @@ Usage:
                         Send a synthetic notify to validate inbound→chat path
                         (default) or outbound (--outbound: send to external URL)
   wechat-cc provider show [--json]  Show selected agent provider
-  wechat-cc provider set <claude|codex|cursor|openai> [--model MODEL] [--unattended true|false]
+  wechat-cc provider set <claude|codex|cursor|openai|gemini> [--model MODEL] [--unattended true|false]
                         --unattended: when true (default for new installs), the
                           installed daemon runs the daemon with --dangerously so
                           inbound WeChat messages don't hang waiting for human
@@ -765,6 +772,21 @@ const guardStatusCmd = defineCommand({
 async function setGuardEnabled(enabled: boolean, json: boolean): Promise<void> {
   const { loadGuardConfig, saveGuardConfig } = await import('./src/daemon/guard/store')
   const cfg = loadGuardConfig(STATE_DIR)
+  // TEMP DIAG (network-guard auto-enable hunt): persistently record WHO turned
+  // guard ON. The CLI is short-lived, so pid/ppid + the parent process command
+  // reveal whether it was the Tauri GUI (wechat_cc_desktop), a terminal `bun`,
+  // or something else. Written to channel.log so it survives even when no
+  // devtools console is open at the moment of the intermittent bug. Remove
+  // once the root cause is confirmed.
+  if (enabled) {
+    try {
+      const { log } = await import('./src/lib/log')
+      const { execSync } = await import('node:child_process')
+      let parent = '?'
+      try { parent = execSync(`ps -o comm= -p ${process.ppid}`, { encoding: 'utf8' }).trim() } catch { /* best-effort */ }
+      log('GUARD_DIAG', `guard ENABLE invoked (was ${cfg.enabled}) pid=${process.pid} ppid=${process.ppid} parent="${parent}" argv=${JSON.stringify(process.argv.slice(2))}`)
+    } catch { /* diagnostics must never break the command */ }
+  }
   cfg.enabled = enabled
   saveGuardConfig(STATE_DIR, cfg)
   if (json) console.log(JSON.stringify((enabled ? GuardEnableOutput : GuardDisableOutput).parse({ ok: true, enabled: cfg.enabled })))
@@ -833,8 +855,8 @@ export function computeProviderSetOutcome(
   existing: AgentConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): ProviderSetOutcome {
-  if (args.provider !== 'claude' && args.provider !== 'codex' && args.provider !== 'cursor' && args.provider !== 'openai') {
-    return { ok: false, error: `provider must be 'claude', 'codex', 'cursor', or 'openai' (got: ${args.provider})` }
+  if (args.provider !== 'claude' && args.provider !== 'codex' && args.provider !== 'cursor' && args.provider !== 'openai' && args.provider !== 'gemini') {
+    return { ok: false, error: `provider must be 'claude', 'codex', 'cursor', 'openai', or 'gemini' (got: ${args.provider})` }
   }
   const provider = args.provider as AgentProviderKind
   const unattended = parseBoolValue(args.unattended)
@@ -890,9 +912,9 @@ export function computeProviderSetOutcome(
 }
 
 const providerSetCmd = defineCommand({
-  meta: { name: 'set', description: 'Switch agent provider (claude|codex|cursor|openai), optionally with --model + --base-url + --unattended + --auto-start + --close-stops-daemon' },
+  meta: { name: 'set', description: 'Switch agent provider (claude|codex|cursor|openai|gemini), optionally with --model + --base-url + --unattended + --auto-start + --close-stops-daemon' },
   args: {
-    provider: { type: 'positional', required: true, description: 'claude | codex | cursor | openai', valueHint: 'claude|codex|cursor|openai' },
+    provider: { type: 'positional', required: true, description: 'claude | codex | cursor | openai | gemini', valueHint: 'claude|codex|cursor|openai|gemini' },
     model: { type: 'string', description: 'Override default model (openai: required the first time, unless already stored)' },
     'base-url': { type: 'string', description: 'OpenAI-compatible API base URL — openai only, e.g. https://api.deepseek.com/v1 (required the first time, unless already stored)', valueHint: 'https://api.deepseek.com/v1' },
     // String, not boolean: matches the legacy parseBoolFlag tri-state semantics
@@ -921,7 +943,7 @@ const providerSetCmd = defineCommand({
 })
 
 const providerCmd = defineCommand({
-  meta: { name: 'provider', description: 'Agent provider config (claude / codex / cursor / openai)' },
+  meta: { name: 'provider', description: 'Agent provider config (claude / codex / cursor / openai / gemini)' },
   subCommands: {
     show: providerShowCmd,
     set: providerSetCmd,
@@ -1023,6 +1045,30 @@ const memoryWriteCmd = defineCommand({
         return
       }
       console.error(`memory write failed: ${msg}`)
+      process.exit(1)
+    }
+  },
+})
+
+const memoryProfileReadCmd = defineCommand({
+  meta: { name: 'profile-read', description: 'Read memory/<user-id>/_profile.json (desktop profile data)' },
+  args: {
+    userId: { type: 'positional', required: true, description: 'User id', valueHint: 'user-id' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { readMemoryProfileFile } = await import('./src/lib/memory.ts')
+    try {
+      const content = readMemoryProfileFile(STATE_DIR, args.userId)
+      if (args.json) console.log(JSON.stringify(MemoryReadOutput.parse({ ok: true, userId: args.userId, path: '_profile.json', content }), null, 2))
+      else process.stdout.write(content)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (args.json) {
+        console.log(JSON.stringify(MemoryReadOutput.parse({ ok: false, error: msg })))
+        return
+      }
+      console.error(`memory profile-read failed: ${msg}`)
       process.exit(1)
     }
   },
@@ -1138,6 +1184,199 @@ const memorySynthesizeCmd = defineCommand({
   },
 })
 
+async function resolveProfileChatId(chatIdArg: string | undefined): Promise<string> {
+  if (chatIdArg) return chatIdArg
+  const { readFileSync } = await import('node:fs')
+  let access: { admins?: string[] } = {}
+  try {
+    access = JSON.parse(readFileSync(join(STATE_DIR, 'access.json'), 'utf8'))
+  } catch { /* missing/corrupt — fail below */ }
+  const admins = access.admins ?? []
+  if (admins.length === 1) return admins[0]!
+  throw new Error(admins.length === 0
+    ? 'No admins in access.json — pass --chat-id explicitly'
+    : `Multiple admins (${admins.join(', ')}) — pass --chat-id explicitly`)
+}
+
+async function profileProvider(chatId: string, requested: string | undefined, db: ReturnType<typeof import('./src/lib/db').openWechatDb>): Promise<string> {
+  if (requested) return requested
+  try {
+    const { makeConversationStore } = await import('./src/core/conversation-store')
+    const conv = makeConversationStore(db).get(chatId)
+    if (conv?.mode?.kind === 'solo') return conv.mode.provider
+  } catch { /* no conversation yet — default below */ }
+  return 'claude'
+}
+
+function makeProfileSdkEval(provider: string): (prompt: string) => Promise<string> {
+  return async (prompt: string): Promise<string> => {
+    if (provider === 'codex') {
+      const { Codex } = await import('@openai/codex-sdk')
+      const { resolveCodexCheapModel } = await import('./src/core/codex-cheap-model')
+      const { tmpdir } = await import('node:os')
+      const thread = new Codex().startThread({
+        model: resolveCodexCheapModel(),
+        sandboxMode: 'read-only',
+        approvalPolicy: 'never',
+        webSearchEnabled: false,
+        networkAccessEnabled: false,
+        workingDirectory: tmpdir(),
+        skipGitRepoCheck: true,
+      })
+      const turn = await thread.run(prompt)
+      return (turn.items as Array<{ type?: string; text?: string }>)
+        .filter(i => i.type === 'agent_message' && typeof i.text === 'string')
+        .map(i => i.text!)
+        .join('')
+    }
+    const { query } = await import('@anthropic-ai/claude-agent-sdk')
+    const model = process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || 'claude-haiku-4-5'
+    let text = ''
+    const q = query({ prompt, options: { model, maxTurns: 1 } })
+    for await (const raw of q as AsyncGenerator<import('@anthropic-ai/claude-agent-sdk').SDKMessage>) {
+      const msg = raw as unknown as { type: string; message?: { content?: unknown } }
+      if (msg.type === 'assistant' && Array.isArray(msg.message?.content)) {
+        for (const part of msg.message.content as Array<{ type?: string; text?: string }>) {
+          if (part.type === 'text' && typeof part.text === 'string') text += part.text
+        }
+      }
+    }
+    return text
+  }
+}
+
+async function runMemoryProfileGenerate(args: {
+  'chat-id'?: string
+  provider?: string
+  'dry-run'?: boolean
+  json?: boolean
+  auto?: boolean
+}) {
+  try {
+    const chatId = await resolveProfileChatId(args['chat-id'])
+    const { openWechatDb } = await import('./src/lib/db')
+    const db = openWechatDb(STATE_DIR)
+    let provider = 'claude'
+    let result
+    try {
+      provider = await profileProvider(chatId, args.provider, db)
+      const { synthesizeProfile } = await import('./src/lib/memory-synthesis')
+      const { makeLifeStoresReader } = await import('./src/daemon/life-stores')
+      const dryRun = Boolean(args['dry-run'])
+      result = await synthesizeProfile({
+        stateDir: STATE_DIR,
+        adminChatId: chatId,
+        sdkEval: makeProfileSdkEval(provider),
+        dryRun,
+        lifeStores: makeLifeStoresReader(db, STATE_DIR),
+        generatedBy: args.auto ? 'auto' : 'manual',
+        modelProvider: provider,
+      })
+    } finally {
+      db.close()
+    }
+
+    const dryRun = Boolean(args['dry-run'])
+    const output = MemoryProfileOutput.parse({
+      ok: true,
+      chatId,
+      provider,
+      dryRun,
+      sourceStats: result.profile?.sourceStats,
+      sourceFingerprint: result.profile?.sourceFingerprint,
+      ...result,
+    })
+    if (args.json) {
+      console.log(JSON.stringify(output, null, 2))
+      return
+    }
+    console.log(`画像对象: ${chatId}  ·  provider: ${provider}${dryRun ? '  ·  (dry-run)' : ''}`)
+    console.log(`工作侧: ${result.projectsFound} 个项目: ${result.projectNames.join(', ') || '(无)'}  ·  ${result.filesScanned} 文件`)
+    console.log(`生活侧: ${result.observationsFound} 观察 · ${result.milestonesFound} 里程碑 · ${result.memoryNotesFound} 记忆笔记  ·  prompt ${result.promptChars} 字`)
+    if (dryRun) { console.log('(dry-run — 未调用 LLM、未写入)'); return }
+    if (result.written) console.log(`已写入 ${result.written.path} (${result.written.bytesWritten}B)`)
+    else console.log('未写入(记忆不足或 LLM 返回无效 JSON)')
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (args.json) { console.log(JSON.stringify(MemoryProfileOutput.parse({ ok: false, error: msg }))); return }
+    console.error(msg); process.exit(1)
+  }
+}
+
+const memoryProfileGenerateCmd = defineCommand({
+  meta: {
+    name: 'generate',
+    description: 'Generate or refresh memory/<chat-id>/_profile.json for the desktop memory page',
+  },
+  args: {
+    'chat-id': { type: 'string', description: 'Admin chat_id (default: sole admin in access.json)' },
+    provider: { type: 'string', description: 'Force provider claude|codex (default: admin conversation provider)' },
+    'dry-run': { type: 'boolean', default: false, description: 'Discover + build prompt; make no LLM call and no write' },
+    auto: { type: 'boolean', default: false, description: 'Mark generatedBy as auto (for daemon/background callers)' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    await runMemoryProfileGenerate(args)
+  },
+})
+
+const memoryProfileStatusCmd = defineCommand({
+  meta: {
+    name: 'status',
+    description: 'Show whether memory/<chat-id>/_profile.json is missing, fresh, stale, or blocked by too little memory',
+  },
+  args: {
+    'chat-id': { type: 'string', description: 'Admin chat_id (default: sole admin in access.json)' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    try {
+      const chatId = await resolveProfileChatId(args['chat-id'])
+      const { openWechatDb } = await import('./src/lib/db')
+      const db = openWechatDb(STATE_DIR)
+      let status
+      try {
+        const { getMemoryProfileStatus } = await import('./src/lib/memory-synthesis')
+        const { makeLifeStoresReader } = await import('./src/daemon/life-stores')
+        status = await getMemoryProfileStatus({ stateDir: STATE_DIR, adminChatId: chatId, lifeStores: makeLifeStoresReader(db, STATE_DIR) })
+      } finally {
+        db.close()
+      }
+      const output = MemoryProfileStatusOutput.parse({ ok: true, ...status })
+      if (!output.ok) throw new Error(output.error)
+      if (args.json) {
+        console.log(JSON.stringify(output, null, 2))
+        return
+      }
+      console.log(`画像状态: ${output.status} · ${output.reason}`)
+      console.log(`来源: ${output.sourceStats.memoryNotesFound} 记忆笔记 · ${output.sourceStats.observationsFound} 观察 · ${output.sourceStats.milestonesFound} 里程碑 · ${output.sourceStats.projectsFound} 项目`)
+      if (output.generatedAt) console.log(`上次生成: ${new Date(output.generatedAt).toLocaleString()}`)
+      if (output.minRefreshAfter) console.log(`自动刷新最早: ${new Date(output.minRefreshAfter).toLocaleString()}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (args.json) { console.log(JSON.stringify(MemoryProfileStatusOutput.parse({ ok: false, error: msg }))); return }
+      console.error(msg); process.exit(1)
+    }
+  },
+})
+
+const memoryProfileCmd = defineCommand({
+  meta: {
+    name: 'profile',
+    description: 'User profile generation status and refresh commands',
+  },
+  args: {
+    'chat-id': { type: 'string', description: 'Admin chat_id (default: sole admin in access.json)' },
+    provider: { type: 'string', description: 'Force provider claude|codex (default: admin conversation provider)' },
+    'dry-run': { type: 'boolean', default: false, description: 'Compatibility: generate with dry-run' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  subCommands: {
+    status: memoryProfileStatusCmd,
+    generate: memoryProfileGenerateCmd,
+  },
+})
+
 const memoryProjectsCmd = defineCommand({
   meta: {
     name: 'projects',
@@ -1231,7 +1470,9 @@ const memoryCmd = defineCommand({
     list: memoryListCmd,
     read: memoryReadCmd,
     write: memoryWriteCmd,
+    'profile-read': memoryProfileReadCmd,
     synthesize: memorySynthesizeCmd,
+    profile: memoryProfileCmd,
     projects: memoryProjectsCmd,
     status: memoryStatusCmd,
   },
@@ -1388,6 +1629,67 @@ const companionPushCmd = defineCommand({
 const companionCmd = defineCommand({
   meta: { name: 'companion', description: 'Companion (proactive contact) controls' },
   subCommands: { push: companionPushCmd },
+})
+
+// ── connection probe — wechat-cc connection probe [--json] ─────────────────
+//
+// Walks STATE_DIR/accounts/<id>/{account.json,token}, calls probeConnection
+// for each bound account, and emits { accounts: ProbeResult[] }.
+// On taken_over the daemon's SQLite session_state row is written so the
+// dashboard's expiredBots list reflects it on next doctor poll.
+
+const connectionProbeCmd = defineCommand({
+  meta: { name: 'probe', description: 'Test whether THIS machine holds the live WeChat connection' },
+  args: { json: { type: 'boolean', description: 'machine-readable output' } },
+  async run({ args }) {
+    const { ilinkGetUpdates } = await import('./src/lib/ilink')
+    const { probeConnection } = await import('./src/daemon/connection-probe')
+    const { openWechatDb } = await import('./src/lib/db')
+    const { makeSessionStateStore } = await import('./src/daemon/session-state')
+    const { readFileSync, existsSync, readdirSync } = await import('node:fs')
+    const { join } = await import('node:path')
+
+    const PROBE_TIMEOUT_MS = 5000
+    const dir = join(STATE_DIR, 'accounts')
+    const ids = existsSync(dir) ? readdirSync(dir).filter(n => !n.includes('.superseded.')) : []
+
+    // Open db only when accounts exist to avoid creating an empty db in a
+    // non-existent STATE_DIR (the db file lives inside STATE_DIR).
+    let db: import('./src/lib/db').Db | null = null
+    const accounts: import('./src/daemon/connection-probe').ProbeResult[] = []
+    try {
+      if (ids.length > 0) db = openWechatDb(STATE_DIR)
+      const store = db ? makeSessionStateStore(db) : null
+      for (const id of ids) {
+        const acctDir = join(dir, id)
+        const metaPath = join(acctDir, 'account.json')
+        const tokenPath = join(acctDir, 'token')
+        if (!existsSync(metaPath) || !existsSync(tokenPath)) continue
+        const meta = JSON.parse(readFileSync(metaPath, 'utf8'))
+        const token = readFileSync(tokenPath, 'utf8').trim()
+        const result = await probeConnection({
+          account: { id, botId: meta.botId, baseUrl: meta.baseUrl, token },
+          getUpdates: (baseUrl, tok, timeoutMs) => ilinkGetUpdates(baseUrl, tok, '', timeoutMs),
+          markExpired: (accountId, reason) => store ? store.markExpired(accountId, reason) : false,
+          clearExpired: (accountId) => store?.clear(accountId),
+          probeTimeoutMs: PROBE_TIMEOUT_MS,
+        })
+        accounts.push(result)
+      }
+    } finally {
+      db?.close()
+    }
+
+    const out = { accounts }
+    if (args.json) console.log(JSON.stringify(out, null, 2))
+    else if (accounts.length === 0) console.log('no bound accounts found')
+    else for (const a of accounts) console.log(`${a.id}: ${a.state}${a.detail ? ` (${a.detail})` : ''}`)
+  },
+})
+
+const connectionCmd = defineCommand({
+  meta: { name: 'connection', description: "Inspect this machine's WeChat connection" },
+  subCommands: { probe: connectionProbeCmd },
 })
 
 const daemonKillCmd = defineCommand({
@@ -2867,6 +3169,8 @@ const SUBCOMMANDS = {
   memory: memoryCmd,
   account: accountCmd,
   companion: companionCmd,
+  // connection-owner detection (Task 4).
+  connection: connectionCmd,
   daemon: daemonCmd,
   demo: demoCmd,
   // PR4 batch 3c — heavy entry points. Completes the migration; legacy

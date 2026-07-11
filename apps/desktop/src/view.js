@@ -135,6 +135,19 @@ export function initialMode(report) {
   return { mode: "wizard", step: "service" }
 }
 
+// After a QR scan confirms, decide where the 继续 button should land.
+// If this machine is ALREADY fully set up (background service installed +
+// provider ready), there's nothing to do on the "后台服务" step — go straight
+// to the dashboard. Otherwise show the service-install step. This mirrors
+// initialMode's "everything installed → dashboard" rule, extended to the
+// re-scan path (a returning user who re-scans on an already-configured
+// machine shouldn't be parked on the install screen again).
+export function afterScanTarget(report) {
+  const installed = !!report?.checks?.service?.installed
+  const providerOk = !!report?.checks?.provider?.ok
+  return installed && providerOk ? "dashboard" : "service"
+}
+
 // Determine the dashboard "restart daemon" button's mode + label given the
 // service+daemon state. The pre-existing button blindly invoked
 // `service stop` + `service start`, which fails noisily when no service unit
@@ -164,8 +177,8 @@ export function restartButtonState(daemon, service) {
 }
 
 /**
- * Analyse the current system state and return a reconnect-diagnosis card
- * description, or a code-0 "auto-dismiss" signal when everything is healthy.
+ * Analyse the current system state and return the recovery action that the
+ * overview's single reconnect surface should execute.
  *
  * Priority order (first matching rule wins):
  *  8 — win pid-unchanged  only after a known restart attempt on win32
@@ -323,32 +336,24 @@ export function diagnose({ report, healthOk, lastError, lastRestart = null, plat
   }
 }
 
-// Hero block for the dashboard top. In the user-facing dashboard, a bound
-// account means the companion relationship is established; transient daemon
-// downtime should keep the reconnect affordance without making the default
-// moment read as "AI lost".
-export function dashboardHero(daemon, accountCount) {
-  if (daemon.alive || accountCount > 0) {
-    return {
-      headline: "running",
-      tone: "ok",
-      meta1: daemon.alive ? `pid ${daemon.pid}` : "waiting for daemon",
-      meta2: accountCount === 1 ? "1 account live" : `${accountCount} accounts live`,
-    }
+// Connection verdict for the overview hero. Three honest states:
+//   connected   — this machine holds the live WeChat connection
+//   recovering  — transient: daemon down / not yet polling (auto-recovers)
+//   taken_over  — terminal: another device rebound the bot (errcode=-14);
+//                 needs a re-scan to reclaim, does NOT self-heal.
+// Inputs come from the doctor report + the last probe result (if any).
+export function dashboardHero({ daemonAlive, accountCount, expiredCount = 0, lastProbe = null }) {
+  if (lastProbe?.state === 'taken_over' || expiredCount > 0) {
+    return { state: 'taken_over', tone: 'warn', headline: '本机未连接', meta: '连接在其他设备 · 重新扫码可接管' }
   }
-  if (daemon.pid !== null) {
-    return {
-      headline: "stale",
-      tone: "warn",
-      meta1: `pid ${daemon.pid} · gone`,
-      meta2: "service may need a restart",
-    }
+  if (lastProbe?.state === 'connected' || (daemonAlive && accountCount > 0)) {
+    return { state: 'connected', tone: 'ok', headline: 'AI 正在陪伴中', meta: '连接正常' }
   }
   return {
-    headline: "stopped",
-    tone: "warn",
-    meta1: "no daemon process",
-    meta2: "press restart to bring it up",
+    state: 'recovering',
+    tone: 'warn',
+    headline: 'CC 暂时失去连接',
+    meta: '可能暂时无法接收微信消息',
   }
 }
 
@@ -364,8 +369,9 @@ export function deleteAccountConfirmCopy(name, service) {
 // Each row for the dashboard accounts table. Resolve a friendly display
 // name through user_names.json (keyed by the wechat userId that owns the
 // scan); fall back to the short bot id (directory name minus -im-bot).
-// expiredBots — list of {botId, firstSeenExpiredAt} from session-state.json
-// drives the badge. Account rows for which there is no expired entry are
+// expiredBots — list of {botId, firstSeenExpiredAt} from the SQLite
+// session_state table (via the doctor report) drives the badge. Account
+// rows for which there is no expired entry are
 // shown as `active` (we don't have a positive heartbeat from ilink — only
 // the errcode=-14 negative signal).
 // admins — list of wechat userIds from access.json admins[]. Rows whose

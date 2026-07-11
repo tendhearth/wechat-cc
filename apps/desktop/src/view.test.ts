@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   doctorRows, pollAdvance, daemonStatusLine, escapeHtml,
-  initialMode, dashboardHero, accountRows, formatRelativeTime,
+  initialMode, afterScanTarget, dashboardHero, accountRows, formatRelativeTime,
   updateProbeLine, updateApplyLine, restartButtonState, deleteAccountConfirmCopy,
   UPDATE_REASON_COPY, modeBadge, conversationRows, diagnose,
 } from './view.js'
@@ -33,6 +33,25 @@ function fakeReport(overrides: Record<string, any> = {}): any {
   }
   return { ...base, ...overrides, checks: { ...base.checks, ...(overrides.checks ?? {}) } }
 }
+
+describe('afterScanTarget', () => {
+  it('service installed + provider ok → dashboard (skip the install step)', () => {
+    const r = fakeReport({ checks: { service: { installed: true, kind: 'systemd-user' }, provider: { ok: true, provider: 'claude', binaryPath: '/c' } } })
+    expect(afterScanTarget(r)).toBe('dashboard')
+  })
+  it('service NOT installed → service step', () => {
+    const r = fakeReport({ checks: { service: { installed: false, kind: 'systemd-user' }, provider: { ok: true, provider: 'claude', binaryPath: '/c' } } })
+    expect(afterScanTarget(r)).toBe('service')
+  })
+  it('provider not ok → service step (even if service installed)', () => {
+    const r = fakeReport({ checks: { service: { installed: true, kind: 'systemd-user' }, provider: { ok: false, provider: 'claude', binaryPath: null } } })
+    expect(afterScanTarget(r)).toBe('service')
+  })
+  it('null/undefined report → service step (safe default)', () => {
+    expect(afterScanTarget(null)).toBe('service')
+    expect(afterScanTarget(undefined)).toBe('service')
+  })
+})
 
 describe('doctorRows', () => {
   it('flattens checks into [name, {ok, path}] tuples in display order', () => {
@@ -327,24 +346,30 @@ describe('initialMode', () => {
   })
 })
 
-describe('dashboardHero', () => {
-  it('alive → running with pid + account count', () => {
-    expect(dashboardHero({ alive: true, pid: 4321 }, 3))
-      .toEqual({ headline: 'running', tone: 'ok', meta1: 'pid 4321', meta2: '3 accounts live' })
+describe('dashboardHero 3-state', () => {
+  it('daemon alive + accounts, no expiry → connected', () => {
+    const h = dashboardHero({ daemonAlive: true, accountCount: 1, expiredCount: 0 })
+    expect(h.state).toBe('connected')
+    expect(h.tone).toBe('ok')
   })
-  it('alive with single account → singular copy', () => {
-    expect(dashboardHero({ alive: true, pid: 7 }, 1).meta2).toBe('1 account live')
+  it('bound account but daemon NOT alive → recovering (was falsely "connected")', () => {
+    const h = dashboardHero({ daemonAlive: false, accountCount: 1, expiredCount: 0 })
+    expect(h.state).toBe('recovering')
+    expect(h.tone).not.toBe('ok')
   })
-  it('bound account with daemon temporarily down → still presents companion as active', () => {
-    expect(dashboardHero({ alive: false, pid: null }, 1))
-      .toEqual({ headline: 'running', tone: 'ok', meta1: 'waiting for daemon', meta2: '1 account live' })
+  it('expired account → taken_over regardless of daemon', () => {
+    const h = dashboardHero({ daemonAlive: true, accountCount: 1, expiredCount: 1 })
+    expect(h.state).toBe('taken_over')
   })
-  it('stale pid → warn tone', () => {
-    expect(dashboardHero({ alive: false, pid: 99 }, 0).tone).toBe('warn')
-    expect(dashboardHero({ alive: false, pid: 99 }, 0).headline).toBe('stale')
+  it('probe verdict taken_over wins even with no expiry recorded yet', () => {
+    // @ts-expect-error JS function infers lastProbe:null; the object is valid at runtime
+    const h = dashboardHero({ daemonAlive: true, accountCount: 1, expiredCount: 0, lastProbe: { state: 'taken_over' } })
+    expect(h.state).toBe('taken_over')
   })
-  it('no pid → stopped', () => {
-    expect(dashboardHero({ alive: false, pid: null }, 0).headline).toBe('stopped')
+  it('probe verdict connected promotes a daemon-down machine', () => {
+    // @ts-expect-error JS function infers lastProbe:null; the object is valid at runtime
+    const h = dashboardHero({ daemonAlive: false, accountCount: 1, expiredCount: 0, lastProbe: { state: 'connected' } })
+    expect(h.state).toBe('connected')
   })
 })
 
