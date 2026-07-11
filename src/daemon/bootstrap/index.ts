@@ -531,12 +531,25 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // = arbitrary code; enable via dashboard / plugins.json); BUNDLED default
   // ENABLED. Unlike installUserMcp (which pollutes the human's global
   // ~/.claude.json), this injects only into the daemon-spawned providers.
-  const pluginMcp = pluginMcpSpecs(loadPlugins({
+  const loadedPlugins = loadPlugins({
     stateDir: deps.stateDir,
     bundledDir: bundledPluginsDir(),
     hostVersion: selfPkg.version,
     log: (m) => deps.log('BOOT', `plugin: ${m}`),
-  }))
+  })
+  const pluginMcp = pluginMcpSpecs(loadedPlugins)
+  // Names of ACTUALLY-registered plugins (enabled AND ready — same gate
+  // pluginMcpSpecs applies above), daemon-global (computed once at boot, NOT
+  // per-chat), threaded into buildSystemPrompt's `knowledgePlugins` arg
+  // (knowledge-orchestration design Task 2). Deliberately == Object.keys(
+  // pluginMcp) rather than a looser `enabled`-only filter: a bundled
+  // knowledge plugin (e.g. wxsearch) defaults ENABLED but is commonly NOT
+  // READY (its healthcheck requires wxvault's decrypted output, which a
+  // fresh install/dev box won't have yet) — mentioning it in the prompt
+  // before its tools actually exist would send the agent at tools that
+  // don't exist. Unknown plugin names are harmless — buildSystemPrompt
+  // silently ignores anything outside KNOWN_KNOWLEDGE_PLUGINS.
+  const knowledgePluginNames = Object.keys(pluginMcp)
   // Claude's SDK wants each server tagged `type: 'stdio'`; codex/cursor take
   // the bare {command,args,env} shape (structurally identical to McpStdioSpec).
   const pluginMcpForClaude = Object.fromEntries(
@@ -1063,6 +1076,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // guest-allowed, not memory_write-gated, so there's no denied-tool-call
       // risk in giving a guest chat the same bubbling guidance.
       bubbleReplies: deps.bubbleRepliesFor?.(chatId) ?? false,
+      // knowledge-orchestration design Task 2 — daemon-global (loaded once at
+      // boot, not per-chat), so this is the captured const, not a `*For`
+      // thunk. buildSystemPrompt only surfaces the section when at least one
+      // name is a KNOWN_KNOWLEDGE_PLUGINS entry, so this is inert when no
+      // knowledge plugin is loaded/enabled.
+      knowledgePlugins: knowledgePluginNames,
     })
   }
 

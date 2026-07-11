@@ -1,11 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { buildBootstrap, resolveAdminChatId } from './bootstrap'
 import { saveAgentConfig } from '../lib/agent-config'
 import { openTestDb } from '../lib/db'
 import { TIER_PROFILES } from '../core/user-tier'
+import { MANIFEST_FILE } from './plugins/paths'
 import type { Access } from '../lib/access'
 import type { CompanionConfig } from './companion/config'
 
@@ -736,6 +737,52 @@ describe('bootstrap', () => {
     const promptB = withUndefinedCoreMemory.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
     expect(promptA).toBe(promptB)
     expect(promptA).not.toContain('核心记忆')
+  })
+
+  it('buildInstructions includes the knowledge-orchestration section when a KNOWN_KNOWLEDGE_PLUGINS entry (wxsearch) is loaded+enabled from bundledPluginsDir (knowledge-orchestration design Task 2)', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-'))
+    const bundledDir = join(base, 'bundled')
+    const pluginDir = join(bundledDir, 'wxsearch')
+    mkdirSync(pluginDir, { recursive: true })
+    // /bin/sh is absolute + always present, so the plugin resolves ready
+    // (mirrors registry.test.ts's `good()` fixture) — bundled defaults enabled.
+    writeFileSync(join(pluginDir, MANIFEST_FILE), JSON.stringify({
+      name: 'wxsearch',
+      kind: 'mcp',
+      spawn: { command: '/bin/sh', args: [] },
+    }))
+    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = bundledDir
+    try {
+      const b = await buildBootstrap({
+        db: openTestDb(),
+        stateDir: base,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+      expect(prompt).toContain('知识编排')
+      expect(prompt).toContain('消息检索')
+    } finally {
+      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('buildInstructions omits the knowledge-orchestration section when no knowledge plugin is loaded (stateDir has none)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+    })
+    const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(prompt).not.toContain('知识编排')
   })
 
   it('buildInstructions includes the new-relationship section for a fresh chat at trusted+ tier when newRelationshipFor returns true (onboarding-curiosity design §2)', async () => {
