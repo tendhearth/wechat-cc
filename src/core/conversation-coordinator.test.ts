@@ -2091,4 +2091,129 @@ describe('ConversationCoordinator', () => {
       expect(sentTexts.some((t) => t.includes('[Cursor]'))).toBe(true)
     })
   })
+
+  // ─── Task 1 (session-serialization) — per-chatId dispatch mutex ────────
+  describe('per-chatId serialization (dispatch mutex)', () => {
+    it('two dispatch() calls on the SAME chatId serialize — 2nd starts only after 1st ends', async () => {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+
+      const order: string[] = []
+      let gate1Resolve: () => void = () => {}
+      const gate1 = new Promise<void>(res => { gate1Resolve = res })
+      let callCount = 0
+
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => ({
+        alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+        dispatch: (_text: string): AsyncIterable<AgentEvent> => {
+          callCount++
+          const n = callCount
+          return {
+            async *[Symbol.asyncIterator]() {
+              order.push(`start-${n}`)
+              if (n === 1) await gate1
+              order.push(`end-${n}`)
+              yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+            },
+          }
+        },
+        close: async () => {},
+      }))
+
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText: async () => {},
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+
+      const p1 = c.dispatch(inbound('chat-1', 'first'))
+      await new Promise(r => setImmediate(r))  // let dispatch 1 acquire, hit the gate
+      const p2 = c.dispatch(inbound('chat-1', 'second'))
+      await new Promise(r => setImmediate(r))
+      // dispatch 2 must NOT have started its own acquire()/dispatch() yet —
+      // it's queued behind the mutex holding dispatch 1's turn.
+      expect(callCount).toBe(1)
+
+      gate1Resolve()
+      await Promise.all([p1, p2])
+
+      expect(order).toEqual(['start-1', 'end-1', 'start-2', 'end-2'])
+    })
+
+    it('two dispatch() calls on DIFFERENT chatIds run concurrently (interleaved, not serialized)', async () => {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+
+      const entered: string[] = []
+      let gateAResolve: () => void = () => {}
+      const gateA = new Promise<void>(res => { gateAResolve = res })
+      let gateBResolve: () => void = () => {}
+      const gateB = new Promise<void>(res => { gateBResolve = res })
+
+      const acquire = vi.fn(async ({ providerId, chatId }: AcquireRequest) => ({
+        alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+        dispatch: (_text: string): AsyncIterable<AgentEvent> => ({
+          async *[Symbol.asyncIterator]() {
+            entered.push(chatId)
+            await (chatId === 'chat-a' ? gateA : gateB)
+            yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+          },
+        }),
+        close: async () => {},
+      }))
+
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText: async () => {},
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+
+      const pA = c.dispatch(inbound('chat-a', 'a-msg'))
+      const pB = c.dispatch(inbound('chat-b', 'b-msg'))
+      await new Promise(r => setImmediate(r))
+
+      // Both entered before either gate resolved — proves they ran
+      // concurrently rather than one waiting on the other's mutex.
+      expect(entered.sort()).toEqual(['chat-a', 'chat-b'])
+
+      gateBResolve()
+      gateAResolve()
+      await Promise.all([pA, pB])
+    })
+
+    it('exposes runExclusive and dispatchInner on the coordinator', () => {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire: vi.fn() },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+      expect(typeof c.runExclusive).toBe('function')
+      expect(typeof c.dispatchInner).toBe('function')
+    })
+  })
 })
