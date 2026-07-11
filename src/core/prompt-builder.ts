@@ -29,6 +29,16 @@
  */
 import type { ProviderId } from './conversation'
 
+/**
+ * Knowledge plugins the knowledge-orchestration section knows how to explain
+ * (knowledge-orchestration design Task 1). Any plugin name NOT in this list
+ * is silently ignored by `knowledgeOrchestrationSection` — the section only
+ * ever documents sources it has hand-written copy for, so an unrelated
+ * plugin (or a future one this file hasn't been updated for yet) never
+ * triggers the section or produces a blank/garbled bullet.
+ */
+export const KNOWN_KNOWLEDGE_PLUGINS = ['wxgraph', 'wxfacts', 'wxsearch', 'wxmedia'] as const
+
 export interface BuildSystemPromptArgs {
   /** Which provider this session is for. Used to compute peer + delegate tool name. */
   providerId: ProviderId
@@ -132,6 +142,19 @@ export interface BuildSystemPromptArgs {
    * to before this field existed (mirrors `careEnabled`'s contract).
    */
   bubbleReplies?: boolean
+  /**
+   * Names of knowledge-mcp plugins registered for this session (RFC
+   * knowledge-orchestration Task 1) — e.g. `wxgraph`/`wxfacts`/`wxsearch`/
+   * `wxmedia`. When at least one of these is a KNOWN_KNOWLEDGE_PLUGINS
+   * entry, adds the knowledge-orchestration section right after
+   * `memorySection()` so the agent knows memory (its own "看法") composes
+   * with these structured sources rather than substituting for them.
+   * Unknown plugin names are ignored for gating purposes (no known plugin
+   * present ⇒ section omitted). Absent, empty, or all-unknown ⇒ output is
+   * byte-identical to before this field existed (mirrors `careEnabled`'s
+   * contract).
+   */
+  knowledgePlugins?: string[]
 }
 
 /**
@@ -141,6 +164,8 @@ export interface BuildSystemPromptArgs {
  */
 export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
   const { providerId, peerProviderId, companionEnabled, delegateAvailable } = args
+
+  const hasKnownKnowledge = (args.knowledgePlugins ?? []).some(n => (KNOWN_KNOWLEDGE_PLUGINS as readonly string[]).includes(n))
 
   const sections: string[] = [
     baseChannelSection(providerId),
@@ -157,6 +182,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     args.personaCultivate === true ? personaCultivationSection({ personaEmpty: args.personaEmpty === true }) : '',
     args.stickerTags && args.stickerTags.length > 0 ? stickerSection(args.stickerTags) : '',
     memorySection(),
+    hasKnownKnowledge ? knowledgeOrchestrationSection(args.knowledgePlugins!) : '',
     multiModeAwarenessSection(),
     companionEnabled ? companionSection() : '',
   ].filter(s => s.length > 0)
@@ -446,6 +472,41 @@ companion 现在的 persona（小助手 / 陪伴）影响你**怎么读 memory +
 - 不要写"我观察到用户……"这种第三人称报告腔。第一人称："他这周在试验新流程，我感觉他比较在意 X。"
 - 不要追求完美客观——你**被允许**误读、过度解读、漏掉。下次发现错了改就行。
 - 不要在每个回复前都把整个 memory 复述给用户。用户看不见 memory 的存在。`
+}
+
+/**
+ * Knowledge-orchestration section (knowledge-orchestration design Task 1) —
+ * appears when at least one KNOWN_KNOWLEDGE_PLUGINS entry is registered for
+ * this session. Frames memory as the agent's own first-person "看法" and the
+ * knowledge-mcp plugins as structured sources computed from real data, so the
+ * agent learns to compose them (memory + relationship + facts) instead of
+ * leaning on memory alone. Placed right after memorySection() — identity/
+ * memory cluster — before mode/companion mechanics. Renders one bullet per
+ * KNOWN_KNOWLEDGE_PLUGINS entry that is actually present in `pluginNames`,
+ * in KNOWN_KNOWLEDGE_PLUGINS order, so bootstrap can pass whatever plugin set
+ * this session ended up with and only the matching copy shows up.
+ */
+export function knowledgeOrchestrationSection(pluginNames: string[]): string {
+  const present = new Set(pluginNames)
+  const bullets: string[] = []
+  if (present.has('wxgraph')) {
+    bullets.push('- **关系画像**（`contact_profile`/`top_contacts`）：你俩的量化关系——亲密度/最近联系/往来是否平衡。问"我们关系怎么样"用它。')
+  }
+  if (present.has('wxfacts')) {
+    bullets.push('- **结构化事实**（`contact_facts`/`find_facts`）：抽取出的事实、义务、关系（带出处）。问"关于 ta 的具体事实 / ta 欠我什么"用它。')
+  }
+  if (present.has('wxsearch')) {
+    bullets.push('- **消息检索**（`search`）：语义找"那次聊到 X 的消息"。回溯具体对话用它。')
+  }
+  if (present.has('wxmedia')) {
+    bullets.push('- 语音/图片转出的文字也在检索范围内。')
+  }
+
+  return `## 你怎么了解一个人（知识编排）
+
+你对一个人的了解由几层组成——你自己的记忆是你的"看法"（第一人称、可能有偏见）；下面这些是从真实数据算出来的源。**要真正懂一个人，把你的看法 + 关系 + 事实拼起来，别只靠一层。用人名找人（按微信联系人名解析，同名可能对不准）。**
+
+${bullets.join('\n')}`
 }
 
 function multiModeAwarenessSection(): string {

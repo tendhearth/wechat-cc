@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSystemPrompt, bubbleRepliesSection, careSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, daemonSelfHealSection, newRelationshipSection, personaCultivationSection, personaSection, stickerSection } from './prompt-builder'
+import { buildSystemPrompt, bubbleRepliesSection, careSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, daemonSelfHealSection, knowledgeOrchestrationSection, newRelationshipSection, personaCultivationSection, personaSection, stickerSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
   function defaults() {
@@ -464,5 +464,66 @@ describe('core-memory prompt section', () => {
     const withoutKey = buildSystemPrompt(configA)
     const withUndefined = buildSystemPrompt({ ...configA, coreMemory: undefined })
     expect(withUndefined).toBe(withoutKey)
+  })
+})
+
+describe('knowledge-orchestration prompt section', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+
+  it('knowledgeOrchestrationSection() includes the heading + compose framing + name-resolution note', () => {
+    const s = knowledgeOrchestrationSection(['wxgraph'])
+    expect(s).toContain('知识编排')
+    expect(s).toContain('把你的看法 + 关系 + 事实拼起来')
+    expect(s).toContain('用人名找人')
+    expect(s).toContain('同名可能对不准')
+  })
+
+  it('renders only bullets for known plugins that are present: wxgraph+wxsearch includes those two, not facts/media', () => {
+    const s = knowledgeOrchestrationSection(['wxgraph', 'wxsearch'])
+    expect(s).toContain('关系画像')
+    expect(s).toContain('消息检索')
+    expect(s).not.toContain('结构化事实')
+    expect(s).not.toContain('语音/图片转出的文字')
+  })
+
+  it('renders only the facts bullet when only wxfacts is present', () => {
+    const s = knowledgeOrchestrationSection(['wxfacts'])
+    expect(s).toContain('结构化事实')
+    expect(s).not.toContain('关系画像')
+    expect(s).not.toContain('消息检索')
+    expect(s).not.toContain('语音/图片转出的文字')
+  })
+
+  it('buildSystemPrompt includes the section when a known knowledge plugin is present', () => {
+    const p = buildSystemPrompt({ ...base, knowledgePlugins: ['wxgraph'] })
+    expect(p).toContain('知识编排')
+    expect(p).toContain('关系画像')
+  })
+
+  it('buildSystemPrompt is byte-identical whether knowledgePlugins is absent, empty, or all-unknown (section omitted)', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withEmpty = buildSystemPrompt({ ...base, knowledgePlugins: [] })
+    const withUnknown = buildSystemPrompt({ ...base, knowledgePlugins: ['some-unknown-plugin'] })
+    expect(withEmpty).toBe(withoutKey)
+    expect(withUnknown).toBe(withoutKey)
+    expect(withoutKey).not.toContain('知识编排')
+  })
+
+  it('places the knowledge section immediately after the memory section, no other section shifted', () => {
+    const withoutKnowledge = buildSystemPrompt({ ...base })
+    const withKnowledge = buildSystemPrompt({ ...base, knowledgePlugins: ['wxgraph'] })
+
+    const memoryIdx = withKnowledge.indexOf('长期记忆')
+    const knowledgeIdx = withKnowledge.indexOf('知识编排')
+    const multiModeIdx = withKnowledge.indexOf('模式感知')
+    expect(memoryIdx).toBeGreaterThan(-1)
+    expect(knowledgeIdx).toBeGreaterThan(memoryIdx)
+    expect(knowledgeIdx).toBeLessThan(multiModeIdx)
+
+    // Nothing else shifted: withKnowledge is withoutKnowledge with exactly the
+    // knowledge section (+ join separator) spliced in right after memory.
+    const multiModeIdxWithout = withoutKnowledge.indexOf('模式感知')
+    const withoutKnowledgeSpliced = withKnowledge.slice(0, memoryIdx) + withKnowledge.slice(multiModeIdx)
+    expect(withoutKnowledgeSpliced).toBe(withoutKnowledge.slice(0, memoryIdx) + withoutKnowledge.slice(multiModeIdxWithout))
   })
 })
