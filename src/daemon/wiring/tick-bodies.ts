@@ -30,7 +30,7 @@ import { makeLifeStoresReader } from '../life-stores'
 import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
 import { bundledPluginsDir } from '../plugins/paths'
 import { createResilientBridge } from '../companion/ingest/bridge'
-import { runIngestCycle, maxDecryptedMtime } from '../companion/ingest/cycle'
+import { runIngestCycle, maxDecryptedMtime, ingestHasTool } from '../companion/ingest/cycle'
 import selfPkg from '../../../package.json' with { type: 'json' }
 
 /** Per-cycle wxfacts extraction batch cap (rate bound). */
@@ -168,11 +168,30 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     }))
     if (Object.keys(specs).length === 0) return   // no knowledge plugins → nothing to ingest
 
-    // Idle politeness: don't compete with an active conversation. Skip if any
-    // chat received an inbound message within the quiet window.
+    // Don't compete with an active conversation. Two checks per known chat:
+    // (1) authoritative — a turn is actually in-flight on its session (catches
+    // long turns + proactive/converse dispatches that leave no inbound record);
+    // (2) soft — an inbound arrived within the quiet window (give it a breather).
+    // Concurrency matters: a live agent turn already runs its OWN plugin MCP
+    // processes, so ingesting in parallel would open a second set on the same
+    // sqlite (SQLITE_BUSY / lock contention).
     const messagesStore = makeMessagesStore(deps.db)
+    const snapshot = deps.ilink.loadProjects()
+    const alias = snapshot.current && snapshot.projects[snapshot.current] ? snapshot.current : '_default'
     try {
-      for (const chatId of await messagesStore.listChatIds()) {
+      const defaultChatId = loadCompanionConfig(deps.stateDir).default_chat_id
+      const chatIds = new Set<string>(await messagesStore.listChatIds())
+      if (defaultChatId) chatIds.add(defaultChatId)
+      for (const chatId of chatIds) {
+        const mode = deps.boot.coordinator.getMode(chatId)
+        const providerId =
+          mode.kind === 'solo' ? mode.provider
+          : mode.kind === 'primary_tool' ? mode.primary
+          : (mode.participants?.[0] ?? deps.boot.defaultProviderId)
+        if (deps.boot.sessionManager.isInFlight({ alias, providerId, chatId })) {
+          deps.log('INGEST', `skip cycle — session in-flight (chat ${chatId})`)
+          return
+        }
         const ts = await messagesStore.latestInboundTs(chatId)
         if (ts && Date.now() - Date.parse(ts) < INGEST_QUIET_MS) {
           deps.log('INGEST', `skip cycle — chat ${chatId} recently active`)
@@ -189,11 +208,14 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       // (wxsearch/wxmedia model loads) doesn't sink the whole cycle.
       const bridge = await createResilientBridge(specs, { log: (t, m) => deps.log(t, m) })
       try {
-        const hasTool = (t: string) => bridge.tools.some(x => x.name === t)
+        // Gate extraction off when there's no cheap-eval provider — otherwise the
+        // loop would drain real message windows into empty records + advance the
+        // watermark past them (silent loss). See ingestHasTool.
+        const hasTool = ingestHasTool(bridge.tools.map(t => t.name), !!cheapEval)
         const report = await runIngestCycle({
           bridge,
           hasTool,
-          cheapEval: cheapEval ?? (async () => '[]'),   // no cheap provider → deterministic builders only
+          cheapEval: cheapEval ?? (async () => '[]'),   // never invoked when extraction is gated off above
           sourceMaxMtime: () => maxDecryptedMtime(deps.stateDir),
           lastSourceMtime: lastIngestSourceMtime,
           cap: INGEST_BATCH_CAP,

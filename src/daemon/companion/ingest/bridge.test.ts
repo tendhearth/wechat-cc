@@ -36,6 +36,24 @@ describe('createResilientBridge', () => {
     await bridge.close()
   })
 
+  it('closes a client that connects but then fails listTools (no orphaned process)', async () => {
+    const closed = vi.fn(async () => {})
+    const bridge = await createResilientBridge(
+      { flaky: { command: 'x', args: [] } },
+      {
+        makeClient: async () => ({
+          // connected (process spawned) but the tools handshake fails
+          listTools: async () => { throw new Error('Connection closed') },
+          callTool: async () => ({ content: [] }),
+          close: closed,
+        }),
+      },
+    )
+    expect(bridge.tools).toEqual([])       // nothing usable
+    expect(closed).toHaveBeenCalledTimes(1) // but the spawned client WAS closed
+    await bridge.close()
+  })
+
   it('returns an empty bridge (no throw) when every plugin fails', async () => {
     const bridge = await createResilientBridge(
       { a: { command: 'x', args: [] }, b: { command: 'y', args: [] } },

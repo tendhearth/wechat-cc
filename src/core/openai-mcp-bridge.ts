@@ -52,19 +52,28 @@ export async function createMcpToolBridge(
   const clients: McpClientLike[] = []
   const tools: ToolSpec[] = []
 
-  for (const [serverName, spec] of Object.entries(specs)) {
-    const client = await make(spec)
-    clients.push(client)
-    const { tools: mcpTools } = await client.listTools()
-    for (const t of mcpTools) {
-      owners.set(t.name, client)
-      toolServer.set(t.name, serverName) // last-server-wins on duplicate tool names
-      tools.push({
-        name: t.name,
-        description: t.description ?? t.name,
-        parameters: (t.inputSchema as Record<string, unknown>) ?? { ...EMPTY_SCHEMA },
-      })
+  try {
+    for (const [serverName, spec] of Object.entries(specs)) {
+      const client = await make(spec)
+      clients.push(client)
+      const { tools: mcpTools } = await client.listTools()
+      for (const t of mcpTools) {
+        owners.set(t.name, client)
+        toolServer.set(t.name, serverName) // last-server-wins on duplicate tool names
+        tools.push({
+          name: t.name,
+          description: t.description ?? t.name,
+          parameters: (t.inputSchema as Record<string, unknown>) ?? { ...EMPTY_SCHEMA },
+        })
+      }
     }
+  } catch (err) {
+    // A spec whose client connects (process spawned) but then fails listTools
+    // would otherwise leave that child process orphaned — the McpToolBridge
+    // (which owns .close()) is never returned. Close everything connected so
+    // far before rethrowing.
+    await Promise.all(clients.map(c => c.close().catch(() => {})))
+    throw err
   }
 
   return {

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runIngestCycle, maxDecryptedMtime, type CycleDeps } from './cycle'
+import { runIngestCycle, maxDecryptedMtime, ingestHasTool, type CycleDeps } from './cycle'
 
 const DONE = JSON.stringify({ done: true })
 const BATCH = JSON.stringify({
@@ -78,6 +78,28 @@ describe('runIngestCycle', () => {
     const r = await runIngestCycle(deps({ tools: ['extraction_batch'], bridge }))
     expect(r.decrypted).toBe(false)   // no overview tool
     expect(r.batches).toBe(0)         // immediately done
+  })
+
+  it('does NOT touch extraction_batch when it is gated off (simulates no cheapEval)', async () => {
+    const seen: string[] = []
+    const bridge = { call: vi.fn(async (t: string) => { seen.push(t); return '{}' }) }
+    // ingestHasTool(..., canExtract=false) hides extraction_batch → same as it being absent here
+    const r = await runIngestCycle(deps({ tools: ['overview'], bridge, sourceMaxMtime: () => 1, lastSourceMtime: 1 }))
+    expect(seen).not.toContain('extraction_batch')   // never pulled a window
+    expect(r.batches).toBe(0)
+  })
+})
+
+describe('ingestHasTool', () => {
+  it('hides extraction_batch when canExtract is false, but not other tools', () => {
+    const h = ingestHasTool(['overview', 'rebuild', 'extraction_batch'], false)
+    expect(h('extraction_batch')).toBe(false)
+    expect(h('overview')).toBe(true)
+    expect(h('rebuild')).toBe(true)
+  })
+  it('exposes extraction_batch when canExtract is true and the tool is present', () => {
+    expect(ingestHasTool(['extraction_batch'], true)('extraction_batch')).toBe(true)
+    expect(ingestHasTool([], true)('extraction_batch')).toBe(false)   // absent tool still false
   })
 })
 

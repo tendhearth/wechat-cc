@@ -58,6 +58,18 @@ export function maxDecryptedMtime(stateDir: string): number {
   return max
 }
 
+/**
+ * Build the cycle's `hasTool` predicate. Gates `extraction_batch` off when the
+ * LLM is unavailable (`canExtract=false`) — otherwise the extraction loop would
+ * pull real message windows, feed them to a stub, record `[]`, and PERMANENTLY
+ * advance the watermark past un-extracted messages (silent data loss). With the
+ * gate, extraction is simply skipped until a cheap-eval provider exists.
+ */
+export function ingestHasTool(toolNames: string[], canExtract: boolean): (t: string) => boolean {
+  const set = new Set(toolNames)
+  return (t) => (t === 'extraction_batch' && !canExtract) ? false : set.has(t)
+}
+
 async function tryBuild(d: CycleDeps, tool: string): Promise<boolean> {
   if (!d.hasTool(tool)) return false
   try {
