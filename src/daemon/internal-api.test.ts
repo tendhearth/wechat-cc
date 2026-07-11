@@ -1608,6 +1608,32 @@ describe('internal-api', () => {
       })
       expect(resp.status).toBe(200)
     })
+
+    it('400 text too long when text exceeds 5000 chars', async () => {
+      const { port, token } = await startWithSynth(async () => ({ audio: Buffer.from('x'), mime: 'audio/wav' }))
+      const longText = 'x'.repeat(5001)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/speak`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: longText }),
+      })
+      expect(resp.status).toBe(400)
+      expect(await resp.json()).toEqual({ error: 'text too long' })
+    })
+
+    it('happy path still works with 5000 chars exactly', async () => {
+      const synthesizeSpeech = vi.fn(async () => ({ audio: Buffer.from([1, 2, 3]), mime: 'audio/wav' }))
+      const { port, token } = await startWithSynth(synthesizeSpeech)
+      const text = 'x'.repeat(5000)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/speak`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toMatchObject({ ok: true, mime: 'audio/wav' })
+      expect(synthesizeSpeech).toHaveBeenCalledWith(text)
+    })
   })
 
   // ─── chat prefs (set_chat_pref tool backend) ──────────────────────────

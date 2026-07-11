@@ -521,6 +521,9 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       if (typeof text !== 'string' || text.trim().length === 0) {
         return { status: 400, body: { error: 'text required' } }
       }
+      if (text.length > 5000) {
+        return { status: 400, body: { error: 'text too long' } }
+      }
       try {
         const { audio, mime } = await deps.voice.synthesizeSpeech(text)
         return { status: 200, body: { ok: true, audio_b64: audio.toString('base64'), mime } }
