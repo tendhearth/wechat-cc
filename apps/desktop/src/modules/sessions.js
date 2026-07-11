@@ -851,7 +851,7 @@ export function turnHtmlCompact(turn, opts = {}) {
       avatarText: avatarInitial(meta.user),
       avatarColor: avatarColor(meta.user || ''),
       avatarSrc: opts.contactAvatarSrc || null,
-      avatarKey: opts.contactKey || null,
+      avatarKey: null,
     }
     const out = []
     // Daemon stamps "(non-text message)" as the text body when an
@@ -882,7 +882,7 @@ export function turnHtmlCompact(turn, opts = {}) {
         avatarText: 'cc',
         avatarClass: 'wechat-avatar-cc',
         avatarSrc: opts.claudeAvatarSrc || null,
-        avatarKey: 'claude',
+        avatarKey: null,
         text: r,
       }))
       .join('')
@@ -943,17 +943,14 @@ function phoneFrameHtml({ contactName, chatContent }) {
  * @returns {string}
  */
 function avatarHtml({ avatarText, avatarColor: bg, avatarClass, avatarSrc, avatarKey }) {
-  // `avatarKey` is what the click handler uses to know which avatar to
-  // edit ("claude" or a chat_id). Passed as data-avatar-key.
   const cls = avatarClass ? ` ${escapeHtml(avatarClass)}` : ''
-  const dataKey = avatarKey ? ` data-avatar-key="${escapeHtml(avatarKey)}"` : ''
   if (avatarSrc) {
-    return `<div class="wechat-avatar wechat-avatar-image${cls}"${dataKey} title="点击修改头像">` +
+    return `<div class="wechat-avatar wechat-avatar-image${cls}">` +
       `<img src="${escapeHtml(avatarSrc)}" alt="avatar" />` +
       `</div>`
   }
   const style = bg ? ` style="background:${escapeHtml(bg)}"` : ''
-  return `<div class="wechat-avatar${cls}"${style}${dataKey} title="点击修改头像">${escapeHtml(avatarText)}</div>`
+  return `<div class="wechat-avatar${cls}"${style}>${escapeHtml(avatarText)}</div>`
 }
 
 /**

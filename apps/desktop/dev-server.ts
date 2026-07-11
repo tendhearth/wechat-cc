@@ -62,13 +62,6 @@ function scheduleReload(filename: string | null) {
   }, 50)
 }
 
-watch(ROOT, { recursive: true }, (_event, filename) => {
-  if (!filename) return
-  // Ignore editor swap files, etc.
-  if (/(^|\/)\..+\.sw[a-z]$|~$/.test(filename)) return
-  scheduleReload(filename)
-})
-
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js':   'application/javascript; charset=utf-8',
@@ -89,7 +82,7 @@ const MIME: Record<string, string> = {
   '.wasm': 'application/wasm',
 }
 
-Bun.serve({
+const server = Bun.serve({
   hostname: '127.0.0.1',
   port: PORT,
   async fetch(req) {
@@ -169,6 +162,13 @@ Bun.serve({
   },
 })
 
+const watcher = watch(ROOT, { recursive: true }, (_event, filename) => {
+  if (!filename) return
+  // Ignore editor swap files, etc.
+  if (/(^|\/)\..+\.sw[a-z]$|~$/.test(filename)) return
+  scheduleReload(filename)
+})
+
 // Banner on stderr so tauri's beforeDevCommand stdout-parsers don't see it.
 console.error(`[dev-server] serving ${ROOT}`)
 console.error(`[dev-server] listening on http://127.0.0.1:${PORT}`)
@@ -177,5 +177,9 @@ console.error(`[dev-server] watching for file changes; browser reloads on save`)
 // Clean exit when tauri's beforeDevCommand parent goes away, or on ctrl-C.
 // Without this, the port can stay bound for a few seconds on the next dev run.
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(sig, () => process.exit(0))
+  process.on(sig, () => {
+    watcher.close()
+    server.stop()
+    process.exit(0)
+  })
 }

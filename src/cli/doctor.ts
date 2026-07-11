@@ -10,6 +10,8 @@ import { buildServicePlan, isServiceInstalled, type ServiceKind } from './servic
 import { compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from '../lib/runtime-info'
 import { openWechatDb } from '../lib/db'
 import { makeConversationStore } from '../core/conversation-store'
+import { makeSessionStateStore } from '../daemon/session-state'
+import { makeHeartbeatStore } from '../daemon/connection-heartbeat'
 
 export interface BoundAccount {
   id: string
@@ -66,11 +68,17 @@ export interface DoctorDeps {
    * a real env+resolve check in defaultDoctorDeps.
    */
   probeCursor?: () => { apiKeySet: boolean; sdkInstalled: boolean }
+  probeGemini?: () => { apiKeySet: boolean; sdkInstalled: boolean }
   readAccounts: () => BoundAccount[]
   readAccess: () => AccessSnapshot
   readAgentConfig: () => AgentConfig
   readUserNames: () => Record<string, string>
   readExpiredBots: () => ExpiredBotEntry[]
+  /**
+   * Returns the last successful getUpdates timestamp for each bound account,
+   * keyed by account.id. Null for accounts that have never had a successful poll.
+   */
+  readHeartbeats?: () => Record<string, string | null>
   daemon: () => DaemonSnapshot
   service: () => ServiceSnapshot
   // 'compiled-bundle' = the bun-compiled wechat-cc-cli sidecar inside the
@@ -128,6 +136,10 @@ export interface DoctorReport {
     // derived `ok` mirrors that AND so doctor's gating aligns with what the
     // boot path will actually do.
     cursor: DoctorCheckBase & { apiKeySet: boolean; sdkInstalled: boolean }
+    // Gemini also has no PATH binary — GEMINI_API_KEY (or GOOGLE_API_KEY) +
+    // @google/genai SDK are the two install signals. Both must be present for
+    // bootstrap to register the gemini provider.
+    gemini: DoctorCheckBase & { apiKeySet: boolean; sdkInstalled: boolean }
     accounts: DoctorCheckBase & { count: number; items: BoundAccount[] }
     access: DoctorCheckBase & { dmPolicy: string; allowFromCount: number; admins?: string[] }
     provider: DoctorCheckBase & { provider: AgentConfig['provider']; model?: string; binaryPath: string | null }
@@ -136,6 +148,13 @@ export interface DoctorReport {
   }
   userNames: Record<string, string>
   expiredBots: ExpiredBotEntry[]
+  /**
+   * Last successful ilink getUpdates timestamp per account, keyed by account.id.
+   * Null for accounts that have never had a successful poll since the daemon started
+   * recording (requires daemon restart after v14 migration for first data).
+   * Used by the dashboard to show "上次活动 X 前" on the connected card.
+   */
+  heartbeats: Record<string, string | null>
   nextActions: string[]
 }
 
@@ -150,22 +169,26 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   const claudeVersion = claude ? probe(claude) : null
   const codexVersion = codex ? probe(codex) : null
   const cursorProbe = (deps.probeCursor ?? defaultProbeCursor)()
+  const geminiProbe = (deps.probeGemini ?? defaultProbeGemini)()
   const accounts = deps.readAccounts()
   const access = deps.readAccess()
   const agent = deps.readAgentConfig()
   const daemon = deps.daemon()
   const service = deps.service()
-  // Cursor has no PATH binary — providerBinary stays null for cursor and the
-  // provider check below treats SDK+key presence as the "binary" equivalent.
+  // Cursor and Gemini have no PATH binary — providerBinary stays null for
+  // them and the provider check below treats SDK+key presence as the
+  // "binary" equivalent.
   const providerBinary = agent.provider === 'codex'
     ? codex
-    : agent.provider === 'cursor'
+    : (agent.provider === 'cursor' || agent.provider === 'gemini')
       ? null
       : claude
   const claudeIsActive = agent.provider === 'claude'
   const codexIsActive = agent.provider === 'codex'
   const cursorIsActive = agent.provider === 'cursor'
+  const geminiIsActive = agent.provider === 'gemini'
   const cursorOk = cursorProbe.apiKeySet && cursorProbe.sdkInstalled
+  const geminiOk = geminiProbe.apiKeySet && geminiProbe.sdkInstalled
   // WSL is a Windows-only concept; checking findOnPath('wsl') on non-win32
   // would risk false positives (some Linux distros ship `wsl` as an unrelated
   // helper). Gate strictly on platform.
@@ -182,10 +205,12 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   // consumers don't know about `install_cursor`, so reuse the same hook
   // name ('install_cursor') only when cursor is selected; claude/codex
   // continue to emit their existing action strings unchanged.
-  if (!providerBinary && agent.provider !== 'cursor') {
+  if (!providerBinary && agent.provider !== 'cursor' && agent.provider !== 'gemini') {
     nextActions.push(agent.provider === 'codex' ? 'install_codex' : 'install_claude')
   } else if (agent.provider === 'cursor' && !cursorOk) {
     nextActions.push('install_cursor')
+  } else if (agent.provider === 'gemini' && !geminiOk) {
+    nextActions.push('install_gemini')
   }
   if (accounts.length === 0) nextActions.push('run_wechat_setup')
   if (accounts.length > 0 && access.allowFrom.length === 0) nextActions.push('fix_access_allowlist')
@@ -247,6 +272,21 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
           : { command: 'bun add @cursor/sdk' },
       }),
     },
+    gemini: {
+      ok: geminiOk,
+      apiKeySet: geminiProbe.apiKeySet,
+      sdkInstalled: geminiProbe.sdkInstalled,
+      ...(geminiOk ? {} : {
+        severity: (geminiIsActive ? 'hard' : 'soft') as Severity,
+        // Fix hint picks the missing leg — env var or SDK install. When both
+        // are missing we surface the env var first (operators reading the
+        // doctor output left-to-right will fix that, then re-run to see
+        // the SDK leg).
+        fix: !geminiProbe.apiKeySet
+          ? { action: 'export GEMINI_API_KEY=<your-key>  (or GOOGLE_API_KEY)' }
+          : { command: 'bun add @google/genai' },
+      }),
+    },
     accounts: {
       ok: accounts.length > 0,
       count: accounts.length,
@@ -267,14 +307,14 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
       }),
     },
     provider: {
-      // Cursor's "backend ready" check is SDK+key, not a PATH binary —
-      // fall through to cursorOk when the active provider is cursor so
-      // the gate aligns with what bootstrap will register at boot.
-      ok: cursorIsActive ? cursorOk : !!providerBinary,
+      // Cursor and Gemini's "backend ready" check is SDK+key, not a PATH
+      // binary — fall through to their respective Ok when the active provider
+      // is cursor/gemini so the gate aligns with what bootstrap will register.
+      ok: cursorIsActive ? cursorOk : geminiIsActive ? geminiOk : !!providerBinary,
       provider: agent.provider,
       ...(agent.model ? { model: agent.model } : {}),
       binaryPath: providerBinary,
-      ...((cursorIsActive ? cursorOk : !!providerBinary) ? {} : {
+      ...((cursorIsActive ? cursorOk : geminiIsActive ? geminiOk : !!providerBinary) ? {} : {
         severity: 'hard' as const,
         fix: agent.provider === 'codex'
           ? { link: 'https://github.com/openai/codex#installation' }
@@ -282,7 +322,11 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
             ? (!cursorProbe.apiKeySet
                 ? { action: 'export CURSOR_API_KEY=<your-key>' }
                 : { command: 'bun add @cursor/sdk' })
-            : { command: 'npm install -g @anthropic-ai/claude-code', link: 'https://docs.claude.com/en/docs/claude-code/install' },
+            : agent.provider === 'gemini'
+              ? (!geminiProbe.apiKeySet
+                  ? { action: 'export GEMINI_API_KEY=<your-key>  (or GOOGLE_API_KEY)' }
+                  : { command: 'bun add @google/genai' })
+              : { command: 'npm install -g @anthropic-ai/claude-code', link: 'https://docs.claude.com/en/docs/claude-code/install' },
       }),
     },
     daemon,
@@ -305,6 +349,7 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
     checks,
     userNames: deps.readUserNames(),
     expiredBots: deps.readExpiredBots(),
+    heartbeats: deps.readHeartbeats ? deps.readHeartbeats() : {},
     nextActions,
   }
 }
@@ -366,17 +411,36 @@ export function defaultProbeCursor(): { apiKeySet: boolean; sdkInstalled: boolea
   return { apiKeySet, sdkInstalled }
 }
 
+/**
+ * Real-environment gemini probe used by `defaultDoctorDeps`. Reports whether
+ * GEMINI_API_KEY (or GOOGLE_API_KEY) is exported and whether `@google/genai`
+ * resolves from node_modules — the two conditions bootstrap checks before
+ * registering the gemini provider. Uses `createRequire` so resolution works
+ * both under `bun cli.ts` (ESM) and the compiled-bundle sidecar.
+ */
+export function defaultProbeGemini(): { apiKeySet: boolean; sdkInstalled: boolean } {
+  const apiKeySet = !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)
+  let sdkInstalled = false
+  try {
+    createRequire(import.meta.url).resolve('@google/genai')
+    sdkInstalled = true
+  } catch { /* @google/genai not installed — operators can `bun add @google/genai` */ }
+  return { apiKeySet, sdkInstalled }
+}
+
 export function defaultDoctorDeps(stateDir = STATE_DIR): DoctorDeps {
   return {
     stateDir,
     findOnPath,
     probeBinaryVersion,
     probeCursor: defaultProbeCursor,
+    probeGemini: defaultProbeGemini,
     readAccounts: () => readAccounts(stateDir),
     readAccess: () => readAccess(stateDir),
     readAgentConfig: () => loadAgentConfig(stateDir),
     readUserNames: () => readUserNames(stateDir),
     readExpiredBots: () => readExpiredBots(stateDir),
+    readHeartbeats: () => readHeartbeats(stateDir),
     daemon: () => readDaemon(stateDir),
     service: () => defaultServiceSnapshot(stateDir),
     runtime: isCompiledBundle() ? 'compiled-bundle' : 'source',
@@ -403,24 +467,34 @@ export function defaultServiceSnapshot(stateDir: string): ServiceSnapshot {
 }
 
 export function readExpiredBots(stateDir: string): ExpiredBotEntry[] {
+  // PR7 migrated session state from session-state.json to the SQLite
+  // session_state table (the JSON is now session-state.json.migrated).
+  // Read from SQLite via SessionStateStore — the same store the passive
+  // poll loop (transport.ts errcode=-14) and the connection probe write to.
+  let db: ReturnType<typeof openWechatDb> | undefined
   try {
-    const parsed = JSON.parse(readFileSync(join(stateDir, 'session-state.json'), 'utf8')) as {
-      bots?: Record<string, { status?: string; first_seen_expired_at?: string; last_reason?: string }>
-    }
-    if (!parsed.bots) return []
-    const out: ExpiredBotEntry[] = []
-    for (const [botId, entry] of Object.entries(parsed.bots)) {
-      if (entry?.status !== 'expired' || typeof entry.first_seen_expired_at !== 'string') continue
-      out.push({
-        botId,
-        firstSeenExpiredAt: entry.first_seen_expired_at,
-        ...(typeof entry.last_reason === 'string' ? { lastReason: entry.last_reason } : {}),
-      })
-    }
-    out.sort((a, b) => a.firstSeenExpiredAt.localeCompare(b.firstSeenExpiredAt))
-    return out
+    // Only report expiry for currently-bound accounts. Re-scanning supersedes
+    // the old account dir (renamed `.superseded.`) but leaves its session_state
+    // row behind — an orphan. Likewise `account remove` may race the cleanup.
+    // An orphan must NOT inflate the dashboard's expiredCount, or the hero
+    // stays `taken_over` even though the live account is connected. Mirrors
+    // readAccounts/readHeartbeats, which already skip superseded dirs.
+    const liveIds = new Set(readAccounts(stateDir).map(a => a.id))
+    db = openWechatDb(stateDir)
+    const rows = makeSessionStateStore(db).listExpired()
+    return rows.filter(r => liveIds.has(r.id)).map(r => ({
+      // r.id is the account dir id (account.id) — the dashboard's
+      // expiredById lookup uses item.id (=account.id) as the key, so
+      // botId MUST carry account.id here (not the @im.bot botId field).
+      botId: r.id,
+      firstSeenExpiredAt: r.first_seen_expired_at,
+      ...(r.last_reason ? { lastReason: r.last_reason } : {}),
+    }))
+    // listExpired() already returns rows ORDER BY first_seen_expired_at ASC
   } catch {
     return []
+  } finally {
+    try { db?.close() } catch { /* best-effort */ }
   }
 }
 
@@ -438,6 +512,30 @@ export function readUserNames(stateDir: string): Record<string, string> {
     for (const chatId of Object.keys(store.all())) {
       const id = store.getIdentity(chatId)
       if (id?.last_user_name) out[chatId] = id.last_user_name
+    }
+    return out
+  } catch {
+    return {}
+  } finally {
+    try { db?.close() } catch { /* best-effort */ }
+  }
+}
+
+/**
+ * Read the last successful getUpdates timestamp for each bound account from
+ * the SQLite db. Opens and CLOSES the db (Windows EBUSY: daemon is the writer,
+ * CLI path must close immediately after reading). Returns {} on any error.
+ */
+export function readHeartbeats(stateDir: string): Record<string, string | null> {
+  let db: ReturnType<typeof openWechatDb> | undefined
+  try {
+    const accounts = readAccounts(stateDir)
+    if (accounts.length === 0) return {}
+    db = openWechatDb(stateDir)
+    const store = makeHeartbeatStore(db)
+    const out: Record<string, string | null> = {}
+    for (const account of accounts) {
+      out[account.id] = store.lastOk(account.id)
     }
     return out
   } catch {
@@ -541,6 +639,7 @@ export function printDoctor(report: DoctorReport): void {
   console.log(`claude: ${fmtWithVersion(report.checks.claude)}`)
   console.log(`codex: ${fmtWithVersion(report.checks.codex)}`)
   console.log(`cursor: ${fmtCursor(report.checks.cursor)}`)
+  console.log(`gemini: ${fmtCursor(report.checks.gemini)}`)
   console.log(`provider: ${report.checks.provider.provider}${report.checks.provider.model ? ` (${report.checks.provider.model})` : ''}`)
   console.log(`accounts: ${report.checks.accounts.count}`)
   console.log(`access: ${report.checks.access.dmPolicy}, allowed=${report.checks.access.allowFromCount}`)

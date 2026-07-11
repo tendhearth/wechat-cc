@@ -105,12 +105,12 @@ export async function ilinkPost(baseUrl: string, endpoint: string, body: object,
 
 // ── API calls ─────────────────────────────────────────────────────────────
 
-export async function ilinkGetUpdates(baseUrl: string, token: string, buf: string): Promise<GetUpdatesResp> {
+export async function ilinkGetUpdates(baseUrl: string, token: string, buf: string, timeoutMs: number = LONG_POLL_TIMEOUT_MS): Promise<GetUpdatesResp> {
   try {
     const raw = await ilinkPost(baseUrl, 'ilink/bot/getupdates', {
       get_updates_buf: buf,
       base_info: ILINK_BASE_INFO,
-    }, token, LONG_POLL_TIMEOUT_MS)
+    }, token, timeoutMs)
     return JSON.parse(raw) as GetUpdatesResp
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {

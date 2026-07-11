@@ -41,7 +41,7 @@
             <div class="launch-grid">
               <div class="launch-hero">
                 <div class="launch-illus launch-illus-missing" aria-hidden="true">
-                  <img src="./assets/onboarding-missing.svg" alt="" />
+                  <img src="./assets/onboarding-missing.png" alt="" />
                 </div>
                 <h2>还差一步就能见面了</h2>
                 <p>还没检测到 Claude Code 或 Codex，安装任意一个就能继续。</p>
@@ -120,7 +120,7 @@
             <div class="launch-grid">
               <div class="launch-hero">
                 <div class="launch-illus launch-illus-ready" aria-hidden="true">
-                  <img src="./assets/onboarding-success.svg" alt="" />
+                  <img src="./assets/onboarding-success.png" alt="" />
                 </div>
                 <h2>环境检测成功</h2>
                 <p>一切准备就绪，开启你的体验之旅吧！</p>
@@ -374,11 +374,11 @@
             <div class="moment-body">
               <section class="moment-ai" id="hero-card" aria-live="polite">
                 <div class="ai-orbit-visual" aria-hidden="true">
-                  <img class="moment-illustration moment-illustration-online" src="./assets/moment-ai-online.png" alt="" />
+                  <img class="moment-illustration moment-illustration-online" src="./assets/moment-cc-companion.png" alt="" />
                   <img class="moment-illustration moment-illustration-offline" src="./assets/moment-ai-offline.png" alt="" />
                 </div>
                 <h1 id="hero-headline">AI 正在陪伴中</h1>
-                <p id="hero-meta">一切正常，连接稳定</p>
+                <p id="hero-meta">连接正常</p>
                 <div class="moment-actions">
                   <span class="pending" id="dash-pending"></span>
                   <button id="dash-stop" class="moment-connect-btn">
@@ -389,19 +389,12 @@
                     <span class="ic" data-hg-icon="refresh"></span>
                     重新连接
                   </button>
+                  <button id="dash-view-details" class="moment-reconnect-details" type="button" hidden>
+                    查看详情
+                  </button>
                   <button id="dash-refresh" class="btn ghost" hidden>刷新</button>
-                </div>
-                <!-- Reconnect-diagnose card. Hidden by default; shown by
-                     renderDiagnoseCard() in dashboard.js after the user
-                     clicks "重新连接" and a non-0 diagnosis code fires. -->
-                <div id="reconnect-diagnose-card" hidden>
-                  <h3 id="rdc-title"></h3>
-                  <p id="rdc-hint"></p>
-                  <div id="rdc-fix" hidden></div>
-                  <div class="rdc-footer">
-                    <button id="rdc-primary" class="rdc-btn-primary"></button>
-                    <a id="rdc-secondary" href="#" hidden></a>
-                  </div>
+                  <button id="dash-test-conn" class="btn ghost">测试本机连接</button>
+                  <button id="dash-rebind" class="btn" hidden>重新扫码绑定</button>
                 </div>
               </section>
 
@@ -449,7 +442,6 @@
                 <span class="meta" id="memory-meta">—</span>
                 <span class="chev">▾</span>
               </button>
-
               <div id="memory-profile-content">
                 <p class="empty-state">正在整理 CC 眼中的你…</p>
               </div>
@@ -461,6 +453,11 @@
                     <span class="ic" data-hg-icon="star" data-hg-size="16"></span>
                     重新整理
                   </button>
+                  <button id="memory-profile-generate-btn" class="btn" title="根据长期记忆刷新用户画像">
+                    <span class="ic" data-hg-icon="refresh" data-hg-size="16"></span>
+                    刷新画像
+                  </button>
+                  <span id="memory-profile-status" class="memory-profile-status">检查中</span>
                   <button id="memory-refresh" class="btn">
                     <span class="ic" data-hg-icon="refresh" data-hg-size="16"></span>
                     刷新

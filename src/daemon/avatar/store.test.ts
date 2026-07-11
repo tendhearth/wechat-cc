@@ -6,6 +6,7 @@ import { avatarPath, avatarInfo, setAvatar, removeAvatar } from './store'
 
 // 1×1 transparent PNG, base64
 const TINY_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAUAAeImBZsAAAAASUVORK5CYII='
+const TINY_JPG_BASE64 = '/9j/4AAQSkZJRg=='
 
 describe('avatar store', () => {
   let stateDir: string
@@ -57,9 +58,15 @@ describe('avatar store', () => {
       expect(avatarInfo(stateDir, 'claude').exists).toBe(true)
     })
 
-    it('rejects non-PNG bytes', () => {
-      const jpgBase64 = '/9j/4AAQSkZJRg=='
-      expect(() => setAvatar(stateDir, 'claude', jpgBase64)).toThrow(/PNG/)
+    it('accepts JPEG bytes for automatically synced WeChat avatars', () => {
+      const result = setAvatar(stateDir, 'claude', TINY_JPG_BASE64)
+      expect(result.path).toMatch(/_claude\.jpg$/)
+      expect(avatarInfo(stateDir, 'claude')).toEqual({ exists: true, path: result.path })
+    })
+
+    it('rejects unsupported image bytes', () => {
+      const badBase64 = Buffer.from('not-an-image').toString('base64')
+      expect(() => setAvatar(stateDir, 'claude', badBase64)).toThrow(/supported image/)
     })
 
     it('rejects empty input', () => {

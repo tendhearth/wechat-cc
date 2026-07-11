@@ -59,6 +59,7 @@ describe('citty migrated commands', () => {
       'agent',
       'avatar',
       'companion',
+      'connection',
       'conversations',
       'daemon',
       'demo',
@@ -547,5 +548,38 @@ describe('citty migrated commands', () => {
     const r = await runWithStub(['update'], 'update')
     expect(r?.args.check).toBeFalsy()
     expect(r?.args.json).toBeFalsy()
+  })
+
+  // ── connection probe ─────────────────────────────────────────────────────
+
+  it('connection probe parses --json', async () => {
+    const r = await runWithNestedStub(
+      ['connection', 'probe', '--json'],
+      ['connection', 'probe'],
+    )
+    expect(r?.args.json).toBe(true)
+  })
+
+  it('connection probe defaults --json to falsy', async () => {
+    const r = await runWithNestedStub(
+      ['connection', 'probe'],
+      ['connection', 'probe'],
+    )
+    expect(r?.args.json).toBeFalsy()
+  })
+})
+
+describe('connection probe CLI — integration (empty state dir)', () => {
+  it('prints a JSON envelope with an accounts array when state dir is empty', () => {
+    const { spawnSync } = require('node:child_process')
+    const r = spawnSync('bun', ['cli.ts', 'connection', 'probe', '--json'], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: { ...process.env, WECHAT_STATE_DIR: '/tmp/wechat-cc-probe-empty' },
+    })
+    expect(r.status).toBe(0)
+    const out = JSON.parse(r.stdout)
+    expect(Array.isArray(out.accounts)).toBe(true)
+    expect(out.accounts).toHaveLength(0)
   })
 })

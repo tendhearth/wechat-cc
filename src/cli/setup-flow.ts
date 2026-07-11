@@ -34,6 +34,7 @@ export type SetupPollResult =
   | { status: 'confirmed'; accountId: string; userId: string; scenario: Scenario }
 
 export type FetchText = (baseUrl: string, endpoint: string, timeoutMs?: number) => Promise<string>
+export type FetchBinary = (url: string, timeoutMs?: number) => Promise<Buffer>
 
 export async function requestSetupQrCode(opts: {
   fetchText?: FetchText
@@ -115,7 +116,15 @@ export async function pollSetupQrStatus(opts: {
     baseurl?: string
     ilink_user_id?: string
     redirect_host?: string
-  }
+    avatar?: string
+    avatar_url?: string
+    avatarUrl?: string
+    headimg?: string
+    headimgurl?: string
+    head_img_url?: string
+    user_info?: Record<string, unknown>
+    userInfo?: Record<string, unknown>
+  } & Record<string, unknown>
   try {
     status = JSON.parse(statusRaw)
   } catch {
@@ -134,6 +143,11 @@ export async function pollSetupQrStatus(opts: {
       status: { ...status, status: 'confirmed' },
       ...(opts.isExpired ? { isExpired: opts.isExpired } : {}),
     })
+    await persistConfirmedAvatar({
+      stateDir: opts.stateDir,
+      userId: saved.userId,
+      status,
+    })
     return { status: 'confirmed', accountId: saved.accountId, userId: saved.userId, scenario: saved.scenario }
   }
   return { status: status.status }
@@ -145,6 +159,79 @@ export interface ConfirmedSetupStatus {
   ilink_bot_id?: string
   baseurl?: string
   ilink_user_id?: string
+  avatar?: string
+  avatar_url?: string
+  avatarUrl?: string
+  headimg?: string
+  headimgurl?: string
+  head_img_url?: string
+  user_info?: Record<string, unknown>
+  userInfo?: Record<string, unknown>
+}
+
+const AVATAR_FIELD_NAMES = new Set([
+  'avatar',
+  'avatar_url',
+  'avatarUrl',
+  'headimg',
+  'headimgurl',
+  'head_img_url',
+  'headImgUrl',
+])
+
+function extractAvatarCandidate(obj: unknown, depth = 0): string | null {
+  if (!obj || typeof obj !== 'object' || depth > 2) return null
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    if (AVATAR_FIELD_NAMES.has(key) && typeof value === 'string' && value.trim()) {
+      return value.trim()
+    }
+    if (value && typeof value === 'object') {
+      const nested = extractAvatarCandidate(value, depth + 1)
+      if (nested) return nested
+    }
+  }
+  return null
+}
+
+async function defaultFetchBinary(url: string, timeoutMs = 10_000): Promise<Buffer> {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, { signal: ctrl.signal })
+    if (!res.ok) throw new Error(`avatar ${res.status}: ${await res.text()}`)
+    const buf = Buffer.from(await res.arrayBuffer())
+    return buf
+  } finally {
+    ctrl.abort()
+    clearTimeout(t)
+  }
+}
+
+export async function persistConfirmedAvatar(opts: {
+  stateDir?: string
+  userId: string
+  status: Record<string, unknown>
+  fetchBinary?: FetchBinary
+}): Promise<{ saved: boolean; reason?: string; path?: string }> {
+  if (!opts.userId) return { saved: false, reason: 'missing_user_id' }
+  const candidate = extractAvatarCandidate(opts.status)
+  if (!candidate) return { saved: false, reason: 'missing_avatar' }
+
+  try {
+    const stateDir = opts.stateDir ?? join(homedir(), '.claude', 'channels', 'wechat')
+    const { setAvatar } = await import('../daemon/avatar/store')
+    if (/^https?:\/\//i.test(candidate)) {
+      const fetchBinary = opts.fetchBinary ?? defaultFetchBinary
+      const buf = await fetchBinary(candidate)
+      const result = setAvatar(stateDir, opts.userId, buf.toString('base64'))
+      return { saved: true, path: result.path }
+    }
+    const result = setAvatar(stateDir, opts.userId, candidate)
+    return { saved: true, path: result.path }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    return { saved: false, reason }
+  }
 }
 
 export function persistConfirmedAccount(opts: {
