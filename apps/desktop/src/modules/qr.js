@@ -42,8 +42,8 @@ export async function refreshQr(deps, state) {
   const rawEl = document.getElementById("qr-raw")
   const continueBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("continue-service"))
   if (titleEl) titleEl.textContent = "使用微信扫描二维码，激活应用"
-  if (messageEl) messageEl.textContent = "等待扫码"
-  if (pollEl) pollEl.hidden = false
+  if (messageEl) messageEl.textContent = ""
+  if (pollEl) pollEl.hidden = true
   if (ttlEl) ttlEl.textContent = qr.expires_in_ms
     ? `${Math.floor(qr.expires_in_ms / 1000)}s ttl`
     : "scan now"

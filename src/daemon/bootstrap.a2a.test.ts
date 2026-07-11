@@ -49,9 +49,12 @@ function makeIlinkStub() {
 
 describe('bootstrap A2A wiring', () => {
   it('a2aServer is null when a2a_listen is not configured', async () => {
+    // Isolated empty stateDir (no agent-config.json ⇒ no a2a_listen). A shared
+    // fixed path like /tmp/state is racy: a parallel test writing an
+    // a2a_listen config there makes this read it and flake.
     const boot = await buildBootstrap({
       db: openTestDb(),
-      stateDir: '/tmp/state',
+      stateDir: mkdtempSync(join(tmpdir(), 'bootstrap-a2a-null-')),
       ilink: makeIlinkStub() as any,
       loadProjects: () => ({ projects: {}, current: null }),
       lastActiveChatId: () => null,
@@ -63,7 +66,7 @@ describe('bootstrap A2A wiring', () => {
   it('a2aDeps is always present (registry, client, recordEvent)', async () => {
     const boot = await buildBootstrap({
       db: openTestDb(),
-      stateDir: '/tmp/state',
+      stateDir: mkdtempSync(join(tmpdir(), 'bootstrap-a2a-deps-')),
       ilink: makeIlinkStub() as any,
       loadProjects: () => ({ projects: {}, current: null }),
       lastActiveChatId: () => null,

@@ -28,6 +28,7 @@ import { CLAUDE_CAPABILITIES } from './claude-agent-provider'
 import { CODEX_CAPABILITIES } from './codex-agent-provider'
 import { CURSOR_CAPABILITIES } from './cursor-agent-provider'
 import { OPENAI_CAPABILITIES } from './openai-agent-provider'
+import { GEMINI_CAPABILITIES } from './gemini-agent-provider'
 
 // Backwards-compat re-export: PermissionMode used to live here. Moved
 // to agent-provider.ts to break the cycle introduced by Phase 2's
@@ -110,6 +111,7 @@ const CAPABILITIES_BY_PROVIDER: Record<ProviderId, ProviderCapabilities> = {
   codex:  CODEX_CAPABILITIES,
   cursor: CURSOR_CAPABILITIES,
   openai: OPENAI_CAPABILITIES,
+  gemini: GEMINI_CAPABILITIES,
 }
 
 /**

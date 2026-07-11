@@ -82,6 +82,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     // registered (WECHAT_OPENAI_API_KEY + base_url + model); otherwise the
     // registry.has() guard below replies "未注册".
     if (lower === 'api') return 'openai'
+    if (lower === 'gemini') return 'gemini'
     return null
   }
 
@@ -97,7 +98,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     // from the provider's ProviderCapabilities.defaultPeer, not a hardcoded
     // ternary — so a new provider (openai → claude, …) is covered without
     // editing this function. Values match the prior hardcoded ones
-    // (claude→codex, codex→claude, cursor→claude).
+    // (claude→codex, codex→claude, cursor→claude, gemini→claude).
     return capabilitiesFor(primary).defaultPeer ?? null
   }
 
@@ -218,7 +219,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           const peerSlash = peerMatch[1]!
           const peerProviderId = isProviderCommand(peerSlash)
           if (!peerProviderId) {
-            await reply(msg.chatId, `❓ 未知的 peer \`${peerSlash}\`。支持: cc, codex, cursor`)
+            await reply(msg.chatId, `❓ 未知的 peer \`${peerSlash}\`。支持: cc, codex, cursor, gemini`)
             return true
           }
           if (peerProviderId === providerId) {
@@ -392,7 +393,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           `已注册 provider: ${deps.registry.list().join(', ')}`,
           `默认: ${deps.defaultProviderId}`,
           '',
-          '可用命令: /cc /codex /cursor /api /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',
+          '可用命令: /cc /codex /cursor /api /gemini /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',
         ]
         await reply(msg.chatId, lines.join('\n'))
         return true
