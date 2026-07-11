@@ -129,10 +129,14 @@ async function speakAndPlay(deps, text) {
     const cleanup = () => URL.revokeObjectURL(url)
     audio.addEventListener("ended", cleanup, { once: true })
     audio.addEventListener("error", cleanup, { once: true })
-    await audio.play()
+    try {
+      await audio.play()
+    } catch {
+      cleanup()
+    }
   } catch {
-    // Decode failure or `.play()` rejection (autoplay policy) — no crash,
-    // no error note; the ▶ replay button remains as the manual fallback.
+    // Decode failure — no crash, no error note; the ▶ replay button
+    // remains as the manual fallback.
   }
 }
 
