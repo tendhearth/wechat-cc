@@ -9,6 +9,7 @@
 import type { MemoryFS } from '../memory/fs-api'
 import type { Db } from '../../lib/db'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
+import type { ReplySinks } from '../reply-sinks'
 import type { ConversationStore } from '../../core/conversation-store'
 import type { ProviderId } from '../../core/conversation'
 import type { PermissionMode } from '../../core/capability-matrix'
@@ -125,6 +126,13 @@ export interface InternalApiDeps {
    */
   ilink?: InternalApiIlinkDep
   /**
+   * Optional reply-sink registry (app-conversation-channel, Stage 0). When
+   * a sink is open for a chat, `POST /v1/wechat/reply` captures the reply
+   * into it instead of ilink-sending — the app channel reads the turn's
+   * output back from the sink. Absent ⇒ WeChat reply path unchanged.
+   */
+  replySinks?: ReplySinks
+  /**
    * Optional mode-aware reply prefixing (RFC 03 P3). When wired, the
    * `reply` route consults `conversationStore` for the chat's mode and
    * prefixes `[Display]` in parallel + chatroom modes. Without this,
@@ -147,6 +155,24 @@ export interface InternalApiDeps {
   conversation?: {
     setMode(chatId: string, mode: import('../../core/conversation').Mode): void
   }
+  /**
+   * Optional app-conversation-channel converse dep (voice arc, Stage 0,
+   * Task 2). Encapsulates the whole owner-session turn — synthesizes an
+   * inbound message for the owner chat, dispatches it through the real
+   * coordinator, and captures the reply via a reply-sink (see
+   * ../reply-sinks.ts) instead of ilink-sending it — so the route table
+   * never has to import coordinator internals.
+   *
+   * Late-bound: main.ts wires this in after bootstrap constructs the
+   * coordinator (mirrors `conversation` above). POST /v1/companion/converse
+   * returns 503 until this is set.
+   *
+   * Throws `Error('reply_sink_busy')` when a turn is already in flight for
+   * the owner chat (route maps to 409), or a distinct error when the owner
+   * chat isn't configured yet (route maps to 503); any other rejection maps
+   * to 500.
+   */
+  companionConverse?: (text: string) => Promise<{ reply: string }>
   /**
    * Optional A2A deps — undefined when a2a_listen is not configured.
    * When absent, POST /v1/a2a/send returns 503.
@@ -236,7 +262,7 @@ export interface InternalApiDeps {
 
 export interface InternalApi {
   /** Start listening on 127.0.0.1:0; resolves once bound. */
-  start(): Promise<{ port: number; tokenFilePath: string }>
+  start(): Promise<{ port: number; tokenFilePath: string; operatorTokenFilePath: string }>
   /** Stop the HTTP server and (optionally) clean up the token file. */
   stop(opts?: { unlinkToken?: boolean }): Promise<void>
   /** Bound port. Throws if accessed before start() resolves. */
@@ -255,6 +281,13 @@ export interface InternalApi {
    * returns 503 until this is called.
    */
   setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
+  /**
+   * Late-bind the companion converse dep (app-conversation-channel, Stage 0
+   * Task 2) after the wiring layer has built the closure over the
+   * coordinator + reply sinks. POST /v1/companion/converse returns 503
+   * until this is called.
+   */
+  setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
   /**
    * Late-bind A2A deps after bootstrap has constructed the registry,
    * client, and events store. POST /v1/a2a/send returns 503 until this
@@ -283,7 +316,7 @@ export interface InternalApi {
 export type RouteHandler = (
   query: URLSearchParams,
   body: unknown,
-  caller?: { tier: UserTier; origin: 'file' | 'session'; chatId?: string },
+  caller?: { tier: UserTier; origin: 'file' | 'session' | 'operator'; chatId?: string },
 ) => Promise<{ status: number; body: unknown }> | { status: number; body: unknown }
 
 export type RouteTable = Record<string, RouteHandler | undefined>

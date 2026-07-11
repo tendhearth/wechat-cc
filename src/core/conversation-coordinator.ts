@@ -25,6 +25,7 @@ import { assertSupported, capabilitiesFor, UnsupportedCombinationError, type Per
 import { collectTurn, TURN_TIMEOUT_CODE, type TurnSummary } from './agent-provider'
 import { resolveEffectiveTier, TIER_PROFILES, type TierProfile } from './user-tier'
 import type { Access } from '../lib/access'
+import { makeChatMutex } from './async-mutex'
 
 /**
  * Per-agent timeout for a single /chat debate beat. Much shorter than the
@@ -169,6 +170,23 @@ export function authFailNotice(providerId: ProviderId): string {
 
 export interface ConversationCoordinator {
   dispatch(msg: InboundMsg): Promise<void>
+  /**
+   * The pre-lock dispatch body (Task 1 — session-serialization). Identical
+   * logic to the old unserialized `dispatch`; `dispatch` itself now wraps
+   * this in the per-chat mutex (see `runExclusive`) for solo/parallel/
+   * primary_tool modes. Exposed so callers/tests can bypass the mutex when
+   * they need to (chatroom mode's own dispatch path calls this directly —
+   * see the exemption comment on `dispatch` below).
+   */
+  dispatchInner(msg: InboundMsg): Promise<void>
+  /**
+   * Per-chatId async mutex (Task 1 — session-serialization): runs `fn`
+   * exclusively with respect to any other `runExclusive` call for the same
+   * chatId, so two rapid inbound messages for one chat can never run their
+   * turns concurrently (session/history races). Different chatIds are
+   * independent. Exposed mainly for tests; `dispatch` is the normal caller.
+   */
+  runExclusive<T>(chatId: string, fn: () => Promise<T>): Promise<T>
   /**
    * Get the effective mode for a chat — persisted value, or the daemon
    * default if none. Used by mode-commands to render `/mode` status.
@@ -325,6 +343,12 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
   // chatroom dispatch in the same chat awaits this so the "latest user msg
   // wins" preempt path doesn't race the prior loop's cleanup.
   const inFlightDispatchPromises = new Map<string, Promise<void>>()
+
+  // Task 1 (session-serialization) — per-chatId async mutex. `dispatch`
+  // (below) wraps `dispatchInner` in this for solo/parallel/primary_tool so
+  // two rapid inbound messages for one chat never run concurrently. Chatroom
+  // is exempt — see the comment on `dispatch`.
+  const mutex = makeChatMutex()
 
   function validateMode(mode: Mode): void {
     // Reject unknown providers up front so the caller (mode-commands or
@@ -751,22 +775,15 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     return results.filter((r): r is Opening => r !== null)
   }
 
-  return {
-    getMode,
-    setMode(chatId, mode) {
-      validateMode(mode)
-      const oldMode = getMode(chatId)
-      deps.conversationStore.set(chatId, mode)
-    },
-    cancel(chatId) {
-      const ac = inFlightAborters.get(chatId)
-      if (!ac) return false
-      ac.abort()
-      // delete is done in dispatchChatroom's finally; double-delete is harmless.
-      return true
-    },
-    async dispatch(msg) {
-      const proj = deps.resolveProject(msg.chatId)
+  /**
+   * The pre-lock dispatch body (Task 1 — session-serialization). Renamed
+   * from the original unserialized `dispatch`; behaviour is byte-for-byte
+   * identical. `dispatch` (below) is the only caller in normal operation —
+   * it wraps this in `mutex.runExclusive(msg.chatId, ...)` for solo/
+   * parallel/primary_tool, and calls it directly (no lock) for chatroom.
+   */
+  async function dispatchInner(msg: InboundMsg): Promise<void> {
+    const proj = deps.resolveProject(msg.chatId)
       if (!proj) {
         deps.log('COORDINATOR', `drop: no project for chat=${msg.chatId}`)
         return
@@ -841,6 +858,60 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           return dispatchChatroom(msg, proj, participants!)
         }
       }
+    }
+
+  /**
+   * Task 1 (session-serialization) — the public dispatch entry point.
+   * Mode is resolved BEFORE locking (cheap store read) so we can route:
+   *
+   *   - solo / parallel / primary_tool: single-turn dispatches with no
+   *     self-preemption, so wrapping them in the per-chat mutex is a pure
+   *     win — two rapid inbound messages for the same chat now run their
+   *     turns one at a time instead of racing on session/history state.
+   *   - chatroom: EXEMPT from the mutex. dispatchChatroom already
+   *     implements its own preempt-on-arrival protocol (inFlightAborters /
+   *     inFlightDispatchPromises above): a new message aborts the prior
+   *     in-flight loop and then awaits its cleanup, rather than waiting
+   *     for it to run to completion. If chatroom were also routed through
+   *     runExclusive, a new message would have to wait for the mutex to
+   *     hand it the lock — which only happens after the PRIOR
+   *     dispatchInner call fully settles — before it could even reach the
+   *     preempt-abort check at the top of dispatchChatroom. That would
+   *     turn "abort the stale loop and start immediately" into "wait for
+   *     the stale loop to drain, THEN start", defeating the "latest user
+   *     message wins" semantics the preempt logic exists for. Verified by
+   *     temporarily routing chatroom through the mutex too and re-running
+   *     the existing preemption tests (`cancel(chatId) returns true while
+   *     in-flight...`, `rapid follow-up message preempts...`,
+   *     `three-or-more rapid dispatches...`): no deadlock, but the abort
+   *     never fires early — B's dispatch just waits behind A's held lock,
+   *     so "preempting prior in-flight dispatch" is logged 0 times instead
+   *     of the expected ≥1/≥2, confirming the exemption is required.
+   */
+  async function dispatch(msg: InboundMsg): Promise<void> {
+    const mode = getMode(msg.chatId)
+    if (mode.kind === 'chatroom') {
+      return dispatchInner(msg)
+    }
+    return mutex.runExclusive(msg.chatId, () => dispatchInner(msg))
+  }
+
+  return {
+    getMode,
+    setMode(chatId, mode) {
+      validateMode(mode)
+      const oldMode = getMode(chatId)
+      deps.conversationStore.set(chatId, mode)
     },
+    cancel(chatId) {
+      const ac = inFlightAborters.get(chatId)
+      if (!ac) return false
+      ac.abort()
+      // delete is done in dispatchChatroom's finally; double-delete is harmless.
+      return true
+    },
+    dispatchInner,
+    runExclusive: mutex.runExclusive,
+    dispatch,
   }
 }

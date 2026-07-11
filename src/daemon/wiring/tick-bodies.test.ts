@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildTickBodies, buildPushTickText, buildGapCheckinText, buildHuntText, type TickDeps } from './tick-bodies'
@@ -9,6 +9,7 @@ import { openTestDb, type Db } from '../../lib/db'
 import { makeMessagesStore } from '../../lib/messages-store'
 import type { CareLedgerEntry } from '../companion/calibration'
 import type { CareLedger } from '../companion/care-ledger'
+import { makeChatMutex, type ChatMutex } from '../../core/async-mutex'
 
 /** Minimal in-memory fake of the structural chatPrefs subset TickDeps needs. */
 function makeFakeChatPrefs(
@@ -104,6 +105,13 @@ interface Setup {
   db: Db
   chatPrefsEntries: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean }>
   careLedgerEntries: Record<string, CareLedgerEntry>
+  /** Task 3 (session-serialization) — the fake coordinator's `runExclusive`
+   * spy, backed by a REAL per-chatId async mutex (the same implementation
+   * `createConversationCoordinator` uses), so tests can both assert the
+   * tick routes through it AND hold the lock externally (simulating an
+   * app/WeChat turn in flight) to prove the tick actually waits. */
+  runExclusive: ReturnType<typeof vi.fn>
+  coordinatorMutex: ChatMutex
 }
 
 function setupDeps(opts: {
@@ -158,6 +166,11 @@ function setupDeps(opts: {
   const defaultProviderId = opts.defaultProviderId ?? 'claude'
   const mode = opts.mode ?? { kind: 'solo' as const, provider: defaultProviderId }
   const getMode = vi.fn(() => mode)
+  // Task 3 — real pass-through mutex (same impl the coordinator uses), so
+  // the tick's runExclusive(chatId, ...) call genuinely serializes against
+  // anything else holding the lock for the same chatId in a test.
+  const coordinatorMutex = makeChatMutex()
+  const runExclusive = vi.fn((chatId: string, fn: () => Promise<unknown>) => coordinatorMutex.runExclusive(chatId, fn))
   const defaultAccess: Access = {
     dmPolicy: 'allowlist',
     allowFrom: opts.defaultChatId ? [opts.defaultChatId] : [],
@@ -173,7 +186,7 @@ function setupDeps(opts: {
     boot: {
       sessionManager: { acquire, isInFlight } as never,
       defaultProviderId: defaultProviderId as never,
-      coordinator: { getMode } as never,
+      coordinator: { getMode, runExclusive } as never,
       // Default: no provider has cheapEval. Introspect-specific tests
       // override via deps.boot.registry directly.
       registry: { getCheapEval: () => null } as never,
@@ -184,7 +197,7 @@ function setupDeps(opts: {
     chatPrefs: makeFakeChatPrefs(chatPrefsEntries),
     careLedger: makeFakeCareLedger(careLedgerEntries),
   }
-  return { stateDir, acquire, isInFlight, dispatch, logs, deps, db, chatPrefsEntries, careLedgerEntries }
+  return { stateDir, acquire, isInFlight, dispatch, logs, deps, db, chatPrefsEntries, careLedgerEntries, runExclusive, coordinatorMutex }
 }
 
 describe('buildTickBodies / pushTick — companion isolation (PR D)', () => {
@@ -298,6 +311,72 @@ describe('buildTickBodies / pushTick — companion isolation (PR D)', () => {
     expect(s.isInFlight).not.toHaveBeenCalled()
     expect(s.acquire).not.toHaveBeenCalled()
     expect(s.logs.some(l => l.includes('CARE') && l.includes('reason=never_talked'))).toBe(true)
+  })
+})
+
+describe('buildTickBodies / pushTick — routes claim+dispatch through the per-chat mutex (Task 3, session-serialization)', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => {
+    for (const d of cleanup) {
+      try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ }
+    }
+  })
+
+  it('claim+dispatch run inside coordinator.runExclusive(chatId, ...)', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1',
+      inFlight: false,
+      agendaMd: '- [ ] due:2026-05-13 check in on project',
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    // The tick claimed the mutex for the chat it dispatched to, and did so
+    // BEFORE acquire/claim/dispatch ran (asserted via ordering below).
+    expect(s.runExclusive).toHaveBeenCalledWith('chat-1', expect.any(Function))
+    expect(s.acquire).toHaveBeenCalledOnce()
+    expect(s.dispatch).toHaveBeenCalledOnce()
+    const runExclusiveOrder = s.runExclusive.mock.invocationCallOrder[0]!
+    const acquireOrder = s.acquire.mock.invocationCallOrder[0]!
+    const dispatchOrder = s.dispatch.mock.invocationCallOrder[0]!
+    expect(runExclusiveOrder).toBeLessThan(acquireOrder)
+    expect(acquireOrder).toBeLessThan(dispatchOrder)
+  })
+
+  it('does not start acquire/dispatch until a same-chat runExclusive lock (simulating an in-flight app turn) is released', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1',
+      inFlight: false, // the cheap isInFlight pre-check does NOT see this app turn — only the mutex does
+      agendaMd: '- [ ] due:2026-05-13 check in on project',
+    })
+    cleanup.push(s.stateDir)
+
+    // Simulate an app converse turn already holding the mutex for this chat
+    // (mirrors pipeline-deps.ts's companionConverse: runExclusive wraps its
+    // whole reply-sink-open→dispatch→close lifetime).
+    let releaseHeldTurn!: () => void
+    const heldTurnDone = new Promise<void>(resolve => { releaseHeldTurn = resolve })
+    const holdPromise = s.coordinatorMutex.runExclusive('chat-1', () => heldTurnDone)
+
+    const { pushTick } = buildTickBodies(s.deps)
+    const tickPromise = pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+
+    // Give pending microtasks a chance to run — the tick should be blocked
+    // on the mutex, so acquire/dispatch must NOT have run yet.
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(s.acquire).not.toHaveBeenCalled()
+    expect(s.dispatch).not.toHaveBeenCalled()
+
+    // Release the held "app turn" — the tick's runExclusive callback can now run.
+    releaseHeldTurn()
+    await holdPromise
+    await tickPromise
+
+    expect(s.acquire).toHaveBeenCalledOnce()
+    expect(s.dispatch).toHaveBeenCalledOnce()
   })
 })
 
@@ -735,5 +814,55 @@ describe('buildTickBodies / introspectTick — provider-agnostic cheap eval (PR 
     const { introspectTick } = buildTickBodies(s.deps)
     await introspectTick()
     expect(getCheapEval).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('buildTickBodies / introspectTick — memory gardener mount', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => {
+    for (const d of cleanup) {
+      try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ }
+    }
+  })
+
+  it('cheapEval absent ⇒ gardener never runs (no GARDEN log, no archive dir created)', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    // Seed a large memory file that WOULD be eligible if the gardener ran.
+    const memDir = join(s.stateDir, 'memory', 'chat-1')
+    mkdirSync(memDir, { recursive: true })
+    writeFileSync(join(memDir, 'profile.md'), 'x'.repeat(3000))
+    const { introspectTick } = buildTickBodies(s.deps)
+    await introspectTick()
+    expect(s.logs.some(l => l.startsWith('GARDEN|'))).toBe(false)
+    expect(existsSync(join(s.stateDir, 'memory-archive'))).toBe(false)
+  })
+
+  it('cheapEval present ⇒ introspectTick invokes the gardener after the existing steps', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const memDir = join(s.stateDir, 'memory', 'chat-1')
+    mkdirSync(memDir, { recursive: true })
+    // "seed\nfiller filler ..." rather than a single repeated-char run: the
+    // gardener's vocabulary-overlap validation requires a curated output to
+    // actually share word tokens with the original, which a giant run of
+    // one repeated character can't satisfy in the same way real prose can.
+    const original = `seed\n${'filler '.repeat(500)}`
+    writeFileSync(join(memDir, 'profile.md'), original)
+    // Curated output must also clear the shrink floor (min(512, 0.2 *
+    // originalBytes)) — a bare "seed filler" (11 bytes) would now be
+    // rejected as over_shrunk before the gardener ever writes it, so keep
+    // enough of the original's filler tokens to pass.
+    const curated = `seed\n${'filler '.repeat(100)}`.trim()
+    expect(Buffer.byteLength(curated, 'utf8')).toBeGreaterThan(0.2 * Buffer.byteLength(original, 'utf8'))
+    expect(Buffer.byteLength(curated, 'utf8')).toBeLessThan(Buffer.byteLength(original, 'utf8'))
+    const cheapEval = vi.fn(async () => curated)
+    s.deps.boot = { ...s.deps.boot, registry: { getCheapEval: () => cheapEval } as never }
+    const { introspectTick } = buildTickBodies(s.deps)
+    await introspectTick({ nowIso: '2026-07-10T00:00:00.000Z' })
+    expect(s.logs.some(l => l.startsWith('GARDEN|'))).toBe(true)
+    expect(existsSync(join(s.stateDir, 'memory-archive', 'chat-1', 'profile.md.2026-07-10.md'))).toBe(true)
+    expect(readFileSync(join(memDir, 'profile.md'), 'utf8')).toBe(curated)
   })
 })

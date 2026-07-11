@@ -26,6 +26,7 @@ import { wireMain } from './wiring'
 import type { TickBodies } from './wiring/tick-bodies'
 import { makeChatPrefs } from './chat-prefs'
 import { makeStickerLib } from './stickers'
+import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
@@ -168,14 +169,22 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // streak on every message. A second instance would have a stale
     // in-memory cache (write-through only protects its own writes).
     const careLedger = makeCareLedger(stateDir)
+    // Single shared reply-sink registry (app-conversation-channel, voice arc
+    // Stage 0) — the POST /v1/wechat/reply route captures into it when a
+    // sink is open (Task 1); the companion-converse closure below (built
+    // from wireMain's pipelineDeps) opens/closes it around a real turn
+    // (Task 2). Both MUST share this one instance — a second instance would
+    // never see the capture (same posture as chatPrefs/careLedger above).
+    const replySinks = makeReplySinks()
     // 1. internal-api FIRST — bootstrap needs its baseUrl/token for MCP wiring
     const internalApi = await registerInternalApi({
       stateDir, daemonPid: process.pid, memory: memoryFS, db, projects: ilink.projects,
       getChatPrefs: (c) => chatPrefs.get(c),
       setChatPref: (c, p) => chatPrefs.set(c, p),
       stickers: stickerLib,
+      replySinks,
       setUserName: (chatId, name) => ilink.setUserName(chatId, name),
-      voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus() },
+      voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus(), synthesizeSpeech: (t) => ilink.voice.synthesizeSpeech(t) },
       sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),
       companion: { enable: () => ilink.companion.enable(), disable: () => ilink.companion.disable(), status: () => ilink.companion.status(), snooze: (m) => ilink.companion.snooze(m), setImportLocal: (e) => ilink.companion.setImportLocal(e) },
       ilink: { sendReply: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string; error?: string }), sendFile: (c, p) => ilink.sendFile(c, p), editMessage: (c, m, t) => ilink.editMessage(c, m, t), broadcast: (t, a) => ilink.broadcast(t, a) },
@@ -205,6 +214,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       lastActiveChatId: ilink.lastActiveChatId, log: (t, l, f) => log(t, l, f),
       fallbackProject: () => ({ alias: '_default', path: process.cwd() }),
       dangerouslySkipPermissions: dangerously, conversationStore,
+      // Session-serialization design, Task 2 Part B — same shared instance
+      // passed to internal-api and wireMain below; makes the coordinator's
+      // sendAssistantText fallback sink-aware.
+      replySinks,
       onTurnRecord: (r) => turnRecordStore.append(r),
       mintSessionToken: internalApi.mintSessionToken,
       invalidateSession: internalApi.invalidateSession,
@@ -216,6 +229,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // onboarding-curiosity design §2 — sync because buildInstructions is
       // sync; cheap indexed COUNT per spawn (chat_id, direction indexed).
       newRelationshipFor: (c) => countInboundMessagesSync(db, c) < NEW_RELATIONSHIP_MSG_COUNT,
+      // bubble-replies design (行为流式气泡回复) — same per-chat 拆分 pref
+      // that gates route-level mechanical splitting (getChatPrefs above)
+      // also gates the bubble-guidance prompt section: `/set split off`
+      // silences BOTH, matching the user-facing meaning of 拆分.
+      bubbleRepliesFor: (c) => chatPrefs.get(c).split !== false,
       // image-stickers plan §5 — per-chat opt-out (chatPrefs.stickers === false)
       // hides the sticker section from that chat's prompt; empty lib ⇒ [] ⇒
       // stickerSection omitted entirely (see prompt-builder.ts).
@@ -247,7 +265,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setA2A(boot.a2aDeps)
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({
-      stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger,
+      stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,
       // Task 11 — tick-bodies pass this to resolveTier() when computing
       // the companion's tierProfile. Same singleton import the bootstrap
       // coordinator uses; 5s TTL cache inside `loadAccess` keeps the
@@ -256,6 +274,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       log: (t, l) => log(t, l),
       schedulerIntervalMs: opts.schedulerIntervalMs,
     })
+    // Wire companion-converse dep now that the coordinator (via boot) and
+    // the pipeline wiring are available. Routes access deps.companionConverse
+    // at request time, so this late assignment is safe (mirrors setConversation).
+    internalApi.setCompanionConverse(wired.companionConverse)
     ticksRef = wired.ticks
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
     wireRef(wired.refs.pipeline, pipeline)

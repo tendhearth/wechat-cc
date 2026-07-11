@@ -347,6 +347,7 @@ describe('wechat-mcp stdio integration', () => {
       },
       saveConfig: async (): Promise<{ ok: false; reason: string }> => ({ ok: false, reason: 'unused' }),
       configStatus: () => ({ configured: false as const }),
+      synthesizeSpeech: async (): Promise<{ audio: Buffer; mime: string }> => { throw new Error('unused') },
     }
     api = createInternalApi({ stateDir, daemonPid: 7777, memory, ilink: ilinkDep, voice })
     const { port, tokenFilePath } = await api.start()
@@ -403,6 +404,7 @@ describe('wechat-mcp stdio integration', () => {
       replyVoice: async () => { replyVoiceCalls.push(1); return { ok: true as const, msgId: 'should-not-be-called' } },
       saveConfig: async (): Promise<{ ok: false; reason: string }> => ({ ok: false, reason: 'unused' }),
       configStatus: () => ({ configured: false as const }),
+      synthesizeSpeech: async (): Promise<{ audio: Buffer; mime: string }> => { throw new Error('unused') },
     }
     api = createInternalApi({ stateDir, daemonPid: 7777, memory, voice })
     const { port, tokenFilePath } = await api.start()
@@ -589,6 +591,7 @@ describe('wechat-mcp stdio integration', () => {
       configStatus: () => stored
         ? { configured: true as const, ...stored }
         : { configured: false as const },
+      synthesizeSpeech: async (): Promise<{ audio: Buffer; mime: string }> => { throw new Error('unused_in_voice_config_test') },
     }
     api = createInternalApi({ stateDir, daemonPid: 7777, memory, voice })
     const { port, tokenFilePath } = await api.start()

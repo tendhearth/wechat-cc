@@ -19,6 +19,7 @@ import type { PollingDeps } from '../polling-lifecycle'
 import type { StartupSweepDeps } from '../startup-sweeps'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
+import type { ReplySinks } from '../reply-sinks'
 import { buildPipelineDeps } from './pipeline-deps'
 import { buildLifecycleDeps } from './lifecycle-deps'
 import { buildTickBodies, type TickBodies } from './tick-bodies'
@@ -55,10 +56,23 @@ export interface WireMainOpts {
    * a stale in-memory cache.
    */
   careLedger: CareLedger
+  /**
+   * Shared reply-sink registry (constructed once in main.ts, also passed to
+   * registerInternalApi's `replySinks`) — threaded through to
+   * buildPipelineDeps so the companion-converse closure opens sinks on the
+   * SAME registry the reply route captures into.
+   */
+  replySinks: ReplySinks
 }
 
 export interface WiredDeps {
   pipelineDeps: InboundPipelineDeps
+  /**
+   * App-conversation-channel converse closure (voice arc Stage 0, Task 2).
+   * main.ts late-binds this onto internal-api via setCompanionConverse()
+   * once wireMain returns (bootstrap must be ready first).
+   */
+  companionConverse: (text: string) => Promise<{ reply: string }>
   companionPushDeps: CompanionPushDeps
   companionIntrospectDeps: CompanionIntrospectDeps
   guardDeps: SchedulerDeps
@@ -94,10 +108,11 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     ...opts,
     permissionMode: opts.dangerously ? 'dangerously' : 'strict',
   })
-  const { pipelineDeps } = buildPipelineDeps(opts, refs)
+  const { pipelineDeps, companionConverse } = buildPipelineDeps(opts, refs)
   const lifecycleDeps = buildLifecycleDeps(opts, ticks)
   return {
     pipelineDeps,
+    companionConverse,
     ...lifecycleDeps,
     ticks,
     refs,

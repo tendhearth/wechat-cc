@@ -33,6 +33,17 @@ export function makeVoice(ctx: IlinkContext): WechatVoiceDep {
   const { stateDir, ctxStore, resolveAccount, assertChatRoutable } = ctx
 
   return {
+    async synthesizeSpeech(text) {
+      const cfg = loadVoiceConfig(stateDir)
+      if (!cfg) throw new Error('no_voice_config')
+      const provider = providerFromConfig(cfg)
+      const { audio, mimeType } = await provider.synth(
+        text,
+        cfg.default_voice ?? (cfg.provider === 'qwen' ? 'Cherry' : 'default'),
+      )
+      return { audio, mime: mimeType }
+    },
+
     async replyVoice(chatId, text) {
       const cfg = loadVoiceConfig(stateDir)
       if (!cfg) return { ok: false as const, reason: 'not_configured' }

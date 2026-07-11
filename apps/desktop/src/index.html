@@ -329,6 +329,10 @@
               <span>对话</span>
               <span class="count" id="sessions-count"></span>
             </button>
+            <button class="dash-nav-link" data-pane="converse">
+              <span class="ic" data-hg-icon="smile" data-hg-size="16"></span>
+              <span>跟 CC 说</span>
+            </button>
             <button class="dash-nav-link" data-pane="a2a-agents">
               <span class="ic" data-hg-icon="settings-01" data-hg-size="16"></span>
               <span>Agent</span>
@@ -534,6 +538,11 @@
           <!-- ── pane: sessions ─────────────────────────────────────── -->
           <article class="dash-pane" data-pane="sessions" hidden>
             <div id="dialogue-root" class="dialogue-page"></div>
+          </article>
+
+          <!-- ── pane: converse (in-app compose UI) ─────────────────── -->
+          <article class="dash-pane" data-pane="converse" hidden>
+            <div id="converse-root" class="converse-page"></div>
           </article>
 
           <!-- ── pane: logs ─────────────────────────────────────────── -->

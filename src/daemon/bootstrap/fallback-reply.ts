@@ -32,6 +32,20 @@ export interface FallbackReplyDeps {
   /** ilink adapter's sendMessage. Undefined when there's no ilink wired (test harnesses). */
   sendMessage: ((chatId: string, text: string) => Promise<SendMessageResult>) | undefined
   log: (tag: string, line: string) => void
+  /**
+   * App-conversation-channel reply-sink capture (session-serialization
+   * design, Task 2 Part B) — mirrors the `POST /v1/wechat/reply` route's
+   * sink check (routes.ts). When an app turn's agent emits plain
+   * assistant text instead of calling the `reply` tool, this fallback
+   * path is the ONLY place that text surfaces; without this check it
+   * would leak straight to WeChat via `sendMessage` while the app caller
+   * that opened the sink is left waiting on an empty reply. Returns true
+   * when a sink was open and the text was captured there (caller must
+   * NOT ilink-send); false when no sink is open (WeChat path unchanged).
+   * Undefined ⇒ same as "no sink ever open" (tests / embeddings that
+   * don't wire replySinks stay byte-identical to before this feature).
+   */
+  capture?: (chatId: string, text: string) => boolean
 }
 
 export type SendAssistantText = (chatId: string, text: string) => Promise<void>
@@ -40,6 +54,7 @@ export function makeSendAssistantText(deps: FallbackReplyDeps): SendAssistantTex
   if (!deps.sendMessage) return undefined
   const send = deps.sendMessage
   return async (chatId, text) => {
+    if (deps.capture?.(chatId, text)) return
     let result: SendMessageResult
     try {
       result = await send(chatId, text)

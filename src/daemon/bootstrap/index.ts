@@ -259,6 +259,32 @@ export interface BootstrapDeps {
    * count vs. NEW_RELATIONSHIP_MSG_COUNT) happens in main.ts.
    */
   newRelationshipFor?: (chatId: string) => boolean
+  /**
+   * Resolve whether the bubble-replies prompt section (行为流式气泡回复
+   * design) should be added for this chat. Read per-spawn (like
+   * `careLevelFor`'s siblings) so a `/set split off` flip applies without a
+   * daemon restart. Absent ⇒ the bubble-replies section is NEVER included
+   * for any chat — tests and minimal embeddings that don't wire this stay
+   * byte-identical to before this feature existed. Unlike `careLevelFor`,
+   * there is deliberately NO tier gate here: `reply` is guest-allowed (it's
+   * not a memory_write-gated capability), so a guest chat gets the same
+   * bubble guidance as an owner chat. Wiring the actual thunk (chatPrefs
+   * `split` — same pref that gates route-level mechanical splitting)
+   * happens in main.ts.
+   */
+  bubbleRepliesFor?: (chatId: string) => boolean
+  /**
+   * App-conversation-channel reply-sink registry (session-serialization
+   * design, Task 2 Part B) — the SAME shared instance main.ts passes to
+   * internal-api (its `POST /v1/wechat/reply` route) and to
+   * wireMain/pipeline-deps (companionConverse's open/close). Only
+   * `capture` is used here, threaded into the coordinator's
+   * sendAssistantText fallback so plain-text app-turn replies (no `reply`
+   * tool call) land in the open sink instead of leaking to WeChat. Absent
+   * ⇒ fallback text always ilink-sends (tests / minimal embeddings stay
+   * byte-identical to before this feature existed).
+   */
+  replySinks?: { capture: (chatId: string, text: string) => boolean }
 }
 
 export interface Bootstrap {
@@ -950,6 +976,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       personaCultivate: p?.cultivate === true && tierProfile.allow.has('memory_write'),
       newRelationship: (deps.newRelationshipFor?.(chatId) ?? false) && tierProfile.allow.has('memory_write'),
       personaEmpty: !(p?.content && p.content.trim().length > 0),
+      // bubbleReplies mirrors `deps.bubbleRepliesFor` the same way — absent
+      // thunk ⇒ section never included. Deliberately NO tier gate here
+      // (unlike careEnabled/newRelationship/personaCultivate): `reply` is
+      // guest-allowed, not memory_write-gated, so there's no denied-tool-call
+      // risk in giving a guest chat the same bubbling guidance.
+      bubbleReplies: deps.bubbleRepliesFor?.(chatId) ?? false,
     })
   }
 
@@ -1007,7 +1039,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // Extracted as a named variable so routeA2ANotify can also call it.
   // v0.5.3 — extracted to fallback-reply.ts so the failure paths log
   // [FALLBACK_REPLY_FAIL] / success path logs [FALLBACK_REPLY_SENT].
-  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log })
+  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture })
 
   // Per-turn watchdog: the daemon-level bound that guarantees a silently-
   // stalled SDK subprocess (idle timeout, wedge, hung MCP tool) can never

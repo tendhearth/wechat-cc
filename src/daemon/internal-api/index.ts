@@ -47,9 +47,16 @@ export type {
 } from './types'
 
 const TOKEN_FILE = 'internal-token'
+// Separate admin-tier credential (option B security fix) — see the
+// "OPERATOR token" note in token-registry.ts's module doc comment. Kept in
+// its own file (not appended to / merged with TOKEN_FILE) so a process that
+// only needs the daemon-wide trusted token never has admin sitting next to
+// it on disk.
+const OPERATOR_TOKEN_FILE = 'internal-operator-token'
 
 export function createInternalApi(deps: InternalApiDeps): InternalApi {
   const tokenPath = join(deps.stateDir, TOKEN_FILE)
+  const operatorTokenPath = join(deps.stateDir, OPERATOR_TOKEN_FILE)
   const registry = makeTokenRegistry()
   let server: Server | null = null
   let boundPort: number | null = null
@@ -150,6 +157,18 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       return send(res, 403, { error: 'forbidden', required: need }, origin)
     }
 
+    // Route-allow gate: some tokens (currently the operator token — see
+    // token-registry.ts's "ROUTE-SCOPING" doc note) are restricted to a
+    // fixed set of routes regardless of their tier, so an admin-tier grant
+    // that leaks doesn't hand out the whole admin surface. Checked after
+    // the tier gate so a route-scoped token still needs the right tier too.
+    if (caller.routeAllow && !caller.routeAllow.has(routeKey)) {
+      deps.log?.('INTERNAL_API', `403 ${routeKey} caller=${caller.tier}/${caller.origin} route_not_allowed`, {
+        event: 'route_not_allowed', path: routeKey, caller: caller.tier, origin: caller.origin,
+      })
+      return send(res, 403, { error: 'route_not_allowed' }, origin)
+    }
+
     let body: unknown = null
     if (method === 'POST') {
       try {
@@ -219,6 +238,19 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       const { renameSync } = await import('node:fs')
       renameSync(tmp, tokenPath)
 
+      // Separate admin-tier operator token (option B) — a distinct random
+      // secret, registered `admin`, written to its own 0600 file. See
+      // token-registry.ts's module doc comment for the rationale: this is
+      // the one deliberate exception to "admin never from a file", scoped
+      // to a credential only the local machine owner can read. Same
+      // generate → registerOperatorToken → atomic write pattern as the
+      // trusted file token above.
+      const opTokenHex = randomBytes(32).toString('hex')
+      registry.registerOperatorToken(opTokenHex)
+      const opTmp = `${operatorTokenPath}.tmp-${process.pid}-${Date.now()}`
+      writeFileSync(opTmp, opTokenHex + '\n', { mode: 0o600 })
+      renameSync(opTmp, operatorTokenPath)
+
       server = createServer(handleRequest)
       // Catch listener errors so we surface bind failures to start()'s caller.
       const listenError = new Promise<never>((_, reject) => {
@@ -236,7 +268,7 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       boundPort = addr.port
       deps.log?.('INTERNAL_API', `listening on 127.0.0.1:${boundPort}`)
 
-      return { port: boundPort, tokenFilePath: tokenPath }
+      return { port: boundPort, tokenFilePath: tokenPath, operatorTokenFilePath: operatorTokenPath }
     },
 
     async stop(opts) {
@@ -250,6 +282,7 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       if (opts?.unlinkToken) {
         const { unlinkSync, existsSync } = await import('node:fs')
         if (existsSync(tokenPath)) unlinkSync(tokenPath)
+        if (existsSync(operatorTokenPath)) unlinkSync(operatorTokenPath)
       }
       deps.log?.('INTERNAL_API', 'stopped')
     },
@@ -269,6 +302,10 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
 
     setConversation(c) {
       deps.conversation = c
+    },
+
+    setCompanionConverse(fn) {
+      deps.companionConverse = fn
     },
 
     setA2A(a2a) {

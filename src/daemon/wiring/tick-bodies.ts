@@ -27,6 +27,7 @@ import { runThreadsExtraction } from '../threads/extractor'
 import { runLocalImportIfEnabled } from '../local-import'
 import { synthesizeOverview } from '../../lib/memory-synthesis'
 import { makeLifeStoresReader } from '../life-stores'
+import { runGarden } from '../memory/gardener'
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
@@ -69,7 +70,10 @@ export interface TickDeps {
 
 export interface TickBodies {
   pushTick: (opts?: { nowIso?: string }) => Promise<void>
-  introspectTick: (opts?: { nowIso?: string }) => Promise<void>  // introspect ignores nowIso for MVP — keeps signatures symmetric
+  // introspect/observations internal timestamps stay wall-clock (MVP); nowIso
+  // is only used to seed the memory gardener's `today` (archive filename /
+  // watermark date), keeping the signature symmetric with pushTick.
+  introspectTick: (opts?: { nowIso?: string }) => Promise<void>
 }
 
 export interface BuildPushTickTextOpts {
@@ -163,33 +167,51 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       mode.kind === 'solo' ? mode.provider
       : mode.kind === 'primary_tool' ? mode.primary
       : (mode.participants?.[0] ?? deps.boot.defaultProviderId)
+    // Proactive fast-skip (TOCTOU-prone on its own, kept ABOVE the mutex
+    // deliberately): avoids waiting on the lock in the common case where a
+    // user session is obviously already busy. The runExclusive below closes
+    // the residual race window this check alone can't — see the comment on
+    // it just below.
     if (deps.boot.sessionManager.isInFlight({ alias: proj.alias, providerId, chatId })) {
       deps.log('SCHED', `[companion] skipping push tick: user session in-flight (alias=${proj.alias} provider=${providerId} chat=${chatId})`)
       return // leave the item pending — retry next tick
     }
-    const handle = await deps.boot.sessionManager.acquire({
-      alias: proj.alias,
-      path: proj.path,
-      providerId,
-      chatId,
-      tierProfile,
-      permissionMode: deps.permissionMode,
+    // Session-serialization (Task 3) — serialize the tick's acquire+claim+
+    // dispatch against the SAME per-chatId mutex app converse turns
+    // (companionConverse) and WeChat inbound turns (coordinator.dispatch)
+    // use. Without this, the isInFlight check above is a TOCTOU: an app
+    // turn opens its reply-sink AFTER its own (slower) manager.acquire, so
+    // a tick could slip through in that window and have its reply captured
+    // into the still-open app sink. The tick never calls
+    // coordinator.dispatch/dispatchInner itself (it drives the
+    // SessionManager handle directly), so this can never re-enter the
+    // mutex and self-deadlock. See docs/superpowers/specs/2026-07-10-
+    // session-serialization-design.md.
+    await deps.boot.coordinator.runExclusive(chatId, async () => {
+      const handle = await deps.boot.sessionManager.acquire({
+        alias: proj.alias,
+        path: proj.path,
+        providerId,
+        chatId,
+        tierProfile,
+        permissionMode: deps.permissionMode,
+      })
+      // Claim BEFORE dispatch — mark the send up front so a push that is
+      // interrupted (machine sleeps mid-turn; daemon restart / lock-steal on
+      // wake) cannot re-fire on the next tick. At-most-once: if the dispatch
+      // then fails the nudge is simply skipped rather than retried — the
+      // deliberate trade-off for proactive messages, where a duplicate is the
+      // reported pain and a missed nudge is low-stakes (the agent can
+      // re-author it, or the gap/agenda gate will surface it again later).
+      // See docs/superpowers/specs/2026-06-25-companion-push-at-most-once-design.md
+      args.claim()
+      const tickText = args.buildText()
+      try {
+        for await (const _ev of handle.dispatch(tickText)) { /* drain */ }
+      } catch (err) {
+        deps.log('SCHED', `companion tick dispatch failed: ${errMsg(err)}`)
+      }
     })
-    // Claim BEFORE dispatch — mark the send up front so a push that is
-    // interrupted (machine sleeps mid-turn; daemon restart / lock-steal on
-    // wake) cannot re-fire on the next tick. At-most-once: if the dispatch
-    // then fails the nudge is simply skipped rather than retried — the
-    // deliberate trade-off for proactive messages, where a duplicate is the
-    // reported pain and a missed nudge is low-stakes (the agent can
-    // re-author it, or the gap/agenda gate will surface it again later).
-    // See docs/superpowers/specs/2026-06-25-companion-push-at-most-once-design.md
-    args.claim()
-    const tickText = args.buildText()
-    try {
-      for await (const _ev of handle.dispatch(tickText)) { /* drain */ }
-    } catch (err) {
-      deps.log('SCHED', `companion tick dispatch failed: ${errMsg(err)}`)
-    }
   }
 
   /**
@@ -293,10 +315,13 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     }
   }
 
-  async function introspectTick(_opts?: { nowIso?: string }): Promise<void> {
-    // _opts.nowIso ignored for MVP — observations/memory internal timestamps
-    // stay wall-clock. Keeping the symmetric signature avoids churn when
-    // introspect virtual time is added later.
+  async function introspectTick(opts?: { nowIso?: string }): Promise<void> {
+    // opts.nowIso is otherwise ignored for MVP — observations/memory internal
+    // timestamps stay wall-clock. Keeping the symmetric signature avoids
+    // churn when introspect virtual time is added later. The one consumer
+    // today is the memory gardener's `today` below.
+    const nowIso = opts?.nowIso ?? new Date().toISOString()
+    const today = nowIso.slice(0, 10)
     // Opt-in local-history import (zero-LLM). Runs FIRST, before the
     // chatId/sdkEval gates below, since it needs neither — the 对话 archive
     // should populate even on a misconfigured / cheap-eval-less install.
@@ -383,6 +408,27 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       } catch (err) {
         deps.log('SYNTHESIZE', `auto refresh failed: ${err instanceof Error ? err.message : err}`)
       }
+    }
+
+    // Memory gardener — daily curation pass over each chat's freeform memory
+    // files (profile.md, preferences.md, notes/*.md). Same resolved sdkEval
+    // as the steps above; isolated try/catch so a gardener failure cannot
+    // break the rest of the tick. See docs/superpowers/specs/2026-07-10-
+    // memory-gardener-design.md.
+    try {
+      const { gardened, skipped } = await runGarden({
+        memoryRoot,
+        archiveRoot: join(deps.stateDir, 'memory-archive'),
+        stateFile: join(deps.stateDir, 'garden_state.json'),
+        cheapEval: sdkEval,
+        log: deps.log,
+        today,
+      })
+      if (gardened > 0 || skipped > 0) {
+        deps.log('GARDEN', `tick complete: gardened=${gardened} skipped=${skipped}`)
+      }
+    } catch (err) {
+      deps.log('GARDEN', `tick failed: ${err instanceof Error ? err.message : err}`)
     }
   }
 

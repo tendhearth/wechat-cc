@@ -31,6 +31,7 @@ import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
+import { initConversePage } from "./modules/converse.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
 import { initPluginsTab, refresh as refreshPlugins } from "./modules/plugins.js"
 import { initLicense, refreshLicense } from "./modules/license.js"
@@ -429,6 +430,9 @@ function switchPane(name) {
     // Stop the dialogue pane's 30s auto-refresh tick when leaving it
     // (mirrors the logs/sessions auto-refresh lifecycle).
     stopDialogueAutoRefresh()
+  }
+  if (name === "converse") {
+    initConversePage(deps)
   }
   if (name === "a2a-agents") {
     refreshA2AAgents().catch(err => console.error("a2a-agents refresh failed", err))

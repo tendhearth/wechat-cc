@@ -62,5 +62,17 @@ export async function mockInvoke(command, args, state) {
     }
   }
   if (command === "wechat_cli_text") return "ok"
+  if (command === "agent_converse") {
+    return `（模拟回复）收到你说的："${String(args?.text ?? "")}"`
+  }
+  if (command === "agent_speak") {
+    // Tiny valid WAV (silence, ~11ms @8kHz mono) — just needs to decode and
+    // play so the 🔊 toggle / ▶ replay path is exercisable in browser dev
+    // mode without a daemon or real voice config.
+    return {
+      audio_b64: "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=",
+      mime: "audio/wav",
+    }
+  }
   return {}
 }
