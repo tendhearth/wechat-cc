@@ -273,6 +273,18 @@ export interface BootstrapDeps {
    * happens in main.ts.
    */
   bubbleRepliesFor?: (chatId: string) => boolean
+  /**
+   * App-conversation-channel reply-sink registry (session-serialization
+   * design, Task 2 Part B) — the SAME shared instance main.ts passes to
+   * internal-api (its `POST /v1/wechat/reply` route) and to
+   * wireMain/pipeline-deps (companionConverse's open/close). Only
+   * `capture` is used here, threaded into the coordinator's
+   * sendAssistantText fallback so plain-text app-turn replies (no `reply`
+   * tool call) land in the open sink instead of leaking to WeChat. Absent
+   * ⇒ fallback text always ilink-sends (tests / minimal embeddings stay
+   * byte-identical to before this feature existed).
+   */
+  replySinks?: { capture: (chatId: string, text: string) => boolean }
 }
 
 export interface Bootstrap {
@@ -1027,7 +1039,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // Extracted as a named variable so routeA2ANotify can also call it.
   // v0.5.3 — extracted to fallback-reply.ts so the failure paths log
   // [FALLBACK_REPLY_FAIL] / success path logs [FALLBACK_REPLY_SENT].
-  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log })
+  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture })
 
   // Per-turn watchdog: the daemon-level bound that guarantees a silently-
   // stalled SDK subprocess (idle timeout, wedge, hung MCP tool) can never

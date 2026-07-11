@@ -214,6 +214,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       lastActiveChatId: ilink.lastActiveChatId, log: (t, l, f) => log(t, l, f),
       fallbackProject: () => ({ alias: '_default', path: process.cwd() }),
       dangerouslySkipPermissions: dangerously, conversationStore,
+      // Session-serialization design, Task 2 Part B — same shared instance
+      // passed to internal-api and wireMain below; makes the coordinator's
+      // sendAssistantText fallback sink-aware.
+      replySinks,
       onTurnRecord: (r) => turnRecordStore.append(r),
       mintSessionToken: internalApi.mintSessionToken,
       invalidateSession: internalApi.invalidateSession,

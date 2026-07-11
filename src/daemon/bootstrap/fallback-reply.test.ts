@@ -62,4 +62,48 @@ describe('makeSendAssistantText (FALLBACK_REPLY diagnostic logger)', () => {
     expect(failCalls.length).toBe(1)
     expect(failCalls[0]![1]).toContain('ECONNRESET')
   })
+
+  // Session-serialization design, Task 2 Part B: an app turn (companionConverse)
+  // whose agent emits plain assistant text instead of calling the `reply` tool
+  // falls through to sendAssistantText — this is the ONLY place that text can
+  // be captured into the open app-conversation-channel sink instead of leaking
+  // to WeChat. Mirrors the POST /v1/wechat/reply route's `replySinks.capture`
+  // check (routes.ts).
+  describe('reply-sink capture (app-conversation-channel)', () => {
+    it('captures into the sink and does NOT call sendMessage when a sink is open for the chat', async () => {
+      const log = vi.fn()
+      const sendMessage = vi.fn(async () => ({ msgId: '1' }))
+      const capture = vi.fn(() => true)
+      const wrapper = makeSendAssistantText({ sendMessage, log, capture })
+
+      await wrapper!('owner_chat', 'plain assistant text')
+
+      expect(capture).toHaveBeenCalledWith('owner_chat', 'plain assistant text')
+      expect(sendMessage).not.toHaveBeenCalled()
+      // No FALLBACK_REPLY_SENT/FAIL log — the ilink send path never ran.
+      expect(log).not.toHaveBeenCalled()
+    })
+
+    it('falls through to sendMessage (WeChat unchanged) when no sink is open for the chat', async () => {
+      const log = vi.fn()
+      const sendMessage = vi.fn(async () => ({ msgId: '1' }))
+      const capture = vi.fn(() => false)
+      const wrapper = makeSendAssistantText({ sendMessage, log, capture })
+
+      await wrapper!('some_chat', 'text')
+
+      expect(capture).toHaveBeenCalledWith('some_chat', 'text')
+      expect(sendMessage).toHaveBeenCalledWith('some_chat', 'text')
+    })
+
+    it('falls through to sendMessage when capture is undefined (no replySinks wired)', async () => {
+      const log = vi.fn()
+      const sendMessage = vi.fn(async () => ({ msgId: '1' }))
+      const wrapper = makeSendAssistantText({ sendMessage, log })
+
+      await wrapper!('some_chat', 'text')
+
+      expect(sendMessage).toHaveBeenCalledWith('some_chat', 'text')
+    })
+  })
 })

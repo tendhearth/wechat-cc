@@ -97,16 +97,22 @@ reply at once (it's a chat UI, not paced bubbles).
 
 ## Known residuals (Stage 0)
 
-(1) The `companionConverse` in-flight guard (`src/daemon/wiring/pipeline-deps.ts`,
-the `isInFlight` check near the `companionConverse` closure) is
-**one-directional**: it refuses an app turn while a WeChat turn is in flight,
-but NOT the reverse. If the owner sends a WeChat message while an app
-`/converse` turn is already running, that WeChat turn races the same owner
-session and its reply-tool output could be captured into the open app
-replySinks sink and lost from WeChat instead of being ilink-sent. Bounded/
-low-risk for a sole owner; must be closed (session-level serialization of
-turns on one chat, not just an app-side pre-check) before Stage 1 introduces
-concurrent/automated owner turns or any non-owner exposure.
+(1) **RESOLVED** by per-session turn serialization — see
+`docs/superpowers/specs/2026-07-10-session-serialization-design.md`. The
+`companionConverse` in-flight guard (`src/daemon/wiring/pipeline-deps.ts`,
+the `isInFlight` check near the `companionConverse` closure) was
+**one-directional**: it refused an app turn while a WeChat turn was in
+flight, but NOT the reverse — if the owner sent a WeChat message while an app
+`/converse` turn was already running, that WeChat turn could race the same
+owner session and have its reply-tool output captured into the open app
+replySinks sink and lost from WeChat instead of being ilink-sent. The
+session-serialization plan closed this: `companionConverse` now runs its
+entire sink open→dispatch→close lifetime inside the coordinator's per-chat
+mutex (`ConversationCoordinator.runExclusive`), so a same-chat WeChat/tick
+turn queued behind an app turn cannot start — and therefore cannot have its
+reply stolen by the still-open app sink — until the app turn's sink is
+closed. The `isInFlight` pre-check above remains as a fast, lock-free
+rejection for the common case (immediate 409 without waiting on the mutex).
 
 (2) Only `POST /v1/wechat/reply` is sink-captured — `reply_voice`,
 `send_sticker`, `send_file`, `broadcast` during a converse turn still go to
