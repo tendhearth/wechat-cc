@@ -17,7 +17,7 @@ import { formatInvokeError } from "../ipc.js"
 
 /**
  * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> }} Deps
- * @typedef {{ id: number, role: 'user'|'cc'|'error', text: string, pending?: boolean }} ConverseMsg
+ * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean }} ConverseMsg
  */
 
 // ── module state ───────────────────────────────────────────────────────
@@ -48,6 +48,9 @@ function renderSkeleton(root) {
 function messageHtml(m) {
   if (m.role === "error") {
     return `<div class="converse-error-line">${escapeHtml(m.text)}</div>`
+  }
+  if (m.role === "system") {
+    return `<div class="converse-system-line">${escapeHtml(m.text)}</div>`
   }
   const roleCls = m.role === "user" ? "converse-msg-user" : "converse-msg-cc"
   const pendingCls = m.pending ? " is-pending" : ""
@@ -87,7 +90,15 @@ async function sendMessage(deps) {
   try {
     const reply = await deps.invoke("agent_converse", { text })
     messages = messages.filter(m => m.id !== pendingId)
-    messages.push({ id: nextId++, role: "cc", text: String(reply ?? "") })
+    const replyText = String(reply ?? "")
+    if (replyText.trim() === "") {
+      // Bubble replies mean a turn can legitimately produce no text output
+      // (e.g. the agent only sent stickers/files to WeChat). Don't render a
+      // blank CC bubble for that — show a muted system note instead.
+      messages.push({ id: nextId++, role: "system", text: "（CC 这轮没有用文字回复）" })
+    } else {
+      messages.push({ id: nextId++, role: "cc", text: replyText })
+    }
     // Only clear the compose box on success — an error leaves the typed
     // text in place so the user doesn't lose it and can just retry.
     input.value = ""

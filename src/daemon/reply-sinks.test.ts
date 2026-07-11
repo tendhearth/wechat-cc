@@ -9,12 +9,12 @@ describe('reply-sinks', () => {
     expect(handle.close()).toBe('hello')
   })
 
-  it('two captures concatenate before close', () => {
+  it('two captures are newline-joined at close (bubble replies must not run together)', () => {
     const sinks = makeReplySinks()
     const handle = sinks.open('c1')
     expect(sinks.capture('c1', 'foo')).toBe(true)
     expect(sinks.capture('c1', 'bar')).toBe(true)
-    expect(handle.close()).toBe('foobar')
+    expect(handle.close()).toBe('foo\nbar')
   })
 
   it('capture with no open sink returns false', () => {

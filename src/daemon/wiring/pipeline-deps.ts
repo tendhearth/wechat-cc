@@ -401,6 +401,17 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // stays unchanged.
       throw new Error('reply_sink_busy')
     }
+    // GUARD IS ONE-DIRECTIONAL (Stage-0 accepted residual): this refuses an
+    // app turn while a WeChat turn is in flight, but NOT the reverse. If the
+    // owner sends a WeChat message WHILE an app /converse turn is already
+    // running, that WeChat turn (a) races the same owner session/
+    // AgentSession handle and (b) its reply-tool output would be captured
+    // into the OPEN app replySinks sink and lost from WeChat instead of
+    // being ilink-sent. Bounded/low-risk for a sole owner (the owner is the
+    // only one who can trigger either side, and races require sub-turn
+    // timing); MUST be closed (session-level serialization of turns on one
+    // chat, not just an app-side pre-check) before Stage 1 introduces
+    // concurrent/automated owner turns or any non-owner exposure.
     // SECOND line of defense — app-turn-vs-app-turn. Throws
     // Error('reply_sink_busy') if a turn is already in flight for this
     // chat — surfaces as 409 at the route layer.

@@ -4674,6 +4674,17 @@ input { font: inherit; color: inherit; }
   font-size: 12.5px;
   text-align: center;
 }
+.converse-system-line {
+  align-self: center;
+  max-width: 80%;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--paper-2);
+  color: var(--ink-3);
+  font-size: 12.5px;
+  font-style: italic;
+  text-align: center;
+}
 .converse-compose {
   display: flex;
   align-items: flex-end;

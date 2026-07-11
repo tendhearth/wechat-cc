@@ -33,7 +33,7 @@ export function makeReplySinks(): ReplySinks {
         close(): string {
           const buf = sinks.get(chatId) ?? []
           sinks.delete(chatId)
-          return buf.join('')
+          return buf.join('\n')
         },
       }
     },
