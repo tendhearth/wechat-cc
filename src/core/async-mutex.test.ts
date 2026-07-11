@@ -127,4 +127,58 @@ describe('makeChatMutex', () => {
     await Promise.resolve()
     expect(mutex._size()).toBe(0)
   })
+
+  it('3-way race: A pending → B queued → A settles (cleanup fires) → C arrives (must wait for B)', async () => {
+    // This test exercises the map-cleanup guard: if the guard were unconditional
+    // `tails.delete(chatId)`, then A's cleanup would wrongly remove B's entry,
+    // allowing C to run concurrently with B instead of serialized behind it.
+    const mutex = makeChatMutex()
+    const order: string[] = []
+    const gateA = deferred<void>()
+    const gateB = deferred<void>()
+
+    // A starts and gates on gateA
+    const pA = mutex.runExclusive('c1', async () => {
+      order.push('A-start')
+      await gateA.promise
+      order.push('A-end')
+    })
+
+    // B queues behind A
+    const pB = mutex.runExclusive('c1', async () => {
+      order.push('B-start')
+      await gateB.promise
+      order.push('B-end')
+    })
+
+    // Let A actually start and then complete
+    await Promise.resolve()
+    expect(order).toEqual(['A-start'])
+
+    // Now release A, let it complete
+    gateA.resolve()
+    await Promise.all([pA]) // Wait for A to fully settle
+
+    // At this point, A is done and its cleanup microtask has fired.
+    // B should be starting. Flush microtasks to let B's fn get called.
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(order).toEqual(['A-start', 'A-end', 'B-start'])
+
+    // C arrives while B is pending (gateB not yet resolved)
+    const pC = mutex.runExclusive('c1', async () => {
+      order.push('C-start')
+    })
+
+    // C must NOT have started yet — B is still pending
+    await Promise.resolve()
+    expect(order).toEqual(['A-start', 'A-end', 'B-start'])
+
+    // Let B complete
+    gateB.resolve()
+    await Promise.all([pB, pC])
+
+    // C should have started only after B ended
+    expect(order).toEqual(['A-start', 'A-end', 'B-start', 'B-end', 'C-start'])
+  })
 })
