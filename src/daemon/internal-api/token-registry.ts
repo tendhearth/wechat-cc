@@ -26,8 +26,32 @@ import type { UserTier } from '../../core/user-tier'
  *     Keeping it a distinct credential (rather than promoting the trusted
  *     file token) means a `trusted`-tier shell process still can't reach
  *     admin-only routes by reading the one file it's meant to have.
+ *   - ROUTE-SCOPING (blast-radius fix on top of option B): the operator
+ *     token is admin-tier, but admin-tier alone would let it reach every
+ *     other admin route too (daemon-restart, /v1/locate, /v1/sessions,
+ *     ...) — so a `trusted`-tier agent that manages to read this one file
+ *     (same-OS-user shell access) would get full daemon control, not just
+ *     converse. `routeAllow`, when present on a TokenInfo, restricts that
+ *     token to ONLY the listed `"METHOD /path"` route keys regardless of
+ *     its tier; the dispatcher enforces this as a second gate after the
+ *     tier check (see index.ts). registerOperatorToken sets
+ *     `routeAllow: {'POST /v1/companion/converse'}` so a leaked operator
+ *     token can only impersonate the owner in converse — it cannot restart
+ *     the daemon, list sessions, or locate files. That residual
+ *     (converse-impersonation) is accepted and documented: closing it
+ *     fully needs real local-auth (peer-cred / agent-sandboxing) before
+ *     this daemon supports trusted non-owner users alongside the desktop
+ *     app. Session and file tokens leave routeAllow unset (unrestricted by
+ *     route, tier gate only, as before).
  */
-export type TokenInfo = { tier: UserTier; origin: 'file' | 'session' | 'operator'; sessionKey?: string }
+export type TokenInfo = {
+  tier: UserTier
+  origin: 'file' | 'session' | 'operator'
+  sessionKey?: string
+  /** When set, this token may ONLY call routes in this set — see the
+   *  ROUTE-SCOPING note above. Absent ⇒ no route restriction (tier gate only). */
+  routeAllow?: ReadonlySet<string>
+}
 
 export interface TokenRegistry {
   registerFileToken(tokenHex: string): void
@@ -48,11 +72,17 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
       map.set(tokenHex, { tier: 'trusted', origin: 'file' })
     },
     registerOperatorToken(tokenHex) {
-      // See the "OPERATOR token" note in the module doc comment above —
-      // this is the one place a file-origin token is allowed to grant
-      // `admin`, because it's a distinct credential from the shared
-      // trusted file token and only the local machine owner can read it.
-      map.set(tokenHex, { tier: 'admin', origin: 'operator' })
+      // See the "OPERATOR token" and "ROUTE-SCOPING" notes in the module
+      // doc comment above — this is the one place a file-origin token is
+      // allowed to grant `admin`, because it's a distinct credential from
+      // the shared trusted file token and only the local machine owner can
+      // read it. routeAllow narrows it to converse-only so that admin
+      // grant doesn't reach every other admin route too.
+      map.set(tokenHex, {
+        tier: 'admin',
+        origin: 'operator',
+        routeAllow: new Set(['POST /v1/companion/converse']),
+      })
     },
     mint(tier, sessionKey) {
       const tok = randomHex()

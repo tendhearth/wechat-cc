@@ -402,20 +402,22 @@ describe('internal-api', () => {
         expect(await w.json()).toEqual({ ok: true })
       })
 
-      // option B security fix: the operator token is origin:'operator', not
-      // origin:'session' — memoryScopeDenied only scopes SESSION callers
-      // (routes.ts), so like the file token and admin sessions above, it
-      // must stay unrestricted across chat subtrees rather than getting
-      // chat-scoped like a trusted/guest session token would.
-      it('operator token stays unrestricted across chat subtrees', async () => {
+      // Route-scoping fix (blast-radius hardening on top of option B): the
+      // operator token used to be unrestricted across chat subtrees like
+      // the file token, because origin:'operator' isn't a SESSION caller
+      // (memoryScopeDenied only scopes those — routes.ts). It is now
+      // ROUTE-scoped to converse-only (token-registry.ts's ROUTE-SCOPING
+      // note), so it can no longer reach /v1/memory/write at all — it gets
+      // 403 route_not_allowed before the chat-scope check even runs.
+      it('operator token is 403 route_not_allowed on /v1/memory/write (route-scoped to converse-only)', async () => {
         memoryRoot = join(stateDir, 'memory')
         const memory = makeMemoryFS({ rootDir: memoryRoot })
         api = createInternalApi({ stateDir, daemonPid: 999, memory })
         const { port, operatorTokenFilePath } = await api.start()
         const opToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
         const w = await write(port, opToken, 'ownerchat/persona.md')
-        expect(w.status).toBe(200)
-        expect(await w.json()).toEqual({ ok: true })
+        expect(w.status).toBe(403)
+        expect(await w.json()).toEqual({ error: 'route_not_allowed' })
       })
 
       it('admin session token stays unrestricted across chat subtrees', async () => {
@@ -1432,6 +1434,30 @@ describe('internal-api', () => {
       })
       expect(resp.status).toBe(200)
       expect(await resp.json()).toEqual({ ok: true, reply: 'echo:hi' })
+    })
+
+    // ── route-scoping fix on top of option B: the operator token's admin
+    // grant is restricted to converse only, so a leaked token can't reach
+    // other admin routes (daemon-restart, /v1/sessions, /v1/locate, ...).
+    it('the operator token is 403 route_not_allowed on a DIFFERENT admin route (GET /v1/sessions)', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1, listSessions: () => [] })
+      const { port, operatorTokenFilePath } = await api.start()
+      const opToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/sessions`, {
+        headers: { Authorization: `Bearer ${opToken}` },
+      })
+      expect(resp.status).toBe(403)
+      expect(await resp.json()).toEqual({ error: 'route_not_allowed' })
+    })
+
+    it('a normal minted admin SESSION token (unaffected) still reaches GET /v1/sessions', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1, listSessions: () => [] })
+      const { port } = await api.start()
+      const tok = api.mintSessionToken('admin', 'claude/a/chat-1')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/sessions`, {
+        headers: { Authorization: `Bearer ${tok}` },
+      })
+      expect(resp.status).toBe(200)
     })
 
     it('the daemon-wide trusted FILE token still 403s on this admin-only route', async () => {

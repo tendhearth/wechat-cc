@@ -22,12 +22,23 @@ describe('token-registry', () => {
     expect(makeTokenRegistry().resolve('ff'.repeat(32))).toBeNull()
   })
 
-  it('resolves a registered operator token as admin/operator, distinct from the file token', () => {
+  it('resolves a registered operator token as admin/operator, route-scoped to converse-only', () => {
     const r = makeTokenRegistry()
     r.registerFileToken('cc'.repeat(32))
     r.registerOperatorToken('dd'.repeat(32))
-    expect(r.resolve('dd'.repeat(32))).toEqual({ tier: 'admin', origin: 'operator' })
+    const opInfo = r.resolve('dd'.repeat(32))
+    expect(opInfo?.tier).toBe('admin')
+    expect(opInfo?.origin).toBe('operator')
+    expect(opInfo?.routeAllow).toEqual(new Set(['POST /v1/companion/converse']))
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
+  })
+
+  it('file and session tokens carry no routeAllow (unrestricted by route, tier gate only)', () => {
+    const r = makeTokenRegistry()
+    r.registerFileToken('ee'.repeat(32))
+    const sessionTok = r.mint('admin', 'claude/a/chat-1')
+    expect(r.resolve('ee'.repeat(32))?.routeAllow).toBeUndefined()
+    expect(r.resolve(sessionTok)?.routeAllow).toBeUndefined()
   })
 
   it('invalidateSession drops every token for that sessionKey but keeps others', () => {

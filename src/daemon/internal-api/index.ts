@@ -157,6 +157,18 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       return send(res, 403, { error: 'forbidden', required: need }, origin)
     }
 
+    // Route-allow gate: some tokens (currently the operator token — see
+    // token-registry.ts's "ROUTE-SCOPING" doc note) are restricted to a
+    // fixed set of routes regardless of their tier, so an admin-tier grant
+    // that leaks doesn't hand out the whole admin surface. Checked after
+    // the tier gate so a route-scoped token still needs the right tier too.
+    if (caller.routeAllow && !caller.routeAllow.has(routeKey)) {
+      deps.log?.('INTERNAL_API', `403 ${routeKey} caller=${caller.tier}/${caller.origin} route_not_allowed`, {
+        event: 'route_not_allowed', path: routeKey, caller: caller.tier, origin: caller.origin,
+      })
+      return send(res, 403, { error: 'route_not_allowed' }, origin)
+    }
+
     let body: unknown = null
     if (method === 'POST') {
       try {
