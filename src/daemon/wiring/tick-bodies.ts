@@ -29,7 +29,7 @@ import { synthesizeOverview } from '../../lib/memory-synthesis'
 import { makeLifeStoresReader } from '../life-stores'
 import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
 import { bundledPluginsDir } from '../plugins/paths'
-import { createMcpToolBridge } from '../../core/openai-mcp-bridge'
+import { createResilientBridge } from '../companion/ingest/bridge'
 import { runIngestCycle, maxDecryptedMtime } from '../companion/ingest/cycle'
 import selfPkg from '../../../package.json' with { type: 'json' }
 
@@ -185,7 +185,9 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
 
     const cheapEval = deps.boot.registry.getCheapEval()
     await deps.boot.coordinator.runExclusive('__ingest__', async () => {
-      const bridge = await createMcpToolBridge(specs)
+      // Resilient: connect per-plugin so a heavy source that fails to spawn
+      // (wxsearch/wxmedia model loads) doesn't sink the whole cycle.
+      const bridge = await createResilientBridge(specs, { log: (t, m) => deps.log(t, m) })
       try {
         const hasTool = (t: string) => bridge.tools.some(x => x.name === t)
         const report = await runIngestCycle({
