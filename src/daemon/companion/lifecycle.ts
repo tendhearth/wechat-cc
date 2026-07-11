@@ -22,6 +22,7 @@ export interface CompanionPushDeps {
 
 const PUSH_INTERVAL_MS = 20 * 60 * 1000
 const INTROSPECT_INTERVAL_MS = 24 * 60 * 60 * 1000
+const INGEST_INTERVAL_MS = 25 * 60 * 1000
 const JITTER = 0.3
 
 export function registerCompanionPush(deps: CompanionPushDeps): Lifecycle {
@@ -36,6 +37,25 @@ export function registerCompanionPush(deps: CompanionPushDeps): Lifecycle {
   let stopped = false
   return {
     name: 'companion-push',
+    stop: async () => { if (!stopped) { stopped = true; await stop() } },
+  }
+}
+
+export interface CompanionIngestDeps extends CompanionPushDeps {}
+
+/** WRITE-side knowledge ingestion loop (25 min). Same scheduler shape as push. */
+export function registerIngest(deps: CompanionIngestDeps): Lifecycle {
+  const stop = startCompanionScheduler({
+    name: 'ingest',
+    intervalMs: deps.intervalMs ?? INGEST_INTERVAL_MS,
+    jitterRatio: JITTER,
+    shouldRun: deps.shouldRun,
+    log: deps.log,
+    onTick: deps.onTick,
+  })
+  let stopped = false
+  return {
+    name: 'companion-ingest',
     stop: async () => { if (!stopped) { stopped = true; await stop() } },
   }
 }

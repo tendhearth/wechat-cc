@@ -16,7 +16,7 @@ import { makeTurnRecordStore } from '../core/turn-record-store'
 import { providerDisplayName } from './provider-display-names'
 import { loadAllAccounts, makeIlinkAdapter } from './ilink-glue'
 import { registerInternalApi } from './internal-api/lifecycle'
-import { registerCompanionPush, registerCompanionIntrospect } from './companion/lifecycle'
+import { registerCompanionPush, registerCompanionIntrospect, registerIngest } from './companion/lifecycle'
 import { registerGuard } from './guard/lifecycle'
 import { registerPolling } from './polling-lifecycle'
 import { registerSessions } from './sessions-lifecycle'
@@ -295,6 +295,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 4. register lifecycles (LIFO stop = startup order reversed)
     lc.register(registerCompanionPush(wired.companionPushDeps))
     lc.register(registerCompanionIntrospect(wired.companionIntrospectDeps))
+    lc.register(registerIngest(wired.companionIngestDeps))
     const guardLc = registerGuard(wired.guardDeps); wireRef(wired.refs.guard, guardLc); lc.register(guardLc)
     lc.register(registerSessions(wired.sessionsDeps))
     lc.register(registerIlink(wired.ilinkDeps))

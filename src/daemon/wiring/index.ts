@@ -11,7 +11,7 @@ import type { GuardLifecycle } from '../guard/lifecycle'
 import type { PollingLifecycle } from '../polling-lifecycle'
 import type { InboundPipelineDeps } from '../inbound/build'
 import type { PipelineRun } from '../inbound/types'
-import type { CompanionPushDeps, CompanionIntrospectDeps } from '../companion/lifecycle'
+import type { CompanionPushDeps, CompanionIntrospectDeps, CompanionIngestDeps } from '../companion/lifecycle'
 import type { SchedulerDeps } from '../guard/scheduler'
 import type { SessionsLifecycleDeps } from '../sessions-lifecycle'
 import type { IlinkLifecycleDeps } from '../ilink-lifecycle'
@@ -75,6 +75,7 @@ export interface WiredDeps {
   companionConverse: (text: string) => Promise<{ reply: string }>
   companionPushDeps: CompanionPushDeps
   companionIntrospectDeps: CompanionIntrospectDeps
+  companionIngestDeps: CompanionIngestDeps
   guardDeps: SchedulerDeps
   sessionsDeps: SessionsLifecycleDeps
   ilinkDeps: IlinkLifecycleDeps
