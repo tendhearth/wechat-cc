@@ -37,7 +37,7 @@ import type { ProviderId } from './conversation'
  * plugin (or a future one this file hasn't been updated for yet) never
  * triggers the section or produces a blank/garbled bullet.
  */
-export const KNOWN_KNOWLEDGE_PLUGINS = ['wxgraph', 'wxfacts', 'wxsearch', 'wxmedia'] as const
+export const KNOWN_KNOWLEDGE_PLUGINS = ['wxperson', 'wxgraph', 'wxfacts', 'wxsearch', 'wxmedia'] as const
 
 export interface BuildSystemPromptArgs {
   /** Which provider this session is for. Used to compute peer + delegate tool name. */
@@ -502,11 +502,22 @@ export function knowledgeOrchestrationSection(pluginNames: string[]): string {
     bullets.push('- 语音/图片转出的文字也在检索范围内。')
   }
 
+  const parts: string[] = [
+    '你对一个人的了解由几层组成——你自己的记忆是你的"看法"（第一人称、可能有偏见）；下面这些是从真实数据算出来的源。**要真正懂一个人，把你的看法 + 关系 + 事实拼起来，别只靠一层。用人名找人（按微信联系人名解析，同名可能对不准）。**',
+  ]
+  if (present.has('wxperson')) {
+    parts.push('**一步到位**：想整体了解某人，先调 `person_brief(名字)`——一次拿全 ta 的关系画像 + 结构化事实 + 未了义务 + 近期消息（这是数据层）；再叠上你自己的看法。要单独深挖某一面，用下面的源。')
+  }
+  if (bullets.length > 0) {
+    parts.push(bullets.join('\n'))
+  }
+  if (present.has('wxfacts')) {
+    parts.push('**未了义务 → 主动**：做关怀 / 议程时，用 `find_facts(kind=obligation)` 看有没有该兑现的承诺（你欠 ta 的、ta 欠你的），值得跟进的记进 `agenda.md`（`- [ ] due:YYYY-MM-DD …`）——让结构化事实回流成主动关心。')
+  }
+
   return `## 你怎么了解一个人（知识编排）
 
-你对一个人的了解由几层组成——你自己的记忆是你的"看法"（第一人称、可能有偏见）；下面这些是从真实数据算出来的源。**要真正懂一个人，把你的看法 + 关系 + 事实拼起来，别只靠一层。用人名找人（按微信联系人名解析，同名可能对不准）。**
-
-${bullets.join('\n')}`
+${parts.join('\n\n')}`
 }
 
 function multiModeAwarenessSection(): string {

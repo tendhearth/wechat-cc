@@ -494,6 +494,33 @@ describe('knowledge-orchestration prompt section', () => {
     expect(s).not.toContain('语音/图片转出的文字')
   })
 
+  it('adds the person_brief "一步到位" lead only when wxperson is present', () => {
+    const withPerson = knowledgeOrchestrationSection(['wxperson', 'wxgraph'])
+    expect(withPerson).toContain('person_brief(名字)')
+    expect(withPerson).toContain('一步到位')
+    // wxperson alone still renders the section (lead, no source bullets)
+    const personOnly = knowledgeOrchestrationSection(['wxperson'])
+    expect(personOnly).toContain('person_brief(名字)')
+    expect(personOnly).not.toContain('contact_profile')   // no wxgraph source bullet
+    // no wxperson ⇒ no person_brief pointer
+    expect(knowledgeOrchestrationSection(['wxgraph'])).not.toContain('person_brief')
+  })
+
+  it('adds the obligation→agenda flow-back only when wxfacts is present', () => {
+    const withFacts = knowledgeOrchestrationSection(['wxfacts'])
+    expect(withFacts).toContain('未了义务 → 主动')
+    expect(withFacts).toContain('find_facts(kind=obligation)')
+    expect(withFacts).toContain('agenda.md')
+    // no wxfacts ⇒ no flow-back line
+    expect(knowledgeOrchestrationSection(['wxgraph'])).not.toContain('未了义务 → 主动')
+  })
+
+  it('wxperson counts as a known plugin: buildSystemPrompt renders the section for wxperson alone', () => {
+    const p = buildSystemPrompt({ ...base, knowledgePlugins: ['wxperson'] })
+    expect(p).toContain('知识编排')
+    expect(p).toContain('person_brief(名字)')
+  })
+
   it('buildSystemPrompt includes the section when a known knowledge plugin is present', () => {
     const p = buildSystemPrompt({ ...base, knowledgePlugins: ['wxgraph'] })
     expect(p).toContain('知识编排')
