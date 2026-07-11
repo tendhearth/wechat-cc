@@ -510,6 +510,29 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       }
     },
 
+    // ── companion speak (app-conversation-channel, voice arc Stage 1) ──
+    // Synthesizes reply audio for arbitrary text via the daemon's voice
+    // config and hands the bytes back to the caller (base64) instead of
+    // ilink-sending — reuses deps.voice.synthesizeSpeech, which mirrors
+    // replyVoice's synth step exactly, minus the wechat upload/send.
+    'POST /v1/companion/speak': async (_q, body) => {
+      if (!deps.voice) return { status: 503, body: { error: 'voice_not_wired' } }
+      const { text } = body as { text?: unknown }
+      if (typeof text !== 'string' || text.trim().length === 0) {
+        return { status: 400, body: { error: 'text required' } }
+      }
+      try {
+        const { audio, mime } = await deps.voice.synthesizeSpeech(text)
+        return { status: 200, body: { ok: true, audio_b64: audio.toString('base64'), mime } }
+      } catch (err) {
+        const m = errMsg(err)
+        if (/no.?voice.?config|not configured/i.test(m)) {
+          return { status: 422, body: { ok: false, error: 'no_voice_config' } }
+        }
+        return { status: 500, body: { ok: false, error: m } }
+      }
+    },
+
     'POST /v1/voice/save_config': async (_q, body) => {
       if (!deps.voice) return { status: 503, body: { error: 'voice_not_wired' } }
       // Body is pre-validated by index.ts via VoiceSaveConfigRequest schema.

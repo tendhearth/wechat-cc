@@ -22,14 +22,14 @@ describe('token-registry', () => {
     expect(makeTokenRegistry().resolve('ff'.repeat(32))).toBeNull()
   })
 
-  it('resolves a registered operator token as admin/operator, route-scoped to converse-only', () => {
+  it('resolves a registered operator token as admin/operator, route-scoped to converse + speak only', () => {
     const r = makeTokenRegistry()
     r.registerFileToken('cc'.repeat(32))
     r.registerOperatorToken('dd'.repeat(32))
     const opInfo = r.resolve('dd'.repeat(32))
     expect(opInfo?.tier).toBe('admin')
     expect(opInfo?.origin).toBe('operator')
-    expect(opInfo?.routeAllow).toEqual(new Set(['POST /v1/companion/converse']))
+    expect(opInfo?.routeAllow).toEqual(new Set(['POST /v1/companion/converse', 'POST /v1/companion/speak']))
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
   })
 

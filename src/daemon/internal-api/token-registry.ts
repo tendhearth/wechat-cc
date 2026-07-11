@@ -35,10 +35,11 @@ import type { UserTier } from '../../core/user-tier'
  *     token to ONLY the listed `"METHOD /path"` route keys regardless of
  *     its tier; the dispatcher enforces this as a second gate after the
  *     tier check (see index.ts). registerOperatorToken sets
- *     `routeAllow: {'POST /v1/companion/converse'}` so a leaked operator
- *     token can only impersonate the owner in converse — it cannot restart
+ *     `routeAllow: {'POST /v1/companion/converse', 'POST /v1/companion/speak'}`
+ *     so a leaked operator token can only impersonate the owner in converse
+ *     (text turns) and speak (synthesized reply audio) — it cannot restart
  *     the daemon, list sessions, or locate files. That residual
- *     (converse-impersonation) is accepted and documented: closing it
+ *     (converse/speak-impersonation) is accepted and documented: closing it
  *     fully needs real local-auth (peer-cred / agent-sandboxing) before
  *     this daemon supports trusted non-owner users alongside the desktop
  *     app. Session and file tokens leave routeAllow unset (unrestricted by
@@ -81,7 +82,7 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
       map.set(tokenHex, {
         tier: 'admin',
         origin: 'operator',
-        routeAllow: new Set(['POST /v1/companion/converse']),
+        routeAllow: new Set(['POST /v1/companion/converse', 'POST /v1/companion/speak']),
       })
     },
     mint(tier, sessionKey) {

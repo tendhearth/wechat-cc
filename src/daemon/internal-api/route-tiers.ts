@@ -76,6 +76,9 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // conversation channel, voice arc Stage 0). Same trust class as the
   // other admin daemon-control routes below.
   'POST /v1/companion/converse': 'admin',
+  // admin — same trust class as converse above (voice arc Stage 1): synths
+  // reply audio for the owner's app-conversation-channel session.
+  'POST /v1/companion/speak': 'admin',
   // admin — daemon-control (daemon_introspect / daemon_remediate)
   'GET /v1/turns': 'admin',
   'GET /v1/sessions': 'admin',

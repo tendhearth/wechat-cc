@@ -34,6 +34,14 @@ export interface WechatVoiceDep {
     | { ok: true; msgId: string }
     | { ok: false; reason: string }
   >
+  /**
+   * Synthesizes audio for arbitrary text using the daemon's voice config,
+   * WITHOUT ilink-sending it anywhere (voice arc Stage 1 — POST
+   * /v1/companion/speak hands the bytes back to the caller instead).
+   * Throws `Error('no_voice_config')` when no voice config is saved yet;
+   * propagates provider synth errors otherwise.
+   */
+  synthesizeSpeech(text: string): Promise<{ audio: Buffer; mime: string }>
   /** Validates input (test synth), then persists. Returns ok + tested_ms on success. */
   saveConfig(input: {
     provider: 'http_tts' | 'qwen'
