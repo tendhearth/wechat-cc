@@ -27,6 +27,16 @@ import { runThreadsExtraction } from '../threads/extractor'
 import { runLocalImportIfEnabled } from '../local-import'
 import { synthesizeOverview } from '../../lib/memory-synthesis'
 import { makeLifeStoresReader } from '../life-stores'
+import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
+import { bundledPluginsDir } from '../plugins/paths'
+import { createMcpToolBridge } from '../../core/openai-mcp-bridge'
+import { runIngestCycle, maxDecryptedMtime } from '../companion/ingest/cycle'
+import selfPkg from '../../../package.json' with { type: 'json' }
+
+/** Per-cycle wxfacts extraction batch cap (rate bound). */
+export const INGEST_BATCH_CAP = 4
+/** Skip an ingest cycle if any chat had inbound activity within this window (owner is actively chatting). */
+export const INGEST_QUIET_MS = 3 * 60_000
 import { runGarden } from '../memory/gardener'
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
@@ -69,6 +79,8 @@ export interface TickDeps {
 }
 
 export interface TickBodies {
+  /** WRITE-side knowledge ingestion (25m interval + new-message nudge). */
+  ingestTick: () => Promise<void>
   pushTick: (opts?: { nowIso?: string }) => Promise<void>
   // introspect/observations internal timestamps stay wall-clock (MVP); nowIso
   // is only used to seed the memory gardener's `today` (archive filename /
@@ -136,6 +148,66 @@ export function buildHuntText(opts: { nowIso: string }): string {
 
 export function buildTickBodies(deps: TickDeps): TickBodies {
   const launchCwd = process.cwd()
+
+  // In-memory source-freshness marker for the ingest loop (deterministic
+  // builders only run when the decrypted source advanced past this). Reset to 0
+  // on restart → one catch-up build after a restart, which is harmless.
+  let lastIngestSourceMtime = 0
+
+  /**
+   * WRITE-side knowledge ingestion. Drives the plugins' builders + wxfacts
+   * extraction directly via the MCP bridge (no agent turn). Idle-gated (skips
+   * when a chat is active), serialized under a dedicated `__ingest__` lock, and
+   * an inert no-op when no knowledge plugins are loaded (e.g. e2e harness).
+   */
+  async function ingestTick(): Promise<void> {
+    const specs = pluginMcpSpecs(loadPlugins({
+      stateDir: deps.stateDir,
+      bundledDir: bundledPluginsDir(),
+      hostVersion: selfPkg.version,
+    }))
+    if (Object.keys(specs).length === 0) return   // no knowledge plugins → nothing to ingest
+
+    // Idle politeness: don't compete with an active conversation. Skip if any
+    // chat received an inbound message within the quiet window.
+    const messagesStore = makeMessagesStore(deps.db)
+    try {
+      for (const chatId of await messagesStore.listChatIds()) {
+        const ts = await messagesStore.latestInboundTs(chatId)
+        if (ts && Date.now() - Date.parse(ts) < INGEST_QUIET_MS) {
+          deps.log('INGEST', `skip cycle — chat ${chatId} recently active`)
+          return
+        }
+      }
+    } catch (err) {
+      deps.log('INGEST', `activity check failed (proceeding): ${errMsg(err)}`)
+    }
+
+    const cheapEval = deps.boot.registry.getCheapEval()
+    await deps.boot.coordinator.runExclusive('__ingest__', async () => {
+      const bridge = await createMcpToolBridge(specs)
+      try {
+        const hasTool = (t: string) => bridge.tools.some(x => x.name === t)
+        const report = await runIngestCycle({
+          bridge,
+          hasTool,
+          cheapEval: cheapEval ?? (async () => '[]'),   // no cheap provider → deterministic builders only
+          sourceMaxMtime: () => maxDecryptedMtime(deps.stateDir),
+          lastSourceMtime: lastIngestSourceMtime,
+          cap: INGEST_BATCH_CAP,
+          log: (tag, msg) => deps.log(tag, msg),
+        })
+        lastIngestSourceMtime = report.newSourceMtime
+        if (report.batches || report.rebuilt || report.indexed || report.transcribed) {
+          deps.log('INGEST', `cycle: decrypted=${report.decrypted} rebuilt=${report.rebuilt} indexed=${report.indexed} transcribed=${report.transcribed} batches=${report.batches} facts=${report.recorded}`)
+        }
+      } catch (err) {
+        deps.log('INGEST', `cycle failed: ${errMsg(err)}`)
+      } finally {
+        await bridge.close()
+      }
+    })
+  }
 
   /**
    * Resolves the chat's session (project/tier/provider), checks the
@@ -432,5 +504,5 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     }
   }
 
-  return { pushTick, introspectTick }
+  return { ingestTick, pushTick, introspectTick }
 }
