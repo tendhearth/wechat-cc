@@ -171,4 +171,33 @@ describe('plugin registry', () => {
     expect(ready[0]!.ready).toBe(true)
     expect(Object.keys(pluginMcpSpecs(ready))).toEqual(['wxvault'])
   })
+
+  describe('manifest.hidden (parseManifest, via loadPlugins)', () => {
+    it('hidden: true parses through and carries onto the loaded manifest', () => {
+      writePlugin(bundledDir, 'secret', { ...good('secret'), hidden: true })
+      const loaded = loadPlugins({ stateDir, bundledDir })
+      expect(loaded[0]!.manifest.hidden).toBe(true)
+    })
+
+    it('absent hidden is falsy', () => {
+      writePlugin(bundledDir, 'visible', good('visible'))
+      const loaded = loadPlugins({ stateDir, bundledDir })
+      expect(loaded[0]!.manifest.hidden).toBeFalsy()
+    })
+
+    it('a non-boolean hidden is ignored (coerced away), not fatal to the manifest', () => {
+      writePlugin(bundledDir, 'weird', { ...good('weird'), hidden: 'yes' })
+      const loaded = loadPlugins({ stateDir, bundledDir })
+      expect(loaded).toHaveLength(1)                 // manifest still parses
+      expect(loaded[0]!.manifest.hidden).toBeFalsy()  // non-boolean treated as absent
+    })
+
+    it('loading + running is unaffected: a hidden plugin still loads, enables, and is ready like any other', () => {
+      writePlugin(bundledDir, 'secret', { ...good('secret'), hidden: true })
+      const loaded = loadPlugins({ stateDir, bundledDir })
+      expect(loaded[0]!.enabled).toBe(true)   // bundled default-enabled, same as a visible plugin
+      expect(loaded[0]!.ready).toBe(true)
+      expect(Object.keys(pluginMcpSpecs(loaded))).toEqual(['secret'])   // MCP tools still wired
+    })
+  })
 })
