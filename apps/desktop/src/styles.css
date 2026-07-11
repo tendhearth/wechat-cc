@@ -4621,3 +4621,81 @@ input { font: inherit; color: inherit; }
 .contact-row.active { background: var(--tint, rgba(0,0,0,.07)); font-weight: 600; }
 .contact-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .contact-row .count { font-size: 11px; color: var(--ink-3, #999); }
+
+/* ─── converse pane ("跟 CC 说" — in-app compose UI) ──────────────────── */
+.converse-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--paper);
+}
+.converse-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.converse-scroll .empty-state { padding: 40px; text-align: center; color: var(--ink-3); font-size: 13px; }
+.converse-msg { display: flex; }
+.converse-msg-user { justify-content: flex-end; }
+.converse-msg-cc { justify-content: flex-start; }
+.converse-bubble {
+  max-width: 72%;
+  padding: 9px 13px;
+  border-radius: 14px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.converse-msg-user .converse-bubble {
+  background: var(--green);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.converse-msg-cc .converse-bubble {
+  background: var(--paper-2);
+  color: var(--ink);
+  border: 1px solid var(--hair);
+  border-bottom-left-radius: 4px;
+}
+.converse-msg-cc.is-pending .converse-bubble { color: var(--ink-3); }
+.converse-error-line {
+  align-self: center;
+  max-width: 80%;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--rouge-soft);
+  color: var(--rouge);
+  font-size: 12.5px;
+  text-align: center;
+}
+.converse-compose {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--hair);
+  background: var(--paper);
+}
+.converse-textarea {
+  flex: 1;
+  min-height: 40px;
+  max-height: 160px;
+  padding: 9px 12px;
+  border: 1px solid var(--hair-2);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.5;
+  font-family: inherit;
+  resize: vertical;
+}
+.converse-textarea:focus { outline: none; border-color: var(--green-ink); box-shadow: 0 0 0 3px var(--green-soft); }
+.converse-textarea:disabled { opacity: .6; }
+.converse-send-btn { flex: 0 0 auto; height: 40px; }
