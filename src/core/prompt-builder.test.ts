@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSystemPrompt, bubbleRepliesSection, careSection, daemonSelfHealSection, newRelationshipSection, personaCultivationSection, personaSection, stickerSection } from './prompt-builder'
+import { buildSystemPrompt, bubbleRepliesSection, careSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, daemonSelfHealSection, newRelationshipSection, personaCultivationSection, personaSection, stickerSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
   function defaults() {
@@ -396,5 +396,73 @@ describe('persona prompt section', () => {
     const p = buildSystemPrompt({ ...base, personaEmpty: true })
     expect(p).not.toContain('人设养成')
     expect(p).not.toContain('现在还是空的')
+  })
+})
+
+describe('core-memory prompt section', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+
+  it('coreMemorySection() includes the 核心记忆 heading + the given content', () => {
+    const s = coreMemorySection('喜欢猫,养了一只叫豆豆的橘猫')
+    expect(s).toContain('核心记忆')
+    expect(s).toContain('喜欢猫,养了一只叫豆豆的橘猫')
+  })
+
+  it('coreMemorySection() slices content over CORE_MEMORY_MAX_CHARS and appends a truncation note', () => {
+    const long = 'x'.repeat(2000)
+    const s = coreMemorySection(long)
+    expect(s).not.toContain('x'.repeat(CORE_MEMORY_MAX_CHARS + 1))
+    expect(s).toContain('x'.repeat(CORE_MEMORY_MAX_CHARS))
+    expect(s).toContain('核心记忆已截断')
+    expect(s).toContain('memory_read')
+  })
+
+  it('coreMemorySection() does NOT truncate content under the cap', () => {
+    const content = 'y'.repeat(1400)
+    const s = coreMemorySection(content)
+    expect(s).toContain(content)
+    expect(s).not.toContain('核心记忆已截断')
+  })
+
+  it('buildSystemPrompt includes the core-memory section when coreMemory is a non-empty string', () => {
+    const p = buildSystemPrompt({ ...base, coreMemory: '这个人叫小明,喜欢徒步' })
+    expect(p).toContain('核心记忆')
+    expect(p).toContain('这个人叫小明,喜欢徒步')
+  })
+
+  it('buildSystemPrompt is byte-identical whether coreMemory is absent or whitespace-only, and omits the section', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withWhitespace = buildSystemPrompt({ ...base, coreMemory: '  ' })
+    expect(withWhitespace).toBe(withoutKey)
+    expect(withoutKey).not.toContain('核心记忆')
+  })
+
+  it('places the core-memory section immediately after the persona section, before the tools section', () => {
+    const personaOnly = buildSystemPrompt({ ...base, persona: '话风活泼' })
+    const personaPlusCore = buildSystemPrompt({ ...base, persona: '话风活泼', coreMemory: '喜欢猫' })
+
+    expect(personaOnly).not.toContain('核心记忆')
+
+    const personaIdx = personaPlusCore.indexOf('你的人设')
+    const coreIdx = personaPlusCore.indexOf('核心记忆')
+    const toolsIdx = personaPlusCore.indexOf('可用 wechat 工具')
+    expect(personaIdx).toBeGreaterThan(-1)
+    expect(coreIdx).toBeGreaterThan(personaIdx)
+    expect(coreIdx).toBeLessThan(toolsIdx)
+
+    // Nothing else shifted: personaPlusCore is personaOnly with exactly the
+    // core-memory section (+ join separator) spliced in right after persona.
+    const expected = `${personaOnly.slice(0, personaIdx + '你的人设'.length)}`
+    expect(expected).toBe(personaOnly.slice(0, personaIdx + '你的人设'.length))
+    const withoutCoreSpliced = personaPlusCore.slice(0, personaIdx) + personaPlusCore.slice(toolsIdx)
+    const toolsIdxInPersonaOnly = personaOnly.indexOf('可用 wechat 工具')
+    expect(withoutCoreSpliced).toBe(personaOnly.slice(0, personaIdx) + personaOnly.slice(toolsIdxInPersonaOnly))
+  })
+
+  it('buildSystemPrompt is byte-identical across a fuller config when coreMemory is absent vs explicitly undefined (no other section shifted)', () => {
+    const configA = { ...base, companionEnabled: true, careEnabled: true, stickerTags: ['a'], persona: '话风活泼' }
+    const withoutKey = buildSystemPrompt(configA)
+    const withUndefined = buildSystemPrompt({ ...configA, coreMemory: undefined })
+    expect(withUndefined).toBe(withoutKey)
   })
 })

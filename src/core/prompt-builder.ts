@@ -110,6 +110,20 @@ export interface BuildSystemPromptArgs {
    */
   personaEmpty?: boolean
   /**
+   * This chat's core-memory block (core-memory-injection design) — a small,
+   * always-loaded excerpt of profile.md distilled to what matters most about
+   * this person right now. Unlike the rest of memory/ (read on demand via
+   * `memory_read`), this rides on EVERY turn so the agent doesn't start cold
+   * on who it's talking to. Placed right after the persona section (identity
+   * cluster), before the tool/capability sections. The caller is expected to
+   * pass already-capped content (see the design's own cap step); this
+   * function still enforces `CORE_MEMORY_MAX_CHARS` as a belt-and-braces
+   * bound so prompt cost can't blow up if a caller forgets. Absent or
+   * whitespace-only ⇒ output is byte-identical to before this field existed
+   * (mirrors `persona`/`careEnabled`'s contract).
+   */
+  coreMemory?: string
+  /**
    * When true, adds the bubble-replies section (行为流式气泡回复 design):
    * teaches the agent to send each complete thought as its own `reply` call
    * as it forms, instead of accumulating the whole answer into one big send.
@@ -131,6 +145,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
   const sections: string[] = [
     baseChannelSection(providerId),
     args.persona && args.persona.trim().length > 0 ? personaSection(args.persona) : '',
+    args.coreMemory && args.coreMemory.trim().length > 0 ? coreMemorySection(args.coreMemory) : '',
     toolsSection(),
     args.bubbleReplies === true ? bubbleRepliesSection() : '',
     delegateAvailable ? delegateSection(peerProviderId) : '',
@@ -275,6 +290,38 @@ export function personaSection(content: string): string {
 下面是你自己维护的人设档案(persona.md)。这就是你的性格和说话方式——在所有对话里保持一致地做这个"人":
 
 ${content.slice(0, 4000)}`
+}
+
+/**
+ * Belt-and-braces cap on core-memory content rendered into the prompt
+ * (core-memory-injection design). The caller is expected to pass
+ * already-capped content — this exists so a caller bug can't blow up
+ * per-turn prompt cost.
+ */
+export const CORE_MEMORY_MAX_CHARS = 1500
+
+/**
+ * Core-memory identity section — appears when this chat has non-blank
+ * core-memory content (core-memory-injection design). Placed right after
+ * the persona section (identity cluster), before the tool/capability
+ * sections, so the agent's understanding of WHO it's talking to loads
+ * before it reads about WHAT it can do. Unlike the rest of memory/, this is
+ * always loaded — no `memory_read` round-trip needed — because it's meant
+ * to be the few things worth knowing about this person on every single
+ * turn. Content is capped at `CORE_MEMORY_MAX_CHARS` (belt; the caller caps
+ * too) with a truncation note pointing back at `memory_read` for the full
+ * profile.
+ */
+export function coreMemorySection(content: string): string {
+  const capped = content.length > CORE_MEMORY_MAX_CHARS
+    ? `${content.slice(0, CORE_MEMORY_MAX_CHARS)}\n（核心记忆已截断;完整 profile 用 memory_read）`
+    : content
+
+  return `## 核心记忆（你眼中的 ta）
+
+这是你此刻对这个人最核心的了解(来自 profile),始终加载、不用查。更细的东西在长期记忆里,需要时用 \`memory_read\`。
+
+${capped}`
 }
 
 /**
