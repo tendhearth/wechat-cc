@@ -20,15 +20,19 @@ export interface InternalApiLifecycle extends Lifecycle {
  */
 export async function registerInternalApi(deps: InternalApiDeps): Promise<InternalApiLifecycle> {
   const api = createInternalApi(deps)
-  const { port, tokenFilePath } = await api.start()
+  const { port, tokenFilePath, operatorTokenFilePath } = await api.start()
   const infoPath = join(deps.stateDir, 'internal-api-info.json')
   // Write discovery file so CLI (`wechat-cc mode set`) can find the running
   // daemon's baseUrl + token without hardcoding a port. Mode 0o600: token
   // path is sensitive (any holder can POST set-mode / broadcast / etc.).
+  // operatorTokenFilePath (option B security fix) is included so the
+  // desktop app's agent_converse can discover the admin-tier operator
+  // token path without hardcoding it — see token-registry.ts's module doc
+  // comment for why a file-origin admin token is safe here.
   try {
     writeFileSync(
       infoPath,
-      JSON.stringify({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath, pid: process.pid, ts: Date.now() }, null, 2),
+      JSON.stringify({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath, operatorTokenFilePath, pid: process.pid, ts: Date.now() }, null, 2),
       { mode: 0o600 },
     )
   } catch { /* non-fatal: CLI will just error clearly if it can't find the file */ }

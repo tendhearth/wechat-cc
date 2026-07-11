@@ -50,6 +50,31 @@ describe('internal-api', () => {
     }
   })
 
+  it('also writes a SEPARATE 0600 operator token file (option B admin credential)', async () => {
+    api = createInternalApi({ stateDir, daemonPid: 1 })
+    const { tokenFilePath, operatorTokenFilePath, port } = await api.start()
+    expect(operatorTokenFilePath).not.toBe(tokenFilePath)
+    const opToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
+    const fileToken = readFileSync(tokenFilePath, 'utf8').trim()
+    expect(opToken).toMatch(/^[0-9a-f]{64}$/)
+    expect(opToken).not.toBe(fileToken)
+    if (process.platform !== 'win32') {
+      expect((statSync(operatorTokenFilePath).mode & 0o777).toString(8)).toBe('600')
+    }
+    // sanity: bound port is reachable (route access itself is covered
+    // by the companion/converse describe block below)
+    expect(port).toBeGreaterThan(0)
+  })
+
+  it('stop({ unlinkToken: true }) removes the operator token file too', async () => {
+    api = createInternalApi({ stateDir, daemonPid: 1 })
+    const { operatorTokenFilePath } = await api.start()
+    expect(existsSync(operatorTokenFilePath)).toBe(true)
+    await api.stop({ unlinkToken: true })
+    api = null
+    expect(existsSync(operatorTokenFilePath)).toBe(false)
+  })
+
   it('GET /v1/health with valid bearer token returns ok=true and daemon_pid', async () => {
     const { port, token } = await start()
     const resp = await fetch(`http://127.0.0.1:${port}/v1/health`, {
@@ -373,6 +398,22 @@ describe('internal-api', () => {
       it('file-origin token (operator CLI) stays unrestricted across chat subtrees', async () => {
         const { port, token } = await startWithMemory()
         const w = await write(port, token, 'ownerchat/persona.md')
+        expect(w.status).toBe(200)
+        expect(await w.json()).toEqual({ ok: true })
+      })
+
+      // option B security fix: the operator token is origin:'operator', not
+      // origin:'session' — memoryScopeDenied only scopes SESSION callers
+      // (routes.ts), so like the file token and admin sessions above, it
+      // must stay unrestricted across chat subtrees rather than getting
+      // chat-scoped like a trusted/guest session token would.
+      it('operator token stays unrestricted across chat subtrees', async () => {
+        memoryRoot = join(stateDir, 'memory')
+        const memory = makeMemoryFS({ rootDir: memoryRoot })
+        api = createInternalApi({ stateDir, daemonPid: 999, memory })
+        const { port, operatorTokenFilePath } = await api.start()
+        const opToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
+        const w = await write(port, opToken, 'ownerchat/persona.md')
         expect(w.status).toBe(200)
         expect(await w.json()).toEqual({ ok: true })
       })
@@ -1373,6 +1414,38 @@ describe('internal-api', () => {
       })
       expect(resp.status).not.toBe(403)
       expect(resp.status).toBe(200)
+    })
+
+    // ── option B security fix: dedicated admin-tier operator token ────
+    // (docs: token-registry.ts module comment). Desktop app's agent_converse
+    // presents THIS token, not the daemon-wide trusted file token, so it
+    // can reach the admin-only route.
+    it('the operator token reaches the route (not 403)', async () => {
+      const companionConverse = async (text: string) => ({ reply: `echo:${text}` })
+      api = createInternalApi({ stateDir, daemonPid: 1, companionConverse })
+      const { port, operatorTokenFilePath } = await api.start()
+      const opToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${opToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true, reply: 'echo:hi' })
+    })
+
+    it('the daemon-wide trusted FILE token still 403s on this admin-only route', async () => {
+      const companionConverse = async () => ({ reply: 'hey' })
+      api = createInternalApi({ stateDir, daemonPid: 1, companionConverse })
+      const { port, tokenFilePath } = await api.start()
+      const fileToken = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${fileToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(403)
+      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
     })
   })
 

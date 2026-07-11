@@ -342,11 +342,25 @@ async fn wechat_health_ping(
 // synchronously. Discovers the daemon's baseUrl + bearer token the same way
 // the CLI/daemon do — <stateDir>/internal-api-info.json (written by
 // registerInternalApi in src/daemon/internal-api/lifecycle.ts) holds
-// {baseUrl, tokenFilePath}; stateDir defaults to ~/.claude/channels/wechat,
-// overridable via WECHAT_STATE_DIR (mirrors src/lib/config.ts STATE_DIR).
+// {baseUrl, tokenFilePath, operatorTokenFilePath}; stateDir defaults to
+// ~/.claude/channels/wechat, overridable via WECHAT_STATE_DIR (mirrors
+// src/lib/config.ts STATE_DIR).
 // Unlike wechat_health_ping (which receives port/token_file_path from JS,
 // itself sourced from the doctor report), this command is self-contained —
 // it has no doctor report to lean on, so it re-derives the same paths.
+//
+// Security (option B fix, see token-registry.ts's module doc comment):
+// POST /v1/companion/converse is admin-tier, but the daemon-wide
+// `tokenFilePath` token is only ever registered `trusted` (it's the
+// shell-readable operator-CLI token — see index.ts's registerFileToken
+// comment) so presenting it here always 403s. Instead this command reads
+// the SEPARATE `operatorTokenFilePath` — a distinct admin-tier credential
+// minted only for local-operator use. Anyone who can read that file already
+// has local filesystem access as the machine owner (could read the WeChat
+// data directly), so granting it admin is a deliberate, narrowly-scoped
+// exception. Do NOT fall back to tokenFilePath here — that would either
+// 403 (correct but confusing) or, worse, mask a real daemon/version
+// mismatch where operatorTokenFilePath hasn't been written yet.
 #[tauri::command]
 async fn agent_converse(text: String) -> Result<String, String> {
     use std::time::Duration;
@@ -375,12 +389,16 @@ async fn agent_converse(text: String) -> Result<String, String> {
         .get("baseUrl")
         .and_then(|v| v.as_str())
         .ok_or_else(|| format!("missing baseUrl in {}", info_path.display()))?;
-    let token_file_path = info
-        .get("tokenFilePath")
+    // operatorTokenFilePath, not tokenFilePath — see the doc comment above
+    // this command. Absent means an old daemon that predates the option B
+    // fix; fail clearly rather than silently falling back to a token that
+    // will just 403.
+    let operator_token_file_path = info
+        .get("operatorTokenFilePath")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| format!("missing tokenFilePath in {}", info_path.display()))?;
+        .ok_or_else(|| "operator token unavailable — daemon too old".to_string())?;
 
-    let token = std::fs::read_to_string(token_file_path)
+    let token = std::fs::read_to_string(operator_token_file_path)
         .map(|s| s.trim().to_string())
         .map_err(|e| format!("token read error: {e}"))?;
 

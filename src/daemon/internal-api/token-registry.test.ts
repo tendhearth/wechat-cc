@@ -22,6 +22,14 @@ describe('token-registry', () => {
     expect(makeTokenRegistry().resolve('ff'.repeat(32))).toBeNull()
   })
 
+  it('resolves a registered operator token as admin/operator, distinct from the file token', () => {
+    const r = makeTokenRegistry()
+    r.registerFileToken('cc'.repeat(32))
+    r.registerOperatorToken('dd'.repeat(32))
+    expect(r.resolve('dd'.repeat(32))).toEqual({ tier: 'admin', origin: 'operator' })
+    expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
+  })
+
   it('invalidateSession drops every token for that sessionKey but keeps others', () => {
     const r = makeTokenRegistry()
     r.registerFileToken('bb'.repeat(32))

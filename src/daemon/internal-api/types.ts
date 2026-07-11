@@ -262,7 +262,7 @@ export interface InternalApiDeps {
 
 export interface InternalApi {
   /** Start listening on 127.0.0.1:0; resolves once bound. */
-  start(): Promise<{ port: number; tokenFilePath: string }>
+  start(): Promise<{ port: number; tokenFilePath: string; operatorTokenFilePath: string }>
   /** Stop the HTTP server and (optionally) clean up the token file. */
   stop(opts?: { unlinkToken?: boolean }): Promise<void>
   /** Bound port. Throws if accessed before start() resolves. */
@@ -316,7 +316,7 @@ export interface InternalApi {
 export type RouteHandler = (
   query: URLSearchParams,
   body: unknown,
-  caller?: { tier: UserTier; origin: 'file' | 'session'; chatId?: string },
+  caller?: { tier: UserTier; origin: 'file' | 'session' | 'operator'; chatId?: string },
 ) => Promise<{ status: number; body: unknown }> | { status: number; body: unknown }
 
 export type RouteTable = Record<string, RouteHandler | undefined>
