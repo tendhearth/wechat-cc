@@ -696,6 +696,48 @@ describe('bootstrap', () => {
     expect(promptA).not.toContain('人设养成(persona.md)')
   })
 
+  it('buildInstructions includes the core-memory section when coreMemoryFor returns content (core-memory-injection design)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      coreMemoryFor: () => '张三是产品经理，在做一个陪伴 app',
+    })
+    const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(prompt).toContain('张三是产品经理，在做一个陪伴 app')
+    expect(prompt).toContain('核心记忆')
+  })
+
+  it('buildInstructions is byte-identical whether or not other bootstraps wire coreMemoryFor, when this bootstrap omits it (core-memory-injection design inert default)', async () => {
+    const withoutCoreMemoryDep = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+    })
+    const withUndefinedCoreMemory = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      coreMemoryFor: () => '',
+    })
+    const promptA = withoutCoreMemoryDep.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    const promptB = withUndefinedCoreMemory.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(promptA).toBe(promptB)
+    expect(promptA).not.toContain('核心记忆')
+  })
+
   it('buildInstructions includes the new-relationship section for a fresh chat at trusted+ tier when newRelationshipFor returns true (onboarding-curiosity design §2)', async () => {
     const b = await buildBootstrap({
       db: openTestDb(),

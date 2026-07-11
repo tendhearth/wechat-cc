@@ -10,6 +10,7 @@ import { dedupeAccountsByUserId } from '../lib/dedupe-accounts'
 import { loadAccess, AccessConfigCorruptError } from '../lib/access'
 import { buildBootstrap } from './bootstrap'
 import { makeMemoryFS } from './memory/fs-api'
+import { CORE_MEMORY_MAX_CHARS } from '../core/prompt-builder'
 import { makeConversationStore } from '../core/conversation-store'
 import { makeTurnRecordStore } from '../core/turn-record-store'
 import { providerDisplayName } from './provider-display-names'
@@ -254,6 +255,16 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         if (ownerChat.includes('..') || ownerChat.includes('/') || ownerChat.includes('\\')) return {}
         const fs = makeMemoryFS({ rootDir: join(stateDir, 'memory', ownerChat) })
         return { content: fs.read('persona.md') ?? undefined, cultivate: c === ownerChat }
+      },
+      // core-memory-injection design §2 — THIS chat's OWN profile.md
+      // excerpt, read fresh per spawn (like personaFor above), capped to
+      // CORE_MEMORY_MAX_CHARS. Unlike personaFor (owner chat via
+      // default_chat_id), every chat reads its own memory/<chatId>/ dir —
+      // there is no owner indirection here.
+      coreMemoryFor: (c) => {
+        const fs = makeMemoryFS({ rootDir: join(stateDir, 'memory', c) })
+        const profile = fs.read('profile.md') ?? ''
+        return profile.length > CORE_MEMORY_MAX_CHARS ? profile.slice(0, CORE_MEMORY_MAX_CHARS) : profile
       },
     })
     bootRef = boot
