@@ -96,6 +96,7 @@ export interface WiredDeps {
     polling: Ref<PollingLifecycle>
     guard: Ref<GuardLifecycle>
     pipeline: Ref<PipelineRun>
+    ingestNudge: Ref<() => void>
   }
 }
 
@@ -104,6 +105,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     polling: new Ref<PollingLifecycle>('polling'),
     guard: new Ref<GuardLifecycle>('guard'),
     pipeline: new Ref<PipelineRun>('pipeline'),
+    ingestNudge: new Ref<() => void>('ingestNudge'),
   }
   const ticks = buildTickBodies({
     ...opts,

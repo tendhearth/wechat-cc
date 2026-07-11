@@ -154,6 +154,7 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
         polling: new Ref('polling'),
         guard: new Ref('guard'),
         pipeline: new Ref('pipeline'),
+        ingestNudge: new Ref('ingestNudge'),
       },
     )
 
@@ -304,7 +305,7 @@ describe('companionConverse lock spans the sink lifetime (real mutex + real repl
 
     const { companionConverse } = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
-      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline') },
+      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
     )
 
     const result = await companionConverse('how are you')

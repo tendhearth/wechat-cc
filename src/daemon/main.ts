@@ -295,7 +295,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 4. register lifecycles (LIFO stop = startup order reversed)
     lc.register(registerCompanionPush(wired.companionPushDeps))
     lc.register(registerCompanionIntrospect(wired.companionIntrospectDeps))
-    lc.register(registerIngest(wired.companionIngestDeps))
+    const ingestLc = registerIngest(wired.companionIngestDeps)
+    lc.register(ingestLc)
+    wireRef(wired.refs.ingestNudge, ingestLc.nudge)   // inbound path nudges ingestion on fresh activity
     const guardLc = registerGuard(wired.guardDeps); wireRef(wired.refs.guard, guardLc); lc.register(guardLc)
     lc.register(registerSessions(wired.sessionsDeps))
     lc.register(registerIlink(wired.ilinkDeps))

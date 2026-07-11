@@ -127,6 +127,8 @@ export interface PipelineDepsRefs {
   polling: Ref<PollingLifecycle>
   guard: Ref<GuardLifecycle>
   pipeline: Ref<PipelineRun>
+  /** Late-bound ingest nudge — fired per new inbound so the knowledge base tracks fresh activity. */
+  ingestNudge: Ref<() => void>
 }
 
 const STARTED_AT_ISO = new Date().toISOString()
@@ -362,7 +364,14 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       append: rec => messagesStore.append(rec),
       log,
     },
-    activity: { recordInbound, resetCareNoReply: (c) => careLedger.resetNoReply(c), log },
+    activity: {
+      // Piggyback the ingest nudge on the per-new-inbound recordInbound call:
+      // fresh WeChat activity means new data to fold into the knowledge base.
+      // Trailing-debounced + gated inside registerIngest, so this is O(1) here.
+      recordInbound: (chatId, when) => { refs.ingestNudge.current?.(); return recordInbound(chatId, when) },
+      resetCareNoReply: (c) => careLedger.resetNoReply(c),
+      log,
+    },
     milestone: { fireMilestonesFor, log },
     welcome: { maybeWriteWelcomeObservation, log },
     dispatch: { coordinator: { dispatch: (msg) => boot.coordinator.dispatch(msg) } },
