@@ -23,6 +23,20 @@ export function handExecUrl(agentUrl: string): string {
   return `${u}/a2a/exec`
 }
 
+/**
+ * Derive a peer's /a2a/intent URL from its registered url, tolerating the
+ * same common shapes as {@link handExecUrl}: a bare base, `/a2a`,
+ * `/a2a/notify`, `/a2a/exec`, or already `/a2a/intent`.
+ */
+export function intentUrl(agentUrl: string): string {
+  const u = agentUrl.replace(/\/+$/, '')
+  if (u.endsWith('/a2a/intent')) return u
+  if (u.endsWith('/a2a/notify')) return u.replace(/\/a2a\/notify$/, '/a2a/intent')
+  if (u.endsWith('/a2a/exec')) return u.replace(/\/a2a\/exec$/, '/a2a/intent')
+  if (u.endsWith('/a2a')) return `${u}/intent`
+  return `${u}/a2a/intent`
+}
+
 export interface DelegateToHandReq {
   hand: A2AAgentRecord
   /** The brain's agent id as the HAND knows it (the hand's Bearer check keys on this). */

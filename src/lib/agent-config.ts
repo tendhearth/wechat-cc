@@ -51,6 +51,14 @@ export interface AgentConfig {
   yi_hub_listen?: { host: string; port: number }
   // 乙 v2 — HAND side: connect outbound to this brain WebSocket URL.
   yi_brain?: { url: string; handId: string; authToken: string }
+  // Agent-social M1: gates the intent-brokering feature (initiating broker +
+  // answering judge) off by default. Mirrors `openaiBaseUrl?`'s optional-field
+  // shape — absent/false → the feature stays inert even if a2a peers exist.
+  social_enabled?: boolean
+  // Free-text disclosure policy the operator writes (e.g. "兴趣可说;住址不可"),
+  // consulted by gateOutbound when brokering/answering intents. Required
+  // alongside social_enabled for bootstrap to wire the real judge/broker seams.
+  social_disclosure_policy?: string
 }
 
 // ── A2A sub-schemas ──────────────────────────────────────────────────────────
@@ -102,6 +110,8 @@ const AgentConfigSchema = z.object({
     }),
   bot_name: z.string().nullable().optional(),
   dialogue_lock_hash: z.string().optional(),
+  social_enabled: z.boolean().optional(),
+  social_disclosure_policy: z.string().optional(),
 })
 
 /**
@@ -168,6 +178,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(parsed.bot_name === null ? { bot_name: null } : {}),
       ...(typeof parsed.bot_name === 'string' ? { bot_name: parsed.bot_name } : {}),
       ...(typeof parsed.dialogue_lock_hash === 'string' ? { dialogue_lock_hash: parsed.dialogue_lock_hash } : {}),
+      ...(typeof parsed.social_enabled === 'boolean' ? { social_enabled: parsed.social_enabled } : {}),
+      ...(typeof parsed.social_disclosure_policy === 'string' ? { social_disclosure_policy: parsed.social_disclosure_policy } : {}),
     }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }
