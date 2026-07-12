@@ -22,7 +22,16 @@ export function makeBroker(deps: BrokerDeps) {
       const gated = await gateOutbound(topic, { policy: deps.policy, peerNames: [], cheapEval: deps.cheapEval })
       if (!gated.ok) return { intent_id, matched: [], lit: [] }
       const ttl = deps.ttlMs ?? 10 * 60_000
-      const card: IntentCard = { intent_id, kind: 'seek', topic: gated.redacted, ...(opts?.city ? { city: opts.city } : {}), expires_at: new Date(Date.now() + ttl).toISOString() }
+      // Gate the city field if present; omit from card if blocked (safe degradation).
+      let cardCity: string | undefined
+      if (opts?.city) {
+        const gatedCity = await gateOutbound(opts.city, { policy: deps.policy, peerNames: [], cheapEval: deps.cheapEval })
+        if (gatedCity.ok) {
+          cardCity = gatedCity.redacted
+        }
+        // If gatedCity.ok is false, cardCity remains undefined and city is omitted from card
+      }
+      const card: IntentCard = { intent_id, kind: 'seek', topic: gated.redacted, ...(cardCity ? { city: cardCity } : {}), expires_at: new Date(Date.now() + ttl).toISOString() }
       const candidates = await deps.discover(gated.redacted)
       const matched: Array<{ hand: A2AAgentRecord; blurb?: string }> = []
       for (const hand of candidates) {

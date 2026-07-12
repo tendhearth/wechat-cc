@@ -54,4 +54,65 @@ describe('makeBroker.seek', () => {
     expect(sent).toBe(0)
     expect(out.matched).toEqual([])
   })
+  it('city gated through: cheapEval redacts city, card carries redacted value', async () => {
+    let sentCard: any
+    let callCount = 0
+    const broker = makeBroker({
+      policy: 'p',
+      cheapEval: async (prompt) => {
+        callCount++
+        // First call is topic, second call is city
+        if (callCount === 1) {
+          return JSON.stringify({ violation: false, redacted: '找摄影搭子' })
+        } else {
+          return JSON.stringify({ violation: false, redacted: '<REDACTED-CITY>' })
+        }
+      },
+      discover: async () => [peerB],
+      send: async (_hand, card) => { sentCard = card; return { intent_id: 'x', match: 'yes' } },
+      confirmWithOwner: async () => true,
+      confirmPeer: async () => true,
+    })
+    const out = await broker.seek('找摄影搭子', { city: 'Beijing' })
+    expect(sentCard.city).toBe('<REDACTED-CITY>')
+    expect(out.matched.map(m => m.hand)).toEqual(['ccb'])
+  })
+  it('city blocked by gate: omit from card, seek proceeds', async () => {
+    let sentCard: any
+    let callCount = 0
+    const broker = makeBroker({
+      policy: 'p',
+      cheapEval: async (prompt) => {
+        callCount++
+        // First call is topic (passes), second call is city (blocked)
+        if (callCount === 1) {
+          return JSON.stringify({ violation: false, redacted: '找摄影搭子' })
+        } else {
+          return JSON.stringify({ violation: true, redacted: '', reasons: ['leak'] })
+        }
+      },
+      discover: async () => [peerB],
+      send: async (_hand, card) => { sentCard = card; return { intent_id: 'x', match: 'yes' } },
+      confirmWithOwner: async () => true,
+      confirmPeer: async () => true,
+    })
+    const out = await broker.seek('找摄影搭子', { city: 'Beijing' })
+    expect(sentCard.city).toBeUndefined()
+    expect(out.matched.map(m => m.hand)).toEqual(['ccb'])
+  })
+  it('redacted topic actually sent: card carries redacted value not raw input', async () => {
+    let sentCard: any
+    const broker = makeBroker({
+      policy: 'p',
+      cheapEval: async () => JSON.stringify({ violation: false, redacted: '寻找摄影伙伴【已清理】' }),
+      discover: async () => [peerB],
+      send: async (_hand, card) => { sentCard = card; return { intent_id: 'x', match: 'yes' } },
+      confirmWithOwner: async () => true,
+      confirmPeer: async () => true,
+    })
+    const out = await broker.seek('找摄影搭子+电话')
+    expect(sentCard.topic).toBe('寻找摄影伙伴【已清理】')
+    expect(sentCard.topic).not.toBe('找摄影搭子+电话')
+    expect(out.matched.map(m => m.hand)).toEqual(['ccb'])
+  })
 })
