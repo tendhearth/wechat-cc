@@ -391,6 +391,14 @@ export const A2ASendResponse = z.union([
 ])
 export type A2ASendRequestT = z.infer<typeof A2ASendRequest>
 
+// ── POST /v1/social/seek (agent-social M1, T7b-core) ──────────────────────────
+
+export const SocialSeekRequest = z.object({
+  topic: z.string().min(1),
+  city: z.string().optional(),
+})
+export type SocialSeekRequestT = z.infer<typeof SocialSeekRequest>
+
 // ── POST /v1/a2a/test ────────────────────────────────────────────────────────
 // Server-side smoke test for the dashboard's Test button. With outbound=false
 // (default), the daemon performs a synthetic inbound notify against its own
@@ -543,6 +551,9 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 
   // conversation
   'POST /v1/conversation/set-mode': ConversationSetModeRequest,
+
+  // agent-social M1
+  'POST /v1/social/seek': SocialSeekRequest,
 
   // a2a
   'POST /v1/a2a/send': A2ASendRequest,

@@ -9,6 +9,7 @@ import { TIER_PROFILES } from '../core/user-tier'
 import { MANIFEST_FILE } from './plugins/paths'
 import type { Access } from '../lib/access'
 import type { CompanionConfig } from './companion/config'
+import { createInternalApi } from './internal-api'
 
 function makeIlinkStub() {
   return {
@@ -1013,5 +1014,151 @@ describe('bootstrap', () => {
     // closure read lastActiveChatId (= chatA) and resolved admin instead
     // of being bound to its own chatId. The deny proves the binding holds.
     expect(result.behavior).toBe('deny')
+  })
+})
+
+// ── Agent-social M1 wiring (T7b-core) ─────────────────────────────────────
+// onIntent/onIntentConfirm are only wired into the a2a server — and
+// bootstrap.social only constructed — when BOTH social_enabled and
+// social_disclosure_policy are configured. See
+// docs/superpowers/specs/2026-07-12-agent-social-m1-intent-brokering-design.md
+// and src/daemon/bootstrap.a2a.test.ts for the sibling a2a-wiring pattern
+// this mirrors (real a2a_listen on a fixed test port, agent.json capability
+// assertions).
+describe('bootstrap agent-social M1 wiring', () => {
+  it('wires onIntent/onIntentConfirm + boot.social when social_enabled + social_disclosure_policy are BOTH configured', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-on-'))
+    const port = 19901
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      // The a2a server advertises the two social capabilities only when
+      // onIntent/onIntentConfirm were actually passed to createA2AServer.
+      const card = await (await fetch(`http://127.0.0.1:${port}/.well-known/agent.json`)).json() as {
+        capabilities: Array<{ name: string }>
+      }
+      expect(card.capabilities.some(c => c.name === 'intent')).toBe(true)
+      expect(card.capabilities.some(c => c.name === 'intent_confirm')).toBe(true)
+      // The broker + pendingConfirms are exposed on the bootstrap return so
+      // main.ts can late-bind them into internal-api (setSocial) and a
+      // follow-up task (T7b-2) can wire the operator-reply resolve.
+      expect(boot.social).toBeDefined()
+      expect(typeof boot.social!.broker.seek).toBe('function')
+      expect(typeof boot.social!.pendingConfirms.ask).toBe('function')
+      expect(typeof boot.social!.pendingConfirms.resolve).toBe('function')
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does NOT wire onIntent/onIntentConfirm and boot.social is undefined when social_enabled is absent', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-off-'))
+    const port = 19902
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        // social_enabled omitted entirely.
+        social_disclosure_policy: '兴趣可说；住址不可',
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      const card = await (await fetch(`http://127.0.0.1:${port}/.well-known/agent.json`)).json() as {
+        capabilities: Array<{ name: string }>
+      }
+      expect(card.capabilities.some(c => c.name === 'intent')).toBe(false)
+      expect(card.capabilities.some(c => c.name === 'intent_confirm')).toBe(false)
+      expect(boot.social).toBeUndefined()
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does NOT wire social when social_enabled is true but social_disclosure_policy is absent', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-nopolicy-'))
+    const port = 19903
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        // social_disclosure_policy omitted.
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(boot.social).toBeUndefined()
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('POST /v1/social/seek returns 503 when the social broker is not wired (deps.social absent)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'internal-api-social-503-'))
+    const api = createInternalApi({ stateDir, daemonPid: 1 } as any)
+    try {
+      const { port } = await api.start()
+      // social_seek is admin-tier (route-tiers.ts) — the daemon-wide file
+      // token is only 'trusted', so mint an admin-tier session token
+      // (mirrors how a real admin-tier MCP child would authenticate).
+      const token = api.mintSessionToken('admin', 'test-session')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/seek`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ topic: '找摄影搭子' }),
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toMatchObject({ error: 'social_not_wired' })
+    } finally {
+      await api.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
   })
 })

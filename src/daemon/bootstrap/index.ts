@@ -21,7 +21,7 @@ import { SessionManager } from '../../core/session-manager'
 import { createClaudeAgentProvider, tierProfileToClaudeSdkOpts } from '../../core/claude-agent-provider'
 import { createCodexAgentProvider } from '../../core/codex-agent-provider'
 import type { TierProfile } from '../../core/user-tier'
-import { resolveTier } from '../../core/user-tier'
+import { resolveTier, TIER_PROFILES } from '../../core/user-tier'
 import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
 import { createConversationCoordinator, type ConversationCoordinator, type TurnRecord } from '../../core/conversation-coordinator'
 import { makeConversationStore, type ConversationStore } from '../../core/conversation-store'
@@ -55,14 +55,22 @@ import { makeSendAssistantText } from './fallback-reply'
 import { findCodexBinary } from '../../lib/find-codex-binary'
 import { checkCodexVersion } from './codex-version-check'
 import { attemptCodexAutofix } from '../../lib/codex-autofix'
-import { assertNotAuthFailed, type CheapEval } from '../../core/agent-provider'
+import { assertNotAuthFailed, collectTurn, type CheapEval } from '../../core/agent-provider'
 import { createA2ARegistry } from '../../core/a2a-registry'
 import { createA2AClient } from '../../core/a2a-client'
-import { createA2AServer, type NotifyEvent } from '../../core/a2a-server'
+import { createA2AServer, type NotifyEvent, type A2AServerOpts } from '../../core/a2a-server'
 import { verifyAndConsumeInvite } from '../../lib/a2a-pairing'
 import { makeA2AEventsStore, type AppendInput } from '../../core/a2a-events-store'
 import { createYiHub, type YiHub } from '../../core/yi-hub'
 import { createYiWsServer } from '../yi-ws-server'
+// Agent-social M1 (T7b-core) — intent-brokering wiring. See
+// docs/superpowers/specs/2026-07-12-agent-social-m1-intent-brokering-design.md
+import { makeJudge } from '../../core/social-judge'
+import { makeAnswerIntent } from '../../core/social-answer'
+import { makeBroker, type SeekOutcome } from '../../core/social-broker'
+import { createPendingConfirms, type PendingConfirms } from '../../core/pending-confirm'
+import { intentUrl } from '../../core/a2a-delegate'
+import { MatchReceiptSchema } from '../../core/a2a-intent'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
@@ -362,6 +370,25 @@ export interface Bootstrap {
    * Mutations (e.g. setBotName) are visible to all closures that hold this ref.
    */
   agentConfig: AgentConfig
+  /**
+   * Agent-social M1 (T7b-core) — present only when `social_enabled` +
+   * `social_disclosure_policy` are both configured (and at least one
+   * registered provider offers a cheapEval). Undefined otherwise — the
+   * feature stays fully inert (no /a2a/intent, no /v1/social/seek).
+   *
+   * `broker.seek()` is what POST /v1/social/seek calls — late-bound into
+   * internal-api by main.ts (mirrors `a2aDeps`/`setA2A`).
+   *
+   * `pendingConfirms` is exposed so a follow-up task (T7b-2) can resolve
+   * the operator's WeChat yes/no reply via `pendingConfirms.resolve(key,
+   * text)`. Until that lands, every `confirmWithOwner` ask times out to
+   * `false` after 5 minutes (the ask is still sent to the operator's chat;
+   * only the reply-capture leg is missing).
+   */
+  social?: {
+    broker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> }
+    pendingConfirms: PendingConfirms
+  }
 }
 
 // buildChannelSystemPrompt() moved to src/core/prompt-builder.ts in
@@ -427,6 +454,24 @@ export function resolveAdminChatId(
     return companion.default_chat_id
   }
   return access.admins?.[0] ?? null
+}
+
+/**
+ * Cheap, deterministic string → key derivation for `confirmWithOwner`'s
+ * pending-confirm key. The broker's `confirmWithOwner(summary)` seam takes
+ * only a rendered summary string (no intent_id threaded through) — unlike
+ * `onIntentConfirm` (the peer-driven confirm leg), which DOES carry
+ * intent_id and keys on it directly. Hashing the summary is the documented
+ * limitation from the M1 T7b-core plan: two concurrent seeks that happen to
+ * render an IDENTICAL summary for the SAME operator chat would collide on
+ * the same pending-confirm key. Acceptable in M1 (single-seek-at-a-time is
+ * the common case); a real fix threads intent_id through confirmWithOwner
+ * in a follow-up.
+ */
+function hashSummary(s: string): string {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
+  return (h >>> 0).toString(36)
 }
 
 export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
@@ -1253,6 +1298,132 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     return cachedOperatorChatId
   }
 
+  // ── Agent-social M1 wiring (T7b-core) ───────────────────────────────────
+  // Gated on BOTH social_enabled and social_disclosure_policy — absent
+  // either, the feature stays fully inert: no onIntent/onIntentConfirm
+  // wired into the a2a server below, no broker constructed, no
+  // /v1/social/seek functionality (the route 503s). This wires everything
+  // EXCEPT capturing the operator's WeChat yes/no reply (a separate task,
+  // T7b-2) — every confirmWithOwner ask still gets SENT to the operator's
+  // chat; it just times out to `false` after 5 minutes until 7b-2 lands.
+  let socialOnIntent: A2AServerOpts['onIntent']
+  let socialOnIntentConfirm: A2AServerOpts['onIntentConfirm']
+  let socialBroker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> } | undefined
+  let socialPendingConfirms: PendingConfirms | undefined
+
+  if (configuredAgent.social_enabled && configuredAgent.social_disclosure_policy) {
+    const socialPolicy = configuredAgent.social_disclosure_policy
+    const socialCheapEval = registry.getCheapEval()
+    if (!socialCheapEval) {
+      // Same degrade pattern as the openai provider block above: log and
+      // skip rather than throw. No registered provider implements cheapEval
+      // is exotic in practice (claude always registers one), but the seam
+      // must degrade gracefully like every other optional wiring here.
+      deps.log('BOOT', 'social: no cheapEval available from any registered provider — social_enabled is on but wiring is skipped (inert)')
+    } else {
+      const SOCIAL_SELF_ID = process.env.WECHAT_A2A_SELF_ID || 'wechat-cc'
+      const socialOpenaiKey = process.env.WECHAT_OPENAI_API_KEY
+
+      // The judge's runTurn seam. When the daemon's DEFAULT provider is the
+      // openai-compatible one, spawn a one-shot session carrying ONLY the
+      // plugin MCP tools (buildOpenaiMcpSpecs({wechat:null, delegate:null,
+      // pluginMcp})) — mirrors the main openai provider construction above,
+      // but the answerer must never get wechat tools (could send-as-owner)
+      // or delegate-mcp (could recurse). Falls back to the registry's
+      // cheapEval (no tools at all) when the default provider isn't openai —
+      // judging still works, just without plugin-grounded facts.
+      let socialRunTurn: (systemPrompt: string, userPrompt: string) => Promise<string>
+      if (defaultProviderId === 'openai' && socialOpenaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel) {
+        const socialJudgeBaseUrl = configuredAgent.openaiBaseUrl
+        const socialJudgeModel = configuredAgent.openaiModel
+        socialRunTurn = async (systemPrompt, userPrompt) => {
+          const { createOpenAiAgentProvider } = await import('../../core/openai-agent-provider')
+          const { createAiSdkChatModel } = await import('../../core/openai-chat-model')
+          const { createMcpToolBridge } = await import('../../core/openai-mcp-bridge')
+          const judgeProvider = createOpenAiAgentProvider({
+            makeChatModel: (model) => createAiSdkChatModel({
+              baseURL: socialJudgeBaseUrl,
+              apiKey: socialOpenaiKey,
+              model: model ?? socialJudgeModel,
+            }),
+            makeMcpBridge: async (sessionEnv) => createMcpToolBridge(
+              buildOpenaiMcpSpecs({ wechat: null, delegate: null, pluginMcp }, sessionEnv),
+            ),
+            log: deps.log,
+          })
+          let judgeSession: Awaited<ReturnType<typeof judgeProvider.spawn>> | null = null
+          try {
+            judgeSession = await judgeProvider.spawn(
+              { alias: '_social_judge', path: deps.stateDir },
+              {
+                tierProfile: TIER_PROFILES.guest,
+                permissionMode: 'strict',
+                chatId: '_social_judge',
+                appendInstructions: systemPrompt,
+              },
+            )
+            const result = await collectTurn(judgeSession.dispatch(userPrompt))
+            return result.assistantText.join('')
+          } finally {
+            if (judgeSession) { try { await judgeSession.close() } catch { /* swallow shutdown errors */ } }
+          }
+        }
+        deps.log('BOOT', 'social: judge wired via plugin-grounded one-shot openai spawn (pluginMcp only, no wechat/delegate)')
+      } else {
+        socialRunTurn = async (systemPrompt, userPrompt) => socialCheapEval(`${systemPrompt}\n\n${userPrompt}`)
+        deps.log('BOOT', 'social: plugin-grounded judging unavailable (daemon default provider is not openai) — judge falls back to cheapEval with no tools')
+      }
+
+      const socialJudge = makeJudge({ runTurn: socialRunTurn, policy: socialPolicy })
+      socialOnIntent = makeAnswerIntent({ judge: socialJudge, policy: socialPolicy, cheapEval: socialCheapEval })
+
+      socialPendingConfirms = createPendingConfirms()
+      const pendingConfirmsRef = socialPendingConfirms
+
+      // The peer-driven confirm leg (second half of the dual-confirm
+      // handshake): a matched peer's broker asks THIS owner to confirm.
+      // Keyed on intent_id (threaded through the wire body), unlike
+      // confirmWithOwner below.
+      socialOnIntentConfirm = async ({ intent_id }) => {
+        const op = resolveOperatorChatId()
+        if (!op) return { ok: false }
+        if (sendAssistantText) await sendAssistantText(op, '🤝 有人想和你牵线,回复 是/否')
+        return { ok: await pendingConfirmsRef.ask(`${op}:${intent_id}`, 5 * 60_000) }
+      }
+
+      socialBroker = makeBroker({
+        policy: socialPolicy,
+        cheapEval: socialCheapEval,
+        // TODO(v1+): rank candidates via wxgraph closeness/topical relevance
+        // instead of "every paired peer, capped" — see design doc's
+        // Discovery section. Minimal-but-safe for M1: targeted (bounded to
+        // paired peers only), never a broadcast to strangers.
+        discover: async (_topic) => a2aRegistry.list().filter(a => !a.paused).slice(0, 5),
+        send: async (hand, card) => {
+          const r = await a2aClient.send({ url: intentUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, card } })
+          return r.ok ? MatchReceiptSchema.parse(r.response) : null
+        },
+        confirmPeer: async (hand, card) => {
+          const r = await a2aClient.send({
+            url: intentUrl(hand.url) + '/confirm',
+            bearer: hand.outbound_api_key,
+            body: { agent_id: SOCIAL_SELF_ID, intent_id: card.intent_id },
+          })
+          return r.ok && (r.response as { ok?: unknown } | undefined)?.ok === true
+        },
+        confirmWithOwner: async (summary) => {
+          const op = resolveOperatorChatId()
+          if (!op) return false
+          if (sendAssistantText) await sendAssistantText(op, '🤝 ' + summary + '(回复 是/否)')
+          // See hashSummary's doc comment: the broker's confirmWithOwner
+          // seam only takes a rendered summary, not the intent_id, so we
+          // key on a hash of the summary rather than the real intent_id.
+          return pendingConfirmsRef.ask(`${op}:${hashSummary(summary)}`, 5 * 60_000)
+        },
+      })
+    }
+  }
+
   // onNotify: route inbound A2A notification → operator chat via sendAssistantText.
   // Formats the message as `[A2A:<agentId>] <text>` so the operator can
   // visually distinguish A2A pushes from regular assistant replies.
@@ -1336,6 +1507,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
           status: 'auth_failed',
         })
       },
+      // Agent-social M1 (T7b-core) — only wired when social_enabled +
+      // social_disclosure_policy are configured (see wiring block above).
+      // Undefined ⇒ /a2a/intent and /a2a/intent/confirm both 501, exactly
+      // like every other optional A2A capability.
+      ...(socialOnIntent ? { onIntent: socialOnIntent } : {}),
+      ...(socialOnIntentConfirm ? { onIntentConfirm: socialOnIntentConfirm } : {}),
       daemonInfo: { name: 'wechat-cc', version: selfPkg.version },
     })
     await a2aServer.start()
@@ -1424,5 +1601,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     a2aServer,
     yiHub,
     agentConfig: configuredAgent,
+    /**
+     * Agent-social M1 (T7b-core) — late-bound into internal-api by main.ts
+     * (mirrors a2aDeps/setA2A). Undefined when social_enabled +
+     * social_disclosure_policy aren't both configured — POST
+     * /v1/social/seek then 503s.
+     */
+    ...(socialBroker ? { social: { broker: socialBroker, pendingConfirms: socialPendingConfirms! } } : {}),
   }
 }
