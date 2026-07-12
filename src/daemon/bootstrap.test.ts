@@ -767,12 +767,13 @@ describe('bootstrap', () => {
     const bundledDir = join(base, 'bundled')
     const pluginDir = join(bundledDir, 'wxsearch')
     mkdirSync(pluginDir, { recursive: true })
-    // /bin/sh is absolute + always present, so the plugin resolves ready
-    // (mirrors registry.test.ts's `good()` fixture) — bundled defaults enabled.
+    // process.execPath is absolute + always present on every platform, so the
+    // plugin resolves ready (mirrors registry.test.ts's `good()` fixture, and
+    // is cross-platform — Windows has no /bin/sh) — bundled defaults enabled.
     writeFileSync(join(pluginDir, MANIFEST_FILE), JSON.stringify({
       name: 'wxsearch',
       kind: 'mcp',
-      spawn: { command: '/bin/sh', args: [] },
+      spawn: { command: process.execPath, args: [] },
     }))
     const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
     process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = bundledDir

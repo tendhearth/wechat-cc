@@ -20,13 +20,14 @@ function writePlugin(root: string, name: string, manifest: unknown): string {
   return dir
 }
 
-// /bin/sh is absolute + always present → these plugins are ready, keeping
-// tests hermetic (mirrors plugins/registry.test.ts's `good()` fixture).
+// process.execPath is absolute + always present on every platform → these
+// plugins resolve ready, keeping tests hermetic and cross-platform (Windows
+// has no /bin/sh). Mirrors plugins/registry.test.ts's `good()` fixture.
 const good = (name: string, extra: Record<string, unknown> = {}) => ({
   name,
   kind: 'mcp',
   displayName: name,
-  spawn: { command: '/bin/sh', args: ['${pluginDir}/main.py'] },
+  spawn: { command: process.execPath, args: ['${pluginDir}/main.py'] },
   ...extra,
 })
 

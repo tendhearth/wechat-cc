@@ -12,14 +12,17 @@ function writePlugin(root: string, name: string, manifest: unknown): string {
   return dir
 }
 
-// /bin/sh is absolute + always present → plugins built from good() are ready,
-// keeping tests hermetic (no dependency on python3 being on the CI PATH). PATH
-// resolution of a *bare* command is exercised explicitly further down.
+// process.execPath (the bun/node binary running these tests) is absolute and
+// always present on every platform → plugins built from good() resolve ready,
+// keeping tests hermetic (no dependency on /bin/sh or python3 on the CI PATH)
+// and cross-platform (Windows has no /bin/sh). PATH resolution of a *bare*
+// command is exercised explicitly further down (unix-only — see that test).
+const READY_CMD = process.execPath
 const good = (name: string) => ({
   name,
   kind: 'mcp',
   displayName: name,
-  spawn: { command: '/bin/sh', args: ['${pluginDir}/main.py'], env: { DATA: '${pluginDir}/data' } },
+  spawn: { command: READY_CMD, args: ['${pluginDir}/main.py'], env: { DATA: '${pluginDir}/data' } },
 })
 
 describe('plugin registry', () => {
@@ -58,13 +61,17 @@ describe('plugin registry', () => {
     writeFileSync(join(stateDir, 'plugins', 'plugins.json'), JSON.stringify({ enabled: { wxvault: true } }))
     const specs = pluginMcpSpecs(loadPlugins({ stateDir, bundledDir }))
     expect(specs.wxvault).toEqual({
-      command: '/bin/sh',
+      command: READY_CMD,
       args: [join(dir, 'main.py')],
       env: { DATA: join(dir, 'data') },
     })
   })
 
-  it('resolves a bare command to an absolute path (child gets no daemon PATH)', () => {
+  // Bare-command PATH resolution is unix-only by design: resolveCommand()
+  // deliberately does not do Windows PATHEXT (.exe/.cmd) suffix search, so a
+  // bare Windows command is expected to stay unresolved. This test exercises
+  // the unix path and is skipped on win32.
+  it.skipIf(process.platform === 'win32')('resolves a bare command to an absolute path (child gets no daemon PATH)', () => {
     writePlugin(bundledDir, 'bare', { ...good('bare'), spawn: { command: 'sh' } })
     const loaded = loadPlugins({ stateDir, bundledDir })
     expect(loaded[0]!.ready).toBe(true)
