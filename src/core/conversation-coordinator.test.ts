@@ -2197,7 +2197,7 @@ describe('ConversationCoordinator', () => {
       await Promise.all([pA, pB])
     })
 
-    it('exposes runExclusive and dispatchInner on the coordinator', () => {
+    it('exposes submitTurn and runExclusive on the coordinator (dispatchInner is private — D3)', () => {
       const store = makeMockStore()
       const registry = createProviderRegistry()
       registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
@@ -2212,8 +2212,9 @@ describe('ConversationCoordinator', () => {
         loadAccess: adminAccess,
         log: () => {},
       })
+      expect(typeof c.submitTurn).toBe('function')
       expect(typeof c.runExclusive).toBe('function')
-      expect(typeof c.dispatchInner).toBe('function')
+      expect('dispatchInner' in c).toBe(false)   // D3: no longer bare-callable
     })
   })
 })

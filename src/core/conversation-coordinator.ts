@@ -195,15 +195,6 @@ export interface ConversationCoordinator {
   submitTurn<T>(msg: InboundMsg, opts: { within: (dispatch: () => Promise<void>) => Promise<T> }): Promise<T>
   dispatch(msg: InboundMsg): Promise<void>
   /**
-   * The pre-lock dispatch body (Task 1 — session-serialization). Identical
-   * logic to the old unserialized `dispatch`; `dispatch` itself now wraps
-   * this in the per-chat mutex (see `runExclusive`) for solo/parallel/
-   * primary_tool modes. Exposed so callers/tests can bypass the mutex when
-   * they need to (chatroom mode's own dispatch path calls this directly —
-   * see the exemption comment on `dispatch` below).
-   */
-  dispatchInner(msg: InboundMsg): Promise<void>
-  /**
    * Per-chatId async mutex (Task 1 — session-serialization): runs `fn`
    * exclusively with respect to any other `runExclusive` call for the same
    * chatId, so two rapid inbound messages for one chat can never run their
@@ -953,7 +944,6 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // delete is done in dispatchChatroom's finally; double-delete is harmless.
       return true
     },
-    dispatchInner,
     runExclusive: mutex.runExclusive,
     dispatch,
   }
