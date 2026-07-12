@@ -65,6 +65,17 @@ export interface IntentEvent {
   card: IntentCard
 }
 
+/**
+ * A peer confirming that ITS owner said yes to lighting up a previously
+ * matched intent — the second half of the broker's dual-confirm handshake
+ * (see social-broker's `confirmPeer`). The peer's own `onIntentConfirm`
+ * handler is what actually asks its owner and returns the answer.
+ */
+export interface IntentConfirmEvent {
+  agent: A2AAgentRecord
+  intent_id: string
+}
+
 export interface AuthFailedEvent {
   /** The claimed agent_id from the request body. Only emitted when the
    *  body is parseable AND has agent_id — pure noise (random scanners
@@ -95,6 +106,10 @@ export interface A2AServerOpts {
    *  Card against the owner's derived facts and return a Match Receipt.
    *  Undefined → /a2a/intent returns 501. */
   onIntent?: (event: IntentEvent) => Promise<MatchReceipt>
+  /** Optional. When wired, enables POST /a2a/intent/confirm — a peer asks
+   *  THIS owner to confirm lighting up a previously matched intent (the
+   *  dual-confirm handshake's second leg). Undefined → 501. */
+  onIntentConfirm?: (event: IntentConfirmEvent) => Promise<{ ok: boolean }>
   /** Optional hook called when a notify request is rejected with 401/403
    *  AND we can identify which agent_id the caller claimed. Used by
    *  bootstrap to write an `a2a_events` row with status='auth_failed' so
@@ -262,6 +277,46 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         return new Response(JSON.stringify({ ok: false, reason: msg }), { status: 200 })
+      }
+    }
+    if (url.pathname === '/a2a/intent/confirm') {
+      if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
+      if (!opts.onIntentConfirm) return new Response(JSON.stringify({ error: 'intent_confirm_not_supported' }), { status: 501 })
+
+      let body: { agent_id?: unknown; intent_id?: unknown }
+      try {
+        body = await req.json() as typeof body
+      } catch {
+        return new Response(JSON.stringify({ error: 'invalid_json' }), { status: 400 })
+      }
+      if (typeof body.agent_id !== 'string') return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
+      const claimedId = body.agent_id
+
+      const auth = req.headers.get('authorization')
+      if (!auth?.startsWith('Bearer ')) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'missing_bearer' })
+        return new Response(JSON.stringify({ error: 'missing_bearer' }), { status: 401 })
+      }
+      const agent = opts.registry.verifyBearer(claimedId, auth.slice('Bearer '.length).trim())
+      if (!agent) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'wrong_bearer' })
+        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
+      }
+      if (agent.id !== claimedId) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'agent_id_mismatch' })
+        return new Response(JSON.stringify({ error: 'agent_id_mismatch' }), { status: 403 })
+      }
+      if (agent.paused) return new Response(JSON.stringify({ ok: false, reason: 'paused' }), { status: 202 })
+
+      if (typeof body.intent_id !== 'string' || body.intent_id.length === 0) {
+        return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
+      }
+      try {
+        const result = await opts.onIntentConfirm({ agent, intent_id: body.intent_id })
+        return new Response(JSON.stringify(result), { status: 200 })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return new Response(JSON.stringify({ error: 'intent_confirm_failed', detail: msg }), { status: 500 })
       }
     }
     if (url.pathname === '/a2a/intent') {

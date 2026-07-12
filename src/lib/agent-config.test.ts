@@ -353,6 +353,49 @@ describe('loadAgentConfig — openai provider', () => {
   })
 })
 
+describe('agent-config social (M1 intent brokering)', () => {
+  it('parseAgentConfig accepts social_enabled + social_disclosure_policy', () => {
+    const cfg = parseAgentConfig({
+      provider: 'claude',
+      social_enabled: true,
+      social_disclosure_policy: '兴趣可说;住址不可',
+    })
+    expect(cfg.social_enabled).toBe(true)
+    expect(cfg.social_disclosure_policy).toBe('兴趣可说;住址不可')
+  })
+
+  it('round-trips social_enabled + social_disclosure_policy through save → load', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-social-'))
+    try {
+      saveAgentConfig(dir, {
+        provider: 'claude',
+        dangerouslySkipPermissions: true,
+        autoStart: true,
+        closeStopsDaemon: false,
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说;住址不可',
+      })
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.social_enabled).toBe(true)
+      expect(loaded.social_disclosure_policy).toBe('兴趣可说;住址不可')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('absent social fields load as undefined (back-compat)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-social-'))
+    try {
+      saveAgentConfig(dir, { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.social_enabled).toBeUndefined()
+      expect(loaded.social_disclosure_policy).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('loadAgentConfig preserves yi v2 fields', () => {
   it('round-trips yi_hub_listen and yi_brain through save+load', () => {
     const dir = mkdtempSync(join(tmpdir(), 'yi-cfg-'))
