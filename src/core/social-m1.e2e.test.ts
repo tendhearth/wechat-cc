@@ -30,7 +30,7 @@ const passingCheck = async (prompt: string) => {
 }
 function extractReviewed(prompt: string): string {
   const m = prompt.match(/"""([\s\S]*?)"""/)
-  return m ? m[1] : ''
+  return m?.[1] ?? ''
 }
 
 function brokerWith(judge: (c: IntentCard) => Promise<{ match: 'yes' | 'no'; blurb?: string }>, confirmOwner: boolean, confirmPeer: boolean) {
@@ -50,7 +50,7 @@ describe('M1 intent-brokering AC1–AC5', () => {
     const judge = async () => ({ match: 'yes' as const, blurb: '南京摄影爱好者,周末想出门拍照' })
     const out = await brokerWith(judge, true, true).seek('找周末拍照搭子', { city: '南京' })
     expect(out.matched.map(m => m.hand)).toEqual(['ccb'])
-    expect(out.matched[0].blurb).toContain('摄影')
+    expect(out.matched[0]?.blurb ?? '').toContain('摄影')
     expect(out.lit).toEqual(['ccb'])
   })
 
