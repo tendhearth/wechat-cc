@@ -684,7 +684,7 @@ const avatarInfoCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
-    const { avatarInfo } = await import('./src/daemon/avatar/store')
+    const { avatarInfo } = await import('./src/core/avatar/store')
     const info = avatarInfo(STATE_DIR, args.key)
     if (args.json) console.log(JSON.stringify(AvatarInfoOutput.parse({ ok: true, ...info })))
     else console.log(`${args.key}: ${info.exists ? info.path : '(no avatar)'}`)
@@ -699,7 +699,7 @@ const avatarSetCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
-    const { setAvatar } = await import('./src/daemon/avatar/store')
+    const { setAvatar } = await import('./src/core/avatar/store')
     try {
       const result = setAvatar(STATE_DIR, args.key, args.base64)
       if (args.json) console.log(JSON.stringify(AvatarSetOutput.parse(result)))
@@ -720,7 +720,7 @@ const avatarRemoveCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
-    const { removeAvatar } = await import('./src/daemon/avatar/store')
+    const { removeAvatar } = await import('./src/core/avatar/store')
     const result = removeAvatar(STATE_DIR, args.key)
     if (args.json) console.log(JSON.stringify(AvatarRemoveOutput.parse(result)))
     else console.log(`removed ${args.key}`)
@@ -1492,7 +1492,7 @@ const accountRemoveCmd = defineCommand({
     let clearSessionStateBot: ((botId: string) => boolean) | undefined
     try {
       const { openWechatDb } = await import('./src/lib/db')
-      const { makeSessionStateStore } = await import('./src/daemon/session-state')
+      const { makeSessionStateStore } = await import('./src/core/session-state')
       const db = openWechatDb(STATE_DIR)
       const store = makeSessionStateStore(db)
       clearSessionStateBot = (botId: string) => {
@@ -1645,7 +1645,7 @@ const connectionProbeCmd = defineCommand({
     const { ilinkGetUpdates } = await import('./src/lib/ilink')
     const { probeConnection } = await import('./src/daemon/connection-probe')
     const { openWechatDb } = await import('./src/lib/db')
-    const { makeSessionStateStore } = await import('./src/daemon/session-state')
+    const { makeSessionStateStore } = await import('./src/core/session-state')
     const { readFileSync, existsSync, readdirSync } = await import('node:fs')
     const { join } = await import('node:path')
 
@@ -1953,7 +1953,7 @@ const setupPollCmd = defineCommand({
     let isExpired: ((botDirName: string) => boolean) | undefined
     try {
       const { openWechatDb } = await import('./src/lib/db')
-      const { makeSessionStateStore } = await import('./src/daemon/session-state')
+      const { makeSessionStateStore } = await import('./src/core/session-state')
       const db = openWechatDb(STATE_DIR)
       const store = makeSessionStateStore(db)
       isExpired = (botDirName: string) => store.isExpired(botDirName)

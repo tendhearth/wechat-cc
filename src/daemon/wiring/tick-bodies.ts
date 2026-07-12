@@ -27,6 +27,17 @@ import { runThreadsExtraction } from '../threads/extractor'
 import { runLocalImportIfEnabled } from '../local-import'
 import { synthesizeOverview } from '../../lib/memory-synthesis'
 import { makeLifeStoresReader } from '../life-stores'
+import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
+import { bundledPluginsDir } from '../plugins/paths'
+import { createResilientBridge } from '../companion/ingest/bridge'
+import { runIngestCycle, maxDecryptedMtime, ingestHasTool } from '../companion/ingest/cycle'
+import { distillOwnerKnowledge } from '../companion/knowledge-distill'
+import selfPkg from '../../../package.json' with { type: 'json' }
+
+/** Per-cycle wxfacts extraction batch cap (rate bound). */
+export const INGEST_BATCH_CAP = 4
+/** Skip an ingest cycle if any chat had inbound activity within this window (owner is actively chatting). */
+export const INGEST_QUIET_MS = 3 * 60_000
 import { runGarden } from '../memory/gardener'
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
@@ -69,6 +80,8 @@ export interface TickDeps {
 }
 
 export interface TickBodies {
+  /** WRITE-side knowledge ingestion (25m interval + new-message nudge). */
+  ingestTick: () => Promise<void>
   pushTick: (opts?: { nowIso?: string }) => Promise<void>
   // introspect/observations internal timestamps stay wall-clock (MVP); nowIso
   // is only used to seed the memory gardener's `today` (archive filename /
@@ -136,6 +149,104 @@ export function buildHuntText(opts: { nowIso: string }): string {
 
 export function buildTickBodies(deps: TickDeps): TickBodies {
   const launchCwd = process.cwd()
+
+  // In-memory source-freshness marker for the ingest loop (deterministic
+  // builders only run when the decrypted source advanced past this). Reset to 0
+  // on restart → one catch-up build after a restart, which is harmless.
+  let lastIngestSourceMtime = 0
+
+  /**
+   * WRITE-side knowledge ingestion. Drives the plugins' builders + wxfacts
+   * extraction directly via the MCP bridge (no agent turn). Idle-gated (skips
+   * when a chat is active), serialized under a dedicated `__ingest__` lock, and
+   * an inert no-op when no knowledge plugins are loaded (e.g. e2e harness).
+   */
+  async function ingestTick(): Promise<void> {
+    const specs = pluginMcpSpecs(loadPlugins({
+      stateDir: deps.stateDir,
+      bundledDir: bundledPluginsDir(),
+      hostVersion: selfPkg.version,
+    }))
+    if (Object.keys(specs).length === 0) return   // no knowledge plugins → nothing to ingest
+
+    // Don't compete with an active conversation. Two checks per known chat:
+    // (1) authoritative — a turn is actually in-flight on its session (catches
+    // long turns + proactive/converse dispatches that leave no inbound record);
+    // (2) soft — an inbound arrived within the quiet window (give it a breather).
+    // Concurrency matters: a live agent turn already runs its OWN plugin MCP
+    // processes, so ingesting in parallel would open a second set on the same
+    // sqlite (SQLITE_BUSY / lock contention).
+    const messagesStore = makeMessagesStore(deps.db)
+    const snapshot = deps.ilink.loadProjects()
+    const alias = snapshot.current && snapshot.projects[snapshot.current] ? snapshot.current : '_default'
+    try {
+      const defaultChatId = loadCompanionConfig(deps.stateDir).default_chat_id
+      const chatIds = new Set<string>(await messagesStore.listChatIds())
+      if (defaultChatId) chatIds.add(defaultChatId)
+      for (const chatId of chatIds) {
+        const mode = deps.boot.coordinator.getMode(chatId)
+        const providerId =
+          mode.kind === 'solo' ? mode.provider
+          : mode.kind === 'primary_tool' ? mode.primary
+          : (mode.participants?.[0] ?? deps.boot.defaultProviderId)
+        if (deps.boot.sessionManager.isInFlight({ alias, providerId, chatId })) {
+          deps.log('INGEST', `skip cycle — session in-flight (chat ${chatId})`)
+          return
+        }
+        const ts = await messagesStore.latestInboundTs(chatId)
+        if (ts && Date.now() - Date.parse(ts) < INGEST_QUIET_MS) {
+          deps.log('INGEST', `skip cycle — chat ${chatId} recently active`)
+          return
+        }
+      }
+    } catch (err) {
+      deps.log('INGEST', `activity check failed (proceeding): ${errMsg(err)}`)
+    }
+
+    const cheapEval = deps.boot.registry.getCheapEval()
+    await deps.boot.coordinator.runExclusive('__ingest__', async () => {
+      // Resilient: connect per-plugin so a heavy source that fails to spawn
+      // (wxsearch/wxmedia model loads) doesn't sink the whole cycle.
+      const bridge = await createResilientBridge(specs, { log: (t, m) => deps.log(t, m) })
+      try {
+        // Gate extraction off when there's no cheap-eval provider — otherwise the
+        // loop would drain real message windows into empty records + advance the
+        // watermark past them (silent loss). See ingestHasTool.
+        const hasTool = ingestHasTool(bridge.tools.map(t => t.name), !!cheapEval)
+        const report = await runIngestCycle({
+          bridge,
+          hasTool,
+          cheapEval: cheapEval ?? (async () => '[]'),   // never invoked when extraction is gated off above
+          sourceMaxMtime: () => maxDecryptedMtime(deps.stateDir),
+          lastSourceMtime: lastIngestSourceMtime,
+          cap: INGEST_BATCH_CAP,
+          log: (tag, msg) => deps.log(tag, msg),
+        })
+        lastIngestSourceMtime = report.newSourceMtime
+        if (report.batches || report.rebuilt || report.indexed || report.transcribed) {
+          deps.log('INGEST', `cycle: decrypted=${report.decrypted} rebuilt=${report.rebuilt} indexed=${report.indexed} transcribed=${report.transcribed} batches=${report.batches} facts=${report.recorded}`)
+        }
+        // D1 — distill the owner's plugin knowledge into knowledge.md (always-on
+        // memory). Owner chat only (no chatId→name join needed); reuses the open
+        // bridge. Empty digest ⇒ remove the file so a stale one doesn't linger.
+        const ownerChat = loadCompanionConfig(deps.stateDir).default_chat_id
+        if (ownerChat && !ownerChat.includes('..') && !ownerChat.includes('/') && !ownerChat.includes('\\')) {
+          try {
+            const digest = await distillOwnerKnowledge({ call: bridge.call, hasTool: (t) => bridge.tools.some(x => x.name === t) })
+            const fs = makeMemoryFS({ rootDir: join(deps.stateDir, 'memory', ownerChat) })
+            if (digest) { fs.write('knowledge.md', digest); deps.log('INGEST', `distilled knowledge.md for ${ownerChat} (${digest.length} chars)`) }
+            else if (fs.read('knowledge.md')) fs.delete('knowledge.md')
+          } catch (err) {
+            deps.log('INGEST', `knowledge distill failed: ${errMsg(err)}`)
+          }
+        }
+      } catch (err) {
+        deps.log('INGEST', `cycle failed: ${errMsg(err)}`)
+      } finally {
+        await bridge.close()
+      }
+    })
+  }
 
   /**
    * Resolves the chat's session (project/tier/provider), checks the
@@ -432,5 +543,5 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     }
   }
 
-  return { pushTick, introspectTick }
+  return { ingestTick, pushTick, introspectTick }
 }

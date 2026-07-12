@@ -212,6 +212,13 @@ export function loadPlugins(deps: LoadPluginsDeps): LoadedPlugin[] {
     const def = p.source === 'bundled'          // default enable-state by trust
     const enabled = p.name in enabledMap ? enabledMap[p.name]! : def
     const dataDir = pluginDataDir(deps.stateDir, p.name)
+    // An enabled plugin's ${dataDir} is its own writable area — ensure it exists
+    // BEFORE the healthcheck. Manifests reference it (e.g. `${dataDir}/../wxvault/...`
+    // to probe a sibling's output), and a `..` traversal through a not-yet-created
+    // dir fails existsSync, which would wrongly mark a fresh install NOT READY until
+    // some other step happened to create the dir. Only for enabled plugins (disabled
+    // ones are withheld regardless, and we don't want to litter dirs during discovery).
+    if (enabled) { try { mkdirSync(dataDir, { recursive: true }) } catch { /* checkReady will report */ } }
     const spec = resolveSpec(p.manifest, p.dir, dataDir)
     const health = checkReady(p.manifest, spec, p.dir, dataDir, deps.hostVersion)   // may rewrite spec.command → absolute
     loaded.push({

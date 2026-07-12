@@ -82,7 +82,7 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
       map.set(tokenHex, {
         tier: 'admin',
         origin: 'operator',
-        routeAllow: new Set(['POST /v1/companion/converse', 'POST /v1/companion/speak']),
+        routeAllow: new Set(['POST /v1/companion/converse', 'POST /v1/companion/speak', 'POST /v1/companion/transcribe']),
       })
     },
     mint(tier, sessionKey) {

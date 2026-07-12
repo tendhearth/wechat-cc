@@ -127,6 +127,8 @@ export interface PipelineDepsRefs {
   polling: Ref<PollingLifecycle>
   guard: Ref<GuardLifecycle>
   pipeline: Ref<PipelineRun>
+  /** Late-bound ingest nudge — fired per new inbound so the knowledge base tracks fresh activity. */
+  ingestNudge: Ref<() => void>
 }
 
 const STARTED_AT_ISO = new Date().toISOString()
@@ -362,7 +364,14 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       append: rec => messagesStore.append(rec),
       log,
     },
-    activity: { recordInbound, resetCareNoReply: (c) => careLedger.resetNoReply(c), log },
+    activity: {
+      // Piggyback the ingest nudge on the per-new-inbound recordInbound call:
+      // fresh WeChat activity means new data to fold into the knowledge base.
+      // Trailing-debounced + gated inside registerIngest, so this is O(1) here.
+      recordInbound: (chatId, when) => { refs.ingestNudge.current?.(); return recordInbound(chatId, when) },
+      resetCareNoReply: (c) => careLedger.resetNoReply(c),
+      log,
+    },
     milestone: { fireMilestonesFor, log },
     welcome: { maybeWriteWelcomeObservation, log },
     dispatch: { coordinator: { dispatch: (msg) => boot.coordinator.dispatch(msg) } },
@@ -379,6 +388,15 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const companionConverse = async (text: string): Promise<{ reply: string }> => {
     const ownerChatId = loadCompanionConfig(stateDir).default_chat_id
     if (!ownerChatId) throw new Error('companion_owner_chat_not_configured')
+    // D3 review follow-up: app-converse captures the reply through a sink, but a
+    // chatroom-mode chat is preempt-policy (submitTurn runs the turn BARE, no
+    // per-chat lock) AND chatroom forbids the `reply` tool — so an app turn on a
+    // chatroom-mode owner chat would run unserialized and capture nothing.
+    // Reject clearly instead of hanging / returning an empty reply. (Pre-D3 this
+    // was a silent no-op; D3 makes the policy explicit, so we guard it explicitly.)
+    if (boot.coordinator.getMode(ownerChatId).kind === 'chatroom') {
+      throw new Error('owner_chat_in_chatroom_mode')
+    }
     // PRIMARY guard (spec §3, HIGH finding fix): refuse to start an app turn
     // while a WeChat turn is already dispatching on the owner's session.
     // replySinks.open() below only catches app-vs-app races (both go through
@@ -405,30 +423,32 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // still-common case (WeChat turn already running) so the app UI gets an
     // immediate 409 without waiting on the mutex. Below, session
     // serialization (session-serialization-design.md) closes the residual
-    // this pre-check alone can't: it spans the SINK's entire open→close
-    // lifetime inside the per-chat mutex, so a WeChat/tick turn queued behind
-    // this app turn cannot start — and therefore cannot have its reply-tool
-    // output stolen by the still-open app sink — until this turn's sink is
-    // closed. dispatchInner (NOT dispatch) is required here: dispatch itself
-    // acquires the same per-chat mutex, so calling it from inside
-    // runExclusive would self-deadlock.
-    return boot.coordinator.runExclusive(ownerChatId, async () => {
-      const sink = replySinks.open(ownerChatId)
-      try {
-        const synthetic: InboundMsg = {
-          chatId: ownerChatId,
-          userId: ownerChatId,
-          text,
-          msgType: 'text',
-          createTimeMs: Date.now(),
-          accountId: ilink.resolveAccountId(ownerChatId),
+    // this pre-check alone can't: the SINK's entire open→close lifetime runs
+    // INSIDE the per-chat turn (submitTurn's `within` hook), so a WeChat/tick
+    // turn queued behind this app turn cannot start — and cannot have its
+    // reply-tool output stolen by the still-open app sink — until this turn's
+    // sink is closed. D3: submitTurn owns the lock/policy + the dispatch; the
+    // app path just supplies the capture logic to run within the locked turn
+    // (no more hand-rolled runExclusive/dispatchInner + the deadlock footgun).
+    const synthetic: InboundMsg = {
+      chatId: ownerChatId,
+      userId: ownerChatId,
+      text,
+      msgType: 'text',
+      createTimeMs: Date.now(),
+      accountId: ilink.resolveAccountId(ownerChatId),
+    }
+    return boot.coordinator.submitTurn(synthetic, {
+      within: async (dispatch) => {
+        const sink = replySinks.open(ownerChatId)
+        try {
+          await dispatch()
+          return { reply: sink.close() }
+        } catch (err) {
+          sink.close()
+          throw err
         }
-        await boot.coordinator.dispatchInner(synthetic)
-        return { reply: sink.close() }
-      } catch (err) {
-        sink.close()
-        throw err
-      }
+      },
     })
   }
 

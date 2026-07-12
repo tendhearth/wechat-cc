@@ -41,6 +41,24 @@ describe('companion/config (v2 — memory-first, no triggers/personas)', () => {
     expect(loaded.snooze_until).toBe('2026-04-25T00:00:00Z')
   })
 
+  describe('ingest_enabled field (knowledge-ingestion engine)', () => {
+    it('is undefined when absent (⇒ ingestion ON when companion enabled)', () => {
+      const d = freshDir()
+      writeFileSync(join(d, 'companion', 'config.json'), JSON.stringify({ enabled: true }))
+      expect(loadCompanionConfig(d).ingest_enabled).toBeUndefined()
+    })
+    it('round-trips an explicit false (the independent off-switch)', async () => {
+      const d = freshDir()
+      await saveCompanionConfig(d, { ...defaultCompanionConfig(), enabled: true, ingest_enabled: false })
+      expect(loadCompanionConfig(d).ingest_enabled).toBe(false)
+    })
+    it('ignores a non-boolean ingest_enabled', () => {
+      const d = freshDir()
+      writeFileSync(join(d, 'companion', 'config.json'), JSON.stringify({ enabled: true, ingest_enabled: 'yes' }))
+      expect(loadCompanionConfig(d).ingest_enabled).toBeUndefined()
+    })
+  })
+
   it('silently drops legacy triggers/per_project_persona fields (v1 → v2 migration)', () => {
     const d = freshDir()
     writeFileSync(join(d, 'companion', 'config.json'), JSON.stringify({

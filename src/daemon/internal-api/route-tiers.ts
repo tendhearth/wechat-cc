@@ -40,6 +40,8 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/user/set_name': 'trusted',
   'POST /v1/voice/save_config': 'trusted',
   'GET /v1/voice/status': 'trusted',
+  'POST /v1/stt/save_config': 'trusted',
+  'GET /v1/stt/status': 'trusted',
   'POST /v1/companion/enable': 'trusted',
   'POST /v1/companion/disable': 'trusted',
   'POST /v1/companion/snooze': 'trusted',
@@ -79,6 +81,8 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // admin — same trust class as converse above (voice arc Stage 1): synths
   // reply audio for the owner's app-conversation-channel session.
   'POST /v1/companion/speak': 'admin',
+  // admin — voice arc Stage 2: transcribes inbound app-channel audio to text.
+  'POST /v1/companion/transcribe': 'admin',
   // admin — daemon-control (daemon_introspect / daemon_remediate)
   'GET /v1/turns': 'admin',
   'GET /v1/sessions': 'admin',

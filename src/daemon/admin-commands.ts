@@ -18,7 +18,7 @@ import type { InboundMsg } from '../core/prompt-format'
 import type { ProviderRegistry } from '../core/provider-registry'
 import type { SessionManager } from '../core/session-manager'
 import type { SessionStore } from '../core/session-store'
-import type { SessionStateStore, ExpiredBot } from './session-state'
+import type { SessionStateStore, ExpiredBot } from '../core/session-state'
 import { loadHearthApi, type HearthApi, type HearthLoadResult } from './hearth-adapter'
 import type { SynthesizeResult } from '../lib/memory-synthesis'
 

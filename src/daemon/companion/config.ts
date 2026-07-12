@@ -33,6 +33,14 @@ export interface CompanionConfig {
    * history into the bot is privacy-sensitive, so it's an explicit choice.
    */
   import_local_history: boolean
+  /**
+   * WRITE-side knowledge ingestion loop (keeps wxgraph/wxsearch/wxfacts fresh
+   * from decrypted messages). Optional; absent = ON when the companion is
+   * enabled. Set false to disable ingestion independently of proactive push —
+   * ingestion is silent maintenance and spends cheap-eval tokens on extraction,
+   * so it gets its own off-switch.
+   */
+  ingest_enabled?: boolean
 }
 
 export function defaultCompanionConfig(): CompanionConfig {
@@ -64,6 +72,7 @@ export function loadCompanionConfig(stateDir: string): CompanionConfig {
       snooze_until: typeof parsed.snooze_until === 'string' ? parsed.snooze_until : null,
       last_introspect_at: typeof parsed.last_introspect_at === 'string' ? parsed.last_introspect_at : null,
       import_local_history: typeof parsed.import_local_history === 'boolean' ? parsed.import_local_history : d.import_local_history,
+      ingest_enabled: typeof parsed.ingest_enabled === 'boolean' ? parsed.ingest_enabled : undefined,
     }
     // Legacy triggers/per_project_persona/triggers fields (if any) are
     // silently dropped on next save — migration path for v1.1 installs.

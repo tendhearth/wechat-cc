@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadPlugins, pluginMcpSpecs, setPluginEnabled, cmpVersion } from './registry'
@@ -12,14 +12,17 @@ function writePlugin(root: string, name: string, manifest: unknown): string {
   return dir
 }
 
-// /bin/sh is absolute + always present → plugins built from good() are ready,
-// keeping tests hermetic (no dependency on python3 being on the CI PATH). PATH
-// resolution of a *bare* command is exercised explicitly further down.
+// process.execPath (the bun/node binary running these tests) is absolute and
+// always present on every platform → plugins built from good() resolve ready,
+// keeping tests hermetic (no dependency on /bin/sh or python3 on the CI PATH)
+// and cross-platform (Windows has no /bin/sh). PATH resolution of a *bare*
+// command is exercised explicitly further down (unix-only — see that test).
+const READY_CMD = process.execPath
 const good = (name: string) => ({
   name,
   kind: 'mcp',
   displayName: name,
-  spawn: { command: '/bin/sh', args: ['${pluginDir}/main.py'], env: { DATA: '${pluginDir}/data' } },
+  spawn: { command: READY_CMD, args: ['${pluginDir}/main.py'], env: { DATA: '${pluginDir}/data' } },
 })
 
 describe('plugin registry', () => {
@@ -57,18 +60,46 @@ describe('plugin registry', () => {
     const dir = writePlugin(join(stateDir, 'plugins'), 'wxvault', good('wxvault'))
     writeFileSync(join(stateDir, 'plugins', 'plugins.json'), JSON.stringify({ enabled: { wxvault: true } }))
     const specs = pluginMcpSpecs(loadPlugins({ stateDir, bundledDir }))
+    // ${pluginDir} is substituted literally into the template, preserving the
+    // manifest's own '/' separators (manifests are cross-platform; Windows
+    // accepts '/'). Assert with '/'-concat, NOT join() — join() emits '\' on
+    // win32 and would spuriously mismatch the literal substitution.
     expect(specs.wxvault).toEqual({
-      command: '/bin/sh',
-      args: [join(dir, 'main.py')],
-      env: { DATA: join(dir, 'data') },
+      command: READY_CMD,
+      args: [`${dir}/main.py`],
+      env: { DATA: `${dir}/data` },
     })
   })
 
-  it('resolves a bare command to an absolute path (child gets no daemon PATH)', () => {
+  // Bare-command PATH resolution is unix-only by design: resolveCommand()
+  // deliberately does not do Windows PATHEXT (.exe/.cmd) suffix search, so a
+  // bare Windows command is expected to stay unresolved. This test exercises
+  // the unix path and is skipped on win32.
+  it.skipIf(process.platform === 'win32')('resolves a bare command to an absolute path (child gets no daemon PATH)', () => {
     writePlugin(bundledDir, 'bare', { ...good('bare'), spawn: { command: 'sh' } })
     const loaded = loadPlugins({ stateDir, bundledDir })
     expect(loaded[0]!.ready).toBe(true)
     expect(loaded[0]!.spec.command).toMatch(/^\/.*\/sh$/)   // rewritten to absolute
+  })
+
+  it('creates an enabled plugin\'s ${dataDir} so a `..` healthcheck into a peer resolves', () => {
+    // peer output exists under plugin-data/wxvault/...; consumer probes it via ${dataDir}/../wxvault
+    mkdirSync(join(stateDir, 'plugin-data', 'wxvault', 'out', 'decrypted'), { recursive: true })
+    // consumer's OWN plugin-data dir does NOT exist yet → without the mkdir the `..`
+    // traversal fails existsSync and the plugin is wrongly NOT READY.
+    writePlugin(bundledDir, 'wxperson', {
+      ...good('wxperson'),
+      healthcheck: { requiresPaths: ['${dataDir}/../wxvault/out/decrypted'] },
+    })
+    const p = loadPlugins({ stateDir, bundledDir }).find(x => x.name === 'wxperson')!
+    expect(p.enabled).toBe(true)
+    expect(p.ready).toBe(true)   // dataDir auto-created → `..` resolves
+  })
+
+  it('does NOT create ${dataDir} for a disabled plugin (no discovery-time litter)', () => {
+    writePlugin(join(stateDir, 'plugins'), 'userpl', good('userpl'))   // user dir → disabled by default
+    loadPlugins({ stateDir, bundledDir })
+    expect(existsSync(join(stateDir, 'plugin-data', 'userpl'))).toBe(false)
   })
 
   it('a command not on PATH makes the plugin not-ready (no silent spawn ENOENT)', () => {
@@ -170,5 +201,34 @@ describe('plugin registry', () => {
     const ready = loadPlugins({ stateDir, bundledDir })
     expect(ready[0]!.ready).toBe(true)
     expect(Object.keys(pluginMcpSpecs(ready))).toEqual(['wxvault'])
+  })
+
+  describe('manifest.hidden (parseManifest, via loadPlugins)', () => {
+    it('hidden: true parses through and carries onto the loaded manifest', () => {
+      writePlugin(bundledDir, 'secret', { ...good('secret'), hidden: true })
+      const loaded = loadPlugins({ stateDir, bundledDir })
+      expect(loaded[0]!.manifest.hidden).toBe(true)
+    })
+
+    it('absent hidden is falsy', () => {
+      writePlugin(bundledDir, 'visible', good('visible'))
+      const loaded = loadPlugins({ stateDir, bundledDir })
+      expect(loaded[0]!.manifest.hidden).toBeFalsy()
+    })
+
+    it('a non-boolean hidden is ignored (coerced away), not fatal to the manifest', () => {
+      writePlugin(bundledDir, 'weird', { ...good('weird'), hidden: 'yes' })
+      const loaded = loadPlugins({ stateDir, bundledDir })
+      expect(loaded).toHaveLength(1)                 // manifest still parses
+      expect(loaded[0]!.manifest.hidden).toBeFalsy()  // non-boolean treated as absent
+    })
+
+    it('loading + running is unaffected: a hidden plugin still loads, enables, and is ready like any other', () => {
+      writePlugin(bundledDir, 'secret', { ...good('secret'), hidden: true })
+      const loaded = loadPlugins({ stateDir, bundledDir })
+      expect(loaded[0]!.enabled).toBe(true)   // bundled default-enabled, same as a visible plugin
+      expect(loaded[0]!.ready).toBe(true)
+      expect(Object.keys(pluginMcpSpecs(loaded))).toEqual(['secret'])   // MCP tools still wired
+    })
   })
 })

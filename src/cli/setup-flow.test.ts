@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { determineScenario, pollSetupQrStatus, requestSetupQrCode } from './setup-flow'
-import { avatarInfo } from '../daemon/avatar/store'
+import { avatarInfo } from '../core/avatar/store'
 
 describe('setup-flow', () => {
   it('returns QR payload for desktop installers without printing terminal UI', async () => {

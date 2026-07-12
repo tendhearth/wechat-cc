@@ -249,6 +249,26 @@ export interface BootstrapDeps {
    */
   personaFor?: (chatId: string) => { content?: string; cultivate?: boolean }
   /**
+   * Resolve a chat's core-memory block — a small, always-loaded excerpt of
+   * THIS chat's own profile.md (core-memory-injection design §2). Read
+   * per-spawn (like `careLevelFor`'s siblings) so a memory_write update to
+   * profile.md shows up on the very next turn without a daemon restart.
+   * Unlike `personaFor` (which reads the OWNER chat's persona.md via
+   * `default_chat_id`), this reads the CALLING chat's OWN dir — each chat
+   * gets its own core memory, not the owner's. Absent ⇒ the core-memory
+   * section is NEVER included for any chat — tests and minimal embeddings
+   * that don't wire this stay byte-identical to before this feature
+   * existed. Wiring the actual thunk (per-chat memory/profile.md read,
+   * capped to CORE_MEMORY_MAX_CHARS) happens in main.ts.
+   */
+  coreMemoryFor?: (chatId: string) => string
+  /**
+   * Daemon-distilled objective plugin knowledge for this chat (knowledge.md),
+   * read fresh per spawn + capped. Injected right after core memory. Absent
+   * thunk / empty ⇒ section omitted (knowledge-distillation design, D1).
+   */
+  knowledgeMemoryFor?: (chatId: string) => string
+  /**
    * Resolve whether a chat is still in the "刚认识" (just-met) phase
    * (onboarding-curiosity design §2). Read per-spawn (like `careLevelFor`'s
    * siblings) so the section drops off mid-conversation once the message
@@ -517,12 +537,25 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // = arbitrary code; enable via dashboard / plugins.json); BUNDLED default
   // ENABLED. Unlike installUserMcp (which pollutes the human's global
   // ~/.claude.json), this injects only into the daemon-spawned providers.
-  const pluginMcp = pluginMcpSpecs(loadPlugins({
+  const loadedPlugins = loadPlugins({
     stateDir: deps.stateDir,
     bundledDir: bundledPluginsDir(),
     hostVersion: selfPkg.version,
     log: (m) => deps.log('BOOT', `plugin: ${m}`),
-  }))
+  })
+  const pluginMcp = pluginMcpSpecs(loadedPlugins)
+  // Names of ACTUALLY-registered plugins (enabled AND ready — same gate
+  // pluginMcpSpecs applies above), daemon-global (computed once at boot, NOT
+  // per-chat), threaded into buildSystemPrompt's `knowledgePlugins` arg
+  // (knowledge-orchestration design Task 2). Deliberately == Object.keys(
+  // pluginMcp) rather than a looser `enabled`-only filter: a bundled
+  // knowledge plugin (e.g. wxsearch) defaults ENABLED but is commonly NOT
+  // READY (its healthcheck requires wxvault's decrypted output, which a
+  // fresh install/dev box won't have yet) — mentioning it in the prompt
+  // before its tools actually exist would send the agent at tools that
+  // don't exist. Unknown plugin names are harmless — buildSystemPrompt
+  // silently ignores anything outside KNOWN_KNOWLEDGE_PLUGINS.
+  const knowledgePluginNames = Object.keys(pluginMcp)
   // Claude's SDK wants each server tagged `type: 'stdio'`; codex/cursor take
   // the bare {command,args,env} shape (structurally identical to McpStdioSpec).
   const pluginMcpForClaude = Object.fromEntries(
@@ -1013,7 +1046,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // not get that instruction either. personaEmpty is passed through
   // unconditionally — buildSystemPrompt only surfaces it nested inside the
   // (already tier-gated) persona-cultivation section, so no extra gating
-  // is needed here.
+  // is needed here. coreMemory mirrors `deps.coreMemoryFor` the same way —
+  // absent thunk ⇒ section never included (core-memory-injection design
+  // §2). Unlike personaFor (owner chat via default_chat_id), coreMemoryFor
+  // is called with THIS chat's own chatId, so each chat gets its own
+  // profile.md excerpt.
   const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string): string => {
     const p = deps.personaFor?.(chatId)
     return buildSystemPrompt({
@@ -1035,12 +1072,23 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       personaCultivate: p?.cultivate === true && tierProfile.allow.has('memory_write'),
       newRelationship: (deps.newRelationshipFor?.(chatId) ?? false) && tierProfile.allow.has('memory_write'),
       personaEmpty: !(p?.content && p.content.trim().length > 0),
+      // core-memory-injection design §2 — this chat's OWN profile.md
+      // excerpt (not the owner's). No tier gate: it's a read-only context
+      // block, unlike personaCultivate/newRelationship which nudge writes.
+      coreMemory: deps.coreMemoryFor?.(chatId),
+      knowledgeMemory: deps.knowledgeMemoryFor?.(chatId),
       // bubbleReplies mirrors `deps.bubbleRepliesFor` the same way — absent
       // thunk ⇒ section never included. Deliberately NO tier gate here
       // (unlike careEnabled/newRelationship/personaCultivate): `reply` is
       // guest-allowed, not memory_write-gated, so there's no denied-tool-call
       // risk in giving a guest chat the same bubbling guidance.
       bubbleReplies: deps.bubbleRepliesFor?.(chatId) ?? false,
+      // knowledge-orchestration design Task 2 — daemon-global (loaded once at
+      // boot, not per-chat), so this is the captured const, not a `*For`
+      // thunk. buildSystemPrompt only surfaces the section when at least one
+      // name is a KNOWN_KNOWLEDGE_PLUGINS entry, so this is inert when no
+      // knowledge plugin is loaded/enabled.
+      knowledgePlugins: knowledgePluginNames,
     })
   }
 

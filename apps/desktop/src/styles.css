@@ -5025,3 +5025,21 @@ input { font: inherit; color: inherit; }
   background: var(--green-soft);
   color: var(--green-ink);
 }
+.converse-mic {
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--hair-2);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink-3);
+  font-size: 13px;
+  cursor: pointer;
+}
+.converse-mic:hover { color: var(--ink); }
+.converse-mic[disabled] { opacity: 0.6; cursor: default; }
+.converse-mic.is-recording {
+  border-color: var(--red-ink, #c0392b);
+  background: var(--red-soft, #fdecea);
+  color: var(--red-ink, #c0392b);
+}

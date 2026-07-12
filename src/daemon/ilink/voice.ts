@@ -15,6 +15,9 @@ import { loadVoiceConfig, saveVoiceConfig, type VoiceConfig } from '../tts/voice
 import { makeHttpTTSProvider } from '../tts/http-tts'
 import { makeQwenProvider } from '../tts/qwen'
 import type { TTSProvider } from '../tts/types'
+import { loadSTTConfig, saveSTTConfig, type STTConfig } from '../stt/stt-config'
+import { makeHttpSTTProvider } from '../stt/http-stt'
+import type { STTProvider } from '../stt/types'
 import type { IlinkContext } from './context'
 
 function providerFromConfig(cfg: VoiceConfig): TTSProvider {
@@ -27,6 +30,10 @@ function providerFromConfig(cfg: VoiceConfig): TTSProvider {
     })
   }
   return makeQwenProvider({ apiKey: cfg.api_key })
+}
+
+function sttProviderFromConfig(cfg: STTConfig): STTProvider {
+  return makeHttpSTTProvider({ baseUrl: cfg.base_url, model: cfg.model, apiKey: cfg.api_key })
 }
 
 export function makeVoice(ctx: IlinkContext): WechatVoiceDep {
@@ -157,6 +164,36 @@ export function makeVoice(ctx: IlinkContext): WechatVoiceDep {
         model: cfg.provider === 'http_tts' ? cfg.model : undefined,
         saved_at: cfg.saved_at,
       }
+    },
+
+    async transcribe(audio, mime) {
+      const cfg = loadSTTConfig(stateDir)
+      if (!cfg) throw new Error('no_stt_config')
+      return sttProviderFromConfig(cfg).transcribe(audio, mime)
+    },
+
+    async saveSTTConfig(input) {
+      const base_url = typeof input.base_url === 'string' ? input.base_url.trim() : ''
+      const model = typeof input.model === 'string' ? input.model.trim() : ''
+      if (base_url.length < 5) return { ok: false as const, reason: 'base_url required' }
+      if (model.length === 0) return { ok: false as const, reason: 'model required' }
+      const provider = makeHttpSTTProvider({ baseUrl: base_url, model, apiKey: input.api_key })
+      const started = Date.now()
+      const t = await provider.test()
+      if (!t.ok) return { ok: false as const, reason: t.reason, detail: t.detail }
+      saveSTTConfig(stateDir, {
+        provider: 'http_stt', base_url, model,
+        api_key: typeof input.api_key === 'string' && input.api_key.length > 0 ? input.api_key : undefined,
+        saved_at: new Date().toISOString(),
+      })
+      log('STT', `config saved base_url=${base_url} model=${model}`)
+      return { ok: true as const, tested_ms: Date.now() - started, base_url, model }
+    },
+
+    sttStatus() {
+      const cfg = loadSTTConfig(stateDir)
+      if (!cfg) return { configured: false as const }
+      return { configured: true as const, provider: 'http_stt' as const, base_url: cfg.base_url, model: cfg.model, saved_at: cfg.saved_at }
     },
   }
 }

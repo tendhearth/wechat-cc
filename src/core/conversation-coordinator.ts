@@ -168,17 +168,45 @@ export function authFailNotice(providerId: ProviderId): string {
     ?? `⚠ ${providerId} 登录已过期，请在电脑上重新登录后再发消息。`
 }
 
+/** Turn-taking policy for a mode (D3 — turn-entry unification). */
+export type TurnPolicy = 'queue' | 'preempt'
+
+/**
+ * The per-chat serialization strategy for a mode, made EXPLICIT (D3):
+ *  - `queue`: turns serialize on the per-chat mutex (solo/parallel/primary_tool)
+ *    — single-turn dispatches with no self-preemption, so wrapping them in the
+ *    mutex is a pure win: two rapid inbound messages for one chat run their
+ *    turns one at a time instead of racing on session/history state.
+ *  - `preempt`: a new turn aborts the in-flight one (chatroom's latest-wins;
+ *    the shape a future voice channel needs for barge-in). Chatroom is EXEMPT
+ *    from the mutex because `dispatchChatroom` implements its OWN
+ *    preempt-on-arrival protocol (inFlightAborters / inFlightDispatchPromises):
+ *    a new message aborts the prior in-flight loop and awaits its cleanup rather
+ *    than running it to completion. Routing it through the mutex would make a
+ *    new message wait for the lock — handed over only after the PRIOR dispatch
+ *    fully settles — before it could even reach the preempt-abort check, turning
+ *    "abort the stale loop and start now" into "wait for the stale loop to
+ *    drain, THEN start" and defeating latest-wins. (Verified pre-D3 by
+ *    temporarily routing chatroom through the mutex: no deadlock, but the abort
+ *    never fired early — B just waited behind A's held lock.)
+ * Adding a preempt mode is a one-line entry here, not a re-derivation across callers.
+ */
+export function turnPolicy(mode: Mode): TurnPolicy {
+  return mode.kind === 'chatroom' ? 'preempt' : 'queue'
+}
+
 export interface ConversationCoordinator {
-  dispatch(msg: InboundMsg): Promise<void>
   /**
-   * The pre-lock dispatch body (Task 1 — session-serialization). Identical
-   * logic to the old unserialized `dispatch`; `dispatch` itself now wraps
-   * this in the per-chat mutex (see `runExclusive`) for solo/parallel/
-   * primary_tool modes. Exposed so callers/tests can bypass the mutex when
-   * they need to (chatroom mode's own dispatch path calls this directly —
-   * see the exemption comment on `dispatch` below).
+   * The SINGLE turn entrypoint (D3). Owns the per-chat turn-taking policy
+   * (queue vs preempt, via {@link turnPolicy}) AND the dispatch itself, so a
+   * caller can never take the wrong lock or bypass it. `opts.within` runs
+   * caller logic (e.g. an app reply-sink capture) INSIDE the locked/preempt
+   * turn; it receives an opaque `dispatch` closure it must await — the only
+   * way to trigger the turn (so callers never name the internal dispatch).
    */
-  dispatchInner(msg: InboundMsg): Promise<void>
+  submitTurn(msg: InboundMsg): Promise<void>
+  submitTurn<T>(msg: InboundMsg, opts: { within: (dispatch: () => Promise<void>) => Promise<T> }): Promise<T>
+  dispatch(msg: InboundMsg): Promise<void>
   /**
    * Per-chatId async mutex (Task 1 — session-serialization): runs `fn`
    * exclusively with respect to any other `runExclusive` call for the same
@@ -861,42 +889,34 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     }
 
   /**
-   * Task 1 (session-serialization) — the public dispatch entry point.
-   * Mode is resolved BEFORE locking (cheap store read) so we can route:
-   *
-   *   - solo / parallel / primary_tool: single-turn dispatches with no
-   *     self-preemption, so wrapping them in the per-chat mutex is a pure
-   *     win — two rapid inbound messages for the same chat now run their
-   *     turns one at a time instead of racing on session/history state.
-   *   - chatroom: EXEMPT from the mutex. dispatchChatroom already
-   *     implements its own preempt-on-arrival protocol (inFlightAborters /
-   *     inFlightDispatchPromises above): a new message aborts the prior
-   *     in-flight loop and then awaits its cleanup, rather than waiting
-   *     for it to run to completion. If chatroom were also routed through
-   *     runExclusive, a new message would have to wait for the mutex to
-   *     hand it the lock — which only happens after the PRIOR
-   *     dispatchInner call fully settles — before it could even reach the
-   *     preempt-abort check at the top of dispatchChatroom. That would
-   *     turn "abort the stale loop and start immediately" into "wait for
-   *     the stale loop to drain, THEN start", defeating the "latest user
-   *     message wins" semantics the preempt logic exists for. Verified by
-   *     temporarily routing chatroom through the mutex too and re-running
-   *     the existing preemption tests (`cancel(chatId) returns true while
-   *     in-flight...`, `rapid follow-up message preempts...`,
-   *     `three-or-more rapid dispatches...`): no deadlock, but the abort
-   *     never fires early — B's dispatch just waits behind A's held lock,
-   *     so "preempting prior in-flight dispatch" is logged 0 times instead
-   *     of the expected ≥1/≥2, confirming the exemption is required.
+   * D3 — the single turn entrypoint. Resolves the mode's turn policy (see
+   * {@link turnPolicy} for the queue-vs-preempt rationale), then runs
+   * the turn under it: `preempt` (chatroom) bypasses the mutex (its own
+   * abort-on-arrival protocol IS the preemption); `queue` serializes on the
+   * per-chat mutex. `opts.within`, when given, runs INSIDE that locked/preempt
+   * region and receives the dispatch closure (used by the app path to open a
+   * reply-sink, dispatch, and read the captured reply — all under one lock).
    */
-  async function dispatch(msg: InboundMsg): Promise<void> {
-    const mode = getMode(msg.chatId)
-    if (mode.kind === 'chatroom') {
-      return dispatchInner(msg)
+  async function submitTurn<T = void>(
+    msg: InboundMsg,
+    opts?: { within?: (dispatch: () => Promise<void>) => Promise<T> },
+  ): Promise<T | void> {
+    const run = async (): Promise<T | void> => {
+      const doDispatch = (): Promise<void> => dispatchInner(msg)
+      return opts?.within ? opts.within(doDispatch) : doDispatch()
     }
-    return mutex.runExclusive(msg.chatId, () => dispatchInner(msg))
+    if (turnPolicy(getMode(msg.chatId)) === 'preempt') return run()
+    return mutex.runExclusive(msg.chatId, run)
+  }
+
+  // Back-compat thin wrapper — the WeChat inbound path. Identical behavior to
+  // the old mode-branching dispatch, now expressed via submitTurn's policy.
+  async function dispatch(msg: InboundMsg): Promise<void> {
+    await submitTurn(msg)
   }
 
   return {
+    submitTurn,
     getMode,
     setMode(chatId, mode) {
       validateMode(mode)
@@ -910,7 +930,6 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // delete is done in dispatchChatroom's finally; double-delete is harmless.
       return true
     },
-    dispatchInner,
     runExclusive: mutex.runExclusive,
     dispatch,
   }

@@ -16,7 +16,8 @@ import { escapeHtml } from "../view.js"
 import { formatInvokeError } from "../ipc.js"
 
 /**
- * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> }} Deps
+ * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
+ * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps }} Deps
  * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean }} ConverseMsg
  */
 
@@ -36,6 +37,14 @@ let sending = false
 let voiceOut = localStorage.getItem("cc.voiceOut") === "1"
 let voiceConfigWarned = false
 
+// Voice-in (Stage 2): push-to-talk mic capture → agent_transcribe → auto-send.
+/** @type {MediaRecorder|null} */
+let mediaRecorder = null
+/** @type {Blob[]} */
+let recordedChunks = []
+let recording = false
+let transcribing = false
+
 // ── skeleton ───────────────────────────────────────────────────────────
 
 /** @param {HTMLElement} root */
@@ -44,6 +53,7 @@ function renderSkeleton(root) {
     <div id="converse-scroll" class="converse-scroll"></div>
     <div class="converse-compose">
       <button id="converse-voice-toggle" class="converse-voice-toggle" type="button" aria-pressed="false" title="自动朗读 CC 的回复">🔊 语音</button>
+      <button id="converse-mic" class="converse-mic" type="button" aria-pressed="false" title="按一下开始说，再按一下结束（语音转文字）">🎤 说话</button>
       <textarea id="converse-input" class="converse-textarea" placeholder="跟 CC 说点什么…" rows="1"></textarea>
       <button id="converse-send" class="btn primary converse-send-btn" type="button">发送</button>
     </div>
@@ -140,6 +150,94 @@ async function speakAndPlay(deps, text) {
   }
 }
 
+// ── voice-in (mic capture → transcribe → auto-send) ─────────────────────
+
+/** Reflect recording/transcribing state on the mic button. */
+function reflectMic() {
+  const btn = document.getElementById("converse-mic")
+  if (!btn) return
+  btn.classList.toggle("is-recording", recording)
+  btn.setAttribute("aria-pressed", String(recording))
+  btn.textContent = transcribing ? "⏳ 识别中" : recording ? "⏹ 结束" : "🎤 说话"
+  btn.toggleAttribute("disabled", transcribing)
+}
+
+/** Read a Blob as bare base64 (no data: prefix). @param {Blob} blob */
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onloadend = () => resolve(String(r.result).split(",")[1] ?? "")
+    r.onerror = () => reject(r.error ?? new Error("read failed"))
+    r.readAsDataURL(blob)
+  })
+}
+
+/**
+ * Toggle mic capture. First press starts recording; second press stops and
+ * transcribes the clip via `agent_transcribe`, drops the text into the compose
+ * box, and auto-sends it. All failures surface as a muted system/error note —
+ * never a crash. `deps.media` is injectable for tests (defaults to the
+ * browser's navigator.mediaDevices + MediaRecorder).
+ * @param {Deps} deps
+ */
+async function toggleMic(deps) {
+  if (transcribing) return
+  if (recording) { try { mediaRecorder?.stop() } catch { /* already stopped */ } return }
+
+  const md = deps.media ?? {
+    getUserMedia: (c) => navigator.mediaDevices.getUserMedia(c),
+    makeRecorder: (s) => new MediaRecorder(s),
+  }
+  let stream
+  try {
+    stream = await md.getUserMedia({ audio: true })
+  } catch (err) {
+    messages.push({ id: nextId++, role: "system", text: "麦克风用不了（权限或设备问题）" })
+    renderMessages()
+    return
+  }
+
+  recordedChunks = []
+  mediaRecorder = md.makeRecorder(stream)
+  mediaRecorder.addEventListener("dataavailable", (ev) => {
+    const e = /** @type {BlobEvent} */ (ev)
+    if (e.data && e.data.size > 0) recordedChunks.push(e.data)
+  })
+  mediaRecorder.addEventListener("stop", async () => {
+    stream.getTracks().forEach(t => t.stop())
+    recording = false
+    const type = mediaRecorder?.mimeType || "audio/webm"
+    const blob = new Blob(recordedChunks, { type })
+    if (blob.size === 0) { reflectMic(); return }
+    transcribing = true
+    reflectMic()
+    try {
+      const b64 = await blobToBase64(blob)
+      const text = String(await deps.invoke("agent_transcribe", { audio_b64: b64, mime: type }))
+      transcribing = false
+      reflectMic()
+      if (text.trim() === "") {
+        messages.push({ id: nextId++, role: "system", text: "（没听清，再说一次？）" })
+        renderMessages()
+        return
+      }
+      const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById("converse-input"))
+      if (input) input.value = text
+      await sendMessage(deps)   // auto-send the transcript
+    } catch (err) {
+      transcribing = false
+      reflectMic()
+      const raw = formatInvokeError(err)
+      const friendly = /no_stt_config/.test(raw) ? "语音识别还没配置（去设置里填 STT 网关）" : raw
+      messages.push({ id: nextId++, role: "error", text: friendly })
+      renderMessages()
+    }
+  })
+  mediaRecorder.start()
+  recording = true
+  reflectMic()
+}
+
 function renderMessages() {
   const scroll = document.getElementById("converse-scroll")
   if (!scroll) return
@@ -220,6 +318,10 @@ function wireEvents(root, deps) {
 
   root.querySelector("#converse-voice-toggle")?.addEventListener("click", () => {
     setVoiceOut(!voiceOut)
+  })
+
+  root.querySelector("#converse-mic")?.addEventListener("click", () => {
+    toggleMic(deps).catch(err => console.error("converse mic failed", err))
   })
 
   // Delegated: bubbles (and their ▶ buttons) are re-created on every

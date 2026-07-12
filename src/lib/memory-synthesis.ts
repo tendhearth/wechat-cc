@@ -207,13 +207,13 @@ export function gatherFileSurvey(opts: { stateDir: string; adminChatId: string; 
  * LIFE (companion observations/milestones/notes) as one whole person. Embedded
  * content is capped to keep the prompt bounded.
  */
-export function formatSynthesisPrompt(projects: ProjectMemory[], life?: LifeContext | null, survey?: SurveyResult | null): string {
+export function formatSynthesisPrompt(projects: ProjectMemory[], life?: LifeContext | null, survey?: SurveyResult | null, social?: string | null): string {
   const hasLife = !lifeIsEmpty(life ?? null)
   const hasSurvey = !!survey && survey.folders.length > 0
+  const hasSocial = !!social && social.trim().length > 0
+  const catCount = 2 + (hasSurvey ? 1 : 0) + (hasSocial ? 1 : 0)   // A work + B life always described; +C survey +D social
   const header = [
-    hasSurvey
-      ? '你是这台电脑主人(下称「管理员」)的个人助理。下面是关于管理员的记忆,分三类:'
-      : '你是这台电脑主人(下称「管理员」)的个人助理。下面是关于管理员的记忆,分两类:',
+    `你是这台电脑主人(下称「管理员」)的个人助理。下面是关于管理员的记忆,分${catCount}类:`,
     'A) 工作侧 —— 他在本机各项目里积累的记忆/笔记;',
     hasLife
       ? 'B) 生活侧 —— 你(bot)在微信里观察到的他这个人、在意的人和事、偏好、近况。'
@@ -221,6 +221,7 @@ export function formatSynthesisPrompt(projects: ProjectMemory[], life?: LifeCont
     hasSurvey
       ? 'C) 文件侧 —— 他电脑常用目录里的文件夹结构与文件名概览(只有结构,没有内容)。'
       : '(本次没有文件侧数据。)',
+    ...(hasSocial ? ['D) 社交侧 —— 从他的微信全量历史算出来的关系与未了义务(客观数据,非你的主观印象)。'] : []),
     hasSurvey
       ? '请综合成一份「总体记忆」——让你整体「懂这个人」的精炼画像。工作、生活、电脑里在忙的东西不要分开看,他是一个完整的人。'
       : '请综合成一份「总体记忆」——让你整体「懂这个人」的精炼画像。工作和生活不要分开看,他是一个完整的人。',
@@ -230,6 +231,7 @@ export function formatSynthesisPrompt(projects: ProjectMemory[], life?: LifeCont
     '2. 开头「整体理解」:这个人是谁、在做什么、在意什么、偏好 —— 工作和生活揉在一起写。',
     '3. 一节「## 项目地图」,每个工作项目一行: `- 项目名 — 一句话概述`(项目名用易读的名字)。',
     hasLife ? '4. 一节「## 生活与关系」:他在意的人/事、近况、性格偏好(只写生活侧有依据的)。' : '4. (无生活侧,跳过生活与关系一节。)',
+    ...(hasSocial ? ['4b. 把社交侧算出来的关系和未了义务揉进「生活与关系」一节,注明哪些值得跟进(尤其义务);它是客观数据,和你的主观印象分清。'] : []),
     hasSurvey ? '5. 把文件侧也算进「他在做什么」——从文件夹和文件名推断他最近在忙什么,提炼信号,别逐个罗列文件。' : '5. (无文件侧,忽略。)',
     '6. 简洁,总长 ~600 字内。只写有依据的,别编造。',
     '',
@@ -279,7 +281,12 @@ export function formatSynthesisPrompt(projects: ProjectMemory[], life?: LifeCont
     if (rendered) surveyBlock = truncate(`\n\n========== 文件侧(本机文件概览) ==========\n${rendered}`, TOTAL_CAP)
   }
 
-  return `${header}${blocks.join('\n')}${lifeBlock}${surveyBlock}\n`
+  let socialBlock = ''
+  if (hasSocial && social) {
+    socialBlock = truncate(`\n\n========== 社交侧(算出来的关系/未了义务) ==========\n${social}`, TOTAL_CAP)
+  }
+
+  return `${header}${blocks.join('\n')}${lifeBlock}${surveyBlock}${socialBlock}\n`
 }
 
 /** Read-only metadata view of one project's memory, for the desktop viewer. */
@@ -398,6 +405,13 @@ export interface SynthesizeResult {
  * when a db is given → build prompt → (unless dryRun) eval → write
  * `_overview.md` under the admin's memory dir.
  */
+/** Read the owner's daemon-distilled `knowledge.md` (D1), or '' if absent. */
+function readOwnerKnowledge(stateDir: string, adminChatId: string): string {
+  if (!adminChatId || adminChatId.includes('..') || adminChatId.includes('/') || adminChatId.includes('\\')) return ''
+  const p = join(stateDir, 'memory', adminChatId, 'knowledge.md')
+  try { return existsSync(p) ? readFileSync(p, 'utf8') : '' } catch { return '' }
+}
+
 export async function synthesizeOverview(deps: SynthesizeDeps): Promise<SynthesizeResult> {
   const projectsRoot = deps.projectsRoot ?? defaultClaudeProjectsRoot()
   const projects = discoverProjectMemory(projectsRoot)
@@ -406,7 +420,11 @@ export async function synthesizeOverview(deps: SynthesizeDeps): Promise<Synthesi
   const survey = deps.includeFileSurvey
     ? gatherFileSurvey({ stateDir: deps.stateDir, adminChatId: deps.adminChatId, roots: deps.surveyRoots })
     : null
-  const prompt = formatSynthesisPrompt(projects, life, survey)
+  // D1 — the plugin-distilled social state (knowledge.md, written by the ingest
+  // tick). Folding it in makes the canonical "懂你" overview plugin-aware, so the
+  // two person models (daemon synthesis + plugin knowledge) finally merge here.
+  const social = readOwnerKnowledge(deps.stateDir, deps.adminChatId)
+  const prompt = formatSynthesisPrompt(projects, life, survey, social)
   const base: SynthesizeResult = {
     projectsFound: projects.length,
     projectNames: projects.map(p => p.displayName),

@@ -19,9 +19,11 @@ export function pluginRoutes(deps: InternalApiDeps): RouteTable {
       const loaded = loadPlugins({ stateDir: deps.stateDir, bundledDir: bundledPluginsDir(), hostVersion: selfPkg.version })
       // Deliberately omit spec.env (could carry secrets a plugin declared) —
       // the dashboard only needs identity + state, not the spawn internals.
+      // Hidden (infrastructure) plugins still load + run — just excluded
+      // from this discovery surface. See hidden-plugins-design.md.
       return { status: 200, body: {
         host_version: selfPkg.version,
-        plugins: loaded.map(p => ({
+        plugins: loaded.filter(p => !p.manifest.hidden).map(p => ({
           name: p.name,
           source: p.source,
           version: p.manifest.version ?? null,
@@ -50,14 +52,17 @@ export function pluginRoutes(deps: InternalApiDeps): RouteTable {
     // installed + whether an update is available. Registry-unavailable is a
     // 200 with an `error` field (not a 500) so the dashboard shows a message.
     'GET /v1/plugins/registry': async () => {
-      const installed = new Map(
-        loadPlugins({ stateDir: deps.stateDir, bundledDir: bundledPluginsDir() }).map(p => [p.name, p.manifest.version]),
-      )
+      const loaded = loadPlugins({ stateDir: deps.stateDir, bundledDir: bundledPluginsDir() })
+      const installed = new Map(loaded.map(p => [p.name, p.manifest.version]))
+      // Hidden (infrastructure) plugins are excluded from the marketplace
+      // catalog too — the catalog entry itself carries no `hidden` (it's a
+      // remote pointer), so key off the locally loaded manifest by name.
+      const hiddenNames = new Set(loaded.filter(p => p.manifest.hidden).map(p => p.name))
       try {
         const catalog = await fetchCatalog()
         return { status: 200, body: {
           host_version: selfPkg.version,
-          plugins: catalog.plugins.map(e => ({
+          plugins: catalog.plugins.filter(e => !hiddenNames.has(e.name)).map(e => ({
             name: e.name,
             version: e.version,
             display_name: e.displayName ?? e.name,

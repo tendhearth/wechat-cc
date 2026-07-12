@@ -10,12 +10,13 @@ import { dedupeAccountsByUserId } from '../lib/dedupe-accounts'
 import { loadAccess, AccessConfigCorruptError } from '../lib/access'
 import { buildBootstrap } from './bootstrap'
 import { makeMemoryFS } from './memory/fs-api'
+import { CORE_MEMORY_MAX_CHARS, KNOWLEDGE_MEMORY_MAX_CHARS } from '../core/prompt-builder'
 import { makeConversationStore } from '../core/conversation-store'
 import { makeTurnRecordStore } from '../core/turn-record-store'
 import { providerDisplayName } from './provider-display-names'
 import { loadAllAccounts, makeIlinkAdapter } from './ilink-glue'
 import { registerInternalApi } from './internal-api/lifecycle'
-import { registerCompanionPush, registerCompanionIntrospect } from './companion/lifecycle'
+import { registerCompanionPush, registerCompanionIntrospect, registerIngest } from './companion/lifecycle'
 import { registerGuard } from './guard/lifecycle'
 import { registerPolling } from './polling-lifecycle'
 import { registerSessions } from './sessions-lifecycle'
@@ -184,7 +185,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       stickers: stickerLib,
       replySinks,
       setUserName: (chatId, name) => ilink.setUserName(chatId, name),
-      voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus(), synthesizeSpeech: (t) => ilink.voice.synthesizeSpeech(t) },
+      voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus(), synthesizeSpeech: (t) => ilink.voice.synthesizeSpeech(t), transcribe: (a, m) => ilink.voice.transcribe!(a, m), saveSTTConfig: (i) => ilink.voice.saveSTTConfig!(i), sttStatus: () => ilink.voice.sttStatus!() },
       sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),
       companion: { enable: () => ilink.companion.enable(), disable: () => ilink.companion.disable(), status: () => ilink.companion.status(), snooze: (m) => ilink.companion.snooze(m), setImportLocal: (e) => ilink.companion.setImportLocal(e) },
       ilink: { sendReply: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string; error?: string }), sendFile: (c, p) => ilink.sendFile(c, p), editMessage: (c, m, t) => ilink.editMessage(c, m, t), broadcast: (t, a) => ilink.broadcast(t, a) },
@@ -255,6 +256,24 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         const fs = makeMemoryFS({ rootDir: join(stateDir, 'memory', ownerChat) })
         return { content: fs.read('persona.md') ?? undefined, cultivate: c === ownerChat }
       },
+      // core-memory-injection design §2 — THIS chat's OWN profile.md
+      // excerpt, read fresh per spawn (like personaFor above), capped to
+      // CORE_MEMORY_MAX_CHARS. Unlike personaFor (owner chat via
+      // default_chat_id), every chat reads its own memory/<chatId>/ dir —
+      // there is no owner indirection here.
+      coreMemoryFor: (c) => {
+        const fs = makeMemoryFS({ rootDir: join(stateDir, 'memory', c) })
+        const profile = fs.read('profile.md') ?? ''
+        return profile.length > CORE_MEMORY_MAX_CHARS ? profile.slice(0, CORE_MEMORY_MAX_CHARS) : profile
+      },
+      // knowledge-distillation §2 — THIS chat's daemon-distilled knowledge.md
+      // (objective plugin facts), read fresh per spawn + capped. Written by the
+      // ingest tick for the owner chat; absent for chats without it.
+      knowledgeMemoryFor: (c) => {
+        const fs = makeMemoryFS({ rootDir: join(stateDir, 'memory', c) })
+        const k = fs.read('knowledge.md') ?? ''
+        return k.length > KNOWLEDGE_MEMORY_MAX_CHARS ? k.slice(0, KNOWLEDGE_MEMORY_MAX_CHARS) : k
+      },
     })
     bootRef = boot
     internalApi.setDelegate({ dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() })
@@ -284,6 +303,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 4. register lifecycles (LIFO stop = startup order reversed)
     lc.register(registerCompanionPush(wired.companionPushDeps))
     lc.register(registerCompanionIntrospect(wired.companionIntrospectDeps))
+    const ingestLc = registerIngest(wired.companionIngestDeps)
+    lc.register(ingestLc)
+    wireRef(wired.refs.ingestNudge, ingestLc.nudge)   // inbound path nudges ingestion on fresh activity
     const guardLc = registerGuard(wired.guardDeps); wireRef(wired.refs.guard, guardLc); lc.register(guardLc)
     lc.register(registerSessions(wired.sessionsDeps))
     lc.register(registerIlink(wired.ilinkDeps))

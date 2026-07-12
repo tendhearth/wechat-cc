@@ -58,6 +58,14 @@ export interface PluginManifest {
   requires?: Record<string, string>
   /** Advertised tool names (documentation only; MCP is the source of truth). */
   tools?: string[]
+  /**
+   * Infrastructure plugin — loaded and run exactly as any other plugin (its
+   * MCP tools still work for dependents) but excluded from the two
+   * user-facing discovery routes (dashboard plugin list + marketplace
+   * registry). Default false/absent = visible. See
+   * docs/superpowers/specs/2026-07-11-hidden-plugins-design.md.
+   */
+  hidden?: boolean
 }
 
 /**
@@ -162,6 +170,7 @@ export function parseManifest(raw: unknown): ParseResult {
     ...(setupSpawn ? { setup: setupSpawn } : {}),
     ...(isStringRecord(raw.requires) ? { requires: raw.requires } : {}),
     ...(isStringArray(raw.tools) ? { tools: raw.tools } : {}),
+    ...(raw.hidden === true ? { hidden: true } : {}),
   }
   return { ok: true, manifest }
 }

@@ -29,7 +29,7 @@ describe('token-registry', () => {
     const opInfo = r.resolve('dd'.repeat(32))
     expect(opInfo?.tier).toBe('admin')
     expect(opInfo?.origin).toBe('operator')
-    expect(opInfo?.routeAllow).toEqual(new Set(['POST /v1/companion/converse', 'POST /v1/companion/speak']))
+    expect(opInfo?.routeAllow).toEqual(new Set(['POST /v1/companion/converse', 'POST /v1/companion/speak', 'POST /v1/companion/transcribe']))
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
   })
 

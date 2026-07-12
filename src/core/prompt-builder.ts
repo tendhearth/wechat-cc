@@ -29,6 +29,16 @@
  */
 import type { ProviderId } from './conversation'
 
+/**
+ * Knowledge plugins the knowledge-orchestration section knows how to explain
+ * (knowledge-orchestration design Task 1). Any plugin name NOT in this list
+ * is silently ignored by `knowledgeOrchestrationSection` — the section only
+ * ever documents sources it has hand-written copy for, so an unrelated
+ * plugin (or a future one this file hasn't been updated for yet) never
+ * triggers the section or produces a blank/garbled bullet.
+ */
+export const KNOWN_KNOWLEDGE_PLUGINS = ['wxperson', 'wxgraph', 'wxfacts', 'wxsearch', 'wxmedia'] as const
+
 export interface BuildSystemPromptArgs {
   /** Which provider this session is for. Used to compute peer + delegate tool name. */
   providerId: ProviderId
@@ -110,6 +120,22 @@ export interface BuildSystemPromptArgs {
    */
   personaEmpty?: boolean
   /**
+   * This chat's core-memory block (core-memory-injection design) — a small,
+   * always-loaded excerpt of profile.md distilled to what matters most about
+   * this person right now. Unlike the rest of memory/ (read on demand via
+   * `memory_read`), this rides on EVERY turn so the agent doesn't start cold
+   * on who it's talking to. Placed right after the persona section (identity
+   * cluster), before the tool/capability sections. The caller is expected to
+   * pass already-capped content (see the design's own cap step); this
+   * function still enforces `CORE_MEMORY_MAX_CHARS` as a belt-and-braces
+   * bound so prompt cost can't blow up if a caller forgets. Absent or
+   * whitespace-only ⇒ output is byte-identical to before this field existed
+   * (mirrors `persona`/`careEnabled`'s contract).
+   */
+  coreMemory?: string
+  /** Daemon-distilled objective plugin knowledge (knowledge.md), injected after core memory. */
+  knowledgeMemory?: string
+  /**
    * When true, adds the bubble-replies section (行为流式气泡回复 design):
    * teaches the agent to send each complete thought as its own `reply` call
    * as it forms, instead of accumulating the whole answer into one big send.
@@ -118,6 +144,19 @@ export interface BuildSystemPromptArgs {
    * to before this field existed (mirrors `careEnabled`'s contract).
    */
   bubbleReplies?: boolean
+  /**
+   * Names of knowledge-mcp plugins registered for this session (RFC
+   * knowledge-orchestration Task 1) — e.g. `wxgraph`/`wxfacts`/`wxsearch`/
+   * `wxmedia`. When at least one of these is a KNOWN_KNOWLEDGE_PLUGINS
+   * entry, adds the knowledge-orchestration section right after
+   * `memorySection()` so the agent knows memory (its own "看法") composes
+   * with these structured sources rather than substituting for them.
+   * Unknown plugin names are ignored for gating purposes (no known plugin
+   * present ⇒ section omitted). Absent, empty, or all-unknown ⇒ output is
+   * byte-identical to before this field existed (mirrors `careEnabled`'s
+   * contract).
+   */
+  knowledgePlugins?: string[]
 }
 
 /**
@@ -128,9 +167,13 @@ export interface BuildSystemPromptArgs {
 export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
   const { providerId, peerProviderId, companionEnabled, delegateAvailable } = args
 
+  const hasKnownKnowledge = (args.knowledgePlugins ?? []).some(n => (KNOWN_KNOWLEDGE_PLUGINS as readonly string[]).includes(n))
+
   const sections: string[] = [
     baseChannelSection(providerId),
     args.persona && args.persona.trim().length > 0 ? personaSection(args.persona) : '',
+    args.coreMemory && args.coreMemory.trim().length > 0 ? coreMemorySection(args.coreMemory) : '',
+    args.knowledgeMemory && args.knowledgeMemory.trim().length > 0 ? knowledgeMemorySection(args.knowledgeMemory) : '',
     toolsSection(),
     args.bubbleReplies === true ? bubbleRepliesSection() : '',
     delegateAvailable ? delegateSection(peerProviderId) : '',
@@ -142,6 +185,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     args.personaCultivate === true ? personaCultivationSection({ personaEmpty: args.personaEmpty === true }) : '',
     args.stickerTags && args.stickerTags.length > 0 ? stickerSection(args.stickerTags) : '',
     memorySection(),
+    hasKnownKnowledge ? knowledgeOrchestrationSection(args.knowledgePlugins!) : '',
     multiModeAwarenessSection(),
     companionEnabled ? companionSection() : '',
   ].filter(s => s.length > 0)
@@ -278,6 +322,60 @@ ${content.slice(0, 4000)}`
 }
 
 /**
+ * Belt-and-braces cap on core-memory content rendered into the prompt
+ * (core-memory-injection design). The caller is expected to pass
+ * already-capped content — this exists so a caller bug can't blow up
+ * per-turn prompt cost.
+ */
+export const CORE_MEMORY_MAX_CHARS = 1500
+
+/**
+ * Core-memory identity section — appears when this chat has non-blank
+ * core-memory content (core-memory-injection design). Placed right after
+ * the persona section (identity cluster), before the tool/capability
+ * sections, so the agent's understanding of WHO it's talking to loads
+ * before it reads about WHAT it can do. Unlike the rest of memory/, this is
+ * always loaded — no `memory_read` round-trip needed — because it's meant
+ * to be the few things worth knowing about this person on every single
+ * turn. Content is capped at `CORE_MEMORY_MAX_CHARS` (belt; the caller caps
+ * too) with a truncation note pointing back at `memory_read` for the full
+ * profile.
+ */
+export function coreMemorySection(content: string): string {
+  const capped = content.length > CORE_MEMORY_MAX_CHARS
+    ? `${content.slice(0, CORE_MEMORY_MAX_CHARS)}\n（核心记忆已截断;完整 profile 用 memory_read）`
+    : content
+
+  return `## 核心记忆（你眼中的 ta）
+
+这是你此刻对这个人最核心的了解(来自 profile),始终加载、不用查。更细的东西在长期记忆里,需要时用 \`memory_read\`。
+
+${capped}`
+}
+
+export const KNOWLEDGE_MEMORY_MAX_CHARS = 1500
+
+/**
+ * Distilled-knowledge section (knowledge-distillation design, D1). The COMPANION
+ * of coreMemorySection: coreMemory is the agent's own subjective take (profile.md);
+ * this is the OBJECTIVE data computed by the knowledge plugins (open obligations,
+ * key/neglected relationships), distilled by the daemon into knowledge.md and
+ * injected every turn so the two halves compose without a `person_brief` call.
+ * Placed immediately after coreMemorySection. Capped like core memory.
+ */
+export function knowledgeMemorySection(content: string): string {
+  const capped = content.length > KNOWLEDGE_MEMORY_MAX_CHARS
+    ? `${content.slice(0, KNOWLEDGE_MEMORY_MAX_CHARS)}\n（已截断;更细用 \`person_brief(名字)\` 深挖）`
+    : content
+
+  return `## 算出来的事实（客观，别和你的看法混）
+
+下面是从真实聊天数据算出来的（不是你的主观印象），始终加载。要深挖某个具体的人,用 \`person_brief(名字)\`。
+
+${capped}`
+}
+
+/**
  * Persona-cultivation capability (owner chat only) — tells the agent WHEN
  * and HOW to write persona.md: it's a "白纸养成" character sheet that forms
  * out of the owner/agent relationship over time, not a spec to fill in
@@ -399,6 +497,52 @@ companion 现在的 persona（小助手 / 陪伴）影响你**怎么读 memory +
 - 不要写"我观察到用户……"这种第三人称报告腔。第一人称："他这周在试验新流程，我感觉他比较在意 X。"
 - 不要追求完美客观——你**被允许**误读、过度解读、漏掉。下次发现错了改就行。
 - 不要在每个回复前都把整个 memory 复述给用户。用户看不见 memory 的存在。`
+}
+
+/**
+ * Knowledge-orchestration section (knowledge-orchestration design Task 1) —
+ * appears when at least one KNOWN_KNOWLEDGE_PLUGINS entry is registered for
+ * this session. Frames memory as the agent's own first-person "看法" and the
+ * knowledge-mcp plugins as structured sources computed from real data, so the
+ * agent learns to compose them (memory + relationship + facts) instead of
+ * leaning on memory alone. Placed right after memorySection() — identity/
+ * memory cluster — before mode/companion mechanics. Renders one bullet per
+ * KNOWN_KNOWLEDGE_PLUGINS entry that is actually present in `pluginNames`,
+ * in KNOWN_KNOWLEDGE_PLUGINS order, so bootstrap can pass whatever plugin set
+ * this session ended up with and only the matching copy shows up.
+ */
+export function knowledgeOrchestrationSection(pluginNames: string[]): string {
+  const present = new Set(pluginNames)
+  const bullets: string[] = []
+  if (present.has('wxgraph')) {
+    bullets.push('- **关系画像**（`contact_profile`/`top_contacts`）：你俩的量化关系——亲密度/最近联系/往来是否平衡。问"我们关系怎么样"用它。')
+  }
+  if (present.has('wxfacts')) {
+    bullets.push('- **结构化事实**（`contact_facts`/`find_facts`）：抽取出的事实、义务、关系（带出处）。问"关于 ta 的具体事实 / ta 欠我什么"用它。')
+  }
+  if (present.has('wxsearch')) {
+    bullets.push('- **消息检索**（`search`）：语义找"那次聊到 X 的消息"。回溯具体对话用它。')
+  }
+  if (present.has('wxmedia')) {
+    bullets.push('- 语音/图片转出的文字也在检索范围内。')
+  }
+
+  const parts: string[] = [
+    '你对一个人的了解由几层组成——你自己的记忆是你的"看法"（第一人称、可能有偏见）；下面这些是从真实数据算出来的源。**要真正懂一个人，把你的看法 + 关系 + 事实拼起来，别只靠一层。用人名找人（按微信联系人名解析，同名可能对不准）。**',
+  ]
+  if (present.has('wxperson')) {
+    parts.push('**一步到位**：想整体了解某人，先调 `person_brief(名字)`——一次拿全 ta 的关系画像 + 结构化事实 + 未了义务 + 近期消息（这是数据层）；再叠上你自己的看法。要单独深挖某一面，用下面的源。')
+  }
+  if (bullets.length > 0) {
+    parts.push(bullets.join('\n'))
+  }
+  if (present.has('wxfacts')) {
+    parts.push('**未了义务 → 主动**：做关怀 / 议程时，用 `find_facts(kind=obligation)` 看有没有该兑现的承诺（你欠 ta 的、ta 欠你的），值得跟进的记进 `agenda.md`（`- [ ] due:YYYY-MM-DD …`）——让结构化事实回流成主动关心。')
+  }
+
+  return `## 你怎么了解一个人（知识编排）
+
+${parts.join('\n\n')}`
 }
 
 function multiModeAwarenessSection(): string {

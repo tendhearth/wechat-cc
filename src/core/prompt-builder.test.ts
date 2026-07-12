@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSystemPrompt, bubbleRepliesSection, careSection, daemonSelfHealSection, newRelationshipSection, personaCultivationSection, personaSection, stickerSection } from './prompt-builder'
+import { buildSystemPrompt, bubbleRepliesSection, careSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, KNOWLEDGE_MEMORY_MAX_CHARS, knowledgeMemorySection, daemonSelfHealSection, knowledgeOrchestrationSection, newRelationshipSection, personaCultivationSection, personaSection, stickerSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
   function defaults() {
@@ -396,5 +396,189 @@ describe('persona prompt section', () => {
     const p = buildSystemPrompt({ ...base, personaEmpty: true })
     expect(p).not.toContain('人设养成')
     expect(p).not.toContain('现在还是空的')
+  })
+})
+
+describe('core-memory prompt section', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+
+  it('coreMemorySection() includes the 核心记忆 heading + the given content', () => {
+    const s = coreMemorySection('喜欢猫,养了一只叫豆豆的橘猫')
+    expect(s).toContain('核心记忆')
+    expect(s).toContain('喜欢猫,养了一只叫豆豆的橘猫')
+  })
+
+  it('coreMemorySection() slices content over CORE_MEMORY_MAX_CHARS and appends a truncation note', () => {
+    const long = 'x'.repeat(2000)
+    const s = coreMemorySection(long)
+    expect(s).not.toContain('x'.repeat(CORE_MEMORY_MAX_CHARS + 1))
+    expect(s).toContain('x'.repeat(CORE_MEMORY_MAX_CHARS))
+    expect(s).toContain('核心记忆已截断')
+    expect(s).toContain('memory_read')
+  })
+
+  it('coreMemorySection() does NOT truncate content under the cap', () => {
+    const content = 'y'.repeat(1400)
+    const s = coreMemorySection(content)
+    expect(s).toContain(content)
+    expect(s).not.toContain('核心记忆已截断')
+  })
+
+  it('buildSystemPrompt includes the core-memory section when coreMemory is a non-empty string', () => {
+    const p = buildSystemPrompt({ ...base, coreMemory: '这个人叫小明,喜欢徒步' })
+    expect(p).toContain('核心记忆')
+    expect(p).toContain('这个人叫小明,喜欢徒步')
+  })
+
+  it('knowledgeMemorySection() includes the 算出来的事实 heading + content, and caps at KNOWLEDGE_MEMORY_MAX_CHARS', () => {
+    const s = knowledgeMemorySection('**未了义务**\n- 帮张三改简历')
+    expect(s).toContain('算出来的事实')
+    expect(s).toContain('帮张三改简历')
+    expect(s).toContain('person_brief')
+    const capped = knowledgeMemorySection('z'.repeat(2000))
+    expect(capped).toContain('z'.repeat(KNOWLEDGE_MEMORY_MAX_CHARS))
+    expect(capped).not.toContain('z'.repeat(KNOWLEDGE_MEMORY_MAX_CHARS + 1))
+    expect(capped).toContain('已截断')
+  })
+
+  it('buildSystemPrompt is byte-identical whether knowledgeMemory is absent or whitespace, and omits the section', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withWhitespace = buildSystemPrompt({ ...base, knowledgeMemory: '   ' })
+    expect(withWhitespace).toBe(withoutKey)
+    expect(withoutKey).not.toContain('算出来的事实')
+  })
+
+  it('places the knowledge-memory section immediately after core memory, before tools', () => {
+    const p = buildSystemPrompt({ ...base, coreMemory: '喜欢猫', knowledgeMemory: '**亲近的人**\n- 张三' })
+    const coreIdx = p.indexOf('核心记忆')
+    const knowIdx = p.indexOf('算出来的事实')
+    const toolsIdx = p.indexOf('可用 wechat 工具')
+    expect(coreIdx).toBeGreaterThan(-1)
+    expect(knowIdx).toBeGreaterThan(coreIdx)
+    expect(knowIdx).toBeLessThan(toolsIdx)
+  })
+
+  it('buildSystemPrompt is byte-identical whether coreMemory is absent or whitespace-only, and omits the section', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withWhitespace = buildSystemPrompt({ ...base, coreMemory: '  ' })
+    expect(withWhitespace).toBe(withoutKey)
+    expect(withoutKey).not.toContain('核心记忆')
+  })
+
+  it('places the core-memory section immediately after the persona section, before the tools section', () => {
+    const personaOnly = buildSystemPrompt({ ...base, persona: '话风活泼' })
+    const personaPlusCore = buildSystemPrompt({ ...base, persona: '话风活泼', coreMemory: '喜欢猫' })
+
+    expect(personaOnly).not.toContain('核心记忆')
+
+    const personaIdx = personaPlusCore.indexOf('你的人设')
+    const coreIdx = personaPlusCore.indexOf('核心记忆')
+    const toolsIdx = personaPlusCore.indexOf('可用 wechat 工具')
+    expect(personaIdx).toBeGreaterThan(-1)
+    expect(coreIdx).toBeGreaterThan(personaIdx)
+    expect(coreIdx).toBeLessThan(toolsIdx)
+
+    // Nothing else shifted: personaPlusCore is personaOnly with exactly the
+    // core-memory section (+ join separator) spliced in right after persona.
+    const expected = `${personaOnly.slice(0, personaIdx + '你的人设'.length)}`
+    expect(expected).toBe(personaOnly.slice(0, personaIdx + '你的人设'.length))
+    const withoutCoreSpliced = personaPlusCore.slice(0, personaIdx) + personaPlusCore.slice(toolsIdx)
+    const toolsIdxInPersonaOnly = personaOnly.indexOf('可用 wechat 工具')
+    expect(withoutCoreSpliced).toBe(personaOnly.slice(0, personaIdx) + personaOnly.slice(toolsIdxInPersonaOnly))
+  })
+
+  it('buildSystemPrompt is byte-identical across a fuller config when coreMemory is absent vs explicitly undefined (no other section shifted)', () => {
+    const configA = { ...base, companionEnabled: true, careEnabled: true, stickerTags: ['a'], persona: '话风活泼' }
+    const withoutKey = buildSystemPrompt(configA)
+    const withUndefined = buildSystemPrompt({ ...configA, coreMemory: undefined })
+    expect(withUndefined).toBe(withoutKey)
+  })
+})
+
+describe('knowledge-orchestration prompt section', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+
+  it('knowledgeOrchestrationSection() includes the heading + compose framing + name-resolution note', () => {
+    const s = knowledgeOrchestrationSection(['wxgraph'])
+    expect(s).toContain('知识编排')
+    expect(s).toContain('把你的看法 + 关系 + 事实拼起来')
+    expect(s).toContain('用人名找人')
+    expect(s).toContain('同名可能对不准')
+  })
+
+  it('renders only bullets for known plugins that are present: wxgraph+wxsearch includes those two, not facts/media', () => {
+    const s = knowledgeOrchestrationSection(['wxgraph', 'wxsearch'])
+    expect(s).toContain('关系画像')
+    expect(s).toContain('消息检索')
+    expect(s).not.toContain('结构化事实')
+    expect(s).not.toContain('语音/图片转出的文字')
+  })
+
+  it('renders only the facts bullet when only wxfacts is present', () => {
+    const s = knowledgeOrchestrationSection(['wxfacts'])
+    expect(s).toContain('结构化事实')
+    expect(s).not.toContain('关系画像')
+    expect(s).not.toContain('消息检索')
+    expect(s).not.toContain('语音/图片转出的文字')
+  })
+
+  it('adds the person_brief "一步到位" lead only when wxperson is present', () => {
+    const withPerson = knowledgeOrchestrationSection(['wxperson', 'wxgraph'])
+    expect(withPerson).toContain('person_brief(名字)')
+    expect(withPerson).toContain('一步到位')
+    // wxperson alone still renders the section (lead, no source bullets)
+    const personOnly = knowledgeOrchestrationSection(['wxperson'])
+    expect(personOnly).toContain('person_brief(名字)')
+    expect(personOnly).not.toContain('contact_profile')   // no wxgraph source bullet
+    // no wxperson ⇒ no person_brief pointer
+    expect(knowledgeOrchestrationSection(['wxgraph'])).not.toContain('person_brief')
+  })
+
+  it('adds the obligation→agenda flow-back only when wxfacts is present', () => {
+    const withFacts = knowledgeOrchestrationSection(['wxfacts'])
+    expect(withFacts).toContain('未了义务 → 主动')
+    expect(withFacts).toContain('find_facts(kind=obligation)')
+    expect(withFacts).toContain('agenda.md')
+    // no wxfacts ⇒ no flow-back line
+    expect(knowledgeOrchestrationSection(['wxgraph'])).not.toContain('未了义务 → 主动')
+  })
+
+  it('wxperson counts as a known plugin: buildSystemPrompt renders the section for wxperson alone', () => {
+    const p = buildSystemPrompt({ ...base, knowledgePlugins: ['wxperson'] })
+    expect(p).toContain('知识编排')
+    expect(p).toContain('person_brief(名字)')
+  })
+
+  it('buildSystemPrompt includes the section when a known knowledge plugin is present', () => {
+    const p = buildSystemPrompt({ ...base, knowledgePlugins: ['wxgraph'] })
+    expect(p).toContain('知识编排')
+    expect(p).toContain('关系画像')
+  })
+
+  it('buildSystemPrompt is byte-identical whether knowledgePlugins is absent, empty, or all-unknown (section omitted)', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withEmpty = buildSystemPrompt({ ...base, knowledgePlugins: [] })
+    const withUnknown = buildSystemPrompt({ ...base, knowledgePlugins: ['some-unknown-plugin'] })
+    expect(withEmpty).toBe(withoutKey)
+    expect(withUnknown).toBe(withoutKey)
+    expect(withoutKey).not.toContain('知识编排')
+  })
+
+  it('places the knowledge section immediately after the memory section, no other section shifted', () => {
+    const withoutKnowledge = buildSystemPrompt({ ...base })
+    const withKnowledge = buildSystemPrompt({ ...base, knowledgePlugins: ['wxgraph'] })
+
+    const memoryIdx = withKnowledge.indexOf('长期记忆')
+    const knowledgeIdx = withKnowledge.indexOf('知识编排')
+    const multiModeIdx = withKnowledge.indexOf('模式感知')
+    expect(memoryIdx).toBeGreaterThan(-1)
+    expect(knowledgeIdx).toBeGreaterThan(memoryIdx)
+    expect(knowledgeIdx).toBeLessThan(multiModeIdx)
+
+    // Nothing else shifted: withKnowledge is withoutKnowledge with exactly the
+    // knowledge section (+ join separator) spliced in right after memory.
+    const multiModeIdxWithout = withoutKnowledge.indexOf('模式感知')
+    const withoutKnowledgeSpliced = withKnowledge.slice(0, memoryIdx) + withKnowledge.slice(multiModeIdx)
+    expect(withoutKnowledgeSpliced).toBe(withoutKnowledge.slice(0, memoryIdx) + withoutKnowledge.slice(multiModeIdxWithout))
   })
 })

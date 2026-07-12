@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest'
-import { registerCompanionPush, registerCompanionIntrospect } from './lifecycle'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { registerCompanionPush, registerCompanionIntrospect, registerIngest } from './lifecycle'
 
 describe('registerCompanionPush', () => {
   it('returns a Lifecycle with name=companion-push', () => {
@@ -66,5 +66,62 @@ describe('intervalMs override', () => {
     })
     expect(lc.name).toBe('companion-introspect')
     return lc.stop()
+  })
+})
+
+describe('registerIngest — new-message nudge (debounced)', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  // A huge base interval keeps the 25-min cadence from firing during the test;
+  // we only exercise the nudge path.
+  function make(over: { shouldRun?: () => boolean } = {}) {
+    const onTick = vi.fn(async () => {})
+    const lc = registerIngest({
+      shouldRun: over.shouldRun ?? (() => true),
+      log: () => {},
+      onTick,
+      intervalMs: 1e9,
+      nudgeDelayMs: 1000,
+    })
+    return { lc, onTick }
+  }
+
+  it('collapses rapid nudges to a single fire after the debounce settles', async () => {
+    const { lc, onTick } = make()
+    lc.nudge(); lc.nudge(); lc.nudge()          // burst
+    await vi.advanceTimersByTimeAsync(999)
+    expect(onTick).not.toHaveBeenCalled()        // still within debounce
+    await vi.advanceTimersByTimeAsync(1)
+    expect(onTick).toHaveBeenCalledTimes(1)      // exactly one fire
+    await lc.stop()
+  })
+
+  it('trailing: a later nudge resets the timer (fires once, after the LAST nudge)', async () => {
+    const { lc, onTick } = make()
+    lc.nudge()
+    await vi.advanceTimersByTimeAsync(800)
+    lc.nudge()                                   // resets the 1000ms window
+    await vi.advanceTimersByTimeAsync(800)
+    expect(onTick).not.toHaveBeenCalled()        // 800ms since last nudge < 1000
+    await vi.advanceTimersByTimeAsync(200)
+    expect(onTick).toHaveBeenCalledTimes(1)
+    await lc.stop()
+  })
+
+  it('does not fire when shouldRun is false at fire time', async () => {
+    const { lc, onTick } = make({ shouldRun: () => false })
+    lc.nudge()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(onTick).not.toHaveBeenCalled()
+    await lc.stop()
+  })
+
+  it('a nudge after stop() never fires', async () => {
+    const { lc, onTick } = make()
+    await lc.stop()
+    lc.nudge()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(onTick).not.toHaveBeenCalled()
   })
 })
