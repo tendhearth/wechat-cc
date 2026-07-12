@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - **Invariant 1 — exchange intent, not raw data.** Intent Cards and Match Receipts carry short, policy-filtered natural language only. Never a chat excerpt or a fact-store dump.
-- **Invariant 2 — third-party hard rule.** No information about any contact other than the two peers may leave. Enforced in **code**, not just policy text or LLM adherence.
+- **Invariant 2 — third-party rule.** No information about any contact other than the two peers may leave. In M1 this is enforced by the disclosure **checker's prompt** (not policy text alone, and not — yet — a code-level backstop) as part of the fail-closed `gateOutbound` pass; a genuine code-level name strip (matching outbound text against the owner's contact list) is deferred to v1+ / the T7b judge, which has plugin access to that list.
 - **Invariant 3 — low interruption.** A non-match is a silent no-op; humans are interrupted only for a confirmable match.
 - **Invariant 4 — consent = (b).** Compose/judge (steps ③④) are autonomous *within policy*; the commit (step ⑤ reveal) requires **both** humans' explicit confirmation via the `confirmWithOwner` seam.
 - **Disclosure is defence-in-depth:** LLM self-adherence to the policy PLUS a mandatory `gateOutbound` cheap-model checker pass on every outbound payload. A leak is catastrophic — the second pass is not optional.
@@ -131,7 +131,7 @@ git commit -m "feat(social): Intent Card + Match Receipt schemas (M1 T1)"
 - Consumes: `CheapEval = (prompt: string) => Promise<string>` from `./agent-provider`.
 - Produces: `gateOutbound(text: string, opts: { policy: string; peerNames: string[]; cheapEval: CheapEval }): Promise<{ ok: boolean; redacted: string; violations: string[] }>`.
 
-**Design:** two layers. (1) A code-level third-party strip: if `text` contains the name of any known contact NOT in `peerNames`, it is a violation — but M1 cannot enumerate all contacts cheaply, so the code rule is: the checker prompt is instructed that mentioning ANY person other than the sender's own owner and the recipient is forbidden, and any receipt naming a third party is blocked. (2) A cheap-model checker that returns a strict JSON verdict; parse defensively — **on any parse failure or checker error, fail CLOSED** (block).
+**Design:** a single enforcement layer for third parties — the checker prompt itself. There is no code-level name strip: M1 cannot cheaply enumerate the owner's full contact list, so the `CHECKER_PROMPT` instructs the checker LLM that mentioning ANY person other than the sender's own owner and the recipient is forbidden, and any text naming a third party is blocked on the checker's verdict. A genuine code-level strip (matching outbound text against the owner's contact list) is deferred to v1+ / the T7b judge, which has plugin access to that list. The checker returns a strict JSON verdict; parse defensively — **on any parse failure or checker error, fail CLOSED** (block).
 
 - [ ] **Step 1: Write the failing test**
 

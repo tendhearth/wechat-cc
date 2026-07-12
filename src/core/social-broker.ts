@@ -19,13 +19,13 @@ export function makeBroker(deps: BrokerDeps) {
     async seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> {
       const intent_id = newIntentId()
       // Gate the OUTBOUND intent topic before it ever leaves.
-      const gated = await gateOutbound(topic, { policy: deps.policy, peerNames: [], cheapEval: deps.cheapEval })
+      const gated = await gateOutbound(topic, { policy: deps.policy, cheapEval: deps.cheapEval })
       if (!gated.ok) return { intent_id, matched: [], lit: [] }
       const ttl = deps.ttlMs ?? 10 * 60_000
       // Gate the city field if present; omit from card if blocked (safe degradation).
       let cardCity: string | undefined
       if (opts?.city) {
-        const gatedCity = await gateOutbound(opts.city, { policy: deps.policy, peerNames: [], cheapEval: deps.cheapEval })
+        const gatedCity = await gateOutbound(opts.city, { policy: deps.policy, cheapEval: deps.cheapEval })
         if (gatedCity.ok) {
           cardCity = gatedCity.redacted
         }

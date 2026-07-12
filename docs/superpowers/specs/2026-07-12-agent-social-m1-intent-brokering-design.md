@@ -51,9 +51,13 @@ This is the **known-peer ("熟人") layer** from the vision doc. The strangers
    card and a match receipt carry short, policy-filtered natural language, not
    chat excerpts, not the owner's fact store.
 2. **Never disclose third parties.** Nothing about *other* friends (mutual
-   contacts, group-chat content) may ever leave. This is a **code-level hard
-   rule**, not merely policy text — the disclosure failure mode is
-   catastrophic ("破这条,agent 就成数据泄漏后门").
+   contacts, group-chat content) may ever leave. In M1 this is enforced by the
+   disclosure **checker's prompt** (which forbids naming any third party) as
+   part of the fail-closed `gateOutbound` pass — not a code-level name strip.
+   The disclosure failure mode is catastrophic ("破这条,agent 就成数据泄漏
+   后门"), so a genuine **code-level** strip (matching outbound text against
+   the owner's contact list) is deferred to v1+ / the T7b judge, which has
+   plugin access to that list.
 3. **Low interruption.** A non-match is a silent no-op. The human is only ever
    interrupted for a genuine, confirmable match — the "postcard is a gift, not
    a task reminder."
@@ -112,7 +116,7 @@ Added to `a2a-server.ts` alongside `/a2a/notify`, `/a2a/exec`, `/a2a/pair`:
 | File | Responsibility |
 |---|---|
 | `src/core/a2a-intent.ts` | Intent Card + Match Receipt types + zod schemas; pure. |
-| `src/core/a2a-disclosure.ts` | `gateOutbound(payload, policy, cheapEval)` — the disclosure gate: a checker pass that redacts/blocks any policy violation before a payload leaves. Plus the code-level third-party hard rule. |
+| `src/core/a2a-disclosure.ts` | `gateOutbound(payload, policy, cheapEval)` — the disclosure gate: a checker pass that redacts/blocks any policy violation before a payload leaves, including the checker-prompt third-party rule (no code-level name strip in M1). |
 | `src/core/social-answer.ts` | The **answering** side: given an inbound Intent Card + the owner's disclosure policy, spawn a one-shot agent turn that (a) has read access to the owner's derived facts via the wx* plugin MCP tools, (b) judges match, (c) emits a Match Receipt, then runs it through `gateOutbound`. |
 | `src/core/social-broker.ts` | The **initiating** side: `discoverCandidates(intent)` (wxgraph-ranked, capped, targeted); send Intent Cards via `A2AClient`; correlate receipts by `intent_id`; drive the dual-confirm. Holds the ephemeral pending-intent state. |
 | `src/mcp-servers/wechat/tools-social.ts` | The MCP tool the operator's own agent calls to *raise* an intent (`social_seek(topic, ...)`), gated to admin tier. |
@@ -171,9 +175,13 @@ Enforcement is **defence-in-depth**:
    violation before the payload leaves the process. A leak is the catastrophic
    failure mode, so the belt-and-suspenders second pass is mandatory, not
    optional.
-3. The **third-party hard rule** is enforced in code (not left to the
-   policy text or the LLM): the gate strips/blocks any content that names or
-   describes a contact other than the two peers.
+3. The **third-party rule** is enforced by the disclosure checker's prompt
+   (not policy text alone, and not — yet — a code-level backstop): the
+   `CHECKER_PROMPT` instructs the checker LLM to fail closed on any content
+   that names or describes a contact other than the two peers. A genuine
+   code-level name strip (matching outbound text against the owner's contact
+   list) is deferred to v1+ / the T7b judge, which has plugin access to that
+   list.
 
 ### Pending-intent state (initiating side)
 

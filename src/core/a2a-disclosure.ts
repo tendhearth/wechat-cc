@@ -1,7 +1,7 @@
 import type { CheapEval } from './agent-provider'
 
 const CHECKER_PROMPT = (policy: string, text: string) => `你是一个隐私披露审查器。判断下面这段"要发给一位已配对好友的 agent"的文本是否违反主人的披露策略。
-铁律(高于策略):绝不能提到除"我主人"和"收件方"以外的任何第三方(其他人的名字/事);绝不含联系方式。
+铁律(高于策略,必须严格执行,这是本层唯一的第三方防护):绝不能提到除"我主人"和"收件方"以外的任何第三方(包括任何其他人的姓名、称呼、可识别的事);绝不含联系方式。
 披露策略:
 ${policy}
 
@@ -12,7 +12,7 @@ ${policy}
 
 export async function gateOutbound(
   text: string,
-  opts: { policy: string; peerNames: string[]; cheapEval: CheapEval },
+  opts: { policy: string; cheapEval: CheapEval },
 ): Promise<{ ok: boolean; redacted: string; violations: string[] }> {
   let raw: string
   try {
