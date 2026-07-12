@@ -562,6 +562,95 @@ async fn agent_speak(text: String) -> Result<SpeakOut, String> {
     }
 }
 
+// agent_transcribe — voice arc Stage 2 (voice-in). POSTs an inbound audio clip
+// (base64) to the daemon's POST /v1/companion/transcribe endpoint, which sends
+// it to the gateway STT and returns the recognized text. Mirrors agent_speak
+// precisely (same operator-token discovery + route-scoped credential); only the
+// route, request body ({audio_b64, mime}) and response ({ok, text}) differ.
+#[tauri::command]
+async fn agent_transcribe(audio_b64: String, mime: String) -> Result<String, String> {
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|e| format!("cannot resolve home dir: {e}"))?;
+    let state_dir = std::env::var("WECHAT_STATE_DIR").unwrap_or_else(|_| {
+        PathBuf::from(home)
+            .join(".claude")
+            .join("channels")
+            .join("wechat")
+            .to_string_lossy()
+            .to_string()
+    });
+    let info_path = PathBuf::from(&state_dir).join("internal-api-info.json");
+
+    let info_raw = std::fs::read_to_string(&info_path)
+        .map_err(|e| format!("read {}: {e}", info_path.display()))?;
+    let info: Value = serde_json::from_str(&info_raw)
+        .map_err(|e| format!("invalid JSON in {}: {e}", info_path.display()))?;
+
+    let base_url = info
+        .get("baseUrl")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("missing baseUrl in {}", info_path.display()))?;
+    let operator_token_file_path = info
+        .get("operatorTokenFilePath")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "operator token unavailable — daemon too old".to_string())?;
+
+    let token = std::fs::read_to_string(operator_token_file_path)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| format!("token read error: {e}"))?;
+
+    let url = format!("{base_url}/v1/companion/transcribe");
+    // Transcription can be slower than TTS on a cold whisper model — allow 120s.
+    let duration = Duration::from_secs(120);
+    let payload = serde_json::to_string(&serde_json::json!({ "audio_b64": audio_b64, "mime": mime }))
+        .map_err(|e| format!("failed to serialize request body: {e}"))?;
+
+    let result = timeout(duration, async {
+        reqwest::Client::new()
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(payload)
+            .send()
+            .await
+    })
+    .await;
+
+    let resp = match result {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => return Err(format!("request error: {e}")),
+        Err(_) => return Err("request timed out".to_string()),
+    };
+
+    let status = resp.status();
+    let body_text = resp
+        .text()
+        .await
+        .map_err(|e| format!("failed to read response body ({status}): {e}"))?;
+    let body: Value = serde_json::from_str(&body_text)
+        .map_err(|e| format!("invalid JSON response ({status}): {e}\n{body_text}"))?;
+
+    let ok = body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    if ok {
+        Ok(body
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string())
+    } else {
+        let err_msg = body
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("request failed: {status}"));
+        Err(err_msg)
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -577,7 +666,8 @@ pub fn run() {
             notify_user,
             wechat_health_ping,
             agent_converse,
-            agent_speak
+            agent_speak,
+            agent_transcribe
         ])
         .run(tauri::generate_context!())
         .expect("error while running wechat-cc desktop");
