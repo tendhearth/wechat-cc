@@ -107,6 +107,18 @@ describe('formatSynthesisPrompt', () => {
     expect(prompt).toContain('detail-a')
     expect(prompt).toContain('项目地图')
   })
+
+  it('folds in the social side (D) when given plugin knowledge (D1)', () => {
+    const proj = [{ encodedDir: '-p', displayName: 'p', index: null, files: [], totalBytes: 0 }]
+    const withSocial = formatSynthesisPrompt(proj, null, null, '**未了义务**\n- 帮张三改简历')
+    expect(withSocial).toContain('社交侧')
+    expect(withSocial).toContain('帮张三改简历')
+    expect(withSocial).toContain('分3类')          // A work + B life + D social
+    // byte-identical when social absent OR whitespace (no spurious lines)
+    const withoutSocial = formatSynthesisPrompt(proj, null, null)
+    expect(formatSynthesisPrompt(proj, null, null, '   ')).toBe(withoutSocial)
+    expect(withoutSocial).not.toContain('社交侧')
+  })
 })
 
 describe('synthesizeOverview', () => {
