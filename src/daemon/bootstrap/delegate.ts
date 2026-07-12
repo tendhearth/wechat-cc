@@ -12,7 +12,10 @@
  */
 import { createClaudeAgentProvider } from '../../core/claude-agent-provider'
 import { createCodexAgentProvider } from '../../core/codex-agent-provider'
-import { collectTurn } from '../../core/agent-provider'
+import { createOpenAiAgentProvider } from '../../core/openai-agent-provider'
+import { createAiSdkChatModel } from '../../core/openai-chat-model'
+import { createMcpToolBridge } from '../../core/openai-mcp-bridge'
+import { collectTurn, type AgentProvider } from '../../core/agent-provider'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { ProviderId } from '../../core/conversation'
 import { loadAgentConfig } from '../../lib/agent-config'
@@ -23,6 +26,13 @@ export interface DelegateBuildDeps {
   stateDir: string
   /** Optional override path for the claude-code binary. */
   claudeBin?: string
+  /**
+   * Test-only: pre-built delegate providers keyed by peer id, merged OVER the
+   * built-in claude/codex/openai delegates. Lets a test route a peer to a fake
+   * provider instead of spawning a subprocess / hitting the network. Production
+   * callers never pass this.
+   */
+  delegateProviders?: Partial<Record<ProviderId, AgentProvider>>
 }
 
 export type DelegateDispatch = (
@@ -80,6 +90,37 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
     // recursion-prevention guarantee.
   })
 
+  // openai-compatible backends (DeepSeek / Kimi / Qwen / GLM / Ollama / …) as a
+  // bare delegate peer. Same clean-slate contract as claude/codex: an EMPTY MCP
+  // bridge (no wechat tools → can't reply as the user; no delegate-mcp → can't
+  // recurse); only the tier-gated fs/shell builtins remain. Built only when the
+  // openai backend is fully configured (env key + base_url + model); otherwise
+  // null, so `peer === 'openai'` reports unknown_peer like any unconfigured
+  // provider. API key is env-only (WECHAT_OPENAI_API_KEY), mirroring
+  // bootstrap/index.ts's main-provider registration.
+  const openaiKey = process.env.WECHAT_OPENAI_API_KEY
+  const delegateOpenai: AgentProvider | null =
+    openaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel
+      ? (() => {
+          const baseURL = configuredAgent.openaiBaseUrl
+          const defaultModel = configuredAgent.openaiModel
+          return createOpenAiAgentProvider({
+            makeChatModel: (model) =>
+              createAiSdkChatModel({ baseURL, apiKey: openaiKey, model: model ?? defaultModel }),
+            // Empty spec set → bridge with zero MCP tools (bare-bones).
+            makeMcpBridge: async () => createMcpToolBridge({}),
+          })
+        })()
+      : null
+
+  // Built-in delegates by peer id; test overrides win (see DelegateBuildDeps).
+  const providers: Partial<Record<ProviderId, AgentProvider>> = {
+    claude: delegateClaude,
+    codex: delegateCodex,
+    ...(delegateOpenai ? { openai: delegateOpenai } : {}),
+    ...(deps.delegateProviders ?? {}),
+  }
+
   /**
    * Run a one-shot prompt against the bare delegate provider for `peer`.
    * Used by internal-api's /v1/delegate route. Spawns a fresh thread,
@@ -92,9 +133,7 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
    * files), preserving the "ask, don't do" framing.
    */
   return async function dispatchDelegate(peer, prompt, cwd) {
-    const provider = peer === 'claude' ? delegateClaude
-                   : peer === 'codex' ? delegateCodex
-                   : null
+    const provider = providers[peer] ?? null
     if (!provider) return { ok: false, reason: `unknown_peer: ${peer}` }
     const started = Date.now()
     let session: Awaited<ReturnType<typeof provider.spawn>> | null = null
@@ -118,7 +157,10 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
       session = await provider.spawn(
         { alias: '_delegate', path: cwd ?? deps.stateDir },
         {
-          tierProfile: peer === 'codex' ? TIER_PROFILES.guest : TIER_PROFILES.trusted,
+          // claude keeps its auto-allow (trusted) posture; every other bare
+          // delegate (codex, openai/Kimi/…) is read-mostly "consult, don't
+          // act" → guest (read-only fs, writes/shell denied by the gate).
+          tierProfile: peer === 'claude' ? TIER_PROFILES.trusted : TIER_PROFILES.guest,
           // Delegate is always strict — there's no daemon-wide --dangerously
           // override path that reaches here (delegate is invoked headless
           // for one-shot consultations, not user-initiated dispatch).
