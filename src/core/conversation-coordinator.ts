@@ -173,9 +173,22 @@ export type TurnPolicy = 'queue' | 'preempt'
 
 /**
  * The per-chat serialization strategy for a mode, made EXPLICIT (D3):
+ *  - `queue`: turns serialize on the per-chat mutex (solo/parallel/primary_tool)
+ *    — single-turn dispatches with no self-preemption, so wrapping them in the
+ *    mutex is a pure win: two rapid inbound messages for one chat run their
+ *    turns one at a time instead of racing on session/history state.
  *  - `preempt`: a new turn aborts the in-flight one (chatroom's latest-wins;
- *    the shape a future voice channel needs for barge-in).
- *  - `queue`: turns serialize on the per-chat mutex (solo/parallel/primary_tool).
+ *    the shape a future voice channel needs for barge-in). Chatroom is EXEMPT
+ *    from the mutex because `dispatchChatroom` implements its OWN
+ *    preempt-on-arrival protocol (inFlightAborters / inFlightDispatchPromises):
+ *    a new message aborts the prior in-flight loop and awaits its cleanup rather
+ *    than running it to completion. Routing it through the mutex would make a
+ *    new message wait for the lock — handed over only after the PRIOR dispatch
+ *    fully settles — before it could even reach the preempt-abort check, turning
+ *    "abort the stale loop and start now" into "wait for the stale loop to
+ *    drain, THEN start" and defeating latest-wins. (Verified pre-D3 by
+ *    temporarily routing chatroom through the mutex: no deadlock, but the abort
+ *    never fired early — B just waited behind A's held lock.)
  * Adding a preempt mode is a one-line entry here, not a re-derivation across callers.
  */
 export function turnPolicy(mode: Mode): TurnPolicy {
@@ -876,35 +889,8 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     }
 
   /**
-   * Task 1 (session-serialization) — the public dispatch entry point.
-   * Mode is resolved BEFORE locking (cheap store read) so we can route:
-   *
-   *   - solo / parallel / primary_tool: single-turn dispatches with no
-   *     self-preemption, so wrapping them in the per-chat mutex is a pure
-   *     win — two rapid inbound messages for the same chat now run their
-   *     turns one at a time instead of racing on session/history state.
-   *   - chatroom: EXEMPT from the mutex. dispatchChatroom already
-   *     implements its own preempt-on-arrival protocol (inFlightAborters /
-   *     inFlightDispatchPromises above): a new message aborts the prior
-   *     in-flight loop and then awaits its cleanup, rather than waiting
-   *     for it to run to completion. If chatroom were also routed through
-   *     runExclusive, a new message would have to wait for the mutex to
-   *     hand it the lock — which only happens after the PRIOR
-   *     dispatchInner call fully settles — before it could even reach the
-   *     preempt-abort check at the top of dispatchChatroom. That would
-   *     turn "abort the stale loop and start immediately" into "wait for
-   *     the stale loop to drain, THEN start", defeating the "latest user
-   *     message wins" semantics the preempt logic exists for. Verified by
-   *     temporarily routing chatroom through the mutex too and re-running
-   *     the existing preemption tests (`cancel(chatId) returns true while
-   *     in-flight...`, `rapid follow-up message preempts...`,
-   *     `three-or-more rapid dispatches...`): no deadlock, but the abort
-   *     never fires early — B's dispatch just waits behind A's held lock,
-   *     so "preempting prior in-flight dispatch" is logged 0 times instead
-   *     of the expected ≥1/≥2, confirming the exemption is required.
-   */
-  /**
-   * D3 — the single turn entrypoint. Resolves the mode's turn policy, then runs
+   * D3 — the single turn entrypoint. Resolves the mode's turn policy (see
+   * {@link turnPolicy} for the queue-vs-preempt rationale), then runs
    * the turn under it: `preempt` (chatroom) bypasses the mutex (its own
    * abort-on-arrival protocol IS the preemption); `queue` serializes on the
    * per-chat mutex. `opts.within`, when given, runs INSIDE that locked/preempt

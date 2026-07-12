@@ -388,6 +388,15 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const companionConverse = async (text: string): Promise<{ reply: string }> => {
     const ownerChatId = loadCompanionConfig(stateDir).default_chat_id
     if (!ownerChatId) throw new Error('companion_owner_chat_not_configured')
+    // D3 review follow-up: app-converse captures the reply through a sink, but a
+    // chatroom-mode chat is preempt-policy (submitTurn runs the turn BARE, no
+    // per-chat lock) AND chatroom forbids the `reply` tool — so an app turn on a
+    // chatroom-mode owner chat would run unserialized and capture nothing.
+    // Reject clearly instead of hanging / returning an empty reply. (Pre-D3 this
+    // was a silent no-op; D3 makes the policy explicit, so we guard it explicitly.)
+    if (boot.coordinator.getMode(ownerChatId).kind === 'chatroom') {
+      throw new Error('owner_chat_in_chatroom_mode')
+    }
     // PRIMARY guard (spec §3, HIGH finding fix): refuse to start an app turn
     // while a WeChat turn is already dispatching on the owner's session.
     // replySinks.open() below only catches app-vs-app races (both go through

@@ -71,7 +71,7 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  function setup(opts: { inFlight: boolean }) {
+  function setup(opts: { inFlight: boolean; mode?: Mode }) {
     // `dispatch` (the LOCKING entry point) must never be called by
     // companionConverse — calling it from inside runExclusive would
     // self-deadlock (see pipeline-deps.ts). Failing loudly here catches a
@@ -127,7 +127,7 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
         dispatchInner,
         runExclusive,
         submitTurn,
-        getMode: vi.fn((): Mode => ({ kind: 'solo', provider: 'claude' })),
+        getMode: vi.fn((): Mode => opts.mode ?? { kind: 'solo', provider: 'claude' }),
         cancel: vi.fn(() => false),
       } as unknown as Bootstrap['coordinator'],
       resolve: vi.fn((chatId: string) => (chatId === 'owner_chat' ? { alias: 'proj1', path: '/tmp/proj1' } : null)),
@@ -192,6 +192,15 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     // The locking `dispatch` is never used by companionConverse — only
     // runExclusive + dispatchInner (self-deadlock avoidance).
     expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it('rejects the app turn when the owner chat is in chatroom mode (D3 review follow-up) — no dispatch, no sink', async () => {
+    const { companionConverse, dispatchInner, runExclusive, replySinksOpen } =
+      setup({ inFlight: false, mode: { kind: 'chatroom', participants: ['claude', 'codex'] } })
+    await expect(companionConverse('hi')).rejects.toThrow('owner_chat_in_chatroom_mode')
+    expect(dispatchInner).not.toHaveBeenCalled()
+    expect(runExclusive).not.toHaveBeenCalled()
+    expect(replySinksOpen).not.toHaveBeenCalled()
   })
 })
 
