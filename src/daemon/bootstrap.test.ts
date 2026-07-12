@@ -713,6 +713,29 @@ describe('bootstrap', () => {
     expect(prompt).toContain('核心记忆')
   })
 
+  it('buildInstructions includes the knowledge-memory section when knowledgeMemoryFor returns content (knowledge-distillation design D1)', async () => {
+    const b = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      knowledgeMemoryFor: () => '## 你的社交状态（算出来的，非主观）\n\n**未了义务**\n- 帮张三改简历',
+    })
+    const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(prompt).toContain('算出来的事实')
+    expect(prompt).toContain('帮张三改简历')
+    // absent thunk ⇒ section omitted
+    const b2 = await buildBootstrap({
+      db: openTestDb(), stateDir: '/tmp/state', ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }), lastActiveChatId: () => null,
+      log: () => {}, internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+    })
+    expect(b2.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')).not.toContain('算出来的事实')
+  })
+
   it('buildInstructions is byte-identical whether or not other bootstraps wire coreMemoryFor, when this bootstrap omits it (core-memory-injection design inert default)', async () => {
     const withoutCoreMemoryDep = await buildBootstrap({
       db: openTestDb(),

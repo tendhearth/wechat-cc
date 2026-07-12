@@ -10,7 +10,7 @@ import { dedupeAccountsByUserId } from '../lib/dedupe-accounts'
 import { loadAccess, AccessConfigCorruptError } from '../lib/access'
 import { buildBootstrap } from './bootstrap'
 import { makeMemoryFS } from './memory/fs-api'
-import { CORE_MEMORY_MAX_CHARS } from '../core/prompt-builder'
+import { CORE_MEMORY_MAX_CHARS, KNOWLEDGE_MEMORY_MAX_CHARS } from '../core/prompt-builder'
 import { makeConversationStore } from '../core/conversation-store'
 import { makeTurnRecordStore } from '../core/turn-record-store'
 import { providerDisplayName } from './provider-display-names'
@@ -265,6 +265,14 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         const fs = makeMemoryFS({ rootDir: join(stateDir, 'memory', c) })
         const profile = fs.read('profile.md') ?? ''
         return profile.length > CORE_MEMORY_MAX_CHARS ? profile.slice(0, CORE_MEMORY_MAX_CHARS) : profile
+      },
+      // knowledge-distillation §2 — THIS chat's daemon-distilled knowledge.md
+      // (objective plugin facts), read fresh per spawn + capped. Written by the
+      // ingest tick for the owner chat; absent for chats without it.
+      knowledgeMemoryFor: (c) => {
+        const fs = makeMemoryFS({ rootDir: join(stateDir, 'memory', c) })
+        const k = fs.read('knowledge.md') ?? ''
+        return k.length > KNOWLEDGE_MEMORY_MAX_CHARS ? k.slice(0, KNOWLEDGE_MEMORY_MAX_CHARS) : k
       },
     })
     bootRef = boot

@@ -263,6 +263,12 @@ export interface BootstrapDeps {
    */
   coreMemoryFor?: (chatId: string) => string
   /**
+   * Daemon-distilled objective plugin knowledge for this chat (knowledge.md),
+   * read fresh per spawn + capped. Injected right after core memory. Absent
+   * thunk / empty ⇒ section omitted (knowledge-distillation design, D1).
+   */
+  knowledgeMemoryFor?: (chatId: string) => string
+  /**
    * Resolve whether a chat is still in the "刚认识" (just-met) phase
    * (onboarding-curiosity design §2). Read per-spawn (like `careLevelFor`'s
    * siblings) so the section drops off mid-conversation once the message
@@ -1070,6 +1076,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // excerpt (not the owner's). No tier gate: it's a read-only context
       // block, unlike personaCultivate/newRelationship which nudge writes.
       coreMemory: deps.coreMemoryFor?.(chatId),
+      knowledgeMemory: deps.knowledgeMemoryFor?.(chatId),
       // bubbleReplies mirrors `deps.bubbleRepliesFor` the same way — absent
       // thunk ⇒ section never included. Deliberately NO tier gate here
       // (unlike careEnabled/newRelationship/personaCultivate): `reply` is

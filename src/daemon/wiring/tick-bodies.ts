@@ -31,6 +31,7 @@ import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
 import { bundledPluginsDir } from '../plugins/paths'
 import { createResilientBridge } from '../companion/ingest/bridge'
 import { runIngestCycle, maxDecryptedMtime, ingestHasTool } from '../companion/ingest/cycle'
+import { distillOwnerKnowledge } from '../companion/knowledge-distill'
 import selfPkg from '../../../package.json' with { type: 'json' }
 
 /** Per-cycle wxfacts extraction batch cap (rate bound). */
@@ -224,6 +225,20 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         lastIngestSourceMtime = report.newSourceMtime
         if (report.batches || report.rebuilt || report.indexed || report.transcribed) {
           deps.log('INGEST', `cycle: decrypted=${report.decrypted} rebuilt=${report.rebuilt} indexed=${report.indexed} transcribed=${report.transcribed} batches=${report.batches} facts=${report.recorded}`)
+        }
+        // D1 — distill the owner's plugin knowledge into knowledge.md (always-on
+        // memory). Owner chat only (no chatId→name join needed); reuses the open
+        // bridge. Empty digest ⇒ remove the file so a stale one doesn't linger.
+        const ownerChat = loadCompanionConfig(deps.stateDir).default_chat_id
+        if (ownerChat && !ownerChat.includes('..') && !ownerChat.includes('/') && !ownerChat.includes('\\')) {
+          try {
+            const digest = await distillOwnerKnowledge({ call: bridge.call, hasTool: (t) => bridge.tools.some(x => x.name === t) })
+            const fs = makeMemoryFS({ rootDir: join(deps.stateDir, 'memory', ownerChat) })
+            if (digest) { fs.write('knowledge.md', digest); deps.log('INGEST', `distilled knowledge.md for ${ownerChat} (${digest.length} chars)`) }
+            else if (fs.read('knowledge.md')) fs.delete('knowledge.md')
+          } catch (err) {
+            deps.log('INGEST', `knowledge distill failed: ${errMsg(err)}`)
+          }
         }
       } catch (err) {
         deps.log('INGEST', `cycle failed: ${errMsg(err)}`)
