@@ -16,8 +16,8 @@ import { loadGuardConfig } from '../guard/store'
 import { parseUpdates } from '../poll-loop'
 import { writeHeartbeat, HEARTBEAT_FILE } from '../single-instance'
 import { join } from 'node:path'
-import { makeHeartbeatStore } from '../connection-heartbeat'
-import { makeSessionStateStore } from '../session-state'
+import { makeHeartbeatStore } from '../../core/connection-heartbeat'
+import { makeSessionStateStore } from '../../core/session-state'
 import type { TickBodies } from './tick-bodies'
 
 export interface LifecycleDepsOpts {

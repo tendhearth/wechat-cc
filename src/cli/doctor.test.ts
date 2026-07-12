@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { analyzeDoctor, setupStatus, serviceStatus, readDaemon, readAccess, readExpiredBots } from './doctor'
 import { openWechatDb } from '../lib/db'
-import { makeSessionStateStore } from '../daemon/session-state'
+import { makeSessionStateStore } from '../core/session-state'
 
 const installedSystemd = () => ({ installed: true, kind: 'systemd-user' as const })
 const missingSystemd = () => ({ installed: false, kind: 'systemd-user' as const })

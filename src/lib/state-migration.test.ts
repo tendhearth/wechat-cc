@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from './db'
-import { makeSessionStateStore } from '../daemon/session-state'
+import { makeSessionStateStore } from '../core/session-state'
 import { makeSessionStore } from '../core/session-store'
 import { makeConversationStore } from '../core/conversation-store'
 import { makeActivityStore } from '../daemon/activity/store'

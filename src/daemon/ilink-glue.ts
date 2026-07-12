@@ -14,7 +14,7 @@ import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from './we
 import { parsePermissionReply } from './pending-permissions'
 import { buildMediaItemFromFile, assertSendable } from './media'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
-import type { SessionStateStore } from './session-state'
+import type { SessionStateStore } from '../core/session-state'
 import { sendReplyOnce, chunk } from '../lib/send-reply'
 import { MAX_TEXT_CHUNK } from '../lib/config'
 import { log } from '../lib/log'
