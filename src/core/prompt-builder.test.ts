@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSystemPrompt, bubbleRepliesSection, careSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, daemonSelfHealSection, knowledgeOrchestrationSection, newRelationshipSection, personaCultivationSection, personaSection, stickerSection } from './prompt-builder'
+import { buildSystemPrompt, bubbleRepliesSection, careSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, KNOWLEDGE_MEMORY_MAX_CHARS, knowledgeMemorySection, daemonSelfHealSection, knowledgeOrchestrationSection, newRelationshipSection, personaCultivationSection, personaSection, stickerSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
   function defaults() {
@@ -428,6 +428,34 @@ describe('core-memory prompt section', () => {
     const p = buildSystemPrompt({ ...base, coreMemory: '这个人叫小明,喜欢徒步' })
     expect(p).toContain('核心记忆')
     expect(p).toContain('这个人叫小明,喜欢徒步')
+  })
+
+  it('knowledgeMemorySection() includes the 算出来的事实 heading + content, and caps at KNOWLEDGE_MEMORY_MAX_CHARS', () => {
+    const s = knowledgeMemorySection('**未了义务**\n- 帮张三改简历')
+    expect(s).toContain('算出来的事实')
+    expect(s).toContain('帮张三改简历')
+    expect(s).toContain('person_brief')
+    const capped = knowledgeMemorySection('z'.repeat(2000))
+    expect(capped).toContain('z'.repeat(KNOWLEDGE_MEMORY_MAX_CHARS))
+    expect(capped).not.toContain('z'.repeat(KNOWLEDGE_MEMORY_MAX_CHARS + 1))
+    expect(capped).toContain('已截断')
+  })
+
+  it('buildSystemPrompt is byte-identical whether knowledgeMemory is absent or whitespace, and omits the section', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withWhitespace = buildSystemPrompt({ ...base, knowledgeMemory: '   ' })
+    expect(withWhitespace).toBe(withoutKey)
+    expect(withoutKey).not.toContain('算出来的事实')
+  })
+
+  it('places the knowledge-memory section immediately after core memory, before tools', () => {
+    const p = buildSystemPrompt({ ...base, coreMemory: '喜欢猫', knowledgeMemory: '**亲近的人**\n- 张三' })
+    const coreIdx = p.indexOf('核心记忆')
+    const knowIdx = p.indexOf('算出来的事实')
+    const toolsIdx = p.indexOf('可用 wechat 工具')
+    expect(coreIdx).toBeGreaterThan(-1)
+    expect(knowIdx).toBeGreaterThan(coreIdx)
+    expect(knowIdx).toBeLessThan(toolsIdx)
   })
 
   it('buildSystemPrompt is byte-identical whether coreMemory is absent or whitespace-only, and omits the section', () => {

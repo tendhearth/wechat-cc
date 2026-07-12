@@ -133,6 +133,8 @@ export interface BuildSystemPromptArgs {
    * (mirrors `persona`/`careEnabled`'s contract).
    */
   coreMemory?: string
+  /** Daemon-distilled objective plugin knowledge (knowledge.md), injected after core memory. */
+  knowledgeMemory?: string
   /**
    * When true, adds the bubble-replies section (行为流式气泡回复 design):
    * teaches the agent to send each complete thought as its own `reply` call
@@ -171,6 +173,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     baseChannelSection(providerId),
     args.persona && args.persona.trim().length > 0 ? personaSection(args.persona) : '',
     args.coreMemory && args.coreMemory.trim().length > 0 ? coreMemorySection(args.coreMemory) : '',
+    args.knowledgeMemory && args.knowledgeMemory.trim().length > 0 ? knowledgeMemorySection(args.knowledgeMemory) : '',
     toolsSection(),
     args.bubbleReplies === true ? bubbleRepliesSection() : '',
     delegateAvailable ? delegateSection(peerProviderId) : '',
@@ -346,6 +349,28 @@ export function coreMemorySection(content: string): string {
   return `## 核心记忆（你眼中的 ta）
 
 这是你此刻对这个人最核心的了解(来自 profile),始终加载、不用查。更细的东西在长期记忆里,需要时用 \`memory_read\`。
+
+${capped}`
+}
+
+export const KNOWLEDGE_MEMORY_MAX_CHARS = 1500
+
+/**
+ * Distilled-knowledge section (knowledge-distillation design, D1). The COMPANION
+ * of coreMemorySection: coreMemory is the agent's own subjective take (profile.md);
+ * this is the OBJECTIVE data computed by the knowledge plugins (open obligations,
+ * key/neglected relationships), distilled by the daemon into knowledge.md and
+ * injected every turn so the two halves compose without a `person_brief` call.
+ * Placed immediately after coreMemorySection. Capped like core memory.
+ */
+export function knowledgeMemorySection(content: string): string {
+  const capped = content.length > KNOWLEDGE_MEMORY_MAX_CHARS
+    ? `${content.slice(0, KNOWLEDGE_MEMORY_MAX_CHARS)}\n（已截断;更细用 \`person_brief(名字)\` 深挖）`
+    : content
+
+  return `## 算出来的事实（客观，别和你的看法混）
+
+下面是从真实聊天数据算出来的（不是你的主观印象），始终加载。要深挖某个具体的人,用 \`person_brief(名字)\`。
 
 ${capped}`
 }
