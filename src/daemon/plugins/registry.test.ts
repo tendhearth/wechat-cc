@@ -60,10 +60,14 @@ describe('plugin registry', () => {
     const dir = writePlugin(join(stateDir, 'plugins'), 'wxvault', good('wxvault'))
     writeFileSync(join(stateDir, 'plugins', 'plugins.json'), JSON.stringify({ enabled: { wxvault: true } }))
     const specs = pluginMcpSpecs(loadPlugins({ stateDir, bundledDir }))
+    // ${pluginDir} is substituted literally into the template, preserving the
+    // manifest's own '/' separators (manifests are cross-platform; Windows
+    // accepts '/'). Assert with '/'-concat, NOT join() — join() emits '\' on
+    // win32 and would spuriously mismatch the literal substitution.
     expect(specs.wxvault).toEqual({
       command: READY_CMD,
-      args: [join(dir, 'main.py')],
-      env: { DATA: join(dir, 'data') },
+      args: [`${dir}/main.py`],
+      env: { DATA: `${dir}/data` },
     })
   })
 
