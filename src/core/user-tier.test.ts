@@ -105,11 +105,12 @@ describe('TIER_PROFILES', () => {
     expect(TIER_PROFILES.trusted.relay.has('memory_delete')).toBe(true)
     // trusted denies all admin-exclusive tools (was 0 before
     // self-diagnosis / remediation / plugin tools existed).
-    expect(TIER_PROFILES.trusted.deny.size).toBe(4)
+    expect(TIER_PROFILES.trusted.deny.size).toBe(5)
     expect(TIER_PROFILES.trusted.deny.has('daemon_introspect')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('daemon_remediate')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('file_locate')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('plugin_tool')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('social_seek')).toBe(true)
   })
 
   it('guest allows only reply/share_page/memory_read/observations_read', () => {
@@ -332,5 +333,22 @@ describe('file_locate tier kind', () => {
     expect(TIER_PROFILES.admin.relay.has('file_locate')).toBe(false)
     expect(TIER_PROFILES.trusted.deny.has('file_locate')).toBe(true)
     expect(TIER_PROFILES.guest.deny.has('file_locate')).toBe(true)
+  })
+})
+
+describe('social_seek tier kind (M1 T6)', () => {
+  it('classifies mcp__wechat__social_seek as ToolKind social_seek', () => {
+    expect(classifyToolUse('mcp__wechat__social_seek', { topic: 'x' })).toBe('social_seek')
+  })
+  it('admin allows social_seek; trusted and guest deny it', () => {
+    // social_seek initiates outbound social contact with external A2A agents
+    // (unlike a2a_send, which replies to an already-established peer) —
+    // admin-only, no relay path: trusted/guest are denied outright.
+    expect(TIER_PROFILES.admin.allow.has('social_seek')).toBe(true)
+    expect(TIER_PROFILES.admin.relay.has('social_seek')).toBe(false)
+    expect(TIER_PROFILES.trusted.deny.has('social_seek')).toBe(true)
+    expect(TIER_PROFILES.trusted.allow.has('social_seek')).toBe(false)
+    expect(TIER_PROFILES.guest.deny.has('social_seek')).toBe(true)
+    expect(TIER_PROFILES.guest.allow.has('social_seek')).toBe(false)
   })
 })
