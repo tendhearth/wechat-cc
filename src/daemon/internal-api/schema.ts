@@ -394,8 +394,12 @@ export type A2ASendRequestT = z.infer<typeof A2ASendRequest>
 // ── POST /v1/social/seek (agent-social M1, T7b-core) ──────────────────────────
 
 export const SocialSeekRequest = z.object({
-  topic: z.string().min(1),
-  city: z.string().optional(),
+  // Bounds mirror IntentCardSchema (src/core/a2a-intent.ts) — the seek
+  // request feeds directly into the intent card sent to peers, so an
+  // overlong topic/city should be rejected locally (400) rather than
+  // passed through and only ever failing downstream, once per peer.
+  topic: z.string().min(1).max(280),
+  city: z.string().max(64).optional(),
 })
 export type SocialSeekRequestT = z.infer<typeof SocialSeekRequest>
 

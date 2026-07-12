@@ -109,6 +109,26 @@ export const TIER_PROFILES: Record<UserTier, TierProfile> = {
   },
 }
 
+// The social answering judge is a clean-slate one-shot spawn that must be able
+// to call ONLY the owner's plugin MCP tools (wx* fact tools, e.g. wxvault) to
+// ground its verdict in the owner's real data — it has no other business:
+// no fs/shell/network, no subagent, no wechat send/reply, no a2a/social tools
+// of its own. TIER_PROFILES.guest is NOT usable here: classifyToolUse buckets
+// every third-party plugin tool as `plugin_tool`, which is in guest's (and
+// trusted's) deny set, so a guest-tiered judge would get "Permission denied"
+// on every wx* call and silently degrade to topic-text-only grounding — see
+// the T7b-core review. TIER_PROFILES.admin is also NOT usable: admin denies
+// nothing, so it would additionally unlock the judge's builtin Read/Write/
+// Bash/WebFetch/subagent tools, which is far more than the judge needs.
+// Standalone (not part of TIER_PROFILES / UserTier) because this is a
+// bespoke one-shot capability, not a resolvable chat tier — there is no
+// access.json entry that maps a chatId to "social_judge".
+export const SOCIAL_JUDGE_PROFILE: TierProfile = {
+  allow: new Set<ToolKind>(['plugin_tool']),
+  relay: new Set(),
+  deny: difference(ALL_KINDS, new Set<ToolKind>(['plugin_tool'])),
+}
+
 /**
  * Recover the tier NAME from a resolved TierProfile. Used by providers to bake
  * `WECHAT_SESSION_TIER` into MCP child env (the non-secret companion to the

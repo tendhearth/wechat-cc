@@ -21,7 +21,7 @@ import { SessionManager } from '../../core/session-manager'
 import { createClaudeAgentProvider, tierProfileToClaudeSdkOpts } from '../../core/claude-agent-provider'
 import { createCodexAgentProvider } from '../../core/codex-agent-provider'
 import type { TierProfile } from '../../core/user-tier'
-import { resolveTier, TIER_PROFILES } from '../../core/user-tier'
+import { resolveTier, TIER_PROFILES, SOCIAL_JUDGE_PROFILE } from '../../core/user-tier'
 import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
 import { createConversationCoordinator, type ConversationCoordinator, type TurnRecord } from '../../core/conversation-coordinator'
 import { makeConversationStore, type ConversationStore } from '../../core/conversation-store'
@@ -1356,7 +1356,16 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
             judgeSession = await judgeProvider.spawn(
               { alias: '_social_judge', path: deps.stateDir },
               {
-                tierProfile: TIER_PROFILES.guest,
+                // NOT TIER_PROFILES.guest: classifyToolUse buckets every
+                // plugin MCP tool (the wx* fact tools this judge exists to
+                // call) as `plugin_tool`, which guest denies — the judge
+                // would get "Permission denied" on every call and silently
+                // degrade to topic-text-only grounding (T7b-core review).
+                // NOT TIER_PROFILES.admin either: admin denies nothing, so
+                // it would also unlock this session's builtin Read/Write/
+                // Bash/WebFetch/subagent tools. SOCIAL_JUDGE_PROFILE allows
+                // ONLY plugin_tool — exactly the wx* facts, nothing else.
+                tierProfile: SOCIAL_JUDGE_PROFILE,
                 permissionMode: 'strict',
                 chatId: '_social_judge',
                 appendInstructions: systemPrompt,
