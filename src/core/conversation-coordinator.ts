@@ -168,7 +168,30 @@ export function authFailNotice(providerId: ProviderId): string {
     ?? `⚠ ${providerId} 登录已过期，请在电脑上重新登录后再发消息。`
 }
 
+/** Turn-taking policy for a mode (D3 — turn-entry unification). */
+export type TurnPolicy = 'queue' | 'preempt'
+
+/**
+ * The per-chat serialization strategy for a mode, made EXPLICIT (D3):
+ *  - `preempt`: a new turn aborts the in-flight one (chatroom's latest-wins;
+ *    the shape a future voice channel needs for barge-in).
+ *  - `queue`: turns serialize on the per-chat mutex (solo/parallel/primary_tool).
+ * Adding a preempt mode is a one-line entry here, not a re-derivation across callers.
+ */
+export function turnPolicy(mode: Mode): TurnPolicy {
+  return mode.kind === 'chatroom' ? 'preempt' : 'queue'
+}
+
 export interface ConversationCoordinator {
+  /**
+   * The SINGLE turn entrypoint (D3). Owns the per-chat turn-taking policy
+   * (queue vs preempt, via {@link turnPolicy}) AND the dispatch itself, so a
+   * caller can never take the wrong lock or bypass it. `opts.within` runs
+   * caller logic (e.g. an app reply-sink capture) INSIDE the locked/preempt
+   * turn; it receives an opaque `dispatch` closure it must await — the only
+   * way to trigger the turn (so callers never name the internal dispatch).
+   */
+  submitTurn<T = void>(msg: InboundMsg, opts?: { within?: (dispatch: () => Promise<void>) => Promise<T> }): Promise<T | void>
   dispatch(msg: InboundMsg): Promise<void>
   /**
    * The pre-lock dispatch body (Task 1 — session-serialization). Identical
@@ -888,15 +911,34 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
    *     so "preempting prior in-flight dispatch" is logged 0 times instead
    *     of the expected ≥1/≥2, confirming the exemption is required.
    */
-  async function dispatch(msg: InboundMsg): Promise<void> {
-    const mode = getMode(msg.chatId)
-    if (mode.kind === 'chatroom') {
-      return dispatchInner(msg)
+  /**
+   * D3 — the single turn entrypoint. Resolves the mode's turn policy, then runs
+   * the turn under it: `preempt` (chatroom) bypasses the mutex (its own
+   * abort-on-arrival protocol IS the preemption); `queue` serializes on the
+   * per-chat mutex. `opts.within`, when given, runs INSIDE that locked/preempt
+   * region and receives the dispatch closure (used by the app path to open a
+   * reply-sink, dispatch, and read the captured reply — all under one lock).
+   */
+  async function submitTurn<T = void>(
+    msg: InboundMsg,
+    opts?: { within?: (dispatch: () => Promise<void>) => Promise<T> },
+  ): Promise<T | void> {
+    const run = async (): Promise<T | void> => {
+      const doDispatch = (): Promise<void> => dispatchInner(msg)
+      return opts?.within ? opts.within(doDispatch) : doDispatch()
     }
-    return mutex.runExclusive(msg.chatId, () => dispatchInner(msg))
+    if (turnPolicy(getMode(msg.chatId)) === 'preempt') return run()
+    return mutex.runExclusive(msg.chatId, run)
+  }
+
+  // Back-compat thin wrapper — the WeChat inbound path. Identical behavior to
+  // the old mode-branching dispatch, now expressed via submitTurn's policy.
+  async function dispatch(msg: InboundMsg): Promise<void> {
+    await submitTurn(msg)
   }
 
   return {
+    submitTurn,
     getMode,
     setMode(chatId, mode) {
       validateMode(mode)
