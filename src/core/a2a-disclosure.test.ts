@@ -27,4 +27,29 @@ describe('gateOutbound', () => {
     const r = await gateOutbound('anything', { policy, peerNames: [], cheapEval })
     expect(r.ok).toBe(false)
   })
+  it('fails CLOSED when the checker returns an empty object (missing violation field)', async () => {
+    const cheapEval = async () => '{}'
+    const r = await gateOutbound('anything', { policy, peerNames: [], cheapEval })
+    expect(r.ok).toBe(false)
+  })
+  it('fails CLOSED when violation is a string, not a boolean', async () => {
+    const cheapEval = async () => JSON.stringify({ violation: 'true', redacted: 'x' })
+    const r = await gateOutbound('anything', { policy, peerNames: [], cheapEval })
+    expect(r.ok).toBe(false)
+  })
+  it('fails CLOSED when violation is a number, not a boolean', async () => {
+    const cheapEval = async () => JSON.stringify({ violation: 1 })
+    const r = await gateOutbound('anything', { policy, peerNames: [], cheapEval })
+    expect(r.ok).toBe(false)
+  })
+  it('fails CLOSED when the checker returns a bare JSON primitive (true)', async () => {
+    const cheapEval = async () => 'true'
+    const r = await gateOutbound('anything', { policy, peerNames: [], cheapEval })
+    expect(r.ok).toBe(false)
+  })
+  it('fails CLOSED when the checker returns bare JSON null, without throwing', async () => {
+    const cheapEval = async () => 'null'
+    const r = await gateOutbound('anything', { policy, peerNames: [], cheapEval })
+    expect(r.ok).toBe(false)
+  })
 })

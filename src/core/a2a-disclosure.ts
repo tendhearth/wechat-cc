@@ -21,17 +21,26 @@ export async function gateOutbound(
     // Fail CLOSED — a disclosure leak is worse than a dropped match.
     return { ok: false, redacted: '', violations: ['checker_error: ' + (err instanceof Error ? err.message : String(err))] }
   }
-  let parsed: { violation?: unknown; redacted?: unknown; reasons?: unknown }
+  let parsedRaw: unknown
   try {
     const m = raw.match(/\{[\s\S]*\}/)   // tolerate stray prose around the JSON
-    parsed = JSON.parse(m ? m[0] : raw)
+    parsedRaw = JSON.parse(m ? m[0] : raw)
   } catch {
     return { ok: false, redacted: '', violations: ['checker_unparseable'] }
   }
-  const violation = parsed.violation === true
+  // Fail CLOSED — only a well-typed object with an explicit boolean `violation`
+  // field counts as a usable checker response. Anything else (null, arrays,
+  // primitives, missing/mistyped `violation`) is treated as a malformed check.
+  if (typeof parsedRaw !== 'object' || parsedRaw === null || Array.isArray(parsedRaw)) {
+    return { ok: false, redacted: '', violations: ['checker_malformed'] }
+  }
+  const parsed = parsedRaw as Record<string, unknown>
+  if (typeof parsed.violation !== 'boolean') {
+    return { ok: false, redacted: '', violations: ['checker_malformed_schema'] }
+  }
   const reasons = Array.isArray(parsed.reasons) ? parsed.reasons.map(String) : []
   const redacted = typeof parsed.redacted === 'string' ? parsed.redacted : ''
-  return violation
+  return parsed.violation
     ? { ok: false, redacted, violations: reasons.length ? reasons : ['policy_violation'] }
     : { ok: true, redacted: redacted || text, violations: [] }
 }
