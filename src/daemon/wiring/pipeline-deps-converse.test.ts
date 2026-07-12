@@ -83,6 +83,11 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     // Pass-through runExclusive for the two guard-focused tests below — the
     // dedicated lock-spans-sink test further down uses a REAL makeChatMutex.
     const runExclusive = vi.fn(<T,>(_chatId: string, fn: () => Promise<T>) => fn())
+    // D3: submitTurn owns the lock + dispatch. Mock the queue-policy path (solo
+    // mode): runExclusive around the within hook, whose dispatch closure calls
+    // dispatchInner (NOT the locking dispatch — see the guard above).
+    const submitTurn = vi.fn(<T,>(msg: InboundMsg, o?: { within?: (d: () => Promise<void>) => Promise<T> }) =>
+      runExclusive(msg.chatId, () => (o?.within ? o.within(() => dispatchInner(msg)) : dispatchInner(msg))))
     const isInFlight = vi.fn(() => opts.inFlight)
     const replySinksOpen = vi.fn((_chatId: string) => ({ close: () => 'reply text' }))
     const replySinks: ReplySinks = { open: replySinksOpen, capture: vi.fn(() => false) }
@@ -121,6 +126,7 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
         dispatch,
         dispatchInner,
         runExclusive,
+        submitTurn,
         getMode: vi.fn((): Mode => ({ kind: 'solo', provider: 'claude' })),
         cancel: vi.fn(() => false),
       } as unknown as Bootstrap['coordinator'],
@@ -253,6 +259,11 @@ describe('companionConverse lock spans the sink lifetime (real mutex + real repl
       dispatch: (msg: InboundMsg) => mutex.runExclusive(msg.chatId, () => dispatchInnerImpl(msg)),
       dispatchInner: dispatchInnerImpl,
       runExclusive: mutex.runExclusive.bind(mutex),
+      // D3: submitTurn owns lock + dispatch (real mutex here) — the app turn's
+      // within hook (sink open→dispatch→close) runs inside runExclusive, so the
+      // mid-turn WeChat dispatch queues behind it exactly as before.
+      submitTurn: (<T,>(msg: InboundMsg, o?: { within?: (d: () => Promise<void>) => Promise<T> }) =>
+        mutex.runExclusive(msg.chatId, () => (o?.within ? o.within(() => dispatchInnerImpl(msg)) : dispatchInnerImpl(msg)) as Promise<T>)),
       getMode: vi.fn((): Mode => ({ kind: 'solo', provider: 'claude' })),
       cancel: vi.fn(() => false),
     } as unknown as Bootstrap['coordinator']

@@ -191,7 +191,8 @@ export interface ConversationCoordinator {
    * turn; it receives an opaque `dispatch` closure it must await — the only
    * way to trigger the turn (so callers never name the internal dispatch).
    */
-  submitTurn<T = void>(msg: InboundMsg, opts?: { within?: (dispatch: () => Promise<void>) => Promise<T> }): Promise<T | void>
+  submitTurn(msg: InboundMsg): Promise<void>
+  submitTurn<T>(msg: InboundMsg, opts: { within: (dispatch: () => Promise<void>) => Promise<T> }): Promise<T>
   dispatch(msg: InboundMsg): Promise<void>
   /**
    * The pre-lock dispatch body (Task 1 — session-serialization). Identical

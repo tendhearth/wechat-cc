@@ -414,30 +414,32 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // still-common case (WeChat turn already running) so the app UI gets an
     // immediate 409 without waiting on the mutex. Below, session
     // serialization (session-serialization-design.md) closes the residual
-    // this pre-check alone can't: it spans the SINK's entire open→close
-    // lifetime inside the per-chat mutex, so a WeChat/tick turn queued behind
-    // this app turn cannot start — and therefore cannot have its reply-tool
-    // output stolen by the still-open app sink — until this turn's sink is
-    // closed. dispatchInner (NOT dispatch) is required here: dispatch itself
-    // acquires the same per-chat mutex, so calling it from inside
-    // runExclusive would self-deadlock.
-    return boot.coordinator.runExclusive(ownerChatId, async () => {
-      const sink = replySinks.open(ownerChatId)
-      try {
-        const synthetic: InboundMsg = {
-          chatId: ownerChatId,
-          userId: ownerChatId,
-          text,
-          msgType: 'text',
-          createTimeMs: Date.now(),
-          accountId: ilink.resolveAccountId(ownerChatId),
+    // this pre-check alone can't: the SINK's entire open→close lifetime runs
+    // INSIDE the per-chat turn (submitTurn's `within` hook), so a WeChat/tick
+    // turn queued behind this app turn cannot start — and cannot have its
+    // reply-tool output stolen by the still-open app sink — until this turn's
+    // sink is closed. D3: submitTurn owns the lock/policy + the dispatch; the
+    // app path just supplies the capture logic to run within the locked turn
+    // (no more hand-rolled runExclusive/dispatchInner + the deadlock footgun).
+    const synthetic: InboundMsg = {
+      chatId: ownerChatId,
+      userId: ownerChatId,
+      text,
+      msgType: 'text',
+      createTimeMs: Date.now(),
+      accountId: ilink.resolveAccountId(ownerChatId),
+    }
+    return boot.coordinator.submitTurn(synthetic, {
+      within: async (dispatch) => {
+        const sink = replySinks.open(ownerChatId)
+        try {
+          await dispatch()
+          return { reply: sink.close() }
+        } catch (err) {
+          sink.close()
+          throw err
         }
-        await boot.coordinator.dispatchInner(synthetic)
-        return { reply: sink.close() }
-      } catch (err) {
-        sink.close()
-        throw err
-      }
+      },
     })
   }
 
