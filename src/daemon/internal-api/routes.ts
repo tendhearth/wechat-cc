@@ -536,6 +536,52 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       }
     },
 
+    // ── companion transcribe (app-conversation-channel, voice arc Stage 2) ──
+    // Inbound audio (base64) → gateway STT → text. Mirror of /speak.
+    'POST /v1/companion/transcribe': async (_q, body) => {
+      if (!deps.voice?.transcribe) return { status: 503, body: { error: 'voice_not_wired' } }
+      const { audio_b64, mime } = (body ?? {}) as { audio_b64?: unknown; mime?: unknown }
+      if (typeof audio_b64 !== 'string' || audio_b64.length === 0) {
+        return { status: 400, body: { error: 'audio_b64 required' } }
+      }
+      let audio: Buffer
+      try {
+        audio = Buffer.from(audio_b64, 'base64')
+      } catch {
+        return { status: 400, body: { error: 'audio_b64 must be valid base64' } }
+      }
+      if (audio.length === 0) return { status: 400, body: { error: 'audio_b64 decoded to empty' } }
+      if (audio.length > 25 * 1024 * 1024) return { status: 413, body: { error: 'audio too large (max 25MB)' } }
+      try {
+        const { text } = await deps.voice.transcribe(audio, typeof mime === 'string' && mime ? mime : 'audio/wav')
+        return { status: 200, body: { ok: true, text } }
+      } catch (err) {
+        const m = errMsg(err)
+        if (/no.?stt.?config/i.test(m)) return { status: 422, body: { ok: false, error: 'no_stt_config' } }
+        return { status: 500, body: { ok: false, error: m } }
+      }
+    },
+
+    'POST /v1/stt/save_config': async (_q, body) => {
+      if (!deps.voice?.saveSTTConfig) return { status: 503, body: { error: 'voice_not_wired' } }
+      const { base_url, model, api_key } = (body ?? {}) as { base_url?: unknown; model?: unknown; api_key?: unknown }
+      try {
+        const r = await deps.voice.saveSTTConfig({
+          ...(typeof base_url === 'string' ? { base_url } : {}),
+          ...(typeof model === 'string' ? { model } : {}),
+          ...(typeof api_key === 'string' ? { api_key } : {}),
+        })
+        return { status: 200, body: r }
+      } catch (err) {
+        return { status: 200, body: { ok: false, reason: 'unexpected_error', detail: errMsg(err) } }
+      }
+    },
+
+    'GET /v1/stt/status': () => {
+      if (!deps.voice?.sttStatus) return { status: 503, body: { error: 'voice_not_wired' } }
+      return { status: 200, body: deps.voice.sttStatus() }
+    },
+
     'POST /v1/voice/save_config': async (_q, body) => {
       if (!deps.voice) return { status: 503, body: { error: 'voice_not_wired' } }
       // Body is pre-validated by index.ts via VoiceSaveConfigRequest schema.
