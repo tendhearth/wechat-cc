@@ -28,6 +28,7 @@ async function startServer(opts: {
   agents?: A2AAgentRecord[]
   onNotify?: (event: import('./a2a-server').NotifyEvent) => Promise<void>
   onExec?: (event: import('./a2a-server').ExecEvent) => Promise<import('./a2a-server').ExecResult>
+  onIntent?: (event: import('./a2a-server').IntentEvent) => Promise<import('./a2a-intent').MatchReceipt>
 } = {}) {
   const onNotify: (event: import('./a2a-server').NotifyEvent) => Promise<void> = opts.onNotify ?? vi.fn(async () => {})
   const server = createA2AServer({
@@ -35,6 +36,7 @@ async function startServer(opts: {
     registry: fakeRegistry(opts.agents ?? [rec('alpha')]),
     onNotify,
     ...(opts.onExec ? { onExec: opts.onExec } : {}),
+    ...(opts.onIntent ? { onIntent: opts.onIntent } : {}),
     daemonInfo: { name: 'wechat-cc', version: '0.6.x' },
   })
   await server.start()
@@ -250,6 +252,78 @@ describe('a2a-server', () => {
         expect(a.capabilities.some(c => c.name === 'exec')).toBe(true)
         expect(b.capabilities.some(c => c.name === 'exec')).toBe(false)
       } finally { await withExec.server.stop(); await without.server.stop() }
+    })
+  })
+
+  describe('POST /a2a/intent (agent-social M1)', () => {
+    it('runs onIntent and returns the Match Receipt when authed', async () => {
+      const onIntent = vi.fn(async (e: import('./a2a-server').IntentEvent) => (
+        { intent_id: e.card.intent_id, match: 'yes' as const, blurb: '也爱摄影' }
+      ))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onIntent })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/intent`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({
+            agent_id: 'alpha',
+            card: { intent_id: 'i1', kind: 'seek', topic: '找摄影搭子', expires_at: new Date(Date.now() + 60000).toISOString() },
+          }),
+        })
+        expect(res.status).toBe(200)
+        expect(await res.json()).toMatchObject({ intent_id: 'i1', match: 'yes' })
+        expect(onIntent).toHaveBeenCalledWith(expect.objectContaining({
+          agent: expect.objectContaining({ id: 'alpha' }),
+          card: expect.objectContaining({ intent_id: 'i1', topic: '找摄影搭子' }),
+        }))
+      } finally { await server.stop() }
+    })
+
+    it('returns 501 when this machine is not wired for intent (no onIntent)', async () => {
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec] })  // no onIntent
+      try {
+        const res = await fetch(`${baseUrl}/a2a/intent`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({
+            agent_id: 'alpha',
+            card: { intent_id: 'i1', kind: 'seek', topic: 'x', expires_at: new Date(Date.now() + 60000).toISOString() },
+          }),
+        })
+        expect(res.status).toBe(501)
+      } finally { await server.stop() }
+    })
+
+    it('rejects intent without a valid Bearer → 401, onIntent not called', async () => {
+      const onIntent = vi.fn(async (e: import('./a2a-server').IntentEvent) => (
+        { intent_id: e.card.intent_id, match: 'yes' as const }
+      ))
+      const { server, baseUrl } = await startServer({ onIntent })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/intent`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            agent_id: 'alpha',
+            card: { intent_id: 'i1', kind: 'seek', topic: 'x', expires_at: new Date(Date.now() + 60000).toISOString() },
+          }),
+        })
+        expect(res.status).toBe(401)
+        expect(onIntent).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('advertises the intent capability in the Agent Card only when wired', async () => {
+      const withIntent = await startServer({ onIntent: async (e) => ({ intent_id: e.card.intent_id, match: 'no' }) })
+      const without = await startServer()
+      try {
+        const a = await (await fetch(`${withIntent.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        const b = await (await fetch(`${without.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        expect(a.capabilities.some(c => c.name === 'intent')).toBe(true)
+        expect(b.capabilities.some(c => c.name === 'intent')).toBe(false)
+      } finally { await withIntent.server.stop(); await without.server.stop() }
     })
   })
 
