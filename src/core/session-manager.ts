@@ -40,14 +40,17 @@ export interface SessionManagerOptions {
    */
   mintSessionToken?: (tier: UserTier, sessionKey: string) => string
   /**
-   * Assemble the per-session system prompt for (providerId, tierProfile),
-   * called ONCE per real spawn (cache miss) — the daemon owns prompt content
-   * (provider/peer/companion/delegate config + tier-gated sections), the
-   * provider just injects the returned string via its transport. Mirrors the
-   * `mcpEnv` seam. Omitted in tests/embeddings → `appendInstructions` is left
-   * off the SpawnContext entirely.
+   * Assemble the per-session system prompt for (providerId, tierProfile,
+   * chatId), called ONCE per real spawn (cache miss) — the daemon owns
+   * prompt content (provider/peer/companion/delegate config + tier-gated
+   * sections), the provider just injects the returned string via its
+   * transport. Mirrors the `mcpEnv` seam. The `chatId` param enables
+   * per-chat prompt sections — currently the care section (gated on this
+   * chat's care level), with per-chat persona a likely future addition.
+   * Omitted in tests/embeddings → `appendInstructions` is left off the
+   * SpawnContext entirely.
    */
-  buildInstructions?: (providerId: ProviderId, tierProfile: TierProfile) => string
+  buildInstructions?: (providerId: ProviderId, tierProfile: TierProfile, chatId: string) => string
   /**
    * The pinned model id for a (provider) spawn, read per-spawn so a `/model`
    * switch applies without a daemon restart. Returns undefined when no pin
@@ -207,7 +210,7 @@ export class SessionManager {
     // mcpEnv: daemon-owned, computed once per spawn, forwarded for the provider
     // to inject. Conditionally spread so non-wired callers (tests/embeddings)
     // leave the field off entirely.
-    const appendInstructions = this.opts.buildInstructions?.(req.providerId, req.tierProfile)
+    const appendInstructions = this.opts.buildInstructions?.(req.providerId, req.tierProfile, req.chatId)
     const model = this.opts.currentModelFor?.(req.providerId)
     let session: AgentSession
     try {

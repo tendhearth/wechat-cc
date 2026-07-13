@@ -21,7 +21,7 @@ import { SessionManager } from '../../core/session-manager'
 import { createClaudeAgentProvider, tierProfileToClaudeSdkOpts } from '../../core/claude-agent-provider'
 import { createCodexAgentProvider } from '../../core/codex-agent-provider'
 import type { TierProfile } from '../../core/user-tier'
-import { resolveTier } from '../../core/user-tier'
+import { resolveTier, TIER_PROFILES, SOCIAL_JUDGE_PROFILE } from '../../core/user-tier'
 import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
 import { createConversationCoordinator, type ConversationCoordinator, type TurnRecord } from '../../core/conversation-coordinator'
 import { makeConversationStore, type ConversationStore } from '../../core/conversation-store'
@@ -42,25 +42,35 @@ import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../w
 import { makeSessionStore } from '../../core/session-store'
 import type { Db } from '../../lib/db'
 import { homedir } from 'node:os'
-import { loadAgentConfig, makeMtimeCachedConfigReader } from '../../lib/agent-config'
+import { loadAgentConfig, makeMtimeCachedConfigReader, modelForProvider } from '../../lib/agent-config'
 import type { AgentConfig, AgentProviderKind } from '../../lib/agent-config'
 import { loadAccess, setSessionInvalidator, type Access } from '../../lib/access'
 import { loadCompanionConfig, type CompanionConfig } from '../companion/config'
-import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
+import { wechatStdioMcpSpec, delegateStdioMcpSpec, buildOpenaiMcpSpecs, type McpStdioSpec } from './mcp-specs'
+import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
+import { bundledPluginsDir } from '../plugins/paths'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { buildDelegateDispatch, type DelegateDispatch } from './delegate'
 import { makeSendAssistantText } from './fallback-reply'
 import { findCodexBinary } from '../../lib/find-codex-binary'
 import { checkCodexVersion } from './codex-version-check'
 import { attemptCodexAutofix } from '../../lib/codex-autofix'
-import { assertNotAuthFailed, type CheapEval } from '../../core/agent-provider'
+import { assertNotAuthFailed, collectTurn, type CheapEval } from '../../core/agent-provider'
 import { createA2ARegistry } from '../../core/a2a-registry'
 import { createA2AClient } from '../../core/a2a-client'
-import { createA2AServer, type NotifyEvent } from '../../core/a2a-server'
+import { createA2AServer, type NotifyEvent, type A2AServerOpts } from '../../core/a2a-server'
 import { verifyAndConsumeInvite } from '../../lib/a2a-pairing'
 import { makeA2AEventsStore, type AppendInput } from '../../core/a2a-events-store'
 import { createYiHub, type YiHub } from '../../core/yi-hub'
 import { createYiWsServer } from '../yi-ws-server'
+// Agent-social M1 (T7b-core) — intent-brokering wiring. See
+// docs/superpowers/specs/2026-07-12-agent-social-m1-intent-brokering-design.md
+import { makeJudge } from '../../core/social-judge'
+import { makeAnswerIntent } from '../../core/social-answer'
+import { makeBroker, type SeekOutcome } from '../../core/social-broker'
+import { createPendingConfirms, type PendingConfirms } from '../../core/pending-confirm'
+import { intentUrl } from '../../core/a2a-delegate'
+import { MatchReceiptSchema } from '../../core/a2a-intent'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
@@ -214,6 +224,95 @@ export interface BootstrapDeps {
    * file + one process-wide writer.
    */
   db: Db
+  /**
+   * Resolve a chat's effective proactive-care level (proactive-care design
+   * §5/§7): chat-prefs override ∪ default_chat_id fallback. Read per-spawn
+   * (like `careLevelFor`'s siblings `currentModelFor` / `buildInstructions`
+   * itself) so a `/set care` flip applies without a daemon restart. Absent
+   * ⇒ the care prompt section is NEVER included for any chat — tests and
+   * minimal embeddings that don't wire this stay byte-identical to before
+   * the care feature existed. Wiring the actual thunk (chat-prefs +
+   * companion default_chat_id) happens in main.ts (Task 7).
+   */
+  careLevelFor?: (chatId: string) => 'off' | 'low' | 'high'
+  /**
+   * Resolve a chat's local sticker library tags (image-stickers design §5).
+   * Read per-spawn (like `careLevelFor`'s siblings) so a newly-saved sticker
+   * shows up in the prompt without a daemon restart. Absent ⇒ the sticker
+   * prompt section is NEVER included for any chat — tests and minimal
+   * embeddings that don't wire this stay byte-identical to before the
+   * sticker feature existed. Wiring the actual thunk (sticker store lookup)
+   * happens in main.ts (later task).
+   */
+  stickerTagsFor?: (chatId: string) => string[]
+  /**
+   * Resolve a chat's persona content + whether it may cultivate persona.md
+   * (persona design §2). Read per-spawn (like `careLevelFor`'s siblings) so
+   * a hand-edited persona.md shows up in the prompt without a daemon
+   * restart. Absent ⇒ BOTH the persona identity section and the
+   * persona-cultivation section are NEVER included for any chat — tests and
+   * minimal embeddings that don't wire this stay byte-identical to before
+   * the persona feature existed. Wiring the actual thunk (owner-chat
+   * memory/persona.md read via `default_chat_id`) happens in main.ts.
+   */
+  personaFor?: (chatId: string) => { content?: string; cultivate?: boolean }
+  /**
+   * Resolve a chat's core-memory block — a small, always-loaded excerpt of
+   * THIS chat's own profile.md (core-memory-injection design §2). Read
+   * per-spawn (like `careLevelFor`'s siblings) so a memory_write update to
+   * profile.md shows up on the very next turn without a daemon restart.
+   * Unlike `personaFor` (which reads the OWNER chat's persona.md via
+   * `default_chat_id`), this reads the CALLING chat's OWN dir — each chat
+   * gets its own core memory, not the owner's. Absent ⇒ the core-memory
+   * section is NEVER included for any chat — tests and minimal embeddings
+   * that don't wire this stay byte-identical to before this feature
+   * existed. Wiring the actual thunk (per-chat memory/profile.md read,
+   * capped to CORE_MEMORY_MAX_CHARS) happens in main.ts.
+   */
+  coreMemoryFor?: (chatId: string) => string
+  /**
+   * Daemon-distilled objective plugin knowledge for this chat (knowledge.md),
+   * read fresh per spawn + capped. Injected right after core memory. Absent
+   * thunk / empty ⇒ section omitted (knowledge-distillation design, D1).
+   */
+  knowledgeMemoryFor?: (chatId: string) => string
+  /**
+   * Resolve whether a chat is still in the "刚认识" (just-met) phase
+   * (onboarding-curiosity design §2). Read per-spawn (like `careLevelFor`'s
+   * siblings) so the section drops off mid-conversation once the message
+   * count crosses the threshold, with no daemon restart. Absent ⇒ the
+   * new-relationship prompt section is NEVER included for any chat — tests
+   * and minimal embeddings that don't wire this stay byte-identical to
+   * before this feature existed. Wiring the actual thunk (sync message
+   * count vs. NEW_RELATIONSHIP_MSG_COUNT) happens in main.ts.
+   */
+  newRelationshipFor?: (chatId: string) => boolean
+  /**
+   * Resolve whether the bubble-replies prompt section (行为流式气泡回复
+   * design) should be added for this chat. Read per-spawn (like
+   * `careLevelFor`'s siblings) so a `/set split off` flip applies without a
+   * daemon restart. Absent ⇒ the bubble-replies section is NEVER included
+   * for any chat — tests and minimal embeddings that don't wire this stay
+   * byte-identical to before this feature existed. Unlike `careLevelFor`,
+   * there is deliberately NO tier gate here: `reply` is guest-allowed (it's
+   * not a memory_write-gated capability), so a guest chat gets the same
+   * bubble guidance as an owner chat. Wiring the actual thunk (chatPrefs
+   * `split` — same pref that gates route-level mechanical splitting)
+   * happens in main.ts.
+   */
+  bubbleRepliesFor?: (chatId: string) => boolean
+  /**
+   * App-conversation-channel reply-sink registry (session-serialization
+   * design, Task 2 Part B) — the SAME shared instance main.ts passes to
+   * internal-api (its `POST /v1/wechat/reply` route) and to
+   * wireMain/pipeline-deps (companionConverse's open/close). Only
+   * `capture` is used here, threaded into the coordinator's
+   * sendAssistantText fallback so plain-text app-turn replies (no `reply`
+   * tool call) land in the open sink instead of leaking to WeChat. Absent
+   * ⇒ fallback text always ilink-sends (tests / minimal embeddings stay
+   * byte-identical to before this feature existed).
+   */
+  replySinks?: { capture: (chatId: string, text: string) => boolean }
 }
 
 export interface Bootstrap {
@@ -228,9 +327,11 @@ export interface Bootstrap {
   /**
    * The single provider-agnostic system-prompt assembler. SessionManager calls
    * it once per spawn and forwards the result via SpawnContext.appendInstructions;
-   * each provider injects it through its own transport. Exposed for tests.
+   * each provider injects it through its own transport. `chatId` gates the
+   * per-chat sections (currently: the care section, via `deps.careLevelFor`).
+   * Exposed for tests.
    */
-  buildInstructions: (providerId: ProviderId, tierProfile: TierProfile) => string
+  buildInstructions: (providerId: ProviderId, tierProfile: TierProfile, chatId: string) => string
   /** Daemon-default provider id — what new chats get until user runs `/cc` or `/codex`. */
   defaultProviderId: ProviderId
   /** Backward-compat alias for defaultProviderId. Pre-P2 callers expected this name. */
@@ -269,6 +370,25 @@ export interface Bootstrap {
    * Mutations (e.g. setBotName) are visible to all closures that hold this ref.
    */
   agentConfig: AgentConfig
+  /**
+   * Agent-social M1 (T7b-core) — present only when `social_enabled` +
+   * `social_disclosure_policy` are both configured (and at least one
+   * registered provider offers a cheapEval). Undefined otherwise — the
+   * feature stays fully inert (no /a2a/intent, no /v1/social/seek).
+   *
+   * `broker.seek()` is what POST /v1/social/seek calls — late-bound into
+   * internal-api by main.ts (mirrors `a2aDeps`/`setA2A`).
+   *
+   * `pendingConfirms` is exposed so a follow-up task (T7b-2) can resolve
+   * the operator's WeChat yes/no reply via `pendingConfirms.resolve(key,
+   * text)`. Until that lands, every `confirmWithOwner` ask times out to
+   * `false` after 5 minutes (the ask is still sent to the operator's chat;
+   * only the reply-capture leg is missing).
+   */
+  social?: {
+    broker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> }
+    pendingConfirms: PendingConfirms
+  }
 }
 
 // buildChannelSystemPrompt() moved to src/core/prompt-builder.ts in
@@ -334,6 +454,24 @@ export function resolveAdminChatId(
     return companion.default_chat_id
   }
   return access.admins?.[0] ?? null
+}
+
+/**
+ * Cheap, deterministic string → key derivation for `confirmWithOwner`'s
+ * pending-confirm key. The broker's `confirmWithOwner(summary)` seam takes
+ * only a rendered summary string (no intent_id threaded through) — unlike
+ * `onIntentConfirm` (the peer-driven confirm leg), which DOES carry
+ * intent_id and keys on it directly. Hashing the summary is the documented
+ * limitation from the M1 T7b-core plan: two concurrent seeks that happen to
+ * render an IDENTICAL summary for the SAME operator chat would collide on
+ * the same pending-confirm key. Acceptable in M1 (single-seek-at-a-time is
+ * the common case); a real fix threads intent_id through confirmWithOwner
+ * in a follow-up.
+ */
+function hashSummary(s: string): string {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
+  return (h >>> 0).toString(36)
 }
 
 export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
@@ -431,7 +569,43 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const delegateStdioForCodex: McpStdioSpec | null = delegateStdioByProvider.codex ?? null
   const delegateStdioForCursor: McpStdioSpec | null = delegateStdioByProvider.cursor ?? null
   const wechatStdioForCursor: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'cursor') : null
+  const delegateStdioForOpenai: McpStdioSpec | null = delegateStdioByProvider.openai ?? null
+  const wechatStdioForOpenai: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'openai') : null
   const wechatStdioForGemini: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'gemini') : null
+
+  // Decoupled plugin lane — third-party MCP tool providers
+  // spawned as stdio children exactly like wechat/delegate, but discovered
+  // from `{stateDir}/plugins/<name>/` (drop-in, survives upgrades) or the
+  // bundled `plugins/` dir. wechat-cc never imports plugin code; the process
+  // boundary + MCP wire protocol are the only coupling, so a plugin can be
+  // any language. USER plugins default DISABLED (a manifest spawns a process
+  // = arbitrary code; enable via dashboard / plugins.json); BUNDLED default
+  // ENABLED. Unlike installUserMcp (which pollutes the human's global
+  // ~/.claude.json), this injects only into the daemon-spawned providers.
+  const loadedPlugins = loadPlugins({
+    stateDir: deps.stateDir,
+    bundledDir: bundledPluginsDir(),
+    hostVersion: selfPkg.version,
+    log: (m) => deps.log('BOOT', `plugin: ${m}`),
+  })
+  const pluginMcp = pluginMcpSpecs(loadedPlugins)
+  // Names of ACTUALLY-registered plugins (enabled AND ready — same gate
+  // pluginMcpSpecs applies above), daemon-global (computed once at boot, NOT
+  // per-chat), threaded into buildSystemPrompt's `knowledgePlugins` arg
+  // (knowledge-orchestration design Task 2). Deliberately == Object.keys(
+  // pluginMcp) rather than a looser `enabled`-only filter: a bundled
+  // knowledge plugin (e.g. wxsearch) defaults ENABLED but is commonly NOT
+  // READY (its healthcheck requires wxvault's decrypted output, which a
+  // fresh install/dev box won't have yet) — mentioning it in the prompt
+  // before its tools actually exist would send the agent at tools that
+  // don't exist. Unknown plugin names are harmless — buildSystemPrompt
+  // silently ignores anything outside KNOWN_KNOWLEDGE_PLUGINS.
+  const knowledgePluginNames = Object.keys(pluginMcp)
+  // Claude's SDK wants each server tagged `type: 'stdio'`; codex/cursor take
+  // the bare {command,args,env} shape (structurally identical to McpStdioSpec).
+  const pluginMcpForClaude = Object.fromEntries(
+    Object.entries(pluginMcp).map(([k, s]) => [k, { type: 'stdio' as const, ...s }]),
+  )
 
   // Pin a Claude model from agent-config.json (or fall back to a stable
   // full ID). Without this, the spawned Claude Code subprocess inherits
@@ -457,16 +631,15 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     const c = readAgentConfig()
     return c.provider === 'claude' && c.model ? c.model : 'claude-opus-4-8'
   }
-  // Per-spawn pinned model for codex/cursor (claude has currentClaudeModel
-  // above). Mirrors that rule: the pin only applies when the configured
-  // provider matches the spawning provider; otherwise undefined → the provider
-  // keeps its construction default. Read via the mtime-cached reader so a
-  // `/model` switch lands on the next session with NO daemon restart.
-  const currentModelFor = (providerId: ProviderId): string | undefined => {
-    const c = readAgentConfig()
-    if (c.provider !== providerId) return undefined
-    return providerId === 'cursor' ? c.cursorModel : c.model
-  }
+  // Per-spawn pinned model, resolved PER provider id (not the global default).
+  // `modelForProvider` owns the field rule: openai→openaiModel and
+  // cursor→cursorModel resolve unconditionally (own field), while claude/codex
+  // share `model` so it only applies when the global provider matches. This is
+  // what lets `/api <model>` (which switches ONE chat to openai while the
+  // global default may stay claude) hot-reload the openai model on the next
+  // spawn with no restart. Read via the mtime-cached reader.
+  const currentModelFor = (providerId: ProviderId): string | undefined =>
+    modelForProvider(readAgentConfig(), providerId)
 
   const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string): Options => {
     // The per-session system prompt is assembled by the daemon's
@@ -489,6 +662,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       mcpServers: {
         ...(wechatStdioForClaude ? { wechat: { type: 'stdio' as const, ...wechatStdioForClaude, env: wechatEnv! } } : {}),
         ...(delegateStdioForClaude ? { delegate: { type: 'stdio' as const, ...delegateStdioForClaude, env: delegateEnv! } } : {}),
+        ...pluginMcpForClaude,
       },
       // Using preset+append (instead of raw string) keeps MCP tools inline in
       // the system prompt — otherwise they're deferred behind ToolSearch,
@@ -668,6 +842,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
         mcpServers: {
           ...(wechatStdioForCodex ? { wechat: wechatStdioForCodex } : {}),
           ...(delegateStdioForCodex ? { delegate: delegateStdioForCodex } : {}),
+          ...pluginMcp,
         },
       }),
       {
@@ -743,6 +918,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
           mcpServers: {
             ...(wechatStdioForCursor ? { wechat: wechatStdioForCursor } : {}),
             ...(delegateStdioForCursor ? { delegate: delegateStdioForCursor } : {}),
+            ...pluginMcp,
           },
         }),
         {
@@ -763,7 +939,71 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   }
 
   // ──────────────────────────────────────────────────────────────
-  // Gemini provider — fourth registered provider.
+  // OpenAI-compatible provider — fourth registered provider. Targets any
+  // OpenAI-Chat-Completions-shaped endpoint (DeepSeek/Kimi/Qwen/OpenRouter/
+  // Ollama, …) via the AI SDK. WECHAT_OPENAI_API_KEY is env-only (same
+  // rationale as CURSOR_API_KEY above); base_url + model live in
+  // agent-config.json (openaiBaseUrl/openaiModel) since they're not secret
+  // and vary per backend. All three must be present or the provider is
+  // skipped with a BOOT log line. The SDK modules are dynamic-imported so a
+  // registration failure (missing dep, bad config) degrades to a log line
+  // instead of crashing boot.
+  const openaiKey = process.env.WECHAT_OPENAI_API_KEY
+  if (openaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel) {
+    // Narrowed into locals: property access on `configuredAgent` doesn't
+    // stay narrowed inside the `makeChatModel` closure below (TS only
+    // preserves narrowing for local const bindings, not object properties).
+    const openaiBaseUrl = configuredAgent.openaiBaseUrl
+    const defaultOpenaiModel = configuredAgent.openaiModel
+    try {
+      const { createOpenAiAgentProvider } = await import('../../core/openai-agent-provider')
+      const { createAiSdkChatModel } = await import('../../core/openai-chat-model')
+      const { createMcpToolBridge } = await import('../../core/openai-mcp-bridge')
+      registry.register(
+        'openai',
+        createOpenAiAgentProvider({
+          // Built per-spawn (not once at construction) so an operator's
+          // `/api <model>` pin — re-read via the mtime-cached config reader
+          // through currentModelFor → SpawnContext.model — takes effect on
+          // the NEXT session without a daemon restart. `model` is undefined
+          // for background evals (cheapEval/strongEval) and for spawns before
+          // any pin exists; both fall back to the boot-time configured model.
+          // createAiSdkChatModel is cheap (just SDK client wiring, no
+          // network), so constructing one per spawn is fine.
+          makeChatModel: (model) => createAiSdkChatModel({
+            baseURL: openaiBaseUrl,
+            apiKey: openaiKey,
+            model: model ?? defaultOpenaiModel,
+          }),
+          // Gated via buildOpenaiMcpSpecs so only wechat/delegate ever see
+          // sessionEnv (WECHAT_SESSION_TOKEN) — third-party plugin MCP specs
+          // must never receive the daemon's loopback bearer token. See
+          // mcp-specs.ts buildOpenaiMcpSpecs doc comment.
+          makeMcpBridge: async (sessionEnv) => createMcpToolBridge(
+            buildOpenaiMcpSpecs(
+              { wechat: wechatStdioForOpenai, delegate: delegateStdioForOpenai, pluginMcp },
+              sessionEnv,
+            ),
+          ),
+          log: deps.log,
+        }),
+        {
+          displayName: 'OpenAI-compatible',
+          // No resume support in v1 — same posture as cursor above.
+          canResume: () => false,
+        },
+      )
+      deps.log('BOOT', 'openai: base_url + model + WECHAT_OPENAI_API_KEY present — provider registered')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      deps.log('BOOT', `openai: registration failed (${msg}) — provider not registered`)
+    }
+  } else {
+    deps.log('BOOT', 'openai: not configured (need WECHAT_OPENAI_API_KEY + openaiBaseUrl + openaiModel) — provider not registered')
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // Gemini provider — fifth registered provider.
   //
   // GEMINI_API_KEY (or GOOGLE_API_KEY) is env-only — not stored in
   // agent-config.json. The @google/genai SDK is loaded via dynamic
@@ -834,9 +1074,31 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // wired (no per-provider ternary — adding a provider needs no edit here).
   // daemonOpsAvailable mirrors the admin predicate the wechat MCP server gates
   // its daemon-control tools on, so the self-heal section appears iff those
-  // tools are actually registered for this spawn.
-  const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile): string =>
-    buildSystemPrompt({
+  // tools are actually registered for this spawn. careEnabled mirrors
+  // `deps.careLevelFor` the same way — absent thunk ⇒ 'off' ⇒ section never
+  // included (proactive-care design §7). It also requires memory_write:
+  // guests can't author agenda.md entries or call set_chat_pref (both
+  // memory_write), so showing the care section would just burn turns on
+  // denied tool calls — gap check-ins (guest-allowed `reply`) work fine
+  // without it. stickerTags mirrors `deps.stickerTagsFor`
+  // the same way — absent thunk ⇒ [] ⇒ section never included. persona /
+  // personaCultivate mirror `deps.personaFor` the same way — absent thunk
+  // ⇒ both persona sections never included (persona design §2).
+  // newRelationship mirrors `deps.newRelationshipFor` the same way — absent
+  // thunk ⇒ section never included (onboarding-curiosity design §2). Like
+  // careEnabled it's also memory_write-gated: the section nudges the agent
+  // to jot notes/observations into memory, so a guest-tier owner chat must
+  // not get that instruction either. personaEmpty is passed through
+  // unconditionally — buildSystemPrompt only surfaces it nested inside the
+  // (already tier-gated) persona-cultivation section, so no extra gating
+  // is needed here. coreMemory mirrors `deps.coreMemoryFor` the same way —
+  // absent thunk ⇒ section never included (core-memory-injection design
+  // §2). Unlike personaFor (owner chat via default_chat_id), coreMemoryFor
+  // is called with THIS chat's own chatId, so each chat gets its own
+  // profile.md excerpt.
+  const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string): string => {
+    const p = deps.personaFor?.(chatId)
+    return buildSystemPrompt({
       providerId,
       // Unused when delegateAvailable is false; fall back to the daemon default.
       peerProviderId: capabilitiesFor(providerId).defaultPeer ?? defaultProviderId,
@@ -844,7 +1106,36 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       delegateAvailable: !!delegateStdioByProvider[providerId],
       daemonOpsAvailable: tierProfile.allow.has('daemon_introspect'),
       fileLocateAvailable: tierProfile.allow.has('file_locate'),
+      careEnabled: (deps.careLevelFor?.(chatId) ?? 'off') !== 'off' && tierProfile.allow.has('memory_write'),
+      stickerTags: deps.stickerTagsFor?.(chatId) ?? [],
+      persona: p?.content,
+      // Like careEnabled: cultivation guidance tells the agent to WRITE
+      // persona.md via memory_write, so it must also be tier-gated — a
+      // guest-tier owner chat would otherwise be prompted to make writes
+      // its tier profile denies (burned turns on denied tool calls, and a
+      // standing invitation to probe the memory surface).
+      personaCultivate: p?.cultivate === true && tierProfile.allow.has('memory_write'),
+      newRelationship: (deps.newRelationshipFor?.(chatId) ?? false) && tierProfile.allow.has('memory_write'),
+      personaEmpty: !(p?.content && p.content.trim().length > 0),
+      // core-memory-injection design §2 — this chat's OWN profile.md
+      // excerpt (not the owner's). No tier gate: it's a read-only context
+      // block, unlike personaCultivate/newRelationship which nudge writes.
+      coreMemory: deps.coreMemoryFor?.(chatId),
+      knowledgeMemory: deps.knowledgeMemoryFor?.(chatId),
+      // bubbleReplies mirrors `deps.bubbleRepliesFor` the same way — absent
+      // thunk ⇒ section never included. Deliberately NO tier gate here
+      // (unlike careEnabled/newRelationship/personaCultivate): `reply` is
+      // guest-allowed, not memory_write-gated, so there's no denied-tool-call
+      // risk in giving a guest chat the same bubbling guidance.
+      bubbleReplies: deps.bubbleRepliesFor?.(chatId) ?? false,
+      // knowledge-orchestration design Task 2 — daemon-global (loaded once at
+      // boot, not per-chat), so this is the captured const, not a `*For`
+      // thunk. buildSystemPrompt only surfaces the section when at least one
+      // name is a KNOWN_KNOWLEDGE_PLUGINS entry, so this is inert when no
+      // knowledge plugin is loaded/enabled.
+      knowledgePlugins: knowledgePluginNames,
     })
+  }
 
   const sessionManager = new SessionManager({
     maxConcurrent: 6,
@@ -900,7 +1191,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // Extracted as a named variable so routeA2ANotify can also call it.
   // v0.5.3 — extracted to fallback-reply.ts so the failure paths log
   // [FALLBACK_REPLY_FAIL] / success path logs [FALLBACK_REPLY_SENT].
-  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log })
+  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture })
 
   // Per-turn watchdog: the daemon-level bound that guarantees a silently-
   // stalled SDK subprocess (idle timeout, wedge, hung MCP tool) can never
@@ -1007,6 +1298,141 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     return cachedOperatorChatId
   }
 
+  // ── Agent-social M1 wiring (T7b-core) ───────────────────────────────────
+  // Gated on BOTH social_enabled and social_disclosure_policy — absent
+  // either, the feature stays fully inert: no onIntent/onIntentConfirm
+  // wired into the a2a server below, no broker constructed, no
+  // /v1/social/seek functionality (the route 503s). This wires everything
+  // EXCEPT capturing the operator's WeChat yes/no reply (a separate task,
+  // T7b-2) — every confirmWithOwner ask still gets SENT to the operator's
+  // chat; it just times out to `false` after 5 minutes until 7b-2 lands.
+  let socialOnIntent: A2AServerOpts['onIntent']
+  let socialOnIntentConfirm: A2AServerOpts['onIntentConfirm']
+  let socialBroker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> } | undefined
+  let socialPendingConfirms: PendingConfirms | undefined
+
+  if (configuredAgent.social_enabled && configuredAgent.social_disclosure_policy) {
+    const socialPolicy = configuredAgent.social_disclosure_policy
+    const socialCheapEval = registry.getCheapEval()
+    if (!socialCheapEval) {
+      // Same degrade pattern as the openai provider block above: log and
+      // skip rather than throw. No registered provider implements cheapEval
+      // is exotic in practice (claude always registers one), but the seam
+      // must degrade gracefully like every other optional wiring here.
+      deps.log('BOOT', 'social: no cheapEval available from any registered provider — social_enabled is on but wiring is skipped (inert)')
+    } else {
+      const SOCIAL_SELF_ID = process.env.WECHAT_A2A_SELF_ID || 'wechat-cc'
+      const socialOpenaiKey = process.env.WECHAT_OPENAI_API_KEY
+
+      // The judge's runTurn seam. When the daemon's DEFAULT provider is the
+      // openai-compatible one, spawn a one-shot session carrying ONLY the
+      // plugin MCP tools (buildOpenaiMcpSpecs({wechat:null, delegate:null,
+      // pluginMcp})) — mirrors the main openai provider construction above,
+      // but the answerer must never get wechat tools (could send-as-owner)
+      // or delegate-mcp (could recurse). Falls back to the registry's
+      // cheapEval (no tools at all) when the default provider isn't openai —
+      // judging still works, just without plugin-grounded facts.
+      let socialRunTurn: (systemPrompt: string, userPrompt: string) => Promise<string>
+      if (defaultProviderId === 'openai' && socialOpenaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel) {
+        const socialJudgeBaseUrl = configuredAgent.openaiBaseUrl
+        const socialJudgeModel = configuredAgent.openaiModel
+        socialRunTurn = async (systemPrompt, userPrompt) => {
+          const { createOpenAiAgentProvider } = await import('../../core/openai-agent-provider')
+          const { createAiSdkChatModel } = await import('../../core/openai-chat-model')
+          const { createMcpToolBridge } = await import('../../core/openai-mcp-bridge')
+          const judgeProvider = createOpenAiAgentProvider({
+            makeChatModel: (model) => createAiSdkChatModel({
+              baseURL: socialJudgeBaseUrl,
+              apiKey: socialOpenaiKey,
+              model: model ?? socialJudgeModel,
+            }),
+            makeMcpBridge: async (sessionEnv) => createMcpToolBridge(
+              buildOpenaiMcpSpecs({ wechat: null, delegate: null, pluginMcp }, sessionEnv),
+            ),
+            log: deps.log,
+          })
+          let judgeSession: Awaited<ReturnType<typeof judgeProvider.spawn>> | null = null
+          try {
+            judgeSession = await judgeProvider.spawn(
+              { alias: '_social_judge', path: deps.stateDir },
+              {
+                // NOT TIER_PROFILES.guest: classifyToolUse buckets every
+                // plugin MCP tool (the wx* fact tools this judge exists to
+                // call) as `plugin_tool`, which guest denies — the judge
+                // would get "Permission denied" on every call and silently
+                // degrade to topic-text-only grounding (T7b-core review).
+                // NOT TIER_PROFILES.admin either: admin denies nothing, so
+                // it would also unlock this session's builtin Read/Write/
+                // Bash/WebFetch/subagent tools. SOCIAL_JUDGE_PROFILE allows
+                // ONLY plugin_tool — exactly the wx* facts, nothing else.
+                tierProfile: SOCIAL_JUDGE_PROFILE,
+                permissionMode: 'strict',
+                chatId: '_social_judge',
+                appendInstructions: systemPrompt,
+              },
+            )
+            const result = await collectTurn(judgeSession.dispatch(userPrompt))
+            return result.assistantText.join('')
+          } finally {
+            if (judgeSession) { try { await judgeSession.close() } catch { /* swallow shutdown errors */ } }
+          }
+        }
+        deps.log('BOOT', 'social: judge wired via plugin-grounded one-shot openai spawn (pluginMcp only, no wechat/delegate)')
+      } else {
+        socialRunTurn = async (systemPrompt, userPrompt) => socialCheapEval(`${systemPrompt}\n\n${userPrompt}`)
+        deps.log('BOOT', 'social: plugin-grounded judging unavailable (daemon default provider is not openai) — judge falls back to cheapEval with no tools')
+      }
+
+      const socialJudge = makeJudge({ runTurn: socialRunTurn, policy: socialPolicy })
+      socialOnIntent = makeAnswerIntent({ judge: socialJudge, policy: socialPolicy, cheapEval: socialCheapEval })
+
+      socialPendingConfirms = createPendingConfirms()
+      const pendingConfirmsRef = socialPendingConfirms
+
+      // The peer-driven confirm leg (second half of the dual-confirm
+      // handshake): a matched peer's broker asks THIS owner to confirm.
+      // Keyed on intent_id (threaded through the wire body), unlike
+      // confirmWithOwner below.
+      socialOnIntentConfirm = async ({ intent_id }) => {
+        const op = resolveOperatorChatId()
+        if (!op) return { ok: false }
+        if (sendAssistantText) await sendAssistantText(op, '🤝 有人想和你牵线,回复 是/否')
+        return { ok: await pendingConfirmsRef.ask(`${op}:${intent_id}`, 5 * 60_000) }
+      }
+
+      socialBroker = makeBroker({
+        policy: socialPolicy,
+        cheapEval: socialCheapEval,
+        // TODO(v1+): rank candidates via wxgraph closeness/topical relevance
+        // instead of "every paired peer, capped" — see design doc's
+        // Discovery section. Minimal-but-safe for M1: targeted (bounded to
+        // paired peers only), never a broadcast to strangers.
+        discover: async (_topic) => a2aRegistry.list().filter(a => !a.paused).slice(0, 5),
+        send: async (hand, card) => {
+          const r = await a2aClient.send({ url: intentUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, card } })
+          return r.ok ? MatchReceiptSchema.parse(r.response) : null
+        },
+        confirmPeer: async (hand, card) => {
+          const r = await a2aClient.send({
+            url: intentUrl(hand.url) + '/confirm',
+            bearer: hand.outbound_api_key,
+            body: { agent_id: SOCIAL_SELF_ID, intent_id: card.intent_id },
+          })
+          return r.ok && (r.response as { ok?: unknown } | undefined)?.ok === true
+        },
+        confirmWithOwner: async (summary) => {
+          const op = resolveOperatorChatId()
+          if (!op) return false
+          if (sendAssistantText) await sendAssistantText(op, '🤝 ' + summary + '(回复 是/否)')
+          // See hashSummary's doc comment: the broker's confirmWithOwner
+          // seam only takes a rendered summary, not the intent_id, so we
+          // key on a hash of the summary rather than the real intent_id.
+          return pendingConfirmsRef.ask(`${op}:${hashSummary(summary)}`, 5 * 60_000)
+        },
+      })
+    }
+  }
+
   // onNotify: route inbound A2A notification → operator chat via sendAssistantText.
   // Formats the message as `[A2A:<agentId>] <text>` so the operator can
   // visually distinguish A2A pushes from regular assistant replies.
@@ -1090,6 +1516,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
           status: 'auth_failed',
         })
       },
+      // Agent-social M1 (T7b-core) — only wired when social_enabled +
+      // social_disclosure_policy are configured (see wiring block above).
+      // Undefined ⇒ /a2a/intent and /a2a/intent/confirm both 501, exactly
+      // like every other optional A2A capability.
+      ...(socialOnIntent ? { onIntent: socialOnIntent } : {}),
+      ...(socialOnIntentConfirm ? { onIntentConfirm: socialOnIntentConfirm } : {}),
       daemonInfo: { name: 'wechat-cc', version: selfPkg.version },
     })
     await a2aServer.start()
@@ -1178,5 +1610,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     a2aServer,
     yiHub,
     agentConfig: configuredAgent,
+    /**
+     * Agent-social M1 (T7b-core) — late-bound into internal-api by main.ts
+     * (mirrors a2aDeps/setA2A). Undefined when social_enabled +
+     * social_disclosure_policy aren't both configured — POST
+     * /v1/social/seek then 503s.
+     */
+    ...(socialBroker ? { social: { broker: socialBroker, pendingConfirms: socialPendingConfirms! } } : {}),
   }
 }

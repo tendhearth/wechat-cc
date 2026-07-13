@@ -11,12 +11,15 @@ import type { GuardLifecycle } from '../guard/lifecycle'
 import type { PollingLifecycle } from '../polling-lifecycle'
 import type { InboundPipelineDeps } from '../inbound/build'
 import type { PipelineRun } from '../inbound/types'
-import type { CompanionPushDeps, CompanionIntrospectDeps } from '../companion/lifecycle'
+import type { CompanionPushDeps, CompanionIntrospectDeps, CompanionIngestDeps } from '../companion/lifecycle'
 import type { SchedulerDeps } from '../guard/scheduler'
 import type { SessionsLifecycleDeps } from '../sessions-lifecycle'
 import type { IlinkLifecycleDeps } from '../ilink-lifecycle'
 import type { PollingDeps } from '../polling-lifecycle'
 import type { StartupSweepDeps } from '../startup-sweeps'
+import type { ChatPrefsStore } from '../chat-prefs'
+import type { CareLedger } from '../companion/care-ledger'
+import type { ReplySinks } from '../reply-sinks'
 import { buildPipelineDeps } from './pipeline-deps'
 import { buildLifecycleDeps } from './lifecycle-deps'
 import { buildTickBodies, type TickBodies } from './tick-bodies'
@@ -39,12 +42,40 @@ export interface WireMainOpts {
   log: (tag: string, line: string, fields?: Record<string, unknown>) => void
   /** Forwarded to buildLifecycleDeps — eval harness override. */
   schedulerIntervalMs?: number
+  /**
+   * Shared chat-prefs instance (constructed once in main.ts, also passed to
+   * registerInternalApi's getChatPrefs) — threaded through to buildPipelineDeps
+   * so the /set command reads/writes the SAME store the reply-route split
+   * logic reads. A second instance would have a stale in-memory cache.
+   */
+  chatPrefs: ChatPrefsStore
+  /**
+   * Shared care-ledger instance (constructed once in main.ts alongside
+   * chatPrefs) — threaded through so pushTick's claim/read and the inbound
+   * no-reply reset operate on the SAME store. A second instance would have
+   * a stale in-memory cache.
+   */
+  careLedger: CareLedger
+  /**
+   * Shared reply-sink registry (constructed once in main.ts, also passed to
+   * registerInternalApi's `replySinks`) — threaded through to
+   * buildPipelineDeps so the companion-converse closure opens sinks on the
+   * SAME registry the reply route captures into.
+   */
+  replySinks: ReplySinks
 }
 
 export interface WiredDeps {
   pipelineDeps: InboundPipelineDeps
+  /**
+   * App-conversation-channel converse closure (voice arc Stage 0, Task 2).
+   * main.ts late-binds this onto internal-api via setCompanionConverse()
+   * once wireMain returns (bootstrap must be ready first).
+   */
+  companionConverse: (text: string) => Promise<{ reply: string }>
   companionPushDeps: CompanionPushDeps
   companionIntrospectDeps: CompanionIntrospectDeps
+  companionIngestDeps: CompanionIngestDeps
   guardDeps: SchedulerDeps
   sessionsDeps: SessionsLifecycleDeps
   ilinkDeps: IlinkLifecycleDeps
@@ -65,6 +96,7 @@ export interface WiredDeps {
     polling: Ref<PollingLifecycle>
     guard: Ref<GuardLifecycle>
     pipeline: Ref<PipelineRun>
+    ingestNudge: Ref<() => void>
   }
 }
 
@@ -73,15 +105,17 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     polling: new Ref<PollingLifecycle>('polling'),
     guard: new Ref<GuardLifecycle>('guard'),
     pipeline: new Ref<PipelineRun>('pipeline'),
+    ingestNudge: new Ref<() => void>('ingestNudge'),
   }
   const ticks = buildTickBodies({
     ...opts,
     permissionMode: opts.dangerously ? 'dangerously' : 'strict',
   })
-  const { pipelineDeps } = buildPipelineDeps(opts, refs)
+  const { pipelineDeps, companionConverse } = buildPipelineDeps(opts, refs)
   const lifecycleDeps = buildLifecycleDeps(opts, ticks)
   return {
     pipelineDeps,
+    companionConverse,
     ...lifecycleDeps,
     ticks,
     refs,

@@ -26,6 +26,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/share/page': 'guest',
   'POST /v1/share/resurface': 'guest',
   'GET /v1/companion/status': 'guest',
+  // send_sticker draws only from the curated sticker lib (pre-approved
+  // images, no arbitrary-path read) and has no exfiltration surface —
+  // same trust class as reply/reply_voice, so it's guest not trusted.
+  'POST /v1/wechat/send_sticker': 'guest',
+  'GET /v1/stickers': 'guest',
   // trusted — operator/agent ops (also reachable by the CLI, capped at trusted)
   'POST /v1/wechat/broadcast': 'trusted',
   'POST /v1/wechat/send_file': 'trusted',
@@ -35,6 +40,8 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/user/set_name': 'trusted',
   'POST /v1/voice/save_config': 'trusted',
   'GET /v1/voice/status': 'trusted',
+  'POST /v1/stt/save_config': 'trusted',
+  'GET /v1/stt/status': 'trusted',
   'POST /v1/companion/enable': 'trusted',
   'POST /v1/companion/disable': 'trusted',
   'POST /v1/companion/snooze': 'trusted',
@@ -53,7 +60,29 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/a2a/pause': 'trusted',
   'POST /v1/a2a/send': 'trusted',
   'POST /v1/a2a/test': 'trusted',
+  'GET /v1/plugins/list': 'trusted',
+  'POST /v1/plugins/toggle': 'trusted',
+  'GET /v1/plugins/registry': 'trusted',
+  'POST /v1/plugins/install': 'trusted',
+  'POST /v1/plugins/upgrade': 'trusted',
+  'GET /v1/license/status': 'trusted',
+  'POST /v1/license/activate': 'trusted',
+  'POST /v1/license/deactivate': 'trusted',
   'POST /v1/delegate': 'trusted',
+  'POST /v1/chat-prefs': 'trusted',
+  // POST /v1/stickers writes an arbitrary sourcePath into the lib — same
+  // trust class as send_file, so it's trusted not guest.
+  'POST /v1/stickers': 'trusted',
+  // admin — owner-only same-session power: drives a real turn on the
+  // owner's own chat session and returns the reply to the caller (app
+  // conversation channel, voice arc Stage 0). Same trust class as the
+  // other admin daemon-control routes below.
+  'POST /v1/companion/converse': 'admin',
+  // admin — same trust class as converse above (voice arc Stage 1): synths
+  // reply audio for the owner's app-conversation-channel session.
+  'POST /v1/companion/speak': 'admin',
+  // admin — voice arc Stage 2: transcribes inbound app-channel audio to text.
+  'POST /v1/companion/transcribe': 'admin',
   // admin — daemon-control (daemon_introspect / daemon_remediate)
   'GET /v1/turns': 'admin',
   'GET /v1/sessions': 'admin',
@@ -63,6 +92,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/daemon/restart': 'admin',
   // admin — on-demand file locate over the owner's computer (file_locate)
   'GET /v1/locate': 'admin',
+  // admin — agent-social M1 (social_seek is ADMIN_ONLY in user-tier.ts;
+  // actively broadcasts an intent to external A2A agents, unlike a2a_send's
+  // reply-to-an-established-peer). Would default to admin anyway (unlisted
+  // routes fail-closed) — listed explicitly for documentation.
+  'POST /v1/social/seek': 'admin',
 }
 
 export function minTierFor(routeKey: string): UserTier {

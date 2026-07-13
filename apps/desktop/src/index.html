@@ -238,6 +238,19 @@
       </header>
       <div class="drawer-body">
         <section class="drawer-section">
+          <h3>Pro 会员</h3>
+          <div id="license-status" class="license-status">加载中…</div>
+          <div class="license-row">
+            <input id="license-key-input" type="text" placeholder="粘贴 license key（试用填 DEV-）" autocomplete="off" spellcheck="false">
+            <button id="license-activate-btn" class="btn" type="button">激活</button>
+          </div>
+          <div class="license-actions">
+            <a id="license-upgrade-link" class="btn ghost" href="#" target="_blank" rel="noreferrer">升级到 Pro →</a>
+            <button id="license-deactivate-btn" class="btn ghost" type="button" hidden>移除</button>
+          </div>
+          <p class="drawer-section-help">插件为 agent 提供额外能力；激活后重启 daemon 生效。</p>
+        </section>
+        <section class="drawer-section">
           <h3>后台服务</h3>
           <div class="toggle-row">
             <div>
@@ -316,9 +329,17 @@
               <span>对话</span>
               <span class="count" id="sessions-count"></span>
             </button>
+            <button class="dash-nav-link" data-pane="converse">
+              <span class="ic" data-hg-icon="smile" data-hg-size="16"></span>
+              <span>跟 CC 说</span>
+            </button>
             <button class="dash-nav-link" data-pane="a2a-agents">
               <span class="ic" data-hg-icon="settings-01" data-hg-size="16"></span>
               <span>Agent</span>
+            </button>
+            <button class="dash-nav-link" data-pane="plugins">
+              <span class="ic" data-hg-icon="plug-01" data-hg-size="16"></span>
+              <span>插件</span>
             </button>
           </nav>
 
@@ -516,6 +537,11 @@
             <div id="dialogue-root" class="dialogue-page"></div>
           </article>
 
+          <!-- ── pane: converse (in-app compose UI) ─────────────────── -->
+          <article class="dash-pane" data-pane="converse" hidden>
+            <div id="converse-root" class="converse-page"></div>
+          </article>
+
           <!-- ── pane: logs ─────────────────────────────────────────── -->
           <article class="dash-pane" data-pane="logs" hidden>
             <div class="topbar">
@@ -552,6 +578,29 @@
                    through Add Agent flow. Populated by refresh(). -->
               <div id="a2a-server-banner" class="a2a-server-banner"></div>
               <ul id="a2a-agents-list" class="a2a-agents-list"></ul>
+            </div>
+          </article>
+
+          <!-- ── pane: plugins ─────────────────────────────────────────── -->
+          <article class="dash-pane" data-pane="plugins" hidden>
+            <div class="topbar">
+              <span class="crumb">插件</span>
+              <div class="actions">
+                <button id="plugins-refresh-btn" class="btn ghost"><span class="ic" data-hg-icon="refresh" data-hg-size="16"></span> 刷新</button>
+              </div>
+            </div>
+            <div class="a2a-agents-body">
+              <div class="plugins-hint">
+                插件给 agent 加能力（MCP 工具）。放进
+                <code>~/.claude/channels/wechat/plugins/</code> 的插件默认<strong>停用</strong>——
+                启用后<strong>重启 daemon</strong> 生效。
+              </div>
+              <div id="plugins-note" class="plugins-note" hidden></div>
+              <ul id="plugins-list" class="a2a-agents-list"></ul>
+
+              <div class="plugins-subhead">市场</div>
+              <div id="plugins-market-note" class="plugins-hint" hidden></div>
+              <ul id="plugins-market-list" class="a2a-agents-list"></ul>
             </div>
           </article>
 

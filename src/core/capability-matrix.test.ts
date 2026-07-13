@@ -5,6 +5,7 @@ import {
   assertSupported,
   assertMatrixComplete,
   capabilitiesFor,
+  capabilityProviderIds,
   UnsupportedCombinationError,
   type MatrixRow,
   type PermissionMode,
@@ -22,8 +23,8 @@ describe('ProviderCapabilities.defaultPeer', () => {
 })
 
 describe('CAPABILITY_MATRIX', () => {
-  it('contains exactly 32 rows (4 modes × 4 providers × 2 perms)', () => {
-    expect(CAPABILITY_MATRIX).toHaveLength(32)
+  it('contains exactly 40 rows (4 modes × 5 providers × 2 perms)', () => {
+    expect(CAPABILITY_MATRIX).toHaveLength(40)
   })
 
   it.each(CAPABILITY_MATRIX)(
@@ -143,6 +144,14 @@ describe('deriveCapability (RFC 05 Phase 2)', () => {
       expect(derived.forbidden).toBe(row.forbidden)
     },
   )
+})
+
+describe('capability-matrix openai', () => {
+  it('includes openai and derives all combinations', () => {
+    expect(capabilityProviderIds()).toContain('openai')
+    expect(() => assertMatrixComplete(['openai'])).not.toThrow()
+    expect(lookup('solo', 'openai', 'strict').askUser).toBe('per-tool') // perToolCallback true
+  })
 })
 
 describe('capability-matrix — cursor rows', () => {

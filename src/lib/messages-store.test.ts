@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { openTestDb } from './db'
-import { makeMessagesStore, inboundMessageId, inboundFallbackMessageId } from './messages-store'
+import { makeMessagesStore, inboundMessageId, inboundFallbackMessageId, countInboundMessagesSync } from './messages-store'
 
 describe('messages store', () => {
   it('append + listRange returns rows in ts order', async () => {
@@ -41,6 +41,20 @@ describe('messages store', () => {
     expect(await s.latestTs('c1')).toBeNull()
     await s.append({ id: '1', chatId: 'c1', ts: '2026-06-11T00:05:00Z', direction: 'in', kind: 'text', text: 'x', source: 'live' })
     expect(await s.latestTs('c1')).toBe('2026-06-11T00:05:00Z')
+  })
+
+  it('latestInboundTs returns the latest "in" row only, ignoring "out" rows', async () => {
+    const s = makeMessagesStore(openTestDb())
+    await s.append({ id: '1', chatId: 'c1', ts: '2026-06-11T00:00:00Z', direction: 'in', kind: 'text', text: 'hi', source: 'live' })
+    await s.append({ id: '2', chatId: 'c1', ts: '2026-06-11T00:10:00Z', direction: 'out', kind: 'text', text: 'reply', provider: 'claude', source: 'live' })
+    expect(await s.latestInboundTs('c1')).toBe('2026-06-11T00:00:00Z')
+  })
+
+  it('latestInboundTs returns null when the chat has no inbound messages', async () => {
+    const s = makeMessagesStore(openTestDb())
+    await s.append({ id: '1', chatId: 'c1', ts: '2026-06-11T00:00:00Z', direction: 'out', kind: 'text', text: 'hi', provider: 'claude', source: 'live' })
+    expect(await s.latestInboundTs('c1')).toBeNull()
+    expect(await s.latestInboundTs('nonexistent')).toBeNull()
   })
 
   it('inboundMessageId mirrors the dedupe key', () => {
@@ -108,5 +122,31 @@ describe('messages store', () => {
     const hits = await s.search('c1', 'foo_bar', 10)
     expect(hits.length).toBe(1)
     expect(hits[0]!.id).toBe('u3')
+  })
+
+  // countInboundMessagesSync — onboarding-curiosity design §2 gate input
+  it('countInboundMessagesSync returns 0 for an unknown chat', () => {
+    const db = openTestDb()
+    expect(countInboundMessagesSync(db, 'nonexistent')).toBe(0)
+  })
+
+  it('countInboundMessagesSync counts inbound only, ignoring outbound (reply-splitting bubbles)', async () => {
+    const db = openTestDb()
+    const s = makeMessagesStore(db)
+    await s.append({ id: '1', chatId: 'c1', ts: '2026-06-11T00:00:00Z', direction: 'in', kind: 'text', text: 'hi', source: 'live' })
+    await s.append({ id: '2', chatId: 'c1', ts: '2026-06-11T00:00:01Z', direction: 'out', kind: 'text', text: 'hello', provider: 'claude', source: 'live' })
+    await s.append({ id: '3', chatId: 'c1', ts: '2026-06-11T00:00:02Z', direction: 'out', kind: 'text', text: 'bubble2', provider: 'claude', source: 'live' })
+    await s.append({ id: '4', chatId: 'c1', ts: '2026-06-11T00:00:03Z', direction: 'in', kind: 'text', text: 'again', source: 'live' })
+    expect(countInboundMessagesSync(db, 'c1')).toBe(2)
+  })
+
+  it('countInboundMessagesSync isolates counts per chat', async () => {
+    const db = openTestDb()
+    const s = makeMessagesStore(db)
+    await s.append({ id: '1', chatId: 'chatA', ts: '2026-06-11T00:00:00Z', direction: 'in', kind: 'text', text: 'hi', source: 'live' })
+    await s.append({ id: '2', chatId: 'chatB', ts: '2026-06-11T00:00:00Z', direction: 'in', kind: 'text', text: 'hi', source: 'live' })
+    await s.append({ id: '3', chatId: 'chatB', ts: '2026-06-11T00:00:01Z', direction: 'out', kind: 'text', text: 'reply', provider: 'claude', source: 'live' })
+    expect(countInboundMessagesSync(db, 'chatA')).toBe(1)
+    expect(countInboundMessagesSync(db, 'chatB')).toBe(1)
   })
 })

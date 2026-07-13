@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadAgentConfig, saveAgentConfig, parseAgentConfig, A2AAgentRecord, makeMtimeCachedConfigReader, activeModel, withActiveModel, type AgentConfig } from './agent-config'
+import { loadAgentConfig, saveAgentConfig, parseAgentConfig, A2AAgentRecord, makeMtimeCachedConfigReader, activeModel, withActiveModel, modelForProvider, withModelForProvider, type AgentConfig } from './agent-config'
 
 describe('agent-config', () => {
   it('defaults to claude with unattended=true when no config exists', () => {
@@ -298,6 +298,104 @@ describe('loadAgentConfig — cursor provider', () => {
   })
 })
 
+describe('agent-config openai', () => {
+  it('accepts provider "openai" with base_url + model', () => {
+    const cfg = parseAgentConfig({
+      provider: 'openai',
+      openaiBaseUrl: 'https://api.deepseek.com/v1',
+      openaiModel: 'deepseek-chat',
+    })
+    expect(cfg.provider).toBe('openai')
+    expect(cfg.openaiBaseUrl).toBe('https://api.deepseek.com/v1')
+    expect(cfg.openaiModel).toBe('deepseek-chat')
+  })
+})
+
+describe('loadAgentConfig — openai provider', () => {
+  it('accepts provider="openai" with openaiBaseUrl and openaiModel', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-'))
+    const fs = require('node:fs') as typeof import('node:fs')
+    fs.writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+      provider: 'openai',
+      openaiBaseUrl: 'https://api.deepseek.com/v1',
+      openaiModel: 'deepseek-chat',
+      dangerouslySkipPermissions: false,
+      autoStart: false,
+      closeStopsDaemon: false,
+    }))
+    try {
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.provider).toBe('openai')
+      expect(cfg.openaiBaseUrl).toBe('https://api.deepseek.com/v1')
+      expect(cfg.openaiModel).toBe('deepseek-chat')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('openaiBaseUrl/openaiModel optional — default to undefined', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-'))
+    const fs = require('node:fs') as typeof import('node:fs')
+    fs.writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+      provider: 'openai',
+      dangerouslySkipPermissions: false,
+      autoStart: false,
+      closeStopsDaemon: false,
+    }))
+    try {
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.provider).toBe('openai')
+      expect(cfg.openaiBaseUrl).toBeUndefined()
+      expect(cfg.openaiModel).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('agent-config social (M1 intent brokering)', () => {
+  it('parseAgentConfig accepts social_enabled + social_disclosure_policy', () => {
+    const cfg = parseAgentConfig({
+      provider: 'claude',
+      social_enabled: true,
+      social_disclosure_policy: '兴趣可说;住址不可',
+    })
+    expect(cfg.social_enabled).toBe(true)
+    expect(cfg.social_disclosure_policy).toBe('兴趣可说;住址不可')
+  })
+
+  it('round-trips social_enabled + social_disclosure_policy through save → load', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-social-'))
+    try {
+      saveAgentConfig(dir, {
+        provider: 'claude',
+        dangerouslySkipPermissions: true,
+        autoStart: true,
+        closeStopsDaemon: false,
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说;住址不可',
+      })
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.social_enabled).toBe(true)
+      expect(loaded.social_disclosure_policy).toBe('兴趣可说;住址不可')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('absent social fields load as undefined (back-compat)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-social-'))
+    try {
+      saveAgentConfig(dir, { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.social_enabled).toBeUndefined()
+      expect(loaded.social_disclosure_policy).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('loadAgentConfig preserves yi v2 fields', () => {
   it('round-trips yi_hub_listen and yi_brain through save+load', () => {
     const dir = mkdtempSync(join(tmpdir(), 'yi-cfg-'))
@@ -379,6 +477,10 @@ describe('activeModel / withActiveModel — provider-specific model field', () =
     expect(activeModel({ ...base('cursor'), cursorModel: 'composer-2', model: 'ignored' })).toBe('composer-2')
   })
 
+  it('reads `openaiModel` for openai', () => {
+    expect(activeModel({ ...base('openai'), openaiModel: 'deepseek-chat', model: 'ignored' })).toBe('deepseek-chat')
+  })
+
   it('returns undefined when the provider\'s field is unset', () => {
     expect(activeModel(base('claude'))).toBeUndefined()
     // cursor reads cursorModel, so a stray `model` does not count as set
@@ -395,12 +497,48 @@ describe('activeModel / withActiveModel — provider-specific model field', () =
     expect(cursor.cursorModel).toBe('composer-2')
     expect(cursor.model).toBeUndefined()
     expect(activeModel(cursor)).toBe('composer-2')
+
+    const openai = withActiveModel(base('openai'), 'deepseek-chat')
+    expect(openai.openaiModel).toBe('deepseek-chat')
+    expect(openai.model).toBeUndefined()
+    expect(activeModel(openai)).toBe('deepseek-chat')
   })
 
   it('does not mutate the input config', () => {
     const cfg = base('claude')
     withActiveModel(cfg, 'claude-opus-4-8')
     expect(cfg.model).toBeUndefined()
+  })
+})
+
+describe('modelForProvider / withModelForProvider — per-provider (non-default) resolution', () => {
+  const base = (provider: AgentConfig['provider']): AgentConfig => ({
+    provider, dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false,
+  })
+
+  it('openai/cursor resolve their OWN field even when the global default is a different provider', () => {
+    // Global default is claude, but openai/cursor are used per-chat (e.g. via /api).
+    const cfg = { ...base('claude'), model: 'claude-opus-4-8', openaiModel: 'deepseek-chat', cursorModel: 'composer-2' }
+    expect(modelForProvider(cfg, 'openai')).toBe('deepseek-chat') // NOT gated on config.provider
+    expect(modelForProvider(cfg, 'cursor')).toBe('composer-2')
+    expect(modelForProvider(cfg, 'claude')).toBe('claude-opus-4-8') // matches global → applies
+  })
+
+  it('claude/codex share `model`, so it only applies when the global provider matches', () => {
+    const cfg = { ...base('claude'), model: 'claude-opus-4-8' }
+    expect(modelForProvider(cfg, 'claude')).toBe('claude-opus-4-8')
+    // codex would otherwise wrongly inherit claude's model — guarded to undefined.
+    expect(modelForProvider(cfg, 'codex')).toBeUndefined()
+  })
+
+  it('withModelForProvider writes the TARGET provider field regardless of the global default', () => {
+    // /api deepseek-chat while global default is claude → must land in openaiModel, not model.
+    const next = withModelForProvider(base('claude'), 'openai', 'deepseek-chat')
+    expect(next.openaiModel).toBe('deepseek-chat')
+    expect(next.model).toBeUndefined()
+    expect(modelForProvider(next, 'openai')).toBe('deepseek-chat')
+    // claude's own field untouched, so a claude spawn still uses its own model.
+    expect(modelForProvider({ ...next, model: 'claude-opus-4-8' }, 'claude')).toBe('claude-opus-4-8')
   })
 })
 

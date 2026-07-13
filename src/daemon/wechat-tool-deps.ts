@@ -34,6 +34,14 @@ export interface WechatVoiceDep {
     | { ok: true; msgId: string }
     | { ok: false; reason: string }
   >
+  /**
+   * Synthesizes audio for arbitrary text using the daemon's voice config,
+   * WITHOUT ilink-sending it anywhere (voice arc Stage 1 — POST
+   * /v1/companion/speak hands the bytes back to the caller instead).
+   * Throws `Error('no_voice_config')` when no voice config is saved yet;
+   * propagates provider synth errors otherwise.
+   */
+  synthesizeSpeech(text: string): Promise<{ audio: Buffer; mime: string }>
   /** Validates input (test synth), then persists. Returns ok + tested_ms on success. */
   saveConfig(input: {
     provider: 'http_tts' | 'qwen'
@@ -56,6 +64,23 @@ export interface WechatVoiceDep {
         model?: string
         saved_at: string
       }
+  /**
+   * Transcribe an inbound audio clip via the gateway STT (voice arc Stage 2 —
+   * POST /v1/companion/transcribe). Throws `Error('no_stt_config')` when no STT
+   * config is saved yet; propagates provider errors otherwise. OPTIONAL: STT is
+   * a capability the real voice adapter always provides, but a minimal/mock
+   * voice dep may omit it — the routes treat its absence as not-wired.
+   */
+  transcribe?(audio: Buffer, mime: string): Promise<{ text: string }>
+  /** Validates (test-transcribe), then persists the STT config. Optional (see `transcribe`). */
+  saveSTTConfig?(input: { base_url?: string; model?: string; api_key?: string }): Promise<
+    | { ok: true; tested_ms: number; base_url: string; model: string }
+    | { ok: false; reason: string; detail?: string }
+  >
+  /** STT config status (does NOT leak api_key). Optional (see `transcribe`). */
+  sttStatus?():
+    | { configured: false }
+    | { configured: true; provider: 'http_stt'; base_url: string; model: string; saved_at: string }
 }
 
 /** Companion proactive-tick controls. */

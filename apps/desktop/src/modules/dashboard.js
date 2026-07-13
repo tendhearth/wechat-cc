@@ -107,6 +107,8 @@ export function renderDashboard(report) {
     } else {
       tbody.innerHTML = subRows.map((row, index) => {
       const expEntry = expiredById[row.id]
+      // Active: honest "已连接" — daemon has no last-active heartbeat for
+      // real accounts, so we don't fake a last-active time.
       const expCell = expEntry
         ? `已过期 · ${formatRelativeTime(expEntry.firstSeenExpiredAt)}`
         : "已连接"
@@ -140,7 +142,6 @@ export function renderDashboard(report) {
       ? `${subRows.length} 个 · ${subExpiredCount} 已过期`
       : `${subRows.length} 个`
   }
-
 }
 
 function conversationForAccount(conversations, row) {
@@ -655,7 +656,8 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
 
   const currentProvider = row.dataset.currentProvider || "claude"
   const chatId = row.dataset.chatId
-  const isDemo = row.dataset.demo === "true" || !chatId
+  // No chat_id yet (freshly bound, no conversation) → switch provider UI-only.
+  const noChat = !chatId
 
   menu.innerHTML = USER_CARD_PROVIDERS.map(p => {
     const active = p === currentProvider
@@ -678,7 +680,7 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
         closeProviderMenu()
         return
       }
-      if (isDemo) {
+      if (noChat) {
         row.dataset.currentProvider = name
         closeProviderMenu()
         return

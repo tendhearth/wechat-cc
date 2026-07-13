@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, existsSync, rmSync, writeFileSync } from 'node:
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { makeAdminCommands, friendlyDelegateReason, formatOverviewForDisplay, isDelegateName, type AdminCommandsDeps } from './admin-commands'
-import { makeSessionStateStore } from './session-state'
+import { makeSessionStateStore } from '../core/session-state'
 import { openTestDb, type Db } from '../lib/db'
 import type { InboundMsg } from '../core/prompt-format'
 import packageJson from '../../package.json'

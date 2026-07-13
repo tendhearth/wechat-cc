@@ -5,7 +5,7 @@ import { join } from 'node:path'
 // runtime — this is a build-tool interop quirk, not a zod API difference).
 import z from 'zod'
 
-export type AgentProviderKind = 'claude' | 'codex' | 'cursor' | 'gemini'
+export type AgentProviderKind = 'claude' | 'codex' | 'cursor' | 'openai' | 'gemini'
 
 export interface AgentConfig {
   provider: AgentProviderKind
@@ -14,6 +14,12 @@ export interface AgentConfig {
   // optional-string shape so an operator can persist a Cursor model
   // alongside the Claude one without overloading a single field.
   cursorModel?: string
+  // OpenAI-compatible provider fields (also covers OpenAI-compatible
+  // endpoints like DeepSeek). Mirrors `cursorModel?`'s shape: kept separate
+  // from `model?` so switching providers doesn't clobber another
+  // provider's pinned model/endpoint.
+  openaiBaseUrl?: string
+  openaiModel?: string
   geminiModel?: string
   // When true, the daemon spawned by `service install` runs with
   // `cli.ts run --dangerously` (Claude SDK permissionMode=bypassPermissions).
@@ -45,6 +51,14 @@ export interface AgentConfig {
   yi_hub_listen?: { host: string; port: number }
   // 乙 v2 — HAND side: connect outbound to this brain WebSocket URL.
   yi_brain?: { url: string; handId: string; authToken: string }
+  // Agent-social M1: gates the intent-brokering feature (initiating broker +
+  // answering judge) off by default. Mirrors `openaiBaseUrl?`'s optional-field
+  // shape — absent/false → the feature stays inert even if a2a peers exist.
+  social_enabled?: boolean
+  // Free-text disclosure policy the operator writes (e.g. "兴趣可说;住址不可"),
+  // consulted by gateOutbound when brokering/answering intents. Required
+  // alongside social_enabled for bootstrap to wire the real judge/broker seams.
+  social_disclosure_policy?: string
 }
 
 // ── A2A sub-schemas ──────────────────────────────────────────────────────────
@@ -74,9 +88,11 @@ export type YiHubListen = z.infer<typeof YiHubListen>
 export type YiBrain = z.infer<typeof YiBrain>
 
 const AgentConfigSchema = z.object({
-  provider: z.enum(['claude', 'codex', 'cursor', 'gemini']).default('claude'),
+  provider: z.enum(['claude', 'codex', 'cursor', 'openai', 'gemini']).default('claude'),
   model: z.string().optional(),
   cursorModel: z.string().optional(),
+  openaiBaseUrl: z.string().optional(),
+  openaiModel: z.string().optional(),
   geminiModel: z.string().optional(),
   dangerouslySkipPermissions: z.boolean().default(true),
   autoStart: z.boolean().default(true),
@@ -94,6 +110,8 @@ const AgentConfigSchema = z.object({
     }),
   bot_name: z.string().nullable().optional(),
   dialogue_lock_hash: z.string().optional(),
+  social_enabled: z.boolean().optional(),
+  social_disclosure_policy: z.string().optional(),
 })
 
 /**
@@ -118,6 +136,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
     const provider: AgentProviderKind =
       parsed.provider === 'codex' ? 'codex'
       : parsed.provider === 'cursor' ? 'cursor'
+      : parsed.provider === 'openai' ? 'openai'
       : parsed.provider === 'gemini' ? 'gemini'
       : 'claude'
     // Preserve `model` for both providers. Pre-2026-05-08 only codex
@@ -146,6 +165,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       provider,
       ...(typeof parsed.model === 'string' ? { model: parsed.model } : {}),
       ...(typeof parsed.cursorModel === 'string' ? { cursorModel: parsed.cursorModel } : {}),
+      ...(typeof parsed.openaiBaseUrl === 'string' ? { openaiBaseUrl: parsed.openaiBaseUrl } : {}),
+      ...(typeof parsed.openaiModel === 'string' ? { openaiModel: parsed.openaiModel } : {}),
       ...(typeof parsed.geminiModel === 'string' ? { geminiModel: parsed.geminiModel } : {}),
       dangerouslySkipPermissions,
       autoStart,
@@ -157,6 +178,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(parsed.bot_name === null ? { bot_name: null } : {}),
       ...(typeof parsed.bot_name === 'string' ? { bot_name: parsed.bot_name } : {}),
       ...(typeof parsed.dialogue_lock_hash === 'string' ? { dialogue_lock_hash: parsed.dialogue_lock_hash } : {}),
+      ...(typeof parsed.social_enabled === 'boolean' ? { social_enabled: parsed.social_enabled } : {}),
+      ...(typeof parsed.social_disclosure_policy === 'string' ? { social_disclosure_policy: parsed.social_disclosure_policy } : {}),
     }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }
@@ -218,17 +241,50 @@ export function saveAgentConfig(stateDir: string, config: AgentConfig): void {
 }
 
 // The pinned model lives in a provider-specific field: cursor reads
-// `cursorModel`, claude/codex read `model`. These two accessors are the single
-// home for that rule so callers (e.g. the /v1/model routes) don't re-encode
-// `provider === 'cursor' ? cursorModel : model` at each read/write — writing the
-// wrong field is a silent no-op with a falsely-confirming read-back.
+// `cursorModel`, openai reads `openaiModel`, claude/codex read `model`. These
+// two accessors are the single home for that rule so callers (e.g. the
+// /v1/model routes) don't re-encode `provider === 'cursor' ? cursorModel :
+// model` at each read/write — writing the wrong field is a silent no-op with
+// a falsely-confirming read-back.
 
 /** The model id the configured provider actually reads (undefined if unset). */
 export function activeModel(config: AgentConfig): string | undefined {
-  return config.provider === 'cursor' ? config.cursorModel : config.model
+  if (config.provider === 'cursor') return config.cursorModel
+  if (config.provider === 'openai') return config.openaiModel
+  if (config.provider === 'gemini') return config.geminiModel
+  return config.model
 }
 
 /** A copy of `config` with the provider's active model field set to `model`. */
 export function withActiveModel(config: AgentConfig, model: string): AgentConfig {
-  return config.provider === 'cursor' ? { ...config, cursorModel: model } : { ...config, model }
+  if (config.provider === 'cursor') return { ...config, cursorModel: model }
+  if (config.provider === 'openai') return { ...config, openaiModel: model }
+  if (config.provider === 'gemini') return { ...config, geminiModel: model }
+  return { ...config, model }
+}
+
+// activeModel/withActiveModel above answer "the GLOBAL default provider's
+// model" (keyed on config.provider) — correct for /v1/model, boot, desktop.
+// The pair below answers "a SPECIFIC provider's model" (keyed on the given
+// providerId) — needed when a chat runs a NON-default provider (e.g. `/api`
+// switches one chat to openai while the global default stays claude) and by
+// `currentModelFor(providerId)` on every spawn. openai/cursor have their OWN
+// field so they resolve per-id unconditionally; claude & codex SHARE the
+// generic `model` field, so it's only meaningful when the global provider is
+// that same one (can't tell a claude pin from a codex pin otherwise).
+
+/** The model id `providerId` should use, resolved per-provider (undefined if unset). */
+export function modelForProvider(config: AgentConfig, providerId: string): string | undefined {
+  if (providerId === 'openai') return config.openaiModel
+  if (providerId === 'cursor') return config.cursorModel
+  if (providerId === 'gemini') return config.geminiModel
+  return config.provider === providerId ? config.model : undefined
+}
+
+/** A copy of `config` with `providerId`'s own model field set — regardless of the global default provider. */
+export function withModelForProvider(config: AgentConfig, providerId: string, model: string): AgentConfig {
+  if (providerId === 'openai') return { ...config, openaiModel: model }
+  if (providerId === 'cursor') return { ...config, cursorModel: model }
+  if (providerId === 'gemini') return { ...config, geminiModel: model }
+  return { ...config, model }
 }

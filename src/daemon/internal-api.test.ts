@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, existsSync } from 'node:fs
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createInternalApi, type InternalApi } from './internal-api'
+import { makeReplySinks } from './reply-sinks'
 import { makeMemoryFS } from './memory/fs-api'
 import { makeEventsStore } from './events/store'
 import { openTestDb } from '../lib/db'
@@ -47,6 +48,31 @@ describe('internal-api', () => {
       // 0o777 to drop file-type bits.
       expect((st.mode & 0o777).toString(8)).toBe('600')
     }
+  })
+
+  it('also writes a SEPARATE 0600 operator token file (option B admin credential)', async () => {
+    api = createInternalApi({ stateDir, daemonPid: 1 })
+    const { tokenFilePath, operatorTokenFilePath, port } = await api.start()
+    expect(operatorTokenFilePath).not.toBe(tokenFilePath)
+    const opToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
+    const fileToken = readFileSync(tokenFilePath, 'utf8').trim()
+    expect(opToken).toMatch(/^[0-9a-f]{64}$/)
+    expect(opToken).not.toBe(fileToken)
+    if (process.platform !== 'win32') {
+      expect((statSync(operatorTokenFilePath).mode & 0o777).toString(8)).toBe('600')
+    }
+    // sanity: bound port is reachable (route access itself is covered
+    // by the companion/converse describe block below)
+    expect(port).toBeGreaterThan(0)
+  })
+
+  it('stop({ unlinkToken: true }) removes the operator token file too', async () => {
+    api = createInternalApi({ stateDir, daemonPid: 1 })
+    const { operatorTokenFilePath } = await api.start()
+    expect(existsSync(operatorTokenFilePath)).toBe(true)
+    await api.stop({ unlinkToken: true })
+    api = null
+    expect(existsSync(operatorTokenFilePath)).toBe(false)
   })
 
   it('GET /v1/health with valid bearer token returns ok=true and daemon_pid', async () => {
@@ -316,6 +342,160 @@ describe('internal-api', () => {
         db.close()
       })
     })
+
+    // ── chat-scoping (persona injection hardening) ────────────────────
+    // Non-admin SESSION tokens may only touch their own chat's memory
+    // subtree; file-origin (operator CLI) and admin sessions stay
+    // unrestricted. Closes the cross-chat write path into the owner
+    // chat's persona.md (which broadcasts into every chat's prompt).
+    describe('chat-scoped authorization (non-admin session tokens)', () => {
+      const write = (port: number, token: string, path: string) =>
+        fetch(`http://127.0.0.1:${port}/v1/memory/write`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ path, content: 'x' }),
+        })
+
+      it('trusted session token can write/read within its OWN chat subtree', async () => {
+        const { port } = await startWithMemory()
+        const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+        const w = await write(port, tok, 'chat-1/notes.md')
+        expect(w.status).toBe(200)
+        expect(await w.json()).toEqual({ ok: true })
+        const r = await fetch(`http://127.0.0.1:${port}/v1/memory/read`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ path: 'chat-1/notes.md' }),
+        })
+        expect(r.status).toBe(200)
+        expect(await r.json()).toEqual({ exists: true, content: 'x' })
+      })
+
+      it('trusted session token gets 403 memory_scope_denied on ANOTHER chat\'s path (persona.md injection)', async () => {
+        const { port } = await startWithMemory()
+        const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+        const w = await write(port, tok, 'ownerchat/persona.md')
+        expect(w.status).toBe(403)
+        expect(await w.json()).toEqual({ error: 'memory_scope_denied' })
+        // read + delete of a foreign path are denied too
+        const r = await fetch(`http://127.0.0.1:${port}/v1/memory/read`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ path: 'ownerchat/persona.md' }),
+        })
+        expect(r.status).toBe(403)
+        expect(await r.json()).toEqual({ error: 'memory_scope_denied' })
+      })
+
+      it('`..` traversal in the path is 403 for a non-admin session even when it appears in-scope', async () => {
+        const { port } = await startWithMemory()
+        const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+        const w = await write(port, tok, 'chat-1/../ownerchat/persona.md')
+        expect(w.status).toBe(403)
+        expect(await w.json()).toEqual({ error: 'memory_scope_denied' })
+      })
+
+      it('file-origin token (operator CLI) stays unrestricted across chat subtrees', async () => {
+        const { port, token } = await startWithMemory()
+        const w = await write(port, token, 'ownerchat/persona.md')
+        expect(w.status).toBe(200)
+        expect(await w.json()).toEqual({ ok: true })
+      })
+
+      // Route-scoping fix (blast-radius hardening on top of option B): the
+      // operator token used to be unrestricted across chat subtrees like
+      // the file token, because origin:'operator' isn't a SESSION caller
+      // (memoryScopeDenied only scopes those — routes.ts). It is now
+      // ROUTE-scoped to converse-only (token-registry.ts's ROUTE-SCOPING
+      // note), so it can no longer reach /v1/memory/write at all — it gets
+      // 403 route_not_allowed before the chat-scope check even runs.
+      it('operator token is 403 route_not_allowed on /v1/memory/write (route-scoped to converse-only)', async () => {
+        memoryRoot = join(stateDir, 'memory')
+        const memory = makeMemoryFS({ rootDir: memoryRoot })
+        api = createInternalApi({ stateDir, daemonPid: 999, memory })
+        const { port, operatorTokenFilePath } = await api.start()
+        const opToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
+        const w = await write(port, opToken, 'ownerchat/persona.md')
+        expect(w.status).toBe(403)
+        expect(await w.json()).toEqual({ error: 'route_not_allowed' })
+      })
+
+      it('admin session token stays unrestricted across chat subtrees', async () => {
+        const { port } = await startWithMemory()
+        const tok = api!.mintSessionToken('admin', 'claude/a/admin-chat')
+        const w = await write(port, tok, 'ownerchat/persona.md')
+        expect(w.status).toBe(200)
+        expect(await w.json()).toEqual({ ok: true })
+      })
+
+      it('memory/list is scoped: own-chat dir 200, foreign dir 403, bare (no dir) defaults to own subtree', async () => {
+        const { port, token } = await startWithMemory()
+        // Seed via the unrestricted file token
+        for (const p of ['chat-1/a.md', 'ownerchat/persona.md']) await write(port, token, p)
+        const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+        const own = await fetch(`http://127.0.0.1:${port}/v1/memory/list?dir=chat-1`, {
+          headers: { Authorization: `Bearer ${tok}` },
+        })
+        expect(own.status).toBe(200)
+        expect(((await own.json()) as { files: string[] }).files).toEqual(['chat-1/a.md'])
+        const foreign = await fetch(`http://127.0.0.1:${port}/v1/memory/list?dir=ownerchat`, {
+          headers: { Authorization: `Bearer ${tok}` },
+        })
+        expect(foreign.status).toBe(403)
+        expect(await foreign.json()).toEqual({ error: 'memory_scope_denied' })
+        // No dir at all is the system prompt's default recall flow. It must
+        // keep working for a scoped session — defaults to the caller's own
+        // subtree rather than 403ing on the root. The no-cross-chat-leak
+        // intent is preserved: ownerchat's file must NOT appear here.
+        const root = await fetch(`http://127.0.0.1:${port}/v1/memory/list`, {
+          headers: { Authorization: `Bearer ${tok}` },
+        })
+        expect(root.status).toBe(200)
+        const rootFiles = ((await root.json()) as { files: string[] }).files
+        expect(rootFiles).toEqual(['chat-1/a.md'])
+        expect(rootFiles).not.toContain('ownerchat/persona.md')
+      })
+
+      it('memory/list bare (no dir) for a scoped session returns only its own subtree, even with multiple chats seeded', async () => {
+        const { port, token } = await startWithMemory()
+        for (const p of ['chat-1/a.md', 'chat-1/sub/b.md', 'chat-2/c.md', 'ownerchat/persona.md']) {
+          await write(port, token, p)
+        }
+        const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/list`, {
+          headers: { Authorization: `Bearer ${tok}` },
+        })
+        expect(resp.status).toBe(200)
+        const body = await resp.json() as { files: string[] }
+        expect(body.files.sort()).toEqual(['chat-1/a.md', 'chat-1/sub/b.md'])
+      })
+
+      it('memory/delete is scoped: foreign path 403, own path succeeds', async () => {
+        memoryRoot = join(stateDir, 'memory')
+        const memory = makeMemoryFS({ rootDir: memoryRoot })
+        const db = openTestDb()
+        api = createInternalApi({ stateDir, daemonPid: 999, memory, db })
+        const { port, tokenFilePath } = await api.start()
+        const fileToken = readFileSync(tokenFilePath, 'utf8').trim()
+        for (const p of ['chat-1/a.md', 'ownerchat/persona.md']) await write(port, fileToken, p)
+        const tok = api.mintSessionToken('trusted', 'claude/a/chat-1')
+        const foreign = await fetch(`http://127.0.0.1:${port}/v1/memory/delete`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'chat-1', path: 'ownerchat/persona.md', reason: 'attempted cross-chat delete' }),
+        })
+        expect(foreign.status).toBe(403)
+        expect(await foreign.json()).toEqual({ error: 'memory_scope_denied' })
+        const own = await fetch(`http://127.0.0.1:${port}/v1/memory/delete`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'chat-1', path: 'chat-1/a.md', reason: 'user said forget it' }),
+        })
+        expect(own.status).toBe(200)
+        expect(await own.json()).toMatchObject({ ok: true, existed: true })
+        db.close()
+      })
+    })
   })
 
   it('returns 400 on malformed JSON body', async () => {
@@ -548,12 +728,21 @@ describe('internal-api', () => {
         model?: string
         saved_at: string
       }
+      synthesizeSpeech: (text: string) => Promise<{ audio: Buffer; mime: string }>
     }
 
     const stubReplyVoice: MockVoice['replyVoice'] = async () => ({ ok: false, reason: 'unused_in_b4_tests' })
+    const stubSynthesizeSpeech: MockVoice['synthesizeSpeech'] = async () => {
+      throw new Error('unused_in_b4_tests')
+    }
 
-    function startWithVoice(voiceParts: Omit<MockVoice, 'replyVoice'> & Partial<Pick<MockVoice, 'replyVoice'>>): Promise<{ port: number; token: string }> {
-      const voice: MockVoice = { replyVoice: voiceParts.replyVoice ?? stubReplyVoice, saveConfig: voiceParts.saveConfig, configStatus: voiceParts.configStatus }
+    function startWithVoice(voiceParts: Omit<MockVoice, 'replyVoice' | 'synthesizeSpeech'> & Partial<Pick<MockVoice, 'replyVoice' | 'synthesizeSpeech'>>): Promise<{ port: number; token: string }> {
+      const voice: MockVoice = {
+        replyVoice: voiceParts.replyVoice ?? stubReplyVoice,
+        saveConfig: voiceParts.saveConfig,
+        configStatus: voiceParts.configStatus,
+        synthesizeSpeech: voiceParts.synthesizeSpeech ?? stubSynthesizeSpeech,
+      }
       api = createInternalApi({ stateDir, daemonPid: 1, voice })
       return api.start().then(({ port, tokenFilePath }) => ({
         port,
@@ -1094,6 +1283,679 @@ describe('internal-api', () => {
     })
   })
 
+  // ─── companion converse (app-conversation-channel, voice arc Stage 0) ─
+  // Route-contract tests only, against a MOCKED companionConverse. The real
+  // wiring closure (coordinator.dispatch + reply-sink open/close) is built
+  // in src/daemon/wiring/pipeline-deps.ts and is exercised at final review
+  // + manual daemon smoke, not here — spinning a real ConversationCoordinator
+  // is out of scope for this unit suite.
+  describe('POST /v1/companion/converse', () => {
+    // The route is admin-tier; the daemon-wide FILE token only carries
+    // 'trusted' (see index.ts's registerFileToken comment), so route-contract
+    // tests need a minted ADMIN session token, not the file token.
+    async function startWithConverse(
+      companionConverse: (text: string) => Promise<{ reply: string }>,
+    ): Promise<{ port: number; token: string }> {
+      api = createInternalApi({ stateDir, daemonPid: 1, companionConverse })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
+      return { port, token }
+    }
+
+    it('503 when companionConverse dep not wired', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      await api.start()
+      const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
+      const port = api.port()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'companion_converse_not_wired' })
+    })
+
+    it('400 when text is missing', async () => {
+      const { port, token } = await startWithConverse(async () => ({ reply: 'hey' }))
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: '{}',
+      })
+      expect(resp.status).toBe(400)
+    })
+
+    it('400 when text is empty/whitespace', async () => {
+      const { port, token } = await startWithConverse(async () => ({ reply: 'hey' }))
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '   ' }),
+      })
+      expect(resp.status).toBe(400)
+    })
+
+    it('happy path: 200 {ok:true, reply} from the mocked closure', async () => {
+      const companionConverse = vi.fn(async (text: string) => {
+        expect(text).toBe('how are you')
+        return { reply: 'hey' }
+      })
+      const { port, token } = await startWithConverse(companionConverse)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'how are you' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true, reply: 'hey' })
+      expect(companionConverse).toHaveBeenCalledWith('how are you')
+    })
+
+    it('409 session_busy when the closure throws reply_sink_busy', async () => {
+      const { port, token } = await startWithConverse(async () => {
+        throw new Error('reply_sink_busy')
+      })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(409)
+      expect(await resp.json()).toEqual({ ok: false, error: 'session_busy' })
+    })
+
+    it('503 companion_owner_chat_not_configured when the closure throws that error', async () => {
+      const { port, token } = await startWithConverse(async () => {
+        throw new Error('companion_owner_chat_not_configured')
+      })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ ok: false, error: 'companion_owner_chat_not_configured' })
+    })
+
+    it('500 with error detail on any other thrown error', async () => {
+      const { port, token } = await startWithConverse(async () => {
+        throw new Error('boom')
+      })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(500)
+      expect(await resp.json()).toEqual({ ok: false, error: 'boom' })
+    })
+
+    it('tier gate: a trusted session token gets 403 (admin-only route)', async () => {
+      const { port } = await startWithConverse(async () => ({ reply: 'hey' }))
+      const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(403)
+      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+    })
+
+    it('tier gate: a guest session token gets 403 (admin-only route)', async () => {
+      const { port } = await startWithConverse(async () => ({ reply: 'hey' }))
+      const tok = api!.mintSessionToken('guest', 'claude/a/chat-1')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(403)
+      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+    })
+
+    it('an admin session token reaches the route (not 403)', async () => {
+      const { port } = await startWithConverse(async () => ({ reply: 'hey' }))
+      const tok = api!.mintSessionToken('admin', 'claude/a/chat-1')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).not.toBe(403)
+      expect(resp.status).toBe(200)
+    })
+
+    // ── option B security fix: dedicated admin-tier operator token ────
+    // (docs: token-registry.ts module comment). Desktop app's agent_converse
+    // presents THIS token, not the daemon-wide trusted file token, so it
+    // can reach the admin-only route.
+    it('the operator token reaches the route (not 403)', async () => {
+      const companionConverse = async (text: string) => ({ reply: `echo:${text}` })
+      api = createInternalApi({ stateDir, daemonPid: 1, companionConverse })
+      const { port, operatorTokenFilePath } = await api.start()
+      const opToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${opToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true, reply: 'echo:hi' })
+    })
+
+    // ── route-scoping fix on top of option B: the operator token's admin
+    // grant is restricted to converse only, so a leaked token can't reach
+    // other admin routes (daemon-restart, /v1/sessions, /v1/locate, ...).
+    it('the operator token is 403 route_not_allowed on a DIFFERENT admin route (GET /v1/sessions)', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1, listSessions: () => [] })
+      const { port, operatorTokenFilePath } = await api.start()
+      const opToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/sessions`, {
+        headers: { Authorization: `Bearer ${opToken}` },
+      })
+      expect(resp.status).toBe(403)
+      expect(await resp.json()).toEqual({ error: 'route_not_allowed' })
+    })
+
+    it('a normal minted admin SESSION token (unaffected) still reaches GET /v1/sessions', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1, listSessions: () => [] })
+      const { port } = await api.start()
+      const tok = api.mintSessionToken('admin', 'claude/a/chat-1')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/sessions`, {
+        headers: { Authorization: `Bearer ${tok}` },
+      })
+      expect(resp.status).toBe(200)
+    })
+
+    it('the daemon-wide trusted FILE token still 403s on this admin-only route', async () => {
+      const companionConverse = async () => ({ reply: 'hey' })
+      api = createInternalApi({ stateDir, daemonPid: 1, companionConverse })
+      const { port, tokenFilePath } = await api.start()
+      const fileToken = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${fileToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(403)
+      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+    })
+  })
+
+  // Route-contract tests against a MOCKED deps.voice.synthesizeSpeech —
+  // reuses the same synth-extraction as replyVoice (see ilink/voice.ts),
+  // but hands audio bytes back instead of ilink-sending (voice arc Stage 1).
+  describe('POST /v1/companion/speak', () => {
+    async function startWithSynth(
+      synthesizeSpeech: (text: string) => Promise<{ audio: Buffer; mime: string }>,
+    ): Promise<{ port: number; token: string }> {
+      api = createInternalApi({
+        stateDir, daemonPid: 1,
+        voice: {
+          replyVoice: async () => ({ ok: false, reason: 'unused_in_speak_tests' }),
+          saveConfig: async () => ({ ok: false, reason: 'unused_in_speak_tests' }),
+          configStatus: () => ({ configured: false }),
+          synthesizeSpeech,
+        },
+      })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
+      return { port, token }
+    }
+
+    it('503 when deps.voice is not wired', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      await api.start()
+      const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
+      const port = api.port()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/speak`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'voice_not_wired' })
+    })
+
+    it('400 when text is empty/whitespace', async () => {
+      const { port, token } = await startWithSynth(async () => ({ audio: Buffer.from('x'), mime: 'audio/wav' }))
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/speak`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '   ' }),
+      })
+      expect(resp.status).toBe(400)
+    })
+
+    it('422 no_voice_config when synth throws a no-voice-config error', async () => {
+      const { port, token } = await startWithSynth(async () => {
+        throw new Error('no_voice_config')
+      })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/speak`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(422)
+      expect(await resp.json()).toEqual({ ok: false, error: 'no_voice_config' })
+    })
+
+    it('500 with error detail on any other thrown error', async () => {
+      const { port, token } = await startWithSynth(async () => {
+        throw new Error('provider_boom')
+      })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/speak`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(500)
+      expect(await resp.json()).toEqual({ ok: false, error: 'provider_boom' })
+    })
+
+    it('happy path: 200 {ok:true, mime} with base64-roundtripping audio bytes', async () => {
+      const originalBytes = Buffer.from([0x52, 0x49, 0x46, 0x46])
+      const synthesizeSpeech = vi.fn(async (text: string) => {
+        expect(text).toBe('read this back')
+        return { audio: originalBytes, mime: 'audio/wav' }
+      })
+      const { port, token } = await startWithSynth(synthesizeSpeech)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/speak`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'read this back' }),
+      })
+      expect(resp.status).toBe(200)
+      const bodyJson = await resp.json()
+      expect(bodyJson).toMatchObject({ ok: true, mime: 'audio/wav' })
+      expect(Buffer.from(bodyJson.audio_b64, 'base64')).toEqual(originalBytes)
+      expect(synthesizeSpeech).toHaveBeenCalledWith('read this back')
+    })
+
+    it('tier gate: a trusted session token gets 403 (admin-only route)', async () => {
+      const { port } = await startWithSynth(async () => ({ audio: Buffer.from('x'), mime: 'audio/wav' }))
+      const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/speak`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(403)
+      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+    })
+
+    // ── route-scoping: the operator token's routeAllow includes speak
+    // alongside converse (see token-registry.ts), so it reaches this route.
+    it('the operator token reaches the route (not 403)', async () => {
+      const synthesizeSpeech = async () => ({ audio: Buffer.from([1, 2, 3]), mime: 'audio/wav' })
+      api = createInternalApi({
+        stateDir, daemonPid: 1,
+        voice: {
+          replyVoice: async () => ({ ok: false, reason: 'unused' }),
+          saveConfig: async () => ({ ok: false, reason: 'unused' }),
+          configStatus: () => ({ configured: false }),
+          synthesizeSpeech,
+        },
+      })
+      const { port, operatorTokenFilePath } = await api.start()
+      const opToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/speak`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${opToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(200)
+    })
+
+    it('400 text too long when text exceeds 5000 chars', async () => {
+      const { port, token } = await startWithSynth(async () => ({ audio: Buffer.from('x'), mime: 'audio/wav' }))
+      const longText = 'x'.repeat(5001)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/speak`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: longText }),
+      })
+      expect(resp.status).toBe(400)
+      expect(await resp.json()).toEqual({ error: 'text too long' })
+    })
+
+    it('happy path still works with 5000 chars exactly', async () => {
+      const synthesizeSpeech = vi.fn(async () => ({ audio: Buffer.from([1, 2, 3]), mime: 'audio/wav' }))
+      const { port, token } = await startWithSynth(synthesizeSpeech)
+      const text = 'x'.repeat(5000)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/speak`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toMatchObject({ ok: true, mime: 'audio/wav' })
+      expect(synthesizeSpeech).toHaveBeenCalledWith(text)
+    })
+  })
+
+  // ─── chat prefs (set_chat_pref tool backend) ──────────────────────────
+
+  describe('POST /v1/chat-prefs', () => {
+    it('503 when setChatPref dep not wired', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/chat-prefs`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'u@bot', care: 'high' }),
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'chat_prefs_not_wired' })
+    })
+
+    it('400 on missing chat_id / bad care value / empty patch', async () => {
+      const setChatPref = vi.fn()
+      api = createInternalApi({ stateDir, daemonPid: 1, setChatPref })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+
+      const missingChatId = await fetch(`http://127.0.0.1:${port}/v1/chat-prefs`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ care: 'high' }),
+      })
+      expect(missingChatId.status).toBe(400)
+
+      const badCare = await fetch(`http://127.0.0.1:${port}/v1/chat-prefs`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'u@bot', care: 'medium' }),
+      })
+      expect(badCare.status).toBe(400)
+
+      const badSplit = await fetch(`http://127.0.0.1:${port}/v1/chat-prefs`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'u@bot', split: 'yes' }),
+      })
+      expect(badSplit.status).toBe(400)
+
+      const emptyPatch = await fetch(`http://127.0.0.1:${port}/v1/chat-prefs`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'u@bot' }),
+      })
+      expect(emptyPatch.status).toBe(400)
+
+      expect(setChatPref).not.toHaveBeenCalled()
+    })
+
+    it('happy path calls setChatPref(chat_id, patch) and returns the read-back', async () => {
+      const setChatPref = vi.fn((_chatId: string, patch: { care?: 'off' | 'low' | 'high'; split?: boolean }) => ({ care: 'high' as const, split: patch.split }))
+      api = createInternalApi({ stateDir, daemonPid: 1, setChatPref })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/chat-prefs`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'u@bot', care: 'high', split: false }),
+      })
+      expect(resp.status).toBe(200)
+      expect(setChatPref).toHaveBeenCalledWith('u@bot', { care: 'high', split: false })
+      expect(await resp.json()).toEqual({ ok: true, prefs: { care: 'high', split: false } })
+    })
+  })
+
+  // ─── stickers (send_sticker / save / list) ─────────────────────────────
+
+  interface MockStickers {
+    resolve: (tag: string) => string | null
+    save: (sourcePath: string, tags: string[], desc?: string) => { file: string; tags: string[] }
+    list: () => { file: string; tags: string[]; desc?: string }[]
+    allTags: () => string[]
+  }
+
+  describe('POST /v1/wechat/send_sticker', () => {
+    it('503 when stickers dep not wired', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c@bot', tag: 'happy' }),
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'stickers_not_wired' })
+    })
+
+    it('400 on missing chat_id / missing tag', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => null),
+        save: vi.fn(),
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => []),
+      }
+      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+
+      const missingChatId = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ tag: 'happy' }),
+      })
+      expect(missingChatId.status).toBe(400)
+
+      const missingTag = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c@bot' }),
+      })
+      expect(missingTag.status).toBe(400)
+
+      expect(stickers.resolve).not.toHaveBeenCalled()
+    })
+
+    it('no matching sticker ⇒ ok:false with available tags', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => null),
+        save: vi.fn(),
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => ['happy', 'sad']),
+      }
+      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c@bot', tag: 'angry' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: false, reason: 'no_sticker_for_tag', tags: ['happy', 'sad'] })
+    })
+
+    it('ilink not wired ⇒ 503 when tag resolves', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => '/state/stickers/happy.png'),
+        save: vi.fn(),
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => []),
+      }
+      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c@bot', tag: 'happy' }),
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'ilink_not_wired' })
+    })
+
+    it('happy path calls ilink.sendFile(chat_id, resolvedPath) and returns basename', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => '/state/stickers/happy.png'),
+        save: vi.fn(),
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => []),
+      }
+      const sendFile = vi.fn(async () => {})
+      api = createInternalApi({
+        stateDir, daemonPid: 1, stickers,
+        ilink: { sendReply: async () => ({ msgId: 'm' }), sendFile, editMessage: async () => {}, broadcast: async () => ({ ok: 0, failed: 0 }) },
+      })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c@bot', tag: 'happy' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(sendFile).toHaveBeenCalledWith('c@bot', '/state/stickers/happy.png')
+      expect(await resp.json()).toEqual({ ok: true, file: 'happy.png' })
+    })
+
+    it('ilink.sendFile throws ⇒ ok:false+error', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => '/state/stickers/happy.png'),
+        save: vi.fn(),
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => []),
+      }
+      const sendFile = vi.fn(async () => { throw new Error('boom') })
+      api = createInternalApi({
+        stateDir, daemonPid: 1, stickers,
+        ilink: { sendReply: async () => ({ msgId: 'm' }), sendFile, editMessage: async () => {}, broadcast: async () => ({ ok: 0, failed: 0 }) },
+      })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c@bot', tag: 'happy' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: false, error: 'boom' })
+    })
+  })
+
+  describe('POST /v1/stickers', () => {
+    it('503 when stickers dep not wired', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ path: '/tmp/x.png', tags: ['happy'] }),
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'stickers_not_wired' })
+    })
+
+    it('400 on missing path / empty tags array', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => null),
+        save: vi.fn(),
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => []),
+      }
+      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+
+      const missingPath = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ tags: ['happy'] }),
+      })
+      expect(missingPath.status).toBe(400)
+
+      const emptyTags = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ path: '/tmp/x.png', tags: [] }),
+      })
+      expect(emptyTags.status).toBe(400)
+
+      const badTagType = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ path: '/tmp/x.png', tags: ['happy', ''] }),
+      })
+      expect(badTagType.status).toBe(400)
+
+      expect(stickers.save).not.toHaveBeenCalled()
+    })
+
+    it('lib throws invalid_extension ⇒ 400 with that message', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => null),
+        save: vi.fn(() => { throw new Error('invalid_extension') }),
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => []),
+      }
+      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ path: '/tmp/x.txt', tags: ['happy'] }),
+      })
+      expect(resp.status).toBe(400)
+      expect(await resp.json()).toEqual({ error: 'invalid_extension' })
+    })
+
+    it('happy path calls save(path, tags, desc) and returns ok+file+tags', async () => {
+      const save = vi.fn(() => ({ file: 'x.png', tags: ['happy'] }))
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => null),
+        save,
+        list: vi.fn(() => []),
+        allTags: vi.fn(() => []),
+      }
+      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ path: '/tmp/x.png', tags: ['happy'], desc: 'a happy face' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(save).toHaveBeenCalledWith('/tmp/x.png', ['happy'], 'a happy face')
+      expect(await resp.json()).toEqual({ ok: true, file: 'x.png', tags: ['happy'] })
+    })
+  })
+
+  describe('GET /v1/stickers', () => {
+    it('503 when stickers dep not wired', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'stickers_not_wired' })
+    })
+
+    it('happy path returns stickers list + tags', async () => {
+      const stickers: MockStickers = {
+        resolve: vi.fn(() => null),
+        save: vi.fn(),
+        list: vi.fn(() => [{ file: 'x.png', tags: ['happy'], desc: 'a happy face' }]),
+        allTags: vi.fn(() => ['happy']),
+      }
+      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({
+        ok: true,
+        stickers: [{ file: 'x.png', tags: ['happy'], desc: 'a happy face' }],
+        tags: ['happy'],
+      })
+    })
+  })
+
   // ─── ilink-bound message family routes (RFC 03 P1.B B1) ──────────────
 
   describe('ilink message routes', () => {
@@ -1113,6 +1975,7 @@ describe('internal-api', () => {
             replyVoice: opts.replyVoice,
             saveConfig: async () => ({ ok: false, reason: 'unused' }),
             configStatus: () => ({ configured: false }),
+            synthesizeSpeech: async () => { throw new Error('unused') },
           }
         : undefined as unknown as WechatVoiceImports
       api = createInternalApi({
@@ -1131,6 +1994,7 @@ describe('internal-api', () => {
       replyVoice: (chatId: string, text: string) => Promise<{ ok: true; msgId: string } | { ok: false; reason: string }>
       saveConfig: (i: { provider: 'http_tts' | 'qwen' }) => Promise<{ ok: false; reason: string }>
       configStatus: () => { configured: false }
+      synthesizeSpeech: (text: string) => Promise<{ audio: Buffer; mime: string }>
     } | undefined
 
     it('POST /v1/wechat/reply forwards chat_id+text and returns ok+msg_id (legacy reshape)', async () => {
@@ -1205,6 +2069,49 @@ describe('internal-api', () => {
       const body = await resp.json() as { ok: boolean; error?: string }
       expect(body.ok).toBe(false)
       expect(body.error).toContain('ilink down')
+    })
+
+    it('POST /v1/wechat/reply captures into an open reply sink instead of ilink-sending', async () => {
+      const sendReply = vi.fn(async () => ({ msgId: 'm-123' }))
+      const replySinks = makeReplySinks()
+      const handle = replySinks.open('c1')
+      api = createInternalApi({
+        stateDir, daemonPid: 1,
+        ilink: { sendReply, sendFile: async () => {}, editMessage: async () => {}, broadcast: async () => ({ ok: 0, failed: 0 }) },
+        replySinks,
+      })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c1', text: 'hi' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true, captured: true })
+      expect(sendReply).not.toHaveBeenCalled()
+      expect(handle.close()).toBe('hi')
+    })
+
+    it('POST /v1/wechat/reply falls through to ilink when no sink is open for the chat', async () => {
+      const sendReply = vi.fn(async () => ({ msgId: 'm-123' }))
+      const replySinks = makeReplySinks()
+      replySinks.open('other-chat') // sink open, but not for c1
+      api = createInternalApi({
+        stateDir, daemonPid: 1,
+        ilink: { sendReply, sendFile: async () => {}, editMessage: async () => {}, broadcast: async () => ({ ok: 0, failed: 0 }) },
+        replySinks,
+      })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: 'c1', text: 'hi' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true, msg_id: 'm-123' })
+      expect(sendReply).toHaveBeenCalledWith('c1', 'hi')
     })
 
     it('POST /v1/wechat/reply_voice forwards chat_id+text and returns voice result', async () => {
@@ -1660,6 +2567,160 @@ describe('internal-api', () => {
         expect(resp.status).toBe(503)
         expect(await resp.json()).toEqual({ error: 'ilink_not_wired' })
       }
+    })
+
+    // ── reply splitting (活人感, spec 2026-07-09) ────────────────────────
+
+    describe('POST /v1/wechat/reply — splitting (活人感)', () => {
+      // Three paragraphs: the first two are individually long enough to
+      // each cross splitReply's per-chunk target on their own (so they
+      // land in separate chunks instead of being greedily merged), the
+      // third is a short tail — this reliably yields 3 chunks under the
+      // real (non-mocked) splitReply implementation.
+      const P1 = '第一段说明这个问题的背景，内容足够长，细节丰富，超过最小长度阈值，需要多写一些内容才能保证触发拆分逻辑的判断条件呀哈哈这里再多加一些字数用来撑够长度到九十个字符左右这样才行喔喔喔喔喔'
+      const P2 = '第二段给出中间的分析过程，进一步展开论证，补充一些额外的说明文字，让这一段也达到足够的长度用于拆分成一条独立消息呀哈哈这里再多加一些字数用来撑够长度到九十个字符左右这样才行喔喔喔喔喔'
+      const P3 = '第三段简短总结一下就好了。'
+      const LONG = `${P1}\n\n${P2}\n\n${P3}`
+
+      function startWithSplit(opts: {
+        sendReply: (chatId: string, text: string) => Promise<{ msgId: string; error?: string }>
+        getChatPrefs?: (chatId: string) => { split?: boolean }
+        sleepMs?: (ms: number) => Promise<void>
+        log?: (tag: string, line: string, fields?: Record<string, unknown>) => void
+        // When set, wires `prefix` deps the same way the "reply prefixing"
+        // fixture above does, so maybePrefix() can be driven into prefixing.
+        prefixMode?: { kind: 'solo' | 'parallel' | 'chatroom' | 'primary_tool'; provider?: string; primary?: string }
+      }): Promise<{ port: number; token: string }> {
+        const conversationStore = {
+          get: (_chatId: string) => opts.prefixMode ? { mode: opts.prefixMode as never } : null,
+        }
+        api = createInternalApi({
+          stateDir, daemonPid: 1,
+          ilink: {
+            sendReply: opts.sendReply,
+            sendFile: async () => {},
+            editMessage: async () => {},
+            broadcast: async () => ({ ok: 0, failed: 0 }),
+          },
+          ...(opts.getChatPrefs ? { getChatPrefs: opts.getChatPrefs } : {}),
+          ...(opts.sleepMs ? { sleepMs: opts.sleepMs } : {}),
+          ...(opts.log ? { log: opts.log } : {}),
+          ...(opts.prefixMode ? {
+            prefix: {
+              conversationStore,
+              providerDisplayName: (id: string) => id === 'claude' ? 'Claude' : id,
+              permissionMode: 'strict' as const,
+            },
+          } : {}),
+        })
+        return api.start().then(({ port, tokenFilePath }) => ({
+          port, token: readFileSync(tokenFilePath, 'utf8').trim(),
+        }))
+      }
+
+      it('splits an un-prefixed reply into ordered chunks with paced sleeps; msg_id is the LAST chunk', async () => {
+        const sent: string[] = []
+        const delays: number[] = []
+        let n = 0
+        const sendReply = vi.fn(async (_c: string, text: string) => { sent.push(text); n++; return { msgId: `m-${n}` } })
+        const { port, token } = await startWithSplit({
+          sendReply,
+          getChatPrefs: () => ({}),
+          sleepMs: async (ms) => { delays.push(ms) },
+        })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'c@bot', text: LONG }),
+        })
+        expect(resp.status).toBe(200)
+        expect(sendReply.mock.calls.length).toBeGreaterThanOrEqual(2)
+        // Content order preserved — rejoining the sent chunks (ignoring the
+        // whitespace trimmed at chunk boundaries) reconstructs the source.
+        expect(sent.join('').replace(/\s+/g, '')).toBe(LONG.replace(/\s+/g, ''))
+        expect(await resp.json()).toEqual({ ok: true, msg_id: `m-${n}` })
+        expect(delays.length).toBe(n - 1)
+        for (const d of delays) {
+          expect(d).toBeGreaterThanOrEqual(600)
+          expect(d).toBeLessThanOrEqual(2000)
+        }
+      })
+
+      it('split:false pref → single send with the full text', async () => {
+        const sendReply = vi.fn(async () => ({ msgId: 'm-1' }))
+        const { port, token } = await startWithSplit({
+          sendReply,
+          getChatPrefs: () => ({ split: false }),
+        })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'c@bot', text: LONG }),
+        })
+        expect(resp.status).toBe(200)
+        expect(sendReply).toHaveBeenCalledTimes(1)
+        expect(sendReply).toHaveBeenCalledWith('c@bot', LONG)
+      })
+
+      it('absent getChatPrefs dep → single send (backwards compatible)', async () => {
+        const sendReply = vi.fn(async () => ({ msgId: 'm-1' }))
+        const { port, token } = await startWithSplit({ sendReply })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'c@bot', text: LONG }),
+        })
+        expect(resp.status).toBe(200)
+        expect(sendReply).toHaveBeenCalledTimes(1)
+        expect(sendReply).toHaveBeenCalledWith('c@bot', LONG)
+      })
+
+      it('prefixed reply (participant_tag in a multi-participant mode) → single send', async () => {
+        const sendReply = vi.fn(async () => ({ msgId: 'm-1' }))
+        const { port, token } = await startWithSplit({
+          sendReply,
+          getChatPrefs: () => ({}),
+          prefixMode: { kind: 'parallel' },
+        })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'c', text: LONG, participant_tag: 'claude' }),
+        })
+        expect(resp.status).toBe(200)
+        expect(sendReply).toHaveBeenCalledTimes(1)
+        expect(sendReply).toHaveBeenCalledWith('c', `[Claude] ${LONG}`)
+      })
+
+      it('mid-sequence failure stops and reports sent count', async () => {
+        let n = 0
+        const sendReply = vi.fn(async (): Promise<{ msgId: string; error?: string }> => {
+          n++
+          if (n === 1) return { msgId: 'm-1' }
+          return { msgId: '', error: 'boom' }
+        })
+        const log = vi.fn()
+        const { port, token } = await startWithSplit({
+          sendReply,
+          getChatPrefs: () => ({}),
+          sleepMs: async () => {},
+          log,
+        })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'c@bot', text: LONG }),
+        })
+        expect(resp.status).toBe(200)
+        expect(await resp.json()).toEqual({ ok: false, error: 'boom', sent: 1 })
+        expect(sendReply).toHaveBeenCalledTimes(2)
+        const wechatReplyLogs = log.mock.calls.filter(call => call[0] === 'WECHAT_REPLY')
+        expect(wechatReplyLogs).toHaveLength(1)
+        const [tag, line] = wechatReplyLogs[0]!
+        expect(tag).toBe('WECHAT_REPLY')
+        expect(line).toContain('split partial failure')
+        expect(line).toContain('sent=1')
+      })
     })
   })
 })

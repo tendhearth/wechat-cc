@@ -20,9 +20,14 @@ import type { PipelineRun } from '../inbound/types'
 import { isAdmin, loadAccess } from '../../lib/access'
 import { makeAdminCommands } from '../admin-commands'
 import { makeModeCommands } from '../mode-commands'
+import type { ChatPrefsStore } from '../chat-prefs'
+import type { CareLedger } from '../companion/care-ledger'
+import type { ReplySinks } from '../reply-sinks'
+import { loadCompanionConfig } from '../companion/config'
+import type { InboundMsg } from '../../core/prompt-format'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
-import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
+import { loadAgentConfig, saveAgentConfig, withModelForProvider } from '../../lib/agent-config'
 import { findOnPath } from '../../lib/util'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
@@ -32,6 +37,7 @@ import { makeMessagesStore } from '../../lib/messages-store'
 import { makeDedupStore } from '../../lib/dedup-store'
 import type { YiHub, YiDispatch } from '../../core/yi-hub'
 import type { ExecResult } from '../../core/a2a-server'
+import type { Mode, ProviderId } from '../../core/conversation'
 
 export interface DelegateDeps {
   listHands: () => readonly A2AAgentRecord[]
@@ -39,6 +45,43 @@ export interface DelegateDeps {
   pushDelegate: (hand: A2AAgentRecord, task: YiDispatch, selfId: string, timeoutMs: number) => Promise<ExecResult>
   selfId: string
   timeoutMs: number
+}
+
+export interface OwnerSessionKeyDeps {
+  resolveProject: (chatId: string) => { alias: string; path: string } | null
+  getMode: (chatId: string) => Mode
+  defaultProviderId: ProviderId
+}
+
+/**
+ * Resolves the (alias, providerId) session-manager key for a chat the SAME
+ * way ConversationCoordinator.dispatch resolves it internally (resolveProject
+ * + mode → provider), mirroring the provider-derivation chain tick-bodies.ts's
+ * dispatchToChat uses before its own isInFlight check. Exported/pure so the
+ * app-conversation-channel in-flight guard (companionConverse below) is unit
+ * testable without constructing a full Bootstrap.
+ *
+ * Used to check SessionManager.isInFlight with the EXACT key a real dispatch
+ * will acquire — so an app /converse turn (companionConverse) refuses to
+ * start while a WeChat turn is in flight on the owner's session. Without
+ * this, a WeChat message and an app /converse racing on the owner's
+ * default_chat_id both resolve the same SessionManager handle and dispatch
+ * concurrently on one AgentSession → corruption (e.g. the openai provider
+ * pushes to a shared mutable history array with no self-guard). Spec §3
+ * (app-conversation-channel Task 2, HIGH review finding).
+ *
+ * Returns null when the chat has no resolvable project — dispatch would
+ * drop the message in that case too, so there's nothing to guard.
+ */
+export function resolveOwnerSessionKey(chatId: string, deps: OwnerSessionKeyDeps): { alias: string; providerId: ProviderId } | null {
+  const proj = deps.resolveProject(chatId)
+  if (!proj) return null
+  const mode = deps.getMode(chatId)
+  const providerId =
+    mode.kind === 'solo' ? mode.provider
+    : mode.kind === 'primary_tool' ? mode.primary
+    : (mode.participants?.[0] ?? deps.defaultProviderId)
+  return { alias: proj.alias, providerId }
 }
 
 export function makeDelegateToHand(deps: DelegateDeps) {
@@ -58,12 +101,34 @@ export interface PipelineDepsOpts {
   ilink: IlinkAdapter
   boot: Bootstrap
   log: (tag: string, line: string, fields?: Record<string, unknown>) => void
+  /**
+   * Shared chat-prefs instance — constructed once in main.ts and also fed
+   * to registerInternalApi's getChatPrefs, so the /set command and the
+   * reply-route split logic read/write the SAME in-memory-cached store.
+   */
+  chatPrefs: ChatPrefsStore
+  /**
+   * Shared care-ledger instance — constructed once in main.ts, also fed to
+   * pushTick (via WireMainOpts). The inbound activity middleware resets the
+   * no-reply streak through this SAME store on every inbound message.
+   */
+  careLedger: CareLedger
+  /**
+   * Shared reply-sink registry (app-conversation-channel, voice arc Stage
+   * 0, Task 1/2) — constructed once in main.ts, also fed to
+   * registerInternalApi's `replySinks` so the `POST /v1/wechat/reply`
+   * route captures into the SAME sink the converse closure below opens.
+   * A second instance would never see the capture.
+   */
+  replySinks: ReplySinks
 }
 
 export interface PipelineDepsRefs {
   polling: Ref<PollingLifecycle>
   guard: Ref<GuardLifecycle>
   pipeline: Ref<PipelineRun>
+  /** Late-bound ingest nudge — fired per new inbound so the knowledge base tracks fresh activity. */
+  ingestNudge: Ref<() => void>
 }
 
 const STARTED_AT_ISO = new Date().toISOString()
@@ -71,8 +136,21 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = join(HERE, '..', '..', '..')
 const CLI_ENTRY = join(REPO_ROOT, 'cli.ts')
 
-export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): { pipelineDeps: InboundPipelineDeps } {
-  const { stateDir, db, ilink, boot, log } = opts
+export interface BuildPipelineDepsResult {
+  pipelineDeps: InboundPipelineDeps
+  /**
+   * App-conversation-channel converse closure (voice arc Stage 0, Task 2).
+   * Late-bound onto internal-api by main.ts via setCompanionConverse()
+   * once this returns — bootstrap (boot.coordinator) isn't available until
+   * after buildPipelineDeps runs, so it can't be wired at internal-api
+   * registration time (see main.ts's staged startup: internal-api first,
+   * then bootstrap, then this wiring pass).
+   */
+  companionConverse: (text: string) => Promise<{ reply: string }>
+}
+
+export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): BuildPipelineDepsResult {
+  const { stateDir, db, ilink, boot, log, chatPrefs, careLedger, replySinks } = opts
   const inboxDir = join(stateDir, 'inbox')
 
   // A2A exec (delegate a task to a hand) runs a FULL agent on the hand —
@@ -207,6 +285,20 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     sendMessage: (cid, txt) => ilink.sendMessage(cid, txt),
     setUserName: (cid, name) => ilink.setUserName(cid, name),
     getUserName: (cid) => ilink.resolveUserName(cid) ?? null,
+    // `/api <model>` — read-modify-write agent-config.json via
+    // withModelForProvider/saveAgentConfig (per-provider field, unlike the
+    // POST /v1/model route which pins the GLOBAL default provider's model).
+    // The daemon's mtime-cached config reader (currentModelFor,
+    // bootstrap/index.ts) then delivers it to the next openai spawn, no restart.
+    pinModel: (providerId, model) => {
+      // Write the TARGET provider's own model field (openai→openaiModel), NOT
+      // the global default provider's — so `/api <model>` pins openai even when
+      // the global default is claude. Mirrors currentModelFor's per-provider
+      // resolution (bootstrap/index.ts). mtime-cached reader delivers it next spawn.
+      const current = loadAgentConfig(stateDir)
+      saveAgentConfig(stateDir, withModelForProvider(current, providerId, model))
+    },
+    chatPrefs,
     log,
     isAdmin,
   })
@@ -272,11 +364,115 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       append: rec => messagesStore.append(rec),
       log,
     },
-    activity: { recordInbound, log },
+    activity: {
+      // Piggyback the ingest nudge on the per-new-inbound recordInbound call:
+      // fresh WeChat activity means new data to fold into the knowledge base.
+      // Trailing-debounced + gated inside registerIngest, so this is O(1) here.
+      recordInbound: (chatId, when) => { refs.ingestNudge.current?.(); return recordInbound(chatId, when) },
+      resetCareNoReply: (c) => careLedger.resetNoReply(c),
+      log,
+    },
     milestone: { fireMilestonesFor, log },
     welcome: { maybeWriteWelcomeObservation, log },
-    dispatch: { coordinator: { dispatch: (msg) => boot.coordinator.dispatch(msg) } },
+    dispatch: {
+      coordinator: {
+        // Agent-social M1 (T7b-2) — before running a normal turn, check
+        // whether this inbound is the operator's own chat AND there's a
+        // pending confirm awaiting their yes/no (asked out-of-band by
+        // confirmWithOwner via boot.social.pendingConfirms.ask, wired in
+        // bootstrap/index.ts's T7b-core social block). If so, try to
+        // consume it as a confirm answer instead of dispatching a normal
+        // agent turn — a clear yes/no settles the pending broker Promise
+        // directly (see pending-confirm.ts's resolveByOwner); the reveal/
+        // opener that follows is driven entirely by the broker, so there's
+        // nothing more to send from here. An `'unclear'` verdict leaves the
+        // pending confirm untouched and falls through to a normal turn, so
+        // a genuine question from the operator is never swallowed.
+        dispatch: (msg) => {
+          if (boot.social && isAdmin(msg.chatId) && boot.social.pendingConfirms.hasPending(msg.chatId)) {
+            const r = boot.social.pendingConfirms.resolveByOwner(msg.chatId, msg.text)
+            if (r !== 'unclear') return Promise.resolve()
+          }
+          return boot.coordinator.dispatch(msg)
+        },
+      },
+    },
   }
 
-  return { pipelineDeps }
+  // App-conversation-channel converse (voice arc Stage 0, Task 2) — drives
+  // one real turn on the owner's own chat session and hands the reply back
+  // synchronously. Synthesizes an InboundMsg the same shape a real WeChat
+  // inbound would have (userId==chatId is correct for a solo owner chat)
+  // and dispatches it straight through the coordinator — NOT through the
+  // poll-loop/inbound-pipeline middleware chain, since this isn't a WeChat
+  // inbound. The agent's `reply` tool still posts to POST /v1/wechat/reply
+  // as normal; the open sink captures it instead of ilink-sending.
+  const companionConverse = async (text: string): Promise<{ reply: string }> => {
+    const ownerChatId = loadCompanionConfig(stateDir).default_chat_id
+    if (!ownerChatId) throw new Error('companion_owner_chat_not_configured')
+    // D3 review follow-up: app-converse captures the reply through a sink, but a
+    // chatroom-mode chat is preempt-policy (submitTurn runs the turn BARE, no
+    // per-chat lock) AND chatroom forbids the `reply` tool — so an app turn on a
+    // chatroom-mode owner chat would run unserialized and capture nothing.
+    // Reject clearly instead of hanging / returning an empty reply. (Pre-D3 this
+    // was a silent no-op; D3 makes the policy explicit, so we guard it explicitly.)
+    if (boot.coordinator.getMode(ownerChatId).kind === 'chatroom') {
+      throw new Error('owner_chat_in_chatroom_mode')
+    }
+    // PRIMARY guard (spec §3, HIGH finding fix): refuse to start an app turn
+    // while a WeChat turn is already dispatching on the owner's session.
+    // replySinks.open() below only catches app-vs-app races (both go through
+    // this closure); a WeChat inbound never touches replySinks, so without
+    // this check a WeChat message and an app /converse racing on the same
+    // (alias, providerId, chatId) would both acquire the SAME SessionManager
+    // handle and dispatch concurrently on one AgentSession. Resolves the key
+    // the exact same way ConversationCoordinator.dispatch will (see
+    // resolveOwnerSessionKey above) and reuses SessionManager.isInFlight —
+    // the SAME in-flight guard the companion push tick checks before
+    // dispatching (tick-bodies.ts's dispatchToChat).
+    const ownerKey = resolveOwnerSessionKey(ownerChatId, {
+      resolveProject: boot.resolve,
+      getMode: (cid) => boot.coordinator.getMode(cid),
+      defaultProviderId: boot.defaultProviderId,
+    })
+    if (ownerKey && boot.sessionManager.isInFlight({ alias: ownerKey.alias, providerId: ownerKey.providerId, chatId: ownerChatId })) {
+      // Same error string as the replySinks guard below so the route's
+      // reply_sink_busy → 409 session_busy mapping (internal-api/routes.ts)
+      // stays unchanged.
+      throw new Error('reply_sink_busy')
+    }
+    // The isInFlight pre-check above is a fast, lock-free rejection for the
+    // still-common case (WeChat turn already running) so the app UI gets an
+    // immediate 409 without waiting on the mutex. Below, session
+    // serialization (session-serialization-design.md) closes the residual
+    // this pre-check alone can't: the SINK's entire open→close lifetime runs
+    // INSIDE the per-chat turn (submitTurn's `within` hook), so a WeChat/tick
+    // turn queued behind this app turn cannot start — and cannot have its
+    // reply-tool output stolen by the still-open app sink — until this turn's
+    // sink is closed. D3: submitTurn owns the lock/policy + the dispatch; the
+    // app path just supplies the capture logic to run within the locked turn
+    // (no more hand-rolled runExclusive/dispatchInner + the deadlock footgun).
+    const synthetic: InboundMsg = {
+      chatId: ownerChatId,
+      userId: ownerChatId,
+      text,
+      msgType: 'text',
+      createTimeMs: Date.now(),
+      accountId: ilink.resolveAccountId(ownerChatId),
+    }
+    return boot.coordinator.submitTurn(synthetic, {
+      within: async (dispatch) => {
+        const sink = replySinks.open(ownerChatId)
+        try {
+          await dispatch()
+          return { reply: sink.close() }
+        } catch (err) {
+          sink.close()
+          throw err
+        }
+      },
+    })
+  }
+
+  return { pipelineDeps, companionConverse }
 }

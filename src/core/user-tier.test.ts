@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveTier, resolveEffectiveTier, TIER_PROFILES, type UserTier, type ToolKind } from './user-tier'
+import { resolveTier, resolveEffectiveTier, TIER_PROFILES, SOCIAL_JUDGE_PROFILE, type UserTier, type ToolKind } from './user-tier'
 import type { Access } from '../lib/access'
 
 const baseAccess: Access = {
@@ -59,7 +59,7 @@ describe('TIER_PROFILES', () => {
     'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
     'observations_read', 'observations_write',
     'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
-    'a2a_send',
+    'a2a_send', 'plugin_tool',
   ]
 
   for (const tier of ['admin', 'trusted', 'guest'] as UserTier[]) {
@@ -104,11 +104,13 @@ describe('TIER_PROFILES', () => {
     expect(TIER_PROFILES.trusted.relay.has('shell_destructive')).toBe(true)
     expect(TIER_PROFILES.trusted.relay.has('memory_delete')).toBe(true)
     // trusted denies all admin-exclusive tools (was 0 before
-    // self-diagnosis / remediation tools existed).
-    expect(TIER_PROFILES.trusted.deny.size).toBe(3)
+    // self-diagnosis / remediation / plugin tools existed).
+    expect(TIER_PROFILES.trusted.deny.size).toBe(5)
     expect(TIER_PROFILES.trusted.deny.has('daemon_introspect')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('daemon_remediate')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('file_locate')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('plugin_tool')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('social_seek')).toBe(true)
   })
 
   it('guest allows only reply/share_page/memory_read/observations_read', () => {
@@ -128,6 +130,17 @@ describe('TIER_PROFILES', () => {
     expect(TIER_PROFILES.trusted.deny.has('daemon_introspect')).toBe(true)
     expect(TIER_PROFILES.trusted.allow.has('daemon_introspect')).toBe(false)
     expect(TIER_PROFILES.guest.deny.has('daemon_introspect')).toBe(true)
+  })
+
+  it('plugin_tool (any third-party plugin MCP tool) is admin-only — denied for trusted and guest', () => {
+    // A plugin (e.g. wxvault = the owner's WeChat history) spawns arbitrary code
+    // and can expose owner-private data. Fail closed: only the owner (admin) can
+    // call a plugin's tools by default.
+    expect(TIER_PROFILES.admin.allow.has('plugin_tool')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('plugin_tool')).toBe(true)
+    expect(TIER_PROFILES.trusted.allow.has('plugin_tool')).toBe(false)
+    expect(TIER_PROFILES.guest.deny.has('plugin_tool')).toBe(true)
+    expect(TIER_PROFILES.guest.allow.has('plugin_tool')).toBe(false)
   })
 
   it('daemon_remediate (release/restart/model-set) is admin-only and relays even for admin', () => {
@@ -186,6 +199,14 @@ describe('classifyToolUse', () => {
     expect(classifyToolUse('mcp__wechat__observations_write', {})).toBe('observations_write')
     expect(classifyToolUse('mcp__wechat__observations_archive', {})).toBe('observations_write')
   })
+  it('set_chat_pref → memory_write (a write must not classify as a read)', () => {
+    expect(classifyToolUse('mcp__wechat__set_chat_pref', {})).toBe('memory_write')
+  })
+  it('send_sticker → reply, save_sticker → memory_write, list_stickers → memory_read', () => {
+    expect(classifyToolUse('mcp__wechat__send_sticker', {})).toBe('reply')
+    expect(classifyToolUse('mcp__wechat__save_sticker', {})).toBe('memory_write')
+    expect(classifyToolUse('mcp__wechat__list_stickers', {})).toBe('memory_read')
+  })
   it('diagnostic_turns / diagnostic_sessions / diagnostic_health / model_get → daemon_introspect', () => {
     expect(classifyToolUse('mcp__wechat__diagnostic_turns', {})).toBe('daemon_introspect')
     expect(classifyToolUse('mcp__wechat__diagnostic_sessions', {})).toBe('daemon_introspect')
@@ -205,6 +226,17 @@ describe('classifyToolUse', () => {
     expect(classifyToolUse('mcp__wechat__session_evict', {})).toBe('daemon_remediate')
     // A non-daemon unknown wechat tool still uses the permissive query default.
     expect(classifyToolUse('mcp__wechat__some_query_tool', {})).toBe('fs_read')
+  })
+  it('third-party plugin MCP tools → plugin_tool (admin-only, fail-closed)', () => {
+    // Any non-wechat, non-delegate MCP server is a plugin; its tools must not
+    // reach trusted/guest by default (wxvault would leak the owner's WeChat DB).
+    expect(classifyToolUse('mcp__wxvault__get_messages', {})).toBe('plugin_tool')
+    expect(classifyToolUse('mcp__wxvault__search_messages', {})).toBe('plugin_tool')
+    expect(classifyToolUse('mcp__someplugin__anything', {})).toBe('plugin_tool')
+  })
+  it('delegate MCP tools stay subagent (owner cross-provider delegation, not a plugin)', () => {
+    expect(classifyToolUse('mcp__delegate__delegate_claude', {})).toBe('subagent')
+    expect(classifyToolUse('mcp__delegate__delegate_codex', {})).toBe('subagent')
   })
   it('Read / Glob / Grep / LS → fs_read', () => {
     expect(classifyToolUse('Read', {})).toBe('fs_read')
@@ -301,5 +333,71 @@ describe('file_locate tier kind', () => {
     expect(TIER_PROFILES.admin.relay.has('file_locate')).toBe(false)
     expect(TIER_PROFILES.trusted.deny.has('file_locate')).toBe(true)
     expect(TIER_PROFILES.guest.deny.has('file_locate')).toBe(true)
+  })
+})
+
+describe('social_seek tier kind (M1 T6)', () => {
+  it('classifies mcp__wechat__social_seek as ToolKind social_seek', () => {
+    expect(classifyToolUse('mcp__wechat__social_seek', { topic: 'x' })).toBe('social_seek')
+  })
+  it('admin allows social_seek; trusted and guest deny it', () => {
+    // social_seek initiates outbound social contact with external A2A agents
+    // (unlike a2a_send, which replies to an already-established peer) —
+    // admin-only, no relay path: trusted/guest are denied outright.
+    expect(TIER_PROFILES.admin.allow.has('social_seek')).toBe(true)
+    expect(TIER_PROFILES.admin.relay.has('social_seek')).toBe(false)
+    expect(TIER_PROFILES.trusted.deny.has('social_seek')).toBe(true)
+    expect(TIER_PROFILES.trusted.allow.has('social_seek')).toBe(false)
+    expect(TIER_PROFILES.guest.deny.has('social_seek')).toBe(true)
+    expect(TIER_PROFILES.guest.allow.has('social_seek')).toBe(false)
+  })
+})
+
+describe('SOCIAL_JUDGE_PROFILE (T7b-core review fix)', () => {
+  it('allows a plugin tool (the wx* fact tools the judge must call)', () => {
+    // Pre-fix, the judge spawned with TIER_PROFILES.guest — guest denies
+    // plugin_tool, so classifyToolUse('mcp__wxfacts__contact_facts', ...)
+    // would resolve to a kind that's in guest.deny, and the judge got
+    // "Permission denied" on every wx* call, silently falling back to
+    // topic-text-only grounding despite the BOOT log claiming otherwise.
+    const kind = classifyToolUse('mcp__wxfacts__contact_facts', {})
+    expect(kind).toBe('plugin_tool')
+    expect(SOCIAL_JUDGE_PROFILE.allow.has(kind)).toBe(true)
+    expect(SOCIAL_JUDGE_PROFILE.deny.has(kind)).toBe(false)
+  })
+
+  it('denies builtin fs/shell/network/subagent tools (unlike admin, which allows them)', () => {
+    // The judge must NOT get the run of a full admin session — only its
+    // plugin-grounded facts. Read/Write/Bash/WebFetch/Task must all be denied.
+    for (const toolName of ['Read', 'Write', 'Bash', 'WebFetch', 'Task']) {
+      const kind = classifyToolUse(toolName, {})
+      expect(SOCIAL_JUDGE_PROFILE.allow.has(kind), `${toolName} (kind=${kind}) must not be allowed`).toBe(false)
+      expect(SOCIAL_JUDGE_PROFILE.deny.has(kind), `${toolName} (kind=${kind}) must be denied`).toBe(true)
+    }
+  })
+
+  it('denies wechat tools (no send-as-owner, no reply, no a2a/social)', () => {
+    const kind = classifyToolUse('mcp__wechat__reply', {})
+    expect(SOCIAL_JUDGE_PROFILE.allow.has(kind)).toBe(false)
+    expect(SOCIAL_JUDGE_PROFILE.deny.has(kind)).toBe(true)
+  })
+
+  it('allow ∪ relay ∪ deny covers every ToolKind exactly once, with allow = {plugin_tool} only', () => {
+    expect([...SOCIAL_JUDGE_PROFILE.allow]).toEqual(['plugin_tool'])
+    expect(SOCIAL_JUDGE_PROFILE.relay.size).toBe(0)
+    const seen = new Set<ToolKind>()
+    for (const k of SOCIAL_JUDGE_PROFILE.allow) seen.add(k)
+    for (const k of SOCIAL_JUDGE_PROFILE.deny) {
+      expect(SOCIAL_JUDGE_PROFILE.allow.has(k)).toBe(false)
+      seen.add(k)
+    }
+    const allKinds: ToolKind[] = [
+      'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
+      'observations_read', 'observations_write',
+      'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
+      'a2a_send', 'daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool',
+      'social_seek',
+    ]
+    for (const k of allKinds) expect(seen.has(k)).toBe(true)
   })
 })

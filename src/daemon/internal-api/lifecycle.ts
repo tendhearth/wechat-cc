@@ -8,7 +8,9 @@ export interface InternalApiLifecycle extends Lifecycle {
   readonly tokenFilePath: string
   setDelegate(d: InternalApiDelegateDep): void
   setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
+  setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
   setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
+  setSocial(social: NonNullable<InternalApiDeps['social']>): void
   mintSessionToken(tier: import('../../core/user-tier').UserTier, sessionKey: string): string
   invalidateSession(sessionKey: string): void
 }
@@ -19,15 +21,19 @@ export interface InternalApiLifecycle extends Lifecycle {
  */
 export async function registerInternalApi(deps: InternalApiDeps): Promise<InternalApiLifecycle> {
   const api = createInternalApi(deps)
-  const { port, tokenFilePath } = await api.start()
+  const { port, tokenFilePath, operatorTokenFilePath } = await api.start()
   const infoPath = join(deps.stateDir, 'internal-api-info.json')
   // Write discovery file so CLI (`wechat-cc mode set`) can find the running
   // daemon's baseUrl + token without hardcoding a port. Mode 0o600: token
   // path is sensitive (any holder can POST set-mode / broadcast / etc.).
+  // operatorTokenFilePath (option B security fix) is included so the
+  // desktop app's agent_converse can discover the admin-tier operator
+  // token path without hardcoding it — see token-registry.ts's module doc
+  // comment for why a file-origin admin token is safe here.
   try {
     writeFileSync(
       infoPath,
-      JSON.stringify({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath, pid: process.pid, ts: Date.now() }, null, 2),
+      JSON.stringify({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath, operatorTokenFilePath, pid: process.pid, ts: Date.now() }, null, 2),
       { mode: 0o600 },
     )
   } catch { /* non-fatal: CLI will just error clearly if it can't find the file */ }
@@ -37,7 +43,9 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     tokenFilePath,
     setDelegate: (d) => api.setDelegate(d),
     setConversation: (c) => api.setConversation(c),
+    setCompanionConverse: (fn) => api.setCompanionConverse(fn),
     setA2A: (a2a) => api.setA2A(a2a),
+    setSocial: (social) => api.setSocial(social),
     mintSessionToken: (tier, sessionKey) => api.mintSessionToken(tier, sessionKey),
     invalidateSession: (sessionKey) => api.invalidateSession(sessionKey),
     stop: async () => {

@@ -27,6 +27,7 @@ import type { Mode, ProviderId } from '../core/conversation'
 import type { InboundMsg } from '../core/prompt-format'
 import { botName } from './bot-name'
 import { validateNickname, NICKNAME_MAX_LEN } from './nickname'
+import { capabilitiesFor } from '../core/capability-matrix'
 import type { AgentConfig } from '../lib/agent-config'
 
 export interface ModeCommandsDeps {
@@ -41,6 +42,19 @@ export interface ModeCommandsDeps {
   setUserName(chatId: string, name: string): Promise<void>
   /** Lookup current nickname for this chat (null if none). Used by /whoami. */
   getUserName(chatId: string): string | null
+  /**
+   * Persist a pinned model for `providerId`. Used by `/api <model>` to pin
+   * the openai-compatible provider's model in the same command that switches
+   * to it. Mirrors the `POST /v1/model` route (writes via
+   * `withActiveModel`/`saveAgentConfig`) — the mtime-cached config reader
+   * then delivers it to the next spawn via `currentModelFor`, no restart.
+   */
+  pinModel(providerId: ProviderId, model: string): void | Promise<void>
+  /** Per-chat prefs (chat-prefs store). /set reads+writes THIS chat's entry. */
+  chatPrefs: {
+    get(chatId: string): { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean }
+    set(chatId: string, patch: { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean }): { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean }
+  }
   log: (tag: string, line: string) => void
   /** Returns true when userId belongs to an admin. Used by /help to gate the admin section. */
   isAdmin?: (userId: string) => boolean
@@ -62,6 +76,12 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     if (lower === 'cc') return 'claude'
     if (lower === 'codex') return 'codex'
     if (lower === 'cursor') return 'cursor'
+    // Generic OpenAI-compatible backend (DeepSeek/Kimi/Qwen/…). Deliberately
+    // named `/api` rather than `/openai` — it's "the user's own API endpoint",
+    // not tied to a vendor. Only takes effect when the openai provider is
+    // registered (WECHAT_OPENAI_API_KEY + base_url + model); otherwise the
+    // registry.has() guard below replies "未注册".
+    if (lower === 'api') return 'openai'
     if (lower === 'gemini') return 'gemini'
     return null
   }
@@ -74,11 +94,12 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
   // We surface that asymmetry up-front rather than silently substituting the
   // wired peer behind the operator's back.
   function defaultDelegatePeer(primary: ProviderId): ProviderId | null {
-    if (primary === 'claude') return 'codex'
-    if (primary === 'codex') return 'claude'
-    if (primary === 'cursor') return 'claude'
-    if (primary === 'gemini') return 'claude'
-    return null
+    // Single source of truth per [[architecture-conventions]]: the peer comes
+    // from the provider's ProviderCapabilities.defaultPeer, not a hardcoded
+    // ternary — so a new provider (openai → claude, …) is covered without
+    // editing this function. Values match the prior hardcoded ones
+    // (claude→codex, codex→claude, cursor→claude, gemini→claude).
+    return capabilitiesFor(primary).defaultPeer ?? null
   }
 
   /**
@@ -128,11 +149,12 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       '这里是微信通道，可以直接跟我对话。可用命令：',
       '',
       '**模式切换**',
-      '/cc /codex /cursor — 单 provider (solo)',
+      '/cc /codex /cursor /api — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)',
       '/cc + codex — Claude 主答，Codex 当工具 (primary_tool)',
       '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
       '/chat [p1 p2 …] — 圆桌讨论',
       '/solo /stop /mode — 回到默认 / 退出 / 显示当前模式',
+      '/set — 本对话偏好(拆分回复、主动关心档位、表情包、每日打猎)',
       '',
       '**身份**',
       '/whoami — 显示你的身份 + 当前模式',
@@ -228,7 +250,125 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           deps.log('MODE_CMD', `chat=${msg.chatId} → primary_tool primary=${providerId} peer=${peerProviderId}`)
           return true
         }
+        // /api <model> — for the openai-compatible provider ONLY, a
+        // non-"+peer" tail is interpreted as a model id: switch this chat to
+        // solo+openai AND pin the model in one command (e.g. `/api DeepSeek`,
+        // `/api kimi-k2.7-code`). Deliberately NOT extended to
+        // claude/codex/cursor — their tail keeps meaning "unsupported
+        // argument" below, unchanged.
+        if (providerId === 'openai') {
+          // Liberal on charset (letters/digits/./_/-//), just no whitespace —
+          // real model ids vary wildly across OpenAI-compatible backends
+          // (DeepSeek/Kimi/Qwen/OpenRouter/…) and some are bare names with no
+          // version digit (e.g. `Kimi`, `DeepSeek`), unlike the digit-required
+          // guard on /v1/model (claude/codex/cursor ids always carry a
+          // version digit; these don't).
+          const modelRe = /^[A-Za-z0-9._/-]+$/
+          if (!modelRe.test(tail)) {
+            await reply(msg.chatId, `❌ 无效的模型名 \`${tail}\`（只支持字母/数字/. _ / - /，不能有空格）。`)
+            return true
+          }
+          if (!deps.registry.has(providerId)) {
+            await reply(msg.chatId, `❌ provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
+            return true
+          }
+          await deps.pinModel(providerId, tail)
+          deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: providerId })
+          const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
+          await reply(msg.chatId, `✅ 这个对话切到 ${dn} (solo)，模型 = ${tail}。下条消息开始生效。`)
+          deps.log('MODE_CMD', `chat=${msg.chatId} → solo+${providerId} model=${tail}`)
+          return true
+        }
         await reply(msg.chatId, `❓ \`/${slashWord}\` 不支持参数 \`${tail}\`。试试 \`/${slashWord}\`、\`/${slashWord} + ${providerId === 'claude' ? 'codex' : 'cc'}\`、\`/solo\` 或 \`/mode\`。`)
+        return true
+      }
+
+      // /set — per-chat preferences (the settings layer's dials: split, care).
+      if (slashWord.toLowerCase() === 'set') {
+        const SET_USAGE = '❓ 不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)\n· /set hunt on|off (别名: 打猎 开|关)'
+        const p = deps.chatPrefs.get(msg.chatId)
+        if (tail === '') {
+          const splitState = p.split === false ? 'off' : 'on'
+          const careState = p.care ?? '未设置'
+          const stickersState = p.stickers === undefined ? '未设置' : (p.stickers ? 'on' : 'off')
+          const huntState = p.hunt === undefined ? '未设置' : (p.hunt ? 'on' : 'off')
+          await reply(
+            msg.chatId,
+            `当前设置(本对话):\n· split(拆分回复): ${splitState}\n· 关心(主动关心档位): ${careState}\n· 表情(表情包): ${stickersState}\n· 打猎(每日打猎): ${huntState}\n\n用法: /set split on|off — 回复像真人一样分几条发\n用法: /set care off|low|high — 主动关心档位(别名: 关心 关|低|高)\n用法: /set stickers on|off — 表情包开关(别名: 表情 开|关)\n用法: /set hunt on|off — 每日打猎开关(别名: 打猎 开|关)`,
+          )
+          return true
+        }
+        const m2 = /^(split|拆分|care|关心|stickers|表情|hunt|打猎)\s+(\S+)$/i.exec(tail)
+        if (!m2) {
+          await reply(msg.chatId, SET_USAGE)
+          return true
+        }
+        const key = m2[1]!.toLowerCase()
+        const rawValue = m2[2]!
+
+        if (key === 'split' || key === '拆分') {
+          if (!/^(on|off|开|关)$/i.test(rawValue)) {
+            await reply(msg.chatId, SET_USAGE)
+            return true
+          }
+          const on = /^(on|开)$/i.test(rawValue)
+          deps.chatPrefs.set(msg.chatId, { split: on })
+          await reply(msg.chatId, on
+            ? '✅ 拆分回复已开启——回复会像真人一样分几条发。'
+            : '✅ 拆分回复已关闭——每次回复只发一条。')
+          deps.log('MODE_CMD', `chat=${msg.chatId} /set split=${on}`)
+          return true
+        }
+
+        if (key === 'stickers' || key === '表情') {
+          if (!/^(on|off|开|关)$/i.test(rawValue)) {
+            await reply(msg.chatId, SET_USAGE)
+            return true
+          }
+          const on = /^(on|开)$/i.test(rawValue)
+          deps.chatPrefs.set(msg.chatId, { stickers: on })
+          await reply(msg.chatId, on
+            ? '✅ 表情包已开启。'
+            : '✅ 表情包已关闭。')
+          deps.log('MODE_CMD', `chat=${msg.chatId} /set stickers=${on}`)
+          return true
+        }
+
+        if (key === 'hunt' || key === '打猎') {
+          if (!/^(on|off|开|关)$/i.test(rawValue)) {
+            await reply(msg.chatId, SET_USAGE)
+            return true
+          }
+          const on = /^(on|开)$/i.test(rawValue)
+          deps.chatPrefs.set(msg.chatId, { hunt: on })
+          await reply(msg.chatId, on
+            ? '✅ 每日打猎已开启。'
+            : '✅ 每日打猎已关闭。')
+          deps.log('MODE_CMD', `chat=${msg.chatId} /set hunt=${on}`)
+          return true
+        }
+
+        // care | 关心 — 3-level dial (off/low/high). Deliberately NOT
+        // on/off like split: "on"/"开" don't map to a level, so they fall
+        // through to the usage error below.
+        const CARE_VALUES: Record<string, 'off' | 'low' | 'high'> = {
+          off: 'off', '关': 'off',
+          low: 'low', '低': 'low',
+          high: 'high', '高': 'high',
+        }
+        const careVal = CARE_VALUES[rawValue.toLowerCase()]
+        if (!careVal) {
+          await reply(msg.chatId, SET_USAGE)
+          return true
+        }
+        deps.chatPrefs.set(msg.chatId, { care: careVal })
+        const careConfirm = careVal === 'high'
+          ? '✅ 主动关心已设为 high——会更主动地问候和关心。'
+          : careVal === 'low'
+            ? '✅ 主动关心已设为 low——偶尔主动问候。'
+            : '✅ 主动关心已设为 off——不会主动找你。'
+        await reply(msg.chatId, careConfirm)
+        deps.log('MODE_CMD', `chat=${msg.chatId} /set care=${careVal}`)
         return true
       }
 
@@ -253,7 +393,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           `已注册 provider: ${deps.registry.list().join(', ')}`,
           `默认: ${deps.defaultProviderId}`,
           '',
-          '可用命令: /cc /codex /cursor /gemini /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',
+          '可用命令: /cc /codex /cursor /api /gemini /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',
         ]
         await reply(msg.chatId, lines.join('\n'))
         return true

@@ -23,6 +23,7 @@ export const GEMINI_CAPABILITIES: ProviderCapabilities = {
   sandboxLevels: new Set(),
   supportsDelegation: false,
   supportsResume: false,
+  defaultPeer: 'claude',
 }
 
 export interface GeminiTierSdkOpts {

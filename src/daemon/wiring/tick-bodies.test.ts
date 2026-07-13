@@ -1,10 +1,46 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildTickBodies, buildPushTickText, type TickDeps } from './tick-bodies'
+import { buildTickBodies, buildPushTickText, buildGapCheckinText, buildHuntText, type TickDeps } from './tick-bodies'
 import { TIER_PROFILES } from '../../core/user-tier'
 import type { Access } from '../../lib/access'
+import { openTestDb, type Db } from '../../lib/db'
+import { makeMessagesStore } from '../../lib/messages-store'
+import type { CareLedgerEntry } from '../companion/calibration'
+import type { CareLedger } from '../companion/care-ledger'
+import { makeChatMutex, type ChatMutex } from '../../core/async-mutex'
+
+/** Minimal in-memory fake of the structural chatPrefs subset TickDeps needs. */
+function makeFakeChatPrefs(
+  entries: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean }> = {},
+): { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean }; list(): string[] } {
+  return {
+    get: (chatId) => entries[chatId] ?? {},
+    list: () => Object.keys(entries),
+  }
+}
+
+/** Minimal in-memory fake CareLedger — mirrors makeCareLedger's semantics
+ * (claim increments noReplyCount; tests that need a specific noReplyCount
+ * pre-seed `entries` directly). */
+function makeFakeCareLedger(entries: Record<string, CareLedgerEntry> = {}): CareLedger {
+  return {
+    get: (chatId) => entries[chatId] ?? { noReplyCount: 0 },
+    claim: (chatId, nowIso) => {
+      const cur = entries[chatId] ?? { noReplyCount: 0 }
+      entries[chatId] = { ...cur, lastProactiveAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
+    },
+    claimHunt: (chatId, nowIso) => {
+      const cur = entries[chatId] ?? { noReplyCount: 0 }
+      entries[chatId] = { ...cur, lastHuntAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
+    },
+    resetNoReply: (chatId) => {
+      const cur = entries[chatId]
+      if (cur) entries[chatId] = { ...cur, noReplyCount: 0 }
+    },
+  }
+}
 
 describe('buildPushTickText', () => {
   it('formats a push tick envelope with the supplied nowIso + chatId + intention', () => {
@@ -19,6 +55,32 @@ describe('buildPushTickText', () => {
     expect(out).toContain('memory_read')
     expect(out).toContain('不算过期')
     expect(out).toContain('晚了几天也照常发')
+  })
+})
+
+describe('buildGapCheckinText', () => {
+  it('formats a gap check-in envelope with the supplied nowIso + chatId + daysSinceContact', () => {
+    const out = buildGapCheckinText({
+      nowIso: '2026-05-16T01:30:00.000Z',
+      chatId: 'chat_test_1',
+      daysSinceContact: 3,
+    })
+    expect(out).toContain('<companion_tick ts="2026-05-16T01:30:00.000Z" chat_id="chat_test_1" kind="gap" />')
+    expect(out).toContain('主动问候')
+    expect(out).toContain('3 天')
+    expect(out).toContain('reply')
+    expect(out).toContain('这次不发')
+  })
+})
+
+describe('buildHuntText', () => {
+  it('formats a daily-hunt envelope with the supplied nowIso', () => {
+    const out = buildHuntText({ nowIso: '2026-05-16T01:30:00.000Z' })
+    expect(out).toContain('<companion_tick ts="2026-05-16T01:30:00.000Z" kind="hunt" />')
+    expect(out).toContain('打猎')
+    expect(out).toContain('值得')
+    expect(out).toContain('reply')
+    expect(out).toContain('不调用 reply')
   })
 })
 
@@ -40,6 +102,16 @@ interface Setup {
   dispatch: ReturnType<typeof vi.fn>
   logs: string[]
   deps: TickDeps
+  db: Db
+  chatPrefsEntries: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean }>
+  careLedgerEntries: Record<string, CareLedgerEntry>
+  /** Task 3 (session-serialization) — the fake coordinator's `runExclusive`
+   * spy, backed by a REAL per-chatId async mutex (the same implementation
+   * `createConversationCoordinator` uses), so tests can both assert the
+   * tick routes through it AND hold the lock externally (simulating an
+   * app/WeChat turn in flight) to prove the tick actually waits. */
+  runExclusive: ReturnType<typeof vi.fn>
+  coordinatorMutex: ChatMutex
 }
 
 function setupDeps(opts: {
@@ -56,6 +128,16 @@ function setupDeps(opts: {
   /** The chat's persisted Mode, returned by coordinator.getMode. Defaults to
    * solo on defaultProviderId — i.e. the chat answers under the daemon default. */
   mode?: { kind: 'solo'; provider: string } | { kind: 'primary_tool'; primary: string } | { kind: 'parallel'; participants?: string[] } | { kind: 'chatroom'; participants?: string[] }
+  /** Task 6 — real sqlite db (all migrations applied) so pushTick's
+   * makeMessagesStore(deps.db) call works. Pass one pre-seeded with rows
+   * (via makeMessagesStore(db).append(...)) to drive the gap branch;
+   * otherwise a fresh empty db is opened. */
+  db?: Db
+  /** Task 6 — chat-prefs entries. Keys double as chatPrefs.list() — i.e.
+   * every chat that has ever set a preference (not just non-default ones). */
+  chatPrefsEntries?: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean }>
+  /** Task 6 — care-ledger entries, keyed by chatId. */
+  careLedgerEntries?: Record<string, CareLedgerEntry>
 }): Setup {
   const stateDir = makeStateDir({
     enabled: true,
@@ -67,6 +149,9 @@ function setupDeps(opts: {
     writeFileSync(join(memDir, 'agenda.md'), opts.agendaMd)
   }
   const logs: string[] = []
+  const db = opts.db ?? openTestDb()
+  const chatPrefsEntries = opts.chatPrefsEntries ?? {}
+  const careLedgerEntries = opts.careLedgerEntries ?? {}
   // dispatch returns AsyncIterable<AgentEvent>, not a Promise — the real
   // contract. Mocking as `Promise<void>` would mask the bug that pushTick
   // was awaiting the iterable directly without iterating (PR D fix).
@@ -81,6 +166,11 @@ function setupDeps(opts: {
   const defaultProviderId = opts.defaultProviderId ?? 'claude'
   const mode = opts.mode ?? { kind: 'solo' as const, provider: defaultProviderId }
   const getMode = vi.fn(() => mode)
+  // Task 3 — real pass-through mutex (same impl the coordinator uses), so
+  // the tick's runExclusive(chatId, ...) call genuinely serializes against
+  // anything else holding the lock for the same chatId in a test.
+  const coordinatorMutex = makeChatMutex()
+  const runExclusive = vi.fn((chatId: string, fn: () => Promise<unknown>) => coordinatorMutex.runExclusive(chatId, fn))
   const defaultAccess: Access = {
     dmPolicy: 'allowlist',
     allowFrom: opts.defaultChatId ? [opts.defaultChatId] : [],
@@ -89,14 +179,14 @@ function setupDeps(opts: {
   const access = opts.access ?? defaultAccess
   const deps: TickDeps = {
     stateDir,
-    db: {} as never,
+    db,
     ilink: {
       loadProjects: () => ({ projects: {}, current: null }),
     } as never,
     boot: {
       sessionManager: { acquire, isInFlight } as never,
       defaultProviderId: defaultProviderId as never,
-      coordinator: { getMode } as never,
+      coordinator: { getMode, runExclusive } as never,
       // Default: no provider has cheapEval. Introspect-specific tests
       // override via deps.boot.registry directly.
       registry: { getCheapEval: () => null } as never,
@@ -104,8 +194,10 @@ function setupDeps(opts: {
     loadAccess: () => access,
     permissionMode: 'strict',
     log: (tag, line) => { logs.push(`${tag}|${line}`) },
+    chatPrefs: makeFakeChatPrefs(chatPrefsEntries),
+    careLedger: makeFakeCareLedger(careLedgerEntries),
   }
-  return { stateDir, acquire, isInFlight, dispatch, logs, deps }
+  return { stateDir, acquire, isInFlight, dispatch, logs, deps, db, chatPrefsEntries, careLedgerEntries, runExclusive, coordinatorMutex }
 }
 
 describe('buildTickBodies / pushTick — companion isolation (PR D)', () => {
@@ -189,15 +281,20 @@ describe('buildTickBodies / pushTick — companion isolation (PR D)', () => {
   })
 
   it('returns silently without an LLM call when no agenda.md exists', async () => {
-    // No agendaMd supplied → no agenda.md file → no due items → silent gate.
-    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    // No agendaMd supplied → no agenda.md file → no due items → falls
+    // through to the hunt branch (disabled here via prefs so this test can
+    // keep pinning the pre-hunt gap fallback in isolation — see the
+    // dedicated "daily hunt" describe block below for hunt coverage), then
+    // the gap branch, which denies (no inbound message ever seen ⇒
+    // 'never_talked') without touching session/dispatch.
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, chatPrefsEntries: { 'chat-1': { hunt: false } } })
     cleanup.push(s.stateDir)
     const { pushTick } = buildTickBodies(s.deps)
     await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
     expect(s.isInFlight).not.toHaveBeenCalled()
     expect(s.acquire).not.toHaveBeenCalled()
     expect(s.dispatch).not.toHaveBeenCalled()
-    expect(s.logs.some(l => l.includes('no due intentions'))).toBe(true)
+    expect(s.logs.some(l => l.includes('CARE') && l.includes('reason=never_talked'))).toBe(true)
   })
 
   it('returns silently when agenda.md has only future items', async () => {
@@ -205,13 +302,81 @@ describe('buildTickBodies / pushTick — companion isolation (PR D)', () => {
       defaultChatId: 'chat-1',
       inFlight: false,
       agendaMd: '- [ ] due:2026-12-31 far future item',
+      // hunt disabled — see comment on the preceding test.
+      chatPrefsEntries: { 'chat-1': { hunt: false } },
     })
     cleanup.push(s.stateDir)
     const { pushTick } = buildTickBodies(s.deps)
     await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
     expect(s.isInFlight).not.toHaveBeenCalled()
     expect(s.acquire).not.toHaveBeenCalled()
-    expect(s.logs.some(l => l.includes('no due intentions'))).toBe(true)
+    expect(s.logs.some(l => l.includes('CARE') && l.includes('reason=never_talked'))).toBe(true)
+  })
+})
+
+describe('buildTickBodies / pushTick — routes claim+dispatch through the per-chat mutex (Task 3, session-serialization)', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => {
+    for (const d of cleanup) {
+      try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ }
+    }
+  })
+
+  it('claim+dispatch run inside coordinator.runExclusive(chatId, ...)', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1',
+      inFlight: false,
+      agendaMd: '- [ ] due:2026-05-13 check in on project',
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    // The tick claimed the mutex for the chat it dispatched to, and did so
+    // BEFORE acquire/claim/dispatch ran (asserted via ordering below).
+    expect(s.runExclusive).toHaveBeenCalledWith('chat-1', expect.any(Function))
+    expect(s.acquire).toHaveBeenCalledOnce()
+    expect(s.dispatch).toHaveBeenCalledOnce()
+    const runExclusiveOrder = s.runExclusive.mock.invocationCallOrder[0]!
+    const acquireOrder = s.acquire.mock.invocationCallOrder[0]!
+    const dispatchOrder = s.dispatch.mock.invocationCallOrder[0]!
+    expect(runExclusiveOrder).toBeLessThan(acquireOrder)
+    expect(acquireOrder).toBeLessThan(dispatchOrder)
+  })
+
+  it('does not start acquire/dispatch until a same-chat runExclusive lock (simulating an in-flight app turn) is released', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1',
+      inFlight: false, // the cheap isInFlight pre-check does NOT see this app turn — only the mutex does
+      agendaMd: '- [ ] due:2026-05-13 check in on project',
+    })
+    cleanup.push(s.stateDir)
+
+    // Simulate an app converse turn already holding the mutex for this chat
+    // (mirrors pipeline-deps.ts's companionConverse: runExclusive wraps its
+    // whole reply-sink-open→dispatch→close lifetime).
+    let releaseHeldTurn!: () => void
+    const heldTurnDone = new Promise<void>(resolve => { releaseHeldTurn = resolve })
+    const holdPromise = s.coordinatorMutex.runExclusive('chat-1', () => heldTurnDone)
+
+    const { pushTick } = buildTickBodies(s.deps)
+    const tickPromise = pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+
+    // Give pending microtasks a chance to run — the tick should be blocked
+    // on the mutex, so acquire/dispatch must NOT have run yet.
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(s.acquire).not.toHaveBeenCalled()
+    expect(s.dispatch).not.toHaveBeenCalled()
+
+    // Release the held "app turn" — the tick's runExclusive callback can now run.
+    releaseHeldTurn()
+    await holdPromise
+    await tickPromise
+
+    expect(s.acquire).toHaveBeenCalledOnce()
+    expect(s.dispatch).toHaveBeenCalledOnce()
   })
 })
 
@@ -318,6 +483,10 @@ describe('buildTickBodies / pushTick — at-most-once dedup on sleep/wake', () =
       defaultChatId: 'chat-1',
       inFlight: false,
       agendaMd: '- [ ] due:2026-05-13 ping me about the gym',
+      // Hunt disabled — the second tick (agenda now resolved) would
+      // otherwise fall into the hunt branch and dispatch a second time,
+      // which is not what this test is pinning (agenda at-most-once).
+      chatPrefsEntries: { 'chat-1': { hunt: false } },
     })
     cleanup.push(s.stateDir)
     s.dispatch.mockImplementationOnce(throwingDispatch)
@@ -385,6 +554,233 @@ describe('buildTickBodies / pushTick — at-most-once dedup on sleep/wake', () =
   })
 })
 
+describe('buildTickBodies / pushTick — multi-chat care sweep (Task 6)', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => {
+    for (const d of cleanup) {
+      try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ }
+    }
+  })
+
+  const agendaPath = (stateDir: string, chatId: string) =>
+    join(stateDir, 'memory', chatId, 'agenda.md')
+
+  it('(a) owner chat with a due agenda item is dispatched, agenda marked resolved, ledger claimed', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1',
+      inFlight: false,
+      agendaMd: '- [ ] due:2026-05-13 check in on project',
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).toHaveBeenCalledOnce()
+    expect(readFileSync(agendaPath(s.stateDir, 'chat-1'), 'utf8')).toContain('- [x] done:2026-05-13 check in on project')
+    expect(s.careLedgerEntries['chat-1']?.lastProactiveAtIso).toBe('2026-05-13T10:00:00.000Z')
+  })
+
+  it('(b) care:high chat with no agenda + lastInbound 3 days ago + no prior proactive ⇒ gap dispatched, text contains 天', async () => {
+    const db = openTestDb()
+    const ms = makeMessagesStore(db)
+    await ms.append({ id: 'm1', chatId: 'chat-2', ts: '2026-05-13T10:00:00.000Z', direction: 'in', kind: 'text', text: 'hi', source: 'live' })
+    const s = setupDeps({
+      defaultChatId: null,
+      inFlight: false,
+      db,
+      chatPrefsEntries: { 'chat-2': { care: 'high' } },
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-16T10:00:00.000Z' })
+    expect(s.dispatch).toHaveBeenCalledOnce()
+    expect(s.acquire.mock.calls[0]![0]).toMatchObject({ chatId: 'chat-2' })
+    const text = s.dispatch.mock.calls[0]![0] as string
+    expect(text).toContain('天')
+    expect(s.careLedgerEntries['chat-2']?.lastProactiveAtIso).toBe('2026-05-16T10:00:00.000Z')
+  })
+
+  it('(c) same chat with noReplyCount:2 is NOT dispatched, log contains paused_no_reply', async () => {
+    const db = openTestDb()
+    const ms = makeMessagesStore(db)
+    await ms.append({ id: 'm1', chatId: 'chat-2', ts: '2026-05-13T10:00:00.000Z', direction: 'in', kind: 'text', text: 'hi', source: 'live' })
+    const s = setupDeps({
+      defaultChatId: null,
+      inFlight: false,
+      db,
+      chatPrefsEntries: { 'chat-2': { care: 'high' } },
+      careLedgerEntries: { 'chat-2': { noReplyCount: 2 } },
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-16T10:00:00.000Z' })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.includes('CARE') && l.includes('paused_no_reply'))).toBe(true)
+  })
+
+  it('(d) chat with prefs set but care unset (non-owner) is untouched — no dispatch, no log', async () => {
+    const s = setupDeps({
+      defaultChatId: null,
+      inFlight: false,
+      chatPrefsEntries: { 'chat-3': {} },
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-16T10:00:00.000Z' })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.acquire).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.includes('chat-3'))).toBe(false)
+  })
+
+  it('(e) no default_chat_id + no care prefs ⇒ zero dispatches (e2e-silence invariant)', async () => {
+    const s = setupDeps({ defaultChatId: null, inFlight: false })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-16T10:00:00.000Z' })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.acquire).not.toHaveBeenCalled()
+    expect(s.isInFlight).not.toHaveBeenCalled()
+  })
+
+  it('(f) owner agenda item but ledger lastProactive 1h ago ⇒ skipped, log agenda_cooldown', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1',
+      inFlight: false,
+      agendaMd: '- [ ] due:2026-05-13 check in on project',
+      careLedgerEntries: { 'chat-1': { lastProactiveAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' }) // 1h after lastProactiveAtIso, < 20h cooldown
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.includes('CARE') && l.includes('agenda_cooldown'))).toBe(true)
+  })
+})
+
+describe('buildTickBodies / pushTick — daily hunt branch (Task 3)', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => {
+    for (const d of cleanup) {
+      try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ }
+    }
+  })
+
+  it('(a) owner, no agenda, hunt unset, no lastHuntAtIso ⇒ hunt dispatched (text has 打猎/值得), ledger claimed', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).toHaveBeenCalledOnce()
+    const text = s.dispatch.mock.calls[0]![0] as string
+    expect(text).toContain('打猎')
+    expect(text).toContain('值得')
+    // Claimed BEFORE dispatch is guaranteed by dispatchToChat's shared
+    // claim-then-dispatch contract (see the at-most-once tests above for
+    // the interrupted-dispatch proof); here we assert both the ledger
+    // write and the dispatch happened.
+    expect(s.careLedgerEntries['chat-1']?.lastHuntAtIso).toBe('2026-05-13T10:00:00.000Z')
+  })
+
+  it('(b) lastHuntAtIso 1h ago ⇒ hunt skipped (hunt_cooldown), falls through to gap evaluation', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1',
+      inFlight: false,
+      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.includes('CARE') && l.includes('kind=hunt') && l.includes('reason=hunt_cooldown'))).toBe(true)
+    // Fell through to the gap branch (no inbound message ever seen here ⇒ never_talked).
+    expect(s.logs.some(l => l.includes('CARE') && l.includes('kind=gap') && l.includes('reason=never_talked'))).toBe(true)
+  })
+
+  it('(c) prefs.hunt:false ⇒ no hunt (care_off), falls through to gap evaluation', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1',
+      inFlight: false,
+      chatPrefsEntries: { 'chat-1': { hunt: false } },
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.includes('CARE') && l.includes('kind=hunt') && l.includes('reason=care_off'))).toBe(true)
+    expect(s.logs.some(l => l.includes('CARE') && l.includes('kind=gap') && l.includes('reason=never_talked'))).toBe(true)
+  })
+
+  it('(d) non-owner care-enabled chat never hunts, even with hunt pref unset', async () => {
+    const db = openTestDb()
+    const ms = makeMessagesStore(db)
+    await ms.append({ id: 'm1', chatId: 'chat-2', ts: '2026-05-13T10:00:00.000Z', direction: 'in', kind: 'text', text: 'hi', source: 'live' })
+    const s = setupDeps({
+      defaultChatId: null,
+      inFlight: false,
+      db,
+      chatPrefsEntries: { 'chat-2': { care: 'high' } },
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-16T10:00:00.000Z' })
+    // Gap fires (as in the multi-chat sweep test above) but it must never be
+    // the hunt text, and no hunt log line should appear for a non-owner chat.
+    expect(s.dispatch).toHaveBeenCalledOnce()
+    const text = s.dispatch.mock.calls[0]![0] as string
+    expect(text).not.toContain('打猎')
+    expect(s.logs.some(l => l.includes('kind=hunt'))).toBe(false)
+    expect(s.careLedgerEntries['chat-2']?.lastHuntAtIso).toBeUndefined()
+  })
+
+  it('(e) agenda due ⇒ agenda fires, hunt not attempted', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1',
+      inFlight: false,
+      agendaMd: '- [ ] due:2026-05-13 check in on project',
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).toHaveBeenCalledOnce()
+    const text = s.dispatch.mock.calls[0]![0] as string
+    expect(text).not.toContain('打猎')
+    expect(s.logs.some(l => l.includes('kind=hunt'))).toBe(false)
+    expect(s.careLedgerEntries['chat-1']?.lastHuntAtIso).toBeUndefined()
+  })
+
+  it('(f) noReplyCount:2 ⇒ hunt paused_no_reply', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1',
+      inFlight: false,
+      careLedgerEntries: { 'chat-1': { noReplyCount: 2 } },
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.includes('CARE') && l.includes('kind=hunt') && l.includes('reason=paused_no_reply'))).toBe(true)
+  })
+
+  it('(g) care:off + hunt:true ⇒ care=off is master switch, zero dispatches (hunt suppressed by care)', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1',
+      inFlight: false,
+      chatPrefsEntries: { 'chat-1': { care: 'off', hunt: true } },
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    // care=off early-return means ZERO dispatches: no hunt, no gap, no agenda.
+    expect(s.dispatch).not.toHaveBeenCalled()
+    // Hunt-specific log should not exist at all (the early-return prevents
+    // reaching the hunt branch).
+    expect(s.logs.some(l => l.includes('kind=hunt'))).toBe(false)
+    expect(s.logs.some(l => l.includes('kind=gap'))).toBe(false)
+    expect(s.careLedgerEntries['chat-1']?.lastHuntAtIso).toBeUndefined()
+  })
+})
+
 describe('buildTickBodies / introspectTick — provider-agnostic cheap eval (PR F)', () => {
   let cleanup: string[]
   beforeEach(() => { cleanup = [] })
@@ -418,5 +814,55 @@ describe('buildTickBodies / introspectTick — provider-agnostic cheap eval (PR 
     const { introspectTick } = buildTickBodies(s.deps)
     await introspectTick()
     expect(getCheapEval).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('buildTickBodies / introspectTick — memory gardener mount', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => {
+    for (const d of cleanup) {
+      try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ }
+    }
+  })
+
+  it('cheapEval absent ⇒ gardener never runs (no GARDEN log, no archive dir created)', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    // Seed a large memory file that WOULD be eligible if the gardener ran.
+    const memDir = join(s.stateDir, 'memory', 'chat-1')
+    mkdirSync(memDir, { recursive: true })
+    writeFileSync(join(memDir, 'profile.md'), 'x'.repeat(3000))
+    const { introspectTick } = buildTickBodies(s.deps)
+    await introspectTick()
+    expect(s.logs.some(l => l.startsWith('GARDEN|'))).toBe(false)
+    expect(existsSync(join(s.stateDir, 'memory-archive'))).toBe(false)
+  })
+
+  it('cheapEval present ⇒ introspectTick invokes the gardener after the existing steps', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const memDir = join(s.stateDir, 'memory', 'chat-1')
+    mkdirSync(memDir, { recursive: true })
+    // "seed\nfiller filler ..." rather than a single repeated-char run: the
+    // gardener's vocabulary-overlap validation requires a curated output to
+    // actually share word tokens with the original, which a giant run of
+    // one repeated character can't satisfy in the same way real prose can.
+    const original = `seed\n${'filler '.repeat(500)}`
+    writeFileSync(join(memDir, 'profile.md'), original)
+    // Curated output must also clear the shrink floor (min(512, 0.2 *
+    // originalBytes)) — a bare "seed filler" (11 bytes) would now be
+    // rejected as over_shrunk before the gardener ever writes it, so keep
+    // enough of the original's filler tokens to pass.
+    const curated = `seed\n${'filler '.repeat(100)}`.trim()
+    expect(Buffer.byteLength(curated, 'utf8')).toBeGreaterThan(0.2 * Buffer.byteLength(original, 'utf8'))
+    expect(Buffer.byteLength(curated, 'utf8')).toBeLessThan(Buffer.byteLength(original, 'utf8'))
+    const cheapEval = vi.fn(async () => curated)
+    s.deps.boot = { ...s.deps.boot, registry: { getCheapEval: () => cheapEval } as never }
+    const { introspectTick } = buildTickBodies(s.deps)
+    await introspectTick({ nowIso: '2026-07-10T00:00:00.000Z' })
+    expect(s.logs.some(l => l.startsWith('GARDEN|'))).toBe(true)
+    expect(existsSync(join(s.stateDir, 'memory-archive', 'chat-1', 'profile.md.2026-07-10.md'))).toBe(true)
+    expect(readFileSync(join(memDir, 'profile.md'), 'utf8')).toBe(curated)
   })
 })

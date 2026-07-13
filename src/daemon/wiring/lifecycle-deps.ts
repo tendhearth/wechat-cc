@@ -5,7 +5,7 @@
 import type { Db } from '../../lib/db'
 import type { IlinkAdapter, IlinkAccount } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
-import type { CompanionPushDeps, CompanionIntrospectDeps } from '../companion/lifecycle'
+import type { CompanionPushDeps, CompanionIntrospectDeps, CompanionIngestDeps } from '../companion/lifecycle'
 import type { SchedulerDeps } from '../guard/scheduler'
 import type { SessionsLifecycleDeps } from '../sessions-lifecycle'
 import type { IlinkLifecycleDeps } from '../ilink-lifecycle'
@@ -16,8 +16,8 @@ import { loadGuardConfig } from '../guard/store'
 import { parseUpdates } from '../poll-loop'
 import { writeHeartbeat, HEARTBEAT_FILE } from '../single-instance'
 import { join } from 'node:path'
-import { makeHeartbeatStore } from '../connection-heartbeat'
-import { makeSessionStateStore } from '../session-state'
+import { makeHeartbeatStore } from '../../core/connection-heartbeat'
+import { makeSessionStateStore } from '../../core/session-state'
 import type { TickBodies } from './tick-bodies'
 
 export interface LifecycleDepsOpts {
@@ -40,6 +40,7 @@ export interface LifecycleDepsOpts {
 export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): {
   companionPushDeps: CompanionPushDeps
   companionIntrospectDeps: CompanionIntrospectDeps
+  companionIngestDeps: CompanionIngestDeps
   guardDeps: SchedulerDeps
   sessionsDeps: SessionsLifecycleDeps
   ilinkDeps: IlinkLifecycleDeps
@@ -66,9 +67,21 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
     return true
   }
 
+  // Ingestion has its own gate: the master companion gate PLUS an independent
+  // off-switch (silent maintenance vs proactive push), still honoring snooze.
+  const shouldRunIngest = () => {
+    const cfg = loadCompanionConfig(stateDir)
+    if (!cfg.enabled) return false
+    if (cfg.ingest_enabled === false) return false
+    const s = cfg.snooze_until
+    if (s && Date.parse(s) > Date.now()) return false
+    return true
+  }
+
   return {
     companionPushDeps: { shouldRun, log, onTick: ticks.pushTick, intervalMs: opts.schedulerIntervalMs },
     companionIntrospectDeps: { shouldRun, log, onTick: ticks.introspectTick, intervalMs: opts.schedulerIntervalMs },
+    companionIngestDeps: { shouldRun: shouldRunIngest, log, onTick: ticks.ingestTick, intervalMs: opts.schedulerIntervalMs },
     guardDeps: {
       pollMs: 30_000,
       isEnabled: () => loadGuardConfig(stateDir).enabled,

@@ -62,6 +62,9 @@ export async function invokeApi(method, path, body) {
       ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
     },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    // Bound the request so a blocked/unreachable daemon surfaces as an error
+    // instead of an indefinite "加载中…" spinner (e.g. a CSP connect-src gap).
+    signal: AbortSignal.timeout(10_000),
   }
   const resp = await fetch(url, init)
   if (!resp.ok) {

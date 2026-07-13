@@ -10,8 +10,8 @@ import { buildServicePlan, isServiceInstalled, type ServiceKind } from './servic
 import { compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from '../lib/runtime-info'
 import { openWechatDb } from '../lib/db'
 import { makeConversationStore } from '../core/conversation-store'
-import { makeSessionStateStore } from '../daemon/session-state'
-import { makeHeartbeatStore } from '../daemon/connection-heartbeat'
+import { makeSessionStateStore } from '../core/session-state'
+import { makeHeartbeatStore } from '../core/connection-heartbeat'
 
 export interface BoundAccount {
   id: string

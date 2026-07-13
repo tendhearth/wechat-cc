@@ -4591,6 +4591,109 @@ input { font: inherit; color: inherit; }
   margin-top: 8px;
 }
 
+/* ── Plugins pane ─────────────────────────────────────────────────────────
+   Reuses the a2a card / .dot / .btn styling; only the plugin-specific chrome
+   is defined here. All colors come from the shared tokens so light/dark and
+   the paper theme are inherited automatically. */
+.plugins-hint {
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  border-radius: var(--radius-sm);
+  background: var(--paper-2);
+  border: 1px solid var(--hair);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+.plugins-hint code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--paper-3);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.plugins-note {
+  padding: 8px 12px;
+  margin: 0 0 12px;
+  border-radius: var(--radius-sm);
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 12.5px;
+}
+.plugins-note[hidden] { display: none; }
+.plugins-subhead {
+  margin: 20px 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  letter-spacing: .02em;
+}
+
+/* ── License / Pro (settings drawer) ─────────────────────────────────────── */
+.license-status {
+  font-size: 13px;
+  color: var(--ink-3);
+  margin-bottom: 10px;
+}
+.license-status.pro { color: var(--green); }
+.license-status.pro strong { color: var(--green-ink); }
+.license-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.license-row input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--hair-2);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink);
+}
+.license-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.plugin-name {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+.plugin-ver {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  background: var(--paper-3);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.plugin-source {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-3);
+  border: 1px solid var(--hair-2);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.plugin-tools {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  margin: 4px 0;
+}
+.plugin-warn {
+  color: var(--amber);
+  background: var(--amber-soft);
+  font-size: 12px;
+  padding: 6px 8px;
+  margin: 6px 0 2px;
+  border-radius: var(--radius-sm);
+}
+
 /* Server status banner at the top of the Agents (A2A) tab. */
 .a2a-server-banner {
   padding: 10px 12px;
@@ -4827,3 +4930,142 @@ input { font: inherit; color: inherit; }
 .contact-row.active { background: var(--tint, rgba(0,0,0,.07)); font-weight: 600; }
 .contact-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .contact-row .count { font-size: 11px; color: var(--ink-3, #999); }
+
+/* ─── converse pane ("跟 CC 说" — in-app compose UI) ──────────────────── */
+.converse-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--paper);
+}
+.converse-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.converse-scroll .empty-state { padding: 40px; text-align: center; color: var(--ink-3); font-size: 13px; }
+.converse-msg { display: flex; align-items: flex-end; gap: 6px; }
+.converse-msg-user { justify-content: flex-end; }
+.converse-msg-cc { justify-content: flex-start; }
+.converse-bubble {
+  max-width: 72%;
+  padding: 9px 13px;
+  border-radius: 14px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.converse-msg-user .converse-bubble {
+  background: var(--green);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.converse-msg-cc .converse-bubble {
+  background: var(--paper-2);
+  color: var(--ink);
+  border: 1px solid var(--hair);
+  border-bottom-left-radius: 4px;
+}
+.converse-msg-cc.is-pending .converse-bubble { color: var(--ink-3); }
+.voice-replay-btn {
+  flex: 0 0 auto;
+  width: 22px; height: 22px;
+  border: 1px solid var(--hair-2);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--ink-3);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.voice-replay-btn:hover { color: var(--ink); border-color: var(--hair); background: var(--paper-2); }
+.converse-error-line {
+  align-self: center;
+  max-width: 80%;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--rouge-soft);
+  color: var(--rouge);
+  font-size: 12.5px;
+  text-align: center;
+}
+.converse-system-line {
+  align-self: center;
+  max-width: 80%;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--paper-2);
+  color: var(--ink-3);
+  font-size: 12.5px;
+  font-style: italic;
+  text-align: center;
+}
+.converse-compose {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--hair);
+  background: var(--paper);
+}
+.converse-textarea {
+  flex: 1;
+  min-height: 40px;
+  max-height: 160px;
+  padding: 9px 12px;
+  border: 1px solid var(--hair-2);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.5;
+  font-family: inherit;
+  resize: vertical;
+}
+.converse-textarea:focus { outline: none; border-color: var(--green-ink); box-shadow: 0 0 0 3px var(--green-soft); }
+.converse-textarea:disabled { opacity: .6; }
+.converse-send-btn { flex: 0 0 auto; height: 40px; }
+.converse-voice-toggle {
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--hair-2);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink-3);
+  font-size: 13px;
+  cursor: pointer;
+}
+.converse-voice-toggle:hover { color: var(--ink); }
+.converse-voice-toggle.is-on {
+  border-color: var(--green-ink);
+  background: var(--green-soft);
+  color: var(--green-ink);
+}
+.converse-mic {
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--hair-2);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink-3);
+  font-size: 13px;
+  cursor: pointer;
+}
+.converse-mic:hover { color: var(--ink); }
+.converse-mic[disabled] { opacity: 0.6; cursor: default; }
+.converse-mic.is-recording {
+  border-color: var(--red-ink, #c0392b);
+  background: var(--red-soft, #fdecea);
+  color: var(--red-ink, #c0392b);
+}

@@ -365,6 +365,15 @@ export const A2AInstallResponse = z.union([
 export const A2ARemoveRequest = z.object({ id: z.string() })
 export const A2APauseRequest = z.object({ id: z.string(), paused: z.boolean() })
 
+// ── POST /v1/plugins/toggle ──────────────────────────────────────────────────
+export const PluginToggleRequest = z.object({ name: z.string(), enabled: z.boolean() })
+export type PluginToggleRequestT = z.infer<typeof PluginToggleRequest>
+export const PluginInstallRequest = z.object({ name: z.string() })
+export type PluginInstallRequestT = z.infer<typeof PluginInstallRequest>
+// POST /v1/plugins/upgrade reuses the same { name } shape.
+export const LicenseActivateRequest = z.object({ key: z.string() })
+export type LicenseActivateRequestT = z.infer<typeof LicenseActivateRequest>
+
 export type A2APreviewRequestT = z.infer<typeof A2APreviewRequest>
 export type A2AInstallRequestT = z.infer<typeof A2AInstallRequest>
 export type A2ARemoveRequestT = z.infer<typeof A2ARemoveRequest>
@@ -381,6 +390,18 @@ export const A2ASendResponse = z.union([
   z.object({ ok: z.literal(false), error: z.string(), http_status: z.number().optional(), registered: z.array(z.string()).optional() }),
 ])
 export type A2ASendRequestT = z.infer<typeof A2ASendRequest>
+
+// ── POST /v1/social/seek (agent-social M1, T7b-core) ──────────────────────────
+
+export const SocialSeekRequest = z.object({
+  // Bounds mirror IntentCardSchema (src/core/a2a-intent.ts) — the seek
+  // request feeds directly into the intent card sent to peers, so an
+  // overlong topic/city should be rejected locally (400) rather than
+  // passed through and only ever failing downstream, once per peer.
+  topic: z.string().min(1).max(280),
+  city: z.string().max(64).optional(),
+})
+export type SocialSeekRequestT = z.infer<typeof SocialSeekRequest>
 
 // ── POST /v1/a2a/test ────────────────────────────────────────────────────────
 // Server-side smoke test for the dashboard's Test button. With outbound=false
@@ -535,6 +556,9 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   // conversation
   'POST /v1/conversation/set-mode': ConversationSetModeRequest,
 
+  // agent-social M1
+  'POST /v1/social/seek': SocialSeekRequest,
+
   // a2a
   'POST /v1/a2a/send': A2ASendRequest,
   'POST /v1/a2a/test': A2ATestRequest,
@@ -542,6 +566,10 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/a2a/install': A2AInstallRequest,
   'POST /v1/a2a/remove': A2ARemoveRequest,
   'POST /v1/a2a/pause': A2APauseRequest,
+  'POST /v1/plugins/toggle': PluginToggleRequest,
+  'POST /v1/plugins/install': PluginInstallRequest,
+  'POST /v1/plugins/upgrade': PluginInstallRequest,
+  'POST /v1/license/activate': LicenseActivateRequest,
 }
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { A2AClient, SendRequest, SendResult } from './a2a-client'
 import type { A2AAgentRecord } from '../lib/agent-config'
-import { delegateToHand, handExecUrl } from './a2a-delegate'
+import { delegateToHand, handExecUrl, intentUrl } from './a2a-delegate'
 
 function hand(url: string): A2AAgentRecord {
   return { id: 'home', name: 'home', url, inbound_api_key: 'in_home_key_16chars', outbound_api_key: 'out_home_key', capabilities: ['exec'], paused: false, transport: 'push' }
@@ -17,6 +17,16 @@ describe('handExecUrl', () => {
     expect(handExecUrl('https://home/a2a')).toBe('https://home/a2a/exec')
     expect(handExecUrl('https://home/a2a/exec')).toBe('https://home/a2a/exec')
     expect(handExecUrl('https://home/')).toBe('https://home/a2a/exec')
+  })
+})
+
+describe('intentUrl', () => {
+  it('derives /a2a/intent from the common url shapes', () => {
+    expect(intentUrl('https://home/a2a/notify')).toBe('https://home/a2a/intent')
+    expect(intentUrl('https://home/a2a/exec')).toBe('https://home/a2a/intent')
+    expect(intentUrl('https://home/a2a')).toBe('https://home/a2a/intent')
+    expect(intentUrl('https://home/a2a/intent')).toBe('https://home/a2a/intent')
+    expect(intentUrl('https://home/')).toBe('https://home/a2a/intent')
   })
 })
 

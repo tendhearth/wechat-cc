@@ -23,6 +23,12 @@ function setup(opts: {
     sentMessages.push([chatId, text])
     return { msgId: 'm-1' }
   })
+  const pinModel = vi.fn<(providerId: ProviderId, model: string) => void>()
+  const prefsData = new Map<string, { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean }>()
+  const chatPrefs = {
+    get: (c: string) => prefsData.get(c) ?? {},
+    set: (c: string, p: { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean }) => { const n = { ...(prefsData.get(c) ?? {}), ...p }; prefsData.set(c, n); return n },
+  }
   const cmds = makeModeCommands({
     coordinator: {
       getMode: () => stored ?? { kind: 'solo', provider: opts.defaultProviderId ?? 'claude' },
@@ -41,10 +47,12 @@ function setup(opts: {
     sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
     setUserName: vi.fn(async (chat: string, name: string) => { storedName = { chat, name } }),
     getUserName: vi.fn(() => opts.initialUserName ?? null),
+    pinModel,
+    chatPrefs,
     log: () => {},
     isAdmin: opts.isAdmin,
   })
-  return { cmds, set, sendMessage, sentMessages, getStored: () => stored, getStoredName: () => storedName }
+  return { cmds, set, sendMessage, sentMessages, pinModel, chatPrefs, prefsData, getStored: () => stored, getStoredName: () => storedName }
 }
 
 describe('makeModeCommands', () => {
@@ -77,6 +85,74 @@ describe('makeModeCommands', () => {
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'cursor' })
     expect(sentMessages[0]?.[1]).toContain('Cursor')
     expect(sentMessages[0]?.[1]).toContain('solo')
+  })
+
+  it('/api switches mode to solo+openai (the OpenAI-compatible backend)', async () => {
+    const { cmds, set, sentMessages, pinModel } = setup({ registered: ['claude', 'codex', 'openai'] })
+    const consumed = await cmds.handle(inbound('/api'))
+    expect(consumed).toBe(true)
+    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'openai' })
+    expect(sentMessages[0]?.[1]).toContain('solo')
+    // Bare /api (no model tail) does NOT pin a model — only switches provider.
+    expect(pinModel).not.toHaveBeenCalled()
+  })
+
+  it('/api replies 未注册 when the openai provider is not configured', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex'] })
+    const consumed = await cmds.handle(inbound('/api'))
+    expect(consumed).toBe(true)
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('未注册')
+  })
+
+  // ── /api <model> — switch + pin the openai-compatible model in one go ──
+
+  it('/api deepseek-chat pins the model AND switches to solo+openai', async () => {
+    const { cmds, set, sentMessages, pinModel } = setup({ registered: ['claude', 'codex', 'openai'] })
+    const consumed = await cmds.handle(inbound('/api deepseek-chat'))
+    expect(consumed).toBe(true)
+    expect(pinModel).toHaveBeenCalledWith('openai', 'deepseek-chat')
+    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'openai' })
+    expect(sentMessages[0]?.[1]).toContain('deepseek-chat')
+  })
+
+  it('/api Kimi accepts a bare model name with no version digit', async () => {
+    // Unlike /v1/model (which rejects bare aliases), the openai-compatible
+    // backends this feature targets DO have bare names like `Kimi` /
+    // `DeepSeek` — the digit requirement would wrongly reject those.
+    const { cmds, set, pinModel, sentMessages } = setup({ registered: ['claude', 'codex', 'openai'] })
+    const consumed = await cmds.handle(inbound('/api Kimi'))
+    expect(consumed).toBe(true)
+    expect(pinModel).toHaveBeenCalledWith('openai', 'Kimi')
+    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'openai' })
+    expect(sentMessages[0]?.[1]).toContain('Kimi')
+  })
+
+  it('/api bad name rejects a model id containing a space — no switch, no pin', async () => {
+    const { cmds, set, pinModel, sentMessages } = setup({ registered: ['claude', 'codex', 'openai'] })
+    const consumed = await cmds.handle(inbound('/api bad name'))
+    expect(consumed).toBe(true)
+    expect(pinModel).not.toHaveBeenCalled()
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('无效')
+  })
+
+  it('/api <model> replies 未注册 when the openai provider is not configured — no pin', async () => {
+    const { cmds, set, pinModel, sentMessages } = setup({ registered: ['claude', 'codex'] })
+    const consumed = await cmds.handle(inbound('/api deepseek-chat'))
+    expect(consumed).toBe(true)
+    expect(pinModel).not.toHaveBeenCalled()
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('未注册')
+  })
+
+  it('/cc deepseek-chat (non-openai provider with a non-"+peer" tail) keeps the existing unsupported-argument error, does NOT pin', async () => {
+    const { cmds, set, pinModel, sentMessages } = setup({ registered: ['claude', 'codex'] })
+    const consumed = await cmds.handle(inbound('/cc deepseek-chat'))
+    expect(consumed).toBe(true)
+    expect(pinModel).not.toHaveBeenCalled()
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('不支持参数')
   })
 
   it('/cursor rejects with helpful message when cursor is not registered', async () => {
@@ -156,6 +232,8 @@ describe('makeModeCommands', () => {
       sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
       setUserName: async () => {},
       getUserName: () => null,
+      pinModel: async () => {},
+      chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
     })
     await cmds.handle(inbound('/both'))
@@ -198,6 +276,8 @@ describe('makeModeCommands', () => {
       sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
       setUserName: async () => {},
       getUserName: () => null,
+      pinModel: async () => {},
+      chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
     })
     await cmds.handle(inbound('/chat'))
@@ -241,6 +321,8 @@ describe('makeModeCommands', () => {
       sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
       setUserName: async () => {},
       getUserName: () => null,
+      pinModel: async () => {},
+      chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
     })
     await cmds.handle(inbound('/stop'))
@@ -269,6 +351,8 @@ describe('makeModeCommands', () => {
       sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
       setUserName: async () => {},
       getUserName: () => null,
+      pinModel: async () => {},
+      chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
     })
     await cmds.handle(inbound('/stop'))
@@ -353,6 +437,8 @@ describe('makeModeCommands', () => {
       sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
       setUserName: async () => {},
       getUserName: () => null,
+      pinModel: async () => {},
+      chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
     })
     await cmds.handle(inbound('/cc + codex'))
@@ -635,5 +721,192 @@ describe('makeModeCommands', () => {
         kind: 'chatroom', participants: ['claude', 'codex'],
       })
     })
+  })
+
+  // ── /set — per-chat preferences (settings layer seed) ────────────────
+
+  it('/set shows current prefs for this chat', async () => {
+    const { cmds, sentMessages } = setup()
+    expect(await cmds.handle(inbound('/set'))).toBe(true)
+    expect(sentMessages[0]?.[1]).toContain('split')
+    expect(sentMessages[0]?.[1]).toContain('on') // default ON when unset
+  })
+
+  it('/set split off persists and confirms', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    expect(await cmds.handle(inbound('/set split off'))).toBe(true)
+    expect(prefsData.get('chat-1')).toEqual({ split: false })
+    expect(sentMessages[0]?.[1]).toContain('关闭')
+  })
+
+  it('/set 拆分 开 (Chinese alias) turns it on', async () => {
+    const { cmds, prefsData } = setup()
+    await cmds.handle(inbound('/set 拆分 开'))
+    expect(prefsData.get('chat-1')).toEqual({ split: true })
+  })
+
+  it('/set with an unknown key replies usage, does not write', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    await cmds.handle(inbound('/set volume 11'))
+    expect(prefsData.size).toBe(0)
+    expect(sentMessages[0]?.[1]).toContain('split')
+  })
+
+  // ── /set care|关心 — proactive care level (Task 3) ────────────────────
+
+  it('/set care high persists {care:"high"} and confirms', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    expect(await cmds.handle(inbound('/set care high'))).toBe(true)
+    expect(prefsData.get('chat-1')).toEqual({ care: 'high' })
+    expect(sentMessages[0]?.[1]).toContain('high')
+  })
+
+  it('/set 关心 关 (Chinese alias + value) maps to {care:"off"}', async () => {
+    const { cmds, prefsData } = setup()
+    await cmds.handle(inbound('/set 关心 关'))
+    expect(prefsData.get('chat-1')).toEqual({ care: 'off' })
+  })
+
+  it('/set 关心 低 maps to {care:"low"}', async () => {
+    const { cmds, prefsData } = setup()
+    await cmds.handle(inbound('/set 关心 低'))
+    expect(prefsData.get('chat-1')).toEqual({ care: 'low' })
+  })
+
+  it('/set care maybe is a usage error and does not write', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    await cmds.handle(inbound('/set care maybe'))
+    expect(prefsData.size).toBe(0)
+    expect(sentMessages[0]?.[1]).toContain('care')
+  })
+
+  it('/set care on is a usage error (care is 3-level, not on/off) and does not write', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    await cmds.handle(inbound('/set care on'))
+    expect(prefsData.size).toBe(0)
+    expect(sentMessages[0]?.[1]).toContain('care')
+  })
+
+  it('bare /set output contains both split and 关心 states', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/set'))
+    const text = sentMessages[0]?.[1] ?? ''
+    expect(text).toContain('split')
+    expect(text).toContain('关心')
+  })
+
+  it('bare /set shows 未设置 when care is unset, and the raw stored value when set', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[0]?.[1]).toContain('未设置')
+    await cmds.handle(inbound('/set care low'))
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[2]?.[1]).toContain('low')
+  })
+
+  // ── /set stickers|表情 — sticker-reply toggle (Task 4) ────────────────
+
+  it('/set stickers off persists {stickers:false} and confirms', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    expect(await cmds.handle(inbound('/set stickers off'))).toBe(true)
+    expect(prefsData.get('chat-1')).toEqual({ stickers: false })
+    expect(sentMessages[0]?.[1]).toContain('关闭')
+  })
+
+  it('/set stickers on persists {stickers:true} and confirms', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    expect(await cmds.handle(inbound('/set stickers on'))).toBe(true)
+    expect(prefsData.get('chat-1')).toEqual({ stickers: true })
+    expect(sentMessages[0]?.[1]).toContain('开启')
+  })
+
+  it('/set 表情 开 (Chinese alias) turns it on', async () => {
+    const { cmds, prefsData } = setup()
+    await cmds.handle(inbound('/set 表情 开'))
+    expect(prefsData.get('chat-1')).toEqual({ stickers: true })
+  })
+
+  it('/set 表情 关 (Chinese alias) turns it off', async () => {
+    const { cmds, prefsData } = setup()
+    await cmds.handle(inbound('/set 表情 关'))
+    expect(prefsData.get('chat-1')).toEqual({ stickers: false })
+  })
+
+  it('/set stickers maybe is a usage error and does not write', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    await cmds.handle(inbound('/set stickers maybe'))
+    expect(prefsData.size).toBe(0)
+    expect(sentMessages[0]?.[1]).toContain('stickers')
+  })
+
+  it('bare /set output contains 表情', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[0]?.[1]).toContain('表情')
+  })
+
+  it('bare /set shows 未设置 when stickers is unset, and the raw on|off when set', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[0]?.[1]).toContain('未设置')
+    await cmds.handle(inbound('/set stickers off'))
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[2]?.[1]).toContain('表情(表情包): off')
+  })
+
+  // ── /set hunt|打猎 — daily hunt toggle (Task 2) ────────────────────────
+
+  it('/set hunt off persists {hunt:false} and confirms', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    expect(await cmds.handle(inbound('/set hunt off'))).toBe(true)
+    expect(prefsData.get('chat-1')).toEqual({ hunt: false })
+    expect(sentMessages[0]?.[1]).toContain('关闭')
+  })
+
+  it('/set hunt on persists {hunt:true} and confirms', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    expect(await cmds.handle(inbound('/set hunt on'))).toBe(true)
+    expect(prefsData.get('chat-1')).toEqual({ hunt: true })
+    expect(sentMessages[0]?.[1]).toContain('开启')
+  })
+
+  it('/set 打猎 开 (Chinese alias) turns it on', async () => {
+    const { cmds, prefsData } = setup()
+    await cmds.handle(inbound('/set 打猎 开'))
+    expect(prefsData.get('chat-1')).toEqual({ hunt: true })
+  })
+
+  it('/set 打猎 关 (Chinese alias) turns it off', async () => {
+    const { cmds, prefsData } = setup()
+    await cmds.handle(inbound('/set 打猎 关'))
+    expect(prefsData.get('chat-1')).toEqual({ hunt: false })
+  })
+
+  it('/set hunt maybe is a usage error and does not write', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    await cmds.handle(inbound('/set hunt maybe'))
+    expect(prefsData.size).toBe(0)
+    expect(sentMessages[0]?.[1]).toContain('hunt')
+  })
+
+  it('bare /set output contains 打猎', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[0]?.[1]).toContain('打猎')
+  })
+
+  it('bare /set shows 未设置 when hunt is unset, and the raw on|off when set', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[0]?.[1]).toContain('未设置')
+    await cmds.handle(inbound('/set hunt off'))
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages[2]?.[1]).toContain('打猎(每日打猎): off')
+  })
+
+  it('/help line mentions 每日打猎', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/help'))
+    expect(sentMessages[0]?.[1]).toContain('每日打猎')
   })
 })

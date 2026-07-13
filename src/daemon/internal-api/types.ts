@@ -9,9 +9,11 @@
 import type { MemoryFS } from '../memory/fs-api'
 import type { Db } from '../../lib/db'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
+import type { ReplySinks } from '../reply-sinks'
 import type { ConversationStore } from '../../core/conversation-store'
 import type { ProviderId } from '../../core/conversation'
 import type { PermissionMode } from '../../core/capability-matrix'
+import type { UserTier } from '../../core/user-tier'
 
 /**
  * RFC 03 P3: when conversation mode is parallel (or chatroom), the
@@ -124,6 +126,13 @@ export interface InternalApiDeps {
    */
   ilink?: InternalApiIlinkDep
   /**
+   * Optional reply-sink registry (app-conversation-channel, Stage 0). When
+   * a sink is open for a chat, `POST /v1/wechat/reply` captures the reply
+   * into it instead of ilink-sending — the app channel reads the turn's
+   * output back from the sink. Absent ⇒ WeChat reply path unchanged.
+   */
+  replySinks?: ReplySinks
+  /**
    * Optional mode-aware reply prefixing (RFC 03 P3). When wired, the
    * `reply` route consults `conversationStore` for the chat's mode and
    * prefixes `[Display]` in parallel + chatroom modes. Without this,
@@ -147,6 +156,24 @@ export interface InternalApiDeps {
     setMode(chatId: string, mode: import('../../core/conversation').Mode): void
   }
   /**
+   * Optional app-conversation-channel converse dep (voice arc, Stage 0,
+   * Task 2). Encapsulates the whole owner-session turn — synthesizes an
+   * inbound message for the owner chat, dispatches it through the real
+   * coordinator, and captures the reply via a reply-sink (see
+   * ../reply-sinks.ts) instead of ilink-sending it — so the route table
+   * never has to import coordinator internals.
+   *
+   * Late-bound: main.ts wires this in after bootstrap constructs the
+   * coordinator (mirrors `conversation` above). POST /v1/companion/converse
+   * returns 503 until this is set.
+   *
+   * Throws `Error('reply_sink_busy')` when a turn is already in flight for
+   * the owner chat (route maps to 409), or a distinct error when the owner
+   * chat isn't configured yet (route maps to 503); any other rejection maps
+   * to 500.
+   */
+  companionConverse?: (text: string) => Promise<{ reply: string }>
+  /**
    * Optional A2A deps — undefined when a2a_listen is not configured.
    * When absent, POST /v1/a2a/send returns 503.
    */
@@ -167,6 +194,16 @@ export interface InternalApiDeps {
     serverEnabled: boolean
     /** Base URL of the a2a listener, e.g. "http://0.0.0.0:9000". Null when disabled. */
     baseUrl: string | null
+  }
+  /**
+   * Agent-social M1 (T7b-core) — undefined when `social_enabled` +
+   * `social_disclosure_policy` aren't both configured (or bootstrap hasn't
+   * late-bound it yet). POST /v1/social/seek returns 503 until this is set.
+   * Late-bound by main.ts from `bootstrap.social` (mirrors the `a2a` dep
+   * above / `setA2A`).
+   */
+  social?: {
+    broker: { seek(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').SeekOutcome> }
   }
   /**
    * Optional per-turn outcome store — backs GET /v1/turns. Undefined in
@@ -204,11 +241,38 @@ export interface InternalApiDeps {
    * daemon's real `log` impl supports it; test stubs may ignore).
    */
   log?: (tag: string, line: string, fields?: Record<string, unknown>) => void
+  /**
+   * Per-chat prefs read for reply splitting (活人感, spec 2026-07-09).
+   * ABSENT ⇒ splitting disabled (tests/embedded keep single-send
+   * behavior). Wired ⇒ split defaults ON unless the chat set split:false.
+   */
+  getChatPrefs?: (chatId: string) => { split?: boolean }
+  /** Injectable sleep for chunk pacing; absent ⇒ real setTimeout. */
+  sleepMs?: (ms: number) => Promise<void>
+  /**
+   * Shared chat-prefs writer for the set_chat_pref tool (POST /v1/chat-prefs).
+   * Absent ⇒ the route 503s chat_prefs_not_wired.
+   */
+  setChatPref?: (chatId: string, patch: { care?: 'off' | 'low' | 'high'; split?: boolean }) => { care?: 'off' | 'low' | 'high'; split?: boolean }
+  /**
+   * Shared sticker library (image-stickers plan) — backs
+   * POST /v1/wechat/send_sticker, POST /v1/stickers, GET /v1/stickers.
+   * Wired in main.ts over the shared StickerLib instance. Absent ⇒ the
+   * three routes 503 stickers_not_wired.
+   */
+  stickers?: {
+    /** ABSOLUTE path of a random match for `tag`; trim+case-insensitive; null if no match. */
+    resolve(tag: string): string | null
+    /** Copies sourcePath into the library. Throws Error('invalid_extension') / Error('empty_tags') / fs errors. */
+    save(sourcePath: string, tags: string[], desc?: string): { file: string; tags: string[] }
+    list(): { file: string; tags: string[]; desc?: string }[]
+    allTags(): string[]
+  }
 }
 
 export interface InternalApi {
   /** Start listening on 127.0.0.1:0; resolves once bound. */
-  start(): Promise<{ port: number; tokenFilePath: string }>
+  start(): Promise<{ port: number; tokenFilePath: string; operatorTokenFilePath: string }>
   /** Stop the HTTP server and (optionally) clean up the token file. */
   stop(opts?: { unlinkToken?: boolean }): Promise<void>
   /** Bound port. Throws if accessed before start() resolves. */
@@ -228,11 +292,25 @@ export interface InternalApi {
    */
   setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
   /**
+   * Late-bind the companion converse dep (app-conversation-channel, Stage 0
+   * Task 2) after the wiring layer has built the closure over the
+   * coordinator + reply sinks. POST /v1/companion/converse returns 503
+   * until this is called.
+   */
+  setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
+  /**
    * Late-bind A2A deps after bootstrap has constructed the registry,
    * client, and events store. POST /v1/a2a/send returns 503 until this
    * is called (when a2a_listen is configured).
    */
   setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
+  /**
+   * Late-bind the agent-social M1 broker (T7b-core) after bootstrap has
+   * constructed it. POST /v1/social/seek returns 503 until this is called
+   * (only happens when social_enabled + social_disclosure_policy are both
+   * configured).
+   */
+  setSocial(social: NonNullable<InternalApiDeps['social']>): void
   /** Mint an env-only per-session token granting `tier`, keyed by `sessionKey`
    *  (`provider/alias/chatId`). The daemon injects it into that session's MCP
    *  children; the route layer resolves the tier from it. */
@@ -245,10 +323,17 @@ export interface InternalApi {
  * Each route handler receives the parsed query (always present) and the
  * parsed JSON body (POST only; null on GET). Returns { status, body } —
  * no streaming, no manual res manipulation.
+ *
+ * The optional third param carries the resolved caller identity (tier +
+ * token origin + chatId when the token is a session token) — see index.ts's
+ * dispatcher. Optional so existing handlers that ignore it keep compiling
+ * unchanged; routes that need caller-scoped authorization (e.g. memory/*)
+ * read it explicitly.
  */
 export type RouteHandler = (
   query: URLSearchParams,
   body: unknown,
+  caller?: { tier: UserTier; origin: 'file' | 'session' | 'operator'; chatId?: string },
 ) => Promise<{ status: number; body: unknown }> | { status: number; body: unknown }
 
 export type RouteTable = Record<string, RouteHandler | undefined>

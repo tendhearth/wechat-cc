@@ -25,6 +25,7 @@ import { assertSupported, capabilitiesFor, UnsupportedCombinationError, type Per
 import { collectTurn, TURN_TIMEOUT_CODE, type TurnSummary } from './agent-provider'
 import { resolveEffectiveTier, TIER_PROFILES, type TierProfile } from './user-tier'
 import type { Access } from '../lib/access'
+import { makeChatMutex } from './async-mutex'
 
 /**
  * Per-agent timeout for a single /chat debate beat. Much shorter than the
@@ -167,8 +168,53 @@ export function authFailNotice(providerId: ProviderId): string {
     ?? `⚠ ${providerId} 登录已过期，请在电脑上重新登录后再发消息。`
 }
 
+/** Turn-taking policy for a mode (D3 — turn-entry unification). */
+export type TurnPolicy = 'queue' | 'preempt'
+
+/**
+ * The per-chat serialization strategy for a mode, made EXPLICIT (D3):
+ *  - `queue`: turns serialize on the per-chat mutex (solo/parallel/primary_tool)
+ *    — single-turn dispatches with no self-preemption, so wrapping them in the
+ *    mutex is a pure win: two rapid inbound messages for one chat run their
+ *    turns one at a time instead of racing on session/history state.
+ *  - `preempt`: a new turn aborts the in-flight one (chatroom's latest-wins;
+ *    the shape a future voice channel needs for barge-in). Chatroom is EXEMPT
+ *    from the mutex because `dispatchChatroom` implements its OWN
+ *    preempt-on-arrival protocol (inFlightAborters / inFlightDispatchPromises):
+ *    a new message aborts the prior in-flight loop and awaits its cleanup rather
+ *    than running it to completion. Routing it through the mutex would make a
+ *    new message wait for the lock — handed over only after the PRIOR dispatch
+ *    fully settles — before it could even reach the preempt-abort check, turning
+ *    "abort the stale loop and start now" into "wait for the stale loop to
+ *    drain, THEN start" and defeating latest-wins. (Verified pre-D3 by
+ *    temporarily routing chatroom through the mutex: no deadlock, but the abort
+ *    never fired early — B just waited behind A's held lock.)
+ * Adding a preempt mode is a one-line entry here, not a re-derivation across callers.
+ */
+export function turnPolicy(mode: Mode): TurnPolicy {
+  return mode.kind === 'chatroom' ? 'preempt' : 'queue'
+}
+
 export interface ConversationCoordinator {
+  /**
+   * The SINGLE turn entrypoint (D3). Owns the per-chat turn-taking policy
+   * (queue vs preempt, via {@link turnPolicy}) AND the dispatch itself, so a
+   * caller can never take the wrong lock or bypass it. `opts.within` runs
+   * caller logic (e.g. an app reply-sink capture) INSIDE the locked/preempt
+   * turn; it receives an opaque `dispatch` closure it must await — the only
+   * way to trigger the turn (so callers never name the internal dispatch).
+   */
+  submitTurn(msg: InboundMsg): Promise<void>
+  submitTurn<T>(msg: InboundMsg, opts: { within: (dispatch: () => Promise<void>) => Promise<T> }): Promise<T>
   dispatch(msg: InboundMsg): Promise<void>
+  /**
+   * Per-chatId async mutex (Task 1 — session-serialization): runs `fn`
+   * exclusively with respect to any other `runExclusive` call for the same
+   * chatId, so two rapid inbound messages for one chat can never run their
+   * turns concurrently (session/history races). Different chatIds are
+   * independent. Exposed mainly for tests; `dispatch` is the normal caller.
+   */
+  runExclusive<T>(chatId: string, fn: () => Promise<T>): Promise<T>
   /**
    * Get the effective mode for a chat — persisted value, or the daemon
    * default if none. Used by mode-commands to render `/mode` status.
@@ -325,6 +371,12 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
   // chatroom dispatch in the same chat awaits this so the "latest user msg
   // wins" preempt path doesn't race the prior loop's cleanup.
   const inFlightDispatchPromises = new Map<string, Promise<void>>()
+
+  // Task 1 (session-serialization) — per-chatId async mutex. `dispatch`
+  // (below) wraps `dispatchInner` in this for solo/parallel/primary_tool so
+  // two rapid inbound messages for one chat never run concurrently. Chatroom
+  // is exempt — see the comment on `dispatch`.
+  const mutex = makeChatMutex()
 
   function validateMode(mode: Mode): void {
     // Reject unknown providers up front so the caller (mode-commands or
@@ -513,7 +565,21 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
 
     try {
       // ── Beat ①: parallel opening — every panel agent answers the raw question.
-      const question = deps.format(msg)
+      //
+      // Re-inject [chat_id:xxx] ahead of the formatted envelope. Solo /
+      // parallel dispatch deps.format(msg) verbatim, so the speaker sees the
+      // <wechat chat_id="..."> envelope directly and can namespace
+      // memory_*/set_user_name under it. Chatroom instead embeds
+      // deps.format(msg) as `question` inside the conductor's prompt
+      // builders (buildOpeningPrompt/buildRebuttalPrompt) — the envelope's
+      // chat_id="..." attribute is present there too, but only as XML, not
+      // the bracket form the speaker's tool-routing convention expects.
+      // This was fixed once for the old LLM moderator (b69973f) which
+      // paraphrased the envelope away entirely; deleting the moderator
+      // (a4101ca) dropped the injection along with it even though the
+      // bracket form was never restored. Prepending it here covers every
+      // beat that embeds `question` (opening, rebuttal, convergence, verdict).
+      const question = `[chat_id:${msg.chatId}]\n${deps.format(msg)}`
 
       const openings = await runBeat(msg, proj, tierProfile, participants, (p) => buildOpeningPrompt(question, participants, p))
       if (openings.length === 0) {
@@ -737,22 +803,15 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     return results.filter((r): r is Opening => r !== null)
   }
 
-  return {
-    getMode,
-    setMode(chatId, mode) {
-      validateMode(mode)
-      const oldMode = getMode(chatId)
-      deps.conversationStore.set(chatId, mode)
-    },
-    cancel(chatId) {
-      const ac = inFlightAborters.get(chatId)
-      if (!ac) return false
-      ac.abort()
-      // delete is done in dispatchChatroom's finally; double-delete is harmless.
-      return true
-    },
-    async dispatch(msg) {
-      const proj = deps.resolveProject(msg.chatId)
+  /**
+   * The pre-lock dispatch body (Task 1 — session-serialization). Renamed
+   * from the original unserialized `dispatch`; behaviour is byte-for-byte
+   * identical. `dispatch` (below) is the only caller in normal operation —
+   * it wraps this in `mutex.runExclusive(msg.chatId, ...)` for solo/
+   * parallel/primary_tool, and calls it directly (no lock) for chatroom.
+   */
+  async function dispatchInner(msg: InboundMsg): Promise<void> {
+    const proj = deps.resolveProject(msg.chatId)
       if (!proj) {
         deps.log('COORDINATOR', `drop: no project for chat=${msg.chatId}`)
         return
@@ -827,6 +886,51 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           return dispatchChatroom(msg, proj, participants!)
         }
       }
+    }
+
+  /**
+   * D3 — the single turn entrypoint. Resolves the mode's turn policy (see
+   * {@link turnPolicy} for the queue-vs-preempt rationale), then runs
+   * the turn under it: `preempt` (chatroom) bypasses the mutex (its own
+   * abort-on-arrival protocol IS the preemption); `queue` serializes on the
+   * per-chat mutex. `opts.within`, when given, runs INSIDE that locked/preempt
+   * region and receives the dispatch closure (used by the app path to open a
+   * reply-sink, dispatch, and read the captured reply — all under one lock).
+   */
+  async function submitTurn<T = void>(
+    msg: InboundMsg,
+    opts?: { within?: (dispatch: () => Promise<void>) => Promise<T> },
+  ): Promise<T | void> {
+    const run = async (): Promise<T | void> => {
+      const doDispatch = (): Promise<void> => dispatchInner(msg)
+      return opts?.within ? opts.within(doDispatch) : doDispatch()
+    }
+    if (turnPolicy(getMode(msg.chatId)) === 'preempt') return run()
+    return mutex.runExclusive(msg.chatId, run)
+  }
+
+  // Back-compat thin wrapper — the WeChat inbound path. Identical behavior to
+  // the old mode-branching dispatch, now expressed via submitTurn's policy.
+  async function dispatch(msg: InboundMsg): Promise<void> {
+    await submitTurn(msg)
+  }
+
+  return {
+    submitTurn,
+    getMode,
+    setMode(chatId, mode) {
+      validateMode(mode)
+      const oldMode = getMode(chatId)
+      deps.conversationStore.set(chatId, mode)
     },
+    cancel(chatId) {
+      const ac = inFlightAborters.get(chatId)
+      if (!ac) return false
+      ac.abort()
+      // delete is done in dispatchChatroom's finally; double-delete is harmless.
+      return true
+    },
+    runExclusive: mutex.runExclusive,
+    dispatch,
   }
 }

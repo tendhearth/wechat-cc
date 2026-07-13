@@ -8,7 +8,8 @@
 // the .app/.exe/.deb bundle and is resolved by tauri-plugin-shell.
 
 use serde_json::Value;
-use tauri::{AppHandle, Emitter};
+use std::path::PathBuf;
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
@@ -98,6 +99,24 @@ fn render_qr_svg(text: String) -> Result<String, String> {
 // re-running `bun build --compile`. Release builds (cfg(not(debug_assertions)))
 // always use the sidecar so production has no path that depends on bun
 // being on PATH or on a writable repo checkout.
+// Where the bundled first-party plugins (e.g. wxvault) landed in the app's
+// resource dir. `resources: ["../../../plugins/"]` in tauri.conf maps each `..`
+// to `_up_`, so from $RESOURCE the dir is `_up_/_up_/_up_/plugins`. Probe the
+// likely spots and return the first that exists; if none do we leave the env
+// unset and the daemon falls back to its execPath logic (graceful, not a crash).
+// Passed to the sidecar as WECHAT_CC_BUNDLED_PLUGINS_DIR (read by paths.ts)
+// because the daemon can't portably derive the platform-specific resource path.
+fn bundled_plugins_dir(app: &AppHandle) -> Option<PathBuf> {
+    let base = app.path().resource_dir().ok()?;
+    for rel in ["_up_/_up_/_up_/plugins", "plugins"] {
+        let p = base.join(rel);
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+    None
+}
+
 async fn run_sidecar(app: &AppHandle, args: Vec<String>) -> Result<String, String> {
     #[cfg(debug_assertions)]
     if let Some(root) = resolve_dev_repo_root() {
@@ -108,6 +127,15 @@ async fn run_sidecar(app: &AppHandle, args: Vec<String>) -> Result<String, Strin
         .shell()
         .sidecar("wechat-cc-cli")
         .map_err(|err| format!("failed to resolve wechat-cc-cli sidecar: {err}"))?;
+
+    // Point the sidecar at the bundled plugins dir (see bundled_plugins_dir).
+    let sidecar = match bundled_plugins_dir(app) {
+        Some(dir) => sidecar.env(
+            "WECHAT_CC_BUNDLED_PLUGINS_DIR",
+            dir.to_string_lossy().to_string(),
+        ),
+        None => sidecar,
+    };
 
     let (mut rx, _child) = sidecar
         .args(args)
@@ -308,6 +336,321 @@ async fn wechat_health_ping(
     }
 }
 
+// App-conversation-channel bridge (voice arc Stage 0): proxies the webview
+// to the daemon's POST /v1/companion/converse endpoint, which drives one
+// real turn on the owner's own session and hands the reply back
+// synchronously. Discovers the daemon's baseUrl + bearer token the same way
+// the CLI/daemon do — <stateDir>/internal-api-info.json (written by
+// registerInternalApi in src/daemon/internal-api/lifecycle.ts) holds
+// {baseUrl, tokenFilePath, operatorTokenFilePath}; stateDir defaults to
+// ~/.claude/channels/wechat, overridable via WECHAT_STATE_DIR (mirrors
+// src/lib/config.ts STATE_DIR).
+// Unlike wechat_health_ping (which receives port/token_file_path from JS,
+// itself sourced from the doctor report), this command is self-contained —
+// it has no doctor report to lean on, so it re-derives the same paths.
+//
+// Security (option B fix, see token-registry.ts's module doc comment):
+// POST /v1/companion/converse is admin-tier, but the daemon-wide
+// `tokenFilePath` token is only ever registered `trusted` (it's the
+// shell-readable operator-CLI token — see index.ts's registerFileToken
+// comment) so presenting it here always 403s. Instead this command reads
+// the SEPARATE `operatorTokenFilePath` — a distinct admin-tier credential
+// minted only for local-operator use. Anyone who can read that file already
+// has local filesystem access as the machine owner (could read the WeChat
+// data directly), so granting it admin is a deliberate, narrowly-scoped
+// exception. Do NOT fall back to tokenFilePath here — that would either
+// 403 (correct but confusing) or, worse, mask a real daemon/version
+// mismatch where operatorTokenFilePath hasn't been written yet.
+#[tauri::command]
+async fn agent_converse(text: String) -> Result<String, String> {
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|e| format!("cannot resolve home dir: {e}"))?;
+    let state_dir = std::env::var("WECHAT_STATE_DIR")
+        .unwrap_or_else(|_| {
+            PathBuf::from(home)
+                .join(".claude")
+                .join("channels")
+                .join("wechat")
+                .to_string_lossy()
+                .to_string()
+        });
+    let info_path = PathBuf::from(&state_dir).join("internal-api-info.json");
+
+    let info_raw = std::fs::read_to_string(&info_path)
+        .map_err(|e| format!("read {}: {e}", info_path.display()))?;
+    let info: Value = serde_json::from_str(&info_raw)
+        .map_err(|e| format!("invalid JSON in {}: {e}", info_path.display()))?;
+
+    let base_url = info
+        .get("baseUrl")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("missing baseUrl in {}", info_path.display()))?;
+    // operatorTokenFilePath, not tokenFilePath — see the doc comment above
+    // this command. Absent means an old daemon that predates the option B
+    // fix; fail clearly rather than silently falling back to a token that
+    // will just 403.
+    let operator_token_file_path = info
+        .get("operatorTokenFilePath")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "operator token unavailable — daemon too old".to_string())?;
+
+    let token = std::fs::read_to_string(operator_token_file_path)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| format!("token read error: {e}"))?;
+
+    let url = format!("{base_url}/v1/companion/converse");
+    let duration = Duration::from_secs(60);
+    // reqwest's `json` feature is not enabled in this crate (see Cargo.toml —
+    // default-features = false, only "rustls-tls"), so serialize the body by
+    // hand rather than pull in a new feature flag.
+    let payload = serde_json::to_string(&serde_json::json!({ "text": text }))
+        .map_err(|e| format!("failed to serialize request body: {e}"))?;
+
+    let result = timeout(duration, async {
+        reqwest::Client::new()
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(payload)
+            .send()
+            .await
+    })
+    .await;
+
+    let resp = match result {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => return Err(format!("request error: {e}")),
+        Err(_) => return Err("request timed out".to_string()),
+    };
+
+    let status = resp.status();
+    let body_text = resp
+        .text()
+        .await
+        .map_err(|e| format!("failed to read response body ({status}): {e}"))?;
+    let body: Value = serde_json::from_str(&body_text)
+        .map_err(|e| format!("invalid JSON response ({status}): {e}\n{body_text}"))?;
+
+    let ok = body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    if ok {
+        let reply = body
+            .get("reply")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        Ok(reply)
+    } else {
+        let err_msg = body
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("request failed: {status}"));
+        Err(err_msg)
+    }
+}
+
+// App-conversation-channel bridge (voice arc Stage 1): proxies the webview
+// to the daemon's POST /v1/companion/speak endpoint, which synthesizes reply
+// audio for the given text and hands the bytes back as base64. Mirrors
+// agent_converse above precisely — same operator-token discovery via
+// <stateDir>/internal-api-info.json's operatorTokenFilePath (see that
+// command's doc comment for the full security rationale on why the
+// operator token, not tokenFilePath, is used here). Only the route and the
+// response shape differ: {ok, audio_b64, mime} instead of {ok, reply}.
+#[derive(serde::Serialize)]
+struct SpeakOut {
+    audio_b64: String,
+    mime: String,
+}
+
+#[tauri::command]
+async fn agent_speak(text: String) -> Result<SpeakOut, String> {
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|e| format!("cannot resolve home dir: {e}"))?;
+    let state_dir = std::env::var("WECHAT_STATE_DIR")
+        .unwrap_or_else(|_| {
+            PathBuf::from(home)
+                .join(".claude")
+                .join("channels")
+                .join("wechat")
+                .to_string_lossy()
+                .to_string()
+        });
+    let info_path = PathBuf::from(&state_dir).join("internal-api-info.json");
+
+    let info_raw = std::fs::read_to_string(&info_path)
+        .map_err(|e| format!("read {}: {e}", info_path.display()))?;
+    let info: Value = serde_json::from_str(&info_raw)
+        .map_err(|e| format!("invalid JSON in {}: {e}", info_path.display()))?;
+
+    let base_url = info
+        .get("baseUrl")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("missing baseUrl in {}", info_path.display()))?;
+    // operatorTokenFilePath, not tokenFilePath — see agent_converse's doc
+    // comment above for why.
+    let operator_token_file_path = info
+        .get("operatorTokenFilePath")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "operator token unavailable — daemon too old".to_string())?;
+
+    let token = std::fs::read_to_string(operator_token_file_path)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| format!("token read error: {e}"))?;
+
+    let url = format!("{base_url}/v1/companion/speak");
+    let duration = Duration::from_secs(60);
+    // reqwest's `json` feature is not enabled in this crate (see Cargo.toml —
+    // default-features = false, only "rustls-tls"), so serialize the body by
+    // hand rather than pull in a new feature flag.
+    let payload = serde_json::to_string(&serde_json::json!({ "text": text }))
+        .map_err(|e| format!("failed to serialize request body: {e}"))?;
+
+    let result = timeout(duration, async {
+        reqwest::Client::new()
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(payload)
+            .send()
+            .await
+    })
+    .await;
+
+    let resp = match result {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => return Err(format!("request error: {e}")),
+        Err(_) => return Err("request timed out".to_string()),
+    };
+
+    let status = resp.status();
+    let body_text = resp
+        .text()
+        .await
+        .map_err(|e| format!("failed to read response body ({status}): {e}"))?;
+    let body: Value = serde_json::from_str(&body_text)
+        .map_err(|e| format!("invalid JSON response ({status}): {e}\n{body_text}"))?;
+
+    let ok = body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    if ok {
+        let audio_b64 = body
+            .get("audio_b64")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let mime = body
+            .get("mime")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        Ok(SpeakOut { audio_b64, mime })
+    } else {
+        let err_msg = body
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("request failed: {status}"));
+        Err(err_msg)
+    }
+}
+
+// agent_transcribe — voice arc Stage 2 (voice-in). POSTs an inbound audio clip
+// (base64) to the daemon's POST /v1/companion/transcribe endpoint, which sends
+// it to the gateway STT and returns the recognized text. Mirrors agent_speak
+// precisely (same operator-token discovery + route-scoped credential); only the
+// route, request body ({audio_b64, mime}) and response ({ok, text}) differ.
+#[tauri::command]
+async fn agent_transcribe(audio_b64: String, mime: String) -> Result<String, String> {
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|e| format!("cannot resolve home dir: {e}"))?;
+    let state_dir = std::env::var("WECHAT_STATE_DIR").unwrap_or_else(|_| {
+        PathBuf::from(home)
+            .join(".claude")
+            .join("channels")
+            .join("wechat")
+            .to_string_lossy()
+            .to_string()
+    });
+    let info_path = PathBuf::from(&state_dir).join("internal-api-info.json");
+
+    let info_raw = std::fs::read_to_string(&info_path)
+        .map_err(|e| format!("read {}: {e}", info_path.display()))?;
+    let info: Value = serde_json::from_str(&info_raw)
+        .map_err(|e| format!("invalid JSON in {}: {e}", info_path.display()))?;
+
+    let base_url = info
+        .get("baseUrl")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("missing baseUrl in {}", info_path.display()))?;
+    let operator_token_file_path = info
+        .get("operatorTokenFilePath")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "operator token unavailable — daemon too old".to_string())?;
+
+    let token = std::fs::read_to_string(operator_token_file_path)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| format!("token read error: {e}"))?;
+
+    let url = format!("{base_url}/v1/companion/transcribe");
+    // Transcription can be slower than TTS on a cold whisper model — allow 120s.
+    let duration = Duration::from_secs(120);
+    let payload = serde_json::to_string(&serde_json::json!({ "audio_b64": audio_b64, "mime": mime }))
+        .map_err(|e| format!("failed to serialize request body: {e}"))?;
+
+    let result = timeout(duration, async {
+        reqwest::Client::new()
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(payload)
+            .send()
+            .await
+    })
+    .await;
+
+    let resp = match result {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => return Err(format!("request error: {e}")),
+        Err(_) => return Err("request timed out".to_string()),
+    };
+
+    let status = resp.status();
+    let body_text = resp
+        .text()
+        .await
+        .map_err(|e| format!("failed to read response body ({status}): {e}"))?;
+    let body: Value = serde_json::from_str(&body_text)
+        .map_err(|e| format!("invalid JSON response ({status}): {e}\n{body_text}"))?;
+
+    let ok = body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    if ok {
+        Ok(body
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string())
+    } else {
+        let err_msg = body
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("request failed: {status}"));
+        Err(err_msg)
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -321,7 +664,10 @@ pub fn run() {
             render_qr_svg,
             wechat_daemon_pid,
             notify_user,
-            wechat_health_ping
+            wechat_health_ping,
+            agent_converse,
+            agent_speak,
+            agent_transcribe
         ])
         .run(tauri::generate_context!())
         .expect("error while running wechat-cc desktop");

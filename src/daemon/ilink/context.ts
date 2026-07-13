@@ -8,7 +8,7 @@
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { makeStateStore, type StateStore } from '../state-store'
-import { makeSessionStateStore, type SessionStateStore } from '../session-state'
+import { makeSessionStateStore, type SessionStateStore } from '../../core/session-state'
 import { PendingPermissions } from '../pending-permissions'
 import { unknownChatIdError, missingContextTokenError } from '../../lib/send-reply'
 import type { Db } from '../../lib/db'

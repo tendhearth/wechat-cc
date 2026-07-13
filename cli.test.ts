@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { runCommand } from 'citty'
-import { cittyRoot } from './cli'
+import { cittyRoot, computeProviderSetOutcome } from './cli'
+import { activeModel, type AgentConfig } from './src/lib/agent-config'
 
 // PR4 batch 3c removed parseCliArgs — every subcommand now flows through
 // citty. The legacy describe('parseCliArgs') block + per-subcommand parse
@@ -69,6 +70,7 @@ describe('citty migrated commands', () => {
       'hand',
       'install',
       'install-progress',
+      'license',
       'list',
       'log',
       'logs',
@@ -77,6 +79,7 @@ describe('citty migrated commands', () => {
       'milestones',
       'mode',
       'observations',
+      'plugin',
       'provider',
       'reply',
       'run',
@@ -269,6 +272,122 @@ describe('citty migrated commands', () => {
       ['provider', 'set'],
     )
     expect(r?.args.provider).toBe('cursor')
+  })
+
+  it('provider set accepts openai with --model and --base-url', async () => {
+    const r = await runWithNestedStub(
+      ['provider', 'set', 'openai', '--model', 'deepseek-chat', '--base-url', 'https://api.deepseek.com/v1'],
+      ['provider', 'set'],
+    )
+    expect(r?.args.provider).toBe('openai')
+    expect(r?.args.model).toBe('deepseek-chat')
+    expect(r?.args['base-url']).toBe('https://api.deepseek.com/v1')
+  })
+
+  // ── provider set: computeProviderSetOutcome behavior (pure, no STATE_DIR I/O) ──
+
+  const baseConfig: AgentConfig = {
+    provider: 'claude',
+    dangerouslySkipPermissions: true,
+    autoStart: true,
+    closeStopsDaemon: false,
+  }
+
+  it('provider set openai persists provider + openaiModel + openaiBaseUrl', () => {
+    const outcome = computeProviderSetOutcome(
+      { provider: 'openai', model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' },
+      baseConfig,
+      {},
+    )
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) throw new Error('expected ok')
+    expect(outcome.config.provider).toBe('openai')
+    expect(outcome.config.openaiModel).toBe('deepseek-chat')
+    expect(outcome.config.openaiBaseUrl).toBe('https://api.deepseek.com/v1')
+    // openai never writes the generic `model` field.
+    expect(outcome.config.model).toBeUndefined()
+    expect(outcome.message).toContain('记得设置 WECHAT_OPENAI_API_KEY')
+  })
+
+  it('provider set openai reports the env key as detected when present', () => {
+    const outcome = computeProviderSetOutcome(
+      { provider: 'openai', model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' },
+      baseConfig,
+      { WECHAT_OPENAI_API_KEY: 'sk-test' },
+    )
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) throw new Error('expected ok')
+    expect(outcome.message).toContain('已检测到 WECHAT_OPENAI_API_KEY')
+  })
+
+  it('provider set openai errors when --base-url is missing and none is stored', () => {
+    const outcome = computeProviderSetOutcome({ provider: 'openai', model: 'deepseek-chat' }, baseConfig, {})
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) throw new Error('expected error')
+    expect(outcome.error).toContain('--base-url')
+    expect(outcome.error).toContain('WECHAT_OPENAI_API_KEY')
+  })
+
+  it('provider set openai errors when --model is missing and none is stored', () => {
+    const outcome = computeProviderSetOutcome({ provider: 'openai', baseUrl: 'https://api.deepseek.com/v1' }, baseConfig, {})
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) throw new Error('expected error')
+    expect(outcome.error).toContain('--model')
+  })
+
+  it('provider set openai reuses a stored base-url/model when flags are omitted', () => {
+    const existing: AgentConfig = { ...baseConfig, provider: 'openai', openaiBaseUrl: 'https://api.deepseek.com/v1', openaiModel: 'deepseek-chat' }
+    const outcome = computeProviderSetOutcome({ provider: 'openai' }, existing, {})
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) throw new Error('expected ok')
+    expect(outcome.config.openaiBaseUrl).toBe('https://api.deepseek.com/v1')
+    expect(outcome.config.openaiModel).toBe('deepseek-chat')
+  })
+
+  it('provider set claude is unaffected by openai support (no openai fields touched)', () => {
+    const outcome = computeProviderSetOutcome({ provider: 'claude', model: 'sonnet' }, baseConfig, {})
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) throw new Error('expected ok')
+    expect(outcome.config.provider).toBe('claude')
+    expect(outcome.config.model).toBe('sonnet')
+    expect(outcome.config.openaiModel).toBeUndefined()
+    expect(outcome.config.openaiBaseUrl).toBeUndefined()
+    expect(outcome.message).not.toContain('WECHAT_OPENAI_API_KEY')
+  })
+
+  it('provider set warns when --base-url is supplied for a non-openai provider', () => {
+    const outcome = computeProviderSetOutcome({ provider: 'claude', baseUrl: 'https://example.com' }, baseConfig, {})
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) throw new Error('expected ok')
+    expect(outcome.warning).toContain('ignored')
+  })
+
+  it('provider set cursor with --model persists cursorModel, not the generic model field', () => {
+    const outcome = computeProviderSetOutcome({ provider: 'cursor', model: 'composer-2' }, baseConfig, {})
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) throw new Error('expected ok')
+    expect(outcome.config.cursorModel).toBe('composer-2')
+    expect(outcome.config.model).toBeUndefined()
+    expect(outcome.message).toContain('composer-2')
+    expect(activeModel(outcome.config)).toBe('composer-2')
+  })
+
+  it('provider set openai retains a prior claude/codex generic model as a stale-but-harmless field, while activeModel resolves to the new openai model', () => {
+    const existing: AgentConfig = { ...baseConfig, provider: 'claude', model: 'sonnet-x' }
+    const outcome = computeProviderSetOutcome(
+      { provider: 'openai', model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' },
+      existing,
+      {},
+    )
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) throw new Error('expected ok')
+    expect(outcome.config.openaiModel).toBe('deepseek-chat')
+    // Stale generic `model` from the previous (claude) provider is retained
+    // rather than deleted — harmless since `show`/activeModel() key off the
+    // current provider, and it means switching back to claude later still
+    // remembers 'sonnet-x'.
+    expect(outcome.config.model).toBe('sonnet-x')
+    expect(activeModel(outcome.config)).toBe('deepseek-chat')
   })
 
   // ── PR4 batch 3b — memory / account / daemon / demo ─────────────────

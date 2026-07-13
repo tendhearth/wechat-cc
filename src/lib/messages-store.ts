@@ -31,6 +31,8 @@ export interface MessagesStore {
   listRange(chatId: string, opts: ListRangeOpts): Promise<MessageRecord[]>
   search(chatId: string, query: string, limit: number): Promise<MessageRecord[]>
   latestTs(chatId: string): Promise<string | null>
+  /** Latest INBOUND ('in') message ts only — the calibration gate's "last talked" signal. */
+  latestInboundTs(chatId: string): Promise<string | null>
   /** Extractor input: all messages after a watermark, ascending. */
   listSince(chatId: string, sinceTs: string, limit: number): Promise<MessageRecord[]>
   /** List distinct chat_ids that have at least one message. */
@@ -39,6 +41,30 @@ export interface MessagesStore {
 
 export function inboundMessageId(userId: string, createTimeMs: number): string {
   return `${userId}:${createTimeMs}`
+}
+
+/**
+ * 关系新鲜度阈值 — below this message count the "刚认识" (just-met)
+ * new-relationship prompt section shows (onboarding-curiosity design §2).
+ * ~30 条用户消息 ≈ 头几天的量; only counts inbound, unaffected by reply-splitting bubbles.
+ */
+export const NEW_RELATIONSHIP_MSG_COUNT = 30
+
+/**
+ * Inbound message count for a chat — SYNC, because
+ * buildInstructions (src/daemon/bootstrap/index.ts) is a synchronous
+ * function and can't await the async MessagesStore methods above.
+ * Counts only 'in' direction (user-shared volume); reply-splitting's 'out'
+ * bubbles must not dilute the freshness signal. bun:sqlite's `.get()` is
+ * synchronous, so this bypasses the async MessagesStore entirely and queries
+ * the db directly. Cheap: (chat_id, direction) is indexed, so this is
+ * index-only COUNT.
+ */
+export function countInboundMessagesSync(db: Db, chatId: string): number {
+  const row = db.query<{ n: number }, [string]>(
+    "SELECT COUNT(*) as n FROM messages WHERE chat_id = ? AND direction = 'in'",
+  ).get(chatId)
+  return row?.n ?? 0
 }
 
 /**
@@ -90,6 +116,9 @@ export function makeMessagesStore(db: Db): MessagesStore {
   const stmtLatestTs = db.query<{ ts: string }, [string]>(
     'SELECT ts FROM messages WHERE chat_id = ? ORDER BY ts DESC LIMIT 1',
   )
+  const stmtLatestInboundTs = db.query<{ ts: string }, [string]>(
+    "SELECT ts FROM messages WHERE chat_id = ? AND direction = 'in' ORDER BY ts DESC LIMIT 1",
+  )
   const stmtListSince = db.query<Row, [string, string, number]>(
     'SELECT * FROM messages WHERE chat_id = ? AND ts > ? ORDER BY ts ASC LIMIT ?',
   )
@@ -121,6 +150,9 @@ export function makeMessagesStore(db: Db): MessagesStore {
     },
     async latestTs(chatId) {
       return stmtLatestTs.get(chatId)?.ts ?? null
+    },
+    async latestInboundTs(chatId) {
+      return stmtLatestInboundTs.get(chatId)?.ts ?? null
     },
     async listSince(chatId, sinceTs, limit) {
       return stmtListSince.all(chatId, sinceTs, limit).map(rowToRecord)
