@@ -108,7 +108,7 @@ export function buildClaudeJudgeOptions(args: {
   claudeBin?: string
 }): (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string) => Options {
   const judgeCanUseTool: CanUseTool = async (toolName, input) =>
-    SOCIAL_JUDGE_PROFILE.allow.has(classifyToolUse(toolName, input as Record<string, unknown>))
+    SOCIAL_JUDGE_PROFILE.allow.has(classifyToolUse(toolName, input))
       ? { behavior: 'allow', updatedInput: input }
       : { behavior: 'deny', message: 'social judge: only plugin (wx*) tools are permitted' }
 
@@ -118,6 +118,7 @@ export function buildClaudeJudgeOptions(args: {
       cwd: path,
       model: args.model,
       mcpServers: args.pluginMcpForClaude, // plugins ONLY — no wechat/delegate
+      strictMcpConfig: true, // ignore any .mcp.json/settings MCP servers at cwd — allowlist above is exhaustive
       systemPrompt: { type: 'preset', preset: 'claude_code', append: appendInstructions ?? '' },
       settingSources: ['project', 'local'],
       ...(args.claudeBin ? { pathToClaudeCodeExecutable: args.claudeBin } : {}),

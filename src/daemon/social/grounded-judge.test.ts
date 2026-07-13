@@ -37,6 +37,10 @@ describe('buildClaudeJudgeOptions — isolation', () => {
     expect(Object.keys(opts.mcpServers ?? {})).toEqual(['wxsearch'])
   })
 
+  it('strictMcpConfig is set — ignores stray .mcp.json/settings MCP servers at cwd', () => {
+    expect(opts.strictMcpConfig).toBe(true)
+  })
+
   it('canUseTool allows a plugin MCP tool', async () => {
     const d = await opts.canUseTool!('mcp__wxsearch__find_facts', {}, {} as never)
     expect(d.behavior).toBe('allow')
