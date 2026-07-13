@@ -95,16 +95,21 @@ export function renderDashboard(report) {
     /* skip */
   } else {
     const subRows = currentRow ? rows.filter(r => r.id !== currentRow.id) : []
-    const displayRows = subRows.length > 0 ? subRows : demoSubUsers()
-    tbody.innerHTML = displayRows.map((row, index) => {
+    tbody.classList.toggle("is-empty", subRows.length === 0)
+    if (subRows.length === 0) {
+      tbody.innerHTML = `
+        <div class="sub-user-empty" role="status">
+          <span class="sub-user-empty-icon" aria-hidden="true">${icon("user-add-01", { size: 28 })}</span>
+          <div class="sub-user-empty-title">还没有子用户</div>
+          <div class="sub-user-empty-copy">添加后，他们会出现在这里</div>
+        </div>
+      `
+    } else {
+      tbody.innerHTML = subRows.map((row, index) => {
       const expEntry = expiredById[row.id]
-      // Active: honest "已连接" — daemon has no last-active heartbeat for
-      // real accounts. Demo rows (moxiuwen's placeholder set) get a more
-      // populated-looking "活跃中" so the empty-state mockup still reads
-      // alive without misrepresenting expired-vs-active for real users.
       const expCell = expEntry
         ? `已过期 · ${formatRelativeTime(expEntry.firstSeenExpiredAt)}`
-        : row.demo ? "活跃中" : "已连接"
+        : "已连接"
       // Expired rows get a primary 重新扫码 affordance next to the (now
       // ghost) delete button — clicking 重新扫码 routes back into the
       // wizard's bind/QR step so the user can pair the same WeChat
@@ -113,12 +118,12 @@ export function renderDashboard(report) {
       const actCell = row.expired
         ? `<button class="mini-action" data-action="rebind">${icon("refresh", { size: 13 })}重新扫码</button>
            <button class="mini-action" data-action="ask-delete">${icon("delete-02", { size: 13 })}删除</button>`
-        : row.demo ? "" : `<button class="mini-action" data-action="ask-delete">${icon("delete-02", { size: 13 })}删除</button>`
+        : `<button class="mini-action" data-action="ask-delete">${icon("delete-02", { size: 13 })}删除</button>`
       const conversation = conversationForAccount(report?.conversations || [], row)
       const currentProvider = providerFromMode(conversation?.mode) || report.checks.provider.provider || "claude"
       const chatId = conversation?.chat_id || row.userId || row.id
       return `
-        <div class="sub-user-card" data-bot-id="${escapeHtml(row.id)}" data-chat-id="${escapeHtml(chatId)}" data-current-provider="${escapeHtml(currentProvider)}" data-name="${escapeHtml(row.name)}"${row.demo ? ` data-demo="true"` : ""}>
+        <div class="sub-user-card" data-bot-id="${escapeHtml(row.id)}" data-chat-id="${escapeHtml(chatId)}" data-current-provider="${escapeHtml(currentProvider)}" data-name="${escapeHtml(row.name)}">
           <button class="card-menu" aria-haspopup="true" aria-label="选择 Agent">${icon("more-horizontal", { size: 18 })}</button>
           <div class="user-avatar">${avatarSvg(row.avatar ?? index, row.name)}</div>
           <div class="user-copy">
@@ -128,12 +133,13 @@ export function renderDashboard(report) {
           <div class="act">${actCell}</div>
         </div>
       `
-    }).join("")
+      }).join("")
+    }
+    const subExpiredCount = subRows.filter(row => row.expired).length
+    document.getElementById("accounts-meta").textContent = subExpiredCount > 0
+      ? `${subRows.length} 个 · ${subExpiredCount} 已过期`
+      : `${subRows.length} 个`
   }
-  const meta = expiredCount > 0
-    ? `${accounts.length} 个 · ${expiredCount} 已过期`
-    : `${accounts.length} 个 · ${report.checks.access.allowFromCount} 用户允许`
-  document.getElementById("accounts-meta").textContent = meta
 
 }
 
@@ -174,17 +180,6 @@ function avatarSvg(seed, label) {
       ? Math.abs(Math.trunc(seedNum)) % AVATAR_LINE_ICONS.length
       : Math.abs(String(label || seed).split("").reduce((h, ch) => ((h * 31 + ch.charCodeAt(0)) | 0), 7)) % AVATAR_LINE_ICONS.length
   return `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="22.5" fill="#f8f4ea" stroke="#ebe1d2" stroke-width="1"/><g fill="none" stroke="#593F2C" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">${AVATAR_LINE_ICONS[index]}</g></svg>`
-}
-
-function demoSubUsers() {
-  return [
-    { id: "demo-1", name: "麦子熟了", demo: true, avatar: 0 },
-    { id: "demo-2", name: "小鱼", demo: true, avatar: 1 },
-    { id: "demo-3", name: "程", demo: true, avatar: 2 },
-    { id: "demo-4", name: "阿哲", demo: true, avatar: 3 },
-    { id: "demo-5", name: "Summer", demo: true, avatar: 4 },
-    { id: "demo-6", name: "设计师阿紫", demo: true, avatar: 5 },
-  ]
 }
 
 // Mutate the dashboard's restart + stop buttons to reflect daemon+service

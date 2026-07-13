@@ -126,26 +126,24 @@ test('current-user card renders bound account name + 管理员 pill', async ({ p
 
 // ── Sub-user grid ───────────────────────────────────────────────────────
 
-test('sub-user grid shows 6 demo cards when no real sub-users', async ({ page, shimUrl, shim }) => {
-  // demo.seed produces 1 real account → rows.slice(1) is empty → demo cards shown.
+test('sub-user grid shows a truthful empty state when only the admin is bound', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await page.goto(shimUrl)
   await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 10_000 })
-  // demoSubUsers() returns 6 placeholder rows.
-  await expect(page.locator('#accounts-body .sub-user-card')).toHaveCount(6, { timeout: 10_000 })
-  // Each demo card has the data-bot-id attr set to demo-N.
-  await expect(page.locator('#accounts-body .sub-user-card[data-bot-id^="demo-"]')).toHaveCount(6)
+  await expect(page.locator('#accounts-body .sub-user-card')).toHaveCount(0)
+  await expect(page.locator('#accounts-body .sub-user-empty')).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('#accounts-body .sub-user-empty-title')).toHaveText('还没有子用户')
+  await expect(page.locator('#accounts-body .sub-user-empty-copy')).toHaveText('添加后，他们会出现在这里')
+  await expect(page.locator('#accounts-meta')).toHaveText('0 个')
 })
 
-test('demo sub-user cards have no delete button (row.demo flag)', async ({ page, shimUrl, shim }) => {
+test('empty state keeps the existing add-user button as the only action', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await page.goto(shimUrl)
   await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 10_000 })
-  await expect(page.locator('#accounts-body .sub-user-card')).toHaveCount(6, { timeout: 10_000 })
-  // Demo cards skip the delete affordance — non-demo non-expired rows
-  // would have a .mini-action[data-action="ask-delete"] button.
-  const deleteBtns = page.locator('#accounts-body .sub-user-card .mini-action[data-action="ask-delete"]')
-  await expect(deleteBtns).toHaveCount(0)
+  await expect(page.locator('#accounts-body button')).toHaveCount(0)
+  await expect(page.locator('#add-account-btn')).toBeVisible()
+  await expect(page.locator('#add-account-btn')).toContainText('添加用户')
 })
 
 // ── Connection-probe button + hero flip ────────────────────────────────────
