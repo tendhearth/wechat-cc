@@ -60,4 +60,74 @@ describe('createPendingConfirms', () => {
     await new Promise(r => setTimeout(r, 40))
     expect(pc.resolve('k1', '是')).toBe(false)
   })
+
+  describe('hasPending', () => {
+    it('true when a pending key equals the prefix exactly', () => {
+      const pc = createPendingConfirms()
+      pc.ask('op', 5000)
+      expect(pc.hasPending('op')).toBe(true)
+    })
+
+    it('true when a pending key starts with "prefix:"', () => {
+      const pc = createPendingConfirms()
+      pc.ask('op:intent-1', 5000)
+      expect(pc.hasPending('op')).toBe(true)
+    })
+
+    it('false when no pending key matches the prefix', () => {
+      const pc = createPendingConfirms()
+      pc.ask('other:intent-1', 5000)
+      expect(pc.hasPending('op')).toBe(false)
+    })
+
+    it('false when a pending key merely contains the prefix without the ":" boundary', () => {
+      const pc = createPendingConfirms()
+      pc.ask('operator:intent-1', 5000)
+      expect(pc.hasPending('op')).toBe(false)
+    })
+  })
+
+  describe('resolveByOwner', () => {
+    it('"是" → "yes" and resolves the ask to true', async () => {
+      const pc = createPendingConfirms()
+      const p = pc.ask('op:intent-1', 5000)
+      expect(pc.resolveByOwner('op', '是')).toBe('yes')
+      expect(await p).toBe(true)
+    })
+
+    it('"否" → "no" and resolves the ask to false', async () => {
+      const pc = createPendingConfirms()
+      const p = pc.ask('op:intent-1', 5000)
+      expect(pc.resolveByOwner('op', '否')).toBe('no')
+      expect(await p).toBe(false)
+    })
+
+    it('unclear text → "unclear" and resolves NOTHING (the ask stays pending)', async () => {
+      const pc = createPendingConfirms()
+      const p = pc.ask('op:intent-1', 5000)
+      expect(pc.resolveByOwner('op', '啥?')).toBe('unclear')
+      expect(pc.hasPending('op')).toBe(true)
+      // still pending — resolve it for real so the test doesn't leak a timer
+      pc.resolve('op:intent-1', '是')
+      expect(await p).toBe(true)
+    })
+
+    it('resolves the OLDEST matching entry first (Map insertion order = FIFO)', async () => {
+      const pc = createPendingConfirms()
+      const first = pc.ask('op:intent-1', 5000)
+      const second = pc.ask('op:intent-2', 5000)
+      expect(pc.resolveByOwner('op', '是')).toBe('yes')
+      expect(await first).toBe(true)
+      // second is still pending — resolve it directly to avoid leaking a timer
+      expect(pc.hasPending('op')).toBe(true)
+      pc.resolve('op:intent-2', '否')
+      expect(await second).toBe(false)
+    })
+
+    it('no pending entry matches the prefix → "unclear"', () => {
+      const pc = createPendingConfirms()
+      pc.ask('other:intent-1', 5000)
+      expect(pc.resolveByOwner('op', '是')).toBe('unclear')
+    })
+  })
 })

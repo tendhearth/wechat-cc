@@ -374,7 +374,29 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     },
     milestone: { fireMilestonesFor, log },
     welcome: { maybeWriteWelcomeObservation, log },
-    dispatch: { coordinator: { dispatch: (msg) => boot.coordinator.dispatch(msg) } },
+    dispatch: {
+      coordinator: {
+        // Agent-social M1 (T7b-2) — before running a normal turn, check
+        // whether this inbound is the operator's own chat AND there's a
+        // pending confirm awaiting their yes/no (asked out-of-band by
+        // confirmWithOwner via boot.social.pendingConfirms.ask, wired in
+        // bootstrap/index.ts's T7b-core social block). If so, try to
+        // consume it as a confirm answer instead of dispatching a normal
+        // agent turn — a clear yes/no settles the pending broker Promise
+        // directly (see pending-confirm.ts's resolveByOwner); the reveal/
+        // opener that follows is driven entirely by the broker, so there's
+        // nothing more to send from here. An `'unclear'` verdict leaves the
+        // pending confirm untouched and falls through to a normal turn, so
+        // a genuine question from the operator is never swallowed.
+        dispatch: (msg) => {
+          if (boot.social && isAdmin(msg.chatId) && boot.social.pendingConfirms.hasPending(msg.chatId)) {
+            const r = boot.social.pendingConfirms.resolveByOwner(msg.chatId, msg.text)
+            if (r !== 'unclear') return Promise.resolve()
+          }
+          return boot.coordinator.dispatch(msg)
+        },
+      },
+    },
   }
 
   // App-conversation-channel converse (voice arc Stage 0, Task 2) — drives
