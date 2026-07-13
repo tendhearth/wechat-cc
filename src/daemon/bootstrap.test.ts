@@ -1140,6 +1140,54 @@ describe('bootstrap agent-social M1 wiring', () => {
     }
   })
 
+  it('claude-default daemon with a plugin selects the grounded judge path (not cheapEval) (grounded-judge Task 2)', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'bootstrap-grounded-judge-'))
+    const bundledDir = join(base, 'bundled')
+    const pluginDir = join(bundledDir, 'wxsearch')
+    mkdirSync(pluginDir, { recursive: true })
+    // Mirrors the knowledge-orchestration fixture (line ~766): process.execPath
+    // is absolute + always present, so the plugin resolves ready — bundled
+    // defaults enabled — and ends up in bootstrap's `pluginMcp`, which is what
+    // the grounded judge needs threaded through as `deps.pluginMcp`.
+    writeFileSync(join(pluginDir, MANIFEST_FILE), JSON.stringify({
+      name: 'wxsearch',
+      kind: 'mcp',
+      spawn: { command: process.execPath, args: [] },
+    }))
+    writeFileSync(
+      join(base, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+      }),
+    )
+    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = bundledDir
+    const logs: string[] = []
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir: base,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: (_tag, m) => logs.push(m),
+      })
+      expect(logs.some(m => m.includes('plugin-grounded judge via claude'))).toBe(true)
+      expect(logs.some(m => m.includes('falls back to cheapEval'))).toBe(false)
+    } finally {
+      await boot?.a2aServer?.stop()
+      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
   it('POST /v1/social/seek returns 503 when the social broker is not wired (deps.social absent)', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'internal-api-social-503-'))
     const api = createInternalApi({ stateDir, daemonPid: 1 } as any)

@@ -1340,6 +1340,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
         openai: (socialOpenaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel)
           ? { apiKey: socialOpenaiKey, baseUrl: configuredAgent.openaiBaseUrl, model: configuredAgent.openaiModel }
           : undefined,
+        claude: { model: () => currentClaudeModel(), ...(claudeBin ? { claudeBin } : {}) },
       })
       const socialRunTurn: (systemPrompt: string, userPrompt: string) => Promise<string> =
         groundedRunTurn ?? (async (systemPrompt, userPrompt) => socialCheapEval(`${systemPrompt}\n\n${userPrompt}`))

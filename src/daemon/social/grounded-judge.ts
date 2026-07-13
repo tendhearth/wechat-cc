@@ -18,7 +18,7 @@ export interface GroundedJudgeDeps {
   stateDir: string
   log: (tag: string, msg: string) => void
   openai?: { apiKey: string; baseUrl: string; model: string }
-  // claude added in Task 2
+  claude?: { model: () => string; claudeBin?: string }
 }
 
 export type JudgeRunTurn = (systemPrompt: string, userPrompt: string) => Promise<string>
@@ -82,10 +82,29 @@ function buildOpenaiJudgeProvider(deps: GroundedJudgeDeps): AgentProvider | null
   }
 }
 
+/** claude adapter — plugins-only, no wechat/delegate. */
+function buildClaudeJudgeProvider(deps: GroundedJudgeDeps): AgentProvider | null {
+  const c = deps.claude
+  if (!c) return null
+  const pluginMcpForClaude = Object.fromEntries(
+    Object.entries(deps.pluginMcp).map(([k, s]) => [k, { type: 'stdio' as const, ...s }]),
+  )
+  return {
+    async spawn(project, ctx) {
+      const { createClaudeAgentProvider, buildClaudeJudgeOptions } = await import('../../core/claude-agent-provider')
+      const provider = createClaudeAgentProvider({
+        sdkOptionsForProject: buildClaudeJudgeOptions({ pluginMcpForClaude, model: c.model(), claudeBin: c.claudeBin }),
+        ...(c.claudeBin ? { claudeBin: c.claudeBin } : {}),
+      })
+      return provider.spawn(project, ctx)
+    },
+  }
+}
+
 export function makeGroundedJudgeRunTurn(deps: GroundedJudgeDeps): JudgeRunTurn | null {
   let provider: AgentProvider | null = null
   if (deps.providerId === 'openai') provider = buildOpenaiJudgeProvider(deps)
-  // claude added in Task 2
+  else if (deps.providerId === 'claude') provider = buildClaudeJudgeProvider(deps)
   if (!provider) return null
   return runTurnVia(provider, deps.stateDir)
 }
