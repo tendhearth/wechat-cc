@@ -102,6 +102,15 @@ describe('createPendingConfirms', () => {
       expect(await p).toBe(false)
     })
 
+    it('tolerates trailing punctuation / emoji on a real reply ("是。", "好的~", "yes!")', async () => {
+      for (const reply of ['是。', '好的~', 'yes!', 'ok 👍']) {
+        const pc = createPendingConfirms()
+        const p = pc.ask('op:intent-1', 5000)
+        expect(pc.resolveByOwner('op', reply)).toBe('yes')
+        expect(await p).toBe(true)
+      }
+    })
+
     it('unclear text → "unclear" and resolves NOTHING (the ask stays pending)', async () => {
       const pc = createPendingConfirms()
       const p = pc.ask('op:intent-1', 5000)

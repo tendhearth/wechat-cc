@@ -22,7 +22,9 @@ const NO_WORDS = new Set(['否', '不', '不用', '不要', '算了', 'n', 'no',
  * pending confirm untouched rather than misfire on an unrelated message.
  */
 export function classifyReply(text: string): 'yes' | 'no' | 'unclear' {
-  const t = text.trim().toLowerCase()
+  // Strip leading/trailing punctuation, whitespace and symbols/emoji so real
+  // mobile replies ("是。", "好的~", "yes!", "ok 👍") still match the word sets.
+  const t = text.trim().toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')
   if (YES_WORDS.has(t)) return 'yes'
   if (NO_WORDS.has(t)) return 'no'
   return 'unclear'
