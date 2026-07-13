@@ -92,6 +92,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/daemon/restart': 'admin',
   // admin — on-demand file locate over the owner's computer (file_locate)
   'GET /v1/locate': 'admin',
+  // admin — agent-social M1 (social_seek is ADMIN_ONLY in user-tier.ts;
+  // actively broadcasts an intent to external A2A agents, unlike a2a_send's
+  // reply-to-an-established-peer). Would default to admin anyway (unlisted
+  // routes fail-closed) — listed explicitly for documentation.
+  'POST /v1/social/seek': 'admin',
 }
 
 export function minTierFor(routeKey: string): UserTier {

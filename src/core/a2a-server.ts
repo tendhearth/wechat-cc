@@ -175,6 +175,15 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         method: 'POST',
         request_schema: { agent_id: 'string', card: 'IntentCard' },
       }] : []),
+      // Advertised only when this machine is wired to receive the peer-driven
+      // confirm leg of the dual-confirm handshake (onIntentConfirm set).
+      ...(opts.onIntentConfirm ? [{
+        name: 'intent_confirm',
+        description: 'Second leg of the intent dual-confirm handshake: a peer whose owner already said yes asks THIS owner to confirm lighting up a previously matched intent.',
+        endpoint: '/a2a/intent/confirm',
+        method: 'POST',
+        request_schema: { agent_id: 'string', intent_id: 'string' },
+      }] : []),
     ],
   }
 

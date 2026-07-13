@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveTier, resolveEffectiveTier, TIER_PROFILES, type UserTier, type ToolKind } from './user-tier'
+import { resolveTier, resolveEffectiveTier, TIER_PROFILES, SOCIAL_JUDGE_PROFILE, type UserTier, type ToolKind } from './user-tier'
 import type { Access } from '../lib/access'
 
 const baseAccess: Access = {
@@ -350,5 +350,54 @@ describe('social_seek tier kind (M1 T6)', () => {
     expect(TIER_PROFILES.trusted.allow.has('social_seek')).toBe(false)
     expect(TIER_PROFILES.guest.deny.has('social_seek')).toBe(true)
     expect(TIER_PROFILES.guest.allow.has('social_seek')).toBe(false)
+  })
+})
+
+describe('SOCIAL_JUDGE_PROFILE (T7b-core review fix)', () => {
+  it('allows a plugin tool (the wx* fact tools the judge must call)', () => {
+    // Pre-fix, the judge spawned with TIER_PROFILES.guest — guest denies
+    // plugin_tool, so classifyToolUse('mcp__wxfacts__contact_facts', ...)
+    // would resolve to a kind that's in guest.deny, and the judge got
+    // "Permission denied" on every wx* call, silently falling back to
+    // topic-text-only grounding despite the BOOT log claiming otherwise.
+    const kind = classifyToolUse('mcp__wxfacts__contact_facts', {})
+    expect(kind).toBe('plugin_tool')
+    expect(SOCIAL_JUDGE_PROFILE.allow.has(kind)).toBe(true)
+    expect(SOCIAL_JUDGE_PROFILE.deny.has(kind)).toBe(false)
+  })
+
+  it('denies builtin fs/shell/network/subagent tools (unlike admin, which allows them)', () => {
+    // The judge must NOT get the run of a full admin session — only its
+    // plugin-grounded facts. Read/Write/Bash/WebFetch/Task must all be denied.
+    for (const toolName of ['Read', 'Write', 'Bash', 'WebFetch', 'Task']) {
+      const kind = classifyToolUse(toolName, {})
+      expect(SOCIAL_JUDGE_PROFILE.allow.has(kind), `${toolName} (kind=${kind}) must not be allowed`).toBe(false)
+      expect(SOCIAL_JUDGE_PROFILE.deny.has(kind), `${toolName} (kind=${kind}) must be denied`).toBe(true)
+    }
+  })
+
+  it('denies wechat tools (no send-as-owner, no reply, no a2a/social)', () => {
+    const kind = classifyToolUse('mcp__wechat__reply', {})
+    expect(SOCIAL_JUDGE_PROFILE.allow.has(kind)).toBe(false)
+    expect(SOCIAL_JUDGE_PROFILE.deny.has(kind)).toBe(true)
+  })
+
+  it('allow ∪ relay ∪ deny covers every ToolKind exactly once, with allow = {plugin_tool} only', () => {
+    expect([...SOCIAL_JUDGE_PROFILE.allow]).toEqual(['plugin_tool'])
+    expect(SOCIAL_JUDGE_PROFILE.relay.size).toBe(0)
+    const seen = new Set<ToolKind>()
+    for (const k of SOCIAL_JUDGE_PROFILE.allow) seen.add(k)
+    for (const k of SOCIAL_JUDGE_PROFILE.deny) {
+      expect(SOCIAL_JUDGE_PROFILE.allow.has(k)).toBe(false)
+      seen.add(k)
+    }
+    const allKinds: ToolKind[] = [
+      'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
+      'observations_read', 'observations_write',
+      'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
+      'a2a_send', 'daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool',
+      'social_seek',
+    ]
+    for (const k of allKinds) expect(seen.has(k)).toBe(true)
   })
 })

@@ -282,6 +282,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setConversation({ setMode: (chatId, mode) => boot.coordinator.setMode(chatId, mode) })
     // Wire A2A deps — registry, client, recordEvent — so POST /v1/a2a/send works.
     internalApi.setA2A(boot.a2aDeps)
+    // Wire the agent-social M1 broker (T7b-core) — only present when
+    // social_enabled + social_disclosure_policy are both configured. So
+    // POST /v1/social/seek works when the feature is on.
+    if (boot.social) internalApi.setSocial(boot.social)
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({
       stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,

@@ -28,6 +28,7 @@ import { registerCompanionTools } from './tools-companion'
 import { registerA2ASendTool } from './tools-a2a'
 import { registerDaemonTools } from './tools-daemon'
 import { registerFileTools } from './tools-files'
+import { registerSocialSeekTool } from './tools-social'
 
 const baseUrl = process.env.WECHAT_INTERNAL_API
 const tokenFilePath = process.env.WECHAT_INTERNAL_TOKEN_FILE
@@ -103,6 +104,10 @@ registerA2ASendTool(server, client)
 if (SESSION_IS_ADMIN) {
   registerDaemonTools(server, client)
   registerFileTools(server, client)
+  // agent-social M1 (T7b-core): social_seek actively broadcasts an intent
+  // to external A2A agents (unlike a2a_send's reply-to-an-established-peer),
+  // so it's admin-only — mirrors user-tier.ts's ADMIN_ONLY gate.
+  registerSocialSeekTool(server, client)
 }
 
 const transport = new StdioServerTransport()
