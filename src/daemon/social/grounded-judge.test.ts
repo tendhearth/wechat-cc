@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { makeGroundedJudgeRunTurn } from './grounded-judge'
 import { buildClaudeJudgeOptions } from '../../core/claude-agent-provider'
+import { buildOpenaiMcpSpecs } from '../bootstrap/mcp-specs'
 import { SOCIAL_JUDGE_PROFILE } from '../../core/user-tier'
 
 const baseDeps = {
@@ -49,6 +50,16 @@ describe('buildClaudeJudgeOptions — isolation', () => {
   it('canUseTool denies a non-plugin tool (Bash) — never prompts', async () => {
     const d = await opts.canUseTool!('Bash', { command: 'rm -rf /' }, {} as never)
     expect(d.behavior).toBe('deny')
+  })
+})
+
+describe('buildOpenaiMcpSpecs — isolation (openai judge adapter)', () => {
+  it('mcpServers are plugins-only — no wechat, no delegate', () => {
+    const specs = buildOpenaiMcpSpecs(
+      { wechat: null, delegate: null, pluginMcp: { wxsearch: { command: '/x', args: [], env: {} } } },
+      {},
+    )
+    expect(Object.keys(specs)).toEqual(['wxsearch'])
   })
 })
 
