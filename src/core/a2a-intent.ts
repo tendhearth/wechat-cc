@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import z from 'zod'
 import { randomUUID } from 'node:crypto'
 
 export const IntentCardSchema = z.object({

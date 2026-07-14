@@ -21,7 +21,7 @@ import { SessionManager } from '../../core/session-manager'
 import { createClaudeAgentProvider, tierProfileToClaudeSdkOpts } from '../../core/claude-agent-provider'
 import { createCodexAgentProvider } from '../../core/codex-agent-provider'
 import type { TierProfile } from '../../core/user-tier'
-import { resolveTier, TIER_PROFILES, SOCIAL_JUDGE_PROFILE } from '../../core/user-tier'
+import { resolveTier, TIER_PROFILES } from '../../core/user-tier'
 import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
 import { createConversationCoordinator, type ConversationCoordinator, type TurnRecord } from '../../core/conversation-coordinator'
 import { makeConversationStore, type ConversationStore } from '../../core/conversation-store'
@@ -55,7 +55,7 @@ import { makeSendAssistantText } from './fallback-reply'
 import { findCodexBinary } from '../../lib/find-codex-binary'
 import { checkCodexVersion } from './codex-version-check'
 import { attemptCodexAutofix } from '../../lib/codex-autofix'
-import { assertNotAuthFailed, collectTurn, type CheapEval } from '../../core/agent-provider'
+import { assertNotAuthFailed, type CheapEval } from '../../core/agent-provider'
 import { createA2ARegistry } from '../../core/a2a-registry'
 import { createA2AClient } from '../../core/a2a-client'
 import { createA2AServer, type NotifyEvent, type A2AServerOpts } from '../../core/a2a-server'
@@ -1324,64 +1324,29 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       const SOCIAL_SELF_ID = process.env.WECHAT_A2A_SELF_ID || 'wechat-cc'
       const socialOpenaiKey = process.env.WECHAT_OPENAI_API_KEY
 
-      // The judge's runTurn seam. When the daemon's DEFAULT provider is the
-      // openai-compatible one, spawn a one-shot session carrying ONLY the
-      // plugin MCP tools (buildOpenaiMcpSpecs({wechat:null, delegate:null,
-      // pluginMcp})) — mirrors the main openai provider construction above,
-      // but the answerer must never get wechat tools (could send-as-owner)
-      // or delegate-mcp (could recurse). Falls back to the registry's
-      // cheapEval (no tools at all) when the default provider isn't openai —
-      // judging still works, just without plugin-grounded facts.
-      let socialRunTurn: (systemPrompt: string, userPrompt: string) => Promise<string>
-      if (defaultProviderId === 'openai' && socialOpenaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel) {
-        const socialJudgeBaseUrl = configuredAgent.openaiBaseUrl
-        const socialJudgeModel = configuredAgent.openaiModel
-        socialRunTurn = async (systemPrompt, userPrompt) => {
-          const { createOpenAiAgentProvider } = await import('../../core/openai-agent-provider')
-          const { createAiSdkChatModel } = await import('../../core/openai-chat-model')
-          const { createMcpToolBridge } = await import('../../core/openai-mcp-bridge')
-          const judgeProvider = createOpenAiAgentProvider({
-            makeChatModel: (model) => createAiSdkChatModel({
-              baseURL: socialJudgeBaseUrl,
-              apiKey: socialOpenaiKey,
-              model: model ?? socialJudgeModel,
-            }),
-            makeMcpBridge: async (sessionEnv) => createMcpToolBridge(
-              buildOpenaiMcpSpecs({ wechat: null, delegate: null, pluginMcp }, sessionEnv),
-            ),
-            log: deps.log,
-          })
-          let judgeSession: Awaited<ReturnType<typeof judgeProvider.spawn>> | null = null
-          try {
-            judgeSession = await judgeProvider.spawn(
-              { alias: '_social_judge', path: deps.stateDir },
-              {
-                // NOT TIER_PROFILES.guest: classifyToolUse buckets every
-                // plugin MCP tool (the wx* fact tools this judge exists to
-                // call) as `plugin_tool`, which guest denies — the judge
-                // would get "Permission denied" on every call and silently
-                // degrade to topic-text-only grounding (T7b-core review).
-                // NOT TIER_PROFILES.admin either: admin denies nothing, so
-                // it would also unlock this session's builtin Read/Write/
-                // Bash/WebFetch/subagent tools. SOCIAL_JUDGE_PROFILE allows
-                // ONLY plugin_tool — exactly the wx* facts, nothing else.
-                tierProfile: SOCIAL_JUDGE_PROFILE,
-                permissionMode: 'strict',
-                chatId: '_social_judge',
-                appendInstructions: systemPrompt,
-              },
-            )
-            const result = await collectTurn(judgeSession.dispatch(userPrompt))
-            return result.assistantText.join('')
-          } finally {
-            if (judgeSession) { try { await judgeSession.close() } catch { /* swallow shutdown errors */ } }
-          }
-        }
-        deps.log('BOOT', 'social: judge wired via plugin-grounded one-shot openai spawn (pluginMcp only, no wechat/delegate)')
-      } else {
-        socialRunTurn = async (systemPrompt, userPrompt) => socialCheapEval(`${systemPrompt}\n\n${userPrompt}`)
-        deps.log('BOOT', 'social: plugin-grounded judging unavailable (daemon default provider is not openai) — judge falls back to cheapEval with no tools')
-      }
+      // The judge's runTurn seam (daemon/social/grounded-judge.ts). Provider-
+      // specific adapters spawn a one-shot session carrying ONLY the plugin
+      // MCP tools — the answerer must never get wechat tools (could
+      // send-as-owner) or delegate-mcp (could recurse). Falls back to the
+      // registry's cheapEval (no tools at all) when the default provider has
+      // no grounded adapter yet — judging still works, just without
+      // plugin-grounded facts.
+      const { makeGroundedJudgeRunTurn } = await import('../social/grounded-judge')
+      const groundedRunTurn = makeGroundedJudgeRunTurn({
+        providerId: defaultProviderId,
+        pluginMcp,
+        stateDir: deps.stateDir,
+        log: deps.log,
+        openai: (socialOpenaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel)
+          ? { apiKey: socialOpenaiKey, baseUrl: configuredAgent.openaiBaseUrl, model: configuredAgent.openaiModel }
+          : undefined,
+        claude: { model: () => currentClaudeModel(), ...(claudeBin ? { claudeBin } : {}) },
+      })
+      const socialRunTurn: (systemPrompt: string, userPrompt: string) => Promise<string> =
+        groundedRunTurn ?? (async (systemPrompt, userPrompt) => socialCheapEval(`${systemPrompt}\n\n${userPrompt}`))
+      deps.log('BOOT', groundedRunTurn
+        ? `social: plugin-grounded judge via ${defaultProviderId} (pluginMcp only, no wechat/delegate)`
+        : `social: grounded judging unavailable for provider=${defaultProviderId} — judge falls back to cheapEval (no tools)`)
 
       const socialJudge = makeJudge({ runTurn: socialRunTurn, policy: socialPolicy })
       socialOnIntent = makeAnswerIntent({ judge: socialJudge, policy: socialPolicy, cheapEval: socialCheapEval })
