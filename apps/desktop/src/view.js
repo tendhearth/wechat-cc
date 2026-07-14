@@ -347,7 +347,7 @@ export function dashboardHero({ daemonAlive, accountCount, expiredCount = 0, las
     return { state: 'taken_over', tone: 'warn', headline: '本机未连接', meta: '连接在其他设备 · 重新扫码可接管' }
   }
   if (lastProbe?.state === 'connected' || (daemonAlive && accountCount > 0)) {
-    return { state: 'connected', tone: 'ok', headline: 'AI 正在陪伴中', meta: '连接正常' }
+    return { state: 'connected', tone: 'ok', headline: '此刻，陪你一起看鱼', meta: '把鼠标轻轻移进鱼缸，看看谁会先回应你' }
   }
   return {
     state: 'recovering',

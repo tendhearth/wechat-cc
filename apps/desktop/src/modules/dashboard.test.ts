@@ -17,7 +17,7 @@ beforeEach(() => {
 })
 
 // Import AFTER document stub so setPending's getElementById doesn't crash
-const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, __resetDashboardState, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu } = await import('./dashboard.js')
+const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, __resetDashboardState, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy } = await import('./dashboard.js')
 
 function textNode(text = '') {
   return { nodeType: 3, textContent: text }
@@ -286,15 +286,28 @@ describe('dashboard button state', () => {
     renderDashboard(report)
     renderRestartButton(report)
 
-    expect(els.heroHeadline.textContent).toBe('AI 正在陪伴中')
-    expect(els.heroMeta.textContent).toBe('连接正常')
+    expect(els.heroHeadline.textContent).toBe('此刻，陪你一起看鱼')
+    expect(els.heroMeta.textContent).toBe('把鼠标轻轻移进鱼缸，看看谁会先回应你')
     expect(els.dashStop.hidden).toBe(false)
     expect(els.dashRestart.hidden).toBe(true)
   })
 
+  it('returning to the overview advances the warm hero copy once', () => {
+    const els = installDashboardDom()
+    const report = dashboardReport({ checks: { daemon: { alive: true, pid: 1234 } } })
+
+    renderDashboard(report)
+    expect(els.heroHeadline.textContent).toBe('此刻，陪你一起看鱼')
+    advanceCompanionHeroCopy()
+    renderDashboard(report)
+    expect(els.heroHeadline.textContent).toBe('给忙碌留一小片水光')
+    expect(els.heroMeta.textContent).toBe('在这里慢慢游一会儿，也没关系')
+  })
+
   it('bound account but daemon NOT alive → recovering (was falsely "connected")', () => {
     // dashboardReport() has daemon.alive=false, accounts.count=1.
-    // Old behaviour: tone "ok" → hero showed "AI 正在陪伴中" (false positive).
+    // Connected state uses the warm companion headline; a failed probe still
+    // takes precedence through the warning state above.
     // New behaviour: state "recovering" → honest reconnect affordance shown.
     const els = installDashboardDom()
     const report = dashboardReport()

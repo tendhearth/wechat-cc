@@ -2,7 +2,7 @@
 //
 // Covers moxiuwen's redesigned hero card + current-user card + sub-user
 // grid (post merge 782268e):
-//   1. hero tone — daemon alive ("AI 正在陪伴中") vs dead ("CC 暂时失去连接")
+//   1. hero tone — daemon alive (warm companion headline) vs dead ("CC 暂时失去连接")
 //   2. current-user card — populated when an account is bound, empty
 //      placeholder when not
 //   3. sub-user grid — 6 demo cards when no real sub-users; sub-rows
@@ -65,10 +65,10 @@ async function bootAndForceDashboardRender(page: import('@playwright/test').Page
 // daemonAlive=true  → connected  (#dash-stop visible, #dash-restart hidden)
 // daemonAlive=false → recovering (#dash-stop hidden,  #dash-restart visible)
 
-test('hero shows "AI 正在陪伴中" with bound account (daemon alive)', async ({ page, shimUrl, shim }) => {
+test('hero shows the companion headline with a bound account (daemon alive)', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
   await bootAndForceDashboardRender(page, shimUrl)
-  await expect(page.locator('#hero-headline')).toHaveText(/AI 正在陪伴中/, { timeout: 10_000 })
+  await expect(page.locator('#hero-headline')).toHaveText(/此刻，陪你一起看鱼/, { timeout: 10_000 })
   await expect(page.locator('#hero-card')).not.toHaveClass(/warn/)
 })
 
@@ -96,7 +96,7 @@ test('hero shows "CC 暂时失去连接" when daemon is dead (bound account, no 
 test('stop button visible + restart hidden when account bound and daemon alive', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
   await bootAndForceDashboardRender(page, shimUrl)
-  await expect(page.locator('#hero-headline')).toHaveText(/AI 正在陪伴中/, { timeout: 10_000 })
+  await expect(page.locator('#hero-headline')).toHaveText(/此刻，陪你一起看鱼/, { timeout: 10_000 })
   await expect(page.locator('#dash-stop')).toBeVisible()
   await expect(page.locator('#dash-restart')).toBeHidden()
 })
@@ -133,17 +133,19 @@ test('sub-user grid shows a truthful empty state when only the admin is bound', 
   await expect(page.locator('#accounts-body .sub-user-card')).toHaveCount(0)
   await expect(page.locator('#accounts-body .sub-user-empty')).toBeVisible({ timeout: 10_000 })
   await expect(page.locator('#accounts-body .sub-user-empty-title')).toHaveText('还没有子用户')
-  await expect(page.locator('#accounts-body .sub-user-empty-copy')).toHaveText('添加后，他们会出现在这里')
+  await expect(page.locator('#accounts-body .sub-user-empty-copy')).toHaveText('点击这里添加一位')
   await expect(page.locator('#accounts-meta')).toHaveText('0 个')
+  await expect(page.locator('#accounts-subhead')).toBeHidden()
 })
 
-test('empty state keeps the existing add-user button as the only action', async ({ page, shimUrl, shim }) => {
+test('empty sub-user area opens the add-user page', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await page.goto(shimUrl)
   await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 10_000 })
-  await expect(page.locator('#accounts-body button')).toHaveCount(0)
-  await expect(page.locator('#add-account-btn')).toBeVisible()
-  await expect(page.locator('#add-account-btn')).toContainText('添加用户')
+  const trigger = page.locator('#accounts-body .sub-user-empty-trigger')
+  await expect(trigger).toBeVisible()
+  await trigger.click()
+  await expect(page.locator('html')).toHaveAttribute('data-mode', 'wizard')
 })
 
 // ── Connection-probe button + hero flip ────────────────────────────────────
@@ -162,7 +164,7 @@ test('测试本机连接 is hidden when connected, shown when not connected', as
   // says 陪伴中, so the test button is redundant and hidden.
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
   await bootAndForceDashboardRender(page, shimUrl)
-  await expect(page.locator('#hero-headline')).toHaveText(/AI 正在陪伴中/, { timeout: 10_000 })
+  await expect(page.locator('#hero-headline')).toHaveText(/此刻，陪你一起看鱼/, { timeout: 10_000 })
   await expect(page.locator('#dash-test-conn')).toBeHidden()
 })
 
@@ -197,6 +199,6 @@ test('probe verdict connected flips hero to 陪伴中 and hides the test button'
   await bootAndForceDashboardRender(page, shimUrl)
   await expect(page.locator('#hero-headline')).toHaveText('CC 暂时失去连接', { timeout: 10_000 })
   await page.locator('#dash-test-conn').click()
-  await expect(page.locator('#hero-headline')).toHaveText(/AI 正在陪伴中/, { timeout: 10_000 })
+  await expect(page.locator('#hero-headline')).toHaveText(/此刻，陪你一起看鱼/, { timeout: 10_000 })
   await expect(page.locator('#dash-test-conn')).toBeHidden()
 })

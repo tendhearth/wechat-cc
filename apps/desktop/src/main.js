@@ -26,7 +26,7 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
@@ -407,6 +407,7 @@ function setToggle(id, on) {
 
 /** @param {string} name */
 function switchPane(name) {
+  const overviewWasHidden = name === "overview" && !!document.querySelector('.dash-pane[data-pane="overview"]')?.hidden
   document.querySelectorAll(".dash-nav-link[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
     htmlEl.classList.toggle("active", htmlEl.dataset.pane === name && !htmlEl.classList.contains("disabled"))
@@ -415,6 +416,10 @@ function switchPane(name) {
     const htmlEl = /** @type {HTMLElement} */ (el)
     htmlEl.hidden = htmlEl.dataset.pane !== name
   })
+  if (overviewWasHidden) {
+    advanceCompanionHeroCopy()
+    if (doctorPoller.current) renderDashboardIfActive(doctorPoller.current)
+  }
   // Logs pane gets a 10s auto-refresh tick while active; stop it on
   // pane switch so we don't burn CPU tailing log files no one is reading.
   if (name === "logs") {
@@ -865,18 +870,17 @@ function wireEvents() {
   // use event delegation on the overview pane instead of a direct listener.
   // Escape-key and outside-click are handled inside toggleProviderMenu itself.
   document.querySelector('.dash-pane[data-pane="overview"]')?.addEventListener("click", ev => {
-    const btn = ev.target instanceof HTMLElement ? ev.target.closest(".provider-switch") : null
+    const target = ev.target instanceof HTMLElement ? ev.target : null
+    const addSubUser = target?.closest("[data-action='add-sub-user']")
+    if (addSubUser) {
+      setMode("wizard")
+      showStep("wechat")
+      return
+    }
+    const btn = target?.closest(".provider-switch")
     if (!btn) return
     ev.stopPropagation()
     toggleProviderMenu(deps, doctorPoller.current)
-  })
-
-  // "+ 绑定新账号" routes into the wizard's bind/QR step instead of
-  // a stand-alone modal — the modal version was master's flow; moxiuwen's
-  // wizard renders the QR inline on screen-wechat.
-  document.getElementById("add-account-btn")?.addEventListener("click", () => {
-    setMode("wizard")
-    showStep("wechat")
   })
 
   document.querySelectorAll("[data-action='open-wizard']").forEach(btn =>
@@ -886,10 +890,38 @@ function wireEvents() {
     btn.addEventListener("click", () => setMode("dashboard"))
   )
 
+  const companionBody = document.querySelector(".moment-body")
+  const companionImmersiveStart = document.getElementById("companion-immersive-start")
+  const companionImmersiveExit = document.getElementById("companion-immersive-exit")
+  const companionUsersToggle = document.getElementById("companion-users-toggle")
+  const companionUsersScrim = document.getElementById("companion-users-scrim")
+  const setCompanionUsersOpen = (open) => {
+    if (!companionBody) return
+    companionBody.classList.toggle("is-companion-users-open", open)
+    companionUsersToggle?.setAttribute("aria-expanded", String(open))
+  }
+  const setCompanionImmersive = (active) => {
+    if (!companionBody) return
+    companionBody.classList.toggle("is-companion-immersive", active)
+    setCompanionUsersOpen(false)
+    companionImmersiveStart?.setAttribute("aria-pressed", String(active))
+  }
+  companionImmersiveStart?.addEventListener("click", () => setCompanionImmersive(true))
+  companionImmersiveExit?.addEventListener("click", () => setCompanionImmersive(false))
+  companionUsersToggle?.addEventListener("click", () => {
+    if (!companionBody?.classList.contains("is-companion-immersive")) return
+    setCompanionUsersOpen(!companionBody.classList.contains("is-companion-users-open"))
+  })
+  companionUsersScrim?.addEventListener("click", () => setCompanionUsersOpen(false))
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape") setCompanionImmersive(false)
+  })
+
   document.querySelectorAll(".dash-nav-link[data-pane]").forEach(btn => {
     const el = /** @type {HTMLElement} */ (btn)
     el.addEventListener("click", () => {
       if (el.classList.contains("disabled")) return
+      setCompanionImmersive(false)
       switchPane(el.dataset.pane ?? "")
     })
   })
