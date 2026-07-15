@@ -68,6 +68,8 @@ import { createYiWsServer } from '../yi-ws-server'
 import { makeJudge } from '../../core/social-judge'
 import { makeAnswerIntent } from '../../core/social-answer'
 import { makeBroker, type SeekOutcome } from '../../core/social-broker'
+import { makeSeekStore } from '../../core/social-seek-store'
+import { makeEchoStore } from '../../core/social-echo-store'
 import { createPendingConfirms, type PendingConfirms } from '../../core/pending-confirm'
 import { intentUrl } from '../../core/a2a-delegate'
 import { MatchReceiptSchema } from '../../core/a2a-intent'
@@ -1365,7 +1367,17 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
         return { ok: await pendingConfirmsRef.ask(`${op}:${intent_id}`, 5 * 60_000) }
       }
 
-      socialBroker = makeBroker({
+      // Persisted state layer (觅食台 P1) — every seek gets a `social_seek`
+      // row and every match a `social_echo` row, wrapped around the raw
+      // broker below so `broker.seek`'s return value stays byte-for-byte
+      // identical. P1 records the SYNCHRONOUS outcome only; async/
+      // background foraging (trickling echoes in over time) is a later
+      // rework. Stores are constructed here so a follow-up (P2's internal-
+      // api read surface) can reach them via the social sub-object.
+      const seekStore = makeSeekStore(deps.db)
+      const echoStore = makeEchoStore(deps.db)
+
+      const rawBroker = makeBroker({
         policy: socialPolicy,
         cheapEval: socialCheapEval,
         // TODO(v1+): rank candidates via wxgraph closeness/topical relevance
@@ -1395,6 +1407,22 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
           return pendingConfirmsRef.ask(`${op}:${hashSummary(summary)}`, 5 * 60_000)
         },
       })
+      socialBroker = {
+        async seek(topic, opts) {
+          const outcome = await rawBroker.seek(topic, opts)
+          // Record the wish + whatever came back. P1 records the synchronous
+          // outcome; async/background foraging is a later rework.
+          seekStore.create({ id: outcome.intent_id, kind: 'seek', topic })
+          const status = outcome.lit.length ? 'connected' : outcome.matched.length ? 'echoed' : 'closed'
+          seekStore.update(outcome.intent_id, { status, peersAsked: outcome.matched.length })
+          for (const m of outcome.matched) {
+            const echoId = `${outcome.intent_id}:${m.hand}`
+            echoStore.create({ id: echoId, seekId: outcome.intent_id, peerMasked: '第 1 度的某人', degree: 1, content: m.blurb ?? '' })
+            if (outcome.lit.includes(m.hand)) echoStore.setStatus(echoId, 'revealed')
+          }
+          return outcome
+        },
+      }
     }
   }
 

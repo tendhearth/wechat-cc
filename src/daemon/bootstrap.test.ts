@@ -1071,6 +1071,60 @@ describe('bootstrap agent-social M1 wiring', () => {
     }
   })
 
+  it('a wired social seek persists a social_seek row', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-record-'))
+    const port = 19904
+    // registry.getCheapEval() prefers 'openai' over 'claude' (see
+    // provider-registry.ts CHEAP_EVAL_PREFERENCE) once an openai-compatible
+    // provider is registered. Pointing it at a loopback port nobody's
+    // listening on makes the social gate's cheapEval call fail FAST
+    // (ECONNREFUSED) instead of shelling out to a real `claude` subprocess
+    // for a live LLM round-trip — this test only needs to prove the
+    // recording wrapper persists a row around broker.seek(), not exercise
+    // the real disclosure-gate judgment, and a live network call would make
+    // it slow/flaky and dependent on this machine's authenticated `claude`
+    // CLI (unavailable in most CI runners).
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: 'http://127.0.0.1:1/v1',
+        openaiModel: 'test-model',
+      }),
+    )
+    const db = openTestDb()
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      // discover() returns no peers in this fixture (no paired a2a agents),
+      // so the outcome is empty — recording must STILL persist the seek row
+      // (foraging → closed) even when nothing matched.
+      await boot.social!.broker.seek('找个会修老相机的')
+      const rows = db.query('SELECT topic, status FROM social_seek').all() as Array<{ topic: string; status: string }>
+      expect(rows.some(r => r.topic.includes('相机') && r.status === 'closed')).toBe(true)
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
   it('does NOT wire onIntent/onIntentConfirm and boot.social is undefined when social_enabled is absent', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-off-'))
     const port = 19902
