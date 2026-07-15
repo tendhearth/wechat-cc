@@ -1125,6 +1125,56 @@ describe('bootstrap agent-social M1 wiring', () => {
     }
   })
 
+  it('a social seek recording failure does not surface as a rejected/broken seek (throw-safety)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-record-throw-'))
+    const port = 19905
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: 'http://127.0.0.1:1/v1',
+        openaiModel: 'test-model',
+      }),
+    )
+    const db = openTestDb()
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      // Drop the table the recording wrapper writes to AFTER bootstrap has
+      // already prepared its statements, so the very first INSERT inside
+      // socialBroker.seek() throws ("no such table: social_seek") — this
+      // simulates a persistence error (locked db / disk full / duplicate
+      // PK) without needing to fake those conditions directly. The raw
+      // broker itself is untouched and still resolves fail-closed; only
+      // the *recording* wrapped around it should be able to throw here.
+      db.exec('DROP TABLE social_seek')
+      const outcome = await boot.social!.broker.seek('找个会修老相机的')
+      expect(outcome).toBeTruthy()
+      expect(typeof outcome.intent_id).toBe('string')
+      expect(outcome.intent_id.length).toBeGreaterThan(0)
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
   it('does NOT wire onIntent/onIntentConfirm and boot.social is undefined when social_enabled is absent', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-off-'))
     const port = 19902

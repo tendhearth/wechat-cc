@@ -1411,14 +1411,23 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
         async seek(topic, opts) {
           const outcome = await rawBroker.seek(topic, opts)
           // Record the wish + whatever came back. P1 records the synchronous
-          // outcome; async/background foraging is a later rework.
-          seekStore.create({ id: outcome.intent_id, kind: 'seek', topic })
-          const status = outcome.lit.length ? 'connected' : outcome.matched.length ? 'echoed' : 'closed'
-          seekStore.update(outcome.intent_id, { status, peersAsked: outcome.matched.length })
-          for (const m of outcome.matched) {
-            const echoId = `${outcome.intent_id}:${m.hand}`
-            echoStore.create({ id: echoId, seekId: outcome.intent_id, peerMasked: '第 1 度的某人', degree: 1, content: m.blurb ?? '' })
-            if (outcome.lit.includes(m.hand)) echoStore.setStatus(echoId, 'revealed')
+          // outcome; async/background foraging is a later rework. The raw
+          // broker never throws (fail-closed), but these store writes can
+          // (locked db, disk full, duplicate PK) — guard them so a
+          // persistence error can't turn a successful seek (possibly one
+          // that already made live introductions) into a caller-visible
+          // failure. Recording wraps the outcome; it must never alter it.
+          try {
+            seekStore.create({ id: outcome.intent_id, kind: 'seek', topic })
+            const status = outcome.lit.length ? 'connected' : outcome.matched.length ? 'echoed' : 'closed'
+            seekStore.update(outcome.intent_id, { status, peersAsked: outcome.matched.length })
+            for (const m of outcome.matched) {
+              const echoId = `${outcome.intent_id}:${m.hand}`
+              echoStore.create({ id: echoId, seekId: outcome.intent_id, peerMasked: '第 1 度的某人', degree: 1, content: m.blurb ?? '' })
+              if (outcome.lit.includes(m.hand)) echoStore.setStatus(echoId, 'revealed')
+            }
+          } catch (err) {
+            deps.log('SOCIAL_REC', `failed to record seek outcome intent_id=${outcome.intent_id}: ${err instanceof Error ? err.message : String(err)}`)
           }
           return outcome
         },
