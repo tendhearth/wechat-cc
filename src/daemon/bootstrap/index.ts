@@ -390,6 +390,8 @@ export interface Bootstrap {
   social?: {
     broker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> }
     pendingConfirms: PendingConfirms
+    seekStore: import('../../core/social-seek-store').SeekStore
+    echoStore: import('../../core/social-echo-store').EchoStore
   }
 }
 
@@ -1312,6 +1314,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   let socialOnIntentConfirm: A2AServerOpts['onIntentConfirm']
   let socialBroker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> } | undefined
   let socialPendingConfirms: PendingConfirms | undefined
+  let socialSeekStore: import('../../core/social-seek-store').SeekStore | undefined
+  let socialEchoStore: import('../../core/social-echo-store').EchoStore | undefined
 
   if (configuredAgent.social_enabled && configuredAgent.social_disclosure_policy) {
     const socialPolicy = configuredAgent.social_disclosure_policy
@@ -1376,6 +1380,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // api read surface) can reach them via the social sub-object.
       const seekStore = makeSeekStore(deps.db)
       const echoStore = makeEchoStore(deps.db)
+      socialSeekStore = seekStore
+      socialEchoStore = echoStore
 
       const rawBroker = makeBroker({
         policy: socialPolicy,
@@ -1618,6 +1624,6 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      * social_disclosure_policy aren't both configured — POST
      * /v1/social/seek then 503s.
      */
-    ...(socialBroker ? { social: { broker: socialBroker, pendingConfirms: socialPendingConfirms! } } : {}),
+    ...(socialBroker ? { social: { broker: socialBroker, pendingConfirms: socialPendingConfirms!, seekStore: socialSeekStore!, echoStore: socialEchoStore! } } : {}),
   }
 }

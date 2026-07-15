@@ -1071,6 +1071,39 @@ describe('bootstrap agent-social M1 wiring', () => {
     }
   })
 
+  it('exposes seekStore + echoStore on boot.social', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-stores-'))
+    const port = 19905
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(typeof boot.social!.seekStore.list).toBe('function')
+      expect(typeof boot.social!.echoStore.listAll).toBe('function')
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
   it('a wired social seek persists a social_seek row', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-record-'))
     const port = 19904

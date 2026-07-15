@@ -20,6 +20,16 @@ vi.mock('../../lib/config.ts', () => ({
   LONG_POLL_TIMEOUT_MS: 35_000,
 }))
 
+// P2 added seekStore/echoStore to boot.social's type; these dispatch tests
+// don't exercise the stores, so a minimal no-op stub keeps setup() type-clean.
+const socialStoreStubs = {
+  seekStore: { create() {}, update() {}, list: () => [], get: () => null },
+  echoStore: { create() {}, setStatus() {}, listForSeek: () => [], listAll: () => [], get: () => null },
+} satisfies {
+  seekStore: import('../../core/social-seek-store').SeekStore
+  echoStore: import('../../core/social-echo-store').EchoStore
+}
+
 const { buildPipelineDeps } = await import('./pipeline-deps')
 const { createPendingConfirms } = await import('../../core/pending-confirm')
 const { Ref } = await import('../../lib/lifecycle')
@@ -102,7 +112,7 @@ describe('pipeline-deps social dispatch seam (T7b-2)', () => {
   it('a clear "是" from the admin chat with a pending confirm is consumed — NOT dispatched as a normal turn', async () => {
     const pendingConfirms = createPendingConfirms()
     const answer = pendingConfirms.ask('op_chat:intent-1', 5 * 60_000)
-    const { pipelineDeps, coordinatorDispatch } = setup({ broker: { seek: vi.fn() }, pendingConfirms })
+    const { pipelineDeps, coordinatorDispatch } = setup({ broker: { seek: vi.fn() }, pendingConfirms, ...socialStoreStubs })
 
     await pipelineDeps.dispatch.coordinator.dispatch(baseMsg)
 
@@ -113,7 +123,7 @@ describe('pipeline-deps social dispatch seam (T7b-2)', () => {
   it('a clear "否" resolves the pending confirm to false and is not dispatched', async () => {
     const pendingConfirms = createPendingConfirms()
     const answer = pendingConfirms.ask('op_chat:intent-1', 5 * 60_000)
-    const { pipelineDeps, coordinatorDispatch } = setup({ broker: { seek: vi.fn() }, pendingConfirms })
+    const { pipelineDeps, coordinatorDispatch } = setup({ broker: { seek: vi.fn() }, pendingConfirms, ...socialStoreStubs })
 
     await pipelineDeps.dispatch.coordinator.dispatch({ ...baseMsg, text: '否' })
 
@@ -124,7 +134,7 @@ describe('pipeline-deps social dispatch seam (T7b-2)', () => {
   it('an unclear reply falls through to a normal turn and leaves the pending confirm untouched', async () => {
     const pendingConfirms = createPendingConfirms()
     const answer = pendingConfirms.ask('op_chat:intent-1', 50)
-    const { pipelineDeps, coordinatorDispatch } = setup({ broker: { seek: vi.fn() }, pendingConfirms })
+    const { pipelineDeps, coordinatorDispatch } = setup({ broker: { seek: vi.fn() }, pendingConfirms, ...socialStoreStubs })
 
     await pipelineDeps.dispatch.coordinator.dispatch({ ...baseMsg, text: 'what time works for you?' })
 
@@ -145,7 +155,7 @@ describe('pipeline-deps social dispatch seam (T7b-2)', () => {
   it('a non-admin chat with a pending confirm under a DIFFERENT key is never consumed, even on "是"', async () => {
     const pendingConfirms = createPendingConfirms()
     const answer = pendingConfirms.ask('op_chat:intent-1', 50)
-    const { pipelineDeps, coordinatorDispatch } = setup({ broker: { seek: vi.fn() }, pendingConfirms })
+    const { pipelineDeps, coordinatorDispatch } = setup({ broker: { seek: vi.fn() }, pendingConfirms, ...socialStoreStubs })
 
     await pipelineDeps.dispatch.coordinator.dispatch({ ...baseMsg, chatId: 'someone_else', userId: 'someone_else', text: '是' })
 
