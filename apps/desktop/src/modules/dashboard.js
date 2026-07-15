@@ -12,6 +12,66 @@ import { dashboardHero, accountRows, formatRelativeTime, escapeHtml, restartButt
 import { icon } from "./icons.js"
 
 const USER_CARD_PROVIDERS = ["claude", "codex", "gemini"]
+const COMPANION_HERO_COPIES = [
+  { headline: "此刻，陪你一起看鱼", meta: "把鼠标轻轻移进鱼缸，看看谁会先回应你" },
+  { headline: "给忙碌留一小片水光", meta: "在这里慢慢游一会儿，也没关系" },
+  { headline: "小鱼们正在等你靠近", meta: "把鼠标轻轻移进水面，看看谁先回应你" },
+  { headline: "有小鱼陪着，慢一点也没关系", meta: "点一点水草，或向小熊打声招呼" },
+  { headline: "这里有一缸安静的陪伴", meta: "留一点时间给自己，也留一点给小鱼" },
+]
+let companionHeroCopy = null
+
+function saveCompanionHeroIndex(index) {
+  try { globalThis.localStorage?.setItem("wechat-cc.companion-hero-copy", String(index)) } catch {}
+}
+
+function currentCompanionHeroCopy() {
+  if (companionHeroCopy) return companionHeroCopy
+  let previousIndex = -1
+  try {
+    previousIndex = Number.parseInt(globalThis.localStorage?.getItem("wechat-cc.companion-hero-copy") || "-1", 10)
+  } catch {}
+  const nextIndex = Number.isInteger(previousIndex) && previousIndex >= 0
+    ? (previousIndex + 1) % COMPANION_HERO_COPIES.length
+    : 0
+  companionHeroCopy = COMPANION_HERO_COPIES[nextIndex]
+  saveCompanionHeroIndex(nextIndex)
+  return companionHeroCopy
+}
+
+// Called only when the user returns to the overview pane. Doctor-poll
+// rerenders deliberately keep the same copy so the title never flickers.
+export function advanceCompanionHeroCopy() {
+  const activeIndex = companionHeroCopy ? COMPANION_HERO_COPIES.indexOf(companionHeroCopy) : -1
+  const nextIndex = (activeIndex + 1 + COMPANION_HERO_COPIES.length) % COMPANION_HERO_COPIES.length
+  companionHeroCopy = COMPANION_HERO_COPIES[nextIndex]
+  saveCompanionHeroIndex(nextIndex)
+}
+
+function renderHeroHeadline(element, headline, fishable = false) {
+  if (!element) return
+  // Tests and non-browser contexts intentionally keep a plain text fallback.
+  if (!fishable || typeof document.createTextNode !== "function") {
+    element.textContent = headline
+    element.removeAttribute?.("aria-label")
+    return
+  }
+  element.textContent = ""
+  element.setAttribute("aria-label", headline)
+  let fishIndex = 0
+  for (const character of Array.from(headline)) {
+    const letter = document.createElement("span")
+    const canBecomeFish = /\p{Script=Han}/u.test(character)
+    letter.className = canBecomeFish ? "hero-letter" : "hero-letter-mark"
+    if (canBecomeFish) {
+      letter.dataset.fish = String(fishIndex % 3)
+      fishIndex += 1
+    }
+    letter.setAttribute("aria-hidden", "true")
+    letter.textContent = character
+    element.appendChild(letter)
+  }
+}
 
 export function renderDashboard(report) {
   const expiredCount = (report.expiredBots || []).length
@@ -21,11 +81,16 @@ export function renderDashboard(report) {
     expiredCount,
     lastProbe: _lastProbe,
   })
-  const hero = reconnectHero(baseHero)
+  const reconnectingHero = reconnectHero(baseHero)
+  // Connection health always wins. Only a confirmed, healthy connection gets
+  // the rotating warm copy, and it stays stable during the five-second polls.
+  const hero = reconnectingHero.state === "connected"
+    ? { ...reconnectingHero, ...currentCompanionHeroCopy() }
+    : reconnectingHero
   const card = document.getElementById("hero-card")
   if (!card) return
   card.classList.toggle("warn", hero.tone !== "ok")
-  document.getElementById("hero-headline").textContent = hero.headline
+  renderHeroHeadline(document.getElementById("hero-headline"), hero.headline, hero.state === "connected")
   document.getElementById("hero-meta").textContent = hero.meta
   const stopBtn = document.getElementById("dash-stop")
   const restartBtn = document.getElementById("dash-restart")
@@ -46,6 +111,7 @@ export function renderDashboard(report) {
   const rows = accountRows(accounts, report.userNames || {}, expired, report.checks.access.admins || [])
   const tbody = document.getElementById("accounts-body")
   const current = document.getElementById("accounts-current")
+  const subhead = document.getElementById("accounts-subhead")
 
   // Skip re-render if user has an inline confirm open (poll race — the 5s
   // tick would clobber the half-filled "确定删除?" UI otherwise).
@@ -95,9 +161,18 @@ export function renderDashboard(report) {
     /* skip */
   } else {
     const subRows = currentRow ? rows.filter(r => r.id !== currentRow.id) : []
-    tbody.innerHTML = subRows.length === 0
-      ? `<div class="sub-user-empty">还没有其他子用户 — 在设置里扫码即可添加</div>`
-      : subRows.map((row, index) => {
+    if (subhead) subhead.hidden = subRows.length === 0
+    tbody.classList.toggle("is-empty", subRows.length === 0)
+    if (subRows.length === 0) {
+      tbody.innerHTML = `
+        <button class="sub-user-empty sub-user-empty-trigger" type="button" data-action="add-sub-user">
+          <span class="sub-user-empty-icon" aria-hidden="true">${icon("user-add-01", { size: 28 })}</span>
+          <div class="sub-user-empty-title">还没有子用户</div>
+          <div class="sub-user-empty-copy">点击这里添加一位</div>
+        </button>
+      `
+    } else {
+      tbody.innerHTML = subRows.map((row, index) => {
       const expEntry = expiredById[row.id]
       // Active: honest "已连接" — daemon has no last-active heartbeat for
       // real accounts, so we don't fake a last-active time.
@@ -127,13 +202,13 @@ export function renderDashboard(report) {
           <div class="act">${actCell}</div>
         </div>
       `
-    }).join("")
+      }).join("")
+    }
+    const subExpiredCount = subRows.filter(row => row.expired).length
+    document.getElementById("accounts-meta").textContent = subExpiredCount > 0
+      ? `${subRows.length} 个 · ${subExpiredCount} 已过期`
+      : `${subRows.length} 个`
   }
-  const meta = expiredCount > 0
-    ? `${accounts.length} 个 · ${expiredCount} 已过期`
-    : `${accounts.length} 个 · ${report.checks.access.allowFromCount} 用户允许`
-  document.getElementById("accounts-meta").textContent = meta
-
 }
 
 function conversationForAccount(conversations, row) {
@@ -282,10 +357,10 @@ function setReconnectPhase(phase, message = "暂时无法恢复，请稍后再�
   const headline = document.getElementById("hero-headline")
   const meta = document.getElementById("hero-meta")
   if (phase === "connecting") {
-    if (headline) headline.textContent = "正在重新连接"
+    renderHeroHeadline(headline, "正在重新连接")
     if (meta) meta.textContent = "请稍候…"
   } else if (phase === "failed") {
-    if (headline) headline.textContent = "CC 暂时失去连接"
+    renderHeroHeadline(headline, "CC 暂时失去连接")
     if (meta) meta.textContent = message
   }
   syncReconnectControls({ state: phase === "idle" ? "connected" : "recovering" })
@@ -431,6 +506,7 @@ let _providerMenuKeyHandler = null
  * TEST-ONLY: Reset all module-level dashboard state.
  */
 export function __resetDashboardState() {
+  companionHeroCopy = null
   _lastRestart = null
   _lastProbe = null
   _reconnectPhase = "idle"

@@ -16,6 +16,7 @@ import type { Mode } from '../../core/conversation'
 import type { UserTier } from '../../core/user-tier'
 import { makeEventsStore } from '../events/store'
 import { a2aRoutes } from './routes-a2a'
+import { socialRoutes } from './routes-social'
 import { pluginRoutes } from './routes-plugins'
 import { licenseRoutes } from './routes-license'
 import { daemonControlRoutes } from './routes-daemon-control'
@@ -687,6 +688,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     // ── a2a (send / test / dashboard CRUD) + daemon-control (sessions / model
     //    / restart / turns) live in sibling files — spread in here. ──────────
     ...a2aRoutes(deps),
+    ...socialRoutes(deps),
     ...pluginRoutes(deps),
     ...licenseRoutes(deps),
     ...daemonControlRoutes(deps),

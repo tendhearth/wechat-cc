@@ -36,12 +36,14 @@ export type ToolKind =
   | 'daemon_remediate'   // admin-only mutating self-heal (session_release / model_set / daemon_restart)
   | 'file_locate'        // admin-only: locate files on the owner's computer (lib/locate-files)
   | 'plugin_tool'        // admin-only by default: ANY third-party plugin MCP tool (mcp__<plugin>__*). A plugin spawns arbitrary code and can expose owner-private data (e.g. wxvault = the owner's WeChat history), so fail closed — trusted/guest can't reach it.
+  | 'social_seek'        // admin-only: initiate outbound social contact with external A2A agents (agent-social M1) — unlike a2a_send (reply to an established peer), this actively broadcasts an intent to strangers.
 
 const ALL_KINDS: ReadonlySet<ToolKind> = new Set([
   'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
   'observations_read', 'observations_write',
   'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
   'a2a_send', 'daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool',
+  'social_seek',
 ])
 
 export interface TierProfile {
@@ -87,7 +89,7 @@ const GUEST_ALLOW = new Set<ToolKind>(['reply', 'share_page', 'memory_read', 'ob
 // they FAIL CLOSED — only the owner (admin) can call a plugin's tools by
 // default. A plugin that genuinely wants trusted/guest reach must opt in
 // explicitly (future: manifest `minTier`), not inherit it silently.
-const ADMIN_ONLY = new Set<ToolKind>(['daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool'])
+const ADMIN_ONLY = new Set<ToolKind>(['daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool', 'social_seek'])
 
 export const TIER_PROFILES: Record<UserTier, TierProfile> = {
   admin: {
@@ -105,6 +107,26 @@ export const TIER_PROFILES: Record<UserTier, TierProfile> = {
     relay: new Set(),
     deny: difference(ALL_KINDS, GUEST_ALLOW),
   },
+}
+
+// The social answering judge is a clean-slate one-shot spawn that must be able
+// to call ONLY the owner's plugin MCP tools (wx* fact tools, e.g. wxvault) to
+// ground its verdict in the owner's real data — it has no other business:
+// no fs/shell/network, no subagent, no wechat send/reply, no a2a/social tools
+// of its own. TIER_PROFILES.guest is NOT usable here: classifyToolUse buckets
+// every third-party plugin tool as `plugin_tool`, which is in guest's (and
+// trusted's) deny set, so a guest-tiered judge would get "Permission denied"
+// on every wx* call and silently degrade to topic-text-only grounding — see
+// the T7b-core review. TIER_PROFILES.admin is also NOT usable: admin denies
+// nothing, so it would additionally unlock the judge's builtin Read/Write/
+// Bash/WebFetch/subagent tools, which is far more than the judge needs.
+// Standalone (not part of TIER_PROFILES / UserTier) because this is a
+// bespoke one-shot capability, not a resolvable chat tier — there is no
+// access.json entry that maps a chatId to "social_judge".
+export const SOCIAL_JUDGE_PROFILE: TierProfile = {
+  allow: new Set<ToolKind>(['plugin_tool']),
+  relay: new Set(),
+  deny: difference(ALL_KINDS, new Set<ToolKind>(['plugin_tool'])),
 }
 
 /**
@@ -215,6 +237,7 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     if (sub === 'observations_list' || sub === 'observations_read') return 'observations_read'
     if (sub === 'observations_write' || sub === 'observations_archive') return 'observations_write'
     if (sub === 'a2a_send') return 'a2a_send'
+    if (sub === 'social_seek') return 'social_seek'
     // Explicit write mapping — must NOT fall through to the fs_read default
     // below: set_chat_pref mutates chat_prefs.json (care level / split).
     if (sub === 'set_chat_pref') return 'memory_write'

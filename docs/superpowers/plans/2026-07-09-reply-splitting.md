@@ -483,7 +483,7 @@ git commit -m "feat(liveness): reply route splits un-prefixed replies into paced
 - [ ] **Step 1: Write the failing tests** (append to mode-commands.test.ts; FIRST update the `setup()` helper to provide `chatPrefs` — mirror how `pinModel` was added: a vi.fn-backed in-memory fake, returned from setup for assertions)
 
 ```ts
-// in setup(): 
+// in setup():
 //   const prefsData = new Map<string, { split?: boolean }>()
 //   const chatPrefs = {
 //     get: (c: string) => prefsData.get(c) ?? {},

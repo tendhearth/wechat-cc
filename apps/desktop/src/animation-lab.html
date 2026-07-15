@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>陪伴动画试验 · wechat-cc</title>
+    <link rel="stylesheet" href="./animation-lab.css" />
+  </head>
+  <body>
+    <main class="lab-shell">
+      <header class="lab-header">
+        <a class="back" href="./index.html" aria-label="返回 wechat-cc">
+          <span aria-hidden="true">←</span> 返回
+        </a>
+        <div>
+          <p>ANIMATION LAB</p>
+          <h1>陪伴小世界</h1>
+        </div>
+        <button class="sound-toggle" id="calm-toggle" type="button" aria-pressed="false">安静模式</button>
+      </header>
+
+      <section class="stage-card" aria-label="可交互的陪伴插画">
+        <canvas id="companion-stage"></canvas>
+        <div class="stage-hint" id="stage-hint">把鼠标轻轻移进鱼缸</div>
+        <div class="bear-message" id="bear-message" aria-live="polite">你好呀，今天也在陪你。</div>
+      </section>
+
+      <footer class="lab-footer">
+        <span><i class="dot dot-fish"></i>鱼群会靠近你的鼠标</span>
+        <span><i class="dot dot-bear"></i>靠近或点击小熊试试看</span>
+        <button id="reset-fish" type="button">重新散开</button>
+      </footer>
+    </main>
+    <img class="crab-escape" id="crab-escape" src="./assets/animation/crab-watercolor-v1.png" alt="" aria-hidden="true">
+    <script src="./animation-lab.js"></script>
+  </body>
+</html>

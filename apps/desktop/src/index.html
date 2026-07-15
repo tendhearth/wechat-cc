@@ -355,12 +355,12 @@
                hook is unused here but main.js handles it elsewhere
                (e.g. on the add-user card). -->
           <div class="dash-utilities">
-            <button class="dash-nav-link dash-utility-link" data-pane="logs" title="日志">
+            <button class="dash-nav-link dash-utility-link" data-pane="logs" title="日志" aria-label="日志" data-tooltip="日志">
               <span class="ic" data-hg-icon="archive" data-hg-size="18"></span>
               <span>日志</span>
               <span class="count" id="logs-count"></span>
             </button>
-            <button id="settings-open" class="rail-gear" type="button" title="设置" aria-label="设置">
+            <button id="settings-open" class="rail-gear" type="button" title="设置" aria-label="设置" data-tooltip="设置">
               <span class="ic" data-hg-icon="settings-01" data-hg-size="18"></span>
               <span>设置</span>
             </button>
@@ -373,12 +373,22 @@
           <article class="dash-pane" data-pane="overview">
             <div class="moment-body">
               <section class="moment-ai" id="hero-card" aria-live="polite">
-                <div class="ai-orbit-visual" aria-hidden="true">
-                  <img class="moment-illustration moment-illustration-online" src="./assets/moment-cc-companion.png" alt="" />
+                <div class="companion-intro">
+                  <h1 id="hero-headline">此刻，陪你一起看鱼</h1>
+                  <p id="hero-meta">把鼠标轻轻移进鱼缸，看看谁会先回应你</p>
+                </div>
+                <div class="ai-orbit-visual">
+                  <button id="companion-immersive-start" class="companion-immersive-trigger" type="button" aria-pressed="false">
+                    <span class="companion-immersive-icon" aria-hidden="true">⤢</span>
+                    <span>进入这一刻</span>
+                  </button>
+                  <div class="moment-animation-stage moment-illustration-online" aria-label="可交互的陪伴鱼缸">
+                    <canvas id="companion-stage"></canvas>
+                    <div class="stage-hint" id="stage-hint">把鼠标轻轻移进鱼缸水面下方</div>
+                    <div class="bear-message" id="bear-message" aria-live="polite">你好呀，今天也在陪你。</div>
+                  </div>
                   <img class="moment-illustration moment-illustration-offline" src="./assets/moment-ai-offline.png" alt="" />
                 </div>
-                <h1 id="hero-headline">AI 正在陪伴中</h1>
-                <p id="hero-meta">连接正常</p>
                 <div class="moment-actions">
                   <span class="pending" id="dash-pending"></span>
                   <button id="dash-stop" class="moment-connect-btn">
@@ -401,18 +411,17 @@
               <section class="moment-users" aria-label="用户连接状态">
                 <h2>当前连接中的用户</h2>
                 <div id="accounts-current" class="current-user-card"></div>
-                <div class="moment-subhead">
+                <div class="moment-subhead" id="accounts-subhead">
                   <h2>子用户</h2>
                   <span class="meta" id="accounts-meta">—</span>
                 </div>
                 <div id="accounts-body" class="sub-user-grid"></div>
-                <!-- "+ 绑定新账号" entry point. Wired by main.js via
-                     getElementById('add-account-btn') (opens QR modal). -->
-                <button id="add-account-btn" class="add-user-card" type="button">
-                  <span class="add-ic" data-hg-icon="user-add-01"></span>
-                  <span>添加用户</span>
-                </button>
               </section>
+              <button id="companion-users-scrim" class="companion-users-scrim" type="button" aria-label="收起用户抽屉"></button>
+              <div class="companion-immersive-tools" aria-label="陪伴模式工具">
+                <button id="companion-immersive-exit" type="button">退出陪伴</button>
+                <button id="companion-users-toggle" type="button" aria-expanded="false">用户</button>
+              </div>
 
               <!-- Hidden shim: keeps the IDs that JS modules
                    (conversations.js, update.js, main.js) look up so
@@ -676,10 +685,12 @@
 
     <!-- Shared lightbox for image / file attachment previews. Hidden
          until a chat-bubble image or file-card is clicked. -->
-    <div id="lightbox" class="lightbox" hidden aria-hidden="true">
-      <div class="lightbox-body" id="lightbox-body"></div>
-    </div>
+      <div id="lightbox" class="lightbox" hidden aria-hidden="true">
+        <div class="lightbox-body" id="lightbox-body"></div>
+      </div>
 
+    <img class="crab-escape" id="crab-escape" src="./assets/animation/crab-watercolor-v1.png" alt="" aria-hidden="true">
+    <script src="./animation-lab.js"></script>
     <script type="module" src="./main.js"></script>
   </body>
 </html>

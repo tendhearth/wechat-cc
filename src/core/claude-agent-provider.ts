@@ -1,6 +1,10 @@
-import { query, type Options, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { query, type CanUseTool, type Options, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
-import type { TierProfile, ToolKind } from './user-tier'
+import { classifyToolUse, SOCIAL_JUDGE_PROFILE, type TierProfile, type ToolKind } from './user-tier'
+// McpStdioSpec here is core's own {command,args,env} shape (openai-mcp-bridge.ts)
+// — structurally identical to daemon/bootstrap/mcp-specs.ts's McpStdioSpec, but
+// core MUST NOT import from daemon (dependency-cruiser: core-must-not-depend-on-runtime).
+import type { McpStdioSpec } from './openai-mcp-bridge'
 import { log } from '../lib/log'
 
 /**
@@ -42,6 +46,7 @@ const TOOL_KIND_TO_CLAUDE_BUILTINS: Record<ToolKind, ReadonlyArray<string>> = {
   daemon_remediate: [],    // MCP-only (mcp__wechat__session_release / model_set / daemon_restart)
   file_locate: [],         // MCP-only (mcp__wechat__locate_file), gated by canUseTool
   plugin_tool: [],         // MCP-only (mcp__<plugin>__*), admin-only, gated by canUseTool
+  social_seek: [],         // MCP-only (mcp__wechat__social_seek), admin-only, gated by canUseTool
 }
 
 export interface ClaudeTierSdkOpts {
@@ -78,6 +83,49 @@ export function tierProfileToClaudeSdkOpts(tp: TierProfile, permissionMode: Perm
   return {
     permissionMode: 'default',
     ...(disallowed.length > 0 ? { disallowedTools: disallowed } : {}),
+  }
+}
+
+/**
+ * Builds the SDK Options for a plugins-only judge session (the grounded
+ * social judge — see daemon/social/grounded-judge.ts). mcpServers is ONLY
+ * the plugin MCP specs (never wechat, never delegate — the judge must not
+ * be able to send-as-owner or recurse into another agent). Builtins are
+ * gated via tierProfileToClaudeSdkOpts(tp, 'strict'), same as every other
+ * spawn. canUseTool is a FRESH minimal callback, deliberately NOT
+ * `makeCanUseTool` (permission-relay.ts): that function resolves a tier
+ * NAME (admin/trusted/guest) via `resolveTier()`, and SOCIAL_JUDGE_PROFILE
+ * is a bespoke one-shot profile with no access.json entry — there is no
+ * name to resolve. It also relays to an admin chat on ambiguous
+ * decisions; the judge is a background call with no human to ask
+ * (SOCIAL_JUDGE_PROFILE.relay is empty by construction), so this callback
+ * must never relay — allow iff the tool classifies as `plugin_tool`,
+ * otherwise deny outright.
+ */
+export function buildClaudeJudgeOptions(args: {
+  pluginMcpForClaude: Record<string, { type: 'stdio' } & McpStdioSpec>
+  model: string
+  claudeBin?: string
+}): (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string) => Options {
+  const judgeCanUseTool: CanUseTool = async (toolName, input) =>
+    SOCIAL_JUDGE_PROFILE.allow.has(classifyToolUse(toolName, input))
+      ? { behavior: 'allow', updatedInput: input }
+      : { behavior: 'deny', message: 'social judge: only plugin (wx*) tools are permitted' }
+
+  return (_alias, path, tierProfile, _chatId, _mcpEnv, appendInstructions) => {
+    const tierOpts = tierProfileToClaudeSdkOpts(tierProfile, 'strict')
+    return {
+      cwd: path,
+      model: args.model,
+      mcpServers: args.pluginMcpForClaude, // plugins ONLY — no wechat/delegate
+      strictMcpConfig: true, // ignore any .mcp.json/settings MCP servers at cwd — allowlist above is exhaustive
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: appendInstructions ?? '' },
+      settingSources: ['project', 'local'],
+      ...(args.claudeBin ? { pathToClaudeCodeExecutable: args.claudeBin } : {}),
+      permissionMode: tierOpts.permissionMode,
+      ...(tierOpts.disallowedTools ? { disallowedTools: tierOpts.disallowedTools } : {}),
+      canUseTool: judgeCanUseTool,
+    } as Options
   }
 }
 

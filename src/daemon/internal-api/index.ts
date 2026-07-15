@@ -311,6 +311,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setA2A(a2a) {
       deps.a2a = a2a
     },
+    setSocial(social) {
+      deps.social = social
+    },
     mintSessionToken(tier: UserTier, sessionKey: string) {
       return registry.mint(tier, sessionKey)
     },
