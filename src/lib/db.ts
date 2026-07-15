@@ -464,7 +464,7 @@ const migrations: Migration[] = [
         peers_asked  INTEGER NOT NULL DEFAULT 0,
         created_at   TEXT NOT NULL,
         updated_at   TEXT NOT NULL
-      );
+      ) STRICT;
       CREATE TABLE IF NOT EXISTS social_echo (
         id           TEXT PRIMARY KEY,
         seek_id      TEXT NOT NULL,
@@ -473,7 +473,7 @@ const migrations: Migration[] = [
         content      TEXT NOT NULL,
         status       TEXT NOT NULL,          -- 'pending' | 'revealed' | 'declined'
         created_at   TEXT NOT NULL
-      );
+      ) STRICT;
       CREATE INDEX IF NOT EXISTS idx_social_echo_seek ON social_echo(seek_id);
     `)
   },
