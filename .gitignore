@@ -56,3 +56,6 @@ docs/spike/phase0-rfc03/03-codex-perms/matrix.json
 # Trajectory YAMLs + judge config are checked in; outputs are not.
 eval/companion/runs/
 test-results/
+
+# never track node_modules (dir or stray symlink)
+node_modules
