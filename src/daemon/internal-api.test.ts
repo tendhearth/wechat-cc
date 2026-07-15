@@ -2818,6 +2818,94 @@ describe('internal-api', () => {
       expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
     })
   })
+
+  // ─── GET/POST /v1/social/inbound (觅食台 P2 Task 3) ────────────────────
+
+  describe('inbound toggle (GET/POST /v1/social/inbound)', () => {
+    it('POST /v1/social/inbound {enabled:true} persists a2a_listen; GET reflects it', async () => {
+      saveAgentConfig(stateDir, { provider: 'claude', model: 'claude-opus-4-8', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'test')
+
+      const post = await fetch(`http://127.0.0.1:${port}/v1/social/inbound`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true }),
+      })
+      expect(post.status).toBe(200)
+      expect(await post.json()).toEqual({ enabled: true, restart_required: true })
+      expect(loadAgentConfig(stateDir).a2a_listen).toEqual({ host: '127.0.0.1', port: 8717 })
+
+      const get = await fetch(`http://127.0.0.1:${port}/v1/social/inbound`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(get.status).toBe(200)
+      expect(await get.json()).toEqual({ enabled: true, host: '127.0.0.1', port: 8717 })
+    })
+
+    it('POST /v1/social/inbound {enabled:false} removes a2a_listen; GET reflects it', async () => {
+      saveAgentConfig(stateDir, {
+        provider: 'claude', model: 'claude-opus-4-8', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port: 8717 },
+      })
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'test')
+
+      const post = await fetch(`http://127.0.0.1:${port}/v1/social/inbound`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      })
+      expect(post.status).toBe(200)
+      expect(await post.json()).toEqual({ enabled: false, restart_required: true })
+      expect(loadAgentConfig(stateDir).a2a_listen).toBeUndefined()
+
+      const get = await fetch(`http://127.0.0.1:${port}/v1/social/inbound`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(await get.json()).toEqual({ enabled: false })
+    })
+
+    it('GET /v1/social/inbound returns disabled when a2a_listen is unset', async () => {
+      saveAgentConfig(stateDir, { provider: 'claude', model: 'claude-opus-4-8', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'test')
+
+      const get = await fetch(`http://127.0.0.1:${port}/v1/social/inbound`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(get.status).toBe(200)
+      expect(await get.json()).toEqual({ enabled: false })
+    })
+
+    it('tier gate: a trusted session token gets 403 on POST /v1/social/inbound (admin-only route)', async () => {
+      saveAgentConfig(stateDir, { provider: 'claude', model: 'claude-opus-4-8', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port } = await api.start()
+      const tok = api.mintSessionToken('trusted', 'test')
+
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/inbound`, {
+        method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true }),
+      })
+      expect(resp.status).toBe(403)
+      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+    })
+
+    it('tier gate: a trusted session token gets 403 on GET /v1/social/inbound (admin-only route)', async () => {
+      saveAgentConfig(stateDir, { provider: 'claude', model: 'claude-opus-4-8', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port } = await api.start()
+      const tok = api.mintSessionToken('trusted', 'test')
+
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/inbound`, {
+        headers: { Authorization: `Bearer ${tok}` },
+      })
+      expect(resp.status).toBe(403)
+      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+    })
+  })
 })
 
 // ─── request validation (T7) ──────────────────────────────────────────────────

@@ -101,6 +101,10 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // but exposes the owner's stored seeks/echoes (topics + peer exchanges).
   'GET /v1/social/seeks': 'admin',
   'GET /v1/social/echoes': 'admin',
+  // admin — inbound on/off toggle (觅食台 P2 Task 3): writes a2a_listen in
+  // agent-config.json, the same trust surface as hand-editing the config.
+  'GET /v1/social/inbound': 'admin',
+  'POST /v1/social/inbound': 'admin',
 }
 
 export function minTierFor(routeKey: string): UserTier {
