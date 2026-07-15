@@ -2879,6 +2879,19 @@ describe('internal-api', () => {
       expect(await get.json()).toEqual({ enabled: false })
     })
 
+    it('POST /v1/social/inbound with an empty body reads as enabled:false, not a 500', async () => {
+      saveAgentConfig(stateDir, { provider: 'claude', model: 'claude-opus-4-8', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'test')
+
+      const post = await fetch(`http://127.0.0.1:${port}/v1/social/inbound`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(post.status).toBe(200)
+      expect(await post.json()).toEqual({ enabled: false, restart_required: true })
+    })
+
     it('tier gate: a trusted session token gets 403 on POST /v1/social/inbound (admin-only route)', async () => {
       saveAgentConfig(stateDir, { provider: 'claude', model: 'claude-opus-4-8', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
       api = createInternalApi({ stateDir, daemonPid: 1 })

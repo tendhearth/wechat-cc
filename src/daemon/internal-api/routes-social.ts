@@ -36,7 +36,10 @@ export function socialRoutes(deps: InternalApiDeps): RouteTable {
       return { status: 200, body: l ? { enabled: true, host: l.host, port: l.port } : { enabled: false } }
     },
     'POST /v1/social/inbound': async (_q, body) => {
-      const enabled = !!(body as { enabled?: unknown }).enabled
+      // `body` is null on an empty/`null` request body (readJsonBody) — guard
+      // it (as the sibling inline-validated POST routes do) so a missing body
+      // reads as `enabled:false` instead of throwing a 500.
+      const enabled = !!((body ?? {}) as { enabled?: unknown }).enabled
       const cfg = loadAgentConfig(deps.stateDir)
       const updated = enabled
         ? { ...cfg, a2a_listen: { host: '127.0.0.1', port: 8717 } }
