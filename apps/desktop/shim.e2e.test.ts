@@ -109,7 +109,8 @@ describe('apps/desktop shim — HTML structure', () => {
       'settings-drawer', 'settings-close', 'settings-open',
       // Dashboard (unchanged by this refactor)
       'hero-card', 'hero-headline',
-      'add-account-btn',                                 // + 绑定新账号 in accounts card
+      // (add-sub-user is now a dynamic data-action button in dashboard.js,
+      //  not a static index.html id — covered by the dashboard/sessions tests)
       'accounts-body',
       'update-card', 'update-headline', 'update-body',
       'update-check-btn', 'update-apply-btn',
