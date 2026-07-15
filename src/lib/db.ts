@@ -499,13 +499,52 @@ export function openWechatDb(stateDir: string): Database {
   return openDb({ path: join(stateDir, 'wechat-cc.db') })
 }
 
+function isLockedError(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e)
+  return /database is locked|database is busy|SQLITE_BUSY/i.test(m)
+}
+
+/**
+ * Run `fn`, retrying briefly on a SQLite "database is locked" error. Sync,
+ * since openDb is sync. Survives the WAL-lock race when the daemon restarts
+ * before the SIGKILLed old process released the lock — `busy_timeout` doesn't
+ * cover the journal-mode switch, so that switch would otherwise crash the boot
+ * with "database is locked". Non-lock errors rethrow immediately; `sleep` is
+ * injectable for tests.
+ */
+export function withLockRetry<T>(
+  fn: () => T,
+  opts: { attempts?: number; delayMs?: number; sleep?: (ms: number) => void } = {},
+): T {
+  const attempts = opts.attempts ?? 12
+  const delayMs = opts.delayMs ?? 250
+  const sleep = opts.sleep ?? ((ms: number) => { Bun.sleepSync(ms) })
+  let lastErr: unknown
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return fn()
+    } catch (e) {
+      lastErr = e
+      if (!isLockedError(e)) throw e
+      if (i < attempts - 1) sleep(delayMs)
+    }
+  }
+  throw lastErr
+}
+
 export function openDb(opts: OpenDbOpts): Database {
   if (opts.path !== ':memory:') {
     const dir = dirname(opts.path)
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
-  const db = new Database(opts.path, { create: true })
-  db.exec('PRAGMA journal_mode = WAL;')
+  // Opening + switching to WAL takes a brief exclusive lock; on a daemon
+  // restart the SIGKILLed old process may still hold it (busy_timeout doesn't
+  // cover the journal-mode switch). Retry instead of crashing the boot.
+  const db = withLockRetry(() => {
+    const d = new Database(opts.path, { create: true })
+    d.exec('PRAGMA journal_mode = WAL;')
+    return d
+  })
   db.exec('PRAGMA foreign_keys = ON;')
   // 5s busy_timeout — the CLI process and daemon may try to write the same
   // db simultaneously (e.g. `wechat-cc sessions delete` while the daemon
