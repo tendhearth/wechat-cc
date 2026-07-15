@@ -17,5 +17,14 @@ export function socialRoutes(deps: InternalApiDeps): RouteTable {
       const outcome = await deps.social.broker.seek(topic, city ? { city } : undefined)
       return { status: 200, body: outcome }
     },
+    // 觅食台 P2 — read routes over P1's stored rows (dashboard/CLI listing).
+    'GET /v1/social/seeks': async () => {
+      if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
+      return { status: 200, body: { seeks: deps.social.seekStore.list() } }
+    },
+    'GET /v1/social/echoes': async () => {
+      if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
+      return { status: 200, body: { echoes: deps.social.echoStore.listAll() } }
+    },
   }
 }

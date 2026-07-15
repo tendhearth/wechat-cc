@@ -13,6 +13,8 @@ import { loadAgentConfig, saveAgentConfig } from '../lib/agent-config'
 import type { A2ARegistry } from '../core/a2a-registry'
 import type { A2AClient, SendResult, AgentCard } from '../core/a2a-client'
 import type { A2AEventsStore, EventRow, AppendInput } from '../core/a2a-events-store'
+import type { SeekRow } from '../core/social-seek-store'
+import type { EchoRow } from '../core/social-echo-store'
 
 describe('internal-api', () => {
   let stateDir: string
@@ -2721,6 +2723,99 @@ describe('internal-api', () => {
         expect(line).toContain('split partial failure')
         expect(line).toContain('sent=1')
       })
+    })
+  })
+
+  // ─── GET /v1/social/seeks + GET /v1/social/echoes (觅食台 P2) ─────────
+
+  describe('social read routes (GET /v1/social/seeks, GET /v1/social/echoes)', () => {
+    const seekRow: SeekRow = {
+      id: 'k1', kind: 'seek', topic: '找个会修老相机的',
+      status: 'foraging', hop: 1, peers_asked: 0, created_at: 't', updated_at: 't',
+    }
+    const echoRow: EchoRow = {
+      id: 'e1', seek_id: 'k1', peer_masked: 'p***', degree: 1,
+      content: 'hi there', status: 'pending', created_at: 't',
+    }
+
+    async function startWithSocial(
+      opts: { seeks?: SeekRow[]; echoes?: EchoRow[] } | null = null,
+    ): Promise<{ port: number; token: string }> {
+      api = createInternalApi({
+        stateDir, daemonPid: 1,
+        ...(opts ? {
+          social: {
+            broker: { seek: async () => ({ intent_id: 'x', matched: [], lit: [] }) },
+            seekStore: {
+              create: () => {}, update: () => {},
+              list: () => opts.seeks ?? [], get: () => null,
+            },
+            echoStore: {
+              create: () => {}, setStatus: () => {}, listForSeek: () => [],
+              listAll: () => opts.echoes ?? [], get: () => null,
+            },
+          },
+        } : {}),
+      })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'test')
+      return { port, token }
+    }
+
+    it('GET /v1/social/seeks returns the stored seeks', async () => {
+      const { port, token } = await startWithSocial({ seeks: [seekRow] })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/seeks`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ seeks: [seekRow] })
+    })
+
+    it('GET /v1/social/seeks returns 503 when deps.social is not wired', async () => {
+      const { port, token } = await startWithSocial()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/seeks`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'social_not_wired' })
+    })
+
+    it('GET /v1/social/echoes returns the stored echoes', async () => {
+      const { port, token } = await startWithSocial({ echoes: [echoRow] })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ echoes: [echoRow] })
+    })
+
+    it('GET /v1/social/echoes returns 503 when deps.social is not wired', async () => {
+      const { port, token } = await startWithSocial()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'social_not_wired' })
+    })
+
+    it('tier gate: a trusted session token gets 403 on GET /v1/social/seeks (admin-only route)', async () => {
+      const { port } = await startWithSocial({ seeks: [seekRow] })
+      const tok = api!.mintSessionToken('trusted', 'test')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/seeks`, {
+        headers: { Authorization: `Bearer ${tok}` },
+      })
+      expect(resp.status).toBe(403)
+      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+    })
+
+    it('tier gate: a trusted session token gets 403 on GET /v1/social/echoes (admin-only route)', async () => {
+      const { port } = await startWithSocial({ echoes: [echoRow] })
+      const tok = api!.mintSessionToken('trusted', 'test')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes`, {
+        headers: { Authorization: `Bearer ${tok}` },
+      })
+      expect(resp.status).toBe(403)
+      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
     })
   })
 })

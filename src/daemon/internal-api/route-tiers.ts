@@ -97,6 +97,10 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // reply-to-an-established-peer). Would default to admin anyway (unlisted
   // routes fail-closed) — listed explicitly for documentation.
   'POST /v1/social/seek': 'admin',
+  // admin — same trust class as social_seek above (觅食台 P2): read-only,
+  // but exposes the owner's stored seeks/echoes (topics + peer exchanges).
+  'GET /v1/social/seeks': 'admin',
+  'GET /v1/social/echoes': 'admin',
 }
 
 export function minTierFor(routeKey: string): UserTier {
