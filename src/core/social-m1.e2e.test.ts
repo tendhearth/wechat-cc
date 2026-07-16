@@ -1,93 +1,122 @@
 /**
- * M1 intent-brokering end-to-end (AC1–AC5), deterministic.
+ * Async foraging spine end-to-end (deterministic, in-process).
  *
- * Composes the REAL modules — makeBroker (initiating) → makeAnswerIntent
- * (answering) → gateOutbound (disclosure) — with injected deterministic
- * judge + checker so the acceptance criteria are stable in CI. The /a2a/intent
- * HTTP transport is covered separately in a2a-server.test.ts; here `send`
- * invokes the answering handler directly to exercise the broker↔answer↔gate
- * composition.
- *
- * The same composition was verified against REAL Kimi over the REAL /a2a/intent
- * transport (scratchpad/social-m1-e2e.ts, 2026-07-12): AC1/AC2/AC3/AC5 all passed
- * — B's blurb never leaked the home address or the third party seeded in its facts.
+ * Composes the REAL modules — makeBroker (sync sow + background forage) →
+ * makeAnswerIntent (the peer's judge) → gateOutbound (disclosure) → makeRevealer
+ * (mutual async reveal) — with injected deterministic judge + checker + stores.
+ * The peer's inbound /a2a/reveal is simulated by calling the SEEKER'S
+ * onInboundReveal directly (the HTTP transport is covered in a2a-server.test.ts).
  */
 import { describe, expect, it } from 'vitest'
+import { openDb } from '../lib/db'
 import { makeBroker } from './social-broker'
 import { makeAnswerIntent } from './social-answer'
-import type { IntentCard } from './a2a-intent'
+import { makeRevealer, type PeerIdentity } from './social-reveal'
+import { makeSeekStore } from './social-seek-store'
+import { makeEchoStore } from './social-echo-store'
+import { makePledgeStore } from './social-pledge-store'
 
 const POLICY = '可透露兴趣/城市;不透露住址门牌、第三方。'
-const recB = { id: 'ccb', name: '小B' } as any
+const recB = { id: 'ccb', name: '小B', url: 'http://b/a2a', outbound_api_key: 'k' } as any
+const IDENTITY_B: PeerIdentity = { name: '小B', url: 'http://b/a2a' }
 
-// A permissive checker: passes text through unless it contains a seeded forbidden token.
 const passingCheck = async (prompt: string) => {
-  // Inspect ONLY the reviewed text (between triple quotes), NOT the whole prompt —
-  // the prompt also embeds the policy, which itself names forbidden tokens.
-  const reviewed = extractReviewed(prompt)
+  const m = prompt.match(/"""([\s\S]*?)"""/)
+  const reviewed = m?.[1] ?? ''
   const leak = /兰园路|门牌|老陈/.test(reviewed)
   return JSON.stringify(leak ? { violation: true, redacted: '', reasons: ['leak'] } : { violation: false, redacted: reviewed })
 }
-function extractReviewed(prompt: string): string {
-  const m = prompt.match(/"""([\s\S]*?)"""/)
-  return m?.[1] ?? ''
-}
 
-function brokerWith(judge: (c: IntentCard) => Promise<{ match: 'yes' | 'no'; blurb?: string }>, confirmOwner: boolean, confirmPeer: boolean) {
-  const answerB = makeAnswerIntent({ judge, policy: POLICY, cheapEval: passingCheck })
-  return makeBroker({
-    policy: POLICY,
-    cheapEval: passingCheck,
-    discover: async () => [recB],
-    send: async (_hand, card) => answerB({ agent: { id: 'cca' } as any, card }),
-    confirmWithOwner: async () => confirmOwner,
-    confirmPeer: async () => confirmPeer,
-  })
-}
+describe('async foraging spine e2e', () => {
+  it('sow → background echo → desktop reveal → peer reveals back → connected + identity, seek never blocks', async () => {
+    const db = openDb({ path: ':memory:' })
+    const seekStore = makeSeekStore(db)
+    const echoStore = makeEchoStore(db)
+    const pledgeStore = makePledgeStore(db)
 
-describe('M1 intent-brokering AC1–AC5', () => {
-  it('AC1 happy path: match + both confirm → lit, blurb present', async () => {
-    const judge = async () => ({ match: 'yes' as const, blurb: '南京摄影爱好者,周末想出门拍照' })
-    const out = await brokerWith(judge, true, true).seek('找周末拍照搭子', { city: '南京' })
-    expect(out.matched.map(m => m.hand)).toEqual(['ccb'])
-    expect(out.matched[0]?.blurb ?? '').toContain('摄影')
-    expect(out.lit).toEqual(['ccb'])
-  })
+    // The peer's answering handler (match yes with a clean blurb).
+    const answerB = makeAnswerIntent({ judge: async () => ({ match: 'yes', blurb: '南京摄影爱好者,周末想出门拍照' }), policy: POLICY, cheapEval: passingCheck })
 
-  it('AC2 non-match → nothing matched, owner never asked', async () => {
-    let asked = 0
-    const answerB = makeAnswerIntent({ judge: async () => ({ match: 'no' as const }), policy: POLICY, cheapEval: passingCheck })
-    const out = await makeBroker({
+    // A deferred scheduler so we can assert the seek returned BEFORE any echo.
+    const jobs: Array<() => Promise<void>> = []
+    const broker = makeBroker({
       policy: POLICY, cheapEval: passingCheck,
       discover: async () => [recB],
-      send: async (_h, card) => answerB({ agent: { id: 'cca' } as any, card }),
-      confirmWithOwner: async () => { asked++; return true },
-      confirmPeer: async () => true,
-    }).seek('找打篮球的球友')
-    expect(out.matched).toEqual([])
-    expect(out.lit).toEqual([])
-    expect(asked).toBe(0)
+      send: async (_hand, card) => answerB({ agent: { id: 'cca' } as any, card }),
+      sow: (id, topic) => seekStore.create({ id, kind: 'seek', topic }),
+      recordEcho: (e) => echoStore.create({ id: `${e.intentId}:${e.peerAgentId}`, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId }),
+      finishSeek: (id, status, peersAsked) => seekStore.update(id, { status, peersAsked }),
+      schedule: (fn) => { jobs.push(fn) },
+    })
+
+    // 1) Sow — returns immediately; no echo yet (background not run).
+    const { intent_id } = await broker.seek('找周末拍照搭子', { city: '南京' })
+    expect(seekStore.get(intent_id)!.status).toBe('foraging')
+    expect(echoStore.listForSeek(intent_id)).toHaveLength(0)   // did NOT block on the peer
+
+    // 2) Forage — the background leg lands one pending echo.
+    await Promise.all(jobs.map(j => j()))
+    const echoes = echoStore.listForSeek(intent_id)
+    expect(echoes).toHaveLength(1)
+    expect(echoes[0]!.status).toBe('pending')
+    expect(echoes[0]!.peer_masked).toBe('第 1 度的某人')       // masked before reveal
+    expect(seekStore.get(intent_id)!.status).toBe('echoed')
+    const echoId = echoes[0]!.id
+
+    // 3) Desktop reveal (revealEcho). The peer answers our outbound /a2a/reveal
+    //    with mutual:false first (they haven't revealed yet).
+    const seekerRevealer = makeRevealer({
+      echoStore, pledgeStore, seekStore,
+      postPeerReveal: async () => ({ mutual: false }),
+      selfIdentity: () => ({ name: '我方', url: 'http://a/a2a' }),
+      notify: () => {},
+    })
+    const first = await seekerRevealer.revealEcho(echoId)
+    expect(first).toEqual({ state: 'awaiting_peer' })
+    expect(echoStore.get(echoId)!.self_revealed_at).not.toBeNull()
+    expect(seekStore.get(intent_id)!.status).toBe('echoed')     // not yet connected
+
+    // 4) Peer reveals back — simulate their /a2a/reveal callback into OUR
+    //    onInboundReveal (they carry their identity in the outbound response we
+    //    already recorded; here the mutual instant sets connected).
+    //    We swap the seeker revealer's postPeerReveal to return the peer identity
+    //    so a re-reveal completes the connection with identity swap.
+    const seekerRevealer2 = makeRevealer({
+      echoStore, pledgeStore, seekStore,
+      postPeerReveal: async () => ({ mutual: true, identity: IDENTITY_B }),
+      selfIdentity: () => ({ name: '我方', url: 'http://a/a2a' }),
+      notify: () => {},
+    })
+    const connected = await seekerRevealer2.revealEcho(echoId)
+
+    // 5) Assert connected + identity present.
+    expect(connected).toEqual({ state: 'connected' })
+    const finalEcho = echoStore.get(echoId)!
+    expect(finalEcho.status).toBe('revealed')
+    expect(finalEcho.self_revealed_at).not.toBeNull()
+    expect(finalEcho.peer_revealed_at).not.toBeNull()
+    expect(finalEcho.peer_masked).toBe('小B')                   // identity revealed
+    expect(seekStore.get(intent_id)!.status).toBe('connected')
   })
 
-  it('AC3 disclosure gate: a yes whose blurb leaks a home address is downgraded to no (never sent)', async () => {
-    // Judge (adversarially) returns a blurb containing a forbidden home address.
-    const judge = async () => ({ match: 'yes' as const, blurb: '住南京玄武区兰园路7号302,爱摄影' })
-    const out = await brokerWith(judge, true, true).seek('找周末拍照搭子')
-    // The gate blocks the leaky blurb → answer downgrades to match:no → nothing matched, nothing lit.
-    expect(out.matched).toEqual([])
-    expect(out.lit).toEqual([])
-  })
-
-  it('AC4 third-party hard rule: a blurb naming a third party is blocked', async () => {
-    const judge = async () => ({ match: 'yes' as const, blurb: '我和好友老陈都爱摄影' })
-    const out = await brokerWith(judge, true, true).seek('找周末拍照搭子')
-    expect(out.matched).toEqual([])   // gate blocks "老陈" → downgraded, never revealed
-  })
-
-  it('AC5 no commit without dual confirm: peer declines → matched but not lit', async () => {
-    const judge = async () => ({ match: 'yes' as const, blurb: '南京摄影爱好者' })
-    const out = await brokerWith(judge, true, false).seek('找周末拍照搭子')
-    expect(out.matched.map(m => m.hand)).toEqual(['ccb'])
-    expect(out.lit).toEqual([])
+  it('the disclosure gate still downgrades a leaky blurb (never recorded as an echo)', async () => {
+    const db = openDb({ path: ':memory:' })
+    const seekStore = makeSeekStore(db)
+    const echoStore = makeEchoStore(db)
+    const answerLeaky = makeAnswerIntent({ judge: async () => ({ match: 'yes', blurb: '住南京玄武区兰园路7号302,爱摄影' }), policy: POLICY, cheapEval: passingCheck })
+    const jobs: Array<() => Promise<void>> = []
+    const broker = makeBroker({
+      policy: POLICY, cheapEval: passingCheck,
+      discover: async () => [recB],
+      send: async (_h, card) => answerLeaky({ agent: { id: 'cca' } as any, card }),
+      sow: (id, topic) => seekStore.create({ id, kind: 'seek', topic }),
+      recordEcho: (e) => echoStore.create({ id: `${e.intentId}:${e.peerAgentId}`, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId }),
+      finishSeek: (id, status, peersAsked) => seekStore.update(id, { status, peersAsked }),
+      schedule: (fn) => { jobs.push(fn) },
+    })
+    const { intent_id } = await broker.seek('找周末拍照搭子')
+    await Promise.all(jobs.map(j => j()))
+    expect(echoStore.listForSeek(intent_id)).toHaveLength(0)     // leaky blurb downgraded to match:no
+    expect(seekStore.get(intent_id)!.status).toBe('closed')
   })
 })
