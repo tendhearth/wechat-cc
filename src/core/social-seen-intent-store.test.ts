@@ -15,35 +15,45 @@ describe('makeSeenIntentStore', () => {
     expect(s.hasSeen('other')).toBe(false)
   })
 
-  it('hasSeen is expiry-aware: a non-expired row reads true, an expired row reads false', () => {
+  it('dedup does not depend on the card expires_at: non-expired card dedups (baseline)', () => {
     const db = openDb({ path: ':memory:' })
     const s = makeSeenIntentStore(db)
     s.markSeen({ intentId: 'fresh', expiresAt: '2099-01-01T00:00:00.000Z' })
-    s.markSeen({ intentId: 'stale', expiresAt: '2000-01-01T00:00:00.000Z' })
     expect(s.hasSeen('fresh')).toBe(true)
-    expect(s.hasSeen('stale')).toBe(false)
   })
 
-  it('markSeen prunes already-expired rows so the table stays bounded', () => {
+  it('REGRESSION (DoS-defeat): a peer-supplied expires_at in the PAST does not defeat dedup', () => {
+    // A malicious paired peer controls the inbound card's expires_at field.
+    // If markSeen inserted the row and then immediately pruned it because the
+    // *card's* expires_at was already in the past, hasSeen would read false
+    // right after markSeen — letting the peer resubmit the same intent_id and
+    // re-trigger a full forward fan-out on every POST. The dedup window must
+    // be server-controlled and independent of this attacker-controlled input.
     const db = openDb({ path: ':memory:' })
     const s = makeSeenIntentStore(db)
-    // Insert a row that is already expired at insert time.
-    s.markSeen({ intentId: 'old', expiresAt: '2000-01-01T00:00:00.000Z' })
-    const countBefore = db.query<{ n: number }, []>(
-      'SELECT COUNT(*) as n FROM social_seen_intent',
-    ).get()?.n
-    expect(countBefore).toBe(0) // pruned by its own markSeen call — never observably present
-    expect(s.hasSeen('old')).toBe(false)
+    s.markSeen({ intentId: 'lying-peer', expiresAt: '2000-01-01T00:00:00.000Z' })
+    expect(s.hasSeen('lying-peer')).toBe(true)
+  })
 
-    // A later markSeen for a different (non-expired) intent also prunes any
-    // other stale rows left over in the table.
+  it('markSeen prunes rows past the server retention window, independent of expires_at', () => {
+    const db = openDb({ path: ':memory:' })
+    const s = makeSeenIntentStore(db)
+
+    // Directly insert a row whose first_seen_at is well older than the server
+    // retention window (SEEN_RETENTION_MS = 1h), with a far-future expires_at
+    // to prove pruning is driven by first_seen_at, not expires_at.
+    const oldFirstSeenAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() // 2h ago
     db.query<unknown, [string, string, string]>(
       `INSERT INTO social_seen_intent(intent_id, first_seen_at, expires_at) VALUES (?, ?, ?)`,
-    ).run('leftover', '1999-01-01T00:00:00.000Z', '1999-01-02T00:00:00.000Z')
+    ).run('stale', oldFirstSeenAt, '2099-01-01T00:00:00.000Z')
+
+    // markSeen for a different, fresh intent should prune the stale row.
     s.markSeen({ intentId: 'new', expiresAt: '2099-01-01T00:00:00.000Z' })
+
     const rows = db.query<{ intent_id: string }, []>(
       'SELECT intent_id FROM social_seen_intent ORDER BY intent_id',
     ).all()
     expect(rows.map((r) => r.intent_id)).toEqual(['new'])
+    expect(s.hasSeen('stale')).toBe(false)
   })
 })
