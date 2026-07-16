@@ -74,30 +74,40 @@ POST body reads as `enabled:false` (guarded server-side).
 
 ## Buildable now vs. gated — the honest boundary
 
+> **UPDATED 2026-07-15:** the **async foraging spine shipped to `dev`** (`bd1b025..e045cf9`),
+> so the reveal action below is **now buildable** — earlier this section said "no reveal
+> button; nothing to call." The reveal ROUTES now exist. See the new reveal contract.
+
 **Build now (all data is real & persisted):**
-- The 心愿 list (from `/seeks`), with `kind` and `status` badges.
+- The 心愿 list (from `/seeks`), with `kind` and `status` badges. Status is now a real
+  async lifecycle: `foraging`(觅食中) → `echoed`(有回声) → `connected`(已牵线) / `closed`.
 - The 明信片 list grouped per wish (from `/echoes`).
-- The inbound toggle (with the restart-required note).
+- **The "揭晓牵线" reveal action — NOW LIVE.** For a `pending` echo, add a 揭晓 button →
+  `POST /v1/social/echoes/reveal { id }` (id = the echo's `id`, i.e. `intent_id:peer_agent_id`).
+  Answerer-side pledges reveal via `POST /v1/social/pledges/reveal { id }`. Response
+  `{ outcome: { state } }` where `state` ∈ `connected` | `awaiting_peer` | `peer_unreachable`;
+  404 `{error:'not_found'}` on an unknown id. **The model is mutual async ("双向异步互揭"):
+  your click IS your consent; the backend only asks the peer. So render three states —
+  `awaiting_peer`("已揭晓,等对方回揭"), `connected`(the echo's `peer_masked` is now the
+  real name — swapped server-side only on mutual), `peer_unreachable`(retryable). Not
+  every reveal instantly connects.**
+- The 觅食网 inbound toggle (with the restart-required note above).
 - Empty/503/未启用 states.
+- **`GET /v1/social/pledges`** → `{ pledges: PledgeRow[] }` — the answerer side ("我回应了别人
+  的心愿"). `PledgeRow = { id, intent_id, seeker_agent_id, topic, self_revealed_at,
+  peer_revealed_at, created_at }`. Optional block; pledge reveals use the pledges/reveal route.
 
-**Do NOT build yet — gated on the async-foraging rework (a separate backend project):**
-- **The "揭晓牵线" reveal action.** P1's `broker.seek()` is *synchronous one-shot*
-  (discover→send→dual-confirm→return in one call). There is **no** "reveal later"
-  endpoint — dual-confirm already happened inside the original seek. So render
-  `status:'connected'` / `echo.status:'revealed'` as *state*, but **do not add a
-  reveal button** — there's nothing to call. Leave a placeholder/disabled affordance
-  at most.
-- **The live "觅食中 · trickle-back" animation.** Seeks/echoes are written at seek
-  time, not streamed. Poll `/seeks`+`/echoes` on an interval (like the other
-  pollers) for freshness; don't promise real-time trickle.
-- **Creating a wish from the desktop.** No write route exists yet (seeks are created
-  by the bot via WeChat/tooling). The "派心愿" input in the mockup is **display-only
-  for P3** unless/until a `POST /seek`-from-desktop story is added. Either omit the
-  input or wire it to the existing `POST /v1/social/seek` **knowing it blocks** (it
-  runs the full synchronous seek) — recommend omitting for P3.
-
-When the async rework lands, the reveal action + a non-blocking create + live trickle
-all become buildable; this page should be structured so they slot in.
+**Still gated / defer:**
+- **Live real-time "觅食中" trickle.** Echoes are persisted as the background forage lands
+  them, not streamed. **Poll** `/seeks`+`/echoes` on an interval (like the other pollers)
+  for the trickle-in feel; there's no push channel.
+- **Creating a wish from the desktop.** No desktop write route yet — seeks are created by
+  the bot via WeChat/`social_seek` tooling. `POST /v1/social/seek` exists but is the bot's
+  path. Keep the mockup's "派心愿" input **display-only for P3** (or omit) until a desktop
+  create story lands. (`seek()` is now non-blocking, so a future desktop create won't hang —
+  but the route/UX isn't specced yet.)
+- **Multi-hop ("朋友的朋友").** 1-hop today; `degree` is in the data model but forwarding is
+  spec #2. Show `degree` if you like, but expect `1`.
 
 ## Guardrails (from prior coordination)
 
