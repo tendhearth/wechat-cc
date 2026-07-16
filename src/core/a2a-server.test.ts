@@ -30,6 +30,7 @@ async function startServer(opts: {
   onExec?: (event: import('./a2a-server').ExecEvent) => Promise<import('./a2a-server').ExecResult>
   onIntent?: (event: import('./a2a-server').IntentEvent) => Promise<import('./a2a-intent').MatchReceipt>
   onIntentConfirm?: (event: import('./a2a-server').IntentConfirmEvent) => Promise<{ ok: boolean }>
+  onReveal?: (event: import('./a2a-server').RevealEvent) => Promise<{ mutual: boolean; identity?: { name: string; url: string } }>
 } = {}) {
   const onNotify: (event: import('./a2a-server').NotifyEvent) => Promise<void> = opts.onNotify ?? vi.fn(async () => {})
   const server = createA2AServer({
@@ -39,6 +40,7 @@ async function startServer(opts: {
     ...(opts.onExec ? { onExec: opts.onExec } : {}),
     ...(opts.onIntent ? { onIntent: opts.onIntent } : {}),
     ...(opts.onIntentConfirm ? { onIntentConfirm: opts.onIntentConfirm } : {}),
+    ...(opts.onReveal ? { onReveal: opts.onReveal } : {}),
     daemonInfo: { name: 'wechat-cc', version: '0.6.x' },
   })
   await server.start()
@@ -391,6 +393,64 @@ describe('a2a-server', () => {
         expect(onIntentConfirm).toHaveBeenCalledTimes(1)
         expect(onIntent).not.toHaveBeenCalled()
       } finally { await server.stop() }
+    })
+  })
+
+  describe('POST /a2a/reveal (async foraging spine)', () => {
+    it('runs onReveal and returns { mutual, identity } when authed', async () => {
+      const onReveal = vi.fn(async (_e: import('./a2a-server').RevealEvent) => ({ mutual: true, identity: { name: '小B', url: 'http://b/a2a' } }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onReveal })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/reveal`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1' }),
+        })
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual({ mutual: true, identity: { name: '小B', url: 'http://b/a2a' } })
+        expect(onReveal).toHaveBeenCalledWith(expect.objectContaining({ agent_id: 'alpha', intent_id: 'i1' }))
+      } finally { await server.stop() }
+    })
+
+    it('returns 501 when this machine is not wired for reveal (no onReveal)', async () => {
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec] })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/reveal`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1' }),
+        })
+        expect(res.status).toBe(501)
+      } finally { await server.stop() }
+    })
+
+    it('rejects reveal without a valid Bearer → 401, onReveal not called', async () => {
+      const onReveal = vi.fn(async () => ({ mutual: false }))
+      const { server, baseUrl } = await startServer({ onReveal })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/reveal`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1' }),
+        })
+        expect(res.status).toBe(401)
+        expect(onReveal).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('advertises the reveal capability in the agent card only when wired', async () => {
+      const wired = await startServer({ onReveal: async () => ({ mutual: false }) })
+      try {
+        const card = await (await fetch(`${wired.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        expect(card.capabilities.some(c => c.name === 'reveal')).toBe(true)
+      } finally { await wired.server.stop() }
+      const bare = await startServer({})
+      try {
+        const card = await (await fetch(`${bare.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        expect(card.capabilities.some(c => c.name === 'reveal')).toBe(false)
+      } finally { await bare.server.stop() }
     })
   })
 

@@ -76,6 +76,17 @@ export interface IntentConfirmEvent {
   intent_id: string
 }
 
+/**
+ * A peer's "my owner revealed; wants to connect on this intent" event —
+ * the inbound half of the mutual async reveal. Handler marks the local
+ * echo/pledge row's peer_revealed_at and, if this side already revealed,
+ * responds { mutual:true, identity } for a synchronous connect.
+ */
+export interface RevealEvent {
+  agent_id: string
+  intent_id: string
+}
+
 export interface AuthFailedEvent {
   /** The claimed agent_id from the request body. Only emitted when the
    *  body is parseable AND has agent_id — pure noise (random scanners
@@ -110,6 +121,9 @@ export interface A2AServerOpts {
    *  THIS owner to confirm lighting up a previously matched intent (the
    *  dual-confirm handshake's second leg). Undefined → 501. */
   onIntentConfirm?: (event: IntentConfirmEvent) => Promise<{ ok: boolean }>
+  /** Optional. When wired, enables POST /a2a/reveal — a peer signals its owner
+   *  revealed; mark my matching row + return { mutual, identity? }. Undefined → 501. */
+  onReveal?: (event: RevealEvent) => Promise<{ mutual: boolean; identity?: { name: string; url: string } }>
   /** Optional hook called when a notify request is rejected with 401/403
    *  AND we can identify which agent_id the caller claimed. Used by
    *  bootstrap to write an `a2a_events` row with status='auth_failed' so
@@ -181,6 +195,14 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         name: 'intent_confirm',
         description: 'Second leg of the intent dual-confirm handshake: a peer whose owner already said yes asks THIS owner to confirm lighting up a previously matched intent.',
         endpoint: '/a2a/intent/confirm',
+        method: 'POST',
+        request_schema: { agent_id: 'string', intent_id: 'string' },
+      }] : []),
+      // Advertised only when this machine is wired to receive inbound reveals.
+      ...(opts.onReveal ? [{
+        name: 'reveal',
+        description: 'Mutual async reveal: a peer whose owner revealed asks THIS owner\'s row to mark peer-revealed; returns { mutual, identity } when both sides have revealed.',
+        endpoint: '/a2a/reveal',
         method: 'POST',
         request_schema: { agent_id: 'string', intent_id: 'string' },
       }] : []),
@@ -326,6 +348,46 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         return new Response(JSON.stringify({ error: 'intent_confirm_failed', detail: msg }), { status: 500 })
+      }
+    }
+    if (url.pathname === '/a2a/reveal') {
+      if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
+      if (!opts.onReveal) return new Response(JSON.stringify({ error: 'reveal_not_supported' }), { status: 501 })
+
+      let body: { agent_id?: unknown; intent_id?: unknown }
+      try {
+        body = await req.json() as typeof body
+      } catch {
+        return new Response(JSON.stringify({ error: 'invalid_json' }), { status: 400 })
+      }
+      if (typeof body.agent_id !== 'string') return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
+      const claimedId = body.agent_id
+
+      const auth = req.headers.get('authorization')
+      if (!auth?.startsWith('Bearer ')) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'missing_bearer' })
+        return new Response(JSON.stringify({ error: 'missing_bearer' }), { status: 401 })
+      }
+      const agent = opts.registry.verifyBearer(claimedId, auth.slice('Bearer '.length).trim())
+      if (!agent) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'wrong_bearer' })
+        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
+      }
+      if (agent.id !== claimedId) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'agent_id_mismatch' })
+        return new Response(JSON.stringify({ error: 'agent_id_mismatch' }), { status: 403 })
+      }
+      if (agent.paused) return new Response(JSON.stringify({ ok: false, reason: 'paused' }), { status: 202 })
+
+      if (typeof body.intent_id !== 'string' || body.intent_id.length === 0) {
+        return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
+      }
+      try {
+        const result = await opts.onReveal({ agent_id: agent.id, intent_id: body.intent_id })
+        return new Response(JSON.stringify(result), { status: 200 })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return new Response(JSON.stringify({ error: 'reveal_failed', detail: msg }), { status: 500 })
       }
     }
     if (url.pathname === '/a2a/intent') {
