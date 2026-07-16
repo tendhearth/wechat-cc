@@ -450,6 +450,85 @@ const migrations: Migration[] = [
       ) STRICT;
     `)
   },
+  // agent-social 觅食台 state (M2 P1): persisted seeks + echoes so the
+  // desktop forager's-desk has queryable state. See
+  // docs/superpowers/specs/2026-07-15-forage-desk-agent-page-design.md.
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS social_seek (
+        id           TEXT PRIMARY KEY,
+        kind         TEXT NOT NULL,          -- 'seek' | 'fun'
+        topic        TEXT NOT NULL,
+        status       TEXT NOT NULL,          -- 'foraging' | 'echoed' | 'connected' | 'closed'
+        hop          INTEGER NOT NULL DEFAULT 1,
+        peers_asked  INTEGER NOT NULL DEFAULT 0,
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS social_echo (
+        id           TEXT PRIMARY KEY,
+        seek_id      TEXT NOT NULL,
+        peer_masked  TEXT NOT NULL,          -- e.g. "第 1 度的某人"
+        degree       INTEGER NOT NULL DEFAULT 1,
+        content      TEXT NOT NULL,
+        status       TEXT NOT NULL,          -- 'pending' | 'revealed' | 'declined'
+        created_at   TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS idx_social_echo_seek ON social_echo(seek_id);
+    `)
+  },
+  // v20 — async foraging spine. Adds the reveal columns to social_echo (the
+  // seeker's side) + the social_pledge table (the answerer's mirror side) so
+  // dual-confirm can move OUT of broker.seek() into a durable, row-driven,
+  // restart-survivable mutual reveal. Nullable-TEXT ADD COLUMN is safe on a
+  // STRICT table; social_echo is created unconditionally by v19 above, so no
+  // table-exists guard is needed even for the user_version=9 test harnesses.
+  // See docs/superpowers/specs/2026-07-15-async-foraging-spine-design.md.
+  (db) => {
+    db.exec(`
+      ALTER TABLE social_echo ADD COLUMN peer_agent_id TEXT;
+      ALTER TABLE social_echo ADD COLUMN self_revealed_at TEXT;
+      ALTER TABLE social_echo ADD COLUMN peer_revealed_at TEXT;
+      CREATE TABLE IF NOT EXISTS social_pledge (
+        id                TEXT PRIMARY KEY,
+        intent_id         TEXT NOT NULL,
+        seeker_agent_id   TEXT NOT NULL,      -- who sought (POST back their /a2a/reveal)
+        topic             TEXT NOT NULL,
+        self_revealed_at  TEXT,               -- when THIS owner revealed (nullable)
+        peer_revealed_at  TEXT,               -- when the seeker revealed (nullable)
+        created_at        TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS idx_social_pledge_intent ON social_pledge(intent_id);
+    `)
+  },
+  // v21 — forwarding hop (spec #2). Two nullable relay columns on social_echo
+  // (the seeker's degree-2 echoes) + the intermediary's social_relay table
+  // (links the two proxied reveal legs) + social_seen_intent (loop-prevention
+  // dedup). Nullable-TEXT ADD COLUMN is safe on STRICT; social_echo is created
+  // unconditionally by v19, so the ALTER is safe even in user_version=9 harnesses.
+  // See docs/superpowers/specs/2026-07-15-forwarding-hop-design.md.
+  (db) => {
+    db.exec(`
+      ALTER TABLE social_echo ADD COLUMN relay_via TEXT;
+      ALTER TABLE social_echo ADD COLUMN relay_token TEXT;
+      CREATE TABLE IF NOT EXISTS social_relay (
+        id                     TEXT PRIMARY KEY,   -- intent_id:relay_token
+        intent_id              TEXT NOT NULL,
+        relay_token            TEXT NOT NULL,
+        upstream_agent_id      TEXT NOT NULL,       -- who W received the card from (the seeker S)
+        downstream_agent_id    TEXT NOT NULL,       -- who W forwarded to + got the yes from (Q)
+        upstream_revealed_at   TEXT,                -- S revealed to W (nullable)
+        downstream_revealed_at TEXT,                -- Q revealed to W (nullable)
+        created_at             TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS idx_social_relay_intent_downstream ON social_relay(intent_id, downstream_agent_id);
+      CREATE TABLE IF NOT EXISTS social_seen_intent (
+        intent_id     TEXT PRIMARY KEY,
+        first_seen_at TEXT NOT NULL,
+        expires_at    TEXT NOT NULL
+      ) STRICT;
+    `)
+  },
 ]
 
 export interface OpenDbOpts {
@@ -472,13 +551,52 @@ export function openWechatDb(stateDir: string): Database {
   return openDb({ path: join(stateDir, 'wechat-cc.db') })
 }
 
+function isLockedError(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e)
+  return /database is locked|database is busy|SQLITE_BUSY/i.test(m)
+}
+
+/**
+ * Run `fn`, retrying briefly on a SQLite "database is locked" error. Sync,
+ * since openDb is sync. Survives the WAL-lock race when the daemon restarts
+ * before the SIGKILLed old process released the lock — `busy_timeout` doesn't
+ * cover the journal-mode switch, so that switch would otherwise crash the boot
+ * with "database is locked". Non-lock errors rethrow immediately; `sleep` is
+ * injectable for tests.
+ */
+export function withLockRetry<T>(
+  fn: () => T,
+  opts: { attempts?: number; delayMs?: number; sleep?: (ms: number) => void } = {},
+): T {
+  const attempts = opts.attempts ?? 12
+  const delayMs = opts.delayMs ?? 250
+  const sleep = opts.sleep ?? ((ms: number) => { Bun.sleepSync(ms) })
+  let lastErr: unknown
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return fn()
+    } catch (e) {
+      lastErr = e
+      if (!isLockedError(e)) throw e
+      if (i < attempts - 1) sleep(delayMs)
+    }
+  }
+  throw lastErr
+}
+
 export function openDb(opts: OpenDbOpts): Database {
   if (opts.path !== ':memory:') {
     const dir = dirname(opts.path)
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
-  const db = new Database(opts.path, { create: true })
-  db.exec('PRAGMA journal_mode = WAL;')
+  // Opening + switching to WAL takes a brief exclusive lock; on a daemon
+  // restart the SIGKILLed old process may still hold it (busy_timeout doesn't
+  // cover the journal-mode switch). Retry instead of crashing the boot.
+  const db = withLockRetry(() => {
+    const d = new Database(opts.path, { create: true })
+    d.exec('PRAGMA journal_mode = WAL;')
+    return d
+  })
   db.exec('PRAGMA foreign_keys = ON;')
   // 5s busy_timeout — the CLI process and daemon may try to write the same
   // db simultaneously (e.g. `wechat-cc sessions delete` while the daemon

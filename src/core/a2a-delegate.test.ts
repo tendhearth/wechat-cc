@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { A2AClient, SendRequest, SendResult } from './a2a-client'
 import type { A2AAgentRecord } from '../lib/agent-config'
-import { delegateToHand, handExecUrl, intentUrl } from './a2a-delegate'
+import { delegateToHand, handExecUrl, intentUrl, revealUrl } from './a2a-delegate'
 
 function hand(url: string): A2AAgentRecord {
   return { id: 'home', name: 'home', url, inbound_api_key: 'in_home_key_16chars', outbound_api_key: 'out_home_key', capabilities: ['exec'], paused: false, transport: 'push' }
@@ -27,6 +27,16 @@ describe('intentUrl', () => {
     expect(intentUrl('https://home/a2a')).toBe('https://home/a2a/intent')
     expect(intentUrl('https://home/a2a/intent')).toBe('https://home/a2a/intent')
     expect(intentUrl('https://home/')).toBe('https://home/a2a/intent')
+  })
+})
+
+describe('revealUrl', () => {
+  it('derives /a2a/reveal from the same shapes intentUrl tolerates', () => {
+    expect(revealUrl('http://x/a2a')).toBe('http://x/a2a/reveal')
+    expect(revealUrl('http://x/a2a/notify')).toBe('http://x/a2a/reveal')
+    expect(revealUrl('http://x/a2a/intent')).toBe('http://x/a2a/reveal')
+    expect(revealUrl('http://x')).toBe('http://x/a2a/reveal')
+    expect(revealUrl('http://x/a2a/reveal')).toBe('http://x/a2a/reveal')
   })
 })
 

@@ -97,6 +97,18 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // reply-to-an-established-peer). Would default to admin anyway (unlisted
   // routes fail-closed) — listed explicitly for documentation.
   'POST /v1/social/seek': 'admin',
+  // admin — same trust class as social_seek above (觅食台 P2): read-only,
+  // but exposes the owner's stored seeks/echoes (topics + peer exchanges).
+  'GET /v1/social/seeks': 'admin',
+  'GET /v1/social/echoes': 'admin',
+  // admin — inbound on/off toggle (觅食台 P2 Task 3): writes a2a_listen in
+  // agent-config.json, the same trust surface as hand-editing the config.
+  'GET /v1/social/inbound': 'admin',
+  'POST /v1/social/inbound': 'admin',
+  // admin — async foraging spine: read the answerer's pledges + trigger reveals.
+  'GET /v1/social/pledges': 'admin',
+  'POST /v1/social/echoes/reveal': 'admin',
+  'POST /v1/social/pledges/reveal': 'admin',
 }
 
 export function minTierFor(routeKey: string): UserTier {

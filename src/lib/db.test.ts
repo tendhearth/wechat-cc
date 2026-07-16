@@ -1,9 +1,38 @@
 import { describe, expect, it } from 'vitest'
 import { Database } from 'bun:sqlite'
-import { openTestDb, openDb, renameMigrated, runMigrations } from './db'
+import { openTestDb, openDb, renameMigrated, runMigrations, withLockRetry } from './db'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+describe('withLockRetry', () => {
+  const noop = () => {}
+
+  it('retries a "database is locked" failure and returns once it succeeds', () => {
+    let calls = 0
+    const r = withLockRetry(() => {
+      calls++
+      if (calls < 3) throw new Error('database is locked')
+      return 42
+    }, { attempts: 5, sleep: noop })
+    expect(r).toBe(42)
+    expect(calls).toBe(3) // failed twice, succeeded on the third
+  })
+
+  it('rethrows a non-lock error immediately without retrying', () => {
+    let calls = 0
+    expect(() => withLockRetry(() => { calls++; throw new Error('disk I/O error') }, { attempts: 5, sleep: noop }))
+      .toThrow('disk I/O error')
+    expect(calls).toBe(1)
+  })
+
+  it('gives up after `attempts` locked failures and rethrows the last', () => {
+    let calls = 0
+    expect(() => withLockRetry(() => { calls++; throw new Error('database is locked') }, { attempts: 3, sleep: noop }))
+      .toThrow('database is locked')
+    expect(calls).toBe(3)
+  })
+})
 
 describe('openDb', () => {
   it('returns a database with all migrations applied', () => {

@@ -25,6 +25,7 @@ import type { CareLedger } from '../companion/care-ledger'
 import type { ReplySinks } from '../reply-sinks'
 import { loadCompanionConfig } from '../companion/config'
 import type { InboundMsg } from '../../core/prompt-format'
+import { parseRevealCommand } from '../../core/reveal-command'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider } from '../../lib/agent-config'
@@ -376,22 +377,26 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     welcome: { maybeWriteWelcomeObservation, log },
     dispatch: {
       coordinator: {
-        // Agent-social M1 (T7b-2) — before running a normal turn, check
-        // whether this inbound is the operator's own chat AND there's a
-        // pending confirm awaiting their yes/no (asked out-of-band by
-        // confirmWithOwner via boot.social.pendingConfirms.ask, wired in
-        // bootstrap/index.ts's T7b-core social block). If so, try to
-        // consume it as a confirm answer instead of dispatching a normal
-        // agent turn — a clear yes/no settles the pending broker Promise
-        // directly (see pending-confirm.ts's resolveByOwner); the reveal/
-        // opener that follows is driven entirely by the broker, so there's
-        // nothing more to send from here. An `'unclear'` verdict leaves the
-        // pending confirm untouched and falls through to a normal turn, so
-        // a genuine question from the operator is never swallowed.
-        dispatch: (msg) => {
-          if (boot.social && isAdmin(msg.chatId) && boot.social.pendingConfirms.hasPending(msg.chatId)) {
-            const r = boot.social.pendingConfirms.resolveByOwner(msg.chatId, msg.text)
-            if (r !== 'unclear') return Promise.resolve()
+        // Async foraging spine — an operator "揭晓 <id>" reply triggers the
+        // reveal flow (their action IS their consent) instead of dispatching a
+        // normal agent turn. Try the echo side first; a null lookup means the
+        // id is a pledge (I answered THEIR wish), so fall back to revealPledge.
+        // Anything that isn't a reveal command falls through to a normal turn.
+        // T9 — when BOTH lookups come back null (typo / expired / already-
+        // connected id), the operator previously got silence; now a gentle
+        // one-line "not found" reply so a mistyped id doesn't look like the
+        // bot ignored them.
+        dispatch: async (msg) => {
+          if (boot.social && isAdmin(msg.chatId)) {
+            const cmd = parseRevealCommand(msg.text)
+            if (cmd) {
+              const echoOutcome = await boot.social.revealer.revealEcho(cmd.id)
+              const outcome = echoOutcome === null ? await boot.social.revealer.revealPledge(cmd.id) : echoOutcome
+              if (outcome === null && boot.sendAssistantText) {
+                void boot.sendAssistantText(msg.chatId, `没找到「${cmd.id}」这条,可能已过期或已牵线。`)
+              }
+              return
+            }
           }
           return boot.coordinator.dispatch(msg)
         },

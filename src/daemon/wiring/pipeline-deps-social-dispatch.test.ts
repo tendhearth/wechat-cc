@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-// Agent-social M1 (T7b-2) — the `dispatch.coordinator.dispatch` seam in
-// pipeline-deps.ts intercepts the operator's WeChat "是/否" reply before it
-// reaches a normal agent turn. `isAdmin` (src/lib/access.ts) reads
+// Async foraging spine (Task 9) — the `dispatch.coordinator.dispatch` seam in
+// pipeline-deps.ts intercepts the operator's WeChat "揭晓 <id>" reply before
+// it reaches a normal agent turn. `isAdmin` (src/lib/access.ts) reads
 // access.json from the module-level STATE_DIR (src/lib/config.ts), which is
 // NOT one of buildPipelineDeps's injectable opts — so, mirroring
 // src/lib/access.test.ts, STATE_DIR is redirected to a temp dir via
@@ -21,7 +21,6 @@ vi.mock('../../lib/config.ts', () => ({
 }))
 
 const { buildPipelineDeps } = await import('./pipeline-deps')
-const { createPendingConfirms } = await import('../../core/pending-confirm')
 const { Ref } = await import('../../lib/lifecycle')
 const { openTestDb } = await import('../../lib/db')
 const { makeReplySinks } = await import('../reply-sinks')
@@ -34,36 +33,42 @@ import type { InboundMsg } from '../../core/prompt-format'
 import type { Mode } from '../../core/conversation'
 
 const ACCESS_FILE = join(ACCESS_STATE_DIR, 'access.json')
-
 function writeAccess(admins: string[]): void {
   writeFileSync(ACCESS_FILE, JSON.stringify({ dmPolicy: 'allowlist', allowFrom: [], admins }, null, 2))
 }
 
-describe('pipeline-deps social dispatch seam (T7b-2)', () => {
+// A revealer stub that records calls and lets the test choose whether the echo
+// lookup "exists" (non-null) so the pledge fallback path is exercised.
+// `pledgeReturns` additionally lets a test drive BOTH lookups to null (T9:
+// neither an echo nor a pledge matched — a typo'd/expired/already-connected
+// id), which must NOT stay silent.
+function makeRevealerStub(echoReturns: 'ok' | 'null', pledgeReturns: 'ok' | 'null' = 'ok') {
+  const calls: Array<[string, string]> = []
+  return {
+    calls,
+    revealer: {
+      revealEcho: vi.fn(async (id: string) => { calls.push(['echo', id]); return echoReturns === 'ok' ? { state: 'connected' as const } : null }),
+      revealPledge: vi.fn(async (id: string) => { calls.push(['pledge', id]); return pledgeReturns === 'ok' ? { state: 'awaiting_peer' as const } : null }),
+      onInboundReveal: vi.fn(() => ({ mutual: false })),
+    },
+  }
+}
+
+describe('pipeline-deps social dispatch seam (揭晓 reveal)', () => {
   let stateDir: string
-
-  beforeEach(() => {
-    stateDir = mkdtempSync(join(tmpdir(), 'pipeline-deps-social-test-'))
-    writeAccess(['op_chat'])
-  })
-
-  afterAll(() => {
-    rmSync(ACCESS_STATE_DIR, { recursive: true, force: true })
-  })
+  beforeEach(() => { stateDir = mkdtempSync(join(tmpdir(), 'pipeline-deps-social-test-')); writeAccess(['op_chat']) })
+  afterAll(() => { rmSync(ACCESS_STATE_DIR, { recursive: true, force: true }) })
 
   function setup(social: Bootstrap['social']) {
     const db = openTestDb()
     const coordinatorDispatch = vi.fn(async (_msg: InboundMsg) => {})
+    const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
     const boot = {
       sessionManager: { isInFlight: vi.fn(() => false) } as unknown as Bootstrap['sessionManager'],
       sessionStore: {} as Bootstrap['sessionStore'],
       conversationStore: { upsertIdentity: vi.fn() } as unknown as Bootstrap['conversationStore'],
       registry: { get: vi.fn(), list: vi.fn(() => []), getCheapEval: vi.fn(() => null), has: vi.fn(() => false) } as unknown as Bootstrap['registry'],
-      coordinator: {
-        dispatch: coordinatorDispatch,
-        getMode: vi.fn((): Mode => ({ kind: 'solo', provider: 'claude' })),
-        cancel: vi.fn(() => false),
-      } as unknown as Bootstrap['coordinator'],
+      coordinator: { dispatch: coordinatorDispatch, getMode: vi.fn((): Mode => ({ kind: 'solo', provider: 'claude' })), cancel: vi.fn(() => false) } as unknown as Bootstrap['coordinator'],
       resolve: vi.fn(() => null),
       formatInbound: vi.fn() as unknown as Bootstrap['formatInbound'],
       sdkOptionsForProject: vi.fn() as unknown as Bootstrap['sdkOptionsForProject'],
@@ -74,6 +79,7 @@ describe('pipeline-deps social dispatch seam (T7b-2)', () => {
       a2aDeps: undefined,
       a2aServer: null,
       agentConfig: { bot_name: null } as unknown as Bootstrap['agentConfig'],
+      sendAssistantText,
       social,
     } as unknown as Bootstrap
 
@@ -81,76 +87,81 @@ describe('pipeline-deps social dispatch seam (T7b-2)', () => {
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
     const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), resetNoReply: vi.fn() }
     const replySinks = makeReplySinks()
-
     const { pipelineDeps } = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
       { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
     )
-
-    return { pipelineDeps, coordinatorDispatch }
+    return { pipelineDeps, coordinatorDispatch, sendAssistantText }
   }
 
-  const baseMsg: InboundMsg = {
-    chatId: 'op_chat',
-    userId: 'op_chat',
-    text: '是',
-    msgType: 'text',
-    createTimeMs: Date.now(),
-    accountId: 'acct1',
+  // Minimal social object satisfying Bootstrap['social'] for the seam (only
+  // `revealer` is exercised; the rest are no-op stubs).
+  function socialWith(revealer: any): Bootstrap['social'] {
+    return {
+      broker: { seek: vi.fn(async () => ({ intent_id: 'x' })) },
+      seekStore: { create() {}, update() {}, list: () => [], get: () => null },
+      echoStore: { create() {}, setStatus() {}, setSelfRevealed() {}, setPeerRevealed() {}, setRevealedIdentity() {}, listForSeek: () => [], listAll: () => [], get: () => null },
+      pledgeStore: { create() {}, get: () => null, list: () => [], setSelfRevealed() {}, setPeerRevealed() {} },
+      revealer,
+    } as unknown as Bootstrap['social']
   }
 
-  it('a clear "是" from the admin chat with a pending confirm is consumed — NOT dispatched as a normal turn', async () => {
-    const pendingConfirms = createPendingConfirms()
-    const answer = pendingConfirms.ask('op_chat:intent-1', 5 * 60_000)
-    const { pipelineDeps, coordinatorDispatch } = setup({ broker: { seek: vi.fn() }, pendingConfirms })
+  const baseMsg: InboundMsg = { chatId: 'op_chat', userId: 'op_chat', text: '揭晓 i1:ccb', msgType: 'text', createTimeMs: Date.now(), accountId: 'acct1' }
 
+  it('a "揭晓 <id>" from the admin chat triggers revealEcho and is NOT dispatched as a normal turn', async () => {
+    const { calls, revealer } = makeRevealerStub('ok')
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(socialWith(revealer))
     await pipelineDeps.dispatch.coordinator.dispatch(baseMsg)
-
-    expect(await answer).toBe(true)
+    expect(calls).toEqual([['echo', 'i1:ccb']])
     expect(coordinatorDispatch).not.toHaveBeenCalled()
+    // T9 — the id WAS found (revealEcho succeeded), so no "not found" reply.
+    expect(sendAssistantText).not.toHaveBeenCalled()
   })
 
-  it('a clear "否" resolves the pending confirm to false and is not dispatched', async () => {
-    const pendingConfirms = createPendingConfirms()
-    const answer = pendingConfirms.ask('op_chat:intent-1', 5 * 60_000)
-    const { pipelineDeps, coordinatorDispatch } = setup({ broker: { seek: vi.fn() }, pendingConfirms })
-
-    await pipelineDeps.dispatch.coordinator.dispatch({ ...baseMsg, text: '否' })
-
-    expect(await answer).toBe(false)
+  it('falls back to revealPledge when the echo lookup returns null', async () => {
+    const { calls, revealer } = makeRevealerStub('null')
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(socialWith(revealer))
+    await pipelineDeps.dispatch.coordinator.dispatch(baseMsg)
+    expect(calls).toEqual([['echo', 'i1:ccb'], ['pledge', 'i1:ccb']])
     expect(coordinatorDispatch).not.toHaveBeenCalled()
+    // The pledge fallback DID find it, so still no "not found" reply.
+    expect(sendAssistantText).not.toHaveBeenCalled()
   })
 
-  it('an unclear reply falls through to a normal turn and leaves the pending confirm untouched', async () => {
-    const pendingConfirms = createPendingConfirms()
-    const answer = pendingConfirms.ask('op_chat:intent-1', 50)
-    const { pipelineDeps, coordinatorDispatch } = setup({ broker: { seek: vi.fn() }, pendingConfirms })
+  // T9 — a typo'd/expired/already-connected id matches neither the echo NOR
+  // the pledge side. Previously the message was silently consumed; now the
+  // operator gets a one-line "not found" reply instead of dead silence.
+  it('replies with a "not found" message when BOTH revealEcho and revealPledge return null', async () => {
+    const { calls, revealer } = makeRevealerStub('null', 'null')
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(socialWith(revealer))
+    await pipelineDeps.dispatch.coordinator.dispatch(baseMsg)
+    expect(calls).toEqual([['echo', 'i1:ccb'], ['pledge', 'i1:ccb']])
+    expect(coordinatorDispatch).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    const [chatId, text] = sendAssistantText.mock.calls[0]!
+    expect(chatId).toBe('op_chat')
+    expect(text).toContain('i1:ccb')
+  })
 
-    await pipelineDeps.dispatch.coordinator.dispatch({ ...baseMsg, text: 'what time works for you?' })
-
+  it('a non-command message falls through to a normal turn', async () => {
+    const { revealer } = makeRevealerStub('ok')
+    const { pipelineDeps, coordinatorDispatch } = setup(socialWith(revealer))
+    await pipelineDeps.dispatch.coordinator.dispatch({ ...baseMsg, text: '今天几点见面?' })
     expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
-    expect(pendingConfirms.hasPending('op_chat')).toBe(true)
-    // let the short timeout fire so it doesn't leak past the test
-    expect(await answer).toBe(false)
+    expect(revealer.revealEcho).not.toHaveBeenCalled()
   })
 
-  it('no boot.social at all → always falls through to a normal turn', async () => {
+  it('no boot.social → always a normal turn', async () => {
     const { pipelineDeps, coordinatorDispatch } = setup(undefined)
-
     await pipelineDeps.dispatch.coordinator.dispatch(baseMsg)
-
     expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
   })
 
-  it('a non-admin chat with a pending confirm under a DIFFERENT key is never consumed, even on "是"', async () => {
-    const pendingConfirms = createPendingConfirms()
-    const answer = pendingConfirms.ask('op_chat:intent-1', 50)
-    const { pipelineDeps, coordinatorDispatch } = setup({ broker: { seek: vi.fn() }, pendingConfirms })
-
-    await pipelineDeps.dispatch.coordinator.dispatch({ ...baseMsg, chatId: 'someone_else', userId: 'someone_else', text: '是' })
-
+  it('a 揭晓 from a NON-admin chat is never consumed', async () => {
+    const { revealer } = makeRevealerStub('ok')
+    const { pipelineDeps, coordinatorDispatch } = setup(socialWith(revealer))
+    await pipelineDeps.dispatch.coordinator.dispatch({ ...baseMsg, chatId: 'someone_else', userId: 'someone_else' })
     expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
-    expect(pendingConfirms.hasPending('op_chat')).toBe(true)
-    expect(await answer).toBe(false)
+    expect(revealer.revealEcho).not.toHaveBeenCalled()
   })
 })
