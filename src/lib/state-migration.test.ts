@@ -61,7 +61,7 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  it('opens a fresh db with PRAGMA user_version = 20 and the 18 tables', () => {
+  it('opens a fresh db with PRAGMA user_version = 21 and the 20 tables', () => {
     const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
     // v14 (dialogue real data): messages / threads / thread_extract_state tables added;
     // events.kind widened with 'threads_extracted'.
@@ -71,11 +71,12 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v18 (connection heartbeat): per-account last-successful-poll timestamp table added.
     // v19 (agent-social 觅食台 state): social_seek + social_echo tables added.
     // v20 (async foraging spine): social_echo reveal columns + social_pledge table added.
-    expect(v).toBe(20)
+    // v21 (forwarding hop): social_echo relay columns + social_relay + social_seen_intent tables added.
+    expect(v).toBe(21)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'events', 'handled_messages', 'message_attempts', 'messages',
-      'milestones', 'observations', 'session_state', 'sessions', 'social_echo', 'social_pledge', 'social_seek', 'thread_extract_state', 'threads', 'turn_records',
+      'milestones', 'observations', 'session_state', 'sessions', 'social_echo', 'social_pledge', 'social_relay', 'social_seek', 'social_seen_intent', 'thread_extract_state', 'threads', 'turn_records',
     ])
   })
 

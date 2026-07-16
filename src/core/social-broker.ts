@@ -52,7 +52,7 @@ export function makeBroker(deps: BrokerDeps) {
       if (gatedCity.ok) cardCity = gatedCity.redacted   // else omit city (safe degradation)
     }
     const card: IntentCard = {
-      intent_id: intentId, kind: 'seek', topic: gated.redacted,
+      intent_id: intentId, kind: 'seek', topic: gated.redacted, hop: 1,
       ...(cardCity ? { city: cardCity } : {}),
       expires_at: new Date(Date.now() + ttl).toISOString(),
     }

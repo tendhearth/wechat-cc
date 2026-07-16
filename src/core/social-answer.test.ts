@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { makeAnswerIntent } from './social-answer'
 
 const base = { policy: '兴趣可说;住址不可', cheapEval: async () => JSON.stringify({ violation: false, redacted: '我主人也爱摄影' }) }
-const card = { intent_id: 'i1', kind: 'seek' as const, topic: '找摄影搭子', expires_at: new Date(Date.now()+60000).toISOString() }
+const card = { intent_id: 'i1', kind: 'seek' as const, topic: '找摄影搭子', hop: 1, expires_at: new Date(Date.now()+60000).toISOString() }
 
 describe('makeAnswerIntent', () => {
   it('yes + clean blurb passes through the gate', async () => {
