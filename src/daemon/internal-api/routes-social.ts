@@ -47,5 +47,28 @@ export function socialRoutes(deps: InternalApiDeps): RouteTable {
       saveAgentConfig(deps.stateDir, updated)
       return { status: 200, body: { enabled, restart_required: true } }
     },
+    // async foraging spine — the answerer's pledge rows (mirrors GET echoes).
+    'GET /v1/social/pledges': async () => {
+      if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
+      return { status: 200, body: { pledges: deps.social.pledgeStore.list() } }
+    },
+    // 揭晓 — desktop reveal buttons. id comes in the BODY (router is exact-match,
+    // no :id path params). null outcome ⇒ no such row ⇒ 404.
+    'POST /v1/social/echoes/reveal': async (_q, body) => {
+      if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
+      const id = ((body ?? {}) as { id?: unknown }).id
+      if (typeof id !== 'string' || id.length === 0) return { status: 400, body: { error: 'missing_id' } }
+      const outcome = await deps.social.revealer.revealEcho(id)
+      if (outcome === null) return { status: 404, body: { error: 'not_found' } }
+      return { status: 200, body: { outcome } }
+    },
+    'POST /v1/social/pledges/reveal': async (_q, body) => {
+      if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
+      const id = ((body ?? {}) as { id?: unknown }).id
+      if (typeof id !== 'string' || id.length === 0) return { status: 400, body: { error: 'missing_id' } }
+      const outcome = await deps.social.revealer.revealPledge(id)
+      if (outcome === null) return { status: 404, body: { error: 'not_found' } }
+      return { status: 200, body: { outcome } }
+    },
   }
 }

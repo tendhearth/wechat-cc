@@ -15,6 +15,7 @@ import type { A2AClient, SendResult, AgentCard } from '../core/a2a-client'
 import type { A2AEventsStore, EventRow, AppendInput } from '../core/a2a-events-store'
 import type { SeekRow } from '../core/social-seek-store'
 import type { EchoRow } from '../core/social-echo-store'
+import type { PledgeRow } from '../core/social-pledge-store'
 
 describe('internal-api', () => {
   let stateDir: string
@@ -2740,7 +2741,10 @@ describe('internal-api', () => {
     }
 
     async function startWithSocial(
-      opts: { seeks?: SeekRow[]; echoes?: EchoRow[] } | null = null,
+      opts: {
+        seeks?: SeekRow[]; echoes?: EchoRow[]; pledges?: PledgeRow[]
+        revealEcho?: (id: string) => any; revealPledge?: (id: string) => any
+      } | null = null,
     ): Promise<{ port: number; token: string }> {
       api = createInternalApi({
         stateDir, daemonPid: 1,
@@ -2754,6 +2758,15 @@ describe('internal-api', () => {
             echoStore: {
               create: () => {}, setStatus: () => {}, setSelfRevealed: () => {}, setPeerRevealed: () => {}, setRevealedIdentity: () => {}, listForSeek: () => [],
               listAll: () => opts.echoes ?? [], get: () => null,
+            },
+            pledgeStore: {
+              create: () => {}, get: () => null, list: () => opts.pledges ?? [],
+              setSelfRevealed: () => {}, setPeerRevealed: () => {},
+            },
+            revealer: {
+              revealEcho: async (id: string) => opts.revealEcho ? opts.revealEcho(id) : { state: 'awaiting_peer' as const },
+              revealPledge: async (id: string) => opts.revealPledge ? opts.revealPledge(id) : { state: 'awaiting_peer' as const },
+              onInboundReveal: () => ({ mutual: false }),
             },
           },
         } : {}),
@@ -2817,6 +2830,89 @@ describe('internal-api', () => {
       })
       expect(resp.status).toBe(403)
       expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+    })
+
+    // ─── reveal + pledge routes (async foraging spine) — nested here to
+    // reuse startWithSocial (scoped to this describe block). ─────────────
+
+    describe('reveal + pledge routes (async foraging spine)', () => {
+      const pledgeRow: PledgeRow = {
+        id: 'i1:cca', intent_id: 'i1', seeker_agent_id: 'cca', topic: 't',
+        self_revealed_at: null, peer_revealed_at: null, created_at: 't',
+      }
+
+      it('GET /v1/social/pledges returns the stored pledges', async () => {
+        const { port, token } = await startWithSocial({ pledges: [pledgeRow] })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/pledges`, { headers: { Authorization: `Bearer ${token}` } })
+        expect(resp.status).toBe(200)
+        expect(await resp.json()).toEqual({ pledges: [pledgeRow] })
+      })
+
+      it('GET /v1/social/pledges → 503 when social is not wired', async () => {
+        const { port, token } = await startWithSocial()
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/pledges`, { headers: { Authorization: `Bearer ${token}` } })
+        expect(resp.status).toBe(503)
+        expect(await resp.json()).toEqual({ error: 'social_not_wired' })
+      })
+
+      it('POST /v1/social/echoes/reveal drives revealEcho(id) and returns the outcome', async () => {
+        const { port, token } = await startWithSocial({ revealEcho: () => ({ state: 'connected' }) })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes/reveal`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ id: 'i1:ccb' }),
+        })
+        expect(resp.status).toBe(200)
+        expect(await resp.json()).toEqual({ outcome: { state: 'connected' } })
+      })
+
+      it('POST /v1/social/echoes/reveal → 404 when the echo id is unknown (revealer returns null)', async () => {
+        const { port, token } = await startWithSocial({ revealEcho: () => null })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes/reveal`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ id: 'nope' }),
+        })
+        expect(resp.status).toBe(404)
+        expect(await resp.json()).toEqual({ error: 'not_found' })
+      })
+
+      it('POST /v1/social/echoes/reveal → 503 when social not wired', async () => {
+        const { port, token } = await startWithSocial()
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes/reveal`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ id: 'x' }),
+        })
+        expect(resp.status).toBe(503)
+      })
+
+      it('POST /v1/social/echoes/reveal → 400 on empty/missing id (empty-body guard)', async () => {
+        const { port, token } = await startWithSocial({ revealEcho: () => ({ state: 'connected' }) })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes/reveal`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: '',
+        })
+        expect(resp.status).toBe(400)
+        expect(await resp.json()).toEqual({ error: 'missing_id' })
+      })
+
+      it('POST /v1/social/pledges/reveal drives revealPledge(id)', async () => {
+        const { port, token } = await startWithSocial({ revealPledge: () => ({ state: 'awaiting_peer' }) })
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/pledges/reveal`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ id: 'i1:cca' }),
+        })
+        expect(resp.status).toBe(200)
+        expect(await resp.json()).toEqual({ outcome: { state: 'awaiting_peer' } })
+      })
+
+      it('tier gate: a trusted token gets 403 on POST /v1/social/echoes/reveal', async () => {
+        const { port } = await startWithSocial({ revealEcho: () => ({ state: 'connected' }) })
+        const tok = api!.mintSessionToken('trusted', 'test')
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes/reveal`, {
+          method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ id: 'x' }),
+        })
+        expect(resp.status).toBe(403)
+      })
     })
   })
 

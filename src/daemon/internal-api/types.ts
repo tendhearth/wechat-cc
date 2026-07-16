@@ -206,6 +206,8 @@ export interface InternalApiDeps {
     broker: { seek(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').SeekOutcome> }
     seekStore: import('../../core/social-seek-store').SeekStore
     echoStore: import('../../core/social-echo-store').EchoStore
+    pledgeStore: import('../../core/social-pledge-store').PledgeStore
+    revealer: import('../../core/social-reveal').Revealer
   }
   /**
    * Optional per-turn outcome store — backs GET /v1/turns. Undefined in

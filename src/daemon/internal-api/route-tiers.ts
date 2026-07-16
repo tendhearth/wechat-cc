@@ -105,6 +105,10 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // agent-config.json, the same trust surface as hand-editing the config.
   'GET /v1/social/inbound': 'admin',
   'POST /v1/social/inbound': 'admin',
+  // admin — async foraging spine: read the answerer's pledges + trigger reveals.
+  'GET /v1/social/pledges': 'admin',
+  'POST /v1/social/echoes/reveal': 'admin',
+  'POST /v1/social/pledges/reveal': 'admin',
 }
 
 export function minTierFor(routeKey: string): UserTier {
