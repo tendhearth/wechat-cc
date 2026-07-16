@@ -70,8 +70,9 @@ import { makeAnswerIntent } from '../../core/social-answer'
 import { makeBroker, type SeekOutcome } from '../../core/social-broker'
 import { makeSeekStore } from '../../core/social-seek-store'
 import { makeEchoStore } from '../../core/social-echo-store'
-import { createPendingConfirms, type PendingConfirms } from '../../core/pending-confirm'
-import { intentUrl } from '../../core/a2a-delegate'
+import { makePledgeStore } from '../../core/social-pledge-store'
+import { makeRevealer, type Revealer, type RevealBeat, type NotifyCtx, type PeerIdentity } from '../../core/social-reveal'
+import { intentUrl, revealUrl } from '../../core/a2a-delegate'
 import { MatchReceiptSchema } from '../../core/a2a-intent'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
@@ -381,17 +382,17 @@ export interface Bootstrap {
    * `broker.seek()` is what POST /v1/social/seek calls — late-bound into
    * internal-api by main.ts (mirrors `a2aDeps`/`setA2A`).
    *
-   * `pendingConfirms` is exposed so a follow-up task (T7b-2) can resolve
-   * the operator's WeChat yes/no reply via `pendingConfirms.resolve(key,
-   * text)`. Until that lands, every `confirmWithOwner` ask times out to
-   * `false` after 5 minutes (the ask is still sent to the operator's chat;
-   * only the reply-capture leg is missing).
+   * `revealer` drives the row-driven mutual reveal (both the outbound
+   * revealEcho/revealPledge legs the internal-api calls and the inbound
+   * onInboundReveal wired into the a2a-server's /a2a/reveal). `pledgeStore`
+   * is exposed so the answer-side reveal surface can list/read pledges.
    */
   social?: {
     broker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> }
-    pendingConfirms: PendingConfirms
     seekStore: import('../../core/social-seek-store').SeekStore
     echoStore: import('../../core/social-echo-store').EchoStore
+    pledgeStore: import('../../core/social-pledge-store').PledgeStore
+    revealer: Revealer
   }
 }
 
@@ -458,24 +459,6 @@ export function resolveAdminChatId(
     return companion.default_chat_id
   }
   return access.admins?.[0] ?? null
-}
-
-/**
- * Cheap, deterministic string → key derivation for `confirmWithOwner`'s
- * pending-confirm key. The broker's `confirmWithOwner(summary)` seam takes
- * only a rendered summary string (no intent_id threaded through) — unlike
- * `onIntentConfirm` (the peer-driven confirm leg), which DOES carry
- * intent_id and keys on it directly. Hashing the summary is the documented
- * limitation from the M1 T7b-core plan: two concurrent seeks that happen to
- * render an IDENTICAL summary for the SAME operator chat would collide on
- * the same pending-confirm key. Acceptable in M1 (single-seek-at-a-time is
- * the common case); a real fix threads intent_id through confirmWithOwner
- * in a follow-up.
- */
-function hashSummary(s: string): string {
-  let h = 0
-  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
-  return (h >>> 0).toString(36)
 }
 
 export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
@@ -1302,20 +1285,22 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     return cachedOperatorChatId
   }
 
-  // ── Agent-social M1 wiring (T7b-core) ───────────────────────────────────
+  // ── Agent-social M1 wiring (async foraging spine) ───────────────────────
   // Gated on BOTH social_enabled and social_disclosure_policy — absent
-  // either, the feature stays fully inert: no onIntent/onIntentConfirm
-  // wired into the a2a server below, no broker constructed, no
-  // /v1/social/seek functionality (the route 503s). This wires everything
-  // EXCEPT capturing the operator's WeChat yes/no reply (a separate task,
-  // T7b-2) — every confirmWithOwner ask still gets SENT to the operator's
-  // chat; it just times out to `false` after 5 minutes until 7b-2 lands.
+  // either, the feature stays fully inert: no onIntent/onReveal wired into
+  // the a2a server below, no broker constructed, no /v1/social/seek
+  // functionality (the route 503s). Wires the row-driven mutual reveal
+  // (revealer + inbound onReveal), the non-blocking broker (sow/forage/
+  // recordEcho/finishSeek), the answer-side pledge, and boot resume of any
+  // seeks still `foraging` after a restart.
   let socialOnIntent: A2AServerOpts['onIntent']
-  let socialOnIntentConfirm: A2AServerOpts['onIntentConfirm']
+  let socialOnReveal: A2AServerOpts['onReveal']
   let socialBroker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> } | undefined
-  let socialPendingConfirms: PendingConfirms | undefined
+  let socialForage: ((intentId: string, topic: string, opts?: { city?: string }) => Promise<void>) | undefined
   let socialSeekStore: import('../../core/social-seek-store').SeekStore | undefined
   let socialEchoStore: import('../../core/social-echo-store').EchoStore | undefined
+  let socialPledgeStore: import('../../core/social-pledge-store').PledgeStore | undefined
+  let socialRevealer: Revealer | undefined
 
   if (configuredAgent.social_enabled && configuredAgent.social_disclosure_policy) {
     const socialPolicy = configuredAgent.social_disclosure_policy
@@ -1355,89 +1340,96 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
         : `social: grounded judging unavailable for provider=${defaultProviderId} — judge falls back to cheapEval (no tools)`)
 
       const socialJudge = makeJudge({ runTurn: socialRunTurn, policy: socialPolicy })
-      socialOnIntent = makeAnswerIntent({ judge: socialJudge, policy: socialPolicy, cheapEval: socialCheapEval })
+      const answerIntent = makeAnswerIntent({ judge: socialJudge, policy: socialPolicy, cheapEval: socialCheapEval })
 
-      socialPendingConfirms = createPendingConfirms()
-      const pendingConfirmsRef = socialPendingConfirms
-
-      // The peer-driven confirm leg (second half of the dual-confirm
-      // handshake): a matched peer's broker asks THIS owner to confirm.
-      // Keyed on intent_id (threaded through the wire body), unlike
-      // confirmWithOwner below.
-      socialOnIntentConfirm = async ({ intent_id }) => {
-        const op = resolveOperatorChatId()
-        if (!op) return { ok: false }
-        if (sendAssistantText) await sendAssistantText(op, '🤝 有人想和你牵线,回复 是/否')
-        return { ok: await pendingConfirmsRef.ask(`${op}:${intent_id}`, 5 * 60_000) }
-      }
-
-      // Persisted state layer (觅食台 P1) — every seek gets a `social_seek`
-      // row and every match a `social_echo` row, wrapped around the raw
-      // broker below so `broker.seek`'s return value stays byte-for-byte
-      // identical. P1 records the SYNCHRONOUS outcome only; async/
-      // background foraging (trickling echoes in over time) is a later
-      // rework. Stores are constructed here so a follow-up (P2's internal-
-      // api read surface) can reach them via the social sub-object.
+      // Stores.
       const seekStore = makeSeekStore(deps.db)
       const echoStore = makeEchoStore(deps.db)
+      const pledgeStore = makePledgeStore(deps.db)
       socialSeekStore = seekStore
       socialEchoStore = echoStore
+      socialPledgeStore = pledgeStore
 
-      const rawBroker = makeBroker({
+      // Notification beats (克制三拍). One WeChat sender for all three; on the
+      // inbound-completed `connected` beat we only hold the peer's agent_id, so
+      // resolve its display name from the registry here.
+      const notify = (beat: RevealBeat, ctx: NotifyCtx): void => {
+        const op = resolveOperatorChatId()
+        if (!op || !sendAssistantText) return
+        const peerName = ctx.peerName ?? (ctx.peerAgentId ? (a2aRegistry.get(ctx.peerAgentId)?.name ?? null) : null)
+        const text = beat === 'first_echo'
+          ? '✨ 你的心愿有回声了,去瞧瞧'
+          : beat === 'await_reveal'
+            ? '👀 有人想和你牵线,去看看'
+            : `🤝 牵上线了${peerName ? ' —— 是' + peerName : ''}`
+        void sendAssistantText(op, text)
+      }
+
+      // This daemon's public identity, handed back on the mutual instant. url is
+      // read lazily (a2aServer is constructed further below); name prefers the
+      // configured bot name.
+      const selfIdentity = (): PeerIdentity => ({
+        name: configuredAgent.bot_name ?? SOCIAL_SELF_ID,
+        url: a2aServer ? a2aServer.baseUrl() : '',
+      })
+
+      // Outbound reveal POST to a peer's /a2a/reveal. null on unreachable/unknown.
+      const postPeerReveal = async (agentId: string, intentId: string): Promise<{ mutual: boolean; identity?: PeerIdentity } | null> => {
+        const hand = a2aRegistry.get(agentId)
+        if (!hand) return null
+        const r = await a2aClient.send({ url: revealUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, intent_id: intentId } })
+        if (!r.ok) return null
+        return r.response as { mutual: boolean; identity?: PeerIdentity }
+      }
+
+      const revealer = makeRevealer({ echoStore, pledgeStore, seekStore, postPeerReveal, selfIdentity, notify })
+      socialRevealer = revealer
+      socialOnReveal = async (ev) => revealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id })
+
+      // Answer path: when THIS bot answers a peer's wish with match:'yes', record
+      // a pledge so it can reveal back later. Wraps makeAnswerIntent's receipt.
+      socialOnIntent = async (event) => {
+        const receipt = await answerIntent(event)
+        if (receipt.match === 'yes') {
+          try {
+            pledgeStore.create({ id: `${event.card.intent_id}:${event.agent.id}`, intentId: event.card.intent_id, seekerAgentId: event.agent.id, topic: event.card.topic })
+          } catch (err) {
+            deps.log('SOCIAL_REC', `pledge record failed intent=${event.card.intent_id} agent=${event.agent.id}: ${err instanceof Error ? err.message : String(err)}`)
+          }
+        }
+        return receipt
+      }
+
+      const broker = makeBroker({
         policy: socialPolicy,
         cheapEval: socialCheapEval,
         // TODO(v1+): rank candidates via wxgraph closeness/topical relevance
-        // instead of "every paired peer, capped" — see design doc's
-        // Discovery section. Minimal-but-safe for M1: targeted (bounded to
-        // paired peers only), never a broadcast to strangers.
+        // instead of "every paired peer, capped".
         discover: async (_topic) => a2aRegistry.list().filter(a => !a.paused).slice(0, 5),
         send: async (hand, card) => {
           const r = await a2aClient.send({ url: intentUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, card } })
           return r.ok ? MatchReceiptSchema.parse(r.response) : null
         },
-        confirmPeer: async (hand, card) => {
-          const r = await a2aClient.send({
-            url: intentUrl(hand.url) + '/confirm',
-            bearer: hand.outbound_api_key,
-            body: { agent_id: SOCIAL_SELF_ID, intent_id: card.intent_id },
-          })
-          return r.ok && (r.response as { ok?: unknown } | undefined)?.ok === true
+        sow: (intentId, topic) => {
+          try { seekStore.create({ id: intentId, kind: 'seek', topic }) }
+          catch (err) { deps.log('SOCIAL_REC', `sow failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
         },
-        confirmWithOwner: async (summary) => {
-          const op = resolveOperatorChatId()
-          if (!op) return false
-          if (sendAssistantText) await sendAssistantText(op, '🤝 ' + summary + '(回复 是/否)')
-          // See hashSummary's doc comment: the broker's confirmWithOwner
-          // seam only takes a rendered summary, not the intent_id, so we
-          // key on a hash of the summary rather than the real intent_id.
-          return pendingConfirmsRef.ask(`${op}:${hashSummary(summary)}`, 5 * 60_000)
+        recordEcho: (e) => {
+          // A persistence error must never undo a network action already done.
+          try {
+            echoStore.create({ id: `${e.intentId}:${e.peerAgentId}`, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId })
+          } catch (err) {
+            deps.log('SOCIAL_REC', `echo record failed intent=${e.intentId} peer=${e.peerAgentId}: ${err instanceof Error ? err.message : String(err)}`)
+          }
+          if (e.first) notify('first_echo', { intentId: e.intentId })
+        },
+        finishSeek: (intentId, status, peersAsked) => {
+          try { seekStore.update(intentId, { status, peersAsked }) }
+          catch (err) { deps.log('SOCIAL_REC', `finishSeek failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
         },
       })
-      socialBroker = {
-        async seek(topic, opts) {
-          const outcome = await rawBroker.seek(topic, opts)
-          // Record the wish + whatever came back. P1 records the synchronous
-          // outcome; async/background foraging is a later rework. The raw
-          // broker never throws (fail-closed), but these store writes can
-          // (locked db, disk full, duplicate PK) — guard them so a
-          // persistence error can't turn a successful seek (possibly one
-          // that already made live introductions) into a caller-visible
-          // failure. Recording wraps the outcome; it must never alter it.
-          try {
-            seekStore.create({ id: outcome.intent_id, kind: 'seek', topic })
-            const status = outcome.lit.length ? 'connected' : outcome.matched.length ? 'echoed' : 'closed'
-            seekStore.update(outcome.intent_id, { status, peersAsked: outcome.matched.length })
-            for (const m of outcome.matched) {
-              const echoId = `${outcome.intent_id}:${m.hand}`
-              echoStore.create({ id: echoId, seekId: outcome.intent_id, peerMasked: '第 1 度的某人', degree: 1, content: m.blurb ?? '', peerAgentId: m.hand })
-              if (outcome.lit.includes(m.hand)) echoStore.setStatus(echoId, 'revealed')
-            }
-          } catch (err) {
-            deps.log('SOCIAL_REC', `failed to record seek outcome intent_id=${outcome.intent_id}: ${err instanceof Error ? err.message : String(err)}`)
-          }
-          return outcome
-        },
-      }
+      socialBroker = { seek: (topic, opts) => broker.seek(topic, opts) }
+      socialForage = (intentId, topic, opts) => broker.forage(intentId, topic, opts)
     }
   }
 
@@ -1526,14 +1518,27 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       },
       // Agent-social M1 (T7b-core) — only wired when social_enabled +
       // social_disclosure_policy are configured (see wiring block above).
-      // Undefined ⇒ /a2a/intent and /a2a/intent/confirm both 501, exactly
-      // like every other optional A2A capability.
+      // Undefined ⇒ /a2a/intent and /a2a/reveal both 501, exactly like
+      // every other optional A2A capability.
       ...(socialOnIntent ? { onIntent: socialOnIntent } : {}),
-      ...(socialOnIntentConfirm ? { onIntentConfirm: socialOnIntentConfirm } : {}),
+      ...(socialOnReveal ? { onReveal: socialOnReveal } : {}),
       daemonInfo: { name: 'wechat-cc', version: selfPkg.version },
     })
     await a2aServer.start()
     deps.log('A2A', `server listening on http://${configuredAgent.a2a_listen.host}:${a2aServer.port()}`)
+  }
+
+  // Restart-resume: a seek still in `foraging` means its background leg never
+  // finished (a completed leg moves the row to echoed/closed). Re-forage them.
+  // Idempotent via the echo PK (intent_id:peer_agent_id): a duplicate send does
+  // not double-insert. Fire-and-forget; one bad row never blocks boot.
+  if (socialForage && socialSeekStore) {
+    const forage = socialForage
+    for (const row of socialSeekStore.list()) {
+      if (row.status === 'foraging') {
+        void forage(row.id, row.topic).catch(err => deps.log('SOCIAL_REC', `resume forage failed intent=${row.id}: ${err instanceof Error ? err.message : String(err)}`))
+      }
+    }
   }
 
   // Discovery file — non-sensitive (no token), tells CLI + dashboard the
@@ -1624,6 +1629,6 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      * social_disclosure_policy aren't both configured — POST
      * /v1/social/seek then 503s.
      */
-    ...(socialBroker ? { social: { broker: socialBroker, pendingConfirms: socialPendingConfirms!, seekStore: socialSeekStore!, echoStore: socialEchoStore! } } : {}),
+    ...(socialBroker ? { social: { broker: socialBroker, seekStore: socialSeekStore!, echoStore: socialEchoStore!, pledgeStore: socialPledgeStore!, revealer: socialRevealer! } } : {}),
   }
 }
