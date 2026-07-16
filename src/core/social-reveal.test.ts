@@ -174,3 +174,60 @@ describe('makeRevealer — pledge side (I reveal my answer)', () => {
     expect(revealer.onInboundReveal({ agentId: 'ccb', intentId: 'i1' })).toEqual({ mutual: false })
   })
 })
+
+describe('makeRevealer — relay branch (2-hop, spec #2)', () => {
+  it('revealEcho on a relay echo posts to relay_via carrying the relay_token', async () => {
+    const post = vi.fn(async () => ({ mutual: false }))
+    const { echoStore, revealer } = fixture(post)
+    // Relay echo: peer_agent_id null, relay_via = W, relay_token = T, id = intent:W:T.
+    echoStore.create({ id: 'i1:ccw:T', seekId: 'i1', peerMasked: '第 2 度的某人', degree: 2, content: 'x', peerAgentId: null, relayVia: 'ccw', relayToken: 'T' })
+    const out = await revealer.revealEcho('i1:ccw:T')
+    expect(out).toEqual({ state: 'awaiting_peer' })
+    expect(post).toHaveBeenCalledWith('ccw', 'i1', 'T')   // addressed to W, carries the token
+    expect(echoStore.get('i1:ccw:T')!.self_revealed_at).not.toBeNull()
+  })
+
+  it('relay revealEcho mutual → connected, identity swapped from the response', async () => {
+    const post = vi.fn(async () => ({ mutual: true, identity: PEER }))   // W returns Q's identity
+    const { echoStore, seekStore, revealer } = fixture(post)
+    seekStore.create({ id: 'i1', kind: 'seek', topic: 't' })
+    echoStore.create({ id: 'i1:ccw:T', seekId: 'i1', peerMasked: '第 2 度的某人', degree: 2, content: 'x', peerAgentId: null, relayVia: 'ccw', relayToken: 'T' })
+    const out = await revealer.revealEcho('i1:ccw:T')
+    expect(out).toEqual({ state: 'connected' })
+    expect(echoStore.get('i1:ccw:T')!.peer_masked).toBe('小B')
+    expect(seekStore.get('i1')!.status).toBe('connected')
+  })
+
+  it('inbound relay reveal (carries relay_token) resolves the relay echo, not the direct key', () => {
+    const { echoStore, notify, revealer } = fixture(vi.fn())
+    echoStore.create({ id: 'i1:ccw:T', seekId: 'i1', peerMasked: '第 2 度的某人', degree: 2, content: 'x', peerAgentId: null, relayVia: 'ccw', relayToken: 'T' })
+    const resp = revealer.onInboundReveal({ agentId: 'ccw', intentId: 'i1', relayToken: 'T' })
+    expect(resp).toEqual({ mutual: false })
+    expect(echoStore.get('i1:ccw:T')!.peer_revealed_at).not.toBeNull()
+    expect(notify).toHaveBeenCalledWith('await_reveal', expect.objectContaining({ intentId: 'i1' }))
+  })
+
+  it('inbound relay reveal completing me → mutual, swaps in peerName + notifies with it', () => {
+    const { echoStore, seekStore, notify, revealer } = fixture(vi.fn())
+    seekStore.create({ id: 'i1', kind: 'seek', topic: 't' })
+    echoStore.create({ id: 'i1:ccw:T', seekId: 'i1', peerMasked: '第 2 度的某人', degree: 2, content: 'x', peerAgentId: null, relayVia: 'ccw', relayToken: 'T' })
+    echoStore.setSelfRevealed('i1:ccw:T', '2026-07-15T00:00:00.000Z')   // I revealed first
+    const resp = revealer.onInboundReveal({ agentId: 'ccw', intentId: 'i1', relayToken: 'T', peerName: '小Q' })
+    expect(resp).toEqual({ mutual: true, identity: SELF })
+    expect(echoStore.get('i1:ccw:T')!.peer_masked).toBe('小Q')          // W handed me Q's name
+    expect(seekStore.get('i1')!.status).toBe('connected')
+    expect(notify).toHaveBeenCalledWith('connected', expect.objectContaining({ intentId: 'i1', peerName: '小Q' }))
+  })
+
+  it('retried relay inbound after mutual is idempotent (no duplicate connected beat)', () => {
+    const { echoStore, seekStore, notify, revealer } = fixture(vi.fn())
+    seekStore.create({ id: 'i1', kind: 'seek', topic: 't' })
+    echoStore.create({ id: 'i1:ccw:T', seekId: 'i1', peerMasked: '第 2 度的某人', degree: 2, content: 'x', peerAgentId: null, relayVia: 'ccw', relayToken: 'T' })
+    echoStore.setSelfRevealed('i1:ccw:T', '2026-07-15T00:00:00.000Z')
+    const first = revealer.onInboundReveal({ agentId: 'ccw', intentId: 'i1', relayToken: 'T', peerName: '小Q' })
+    const second = revealer.onInboundReveal({ agentId: 'ccw', intentId: 'i1', relayToken: 'T', peerName: '小Q' })
+    expect(first).toEqual({ mutual: true, identity: SELF })
+    expect(second).toEqual({ mutual: true, identity: SELF })
+    expect(notify.mock.calls.filter((c: any[]) => c[0] === 'connected').length).toBe(1)
+  })
+})

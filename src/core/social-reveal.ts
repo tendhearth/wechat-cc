@@ -20,8 +20,9 @@ export interface RevealerDeps {
   echoStore: EchoStore
   pledgeStore: PledgeStore
   seekStore: SeekStore
-  /** Outbound A2A POST to the peer's /a2a/reveal. null when unreachable. */
-  postPeerReveal(agentId: string, intentId: string): Promise<{ mutual: boolean; identity?: PeerIdentity } | null>
+  /** Outbound A2A POST to the peer's /a2a/reveal. `relayToken` addresses a 2-hop
+   *  relay leg (routed to the intermediary). null when unreachable. */
+  postPeerReveal(agentId: string, intentId: string, relayToken?: string): Promise<{ mutual: boolean; identity?: PeerIdentity } | null>
   /** This daemon's public identity ({ name, url }) handed back on the mutual instant. */
   selfIdentity(): PeerIdentity
   /** Notification beats (克制三拍). Only await_reveal + connected fire from here. */
@@ -31,7 +32,7 @@ export interface RevealerDeps {
 export interface Revealer {
   revealEcho(echoId: string): Promise<RevealOutcome | null>
   revealPledge(pledgeId: string): Promise<RevealOutcome | null>
-  onInboundReveal(ev: { agentId: string; intentId: string }): { mutual: boolean; identity?: PeerIdentity }
+  onInboundReveal(ev: { agentId: string; intentId: string; relayToken?: string; peerName?: string }): { mutual: boolean; identity?: PeerIdentity }
 }
 
 export function makeRevealer(deps: RevealerDeps): Revealer {
@@ -42,8 +43,13 @@ export function makeRevealer(deps: RevealerDeps): Revealer {
       if (echo.self_revealed_at && echo.peer_revealed_at) return { state: 'connected' }  // already mutual, no-op
       const now = new Date().toISOString()
       if (!echo.self_revealed_at) deps.echoStore.setSelfRevealed(echoId, now)             // my consent, idempotent
-      if (!echo.peer_agent_id) return { state: 'peer_unreachable' }                       // legacy row, can't POST back
-      const resp = await deps.postPeerReveal(echo.peer_agent_id, echo.seek_id)
+      // Relay (degree-2) echo → reveal is addressed to the intermediary (relay_via),
+      // carrying the relay_token; a direct echo posts to peer_agent_id (2-arg, unchanged).
+      const target = echo.relay_via ?? echo.peer_agent_id
+      if (!target) return { state: 'peer_unreachable' }                                   // legacy row, can't POST back
+      const resp = echo.relay_token
+        ? await deps.postPeerReveal(target, echo.seek_id, echo.relay_token)
+        : await deps.postPeerReveal(target, echo.seek_id)
       if (!resp) return { state: 'peer_unreachable' }                                     // consent already persisted
       if (!resp.mutual) return { state: 'awaiting_peer' }
       deps.echoStore.setPeerRevealed(echoId, now)
@@ -68,9 +74,11 @@ export function makeRevealer(deps: RevealerDeps): Revealer {
       return { state: 'connected' }
     },
 
-    onInboundReveal({ agentId, intentId }) {
+    onInboundReveal({ agentId, intentId, relayToken, peerName }) {
       const now = new Date().toISOString()
-      const rowId = `${intentId}:${agentId}`
+      // Relay inbound → the relay echo id is intent_id:relay_via:relay_token (S may
+      // hold several relay echoes for one intent, so the direct key is insufficient).
+      const rowId = relayToken ? `${intentId}:${agentId}:${relayToken}` : `${intentId}:${agentId}`
       const echo = deps.echoStore.get(rowId)
       if (echo) {
         if (echo.peer_revealed_at) {
@@ -81,7 +89,10 @@ export function makeRevealer(deps: RevealerDeps): Revealer {
         if (echo.self_revealed_at) {
           deps.echoStore.setStatus(rowId, 'revealed')
           deps.seekStore.update(intentId, { status: 'connected' })
-          deps.notify('connected', { intentId, peerAgentId: agentId })
+          // Relay completion: W hands the other endpoint's real name (the caller
+          // agentId is W, not the counterpart, so we can't resolve it locally).
+          if (peerName) deps.echoStore.setRevealedIdentity(rowId, peerName)
+          deps.notify('connected', { intentId, peerAgentId: agentId, ...(peerName ? { peerName } : {}) })
           return { mutual: true, identity: deps.selfIdentity() }
         }
         deps.notify('await_reveal', { intentId, peerAgentId: agentId })
@@ -95,7 +106,7 @@ export function makeRevealer(deps: RevealerDeps): Revealer {
         }
         deps.pledgeStore.setPeerRevealed(rowId, now)
         if (pledge.self_revealed_at) {
-          deps.notify('connected', { intentId, peerAgentId: agentId })
+          deps.notify('connected', { intentId, peerAgentId: agentId, ...(peerName ? { peerName } : {}) })
           return { mutual: true, identity: deps.selfIdentity() }
         }
         deps.notify('await_reveal', { intentId, peerAgentId: agentId })
