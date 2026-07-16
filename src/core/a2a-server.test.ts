@@ -29,7 +29,6 @@ async function startServer(opts: {
   onNotify?: (event: import('./a2a-server').NotifyEvent) => Promise<void>
   onExec?: (event: import('./a2a-server').ExecEvent) => Promise<import('./a2a-server').ExecResult>
   onIntent?: (event: import('./a2a-server').IntentEvent) => Promise<import('./a2a-intent').MatchReceipt>
-  onIntentConfirm?: (event: import('./a2a-server').IntentConfirmEvent) => Promise<{ ok: boolean }>
   onReveal?: (event: import('./a2a-server').RevealEvent) => Promise<{ mutual: boolean; identity?: { name: string; url: string } }>
 } = {}) {
   const onNotify: (event: import('./a2a-server').NotifyEvent) => Promise<void> = opts.onNotify ?? vi.fn(async () => {})
@@ -39,7 +38,6 @@ async function startServer(opts: {
     onNotify,
     ...(opts.onExec ? { onExec: opts.onExec } : {}),
     ...(opts.onIntent ? { onIntent: opts.onIntent } : {}),
-    ...(opts.onIntentConfirm ? { onIntentConfirm: opts.onIntentConfirm } : {}),
     ...(opts.onReveal ? { onReveal: opts.onReveal } : {}),
     daemonInfo: { name: 'wechat-cc', version: '0.6.x' },
   })
@@ -328,71 +326,6 @@ describe('a2a-server', () => {
         expect(a.capabilities.some(c => c.name === 'intent')).toBe(true)
         expect(b.capabilities.some(c => c.name === 'intent')).toBe(false)
       } finally { await withIntent.server.stop(); await without.server.stop() }
-    })
-  })
-
-  describe('POST /a2a/intent/confirm (agent-social M1)', () => {
-    it('runs onIntentConfirm and returns { ok } when authed', async () => {
-      const onIntentConfirm = vi.fn(async (_e: import('./a2a-server').IntentConfirmEvent) => ({ ok: true }))
-      const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec], onIntentConfirm })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/intent/confirm`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1' }),
-        })
-        expect(res.status).toBe(200)
-        expect(await res.json()).toEqual({ ok: true })
-        expect(onIntentConfirm).toHaveBeenCalledWith(expect.objectContaining({
-          agent: expect.objectContaining({ id: 'alpha' }),
-          intent_id: 'i1',
-        }))
-      } finally { await server.stop() }
-    })
-
-    it('returns 501 when this machine is not wired for intent confirm (no onIntentConfirm)', async () => {
-      const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec] })  // no onIntentConfirm
-      try {
-        const res = await fetch(`${baseUrl}/a2a/intent/confirm`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1' }),
-        })
-        expect(res.status).toBe(501)
-      } finally { await server.stop() }
-    })
-
-    it('rejects intent confirm without a valid Bearer → 401, onIntentConfirm not called', async () => {
-      const onIntentConfirm = vi.fn(async () => ({ ok: true }))
-      const { server, baseUrl } = await startServer({ onIntentConfirm })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/intent/confirm`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1' }),
-        })
-        expect(res.status).toBe(401)
-        expect(onIntentConfirm).not.toHaveBeenCalled()
-      } finally { await server.stop() }
-    })
-
-    it('does not collide with the /a2a/intent route (exact pathname match)', async () => {
-      const onIntent = vi.fn(async (e: import('./a2a-server').IntentEvent) => ({ intent_id: e.card.intent_id, match: 'no' as const }))
-      const onIntentConfirm = vi.fn(async () => ({ ok: true }))
-      const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec], onIntent, onIntentConfirm })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/intent/confirm`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1' }),
-        })
-        expect(res.status).toBe(200)
-        expect(onIntentConfirm).toHaveBeenCalledTimes(1)
-        expect(onIntent).not.toHaveBeenCalled()
-      } finally { await server.stop() }
     })
   })
 

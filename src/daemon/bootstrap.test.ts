@@ -1038,7 +1038,7 @@ describe('bootstrap', () => {
 })
 
 // ── Agent-social M1 wiring (T7b-core) ─────────────────────────────────────
-// onIntent/onIntentConfirm are only wired into the a2a server — and
+// onIntent/onReveal are only wired into the a2a server — and
 // bootstrap.social only constructed — when BOTH social_enabled and
 // social_disclosure_policy are configured. See
 // docs/superpowers/specs/2026-07-12-agent-social-m1-intent-brokering-design.md
