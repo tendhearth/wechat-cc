@@ -2795,13 +2795,26 @@ describe('internal-api', () => {
       expect(await resp.json()).toEqual({ error: 'social_not_wired' })
     })
 
-    it('GET /v1/social/echoes returns the stored echoes', async () => {
+    it('GET /v1/social/echoes returns the stored echoes masked (no peer_agent_id/relay_via/relay_token)', async () => {
       const { port, token } = await startWithSocial({ echoes: [echoRow] })
       const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(resp.status).toBe(200)
-      expect(await resp.json()).toEqual({ echoes: [echoRow] })
+      const json = await resp.json()
+      expect(json).toEqual({
+        echoes: [{
+          id: 'e1', seek_id: 'k1', peer_masked: 'p***', degree: 1,
+          content: 'hi there', status: 'pending', created_at: 't',
+          self_revealed_at: null, peer_revealed_at: null,
+        }],
+      })
+      // echoRow has a set peer_agent_id — assert it (and the other
+      // server-side-only relay fields) never made it into the response.
+      expect(echoRow.peer_agent_id).toBe('ccb')
+      expect(json.echoes[0]).not.toHaveProperty('peer_agent_id')
+      expect(json.echoes[0]).not.toHaveProperty('relay_via')
+      expect(json.echoes[0]).not.toHaveProperty('relay_token')
     })
 
     it('GET /v1/social/echoes returns 503 when deps.social is not wired', async () => {

@@ -16,9 +16,16 @@ export function makeSeenIntentStore(db: Db): SeenIntentStore {
   const ins = db.query<unknown, [string, string, string]>(
     `INSERT OR IGNORE INTO social_seen_intent(intent_id, first_seen_at, expires_at) VALUES (?, ?, ?)`,
   )
-  const sel = db.query<{ one: number }, [string]>('SELECT 1 as one FROM social_seen_intent WHERE intent_id = ?')
+  const sel = db.query<{ one: number }, [string, string]>(
+    'SELECT 1 as one FROM social_seen_intent WHERE intent_id = ? AND expires_at > ?',
+  )
+  const prune = db.query<unknown, [string]>('DELETE FROM social_seen_intent WHERE expires_at <= ?')
   return {
-    markSeen(s) { ins.run(s.intentId, new Date().toISOString(), s.expiresAt) },
-    hasSeen(intentId) { return sel.get(intentId) != null },
+    markSeen(s) {
+      const now = new Date().toISOString()
+      ins.run(s.intentId, now, s.expiresAt)
+      prune.run(now)
+    },
+    hasSeen(intentId) { return sel.get(intentId, new Date().toISOString()) != null },
   }
 }
