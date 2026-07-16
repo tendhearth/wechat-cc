@@ -1429,7 +1429,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
             seekStore.update(outcome.intent_id, { status, peersAsked: outcome.matched.length })
             for (const m of outcome.matched) {
               const echoId = `${outcome.intent_id}:${m.hand}`
-              echoStore.create({ id: echoId, seekId: outcome.intent_id, peerMasked: '第 1 度的某人', degree: 1, content: m.blurb ?? '' })
+              echoStore.create({ id: echoId, seekId: outcome.intent_id, peerMasked: '第 1 度的某人', degree: 1, content: m.blurb ?? '', peerAgentId: m.hand })
               if (outcome.lit.includes(m.hand)) echoStore.setStatus(echoId, 'revealed')
             }
           } catch (err) {

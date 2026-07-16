@@ -2736,6 +2736,7 @@ describe('internal-api', () => {
     const echoRow: EchoRow = {
       id: 'e1', seek_id: 'k1', peer_masked: 'p***', degree: 1,
       content: 'hi there', status: 'pending', created_at: 't',
+      peer_agent_id: 'ccb', self_revealed_at: null, peer_revealed_at: null,
     }
 
     async function startWithSocial(
@@ -2751,7 +2752,7 @@ describe('internal-api', () => {
               list: () => opts.seeks ?? [], get: () => null,
             },
             echoStore: {
-              create: () => {}, setStatus: () => {}, listForSeek: () => [],
+              create: () => {}, setStatus: () => {}, setSelfRevealed: () => {}, setPeerRevealed: () => {}, setRevealedIdentity: () => {}, listForSeek: () => [],
               listAll: () => opts.echoes ?? [], get: () => null,
             },
           },

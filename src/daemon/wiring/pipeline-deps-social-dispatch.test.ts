@@ -24,7 +24,7 @@ vi.mock('../../lib/config.ts', () => ({
 // don't exercise the stores, so a minimal no-op stub keeps setup() type-clean.
 const socialStoreStubs = {
   seekStore: { create() {}, update() {}, list: () => [], get: () => null },
-  echoStore: { create() {}, setStatus() {}, listForSeek: () => [], listAll: () => [], get: () => null },
+  echoStore: { create() {}, setStatus() {}, setSelfRevealed() {}, setPeerRevealed() {}, setRevealedIdentity() {}, listForSeek: () => [], listAll: () => [], get: () => null },
 } satisfies {
   seekStore: import('../../core/social-seek-store').SeekStore
   echoStore: import('../../core/social-echo-store').EchoStore
