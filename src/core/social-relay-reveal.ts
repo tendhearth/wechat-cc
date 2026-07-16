@@ -40,6 +40,12 @@ export function makeRelayReconciler(deps: RelayReconcilerDeps): RelayReconciler 
         : deps.relayStore.getByIntentDownstream(intentId, callerAgentId)
       if (!relay) return null   // not a relay we hold — caller falls through to its own revealer
 
+      // Caller-binding (defense-in-depth): a relay_token addresses a specific
+      // upstream leg. If the presenting caller isn't the row's own upstream,
+      // this isn't a relay we hold FOR THIS CALLER — treat as no relay (null),
+      // same as the downstream branch's caller-bound lookup already does.
+      if (isUpstreamLeg && relay.upstream_agent_id !== callerAgentId) return null
+
       const sIdentity = deps.identityOf(relay.upstream_agent_id)
       const qIdentity = deps.identityOf(relay.downstream_agent_id)
       const otherForCaller = isUpstreamLeg ? qIdentity : sIdentity

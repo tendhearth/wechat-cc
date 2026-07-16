@@ -30,6 +30,18 @@ describe('makeRelayReconciler', () => {
     expect(rec.onRelayReveal({ callerAgentId: 'ccx', intentId: 'nope' })).toBeNull()
   })
 
+  it('correct relayToken but caller is NOT the row upstream → null, no mark/complete/nudge/notify (review fix: caller-bound upstream leg)', () => {
+    const { rec, relayStore, nudge, completeUpstream, completeDownstream, notify3way } = fixture()
+    const out = rec.onRelayReveal({ callerAgentId: 'ccz', intentId: 'i1', relayToken: 'T' })
+    expect(out).toBeNull()
+    expect(relayStore.get('i1:T')!.upstream_revealed_at).toBeNull()
+    expect(relayStore.get('i1:T')!.downstream_revealed_at).toBeNull()
+    expect(nudge).not.toHaveBeenCalled()
+    expect(completeUpstream).not.toHaveBeenCalled()
+    expect(completeDownstream).not.toHaveBeenCalled()
+    expect(notify3way).not.toHaveBeenCalled()
+  })
+
   it('S reveals first (carries token) → mark upstream, nudge Q with NO token, mutual:false', () => {
     const { rec, relayStore, nudge, completeUpstream, completeDownstream } = fixture()
     const out = rec.onRelayReveal({ callerAgentId: 'ccs', intentId: 'i1', relayToken: 'T' })

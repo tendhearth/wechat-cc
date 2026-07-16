@@ -8,8 +8,13 @@
  * postPeerReveal response ({ mutual: true, identity }) — the seeker never calls
  * its own onInboundReveal here (that entry point is covered directly in
  * social-reveal.test.ts; the HTTP transport is covered in a2a-server.test.ts).
+ *
+ * This file also covers the 2-hop forwarding-hop S→W→Q path (real broker +
+ * forwarder + relay reconciler + two revealers, wired end-to-end across three
+ * in-memory dbs) and spec-#1 backward-compat (old-shaped IntentCard/MatchReceipt
+ * parsing unaffected by the new hop/forwarded fields).
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import z from 'zod'
 import { openDb } from '../lib/db'
 import { makeBroker } from './social-broker'
@@ -205,7 +210,8 @@ describe('forwarding hop e2e (S → W → Q)', () => {
     const wOnReveal = (ev: any) => wReconciler.onRelayReveal({ callerAgentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token }) ?? { mutual: false }
 
     const sRevealer = makeRevealer({ echoStore: sEcho, pledgeStore: sPledge, seekStore: sSeek, postPeerReveal: async (_agentId, i, tok) => wOnReveal({ agent_id: 'ccs', intent_id: i, relay_token: tok }), selfIdentity: () => S, notify: () => {} })
-    const qRevealer = makeRevealer({ echoStore: qEcho, pledgeStore: qPledge, seekStore: qSeek, postPeerReveal: async (_agentId, i) => wOnReveal({ agent_id: 'ccq', intent_id: i }), selfIdentity: () => Q, notify: () => {} })
+    const qNotify = vi.fn()
+    const qRevealer = makeRevealer({ echoStore: qEcho, pledgeStore: qPledge, seekStore: qSeek, postPeerReveal: async (_agentId, i) => wOnReveal({ agent_id: 'ccq', intent_id: i }), selfIdentity: () => Q, notify: qNotify })
     // S/Q inbound reveal handlers (endpoint side; W posts back to them).
     const sOnReveal = (ev: any) => sRevealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token, peerName: ev.peer_name })
     const qOnReveal = (ev: any) => qRevealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token, peerName: ev.peer_name })
@@ -224,6 +230,8 @@ describe('forwarding hop e2e (S → W → Q)', () => {
     expect(sSeek.get(intent_id)!.status).toBe('connected')
     expect(qPledge.get(qPledgeId)!.peer_revealed_at).not.toBeNull()   // Q connected too
     expect(w3way).toBe(1)   // W's owner gets a SINGLE 3-way warmth ping
+    // Q's connected beat carried S's REAL name (crossed via W's registry, not W's own name).
+    expect(qNotify).toHaveBeenCalledWith('connected', expect.objectContaining({ peerName: '小S' }))
   })
 })
 
