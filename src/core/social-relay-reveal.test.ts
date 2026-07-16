@@ -92,4 +92,38 @@ describe('makeRelayReconciler', () => {
     expect(completeDownstream).not.toHaveBeenCalled()           // no duplicate post-back
     expect(notify3way).not.toHaveBeenCalled()                   // no duplicate warmth
   })
+
+  it('crossing reveal with a transient identity-null does NOT strand the leg; heals on retry (review fix)', () => {
+    const db = openDb({ path: ':memory:' })
+    const relayStore = makeRelayStore(db)
+    relayStore.create({ id: 'i1:T', intentId: 'i1', relayToken: 'T', upstreamAgentId: 'ccs', downstreamAgentId: 'ccq' })
+    const completeUpstream = vi.fn()
+    const completeDownstream = vi.fn()
+    const nudge = vi.fn()
+    const notify3way = vi.fn()
+    let sResolvable = false
+    const identityOf = vi.fn((id: string) => (id === 'ccs' ? (sResolvable ? S : null) : (ids[id] ?? null)))
+    const rec = makeRelayReconciler({ relayStore, identityOf, completeUpstream, completeDownstream, nudge, notify3way })
+
+    rec.onRelayReveal({ callerAgentId: 'ccq', intentId: 'i1' })   // Q reveals first → marks downstream
+
+    // S reveals second (crossing path) while S's OWN identity is transiently
+    // unresolvable in W's registry.
+    const first = rec.onRelayReveal({ callerAgentId: 'ccs', intentId: 'i1', relayToken: 'T' })
+    expect(first).toEqual({ mutual: false })
+    expect(relayStore.get('i1:T')!.upstream_revealed_at).toBeNull()   // NOT marked — must stay retryable
+    expect(completeUpstream).not.toHaveBeenCalled()
+    expect(completeDownstream).not.toHaveBeenCalled()
+    expect(notify3way).not.toHaveBeenCalled()
+
+    // Registry heals; a retry of the SAME reveal now crosses.
+    sResolvable = true
+    const retried = rec.onRelayReveal({ callerAgentId: 'ccs', intentId: 'i1', relayToken: 'T' })
+    expect(retried).toEqual({ mutual: true, identity: Q })
+    expect(relayStore.get('i1:T')!.upstream_revealed_at).not.toBeNull()
+    expect(completeDownstream).toHaveBeenCalledWith('ccq', 'i1', S)
+    expect(completeUpstream).not.toHaveBeenCalled()
+    expect(notify3way).toHaveBeenCalledTimes(1)
+    expect(notify3way).toHaveBeenCalledWith('i1', S, Q)
+  })
 })

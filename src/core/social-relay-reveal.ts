@@ -53,23 +53,34 @@ export function makeRelayReconciler(deps: RelayReconcilerDeps): RelayReconciler 
       }
 
       const now = new Date().toISOString()
+      const otherLegRevealed = isUpstreamLeg ? !!relay.downstream_revealed_at : !!relay.upstream_revealed_at
+
+      if (otherLegRevealed) {
+        // Crossing path: both identities must resolve from W's registry BEFORE
+        // this leg is marked. A transient registry miss must NOT strand the
+        // first revealer — leave the leg unmarked (no writes, no nudge/complete/
+        // notify) so a later retry (once the registry heals) re-enters here and
+        // completes the cross instead of falling into the legAlready branch.
+        if (!sIdentity || !qIdentity) return { mutual: false }
+
+        // Both legs in → mutual. Cross identities: post back to whoever revealed
+        // FIRST (the OTHER leg); the caller (second) learns mutual synchronously.
+        if (isUpstreamLeg) deps.relayStore.setUpstreamRevealed(relay.id, now)
+        else deps.relayStore.setDownstreamRevealed(relay.id, now)
+
+        const other = isUpstreamLeg ? qIdentity : sIdentity
+        if (isUpstreamLeg) deps.completeDownstream(relay.downstream_agent_id, intentId, sIdentity)
+        else deps.completeUpstream(relay.upstream_agent_id, intentId, relay.relay_token, qIdentity)
+        deps.notify3way(intentId, sIdentity, qIdentity)
+        return { mutual: true, identity: other }
+      }
+
+      // Only this leg revealed → mark it, then nudge the un-revealed endpoint so
+      // its owner gets beat #2. Nudging S must carry the relay_token; nudging Q
+      // must not. No identity is needed on this path.
       if (isUpstreamLeg) deps.relayStore.setUpstreamRevealed(relay.id, now)
       else deps.relayStore.setDownstreamRevealed(relay.id, now)
 
-      const otherLegRevealed = isUpstreamLeg ? !!relay.downstream_revealed_at : !!relay.upstream_revealed_at
-      if (otherLegRevealed) {
-        // Both legs in → mutual. Cross identities: post back to whoever revealed
-        // FIRST (the OTHER leg); the caller (second) learns mutual synchronously.
-        if (sIdentity && qIdentity) {
-          if (isUpstreamLeg) deps.completeDownstream(relay.downstream_agent_id, intentId, sIdentity)
-          else deps.completeUpstream(relay.upstream_agent_id, intentId, relay.relay_token, qIdentity)
-          deps.notify3way(intentId, sIdentity, qIdentity)
-        }
-        return { mutual: true, ...(otherForCaller ? { identity: otherForCaller } : {}) }
-      }
-
-      // Only this leg revealed → nudge the un-revealed endpoint so its owner gets
-      // beat #2. Nudging S must carry the relay_token; nudging Q must not.
       if (isUpstreamLeg) deps.nudge(relay.downstream_agent_id, intentId)
       else deps.nudge(relay.upstream_agent_id, intentId, relay.relay_token)
       return { mutual: false }
