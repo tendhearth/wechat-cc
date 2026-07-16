@@ -1123,6 +1123,73 @@ describe('bootstrap agent-social M1 wiring', () => {
     }
   })
 
+  // I1 regression — when the SEEKER reveals FIRST, mutual completes via the
+  // inbound /a2a/reveal (onInboundReveal's echo branch), which only holds the
+  // peer's agent_id. The wired socialOnReveal must swap the echo's masked
+  // placeholder for the peer's real name from the registry — otherwise
+  // peer_masked stays "第 N 度的某人" forever. Driven full-stack through the
+  // real a2a-server /a2a/reveal endpoint.
+  it('first-revealer echo gets peer_masked swapped to the real name on inbound-completed mutual', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-i1-'))
+    const port = 19907
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      const peerKey = 'peer-inbound-key-abc123'   // ≥16 chars (registry rule)
+      boot.a2aDeps.registry.add({
+        id: 'ccb', name: '小B', url: 'http://127.0.0.1:1/a2a',
+        inbound_api_key: peerKey, outbound_api_key: 'unused',
+        capabilities: [], paused: false, transport: 'push',
+      })
+      // Seed the seeker-side state: a seek + an echo whose owner ALREADY
+      // revealed (self_revealed), still masked, holding the peer's agent_id.
+      const intentId = 'seek-i1'
+      boot.social!.seekStore.create({ id: intentId, kind: 'seek', topic: '找摄影搭子' })
+      boot.social!.echoStore.create({
+        id: `${intentId}:ccb`, seekId: intentId, peerMasked: '第 1 度的某人',
+        degree: 1, content: '南京摄影爱好者', peerAgentId: 'ccb',
+      })
+      boot.social!.echoStore.setSelfRevealed(`${intentId}:ccb`, new Date().toISOString())
+
+      // The peer now reveals back over the wire → mutual completes here.
+      const resp = await fetch(`http://127.0.0.1:${port}/a2a/reveal`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${peerKey}` },
+        body: JSON.stringify({ agent_id: 'ccb', intent_id: intentId }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toMatchObject({ mutual: true })
+
+      // I1: the masked placeholder is now the peer's real registry name.
+      const echo = boot.social!.echoStore.get(`${intentId}:ccb`)!
+      expect(echo.peer_masked).toBe('小B')
+      expect(echo.peer_revealed_at).not.toBeNull()
+      expect(boot.social!.seekStore.get(intentId)!.status).toBe('connected')
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
   it('a wired social seek persists a social_seek row', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-record-'))
     const port = 19904

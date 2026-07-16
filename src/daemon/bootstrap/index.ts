@@ -52,6 +52,7 @@ import { bundledPluginsDir } from '../plugins/paths'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { buildDelegateDispatch, type DelegateDispatch } from './delegate'
 import { makeSendAssistantText } from './fallback-reply'
+import { applyFinishSeek } from './social-finish-seek'
 import { findCodexBinary } from '../../lib/find-codex-binary'
 import { checkCodexVersion } from './codex-version-check'
 import { attemptCodexAutofix } from '../../lib/codex-autofix'
@@ -1384,7 +1385,25 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
 
       const revealer = makeRevealer({ echoStore, pledgeStore, seekStore, postPeerReveal, selfIdentity, notify })
       socialRevealer = revealer
-      socialOnReveal = async (ev) => revealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id })
+      socialOnReveal = async (ev) => {
+        const result = revealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id })
+        // I1: when THIS side revealed FIRST (the seeker), mutual completes here
+        // in the echo branch, which only holds the peer's agent_id — so the
+        // echo's peer_masked would otherwise stay masked ("第 N 度的某人")
+        // forever. Swap in the peer's real name from the registry, mirroring
+        // exactly how the `notify` closure resolves a peer name. Harmless in the
+        // pledge case: no echo row with that id ⇒ the UPDATE touches 0 rows. A
+        // registry/store hiccup must never break the reveal response.
+        if (result.mutual) {
+          try {
+            const name = a2aRegistry.get(ev.agent_id)?.name
+            if (name) echoStore.setRevealedIdentity(`${ev.intent_id}:${ev.agent_id}`, name)
+          } catch (err) {
+            deps.log('SOCIAL_REC', `reveal identity swap failed intent=${ev.intent_id} agent=${ev.agent_id}: ${err instanceof Error ? err.message : String(err)}`)
+          }
+        }
+        return result
+      }
 
       // Answer path: when THIS bot answers a peer's wish with match:'yes', record
       // a pledge so it can reveal back later. Wraps makeAnswerIntent's receipt.
@@ -1423,8 +1442,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
           }
           if (e.first) notify('first_echo', { intentId: e.intentId })
         },
-        finishSeek: (intentId, status, peersAsked) => {
-          try { seekStore.update(intentId, { status, peersAsked }) }
+        finishSeek: (intentId, _status, peersAsked) => {
+          // M1: authoritative + non-downgrading — ignore the broker-passed
+          // status. See applyFinishSeek for why (connected must not downgrade;
+          // resume must derive from real echo rows).
+          try { applyFinishSeek({ seekStore, echoStore }, intentId, peersAsked) }
           catch (err) { deps.log('SOCIAL_REC', `finishSeek failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
         },
       })
@@ -1536,6 +1558,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     const forage = socialForage
     for (const row of socialSeekStore.list()) {
       if (row.status === 'foraging') {
+        // M3: social_seek doesn't persist `city`, so a resumed forage sends
+        // without it — safe degradation, city is an optional discovery hint.
         void forage(row.id, row.topic).catch(err => deps.log('SOCIAL_REC', `resume forage failed intent=${row.id}: ${err instanceof Error ? err.message : String(err)}`))
       }
     }

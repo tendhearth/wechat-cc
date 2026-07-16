@@ -4,8 +4,10 @@
  * Composes the REAL modules — makeBroker (sync sow + background forage) →
  * makeAnswerIntent (the peer's judge) → gateOutbound (disclosure) → makeRevealer
  * (mutual async reveal) — with injected deterministic judge + checker + stores.
- * The peer's inbound /a2a/reveal is simulated by calling the SEEKER'S
- * onInboundReveal directly (the HTTP transport is covered in a2a-server.test.ts).
+ * The peer's SECOND reveal is simulated by stubbing the seeker's
+ * postPeerReveal response ({ mutual: true, identity }) — the seeker never calls
+ * its own onInboundReveal here (that entry point is covered directly in
+ * social-reveal.test.ts; the HTTP transport is covered in a2a-server.test.ts).
  */
 import { describe, expect, it } from 'vitest'
 import { openDb } from '../lib/db'
