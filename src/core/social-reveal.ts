@@ -73,6 +73,10 @@ export function makeRevealer(deps: RevealerDeps): Revealer {
       const rowId = `${intentId}:${agentId}`
       const echo = deps.echoStore.get(rowId)
       if (echo) {
+        if (echo.peer_revealed_at) {
+          // duplicate/retried inbound reveal — no writes, no notify, just a consistent answer
+          return echo.self_revealed_at ? { mutual: true, identity: deps.selfIdentity() } : { mutual: false }
+        }
         deps.echoStore.setPeerRevealed(rowId, now)
         if (echo.self_revealed_at) {
           deps.echoStore.setStatus(rowId, 'revealed')
@@ -85,6 +89,10 @@ export function makeRevealer(deps: RevealerDeps): Revealer {
       }
       const pledge = deps.pledgeStore.get(rowId)
       if (pledge) {
+        if (pledge.peer_revealed_at) {
+          // duplicate/retried inbound reveal — no writes, no notify, just a consistent answer
+          return pledge.self_revealed_at ? { mutual: true, identity: deps.selfIdentity() } : { mutual: false }
+        }
         deps.pledgeStore.setPeerRevealed(rowId, now)
         if (pledge.self_revealed_at) {
           deps.notify('connected', { intentId, peerAgentId: agentId })

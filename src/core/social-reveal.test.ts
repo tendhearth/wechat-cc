@@ -122,6 +122,32 @@ describe('makeRevealer — inbound (peer reveals first)', () => {
     const { revealer } = fixture(vi.fn())
     expect(revealer.onInboundReveal({ agentId: 'zzz', intentId: 'nope' })).toEqual({ mutual: false })
   })
+
+  it('duplicate inbound reveal before I reveal → await_reveal notify fires exactly once', () => {
+    const { echoStore, notify, revealer } = fixture(vi.fn())
+    echoStore.create({ id: 'i1:ccb', seekId: 'i1', peerMasked: '第 1 度的某人', degree: 1, content: 'x', peerAgentId: 'ccb' })
+
+    const first = revealer.onInboundReveal({ agentId: 'ccb', intentId: 'i1' })
+    const second = revealer.onInboundReveal({ agentId: 'ccb', intentId: 'i1' })
+
+    expect(first).toEqual({ mutual: false })
+    expect(second).toEqual({ mutual: false })
+    expect(notify.mock.calls.filter((c) => c[0] === 'await_reveal').length).toBe(1)
+  })
+
+  it('duplicate inbound reveal after connected → connected notify fires exactly once, second call still returns mutual', () => {
+    const { echoStore, seekStore, notify, revealer } = fixture(vi.fn())
+    seekStore.create({ id: 'i1', kind: 'seek', topic: 't' })
+    echoStore.create({ id: 'i1:ccb', seekId: 'i1', peerMasked: '第 1 度的某人', degree: 1, content: 'x', peerAgentId: 'ccb' })
+    echoStore.setSelfRevealed('i1:ccb', '2026-07-15T00:00:00.000Z')  // I already revealed
+
+    const first = revealer.onInboundReveal({ agentId: 'ccb', intentId: 'i1' })
+    const second = revealer.onInboundReveal({ agentId: 'ccb', intentId: 'i1' })
+
+    expect(first).toEqual({ mutual: true, identity: SELF })
+    expect(second).toEqual({ mutual: true, identity: SELF })
+    expect(notify.mock.calls.filter((c) => c[0] === 'connected').length).toBe(1)
+  })
 })
 
 describe('makeRevealer — pledge side (I reveal my answer)', () => {
