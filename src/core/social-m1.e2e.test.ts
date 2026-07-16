@@ -10,6 +10,7 @@
  * social-reveal.test.ts; the HTTP transport is covered in a2a-server.test.ts).
  */
 import { describe, expect, it } from 'vitest'
+import z from 'zod'
 import { openDb } from '../lib/db'
 import { makeBroker } from './social-broker'
 import { makeAnswerIntent } from './social-answer'
@@ -17,6 +18,11 @@ import { makeRevealer, type PeerIdentity } from './social-reveal'
 import { makeSeekStore } from './social-seek-store'
 import { makeEchoStore } from './social-echo-store'
 import { makePledgeStore } from './social-pledge-store'
+import { makeForwarder } from './social-forwarder'
+import { makeRelayStore } from './social-relay-store'
+import { makeSeenIntentStore } from './social-seen-intent-store'
+import { makeRelayReconciler } from './social-relay-reveal'
+import { IntentCardSchema, MatchReceiptSchema } from './a2a-intent'
 
 const POLICY = '可透露兴趣/城市;不透露住址门牌、第三方。'
 const recB = { id: 'ccb', name: '小B', url: 'http://b/a2a', outbound_api_key: 'k' } as any
@@ -120,5 +126,121 @@ describe('async foraging spine e2e', () => {
     await Promise.all(jobs.map(j => j()))
     expect(echoStore.listForSeek(intent_id)).toHaveLength(0)     // leaky blurb downgraded to match:no
     expect(seekStore.get(intent_id)!.status).toBe('closed')
+  })
+})
+
+describe('forwarding hop e2e (S → W → Q)', () => {
+  it('2-hop forage → relay echo → proxied mutual reveal → identity crossing, anonymous until mutual', async () => {
+    // Three dbs (three daemons).
+    const sDb = openDb({ path: ':memory:' }); const wDb = openDb({ path: ':memory:' }); const qDb = openDb({ path: ':memory:' })
+    const sSeek = makeSeekStore(sDb); const sEcho = makeEchoStore(sDb); const sPledge = makePledgeStore(sDb)
+    const wRelay = makeRelayStore(wDb); const wSeen = makeSeenIntentStore(wDb)
+    const qEcho = makeEchoStore(qDb); const qPledge = makePledgeStore(qDb); const qSeek = makeSeekStore(qDb)
+
+    const S = { id: 'ccs', name: '小S', url: 'http://s/a2a' }
+    const W = { id: 'ccw', name: '小W', url: 'http://w/a2a' }
+    const Q = { id: 'ccq', name: '小Q', url: 'http://q/a2a' }
+
+    // Q's answer: matches. W's answer: no-match (forces the forward).
+    const qAnswer = makeAnswerIntent({ judge: async () => ({ match: 'yes', blurb: '我主人认识个摄影师' }), policy: POLICY, cheapEval: passingCheck })
+    const wAnswerLocal = makeAnswerIntent({ judge: async () => ({ match: 'no' }), policy: POLICY, cheapEval: passingCheck })
+
+    // Q's /a2a/intent — records a pledge on yes (seeker, as Q sees it, is W).
+    const qOnIntent = async (event: any) => {
+      const r = await qAnswer(event)
+      if (r.match === 'yes') qPledge.create({ id: `${event.card.intent_id}:${event.agent.id}`, intentId: event.card.intent_id, seekerAgentId: event.agent.id, topic: event.card.topic })
+      return r
+    }
+    // W's forwarder: forwards to Q, mints a relay row.
+    const wForwarder = makeForwarder({
+      answerLocally: wAnswerLocal,
+      forwardTargets: (exclude) => [Q].filter(t => t.id !== exclude),
+      forwardSend: async (target, card) => target.id === Q.id ? qOnIntent({ agent: W, card }) : null,
+      recordRelay: (intentId, upstreamAgentId, downstreamAgentId) => {
+        const tok = 'TOK'
+        wRelay.create({ id: `${intentId}:${tok}`, intentId, relayToken: tok, upstreamAgentId, downstreamAgentId })
+        return tok
+      },
+      markSeen: (i, e) => wSeen.markSeen({ intentId: i, expiresAt: e }),
+      hasSeen: (i) => wSeen.hasSeen(i),
+      hopCap: 2,
+    })
+
+    // S's broker: forwards a seek to W, records the degree-2 relay echo.
+    const jobs: Array<() => Promise<void>> = []
+    const sBroker = makeBroker({
+      policy: POLICY, cheapEval: passingCheck,
+      discover: async () => [W as any],
+      send: async (_hand, card) => wForwarder({ agent: S as any, card }),
+      sow: (id, topic) => sSeek.create({ id, kind: 'seek', topic }),
+      recordEcho: (e) => {
+        const id = e.peerAgentId != null ? `${e.intentId}:${e.peerAgentId}` : `${e.intentId}:${e.relayVia}:${e.relayToken}`
+        sEcho.create({ id, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId, relayVia: e.relayVia, relayToken: e.relayToken })
+      },
+      finishSeek: (id, status, n) => sSeek.update(id, { status, peersAsked: n }),
+      schedule: (fn) => { jobs.push(fn) },
+    })
+
+    // 1) Sow + forage: S ends with ONE degree-2 relay echo, still masked.
+    const { intent_id } = await sBroker.seek('找周末拍照搭子')
+    await Promise.all(jobs.map(j => j()))
+    const echoes = sEcho.listForSeek(intent_id)
+    expect(echoes).toHaveLength(1)
+    expect(echoes[0]!.degree).toBe(2)
+    expect(echoes[0]!.relay_via).toBe('ccw')
+    expect(echoes[0]!.peer_masked).toBe('第 2 度的某人')     // anonymous until mutual
+    const relayEchoId = echoes[0]!.id
+
+    // Reconciler on W + revealers on S and Q, wired to route reveals through W.
+    const idOf = (id: string): PeerIdentity | null => ({ ccs: S, ccw: W, ccq: Q } as any)[id] ?? null
+    let w3way = 0
+    const wReconciler = makeRelayReconciler({
+      relayStore: wRelay, identityOf: idOf,
+      completeUpstream: (up, i, tok, dIdent) => { void sOnReveal({ agent_id: 'ccw', intent_id: i, relay_token: tok, peer_name: dIdent.name }) },
+      completeDownstream: (down, i, uIdent) => { void qOnReveal({ agent_id: 'ccw', intent_id: i, peer_name: uIdent.name }) },
+      nudge: (agentId, i, tok) => { if (agentId === 'ccq') void qOnReveal({ agent_id: 'ccw', intent_id: i }); else void sOnReveal({ agent_id: 'ccw', intent_id: i, relay_token: tok }) },
+      notify3way: (..._a) => { w3way++ },
+    })
+    // W's inbound reveal handler = reconciler-first.
+    const wOnReveal = (ev: any) => wReconciler.onRelayReveal({ callerAgentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token }) ?? { mutual: false }
+
+    const sRevealer = makeRevealer({ echoStore: sEcho, pledgeStore: sPledge, seekStore: sSeek, postPeerReveal: async (_agentId, i, tok) => wOnReveal({ agent_id: 'ccs', intent_id: i, relay_token: tok }), selfIdentity: () => S, notify: () => {} })
+    const qRevealer = makeRevealer({ echoStore: qEcho, pledgeStore: qPledge, seekStore: qSeek, postPeerReveal: async (_agentId, i) => wOnReveal({ agent_id: 'ccq', intent_id: i }), selfIdentity: () => Q, notify: () => {} })
+    // S/Q inbound reveal handlers (endpoint side; W posts back to them).
+    const sOnReveal = (ev: any) => sRevealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token, peerName: ev.peer_name })
+    const qOnReveal = (ev: any) => qRevealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token, peerName: ev.peer_name })
+
+    // 2) S reveals first → awaiting (W nudges Q).
+    const sFirst = await sRevealer.revealEcho(relayEchoId)
+    expect(sFirst).toEqual({ state: 'awaiting_peer' })
+
+    // 3) Q reveals → mutual. Q learns S synchronously; W posts back to complete S.
+    const qPledgeId = qPledge.list()[0]!.id
+    const qOut = await qRevealer.revealPledge(qPledgeId)
+    expect(qOut).toEqual({ state: 'connected' })
+
+    // 4) Assert both connected + identity crossing + 3-way warmth.
+    expect(sEcho.get(relayEchoId)!.peer_masked).toBe('小Q')   // S now sees Q
+    expect(sSeek.get(intent_id)!.status).toBe('connected')
+    expect(qPledge.get(qPledgeId)!.peer_revealed_at).not.toBeNull()   // Q connected too
+    expect(w3way).toBe(1)   // W's owner gets a SINGLE 3-way warmth ping
+  })
+})
+
+describe('forwarding hop — spec-#1 compatibility', () => {
+  it('an old-style MatchReceipt (no forwarded) parses fine', () => {
+    const r = MatchReceiptSchema.parse({ intent_id: 'i1', match: 'yes', blurb: 'x' })
+    expect(r.forwarded).toBeUndefined()
+  })
+  it('an old IntentCard (no hop) safeParses and lands hop=1', () => {
+    const p = IntentCardSchema.safeParse({ intent_id: 'i1', kind: 'seek', topic: 't', expires_at: '2026-07-15T01:00:00.000Z' })
+    expect(p.success).toBe(true)
+    expect(p.success && p.data.hop).toBe(1)
+  })
+  it('a forwarded field is stripped by the OLD MatchReceipt shape (no error)', () => {
+    // Simulate an old seeker: parse with a schema that omits `forwarded`.
+    const OldReceipt = z.object({ intent_id: z.string(), match: z.enum(['yes', 'no']), blurb: z.string().optional() })
+    const r = OldReceipt.parse({ intent_id: 'i1', match: 'yes', blurb: 'x', forwarded: [{ blurb: 'y', degree: 2, relay_token: 'T' }] })
+    expect((r as any).forwarded).toBeUndefined()
   })
 })
