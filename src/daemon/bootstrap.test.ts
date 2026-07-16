@@ -1123,6 +1123,96 @@ describe('bootstrap agent-social M1 wiring', () => {
     }
   })
 
+  // spec #2 forwarding-hop — the forwarder + relay reconciler are wired into
+  // the daemon. Scoped to the intermediary surface (the full S→W→Q path is the
+  // Task 8 e2e): (a) /a2a/reveal accepts a relay leg (relay_token in body)
+  // without 400/500 — proves socialOnReveal tries the reconciler first, then
+  // falls through; (b) an inbound card at the hop ceiling (hop:2) is TERMINAL —
+  // the MatchReceipt carries no `forwarded`, even though a downstream peer is
+  // registered (the cap, not empty targets, is what stops the forward). Judge
+  // routed through a local openai SSE mock so the answer path is deterministic.
+  it('wires the forwarder + relay reconciler: hop:2 is terminal (no forwarded) + /a2a/reveal accepts a relay leg', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-fwd-'))
+    const port = 19908
+    const openaiMock = serveMockOpenai('{"match":"no"}')
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'openai',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: `http://127.0.0.1:${openaiMock.port}/v1`,
+        openaiModel: 'test-model',
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      const senderKey = 'sender-inbound-key-abc123'   // ≥16 chars (registry rule)
+      // The sender S (as W sees it) — authenticates the inbound /a2a/intent.
+      boot.a2aDeps.registry.add({
+        id: 'ccs', name: '小S', url: 'http://127.0.0.1:1/a2a',
+        inbound_api_key: senderKey, outbound_api_key: 'unused',
+        capabilities: [], paused: false, transport: 'push',
+      })
+      // A downstream peer W COULD forward to — present so the terminal assertion
+      // isolates the hop cap (not merely an empty target list). Unreachable url;
+      // it must NOT be contacted at hop:2.
+      boot.a2aDeps.registry.add({
+        id: 'ccq', name: '小Q', url: 'http://127.0.0.1:1/a2a',
+        inbound_api_key: 'downstream-inbound-key-xyz', outbound_api_key: 'unused-q',
+        capabilities: [], paused: false, transport: 'push',
+      })
+
+      // (b) hop:2 card → terminal: the receipt has no `forwarded`.
+      const intentRes = await fetch(`http://127.0.0.1:${port}/a2a/intent`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${senderKey}` },
+        body: JSON.stringify({
+          agent_id: 'ccs',
+          card: {
+            intent_id: 'fwd-terminal-1', kind: 'seek', topic: '找摄影搭子', hop: 2,
+            expires_at: new Date(Date.now() + 600_000).toISOString(),
+          },
+        }),
+      })
+      expect(intentRes.status).toBe(200)
+      const receipt = await intentRes.json() as { match: string; forwarded?: unknown }
+      expect(receipt.match).toBe('no')
+      expect(receipt.forwarded).toBeUndefined()
+
+      // (a) a relay leg (relay_token present) → 200, no 400/500. No relay row
+      // exists for this token, so the reconciler returns null and the endpoint
+      // revealer answers { mutual:false } — the point is the wiring accepts it.
+      const revealRes = await fetch(`http://127.0.0.1:${port}/a2a/reveal`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${senderKey}` },
+        body: JSON.stringify({ agent_id: 'ccs', intent_id: 'fwd-terminal-1', relay_token: 'no-such-token' }),
+      })
+      expect(revealRes.status).toBe(200)
+      expect(await revealRes.json()).toMatchObject({ mutual: false })
+    } finally {
+      openaiMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
   // I1 regression — when the SEEKER reveals FIRST, mutual completes via the
   // inbound /a2a/reveal (onInboundReveal's echo branch), which only holds the
   // peer's agent_id. The wired socialOnReveal must swap the echo's masked

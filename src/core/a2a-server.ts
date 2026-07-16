@@ -85,6 +85,10 @@ export interface IntentConfirmEvent {
 export interface RevealEvent {
   agent_id: string
   intent_id: string
+  /** spec #2: present when this reveal is a 2-hop relay leg addressed to an intermediary. */
+  relay_token?: string
+  /** spec #2: the OTHER endpoint's display name, handed over by the intermediary on the mutual instant. */
+  peer_name?: string
 }
 
 export interface AuthFailedEvent {
@@ -354,7 +358,7 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
       if (!opts.onReveal) return new Response(JSON.stringify({ error: 'reveal_not_supported' }), { status: 501 })
 
-      let body: { agent_id?: unknown; intent_id?: unknown }
+      let body: { agent_id?: unknown; intent_id?: unknown; relay_token?: unknown; peer_name?: unknown }
       try {
         body = await req.json() as typeof body
       } catch {
@@ -383,7 +387,12 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
       }
       try {
-        const result = await opts.onReveal({ agent_id: agent.id, intent_id: body.intent_id })
+        // `agent_id` stays the verified Bearer `agent.id` — client-supplied
+        // agent_id is never trusted as the acting identity. relay_token/peer_name
+        // are display/routing metadata the intermediary provides.
+        const relayToken = typeof body.relay_token === 'string' && body.relay_token ? body.relay_token : undefined
+        const peerName = typeof body.peer_name === 'string' && body.peer_name ? body.peer_name : undefined
+        const result = await opts.onReveal({ agent_id: agent.id, intent_id: body.intent_id, relay_token: relayToken, peer_name: peerName })
         return new Response(JSON.stringify(result), { status: 200 })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)

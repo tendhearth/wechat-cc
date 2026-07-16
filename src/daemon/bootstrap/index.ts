@@ -73,8 +73,13 @@ import { makeSeekStore } from '../../core/social-seek-store'
 import { makeEchoStore } from '../../core/social-echo-store'
 import { makePledgeStore } from '../../core/social-pledge-store'
 import { makeRevealer, type Revealer, type RevealBeat, type NotifyCtx, type PeerIdentity } from '../../core/social-reveal'
+import { makeForwarder } from '../../core/social-forwarder'
+import { makeRelayStore } from '../../core/social-relay-store'
+import { makeSeenIntentStore } from '../../core/social-seen-intent-store'
+import { makeRelayReconciler } from '../../core/social-relay-reveal'
 import { intentUrl, revealUrl } from '../../core/a2a-delegate'
 import { MatchReceiptSchema } from '../../core/a2a-intent'
+import { randomUUID } from 'node:crypto'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
@@ -1347,6 +1352,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       const seekStore = makeSeekStore(deps.db)
       const echoStore = makeEchoStore(deps.db)
       const pledgeStore = makePledgeStore(deps.db)
+      // spec #2 forwarding: the intermediary's durable relay rows + the
+      // loop-prevention seen-intent dedup.
+      const relayStore = makeRelayStore(deps.db)
+      const seenIntentStore = makeSeenIntentStore(deps.db)
       socialSeekStore = seekStore
       socialEchoStore = echoStore
       socialPledgeStore = pledgeStore
@@ -1375,26 +1384,69 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       })
 
       // Outbound reveal POST to a peer's /a2a/reveal. null on unreachable/unknown.
-      const postPeerReveal = async (agentId: string, intentId: string): Promise<{ mutual: boolean; identity?: PeerIdentity } | null> => {
+      // relayToken addresses a 2-hop relay leg (routed to the intermediary).
+      const postPeerReveal = async (agentId: string, intentId: string, relayToken?: string): Promise<{ mutual: boolean; identity?: PeerIdentity } | null> => {
         const hand = a2aRegistry.get(agentId)
         if (!hand) return null
-        const r = await a2aClient.send({ url: revealUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, intent_id: intentId } })
+        const r = await a2aClient.send({ url: revealUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, intent_id: intentId, ...(relayToken ? { relay_token: relayToken } : {}) } })
         if (!r.ok) return null
         return r.response as { mutual: boolean; identity?: PeerIdentity }
       }
 
+      // Fire-and-forget reveal POST used by the relay reconciler's complete/nudge
+      // deps — posts to a peer's /a2a/reveal with arbitrary relay fields. Never
+      // throws to the reconciler (fail-closed; the row is durable so a lost post
+      // is recoverable by a later retry from either endpoint).
+      const postReveal = (agentId: string, body: { intent_id: string; relay_token?: string; peer_name?: string }): void => {
+        const hand = a2aRegistry.get(agentId)
+        if (!hand) return
+        void a2aClient.send({ url: revealUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
+          .catch(err => deps.log('SOCIAL_REC', `relay reveal post failed intent=${body.intent_id} agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`))
+      }
+
       const revealer = makeRevealer({ echoStore, pledgeStore, seekStore, postPeerReveal, selfIdentity, notify })
       socialRevealer = revealer
+
+      // spec #2: the intermediary's (介绍人 / W) reveal reconciler. Both endpoints
+      // reveal TO W; W pivots the two legs on the durable social_relay row and
+      // crosses their identities (resolved from W's OWN registry, never sent
+      // across a hop). Row-driven → survives a W restart.
+      const relayReconciler = makeRelayReconciler({
+        relayStore,
+        identityOf: (id) => { const a = a2aRegistry.get(id); return a ? { name: a.name, url: a.url } : null },
+        completeUpstream: (upstreamId, intentId, relayToken, downstreamIdentity) =>
+          postReveal(upstreamId, { intent_id: intentId, relay_token: relayToken, peer_name: downstreamIdentity.name }),
+        completeDownstream: (downstreamId, intentId, upstreamIdentity) =>
+          postReveal(downstreamId, { intent_id: intentId, peer_name: upstreamIdentity.name }),
+        nudge: (agentId, intentId, relayToken) =>
+          postReveal(agentId, { intent_id: intentId, ...(relayToken ? { relay_token: relayToken } : {}) }),
+        notify3way: (_intentId, _upstream, downstream) => {
+          // 介绍人 warmth: only W's own owner is told — telling W leaks nothing
+          // extra (W already proxied the reveal). S/Q get their own beats via the
+          // complete* posts back to their daemons (which notify their own owners).
+          const op = resolveOperatorChatId()
+          if (op && sendAssistantText) void sendAssistantText(op, `🎉 你把朋友和${downstream.name}牵上线了`)
+        },
+      })
+
       socialOnReveal = async (ev) => {
-        const result = revealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id })
-        // I1: when THIS side revealed FIRST (the seeker), mutual completes here
-        // in the echo branch, which only holds the peer's agent_id — so the
-        // echo's peer_masked would otherwise stay masked ("第 N 度的某人")
-        // forever. Swap in the peer's real name from the registry, mirroring
-        // exactly how the `notify` closure resolves a peer name. Harmless in the
-        // pledge case: no echo row with that id ⇒ the UPDATE touches 0 rows. A
-        // registry/store hiccup must never break the reveal response.
-        if (result.mutual) {
+        // First: is this a relay leg addressed to US as the intermediary? The
+        // reconciler resolves via a social_relay row; null ⇒ not ours, fall through.
+        const relayResult = relayReconciler.onRelayReveal({ callerAgentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token })
+        if (relayResult) return relayResult
+
+        // Otherwise WE are an endpoint: mark our own echo/pledge. A relay inbound
+        // (relay_token present, or peer_name handed over on mutual) drives the
+        // relay branch of onInboundReveal.
+        const result = revealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token, peerName: ev.peer_name })
+        // I1: when THIS side revealed FIRST (the seeker) on a DIRECT echo, mutual
+        // completes here in the echo branch, which only holds the peer's agent_id
+        // — so the echo's peer_masked would otherwise stay masked ("第 N 度的某人")
+        // forever. Swap in the peer's real name from the registry. The relay
+        // branch already swapped peer_name in when present, so only swap the
+        // DIRECT case (no relay_token/peer_name) to avoid clobbering it with W's
+        // name. A registry/store hiccup must never break the reveal response.
+        if (result.mutual && !ev.relay_token && !ev.peer_name) {
           try {
             const name = a2aRegistry.get(ev.agent_id)?.name
             if (name) echoStore.setRevealedIdentity(`${ev.intent_id}:${ev.agent_id}`, name)
@@ -1405,9 +1457,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
         return result
       }
 
-      // Answer path: when THIS bot answers a peer's wish with match:'yes', record
-      // a pledge so it can reveal back later. Wraps makeAnswerIntent's receipt.
-      socialOnIntent = async (event) => {
+      // Answer path: the spine's judge + pledge-on-yes is the LOCAL answer. The
+      // forwarder wraps it with the 2-hop fan-out — judge locally, then (within
+      // the hop cap + not-already-seen) forward the hop+1 card to OUR own paired
+      // peers (minus the sender), minting a relay per downstream yes and
+      // aggregating their degree-2 echoes onto the response.
+      const answerLocally = async (event: import('../../core/a2a-server').IntentEvent): Promise<import('../../core/a2a-intent').MatchReceipt> => {
         const receipt = await answerIntent(event)
         if (receipt.match === 'yes') {
           try {
@@ -1418,6 +1473,42 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
         }
         return receipt
       }
+      socialOnIntent = makeForwarder({
+        answerLocally,
+        // Forward to our OWN paired peers, minus the sender; same cap as discover.
+        // Guarded: a registry lookup failure must NOT reject the whole /a2a/intent
+        // — W still returns its own local match (fail-closed: forward nothing).
+        forwardTargets: (excludeAgentId) => {
+          try { return a2aRegistry.list().filter(a => !a.paused && a.id !== excludeAgentId).slice(0, 5) }
+          catch (err) {
+            deps.log('SOCIAL_REC', `forwardTargets lookup failed exclude=${excludeAgentId}: ${err instanceof Error ? err.message : String(err)}`)
+            return []
+          }
+        },
+        forwardSend: async (hand, card) => {
+          const r = await a2aClient.send({ url: intentUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, card } })
+          return r.ok ? MatchReceiptSchema.parse(r.response) : null
+        },
+        recordRelay: (intentId, upstreamAgentId, downstreamAgentId) => {
+          // upstreamAgentId = the sender (event.agent.id), so W can later resolve
+          // S's identity from its own registry. NOT SOCIAL_SELF_ID.
+          const relayToken = randomUUID()
+          try {
+            relayStore.create({ id: `${intentId}:${relayToken}`, intentId, relayToken, upstreamAgentId, downstreamAgentId })
+          } catch (err) {
+            deps.log('SOCIAL_REC', `relay record failed intent=${intentId} downstream=${downstreamAgentId}: ${err instanceof Error ? err.message : String(err)}`)
+          }
+          return relayToken
+        },
+        markSeen: (intentId, expiresAt) => {
+          // The forwarder core swallows a markSeen throw (empty catch); log it here
+          // so a dedup-write failure is observable at the wiring seam.
+          try { seenIntentStore.markSeen({ intentId, expiresAt }) }
+          catch (err) { deps.log('SOCIAL_REC', `seen mark failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
+        },
+        hasSeen: (intentId) => { try { return seenIntentStore.hasSeen(intentId) } catch { return false } },
+        hopCap: 2,
+      })
 
       const broker = makeBroker({
         policy: socialPolicy,
@@ -1435,10 +1526,14 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
         },
         recordEcho: (e) => {
           // A persistence error must never undo a network action already done.
+          // A degree-2 relay echo (peerAgentId null) is keyed by intent:relayVia:
+          // relayToken (S may hold several relay echoes per intent); a direct echo
+          // by intent:peerAgentId.
           try {
-            echoStore.create({ id: `${e.intentId}:${e.peerAgentId}`, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId })
+            const id = e.peerAgentId != null ? `${e.intentId}:${e.peerAgentId}` : `${e.intentId}:${e.relayVia}:${e.relayToken}`
+            echoStore.create({ id, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId, relayVia: e.relayVia, relayToken: e.relayToken })
           } catch (err) {
-            deps.log('SOCIAL_REC', `echo record failed intent=${e.intentId} peer=${e.peerAgentId}: ${err instanceof Error ? err.message : String(err)}`)
+            deps.log('SOCIAL_REC', `echo record failed intent=${e.intentId} peer=${e.peerAgentId ?? e.relayVia}: ${err instanceof Error ? err.message : String(err)}`)
           }
           if (e.first) notify('first_echo', { intentId: e.intentId })
         },

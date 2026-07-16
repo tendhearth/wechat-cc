@@ -413,6 +413,21 @@ describe('a2a-server', () => {
       } finally { await server.stop() }
     })
 
+    it('forwards relay_token + peer_name from the body to onReveal (verified agent_id preserved)', async () => {
+      const onReveal = vi.fn(async (_e: import('./a2a-server').RevealEvent) => ({ mutual: false }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onReveal })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/reveal`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', relay_token: 'T', peer_name: '小Q' }),
+        })
+        expect(res.status).toBe(200)
+        expect(onReveal).toHaveBeenCalledWith(expect.objectContaining({ agent_id: 'alpha', intent_id: 'i1', relay_token: 'T', peer_name: '小Q' }))
+      } finally { await server.stop() }
+    })
+
     it('returns 501 when this machine is not wired for reveal (no onReveal)', async () => {
       const alphaRec = rec('alpha')
       const { server, baseUrl } = await startServer({ agents: [alphaRec] })

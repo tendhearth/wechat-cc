@@ -5,7 +5,8 @@ import type { MatchReceipt } from './a2a-intent'
 import { gateOutbound } from './a2a-disclosure'
 
 export interface EchoRecord {
-  intentId: string; peerAgentId: string; peerMasked: string; degree: number; content: string; first: boolean
+  intentId: string; peerAgentId: string | null; peerMasked: string; degree: number; content: string; first: boolean
+  relayVia?: string; relayToken?: string
 }
 
 export interface BrokerDeps {
@@ -70,6 +71,17 @@ export function makeBroker(deps: BrokerDeps) {
           deps.recordEcho({
             intentId, peerAgentId: hand.id, peerMasked: '第 1 度的某人', degree: 1,
             content: r.blurb ? sanitizeBlurb(r.blurb) : '', first: echoCount === 1,
+          })
+        }
+        // spec #2: degree-2 echoes this peer forwarded on our behalf. peer_agent_id
+        // is null (we can't reach the downstream peer); the relay is keyed to the
+        // intermediary (hand.id) + the opaque relay_token.
+        for (const fe of r?.forwarded ?? []) {
+          echoCount++
+          deps.recordEcho({
+            intentId, peerAgentId: null, relayVia: hand.id, relayToken: fe.relay_token,
+            peerMasked: '第 2 度的某人', degree: fe.degree,
+            content: sanitizeBlurb(fe.blurb), first: echoCount === 1,
           })
         }
       } catch {

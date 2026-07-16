@@ -24,7 +24,7 @@ function stubDeps(over: Partial<Parameters<typeof makeBroker>[0]> = {}) {
 
 describe('makeBroker.seek — non-blocking', () => {
   it('returns { intent_id } after the sync leg, BEFORE any echo is recorded', async () => {
-    const recorded: string[] = []
+    const recorded: Array<string | null> = []
     const d = deferred()
     const broker = makeBroker(stubDeps({ recordEcho: (e) => { recorded.push(e.peerAgentId) }, schedule: d.schedule }))
     const out = await broker.seek('找摄影搭子')
@@ -69,7 +69,7 @@ describe('makeBroker.seek — non-blocking', () => {
   })
 
   it('one bad peer does not abort the forage — the good peer still records', async () => {
-    const recorded: string[] = []
+    const recorded: Array<string | null> = []
     const d = deferred()
     const bad = { id: 'bad', name: 'BAD' } as any
     const broker = makeBroker(stubDeps({
@@ -141,5 +141,19 @@ describe('makeBroker.seek — non-blocking', () => {
     }))
     await broker.seek('找摄影搭子', { city: 'Beijing' }); await d.run()
     expect(sentCard.city).toBeUndefined()
+  })
+
+  it('records degree-2 relay echoes from a response forwarded[] (spec #2)', async () => {
+    const recorded: any[] = []
+    const d = deferred()
+    const broker = makeBroker(stubDeps({
+      send: async () => ({ intent_id: 'x', match: 'no' as const, forwarded: [{ blurb: '经W的回声', degree: 2, relay_token: 'T' }] }),
+      recordEcho: (e: any) => recorded.push(e),
+      schedule: d.schedule,
+    }))
+    const out = await broker.seek('找摄影搭子')
+    await d.run()
+    const relay = recorded.find(r => r.relayToken === 'T')
+    expect(relay).toMatchObject({ intentId: out.intent_id, peerAgentId: null, relayVia: expect.any(String), relayToken: 'T', degree: 2 })
   })
 })
