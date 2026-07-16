@@ -2738,6 +2738,7 @@ describe('internal-api', () => {
       id: 'e1', seek_id: 'k1', peer_masked: 'p***', degree: 1,
       content: 'hi there', status: 'pending', created_at: 't',
       peer_agent_id: 'ccb', self_revealed_at: null, peer_revealed_at: null,
+      relay_via: null, relay_token: null,
     }
 
     async function startWithSocial(

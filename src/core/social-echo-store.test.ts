@@ -30,4 +30,22 @@ describe('makeEchoStore', () => {
     expect(r.peer_revealed_at).toBe('2026-07-15T00:01:00.000Z')
     expect(r.peer_masked).toBe('小B')
   })
+
+  it('creates a relay (degree-2) echo with a null peer + relay_via/relay_token, gettable by relay id', () => {
+    const db = openDb({ path: ':memory:' })
+    const e = makeEchoStore(db)
+    // Relay echo id is intent_id:relay_via:relay_token; peer_agent_id is null.
+    e.create({ id: 'i1:ccw:tok', seekId: 'i1', peerMasked: '第 2 度的某人', degree: 2, content: '经W转发的回声', peerAgentId: null, relayVia: 'ccw', relayToken: 'tok' })
+    const r = e.get('i1:ccw:tok')!
+    expect(r.peer_agent_id).toBeNull()
+    expect(r.relay_via).toBe('ccw')
+    expect(r.relay_token).toBe('tok')
+    expect(r.degree).toBe(2)
+    // A direct echo still stores relay_* as null.
+    e.create({ id: 'i1:ccb', seekId: 'i1', peerMasked: '第 1 度的某人', degree: 1, content: 'x', peerAgentId: 'ccb' })
+    const d = e.get('i1:ccb')!
+    expect(d.peer_agent_id).toBe('ccb')
+    expect(d.relay_via).toBeNull()
+    expect(d.relay_token).toBeNull()
+  })
 })
