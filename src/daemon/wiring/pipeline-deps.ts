@@ -382,12 +382,19 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         // normal agent turn. Try the echo side first; a null lookup means the
         // id is a pledge (I answered THEIR wish), so fall back to revealPledge.
         // Anything that isn't a reveal command falls through to a normal turn.
+        // T9 — when BOTH lookups come back null (typo / expired / already-
+        // connected id), the operator previously got silence; now a gentle
+        // one-line "not found" reply so a mistyped id doesn't look like the
+        // bot ignored them.
         dispatch: async (msg) => {
           if (boot.social && isAdmin(msg.chatId)) {
             const cmd = parseRevealCommand(msg.text)
             if (cmd) {
-              const r = await boot.social.revealer.revealEcho(cmd.id)
-              if (r === null) await boot.social.revealer.revealPledge(cmd.id)
+              const echoOutcome = await boot.social.revealer.revealEcho(cmd.id)
+              const outcome = echoOutcome === null ? await boot.social.revealer.revealPledge(cmd.id) : echoOutcome
+              if (outcome === null && boot.sendAssistantText) {
+                void boot.sendAssistantText(msg.chatId, `没找到「${cmd.id}」这条,可能已过期或已牵线。`)
+              }
               return
             }
           }

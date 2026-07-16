@@ -51,7 +51,7 @@ import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
 import { bundledPluginsDir } from '../plugins/paths'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { buildDelegateDispatch, type DelegateDispatch } from './delegate'
-import { makeSendAssistantText } from './fallback-reply'
+import { makeSendAssistantText, type SendAssistantText } from './fallback-reply'
 import { applyFinishSeek } from './social-finish-seek'
 import { findCodexBinary } from '../../lib/find-codex-binary'
 import { checkCodexVersion } from './codex-version-check'
@@ -379,6 +379,15 @@ export interface Bootstrap {
    * Mutations (e.g. setBotName) are visible to all closures that hold this ref.
    */
   agentConfig: AgentConfig
+  /**
+   * Fallback-reply sender — same closure the coordinator's fallback path
+   * uses (see `sendAssistantText` local in `buildBootstrap`). Exposed here
+   * so wiring seams OUTSIDE the coordinator turn loop (e.g. pipeline-deps'
+   * "揭晓 <id>" reveal dispatch) can push a one-off operator-facing message
+   * without a full agent turn. `undefined` only when no ilink.sendMessage
+   * was wired (rare test/embedding harnesses) — see makeSendAssistantText.
+   */
+  sendAssistantText?: SendAssistantText
   /**
    * Agent-social M1 (T7b-core) — present only when `social_enabled` +
    * `social_disclosure_policy` are both configured (and at least one
@@ -1525,6 +1534,16 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
           catch (err) { deps.log('SOCIAL_REC', `sow failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
         },
         recordEcho: (e) => {
+          // M2 — `e.first` is the broker's "first yes of THIS forage run"
+          // flag, computed from an in-memory counter local to one forage()
+          // call. On a restart-resume re-forage (boot-scan below re-runs
+          // forage() for any seek still `foraging`), that counter restarts
+          // at 0 even though the echo row may already exist from BEFORE the
+          // crash — re-firing the "有回声了" beat for an echo the operator
+          // already saw. Ask the durable store instead: this is the seek's
+          // first-ever echo iff it currently has zero echo rows, checked
+          // BEFORE the (possibly-duplicate) insert below.
+          const isSeekFirstEcho = echoStore.listForSeek(e.intentId).length === 0
           // A persistence error must never undo a network action already done.
           // A degree-2 relay echo (peerAgentId null) is keyed by intent:relayVia:
           // relayToken (S may hold several relay echoes per intent); a direct echo
@@ -1535,7 +1554,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
           } catch (err) {
             deps.log('SOCIAL_REC', `echo record failed intent=${e.intentId} peer=${e.peerAgentId ?? e.relayVia}: ${err instanceof Error ? err.message : String(err)}`)
           }
-          if (e.first) notify('first_echo', { intentId: e.intentId })
+          if (isSeekFirstEcho) notify('first_echo', { intentId: e.intentId })
         },
         finishSeek: (intentId, _status, peersAsked) => {
           // M1: authoritative + non-downgrading — ignore the broker-passed
@@ -1742,6 +1761,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     a2aServer,
     yiHub,
     agentConfig: configuredAgent,
+    sendAssistantText,
     /**
      * Agent-social M1 (T7b-core) — late-bound into internal-api by main.ts
      * (mirrors a2aDeps/setA2A). Undefined when social_enabled +

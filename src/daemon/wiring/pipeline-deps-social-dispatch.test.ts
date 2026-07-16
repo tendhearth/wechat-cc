@@ -39,13 +39,16 @@ function writeAccess(admins: string[]): void {
 
 // A revealer stub that records calls and lets the test choose whether the echo
 // lookup "exists" (non-null) so the pledge fallback path is exercised.
-function makeRevealerStub(echoReturns: 'ok' | 'null') {
+// `pledgeReturns` additionally lets a test drive BOTH lookups to null (T9:
+// neither an echo nor a pledge matched — a typo'd/expired/already-connected
+// id), which must NOT stay silent.
+function makeRevealerStub(echoReturns: 'ok' | 'null', pledgeReturns: 'ok' | 'null' = 'ok') {
   const calls: Array<[string, string]> = []
   return {
     calls,
     revealer: {
       revealEcho: vi.fn(async (id: string) => { calls.push(['echo', id]); return echoReturns === 'ok' ? { state: 'connected' as const } : null }),
-      revealPledge: vi.fn(async (id: string) => { calls.push(['pledge', id]); return { state: 'awaiting_peer' as const } }),
+      revealPledge: vi.fn(async (id: string) => { calls.push(['pledge', id]); return pledgeReturns === 'ok' ? { state: 'awaiting_peer' as const } : null }),
       onInboundReveal: vi.fn(() => ({ mutual: false })),
     },
   }
@@ -59,6 +62,7 @@ describe('pipeline-deps social dispatch seam (揭晓 reveal)', () => {
   function setup(social: Bootstrap['social']) {
     const db = openTestDb()
     const coordinatorDispatch = vi.fn(async (_msg: InboundMsg) => {})
+    const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
     const boot = {
       sessionManager: { isInFlight: vi.fn(() => false) } as unknown as Bootstrap['sessionManager'],
       sessionStore: {} as Bootstrap['sessionStore'],
@@ -75,6 +79,7 @@ describe('pipeline-deps social dispatch seam (揭晓 reveal)', () => {
       a2aDeps: undefined,
       a2aServer: null,
       agentConfig: { bot_name: null } as unknown as Bootstrap['agentConfig'],
+      sendAssistantText,
       social,
     } as unknown as Bootstrap
 
@@ -86,7 +91,7 @@ describe('pipeline-deps social dispatch seam (揭晓 reveal)', () => {
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
       { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
     )
-    return { pipelineDeps, coordinatorDispatch }
+    return { pipelineDeps, coordinatorDispatch, sendAssistantText }
   }
 
   // Minimal social object satisfying Bootstrap['social'] for the seam (only
@@ -105,18 +110,37 @@ describe('pipeline-deps social dispatch seam (揭晓 reveal)', () => {
 
   it('a "揭晓 <id>" from the admin chat triggers revealEcho and is NOT dispatched as a normal turn', async () => {
     const { calls, revealer } = makeRevealerStub('ok')
-    const { pipelineDeps, coordinatorDispatch } = setup(socialWith(revealer))
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(socialWith(revealer))
     await pipelineDeps.dispatch.coordinator.dispatch(baseMsg)
     expect(calls).toEqual([['echo', 'i1:ccb']])
     expect(coordinatorDispatch).not.toHaveBeenCalled()
+    // T9 — the id WAS found (revealEcho succeeded), so no "not found" reply.
+    expect(sendAssistantText).not.toHaveBeenCalled()
   })
 
   it('falls back to revealPledge when the echo lookup returns null', async () => {
     const { calls, revealer } = makeRevealerStub('null')
-    const { pipelineDeps, coordinatorDispatch } = setup(socialWith(revealer))
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(socialWith(revealer))
     await pipelineDeps.dispatch.coordinator.dispatch(baseMsg)
     expect(calls).toEqual([['echo', 'i1:ccb'], ['pledge', 'i1:ccb']])
     expect(coordinatorDispatch).not.toHaveBeenCalled()
+    // The pledge fallback DID find it, so still no "not found" reply.
+    expect(sendAssistantText).not.toHaveBeenCalled()
+  })
+
+  // T9 — a typo'd/expired/already-connected id matches neither the echo NOR
+  // the pledge side. Previously the message was silently consumed; now the
+  // operator gets a one-line "not found" reply instead of dead silence.
+  it('replies with a "not found" message when BOTH revealEcho and revealPledge return null', async () => {
+    const { calls, revealer } = makeRevealerStub('null', 'null')
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(socialWith(revealer))
+    await pipelineDeps.dispatch.coordinator.dispatch(baseMsg)
+    expect(calls).toEqual([['echo', 'i1:ccb'], ['pledge', 'i1:ccb']])
+    expect(coordinatorDispatch).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    const [chatId, text] = sendAssistantText.mock.calls[0]!
+    expect(chatId).toBe('op_chat')
+    expect(text).toContain('i1:ccb')
   })
 
   it('a non-command message falls through to a normal turn', async () => {

@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os'
 import { buildBootstrap, resolveAdminChatId } from './bootstrap'
 import { saveAgentConfig } from '../lib/agent-config'
 import { openTestDb } from '../lib/db'
+import { makeSeekStore } from '../core/social-seek-store'
+import { makeEchoStore } from '../core/social-echo-store'
 import { TIER_PROFILES } from '../core/user-tier'
 import { MANIFEST_FILE } from './plugins/paths'
 import type { Access } from '../lib/access'
@@ -1386,6 +1388,109 @@ describe('bootstrap agent-social M1 wiring', () => {
       expect(out.intent_id.length).toBeGreaterThan(0)
     } finally {
       openaiMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
+  // M2 — restart-mid-forage must not re-fire the "有回声了" (first_echo) beat.
+  // Boot-time resume-scan (bootstrap/index.ts, just after the a2a server
+  // starts) re-runs forage() for any social_seek row still `foraging` — a
+  // seek whose background leg never reached finishSeek before the process
+  // died. The broker's own `e.first` flag is a per-forage-run in-memory
+  // counter, so a resumed run that echoes the SAME peer again recomputes
+  // `first: true` even though that echo row already exists from before the
+  // crash (the recordEcho wiring's dup-PK insert just gets caught and
+  // swallowed) — re-notifying the operator about an echo they already saw.
+  // seekResume below reproduces exactly that: pre-seeded `foraging` +
+  // pre-existing echo row, so its resume forage must NOT fire first_echo.
+  // seekFresh is the control: pre-seeded `foraging` with NO echo yet, so its
+  // resume forage is a genuine first echo and MUST fire the beat.
+  it('resume forage after a restart does not re-fire first_echo for a seek that already has an echo, but does for one that does not', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-resume-'))
+    const port = 19909
+    const openaiMock = serveMockOpenai('{"violation": false, "redacted": "找搭子"}')
+    // Stand-in peer — always answers "yes" to whatever intent it's asked
+    // about, echoing the caller's intent_id back so the MatchReceipt parses.
+    const peerMock = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: async (req) => {
+        const body = await req.json() as { card: { intent_id: string } }
+        return Response.json({ intent_id: body.card.intent_id, match: 'yes', blurb: '摄影爱好者' })
+      },
+    })
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    const seekResume = 'seek-resume-dup'    // already has an echo — the restart-duplicate case
+    const seekFresh = 'seek-resume-fresh'   // no echo yet — resume's genuine first echo
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: `http://127.0.0.1:${openaiMock.port}/v1`,
+        openaiModel: 'test-model',
+        a2a_agents: [{
+          id: 'ccb', name: '小B', url: `http://127.0.0.1:${peerMock.port}/a2a`,
+          inbound_api_key: 'peer-inbound-key-abc123', outbound_api_key: 'peer-outbound-key-xyz',
+          capabilities: [], paused: false, transport: 'push',
+        }],
+      }),
+    )
+    const db = openTestDb()
+    // Seed the "crash mid-forage" state directly (bypassing broker.seek's
+    // real gate/discover round trip, since we only need the terminal DB
+    // state a crashed prior run would have left behind).
+    const seekStore = makeSeekStore(db)
+    const echoStore = makeEchoStore(db)
+    seekStore.create({ id: seekResume, kind: 'seek', topic: '找摄影搭子（续）' })
+    echoStore.create({ id: `${seekResume}:ccb`, seekId: seekResume, peerMasked: '第 1 度的某人', degree: 1, content: '之前的回声', peerAgentId: 'ccb' })
+    seekStore.create({ id: seekFresh, kind: 'seek', topic: '找摄影搭子（新）' })
+
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    const ilink = makeIlinkStub()
+    ;(ilink.sendMessage as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ msgId: 'm1' })
+    try {
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: ilink as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      // Bind an operator chat so notify()'s sendAssistantText call actually
+      // fires (resolveOperatorChatId reads the earliest `conversations` row).
+      boot.conversationStore.upsertIdentity('op_chat', { userId: 'op_chat' })
+
+      // Both resume forages were already scheduled fire-and-forget inside
+      // buildBootstrap; wait for both to settle.
+      await pollFor(() => (echoStore.listForSeek(seekFresh).length > 0 ? true : null))
+      await pollFor(() => (seekStore.get(seekResume)?.status !== 'foraging' ? true : null))
+      await pollFor(() => (seekStore.get(seekFresh)?.status !== 'foraging' ? true : null))
+
+      // seekResume's echo count stays at 1 — the resumed recordEcho's insert
+      // for the same peer hit the dup-PK guard and was swallowed, as before.
+      expect(echoStore.listForSeek(seekResume).length).toBe(1)
+      expect(echoStore.listForSeek(seekFresh).length).toBe(1)
+
+      const sendMessage = ilink.sendMessage as unknown as ReturnType<typeof vi.fn>
+      const firstEchoSends = sendMessage.mock.calls.filter((c: unknown[]) => String(c[1]).includes('有回声了'))
+      // Exactly ONE first_echo beat total: seekFresh's genuine first echo.
+      // seekResume's resumed (duplicate) echo must NOT have re-fired it.
+      expect(firstEchoSends).toHaveLength(1)
+      expect(firstEchoSends[0]?.[0]).toBe('op_chat')
+    } finally {
+      openaiMock.stop()
+      peerMock.stop()
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })
       if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
