@@ -8,10 +8,20 @@
  *   - ConversationCoordinator (mode-aware dispatch entry)
  *   - Bare delegate providers (RFC 03 P4 peer-as-tool)
  *
+ * Boot order inside buildBootstrap(): stores (conversationStore, plugin MCP
+ * specs) → sessions (sessionStore + registerProviders) →
+ * sendAssistantText / recordTurn / coordinator → dispatchDelegate → A2A
+ * infra (registry/client/eventsStore + resolveOperatorChatId) → wireSocial
+ * → wireA2aServer → resumeForaging() → 乙 v2 (yiHub/yiClient) → return.
+ *
  * Helpers extracted for readability:
+ *   - ./types.ts       — BootstrapDeps / Bootstrap interfaces
  *   - ./mcp-specs.ts   — wechat / delegate stdio MCP spec builders
  *   - ./session-paths.ts — per-provider jsonl path resolvers (canResume probes)
  *   - ./delegate.ts    — bare delegate providers + dispatchDelegate
+ *   - ./providers.ts   — provider registrations (claude/codex/cursor/openai/gemini)
+ *   - ./wire-social.ts — agent-social wiring (seeks/echoes) + boot-resume
+ *   - ./wire-a2a-server.ts — A2A HTTP server + routeA2ANotify + a2a-info.json
  *
  * Imported only by:
  *   - src/daemon/main.ts (production entry)
@@ -20,7 +30,7 @@
 import { SessionManager } from '../../core/session-manager'
 import { tierProfileToClaudeSdkOpts } from '../../core/claude-agent-provider'
 import type { TierProfile } from '../../core/user-tier'
-import { resolveTier, TIER_PROFILES } from '../../core/user-tier'
+import { resolveTier } from '../../core/user-tier'
 import { createConversationCoordinator, type ConversationCoordinator, type TurnRecord } from '../../core/conversation-coordinator'
 import { makeConversationStore, type ConversationStore } from '../../core/conversation-store'
 import { buildSystemPrompt } from '../../core/prompt-builder'
@@ -29,26 +39,21 @@ import { makeResolver } from '../../core/project-resolver'
 import { makeCanUseTool } from '../../core/permission-relay'
 import { capabilitiesFor, capabilityProviderIds, type PermissionMode } from '../../core/capability-matrix'
 import { formatInbound } from '../../core/prompt-format'
-import type { IlinkAdapter } from '../ilink-glue'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import { findOnPath } from '../../lib/util'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
 import { makeSessionStore } from '../../core/session-store'
-import type { Db } from '../../lib/db'
 import { homedir } from 'node:os'
 import { loadAgentConfig, makeMtimeCachedConfigReader, modelForProvider } from '../../lib/agent-config'
-import type { AgentConfig, AgentProviderKind } from '../../lib/agent-config'
 import { loadAccess, setSessionInvalidator, type Access } from '../../lib/access'
 import { loadCompanionConfig, type CompanionConfig } from '../companion/config'
-import { wechatStdioMcpSpec, delegateStdioMcpSpec, buildOpenaiMcpSpecs, type McpStdioSpec } from './mcp-specs'
+import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
 import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
 import { bundledPluginsDir } from '../plugins/paths'
-import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
-import { buildDelegateDispatch, type DelegateDispatch } from './delegate'
-import { makeSendAssistantText, type SendAssistantText } from './fallback-reply'
+import { buildDelegateDispatch } from './delegate'
+import { makeSendAssistantText } from './fallback-reply'
 import { registerProviders } from './providers'
 import { wireSocial } from './wire-social'
 import { wireA2aServer } from './wire-a2a-server'
