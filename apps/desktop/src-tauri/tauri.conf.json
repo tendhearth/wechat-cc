@@ -6,6 +6,7 @@
   "build": {
     "frontendDist": "../src",
     "beforeDevCommand": "bun run dev-server",
+    "beforeBuildCommand": "bun run build-sidecar",
     "devUrl": "http://127.0.0.1:4173"
   },
   "app": {
