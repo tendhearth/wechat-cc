@@ -3,18 +3,13 @@
  * file-survey — a cheap, scripted shallow directory map of the admin's files,
  * for the _overview synthesis (NOT a file search — that's locate-files.ts). Pure
  * (no daemon/cli imports). Returns folder structure + filename samples only;
- * never file contents. Also the single home of `defaultLifeDirs` so the lib
- * synthesis can use it without importing from src/daemon.
+ * never file contents. Callers must supply explicit roots; there are no
+ * implicit Desktop/Documents/Downloads defaults.
  */
 import { readdirSync, statSync, type Dirent } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, sep } from 'node:path'
 import { SKIP_DIRS } from './locate-files'
-
-/** The zero-config default survey/search roots. Single source of truth. */
-export function defaultLifeDirs(home: string = homedir()): string[] {
-  return [join(home, 'Desktop'), join(home, 'Documents'), join(home, 'Downloads')]
-}
 
 export interface FolderSummary {
   path: string        // absolute folder path

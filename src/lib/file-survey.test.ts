@@ -3,7 +3,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { surveyFiles, formatFileSurvey, defaultLifeDirs, DEFAULT_SURVEY_LIMITS } from './file-survey'
+import { surveyFiles, formatFileSurvey, DEFAULT_SURVEY_LIMITS } from './file-survey'
 
 let root: string
 beforeEach(() => {
@@ -95,18 +95,5 @@ describe('formatFileSurvey', () => {
       const out = formatFileSurvey({ folders, truncated: false }, cap)
       expect(out).not.toContain('�')
     }
-  })
-})
-
-describe('defaultLifeDirs', () => {
-  it('is Desktop/Documents/Downloads under home', () => {
-    // defaultLifeDirs returns native fs paths (correct — they're fed straight
-    // into readdirSync elsewhere), so build the expectation with path.join too
-    // rather than hardcoding '/' — on Windows path.join yields '\' separators.
-    expect(defaultLifeDirs('/home/me')).toEqual([
-      join('/home/me', 'Desktop'),
-      join('/home/me', 'Documents'),
-      join('/home/me', 'Downloads'),
-    ])
   })
 })
