@@ -225,6 +225,65 @@ describe('agent-config — A2A fields', () => {
         inbound_api_key: 'wc_1234567890123456', outbound_api_key: 'k', capabilities: ['notify'], paused: false }],
     })).toThrow(/agent id must match/)
   })
+
+  it('round-trips an a2a agent record with proto_version', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-a2a-proto-'))
+    try {
+      saveAgentConfig(dir, {
+        provider: 'claude',
+        dangerouslySkipPermissions: true,
+        autoStart: true,
+        closeStopsDaemon: false,
+        a2a_agents: [
+          {
+            id: 'deploy-bot',
+            name: 'Deploy Bot',
+            url: 'https://deploy.example.com/a2a',
+            inbound_api_key: 'wc_abc1234567890123',
+            outbound_api_key: 'dpb_xyz',
+            capabilities: ['notify'],
+            paused: false,
+            transport: 'push',
+            proto_version: 1,
+          },
+        ],
+      })
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.a2a_agents).toHaveLength(1)
+      expect(loaded.a2a_agents?.[0]?.proto_version).toBe(1)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('loads a2a agent record with absent proto_version as undefined', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-a2a-no-proto-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: true,
+        autoStart: true,
+        closeStopsDaemon: false,
+        a2a_agents: [
+          {
+            id: 'deploy-bot',
+            name: 'Deploy Bot',
+            url: 'https://deploy.example.com/a2a',
+            inbound_api_key: 'wc_abc1234567890123',
+            outbound_api_key: 'dpb_xyz',
+            capabilities: ['notify'],
+            paused: false,
+            transport: 'push',
+          },
+        ],
+      }))
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.a2a_agents).toHaveLength(1)
+      expect(loaded.a2a_agents?.[0]?.proto_version).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('loadAgentConfig — gemini provider', () => {

@@ -1,6 +1,18 @@
 import z from 'zod'
 import { randomUUID } from 'node:crypto'
 
+/**
+ * A2A wire-protocol version, advertised in the agent card
+ * (GET /.well-known/agent.json → `proto_version`).
+ *
+ * Rules:
+ * - Single integer; bumped ONLY on an incompatible wire change.
+ * - A card WITHOUT the field means version 1 (every pre-versioning peer).
+ * - Mismatch = best-effort interop + warn; never refuse (refusal/downgrade
+ *   semantics get designed when a real v2 exists).
+ */
+export const A2A_PROTO_VERSION = 1
+
 export const IntentCardSchema = z.object({
   intent_id: z.string().min(1),
   kind: z.literal('seek'),                 // M1: seek only
