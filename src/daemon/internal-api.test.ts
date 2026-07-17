@@ -2795,13 +2795,26 @@ describe('internal-api', () => {
       expect(await resp.json()).toEqual({ error: 'social_not_wired' })
     })
 
-    it('GET /v1/social/echoes returns the stored echoes', async () => {
+    it('GET /v1/social/echoes returns the stored echoes masked (no peer_agent_id/relay_via/relay_token)', async () => {
       const { port, token } = await startWithSocial({ echoes: [echoRow] })
       const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(resp.status).toBe(200)
-      expect(await resp.json()).toEqual({ echoes: [echoRow] })
+      const json = await resp.json()
+      expect(json).toEqual({
+        echoes: [{
+          id: 'e1', seek_id: 'k1', peer_masked: 'p***', degree: 1,
+          content: 'hi there', status: 'pending', created_at: 't',
+          self_revealed_at: null, peer_revealed_at: null,
+        }],
+      })
+      // echoRow has a set peer_agent_id — assert it (and the other
+      // server-side-only relay fields) never made it into the response.
+      expect(echoRow.peer_agent_id).toBe('ccb')
+      expect(json.echoes[0]).not.toHaveProperty('peer_agent_id')
+      expect(json.echoes[0]).not.toHaveProperty('relay_via')
+      expect(json.echoes[0]).not.toHaveProperty('relay_token')
     })
 
     it('GET /v1/social/echoes returns 503 when deps.social is not wired', async () => {
@@ -3540,6 +3553,35 @@ describe('internal-api request validation', () => {
       expect(typeof body.error).toBe('string')
     })
 
+    it('preview surfaces proto_version + proto_mismatch (missing field defaults to 1)', async () => {
+      // Stub fetchAgentCard to return a card WITHOUT proto_version.
+      const a2aDeps = buildA2ADeps({ cardResult: { name: 'x' } })
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/preview`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ url: 'http://127.0.0.1:19999' }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { proto_version: number; proto_mismatch: boolean }
+      expect(body.proto_version).toBe(1)
+      expect(body.proto_mismatch).toBe(false)
+    })
+
+    it('preview flags a mismatching proto_version', async () => {
+      const a2aDeps = buildA2ADeps({ cardResult: { name: 'x', proto_version: 99 } })
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/preview`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ url: 'http://127.0.0.1:19999' }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { proto_version: number; proto_mismatch: boolean }
+      expect(body.proto_version).toBe(99)
+      expect(body.proto_mismatch).toBe(true)
+    })
+
     it('POST /v1/a2a/install generates inbound_api_key and persists', async () => {
       const a2aDeps = buildA2ADeps()
       const { port, token } = await startWithA2A(a2aDeps)
@@ -3556,6 +3598,39 @@ describe('internal-api request validation', () => {
       expect(a2aDeps.registry.get('new-agent')).not.toBeNull()
       expect(a2aDeps.registry.get('new-agent')!.name).toBe('New Agent')
       expect(a2aDeps.registry.get('new-agent')!.inbound_api_key).toBe(body.inbound_api_key)
+    })
+
+    it('install records the peer proto_version via best-effort card fetch', async () => {
+      const a2aDeps = buildA2ADeps({ cardResult: { name: 'x', proto_version: 1 } })
+      const addSpy = vi.fn(a2aDeps.registry.add)
+      a2aDeps.registry.add = addSpy
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/install`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'new-agent', name: 'New Agent', url: 'http://new.test', outbound_api_key: 'outkey' }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { ok: boolean }
+      expect(body.ok).toBe(true)
+      expect(addSpy).toHaveBeenCalledWith(expect.objectContaining({ proto_version: 1 }))
+    })
+
+    it('install still succeeds (proto_version unset) when the card fetch fails', async () => {
+      const a2aDeps = buildA2ADeps({ cardResult: new Error('ECONNREFUSED') })
+      const addSpy = vi.fn(a2aDeps.registry.add)
+      a2aDeps.registry.add = addSpy
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/install`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'new-agent', name: 'New Agent', url: 'http://new.test', outbound_api_key: 'outkey' }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { ok: boolean }
+      expect(body.ok).toBe(true)
+      expect(addSpy).toHaveBeenCalledTimes(1)
+      expect(addSpy.mock.calls[0]?.[0]).not.toHaveProperty('proto_version')
     })
 
     it('POST /v1/a2a/install fails on duplicate id', async () => {

@@ -13,7 +13,7 @@ export function registerFileTools(server: McpServer, client: InternalApiClient):
     'locate_file',
     {
       title: 'Locate a file on the owner’s computer',
-      description: '【管理员】在主人电脑的常用位置（桌面/文档/下载，加上你在 locations.md 里记过的目录）找文件。query=关键词；mode 默认 name（只匹配文件名/路径，快、不读内容），文件名找不到再用 mode=content（在内容里搜，慢）；mode=browse 列出某目录大致有什么。roots 可选：传你已知的绝对路径目录会优先搜。返回候选路径+大小+修改时间（不含文件内容）——选中后用 Read 打开，并把「这是什么 → 路径」记进 locations.md；都找不到就在微信问主人一句它一般放哪，再把那个目录记进 locations.md。',
+      description: '【管理员】只在主人明确指定的目录，或 locations.md 已记录的目录中找文件；绝不默认扫描桌面/文档/下载。query=关键词；mode 默认 name（只匹配文件名/路径，快、不读内容），文件名找不到再用 mode=content（在内容里搜，慢）；mode=browse 列出某目录大致有什么。roots 必须传明确获知的绝对路径；不传则不搜索。返回候选路径+大小+修改时间（不含文件内容）——选中后用 Read 打开，并把「这是什么 → 路径」记进 locations.md；没有获知目录时就在微信询问主人。',
       inputSchema: {
         query: z.string().optional().describe('关键词；mode=browse 时可省略'),
         mode: z.enum(['name', 'content', 'browse']).optional(),

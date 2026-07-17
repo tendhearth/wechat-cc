@@ -15,6 +15,30 @@ export interface EchoRow {
   relay_via: string | null
   relay_token: string | null
 }
+/**
+ * Public projection of an EchoRow — safe to send to the frontend pre-reveal.
+ * Explicit ALLOWLIST (not a denylist) so a future sensitive field on EchoRow
+ * doesn't leak by default: peer_agent_id (the answerer's real agent id),
+ * relay_via (the intermediary's real agent id) and relay_token (opaque
+ * server routing) are deliberately excluded. Post-reveal, peer_masked
+ * already holds the real name, so the real identity still surfaces then —
+ * correctly, since both sides opted in.
+ */
+export interface PublicEchoRow {
+  id: string; seek_id: string; peer_masked: string; degree: number
+  content: string; status: EchoRow['status']; created_at: string
+  self_revealed_at: string | null
+  peer_revealed_at: string | null
+}
+
+export function toPublicEcho(r: EchoRow): PublicEchoRow {
+  return {
+    id: r.id, seek_id: r.seek_id, peer_masked: r.peer_masked, degree: r.degree,
+    content: r.content, status: r.status, created_at: r.created_at,
+    self_revealed_at: r.self_revealed_at, peer_revealed_at: r.peer_revealed_at,
+  }
+}
+
 export interface EchoStore {
   create(e: { id: string; seekId: string; peerMasked: string; degree: number; content: string; peerAgentId: string | null; relayVia?: string; relayToken?: string }): void
   setStatus(id: string, status: EchoRow['status']): void

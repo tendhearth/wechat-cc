@@ -72,6 +72,8 @@ export const A2AAgentRecord = z.object({
   capabilities: z.array(z.string()),
   paused: z.boolean().default(false),
   transport: z.enum(['push', 'ws']).default('push'),
+  /** Peer's A2A proto_version captured at install time; unset = unknown (treat as 1). */
+  proto_version: z.number().int().optional(),
 })
 
 export const A2AListen = z.object({

@@ -67,6 +67,7 @@ async function refreshInstalled() {
     const desc = p.description
       ? `<div class="a2a-card-url">${escapeHtml(String(p.description))}</div>`
       : ''
+    const sync = p.has_sync ? syncStatusHtml(p.sync_status) : ''
     li.innerHTML = `
       <header class="a2a-card-head">
         <span class="dot ${live ? 'on' : 'off'}"></span>
@@ -78,9 +79,12 @@ async function refreshInstalled() {
       ${desc}
       ${tools}
       ${warn}
+      ${sync}
       <div class="a2a-card-actions">
         ${(p.has_setup && !p.ready)
           ? `<button class="btn" data-action="setup" data-name="${escapeHtml(p.name)}">连接微信并解密</button>` : ''}
+        ${(p.has_sync && p.enabled && p.ready)
+          ? `<button class="btn" data-action="sync" data-name="${escapeHtml(p.name)}">同步最新微信数据</button>` : ''}
         <button class="btn ${p.enabled ? 'ghost' : ''}" data-action="toggle"
                 data-name="${escapeHtml(p.name)}" data-enabled="${p.enabled}">
           ${p.enabled ? '停用' : '启用'}
@@ -98,6 +102,7 @@ async function onCardAction(e) {
   const name = target.dataset.name
   if (!name) return
   if (target.dataset.action === 'setup') { await runSetup(name, target); return }
+  if (target.dataset.action === 'sync') { await runSync(name, target); return }
   if (target.dataset.action !== 'toggle') return
   const enable = target.dataset.enabled !== 'true'   // flip current state
   target.disabled = true
@@ -110,6 +115,41 @@ async function onCardAction(e) {
   } catch (err) {
     target.disabled = false
     alert(`切换失败：${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+/** @param {any} status */
+function syncStatusHtml(status) {
+  if (!status) return '<div class="plugin-tools">尚未手动同步</div>'
+  if (status.running) return '<div class="plugin-tools">同步状态：进行中…</div>'
+  const last = status.last_success_at
+    ? new Date(status.last_success_at).toLocaleString('zh-CN', { hour12: false })
+    : '尚无成功记录'
+  const error = status.error ? ` · 上次失败：${escapeHtml(String(status.error))}` : ''
+  return `<div class="plugin-tools">上次成功同步：${escapeHtml(last)}${error}</div>`
+}
+
+/**
+ * Run the repeatable local sync declared by the plugin manifest. This uses the
+ * CLI bridge because decrypting a large local archive can exceed HTTP timeouts.
+ * @param {string} name @param {HTMLButtonElement} btn
+ */
+async function runSync(name, btn) {
+  const invoke = cliInvoke
+  if (!invoke) { alert('此操作需在桌面 App 内进行'); return }
+  btn.disabled = true
+  const orig = btn.textContent
+  btn.textContent = '同步中…'
+  showNote('正在本机同步最新微信数据；不会上传聊天记录…')
+  try {
+    await invoke('wechat_cli_text', { args: ['plugin', 'sync', name] })
+    showNote(`✓ ${name} 同步完成`)
+  } catch (err) {
+    showNote(`同步失败：${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    btn.disabled = false
+    btn.textContent = orig
+    await refresh()
   }
 }
 

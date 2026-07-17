@@ -8,6 +8,7 @@
  * docs/superpowers/specs/2026-07-12-agent-social-m1-intent-brokering-design.md.
  */
 import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
+import { toPublicEcho } from '../../core/social-echo-store'
 import type { InternalApiDeps, RouteTable } from './types'
 
 export function socialRoutes(deps: InternalApiDeps): RouteTable {
@@ -23,9 +24,13 @@ export function socialRoutes(deps: InternalApiDeps): RouteTable {
       if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
       return { status: 200, body: { seeks: deps.social.seekStore.list() } }
     },
+    // peer_agent_id / relay_via / relay_token are server-side only pre-reveal
+    // (spine spec) — project through toPublicEcho's allowlist so the real
+    // identity behind peer_masked can't leak to the frontend before the
+    // owner's friend double-opt-in reveals it.
     'GET /v1/social/echoes': async () => {
       if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
-      return { status: 200, body: { echoes: deps.social.echoStore.listAll() } }
+      return { status: 200, body: { echoes: deps.social.echoStore.listAll().map(toPublicEcho) } }
     },
     // 觅食台 P2 Task 3 — inbound on/off toggle over a2a_listen, replacing the
     // "hand-edit agent-config.json" instruction. restart_required: true

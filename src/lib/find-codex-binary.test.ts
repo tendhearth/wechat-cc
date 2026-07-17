@@ -179,6 +179,17 @@ describe('findCodexBinary', () => {
     expect(result).toBe(p)
   })
 
+  it('finds Homebrew Codex from a minimal launchd PATH on macOS', () => {
+    const result = findCodexBinary({
+      exists: (p) => p === '/opt/homebrew/bin/codex',
+      readdir: () => [],
+      pathEnv: '/usr/bin:/bin',
+      homeDir: HOME,
+      platform: 'darwin',
+    })
+    expect(result).toBe('/opt/homebrew/bin/codex')
+  })
+
   it('PATH still wins over the ~/.local/bin / standalone fallbacks', () => {
     const fs = new Set(['/usr/local/bin/codex', `${HOME}/.local/bin/codex`])
     const result = findCodexBinary({

@@ -26,6 +26,8 @@ export interface DelegateBuildDeps {
   stateDir: string
   /** Optional override path for the claude-code binary. */
   claudeBin?: string
+  /** Optional override path for the Codex CLI used by the bundled SDK. */
+  codexPathOverride?: string
   /**
    * Test-only: pre-built delegate providers keyed by peer id, merged OVER the
    * built-in claude/codex/openai delegates. Lets a test route a peer to a fake
@@ -78,6 +80,10 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
   })
 
   const delegateCodex = createCodexAgentProvider({
+    // A Bun-compiled desktop sidecar cannot resolve the SDK's optional
+    // platform package from /$bunfs. Reuse the verified user CLI path passed
+    // by bootstrap, just as the main Codex provider does.
+    ...(deps.codexPathOverride ? { codexPathOverride: deps.codexPathOverride } : {}),
     ...(process.env.CODEX_MODEL || configuredAgent.model
       ? { model: process.env.CODEX_MODEL ?? configuredAgent.model }
       : {}),

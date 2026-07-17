@@ -203,6 +203,23 @@ describe('plugin registry', () => {
     expect(Object.keys(pluginMcpSpecs(ready))).toEqual(['wxvault'])
   })
 
+  it('parses a repeatable sync spawn and rejects malformed sync specs', () => {
+    writePlugin(bundledDir, 'syncable', {
+      ...good('syncable'),
+      sync: { command: READY_CMD, args: ['${pluginDir}/sync.py'], env: { DATA: '${dataDir}' } },
+    })
+    writePlugin(bundledDir, 'bad-sync', { ...good('bad-sync'), sync: { args: ['missing-command'] } })
+    const skipped: string[] = []
+    const loaded = loadPlugins({ stateDir, bundledDir, log: m => skipped.push(m) })
+    expect(loaded.find(p => p.name === 'syncable')?.manifest.sync).toEqual({
+      command: READY_CMD,
+      args: ['${pluginDir}/sync.py'],
+      env: { DATA: '${dataDir}' },
+    })
+    expect(loaded.some(p => p.name === 'bad-sync')).toBe(false)
+    expect(skipped.some(m => m.includes('sync must be a spawn spec'))).toBe(true)
+  })
+
   describe('manifest.hidden (parseManifest, via loadPlugins)', () => {
     it('hidden: true parses through and carries onto the loaded manifest', () => {
       writePlugin(bundledDir, 'secret', { ...good('secret'), hidden: true })

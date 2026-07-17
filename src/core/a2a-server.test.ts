@@ -59,6 +59,14 @@ describe('a2a-server', () => {
     }
   })
 
+  it('advertises the A2A protocol version in the agent card', async () => {
+    const { server, baseUrl } = await startServer({})
+    try {
+      const card = await (await fetch(`${baseUrl}/.well-known/agent.json`)).json() as { proto_version?: number }
+      expect(card.proto_version).toBe(1)
+    } finally { await server.stop() }
+  })
+
   it('POST /a2a/notify with valid Bearer + matching agent_id calls onNotify and returns 200', async () => {
     const onNotify = vi.fn(async () => {})
     const alphaRec = rec('alpha')

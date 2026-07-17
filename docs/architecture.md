@@ -178,9 +178,12 @@ data*; the agent fuses them at prompt time (`brief.py:1` "DATA ONLY, does NOT re
 → ilink chunks + sends to WeChat.
 
 **A knowledge-ingest cycle (daemon, 25m or inbound-nudge):** idle-gated `ingestTick` → resilient
-per-plugin MCP bridge → poke wxvault (incremental re-decrypt) → source-mtime-gated builders
+per-plugin MCP bridge → read wxvault's current decrypted snapshot → source-mtime-gated builders
 (wxgraph rebuild / wxsearch index / wxmedia transcribe) → wxfacts extraction (`extraction_batch` →
-`cheapEval` → `record_facts`, bounded + watermark-resumable).
+`cheapEval` → `record_facts`, bounded + watermark-resumable). On macOS, reads never refresh the
+encrypted WeChat source: only an explicit `sync_wechat_data` call or the desktop plugin button does
+that, via an on-demand LaunchAgent with no timer. The Windows backend may incrementally refresh its
+local snapshot on a read when source mtimes advance.
 
 **A voice loop (app):** mic → `MediaRecorder` → `agent_transcribe` (Rust) → `POST /v1/companion/
 transcribe` → local STT → text → converse → reply → `agent_speak` → `POST /v1/companion/speak` →

@@ -20,7 +20,7 @@
 import type { A2ARegistry } from './a2a-registry'
 import type { A2AAgentRecord } from '../lib/agent-config'
 import type { ProviderId } from './conversation'
-import { IntentCardSchema, type IntentCard, type MatchReceipt } from './a2a-intent'
+import { A2A_PROTO_VERSION, IntentCardSchema, type IntentCard, type MatchReceipt } from './a2a-intent'
 
 export interface NotifyEvent {
   agent: A2AAgentRecord
@@ -143,6 +143,7 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
     name: opts.daemonInfo.name,
     description: 'WeChat bridge for AI agents — notify the operator via WeChat chat.',
     version: opts.daemonInfo.version,
+    proto_version: A2A_PROTO_VERSION,
     auth: { type: 'bearer', required: true },
     capabilities: [
       {
