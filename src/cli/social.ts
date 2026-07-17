@@ -127,7 +127,9 @@ export async function cmdSocialReveal(
   }
   if (!resp.ok) fail(`daemon returned ${resp.status}`)
 
-  const body = await resp.json() as { outcome?: { state?: string } }
+  let body: { outcome?: { state?: string } }
+  try { body = await resp.json() as { outcome?: { state?: string } } }
+  catch { return void fail('daemon returned a non-JSON response') }
   const state = body.outcome?.state ?? 'unknown'
   if (opts.json) { console.log(JSON.stringify({ ok: true, id, state })); return }
   const note = state === 'connected' ? '🤝 牵上线了'
