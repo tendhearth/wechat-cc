@@ -52,6 +52,8 @@ export interface PluginManifest {
    * output. Distinct from the free-form `requires.setup` hint string.
    */
   setup?: PluginSpawn
+  /** Repeatable local refresh action exposed by CLI, desktop, and the plugin. */
+  sync?: PluginSpawn
   /** Readiness gate — see PluginHealthcheck. */
   healthcheck?: PluginHealthcheck
   /** Free-form host/setup hints shown to the operator (not enforced). */
@@ -150,8 +152,12 @@ export function parseManifest(raw: unknown): ParseResult {
   if (raw.setup !== undefined && parseSpawn(raw.setup) === null) {
     return { ok: false, reason: 'setup must be a spawn spec { command, args?, env? }' }
   }
+  if (raw.sync !== undefined && parseSpawn(raw.sync) === null) {
+    return { ok: false, reason: 'sync must be a spawn spec { command, args?, env? }' }
+  }
 
   const setupSpawn = parseSpawn(raw.setup)
+  const syncSpawn = parseSpawn(raw.sync)
   const manifest: PluginManifest = {
     name,
     kind: 'mcp',
@@ -168,6 +174,7 @@ export function parseManifest(raw: unknown): ParseResult {
       ? { healthcheck: { requiresPaths: raw.healthcheck.requiresPaths } }
       : {}),
     ...(setupSpawn ? { setup: setupSpawn } : {}),
+    ...(syncSpawn ? { sync: syncSpawn } : {}),
     ...(isStringRecord(raw.requires) ? { requires: raw.requires } : {}),
     ...(isStringArray(raw.tools) ? { tools: raw.tools } : {}),
     ...(raw.hidden === true ? { hidden: true } : {}),

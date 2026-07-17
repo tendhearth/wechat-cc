@@ -9,9 +9,25 @@
 import { type InternalApiDeps, type RouteTable } from './types'
 import type { PluginToggleRequestT, PluginInstallRequestT } from './schema'
 import { loadPlugins, setPluginEnabled } from '../plugins/registry'
-import { bundledPluginsDir } from '../plugins/paths'
+import { bundledPluginsDir, pluginDataDir } from '../plugins/paths'
 import { fetchCatalog, installPlugin, upgradePlugin, updateAvailable } from '../plugins/catalog'
 import selfPkg from '../../../package.json' with { type: 'json' }
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+function syncStatus(stateDir: string, name: string): Record<string, unknown> | null {
+  try {
+    const raw = JSON.parse(readFileSync(join(pluginDataDir(stateDir, name), 'sync-status.json'), 'utf8')) as unknown
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+    const v = raw as Record<string, unknown>
+    return {
+      state: typeof v.state === 'string' ? v.state : 'unknown',
+      running: v.running === true,
+      last_success_at: typeof v.last_success_at === 'string' ? v.last_success_at : null,
+      error: typeof v.error === 'string' ? v.error : null,
+    }
+  } catch { return null }
+}
 
 export function pluginRoutes(deps: InternalApiDeps): RouteTable {
   return {
@@ -35,6 +51,8 @@ export function pluginRoutes(deps: InternalApiDeps): RouteTable {
           tools: p.manifest.tools ?? [],
           command: p.spec.command,
           has_setup: !!p.manifest.setup,   // GUI shows a "run setup" button when true + not ready
+          has_sync: !!p.manifest.sync,
+          sync_status: p.manifest.sync ? syncStatus(deps.stateDir, p.name) : null,
         })),
       } }
     },

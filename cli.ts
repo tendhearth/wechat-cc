@@ -3103,9 +3103,38 @@ const pluginSetupStatusCmd = defineCommand({
   },
 })
 
+const pluginSyncCmd = defineCommand({
+  meta: { name: 'sync', description: "Run a plugin's repeatable local refresh action" },
+  args: { name: { type: 'positional', required: true, description: 'Plugin name', valueHint: 'name' } },
+  async run({ args }) {
+    const { loadPlugins } = await import('./src/daemon/plugins/registry')
+    const { bundledPluginsDir, pluginDataDir } = await import('./src/daemon/plugins/paths')
+    const { spawn } = await import('node:child_process')
+    const { mkdirSync } = await import('node:fs')
+    const p = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() }).find(x => x.name === args.name)
+    if (!p) { console.error(`plugin "${args.name}" not found`); process.exit(1) }
+    if (!p.enabled || !p.ready) { console.error(`plugin "${args.name}" is not enabled + ready`); process.exit(1) }
+    if (!p.manifest.sync) { console.error(`plugin "${args.name}" declares no runnable sync action`); process.exit(1) }
+    const dataDir = pluginDataDir(STATE_DIR, p.name)
+    mkdirSync(dataDir, { recursive: true })
+    const sub = (s: string) => s.split('${pluginDir}').join(p.dir).split('${dataDir}').join(dataDir)
+    const action = p.manifest.sync
+    const env = { ...process.env, ...Object.fromEntries(Object.entries(action.env ?? {}).map(([k, v]) => [k, sub(v)])) }
+    const child = spawn(sub(action.command), (action.args ?? []).map(sub), { env, stdio: 'inherit' })
+    const code: number = await new Promise<number>((resolve) => {
+      child.on('error', (err) => {
+        console.error(`failed to start "${sub(action.command)}": ${err instanceof Error ? err.message : String(err)}`)
+        resolve(127)
+      })
+      child.on('close', (c) => resolve(c ?? 1))
+    })
+    process.exit(code)
+  },
+})
+
 const pluginCmd = defineCommand({
   meta: { name: 'plugin', description: 'Manage plugins (MCP tool providers)' },
-  subCommands: { list: pluginListCmd, search: pluginSearchCmd, install: pluginInstallCmd, upgrade: pluginUpgradeCmd, setup: pluginSetupCmd, 'setup-status': pluginSetupStatusCmd, enable: pluginEnableCmd, disable: pluginDisableCmd },
+  subCommands: { list: pluginListCmd, search: pluginSearchCmd, install: pluginInstallCmd, upgrade: pluginUpgradeCmd, setup: pluginSetupCmd, sync: pluginSyncCmd, 'setup-status': pluginSetupStatusCmd, enable: pluginEnableCmd, disable: pluginDisableCmd },
 })
 
 // License / Pro entitlement. `activate DEV-anything` unlocks Pro locally for
