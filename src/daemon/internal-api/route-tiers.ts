@@ -105,10 +105,22 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // agent-config.json, the same trust surface as hand-editing the config.
   'GET /v1/social/inbound': 'admin',
   'POST /v1/social/inbound': 'admin',
-  // admin — async foraging spine: read the answerer's pledges + trigger reveals.
+  // admin — async foraging spine: read the answerer's pledges (exposes
+  // stored topics/peer exchanges, same trust class as seeks/echoes above).
   'GET /v1/social/pledges': 'admin',
-  'POST /v1/social/echoes/reveal': 'admin',
-  'POST /v1/social/pledges/reveal': 'admin',
+  // trusted, not admin — despite living in the same "async foraging spine"
+  // batch as the admin-tiered routes above. Reveal acts on an ALREADY
+  // established seek/pledge (double opt-in on a match), not a new broadcast —
+  // same trust class as POST /v1/a2a/send ("reply to an established peer",
+  // trusted, in the operator/agent-ops block above), not POST /v1/social/seek
+  // (admin, broadcasts a new intent). This also has to be trusted because
+  // it's the write half of `wechat-cc social reveal`
+  // (docs/superpowers/specs/2026-07-17-cli-social-surface-design.md), and the
+  // CLI only ever holds the daemon-wide FILE token (registerFileToken →
+  // trusted, see token-registry.ts) — an admin-tiered route here would
+  // silently 403 every CLI reveal (caught by cli-routes.test.ts).
+  'POST /v1/social/echoes/reveal': 'trusted',
+  'POST /v1/social/pledges/reveal': 'trusted',
 }
 
 export function minTierFor(routeKey: string): UserTier {
