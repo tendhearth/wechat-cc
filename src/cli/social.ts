@@ -6,7 +6,8 @@
  *   echoes    List postcards that came back (MASKED — see below)
  *   pledges   List wishes of others I answered
  *
- * `reveal` lives in cli.ts — it needs the running daemon (network + notify).
+ * `reveal` (cmdSocialReveal, below) needs the RUNNING daemon (network +
+ * notify) — it goes through the internal-api rather than reading the db.
  *
  * PRIVACY: echoes are projected through toPublicEcho() before printing.
  * The raw EchoRow carries peer_agent_id / relay_via / relay_token — server-side
@@ -15,6 +16,8 @@
  *
  * See docs/superpowers/specs/2026-07-17-cli-social-surface-design.md.
  */
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { openWechatDb } from '../lib/db'
 import { makeSeekStore } from '../core/social-seek-store'
 import { makeEchoStore, toPublicEcho, type PublicEchoRow } from '../core/social-echo-store'
@@ -64,4 +67,72 @@ export function cmdSocialPledges(stateDir: string, opts: SocialReadOpts): void {
     const state = both ? 'connected' : r.self_revealed_at ? '已揭晓,等对方' : r.peer_revealed_at ? '对方已揭晓,待你' : 'pending'
     console.log(`${r.created_at}  ${state}  ${r.topic}  [${r.id}]`)
   }
+}
+
+export interface RevealDeps {
+  fetch?: typeof fetch
+  readInfo?: () => { baseUrl: string; tokenFilePath: string } | null
+  readToken?: (p: string) => string
+  fail?: (msg: string) => never
+}
+
+/**
+ * `reveal` cannot read the db directly: it performs A2A network calls and fires
+ * notification beats, so it must go through the RUNNING daemon's internal-api —
+ * same pattern as `mode set` in cli.ts. Echo-or-pledge is auto-detected exactly
+ * like the WeChat 揭晓 command: try echoes/reveal, fall back on 404.
+ */
+export async function cmdSocialReveal(
+  stateDir: string,
+  id: string,
+  opts: { json: boolean },
+  deps: RevealDeps = {},
+): Promise<void> {
+  const doFetch = deps.fetch ?? fetch
+  const fail = deps.fail ?? ((msg: string): never => { console.error(`social reveal: ${msg}`); throw new Error(msg) })
+  const readInfo = deps.readInfo ?? (() => {
+    const p = join(stateDir, 'internal-api-info.json')
+    if (!existsSync(p)) return null
+    try {
+      const parsed = JSON.parse(readFileSync(p, 'utf8')) as { baseUrl?: string; tokenFilePath?: string }
+      return parsed.baseUrl && parsed.tokenFilePath ? { baseUrl: parsed.baseUrl, tokenFilePath: parsed.tokenFilePath } : null
+    } catch { return null }
+  })
+  const readToken = deps.readToken ?? ((p: string) => readFileSync(p, 'utf8').trim())
+
+  const info = readInfo()
+  if (!info) fail('daemon not running (internal-api-info.json missing or malformed — start the daemon first)')
+
+  let token: string
+  try { token = readToken(info!.tokenFilePath) }
+  catch (err) { return void fail(`could not read token file: ${err instanceof Error ? err.message : String(err)}`) }
+
+  async function post(path: string): Promise<Response> {
+    return doFetch(`${info!.baseUrl}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'authorization': `Bearer ${token}` },
+      body: JSON.stringify({ id }),
+    })
+  }
+
+  let resp: Response
+  try { resp = await post('/v1/social/echoes/reveal') }
+  catch (err) { return void fail(`could not reach the daemon: ${err instanceof Error ? err.message : String(err)}`) }
+
+  // 404 ⇒ not an echo id; it may be a pledge (a wish of someone else I answered).
+  if (resp.status === 404) {
+    try { resp = await post('/v1/social/pledges/reveal') }
+    catch (err) { return void fail(`could not reach the daemon: ${err instanceof Error ? err.message : String(err)}`) }
+    if (resp.status === 404) fail(`没找到「${id}」这条(既不是回声也不是应答,可能已过期或已牵线)`)
+  }
+  if (!resp.ok) fail(`daemon returned ${resp.status}`)
+
+  const body = await resp.json() as { outcome?: { state?: string } }
+  const state = body.outcome?.state ?? 'unknown'
+  if (opts.json) { console.log(JSON.stringify({ ok: true, id, state })); return }
+  const note = state === 'connected' ? '🤝 牵上线了'
+    : state === 'awaiting_peer' ? '已揭晓,等对方回揭'
+    : state === 'peer_unreachable' ? '揭晓已发出,但对面暂时够不着 — 可稍后重试(你的同意已保存)'
+    : state
+  console.log(`${state} — ${note}`)
 }

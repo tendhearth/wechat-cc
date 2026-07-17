@@ -6,7 +6,7 @@ import { openDb } from '../lib/db'
 import { makeSeekStore } from '../core/social-seek-store'
 import { makeEchoStore } from '../core/social-echo-store'
 import { makePledgeStore } from '../core/social-pledge-store'
-import { cmdSocialSeeks, cmdSocialEchoes, cmdSocialPledges } from './social'
+import { cmdSocialSeeks, cmdSocialEchoes, cmdSocialPledges, cmdSocialReveal } from './social'
 
 function tempState(): string {
   return mkdtempSync(join(tmpdir(), 'wechat-cc-cli-social-test-'))
@@ -116,5 +116,50 @@ describe('cmdSocialPledges', () => {
 
     const out = (await captureLog(() => cmdSocialPledges(stateDir, { limit: 20, json: false }))).join('\n')
     expect(out).toContain('找球友')
+  })
+})
+
+describe('cmdSocialReveal', () => {
+  const info = { baseUrl: 'http://127.0.0.1:9', tokenFilePath: '/tmp/tok' }
+  const baseDeps = { readInfo: () => info, readToken: () => 'tokhex' }
+
+  it('reveals an echo and prints the outcome state', async () => {
+    const calls: string[] = []
+    const fakeFetch = (async (url: string) => {
+      calls.push(String(url))
+      return new Response(JSON.stringify({ outcome: { state: 'connected' } }), { status: 200 })
+    }) as unknown as typeof fetch
+    const out = await captureLog(() => cmdSocialReveal('/nope', 'i1:ccb', { json: false }, { ...baseDeps, fetch: fakeFetch }))
+    expect(calls[0]).toContain('/v1/social/echoes/reveal')
+    expect(out.join('\n')).toContain('connected')
+  })
+
+  it('falls back to pledges/reveal when the echo route 404s', async () => {
+    const calls: string[] = []
+    const fakeFetch = (async (url: string) => {
+      calls.push(String(url))
+      return String(url).includes('/echoes/')
+        ? new Response(JSON.stringify({ error: 'not_found' }), { status: 404 })
+        : new Response(JSON.stringify({ outcome: { state: 'awaiting_peer' } }), { status: 200 })
+    }) as unknown as typeof fetch
+    const out = await captureLog(() => cmdSocialReveal('/nope', 'i9:cca', { json: false }, { ...baseDeps, fetch: fakeFetch }))
+    expect(calls[0]).toContain('/echoes/reveal')
+    expect(calls[1]).toContain('/pledges/reveal')
+    expect(out.join('\n')).toContain('awaiting_peer')
+  })
+
+  it('fails clearly when neither route knows the id', async () => {
+    const fakeFetch = (async () => new Response(JSON.stringify({ error: 'not_found' }), { status: 404 })) as unknown as typeof fetch
+    const failed: string[] = []
+    const fail = ((m: string) => { failed.push(m); throw new Error(m) }) as (m: string) => never
+    await expect(cmdSocialReveal('/nope', 'bogus', { json: false }, { ...baseDeps, fetch: fakeFetch, fail })).rejects.toThrow()
+    expect(failed[0]).toMatch(/没找到|not found/i)
+  })
+
+  it('fails clearly when the daemon is not running', async () => {
+    const failed: string[] = []
+    const fail = ((m: string) => { failed.push(m); throw new Error(m) }) as (m: string) => never
+    await expect(cmdSocialReveal('/nope', 'i1:ccb', { json: false }, { readInfo: () => null, fail })).rejects.toThrow()
+    expect(failed[0]).toMatch(/daemon/i)
   })
 })
