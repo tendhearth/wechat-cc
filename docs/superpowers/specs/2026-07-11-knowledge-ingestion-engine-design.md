@@ -4,6 +4,12 @@ Date: 2026-07-11
 Status: approved design → implementation
 Origin: the unified person model has a READ side (person_brief + knowledge-orchestration prompt — shipped) but **no WRITE side**. Diagnosis on the live machine: the daemon triggers ZERO knowledge builds; every store (wxgraph/wxsearch/wxfacts) was built by hand at different times and drifts stale; **wxfacts has never run — 0 facts / 0 watermarks across 102 contacts / 14,451 indexed messages.** So the core owns "read the knowledge" but not "build/keep the knowledge." This engine is the WRITE-side counterpart: a daemon background subsystem that keeps every knowledge source fresh from the decrypted messages — systematically, resumably, idle-gated. See [[architecture-direction-2026]].
 
+> **2026-07-17 wxvault v1.3.2 update:** Step 1 below records the original design. On macOS,
+> ordinary wxvault read tools now consume the current decrypted snapshot only; they do not trigger
+> decryption. Refresh requires an explicit `sync_wechat_data` request or the desktop plugin button,
+> and runs through an on-demand LaunchAgent with no schedule. The Windows backend retains its
+> source-mtime-gated incremental refresh-on-read behavior.
+
 ## 1. What
 
 A daemon background loop (`registerIngest`, peer of the existing companion push/introspect schedulers) that on each cycle brings the local knowledge base toward "caught up" from wxvault's decrypted output — WITHOUT any user-facing agent turn. Two mechanisms, both already in the codebase:
@@ -17,7 +23,7 @@ The daemon owns orchestration; the LLM does only extraction reasoning; the bridg
 
 One cycle = these steps in order, **each independently staleness-gated** so a nothing-changed cycle is just cheap status probes (no rebuild, no LLM):
 
-1. **Freshen decryption.** Bridge-call `wxvault.overview` (or `list_conversations`). wxvault decrypts lazily — its `_maybe_refresh()` only fires on a read-tool call — so nothing re-decrypts unless poked. This forces an incremental re-decrypt of changed WeChat libs and hot-reloads wxvault's snapshot; `out/decrypted/*.sqlite` becomes current.
+1. **Read the current decrypted snapshot.** Bridge-call `wxvault.overview` (or `list_conversations`). On macOS this is read-only and does not re-decrypt changed WeChat libraries; a user must explicitly invoke `sync_wechat_data` (or the desktop sync button) before newly landed Mac data enters `out/decrypted/*.sqlite`. On Windows the backend may still perform a source-mtime-gated incremental refresh before returning the read.
 2. **Deterministic refreshers** (bridge, no LLM). For each present + ready source, check its status tool, and only build if stale:
    - `wxgraph` — `graph_status` reports whether a rebuild is needed (it stores `source_max_mtime` in meta vs the decrypted output's mtime). If behind → `wxgraph.rebuild`.
    - `wxsearch` — status reports `vectors_stale` / new docs. If behind → `wxsearch.index_update` (the incremental indexer; NOT full reindex).
