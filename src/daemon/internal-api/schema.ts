@@ -340,6 +340,8 @@ export const A2APreviewResponse = z.union([
     name: z.string(),
     description: z.string().optional(),
     version: z.string().optional(),
+    proto_version: z.number(),
+    proto_mismatch: z.boolean(),
     auth: z.object({ type: z.string(), required: z.boolean() }).optional(),
     capabilities: z.array(z.object({
       name: z.string(),
