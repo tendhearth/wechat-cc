@@ -91,6 +91,12 @@ export function findCodexBinary(deps: FindCodexBinaryDeps = {}): string | null {
       platformPath.join(homeDir, '.local', 'bin', exe),
       platformPath.join(homeDir, '.codex', 'packages', 'standalone', 'current', 'bin', exe),
     ]
+    // Homebrew is the default installer on modern macOS. launchd starts with
+    // a minimal PATH, so neither Homebrew prefix is guaranteed to be present.
+    // Keep these as service-only fallbacks: an explicit PATH entry still wins.
+    if (platform === 'darwin') {
+      fallbacks.push('/opt/homebrew/bin/codex', '/usr/local/bin/codex')
+    }
     for (const candidate of fallbacks) {
       if (exists(candidate)) return candidate
     }
