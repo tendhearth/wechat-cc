@@ -333,9 +333,9 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
     }
   }
 
-  // Boot-resume loop, wrapped as a returnable closure. main.ts calls this
-  // after the a2a server starts (see index.ts) so a resumed forage's
-  // outbound sends can reach peers over a live listener.
+  // Boot-resume loop, wrapped as a returnable closure. index.ts's
+  // buildBootstrap calls this after wireA2aServer starts the server, so a
+  // resumed forage's outbound sends can reach peers over a live listener.
   const resumeForaging = (): void => {
     if (socialForage && socialSeekStore) {
       const forage = socialForage
