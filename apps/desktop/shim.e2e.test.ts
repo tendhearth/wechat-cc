@@ -130,6 +130,11 @@ describe('apps/desktop shim — HTML structure', () => {
       // memory pane new zones (Task 9)
       'memory-top-zone', 'memory-observations', 'memory-milestones',
       'memory-decisions-toggle', 'memory-decisions-body',
+      // 觅食台 (forage-desk) pane — live regions renderForageDesk() targets,
+      // plus the preserved agent-mgmt anchors folded into §③.
+      'fd-hero-status', 'fd-wishes', 'fd-postcards',
+      'fd-inbound-toggle', 'fd-inbound-note', 'fd-peers', 'fd-net',
+      'a2a-add-btn', 'a2a-server-banner', 'a2a-agents-list',
     ]
     for (const id of requiredIds) {
       expect(html, `missing id="${id}"`).toContain(`id="${id}"`)
