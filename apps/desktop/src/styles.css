@@ -5026,6 +5026,139 @@ input { font: inherit; color: inherit; }
   margin-top: 8px;
 }
 
+/* ── 觅食台 (forage-desk) — pane-scoped; transcribed from the approved
+      mockup. All classes are fd-prefixed and all palette vars are --fd-*
+      scoped under the pane so nothing collides with the app's global
+      tokens or existing .btn/.pulse/etc. ─────────────────────────────── */
+[data-pane="a2a-agents"] {
+  --fd-ground:#FBF6EA; --fd-ground-2:#F4ECD9; --fd-card:#FFFDF8;
+  --fd-ink:#3B3125; --fd-ink-soft:#7B6F5B; --fd-ink-faint:#A99C84;
+  --fd-line:#EADFC7; --fd-line-soft:#F0E8D6;
+  --fd-amber:#DDA23F; --fd-amber-deep:#B9821F; --fd-amber-wash:#F8ECD1;
+  --fd-sage:#8AA36F; --fd-sage-wash:#E9F0DD;
+  --fd-clay:#D2794A; --fd-clay-deep:#B75F32; --fd-clay-wash:#F7DFCD;
+  --fd-shadow:0 1px 2px rgba(59,49,37,.05), 0 8px 22px -12px rgba(59,49,37,.14);
+  --fd-radius:18px;
+}
+
+/* pane surface: paint the desk with the mockup ground instead of --app-bg */
+.a2a-agents-body.fd-body { background: var(--fd-ground); color: var(--fd-ink); padding: 0; }
+.fd-wrap { max-width: 920px; margin: 0 auto; padding: 38px 28px 80px;
+  font-family: "PingFang SC","Hiragino Sans GB",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  line-height: 1.6; }
+
+/* hero */
+.fd-hero { margin-bottom: 8px; }
+.fd-eyebrow { font-size:12.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--fd-amber-deep); font-weight:700; margin-bottom:10px; }
+.fd-h1 { font-size:34px; line-height:1.15; margin:0 0 14px; letter-spacing:-.01em; font-weight:800; color:var(--fd-ink); }
+.fd-status { display:flex; align-items:center; gap:12px; flex-wrap:wrap; color:var(--fd-ink-soft); font-size:15px; }
+.fd-status-line { display:inline-flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.fd-status b { color:var(--fd-ink); font-weight:600; }
+.fd-status .fd-num { font-variant-numeric: tabular-nums; }
+.fd-frog { width:30px; height:30px; flex:none; }
+.fd-dot-sep { width:3px; height:3px; border-radius:50%; background:var(--fd-ink-faint); display:inline-block; }
+.fd-sow { margin-left:auto; }
+.fd-sow-hint { margin-top:10px; font-size:12.5px; color:var(--fd-ink-faint); }
+.fd-social-note { margin-top:10px; font-size:13px; color:var(--fd-ink-soft); background:var(--fd-ground-2); border:1px solid var(--fd-line); border-radius:10px; padding:10px 12px; }
+
+/* fd buttons (do NOT reuse the app's global .btn) */
+.fd-btn { border:0; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600; border-radius:12px; padding:11px 18px; transition:.16s; }
+.fd-btn-primary { background:var(--fd-amber); color:#3a2c0c; box-shadow:0 1px 0 rgba(255,255,255,.4) inset,0 6px 14px -8px var(--fd-amber); }
+.fd-btn-primary:hover { background:var(--fd-amber-deep); color:#fff; }
+.fd-btn-ghost { background:transparent; color:var(--fd-ink-soft); border:1.5px solid var(--fd-line); }
+.fd-btn-ghost:hover { border-color:var(--fd-amber); color:var(--fd-ink); }
+
+.fd-wave { height:12px; margin:26px 0 34px; color:var(--fd-line); }
+.fd-wave svg { width:100%; height:12px; display:block; }
+
+.fd-section { margin-bottom:44px; }
+.fd-sec-head { display:flex; align-items:baseline; gap:12px; margin-bottom:18px; }
+.fd-sec-head h2 { font-size:19px; margin:0; font-weight:700; position:relative; padding-bottom:3px; color:var(--fd-ink); }
+.fd-sec-head h2::after { content:""; position:absolute; left:-2px; right:-2px; bottom:-1px; height:7px; background:var(--fd-amber-wash); border-radius:6px; z-index:-1; transform:rotate(-.4deg); }
+.fd-sec-head .fd-count { color:var(--fd-ink-faint); font-size:13px; font-weight:600; }
+.fd-sec-head .fd-hint { margin-left:auto; color:var(--fd-ink-faint); font-size:12.5px; }
+
+/* ① wish cards */
+.fd-wishes { display:flex; flex-direction:column; gap:14px; }
+.fd-wish { background:var(--fd-card); border:1px solid var(--fd-line); border-radius:var(--fd-radius); padding:18px 20px; box-shadow:var(--fd-shadow); display:grid; grid-template-columns:1fr auto; gap:6px 16px; align-items:start; }
+.fd-kind { font-size:11.5px; font-weight:700; letter-spacing:.04em; padding:3px 9px; border-radius:999px; display:inline-block; grid-column:1/2; justify-self:start; }
+.fd-kind.fd-seek { background:var(--fd-amber-wash); color:var(--fd-amber-deep); }
+.fd-kind.fd-fun { background:#EDE7F3; color:#7a5ea6; }
+.fd-wish .fd-title { font-size:16.5px; font-weight:600; color:var(--fd-ink); margin:9px 0 4px; grid-column:1/2; }
+.fd-wish .fd-meta { grid-column:1/2; color:var(--fd-ink-faint); font-size:13px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.fd-lock { font-size:12px; color:var(--fd-ink-soft); display:inline-flex; align-items:center; gap:4px; }
+.fd-rightcol { grid-column:2/3; grid-row:1/4; display:flex; flex-direction:column; align-items:flex-end; gap:10px; justify-content:space-between; height:100%; }
+.fd-forage { display:flex; align-items:center; gap:9px; color:var(--fd-ink-soft); font-size:12.5px; font-weight:600; }
+.fd-pulse { width:8px; height:8px; border-radius:50%; background:var(--fd-amber); position:relative; }
+.fd-pulse::after { content:""; position:absolute; inset:-5px; border-radius:50%; border:2px solid var(--fd-amber); opacity:.5; animation:fd-ring 1.9s ease-out infinite; }
+@keyframes fd-ring { 0%{transform:scale(.5);opacity:.55} 100%{transform:scale(1.5);opacity:0} }
+.fd-degree { display:flex; align-items:center; gap:5px; }
+.fd-deg-track { display:flex; gap:4px; align-items:center; }
+.fd-deg { width:22px; height:5px; border-radius:3px; background:var(--fd-line); }
+.fd-deg.fd-lit { background:var(--fd-amber); }
+.fd-deg.fd-next { background:repeating-linear-gradient(90deg,var(--fd-line) 0 4px,transparent 4px 8px); }
+.fd-deg-cap { color:var(--fd-ink-faint); font-size:12px; }
+.fd-echo-badge { background:var(--fd-sage-wash); color:#4f6b39; font-size:12px; font-weight:700; padding:5px 11px; border-radius:999px; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+
+/* empty states */
+.fd-empty { background:var(--fd-card); border:1px dashed var(--fd-line); border-radius:var(--fd-radius); padding:26px 20px; text-align:center; color:var(--fd-ink-faint); font-size:13.5px; }
+
+/* ② postcards */
+.fd-postcards { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+@media (max-width:680px) { .fd-postcards { grid-template-columns:1fr; } .fd-wrap { padding:28px 18px 60px; } }
+.fd-postcard { background:var(--fd-card); border:1px solid var(--fd-clay-wash); border-radius:16px; padding:20px 20px 18px; position:relative; box-shadow:var(--fd-shadow); overflow:hidden; }
+.fd-postcard::before { content:""; position:absolute; inset:0; background:repeating-linear-gradient(45deg,transparent 0 11px,rgba(210,121,74,.045) 11px 12px); pointer-events:none; }
+.fd-postcard.fd-connected { border-color:var(--fd-sage); }
+.fd-stamp { position:absolute; top:14px; right:14px; font-size:10.5px; font-weight:800; letter-spacing:.06em; color:var(--fd-clay-deep); border:1.5px dashed var(--fd-clay); border-radius:8px; padding:5px 8px; transform:rotate(4deg); text-align:center; line-height:1.25; background:rgba(255,255,255,.5); }
+.fd-pc-eyebrow { font-size:12px; font-weight:700; color:var(--fd-clay-deep); letter-spacing:.02em; margin-bottom:12px; display:flex; align-items:center; gap:7px; }
+.fd-masked { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+.fd-mask-av { width:44px; height:44px; border-radius:50%; flex:none; background:radial-gradient(circle at 35% 30%,#efe4d3,#dcccae); display:grid; place-items:center; color:var(--fd-ink-faint); font-size:20px; filter:blur(.4px); }
+.fd-masked.fd-revealed .fd-mask-av { filter:none; background:radial-gradient(circle at 35% 30%,#e9f0dd,#c7d8ad); }
+.fd-masked .fd-who { font-size:15px; font-weight:600; color:var(--fd-ink); }
+.fd-masked .fd-who small { display:block; color:var(--fd-ink-faint); font-weight:500; font-size:12.5px; margin-top:1px; }
+.fd-pc-body { font-size:14.5px; color:var(--fd-ink-soft); margin:0 0 16px; line-height:1.55; }
+.fd-pc-body b { color:var(--fd-ink); }
+.fd-pc-actions { display:flex; gap:10px; align-items:center; }
+.fd-btn-reveal { background:var(--fd-clay); color:#fff; box-shadow:0 6px 14px -8px var(--fd-clay); flex:1; text-align:center; }
+.fd-btn-reveal:hover { background:var(--fd-clay-deep); }
+.fd-btn-wait { background:transparent; color:var(--fd-ink-soft); border:1.5px solid var(--fd-line); }
+.fd-btn-wait:hover { border-color:var(--fd-ink-faint); }
+.fd-reveal-note { font-size:11.5px; color:var(--fd-ink-faint); margin-top:11px; display:flex; gap:6px; align-items:center; }
+.fd-outcome { font-size:12.5px; font-weight:600; color:#4f6b39; margin-top:4px; }
+.fd-outcome.fd-wait { color:var(--fd-amber-deep); }
+.fd-outcome.fd-retry { color:var(--fd-clay-deep); }
+
+/* ③ foraging network (folded) */
+.fd-net { background:var(--fd-ground-2); border:1px solid var(--fd-line); border-radius:var(--fd-radius); padding:6px 20px; }
+.fd-net summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:12px; padding:15px 0; font-size:15px; font-weight:600; color:var(--fd-ink); }
+.fd-net summary::-webkit-details-marker { display:none; }
+.fd-net-sub { color:var(--fd-ink-faint); font-weight:500; font-size:13.5px; }
+.fd-chev { margin-left:auto; color:var(--fd-ink-faint); transition:.2s; }
+.fd-net details[open] .fd-chev, .fd-net[open] .fd-chev { transform:rotate(90deg); }
+.fd-net details[open] summary .fd-chev { transform:rotate(90deg); }
+.fd-peers { display:flex; align-items:center; }
+.fd-peer { width:26px; height:26px; border-radius:50%; border:2px solid var(--fd-ground-2); margin-left:-8px; background:radial-gradient(circle at 35% 30%,#f0e6d4,#d8c7a8); display:grid; place-items:center; font-size:11px; color:var(--fd-ink-soft); font-weight:700; }
+.fd-peer:first-child { margin-left:0; }
+.fd-net-body { padding:4px 0 20px; border-top:1px dashed var(--fd-line); margin-top:2px; }
+.fd-net-row { display:flex; align-items:center; gap:14px; padding:14px 0; }
+.fd-net-row + .fd-net-row { border-top:1px solid var(--fd-line-soft); }
+.fd-net-row-peers { align-items:flex-start; }
+.fd-txt { flex:1; }
+.fd-txt-full { flex:1; width:100%; }
+.fd-txt .fd-t { font-weight:600; font-size:14.5px; color:var(--fd-ink); }
+.fd-txt .fd-s { color:var(--fd-ink-faint); font-size:12.5px; }
+.fd-toggle { width:44px; height:26px; border-radius:999px; background:var(--fd-sage); position:relative; flex:none; cursor:pointer; }
+.fd-toggle::after { content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.2); transition:.18s; }
+.fd-toggle.fd-on::after { left:21px; }
+.fd-toggle:not(.fd-on) { background:var(--fd-line); }
+.fd-inbound-note { font-size:12px; color:var(--fd-amber-deep); background:var(--fd-amber-wash); border-radius:8px; padding:8px 10px; margin:2px 0 0; }
+.fd-add-peer { display:inline-flex; align-items:center; gap:7px; color:var(--fd-amber-deep); font-weight:600; font-size:14px; cursor:pointer; padding:12px 0; }
+.fd-depth-note { margin-top:8px; font-size:12.5px; color:var(--fd-ink-faint); display:flex; gap:8px; align-items:center; line-height:1.5; }
+.fd-depth-note b { color:var(--fd-ink-soft); }
+.fd-depth-note .fd-pill { background:var(--fd-amber-wash); color:var(--fd-amber-deep); font-weight:700; font-size:11px; padding:2px 8px; border-radius:999px; white-space:nowrap; }
+
+@media (prefers-reduced-motion:reduce) { .fd-pulse::after { animation:none; } }
+
 /* ── Plugins pane ─────────────────────────────────────────────────────────
    Reuses the a2a card / .dot / .btn styling; only the plugin-specific chrome
    is defined here. All colors come from the shared tokens so light/dark and
