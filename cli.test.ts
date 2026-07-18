@@ -88,6 +88,7 @@ describe('citty migrated commands', () => {
       'setup',
       'setup-poll',
       'setup-status',
+      'social',
       'status',
       'update',
     ])
