@@ -2918,10 +2918,30 @@ describe('internal-api', () => {
         expect(await resp.json()).toEqual({ outcome: { state: 'awaiting_peer' } })
       })
 
-      it('tier gate: a trusted token gets 403 on POST /v1/social/echoes/reveal', async () => {
+      it('tier gate: a trusted token reaches POST /v1/social/echoes/reveal (not 403) — the CLI file token is trusted, not admin', async () => {
         const { port } = await startWithSocial({ revealEcho: () => ({ state: 'connected' }) })
         const tok = api!.mintSessionToken('trusted', 'test')
         const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes/reveal`, {
+          method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ id: 'x' }),
+        })
+        expect(resp.status).toBe(200)
+      })
+
+      it('tier gate: a guest token gets 403 on POST /v1/social/echoes/reveal', async () => {
+        const { port } = await startWithSocial({ revealEcho: () => ({ state: 'connected' }) })
+        const tok = api!.mintSessionToken('guest', 'test')
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes/reveal`, {
+          method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ id: 'x' }),
+        })
+        expect(resp.status).toBe(403)
+      })
+
+      it('tier gate: a guest token gets 403 on POST /v1/social/pledges/reveal', async () => {
+        const { port } = await startWithSocial({ revealPledge: () => ({ state: 'awaiting_peer' }) })
+        const tok = api!.mintSessionToken('guest', 'test')
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/pledges/reveal`, {
           method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
           body: JSON.stringify({ id: 'x' }),
         })

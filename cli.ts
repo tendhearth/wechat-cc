@@ -162,6 +162,10 @@ Usage:
   wechat-cc agent test <id> [--text MSG] [--outbound]
                         Send a synthetic notify to validate inbound→chat path
                         (default) or outbound (--outbound: send to external URL)
+  wechat-cc social seeks [--limit N] [--json]
+  wechat-cc social echoes [--seek <id>] [--limit N] [--json]
+  wechat-cc social pledges [--limit N] [--json]
+  wechat-cc social reveal <id> [--json]
   wechat-cc provider show [--json]  Show selected agent provider
   wechat-cc provider set <claude|codex|cursor|openai|gemini> [--model MODEL] [--unattended true|false]
                         --unattended: when true (default for new installs), the
@@ -2504,6 +2508,81 @@ const agentCmd = defineCommand({
   },
 })
 
+// ── 觅食台 social surface — wechat-cc social {seeks,echoes,pledges,reveal} ──
+// Reads go straight to the daemon's SQLite (work with the daemon down);
+// reveal needs the running daemon (network + notify). See
+// docs/superpowers/specs/2026-07-17-cli-social-surface-design.md.
+
+const socialSeeksCmd = defineCommand({
+  meta: { name: 'seeks', description: 'List my wishes (心愿) + status — newest first' },
+  args: {
+    limit: { type: 'string', description: 'Max rows (default 20)' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const n = args.limit ? Number.parseInt(args.limit, 10) : 20
+    const limit = Number.isFinite(n) && n > 0 ? n : 20
+    const { cmdSocialSeeks } = await import('./src/cli/social.ts')
+    cmdSocialSeeks(STATE_DIR, { limit, json: Boolean(args.json) })
+  },
+})
+
+const socialEchoesCmd = defineCommand({
+  meta: { name: 'echoes', description: 'List postcards that came back (回声) — masked until a mutual reveal' },
+  args: {
+    seek: { type: 'string', description: 'Only echoes for this wish (intent id)' },
+    limit: { type: 'string', description: 'Max rows (default 20)' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const n = args.limit ? Number.parseInt(args.limit, 10) : 20
+    const limit = Number.isFinite(n) && n > 0 ? n : 20
+    const { cmdSocialEchoes } = await import('./src/cli/social.ts')
+    cmdSocialEchoes(STATE_DIR, { limit, json: Boolean(args.json), ...(args.seek ? { seek: args.seek } : {}) })
+  },
+})
+
+const socialPledgesCmd = defineCommand({
+  meta: { name: 'pledges', description: "List others' wishes I answered (应答)" },
+  args: {
+    limit: { type: 'string', description: 'Max rows (default 20)' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const n = args.limit ? Number.parseInt(args.limit, 10) : 20
+    const limit = Number.isFinite(n) && n > 0 ? n : 20
+    const { cmdSocialPledges } = await import('./src/cli/social.ts')
+    cmdSocialPledges(STATE_DIR, { limit, json: Boolean(args.json) })
+  },
+})
+
+const socialRevealCmd = defineCommand({
+  meta: { name: 'reveal', description: '揭晓 — reveal your side of an echo or pledge (calls the running daemon)' },
+  args: {
+    id: { type: 'positional', required: true, description: 'Echo id or pledge id', valueHint: 'id' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { cmdSocialReveal } = await import('./src/cli/social.ts')
+    try {
+      await cmdSocialReveal(STATE_DIR, args.id, { json: Boolean(args.json) })
+    } catch {
+      // cmdSocialReveal's default `fail` already printed the message.
+      process.exit(1)
+    }
+  },
+})
+
+const socialCmd = defineCommand({
+  meta: { name: 'social', description: '觅食台 — list wishes/echoes/pledges and reveal (揭晓)' },
+  subCommands: {
+    seeks: socialSeeksCmd,
+    echoes: socialEchoesCmd,
+    pledges: socialPledgesCmd,
+    reveal: socialRevealCmd,
+  },
+})
+
 // ── dialogue — backfill + (future) query commands ────────────────────
 //
 // Task 5: `wechat-cc dialogue backfill` imports agent session JSONLs into
@@ -3215,6 +3294,8 @@ const SUBCOMMANDS = {
   'mcp-server': mcpServerCmd,
   // A2A agent management (Task 7).
   agent: agentCmd,
+  // 觅食台 social surface — seeks/echoes/pledges/reveal.
+  social: socialCmd,
   // Dialogue backfill (Task 5). Query subcommands arrive in Task 9.
   dialogue: dialogueCmd,
 } as const
