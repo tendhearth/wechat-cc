@@ -59,29 +59,57 @@ export async function initA2AAgentsTab() {
 }
 
 export async function refresh() {
-  const list = document.getElementById('a2a-agents-list')
-  if (!list) return
-  list.innerHTML = '<li class="empty">加载中…</li>'
+  const wishes = document.getElementById('fd-wishes')
+  if (wishes && !wishes.innerHTML) wishes.innerHTML = '<div class="fd-empty">加载中…</div>'
 
-  // Refresh the server-status banner first — operator-visible "your A2A
-  // base URL is X" so they can share it with external agents without
-  // hunting through the Add Agent modal. Best-effort: if /info fails or
-  // the banner element isn't in DOM, just skip it.
+  const [listResp, seeksResp, echoesResp, inbound] = await Promise.all([
+    /** @type {Promise<{agents?:Array<any>}|null>} */ (invokeApi('GET', '/v1/a2a/list').catch(() => null)),
+    /** @type {Promise<{seeks?:Array<any>}|null>}  */ (invokeApi('GET', '/v1/social/seeks').catch(() => null)),
+    /** @type {Promise<{echoes?:Array<any>}|null>} */ (invokeApi('GET', '/v1/social/echoes').catch(() => null)),
+    /** @type {Promise<any>}                        */ (invokeApi('GET', '/v1/social/inbound').catch(() => null)),
+  ])
+
+  // keep the server-status banner (best-effort, as before)
   const banner = document.getElementById('a2a-server-banner')
   if (banner) {
     const info = /** @type {Record<string, any>} */ (await invokeApi('GET', '/v1/a2a/info').catch(() => null))
-    if (!info) {
-      banner.innerHTML = '<span class="dot off"></span> A2A 状态未知（daemon 未启动？）'
-    } else if (!info.enabled) {
-      banner.innerHTML = '<span class="dot off"></span> A2A 入站服务器已禁用 — 编辑 <code>agent-config.json</code> 加 <code>"a2a_listen": { "port": 8717 }</code> 后重启 daemon'
-    } else {
-      const url = String(info.base_url ?? '')
-      banner.innerHTML = `<span class="dot on"></span> A2A 服务器运行中，外部 agent 调用此地址：<code class="a2a-base-url">${escapeHtml(url)}/a2a/notify</code>`
-    }
+    renderServerBanner(info, banner)
   }
 
-  const resp = /** @type {{ agents?: Array<any> }} */ (await invokeApi('GET', '/v1/a2a/list'))
-  const agents = resp?.agents ?? []
+  renderForageDesk({
+    agents: listResp ? (listResp.agents ?? []) : null,
+    seeks:  seeksResp ? (seeksResp.seeks ?? []) : null,
+    echoes: echoesResp ? (echoesResp.echoes ?? []) : null,
+    inbound,
+  })
+}
+
+/**
+ * Render the operator-visible "your A2A base URL is X" banner — so they
+ * can share it with external agents without hunting through the Add
+ * Agent modal.
+ * @param {Record<string, any> | null} info
+ * @param {HTMLElement} banner
+ */
+function renderServerBanner(info, banner) {
+  if (!info) {
+    banner.innerHTML = '<span class="dot off"></span> A2A 状态未知（daemon 未启动？）'
+  } else if (!info.enabled) {
+    banner.innerHTML = '<span class="dot off"></span> A2A 入站服务器已禁用 — 编辑 <code>agent-config.json</code> 加 <code>"a2a_listen": { "port": 8717 }</code> 后重启 daemon'
+  } else {
+    const url = String(info.base_url ?? '')
+    banner.innerHTML = `<span class="dot on"></span> A2A 服务器运行中，外部 agent 调用此地址：<code class="a2a-base-url">${escapeHtml(url)}/a2a/notify</code>`
+  }
+}
+
+/**
+ * Render the registered-agents cards into `list` (preserved verbatim
+ * markup — `.a2a-agent-card`, `data-action`, ids — Playwright a2a.spec
+ * depends on the `.empty` state text).
+ * @param {Array<any>} agents
+ * @param {HTMLElement} list
+ */
+function renderAgents(agents, list) {
   list.innerHTML = ''
   if (agents.length === 0) {
     list.innerHTML = '<li class="empty">No agents registered. Click "+ Add Agent" to install one.</li>'
@@ -108,6 +136,178 @@ export async function refresh() {
     list.appendChild(li)
   }
 }
+
+/**
+ * Render the whole 觅食台 from live data.
+ * @param {{ agents:Array<any>|null, seeks:Array<any>|null, echoes:Array<any>|null, inbound:any }} data
+ */
+export function renderForageDesk(data) {
+  const agents = Array.isArray(data.agents) ? data.agents : []
+  const seeks  = Array.isArray(data.seeks) ? data.seeks : []
+  const echoes = Array.isArray(data.echoes) ? data.echoes : []
+  const socialWired = data.seeks != null || data.echoes != null
+  const seekById = new Map(seeks.map(s => [s.id, s]))
+
+  // ── hero status ──────────────────────────────────────────────────────
+  const status = document.getElementById('fd-hero-status')
+  if (status) {
+    const n = agents.length
+    const asked = seeks.reduce((sum, s) => sum + (Number(s.peers_asked) || 0), 0)
+    const echoCount = echoes.length
+    const askFrag = socialWired
+      ? `<span>替你问过 <b class="fd-num">${asked}</b> 个</span><i class="fd-dot-sep"></i>` +
+        `<span><b style="color:var(--fd-clay-deep)">${echoCount}</b> 条带回音了</span>`
+      : `<span>社交觅食未启用</span>`
+    status.innerHTML =
+      `<svg class="fd-frog" viewBox="0 0 30 30" fill="none" aria-hidden="true">` +
+      `<ellipse cx="15" cy="19" rx="10" ry="8" fill="#8AA36F"/>` +
+      `<circle cx="10" cy="10" r="4.2" fill="#8AA36F"/><circle cx="20" cy="10" r="4.2" fill="#8AA36F"/>` +
+      `<circle cx="10" cy="10" r="2" fill="#fff"/><circle cx="20" cy="10" r="2" fill="#fff"/>` +
+      `<circle cx="10.6" cy="10.4" r="1" fill="#3B3125"/><circle cx="20.6" cy="10.4" r="1" fill="#3B3125"/>` +
+      `<path d="M11 20 q4 3 8 0" stroke="#3B3125" stroke-width="1.3" stroke-linecap="round"/></svg>` +
+      `<span class="fd-status-line"><span>连着 <b>${n} 位</b>朋友的 bot</span><i class="fd-dot-sep"></i>${askFrag}</span>` +
+      `<button class="fd-btn fd-btn-primary fd-sow" id="fd-sow" type="button">＋ 撒一个新心愿</button>`
+  }
+  const note = document.getElementById('fd-social-note')
+  if (note) {
+    if (socialWired) { note.hidden = true; note.textContent = '' }
+    else { note.hidden = false; note.textContent = '社交觅食功能未启用 —— 在 §③ 打开「让朋友的 bot 能找到我」并重启守护进程即可。' }
+  }
+
+  // ── ① wishes ─────────────────────────────────────────────────────────
+  const wishes = document.getElementById('fd-wishes')
+  const wishCount = document.getElementById('fd-wishes-count')
+  if (wishes) {
+    if (seeks.length === 0) {
+      wishes.innerHTML = `<div class="fd-empty">还没有派出去的心愿。在微信里跟 CC 说「帮我悄悄找…」，它就会替你撒出去。</div>`
+    } else {
+      wishes.innerHTML = seeks.map(s => renderWish(s)).join('')
+    }
+  }
+  if (wishCount) {
+    const active = seeks.filter(s => s.status === 'foraging').length
+    wishCount.textContent = seeks.length ? `${active} 条在外面` : ''
+  }
+
+  // ── ② postcards ──────────────────────────────────────────────────────
+  const postcards = document.getElementById('fd-postcards')
+  const pcCount = document.getElementById('fd-postcards-count')
+  if (postcards) {
+    if (echoes.length === 0) {
+      postcards.innerHTML = `<div class="fd-empty">还没有带回明信片。你的 bot 一有回音，就会出现在这里。</div>`
+    } else {
+      postcards.innerHTML = echoes.map(e => renderPostcard(e, seekById.get(e.seek_id))).join('')
+    }
+  }
+  if (pcCount) {
+    const pending = echoes.filter(e => e.status === 'pending').length
+    pcCount.textContent = pending ? `${pending} 张待你揭晓` : (echoes.length ? '已处理' : '')
+  }
+
+  // ── ③ net: inbound toggle + peers summary + agent cards ──────────────
+  const toggle = document.getElementById('fd-inbound-toggle')
+  if (toggle) {
+    const on = !!(data.inbound && data.inbound.enabled)
+    toggle.classList.toggle('fd-on', on)
+    toggle.setAttribute('aria-checked', on ? 'true' : 'false')
+  }
+  const peers = document.getElementById('fd-peers')
+  const peersCount = document.getElementById('fd-peers-count')
+  if (peers) {
+    const shown = agents.slice(0, 4)
+    let html = shown.map(a => `<span class="fd-peer">${escapeHtml(firstGlyph(a.name || a.id))}</span>`).join('')
+    if (agents.length > 4) html += `<span class="fd-peer">+${agents.length - 4}</span>`
+    peers.innerHTML = html
+  }
+  if (peersCount) peersCount.textContent = `连着 ${agents.length} 位朋友的 bot`
+
+  // preserved agent-management surface
+  const list = document.getElementById('a2a-agents-list')
+  if (list) renderAgents(agents, list)
+}
+
+/** @param {string} iso */
+function fdRelTime(iso) {
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return ''
+  const s = Math.floor((Date.now() - t) / 1000)
+  if (s < 60) return '刚刚'
+  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`
+  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`
+  if (s < 172800) return '昨天'
+  return `${Math.floor(s / 86400)} 天前`
+}
+/** @param {number} n → "朋友 → 的朋友 → …" */
+function fdDegreePath(n) {
+  const parts = ['朋友']
+  for (let i = 1; i < n; i++) parts.push('的朋友')
+  return parts.join(' → ')
+}
+/** @param {number} n */
+function fdDegBar(n) {
+  // 1-hop today: deg 1 lit, 2/3 dashed "next" (待开).
+  return [1, 2, 3].map(d =>
+    `<i class="fd-deg ${d <= n ? 'fd-lit' : 'fd-next'}"></i>`).join('')
+}
+
+/** @param {any} s */
+function renderWish(s) {
+  const kindCls = s.kind === 'fun' ? 'fd-fun' : 'fd-seek'
+  const kindTxt = s.kind === 'fun' ? '朋友间小乐趣' : '求物求人'
+  const echoed = s.status === 'echoed' || s.status === 'connected'
+  const right = echoed
+    ? `<span class="fd-echo-badge">🎉 有回音！</span><div class="fd-deg-cap">↓ 见下方明信片</div>`
+    : `<div class="fd-forage"><span class="fd-pulse"></span>觅食中</div>` +
+      `<div class="fd-degree"><span class="fd-deg-track">${fdDegBar(Number(s.hop) || 1)}</span></div>` +
+      `<div class="fd-deg-cap">第 ${Number(s.hop) || 1} 度 · 问了 ${Number(s.peers_asked) || 0} 个</div>`
+  return `<div class="fd-wish">` +
+    `<span class="fd-kind ${kindCls}">${kindTxt}</span>` +
+    `<div class="fd-title">${escapeHtml(s.topic || '')}</div>` +
+    `<div class="fd-meta"><span class="fd-lock">🔒 匿名传播</span><i class="fd-dot-sep"></i><span>撒出去 ${escapeHtml(fdRelTime(s.created_at))}</span></div>` +
+    `<div class="fd-rightcol">${right}</div>` +
+    `</div>`
+}
+
+/** @param {any} e  @param {any} seek */
+function renderPostcard(e, seek) {
+  const deg = Number(e.degree) || 1
+  const topic = seek ? seek.topic : ''
+  const bodyTopic = topic ? `回应了你的「<b>${escapeHtml(topic)}</b>」——` : ''
+  if (e.status === 'revealed') {
+    return `<div class="fd-postcard fd-connected">` +
+      `<div class="fd-stamp">从第 ${deg} 度<br>带回</div>` +
+      `<div class="fd-pc-eyebrow">🎉 已牵线</div>` +
+      `<div class="fd-masked fd-revealed"><div class="fd-mask-av">✓</div><div class="fd-who">${escapeHtml(e.peer_masked || '')}<small>身份已互相亮出</small></div></div>` +
+      `<p class="fd-pc-body">${bodyTopic}「${escapeHtml(e.content || '')}」</p>` +
+      `<div class="fd-outcome">已牵线 · 可以直接联系了</div>` +
+      `</div>`
+  }
+  if (e.status === 'declined') {
+    return `<div class="fd-postcard">` +
+      `<div class="fd-stamp">从第 ${deg} 度<br>带回</div>` +
+      `<div class="fd-masked"><div class="fd-mask-av">?</div><div class="fd-who">${escapeHtml(e.peer_masked || `${deg}度外的某人`)}<small>${escapeHtml(fdDegreePath(deg))}</small></div></div>` +
+      `<p class="fd-pc-body">${bodyTopic}「${escapeHtml(e.content || '')}」</p>` +
+      `<div class="fd-outcome fd-retry">这条已谢绝</div>` +
+      `</div>`
+  }
+  // pending
+  return `<div class="fd-postcard" data-echo-id="${escapeHtml(e.id)}">` +
+    `<div class="fd-stamp">从第 ${deg} 度<br>带回</div>` +
+    `<div class="fd-pc-eyebrow">🐸 你的 bot 带回一张明信片</div>` +
+    `<div class="fd-masked"><div class="fd-mask-av">?</div><div class="fd-who">${escapeHtml(e.peer_masked || `${deg}度外的某人`)}<small>${escapeHtml(fdDegreePath(deg))}</small></div></div>` +
+    `<p class="fd-pc-body">${bodyTopic}「${escapeHtml(e.content || '')}」</p>` +
+    `<div class="fd-pc-actions"><button class="fd-btn fd-btn-reveal" data-action="reveal" data-id="${escapeHtml(e.id)}">揭晓牵线</button><button class="fd-btn fd-btn-wait" data-action="wait">再等等</button></div>` +
+    `<div class="fd-reveal-note">🔒 你点了之后，对方也点「同意」，才互相亮身份和联系方式</div>` +
+    `</div>`
+}
+
+/**
+ * Last visible glyph of a name (handles surrogate pairs) — for common CN
+ * nicknames like 老王/小李 (老/小 + surname prefix pattern) this surfaces
+ * the surname rather than the generic 老/小 prefix.
+ * @param {string} s
+ */
+function firstGlyph(s) { const g = Array.from(String(s || '?')); return g[g.length - 1] || '?' }
 
 // ── event handlers ────────────────────────────────────────────────────────
 
