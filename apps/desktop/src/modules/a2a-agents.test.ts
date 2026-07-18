@@ -29,6 +29,7 @@ function fakeEl() {
     querySelector() { return null },
     addEventListener: vi.fn(),
     closest: () => null,
+    remove: vi.fn(),
   }
 }
 
@@ -161,5 +162,70 @@ describe('renderForageDesk — hero + net', () => {
     expect(el['fd-social-note'].hidden).toBe(false)
     expect(el['fd-social-note'].textContent).toContain('未启用')
     expect(el['fd-hero-status'].innerHTML).toContain('1 位')
+  })
+})
+
+describe('reveal action', () => {
+  it('connected outcome swaps the card to 已牵线 and removes the buttons', async () => {
+    ;(invokeApi as any).mockResolvedValueOnce({ outcome: { state: 'connected' } })
+    // Build a card with a reveal button + note + actions, wired via the handler.
+    const btn = fakeEl(); btn.dataset.action = 'reveal'; btn.dataset.id = 's2:peerX'
+    const actions = fakeEl(); const note = fakeEl()
+    const card = { ...fakeEl(), querySelector: (sel: string) => sel === '.fd-pc-actions' ? actions : sel === '.fd-reveal-note' ? note : null }
+    ;(btn as any).closest = (sel: string) => sel === '.fd-postcard' ? card : null
+    const { __onPostcardActionForTest } = await import('./a2a-agents.js')
+    await __onPostcardActionForTest?.({ target: btn } as any)
+    expect((invokeApi as any)).toHaveBeenCalledWith('POST', '/v1/social/echoes/reveal', { id: 's2:peerX' })
+    expect(card.classList.contains('fd-connected')).toBe(true)
+    expect(note.textContent).toContain('已牵线')
+  })
+
+  it('awaiting_peer outcome collapses actions and shows a wait note', async () => {
+    ;(invokeApi as any).mockResolvedValueOnce({ outcome: { state: 'awaiting_peer' } })
+    const btn = fakeEl(); btn.dataset.action = 'reveal'; btn.dataset.id = 's2:peerX'
+    const actions = fakeEl(); const note = fakeEl()
+    const card = { ...fakeEl(), querySelector: (sel: string) => sel === '.fd-pc-actions' ? actions : sel === '.fd-reveal-note' ? note : null }
+    ;(btn as any).closest = (sel: string) => sel === '.fd-postcard' ? card : null
+    const { __onPostcardActionForTest } = await import('./a2a-agents.js')
+    await __onPostcardActionForTest?.({ target: btn } as any)
+    expect(note.textContent).toContain('等对方回揭')
+    expect(card.classList.contains('fd-connected')).toBe(false)
+  })
+
+  it('peer_unreachable outcome re-enables the button with a retry hint', async () => {
+    ;(invokeApi as any).mockResolvedValueOnce({ outcome: { state: 'peer_unreachable' } })
+    const btn = fakeEl(); btn.dataset.action = 'reveal'; btn.dataset.id = 's2:peerX'
+    const note = fakeEl()
+    const card = { ...fakeEl(), querySelector: (sel: string) => sel === '.fd-reveal-note' ? note : null }
+    ;(btn as any).closest = (sel: string) => sel === '.fd-postcard' ? card : null
+    const { __onPostcardActionForTest } = await import('./a2a-agents.js')
+    await __onPostcardActionForTest?.({ target: btn } as any)
+    expect(btn.disabled).toBe(false)
+    expect(note.textContent).toContain('联系不上')
+  })
+
+  it('a thrown error surfaces a non-crashing inline note', async () => {
+    ;(invokeApi as any).mockRejectedValueOnce(new Error('network down'))
+    const btn = fakeEl(); btn.dataset.action = 'reveal'; btn.dataset.id = 's2:peerX'
+    const note = fakeEl()
+    const card = { ...fakeEl(), querySelector: (sel: string) => sel === '.fd-reveal-note' ? note : null }
+    ;(btn as any).closest = (sel: string) => sel === '.fd-postcard' ? card : null
+    const { __onPostcardActionForTest } = await import('./a2a-agents.js')
+    await expect(__onPostcardActionForTest?.({ target: btn } as any)).resolves.not.toThrow()
+    expect(note.textContent).toContain('揭晓失败')
+    expect(note.textContent).toContain('network down')
+  })
+})
+
+describe('inbound toggle', () => {
+  it('POSTs the flipped state and surfaces restart-required', async () => {
+    ;(invokeApi as any).mockResolvedValueOnce({ enabled: true, restart_required: true })
+    const toggle = fakeEl(); const note = fakeEl()
+    installDom({ 'fd-inbound-toggle': toggle, 'fd-inbound-note': note })
+    const { __onInboundToggleForTest } = await import('./a2a-agents.js')
+    await __onInboundToggleForTest?.()
+    expect((invokeApi as any)).toHaveBeenCalledWith('POST', '/v1/social/inbound', { enabled: true })
+    expect(toggle.classList.contains('fd-on')).toBe(true)
+    expect(note.textContent).toContain('需重启')
   })
 })

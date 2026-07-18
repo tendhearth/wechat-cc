@@ -56,6 +56,21 @@ export async function initA2AAgentsTab() {
   // Delegated click handler on the list container (attached ONCE; not per
   // refresh — duplicating would multiply calls per click).
   list.addEventListener('click', onCardAction)
+
+  // 觅食台 — reveal (delegated), inbound toggle, sow hint.
+  document.getElementById('fd-postcards')?.addEventListener('click', onPostcardAction)
+  document.getElementById('fd-inbound-toggle')?.addEventListener('click', onInboundToggle)
+  document.getElementById('fd-inbound-toggle')?.addEventListener('keydown', (e) => {
+    if (e instanceof KeyboardEvent && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onInboundToggle() }
+  })
+  // #fd-sow / #a2a-add-btn are re-rendered by renderForageDesk, so the sow
+  // hint is delegated from the hero container instead of bound to the node.
+  document.getElementById('fd-hero-status')?.addEventListener('click', (e) => {
+    if (e.target instanceof HTMLElement && e.target.closest('#fd-sow')) {
+      const hint = document.getElementById('fd-sow-hint')
+      if (hint) hint.hidden = false
+    }
+  })
 }
 
 export async function refresh() {
@@ -215,7 +230,7 @@ export function renderForageDesk(data) {
   const peersCount = document.getElementById('fd-peers-count')
   if (peers) {
     const shown = agents.slice(0, 4)
-    let html = shown.map(a => `<span class="fd-peer">${escapeHtml(firstGlyph(a.name || a.id))}</span>`).join('')
+    let html = shown.map(a => `<span class="fd-peer">${escapeHtml(lastGlyph(a.name || a.id))}</span>`).join('')
     if (agents.length > 4) html += `<span class="fd-peer">+${agents.length - 4}</span>`
     peers.innerHTML = html
   }
@@ -307,7 +322,7 @@ function renderPostcard(e, seek) {
  * the surname rather than the generic 老/小 prefix.
  * @param {string} s
  */
-function firstGlyph(s) { const g = Array.from(String(s || '?')); return g[g.length - 1] || '?' }
+function lastGlyph(s) { const g = Array.from(String(s || '?')); return g[g.length - 1] || '?' }
 
 // ── event handlers ────────────────────────────────────────────────────────
 
@@ -346,6 +361,90 @@ async function onCardAction(e) {
     )
   }
 }
+
+// 觅食台 — postcard reveal + inbound toggle. Guards are duck-typed
+// (`target?.dataset`) rather than `instanceof HTMLButtonElement` so these
+// handlers stay directly testable against the bare-object DOM stub used in
+// a2a-agents.test.ts (no jsdom, no HTMLButtonElement in that environment).
+
+/** @param {MouseEvent} e */
+async function onPostcardAction(e) {
+  const target = /** @type {any} */ (e.target)
+  if (!target || !target.dataset) return
+  const action = target.dataset.action
+  const card = typeof target.closest === 'function' ? target.closest('.fd-postcard') : null
+  if (action === 'wait') {
+    // "再等等" — passive; collapse the actions with a soft note.
+    if (card) {
+      const actions = card.querySelector('.fd-pc-actions')
+      if (actions) actions.remove()
+      const note = card.querySelector('.fd-reveal-note')
+      if (note) note.textContent = '好，先放着 —— 有进展你的 bot 会再提醒你。'
+    }
+    return
+  }
+  if (action !== 'reveal') return
+  const id = target.dataset.id
+  if (!id || !card) return
+  target.disabled = true
+  target.textContent = '揭晓中…'
+  try {
+    const r = /** @type {{outcome?:{state?:string}, error?:string}} */ (
+      await invokeApi('POST', '/v1/social/echoes/reveal', { id }))
+    const state = r?.outcome?.state
+    const actions = card.querySelector('.fd-pc-actions')
+    const note = card.querySelector('.fd-reveal-note')
+    if (state === 'connected') {
+      if (actions) actions.remove()
+      card.classList.add('fd-connected')
+      if (note) { note.className = 'fd-outcome'; note.textContent = '🎉 已牵线 · 对方也同意了，可以直接联系了' }
+    } else if (state === 'awaiting_peer') {
+      if (actions) actions.remove()
+      if (note) { note.className = 'fd-outcome fd-wait'; note.textContent = '已揭晓，等对方回揭 —— 对方同意后就会互相亮身份' }
+    } else if (state === 'peer_unreachable') {
+      target.disabled = false
+      target.textContent = '再试一次揭晓'
+      if (note) { note.className = 'fd-outcome fd-retry'; note.textContent = '暂时联系不上对方的 bot，等下再试' }
+    } else {
+      target.disabled = false
+      target.textContent = '揭晓牵线'
+      if (note) { note.className = 'fd-reveal-note'; note.textContent = `揭晓失败：${escapeHtml(String(r?.error ?? '未知错误'))}` }
+    }
+  } catch (err) {
+    target.disabled = false
+    target.textContent = '揭晓牵线'
+    const note = card.querySelector('.fd-reveal-note')
+    if (note) { note.className = 'fd-reveal-note'; note.textContent = `揭晓失败：${escapeHtml(err instanceof Error ? err.message : String(err))}` }
+  }
+}
+
+async function onInboundToggle() {
+  const toggle = document.getElementById('fd-inbound-toggle')
+  const note = document.getElementById('fd-inbound-note')
+  if (!toggle) return
+  const next = !toggle.classList.contains('fd-on')
+  try {
+    const r = /** @type {{enabled?:boolean, restart_required?:boolean, error?:string}} */ (
+      await invokeApi('POST', '/v1/social/inbound', { enabled: next }))
+    const enabled = !!r?.enabled
+    toggle.classList.toggle('fd-on', enabled)
+    toggle.setAttribute('aria-checked', enabled ? 'true' : 'false')
+    if (note) {
+      note.hidden = false
+      note.textContent = r?.restart_required
+        ? (enabled ? '已开启 —— 需重启守护进程后，别人的心愿才能真正传到你这。' : '已关闭 —— 需重启守护进程后生效。')
+        : (enabled ? '已开启。' : '已关闭。')
+    }
+  } catch (err) {
+    if (note) { note.hidden = false; note.textContent = `切换失败：${err instanceof Error ? err.message : String(err)}` }
+  }
+}
+
+// Test seams — onPostcardAction/onInboundToggle are module-private (wired
+// via addEventListener in initA2AAgentsTab), so unit tests reach them
+// through these thin re-exports rather than simulating real DOM events.
+export const __onPostcardActionForTest = onPostcardAction
+export const __onInboundToggleForTest = onInboundToggle
 
 // ── Test modal ────────────────────────────────────────────────────────────
 // Lets the operator validate either direction of the A2A loop without
