@@ -5065,8 +5065,6 @@ input { font: inherit; color: inherit; }
 .fd-btn { border:0; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600; border-radius:12px; padding:11px 18px; transition:.16s; }
 .fd-btn-primary { background:var(--fd-amber); color:#3a2c0c; box-shadow:0 1px 0 rgba(255,255,255,.4) inset,0 6px 14px -8px var(--fd-amber); }
 .fd-btn-primary:hover { background:var(--fd-amber-deep); color:#fff; }
-.fd-btn-ghost { background:transparent; color:var(--fd-ink-soft); border:1.5px solid var(--fd-line); }
-.fd-btn-ghost:hover { border-color:var(--fd-amber); color:var(--fd-ink); }
 
 .fd-wave { height:12px; margin:26px 0 34px; color:var(--fd-line); }
 .fd-wave svg { width:100%; height:12px; display:block; }
@@ -5134,7 +5132,7 @@ input { font: inherit; color: inherit; }
 .fd-net summary::-webkit-details-marker { display:none; }
 .fd-net-sub { color:var(--fd-ink-faint); font-weight:500; font-size:13.5px; }
 .fd-chev { margin-left:auto; color:var(--fd-ink-faint); transition:.2s; }
-.fd-net details[open] .fd-chev, .fd-net[open] .fd-chev { transform:rotate(90deg); }
+.fd-net details[open] .fd-chev { transform:rotate(90deg); }
 .fd-net details[open] summary .fd-chev { transform:rotate(90deg); }
 .fd-peers { display:flex; align-items:center; }
 .fd-peer { width:26px; height:26px; border-radius:50%; border:2px solid var(--fd-ground-2); margin-left:-8px; background:radial-gradient(circle at 35% 30%,#f0e6d4,#d8c7a8); display:grid; place-items:center; font-size:11px; color:var(--fd-ink-soft); font-weight:700; }
@@ -5152,7 +5150,6 @@ input { font: inherit; color: inherit; }
 .fd-toggle.fd-on::after { left:21px; }
 .fd-toggle:not(.fd-on) { background:var(--fd-line); }
 .fd-inbound-note { font-size:12px; color:var(--fd-amber-deep); background:var(--fd-amber-wash); border-radius:8px; padding:8px 10px; margin:2px 0 0; }
-.fd-add-peer { display:inline-flex; align-items:center; gap:7px; color:var(--fd-amber-deep); font-weight:600; font-size:14px; cursor:pointer; padding:12px 0; }
 .fd-depth-note { margin-top:8px; font-size:12.5px; color:var(--fd-ink-faint); display:flex; gap:8px; align-items:center; line-height:1.5; }
 .fd-depth-note b { color:var(--fd-ink-soft); }
 .fd-depth-note .fd-pill { background:var(--fd-amber-wash); color:var(--fd-amber-deep); font-weight:700; font-size:11px; padding:2px 8px; border-radius:999px; white-space:nowrap; }
