@@ -30,6 +30,7 @@ async function startServer(opts: {
   onExec?: (event: import('./a2a-server').ExecEvent) => Promise<import('./a2a-server').ExecResult>
   onIntent?: (event: import('./a2a-server').IntentEvent) => Promise<import('./a2a-intent').MatchReceipt>
   onReveal?: (event: import('./a2a-server').RevealEvent) => Promise<{ mutual: boolean; handle?: import('./penpal-crypto').PenpalHandle }>
+  onLetter?: (event: import('./a2a-server').LetterEvent) => Promise<{ ok: boolean; error?: string }>
 } = {}) {
   const onNotify: (event: import('./a2a-server').NotifyEvent) => Promise<void> = opts.onNotify ?? vi.fn(async () => {})
   const server = createA2AServer({
@@ -39,6 +40,7 @@ async function startServer(opts: {
     ...(opts.onExec ? { onExec: opts.onExec } : {}),
     ...(opts.onIntent ? { onIntent: opts.onIntent } : {}),
     ...(opts.onReveal ? { onReveal: opts.onReveal } : {}),
+    ...(opts.onLetter ? { onLetter: opts.onLetter } : {}),
     daemonInfo: { name: 'wechat-cc', version: '0.6.x' },
   })
   await server.start()
@@ -424,6 +426,115 @@ describe('a2a-server', () => {
       try {
         const card = await (await fetch(`${bare.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
         expect(card.capabilities.some(c => c.name === 'reveal')).toBe(false)
+      } finally { await bare.server.stop() }
+    })
+  })
+
+  describe('POST /a2a/letter (E2E pen-pal inbound)', () => {
+    it('runs onLetter with the verified agent_id + sealed fields, returns { ok: true }', async () => {
+      const onLetter = vi.fn(async (_e: import('./a2a-server').LetterEvent) => ({ ok: true }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onLetter })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/letter`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', channel_id: 'ch-1', nonce: 'n-1', ct: 'ct-1', tag: 't-1' }),
+        })
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual({ ok: true })
+        expect(onLetter).toHaveBeenCalledWith({ agent_id: 'alpha', channel_id: 'ch-1', nonce: 'n-1', ct: 'ct-1', tag: 't-1' })
+      } finally { await server.stop() }
+    })
+
+    it('returns 501 when this machine is not wired for letter (no onLetter)', async () => {
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec] })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/letter`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', channel_id: 'ch-1', nonce: 'n-1', ct: 'ct-1', tag: 't-1' }),
+        })
+        expect(res.status).toBe(501)
+        const body = await res.json() as { error: string }
+        expect(body.error).toBe('letter_not_supported')
+      } finally { await server.stop() }
+    })
+
+    it.each(['channel_id', 'nonce', 'ct', 'tag'])('missing/blank %s → 400 invalid_body, onLetter not called', async (field) => {
+      const onLetter = vi.fn(async () => ({ ok: true }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onLetter })
+      try {
+        const full: Record<string, unknown> = { agent_id: 'alpha', channel_id: 'ch-1', nonce: 'n-1', ct: 'ct-1', tag: 't-1' }
+        full[field] = ''
+        const res = await fetch(`${baseUrl}/a2a/letter`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify(full),
+        })
+        expect(res.status).toBe(400)
+        const body = await res.json() as { error: string }
+        expect(body.error).toBe('invalid_body')
+        expect(onLetter).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('rejects letter without a valid Bearer → 401, onLetter not called', async () => {
+      const onLetter = vi.fn(async () => ({ ok: true }))
+      const { server, baseUrl } = await startServer({ onLetter })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/letter`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agent_id: 'alpha', channel_id: 'ch-1', nonce: 'n-1', ct: 'ct-1', tag: 't-1' }),
+        })
+        expect(res.status).toBe(401)
+        expect(onLetter).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('rejects letter with wrong Bearer → 401, onLetter not called', async () => {
+      const onLetter = vi.fn(async () => ({ ok: true }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onLetter })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/letter`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer wrong-key-completely' },
+          body: JSON.stringify({ agent_id: 'alpha', channel_id: 'ch-1', nonce: 'n-1', ct: 'ct-1', tag: 't-1' }),
+        })
+        expect(res.status).toBe(401)
+        expect(onLetter).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('malformed JSON body → 400 invalid_json, no crash', async () => {
+      const onLetter = vi.fn(async () => ({ ok: true }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onLetter })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/letter`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
+          body: '{not json',
+        })
+        expect(res.status).toBe(400)
+        expect(onLetter).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('advertises the letter capability in the agent card only when wired', async () => {
+      const wired = await startServer({ onLetter: async () => ({ ok: true }) })
+      try {
+        const card = await (await fetch(`${wired.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        expect(card.capabilities.some(c => c.name === 'letter')).toBe(true)
+      } finally { await wired.server.stop() }
+      const bare = await startServer({})
+      try {
+        const card = await (await fetch(`${bare.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        expect(card.capabilities.some(c => c.name === 'letter')).toBe(false)
       } finally { await bare.server.stop() }
     })
   })
