@@ -7,6 +7,8 @@ import { saveAgentConfig } from '../lib/agent-config'
 import { openTestDb } from '../lib/db'
 import { makeSeekStore } from '../core/social-seek-store'
 import { makeEchoStore } from '../core/social-echo-store'
+import { makeChannelStore } from '../core/penpal-channel-store'
+import { generateKeypair } from '../core/penpal-crypto'
 import { TIER_PROFILES } from '../core/user-tier'
 import { MANIFEST_FILE } from './plugins/paths'
 import type { Access } from '../lib/access'
@@ -1217,11 +1219,13 @@ describe('bootstrap agent-social M1 wiring', () => {
 
   // I1 regression — when the SEEKER reveals FIRST, mutual completes via the
   // inbound /a2a/reveal (onInboundReveal's echo branch), which only holds the
-  // peer's agent_id. The wired socialOnReveal must swap the echo's masked
-  // placeholder for the peer's real name from the registry — otherwise
-  // peer_masked stays "第 N 度的某人" forever. Driven full-stack through the
-  // real a2a-server /a2a/reveal endpoint.
-  it('first-revealer echo gets peer_masked swapped to the real name on inbound-completed mutual', async () => {
+  // peer's agent_id. Reveal crosses a PenpalHandle (pubkey + channel id), NEVER
+  // real identity — the masked placeholder is permanent; only the penpal_channel
+  // row learns the crossed handle. Driven full-stack through the real
+  // a2a-server /a2a/reveal endpoint (the peer has no real handle to present
+  // here, so this exercises the "peer presented nothing" path — the channel
+  // still opens via the mutual-instant openLocal, non-null on OUR side).
+  it('first-revealer echo stays masked and opens a penpal_channel on inbound-completed mutual', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-i1-'))
     const port = 19907
     writeFileSync(
@@ -1237,15 +1241,21 @@ describe('bootstrap agent-social M1 wiring', () => {
       }),
     )
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    const db = openTestDb()
+    const ilink = makeIlinkStub()
+    ;(ilink.sendMessage as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ msgId: 'm1' })
     try {
       boot = await buildBootstrap({
-        db: openTestDb(),
+        db,
         stateDir,
-        ilink: makeIlinkStub() as any,
+        ilink: ilink as any,
         loadProjects: () => ({ projects: {}, current: null }),
         lastActiveChatId: () => null,
         log: () => {},
       })
+      // Bind an operator chat so the 'connected' notify beat actually fires,
+      // so we can assert its text is content-free (no peer name).
+      boot.conversationStore.upsertIdentity('op_chat', { userId: 'op_chat' })
       const peerKey = 'peer-inbound-key-abc123'   // ≥16 chars (registry rule)
       boot.a2aDeps.registry.add({
         id: 'ccb', name: '小B', url: 'http://127.0.0.1:1/a2a',
@@ -1262,20 +1272,43 @@ describe('bootstrap agent-social M1 wiring', () => {
       })
       boot.social!.echoStore.setSelfRevealed(`${intentId}:ccb`, new Date().toISOString())
 
-      // The peer now reveals back over the wire → mutual completes here.
+      // The peer now reveals back over the wire, presenting ITS PenpalHandle
+      // (pubkey + channel id) — the reveal transport's ONLY crossing material.
+      // No name, ever.
+      const peerHandle = { pubkey: generateKeypair().publicKey, channel_id: 'peer-chan-1' }
       const resp = await fetch(`http://127.0.0.1:${port}/a2a/reveal`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${peerKey}` },
-        body: JSON.stringify({ agent_id: 'ccb', intent_id: intentId }),
+        body: JSON.stringify({ agent_id: 'ccb', intent_id: intentId, peer_handle: peerHandle }),
       })
       expect(resp.status).toBe(200)
-      expect(await resp.json()).toMatchObject({ mutual: true })
+      const respBody = await resp.json() as { mutual: boolean; handle?: { pubkey: string; channel_id: string } }
+      expect(respBody.mutual).toBe(true)
+      // Content-free: no name, ever — only a pubkey handle may ride along.
+      expect(respBody).not.toHaveProperty('peer_name')
+      expect(respBody).not.toHaveProperty('identity')
 
-      // I1: the masked placeholder is now the peer's real registry name.
+      // The masked placeholder NEVER lifts — reveal crosses pubkeys, not names.
       const echo = boot.social!.echoStore.get(`${intentId}:ccb`)!
-      expect(echo.peer_masked).toBe('小B')
+      expect(echo.peer_masked).toBe('第 1 度的某人')
       expect(echo.peer_revealed_at).not.toBeNull()
       expect(boot.social!.seekStore.get(intentId)!.status).toBe('connected')
+
+      // A penpal_channel row opened for this echo: OUR minted handle plus the
+      // peer's presented handle, crossed and open.
+      const channelStore = makeChannelStore(db)
+      const channel = channelStore.get(`${intentId}:ccb`)
+      expect(channel).not.toBeNull()
+      expect(channel!.status).toBe('open')
+      expect(channel!.peer_pubkey).toBe(peerHandle.pubkey)
+      expect(channel!.peer_channel_id).toBe(peerHandle.channel_id)
+
+      // The 'connected' beat fired to the operator, and it is content-free —
+      // no peer name anywhere in the text (小B never appears).
+      const sendMessage = ilink.sendMessage as unknown as ReturnType<typeof vi.fn>
+      const connectedSends = sendMessage.mock.calls.filter((c: unknown[]) => String(c[1]).includes('接上头'))
+      expect(connectedSends).toHaveLength(1)
+      expect(String(connectedSends[0]?.[1])).not.toContain('小B')
     } finally {
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })
