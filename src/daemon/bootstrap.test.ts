@@ -8,7 +8,8 @@ import { openTestDb } from '../lib/db'
 import { makeSeekStore } from '../core/social-seek-store'
 import { makeEchoStore } from '../core/social-echo-store'
 import { makeChannelStore } from '../core/penpal-channel-store'
-import { generateKeypair } from '../core/penpal-crypto'
+import { makeRelayStore } from '../core/social-relay-store'
+import { generateKeypair, deriveSharedKey, sealLetter } from '../core/penpal-crypto'
 import { TIER_PROFILES } from '../core/user-tier'
 import { MANIFEST_FILE } from './plugins/paths'
 import type { Access } from '../lib/access'
@@ -1088,6 +1089,12 @@ describe('bootstrap agent-social M1 wiring', () => {
       expect(typeof boot.social!.revealer.revealEcho).toBe('function')
       expect(typeof boot.social!.pledgeStore.list).toBe('function')
       expect(card.capabilities.some(c => c.name === 'reveal')).toBe(true)
+      // Task 11: correspondent + letter relay wired — boot.social.penpal AND
+      // the top-level boot.penpal (what the "回信" dispatch seam in
+      // pipeline-deps.ts actually reads) both expose sendLetter.
+      expect(typeof boot.social!.penpal.sendLetter).toBe('function')
+      expect(typeof boot.penpal?.sendLetter).toBe('function')
+      expect(card.capabilities.some(c => c.name === 'letter')).toBe(true)
     } finally {
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })
@@ -1666,6 +1673,209 @@ describe('bootstrap agent-social M1 wiring', () => {
       expect(await resp.json()).toMatchObject({ error: 'social_not_wired' })
     } finally {
       await api.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  // Task 11 — cross-task dispatch order (flagged in Task 9 review): the
+  // inbound /a2a/letter handler MUST try THIS daemon's own channel first
+  // (correspondent.receiveLetter, via channelStore.getByMyChannelId) and
+  // only fall through to the content-blind relay when that channel_id is
+  // NOT one of our own. Each test below drives ONE branch through the real
+  // /a2a/letter endpoint and asserts the OTHER branch's effects did not fire.
+  it('an inbound letter to OUR OWN open channel decrypts + notifies the owner (not routed)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-letter-own-'))
+    const port = 19910
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+      }),
+    )
+    const db = openTestDb()
+    const ilink = makeIlinkStub()
+    ;(ilink.sendMessage as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ msgId: 'm1' })
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: ilink as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      boot.conversationStore.upsertIdentity('op_chat', { userId: 'op_chat' })
+      const peerKey = 'peer-letter-own-key-abc123'
+      boot.a2aDeps.registry.add({
+        id: 'ccb', name: '小B', url: 'http://127.0.0.1:1/a2a',
+        inbound_api_key: peerKey, outbound_api_key: 'unused',
+        capabilities: [], paused: false, transport: 'push',
+      })
+      // Open a real penpal_channel the same way the I1 reveal test does: seed
+      // a self-revealed echo, then have the peer reveal back over the wire
+      // with a REAL keypair (its private key lets us encrypt a valid letter
+      // FROM the peer TO us below, mirroring what the peer's own
+      // penpal-correspondent.ts would produce).
+      const intentId = 'seek-letter-own'
+      boot.social!.seekStore.create({ id: intentId, kind: 'seek', topic: '找摄影搭子' })
+      boot.social!.echoStore.create({
+        id: `${intentId}:ccb`, seekId: intentId, peerMasked: '第 1 度的某人',
+        degree: 1, content: '南京摄影爱好者', peerAgentId: 'ccb',
+      })
+      boot.social!.echoStore.setSelfRevealed(`${intentId}:ccb`, new Date().toISOString())
+      const peerKp = generateKeypair()
+      const peerHandle = { pubkey: peerKp.publicKey, channel_id: 'peer-chan-own-1' }
+      const revealResp = await fetch(`http://127.0.0.1:${port}/a2a/reveal`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${peerKey}` },
+        body: JSON.stringify({ agent_id: 'ccb', intent_id: intentId, peer_handle: peerHandle }),
+      })
+      expect(revealResp.status).toBe(200)
+      expect((await revealResp.json() as { mutual: boolean }).mutual).toBe(true)
+
+      const channelStore = makeChannelStore(db)
+      const channel = channelStore.get(`${intentId}:ccb`)!
+      expect(channel.status).toBe('open')
+
+      // Encrypt a letter AS THE PEER (its private key + our channel's public
+      // key — deriveSharedKey is symmetric), addressed to OUR OWN inbound
+      // channel_id, exactly as penpal-correspondent.ts's sendLetter would
+      // from the peer's side.
+      const key = deriveSharedKey(peerKp.privateKey, channel.my_pubkey)
+      const sealed = sealLetter(key, '下次约拍风景怎么样?')
+      const letterResp = await fetch(`http://127.0.0.1:${port}/a2a/letter`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${peerKey}` },
+        body: JSON.stringify({ agent_id: 'ccb', channel_id: channel.my_channel_id, ...sealed }),
+      })
+      expect(letterResp.status).toBe(200)
+      expect(await letterResp.json()).toEqual({ ok: true })
+
+      // Decrypted + persisted locally — the OWN-endpoint path, not relayed.
+      const letterRow = db.query('SELECT direction, plaintext FROM penpal_letter WHERE channel_id = ?')
+        .get(channel.id) as { direction: string; plaintext: string } | null
+      expect(letterRow).not.toBeNull()
+      expect(letterRow!.direction).toBe('in')
+      expect(letterRow!.plaintext).toBe('下次约拍风景怎么样?')
+
+      // The owner was notified with a decrypted preview; content-free of the
+      // peer's real identity — only the masked degree placeholder rides along.
+      const sendMessage = ilink.sendMessage as unknown as ReturnType<typeof vi.fn>
+      const letterSends = sendMessage.mock.calls.filter((c: unknown[]) => String(c[1]).includes('给你写信了'))
+      expect(letterSends).toHaveLength(1)
+      expect(String(letterSends[0]?.[1])).toContain('下次约拍风景怎么样')
+      expect(String(letterSends[0]?.[1])).toContain(channel.id)
+      expect(String(letterSends[0]?.[1])).not.toContain('小B')
+
+      // boot.penpal.sendLetter is present and callable end to end (Task 10's
+      // dispatch seam calls exactly this). Exercise it against a channel id
+      // that isn't open to prove it's the real correspondent wired in, not a
+      // stub — the real correspondent's own not-open guard fires.
+      const badReply = await boot.penpal!.sendLetter('no-such-channel', 'hi')
+      expect(badReply).toEqual({ ok: false, error: 'channel_not_open' })
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('an inbound letter to a NON-own (relay leg) channel forwards unopened via the content-blind relay (not decrypted, not stored, no owner notify)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-letter-relay-'))
+    const port = 19911
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+      }),
+    )
+    const db = openTestDb()
+    const ilink = makeIlinkStub()
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    // Stand-in far endpoint (Q) — captures whatever we (W, the introducer)
+    // forward, unopened.
+    let forwardedBody: unknown = null
+    const peerMock = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: async (req) => {
+        forwardedBody = await req.json()
+        return Response.json({ ok: true })
+      },
+    })
+    try {
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: ilink as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      const senderKey = 'sender-letter-relay-key-abc1'
+      // S — the sender, authenticates the inbound POST. Its own url is never
+      // contacted in this flow (W only forwards TOWARD the far endpoint).
+      boot.a2aDeps.registry.add({
+        id: 'ccs', name: '小S', url: 'http://127.0.0.1:1/a2a',
+        inbound_api_key: senderKey, outbound_api_key: 'unused-s',
+        capabilities: [], paused: false, transport: 'push',
+      })
+      // Q — the far endpoint W forwards to, registered with the stub's real url.
+      boot.a2aDeps.registry.add({
+        id: 'ccq', name: '小Q', url: `http://127.0.0.1:${peerMock.port}/a2a`,
+        inbound_api_key: 'unused-q-inbound-key123', outbound_api_key: 'w-to-q-outbound-key',
+        capabilities: [], paused: false, transport: 'push',
+      })
+      // A relay leg W (this daemon) brokered earlier (Task 9): S's own inbox
+      // is chan-s-relay, Q's own inbox is chan-q-relay. A letter is always
+      // addressed by the RECIPIENT's own channel_id (see
+      // penpal-correspondent.ts sendLetter), so S writing to Q addresses it
+      // to chan-q-relay.
+      const relayStore = makeRelayStore(db)
+      relayStore.create({ id: 'i1:tok1', intentId: 'i1', relayToken: 'tok1', upstreamAgentId: 'ccs', downstreamAgentId: 'ccq' })
+      relayStore.setUpstreamHandle('i1:tok1', { pubkey: 'Spub', channel_id: 'chan-s-relay' })
+      relayStore.setDownstreamHandle('i1:tok1', { pubkey: 'Qpub', channel_id: 'chan-q-relay' })
+
+      // Deliberately opaque/garbage ciphertext — W must NEVER attempt to
+      // open it (it holds no key for this channel; this proves the relay
+      // path, not the correspondent path, handled it).
+      const sealed = { nonce: 'NONCE1', ct: 'OPAQUE_CIPHERTEXT_NEVER_DECRYPTED', tag: 'TAG1' }
+      const resp = await fetch(`http://127.0.0.1:${port}/a2a/letter`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${senderKey}` },
+        body: JSON.stringify({ agent_id: 'ccs', channel_id: 'chan-q-relay', ...sealed }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true })
+
+      // Forwarded byte-identical + unopened to Q's real endpoint.
+      expect(forwardedBody).toMatchObject({ channel_id: 'chan-q-relay', ...sealed })
+
+      // Never touched the correspondent's own-channel path: no penpal_letter
+      // row was ever created for this channel_id (content-blind — W never
+      // decrypts, and this channel_id isn't one of W's own channels).
+      const letterRow = db.query('SELECT id FROM penpal_letter WHERE channel_id = ?').get('chan-q-relay')
+      expect(letterRow).toBeNull()
+
+      // No owner notify fired either — notifyInbound (the own-endpoint path)
+      // was never entered.
+      const sendMessage = ilink.sendMessage as unknown as ReturnType<typeof vi.fn>
+      expect(sendMessage.mock.calls.some((c: unknown[]) => String(c[1]).includes('给你写信了'))).toBe(false)
+    } finally {
+      peerMock.stop()
+      await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })
     }
   })

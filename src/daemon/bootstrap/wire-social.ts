@@ -11,8 +11,11 @@ import { makeRelayStore } from '../../core/social-relay-store'
 import { makeSeenIntentStore } from '../../core/social-seen-intent-store'
 import { makeRelayReconciler } from '../../core/social-relay-reveal'
 import { makeChannelStore } from '../../core/penpal-channel-store'
+import { makeLetterStore } from '../../core/penpal-letter-store'
+import { makeCorrespondent } from '../../core/penpal-correspondent'
+import { makeLetterRelay } from '../../core/penpal-relay-letter'
 import { generateKeypair, type PenpalHandle } from '../../core/penpal-crypto'
-import { intentUrl, revealUrl } from '../../core/a2a-delegate'
+import { intentUrl, revealUrl, letterUrl } from '../../core/a2a-delegate'
 import { MatchReceiptSchema } from '../../core/a2a-intent'
 import { applyFinishSeek } from './social-finish-seek'
 import type { A2AServerOpts } from '../../core/a2a-server'
@@ -50,12 +53,14 @@ export interface SocialDeps {
 export interface SocialWiring {
   onIntent: A2AServerOpts['onIntent']
   onReveal: A2AServerOpts['onReveal']
+  onLetter: A2AServerOpts['onLetter']
   social?: {
     broker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> }
     seekStore: import('../../core/social-seek-store').SeekStore
     echoStore: import('../../core/social-echo-store').EchoStore
     pledgeStore: import('../../core/social-pledge-store').PledgeStore
     revealer: Revealer
+    penpal: { sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }> }
   }
   resumeForaging: () => void
 }
@@ -77,12 +82,14 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   // seeks still `foraging` after a restart.
   let socialOnIntent: A2AServerOpts['onIntent']
   let socialOnReveal: A2AServerOpts['onReveal']
+  let socialOnLetter: A2AServerOpts['onLetter']
   let socialBroker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> } | undefined
   let socialForage: ((intentId: string, topic: string, opts?: { city?: string }) => Promise<void>) | undefined
   let socialSeekStore: import('../../core/social-seek-store').SeekStore | undefined
   let socialEchoStore: import('../../core/social-echo-store').EchoStore | undefined
   let socialPledgeStore: import('../../core/social-pledge-store').PledgeStore | undefined
   let socialRevealer: Revealer | undefined
+  let socialPenpal: { sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }> } | undefined
 
   if (configuredAgent.social_enabled && configuredAgent.social_disclosure_policy) {
     const socialPolicy = configuredAgent.social_disclosure_policy
@@ -140,6 +147,38 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       socialSeekStore = seekStore
       socialEchoStore = echoStore
       socialPledgeStore = pledgeStore
+
+      // A3 (anonymous pen-pal channel, Task 11): the correspondent handles
+      // THIS daemon's own open channels (seal/persist outbound, open/persist+
+      // notify inbound); the letter relay handles the content-blind 2-hop
+      // forward for channels where WE are the introducer (介绍人), never the
+      // endpoint. Shared `postLetter` — relayVia routes through the
+      // intermediary's own a2a address when set, else straight to the peer.
+      const letterStore = makeLetterStore(deps.db)
+      const postLetter = async (target: { agentId: string; relayVia: string | null }, body: { channel_id: string; nonce: string; ct: string; tag: string }): Promise<boolean> => {
+        const hand = a2aRegistry.get(target.relayVia ?? target.agentId)
+        if (!hand) return false
+        const r = await a2aClient.send({ url: letterUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
+        return r.ok
+      }
+      const notifyInbound = (rowId: string, preview: string): void => {
+        const op = resolveOperatorChatId()
+        if (!op || !sendAssistantText) return
+        const ch = channelStore.get(rowId)
+        const mask = ch ? `第 ${ch.degree} 度的某人` : '某人'
+        void sendAssistantText(op, `📬 ${mask}给你写信了:${preview}\n(回信 ${rowId} <你的话>)`)
+      }
+      const correspondent = makeCorrespondent({ channelStore, letterStore, postLetter, notifyInbound })
+      const letterRelay = makeLetterRelay({ relayStore, postLetter })
+      // Dispatch order matters (Task 9 review flag): try OUR OWN endpoint
+      // first (getByMyChannelId / receiveLetter) — only when that channel_id
+      // is NOT one of this daemon's own open channels does it fall through
+      // to the relay forward. Never both; never relay-first.
+      socialOnLetter = async (ev) => {
+        const mine = channelStore.getByMyChannelId(ev.channel_id)
+        return mine ? correspondent.receiveLetter(ev) : letterRelay.routeLetter(ev)
+      }
+      socialPenpal = { sendLetter: (channel, text) => correspondent.sendLetter(channel, text) }
 
       // Notification beats (克制三拍). Content-free by design — reveal crosses
       // pubkey handles, never a real name or url, so no beat text may carry one.
@@ -365,8 +404,9 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   return {
     onIntent: socialOnIntent,
     onReveal: socialOnReveal,
+    onLetter: socialOnLetter,
     ...(socialBroker
-      ? { social: { broker: socialBroker, seekStore: socialSeekStore!, echoStore: socialEchoStore!, pledgeStore: socialPledgeStore!, revealer: socialRevealer! } }
+      ? { social: { broker: socialBroker, seekStore: socialSeekStore!, echoStore: socialEchoStore!, pledgeStore: socialPledgeStore!, revealer: socialRevealer!, penpal: socialPenpal! } }
       : {}),
     resumeForaging,
   }

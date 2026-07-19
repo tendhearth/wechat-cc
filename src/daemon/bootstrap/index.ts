@@ -710,6 +710,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     sendAssistantText,
     onIntent: socialWiring.onIntent,
     onReveal: socialWiring.onReveal,
+    onLetter: socialWiring.onLetter,
   })
   a2aServer = builtA2aServer
 
@@ -782,5 +783,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      * /v1/social/seek then 503s.
      */
     ...(socialWiring.social ? { social: socialWiring.social } : {}),
+    /**
+     * Anonymous pen-pal channel (Task 8/10/11) — the "回信 <channel> <text>"
+     * dispatch seam in pipeline-deps.ts reads this directly (not
+     * boot.social.penpal). Undefined whenever social wiring is inert, same
+     * gate as boot.social.
+     */
+    ...(socialWiring.social ? { penpal: socialWiring.social.penpal } : {}),
   }
 }
