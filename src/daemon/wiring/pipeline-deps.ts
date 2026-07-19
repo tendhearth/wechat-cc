@@ -26,6 +26,7 @@ import type { ReplySinks } from '../reply-sinks'
 import { loadCompanionConfig } from '../companion/config'
 import type { InboundMsg } from '../../core/prompt-format'
 import { parseRevealCommand } from '../../core/reveal-command'
+import { parseLetterCommand } from '../../core/penpal-letter-command'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider } from '../../lib/agent-config'
@@ -394,6 +395,22 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
               const outcome = echoOutcome === null ? await boot.social.revealer.revealPledge(cmd.id) : echoOutcome
               if (outcome === null && boot.sendAssistantText) {
                 void boot.sendAssistantText(msg.chatId, `没找到「${cmd.id}」这条,可能已过期或已牵线。`)
+              }
+              return
+            }
+          }
+          // Pen-pal outbound reply (Task 10) — the owner's "回信 <channel>
+          // <text>" WeChat reply sends a letter on that open channel instead
+          // of dispatching a normal agent turn. Guarded on boot.penpal being
+          // wired (Task 11); until then this block is inert and every
+          // message — including a well-formed "回信" — falls through to a
+          // normal turn, same as boot.social above.
+          if (boot.penpal && isAdmin(msg.chatId)) {
+            const letterCmd = parseLetterCommand(msg.text)
+            if (letterCmd) {
+              const r = await boot.penpal.sendLetter(letterCmd.channel, letterCmd.text)
+              if (!r.ok && boot.sendAssistantText) {
+                void boot.sendAssistantText(msg.chatId, '没找到这条笔友通道 / 发送失败。')
               }
               return
             }

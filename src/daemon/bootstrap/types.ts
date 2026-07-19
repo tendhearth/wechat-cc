@@ -260,4 +260,14 @@ export interface Bootstrap {
     pledgeStore: import('../../core/social-pledge-store').PledgeStore
     revealer: Revealer
   }
+  /**
+   * Anonymous pen-pal channel (Task 8/10/11) — present only once a channel
+   * has been opened via the reveal flow. Undefined otherwise, so the "回信
+   * <channel> <text>" dispatch seam in pipeline-deps.ts stays a clean no-op
+   * (falls through to a normal turn) until Task 11 wires the real
+   * correspondent in.
+   */
+  penpal?: {
+    sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }>
+  }
 }
