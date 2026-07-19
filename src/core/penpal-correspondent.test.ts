@@ -121,4 +121,43 @@ describe('makeCorrespondent', () => {
     expect(postLetter).not.toHaveBeenCalled()
     expect(letterStore.listForChannel('a:pending')).toHaveLength(0)
   })
+
+  it('on a relay (degree-2) channel, posts to the INTERMEDIARY (relay_via), not the final peer — content-blind 2-hop', async () => {
+    // Regression test for the inverted-target bug: a relay channel has BOTH
+    // peer_agent_id (the final answerer) and relay_via (the intermediary) set.
+    // The letter must go to relay_via so the intermediary can route the
+    // ciphertext onward without seeing it (Task 9).
+    const dbA = openDb({ path: ':memory:' })
+    const channelStore = makeChannelStore(dbA)
+    const letterStore = makeLetterStore(dbA)
+    const a = generateKeypair()
+    const b = generateKeypair()
+    channelStore.create({ id: 'a:relay', seekId: 'seek-a', myPrivkey: a.privateKey, myPubkey: a.publicKey, myChannelId: 'chan-A', degree: 2, relayVia: 'cc-intermediary', peerAgentId: 'cc-final-peer' })
+    channelStore.setPeerHandle('a:relay', { pubkey: b.publicKey, channel_id: 'chan-B' })
+    const postLetter = vi.fn().mockResolvedValue(true)
+    const correspondent = makeCorrespondent({ channelStore, letterStore, postLetter, notifyInbound: vi.fn() })
+
+    const result = await correspondent.sendLetter('a:relay', 'hi via relay')
+
+    expect(result).toEqual({ ok: true })
+    expect(postLetter).toHaveBeenCalledTimes(1)
+    const [target] = postLetter.mock.calls[0]!
+    expect(target).toEqual({ agentId: 'cc-intermediary', relayVia: 'cc-intermediary' })
+  })
+
+  it('receiveLetter is a safe no-op on a channel that exists but is still pending (not yet open)', () => {
+    const dbB = openDb({ path: ':memory:' })
+    const channelStore = makeChannelStore(dbB)
+    const letterStore = makeLetterStore(dbB)
+    const b = generateKeypair()
+    channelStore.create({ id: 'b:pending', seekId: 'seek-b', myPrivkey: b.privateKey, myPubkey: b.publicKey, myChannelId: 'chan-B', degree: 1 })
+    const notifyInbound = vi.fn()
+    const correspondent = makeCorrespondent({ channelStore, letterStore, postLetter: vi.fn(), notifyInbound })
+
+    const result = correspondent.receiveLetter({ channel_id: 'chan-B', nonce: 'N', ct: 'CT', tag: 'T' })
+
+    expect(result).toEqual({ ok: false, error: 'unknown_channel' })
+    expect(letterStore.listForChannel('b:pending')).toHaveLength(0)
+    expect(notifyInbound).not.toHaveBeenCalled()
+  })
 })

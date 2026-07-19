@@ -821,8 +821,12 @@ sendLetter(channelRowId, plaintext) {
   if (!ch || ch.status !== 'open' || !ch.peer_pubkey || !ch.peer_channel_id) return Promise.resolve({ ok: false, error: 'channel_not_open' })
   const key = deriveSharedKey(ch.my_privkey, ch.peer_pubkey)
   const sealed = sealLetter(key, plaintext)
+  // Relay (degree-2) letters post to the intermediary (relay_via) so the 2-hop
+  // path stays content-blind; direct letters post to peer_agent_id.
+  const agentId = ch.relay_via ?? ch.peer_agent_id
+  if (!agentId) return Promise.resolve({ ok: false, error: 'no_route' })
   deps.letterStore.create({ id: randomUUID(), channelId: channelRowId, direction: 'out', sealedCiphertext: sealed.ct, nonce: sealed.nonce, tag: sealed.tag, plaintext })
-  return deps.postLetter({ agentId: ch.peer_agent_id ?? ch.relay_via!, relayVia: ch.relay_via }, { channel_id: ch.peer_channel_id, nonce: sealed.nonce, ct: sealed.ct, tag: sealed.tag })
+  return deps.postLetter({ agentId, relayVia: ch.relay_via }, { channel_id: ch.peer_channel_id, nonce: sealed.nonce, ct: sealed.ct, tag: sealed.tag })
     .then(ok => ok ? { ok: true } : { ok: false, error: 'send_failed' })
 }
 receiveLetter(ev) {

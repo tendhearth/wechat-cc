@@ -31,10 +31,16 @@ export function makeCorrespondent(deps: CorrespondentDeps): Correspondent {
     sendLetter(channelRowId, plaintext) {
       const ch = deps.channelStore.get(channelRowId)
       if (!ch || ch.status !== 'open' || !ch.peer_pubkey || !ch.peer_channel_id) return Promise.resolve({ ok: false, error: 'channel_not_open' })
+      // Relay (degree-2) letters post to the intermediary (relay_via) so the 2-hop
+      // path stays content-blind — the intermediary routes the ciphertext onward
+      // without seeing it; direct letters post straight to peer_agent_id.
+      // Mirrors social-reveal.ts's `echo.relay_via ?? echo.peer_agent_id`.
+      const agentId = ch.relay_via ?? ch.peer_agent_id
+      if (!agentId) return Promise.resolve({ ok: false, error: 'no_route' })
       const key = deriveSharedKey(ch.my_privkey, ch.peer_pubkey)
       const sealed = sealLetter(key, plaintext)
       deps.letterStore.create({ id: randomUUID(), channelId: channelRowId, direction: 'out', sealedCiphertext: sealed.ct, nonce: sealed.nonce, tag: sealed.tag, plaintext })
-      return deps.postLetter({ agentId: ch.peer_agent_id ?? ch.relay_via!, relayVia: ch.relay_via }, { channel_id: ch.peer_channel_id, nonce: sealed.nonce, ct: sealed.ct, tag: sealed.tag })
+      return deps.postLetter({ agentId, relayVia: ch.relay_via }, { channel_id: ch.peer_channel_id, nonce: sealed.nonce, ct: sealed.ct, tag: sealed.tag })
         .then(ok => ok ? { ok: true } : { ok: false, error: 'send_failed' })
     },
     receiveLetter(ev) {
