@@ -42,4 +42,16 @@ describe('makeRelayStore', () => {
     r.setDownstreamHandle('i1:tokA', { pubkey: 'Q', channel_id: 'D' })
     expect(r.get('i1:tokA')!.downstream_handle).toBe(JSON.stringify({ pubkey: 'Q', channel_id: 'D' }))
   })
+
+  it('getByEndpointChannelId scans both stored handles to find the leg a channel_id belongs to', () => {
+    const db = openDb({ path: ':memory:' })
+    const r = makeRelayStore(db)
+    r.create({ id: 'i1:tokA', intentId: 'i1', relayToken: 'tokA', upstreamAgentId: 'ccs', downstreamAgentId: 'ccq' })
+    r.setUpstreamHandle('i1:tokA', { pubkey: 'Spub', channel_id: 'chan-s' })
+    r.setDownstreamHandle('i1:tokA', { pubkey: 'Qpub', channel_id: 'chan-q' })
+
+    expect(r.getByEndpointChannelId('chan-s')?.id).toBe('i1:tokA')
+    expect(r.getByEndpointChannelId('chan-q')?.id).toBe('i1:tokA')
+    expect(r.getByEndpointChannelId('unknown-channel')).toBeNull()
+  })
 })
