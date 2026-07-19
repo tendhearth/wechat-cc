@@ -29,7 +29,7 @@ async function startServer(opts: {
   onNotify?: (event: import('./a2a-server').NotifyEvent) => Promise<void>
   onExec?: (event: import('./a2a-server').ExecEvent) => Promise<import('./a2a-server').ExecResult>
   onIntent?: (event: import('./a2a-server').IntentEvent) => Promise<import('./a2a-intent').MatchReceipt>
-  onReveal?: (event: import('./a2a-server').RevealEvent) => Promise<{ mutual: boolean; identity?: { name: string; url: string } }>
+  onReveal?: (event: import('./a2a-server').RevealEvent) => Promise<{ mutual: boolean; handle?: import('./penpal-crypto').PenpalHandle }>
 } = {}) {
   const onNotify: (event: import('./a2a-server').NotifyEvent) => Promise<void> = opts.onNotify ?? vi.fn(async () => {})
   const server = createA2AServer({
@@ -338,8 +338,8 @@ describe('a2a-server', () => {
   })
 
   describe('POST /a2a/reveal (async foraging spine)', () => {
-    it('runs onReveal and returns { mutual, identity } when authed', async () => {
-      const onReveal = vi.fn(async (_e: import('./a2a-server').RevealEvent) => ({ mutual: true, identity: { name: '小B', url: 'http://b/a2a' } }))
+    it('runs onReveal and returns { mutual, handle } when authed', async () => {
+      const onReveal = vi.fn(async (_e: import('./a2a-server').RevealEvent) => ({ mutual: true, handle: { pubkey: 'pub-b', channel_id: 'ch-1' } }))
       const alphaRec = rec('alpha')
       const { server, baseUrl } = await startServer({ agents: [alphaRec], onReveal })
       try {
@@ -349,12 +349,12 @@ describe('a2a-server', () => {
           body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1' }),
         })
         expect(res.status).toBe(200)
-        expect(await res.json()).toEqual({ mutual: true, identity: { name: '小B', url: 'http://b/a2a' } })
+        expect(await res.json()).toEqual({ mutual: true, handle: { pubkey: 'pub-b', channel_id: 'ch-1' } })
         expect(onReveal).toHaveBeenCalledWith(expect.objectContaining({ agent_id: 'alpha', intent_id: 'i1' }))
       } finally { await server.stop() }
     })
 
-    it('forwards relay_token + peer_name from the body to onReveal (verified agent_id preserved)', async () => {
+    it('forwards relay_token + peer_handle from the body to onReveal (verified agent_id preserved)', async () => {
       const onReveal = vi.fn(async (_e: import('./a2a-server').RevealEvent) => ({ mutual: false }))
       const alphaRec = rec('alpha')
       const { server, baseUrl } = await startServer({ agents: [alphaRec], onReveal })
@@ -362,10 +362,28 @@ describe('a2a-server', () => {
         const res = await fetch(`${baseUrl}/a2a/reveal`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', relay_token: 'T', peer_name: '小Q' }),
+          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', relay_token: 'T', peer_handle: { pubkey: 'pub-q', channel_id: 'ch-9' } }),
         })
         expect(res.status).toBe(200)
-        expect(onReveal).toHaveBeenCalledWith(expect.objectContaining({ agent_id: 'alpha', intent_id: 'i1', relay_token: 'T', peer_name: '小Q' }))
+        expect(onReveal).toHaveBeenCalledWith(expect.objectContaining({
+          agent_id: 'alpha', intent_id: 'i1', relay_token: 'T', peer_handle: { pubkey: 'pub-q', channel_id: 'ch-9' },
+        }))
+      } finally { await server.stop() }
+    })
+
+    it('drops a malformed peer_handle (missing channel_id) to undefined without 400ing', async () => {
+      const onReveal = vi.fn(async (_e: import('./a2a-server').RevealEvent) => ({ mutual: false }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onReveal })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/reveal`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', peer_handle: { pubkey: 'pub-q' } }),
+        })
+        expect(res.status).toBe(200)
+        expect(onReveal).toHaveBeenCalledWith(expect.objectContaining({ agent_id: 'alpha', intent_id: 'i1' }))
+        expect(onReveal.mock.calls[0]?.[0]?.peer_handle).toBeUndefined()
       } finally { await server.stop() }
     })
 

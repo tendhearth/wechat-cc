@@ -69,15 +69,16 @@ export interface IntentEvent {
  * A peer's "my owner revealed; wants to connect on this intent" event —
  * the inbound half of the mutual async reveal. Handler marks the local
  * echo/pledge row's peer_revealed_at and, if this side already revealed,
- * responds { mutual:true, identity } for a synchronous connect.
+ * responds { mutual:true, handle } for a synchronous connect. `handle` is a
+ * PenpalHandle (pubkey + channel_id) — real identity never crosses.
  */
 export interface RevealEvent {
   agent_id: string
   intent_id: string
   /** spec #2: present when this reveal is a 2-hop relay leg addressed to an intermediary. */
   relay_token?: string
-  /** spec #2: the OTHER endpoint's display name, handed over by the intermediary on the mutual instant. */
-  peer_name?: string
+  /** spec #2: the OTHER endpoint's penpal handle, handed over by the intermediary on the mutual instant. */
+  peer_handle?: import('./penpal-crypto').PenpalHandle
 }
 
 export interface AuthFailedEvent {
@@ -111,8 +112,8 @@ export interface A2AServerOpts {
    *  Undefined → /a2a/intent returns 501. */
   onIntent?: (event: IntentEvent) => Promise<MatchReceipt>
   /** Optional. When wired, enables POST /a2a/reveal — a peer signals its owner
-   *  revealed; mark my matching row + return { mutual, identity? }. Undefined → 501. */
-  onReveal?: (event: RevealEvent) => Promise<{ mutual: boolean; identity?: { name: string; url: string } }>
+   *  revealed; mark my matching row + return { mutual, handle? }. Undefined → 501. */
+  onReveal?: (event: RevealEvent) => Promise<{ mutual: boolean; handle?: { pubkey: string; channel_id: string } }>
   /** Optional hook called when a notify request is rejected with 401/403
    *  AND we can identify which agent_id the caller claimed. Used by
    *  bootstrap to write an `a2a_events` row with status='auth_failed' so
@@ -182,7 +183,7 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       // Advertised only when this machine is wired to receive inbound reveals.
       ...(opts.onReveal ? [{
         name: 'reveal',
-        description: 'Mutual async reveal: a peer whose owner revealed asks THIS owner\'s row to mark peer-revealed; returns { mutual, identity } when both sides have revealed.',
+        description: 'Mutual async reveal: a peer whose owner revealed asks THIS owner\'s row to mark peer-revealed; returns { mutual, handle } when both sides have revealed.',
         endpoint: '/a2a/reveal',
         method: 'POST',
         request_schema: { agent_id: 'string', intent_id: 'string' },
@@ -295,7 +296,7 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
       if (!opts.onReveal) return new Response(JSON.stringify({ error: 'reveal_not_supported' }), { status: 501 })
 
-      let body: { agent_id?: unknown; intent_id?: unknown; relay_token?: unknown; peer_name?: unknown }
+      let body: { agent_id?: unknown; intent_id?: unknown; relay_token?: unknown; peer_handle?: unknown }
       try {
         body = await req.json() as typeof body
       } catch {
@@ -325,11 +326,16 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       }
       try {
         // `agent_id` stays the verified Bearer `agent.id` — client-supplied
-        // agent_id is never trusted as the acting identity. relay_token/peer_name
-        // are display/routing metadata the intermediary provides.
+        // agent_id is never trusted as the acting identity. relay_token/peer_handle
+        // are routing/pen-pal metadata the intermediary provides. peer_handle
+        // is the PenpalHandle {pubkey, channel_id} — real identity never crosses.
         const relayToken = typeof body.relay_token === 'string' && body.relay_token ? body.relay_token : undefined
-        const peerName = typeof body.peer_name === 'string' && body.peer_name ? body.peer_name : undefined
-        const result = await opts.onReveal({ agent_id: agent.id, intent_id: body.intent_id, relay_token: relayToken, peer_name: peerName })
+        const ph = body.peer_handle
+        const peerHandle = (ph && typeof ph === 'object'
+          && typeof (ph as any).pubkey === 'string' && (ph as any).pubkey
+          && typeof (ph as any).channel_id === 'string' && (ph as any).channel_id)
+          ? { pubkey: (ph as any).pubkey, channel_id: (ph as any).channel_id } : undefined
+        const result = await opts.onReveal({ agent_id: agent.id, intent_id: body.intent_id, relay_token: relayToken, ...(peerHandle ? { peer_handle: peerHandle } : {}) })
         return new Response(JSON.stringify(result), { status: 200 })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
