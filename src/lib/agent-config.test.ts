@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadAgentConfig, saveAgentConfig, parseAgentConfig, A2AAgentRecord, makeMtimeCachedConfigReader, activeModel, withActiveModel, modelForProvider, withModelForProvider, type AgentConfig } from './agent-config'
+import { loadAgentConfig, saveAgentConfig, parseAgentConfig, A2AAgentRecord, makeMtimeCachedConfigReader, activeModel, withActiveModel, modelForProvider, withModelForProvider, resolveForwardBudget, type AgentConfig } from './agent-config'
 
 describe('agent-config', () => {
   it('defaults to claude with unattended=true when no config exists', () => {
@@ -615,5 +615,66 @@ describe('A2AAgentRecord.transport', () => {
       inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o', capabilities: ['exec'], transport: 'ws',
     })
     expect(rec.transport).toBe('ws')
+  })
+})
+
+describe('agent-config — forward budget (sub-project C)', () => {
+  it('parseAgentConfig accepts an explicit forward_budget', () => {
+    const cfg = parseAgentConfig({ provider: 'claude', forward_budget: { per_sender: 10, window_ms: 60_000 } })
+    expect(cfg.forward_budget).toEqual({ per_sender: 10, window_ms: 60_000 })
+  })
+
+  it('accepts config without forward_budget (backward compat) — field loads as undefined', () => {
+    const cfg = parseAgentConfig({ provider: 'claude' })
+    expect(cfg.forward_budget).toBeUndefined()
+  })
+
+  it('round-trips forward_budget through save → load', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-budget-'))
+    try {
+      saveAgentConfig(dir, {
+        provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false,
+        forward_budget: { per_sender: 5, window_ms: 120_000 },
+      })
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.forward_budget).toEqual({ per_sender: 5, window_ms: 120_000 })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('an old config on disk with no forward_budget field still parses, field undefined', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-budget-old-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+        provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false,
+      }))
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.forward_budget).toBeUndefined()
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('a malformed forward_budget on disk safe-drops (field loads as undefined, matching the a2a_listen? safeParse-drop convention) — resolveForwardBudget then falls back to the default', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-budget-malformed-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+        provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false,
+        forward_budget: { per_sender: 0, window_ms: 'not-a-number' },   // per_sender must be positive; window_ms must be a number
+      }))
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.forward_budget).toBeUndefined()   // safeParse.data is undefined on failure -> dropped, not thrown, no crash
+      expect(resolveForwardBudget(loaded)).toEqual({ per_sender: 30, window_ms: 3_600_000 })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
+
+describe('resolveForwardBudget', () => {
+  it('returns the explicit config when set', () => {
+    expect(resolveForwardBudget({
+      provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false,
+      forward_budget: { per_sender: 7, window_ms: 1000 },
+    })).toEqual({ per_sender: 7, window_ms: 1000 })
+  })
+  it('falls back to the 30/hour default when absent', () => {
+    expect(resolveForwardBudget({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }))
+      .toEqual({ per_sender: 30, window_ms: 3_600_000 })
   })
 })
