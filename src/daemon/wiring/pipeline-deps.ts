@@ -27,6 +27,7 @@ import { loadCompanionConfig } from '../companion/config'
 import type { InboundMsg } from '../../core/prompt-format'
 import { parseRevealCommand } from '../../core/reveal-command'
 import { parseLetterCommand } from '../../core/penpal-letter-command'
+import { parsePairCommand } from '../../core/pair-command'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider } from '../../lib/agent-config'
@@ -417,6 +418,35 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
               const r = await boot.penpal.sendLetter(letterCmd.channel, letterCmd.text)
               if (!r.ok && boot.sendAssistantText) {
                 void boot.sendAssistantText(msg.chatId, '没找到这条笔友通道 / 发送失败。')
+              }
+              return
+            }
+          }
+          // 配对 (spec §7) — admin-gated, deterministic parse, mirrors 揭晓/回信.
+          // Inert (falls through to a normal turn) until boot.pairing is wired
+          // (Task 6, i.e. mailbox_relays configured).
+          if (boot.pairing && isAdmin(msg.chatId)) {
+            const pair = parsePairCommand(msg.text)
+            if (pair) {
+              if (pair.kind === 'start') {
+                // boot.pairing.start()'s own relay_drop_failed branch already
+                // calls its `notify` dep (wired to sendAssistantText in
+                // wire-pairing.ts) — no extra reply needed here on failure,
+                // and r.code only exists on the ok branch.
+                const r = await boot.pairing.start()
+                if (r.ok && boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, `配对码 ${r.code},发给朋友,10 分钟内有效`)
+              } else {
+                const r = await boot.pairing.accept(pair.code)
+                if (boot.sendAssistantText) {
+                  const text = r.ok
+                    ? `和 ${r.peer.name} 的 bot 连上了 ✓ 现在可以互相觅食/写信了`
+                    : r.reason === 'self_pair'
+                      ? '这是你自己的码,换个朋友的码试试'
+                      : r.reason === 'id_conflict'
+                        ? '对方 bot 使用旧版共享身份且与你已有的朋友撞名——请让对方升级出唯一身份后重试'
+                        : '码不对或已过期,让朋友重新生成一个'
+                  void boot.sendAssistantText(msg.chatId, text)
+                }
               }
               return
             }
