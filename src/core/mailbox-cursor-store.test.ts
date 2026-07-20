@@ -17,6 +17,7 @@ describe('makeCursorStore', () => {
   })
 
   it('writes the cursor file with mode 0600', () => {
+    if (process.platform === 'win32') return  // chmod semantics differ on Windows
     const dir = mkdtempSync(join(tmpdir(), 'mbxc-'))
     makeCursorStore(dir).set('r', 1)
     const st = statSync(join(dir, 'mailbox-cursors.json'))
