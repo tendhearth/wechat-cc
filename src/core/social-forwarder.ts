@@ -25,6 +25,13 @@ export interface ForwarderDeps<T extends { id: string }> {
   hasSeen(intentId: string): boolean
   /** Depth cap; forward only while card.hop < hopCap. Default 2. */
   hopCap?: number
+  /** Sub-project C: per-upstream-sender forward budget gate — false means the
+   *  sender is over budget for this window; the forwarder answers locally
+   *  and skips the fan-out (silent, no signal to the sender). OPTIONAL,
+   *  defaults to allow-all so existing callers/tests that construct
+   *  ForwarderDeps without it are unaffected (see the plan's Global
+   *  Constraints "RESOLVED: optional" section for why). */
+  withinBudget?(senderId: string): boolean
 }
 
 export function makeForwarder<T extends { id: string }>(deps: ForwarderDeps<T>): (event: IntentEvent) => Promise<MatchReceipt> {
@@ -41,6 +48,10 @@ export function makeForwarder<T extends { id: string }>(deps: ForwarderDeps<T>):
     }
     // Skip forwarding when: already seen (dedup), or at/over the hop ceiling.
     if (alreadySeen || card.hop >= cap) return receipt
+    // Sub-project C: per-sender forward budget — over budget → same local-only
+    // shape as the hop/dedup skips above (still returns the local `receipt`).
+    const withinBudget = deps.withinBudget ?? (() => true)
+    if (!withinBudget(event.agent.id)) return receipt
 
     const forwarded: ForwardedEcho[] = []
     for (const target of deps.forwardTargets(event.agent.id)) {

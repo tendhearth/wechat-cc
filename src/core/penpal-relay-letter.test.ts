@@ -55,4 +55,56 @@ describe('makeLetterRelay', () => {
     expect(result).toEqual({ ok: false, error: 'unknown_channel' })
     expect(postLetter).not.toHaveBeenCalled()
   })
+
+  it('over-budget sender: drops before postLetter, response is INDISTINGUISHABLE from "unknown channel" (no signal to the sender)', async () => {
+    const db = openDb({ path: ':memory:' })
+    const relayStore = makeRelayStore(db)
+    relayStore.create({ id: 'i1:tok', intentId: 'i1', relayToken: 'tok', upstreamAgentId: 'ccs', downstreamAgentId: 'ccq' })
+    relayStore.setUpstreamHandle('i1:tok', { pubkey: 'Spub', channel_id: 'chan-s' })
+    relayStore.setDownstreamHandle('i1:tok', { pubkey: 'Qpub', channel_id: 'chan-q' })
+
+    const postLetter = vi.fn().mockResolvedValue(true)
+    const withinBudget = vi.fn(() => false)
+    const relay = makeLetterRelay({ relayStore, postLetter, withinBudget })
+
+    const result = await relay.routeLetter({ agent_id: 'ccs', channel_id: 'chan-q', nonce: 'N', ct: 'CT', tag: 'TAG' })
+
+    // MUST equal the SAME shape as the existing "no matching relay leg" drop
+    // (see the 'is a safe no-op on an unknown channel_id' test above) — a
+    // distinct 'over_budget' string would leak the throttle to the sender
+    // once /a2a/letter echoes this result back over HTTP 200 (a2a-server.ts).
+    expect(result).toEqual({ ok: false, error: 'unknown_channel' })
+    expect(withinBudget).toHaveBeenCalledWith('ccs')
+    expect(postLetter).not.toHaveBeenCalled()
+  })
+
+  it('within-budget sender: forwards as normal', async () => {
+    const db = openDb({ path: ':memory:' })
+    const relayStore = makeRelayStore(db)
+    relayStore.create({ id: 'i1:tok', intentId: 'i1', relayToken: 'tok', upstreamAgentId: 'ccs', downstreamAgentId: 'ccq' })
+    relayStore.setUpstreamHandle('i1:tok', { pubkey: 'Spub', channel_id: 'chan-s' })
+    relayStore.setDownstreamHandle('i1:tok', { pubkey: 'Qpub', channel_id: 'chan-q' })
+
+    const postLetter = vi.fn().mockResolvedValue(true)
+    const relay = makeLetterRelay({ relayStore, postLetter, withinBudget: () => true })
+
+    const result = await relay.routeLetter({ agent_id: 'ccs', channel_id: 'chan-q', nonce: 'N', ct: 'CT', tag: 'TAG' })
+    expect(result).toEqual({ ok: true })
+    expect(postLetter).toHaveBeenCalledTimes(1)
+  })
+
+  it('withinBudget omitted — allow-all default, existing behavior unchanged', async () => {
+    const db = openDb({ path: ':memory:' })
+    const relayStore = makeRelayStore(db)
+    relayStore.create({ id: 'i1:tok', intentId: 'i1', relayToken: 'tok', upstreamAgentId: 'ccs', downstreamAgentId: 'ccq' })
+    relayStore.setUpstreamHandle('i1:tok', { pubkey: 'Spub', channel_id: 'chan-s' })
+    relayStore.setDownstreamHandle('i1:tok', { pubkey: 'Qpub', channel_id: 'chan-q' })
+
+    const postLetter = vi.fn().mockResolvedValue(true)
+    const relay = makeLetterRelay({ relayStore, postLetter })
+
+    const result = await relay.routeLetter({ agent_id: 'ccs', channel_id: 'chan-q', nonce: 'N', ct: 'CT', tag: 'TAG' })
+    expect(result).toEqual({ ok: true })
+    expect(postLetter).toHaveBeenCalledTimes(1)
+  })
 })

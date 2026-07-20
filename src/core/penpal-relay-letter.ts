@@ -26,6 +26,12 @@ export interface LetterRelayDeps {
    *  with penpal-correspondent.ts's postLetter for the "consistency of
    *  names" rule, but this leg's target is always mailbox-less. */
   postLetter(target: { agentId: string; relayVia: string | null; mailbox?: PeerMailbox }, body: { channel_id: string; nonce: string; ct: string; tag: string }): Promise<boolean>
+  /** Sub-project C: same per-upstream-sender forward budget as the seek
+   *  forwarder (ForwarderDeps.withinBudget) — shares ONE bucket, injected as
+   *  the identical closure at wiring time (wire-social.ts). Keyed on
+   *  event.agent_id (the upstream sender of THIS letter). OPTIONAL, defaults
+   *  to allow-all — matches ForwarderDeps.withinBudget's optionality. */
+  withinBudget?(senderId: string): boolean
 }
 
 export interface LetterRelay {
@@ -55,7 +61,18 @@ export function makeLetterRelay(deps: LetterRelayDeps): LetterRelay {
       // are distinct from the sender's identity — but guard anyway).
       if (farAgentId === event.agent_id) return { ok: false, error: 'unknown_channel' }
 
-      // TODO(sub-project C): budget.consume(relay_token) gate before re-posting
+      // Sub-project C: per-sender forward budget, gated on the upstream
+      // sender of this letter (event.agent_id) — shares its bucket with the
+      // seek-forwarder's withinBudget (same instance, injected at wiring).
+      // Over budget → drop silently, no postLetter. The response is
+      // DELIBERATELY the same 'unknown_channel' shape as "no matching relay
+      // leg" (not a distinct 'over_budget' string) — /a2a/letter echoes this
+      // result verbatim back to the caller over HTTP 200 (a2a-server.ts),
+      // so a distinct error string would leak the throttle to the sender and
+      // violate spec §2 "no signal to the sender". Indistinguishable from
+      // "W doesn't know this channel" is the point.
+      const withinBudget = deps.withinBudget ?? (() => true)
+      if (!withinBudget(event.agent_id)) return { ok: false, error: 'unknown_channel' }
 
       const ok = await deps.postLetter(
         { agentId: farAgentId, relayVia: null, mailbox: undefined },

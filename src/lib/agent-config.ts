@@ -63,6 +63,11 @@ export interface AgentConfig {
   // consulted by gateOutbound when brokering/answering intents. Required
   // alongside social_enabled for bootstrap to wire the real judge/broker seams.
   social_disclosure_policy?: string
+  // Sub-project C (中间人转发预算): per-upstream-sender token-bucket budget on
+  // how many DISTINCT intents this daemon will forward as intermediary W.
+  // Optional/additive, same posture as mailbox_relays?/a2a_listen? — absent
+  // means "use resolveForwardBudget's default", not "budget disabled".
+  forward_budget?: { per_sender: number; window_ms: number }
 }
 
 // ── A2A sub-schemas ──────────────────────────────────────────────────────────
@@ -94,10 +99,16 @@ export const A2AListen = z.object({
 export const YiHubListen = z.object({ host: z.string(), port: z.number() })
 export const YiBrain = z.object({ url: z.string(), handId: z.string(), authToken: z.string().min(16) })
 
+export const ForwardBudgetConfig = z.object({
+  per_sender: z.number().int().positive(),
+  window_ms: z.number().int().positive(),
+})
+
 export type A2AAgentRecord = z.infer<typeof A2AAgentRecord>
 export type A2AListen = z.infer<typeof A2AListen>
 export type YiHubListen = z.infer<typeof YiHubListen>
 export type YiBrain = z.infer<typeof YiBrain>
+export type ForwardBudgetConfig = z.infer<typeof ForwardBudgetConfig>
 
 const AgentConfigSchema = z.object({
   provider: z.enum(['claude', 'codex', 'cursor', 'openai', 'gemini']).default('claude'),
@@ -125,6 +136,7 @@ const AgentConfigSchema = z.object({
   social_enabled: z.boolean().optional(),
   social_disclosure_policy: z.string().optional(),
   mailbox_relays: z.array(z.string().url()).optional(),
+  forward_budget: ForwardBudgetConfig.optional(),
 })
 
 /**
@@ -173,6 +185,9 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
           return result.success ? [result.data] : []
         })
       : undefined
+    const forwardBudget = parsed.forward_budget != null
+      ? ForwardBudgetConfig.safeParse(parsed.forward_budget).data
+      : undefined
 
     return {
       provider,
@@ -194,6 +209,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.social_enabled === 'boolean' ? { social_enabled: parsed.social_enabled } : {}),
       ...(typeof parsed.social_disclosure_policy === 'string' ? { social_disclosure_policy: parsed.social_disclosure_policy } : {}),
       ...(Array.isArray(parsed.mailbox_relays) ? { mailbox_relays: parsed.mailbox_relays } : {}),
+      ...(forwardBudget ? { forward_budget: forwardBudget } : {}),
     }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }
@@ -301,4 +317,15 @@ export function withModelForProvider(config: AgentConfig, providerId: string, mo
   if (providerId === 'cursor') return { ...config, cursorModel: model }
   if (providerId === 'gemini') return { ...config, geminiModel: model }
   return { ...config, model }
+}
+
+/** Sub-project C default: 30 forwards/hour per upstream sender. Applied by
+ *  resolveForwardBudget when the operator hasn't set config.forward_budget —
+ *  the config field itself stays undefined (additive/optional), this is the
+ *  one canonical place the default value lives. */
+export const DEFAULT_FORWARD_BUDGET: { per_sender: number; window_ms: number } = { per_sender: 30, window_ms: 3_600_000 }
+
+/** `config.forward_budget` if the operator set one, else {@link DEFAULT_FORWARD_BUDGET}. */
+export function resolveForwardBudget(config: AgentConfig): { per_sender: number; window_ms: number } {
+  return config.forward_budget ?? DEFAULT_FORWARD_BUDGET
 }
