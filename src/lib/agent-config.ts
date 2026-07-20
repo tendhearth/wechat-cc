@@ -80,7 +80,7 @@ export interface AgentConfig {
 export const A2AAgentRecord = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, 'agent id must match ^[a-z0-9][a-z0-9-]{0,63}$ (lowercase slug)'),
   name: z.string().min(1).max(128),
-  url: z.string().url(),
+  url: z.string().url().optional(),
   inbound_api_key: z.string().min(16),
   outbound_api_key: z.string().min(1),
   capabilities: z.array(z.string()),
@@ -94,6 +94,12 @@ export const A2AAgentRecord = z.object({
   relays: z.array(z.string().url()).optional(),
   /** Peer's A2A proto_version captured at install time; unset = unknown (treat as 1). */
   proto_version: z.number().int().optional(),
+}).superRefine((rec, ctx) => {
+  // url is optional ONLY for mailbox transport (pure-NAT peers have no public
+  // url). push/ws still require a reachable url. spec §6.
+  if (rec.transport !== 'mailbox' && !rec.url) {
+    ctx.addIssue({ code: 'custom', path: ['url'], message: `url is required for transport '${rec.transport}'` })
+  }
 })
 
 export const A2AListen = z.object({

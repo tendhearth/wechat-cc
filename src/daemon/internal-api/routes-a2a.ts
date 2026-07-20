@@ -33,6 +33,14 @@ export function a2aRoutes(deps: InternalApiDeps): RouteTable {
         deps.a2a.recordEvent({ direction: 'out', agent_id, text, status: 'agent_paused' })
         return { status: 200, body: { ok: false, error: 'agent_paused' } }
       }
+      // A url-less mailbox peer (pairing-code feature) can't take this
+      // push-notify test — mailbox delivery isn't wired into this legacy
+      // dashboard/CLI helper. Fail closed instead of calling client.send
+      // with an undefined url.
+      if (!agent.url) {
+        deps.a2a.recordEvent({ direction: 'out', agent_id, text, status: 'http_error' })
+        return { status: 200, body: { ok: false, error: 'agent_has_no_url' } }
+      }
       const r = await deps.a2a.client.send({
         url: agent.url,
         bearer: agent.outbound_api_key,
@@ -72,6 +80,12 @@ export function a2aRoutes(deps: InternalApiDeps): RouteTable {
         if (agent.paused) {
           deps.a2a.recordEvent({ direction: 'out', agent_id, text, status: 'agent_paused' })
           return { status: 200, body: { ok: false, direction: 'out', error: 'agent_paused' } }
+        }
+        // A url-less mailbox peer (pairing-code feature) can't take this
+        // push-notify test — same fail-closed guard as /v1/a2a/send.
+        if (!agent.url) {
+          deps.a2a.recordEvent({ direction: 'out', agent_id, text, status: 'http_error' })
+          return { status: 200, body: { ok: false, direction: 'out', error: 'agent_has_no_url' } }
         }
         const r = await deps.a2a.client.send({
           url: agent.url, bearer: agent.outbound_api_key,

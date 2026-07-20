@@ -1880,3 +1880,183 @@ describe('bootstrap agent-social M1 wiring', () => {
     }
   })
 })
+
+// ── url-less mailbox peer guard (pairing-code Task 3, review IMPORTANT-2) ──
+// Making A2AAgentRecord.url optional for transport:'mailbox' lets a url-less
+// mailbox peer sit in the registry — that's the whole point of the pairing
+// feature (a pure-NAT peer has no public url). But intentUrl/revealUrl both
+// open with `agentUrl.replace(...)`, which throws on undefined, and three
+// wire-social.ts sites read hand.url unconditionally: broker.discover,
+// forwardTargets, and postPeerReveal. Each test below drives ONE of those
+// three sites with only a url-less mailbox peer registered and proves the
+// peer is cleanly skipped (seek/reveal-over-mailbox deferred, spec §10) —
+// not merely that some outer try/catch happened to swallow a throw.
+describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPORTANT-2)', () => {
+  const mailboxPeer = {
+    id: 'cc-aaaa1111', name: 'Alice', inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o',
+    capabilities: [], paused: false, transport: 'mailbox' as const,
+    mailbox_addr: 'A', mailbox_enc_pub: 'E', relays: ['https://brain.example/mailbox'],
+  }
+
+  it('discover: broker.seek with ONLY a url-less mailbox peer registered never reaches intentUrl(undefined) — peer skipped, seek closes with 0 peers asked', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-guard-discover-'))
+    const port = 19912
+    const openaiMock = serveMockOpenai(JSON.stringify({ violation: false, redacted: '找摄影搭子' }))
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'openai',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: `http://127.0.0.1:${openaiMock.port}/v1`,
+        openaiModel: 'test-model',
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      boot.a2aDeps.registry.add(mailboxPeer)
+
+      const { intent_id } = await boot.social!.broker.seek('找摄影搭子')
+      const row = await pollFor(() => {
+        const r = boot!.social!.seekStore.get(intent_id)
+        return r && r.status !== 'foraging' ? r : null
+      })
+      expect(row).not.toBeNull()
+      // Closed (no yes echo) with 0 peers asked — proves discover filtered
+      // the url-less mailbox peer OUT before any send was attempted, not
+      // merely that a throw somewhere was swallowed.
+      expect(row!.status).toBe('closed')
+      expect(row!.peers_asked).toBe(0)
+    } finally {
+      openaiMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
+  it('forwardTargets: an inbound /a2a/intent with ONLY a url-less mailbox peer as a forward target never reaches intentUrl(undefined) — 200, no forward', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-guard-forward-'))
+    const port = 19913
+    const openaiMock = serveMockOpenai('{"match":"no"}')
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'openai',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: `http://127.0.0.1:${openaiMock.port}/v1`,
+        openaiModel: 'test-model',
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      const senderKey = 'sender-inbound-key-guard1'
+      boot.a2aDeps.registry.add({
+        id: 'ccs', name: '小S', url: 'http://127.0.0.1:1/a2a',
+        inbound_api_key: senderKey, outbound_api_key: 'unused',
+        capabilities: [], paused: false, transport: 'push',
+      })
+      // The ONLY possible forward target is the url-less mailbox peer.
+      boot.a2aDeps.registry.add(mailboxPeer)
+
+      const resp = await fetch(`http://127.0.0.1:${port}/a2a/intent`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${senderKey}` },
+        body: JSON.stringify({
+          agent_id: 'ccs',
+          card: {
+            intent_id: 'guard-fwd-1', kind: 'seek', topic: '找摄影搭子', hop: 1,
+            expires_at: new Date(Date.now() + 600_000).toISOString(),
+          },
+        }),
+      })
+      // No throw (a TypeError deep in forwardTargets/forwardSend would have
+      // surfaced as a 500 here).
+      expect(resp.status).toBe(200)
+      const receipt = await resp.json() as { match: string; forwarded?: unknown }
+      // No forward happened — the mailbox peer was filtered out of forwardTargets.
+      expect(receipt.forwarded).toBeUndefined()
+    } finally {
+      openaiMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
+  it('postPeerReveal: revealEcho against a url-less mailbox peer never reaches revealUrl(undefined) — short-circuits to peer_unreachable, no throw', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-guard-reveal-'))
+    const port = 19914
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      boot.a2aDeps.registry.add(mailboxPeer)
+
+      // Seed an echo whose peer is the url-less mailbox peer — revealEcho's
+      // postPeerReveal call is the site under test.
+      const intentId = 'guard-reveal-1'
+      const echoId = `${intentId}:${mailboxPeer.id}`
+      boot.social!.seekStore.create({ id: intentId, kind: 'seek', topic: '找摄影搭子' })
+      boot.social!.echoStore.create({
+        id: echoId, seekId: intentId, peerMasked: '第 1 度的某人',
+        degree: 1, content: '南京摄影爱好者', peerAgentId: mailboxPeer.id,
+      })
+
+      const outcome = await boot.social!.revealer.revealEcho(echoId)
+      expect(outcome).toEqual({ state: 'peer_unreachable' })
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+})

@@ -680,6 +680,30 @@ describe('agent-config — forward budget (sub-project C)', () => {
   })
 })
 
+describe('A2AAgentRecord url-optional-for-mailbox', () => {
+  const key = 'k'.repeat(16)
+  const mailboxRec = { id: 'cc-a3f92b1c', name: 'peer', inbound_api_key: key, outbound_api_key: 'ob',
+    capabilities: [], transport: 'mailbox' as const, mailbox_addr: 'A', mailbox_enc_pub: 'E', relays: ['https://r.example/mailbox'] }
+
+  it('accepts a mailbox record with NO url', () => {
+    expect(A2AAgentRecord.safeParse(mailboxRec).success).toBe(true)
+  })
+  it('rejects a push record with NO url', () => {
+    const { transport, ...rest } = mailboxRec
+    expect(A2AAgentRecord.safeParse({ ...rest, transport: 'push' }).success).toBe(false)
+  })
+  it('rejects a ws record with NO url', () => {
+    const { transport, ...rest } = mailboxRec
+    expect(A2AAgentRecord.safeParse({ ...rest, transport: 'ws' }).success).toBe(false)
+  })
+  it('still accepts a push record WITH a valid url (back-compat)', () => {
+    expect(A2AAgentRecord.safeParse({ ...mailboxRec, transport: 'push', url: 'https://peer.example' }).success).toBe(true)
+  })
+  it('an old mailbox config with url set still parses', () => {
+    expect(A2AAgentRecord.safeParse({ ...mailboxRec, url: 'https://peer.example' }).success).toBe(true)
+  })
+})
+
 describe('resolveForwardBudget', () => {
   it('returns the explicit config when set', () => {
     expect(resolveForwardBudget({

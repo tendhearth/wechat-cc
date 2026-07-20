@@ -206,6 +206,10 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         pushSend: async (target, body) => {
           const hand = a2aRegistry.get(target.relayVia ?? target.agentId)
           if (!hand) return false
+          // A url-less mailbox peer never reaches here in practice (mailbox
+          // targets go via mailboxSend above), but guard anyway — a
+          // malformed/partial mailbox record must fail closed, not throw.
+          if (!hand.url) return false
           const r = await a2aClient.send({ url: letterUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
           return r.ok
         },
@@ -284,6 +288,12 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       const postPeerReveal = async (agentId: string, intentId: string, relayToken?: string): Promise<{ mutual: boolean; handle?: PenpalHandle } | null> => {
         const hand = a2aRegistry.get(agentId)
         if (!hand) return null
+        // reveal-over-mailbox is deferred (spec §10): a mailbox peer has no
+        // url for revealUrl(). Mirror postReveal's peerMailboxOf short-
+        // circuit — skip cleanly. (Only transport:'mailbox' can lack a url
+        // per the A2AAgentRecord schema, but this also fails closed on any
+        // other malformed/url-less record rather than throwing.)
+        if (!hand.url) return null
         const rowId = relayToken ? `${intentId}:${agentId}:${relayToken}` : `${intentId}:${agentId}`
         const ch = channelStore.get(rowId)
         const myHandle = ch ? buildCrossedHandle({ my_pubkey: ch.my_pubkey, my_channel_id: ch.my_channel_id }, myMailbox) : undefined
@@ -308,6 +318,11 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
             .catch(err => deps.log('SOCIAL_REC', `mailbox reveal drop failed intent=${body.intent_id} agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`))
           return
         }
+        // peerMailboxOf(hand) returned null — normally this means push/ws
+        // (url guaranteed by schema), but a partially-configured mailbox
+        // record (missing one of mailbox_addr/enc_pub/relays) also lands
+        // here and may have no url either. Fail closed instead of throwing.
+        if (!hand.url) return
         void a2aClient.send({ url: revealUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
           .catch(err => deps.log('SOCIAL_REC', `relay reveal post failed intent=${body.intent_id} agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`))
       }
@@ -374,13 +389,20 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         // Guarded: a registry lookup failure must NOT reject the whole /a2a/intent
         // — W still returns its own local match (fail-closed: forward nothing).
         forwardTargets: (excludeAgentId) => {
-          try { return a2aRegistry.list().filter(a => !a.paused && a.id !== excludeAgentId).slice(0, 5) }
+          // url-less mailbox peers can't take a push /a2a/intent (intentUrl
+          // needs a url); seek-over-mailbox is deferred (spec §10) — skip
+          // them here.
+          try { return a2aRegistry.list().filter(a => !a.paused && a.id !== excludeAgentId && !(a.transport === 'mailbox' && !a.url)).slice(0, 5) }
           catch (err) {
             deps.log('SOCIAL_REC', `forwardTargets lookup failed exclude=${excludeAgentId}: ${err instanceof Error ? err.message : String(err)}`)
             return []
           }
         },
         forwardSend: async (hand, card) => {
+          // forwardTargets already filters url-less mailbox peers out, but
+          // this closure's own type doesn't carry that guarantee — guard
+          // here too (treated the same as any other unreachable target).
+          if (!hand.url) return null
           const r = await a2aClient.send({ url: intentUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, card } })
           return r.ok ? MatchReceiptSchema.parse(r.response) : null
         },
@@ -411,8 +433,15 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         cheapEval: socialCheapEval,
         // TODO(v1+): rank candidates via wxgraph closeness/topical relevance
         // instead of "every paired peer, capped".
-        discover: async (_topic) => a2aRegistry.list().filter(a => !a.paused).slice(0, 5),
+        // url-less mailbox peers can't take a push /a2a/intent (intentUrl
+        // needs a url); seek-over-mailbox is deferred (spec §10) — skip
+        // them here.
+        discover: async (_topic) => a2aRegistry.list().filter(a => !a.paused && !(a.transport === 'mailbox' && !a.url)).slice(0, 5),
         send: async (hand, card) => {
+          // discover already filters url-less mailbox peers out, but this
+          // closure's own type doesn't carry that guarantee — guard here
+          // too (treated the same as any other unreachable target).
+          if (!hand.url) return null
           const r = await a2aClient.send({ url: intentUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, card } })
           return r.ok ? MatchReceiptSchema.parse(r.response) : null
         },
