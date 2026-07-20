@@ -271,4 +271,13 @@ export interface Bootstrap {
   penpal?: {
     sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }>
   }
+  /**
+   * Content-blind mailbox transport (sub-project B, Task 8) — deps for
+   * `registerMailboxPoller` (src/daemon/bootstrap/wire-mailbox.ts). Present
+   * only when `social_enabled` AND at least one `mailbox_relays` entry are
+   * configured AND social wiring produced an `onMailboxLetter` (I1's
+   * own-channel-only handler). main.ts registers the poller lifecycle iff
+   * this is set; otherwise the feature is fully inert (no poll timer).
+   */
+  mailboxPollerDeps?: import('./wire-mailbox').MailboxPollerDeps
 }

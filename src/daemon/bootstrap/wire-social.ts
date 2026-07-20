@@ -21,6 +21,7 @@ import { applyFinishSeek } from './social-finish-seek'
 import { makeMailboxSender } from '../../core/mailbox-sender'
 import { makeMailboxClient } from '../../core/mailbox-client'
 import { peerMailboxOf } from './mailbox-dispatch-seam'
+import { makeMailboxLetterHandler } from './mailbox-letter-handler'
 import type { A2AServerOpts } from '../../core/a2a-server'
 import type { A2ARegistry } from '../../core/a2a-registry'
 import type { A2AClient } from '../../core/a2a-client'
@@ -57,6 +58,15 @@ export interface SocialWiring {
   onIntent: A2AServerOpts['onIntent']
   onReveal: A2AServerOpts['onReveal']
   onLetter: A2AServerOpts['onLetter']
+  /**
+   * I1 — the own-channel-ONLY letter handler for the mailbox poller (Task 8).
+   * MUST be used instead of `onLetter` when replaying a decrypted mailbox
+   * envelope: a mailbox drop carries no verified bearer, so it must never be
+   * able to make this daemon forward junk via `letterRelay.routeLetter`
+   * (which `onLetter` falls through to for non-own channels). Undefined
+   * whenever social wiring itself is inert, same gate as `onLetter`.
+   */
+  onMailboxLetter?: A2AServerOpts['onLetter']
   social?: {
     broker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> }
     seekStore: import('../../core/social-seek-store').SeekStore
@@ -86,6 +96,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   let socialOnIntent: A2AServerOpts['onIntent']
   let socialOnReveal: A2AServerOpts['onReveal']
   let socialOnLetter: A2AServerOpts['onLetter']
+  let socialOnMailboxLetter: A2AServerOpts['onLetter']
   let socialBroker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> } | undefined
   let socialForage: ((intentId: string, topic: string, opts?: { city?: string }) => Promise<void>) | undefined
   let socialSeekStore: import('../../core/social-seek-store').SeekStore | undefined
@@ -185,6 +196,16 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         const mine = channelStore.getByMyChannelId(ev.channel_id)
         return mine ? correspondent.receiveLetter(ev) : letterRelay.routeLetter(ev)
       }
+      // I1 (Task 8) — the mailbox-poller-safe variant: own-channel ONLY, NEVER
+      // falls through to letterRelay.routeLetter. A mailbox drop carries no
+      // verified bearer (unlike the HTTP /a2a/letter route, which at least
+      // authenticates the caller as a registered peer before onLetter runs
+      // at all) — an un-bearer'd mailbox drop must not make this daemon
+      // forward junk into a relay leg on some stranger's behalf.
+      socialOnMailboxLetter = makeMailboxLetterHandler({
+        getByMyChannelId: (c) => channelStore.getByMyChannelId(c),
+        receiveLetter: (ev) => correspondent.receiveLetter(ev),
+      })
       socialPenpal = { sendLetter: (channel, text) => correspondent.sendLetter(channel, text) }
 
       // Notification beats (克制三拍). Content-free by design — reveal crosses
@@ -418,6 +439,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
     onIntent: socialOnIntent,
     onReveal: socialOnReveal,
     onLetter: socialOnLetter,
+    onMailboxLetter: socialOnMailboxLetter,
     ...(socialBroker
       ? { social: { broker: socialBroker, seekStore: socialSeekStore!, echoStore: socialEchoStore!, pledgeStore: socialPledgeStore!, revealer: socialRevealer!, penpal: socialPenpal! } }
       : {}),

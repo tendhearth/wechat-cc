@@ -15,6 +15,11 @@ export interface LetterStore {
   listForChannel(channelId: string): LetterRow[]
   get(id: string): LetterRow | null
   markRead(id: string, at: string): void
+  /** M3 — idempotency check: has an INBOUND letter with this (channel_id, nonce)
+   *  already been persisted? A mailbox re-fetch after an ack-network-failure
+   *  redelivers the same envelope; `correspondent.receiveLetter` uses this to
+   *  no-op instead of creating a duplicate row + re-notifying the owner. */
+  hasInbound(channelId: string, nonce: string): boolean
 }
 
 export function makeLetterStore(db: Db): LetterStore {
@@ -25,10 +30,12 @@ export function makeLetterStore(db: Db): LetterStore {
   const selByChan = db.query<LetterRow, [string]>('SELECT * FROM penpal_letter WHERE channel_id = ? ORDER BY created_at DESC, rowid DESC')
   const selOne = db.query<LetterRow, [string]>('SELECT * FROM penpal_letter WHERE id = ?')
   const updRead = db.query<unknown, [string, string]>('UPDATE penpal_letter SET read_at = ? WHERE id = ?')
+  const selInbound = db.query<unknown, [string, string]>("SELECT 1 FROM penpal_letter WHERE channel_id = ? AND nonce = ? AND direction = 'in' LIMIT 1")
   return {
     create(l) { ins.run(l.id, l.channelId, l.direction, l.sealedCiphertext, l.nonce, l.tag, l.plaintext, new Date().toISOString()) },
     listForChannel(channelId) { return selByChan.all(channelId) },
     get(id) { return selOne.get(id) ?? null },
     markRead(id, at) { updRead.run(at, id) },
+    hasInbound(channelId, nonce) { return !!selInbound.get(channelId, nonce) },
   }
 }

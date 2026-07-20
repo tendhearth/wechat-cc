@@ -46,6 +46,11 @@ export function makeCorrespondent(deps: CorrespondentDeps): Correspondent {
     receiveLetter(ev) {
       const ch = deps.channelStore.getByMyChannelId(ev.channel_id)
       if (!ch || ch.status !== 'open' || !ch.peer_pubkey) return { ok: false, error: 'unknown_channel' }
+      // M3 — idempotent re-delivery: a mailbox re-fetch after an ack failure
+      // (or any other at-least-once redelivery) presents the same
+      // (channel_id, nonce) again. No-op instead of a duplicate row + a
+      // second owner ping.
+      if (deps.letterStore.hasInbound(ch.id, ev.nonce)) return { ok: true }
       try {
         const pt = openLetter(deriveSharedKey(ch.my_privkey, ch.peer_pubkey), { nonce: ev.nonce, ct: ev.ct, tag: ev.tag })
         deps.letterStore.create({ id: randomUUID(), channelId: ch.id, direction: 'in', sealedCiphertext: ev.ct, nonce: ev.nonce, tag: ev.tag, plaintext: pt })

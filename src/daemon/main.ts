@@ -21,6 +21,7 @@ import { registerGuard } from './guard/lifecycle'
 import { registerPolling } from './polling-lifecycle'
 import { registerSessions } from './sessions-lifecycle'
 import { registerIlink } from './ilink-lifecycle'
+import { registerMailboxPoller } from './bootstrap/wire-mailbox'
 import { buildInboundPipeline } from './inbound/build'
 import { runStartupSweeps } from './startup-sweeps'
 import { wireMain } from './wiring'
@@ -315,6 +316,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     lc.register(registerIlink(wired.ilinkDeps))
     const pollingLc = registerPolling({ ...wired.pollingDeps, runPipeline: pipeline })
     wireRef(wired.refs.polling, pollingLc); lc.register(pollingLc); pollingLcRef = pollingLc
+    // Content-blind mailbox transport (Task 8) — mounted only when bootstrap
+    // produced mailboxPollerDeps (social_enabled + at least one configured
+    // mailbox_relays entry + a live onMailboxLetter). Absent ⇒ no poll timer,
+    // no relay traffic — same "undefined ⇒ fully inert" posture as every
+    // other optional companion/social wiring above.
+    if (boot.mailboxPollerDeps) lc.register(registerMailboxPoller(boot.mailboxPollerDeps))
     // 5. one-shot startup sweeps — fire-and-forget
     runStartupSweeps(wired.startupDeps)
     const modeStr = dangerously ? 'mode=dangerouslySkipPermissions=true (no WeChat permission prompts will fire)' : 'mode=strict (Phase 1 permission relay active)'
