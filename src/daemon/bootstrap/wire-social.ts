@@ -21,6 +21,7 @@ import { applyFinishSeek } from './social-finish-seek'
 import { makeMailboxSender } from '../../core/mailbox-sender'
 import { makeMailboxClient } from '../../core/mailbox-client'
 import { loadMailboxIdentity } from '../../core/mailbox-crypto'
+import { resolveSelfAgentId } from '../../core/self-agent-id'
 import { peerMailboxOf, buildCrossedHandle } from './mailbox-dispatch-seam'
 import { makeMailboxLetterHandler } from './mailbox-letter-handler'
 import { makeRoutePostLetter } from './postletter-route'
@@ -119,7 +120,9 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // must degrade gracefully like every other optional wiring here.
       deps.log('BOOT', 'social: no cheapEval available from any registered provider — social_enabled is on but wiring is skipped (inert)')
     } else {
-      const SOCIAL_SELF_ID = process.env.WECHAT_A2A_SELF_ID || 'wechat-cc'
+      // spec §2 — one stable-unique slug per daemon (env > config > generated).
+      // Legacy 'wechat-cc' preserved when no mailbox_relays is configured.
+      const SOCIAL_SELF_ID = resolveSelfAgentId(configuredAgent, deps.stateDir)
       const socialOpenaiKey = process.env.WECHAT_OPENAI_API_KEY
       // Mailbox transport (sub-project B): the third dispatch arm alongside
       // push (a2aClient). Constructed once and reused by postReveal (and, per

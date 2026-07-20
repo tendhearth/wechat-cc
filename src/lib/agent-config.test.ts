@@ -664,6 +664,20 @@ describe('agent-config — forward budget (sub-project C)', () => {
       expect(resolveForwardBudget(loaded)).toEqual({ per_sender: 30, window_ms: 3_600_000 })
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
+
+  it('round-trips self_agent_id through loadAgentConfig', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cfg-selfid-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'),
+        JSON.stringify({ provider: 'claude', self_agent_id: 'cc-a3f92b1c' }))
+      expect(loadAgentConfig(dir).self_agent_id).toBe('cc-a3f92b1c')
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('parseAgentConfig accepts an optional self_agent_id', () => {
+    expect(parseAgentConfig({ self_agent_id: 'cc-deadbeef' }).self_agent_id).toBe('cc-deadbeef')
+    expect(parseAgentConfig({}).self_agent_id).toBeUndefined()
+  })
 })
 
 describe('resolveForwardBudget', () => {

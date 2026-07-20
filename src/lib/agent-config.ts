@@ -68,6 +68,11 @@ export interface AgentConfig {
   // Optional/additive, same posture as mailbox_relays?/a2a_listen? — absent
   // means "use resolveForwardBudget's default", not "budget disabled".
   forward_budget?: { per_sender: number; window_ms: number }
+  // Stable-unique self slug (spec §2): this daemon's own a2a id, crossed on the
+  // pairing card and used as the registry id peers file this daemon under.
+  // Additive/optional, same posture as mailbox_relays?/forward_budget?. Resolved
+  // (and persisted here on first need) by resolveSelfAgentId in core/self-agent-id.ts.
+  self_agent_id?: string
 }
 
 // ── A2A sub-schemas ──────────────────────────────────────────────────────────
@@ -137,6 +142,7 @@ const AgentConfigSchema = z.object({
   social_disclosure_policy: z.string().optional(),
   mailbox_relays: z.array(z.string().url()).optional(),
   forward_budget: ForwardBudgetConfig.optional(),
+  self_agent_id: z.string().optional(),
 })
 
 /**
@@ -210,6 +216,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.social_disclosure_policy === 'string' ? { social_disclosure_policy: parsed.social_disclosure_policy } : {}),
       ...(Array.isArray(parsed.mailbox_relays) ? { mailbox_relays: parsed.mailbox_relays } : {}),
       ...(forwardBudget ? { forward_budget: forwardBudget } : {}),
+      ...(typeof parsed.self_agent_id === 'string' ? { self_agent_id: parsed.self_agent_id } : {}),
     }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }
