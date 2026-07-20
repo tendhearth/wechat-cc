@@ -21,7 +21,6 @@ import { applyFinishSeek } from './social-finish-seek'
 import { makeMailboxSender } from '../../core/mailbox-sender'
 import { makeMailboxClient } from '../../core/mailbox-client'
 import { loadMailboxIdentity } from '../../core/mailbox-crypto'
-import { resolveSelfAgentId } from '../../core/self-agent-id'
 import { peerMailboxOf, buildCrossedHandle } from './mailbox-dispatch-seam'
 import { makeMailboxLetterHandler } from './mailbox-letter-handler'
 import { makeRoutePostLetter } from './postletter-route'
@@ -43,6 +42,12 @@ export interface SocialDeps {
   stateDir: string
   db: Db
   configuredAgent: AgentConfig
+  /** Resolved ONCE by bootstrap/index.ts (resolveSelfAgentId) — spec §2's
+   *  stable-unique slug, shared with wirePairing + pipeline-deps' delegate
+   *  path so every outbound seam self-reports the identical agent_id.
+   *  Replaces the old per-call `resolveSelfAgentId(configuredAgent,
+   *  deps.stateDir)` here (never re-resolve; see wire-pairing.ts's header). */
+  selfId: string
   registry: ProviderRegistry
   defaultProviderId: ProviderId
   pluginMcp: Record<string, McpStdioSpec>
@@ -87,7 +92,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   const {
     registry, defaultProviderId, pluginMcp, currentClaudeModel, claudeBin,
     configuredAgent, resolveOperatorChatId, sendAssistantText, a2aRegistry,
-    a2aClient,
+    a2aClient, selfId,
   } = deps
 
   // ── Agent-social M1 wiring (async foraging spine) ───────────────────────
@@ -120,9 +125,12 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // must degrade gracefully like every other optional wiring here.
       deps.log('BOOT', 'social: no cheapEval available from any registered provider — social_enabled is on but wiring is skipped (inert)')
     } else {
-      // spec §2 — one stable-unique slug per daemon (env > config > generated).
-      // Legacy 'wechat-cc' preserved when no mailbox_relays is configured.
-      const SOCIAL_SELF_ID = resolveSelfAgentId(configuredAgent, deps.stateDir)
+      // spec §2 — one stable-unique slug per daemon (env > config > generated),
+      // resolved ONCE by bootstrap/index.ts and threaded in as `deps.selfId`
+      // (shared with wirePairing + pipeline-deps' delegate path — see
+      // SocialDeps.selfId's doc comment). Legacy 'wechat-cc' preserved when
+      // no mailbox_relays is configured.
+      const SOCIAL_SELF_ID = selfId
       const socialOpenaiKey = process.env.WECHAT_OPENAI_API_KEY
       // Mailbox transport (sub-project B): the third dispatch arm alongside
       // push (a2aClient). Constructed once and reused by postReveal (and, per

@@ -280,4 +280,22 @@ export interface Bootstrap {
    * this is set; otherwise the feature is fully inert (no poll timer).
    */
   mailboxPollerDeps?: import('./wire-mailbox').MailboxPollerDeps
+  /**
+   * This daemon's stable-unique self slug (pairing-code design §2), resolved
+   * exactly ONCE at boot via `resolveSelfAgentId` and shared by every wiring
+   * seam that self-reports an agent_id to a peer — wireSocial's outbound
+   * a2a_id, wirePairing's own-card `self_id`, and pipeline-deps'
+   * exec/hands delegate path (`delegateToHand`). A single shared value is
+   * what stops a slug-minting daemon from broadcasting two different
+   * identities to its peers.
+   */
+  selfId: string
+  /**
+   * 配对码 (spec §7) — the daemon-side pairing engine. Present only when
+   * mailbox_relays is configured (the rendezvous relay is the daemon's own
+   * `mailbox_relays[0]`). The WeChat 「配对」 dispatch seam (pipeline-deps)
+   * and internal-api /v1/pair/* routes read this; undefined ⇒ inert (no-op /
+   * 503), same posture as `boot.social`/`boot.penpal`.
+   */
+  pairing?: import('../../core/pairing').PairingEngine
 }

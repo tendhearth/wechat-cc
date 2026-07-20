@@ -11,6 +11,8 @@
  * `{ok:true, code, expiresAt} | {ok:false, reason:'relay_drop_failed'}`) and
  * `accept()` is drop-first (drops the acceptor card before writing the
  * peer). See src/core/pairing.ts + pairing.test.ts for the current surface.
+ * The real daemon wiring that constructs a PairingEngine from these same
+ * deps lives at src/daemon/bootstrap/wire-pairing.ts (Task 6).
  */
 import { describe, it, expect } from 'vitest'
 import { Database } from 'bun:sqlite'
@@ -135,9 +137,10 @@ describe('pairing integration (two engines, one in-process relay)', () => {
 
   // CRITICAL-1 regression: reproduce the exact clobber trace against a REAL
   // registry (writes agent-config.json) + the REAL resolver (persists
-  // self_agent_id), memoizing selfId ONCE the way wire-pairing does. The peer
-  // record registry.add wrote must SURVIVE on disk after accept() — and after a
-  // second pairing (proving the resolver's merge-persist never wipes a2a_agents).
+  // self_agent_id), memoizing selfId ONCE the way
+  // src/daemon/bootstrap/wire-pairing.ts does. The peer record registry.add
+  // wrote must SURVIVE on disk after accept() — and after a second pairing
+  // (proving the resolver's merge-persist never wipes a2a_agents).
   it('the written peer record survives on disk after accept() and a second pairing', async () => {
     const { mkdtempSync, writeFileSync, readFileSync } = await import('node:fs')
     const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
@@ -152,7 +155,12 @@ describe('pairing integration (two engines, one in-process relay)', () => {
     const relays = ['https://brain.example/mailbox']
 
     const registryB = createA2ARegistry({ stateDir })              // REAL — read-modify-writes agent-config.json
-    const selfIdB = resolveSelfAgentId(loadAgentConfig(stateDir), stateDir) // resolved ONCE (persists self_agent_id via merge)
+    // Captured ONCE, before self_agent_id or any a2a_agents exist on disk —
+    // a true "boot snapshot". Reused below (unmemoized re-resolve) to
+    // simulate a bad future caller that still holds this stale object after
+    // peers have been written.
+    const staleConfig = loadAgentConfig(stateDir)
+    const selfIdB = resolveSelfAgentId(staleConfig, stateDir) // resolved ONCE (persists self_agent_id via merge)
     const B = makePairing({
       client, registry: registryB, self: { mailbox_addr: 'B_MB', mailbox_enc_pub: 'B_EP', relays },
       selfId: () => selfIdB, name: () => 'Bob', now: () => NOW,
@@ -186,5 +194,25 @@ describe('pairing integration (two engines, one in-process relay)', () => {
     }
     const disk2 = JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))
     expect(disk2.a2a_agents.map((a: any) => a.id).sort()).toEqual(['cc-aaaa1111', 'cc-cccc3333']) // BOTH survive
+
+    // REVERSE-direction clobber check (carried review item — T6 wiring
+    // review): re-invoke resolveSelfAgentId with the SAME stale,
+    // pre-pairing `staleConfig` object (no self_agent_id, no a2a_agents —
+    // exactly what a caller holding an old boot snapshot would still carry,
+    // per self-agent-id.ts's own doc comment) now that BOTH peers exist on
+    // disk. Because `staleConfig.self_agent_id` is unset, this is NOT the
+    // env/config early-return — it retakes the mint-and-persist branch
+    // (deterministic: same mailbox identity ⇒ same slug), which means
+    // persistSelfAgentId does a SECOND real read-modify-write. If that write
+    // read from the caller's stale in-memory config instead of the current
+    // disk content, both peers would vanish here. They don't — proving the
+    // merge-persist's fresh-disk-read property directly (the other half of
+    // the CRITICAL-1 defense from the "memoize once at the call site" half
+    // already covered above).
+    const reResolved = resolveSelfAgentId(staleConfig, stateDir)
+    expect(reResolved).toBe(selfIdB) // deterministic — same mailbox addr both times
+    const disk3 = JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))
+    expect(disk3.self_agent_id).toBe(selfIdB)
+    expect(disk3.a2a_agents.map((a: any) => a.id).sort()).toEqual(['cc-aaaa1111', 'cc-cccc3333']) // STILL both survive
   })
 })

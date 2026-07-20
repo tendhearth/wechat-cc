@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { buildBootstrap, resolveAdminChatId } from './bootstrap'
@@ -2054,6 +2054,132 @@ describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPO
 
       const outcome = await boot.social!.revealer.revealEcho(echoId)
       expect(outcome).toEqual({ state: 'peer_unreachable' })
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── Pairing-code (spec §7) — boot.pairing wiring ──────────────────────────
+// Gated ONLY on mailbox_relays?.length (the rendezvous relay), independent
+// of social_enabled — a daemon that hasn't turned social on can still pair.
+// See src/daemon/bootstrap/wire-pairing.ts + docs/superpowers/specs/
+// 2026-07-20-pairing-code-design.md §7.
+describe('bootstrap pairing-code wiring', () => {
+  it('wires boot.pairing when mailbox_relays is configured', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-pairing-on-'))
+    writeFileSync(join(stateDir, 'agent-config.json'),
+      JSON.stringify({ provider: 'claude', mailbox_relays: ['https://brain.example/mailbox'] }))
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(boot.pairing).toBeDefined()
+      expect(typeof boot.pairing!.start).toBe('function')
+      expect(typeof boot.pairing!.accept).toBe('function')
+      expect(typeof boot.pairing!.stop).toBe('function')
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves boot.pairing undefined with no mailbox_relays', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-pairing-off-'))
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(boot.pairing).toBeUndefined()
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  // T2/T6 identity split (carried review item 1) — boot.selfId is what every
+  // outbound wiring seam (wireSocial, wirePairing, pipeline-deps' delegate
+  // path) shares. Asserted directly here so a future regression that
+  // reintroduces a second, independently-resolved selfId somewhere is caught
+  // at the bootstrap layer, not just by re-deriving the expected value.
+  it('exposes boot.selfId — the single resolveSelfAgentId result shared by every wiring seam', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-selfid-'))
+    writeFileSync(join(stateDir, 'agent-config.json'),
+      JSON.stringify({ provider: 'claude', mailbox_relays: ['https://brain.example/mailbox'] }))
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(typeof boot.selfId).toBe('string')
+      expect(boot.selfId.length).toBeGreaterThan(0)
+      // Persisted to disk by resolveSelfAgentId's fresh-daemon mint branch —
+      // proves this is the SAME resolution wire-pairing/wire-social read,
+      // not a second independent one.
+      const disk = JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))
+      expect(disk.self_agent_id).toBe(boot.selfId)
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  // The honest failure copy (interface-drift note) — start() is async and
+  // returns PairStartResult; a relay-drop failure must surface the real
+  // 「中继暂时够不着…」 message via the wired notify path, not a generic error.
+  it('a failed relay drop on start() notifies via the real notify path with the honest message', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-pairing-notify-'))
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({
+      provider: 'claude',
+      // Port 1 is never a live relay in this test env — drop() will fail
+      // (fetch throws / non-2xx), driving the honest relay_drop_failed path.
+      mailbox_relays: ['http://127.0.0.1:1/mailbox'],
+    }))
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      const sent: Array<{ chatId: string; text: string }> = []
+      const db = openTestDb()
+      const ilink = makeIlinkStub()
+      ilink.sendMessage = (async (chatId: string, text: string) => { sent.push({ chatId, text }); return { msgId: 'm1' } }) as any
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: ilink as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      // Seed a conversation row so resolveOperatorChatId() (earliest-updated
+      // conversation) resolves to a real chat instead of null — otherwise
+      // notify() is a silent no-op and this test can't observe the copy.
+      boot.conversationStore.set('op_chat', { kind: 'solo', provider: 'claude' })
+      expect(boot.pairing).toBeDefined()
+      const res = await boot.pairing!.start()
+      expect(res.ok).toBe(false)
+      if (res.ok) throw new Error('unreachable')
+      expect(res.reason).toBe('relay_drop_failed')
+      expect(sent.length).toBe(1)
+      expect(sent[0]!.chatId).toBe('op_chat')
+      expect(sent[0]!.text).toContain('中继暂时够不着')
     } finally {
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })

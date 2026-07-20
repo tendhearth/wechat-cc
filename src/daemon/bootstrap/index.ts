@@ -57,6 +57,8 @@ import { makeSendAssistantText } from './fallback-reply'
 import { registerProviders } from './providers'
 import { wireSocial } from './wire-social'
 import { wireA2aServer } from './wire-a2a-server'
+import { wirePairing } from './wire-pairing'
+import { resolveSelfAgentId } from '../../core/self-agent-id'
 import { assertNotAuthFailed, type CheapEval } from '../../core/agent-provider'
 import { createA2ARegistry } from '../../core/a2a-registry'
 import { createA2AClient } from '../../core/a2a-client'
@@ -330,6 +332,17 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // didn't, so this closes that asymmetry. `configuredAgent` is the boot
   // snapshot used for codex/cursor construction + startup logging.
   const configuredAgent = loadAgentConfig(deps.stateDir)
+
+  // spec §2 (pairing-code design) — one stable-unique slug per daemon,
+  // resolved EXACTLY ONCE here and threaded into every wiring seam that
+  // self-reports an agent_id to a peer: wireSocial (outbound a2a_id),
+  // wirePairing (own-card self_id), and pipeline-deps' exec/hands delegate
+  // path (delegateToHand). resolveSelfAgentId persists on its
+  // generate/grandfather branch (read-modify-write of agent-config.json) —
+  // calling it more than once per boot (let alone lazily, per request) would
+  // re-enter that persistence for no benefit and risks two wiring seams
+  // momentarily disagreeing on this daemon's own identity.
+  const selfId = resolveSelfAgentId(configuredAgent, deps.stateDir)
 
   // The model is re-read per spawn via an mtime-cached reader (one stat, parse
   // only on change) instead of being captured once. An operator's `/model`
@@ -686,6 +699,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     stateDir: deps.stateDir,
     db: deps.db,
     configuredAgent,
+    selfId,
     registry,
     defaultProviderId,
     pluginMcp,
@@ -713,6 +727,24 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     onLetter: socialWiring.onLetter,
   })
   a2aServer = builtA2aServer
+
+  // 配对码 (pairing-code design §7) — the daemon-side pairing engine. Gated
+  // ONLY on mailbox_relays (rendezvous needs a relay); independent of
+  // social_enabled — a daemon can pair without social being on. `selfId` is
+  // the SAME constant resolved once above; `url` advertises this daemon's
+  // own a2a_listen base (undefined ⇒ a pure NAT'd, url-less mailbox peer).
+  // Undefined when mailbox_relays is unconfigured — the WeChat「配对」dispatch
+  // seam and internal-api /v1/pair/* routes then stay inert, same posture
+  // as boot.social/boot.penpal.
+  const pairingEngine = wirePairing({
+    stateDir: deps.stateDir,
+    configuredAgent,
+    a2aRegistry,
+    selfId,
+    url: a2aServer ? a2aServer.baseUrl() : undefined,
+    notify: (msg) => { const op = resolveOperatorChatId(); if (op && sendAssistantText) void sendAssistantText(op, msg) },
+    log: deps.log,
+  })
 
   // Restart-resume: a seek still in `foraging` means its background leg never
   // finished (a completed leg moves the row to echoed/closed). Re-forage them.
@@ -800,6 +832,13 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     agentConfig: configuredAgent,
     sendAssistantText,
     /**
+     * spec §2 (pairing-code design) — this daemon's stable-unique self slug,
+     * resolved once above. Shared by wireSocial + wirePairing + (via this
+     * field) pipeline-deps' exec/hands delegate path — see the doc comment
+     * on Bootstrap['selfId'] in ./types.ts.
+     */
+    selfId,
+    /**
      * Agent-social M1 (T7b-core) — late-bound into internal-api by main.ts
      * (mirrors a2aDeps/setA2A). Undefined when social_enabled +
      * social_disclosure_policy aren't both configured — POST
@@ -819,5 +858,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      * main.ts mounts the poller lifecycle iff this is set.
      */
     ...(mailboxPollerDeps ? { mailboxPollerDeps } : {}),
+    /**
+     * 配对码 (spec §7) — undefined when mailbox_relays isn't configured;
+     * see Bootstrap['pairing']'s doc comment in ./types.ts.
+     */
+    ...(pairingEngine ? { pairing: pairingEngine } : {}),
   }
 }

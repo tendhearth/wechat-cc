@@ -241,7 +241,13 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     delegateToHand: async (handName, task) => {
       const a2a = boot.a2aDeps
       if (!a2a) return { ok: false as const, reason: 'A2A 未启用(agent-config 没配 a2a_listen / 没注册手)' }
-      const selfId = process.env.WECHAT_A2A_SELF_ID || 'wechat-cc'
+      // T2 review finding (split identity) — this used to independently
+      // resolve `process.env.WECHAT_A2A_SELF_ID || 'wechat-cc'`, so a
+      // slug-minting daemon (spec §2) broadcast one identity via
+      // wireSocial/wirePairing and a DIFFERENT ('wechat-cc') identity here.
+      // boot.selfId is resolved exactly once at bootstrap and shared by
+      // every outbound seam — see Bootstrap['selfId']'s doc comment.
+      const selfId = boot.selfId
       const timeoutMs = Number(process.env.WECHAT_A2A_EXEC_TIMEOUT_MS) || 300_000
       // Stub hub: when Part B hasn't wired yiHub yet, ws hands fall back to
       // a graceful offline error rather than crashing.
