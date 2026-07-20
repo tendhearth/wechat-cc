@@ -20,8 +20,10 @@ import { MatchReceiptSchema } from '../../core/a2a-intent'
 import { applyFinishSeek } from './social-finish-seek'
 import { makeMailboxSender } from '../../core/mailbox-sender'
 import { makeMailboxClient } from '../../core/mailbox-client'
-import { peerMailboxOf } from './mailbox-dispatch-seam'
+import { loadMailboxIdentity } from '../../core/mailbox-crypto'
+import { peerMailboxOf, buildCrossedHandle } from './mailbox-dispatch-seam'
 import { makeMailboxLetterHandler } from './mailbox-letter-handler'
+import type { PeerMailbox } from '../../core/mailbox-crypto'
 import type { A2AServerOpts } from '../../core/a2a-server'
 import type { A2ARegistry } from '../../core/a2a-registry'
 import type { A2AClient } from '../../core/a2a-client'
@@ -121,6 +123,17 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // push (a2aClient). Constructed once and reused by postReveal (and, per
       // Task 11, postLetter's peer-mailbox branch).
       const mailboxSender = makeMailboxSender({ client: makeMailboxClient() })
+      // C1 (Task 10): THIS daemon's own mailbox routing, loaded once. Used to
+      // enrich the crossing PenpalHandle AT ITS SOURCE (postPeerReveal,
+      // postReveal's forwarded peer_handle, and channel.openLocal's return) —
+      // NOT derived from the bare channel row, which never holds it. undefined
+      // when this daemon has no mailbox_relays configured, so the crossed
+      // handle omits `mailbox` entirely — byte-identical to a push-only peer's
+      // handle today (additive, backward-compatible).
+      const mailboxIdentity = loadMailboxIdentity(deps.stateDir)
+      const myMailbox: PeerMailbox | undefined = configuredAgent.mailbox_relays?.length
+        ? { addr: mailboxIdentity.addr, enc_pub: mailboxIdentity.enc_pub, relays: configuredAgent.mailbox_relays }
+        : undefined
 
       // The judge's runTurn seam (daemon/social/grounded-judge.ts). Provider-
       // specific adapters spawn a one-shot session carrying ONLY the plugin
@@ -227,11 +240,11 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       const channel: ChannelPort = {
         openLocal(rowId, ctx) {
           const existing = channelStore.get(rowId)
-          if (existing) return { pubkey: existing.my_pubkey, channel_id: existing.my_channel_id }
+          if (existing) return buildCrossedHandle({ my_pubkey: existing.my_pubkey, my_channel_id: existing.my_channel_id }, myMailbox)
           const kp = generateKeypair()
           const myChannelId = randomUUID()
           channelStore.create({ id: rowId, seekId: ctx.seekId, myPrivkey: kp.privateKey, myPubkey: kp.publicKey, myChannelId, degree: ctx.degree, relayVia: ctx.relayVia ?? null, peerAgentId: ctx.peerAgentId ?? null })
-          return { pubkey: kp.publicKey, channel_id: myChannelId }
+          return buildCrossedHandle({ my_pubkey: kp.publicKey, my_channel_id: myChannelId }, myMailbox)
         },
         finalize(rowId, peerHandle) { channelStore.setPeerHandle(rowId, peerHandle) },
       }
@@ -250,7 +263,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         if (!hand) return null
         const rowId = relayToken ? `${intentId}:${agentId}:${relayToken}` : `${intentId}:${agentId}`
         const ch = channelStore.get(rowId)
-        const myHandle = ch ? { pubkey: ch.my_pubkey, channel_id: ch.my_channel_id } : undefined
+        const myHandle = ch ? buildCrossedHandle({ my_pubkey: ch.my_pubkey, my_channel_id: ch.my_channel_id }, myMailbox) : undefined
         const r = await a2aClient.send({
           url: revealUrl(hand.url), bearer: hand.outbound_api_key,
           body: { agent_id: SOCIAL_SELF_ID, intent_id: intentId, ...(relayToken ? { relay_token: relayToken } : {}), ...(myHandle ? { peer_handle: myHandle } : {}) },
