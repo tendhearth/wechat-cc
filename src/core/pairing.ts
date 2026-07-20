@@ -36,7 +36,14 @@ export interface PairCard {
 
 export type PairResult =
   | { ok: true; peer: { self_id: string; name: string } }
-  | { ok: false; reason: 'expired_or_wrong' | 'self_pair' | 'id_conflict' }
+  | { ok: false; reason: 'expired_or_wrong' | 'self_pair' | 'id_conflict' | 'relay_drop_failed' }
+
+// start() can now fail too (the initiator card drop is awaited + checked —
+// see makePairing's start()). Uses the same {ok, reason} shape as PairResult
+// for consistency rather than a bespoke {ok:false, error} pair.
+export type PairStartResult =
+  | { ok: true; code: string; expiresAt: number }
+  | { ok: false; reason: 'relay_drop_failed' }
 
 export interface PairScheduleHandle { cancel(): void }
 
@@ -59,7 +66,7 @@ export interface PairingDeps {
 }
 
 export interface PairingEngine {
-  start(): { code: string; expiresAt: number }
+  start(): Promise<PairStartResult>
   accept(code: string): Promise<PairResult>
   stop(): void
 }
@@ -76,6 +83,12 @@ interface ActiveInitiator {
 }
 
 export function makePairing(deps: PairingDeps): PairingEngine {
+  // Fail fast at construction, not with a silent `relays[0]!` non-null
+  // assertion that would only blow up (as `undefined` in a URL string) the
+  // first time start()/accept() actually tries to reach the relay.
+  if (deps.self.relays.length === 0) {
+    throw new Error('makePairing: deps.self.relays must be non-empty (relays[0] is the rendezvous relay)')
+  }
   const pollIntervalMs = deps.pollIntervalMs ?? 10_000
   const ttlMs = deps.ttlMs ?? 600_000
   const rendezvousRelay = deps.self.relays[0]!
@@ -100,6 +113,15 @@ export function makePairing(deps: PairingDeps): PairingEngine {
   // different/absent mailbox_addr is an UNRELATED peer colliding on a legacy
   // shared 'wechat-cc' id (grandfather rule, spec §2) — overwriting would clobber
   // it, so reject the pairing instead (id_conflict).
+  // Peek-only version of the id_conflict check writePeerFromCard applies, so
+  // callers that need to decide something ELSE (e.g. accept()'s drop-first
+  // ordering below) before committing a write can bail out with zero side
+  // effects — no registry write, no card drop.
+  function conflicts(card: PairCard): boolean {
+    const existing = deps.registry.get(card.self_id)
+    return !!existing && existing.mailbox_addr !== card.mailbox_addr
+  }
+
   function writePeerFromCard(card: PairCard, myMintedKey: string): { ok: true } | { ok: false; reason: 'id_conflict' } {
     const existing = deps.registry.get(card.self_id)
     if (existing && existing.mailbox_addr !== card.mailbox_addr) return { ok: false, reason: 'id_conflict' }
@@ -150,18 +172,38 @@ export function makePairing(deps: PairingDeps): PairingEngine {
     active = null
   }
 
-  function start(): { code: string; expiresAt: number } {
+  async function start(): Promise<PairStartResult> {
     stop() // supersede any prior active code (§8: one at a time)
     const code = deps.genCode()
     const rv = deriveRendezvous(code)
     const myKey = deps.mintKey()
     const nonce = deps.genNonce()
     const expiresAt = deps.now() + ttlMs
+
+    // Await + check the initiator card drop BEFORE arming the poller or
+    // handing back a code. `MailboxClient.drop` resolves `false` (not a
+    // throw) on any non-2xx — the original fire-and-forget `.catch()` only
+    // handled rejections, so a `false` resolution was silently swallowed: the
+    // code would be handed to the friend, the poller would arm and dutifully
+    // poll for 10 minutes, and the acceptor's `accept()` would find nothing
+    // and report `expired_or_wrong` with zero diagnostics on either side. A
+    // code whose card never reached the relay can never be redeemed — fail
+    // loudly here instead.
+    const env = sealEnvelope({ path: '/pair', bearer: '', body: ownCard('initiator', nonce, myKey) }, rv.enc_pub)
+    let dropped: boolean
+    try {
+      dropped = await deps.client.drop(rendezvousRelay, rv.addr, JSON.stringify(env))
+    } catch (e) {
+      deps.log?.(`pair drop failed: ${String(e)}`)
+      dropped = false
+    }
+    if (!dropped) {
+      deps.notify('中继暂时够不着,配对码没能生成——稍后再试')
+      return { ok: false, reason: 'relay_drop_failed' }
+    }
+
     const cur: ActiveInitiator = { code, nonce, myKey, expiresAt, rvAddr: rv.addr, rvEncPriv: rv.enc_priv, rvSign: rv.sign, handle: null }
     active = cur
-
-    const env = sealEnvelope({ path: '/pair', bearer: '', body: ownCard('initiator', nonce, myKey) }, rv.enc_pub)
-    void deps.client.drop(rendezvousRelay, rv.addr, JSON.stringify(env)).catch(e => deps.log?.(`pair drop failed: ${String(e)}`))
 
     const tick = (): void => {
       if (active !== cur) return // superseded
@@ -188,7 +230,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
       })
     }
     cur.handle = deps.schedule(tick, pollIntervalMs)
-    return { code, expiresAt }
+    return { ok: true, code, expiresAt }
   }
 
   async function accept(code: string): Promise<PairResult> {
@@ -198,12 +240,38 @@ export function makePairing(deps: PairingDeps): PairingEngine {
     if (!initiator) return { ok: false, reason: 'expired_or_wrong' }
     if (initiator.self_id === deps.selfId()) return { ok: false, reason: 'self_pair' }
 
-    const myKey = deps.mintKey()
-    const write = writePeerFromCard(initiator, myKey)
-    if (!write.ok) { deps.notify(ID_CONFLICT_MSG); return { ok: false, reason: 'id_conflict' } } // no card drop on conflict
+    // id_conflict is checked (peek-only, zero side effects) BEFORE attempting
+    // anything else, so a same-id/different-mailbox collision still means
+    // NO card drop and NO write — preserved from before this fix.
+    if (conflicts(initiator)) { deps.notify(ID_CONFLICT_MSG); return { ok: false, reason: 'id_conflict' } }
 
+    const myKey = deps.mintKey()
+
+    // Drop-first, THEN write locally. `MailboxClient.drop` resolves `false`
+    // (not a throw) on any non-2xx — previously this awaited call's result
+    // was discarded entirely, so a failed drop still wrote the peer locally
+    // and told the acceptor's own operator "connected ✓" while the initiator
+    // silently timed out with "过期了" (one-sided broken pairing, zero
+    // diagnostics on either side). Dropping first means a failed drop leaves
+    // NO local state to unwind — the acceptor can just retry cleanly, no
+    // rollback path needed. (Writing first and rolling back on drop failure
+    // would need an explicit registry.remove() undo and risks a
+    // half-committed peer if THAT itself fails.)
     const env = sealEnvelope({ path: '/pair', bearer: '', body: ownCard('acceptor', deps.genNonce(), myKey) }, rv.enc_pub)
-    await deps.client.drop(rendezvousRelay, rv.addr, JSON.stringify(env))
+    let dropped: boolean
+    try {
+      dropped = await deps.client.drop(rendezvousRelay, rv.addr, JSON.stringify(env))
+    } catch (e) {
+      deps.log?.(`pair drop failed: ${String(e)}`)
+      dropped = false
+    }
+    if (!dropped) {
+      deps.notify(`和 ${initiator.name} 的配对没完成——名片没能投到中继,请重试`)
+      return { ok: false, reason: 'relay_drop_failed' }
+    }
+
+    const write = writePeerFromCard(initiator, myKey)
+    if (!write.ok) { deps.notify(ID_CONFLICT_MSG); return { ok: false, reason: 'id_conflict' } } // defensive: re-checked at write time too
 
     deps.notify(`和 ${initiator.name} 的 bot 连上了 ✓ 现在可以互相觅食/写信了`)
     return { ok: true, peer: { self_id: initiator.self_id, name: initiator.name } }

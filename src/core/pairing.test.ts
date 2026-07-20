@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makePairing, type PairingDeps, type PairCard } from './pairing'
+import { makePairing, type PairingDeps, type PairCard, type PairScheduleHandle } from './pairing'
 import { deriveRendezvous } from './pairing-crypto'
 import type { MailboxClient } from './mailbox-client'
 import type { A2ARegistry } from './a2a-registry'
@@ -41,6 +41,16 @@ function makeManualScheduler() {
   return { schedule, tick: () => { if (armed && !cancelled) armed() }, get cancelled() { return cancelled } }
 }
 
+// start() is async and can fail (relay_drop_failed) — most tests just want
+// the happy-path code + expiresAt, so this helper narrows + throws loudly if
+// a test's setup accidentally makes start() fail (keeps assertions honest
+// instead of silently destructuring `undefined` off the failure branch).
+async function mustStart(engine: { start(): Promise<{ ok: true; code: string; expiresAt: number } | { ok: false; reason: string }> }): Promise<{ code: string; expiresAt: number }> {
+  const r = await engine.start()
+  if (!r.ok) throw new Error(`expected start() to succeed, got: ${r.reason}`)
+  return r
+}
+
 function baseDeps(over: Partial<PairingDeps>): PairingDeps {
   return {
     client: makeFakeRelay().client,
@@ -76,7 +86,7 @@ describe('pairing engine', () => {
       selfId: () => 'cc-bbbb2222', name: () => 'Bob', mintKey: () => keyA, genNonce: () => 'nB',
     }))
 
-    const { code } = A.start()
+    const { code } = await mustStart(A)
     const res = await B.accept(code)
     expect(res).toEqual({ ok: true, peer: { self_id: 'cc-aaaa1111', name: 'Alice' } })
 
@@ -108,14 +118,14 @@ describe('pairing engine', () => {
     const relay = makeFakeRelay()
     const A = makePairing(baseDeps({ client: relay.client, selfId: () => 'cc-same', genNonce: () => 'nA' }))
     const B = makePairing(baseDeps({ client: relay.client, selfId: () => 'cc-same' }))
-    const { code } = A.start()
+    const { code } = await mustStart(A)
     expect(await B.accept(code)).toEqual({ ok: false, reason: 'self_pair' })
   })
 
   it('poller ignores the initiator OWN card (role/nonce filter), never self-files', async () => {
     const relay = makeFakeRelay(); const regA = makeFakeRegistry(); const sched = makeManualScheduler()
     const A = makePairing(baseDeps({ client: relay.client, registry: regA, schedule: sched.schedule, selfId: () => 'cc-aaaa' }))
-    A.start()
+    await mustStart(A)
     sched.tick() // only CardI (role initiator) is in the box — must be ignored
     await new Promise(r => setTimeout(r, 0))
     expect(regA.records.size).toBe(0)
@@ -125,7 +135,7 @@ describe('pairing engine', () => {
     const relay = makeFakeRelay(); const sched = makeManualScheduler(); const notify = vi.fn()
     let t = 1000
     const A = makePairing(baseDeps({ client: relay.client, schedule: sched.schedule, notify, now: () => t, ttlMs: 600_000 }))
-    A.start()
+    await mustStart(A)
     t = 1000 + 600_001
     sched.tick()
     await new Promise(r => setTimeout(r, 0))
@@ -139,7 +149,7 @@ describe('pairing engine', () => {
     regB.records.set('cc-aaaa1111', { id: 'cc-aaaa1111', name: 'stale', inbound_api_key: 'x'.repeat(16), outbound_api_key: 'old', capabilities: [], paused: false, transport: 'mailbox', mailbox_addr: 'A_MB' })
     const A = makePairing(baseDeps({ client: relay.client, self: { mailbox_addr: 'A_MB', mailbox_enc_pub: 'A_EP', relays: ['https://r/mailbox'] }, selfId: () => 'cc-aaaa1111', name: () => 'Alice', mintKey: () => 'keyI-0000000000000000' }))
     const B = makePairing(baseDeps({ client: relay.client, registry: regB, selfId: () => 'cc-bbbb2222', mintKey: () => 'keyA-0000000000000000' }))
-    const { code } = A.start()
+    const { code } = await mustStart(A)
     await B.accept(code)
     expect(regB.records.get('cc-aaaa1111')!.outbound_api_key).toBe('keyI-0000000000000000') // overwritten
   })
@@ -151,7 +161,7 @@ describe('pairing engine', () => {
     // A is a grandfathered daemon still self-reporting 'wechat-cc' with a DIFFERENT mailbox.
     const A = makePairing(baseDeps({ client: relay.client, self: { mailbox_addr: 'A_MB', mailbox_enc_pub: 'A_EP', relays: ['https://r/mailbox'] }, selfId: () => 'wechat-cc', name: () => 'Alice' }))
     const B = makePairing(baseDeps({ client: relay.client, registry: regB, selfId: () => 'cc-bbbb2222' }))
-    const { code } = A.start()
+    const { code } = await mustStart(A)
     const res = await B.accept(code)
     expect(res).toEqual({ ok: false, reason: 'id_conflict' })
     expect(regB.records.get('wechat-cc')!.name).toBe('someone-else') // untouched
@@ -167,12 +177,54 @@ describe('pairing engine', () => {
     const A = makePairing(baseDeps({ client: relay.client, registry: regA, schedule: sched.schedule, notify, selfId: () => 'cc-aaaa1111', name: () => 'Alice', genNonce: () => 'nA' }))
     // B is grandfathered 'wechat-cc' with a different mailbox → its acceptor card conflicts.
     const B = makePairing(baseDeps({ client: relay.client, self: { mailbox_addr: 'B_MB', mailbox_enc_pub: 'B_EP', relays: ['https://r/mailbox'] }, selfId: () => 'wechat-cc', name: () => 'Bob', genNonce: () => 'nB' }))
-    const { code } = A.start()
+    const { code } = await mustStart(A)
     await B.accept(code)
     sched.tick()
     await new Promise(r => setTimeout(r, 0))
     expect(regA.records.get('wechat-cc')!.name).toBe('someone-else') // NOT clobbered
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('撞名'))
     expect(sched.cancelled).toBe(true)
+  })
+
+  it('start(): a relay drop failure (client.drop resolves false) never arms the poller nor hands back a code', async () => {
+    const notify = vi.fn()
+    const scheduleFn = vi.fn((): PairScheduleHandle => ({ cancel() {} }))
+    // client.drop resolves false (the real MailboxClient's behavior on any
+    // non-2xx — NOT a throw), which is exactly the case the old fire-and-forget
+    // `.catch()` at the drop call site could never see.
+    const failingClient: MailboxClient = {
+      async drop() { return false },
+      async fetch() { return { items: [], next_cursor: 0 } },
+      async ack() { throw new Error('ack must NOT be called during pairing') },
+    }
+    const A = makePairing(baseDeps({ client: failingClient, schedule: scheduleFn, notify }))
+    const res = await A.start()
+    expect(res).toEqual({ ok: false, reason: 'relay_drop_failed' })
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('稍后'))
+    expect(scheduleFn).not.toHaveBeenCalled() // no poller armed for a code nobody can ever redeem
+  })
+
+  it('accept(): a relay drop failure (client.drop resolves false) writes nothing locally and reports honestly (drop-first ordering)', async () => {
+    const relay = makeFakeRelay()
+    const regB = makeFakeRegistry()
+    const notify = vi.fn()
+    const A = makePairing(baseDeps({ client: relay.client, selfId: () => 'cc-aaaa1111', name: () => 'Alice', genNonce: () => 'nA' }))
+    const { code } = await mustStart(A)
+
+    // B can still read A's card off the shared relay, but B's OWN card drop fails.
+    const failingDropClient: MailboxClient = { ...relay.client, async drop() { return false } }
+    const B = makePairing(baseDeps({ client: failingDropClient, registry: regB, notify, selfId: () => 'cc-bbbb2222' }))
+    const res = await B.accept(code)
+
+    expect(res).toEqual({ ok: false, reason: 'relay_drop_failed' })
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('请重试'))
+    expect(notify).not.toHaveBeenCalledWith(expect.stringContaining('连上了')) // no false "connected" success notify
+    expect(regB.records.size).toBe(0) // drop-first: nothing written locally on a failed drop
+
+    // The shared box still only has A's initiator card — B's (failed) acceptor
+    // drop never actually reached it either, since the fake client's own drop
+    // short-circuits to `false` without touching the relay's boxes.
+    const rvAddr = deriveRendezvous(code).addr
+    expect(relay.boxes.get(rvAddr)!.length).toBe(1)
   })
 })
