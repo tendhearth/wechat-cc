@@ -14,6 +14,12 @@ export function makeRoutePostLetter(deps: {
   selfId: string
 }): (target: PostLetterTarget, body: PostLetterBody) => Promise<boolean> {
   return (target, body) => target.mailbox
+    // `bearer: deps.selfId` here is unused by the recipient — unlike
+    // postReveal's mailbox branch (bearer: hand.outbound_api_key),
+    // /a2a/letter's mailbox-dispatch path skips verifyBearer by design: the
+    // recipient's makeMailboxLetterHandler/receiveLetter authenticates via
+    // the channel-key AES-GCM open (content-blind E2E), not the bearer. Kept
+    // as selfId (not churned) so the field is at least a legible caller id.
     ? deps.mailboxSend({ path: '/a2a/letter', bearer: deps.selfId, body: { agent_id: deps.selfId, ...body } }, target.mailbox)
     : deps.pushSend(target, body)
 }

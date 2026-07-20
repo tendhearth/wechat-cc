@@ -145,6 +145,29 @@ describe('makeCorrespondent', () => {
     expect(target).toEqual({ agentId: 'cc-intermediary', relayVia: 'cc-intermediary' })
   })
 
+  it('Task 11: a peer that crossed a mailbox at reveal gets a postLetter target carrying `mailbox` (relay-direct)', async () => {
+    // Exercises the actual wiring point — sendLetter's peerMailboxOfRow(ch)
+    // read — not just the pure routing function (postletter-route.test.ts)
+    // or the store round-trip (penpal-channel-store.mailbox.test.ts). If
+    // this line regressed, neither of those other layers would catch it.
+    const dbA = openDb({ path: ':memory:' })
+    const channelStore = makeChannelStore(dbA)
+    const letterStore = makeLetterStore(dbA)
+    const a = generateKeypair()
+    const b = generateKeypair()
+    channelStore.create({ id: 'a:mailbox', seekId: 'seek-a', myPrivkey: a.privateKey, myPubkey: a.publicKey, myChannelId: 'chan-A', degree: 1, peerAgentId: 'ccb' })
+    channelStore.setPeerHandle('a:mailbox', { pubkey: b.publicKey, channel_id: 'chan-B', mailbox: { addr: 'A', enc_pub: 'E', relays: ['https://r/'] } })
+    const postLetter = vi.fn().mockResolvedValue(true)
+    const correspondent = makeCorrespondent({ channelStore, letterStore, postLetter, notifyInbound: vi.fn() })
+
+    const result = await correspondent.sendLetter('a:mailbox', 'hi via mailbox')
+
+    expect(result).toEqual({ ok: true })
+    expect(postLetter).toHaveBeenCalledTimes(1)
+    const [target] = postLetter.mock.calls[0]!
+    expect(target).toEqual({ agentId: 'ccb', relayVia: null, mailbox: { addr: 'A', enc_pub: 'E', relays: ['https://r/'] } })
+  })
+
   it('receiveLetter is a safe no-op on a channel that exists but is still pending (not yet open)', () => {
     const dbB = openDb({ path: ':memory:' })
     const channelStore = makeChannelStore(dbB)
