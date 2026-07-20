@@ -15,8 +15,16 @@ import {
 } from 'node:crypto'
 
 /** A per-connection pseudonym crossed at reveal: an ephemeral pubkey + the
- *  opaque channel id the holder listens on. Contains NO real identity. */
-export interface PenpalHandle { pubkey: string; channel_id: string }
+ *  opaque channel id the holder listens on. Contains NO real identity.
+ *  `mailbox` is OPTIONAL relay-direct-letter routing (structurally mirrors
+ *  `PeerMailbox` in mailbox-crypto.ts; inlined here to avoid a cross-module
+ *  import cycle). Additive plumbing only — nothing populates it yet; see
+ *  Task 10's C1 fix. */
+export interface PenpalHandle {
+  pubkey: string
+  channel_id: string
+  mailbox?: { addr: string; enc_pub: string; relays: string[] }
+}
 
 /** An AES-256-GCM sealed letter; every field base64url. */
 export interface SealedLetter { nonce: string; ct: string; tag: string }

@@ -389,6 +389,44 @@ describe('a2a-server', () => {
       } finally { await server.stop() }
     })
 
+    it('passes a crossed mailbox through peer_handle to onReveal', async () => {
+      const onReveal = vi.fn(async (_e: import('./a2a-server').RevealEvent) => ({ mutual: false }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onReveal })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/reveal`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({
+            agent_id: 'alpha', intent_id: 'i1',
+            peer_handle: { pubkey: 'pub-q', channel_id: 'ch-9', mailbox: { addr: 'A', enc_pub: 'E', relays: ['https://r/'] } },
+          }),
+        })
+        expect(res.status).toBe(200)
+        expect(onReveal.mock.calls[0]?.[0]?.peer_handle).toEqual({
+          pubkey: 'pub-q', channel_id: 'ch-9', mailbox: { addr: 'A', enc_pub: 'E', relays: ['https://r/'] },
+        })
+      } finally { await server.stop() }
+    })
+
+    it('drops a malformed mailbox (missing enc_pub) to undefined without 400ing, keeps the handle', async () => {
+      const onReveal = vi.fn(async (_e: import('./a2a-server').RevealEvent) => ({ mutual: false }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onReveal })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/reveal`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({
+            agent_id: 'alpha', intent_id: 'i1',
+            peer_handle: { pubkey: 'pub-q', channel_id: 'ch-9', mailbox: { addr: 'A' } },
+          }),
+        })
+        expect(res.status).toBe(200)
+        expect(onReveal.mock.calls[0]?.[0]?.peer_handle).toEqual({ pubkey: 'pub-q', channel_id: 'ch-9' })
+      } finally { await server.stop() }
+    })
+
     it('returns 501 when this machine is not wired for reveal (no onReveal)', async () => {
       const alphaRec = rec('alpha')
       const { server, baseUrl } = await startServer({ agents: [alphaRec] })

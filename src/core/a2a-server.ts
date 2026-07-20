@@ -127,7 +127,7 @@ export interface A2AServerOpts {
   onIntent?: (event: IntentEvent) => Promise<MatchReceipt>
   /** Optional. When wired, enables POST /a2a/reveal — a peer signals its owner
    *  revealed; mark my matching row + return { mutual, handle? }. Undefined → 501. */
-  onReveal?: (event: RevealEvent) => Promise<{ mutual: boolean; handle?: { pubkey: string; channel_id: string } }>
+  onReveal?: (event: RevealEvent) => Promise<{ mutual: boolean; handle?: { pubkey: string; channel_id: string; mailbox?: { addr: string; enc_pub: string; relays: string[] } } }>
   /** Optional. When wired, enables POST /a2a/letter — a peer delivers a sealed
    *  E2E pen-pal letter (ciphertext only, never plaintext) addressed to a
    *  PenpalHandle channel on this machine. Undefined → /a2a/letter returns 501. */
@@ -360,7 +360,13 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         const peerHandle = (ph && typeof ph === 'object'
           && typeof (ph as any).pubkey === 'string' && (ph as any).pubkey
           && typeof (ph as any).channel_id === 'string' && (ph as any).channel_id)
-          ? { pubkey: (ph as any).pubkey, channel_id: (ph as any).channel_id } : undefined
+          ? {
+              pubkey: (ph as any).pubkey, channel_id: (ph as any).channel_id,
+              ...((ph as any).mailbox && typeof (ph as any).mailbox === 'object'
+                && typeof (ph as any).mailbox.addr === 'string' && typeof (ph as any).mailbox.enc_pub === 'string' && Array.isArray((ph as any).mailbox.relays)
+                ? { mailbox: { addr: (ph as any).mailbox.addr, enc_pub: (ph as any).mailbox.enc_pub, relays: (ph as any).mailbox.relays } } : {}),
+            }
+          : undefined
         const result = await opts.onReveal({ agent_id: agent.id, intent_id: body.intent_id, relay_token: relayToken, ...(peerHandle ? { peer_handle: peerHandle } : {}) })
         return new Response(JSON.stringify(result), { status: 200 })
       } catch (err) {
