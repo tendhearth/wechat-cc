@@ -424,17 +424,24 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
           }
           // 配对 (spec §7) — admin-gated, deterministic parse, mirrors 揭晓/回信.
           // Inert (falls through to a normal turn) until boot.pairing is wired
-          // (Task 6, i.e. mailbox_relays configured).
+          // (Task 6, i.e. mailbox_relays configured). start()/accept() are
+          // SYNC calls the caller is waiting on — this seam renders EVERY
+          // outcome itself (success + all failure reasons). boot.pairing's
+          // own `notify` dep is reserved for the initiator's ASYNC poller
+          // (card found later / TTL expiry) — see pairing.ts's notify doc
+          // comment; it does NOT fire for anything start()/accept() resolve
+          // synchronously, so there is no double-message here.
           if (boot.pairing && isAdmin(msg.chatId)) {
             const pair = parsePairCommand(msg.text)
             if (pair) {
               if (pair.kind === 'start') {
-                // boot.pairing.start()'s own relay_drop_failed branch already
-                // calls its `notify` dep (wired to sendAssistantText in
-                // wire-pairing.ts) — no extra reply needed here on failure,
-                // and r.code only exists on the ok branch.
                 const r = await boot.pairing.start()
-                if (r.ok && boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, `配对码 ${r.code},发给朋友,10 分钟内有效`)
+                if (boot.sendAssistantText) {
+                  const text = r.ok
+                    ? `配对码 ${r.code},发给朋友,10 分钟内有效`
+                    : '中继暂时够不着,配对码没能生成——稍后再试'
+                  void boot.sendAssistantText(msg.chatId, text)
+                }
               } else {
                 const r = await boot.pairing.accept(pair.code)
                 if (boot.sendAssistantText) {
@@ -444,7 +451,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
                       ? '这是你自己的码,换个朋友的码试试'
                       : r.reason === 'id_conflict'
                         ? '对方 bot 使用旧版共享身份且与你已有的朋友撞名——请让对方升级出唯一身份后重试'
-                        : '码不对或已过期,让朋友重新生成一个'
+                        : r.reason === 'relay_drop_failed'
+                          ? '名片没能投到中继,配对没完成——请重试'
+                          : '码不对或已过期,让朋友重新生成一个'
                   void boot.sendAssistantText(msg.chatId, text)
                 }
               }

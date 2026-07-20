@@ -120,14 +120,16 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
     const pairing = fakePairing({ accept: vi.fn(async () => ({ ok: false, reason: 'self_pair' })) })
     const { pipelineDeps, sendAssistantText } = setup(pairing)
     await pipelineDeps.dispatch.coordinator.dispatch(acceptMsg)
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
     const [, text] = sendAssistantText.mock.calls[0]!
     expect(text).toContain('自己的码')
   })
 
-  it('accept() id_conflict failure gets the upgrade-identity reply', async () => {
+  it('accept() id_conflict failure gets the upgrade-identity reply (single message — engine no longer double-notifies)', async () => {
     const pairing = fakePairing({ accept: vi.fn(async () => ({ ok: false, reason: 'id_conflict' })) })
     const { pipelineDeps, sendAssistantText } = setup(pairing)
     await pipelineDeps.dispatch.coordinator.dispatch(acceptMsg)
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
     const [, text] = sendAssistantText.mock.calls[0]!
     expect(text).toContain('撞名')
   })
@@ -136,25 +138,40 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
     const pairing = fakePairing({ accept: vi.fn(async () => ({ ok: false, reason: 'expired_or_wrong' })) })
     const { pipelineDeps, sendAssistantText } = setup(pairing)
     await pipelineDeps.dispatch.coordinator.dispatch(acceptMsg)
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
     const [, text] = sendAssistantText.mock.calls[0]!
     expect(text).toContain('码不对或已过期')
   })
 
-  it('accept() relay_drop_failed failure gets the "wrong or expired" reply too', async () => {
+  // relay_drop_failed gets its OWN distinct copy — folding it into the
+  // generic "码不对或已过期" would be honest-sounding but WRONG: the code
+  // was fine, the card just never reached the relay. Distinct from
+  // expired_or_wrong below (single call, single message — the engine no
+  // longer notifies on this SYNC outcome, see pairing.ts's notify doc
+  // comment).
+  it('accept() relay_drop_failed failure gets its OWN distinct reply (not folded into "expired")', async () => {
     const pairing = fakePairing({ accept: vi.fn(async () => ({ ok: false, reason: 'relay_drop_failed' })) })
     const { pipelineDeps, sendAssistantText } = setup(pairing)
     await pipelineDeps.dispatch.coordinator.dispatch(acceptMsg)
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
     const [, text] = sendAssistantText.mock.calls[0]!
-    expect(text).toContain('码不对或已过期')
+    expect(text).toContain('没能投到中继')
+    expect(text).not.toContain('码不对或已过期')
   })
 
-  it('start() relay_drop_failed does not crash and sends no extra reply (engine already notified internally)', async () => {
+  // start()'s relay_drop_failed is also a SYNC outcome now — the engine no
+  // longer notifies internally (pairing.ts), so the dispatch seam must
+  // render the honest failure reply itself instead of staying silent.
+  it('start() relay_drop_failed renders its own honest failure reply (single message)', async () => {
     const pairing = fakePairing({ start: vi.fn(async () => ({ ok: false, reason: 'relay_drop_failed' })) })
     const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(pairing)
     await pipelineDeps.dispatch.coordinator.dispatch(startMsg)
     expect(pairing!.start).toHaveBeenCalled()
     expect(coordinatorDispatch).not.toHaveBeenCalled()
-    expect(sendAssistantText).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    const [chatId, text] = sendAssistantText.mock.calls[0]!
+    expect(chatId).toBe('op_chat')
+    expect(text).toContain('稍后再试')
   })
 
   it('a non-command message falls through to a normal turn', async () => {

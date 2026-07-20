@@ -2143,10 +2143,20 @@ describe('bootstrap pairing-code wiring', () => {
     }
   })
 
-  // The honest failure copy (interface-drift note) — start() is async and
-  // returns PairStartResult; a relay-drop failure must surface the real
-  // 「中继暂时够不着…」 message via the wired notify path, not a generic error.
-  it('a failed relay drop on start() notifies via the real notify path with the honest message', async () => {
+  // Double-notify fix (T7 review) — start()/accept() are SYNC calls the
+  // caller (WeChat 配对 dispatch seam / internal-api / CLI) is waiting on
+  // and renders every outcome for; boot.pairing's wired `notify` (→
+  // resolveOperatorChatId + sendMessage) is reserved for the initiator's
+  // ASYNC poller only (see pairing.ts's notify doc comment). Previously
+  // start()'s relay_drop_failed branch ALSO fired notify synchronously,
+  // which — since resolveOperatorChatId resolves to the same chat as the
+  // one that typed "配对" in a solo-owner install — meant the owner got the
+  // honest failure copy twice (once from here, once from the pipeline
+  // dispatch seam). Locking in: the real wired engine must NOT send
+  // anything on a sync relay-drop failure; the caller alone renders it
+  // (covered end-to-end for the WeChat seam in
+  // pipeline-deps-pairing-dispatch.test.ts).
+  it('a failed relay drop on start() does NOT notify via the wired notify path (sync outcome — caller renders it)', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-pairing-notify-'))
     writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({
       provider: 'claude',
@@ -2169,17 +2179,15 @@ describe('bootstrap pairing-code wiring', () => {
         log: () => {},
       })
       // Seed a conversation row so resolveOperatorChatId() (earliest-updated
-      // conversation) resolves to a real chat instead of null — otherwise
-      // notify() is a silent no-op and this test can't observe the copy.
+      // conversation) resolves to a real chat instead of null — proves the
+      // silence below isn't just "no operator chat to notify".
       boot.conversationStore.set('op_chat', { kind: 'solo', provider: 'claude' })
       expect(boot.pairing).toBeDefined()
       const res = await boot.pairing!.start()
       expect(res.ok).toBe(false)
       if (res.ok) throw new Error('unreachable')
       expect(res.reason).toBe('relay_drop_failed')
-      expect(sent.length).toBe(1)
-      expect(sent[0]!.chatId).toBe('op_chat')
-      expect(sent[0]!.text).toContain('中继暂时够不着')
+      expect(sent.length).toBe(0)
     } finally {
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })

@@ -74,6 +74,7 @@ describe('pairing engine', () => {
     const regA = makeFakeRegistry(); const regB = makeFakeRegistry()
     const sched = makeManualScheduler()
     let keyI = 'keyI-0000000000000000'; let keyA = 'keyA-0000000000000000'
+    const notifyB = vi.fn()
 
     const A = makePairing(baseDeps({
       client: relay.client, registry: regA, schedule: sched.schedule,
@@ -83,12 +84,18 @@ describe('pairing engine', () => {
     const B = makePairing(baseDeps({
       client: relay.client, registry: regB,
       self: { mailbox_addr: 'B_MB', mailbox_enc_pub: 'B_EP', relays: ['https://r/mailbox'] },
-      selfId: () => 'cc-bbbb2222', name: () => 'Bob', mintKey: () => keyA, genNonce: () => 'nB',
+      selfId: () => 'cc-bbbb2222', name: () => 'Bob', mintKey: () => keyA, genNonce: () => 'nB', notify: notifyB,
     }))
 
     const { code } = await mustStart(A)
     const res = await B.accept(code)
     expect(res).toEqual({ ok: true, peer: { self_id: 'cc-aaaa1111', name: 'Alice' } })
+    // accept()'s success is a SYNC outcome — the caller (WeChat dispatch /
+    // internal-api / CLI) renders the "连上了" reply from `res` directly;
+    // the engine itself must NOT also notify (that double-messages the
+    // owner in a solo-owner install, where notify's resolveOperatorChatId
+    // is the same chat as the caller's reply target).
+    expect(notifyB).not.toHaveBeenCalled()
 
     // B filed A under A's self_id, keys crossed, transport mailbox, NO url.
     const bRec = regB.records.get('cc-aaaa1111')!
@@ -155,12 +162,12 @@ describe('pairing engine', () => {
   })
 
   it('rejects id_conflict on accept: same self_id, DIFFERENT mailbox_addr (unrelated wechat-cc peer) — no write, no card drop', async () => {
-    const relay = makeFakeRelay(); const regB = makeFakeRegistry()
+    const relay = makeFakeRelay(); const regB = makeFakeRegistry(); const notifyB = vi.fn()
     // B already has an UNRELATED peer filed under the legacy shared id 'wechat-cc'.
     regB.records.set('wechat-cc', { id: 'wechat-cc', name: 'someone-else', inbound_api_key: 'x'.repeat(16), outbound_api_key: 'ob', capabilities: [], paused: false, transport: 'mailbox', mailbox_addr: 'OTHER_MB' })
     // A is a grandfathered daemon still self-reporting 'wechat-cc' with a DIFFERENT mailbox.
     const A = makePairing(baseDeps({ client: relay.client, self: { mailbox_addr: 'A_MB', mailbox_enc_pub: 'A_EP', relays: ['https://r/mailbox'] }, selfId: () => 'wechat-cc', name: () => 'Alice' }))
-    const B = makePairing(baseDeps({ client: relay.client, registry: regB, selfId: () => 'cc-bbbb2222' }))
+    const B = makePairing(baseDeps({ client: relay.client, registry: regB, selfId: () => 'cc-bbbb2222', notify: notifyB }))
     const { code } = await mustStart(A)
     const res = await B.accept(code)
     expect(res).toEqual({ ok: false, reason: 'id_conflict' })
@@ -168,6 +175,10 @@ describe('pairing engine', () => {
     // No acceptor card dropped (only A's initiator card is in the box).
     const rvAddr = deriveRendezvous(code).addr
     expect(relay.boxes.get(rvAddr)!.length).toBe(1)
+    // Sync outcome (accept()'s peek-only conflicts() check, before any card
+    // drop) — the caller renders the id_conflict reply from `res.reason`
+    // directly; the engine must NOT also notify.
+    expect(notifyB).not.toHaveBeenCalled()
   })
 
   it('rejects id_conflict in the poller: acceptor card collides with an unrelated same-id record', async () => {
@@ -200,7 +211,10 @@ describe('pairing engine', () => {
     const A = makePairing(baseDeps({ client: failingClient, schedule: scheduleFn, notify }))
     const res = await A.start()
     expect(res).toEqual({ ok: false, reason: 'relay_drop_failed' })
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining('稍后'))
+    // Sync outcome — the caller renders "中继暂时够不着…" from `res.reason`
+    // directly; the engine must NOT also notify (there's no poller running
+    // yet to justify an async-style push).
+    expect(notify).not.toHaveBeenCalled()
     expect(scheduleFn).not.toHaveBeenCalled() // no poller armed for a code nobody can ever redeem
   })
 
@@ -217,8 +231,9 @@ describe('pairing engine', () => {
     const res = await B.accept(code)
 
     expect(res).toEqual({ ok: false, reason: 'relay_drop_failed' })
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining('请重试'))
-    expect(notify).not.toHaveBeenCalledWith(expect.stringContaining('连上了')) // no false "connected" success notify
+    // Sync outcome — the caller renders "名片没能投到中继…" from `res.reason`
+    // directly; the engine must NOT also notify.
+    expect(notify).not.toHaveBeenCalled()
     expect(regB.records.size).toBe(0) // drop-first: nothing written locally on a failed drop
 
     // The shared box still only has A's initiator card — B's (failed) acceptor

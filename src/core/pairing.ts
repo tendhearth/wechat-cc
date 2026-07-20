@@ -58,6 +58,13 @@ export interface PairingDeps {
   mintKey: () => string
   genCode: () => string
   genNonce: () => string
+  /** notify is for ASYNC outcomes only (the initiator's background poller —
+   *  TTL expiry, a peer card showing up mid-poll): there is no caller waiting
+   *  on those. Every SYNCHRONOUS start()/accept() result is rendered by the
+   *  caller instead (WeChat dispatch / internal-api / CLI) — calling notify
+   *  there too double-messages the owner, since notify targets
+   *  resolveOperatorChatId(), which in a solo-owner install is the SAME chat
+   *  the caller is about to reply to directly. */
   notify: (msg: string) => void
   schedule: (fn: () => void, ms: number) => PairScheduleHandle
   pollIntervalMs?: number
@@ -198,7 +205,8 @@ export function makePairing(deps: PairingDeps): PairingEngine {
       dropped = false
     }
     if (!dropped) {
-      deps.notify('中继暂时够不着,配对码没能生成——稍后再试')
+      // Sync failure — the caller (WeChat dispatch / internal-api / CLI)
+      // renders its own reply; see the notify dep's doc comment.
       return { ok: false, reason: 'relay_drop_failed' }
     }
 
@@ -242,8 +250,9 @@ export function makePairing(deps: PairingDeps): PairingEngine {
 
     // id_conflict is checked (peek-only, zero side effects) BEFORE attempting
     // anything else, so a same-id/different-mailbox collision still means
-    // NO card drop and NO write — preserved from before this fix.
-    if (conflicts(initiator)) { deps.notify(ID_CONFLICT_MSG); return { ok: false, reason: 'id_conflict' } }
+    // NO card drop and NO write — preserved from before this fix. Sync
+    // failure — the caller renders its own reply (notify dep's doc comment).
+    if (conflicts(initiator)) return { ok: false, reason: 'id_conflict' }
 
     const myKey = deps.mintKey()
 
@@ -266,14 +275,14 @@ export function makePairing(deps: PairingDeps): PairingEngine {
       dropped = false
     }
     if (!dropped) {
-      deps.notify(`和 ${initiator.name} 的配对没完成——名片没能投到中继,请重试`)
+      // Sync failure — the caller renders its own reply (notify dep's doc comment).
       return { ok: false, reason: 'relay_drop_failed' }
     }
 
     const write = writePeerFromCard(initiator, myKey)
-    if (!write.ok) { deps.notify(ID_CONFLICT_MSG); return { ok: false, reason: 'id_conflict' } } // defensive: re-checked at write time too
+    // defensive: re-checked at write time too. Sync failure — caller renders its own reply.
+    if (!write.ok) return { ok: false, reason: 'id_conflict' }
 
-    deps.notify(`和 ${initiator.name} 的 bot 连上了 ✓ 现在可以互相觅食/写信了`)
     return { ok: true, peer: { self_id: initiator.self_id, name: initiator.name } }
   }
 
