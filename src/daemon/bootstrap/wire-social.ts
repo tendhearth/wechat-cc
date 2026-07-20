@@ -24,6 +24,7 @@ import { loadMailboxIdentity } from '../../core/mailbox-crypto'
 import { peerMailboxOf, buildCrossedHandle } from './mailbox-dispatch-seam'
 import { makeMailboxLetterHandler } from './mailbox-letter-handler'
 import { makeRoutePostLetter } from './postletter-route'
+import { buildSharedForwardBudget } from './forward-budget-seam'
 import type { PeerMailbox } from '../../core/mailbox-crypto'
 import type { A2AServerOpts } from '../../core/a2a-server'
 import type { A2ARegistry } from '../../core/a2a-registry'
@@ -207,6 +208,10 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         },
         selfId: SOCIAL_SELF_ID,
       })
+      // Sub-project C: ONE shared per-sender forward budget, injected into BOTH
+      // consume points below (letterRelay + the seek forwarder further down) —
+      // see forward-budget-seam.ts for why this must be a single instance.
+      const withinForwardBudget = buildSharedForwardBudget(configuredAgent, deps.log)
       const notifyInbound = (rowId: string, preview: string): void => {
         const op = resolveOperatorChatId()
         if (!op || !sendAssistantText) return
@@ -215,7 +220,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         void sendAssistantText(op, `📬 ${mask}给你写信了:${preview}\n(回信 ${rowId} <你的话>)`)
       }
       const correspondent = makeCorrespondent({ channelStore, letterStore, postLetter, notifyInbound })
-      const letterRelay = makeLetterRelay({ relayStore, postLetter })
+      const letterRelay = makeLetterRelay({ relayStore, postLetter, withinBudget: withinForwardBudget })
       // Dispatch order matters (Task 9 review flag): try OUR OWN endpoint
       // first (getByMyChannelId / receiveLetter) — only when that channel_id
       // is NOT one of this daemon's own open channels does it fall through
@@ -394,6 +399,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           catch (err) { deps.log('SOCIAL_REC', `seen mark failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
         },
         hasSeen: (intentId) => { try { return seenIntentStore.hasSeen(intentId) } catch { return false } },
+        withinBudget: withinForwardBudget,
         hopCap: 2,
       })
 
