@@ -28,9 +28,11 @@
 
 修复:**每台 daemon 一个稳定唯一 slug**:
 - 生成:首次需要时 `cc-` + 信箱地址(Ed25519 addr)SHA-256 的前 8 个 hex(信箱密钥稳定 ⇒ slug 稳定);
-- 持久化:写入 `agent-config.json` 新 optional 字段 `self_agent_id`;
-- 解析顺序:`WECHAT_A2A_SELF_ID` env(兼容现状)> config `self_agent_id` > 生成并写回;
+- 持久化:**合并写**(read-modify-write 原始 `agent-config.json`,只改 `self_agent_id`,不碰 `a2a_agents` / 未建模字段)——绝不能整对象覆盖(会把启动后写入的 peer 抹掉);
+- 解析顺序:`WECHAT_A2A_SELF_ID` env(兼容现状)> config `self_agent_id` > **祖父规则**(见下)> 生成并写回;
+- **祖父规则(避免打断存量边):**若 config 已有 `a2a_agents`(已建过边)且无 env/`self_agent_id`,持久化并沿用旧的共享 `wechat-cc`——一旦改成唯一 slug,存量 peer 按 `wechat-cc` 查 verifyBearer 会 miss → 静默 401 打断已建边;装机默认就配了 `mailbox_relays`,所以必须冻结现状。**只有全新 daemon(无存量 peer)才铸唯一 slug。**改 `self_agent_id` 需重新配对存量边(文档写明)。
 - 用途:随名片交换;对方以它为注册表 id;所有出站 a2a 消息以它自报(替换 wire-social 里的 SOCIAL_SELF_ID 常量解析)。
+- **落库撞名保护(§6 配合):**祖父化的 daemon 仍自报 `wechat-cc`,可能与本地已有的另一条 `wechat-cc` peer 撞 id。落库只在「同 id 且同 `mailbox_addr`」(真正重配对)时覆盖;同 id 异 `mailbox_addr` → **拒绝配对**并友好提示,绝不覆盖无关 peer。
 
 ## 3. 配对码
 
@@ -48,7 +50,9 @@
   1. 发起方:生成码 → 推导密钥 → `sealEnvelope(CardI, 碰头encPub)` → drop 到碰头地址 → 开始轮询(~10s 一次,至多 10 分钟);
   2. 接受方(收到「配对 <code>」):推导同样密钥 → fetch(用推导的签名钥)→ 解出 CardI → 校验角色 → drop CardA → 写本地配置(§6)→ 通知主人;
   3. 发起方轮询到 CardA → 写本地配置 → 通知主人 → 停止轮询(码作废)。
-- **不 ack**(共享信箱,ack 是全局删除会互相踩;靠 10 分钟 TTL 清理);名片带 `role`(initiator/acceptor)+ 随机 nonce,各自忽略己方名片。
+- **不 ack**(共享信箱,ack 是全局删除会互相踩;靠 10 分钟 TTL 清理);名片带 `role`(initiator/acceptor)+ 随机 nonce,各自忽略己方名片(按 role + nonce + self_id 三重过滤)。
+- **先到者胜(first-dropper-wins):**名片按 fetch 游标升序读取,双方用 `.find(...)` 取第一条匹配——若知码的第三方抢投,合法的最早那条胜出;抢投若是「同 id 异 `mailbox_addr`」会被落库撞名保护识别为拒绝(不会静默覆盖),见 §2/§6。
+- **残余(接受):**单次 `/fetch` 至多返回 ~64 条(中继分页,客户端不翻页)——知码者可用垃圾名片把真名片挤到第 64 条之后;与「第三方知码」同威胁级,v0 接受,PAKE 期收口。中继保留 ~7 天而客户端 TTL 10 分钟,过期后共享信箱里残留的密文名片无人再推导,无害。
 - **同中继前置条件**:双方必须使用同一个碰头中继——v0 约定用各自 `mailbox_relays[0]`,且装机默认值即内置中继(brain),因此默认场景天然满足;自建中继的用户需两边一致(文档写明)。多中继协商 = v1。
 - 残余风险:知道码的第三方可在 TTL 内抢答/替换名片(race)——同 §3 接受,PAKE 后收口。
 
@@ -75,7 +79,7 @@
 - **schema 改动(本期内)**:`A2AAgentRecord.url` 在 `transport === 'mailbox'` 时**可选**
   (纯 NAT 用户没有公网 url;现 schema 强制 `z.string().url()`)。zod superRefine 保证
   push/ws 记录仍必填 url。
-- **重复配对** = 刷新:若已存在同 `self_id` 记录,整条覆盖(密钥轮换的天然入口)。
+- **重复配对** = 刷新:若已存在同 `self_id` **且同 `mailbox_addr`** 的记录,整条覆盖(密钥轮换的天然入口)。同 `self_id` 异 `mailbox_addr`(旧版共享 `wechat-cc` 撞名)→ 拒绝配对(`id_conflict`),不覆盖无关 peer(见 §2)。
 - 配对完成即普通 a2a peer:可被觅食转发触达(C 的转发预算管滥用),觅食台 §③ 自动出现。
 
 ## 7. 入口与路由
