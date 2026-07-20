@@ -2583,6 +2583,37 @@ const socialCmd = defineCommand({
   },
 })
 
+// ── 配对码 — friend pairing (spec §7) ─────────────────────────────────
+// wechat-cc pair          → mint + print a 6-digit code (share with a friend)
+// wechat-cc pair <code>   → redeem a friend's code and connect
+// Both need the RUNNING daemon (internal-api, tier trusted) — same idiom as
+// `social reveal`. NOT to be confused with `hand invite`/`hand join`, which
+// pair two WORKER hands (delegated-agent capacity), not two people's bots.
+const pairCmd = defineCommand({
+  meta: {
+    name: 'pair',
+    description: '配对码 — 和朋友的 bot 建边:无参生成码,带 6 位码接受(≠ hand invite/join 的干活手配对;需运行中的 daemon)',
+  },
+  args: {
+    code: { type: 'positional', required: false, description: '朋友的 6 位配对码', valueHint: 'code' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    try {
+      if (args.code) {
+        const { cmdPairAccept } = await import('./src/cli/pair.ts')
+        await cmdPairAccept(STATE_DIR, String(args.code), { json: Boolean(args.json) })
+      } else {
+        const { cmdPairStart } = await import('./src/cli/pair.ts')
+        await cmdPairStart(STATE_DIR, { json: Boolean(args.json) })
+      }
+    } catch {
+      // cmdPairStart/cmdPairAccept's default `fail` already printed the message.
+      process.exit(1)
+    }
+  },
+})
+
 // ── dialogue — backfill + (future) query commands ────────────────────
 //
 // Task 5: `wechat-cc dialogue backfill` imports agent session JSONLs into
@@ -3296,6 +3327,8 @@ const SUBCOMMANDS = {
   agent: agentCmd,
   // 觅食台 social surface — seeks/echoes/pledges/reveal.
   social: socialCmd,
+  // 配对码 — automatic edge-building (spec §7).
+  pair: pairCmd,
   // Dialogue backfill (Task 5). Query subcommands arrive in Task 9.
   dialogue: dialogueCmd,
 } as const

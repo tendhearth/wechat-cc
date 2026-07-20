@@ -79,6 +79,7 @@ describe('citty migrated commands', () => {
       'milestones',
       'mode',
       'observations',
+      'pair',
       'plugin',
       'provider',
       'reply',
