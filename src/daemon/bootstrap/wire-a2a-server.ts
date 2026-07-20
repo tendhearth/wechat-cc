@@ -23,6 +23,7 @@ export interface A2aServerDeps {
   sendAssistantText: SendAssistantText | undefined
   onIntent: A2AServerOpts['onIntent']
   onReveal: A2AServerOpts['onReveal']
+  onLetter: A2AServerOpts['onLetter']
 }
 
 export interface A2aServerWiring {
@@ -34,7 +35,7 @@ export async function wireA2aServer(deps: A2aServerDeps): Promise<A2aServerWirin
   const {
     a2aRegistry, a2aClient, a2aEventsStore, dispatchDelegate,
     resolveOperatorChatId, sendAssistantText, configuredAgent,
-    onIntent: socialOnIntent, onReveal: socialOnReveal,
+    onIntent: socialOnIntent, onReveal: socialOnReveal, onLetter: socialOnLetter,
   } = deps
 
   // onNotify: route inbound A2A notification → operator chat via sendAssistantText.
@@ -126,6 +127,9 @@ export async function wireA2aServer(deps: A2aServerDeps): Promise<A2aServerWirin
       // every other optional A2A capability.
       ...(socialOnIntent ? { onIntent: socialOnIntent } : {}),
       ...(socialOnReveal ? { onReveal: socialOnReveal } : {}),
+      // A3 (anonymous pen-pal channel, Task 11): POST /a2a/letter — same
+      // "undefined ⇒ 501, same as every other optional A2A capability" gate.
+      ...(socialOnLetter ? { onLetter: socialOnLetter } : {}),
       daemonInfo: { name: 'wechat-cc', version: selfPkg.version },
     })
     await a2aServer.start()

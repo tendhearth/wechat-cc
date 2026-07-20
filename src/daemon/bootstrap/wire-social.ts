@@ -5,14 +5,26 @@ import { makeBroker, type SeekOutcome } from '../../core/social-broker'
 import { makeSeekStore } from '../../core/social-seek-store'
 import { makeEchoStore } from '../../core/social-echo-store'
 import { makePledgeStore } from '../../core/social-pledge-store'
-import { makeRevealer, type Revealer, type RevealBeat, type NotifyCtx, type PeerIdentity } from '../../core/social-reveal'
+import { makeRevealer, type Revealer, type RevealBeat, type NotifyCtx, type ChannelPort } from '../../core/social-reveal'
 import { makeForwarder } from '../../core/social-forwarder'
 import { makeRelayStore } from '../../core/social-relay-store'
 import { makeSeenIntentStore } from '../../core/social-seen-intent-store'
 import { makeRelayReconciler } from '../../core/social-relay-reveal'
-import { intentUrl, revealUrl } from '../../core/a2a-delegate'
+import { makeChannelStore } from '../../core/penpal-channel-store'
+import { makeLetterStore } from '../../core/penpal-letter-store'
+import { makeCorrespondent } from '../../core/penpal-correspondent'
+import { makeLetterRelay } from '../../core/penpal-relay-letter'
+import { generateKeypair, type PenpalHandle } from '../../core/penpal-crypto'
+import { intentUrl, revealUrl, letterUrl } from '../../core/a2a-delegate'
 import { MatchReceiptSchema } from '../../core/a2a-intent'
 import { applyFinishSeek } from './social-finish-seek'
+import { makeMailboxSender } from '../../core/mailbox-sender'
+import { makeMailboxClient } from '../../core/mailbox-client'
+import { loadMailboxIdentity } from '../../core/mailbox-crypto'
+import { peerMailboxOf, buildCrossedHandle } from './mailbox-dispatch-seam'
+import { makeMailboxLetterHandler } from './mailbox-letter-handler'
+import { makeRoutePostLetter } from './postletter-route'
+import type { PeerMailbox } from '../../core/mailbox-crypto'
 import type { A2AServerOpts } from '../../core/a2a-server'
 import type { A2ARegistry } from '../../core/a2a-registry'
 import type { A2AClient } from '../../core/a2a-client'
@@ -39,20 +51,32 @@ export interface SocialDeps {
   a2aRegistry: A2ARegistry
   a2aClient: A2AClient
   /** Lazy read of the a2a server's base url — the server is constructed AFTER
-   *  wireSocial runs (it consumes onIntent/onReveal), so selfIdentity reads it
-   *  through this thunk. index.ts backs it with its `a2aServer` variable. */
+   *  wireSocial runs (it consumes onIntent/onReveal). Currently unused by the
+   *  penpal-repointed wiring (reveal crosses pubkey handles, not URLs/names);
+   *  kept on the interface for index.ts's existing wiring + any future use. */
   getServerBaseUrl: () => string | null
 }
 
 export interface SocialWiring {
   onIntent: A2AServerOpts['onIntent']
   onReveal: A2AServerOpts['onReveal']
+  onLetter: A2AServerOpts['onLetter']
+  /**
+   * I1 — the own-channel-ONLY letter handler for the mailbox poller (Task 8).
+   * MUST be used instead of `onLetter` when replaying a decrypted mailbox
+   * envelope: a mailbox drop carries no verified bearer, so it must never be
+   * able to make this daemon forward junk via `letterRelay.routeLetter`
+   * (which `onLetter` falls through to for non-own channels). Undefined
+   * whenever social wiring itself is inert, same gate as `onLetter`.
+   */
+  onMailboxLetter?: A2AServerOpts['onLetter']
   social?: {
     broker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> }
     seekStore: import('../../core/social-seek-store').SeekStore
     echoStore: import('../../core/social-echo-store').EchoStore
     pledgeStore: import('../../core/social-pledge-store').PledgeStore
     revealer: Revealer
+    penpal: { sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }> }
   }
   resumeForaging: () => void
 }
@@ -61,7 +85,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   const {
     registry, defaultProviderId, pluginMcp, currentClaudeModel, claudeBin,
     configuredAgent, resolveOperatorChatId, sendAssistantText, a2aRegistry,
-    a2aClient, getServerBaseUrl,
+    a2aClient,
   } = deps
 
   // ── Agent-social M1 wiring (async foraging spine) ───────────────────────
@@ -74,12 +98,15 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   // seeks still `foraging` after a restart.
   let socialOnIntent: A2AServerOpts['onIntent']
   let socialOnReveal: A2AServerOpts['onReveal']
+  let socialOnLetter: A2AServerOpts['onLetter']
+  let socialOnMailboxLetter: A2AServerOpts['onLetter']
   let socialBroker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> } | undefined
   let socialForage: ((intentId: string, topic: string, opts?: { city?: string }) => Promise<void>) | undefined
   let socialSeekStore: import('../../core/social-seek-store').SeekStore | undefined
   let socialEchoStore: import('../../core/social-echo-store').EchoStore | undefined
   let socialPledgeStore: import('../../core/social-pledge-store').PledgeStore | undefined
   let socialRevealer: Revealer | undefined
+  let socialPenpal: { sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }> } | undefined
 
   if (configuredAgent.social_enabled && configuredAgent.social_disclosure_policy) {
     const socialPolicy = configuredAgent.social_disclosure_policy
@@ -93,6 +120,27 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
     } else {
       const SOCIAL_SELF_ID = process.env.WECHAT_A2A_SELF_ID || 'wechat-cc'
       const socialOpenaiKey = process.env.WECHAT_OPENAI_API_KEY
+      // Mailbox transport (sub-project B): the third dispatch arm alongside
+      // push (a2aClient). Constructed once and reused by postReveal (and, per
+      // Task 11, postLetter's peer-mailbox branch).
+      const mailboxSender = makeMailboxSender({ client: makeMailboxClient() })
+      // C1 (Task 10): THIS daemon's own mailbox routing, loaded once. Used to
+      // enrich the crossing PenpalHandle AT ITS SOURCE (postPeerReveal,
+      // postReveal's forwarded peer_handle, and channel.openLocal's return) —
+      // NOT derived from the bare channel row, which never holds it. undefined
+      // when this daemon has no mailbox_relays configured, so the crossed
+      // handle omits `mailbox` entirely — byte-identical to a push-only peer's
+      // handle today (additive, backward-compatible). Gated (Task 10 review
+      // Minor): loadMailboxIdentity generates+persists mailbox-key.json as a
+      // side effect, so it must not run at all for a push-only daemon (no
+      // mailbox_relays configured) — only called when the identity is
+      // actually going to be used below.
+      const myMailbox: PeerMailbox | undefined = configuredAgent.mailbox_relays?.length
+        ? (() => {
+            const mailboxIdentity = loadMailboxIdentity(deps.stateDir)
+            return { addr: mailboxIdentity.addr, enc_pub: mailboxIdentity.enc_pub, relays: configuredAgent.mailbox_relays! }
+          })()
+        : undefined
 
       // The judge's runTurn seam (daemon/social/grounded-judge.ts). Provider-
       // specific adapters spawn a one-shot session carrying ONLY the plugin
@@ -129,105 +177,171 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // loop-prevention seen-intent dedup.
       const relayStore = makeRelayStore(deps.db)
       const seenIntentStore = makeSeenIntentStore(deps.db)
+      // A3 (anonymous pen-pal channel): the per-connection channel row — mints
+      // an X25519 keypair + channel id per row, holds the peer's crossed
+      // PenpalHandle once mutual. Real identity NEVER crosses this daemon's
+      // boundary; only these ephemeral handles do.
+      const channelStore = makeChannelStore(deps.db)
       socialSeekStore = seekStore
       socialEchoStore = echoStore
       socialPledgeStore = pledgeStore
 
-      // Notification beats (克制三拍). One WeChat sender for all three; on the
-      // inbound-completed `connected` beat we only hold the peer's agent_id, so
-      // resolve its display name from the registry here.
-      const notify = (beat: RevealBeat, ctx: NotifyCtx): void => {
+      // A3 (anonymous pen-pal channel, Task 11): the correspondent handles
+      // THIS daemon's own open channels (seal/persist outbound, open/persist+
+      // notify inbound); the letter relay handles the content-blind 2-hop
+      // forward for channels where WE are the introducer (介绍人), never the
+      // endpoint. Shared `postLetter` — relayVia routes through the
+      // intermediary's own a2a address when set, else straight to the peer.
+      const letterStore = makeLetterStore(deps.db)
+      // Task 11: a target carrying a `mailbox` (the peer crossed one at
+      // reveal — Task 10) goes relay-direct — sealed+dropped straight to the
+      // peer's own mailbox, W never sees it. A push-only target (no mailbox)
+      // falls through to A's existing Task-9 push/W-forward path unchanged.
+      const postLetter = makeRoutePostLetter({
+        mailboxSend: (inner, peer) => mailboxSender.send(inner, peer),
+        pushSend: async (target, body) => {
+          const hand = a2aRegistry.get(target.relayVia ?? target.agentId)
+          if (!hand) return false
+          const r = await a2aClient.send({ url: letterUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
+          return r.ok
+        },
+        selfId: SOCIAL_SELF_ID,
+      })
+      const notifyInbound = (rowId: string, preview: string): void => {
         const op = resolveOperatorChatId()
         if (!op || !sendAssistantText) return
-        const peerName = ctx.peerName ?? (ctx.peerAgentId ? (a2aRegistry.get(ctx.peerAgentId)?.name ?? null) : null)
+        const ch = channelStore.get(rowId)
+        const mask = ch ? `第 ${ch.degree} 度的某人` : '某人'
+        void sendAssistantText(op, `📬 ${mask}给你写信了:${preview}\n(回信 ${rowId} <你的话>)`)
+      }
+      const correspondent = makeCorrespondent({ channelStore, letterStore, postLetter, notifyInbound })
+      const letterRelay = makeLetterRelay({ relayStore, postLetter })
+      // Dispatch order matters (Task 9 review flag): try OUR OWN endpoint
+      // first (getByMyChannelId / receiveLetter) — only when that channel_id
+      // is NOT one of this daemon's own open channels does it fall through
+      // to the relay forward. Never both; never relay-first.
+      socialOnLetter = async (ev) => {
+        const mine = channelStore.getByMyChannelId(ev.channel_id)
+        return mine ? correspondent.receiveLetter(ev) : letterRelay.routeLetter(ev)
+      }
+      // I1 (Task 8) — the mailbox-poller-safe variant: own-channel ONLY, NEVER
+      // falls through to letterRelay.routeLetter. A mailbox drop carries no
+      // verified bearer (unlike the HTTP /a2a/letter route, which at least
+      // authenticates the caller as a registered peer before onLetter runs
+      // at all) — an un-bearer'd mailbox drop must not make this daemon
+      // forward junk into a relay leg on some stranger's behalf.
+      socialOnMailboxLetter = makeMailboxLetterHandler({
+        getByMyChannelId: (c) => channelStore.getByMyChannelId(c),
+        receiveLetter: (ev) => correspondent.receiveLetter(ev),
+      })
+      socialPenpal = { sendLetter: (channel, text) => correspondent.sendLetter(channel, text) }
+
+      // Notification beats (克制三拍). Content-free by design — reveal crosses
+      // pubkey handles, never a real name or url, so no beat text may carry one.
+      const notify = (beat: RevealBeat, _ctx: NotifyCtx): void => {
+        const op = resolveOperatorChatId()
+        if (!op || !sendAssistantText) return
         const text = beat === 'first_echo'
           ? '✨ 你的心愿有回声了,去瞧瞧'
           : beat === 'await_reveal'
             ? '👀 有人想和你牵线,去看看'
-            : `🤝 牵上线了${peerName ? ' —— 是' + peerName : ''}`
+            : '🤝 你俩接上头了~ 可以写信了'
         void sendAssistantText(op, text)
       }
 
-      // This daemon's public identity, handed back on the mutual instant. url is
-      // read lazily (a2aServer is constructed further below); name prefers the
-      // configured bot name.
-      const selfIdentity = (): PeerIdentity => ({
-        name: configuredAgent.bot_name ?? SOCIAL_SELF_ID,
-        url: getServerBaseUrl() ?? '',
-      })
+      // The ChannelPort: mints/persists the per-connection PenpalHandle, backed
+      // by the durable channel store so it survives a restart. openLocal is
+      // idempotent — an existing row just returns its already-minted handle.
+      const channel: ChannelPort = {
+        openLocal(rowId, ctx) {
+          const existing = channelStore.get(rowId)
+          if (existing) return buildCrossedHandle({ my_pubkey: existing.my_pubkey, my_channel_id: existing.my_channel_id }, myMailbox)
+          const kp = generateKeypair()
+          const myChannelId = randomUUID()
+          channelStore.create({ id: rowId, seekId: ctx.seekId, myPrivkey: kp.privateKey, myPubkey: kp.publicKey, myChannelId, degree: ctx.degree, relayVia: ctx.relayVia ?? null, peerAgentId: ctx.peerAgentId ?? null })
+          return buildCrossedHandle({ my_pubkey: kp.publicKey, my_channel_id: myChannelId }, myMailbox)
+        },
+        finalize(rowId, peerHandle) { channelStore.setPeerHandle(rowId, peerHandle) },
+      }
 
       // Outbound reveal POST to a peer's /a2a/reveal. null on unreachable/unknown.
       // relayToken addresses a 2-hop relay leg (routed to the intermediary).
-      const postPeerReveal = async (agentId: string, intentId: string, relayToken?: string): Promise<{ mutual: boolean; identity?: PeerIdentity } | null> => {
+      // Carries THIS side's already-minted PenpalHandle so the peer can finalize
+      // it (I2 — the rowId reconstruction below MUST exactly match how
+      // `channel.openLocal` was keyed inside revealEcho/revealPledge (direct
+      // echo/pledge: `${intentId}:${agentId}`; relay echo:
+      // `${intentId}:${agentId}:${relayToken}`) and onInboundReveal's rowId — a
+      // mismatch silently means channelStore.get(rowId) misses, myHandle stays
+      // undefined, the peer never finalizes, and no letter can ever send).
+      const postPeerReveal = async (agentId: string, intentId: string, relayToken?: string): Promise<{ mutual: boolean; handle?: PenpalHandle } | null> => {
         const hand = a2aRegistry.get(agentId)
         if (!hand) return null
-        const r = await a2aClient.send({ url: revealUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, intent_id: intentId, ...(relayToken ? { relay_token: relayToken } : {}) } })
+        const rowId = relayToken ? `${intentId}:${agentId}:${relayToken}` : `${intentId}:${agentId}`
+        const ch = channelStore.get(rowId)
+        const myHandle = ch ? buildCrossedHandle({ my_pubkey: ch.my_pubkey, my_channel_id: ch.my_channel_id }, myMailbox) : undefined
+        const r = await a2aClient.send({
+          url: revealUrl(hand.url), bearer: hand.outbound_api_key,
+          body: { agent_id: SOCIAL_SELF_ID, intent_id: intentId, ...(relayToken ? { relay_token: relayToken } : {}), ...(myHandle ? { peer_handle: myHandle } : {}) },
+        })
         if (!r.ok) return null
-        return r.response as { mutual: boolean; identity?: PeerIdentity }
+        return r.response as { mutual: boolean; handle?: PenpalHandle }
       }
 
       // Fire-and-forget reveal POST used by the relay reconciler's complete/nudge
       // deps — posts to a peer's /a2a/reveal with arbitrary relay fields. Never
       // throws to the reconciler (fail-closed; the row is durable so a lost post
       // is recoverable by a later retry from either endpoint).
-      const postReveal = (agentId: string, body: { intent_id: string; relay_token?: string; peer_name?: string }): void => {
+      const postReveal = (agentId: string, body: { intent_id: string; relay_token?: string; peer_handle?: PenpalHandle }): void => {
         const hand = a2aRegistry.get(agentId)
         if (!hand) return
+        const peer = peerMailboxOf(hand)
+        if (peer) {
+          void mailboxSender.send({ path: '/a2a/reveal', bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } }, peer)
+            .catch(err => deps.log('SOCIAL_REC', `mailbox reveal drop failed intent=${body.intent_id} agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`))
+          return
+        }
         void a2aClient.send({ url: revealUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
           .catch(err => deps.log('SOCIAL_REC', `relay reveal post failed intent=${body.intent_id} agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`))
       }
 
-      const revealer = makeRevealer({ echoStore, pledgeStore, seekStore, postPeerReveal, selfIdentity, notify })
+      const revealer = makeRevealer({ echoStore, pledgeStore, seekStore, postPeerReveal, channel, notify })
       socialRevealer = revealer
 
       // spec #2: the intermediary's (介绍人 / W) reveal reconciler. Both endpoints
       // reveal TO W; W pivots the two legs on the durable social_relay row and
-      // crosses their identities (resolved from W's OWN registry, never sent
-      // across a hop). Row-driven → survives a W restart.
+      // crosses their EPHEMERAL PenpalHandles — W stays content-blind, it never
+      // resolves or forwards a real identity, only the pubkey handles each leg
+      // presented. Row-driven → survives a W restart.
       const relayReconciler = makeRelayReconciler({
         relayStore,
-        identityOf: (id) => { const a = a2aRegistry.get(id); return a ? { name: a.name, url: a.url } : null },
-        completeUpstream: (upstreamId, intentId, relayToken, downstreamIdentity) =>
-          postReveal(upstreamId, { intent_id: intentId, relay_token: relayToken, peer_name: downstreamIdentity.name }),
-        completeDownstream: (downstreamId, intentId, upstreamIdentity) =>
-          postReveal(downstreamId, { intent_id: intentId, peer_name: upstreamIdentity.name }),
+        completeUpstream: (upstreamId, intentId, relayToken, downstreamHandle) =>
+          postReveal(upstreamId, { intent_id: intentId, relay_token: relayToken, peer_handle: downstreamHandle }),
+        completeDownstream: (downstreamId, intentId, upstreamHandle) =>
+          postReveal(downstreamId, { intent_id: intentId, peer_handle: upstreamHandle }),
         nudge: (agentId, intentId, relayToken) =>
           postReveal(agentId, { intent_id: intentId, ...(relayToken ? { relay_token: relayToken } : {}) }),
-        notify3way: (_intentId, _upstream, downstream) => {
-          // 介绍人 warmth: only W's own owner is told — telling W leaks nothing
-          // extra (W already proxied the reveal). S/Q get their own beats via the
-          // complete* posts back to their daemons (which notify their own owners).
+        notify3way: (_intentId, _upstream, _downstream) => {
+          // 介绍人 warmth: only W's own owner is told, content-free — W never had
+          // either endpoint's real identity, only their ephemeral handles. S/Q
+          // get their own beats via the complete* posts back to their daemons
+          // (which notify their own owners).
           const op = resolveOperatorChatId()
-          if (op && sendAssistantText) void sendAssistantText(op, `🎉 你把朋友和${downstream.name}牵上线了`)
+          if (op && sendAssistantText) void sendAssistantText(op, '🎉 你把两位笔友牵上线了')
         },
       })
 
       socialOnReveal = async (ev) => {
         // First: is this a relay leg addressed to US as the intermediary? The
         // reconciler resolves via a social_relay row; null ⇒ not ours, fall through.
-        const relayResult = relayReconciler.onRelayReveal({ callerAgentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token })
+        const relayResult = relayReconciler.onRelayReveal({ callerAgentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token, peerHandle: ev.peer_handle })
         if (relayResult) return relayResult
 
-        // Otherwise WE are an endpoint: mark our own echo/pledge. A relay inbound
-        // (relay_token present, or peer_name handed over on mutual) drives the
-        // relay branch of onInboundReveal.
-        const result = revealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token, peerName: ev.peer_name })
-        // I1: when THIS side revealed FIRST (the seeker) on a DIRECT echo, mutual
-        // completes here in the echo branch, which only holds the peer's agent_id
-        // — so the echo's peer_masked would otherwise stay masked ("第 N 度的某人")
-        // forever. Swap in the peer's real name from the registry. The relay
-        // branch already swapped peer_name in when present, so only swap the
-        // DIRECT case (no relay_token/peer_name) to avoid clobbering it with W's
-        // name. A registry/store hiccup must never break the reveal response.
-        if (result.mutual && !ev.relay_token && !ev.peer_name) {
-          try {
-            const name = a2aRegistry.get(ev.agent_id)?.name
-            if (name) echoStore.setRevealedIdentity(`${ev.intent_id}:${ev.agent_id}`, name)
-          } catch (err) {
-            deps.log('SOCIAL_REC', `reveal identity swap failed intent=${ev.intent_id} agent=${ev.agent_id}: ${err instanceof Error ? err.message : String(err)}`)
-          }
-        }
-        return result
+        // Otherwise WE are an endpoint: mark our own echo/pledge. The mutual
+        // instant finalizes the channel with the peer's presented handle
+        // entirely inside the revealer (channel.finalize) — there is no
+        // identity-crossing side path here anymore; the masked placeholder is
+        // permanent.
+        return revealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token, peerHandle: ev.peer_handle })
       }
 
       // Answer path: the spine's judge + pledge-on-yes is the LOCAL answer. The
@@ -352,8 +466,10 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   return {
     onIntent: socialOnIntent,
     onReveal: socialOnReveal,
+    onLetter: socialOnLetter,
+    onMailboxLetter: socialOnMailboxLetter,
     ...(socialBroker
-      ? { social: { broker: socialBroker, seekStore: socialSeekStore!, echoStore: socialEchoStore!, pledgeStore: socialPledgeStore!, revealer: socialRevealer! } }
+      ? { social: { broker: socialBroker, seekStore: socialSeekStore!, echoStore: socialEchoStore!, pledgeStore: socialPledgeStore!, revealer: socialRevealer!, penpal: socialPenpal! } }
       : {}),
     resumeForaging,
   }

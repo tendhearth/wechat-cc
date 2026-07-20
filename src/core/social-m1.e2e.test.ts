@@ -5,21 +5,28 @@
  * makeAnswerIntent (the peer's judge) → gateOutbound (disclosure) → makeRevealer
  * (mutual async reveal) — with injected deterministic judge + checker + stores.
  * The peer's SECOND reveal is simulated by stubbing the seeker's
- * postPeerReveal response ({ mutual: true, identity }) — the seeker never calls
+ * postPeerReveal response ({ mutual: true, handle }) — the seeker never calls
  * its own onInboundReveal here (that entry point is covered directly in
  * social-reveal.test.ts; the HTTP transport is covered in a2a-server.test.ts).
+ *
+ * Reveal crosses a per-connection PenpalHandle (X25519 pubkey + channel id),
+ * never real identity — the masked label (第 N 度的某人) is PERMANENT. Each
+ * side's ChannelPort here is backed by a real makeChannelStore over its own
+ * in-memory db, mirroring wire-social.ts's ChannelPort exactly (mint on
+ * openLocal, persist the peer's handle on finalize).
  *
  * This file also covers the 2-hop forwarding-hop S→W→Q path (real broker +
  * forwarder + relay reconciler + two revealers, wired end-to-end across three
  * in-memory dbs) and spec-#1 backward-compat (old-shaped IntentCard/MatchReceipt
  * parsing unaffected by the new hop/forwarded fields).
  */
+import { randomUUID } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import z from 'zod'
 import { openDb } from '../lib/db'
 import { makeBroker } from './social-broker'
 import { makeAnswerIntent } from './social-answer'
-import { makeRevealer, type PeerIdentity } from './social-reveal'
+import { makeRevealer, type ChannelPort } from './social-reveal'
 import { makeSeekStore } from './social-seek-store'
 import { makeEchoStore } from './social-echo-store'
 import { makePledgeStore } from './social-pledge-store'
@@ -27,11 +34,29 @@ import { makeForwarder } from './social-forwarder'
 import { makeRelayStore } from './social-relay-store'
 import { makeSeenIntentStore } from './social-seen-intent-store'
 import { makeRelayReconciler } from './social-relay-reveal'
+import { makeChannelStore, type ChannelStore } from './penpal-channel-store'
+import { generateKeypair, type PenpalHandle } from './penpal-crypto'
 import { IntentCardSchema, MatchReceiptSchema } from './a2a-intent'
 
 const POLICY = '可透露兴趣/城市;不透露住址门牌、第三方。'
 const recB = { id: 'ccb', name: '小B', url: 'http://b/a2a', outbound_api_key: 'k' } as any
-const IDENTITY_B: PeerIdentity = { name: '小B', url: 'http://b/a2a' }
+
+/** A ChannelPort backed by a real makeChannelStore — mirrors wire-social.ts's
+ *  ChannelPort exactly: idempotent mint on openLocal, persist-the-peer's-
+ *  handle-and-open on finalize. */
+function makeTestChannelPort(store: ChannelStore): ChannelPort {
+  return {
+    openLocal(rowId, ctx) {
+      const existing = store.get(rowId)
+      if (existing) return { pubkey: existing.my_pubkey, channel_id: existing.my_channel_id }
+      const kp = generateKeypair()
+      const myChannelId = randomUUID()
+      store.create({ id: rowId, seekId: ctx.seekId, myPrivkey: kp.privateKey, myPubkey: kp.publicKey, myChannelId, degree: ctx.degree, relayVia: ctx.relayVia ?? null, peerAgentId: ctx.peerAgentId ?? null })
+      return { pubkey: kp.publicKey, channel_id: myChannelId }
+    },
+    finalize(rowId, peerHandle) { store.setPeerHandle(rowId, peerHandle) },
+  }
+}
 
 const passingCheck = async (prompt: string) => {
   const m = prompt.match(/"""([\s\S]*?)"""/)
@@ -41,11 +66,13 @@ const passingCheck = async (prompt: string) => {
 }
 
 describe('async foraging spine e2e', () => {
-  it('sow → background echo → desktop reveal → peer reveals back → connected + identity, seek never blocks', async () => {
+  it('sow → background echo → desktop reveal → peer reveals back → connected + channel opens, mask never lifts', async () => {
     const db = openDb({ path: ':memory:' })
     const seekStore = makeSeekStore(db)
     const echoStore = makeEchoStore(db)
     const pledgeStore = makePledgeStore(db)
+    const channelStore = makeChannelStore(db)
+    const channel = makeTestChannelPort(channelStore)
 
     // The peer's answering handler (match yes with a clean blurb).
     const answerB = makeAnswerIntent({ judge: async () => ({ match: 'yes', blurb: '南京摄影爱好者,周末想出门拍照' }), policy: POLICY, cheapEval: passingCheck })
@@ -81,7 +108,7 @@ describe('async foraging spine e2e', () => {
     const seekerRevealer = makeRevealer({
       echoStore, pledgeStore, seekStore,
       postPeerReveal: async () => ({ mutual: false }),
-      selfIdentity: () => ({ name: '我方', url: 'http://a/a2a' }),
+      channel,
       notify: () => {},
     })
     const first = await seekerRevealer.revealEcho(echoId)
@@ -89,27 +116,35 @@ describe('async foraging spine e2e', () => {
     expect(echoStore.get(echoId)!.self_revealed_at).not.toBeNull()
     expect(seekStore.get(intent_id)!.status).toBe('echoed')     // not yet connected
 
-    // 4) Peer reveals back — simulate their /a2a/reveal callback into OUR
-    //    onInboundReveal (they carry their identity in the outbound response we
-    //    already recorded; here the mutual instant sets connected).
-    //    We swap the seeker revealer's postPeerReveal to return the peer identity
-    //    so a re-reveal completes the connection with identity swap.
+    // My own channel row now exists (pending — the peer hasn't presented a handle yet).
+    const pendingChannel = channelStore.get(echoId)!
+    expect(pendingChannel.status).toBe('pending')
+    expect(pendingChannel.peer_pubkey).toBeNull()
+
+    // 4) Peer reveals back — simulate their /a2a/reveal callback carrying their
+    //    PenpalHandle (their pubkey never crosses via anything but this field).
+    const peerHandle: PenpalHandle = { pubkey: generateKeypair().publicKey, channel_id: randomUUID() }
     const seekerRevealer2 = makeRevealer({
       echoStore, pledgeStore, seekStore,
-      postPeerReveal: async () => ({ mutual: true, identity: IDENTITY_B }),
-      selfIdentity: () => ({ name: '我方', url: 'http://a/a2a' }),
+      postPeerReveal: async () => ({ mutual: true, handle: peerHandle }),
+      channel,
       notify: () => {},
     })
     const connected = await seekerRevealer2.revealEcho(echoId)
 
-    // 5) Assert connected + identity present.
+    // 5) Assert connected + the channel (not the mask) carries the crossing.
     expect(connected).toEqual({ state: 'connected' })
     const finalEcho = echoStore.get(echoId)!
     expect(finalEcho.status).toBe('revealed')
     expect(finalEcho.self_revealed_at).not.toBeNull()
     expect(finalEcho.peer_revealed_at).not.toBeNull()
-    expect(finalEcho.peer_masked).toBe('小B')                   // identity revealed
+    expect(finalEcho.peer_masked).toBe('第 1 度的某人')          // STILL masked — no identity crossing
     expect(seekStore.get(intent_id)!.status).toBe('connected')
+
+    const openChannel = channelStore.get(echoId)!
+    expect(openChannel.status).toBe('open')
+    expect(openChannel.peer_pubkey).toBe(peerHandle.pubkey)
+    expect(openChannel.peer_channel_id).toBe(peerHandle.channel_id)
   })
 
   it('the disclosure gate still downgrades a leaky blurb (never recorded as an echo)', async () => {
@@ -135,12 +170,16 @@ describe('async foraging spine e2e', () => {
 })
 
 describe('forwarding hop e2e (S → W → Q)', () => {
-  it('2-hop forage → relay echo → proxied mutual reveal → identity crossing, anonymous until mutual', async () => {
+  it('2-hop forage → relay echo → proxied mutual reveal → handle crossing, mask never lifts', async () => {
     // Three dbs (three daemons).
     const sDb = openDb({ path: ':memory:' }); const wDb = openDb({ path: ':memory:' }); const qDb = openDb({ path: ':memory:' })
     const sSeek = makeSeekStore(sDb); const sEcho = makeEchoStore(sDb); const sPledge = makePledgeStore(sDb)
+    const sChannelStore = makeChannelStore(sDb)
+    const sChannel = makeTestChannelPort(sChannelStore)
     const wRelay = makeRelayStore(wDb); const wSeen = makeSeenIntentStore(wDb)
     const qEcho = makeEchoStore(qDb); const qPledge = makePledgeStore(qDb); const qSeek = makeSeekStore(qDb)
+    const qChannelStore = makeChannelStore(qDb)
+    const qChannel = makeTestChannelPort(qChannelStore)
 
     const S = { id: 'ccs', name: '小S', url: 'http://s/a2a' }
     const W = { id: 'ccw', name: '小W', url: 'http://w/a2a' }
@@ -197,24 +236,48 @@ describe('forwarding hop e2e (S → W → Q)', () => {
     const relayEchoId = echoes[0]!.id
 
     // Reconciler on W + revealers on S and Q, wired to route reveals through W.
-    const idOf = (id: string): PeerIdentity | null => ({ ccs: S, ccw: W, ccq: Q } as any)[id] ?? null
+    // W stays content-blind: it only ever crosses the two endpoints' ephemeral
+    // PenpalHandles, resolved from the durable social_relay row — never a
+    // registry lookup, never a real name.
     let w3way = 0
     const wReconciler = makeRelayReconciler({
-      relayStore: wRelay, identityOf: idOf,
-      completeUpstream: (up, i, tok, dIdent) => { void sOnReveal({ agent_id: 'ccw', intent_id: i, relay_token: tok, peer_name: dIdent.name }) },
-      completeDownstream: (down, i, uIdent) => { void qOnReveal({ agent_id: 'ccw', intent_id: i, peer_name: uIdent.name }) },
+      relayStore: wRelay,
+      completeUpstream: (up, i, tok, dHandle) => { void sOnReveal({ agent_id: 'ccw', intent_id: i, relay_token: tok, peer_handle: dHandle }) },
+      completeDownstream: (down, i, uHandle) => { void qOnReveal({ agent_id: 'ccw', intent_id: i, peer_handle: uHandle }) },
       nudge: (agentId, i, tok) => { if (agentId === 'ccq') void qOnReveal({ agent_id: 'ccw', intent_id: i }); else void sOnReveal({ agent_id: 'ccw', intent_id: i, relay_token: tok }) },
       notify3way: (..._a) => { w3way++ },
     })
     // W's inbound reveal handler = reconciler-first.
-    const wOnReveal = (ev: any) => wReconciler.onRelayReveal({ callerAgentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token }) ?? { mutual: false }
+    const wOnReveal = (ev: any) => wReconciler.onRelayReveal({ callerAgentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token, peerHandle: ev.peer_handle }) ?? { mutual: false }
 
-    const sRevealer = makeRevealer({ echoStore: sEcho, pledgeStore: sPledge, seekStore: sSeek, postPeerReveal: async (_agentId, i, tok) => wOnReveal({ agent_id: 'ccs', intent_id: i, relay_token: tok }), selfIdentity: () => S, notify: () => {} })
+    // Each side's postPeerReveal carries ITS OWN just-minted handle (read back
+    // from its own channel row, exactly like wire-social.ts's postPeerReveal
+    // reconstructs rowId to read `myHandle` before POSTing) so W has something
+    // to cross.
+    const sRevealer = makeRevealer({
+      echoStore: sEcho, pledgeStore: sPledge, seekStore: sSeek,
+      postPeerReveal: async (agentId, i, tok) => {
+        const rowId = tok ? `${i}:${agentId}:${tok}` : `${i}:${agentId}`
+        const ch = sChannelStore.get(rowId)
+        const myHandle = ch ? { pubkey: ch.my_pubkey, channel_id: ch.my_channel_id } : undefined
+        return wOnReveal({ agent_id: 'ccs', intent_id: i, relay_token: tok, ...(myHandle ? { peer_handle: myHandle } : {}) })
+      },
+      channel: sChannel, notify: () => {},
+    })
     const qNotify = vi.fn()
-    const qRevealer = makeRevealer({ echoStore: qEcho, pledgeStore: qPledge, seekStore: qSeek, postPeerReveal: async (_agentId, i) => wOnReveal({ agent_id: 'ccq', intent_id: i }), selfIdentity: () => Q, notify: qNotify })
+    const qRevealer = makeRevealer({
+      echoStore: qEcho, pledgeStore: qPledge, seekStore: qSeek,
+      postPeerReveal: async (agentId, i) => {
+        const rowId = `${i}:${agentId}`
+        const ch = qChannelStore.get(rowId)
+        const myHandle = ch ? { pubkey: ch.my_pubkey, channel_id: ch.my_channel_id } : undefined
+        return wOnReveal({ agent_id: 'ccq', intent_id: i, ...(myHandle ? { peer_handle: myHandle } : {}) })
+      },
+      channel: qChannel, notify: qNotify,
+    })
     // S/Q inbound reveal handlers (endpoint side; W posts back to them).
-    const sOnReveal = (ev: any) => sRevealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token, peerName: ev.peer_name })
-    const qOnReveal = (ev: any) => qRevealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token, peerName: ev.peer_name })
+    const sOnReveal = (ev: any) => sRevealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token, peerHandle: ev.peer_handle })
+    const qOnReveal = (ev: any) => qRevealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token, peerHandle: ev.peer_handle })
 
     // 2) S reveals first → awaiting (W nudges Q).
     const sFirst = await sRevealer.revealEcho(relayEchoId)
@@ -225,13 +288,28 @@ describe('forwarding hop e2e (S → W → Q)', () => {
     const qOut = await qRevealer.revealPledge(qPledgeId)
     expect(qOut).toEqual({ state: 'connected' })
 
-    // 4) Assert both connected + identity crossing + 3-way warmth.
-    expect(sEcho.get(relayEchoId)!.peer_masked).toBe('小Q')   // S now sees Q
+    // 4) Assert both connected + channels opened (handle crossing) + 3-way warmth,
+    //    and that the mask NEVER lifts — S never learns Q's (or W's) real name.
+    expect(sEcho.get(relayEchoId)!.peer_masked).toBe('第 2 度的某人')   // still masked
     expect(sSeek.get(intent_id)!.status).toBe('connected')
     expect(qPledge.get(qPledgeId)!.peer_revealed_at).not.toBeNull()   // Q connected too
     expect(w3way).toBe(1)   // W's owner gets a SINGLE 3-way warmth ping
-    // Q's connected beat carried S's REAL name (crossed via W's registry, not W's own name).
-    expect(qNotify).toHaveBeenCalledWith('connected', expect.objectContaining({ peerName: '小S' }))
+
+    const sChannelRow = sChannelStore.get(relayEchoId)!
+    expect(sChannelRow.status).toBe('open')
+    expect(sChannelRow.peer_pubkey).not.toBeNull()
+    expect(sChannelRow.peer_channel_id).not.toBeNull()
+
+    const qChannelRow = qChannelStore.get(qPledgeId)!
+    expect(qChannelRow.status).toBe('open')
+    expect(qChannelRow.peer_pubkey).not.toBeNull()
+    expect(qChannelRow.peer_channel_id).not.toBeNull()
+    // The two sides' crossed pubkeys are each other's — never a name.
+    expect(sChannelRow.peer_pubkey).toBe(qChannelRow.my_pubkey)
+    expect(qChannelRow.peer_pubkey).toBe(sChannelRow.my_pubkey)
+
+    // Q's connected beat is content-free — no peer name, ever (W never had one to give).
+    expect(qNotify).toHaveBeenCalledWith('connected', { intentId: intent_id })
   })
 })
 

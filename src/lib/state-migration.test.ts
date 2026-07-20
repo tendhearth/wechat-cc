@@ -61,7 +61,7 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  it('opens a fresh db with PRAGMA user_version = 21 and the 20 tables', () => {
+  it('opens a fresh db with PRAGMA user_version = 23 and the 22 tables', () => {
     const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
     // v14 (dialogue real data): messages / threads / thread_extract_state tables added;
     // events.kind widened with 'threads_extracted'.
@@ -72,11 +72,14 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v19 (agent-social 觅食台 state): social_seek + social_echo tables added.
     // v20 (async foraging spine): social_echo reveal columns + social_pledge table added.
     // v21 (forwarding hop): social_echo relay columns + social_relay + social_seen_intent tables added.
-    expect(v).toBe(21)
+    // v22 (匿名笔友通道 A): penpal_channel + penpal_letter tables + social_relay handle columns added.
+    // v23 (mailbox plumbing B, additive): penpal_channel gains a nullable peer_mailbox column
+    // (no new tables — the set below is unchanged from v22).
+    expect(v).toBe(23)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'events', 'handled_messages', 'message_attempts', 'messages',
-      'milestones', 'observations', 'session_state', 'sessions', 'social_echo', 'social_pledge', 'social_relay', 'social_seek', 'social_seen_intent', 'thread_extract_state', 'threads', 'turn_records',
+      'milestones', 'observations', 'penpal_channel', 'penpal_letter', 'session_state', 'sessions', 'social_echo', 'social_pledge', 'social_relay', 'social_seek', 'social_seen_intent', 'thread_extract_state', 'threads', 'turn_records',
     ])
   })
 

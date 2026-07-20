@@ -710,6 +710,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     sendAssistantText,
     onIntent: socialWiring.onIntent,
     onReveal: socialWiring.onReveal,
+    onLetter: socialWiring.onLetter,
   })
   a2aServer = builtA2aServer
 
@@ -720,6 +721,29 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // (Runs after wireA2aServer's a2a-info.json write — a behavior-neutral
   // cross-block reorder: both are independent fire-and-forget side effects.)
   socialWiring.resumeForaging()
+
+  // Content-blind mailbox transport (sub-project B, Task 8) — the poller's
+  // deps, constructed only when social wiring is live AND at least one relay
+  // is configured. main.ts mounts `registerMailboxPoller(mailboxPollerDeps)`
+  // on the companion scheduler iff this is present; otherwise the feature
+  // stays fully inert (no poll timer, no relay traffic). I1: `onMailboxLetter`
+  // is `socialWiring.onMailboxLetter` (own-channel-only) — NEVER
+  // `socialWiring.onLetter` (which falls through to letterRelay.routeLetter).
+  const mailboxRelays = configuredAgent.mailbox_relays ?? []
+  const mailboxPollerDeps = (configuredAgent.social_enabled && mailboxRelays.length > 0 && socialWiring.onMailboxLetter)
+    ? {
+        stateDir: deps.stateDir,
+        a2aRegistry,
+        onReveal: socialWiring.onReveal,
+        onMailboxLetter: socialWiring.onMailboxLetter,
+        relays: mailboxRelays,
+        // Re-checked at every tick (mtime-cached read) so a `/set` toggle of
+        // social_enabled takes effect without a daemon restart, same posture
+        // as the companion schedulers' shouldRun gates.
+        shouldRun: () => readAgentConfig().social_enabled === true,
+        log: deps.log,
+      }
+    : undefined
 
   // ── 乙 v2 wiring (guarded — no-op when config absent) ────────────────────
   // BRAIN side: start a WebSocket rendezvous that hands connect to.
@@ -782,5 +806,18 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      * /v1/social/seek then 503s.
      */
     ...(socialWiring.social ? { social: socialWiring.social } : {}),
+    /**
+     * Anonymous pen-pal channel (Task 8/10/11) — the "回信 <channel> <text>"
+     * dispatch seam in pipeline-deps.ts reads this directly (not
+     * boot.social.penpal). Undefined whenever social wiring is inert, same
+     * gate as boot.social.
+     */
+    ...(socialWiring.social ? { penpal: socialWiring.social.penpal } : {}),
+    /**
+     * Content-blind mailbox transport (Task 8) — present only when
+     * social_enabled + at least one mailbox_relays entry are configured.
+     * main.ts mounts the poller lifecycle iff this is set.
+     */
+    ...(mailboxPollerDeps ? { mailboxPollerDeps } : {}),
   }
 }

@@ -42,6 +42,10 @@ export interface AgentConfig {
   // A2A: optional listener and registered peer agent records.
   a2a_listen?: A2AListen
   a2a_agents?: A2AAgentRecord[]
+  // Mailbox transport (sub-project B): this daemon's OWN relay list — where
+  // it advertises its mailbox reachability to peers and polls for inbound
+  // envelopes. Mirrors `a2a_agents?`'s optional-array shape.
+  mailbox_relays?: string[]
   // Dialogue private-thread lock. Stores a scrypt-derived passphrase hash
   // as `salt:hexhash` (both hex). Absent → no lock configured (the desktop
   // dialogue page hides its unlock affordance). Set/verified via the
@@ -71,7 +75,13 @@ export const A2AAgentRecord = z.object({
   outbound_api_key: z.string().min(1),
   capabilities: z.array(z.string()),
   paused: z.boolean().default(false),
-  transport: z.enum(['push', 'ws']).default('push'),
+  transport: z.enum(['push', 'ws', 'mailbox']).default('push'),
+  /** Mailbox transport (sub-project B): the peer's Ed25519 mailbox address (drop `to` + sig key). */
+  mailbox_addr: z.string().optional(),
+  /** The peer's X25519 encryption pubkey — the sealed-box target for envelopes. */
+  mailbox_enc_pub: z.string().optional(),
+  /** Relay URLs the peer's mailbox is reachable through. */
+  relays: z.array(z.string().url()).optional(),
   /** Peer's A2A proto_version captured at install time; unset = unknown (treat as 1). */
   proto_version: z.number().int().optional(),
 })
@@ -114,6 +124,7 @@ const AgentConfigSchema = z.object({
   dialogue_lock_hash: z.string().optional(),
   social_enabled: z.boolean().optional(),
   social_disclosure_policy: z.string().optional(),
+  mailbox_relays: z.array(z.string().url()).optional(),
 })
 
 /**
@@ -182,6 +193,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.dialogue_lock_hash === 'string' ? { dialogue_lock_hash: parsed.dialogue_lock_hash } : {}),
       ...(typeof parsed.social_enabled === 'boolean' ? { social_enabled: parsed.social_enabled } : {}),
       ...(typeof parsed.social_disclosure_policy === 'string' ? { social_disclosure_policy: parsed.social_disclosure_policy } : {}),
+      ...(Array.isArray(parsed.mailbox_relays) ? { mailbox_relays: parsed.mailbox_relays } : {}),
     }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }

@@ -69,15 +69,30 @@ export interface IntentEvent {
  * A peer's "my owner revealed; wants to connect on this intent" event —
  * the inbound half of the mutual async reveal. Handler marks the local
  * echo/pledge row's peer_revealed_at and, if this side already revealed,
- * responds { mutual:true, identity } for a synchronous connect.
+ * responds { mutual:true, handle } for a synchronous connect. `handle` is a
+ * PenpalHandle (pubkey + channel_id) — real identity never crosses.
  */
 export interface RevealEvent {
   agent_id: string
   intent_id: string
   /** spec #2: present when this reveal is a 2-hop relay leg addressed to an intermediary. */
   relay_token?: string
-  /** spec #2: the OTHER endpoint's display name, handed over by the intermediary on the mutual instant. */
-  peer_name?: string
+  /** spec #2: the OTHER endpoint's penpal handle, handed over by the intermediary on the mutual instant. */
+  peer_handle?: import('./penpal-crypto').PenpalHandle
+}
+
+/**
+ * A sealed E2E letter delivered over the pen-pal channel. `agent_id` is the
+ * verified Bearer id (routing metadata only, NOT the plaintext sender's real
+ * identity). The payload itself carries only ciphertext + AEAD fields —
+ * plaintext never crosses the wire or this event.
+ */
+export interface LetterEvent {
+  agent_id: string
+  channel_id: string
+  nonce: string
+  ct: string
+  tag: string
 }
 
 export interface AuthFailedEvent {
@@ -111,8 +126,12 @@ export interface A2AServerOpts {
    *  Undefined → /a2a/intent returns 501. */
   onIntent?: (event: IntentEvent) => Promise<MatchReceipt>
   /** Optional. When wired, enables POST /a2a/reveal — a peer signals its owner
-   *  revealed; mark my matching row + return { mutual, identity? }. Undefined → 501. */
-  onReveal?: (event: RevealEvent) => Promise<{ mutual: boolean; identity?: { name: string; url: string } }>
+   *  revealed; mark my matching row + return { mutual, handle? }. Undefined → 501. */
+  onReveal?: (event: RevealEvent) => Promise<{ mutual: boolean; handle?: { pubkey: string; channel_id: string; mailbox?: { addr: string; enc_pub: string; relays: string[] } } }>
+  /** Optional. When wired, enables POST /a2a/letter — a peer delivers a sealed
+   *  E2E pen-pal letter (ciphertext only, never plaintext) addressed to a
+   *  PenpalHandle channel on this machine. Undefined → /a2a/letter returns 501. */
+  onLetter?: (event: LetterEvent) => Promise<{ ok: boolean; error?: string }>
   /** Optional hook called when a notify request is rejected with 401/403
    *  AND we can identify which agent_id the caller claimed. Used by
    *  bootstrap to write an `a2a_events` row with status='auth_failed' so
@@ -182,10 +201,18 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       // Advertised only when this machine is wired to receive inbound reveals.
       ...(opts.onReveal ? [{
         name: 'reveal',
-        description: 'Mutual async reveal: a peer whose owner revealed asks THIS owner\'s row to mark peer-revealed; returns { mutual, identity } when both sides have revealed.',
+        description: 'Mutual async reveal: a peer whose owner revealed asks THIS owner\'s row to mark peer-revealed; returns { mutual, handle } when both sides have revealed.',
         endpoint: '/a2a/reveal',
         method: 'POST',
         request_schema: { agent_id: 'string', intent_id: 'string' },
+      }] : []),
+      // Advertised only when this machine is wired to receive inbound letters.
+      ...(opts.onLetter ? [{
+        name: 'letter',
+        description: 'Deliver a sealed E2E pen-pal letter (ciphertext only) to a channel on this machine.',
+        endpoint: '/a2a/letter',
+        method: 'POST',
+        request_schema: { agent_id: 'string', channel_id: 'string', nonce: 'string', ct: 'string', tag: 'string' },
       }] : []),
     ],
   }
@@ -295,7 +322,7 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
       if (!opts.onReveal) return new Response(JSON.stringify({ error: 'reveal_not_supported' }), { status: 501 })
 
-      let body: { agent_id?: unknown; intent_id?: unknown; relay_token?: unknown; peer_name?: unknown }
+      let body: { agent_id?: unknown; intent_id?: unknown; relay_token?: unknown; peer_handle?: unknown }
       try {
         body = await req.json() as typeof body
       } catch {
@@ -325,15 +352,74 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       }
       try {
         // `agent_id` stays the verified Bearer `agent.id` — client-supplied
-        // agent_id is never trusted as the acting identity. relay_token/peer_name
-        // are display/routing metadata the intermediary provides.
+        // agent_id is never trusted as the acting identity. relay_token/peer_handle
+        // are routing/pen-pal metadata the intermediary provides. peer_handle
+        // is the PenpalHandle {pubkey, channel_id} — real identity never crosses.
         const relayToken = typeof body.relay_token === 'string' && body.relay_token ? body.relay_token : undefined
-        const peerName = typeof body.peer_name === 'string' && body.peer_name ? body.peer_name : undefined
-        const result = await opts.onReveal({ agent_id: agent.id, intent_id: body.intent_id, relay_token: relayToken, peer_name: peerName })
+        const ph = body.peer_handle
+        const peerHandle = (ph && typeof ph === 'object'
+          && typeof (ph as any).pubkey === 'string' && (ph as any).pubkey
+          && typeof (ph as any).channel_id === 'string' && (ph as any).channel_id)
+          ? {
+              pubkey: (ph as any).pubkey, channel_id: (ph as any).channel_id,
+              ...((ph as any).mailbox && typeof (ph as any).mailbox === 'object'
+                && typeof (ph as any).mailbox.addr === 'string' && typeof (ph as any).mailbox.enc_pub === 'string' && Array.isArray((ph as any).mailbox.relays)
+                ? { mailbox: { addr: (ph as any).mailbox.addr, enc_pub: (ph as any).mailbox.enc_pub, relays: (ph as any).mailbox.relays } } : {}),
+            }
+          : undefined
+        const result = await opts.onReveal({ agent_id: agent.id, intent_id: body.intent_id, relay_token: relayToken, ...(peerHandle ? { peer_handle: peerHandle } : {}) })
         return new Response(JSON.stringify(result), { status: 200 })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         return new Response(JSON.stringify({ error: 'reveal_failed', detail: msg }), { status: 500 })
+      }
+    }
+    if (url.pathname === '/a2a/letter') {
+      if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
+      if (!opts.onLetter) return new Response(JSON.stringify({ error: 'letter_not_supported' }), { status: 501 })
+
+      let body: { agent_id?: unknown; channel_id?: unknown; nonce?: unknown; ct?: unknown; tag?: unknown }
+      try {
+        body = await req.json() as typeof body
+      } catch {
+        return new Response(JSON.stringify({ error: 'invalid_json' }), { status: 400 })
+      }
+      if (typeof body.agent_id !== 'string') return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
+      const claimedId = body.agent_id
+
+      const auth = req.headers.get('authorization')
+      if (!auth?.startsWith('Bearer ')) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'missing_bearer' })
+        return new Response(JSON.stringify({ error: 'missing_bearer' }), { status: 401 })
+      }
+      const agent = opts.registry.verifyBearer(claimedId, auth.slice('Bearer '.length).trim())
+      if (!agent) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'wrong_bearer' })
+        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
+      }
+      if (agent.id !== claimedId) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'agent_id_mismatch' })
+        return new Response(JSON.stringify({ error: 'agent_id_mismatch' }), { status: 403 })
+      }
+      if (agent.paused) return new Response(JSON.stringify({ ok: false, reason: 'paused' }), { status: 202 })
+
+      if (typeof body.channel_id !== 'string' || body.channel_id.length === 0
+        || typeof body.nonce !== 'string' || body.nonce.length === 0
+        || typeof body.ct !== 'string' || body.ct.length === 0
+        || typeof body.tag !== 'string' || body.tag.length === 0) {
+        return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
+      }
+      try {
+        // `agent_id` stays the verified Bearer `agent.id` — client-supplied
+        // agent_id is never trusted as the acting identity. The wire payload
+        // carries only sealed fields; plaintext never crosses.
+        const result = await opts.onLetter({
+          agent_id: agent.id, channel_id: body.channel_id, nonce: body.nonce, ct: body.ct, tag: body.tag,
+        })
+        return new Response(JSON.stringify(result), { status: 200 })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return new Response(JSON.stringify({ error: 'letter_failed', detail: msg }), { status: 500 })
       }
     }
     if (url.pathname === '/a2a/intent') {
