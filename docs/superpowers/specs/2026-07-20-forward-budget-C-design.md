@@ -37,8 +37,9 @@ C 就是那道量级闸:**per-sender 转发预算**。
 
 1. **`src/core/social-forwarder.ts` `makeForwarder`（seek 转发,主放大面）**:在**决定要 fan `hop+1` 卡之前**(即现有 `alreadySeen || card.hop >= cap` 早返回之后、真正 `forwardSend` 之前),先 `budget.try_consume(event.agent.id)`。**false → 跳过转发,直接返回本地 `receipt`**(W 仍本地应答)。true → 照常转发。
    - 注入方式:`ForwarderDeps` 加一个 `withinBudget(senderId): boolean`(把预算原语注入,保持 forwarder 纯 + 可测),wiring 里接 `makeForwardBudget`。
-2. **`src/core/penpal-relay-letter.ts` `routeLetter`（信件转发,B 之后是 push-only fallback,罕见)**:那行 `// TODO(sub-project C): budget.consume(relay_token) gate before re-posting` —— 换成真的:re-post 之前 `budget.try_consume(<letter 的上游发送方 agent id, = event.agent_id>)`,**false → drop(`{ok:false, error:'over_budget'}`),不 postLetter**。
+2. **`src/core/penpal-relay-letter.ts` `routeLetter`（信件转发,B 之后是 push-only fallback,罕见)**:那行 `// TODO(sub-project C): budget.consume(relay_token) gate before re-posting` —— 换成真的:re-post 之前 `budget.try_consume(<letter 的上游发送方 agent id, = event.agent_id>)`,**false → drop,不 postLetter,响应复用现有「无匹配 relay leg」同款 `{ok:false, error:'unknown_channel'}`(NOT 一个新的 `over_budget` 字符串)**。
    - 注:B 让熟人/relay-direct 信件绕过 W;只有对方 push-only 时才走 routeLetter,所以这条消费点低频,但同一预算原语顺手盖住,闭掉 TODO。
+   - **§2 铁律强制的伪装(CRITICAL,review 发现):`src/core/a2a-server.ts`(`/a2a/letter` 路由,约 416-419 行)把 `onLetter` 的完整返回值原样 `JSON.stringify` 回给调用方(HTTP 200)。若 over-budget 返回一个独有的 `error:'over_budget'`,发送方直接从响应里读出「我被限流了」——这就违反了 §2「不给发送方任何信号」。必须让 over-budget 的丢弃与「W 没有这条 relay leg」（已有的 loop-safety / 未知 channel_id 分支）**响应完全相同**(`{ok:false, error:'unknown_channel'}`),让 flooder 无法从响应区分「被限流」和「W 根本不认识这个 channel」。forwarder 消费点不受影响:它 over-budget 时返回的是和「无下游 yes」一样的本地 `receipt`,本来就已经不可区分,无需改动。
 
 ### 3.3 配置
 
@@ -64,7 +65,7 @@ C 就是那道量级闸:**per-sender 转发预算**。
 
 - **预算原语单测**(`forward-budget.test.ts`):允许到容量 → 扣光后 `try_consume`=false → 随注入时间重填 → 再允许;per-sender 隔离(一个 sender 扣光不影响另一个);大时间跳变 cap 到容量、时间倒退不加令牌。
 - **forwarder 消费点**:超预算的 sender → forwarder **本地应答但 `forwardSend` 不被调用**(assert 未转发);预算内 → 照常 fan-out。per-sender 隔离贯穿到 forwarder 层。
-- **relay-letter 消费点**:超预算 → `routeLetter` drop(`over_budget`),`postLetter` 不被调用;预算内 → 照常转发。
+- **relay-letter 消费点**:超预算 → `routeLetter` drop 且返回 `{ok:false, error:'unknown_channel'}`(与「无匹配 relay leg」不可区分,§2 伪装要求),`postLetter` 不被调用;预算内 → 照常转发。
 - **config**:`forward_budget` 缺省用默认 30/小时;显式配置覆盖;无该字段的旧 config 仍解析。
 - **wiring**:两个消费点接**同一个**预算实例 → 断言同一 sender 的 seek-转发 与 letter-转发**共享额度**(在一条路上扣光,另一条路也被限)。
 
