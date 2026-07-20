@@ -18,6 +18,9 @@ import { generateKeypair, type PenpalHandle } from '../../core/penpal-crypto'
 import { intentUrl, revealUrl, letterUrl } from '../../core/a2a-delegate'
 import { MatchReceiptSchema } from '../../core/a2a-intent'
 import { applyFinishSeek } from './social-finish-seek'
+import { makeMailboxSender } from '../../core/mailbox-sender'
+import { makeMailboxClient } from '../../core/mailbox-client'
+import { peerMailboxOf } from './mailbox-dispatch-seam'
 import type { A2AServerOpts } from '../../core/a2a-server'
 import type { A2ARegistry } from '../../core/a2a-registry'
 import type { A2AClient } from '../../core/a2a-client'
@@ -103,6 +106,10 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
     } else {
       const SOCIAL_SELF_ID = process.env.WECHAT_A2A_SELF_ID || 'wechat-cc'
       const socialOpenaiKey = process.env.WECHAT_OPENAI_API_KEY
+      // Mailbox transport (sub-project B): the third dispatch arm alongside
+      // push (a2aClient). Constructed once and reused by postReveal (and, per
+      // Task 11, postLetter's peer-mailbox branch).
+      const mailboxSender = makeMailboxSender({ client: makeMailboxClient() })
 
       // The judge's runTurn seam (daemon/social/grounded-judge.ts). Provider-
       // specific adapters spawn a one-shot session carrying ONLY the plugin
@@ -238,6 +245,12 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       const postReveal = (agentId: string, body: { intent_id: string; relay_token?: string; peer_handle?: PenpalHandle }): void => {
         const hand = a2aRegistry.get(agentId)
         if (!hand) return
+        const peer = peerMailboxOf(hand)
+        if (peer) {
+          void mailboxSender.send({ path: '/a2a/reveal', bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } }, peer)
+            .catch(err => deps.log('SOCIAL_REC', `mailbox reveal drop failed intent=${body.intent_id} agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`))
+          return
+        }
         void a2aClient.send({ url: revealUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
           .catch(err => deps.log('SOCIAL_REC', `relay reveal post failed intent=${body.intent_id} agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`))
       }
