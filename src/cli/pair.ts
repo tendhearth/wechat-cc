@@ -57,7 +57,7 @@ export async function cmdPairStart(stateDir: string, opts: { json: boolean }, de
     // Only failure reason start() can return today; keep the fallback for
     // forward-compat with any new reason the engine might add later.
     console.log(body.reason === 'relay_drop_failed'
-      ? '名片没能投到中继,配对码没能生成——请重试'
+      ? '中继暂时够不着,配对码没能生成——稍后再试'
       : `配对码生成失败(${body.reason})`)
     return
   }
