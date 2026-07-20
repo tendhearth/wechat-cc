@@ -3379,7 +3379,7 @@ describe('internal-api request validation', () => {
       serverEnabled?: boolean
       baseUrl?: string | null
     } = {}) {
-      type AgentEntry = { id: string; name: string; url: string; outbound_api_key: string; inbound_api_key: string; capabilities: string[]; paused: boolean; transport: 'push' | 'ws' }
+      type AgentEntry = { id: string; name: string; url: string; outbound_api_key: string; inbound_api_key: string; capabilities: string[]; paused: boolean; transport: 'push' | 'ws' | 'mailbox' }
       const agentsList: AgentEntry[] = (opts.agents ?? []).map(a => ({
         id: a.id, name: a.name ?? a.id, url: a.url,
         outbound_api_key: a.outbound_api_key, inbound_api_key: 'unused-inbound',
