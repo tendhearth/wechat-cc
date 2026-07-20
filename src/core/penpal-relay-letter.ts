@@ -15,13 +15,17 @@
 import type { RelayStore } from './social-relay-store'
 import type { PenpalHandle } from './penpal-crypto'
 import type { LetterEvent } from './a2a-server'
+import type { PeerMailbox } from './mailbox-crypto'
 
 export interface LetterRelayDeps {
   relayStore: RelayStore
   /** Forward the sealed letter onward, unopened. relayVia: null — this leg's
    *  hop ends at the far endpoint's own registered a2a address; W does not
-   *  chain through a further relay. */
-  postLetter(target: { agentId: string; relayVia: string | null }, body: { channel_id: string; nonce: string; ct: string; tag: string }): Promise<boolean>
+   *  chain through a further relay. W is always forwarding to a push peer, so
+   *  it never sets `mailbox` — the widened target type (Task 11) is shared
+   *  with penpal-correspondent.ts's postLetter for the "consistency of
+   *  names" rule, but this leg's target is always mailbox-less. */
+  postLetter(target: { agentId: string; relayVia: string | null; mailbox?: PeerMailbox }, body: { channel_id: string; nonce: string; ct: string; tag: string }): Promise<boolean>
 }
 
 export interface LetterRelay {
@@ -54,7 +58,7 @@ export function makeLetterRelay(deps: LetterRelayDeps): LetterRelay {
       // TODO(sub-project C): budget.consume(relay_token) gate before re-posting
 
       const ok = await deps.postLetter(
-        { agentId: farAgentId, relayVia: null },
+        { agentId: farAgentId, relayVia: null, mailbox: undefined },
         { channel_id: event.channel_id, nonce: event.nonce, ct: event.ct, tag: event.tag },
       )
       return ok ? { ok: true } : { ok: false, error: 'forward_failed' }

@@ -6,17 +6,20 @@
  * See docs/superpowers/specs/2026-07-18-anonymous-penpal-social-layer-design.md.
  */
 import { randomUUID } from 'node:crypto'
-import type { ChannelStore } from './penpal-channel-store'
+import { peerMailboxOfRow, type ChannelStore } from './penpal-channel-store'
 import type { LetterStore } from './penpal-letter-store'
 import { deriveSharedKey, sealLetter, openLetter } from './penpal-crypto'
+import type { PeerMailbox } from './mailbox-crypto'
 
 export interface CorrespondentDeps {
   channelStore: ChannelStore
   letterStore: LetterStore
-  /** Outbound: POST the sealed letter to the peer over a2a. relayVia routes a
-   *  2-hop channel through the intermediary (Task 9). channel_id = the PEER's
-   *  inbound address. Returns ok. */
-  postLetter(target: { agentId: string; relayVia: string | null }, body: { channel_id: string; nonce: string; ct: string; tag: string }): Promise<boolean>
+  /** Outbound: POST the sealed letter to the peer. relayVia routes a 2-hop
+   *  channel through the intermediary (Task 9) when the peer has no mailbox;
+   *  `mailbox`, when present (the peer crossed one at reveal — Task 10), sends
+   *  relay-direct instead (Task 11) — W is not in that path. channel_id = the
+   *  PEER's inbound address. Returns ok. */
+  postLetter(target: { agentId: string; relayVia: string | null; mailbox?: PeerMailbox }, body: { channel_id: string; nonce: string; ct: string; tag: string }): Promise<boolean>
   /** Owner notification on an inbound letter (preview of the decrypted text). */
   notifyInbound(channelRowId: string, preview: string): void
 }
@@ -37,10 +40,14 @@ export function makeCorrespondent(deps: CorrespondentDeps): Correspondent {
       // Mirrors social-reveal.ts's `echo.relay_via ?? echo.peer_agent_id`.
       const agentId = ch.relay_via ?? ch.peer_agent_id
       if (!agentId) return Promise.resolve({ ok: false, error: 'no_route' })
+      // Task 11: a peer that crossed a mailbox at reveal (Task 10) goes
+      // relay-direct — W is never consulted for this leg. A push-only peer
+      // (no mailbox) keeps A's Task-9 relayVia/push behavior unchanged.
+      const mailbox = peerMailboxOfRow(ch)
       const key = deriveSharedKey(ch.my_privkey, ch.peer_pubkey)
       const sealed = sealLetter(key, plaintext)
       deps.letterStore.create({ id: randomUUID(), channelId: channelRowId, direction: 'out', sealedCiphertext: sealed.ct, nonce: sealed.nonce, tag: sealed.tag, plaintext })
-      return deps.postLetter({ agentId, relayVia: ch.relay_via }, { channel_id: ch.peer_channel_id, nonce: sealed.nonce, ct: sealed.ct, tag: sealed.tag })
+      return deps.postLetter({ agentId, relayVia: ch.relay_via, ...(mailbox ? { mailbox } : {}) }, { channel_id: ch.peer_channel_id, nonce: sealed.nonce, ct: sealed.ct, tag: sealed.tag })
         .then(ok => ok ? { ok: true } : { ok: false, error: 'send_failed' })
     },
     receiveLetter(ev) {

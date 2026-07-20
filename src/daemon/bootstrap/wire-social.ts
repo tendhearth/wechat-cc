@@ -23,6 +23,7 @@ import { makeMailboxClient } from '../../core/mailbox-client'
 import { loadMailboxIdentity } from '../../core/mailbox-crypto'
 import { peerMailboxOf, buildCrossedHandle } from './mailbox-dispatch-seam'
 import { makeMailboxLetterHandler } from './mailbox-letter-handler'
+import { makeRoutePostLetter } from './postletter-route'
 import type { PeerMailbox } from '../../core/mailbox-crypto'
 import type { A2AServerOpts } from '../../core/a2a-server'
 import type { A2ARegistry } from '../../core/a2a-registry'
@@ -129,10 +130,16 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // NOT derived from the bare channel row, which never holds it. undefined
       // when this daemon has no mailbox_relays configured, so the crossed
       // handle omits `mailbox` entirely — byte-identical to a push-only peer's
-      // handle today (additive, backward-compatible).
-      const mailboxIdentity = loadMailboxIdentity(deps.stateDir)
+      // handle today (additive, backward-compatible). Gated (Task 10 review
+      // Minor): loadMailboxIdentity generates+persists mailbox-key.json as a
+      // side effect, so it must not run at all for a push-only daemon (no
+      // mailbox_relays configured) — only called when the identity is
+      // actually going to be used below.
       const myMailbox: PeerMailbox | undefined = configuredAgent.mailbox_relays?.length
-        ? { addr: mailboxIdentity.addr, enc_pub: mailboxIdentity.enc_pub, relays: configuredAgent.mailbox_relays }
+        ? (() => {
+            const mailboxIdentity = loadMailboxIdentity(deps.stateDir)
+            return { addr: mailboxIdentity.addr, enc_pub: mailboxIdentity.enc_pub, relays: configuredAgent.mailbox_relays! }
+          })()
         : undefined
 
       // The judge's runTurn seam (daemon/social/grounded-judge.ts). Provider-
@@ -186,12 +193,20 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // endpoint. Shared `postLetter` — relayVia routes through the
       // intermediary's own a2a address when set, else straight to the peer.
       const letterStore = makeLetterStore(deps.db)
-      const postLetter = async (target: { agentId: string; relayVia: string | null }, body: { channel_id: string; nonce: string; ct: string; tag: string }): Promise<boolean> => {
-        const hand = a2aRegistry.get(target.relayVia ?? target.agentId)
-        if (!hand) return false
-        const r = await a2aClient.send({ url: letterUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
-        return r.ok
-      }
+      // Task 11: a target carrying a `mailbox` (the peer crossed one at
+      // reveal — Task 10) goes relay-direct — sealed+dropped straight to the
+      // peer's own mailbox, W never sees it. A push-only target (no mailbox)
+      // falls through to A's existing Task-9 push/W-forward path unchanged.
+      const postLetter = makeRoutePostLetter({
+        mailboxSend: (inner, peer) => mailboxSender.send(inner, peer),
+        pushSend: async (target, body) => {
+          const hand = a2aRegistry.get(target.relayVia ?? target.agentId)
+          if (!hand) return false
+          const r = await a2aClient.send({ url: letterUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
+          return r.ok
+        },
+        selfId: SOCIAL_SELF_ID,
+      })
       const notifyInbound = (rowId: string, preview: string): void => {
         const op = resolveOperatorChatId()
         if (!op || !sendAssistantText) return
