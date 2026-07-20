@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makePairing, type PairingDeps, type PairCard, type PairScheduleHandle } from './pairing'
 import { deriveRendezvous } from './pairing-crypto'
+import { sealEnvelope } from './mailbox-crypto'
 import type { MailboxClient } from './mailbox-client'
 import type { A2ARegistry } from './a2a-registry'
 import type { A2AAgentRecord } from '../lib/agent-config'
@@ -241,5 +242,109 @@ describe('pairing engine', () => {
     // short-circuits to `false` without touching the relay's boxes.
     const rvAddr = deriveRendezvous(code).addr
     expect(relay.boxes.get(rvAddr)!.length).toBe(1)
+  })
+
+  // ── admission-point hardening (final-review blocker: id_conflict bypass via
+  // absent mailbox_addr) ──
+  //
+  // Drops a card DIRECTLY into the shared rendezvous box, bypassing
+  // ownCard()'s guaranteed-valid construction — this is how a hostile or
+  // malformed live-code-holder's card would actually arrive on the relay.
+  // `sealEnvelope`'s `body` is `unknown`, so a partial/garbage object is
+  // accepted at the type level exactly as it would be at the wire level.
+  function dropRawCard(client: MailboxClient, rvAddr: string, rvEncPub: string, body: unknown): Promise<boolean> {
+    const env = sealEnvelope({ path: '/pair', bearer: '', body }, rvEncPub)
+    return client.drop('unused', rvAddr, JSON.stringify(env))
+  }
+
+  describe('card admission (readCards validates every field before trusting it)', () => {
+    it('accept(): a card missing mailbox_addr for a same-id legacy PUSH peer is REJECTED — no clobber of the unrelated existing edge', async () => {
+      const relay = makeFakeRelay(); const regB = makeFakeRegistry(); const notifyB = vi.fn()
+      // B already has an unrelated peer filed under the legacy shared id
+      // 'wechat-cc' via the OLD push transport — no mailbox_addr at all
+      // (exactly the shape the id_conflict guard's `undefined !== undefined`
+      // bug would misread as "no conflict").
+      regB.records.set('wechat-cc', {
+        id: 'wechat-cc', name: 'someone-else', inbound_api_key: 'x'.repeat(16), outbound_api_key: 'ob',
+        capabilities: [], paused: false, transport: 'push', url: 'https://someone-else.example/webhook',
+      })
+      const code = '111222'
+      const rv = deriveRendezvous(code)
+      // Attacker (or a malformed live-code-holder) drops an "initiator" card
+      // for 'wechat-cc' with NO mailbox_addr — never went through ownCard().
+      const dropped = await dropRawCard(relay.client, rv.addr, rv.enc_pub, {
+        v: 1, role: 'initiator', nonce: 'atk-nonce', self_id: 'wechat-cc', name: 'Attacker',
+        mailbox_enc_pub: 'ATK_EP', relays: ['https://r/mailbox'], bearer: 'atk-bearer-key-00000000',
+      })
+      expect(dropped).toBe(true)
+
+      const B = makePairing(baseDeps({ client: relay.client, registry: regB, selfId: () => 'cc-bbbb2222', notify: notifyB }))
+      const res = await B.accept(code)
+      // The malformed card never survives readCards's admission filter, so
+      // accept() sees no valid initiator at all — same as an empty box.
+      expect(res).toEqual({ ok: false, reason: 'expired_or_wrong' })
+      // The pre-existing edge is completely untouched.
+      const rec = regB.records.get('wechat-cc')!
+      expect(rec.name).toBe('someone-else')
+      expect(rec.outbound_api_key).toBe('ob')
+      expect(rec.mailbox_addr).toBeUndefined()
+      expect(notifyB).not.toHaveBeenCalled()
+    })
+
+    it('initiator poller: an acceptor card missing mailbox_addr for a same-id legacy PUSH peer is REJECTED — no clobber', async () => {
+      const relay = makeFakeRelay(); const regA = makeFakeRegistry(); const sched = makeManualScheduler(); const notify = vi.fn()
+      // A already has an unrelated peer 'wechat-cc' filed via the legacy push
+      // transport — no mailbox_addr.
+      regA.records.set('wechat-cc', {
+        id: 'wechat-cc', name: 'someone-else', inbound_api_key: 'x'.repeat(16), outbound_api_key: 'ob',
+        capabilities: [], paused: false, transport: 'push', url: 'https://someone-else.example/webhook',
+      })
+      const A = makePairing(baseDeps({
+        client: relay.client, registry: regA, schedule: sched.schedule, notify,
+        selfId: () => 'cc-aaaa1111', name: () => 'Alice', genNonce: () => 'nA',
+      }))
+      const { code } = await mustStart(A)
+      const rv = deriveRendezvous(code)
+      // Attacker drops a malformed "acceptor" card for 'wechat-cc' with NO
+      // mailbox_addr, straight onto the shared box A's poller reads.
+      await dropRawCard(relay.client, rv.addr, rv.enc_pub, {
+        v: 1, role: 'acceptor', nonce: 'atk-nonce', self_id: 'wechat-cc', name: 'Attacker',
+        mailbox_enc_pub: 'ATK_EP', relays: ['https://r/mailbox'], bearer: 'atk-bearer-key-00000000',
+      })
+
+      sched.tick()
+      await new Promise(r => setTimeout(r, 0))
+      const rec = regA.records.get('wechat-cc')!
+      expect(rec.name).toBe('someone-else') // NOT clobbered
+      expect(rec.mailbox_addr).toBeUndefined()
+      // The malformed card was filtered before conflicts() ever saw it, so
+      // this is silent from the poller's perspective (same as "no peer card
+      // yet") — it just re-arms rather than firing the id_conflict notify.
+      expect(notify).not.toHaveBeenCalled()
+      expect(sched.cancelled).toBe(false)
+    })
+
+    it('rejects malformed cards (missing enc_pub / empty self_id / non-slug self_id / empty relays) — skipped, no registry mutation, no throw', async () => {
+      const relay = makeFakeRelay(); const regB = makeFakeRegistry()
+      const code = '333444'
+      const rv = deriveRendezvous(code)
+      const base = {
+        v: 1 as const, role: 'initiator' as const, nonce: 'n', name: 'X',
+        mailbox_addr: 'MB', mailbox_enc_pub: 'EP', relays: ['https://r/mailbox'], bearer: 'bearer-key-00000000',
+      }
+      const malformed = [
+        { ...base, self_id: 'cc-valid1', mailbox_enc_pub: undefined }, // missing enc_pub
+        { ...base, self_id: '' },                                      // empty self_id
+        { ...base, self_id: 'CC-Not-A-Slug!' },                        // non-slug self_id
+        { ...base, self_id: 'cc-valid2', relays: [] },                 // empty relays
+      ]
+      for (const card of malformed) {
+        expect(await dropRawCard(relay.client, rv.addr, rv.enc_pub, card)).toBe(true)
+      }
+
+      const B = makePairing(baseDeps({ client: relay.client, registry: regB, selfId: () => 'cc-bbbb2222' }))
+      await expect(B.accept(code)).resolves.toEqual({ ok: false, reason: 'expired_or_wrong' })
+      expect(regB.records.size).toBe(0)
+    })
   })
 })

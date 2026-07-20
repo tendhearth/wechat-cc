@@ -157,6 +157,38 @@ export function makePairing(deps: PairingDeps): PairingEngine {
   // (spec §4). Note: a single /fetch returns ≤64 items (no client pagination) —
   // a code-holder could bury the card past item 64; accepted for v0 (same threat
   // class as §3's "third party who has the code").
+  //
+  // This is the SINGLE admission point for anything claiming to be a
+  // PairCard — every field the rest of the engine trusts without further
+  // checking (mailbox_addr for the id_conflict guard in conflicts()/
+  // writePeerFromCard, self_id as the registry key, relays/mailbox_enc_pub
+  // as what gets written into the peer record) must be validated here, not
+  // trusted from a bare `as PairCard` cast. A hostile or malformed card can
+  // omit mailbox_addr at runtime despite the compile-time type saying it's
+  // required; against a legacy push/ws peer (mailbox_addr === undefined in
+  // the registry), `undefined !== undefined` would read as "no conflict"
+  // and silently clobber an unrelated pre-existing edge — exactly what the
+  // id_conflict guard exists to prevent. Requiring non-empty strings here
+  // closes that off: a card missing mailbox_addr never reaches conflicts()
+  // at all. self_id is additionally checked against the registry's own slug
+  // regex (agent-config.ts's A2AAgentRecord.id) so a non-slug id can never
+  // pass registry.add() only to be safeParse-dropped by loadAgentConfig on
+  // the next read (registry/config divergence).
+  const SELF_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
+  function isValidCard(card: unknown): card is PairCard {
+    if (!card || typeof card !== 'object') return false
+    const c = card as Record<string, unknown>
+    if (c.v !== 1) return false
+    if (c.role !== 'initiator' && c.role !== 'acceptor') return false
+    if (typeof c.self_id !== 'string' || !SELF_ID_RE.test(c.self_id)) return false
+    if (typeof c.name !== 'string' || c.name.length === 0) return false
+    if (typeof c.bearer !== 'string' || c.bearer.length === 0) return false
+    if (typeof c.mailbox_addr !== 'string' || c.mailbox_addr.length === 0) return false
+    if (typeof c.mailbox_enc_pub !== 'string' || c.mailbox_enc_pub.length === 0) return false
+    if (!Array.isArray(c.relays) || c.relays.length === 0) return false
+    if (typeof c.nonce !== 'string' || c.nonce.length === 0) return false
+    return true
+  }
   function readCards(rvAddr: string, rvEncPriv: string, rvSign: (m: string) => string): Promise<PairCard[]> {
     const ts = deps.now()
     return deps.client.fetch(rendezvousRelay, rvAddr, 0, ts, signFetch(rvSign, rvAddr, ts)).then(res => {
@@ -167,8 +199,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
         try { env = JSON.parse(item.envelope) as Envelope } catch { continue }
         const inner = openEnvelope(rvEncPriv, env)
         if (!inner) continue
-        const card = inner.body as PairCard
-        if (card && card.v === 1 && (card.role === 'initiator' || card.role === 'acceptor')) cards.push(card)
+        if (isValidCard(inner.body)) cards.push(inner.body)
       }
       return cards
     })
