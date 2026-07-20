@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makeForwarder } from './social-forwarder'
+import { makeForwardBudget } from './forward-budget'
 import type { IntentEvent } from './a2a-server'
 import type { IntentCard, MatchReceipt } from './a2a-intent'
 
@@ -79,5 +80,42 @@ describe('makeForwarder', () => {
     const fwd = makeForwarder({ answerLocally: async () => ({ intent_id: 'i1', match: 'no' }), forwardTargets: () => [{ id: 'ccq' }], forwardSend: async () => ({ intent_id: 'i1', match: 'no' }), recordRelay: () => 'tok', markSeen: vi.fn(), hasSeen: () => false })
     const r = await fwd(event('ccs'))
     expect(r.forwarded).toBeUndefined()
+  })
+
+  it('over-budget sender: answered locally, forwardSend NOT called (no fan-out, no signal)', async () => {
+    const forwardSend = vi.fn(async (): Promise<MatchReceipt | null> => ({ intent_id: 'i1', match: 'yes', blurb: 'x' }))
+    const withinBudget = vi.fn(() => false)
+    const fwd = makeForwarder({ answerLocally: async () => ({ intent_id: 'i1', match: 'no' }), forwardTargets: () => [{ id: 'ccq' }], forwardSend, recordRelay: () => 'tok', markSeen: vi.fn(), hasSeen: () => false, withinBudget })
+    const r = await fwd(event('ccs'))
+    expect(withinBudget).toHaveBeenCalledWith('ccs')
+    expect(forwardSend).not.toHaveBeenCalled()
+    expect(r.forwarded).toBeUndefined()
+    expect(r.match).toBe('no')   // still the local answer
+  })
+
+  it('within-budget sender: fans out as normal', async () => {
+    const forwardSend = vi.fn(async (): Promise<MatchReceipt | null> => ({ intent_id: 'i1', match: 'yes', blurb: 'x' }))
+    const withinBudget = vi.fn(() => true)
+    const fwd = makeForwarder({ answerLocally: async () => ({ intent_id: 'i1', match: 'no' }), forwardTargets: () => [{ id: 'ccq' }], forwardSend, recordRelay: () => 'tok', markSeen: vi.fn(), hasSeen: () => false, withinBudget })
+    const r = await fwd(event('ccs'))
+    expect(forwardSend).toHaveBeenCalledTimes(1)
+    expect(r.forwarded).toEqual([{ blurb: 'x', degree: 2, relay_token: 'tok' }])
+  })
+
+  it('withinBudget omitted — allow-all default, existing behavior unchanged', async () => {
+    const forwardSend = vi.fn(async (): Promise<MatchReceipt | null> => ({ intent_id: 'i1', match: 'yes', blurb: 'x' }))
+    const fwd = makeForwarder({ answerLocally: async () => ({ intent_id: 'i1', match: 'no' }), forwardTargets: () => [{ id: 'ccq' }], forwardSend, recordRelay: () => 'tok', markSeen: vi.fn(), hasSeen: () => false })
+    const r = await fwd(event('ccs'))
+    expect(forwardSend).toHaveBeenCalledTimes(1)
+  })
+
+  it('per-sender isolation reaches the forwarder layer: a real budget gates ccs but not ccq', async () => {
+    const budget = makeForwardBudget({ perSender: 1, windowMs: 1000, now: () => 0 })
+    const forwardSend = vi.fn(async (): Promise<MatchReceipt | null> => ({ intent_id: 'i1', match: 'yes', blurb: 'x' }))
+    const fwd = makeForwarder({ answerLocally: async () => ({ intent_id: 'i1', match: 'no' }), forwardTargets: () => [{ id: 'ccq' }], forwardSend, recordRelay: () => 'tok', markSeen: vi.fn(), hasSeen: () => false, withinBudget: (s) => budget.withinBudget(s) })
+    await fwd(event('ccs'))                         // spends ccs's only token
+    await fwd(event('ccs', { intent_id: 'i2' }))     // ccs now over budget
+    await fwd(event('ccq', { intent_id: 'i3' }))     // ccq is a different sender — untouched
+    expect(forwardSend).toHaveBeenCalledTimes(2)     // i1 (ccs) + i3 (ccq); i2 (ccs, over budget) skipped
   })
 })
