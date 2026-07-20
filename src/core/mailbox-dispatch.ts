@@ -41,7 +41,17 @@ export function makeEnvelopeDispatch(deps: {
           if (!deps.onReveal) return
           const ph = body.peer_handle as { pubkey?: unknown; channel_id?: unknown; mailbox?: unknown } | undefined
           const peerHandle = (ph && typeof ph.pubkey === 'string' && typeof ph.channel_id === 'string')
-            ? { pubkey: ph.pubkey, channel_id: ph.channel_id, ...(ph.mailbox && typeof ph.mailbox === 'object' ? { mailbox: ph.mailbox as any } : {}) } : undefined
+            ? {
+                pubkey: ph.pubkey, channel_id: ph.channel_id,
+                // Mirror a2a-server.ts's reveal validation: a crossed mailbox
+                // must have addr/enc_pub/relays ALL present, or it's dropped
+                // (undefined) rather than stored partial — a partial mailbox
+                // stored here would later throw in sealEnvelope on a missing
+                // enc_pub.
+                ...((ph.mailbox && typeof ph.mailbox === 'object'
+                  && typeof (ph.mailbox as any).addr === 'string' && typeof (ph.mailbox as any).enc_pub === 'string' && Array.isArray((ph.mailbox as any).relays))
+                  ? { mailbox: { addr: (ph.mailbox as any).addr, enc_pub: (ph.mailbox as any).enc_pub, relays: (ph.mailbox as any).relays } } : {}),
+              } : undefined
           await deps.onReveal({
             agent_id: agent.id, intent_id: body.intent_id,
             ...(typeof body.relay_token === 'string' && body.relay_token ? { relay_token: body.relay_token } : {}),

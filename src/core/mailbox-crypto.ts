@@ -42,15 +42,30 @@ function toIdentity(k: { addr: string; addr_priv: string; enc_pub: string; enc_p
 
 export function loadMailboxIdentity(stateDir: string): MailboxIdentity {
   const file = join(stateDir, KEY_FILE)
+  let raw: string
   try {
-    return toIdentity(JSON.parse(readFileSync(file, 'utf8')) as { addr: string; addr_priv: string; enc_pub: string; enc_priv: string })
-  } catch {
+    raw = readFileSync(file, 'utf8')
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      // File exists but couldn't be read (EMFILE/EIO/EACCES/...) — this is NOT
+      // "absent." v0 pairing is manual with no re-pairing flow: silently
+      // regenerating here would rotate the mailbox address and break every
+      // established pen-pal connection. Fail loud instead.
+      throw new Error(`loadMailboxIdentity: failed to read ${file}: ${err instanceof Error ? err.message : String(err)}`)
+    }
     const k = generateMailboxIdentity()
     mkdirSync(stateDir, { recursive: true, mode: 0o700 })
     const tmp = `${file}.tmp`
     writeFileSync(tmp, JSON.stringify(k, null, 2) + '\n', { mode: 0o600 })
     renameSync(tmp, file)
     return toIdentity(k)
+  }
+  // File is present — a parse/decode failure here is a corrupt key file, NOT
+  // "absent." Same rationale: never silently regenerate/overwrite it.
+  try {
+    return toIdentity(JSON.parse(raw) as { addr: string; addr_priv: string; enc_pub: string; enc_priv: string })
+  } catch (err) {
+    throw new Error(`loadMailboxIdentity: ${file} is present but corrupt/unparseable — refusing to regenerate (would rotate the mailbox address and break existing pen-pal connections): ${err instanceof Error ? err.message : String(err)}`)
   }
 }
 

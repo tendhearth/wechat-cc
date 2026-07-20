@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { verify as edVerify, createPublicKey } from 'node:crypto'
@@ -36,5 +36,14 @@ describe('mailbox-crypto', () => {
     const sig = signFetch(id1.sign, id1.addr, now)
     const pub = createPublicKey({ key: Buffer.from(id1.addr, 'base64url'), format: 'der', type: 'spki' })
     expect(edVerify(null, Buffer.from(`fetch:${id1.addr}:${now}`, 'utf8'), pub, Buffer.from(sig, 'base64url'))).toBe(true)
+  })
+
+  it('loadMailboxIdentity THROWS on a present-but-corrupt key file (never silently regenerates/overwrites it)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbx-'))
+    const file = join(dir, 'mailbox-key.json')
+    writeFileSync(file, '{ garbage', { mode: 0o600 })
+    expect(() => loadMailboxIdentity(dir)).toThrow()
+    // the corrupt file must be left untouched — not regenerated/overwritten
+    expect(readFileSync(file, 'utf8')).toBe('{ garbage')
   })
 })
