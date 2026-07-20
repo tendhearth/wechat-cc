@@ -121,6 +121,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // silently 403 every CLI reveal (caught by cli-routes.test.ts).
   'POST /v1/social/echoes/reveal': 'trusted',
   'POST /v1/social/pledges/reveal': 'trusted',
+  // trusted — 配对码 (spec §7). Same trust class as a2a/send + social reveal:
+  // internal-api is 127.0.0.1 + 0600 file token; the CLI holds the FILE token
+  // (trusted). Acts on an operator-driven pairing, not a world-open broadcast.
+  'POST /v1/pair/start': 'trusted',
+  'POST /v1/pair/accept': 'trusted',
 }
 
 export function minTierFor(routeKey: string): UserTier {

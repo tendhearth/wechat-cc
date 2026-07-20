@@ -33,6 +33,11 @@ describe('route-tiers', () => {
     expect(minTierFor('POST /v1/some/new/route')).toBe('admin')
   })
 
+  it('pair routes require trusted', () => {
+    expect(minTierFor('POST /v1/pair/start')).toBe('trusted')
+    expect(minTierFor('POST /v1/pair/accept')).toBe('trusted')
+  })
+
   it('every registered route has an explicit min tier (no accidental default-deny)', () => {
     const deps = { stateDir: '/tmp', daemonPid: 1 } as unknown as InternalApiDeps
     const routes = makeRoutes({ deps, getDelegate: () => null, maybePrefix: (_c, t) => t })

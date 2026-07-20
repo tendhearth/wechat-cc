@@ -209,6 +209,12 @@ export interface InternalApiDeps {
     pledgeStore: import('../../core/social-pledge-store').PledgeStore
     revealer: import('../../core/social-reveal').Revealer
   }
+  /** 配对码 (spec §7) — late-bound by main.ts from bootstrap.pairing. Undefined
+   *  (⇒ /v1/pair/* 503) until mailbox_relays is configured AND late-bind runs. */
+  pairing?: {
+    start(): Promise<import('../../core/pairing').PairStartResult>
+    accept(code: string): Promise<import('../../core/pairing').PairResult>
+  }
   /**
    * Optional per-turn outcome store — backs GET /v1/turns. Undefined in
    * minimal embeddings / tests, in which case the route returns 503.
@@ -315,6 +321,12 @@ export interface InternalApi {
    * configured).
    */
   setSocial(social: NonNullable<InternalApiDeps['social']>): void
+  /**
+   * Late-bind the 配对码 engine (spec §7) after bootstrap has constructed it
+   * (only happens when mailbox_relays is configured). POST /v1/pair/start
+   * and POST /v1/pair/accept return 503 until this is called.
+   */
+  setPairing(pairing: NonNullable<InternalApiDeps['pairing']>): void
   /** Mint an env-only per-session token granting `tier`, keyed by `sessionKey`
    *  (`provider/alias/chatId`). The daemon injects it into that session's MCP
    *  children; the route layer resolves the tier from it. */

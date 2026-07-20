@@ -314,6 +314,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setSocial(social) {
       deps.social = social
     },
+    setPairing(pairing) {
+      deps.pairing = pairing
+    },
     mintSessionToken(tier: UserTier, sessionKey: string) {
       return registry.mint(tier, sessionKey)
     },

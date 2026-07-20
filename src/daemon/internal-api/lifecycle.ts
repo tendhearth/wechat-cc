@@ -11,6 +11,7 @@ export interface InternalApiLifecycle extends Lifecycle {
   setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
   setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
   setSocial(social: NonNullable<InternalApiDeps['social']>): void
+  setPairing(pairing: NonNullable<InternalApiDeps['pairing']>): void
   mintSessionToken(tier: import('../../core/user-tier').UserTier, sessionKey: string): string
   invalidateSession(sessionKey: string): void
 }
@@ -46,6 +47,7 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     setCompanionConverse: (fn) => api.setCompanionConverse(fn),
     setA2A: (a2a) => api.setA2A(a2a),
     setSocial: (social) => api.setSocial(social),
+    setPairing: (pairing) => api.setPairing(pairing),
     mintSessionToken: (tier, sessionKey) => api.mintSessionToken(tier, sessionKey),
     invalidateSession: (sessionKey) => api.invalidateSession(sessionKey),
     stop: async () => {
