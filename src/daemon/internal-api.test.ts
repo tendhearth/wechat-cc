@@ -2752,7 +2752,12 @@ describe('internal-api', () => {
         stateDir, daemonPid: 1,
         ...(opts ? {
           social: {
-            broker: { seek: async () => ({ intent_id: 'x', matched: [], lit: [] }) },
+            broker: {
+              seek: async () => ({ intent_id: 'x', matched: [], lit: [] }),
+              propose: async () => ({ ok: true as const, intent_id: 'x', redacted: 'x' }),
+              confirmSeek: () => ({ ok: true as const, intent_id: 'x' }),
+              cancelSeek: () => ({ ok: true as const }),
+            },
             seekStore: {
               create: () => {}, propose: () => {}, update: () => {},
               list: () => opts.seeks ?? [], get: () => null,

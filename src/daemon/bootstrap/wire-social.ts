@@ -79,7 +79,12 @@ export interface SocialWiring {
    */
   onMailboxLetter?: A2AServerOpts['onLetter']
   social?: {
-    broker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> }
+    broker: {
+      seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome>
+      propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
+      confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
+      cancelSeek(id: string): import('../../core/social-broker').CancelOutcome
+    }
     seekStore: import('../../core/social-seek-store').SeekStore
     echoStore: import('../../core/social-echo-store').EchoStore
     pledgeStore: import('../../core/social-pledge-store').PledgeStore
@@ -108,7 +113,12 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   let socialOnReveal: A2AServerOpts['onReveal']
   let socialOnLetter: A2AServerOpts['onLetter']
   let socialOnMailboxLetter: A2AServerOpts['onLetter']
-  let socialBroker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> } | undefined
+  let socialBroker: {
+    seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome>
+    propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
+    confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
+    cancelSeek(id: string): import('../../core/social-broker').CancelOutcome
+  } | undefined
   // Per-row resume closure (replaces the old raw socialForage). It knows how to
   // gate a legacy/bridge row before it reaches the now-DE-GATED forage — see its
   // assignment inside the social block for the full rationale.
@@ -505,7 +515,12 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           catch (err) { deps.log('SOCIAL_REC', `finishSeek failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
         },
       })
-      socialBroker = { seek: (topic, opts) => broker.seek(topic, opts) }
+      socialBroker = {
+        seek: (topic, opts) => broker.seek(topic, opts),            // bridge (Task 7 deletes)
+        propose: (topic, opts) => broker.propose(topic, opts),
+        confirmSeek: (id) => broker.confirmSeek(id),
+        cancelSeek: (id) => broker.cancelSeek(id),
+      }
       socialResumeRow = async (row) => {
         // forage() is now DE-GATED (Task 2) — it broadcasts its argument
         // verbatim. A propose→confirm row carries redacted_topic (+ optional

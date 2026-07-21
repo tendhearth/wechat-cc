@@ -1838,16 +1838,17 @@ describe('bootstrap agent-social M1 wiring', () => {
     }
   })
 
-  it('POST /v1/social/seek returns 503 when the social broker is not wired (deps.social absent)', async () => {
+  it('POST /v1/social/seek/propose returns 503 when the social broker is not wired (deps.social absent)', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'internal-api-social-503-'))
     const api = createInternalApi({ stateDir, daemonPid: 1 } as any)
     try {
       const { port } = await api.start()
-      // social_seek is admin-tier (route-tiers.ts) — the daemon-wide file
-      // token is only 'trusted', so mint an admin-tier session token
-      // (mirrors how a real admin-tier MCP child would authenticate).
+      // POST /v1/social/seek/propose is trusted-tier (route-tiers.ts, P4) —
+      // the daemon-wide file token is already 'trusted', but an admin-tier
+      // session token meets a trusted bar too (admin > trusted), so minting
+      // admin here still exercises the same 503-before-authz-matters path.
       const token = api.mintSessionToken('admin', 'test-session')
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/seek`, {
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/seek/propose`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: JSON.stringify({ topic: '找摄影搭子' }),

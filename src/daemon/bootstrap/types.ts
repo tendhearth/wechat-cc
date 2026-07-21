@@ -243,10 +243,13 @@ export interface Bootstrap {
    * Agent-social M1 (T7b-core) — present only when `social_enabled` +
    * `social_disclosure_policy` are both configured (and at least one
    * registered provider offers a cheapEval). Undefined otherwise — the
-   * feature stays fully inert (no /a2a/intent, no /v1/social/seek).
+   * feature stays fully inert (no /a2a/intent, no /v1/social/seek/*).
    *
-   * `broker.seek()` is what POST /v1/social/seek calls — late-bound into
-   * internal-api by main.ts (mirrors `a2aDeps`/`setA2A`).
+   * `broker.propose`/`confirmSeek`/`cancelSeek` (P4 派心愿) back
+   * POST /v1/social/seek/{propose,confirm,cancel} — late-bound into
+   * internal-api by main.ts (mirrors `a2aDeps`/`setA2A`). `broker.seek()` is
+   * the deprecated one-shot bridge for pre-split callers, kept as a
+   * structural superset until Task 7 deletes it.
    *
    * `revealer` drives the row-driven mutual reveal (both the outbound
    * revealEcho/revealPledge legs the internal-api calls and the inbound
@@ -254,7 +257,12 @@ export interface Bootstrap {
    * is exposed so the answer-side reveal surface can list/read pledges.
    */
   social?: {
-    broker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> }
+    broker: {
+      seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome>
+      propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
+      confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
+      cancelSeek(id: string): import('../../core/social-broker').CancelOutcome
+    }
     seekStore: import('../../core/social-seek-store').SeekStore
     echoStore: import('../../core/social-echo-store').EchoStore
     pledgeStore: import('../../core/social-pledge-store').PledgeStore

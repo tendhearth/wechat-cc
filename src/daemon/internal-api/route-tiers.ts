@@ -73,6 +73,14 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // POST /v1/stickers writes an arbitrary sourcePath into the lib — same
   // trust class as send_file, so it's trusted not guest.
   'POST /v1/stickers': 'trusted',
+  // trusted (RESOLVED, P4 spec §3.3) — the CLI (social propose/confirm/cancel)
+  // holds only the daemon-wide FILE token (→ trusted); an admin-tiered route
+  // would 403 every CLI call. internal-api is 127.0.0.1 + 0600 file token = the
+  // owner. confirm IS the real "broadcast to strangers" step, so FLAG all three
+  // for the release security review. See docs/superpowers/specs/2026-07-20-p4-seek-confirm-design.md.
+  'POST /v1/social/seek/propose': 'trusted',
+  'POST /v1/social/seek/confirm': 'trusted',
+  'POST /v1/social/seek/cancel': 'trusted',
   // admin — owner-only same-session power: drives a real turn on the
   // owner's own chat session and returns the reply to the caller (app
   // conversation channel, voice arc Stage 0). Same trust class as the
@@ -92,13 +100,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/daemon/restart': 'admin',
   // admin — on-demand file locate over the owner's computer (file_locate)
   'GET /v1/locate': 'admin',
-  // admin — agent-social M1 (social_seek is ADMIN_ONLY in user-tier.ts;
-  // actively broadcasts an intent to external A2A agents, unlike a2a_send's
-  // reply-to-an-established-peer). Would default to admin anyway (unlisted
-  // routes fail-closed) — listed explicitly for documentation.
-  'POST /v1/social/seek': 'admin',
-  // admin — same trust class as social_seek above (觅食台 P2): read-only,
-  // but exposes the owner's stored seeks/echoes (topics + peer exchanges).
+  // admin — 觅食台 P2: read-only, but exposes the owner's stored
+  // seeks/echoes (topics + peer exchanges). (The old one-shot
+  // POST /v1/social/seek this comment used to point to was deleted in P4 —
+  // see the trusted seek/propose|confirm|cancel block in the operator/agent
+  // ops section above.)
   'GET /v1/social/seeks': 'admin',
   'GET /v1/social/echoes': 'admin',
   // admin — inbound on/off toggle (觅食台 P2 Task 3): writes a2a_listen in
@@ -112,9 +118,10 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // batch as the admin-tiered routes above. Reveal acts on an ALREADY
   // established seek/pledge (double opt-in on a match), not a new broadcast —
   // same trust class as POST /v1/a2a/send ("reply to an established peer",
-  // trusted, in the operator/agent-ops block above), not POST /v1/social/seek
-  // (admin, broadcasts a new intent). This also has to be trusted because
-  // it's the write half of `wechat-cc social reveal`
+  // trusted, in the operator/agent-ops block above), not the admin-tiered
+  // read routes above (GET seeks/echoes/pledges/inbound, which expose the
+  // owner's full stored history rather than acting on one row). This also
+  // has to be trusted because it's the write half of `wechat-cc social reveal`
   // (docs/superpowers/specs/2026-07-17-cli-social-surface-design.md), and the
   // CLI only ever holds the daemon-wide FILE token (registerFileToken →
   // trusted, see token-registry.ts) — an admin-tiered route here would
