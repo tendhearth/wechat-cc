@@ -334,3 +334,19 @@ describe('migration v11 — participants column', () => {
     expect(row!.participants).toBeNull()
   })
 })
+
+describe('migration v24 — social_seek redacted columns', () => {
+  it('adds nullable redacted_topic / redacted_city columns to social_seek', () => {
+    const db = openTestDb()
+    const cols = db.query<{ name: string }, []>("PRAGMA table_info('social_seek')").all()
+    const names = cols.map(c => c.name)
+    expect(names).toContain('redacted_topic')
+    expect(names).toContain('redacted_city')
+  })
+
+  it('PRAGMA user_version is at least 24', () => {
+    const db = openTestDb()
+    const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
+    expect(v).toBeGreaterThanOrEqual(24)
+  })
+})

@@ -61,7 +61,7 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  it('opens a fresh db with PRAGMA user_version = 23 and the 22 tables', () => {
+  it('opens a fresh db with PRAGMA user_version = 24 and the 22 tables', () => {
     const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
     // v14 (dialogue real data): messages / threads / thread_extract_state tables added;
     // events.kind widened with 'threads_extracted'.
@@ -75,7 +75,9 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v22 (匿名笔友通道 A): penpal_channel + penpal_letter tables + social_relay handle columns added.
     // v23 (mailbox plumbing B, additive): penpal_channel gains a nullable peer_mailbox column
     // (no new tables — the set below is unchanged from v22).
-    expect(v).toBe(23)
+    // v24 (派心愿 propose→confirm, P4): social_seek gains nullable redacted_topic /
+    // redacted_city columns (no new tables — the set below is unchanged from v22).
+    expect(v).toBe(24)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'events', 'handled_messages', 'message_attempts', 'messages',

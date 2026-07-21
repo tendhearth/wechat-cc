@@ -2732,7 +2732,8 @@ describe('internal-api', () => {
   describe('social read routes (GET /v1/social/seeks, GET /v1/social/echoes)', () => {
     const seekRow: SeekRow = {
       id: 'k1', kind: 'seek', topic: '找个会修老相机的',
-      status: 'foraging', hop: 1, peers_asked: 0, created_at: 't', updated_at: 't',
+      status: 'foraging', redacted_topic: null, redacted_city: null,
+      hop: 1, peers_asked: 0, created_at: 't', updated_at: 't',
     }
     const echoRow: EchoRow = {
       id: 'e1', seek_id: 'k1', peer_masked: 'p***', degree: 1,
@@ -2753,7 +2754,7 @@ describe('internal-api', () => {
           social: {
             broker: { seek: async () => ({ intent_id: 'x', matched: [], lit: [] }) },
             seekStore: {
-              create: () => {}, update: () => {},
+              create: () => {}, propose: () => {}, update: () => {},
               list: () => opts.seeks ?? [], get: () => null,
             },
             echoStore: {
