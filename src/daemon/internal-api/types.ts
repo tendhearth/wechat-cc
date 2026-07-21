@@ -203,12 +203,10 @@ export interface InternalApiDeps {
    * (mirrors the `a2a` dep above / `setA2A`).
    *
    * P4 派心愿: `propose`/`confirmSeek`/`cancelSeek` back the propose→confirm
-   * routes; `seek` is the deprecated one-shot bridge (pre-split callers),
-   * kept as a structural superset until Task 7 deletes it.
+   * routes.
    */
   social?: {
     broker: {
-      seek(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').SeekOutcome>
       propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
       confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
       cancelSeek(id: string): import('../../core/social-broker').CancelOutcome

@@ -22,8 +22,6 @@ export interface BrokerDeps {
   policy: string
   cheapEval: CheapEval
   ttlMs?: number
-  /** Sync leg (deprecated `seek()` bridge only): persist the wish as a `foraging` social_seek row. */
-  sow: (intentId: string, topic: string) => void
   /** P4 propose leg: persist a `proposed` row carrying the owner-approved redacted wording. */
   proposeRow: (intentId: string, r: { topic: string; redactedTopic: string; redactedCity?: string }) => void
   /** Read a seek row back (for confirmSeek/cancelSeek). null when unknown. */
@@ -37,7 +35,6 @@ export interface BrokerDeps {
   /** Schedule the background coroutine off the caller's turn. Default: fire-and-forget. */
   schedule?: (fn: () => Promise<void>) => void
 }
-export interface SeekOutcome { intent_id: string }
 export type ProposeOutcome =
   | { ok: true; intent_id: string; redacted: string; redacted_city?: string }
   | { ok: false; reason: string }
@@ -152,26 +149,6 @@ export function makeBroker(deps: BrokerDeps) {
       if (row.status !== 'proposed') return { ok: true }
       deps.markStatus(intentId, 'cancelled')
       return { ok: true }
-    },
-
-    // DEPRECATED — deleted in P4 Task 7; bridges pre-split callers. Gate →
-    // sow (a `foraging` row) → forage the redacted result. The gating that
-    // used to live INSIDE forage now lives here, so alias callers keep
-    // byte-for-byte behavior: a `foraging` row + a redacted broadcast.
-    async seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> {
-      const intent_id = newIntentId()
-      // Gate the OUTBOUND intent topic before it ever leaves. Blocked → return
-      // the id but sow nothing and schedule no forage (nothing was exposed).
-      const gated = await gateOutbound(topic, { policy: deps.policy, cheapEval: deps.cheapEval })
-      if (!gated.ok) return { intent_id }
-      let redactedCity: string | undefined
-      if (opts?.city) {
-        const gatedCity = await gateOutbound(opts.city, { policy: deps.policy, cheapEval: deps.cheapEval })
-        if (gatedCity.ok) redactedCity = gatedCity.redacted   // else omit city (safe degradation)
-      }
-      deps.sow(intent_id, topic)
-      schedule(() => forage(intent_id, gated.redacted, redactedCity ? { city: redactedCity } : undefined))
-      return { intent_id }
     },
   }
 }

@@ -671,7 +671,6 @@ describe('wechat-mcp stdio integration', () => {
       stateDir, daemonPid: 7777,
       social: {
         broker: {
-          seek: async () => ({ intent_id: 'unused' }),
           propose: async (topic: string, opts?: { city?: string }) => {
             proposeCalls.push({ topic, opts })
             return { ok: true as const, intent_id: 'seek-abc123', redacted: '找摄影搭子(已脱敏)' }

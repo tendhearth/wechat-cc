@@ -13,7 +13,6 @@ import type { AppendInput } from '../../core/a2a-events-store'
 import type { YiHub } from '../../core/yi-hub'
 import type { DelegateDispatch } from './delegate'
 import type { SendAssistantText } from './fallback-reply'
-import type { SeekOutcome } from '../../core/social-broker'
 import type { Revealer } from '../../core/social-reveal'
 
 export interface BootstrapDeps {
@@ -247,9 +246,7 @@ export interface Bootstrap {
    *
    * `broker.propose`/`confirmSeek`/`cancelSeek` (P4 派心愿) back
    * POST /v1/social/seek/{propose,confirm,cancel} — late-bound into
-   * internal-api by main.ts (mirrors `a2aDeps`/`setA2A`). `broker.seek()` is
-   * the deprecated one-shot bridge for pre-split callers, kept as a
-   * structural superset until Task 7 deletes it.
+   * internal-api by main.ts (mirrors `a2aDeps`/`setA2A`).
    *
    * `revealer` drives the row-driven mutual reveal (both the outbound
    * revealEcho/revealPledge legs the internal-api calls and the inbound
@@ -258,7 +255,6 @@ export interface Bootstrap {
    */
   social?: {
     broker: {
-      seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome>
       propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
       confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
       cancelSeek(id: string): import('../../core/social-broker').CancelOutcome

@@ -479,7 +479,7 @@ const migrations: Migration[] = [
   },
   // v20 — async foraging spine. Adds the reveal columns to social_echo (the
   // seeker's side) + the social_pledge table (the answerer's mirror side) so
-  // dual-confirm can move OUT of broker.seek() into a durable, row-driven,
+  // dual-confirm can move OUT of the seek broker call into a durable, row-driven,
   // restart-survivable mutual reveal. Nullable-TEXT ADD COLUMN is safe on a
   // STRICT table; social_echo is created unconditionally by v19 above, so no
   // table-exists guard is needed even for the user_version=9 test harnesses.

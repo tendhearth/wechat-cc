@@ -2753,7 +2753,6 @@ describe('internal-api', () => {
         ...(opts ? {
           social: {
             broker: {
-              seek: async () => ({ intent_id: 'x', matched: [], lit: [] }),
               propose: async () => ({ ok: true as const, intent_id: 'x', redacted: 'x' }),
               confirmSeek: () => ({ ok: true as const, intent_id: 'x' }),
               cancelSeek: () => ({ ok: true as const }),

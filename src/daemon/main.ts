@@ -290,7 +290,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setA2A(boot.a2aDeps)
     // Wire the agent-social M1 broker (T7b-core) — only present when
     // social_enabled + social_disclosure_policy are both configured. So
-    // POST /v1/social/seek works when the feature is on.
+    // POST /v1/social/seek/{propose,confirm,cancel} work when the feature is on.
     if (boot.social) internalApi.setSocial(boot.social)
     // Wire the 配对码 engine (spec §7) — only present when mailbox_relays is
     // configured. So POST /v1/pair/start + /v1/pair/accept work when wired.

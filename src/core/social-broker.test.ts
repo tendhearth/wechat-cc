@@ -31,7 +31,6 @@ function stubDeps(over: Partial<Parameters<typeof makeBroker>[0]> = {}) {
     policy: 'p', cheapEval,
     discover: async () => [peerB],
     send: async () => ({ intent_id: 'x', match: 'yes' as const, blurb: '也爱摄影' }),
-    sow: () => {},
     proposeRow: map.proposeRow,
     readSeek: map.readSeek,
     markStatus: map.markStatus,
@@ -218,48 +217,5 @@ describe('makeBroker.forage (pre-gated) — invariants, driven via propose+confi
     broker.confirmSeek('f1'); await d.run()
     const relay = recorded.find(r => r.relayToken === 'T')
     expect(relay).toMatchObject({ intentId: 'f1', peerAgentId: null, relayVia: expect.any(String), relayToken: 'T', degree: 2 })
-  })
-})
-
-describe('makeBroker.seek — deprecated bridge (deleted in Task 7)', () => {
-  it('sows a foraging row and forages the REDACTED string (not raw input)', async () => {
-    const sown: Array<{ id: string; topic: string }> = []
-    let sentCard: any
-    const d = deferred()
-    const broker = makeBroker(stubDeps({
-      cheapEval: async () => JSON.stringify({ violation: false, redacted: '寻找摄影伙伴【已清理】' }),
-      sow: (id, topic) => { sown.push({ id, topic }) },
-      send: async (_h: any, card: any) => { sentCard = card; return { intent_id: 'x', match: 'yes' as const } },
-      schedule: d.schedule,
-    }))
-    const out = await broker.seek('找摄影搭子+电话')
-    expect(sown).toEqual([{ id: out.intent_id, topic: '找摄影搭子+电话' }])   // sow keeps the raw (row re-gated on resume)
-    await d.run()
-    expect(sentCard.topic).toBe('寻找摄影伙伴【已清理】')
-    expect(sentCard.topic).not.toBe('找摄影搭子+电话')
-  })
-
-  it('gate blocks the intent topic → nothing sown, nothing sent, no forage scheduled', async () => {
-    let sent = 0, sown = 0, scheduled = 0
-    const broker = makeBroker(stubDeps({
-      cheapEval: async () => JSON.stringify({ violation: true, redacted: '', reasons: ['leak'] }),
-      send: async () => { sent++; return { intent_id: 'x', match: 'yes' as const } },
-      sow: () => { sown++ },
-      schedule: () => { scheduled++ },
-    }))
-    const out = await broker.seek('涉密意图')
-    expect(out.intent_id).toMatch(/.+/)
-    expect([sent, sown, scheduled]).toEqual([0, 0, 0])
-  })
-
-  it('returns { intent_id } after the sync leg, BEFORE any echo is recorded', async () => {
-    const recorded: Array<string | null> = []
-    const d = deferred()
-    const broker = makeBroker(stubDeps({ recordEcho: (e) => { recorded.push(e.peerAgentId) }, schedule: d.schedule }))
-    const out = await broker.seek('找摄影搭子')
-    expect(out.intent_id).toMatch(/.+/)
-    expect(recorded).toEqual([])          // background leg has not run yet
-    await d.run()
-    expect(recorded).toEqual(['ccb'])     // echo recorded only after foraging
   })
 })

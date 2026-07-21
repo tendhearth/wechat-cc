@@ -1108,7 +1108,8 @@ describe('bootstrap agent-social M1 wiring', () => {
       // The broker + revealer + pledgeStore are exposed on the bootstrap
       // return so main.ts can late-bind them into internal-api (setSocial).
       expect(boot.social).toBeDefined()
-      expect(typeof boot.social!.broker.seek).toBe('function')
+      expect(typeof boot.social!.broker.propose).toBe('function')
+      expect(typeof boot.social!.broker.confirmSeek).toBe('function')
       expect(typeof boot.social!.revealer.revealEcho).toBe('function')
       expect(typeof boot.social!.pledgeStore.list).toBe('function')
       expect(card.capabilities.some(c => c.name === 'reveal')).toBe(true)
@@ -1352,11 +1353,11 @@ describe('bootstrap agent-social M1 wiring', () => {
     // provider-registry.ts CHEAP_EVAL_PREFERENCE) once an openai-compatible
     // provider is registered — so we point it at a local SSE mock instead of
     // shelling out to a real `claude` subprocess (slow/flaky/CI-unavailable).
-    // The broker now GATES the outbound topic via cheapEval *before* sowing
-    // the seek row, so the mock must return a non-violation verdict for the
-    // `foraging` row to appear (a refused port would fail the gate closed →
-    // no sow). discover() returns no peers here, so the background forage
-    // settles the row to `closed`.
+    // The broker GATES the outbound topic via cheapEval at propose time, so the
+    // mock must return a non-violation verdict for the `proposed` row to appear
+    // (a refused port would fail the gate closed → propose returns ok:false, no
+    // row). discover() returns no peers here, so the confirm-scheduled background
+    // forage settles the row to `closed`.
     const openaiMock = serveMockOpenai('{"violation": false, "redacted": "找个会修老相机的"}')
     const prevKey = process.env.WECHAT_OPENAI_API_KEY
     process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
@@ -1386,14 +1387,17 @@ describe('bootstrap agent-social M1 wiring', () => {
         log: () => {},
       })
       // discover() returns no peers in this fixture (no paired a2a agents),
-      // so the outcome is empty — sow must STILL persist the seek row
-      // (foraging → closed) even when nothing matched.
-      await boot.social!.broker.seek('找个会修老相机的')
-      // Non-blocking: the sync leg sows `foraging`; the background forage
-      // (0 peers here) settles it to `closed`. Poll briefly for the terminal row.
+      // so the outcome is empty — propose persists a `proposed` row and
+      // confirm (派) forages it (0 peers → `closed`) even when nothing matched.
+      const proposed = await boot.social!.broker.propose('找个会修老相机的')
+      expect(proposed.ok).toBe(true)
+      boot.social!.broker.confirmSeek((proposed as { ok: true; intent_id: string }).intent_id)
+      // Non-blocking: propose stores `proposed`; confirm flips it to `foraging`
+      // and the background forage (0 peers here) settles it to `closed`. Poll
+      // briefly for any point in that proposed→foraging→closed progression.
       const seen = await pollFor(() => {
         const rows = db.query('SELECT topic, status FROM social_seek').all() as Array<{ topic: string; status: string }>
-        return rows.find(r => r.topic.includes('相机') && (r.status === 'closed' || r.status === 'foraging')) ?? null
+        return rows.find(r => r.topic.includes('相机') && (r.status === 'proposed' || r.status === 'foraging' || r.status === 'closed')) ?? null
       })
       expect(seen).not.toBeNull()
     } finally {
@@ -1409,8 +1413,9 @@ describe('bootstrap agent-social M1 wiring', () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-record-throw-'))
     const port = 19905
     // Gate must PASS (mock returns a non-violation verdict) so the broker
-    // reaches its sow leg — the point of this test is that a persistence
-    // failure inside sow/finishSeek is swallowed, not that the gate blocks.
+    // reaches its propose write leg — the point of this test is that a
+    // persistence failure inside proposeRow/finishSeek is swallowed, not that
+    // the gate blocks.
     const openaiMock = serveMockOpenai('{"violation": false, "redacted": "找个会修老相机的"}')
     const prevKey = process.env.WECHAT_OPENAI_API_KEY
     process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
@@ -1439,16 +1444,18 @@ describe('bootstrap agent-social M1 wiring', () => {
         lastActiveChatId: () => null,
         log: () => {},
       })
-      // Drop the table the sow leg writes to AFTER bootstrap has already
-      // prepared its statements, so the INSERT inside the broker's sow()
+      // Drop the table the propose leg writes to AFTER bootstrap has already
+      // prepared its statements, so the INSERT inside the broker's proposeRow()
       // throws ("no such table: social_seek") — this simulates a persistence
       // error (locked db / disk full / duplicate PK) without faking those
-      // conditions directly. sow/recordEcho/finishSeek each guard their own
-      // writes, so a store failure must never turn seek() into a rejection.
+      // conditions directly. proposeRow/recordEcho/finishSeek each guard their
+      // own writes, so a store failure must never turn propose() into a rejection.
       db.exec('DROP TABLE social_seek')
-      const out = await boot.social!.broker.seek('找个会修老相机的')
-      expect(typeof out.intent_id).toBe('string')   // never rejects; background write failures are swallowed
-      expect(out.intent_id.length).toBeGreaterThan(0)
+      const out = await boot.social!.broker.propose('找个会修老相机的')
+      expect(out.ok).toBe(true)   // never rejects; the persistence write failure is swallowed
+      const okOut = out as { ok: true; intent_id: string }
+      expect(typeof okOut.intent_id).toBe('string')
+      expect(okOut.intent_id.length).toBeGreaterThan(0)
     } finally {
       openaiMock.stop()
       await boot?.a2aServer?.stop()
@@ -1509,9 +1516,9 @@ describe('bootstrap agent-social M1 wiring', () => {
       }),
     )
     const db = openTestDb()
-    // Seed the "crash mid-forage" state directly (bypassing broker.seek's
-    // real gate/discover round trip, since we only need the terminal DB
-    // state a crashed prior run would have left behind).
+    // Seed the "crash mid-forage" state directly (bypassing the broker's
+    // real propose/confirm gate/discover round trip, since we only need the
+    // terminal DB state a crashed prior run would have left behind).
     const seekStore = makeSeekStore(db)
     const echoStore = makeEchoStore(db)
     seekStore.create({ id: seekResume, kind: 'seek', topic: '找摄影搭子（续）' })
@@ -2082,7 +2089,7 @@ describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPO
     mailbox_addr: 'A', mailbox_enc_pub: 'E', relays: ['https://brain.example/mailbox'],
   }
 
-  it('discover: broker.seek with ONLY a url-less mailbox peer registered never reaches intentUrl(undefined) — peer skipped, seek closes with 0 peers asked', async () => {
+  it('discover: broker propose→confirm with ONLY a url-less mailbox peer registered never reaches intentUrl(undefined) — peer skipped, seek closes with 0 peers asked', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-guard-discover-'))
     const port = 19912
     const openaiMock = serveMockOpenai(JSON.stringify({ violation: false, redacted: '找摄影搭子' }))
@@ -2114,10 +2121,12 @@ describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPO
       })
       boot.a2aDeps.registry.add(mailboxPeer)
 
-      const { intent_id } = await boot.social!.broker.seek('找摄影搭子')
+      const proposed = await boot.social!.broker.propose('找摄影搭子')
+      const intent_id = (proposed as { ok: true; intent_id: string }).intent_id
+      boot.social!.broker.confirmSeek(intent_id)
       const row = await pollFor(() => {
         const r = boot!.social!.seekStore.get(intent_id)
-        return r && r.status !== 'foraging' ? r : null
+        return r && r.status !== 'proposed' && r.status !== 'foraging' ? r : null
       })
       expect(row).not.toBeNull()
       // Closed (no yes echo) with 0 peers asked — proves discover filtered

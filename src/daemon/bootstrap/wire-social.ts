@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { makeJudge } from '../../core/social-judge'
 import { makeAnswerIntent } from '../../core/social-answer'
-import { makeBroker, type SeekOutcome } from '../../core/social-broker'
+import { makeBroker } from '../../core/social-broker'
 import { makeSeekStore } from '../../core/social-seek-store'
 import { makeEchoStore } from '../../core/social-echo-store'
 import { makePledgeStore } from '../../core/social-pledge-store'
@@ -80,7 +80,6 @@ export interface SocialWiring {
   onMailboxLetter?: A2AServerOpts['onLetter']
   social?: {
     broker: {
-      seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome>
       propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
       confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
       cancelSeek(id: string): import('../../core/social-broker').CancelOutcome
@@ -106,7 +105,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   // either, the feature stays fully inert: no onIntent/onReveal wired into
   // the a2a server below, no broker constructed, no /v1/social/seek
   // functionality (the route 503s). Wires the row-driven mutual reveal
-  // (revealer + inbound onReveal), the non-blocking broker (sow/forage/
+  // (revealer + inbound onReveal), the non-blocking broker (propose/forage/
   // recordEcho/finishSeek), the answer-side pledge, and boot resume of any
   // seeks still `foraging` after a restart.
   let socialOnIntent: A2AServerOpts['onIntent']
@@ -114,7 +113,6 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   let socialOnLetter: A2AServerOpts['onLetter']
   let socialOnMailboxLetter: A2AServerOpts['onLetter']
   let socialBroker: {
-    seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome>
     propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
     confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
     cancelSeek(id: string): import('../../core/social-broker').CancelOutcome
@@ -467,10 +465,6 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           const r = await a2aClient.send({ url: intentUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, card } })
           return r.ok ? MatchReceiptSchema.parse(r.response) : null
         },
-        sow: (intentId, topic) => {
-          try { seekStore.create({ id: intentId, kind: 'seek', topic }) }
-          catch (err) { deps.log('SOCIAL_REC', `sow failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
-        },
         // P4 propose leg: persist a `proposed` row carrying the owner-approved
         // redacted wording (+ optional redacted city) so confirmSeek can forage
         // it verbatim, and a crash-resumed row survives WYSIWYG (redacted_topic
@@ -516,7 +510,6 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         },
       })
       socialBroker = {
-        seek: (topic, opts) => broker.seek(topic, opts),            // bridge (Task 7 deletes)
         propose: (topic, opts) => broker.propose(topic, opts),
         confirmSeek: (id) => broker.confirmSeek(id),
         cancelSeek: (id) => broker.cancelSeek(id),
@@ -525,9 +518,9 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         // forage() is now DE-GATED (Task 2) — it broadcasts its argument
         // verbatim. A propose→confirm row carries redacted_topic (+ optional
         // redacted_city): forage it verbatim so WYSIWYG survives the restart.
-        // A legacy/bridge row has redacted_topic=null (pre-v24 rows + seek()-
-        // alias sows) — RE-GATE here so a RAW topic can never reach the
-        // de-gated forage. (M1 city fix: resume now carries redacted_city too;
+        // A legacy row has redacted_topic=null (pre-v24 rows) — RE-GATE here
+        // so a RAW topic can never reach the de-gated forage. (M1 city fix:
+        // resume now carries redacted_city too;
         // a re-gated legacy row has no persisted city to carry.)
         if (row.redacted_topic != null) {
           await broker.forage(row.id, row.redacted_topic, row.redacted_city ? { city: row.redacted_city } : undefined)
