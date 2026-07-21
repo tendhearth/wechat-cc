@@ -61,6 +61,7 @@ describe('cmdSocialEnable', () => {
   })
 
   it('writes the config file atomically (tmp+rename) with mode 0600', () => {
+    if (process.platform === 'win32') return  // chmod semantics differ on Windows
     const configPath = join(stateDir, 'agent-config.json')
     cmdSocialEnable(stateDir, { status: false })
 
