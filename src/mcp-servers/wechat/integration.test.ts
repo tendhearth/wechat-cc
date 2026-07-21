@@ -644,6 +644,94 @@ describe('wechat-mcp stdio integration', () => {
     await nonAdmin.client.close()
   })
 
+  it('registers social_seek ONLY for an admin session', async () => {
+    const admin = await bootChain({ admin: true })
+    const adminNames = (await admin.client.listTools()).tools.map(t => t.name)
+    expect(adminNames).toContain('social_seek')
+    await admin.client.close()
+    if (api) { await api.stop(); api = null }
+
+    const nonAdmin = await bootChain() // no admin flag → trusted
+    const nonAdminNames = (await nonAdmin.client.listTools()).tools.map(t => t.name)
+    expect(nonAdminNames).not.toContain('social_seek')
+    await nonAdmin.client.close()
+  })
+
+  it('social_seek hits POST /v1/social/seek/propose and returns {intent_id, redacted, hint} (P4 repoint)', async () => {
+    // Proves the tool repoint through the REAL internal-api router
+    // (routes-social.ts), not just code review: only
+    // POST /v1/social/seek/propose is wired to deps.social.broker.propose —
+    // any other path either 404s (no route registered) before ever reaching
+    // this stub, so the propose spy firing with the right args + the tool
+    // returning this stub's exact response is direct proof the stdio→HTTP
+    // chain hit exactly that endpoint. Store/revealer stubs mirror the
+    // shape internal-api.test.ts already uses for `deps.social`.
+    const proposeCalls: Array<{ topic: string; opts?: { city?: string } }> = []
+    api = createInternalApi({
+      stateDir, daemonPid: 7777,
+      social: {
+        broker: {
+          seek: async () => ({ intent_id: 'unused' }),
+          propose: async (topic: string, opts?: { city?: string }) => {
+            proposeCalls.push({ topic, opts })
+            return { ok: true as const, intent_id: 'seek-abc123', redacted: '找摄影搭子(已脱敏)' }
+          },
+          confirmSeek: () => ({ ok: true as const, intent_id: 'unused' }),
+          cancelSeek: () => ({ ok: true as const }),
+        },
+        seekStore: {
+          create: () => {}, propose: () => {}, update: () => {},
+          list: () => [], get: () => null,
+        },
+        echoStore: {
+          create: () => {}, setStatus: () => {}, setSelfRevealed: () => {}, setPeerRevealed: () => {}, setRevealedIdentity: () => {}, listForSeek: () => [],
+          listAll: () => [], get: () => null,
+        },
+        pledgeStore: {
+          create: () => {}, get: () => null, list: () => [],
+          setSelfRevealed: () => {}, setPeerRevealed: () => {},
+        },
+        revealer: {
+          revealEcho: async () => ({ state: 'awaiting_peer' as const }),
+          revealPledge: async () => ({ state: 'awaiting_peer' as const }),
+          onInboundReveal: () => ({ mutual: false }),
+        },
+      },
+    })
+    const { port, tokenFilePath } = await api.start()
+    const transport = new StdioClientTransport({
+      command: RUNTIME, args: [WECHAT_MCP_MAIN],
+      env: {
+        ...process.env as Record<string, string>,
+        WECHAT_INTERNAL_API: `http://127.0.0.1:${port}`,
+        WECHAT_INTERNAL_TOKEN_FILE: tokenFilePath,
+        // WECHAT_SESSION_TIER='admin' registers the tool client-side
+        // (main.ts's SESSION_IS_ADMIN gate). Deliberately no
+        // WECHAT_SESSION_TOKEN: the client then authenticates HTTP calls
+        // with the daemon-wide FILE token (trusted) — sufficient, since
+        // POST /v1/social/seek/propose is trusted-tier (route-tiers.ts, P4),
+        // same as how the real CLI/session-token holders reach it.
+        WECHAT_SESSION_TIER: 'admin',
+      },
+      stderr: 'pipe',
+    })
+    const c = new Client({ name: 'integration-social', version: '0.0.1' }, { capabilities: {} })
+    await c.connect(transport)
+    client = c
+
+    const result = await c.callTool({ name: 'social_seek', arguments: { topic: '找摄影搭子', city: '深圳' } })
+    expect(result.isError).toBeFalsy()
+    const content = result.content as Array<{ type: string; text?: string }>
+    const textBlock = content.find(b => b.type === 'text')
+    expect(textBlock).toBeDefined()
+    const body = JSON.parse(textBlock!.text!) as { intent_id?: string; redacted?: string; hint?: string }
+    expect(body.intent_id).toBe('seek-abc123')
+    expect(body.redacted).toBe('找摄影搭子(已脱敏)')
+    expect(body.hint).toContain('派 seek-abc123')
+    expect(body.hint).toContain('取消 seek-abc123')
+    expect(proposeCalls).toEqual([{ topic: '找摄影搭子', opts: { city: '深圳' } }])
+  })
+
   it('ping tool returns isError=true when internal-api is unreachable', async () => {
     // Don't start internal-api — point the child at a port that nothing
     // is listening on. The child should still come up (no precondition
