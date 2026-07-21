@@ -28,6 +28,7 @@ import type { InboundMsg } from '../../core/prompt-format'
 import { parseRevealCommand } from '../../core/reveal-command'
 import { parseLetterCommand } from '../../core/penpal-letter-command'
 import { parsePairCommand } from '../../core/pair-command'
+import { parseSeekCommand, resolveSeekRef } from '../../core/seek-command'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider } from '../../lib/agent-config'
@@ -456,6 +457,41 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
                           : '码不对或已过期,让朋友重新生成一个'
                   void boot.sendAssistantText(msg.chatId, text)
                 }
+              }
+              return
+            }
+          }
+          // 派 / 取消 (P4 派心愿) — admin-gated confirm/cancel of a `proposed`
+          // social_seek row, mirrors the 揭晓/配对 blocks above (renders every
+          // outcome itself, no engine notify). `派` is ALREADY the delegate
+          // imperative (admin-commands.ts's DELEGATE_RE: 让/派 <hand> 执行/跑
+          // <task>) — parseSeekCommand's id-charset guard ([0-9a-fA-F-]+)
+          // keeps a delegate command like "派 家里 跑 拉日志" from ever
+          // matching here (belt); makeMwAdmin already runs before this
+          // dispatch seam in the wired pipeline and consumes DELEGATE_RE
+          // first (suspenders). Inert (falls through) until boot.social is
+          // wired, same posture as the 揭晓/配对 blocks.
+          if (boot.social && isAdmin(msg.chatId)) {
+            const cmd = parseSeekCommand(msg.text)
+            if (cmd) {
+              const res = resolveSeekRef(cmd.ref, boot.social.seekStore.list())
+              if (!res.ok) {
+                if (boot.sendAssistantText) {
+                  const text = res.reason === 'ambiguous'
+                    ? '有多条心愿匹配这个开头,请给更长的编号(≥6 位)'
+                    : '这条心愿不存在或已处理'
+                  void boot.sendAssistantText(msg.chatId, text)
+                }
+                return
+              }
+              if (cmd.kind === 'confirm') {
+                const r = await boot.social.broker.confirmSeek(res.id)
+                if (boot.sendAssistantText) {
+                  void boot.sendAssistantText(msg.chatId, r.ok ? '已发出,觅食中…(稍后回来看回声)' : '这条心愿不存在或已处理')
+                }
+              } else {
+                await boot.social.broker.cancelSeek(res.id)
+                if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, '已作废')
               }
               return
             }
