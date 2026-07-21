@@ -173,6 +173,9 @@ Usage:
   wechat-cc social cancel <id> [--json]
                         取消 <id> — void a proposed wish before it ever goes out
   wechat-cc social reveal <id> [--json]
+  wechat-cc social enable [--status]
+                        一键开启觅食台社交(merge-persist,不覆盖已有设置);
+                          --status 只打印当前三项设置,不写入
   wechat-cc provider show [--json]  Show selected agent provider
   wechat-cc provider set <claude|codex|cursor|openai|gemini> [--model MODEL] [--unattended true|false]
                         --unattended: when true (default for new installs), the
@@ -2633,8 +2636,23 @@ const socialCancelCmd = defineCommand({
   },
 })
 
+// `enable` is a one-toggle onramp: sets social_enabled + fills in the two
+// other social-boot settings ONLY when absent (merge-persist, same
+// read-modify-write idiom as self-agent-id.ts). No `disable` — turning
+// social off is an operator-config edit, not part of this onramp.
+const socialEnableCmd = defineCommand({
+  meta: { name: 'enable', description: '一键开启觅食台社交(merge-persist,不覆盖已有设置)' },
+  args: {
+    status: { type: 'boolean', description: '只打印当前三项设置,不写入' },
+  },
+  async run({ args }) {
+    const { cmdSocialEnable } = await import('./src/cli/social-enable.ts')
+    cmdSocialEnable(STATE_DIR, { status: Boolean(args.status) })
+  },
+})
+
 const socialCmd = defineCommand({
-  meta: { name: 'social', description: '觅食台 — list wishes/echoes/pledges, propose/confirm/cancel (派心愿), and reveal (揭晓)' },
+  meta: { name: 'social', description: '觅食台 — list wishes/echoes/pledges, propose/confirm/cancel (派心愿), reveal (揭晓), and enable (开启)' },
   subCommands: {
     seeks: socialSeeksCmd,
     echoes: socialEchoesCmd,
@@ -2643,6 +2661,7 @@ const socialCmd = defineCommand({
     confirm: socialConfirmCmd,
     cancel: socialCancelCmd,
     reveal: socialRevealCmd,
+    enable: socialEnableCmd,
   },
 })
 
