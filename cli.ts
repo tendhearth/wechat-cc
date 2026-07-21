@@ -165,6 +165,13 @@ Usage:
   wechat-cc social seeks [--limit N] [--json]
   wechat-cc social echoes [--seek <id>] [--limit N] [--json]
   wechat-cc social pledges [--limit N] [--json]
+  wechat-cc social propose <topic> [--city X] [--json]
+                        派心愿(预览)— gate + persist a redacted preview; nothing
+                          sent yet (needs running daemon)
+  wechat-cc social confirm <id> [--json]
+                        派 <id> — confirm a proposed wish and broadcast it
+  wechat-cc social cancel <id> [--json]
+                        取消 <id> — void a proposed wish before it ever goes out
   wechat-cc social reveal <id> [--json]
   wechat-cc provider show [--json]  Show selected agent provider
   wechat-cc provider set <claude|codex|cursor|openai|gemini> [--model MODEL] [--unattended true|false]
@@ -2573,12 +2580,68 @@ const socialRevealCmd = defineCommand({
   },
 })
 
+// P4 派心愿 — propose (preview) → confirm/cancel. All three call the running
+// daemon's internal-api (propose gates via the model, confirm/cancel touch
+// the broker) — same posture as `reveal` above. Default `fail` already
+// prints the message, so the catch here just sets the exit code.
+const socialProposeCmd = defineCommand({
+  meta: { name: 'propose', description: '派心愿(预览)— gate + persist a redacted preview; nothing sent yet (needs running daemon)' },
+  args: {
+    topic: { type: 'positional', required: true, description: 'What to seek (raw text; gated + redacted before storage)', valueHint: 'topic' },
+    city: { type: 'string', description: 'Optional city context (also gated)' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { cmdSocialPropose } = await import('./src/cli/social.ts')
+    try {
+      await cmdSocialPropose(STATE_DIR, args.topic, { ...(args.city ? { city: args.city } : {}), json: Boolean(args.json) })
+    } catch {
+      process.exit(1)
+    }
+  },
+})
+
+const socialConfirmCmd = defineCommand({
+  meta: { name: 'confirm', description: '派 <id> — confirm a proposed wish and broadcast it (needs running daemon)' },
+  args: {
+    id: { type: 'positional', required: true, description: 'Proposed wish id (intent id)', valueHint: 'id' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { cmdSocialConfirm } = await import('./src/cli/social.ts')
+    try {
+      await cmdSocialConfirm(STATE_DIR, args.id, { json: Boolean(args.json) })
+    } catch {
+      process.exit(1)
+    }
+  },
+})
+
+const socialCancelCmd = defineCommand({
+  meta: { name: 'cancel', description: '取消 <id> — void a proposed wish before it ever goes out (needs running daemon)' },
+  args: {
+    id: { type: 'positional', required: true, description: 'Proposed wish id (intent id)', valueHint: 'id' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { cmdSocialCancel } = await import('./src/cli/social.ts')
+    try {
+      await cmdSocialCancel(STATE_DIR, args.id, { json: Boolean(args.json) })
+    } catch {
+      process.exit(1)
+    }
+  },
+})
+
 const socialCmd = defineCommand({
-  meta: { name: 'social', description: '觅食台 — list wishes/echoes/pledges and reveal (揭晓)' },
+  meta: { name: 'social', description: '觅食台 — list wishes/echoes/pledges, propose/confirm/cancel (派心愿), and reveal (揭晓)' },
   subCommands: {
     seeks: socialSeeksCmd,
     echoes: socialEchoesCmd,
     pledges: socialPledgesCmd,
+    propose: socialProposeCmd,
+    confirm: socialConfirmCmd,
+    cancel: socialCancelCmd,
     reveal: socialRevealCmd,
   },
 })

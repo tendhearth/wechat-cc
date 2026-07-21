@@ -253,6 +253,29 @@ describe('citty migrated commands', () => {
     expect(await runWithNestedStub(['guard', 'disable', '--json'], ['guard', 'disable'])).not.toBeNull()
   })
 
+  // P4 派心愿 CLI forms — parse-only (real handlers need a running daemon).
+  it('social propose parses topic positional + --city + --json', async () => {
+    const r = await runWithNestedStub(
+      ['social', 'propose', '找摄影搭子', '--city', '北京', '--json'],
+      ['social', 'propose'],
+    )
+    expect(r?.args.topic).toBe('找摄影搭子')
+    expect(r?.args.city).toBe('北京')
+    expect(r?.args.json).toBe(true)
+  })
+
+  it('social confirm parses id positional + --json', async () => {
+    const r = await runWithNestedStub(['social', 'confirm', 'abc123', '--json'], ['social', 'confirm'])
+    expect(r?.args.id).toBe('abc123')
+    expect(r?.args.json).toBe(true)
+  })
+
+  it('social cancel parses id positional + --json', async () => {
+    const r = await runWithNestedStub(['social', 'cancel', 'abc123', '--json'], ['social', 'cancel'])
+    expect(r?.args.id).toBe('abc123')
+    expect(r?.args.json).toBe(true)
+  })
+
   it('provider show parses --json', async () => {
     const r = await runWithNestedStub(['provider', 'show', '--json'], ['provider', 'show'])
     expect(r?.args.json).toBe(true)

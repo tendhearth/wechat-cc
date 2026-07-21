@@ -6,7 +6,10 @@ import { openDb } from '../lib/db'
 import { makeSeekStore } from '../core/social-seek-store'
 import { makeEchoStore } from '../core/social-echo-store'
 import { makePledgeStore } from '../core/social-pledge-store'
-import { cmdSocialSeeks, cmdSocialEchoes, cmdSocialPledges, cmdSocialReveal } from './social'
+import {
+  cmdSocialSeeks, cmdSocialEchoes, cmdSocialPledges, cmdSocialReveal,
+  cmdSocialPropose, cmdSocialConfirm, cmdSocialCancel,
+} from './social'
 
 function tempState(): string {
   return mkdtempSync(join(tmpdir(), 'wechat-cc-cli-social-test-'))
@@ -57,6 +60,24 @@ describe('cmdSocialSeeks', () => {
     const out = await captureLog(() => cmdSocialSeeks(stateDir, { limit: 20, json: true }))
     const parsed = JSON.parse(out.join('\n'))
     expect(parsed.seeks[0].topic).toBe('找摄影搭子')
+  })
+
+  // P4 派心愿 — propose() persists a `proposed` row (not `foraging`); the
+  // status column already pads to width 9 and both 'proposed'(8) and
+  // 'cancelled'(9) fit, so this is a no-code-change guard (task-5 brief 5a).
+  it('renders a `proposed` row with its status', async () => {
+    seed(s => { s.propose({ id: 'i3', kind: 'seek', topic: '找摄影搭子', redactedTopic: '找搭子' }) })
+    const out = await captureLog(() => cmdSocialSeeks(stateDir, { limit: 20, json: false }))
+    expect(out.some(l => l.includes('proposed'))).toBe(true)
+  })
+
+  it('renders a `cancelled` row with its status', async () => {
+    seed(s => {
+      s.propose({ id: 'i4', kind: 'seek', topic: '找摄影搭子', redactedTopic: '找搭子' })
+      s.update('i4', { status: 'cancelled' })
+    })
+    const out = await captureLog(() => cmdSocialSeeks(stateDir, { limit: 20, json: false }))
+    expect(out.some(l => l.includes('cancelled'))).toBe(true)
   })
 })
 
@@ -160,6 +181,133 @@ describe('cmdSocialReveal', () => {
     const failed: string[] = []
     const fail = ((m: string) => { failed.push(m); throw new Error(m) }) as (m: string) => never
     await expect(cmdSocialReveal('/nope', 'i1:ccb', { json: false }, { readInfo: () => null, fail })).rejects.toThrow()
+    expect(failed[0]).toMatch(/daemon/i)
+  })
+})
+
+// P4 派心愿 — propose/confirm/cancel forms, mirroring cmdSocialReveal's
+// injected-fetch/readInfo/readToken deps pattern above. Results are unions
+// ({ok:true,...}/{ok:false,reason}) passed through verbatim by the
+// internal-api route at HTTP 200 — assert both branches, never assume success.
+describe('cmdSocialPropose', () => {
+  const info = { baseUrl: 'http://127.0.0.1:9', tokenFilePath: '/tmp/tok' }
+  const baseDeps = { readInfo: () => info, readToken: () => 'tokhex' }
+
+  it('POSTs topic + city to seek/propose and prints the redacted preview + 派/取消 hint', async () => {
+    const calls: { url: string; body: unknown }[] = []
+    const fakeFetch = (async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init?.body)) })
+      return new Response(JSON.stringify({ ok: true, intent_id: 'abc123', redacted: '找搭子', redacted_city: '北京' }), { status: 200 })
+    }) as unknown as typeof fetch
+    const out = await captureLog(() => cmdSocialPropose('/nope', '找摄影搭子,住朝阳', { city: '北京', json: false }, { ...baseDeps, fetch: fakeFetch }))
+    expect(calls[0]!.url).toContain('/v1/social/seek/propose')
+    expect(calls[0]!.body).toEqual({ topic: '找摄影搭子,住朝阳', city: '北京' })
+    const joined = out.join('\n')
+    expect(joined).toContain('找搭子')
+    expect(joined).toContain('abc123')
+    expect(joined).toContain('派')
+    expect(joined).toContain('取消')
+  })
+
+  it('omits city from the body when not given', async () => {
+    const calls: { body: unknown }[] = []
+    const fakeFetch = (async (_url: string, init?: RequestInit) => {
+      calls.push({ body: JSON.parse(String(init?.body)) })
+      return new Response(JSON.stringify({ ok: true, intent_id: 'abc123', redacted: '找搭子' }), { status: 200 })
+    }) as unknown as typeof fetch
+    await cmdSocialPropose('/nope', '找搭子', { json: false }, { ...baseDeps, fetch: fakeFetch })
+    expect(calls[0]!.body).toEqual({ topic: '找搭子' })
+  })
+
+  it('prints the gate-reject reason instead of a preview', async () => {
+    const fakeFetch = (async () => new Response(JSON.stringify({ ok: false, reason: 'blocked: contains phone number' }), { status: 200 })) as unknown as typeof fetch
+    const out = await captureLog(() => cmdSocialPropose('/nope', '打给我 13800001111', { json: false }, { ...baseDeps, fetch: fakeFetch }))
+    expect(out.join('\n')).toContain('blocked: contains phone number')
+  })
+
+  it('--json emits the outcome verbatim', async () => {
+    const fakeFetch = (async () => new Response(JSON.stringify({ ok: true, intent_id: 'abc123', redacted: '找搭子' }), { status: 200 })) as unknown as typeof fetch
+    const out = await captureLog(() => cmdSocialPropose('/nope', '找搭子', { json: true }, { ...baseDeps, fetch: fakeFetch }))
+    expect(JSON.parse(out.join('\n'))).toEqual({ ok: true, intent_id: 'abc123', redacted: '找搭子' })
+  })
+
+  it('fails clearly when the daemon is not running', async () => {
+    const failed: string[] = []
+    const fail = ((m: string) => { failed.push(m); throw new Error(m) }) as (m: string) => never
+    await expect(cmdSocialPropose('/nope', '找搭子', { json: false }, { readInfo: () => null, fail })).rejects.toThrow()
+    expect(failed[0]).toMatch(/daemon/i)
+  })
+})
+
+describe('cmdSocialConfirm', () => {
+  const info = { baseUrl: 'http://127.0.0.1:9', tokenFilePath: '/tmp/tok' }
+  const baseDeps = { readInfo: () => info, readToken: () => 'tokhex' }
+
+  it('POSTs the id to seek/confirm and prints the dispatch-consistent success copy', async () => {
+    const calls: { url: string; body: unknown }[] = []
+    const fakeFetch = (async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init?.body)) })
+      return new Response(JSON.stringify({ ok: true, intent_id: 'abc123' }), { status: 200 })
+    }) as unknown as typeof fetch
+    const out = await captureLog(() => cmdSocialConfirm('/nope', 'abc123', { json: false }, { ...baseDeps, fetch: fakeFetch }))
+    expect(calls[0]!.url).toContain('/v1/social/seek/confirm')
+    expect(calls[0]!.body).toEqual({ id: 'abc123' })
+    // Same wording as pipeline-deps.ts's WeChat 派 handler (~line 490).
+    expect(out.join('\n')).toContain('已发出,觅食中')
+  })
+
+  it('prints the not-proposed failure copy consistent with the WeChat dispatch wording', async () => {
+    const fakeFetch = (async () => new Response(JSON.stringify({ ok: false, reason: 'not_proposed' }), { status: 200 })) as unknown as typeof fetch
+    const out = await captureLog(() => cmdSocialConfirm('/nope', 'stale', { json: false }, { ...baseDeps, fetch: fakeFetch }))
+    expect(out.join('\n')).toContain('不存在或已处理')
+  })
+
+  it('--json emits the outcome verbatim', async () => {
+    const fakeFetch = (async () => new Response(JSON.stringify({ ok: true, intent_id: 'abc123' }), { status: 200 })) as unknown as typeof fetch
+    const out = await captureLog(() => cmdSocialConfirm('/nope', 'abc123', { json: true }, { ...baseDeps, fetch: fakeFetch }))
+    expect(JSON.parse(out.join('\n'))).toEqual({ ok: true, intent_id: 'abc123' })
+  })
+
+  it('fails clearly when the daemon is not running', async () => {
+    const failed: string[] = []
+    const fail = ((m: string) => { failed.push(m); throw new Error(m) }) as (m: string) => never
+    await expect(cmdSocialConfirm('/nope', 'abc123', { json: false }, { readInfo: () => null, fail })).rejects.toThrow()
+    expect(failed[0]).toMatch(/daemon/i)
+  })
+})
+
+describe('cmdSocialCancel', () => {
+  const info = { baseUrl: 'http://127.0.0.1:9', tokenFilePath: '/tmp/tok' }
+  const baseDeps = { readInfo: () => info, readToken: () => 'tokhex' }
+
+  it('POSTs the id to seek/cancel and prints 已作废, matching the WeChat 取消 handler', async () => {
+    const calls: { url: string; body: unknown }[] = []
+    const fakeFetch = (async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init?.body)) })
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }) as unknown as typeof fetch
+    const out = await captureLog(() => cmdSocialCancel('/nope', 'abc123', { json: false }, { ...baseDeps, fetch: fakeFetch }))
+    expect(calls[0]!.url).toContain('/v1/social/seek/cancel')
+    expect(calls[0]!.body).toEqual({ id: 'abc123' })
+    expect(out.join('\n')).toContain('已作废')
+  })
+
+  it('prints the not_found failure reason', async () => {
+    const fakeFetch = (async () => new Response(JSON.stringify({ ok: false, reason: 'not_found' }), { status: 200 })) as unknown as typeof fetch
+    const out = await captureLog(() => cmdSocialCancel('/nope', 'ghost', { json: false }, { ...baseDeps, fetch: fakeFetch }))
+    expect(out.join('\n')).toContain('not_found')
+  })
+
+  it('--json emits the outcome verbatim', async () => {
+    const fakeFetch = (async () => new Response(JSON.stringify({ ok: true }), { status: 200 })) as unknown as typeof fetch
+    const out = await captureLog(() => cmdSocialCancel('/nope', 'abc123', { json: true }, { ...baseDeps, fetch: fakeFetch }))
+    expect(JSON.parse(out.join('\n'))).toEqual({ ok: true })
+  })
+
+  it('fails clearly when the daemon is not running', async () => {
+    const failed: string[] = []
+    const fail = ((m: string) => { failed.push(m); throw new Error(m) }) as (m: string) => never
+    await expect(cmdSocialCancel('/nope', 'abc123', { json: false }, { readInfo: () => null, fail })).rejects.toThrow()
     expect(failed[0]).toMatch(/daemon/i)
   })
 })
