@@ -165,7 +165,17 @@ Usage:
   wechat-cc social seeks [--limit N] [--json]
   wechat-cc social echoes [--seek <id>] [--limit N] [--json]
   wechat-cc social pledges [--limit N] [--json]
+  wechat-cc social propose <topic> [--city X] [--json]
+                        派心愿(预览)— gate + persist a redacted preview; nothing
+                          sent yet (needs running daemon)
+  wechat-cc social confirm <id> [--json]
+                        派 <id> — confirm a proposed wish and broadcast it
+  wechat-cc social cancel <id> [--json]
+                        取消 <id> — void a proposed wish before it ever goes out
   wechat-cc social reveal <id> [--json]
+  wechat-cc social enable [--status]
+                        一键开启觅食台社交(merge-persist,不覆盖已有设置);
+                          --status 只打印当前三项设置,不写入
   wechat-cc provider show [--json]  Show selected agent provider
   wechat-cc provider set <claude|codex|cursor|openai|gemini> [--model MODEL] [--unattended true|false]
                         --unattended: when true (default for new installs), the
@@ -2573,13 +2583,116 @@ const socialRevealCmd = defineCommand({
   },
 })
 
+// P4 派心愿 — propose (preview) → confirm/cancel. All three call the running
+// daemon's internal-api (propose gates via the model, confirm/cancel touch
+// the broker) — same posture as `reveal` above. Default `fail` already
+// prints the message, so the catch here just sets the exit code.
+const socialProposeCmd = defineCommand({
+  meta: { name: 'propose', description: '派心愿(预览)— gate + persist a redacted preview; nothing sent yet (needs running daemon)' },
+  args: {
+    topic: { type: 'positional', required: true, description: 'What to seek (raw text; gated + redacted before storage)', valueHint: 'topic' },
+    city: { type: 'string', description: 'Optional city context (also gated)' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { cmdSocialPropose } = await import('./src/cli/social.ts')
+    try {
+      await cmdSocialPropose(STATE_DIR, args.topic, { ...(args.city ? { city: args.city } : {}), json: Boolean(args.json) })
+    } catch {
+      process.exit(1)
+    }
+  },
+})
+
+const socialConfirmCmd = defineCommand({
+  meta: { name: 'confirm', description: '派 <id> — confirm a proposed wish and broadcast it (needs running daemon)' },
+  args: {
+    id: { type: 'positional', required: true, description: 'Proposed wish id (intent id)', valueHint: 'id' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { cmdSocialConfirm } = await import('./src/cli/social.ts')
+    try {
+      await cmdSocialConfirm(STATE_DIR, args.id, { json: Boolean(args.json) })
+    } catch {
+      process.exit(1)
+    }
+  },
+})
+
+const socialCancelCmd = defineCommand({
+  meta: { name: 'cancel', description: '取消 <id> — void a proposed wish before it ever goes out (needs running daemon)' },
+  args: {
+    id: { type: 'positional', required: true, description: 'Proposed wish id (intent id)', valueHint: 'id' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { cmdSocialCancel } = await import('./src/cli/social.ts')
+    try {
+      await cmdSocialCancel(STATE_DIR, args.id, { json: Boolean(args.json) })
+    } catch {
+      process.exit(1)
+    }
+  },
+})
+
+// `enable` is a one-toggle onramp: sets social_enabled + fills in the two
+// other social-boot settings ONLY when absent (merge-persist, same
+// read-modify-write idiom as self-agent-id.ts). No `disable` — turning
+// social off is an operator-config edit, not part of this onramp.
+const socialEnableCmd = defineCommand({
+  meta: { name: 'enable', description: '一键开启觅食台社交(merge-persist,不覆盖已有设置)' },
+  args: {
+    status: { type: 'boolean', description: '只打印当前三项设置,不写入' },
+  },
+  async run({ args }) {
+    const { cmdSocialEnable } = await import('./src/cli/social-enable.ts')
+    cmdSocialEnable(STATE_DIR, { status: Boolean(args.status) })
+  },
+})
+
 const socialCmd = defineCommand({
-  meta: { name: 'social', description: '觅食台 — list wishes/echoes/pledges and reveal (揭晓)' },
+  meta: { name: 'social', description: '觅食台 — list wishes/echoes/pledges, propose/confirm/cancel (派心愿), reveal (揭晓), and enable (开启)' },
   subCommands: {
     seeks: socialSeeksCmd,
     echoes: socialEchoesCmd,
     pledges: socialPledgesCmd,
+    propose: socialProposeCmd,
+    confirm: socialConfirmCmd,
+    cancel: socialCancelCmd,
     reveal: socialRevealCmd,
+    enable: socialEnableCmd,
+  },
+})
+
+// ── 配对码 — friend pairing (spec §7) ─────────────────────────────────
+// wechat-cc pair          → mint + print a 6-digit code (share with a friend)
+// wechat-cc pair <code>   → redeem a friend's code and connect
+// Both need the RUNNING daemon (internal-api, tier trusted) — same idiom as
+// `social reveal`. NOT to be confused with `hand invite`/`hand join`, which
+// pair two WORKER hands (delegated-agent capacity), not two people's bots.
+const pairCmd = defineCommand({
+  meta: {
+    name: 'pair',
+    description: '配对码 — 和朋友的 bot 建边:无参生成码,带 6 位码接受(≠ hand invite/join 的干活手配对;需运行中的 daemon)',
+  },
+  args: {
+    code: { type: 'positional', required: false, description: '朋友的 6 位配对码', valueHint: 'code' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    try {
+      if (args.code) {
+        const { cmdPairAccept } = await import('./src/cli/pair.ts')
+        await cmdPairAccept(STATE_DIR, String(args.code), { json: Boolean(args.json) })
+      } else {
+        const { cmdPairStart } = await import('./src/cli/pair.ts')
+        await cmdPairStart(STATE_DIR, { json: Boolean(args.json) })
+      }
+    } catch {
+      // cmdPairStart/cmdPairAccept's default `fail` already printed the message.
+      process.exit(1)
+    }
   },
 })
 
@@ -3296,6 +3409,8 @@ const SUBCOMMANDS = {
   agent: agentCmd,
   // 觅食台 social surface — seeks/echoes/pledges/reveal.
   social: socialCmd,
+  // 配对码 — automatic edge-building (spec §7).
+  pair: pairCmd,
   // Dialogue backfill (Task 5). Query subcommands arrive in Task 9.
   dialogue: dialogueCmd,
 } as const

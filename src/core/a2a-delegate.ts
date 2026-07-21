@@ -85,6 +85,10 @@ export interface DelegateToHandReq {
  * responses come back as `{ ok: false, reason }` — never throws.
  */
 export async function delegateToHand(client: A2AClient, req: DelegateToHandReq): Promise<ExecResult> {
+  // A url-less mailbox peer (pairing-code feature) can't take a push
+  // /a2a/exec — 乙 (yi) hand delegation is push-only. Fail the same way as
+  // any other unreachable hand, never throw.
+  if (!req.hand.url) return { ok: false, reason: 'hand has no url (mailbox-only peer; exec delegation is push-only)' }
   const r = await client.send({
     url: handExecUrl(req.hand.url),
     bearer: req.hand.outbound_api_key,

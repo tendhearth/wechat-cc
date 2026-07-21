@@ -13,7 +13,6 @@ import type { AppendInput } from '../../core/a2a-events-store'
 import type { YiHub } from '../../core/yi-hub'
 import type { DelegateDispatch } from './delegate'
 import type { SendAssistantText } from './fallback-reply'
-import type { SeekOutcome } from '../../core/social-broker'
 import type { Revealer } from '../../core/social-reveal'
 
 export interface BootstrapDeps {
@@ -243,9 +242,10 @@ export interface Bootstrap {
    * Agent-social M1 (T7b-core) — present only when `social_enabled` +
    * `social_disclosure_policy` are both configured (and at least one
    * registered provider offers a cheapEval). Undefined otherwise — the
-   * feature stays fully inert (no /a2a/intent, no /v1/social/seek).
+   * feature stays fully inert (no /a2a/intent, no /v1/social/seek/*).
    *
-   * `broker.seek()` is what POST /v1/social/seek calls — late-bound into
+   * `broker.propose`/`confirmSeek`/`cancelSeek` (P4 派心愿) back
+   * POST /v1/social/seek/{propose,confirm,cancel} — late-bound into
    * internal-api by main.ts (mirrors `a2aDeps`/`setA2A`).
    *
    * `revealer` drives the row-driven mutual reveal (both the outbound
@@ -254,7 +254,11 @@ export interface Bootstrap {
    * is exposed so the answer-side reveal surface can list/read pledges.
    */
   social?: {
-    broker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> }
+    broker: {
+      propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
+      confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
+      cancelSeek(id: string): import('../../core/social-broker').CancelOutcome
+    }
     seekStore: import('../../core/social-seek-store').SeekStore
     echoStore: import('../../core/social-echo-store').EchoStore
     pledgeStore: import('../../core/social-pledge-store').PledgeStore
@@ -280,4 +284,22 @@ export interface Bootstrap {
    * this is set; otherwise the feature is fully inert (no poll timer).
    */
   mailboxPollerDeps?: import('./wire-mailbox').MailboxPollerDeps
+  /**
+   * This daemon's stable-unique self slug (pairing-code design §2), resolved
+   * exactly ONCE at boot via `resolveSelfAgentId` and shared by every wiring
+   * seam that self-reports an agent_id to a peer — wireSocial's outbound
+   * a2a_id, wirePairing's own-card `self_id`, and pipeline-deps'
+   * exec/hands delegate path (`delegateToHand`). A single shared value is
+   * what stops a slug-minting daemon from broadcasting two different
+   * identities to its peers.
+   */
+  selfId: string
+  /**
+   * 配对码 (spec §7) — the daemon-side pairing engine. Present only when
+   * mailbox_relays is configured (the rendezvous relay is the daemon's own
+   * `mailbox_relays[0]`). The WeChat 「配对」 dispatch seam (pipeline-deps)
+   * and internal-api /v1/pair/* routes read this; undefined ⇒ inert (no-op /
+   * 503), same posture as `boot.social`/`boot.penpal`.
+   */
+  pairing?: import('../../core/pairing').PairingEngine
 }

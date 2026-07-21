@@ -33,6 +33,21 @@ describe('route-tiers', () => {
     expect(minTierFor('POST /v1/some/new/route')).toBe('admin')
   })
 
+  it('pair routes require trusted', () => {
+    expect(minTierFor('POST /v1/pair/start')).toBe('trusted')
+    expect(minTierFor('POST /v1/pair/accept')).toBe('trusted')
+  })
+
+  it('P4 seek propose/confirm/cancel require trusted (CLI-reachable, flagged for release review)', () => {
+    expect(minTierFor('POST /v1/social/seek/propose')).toBe('trusted')
+    expect(minTierFor('POST /v1/social/seek/confirm')).toBe('trusted')
+    expect(minTierFor('POST /v1/social/seek/cancel')).toBe('trusted')
+  })
+
+  it('the deleted one-shot POST /v1/social/seek has no explicit tier (falls to the admin default)', () => {
+    expect(ROUTE_MIN_TIER['POST /v1/social/seek']).toBeUndefined()
+  })
+
   it('every registered route has an explicit min tier (no accidental default-deny)', () => {
     const deps = { stateDir: '/tmp', daemonPid: 1 } as unknown as InternalApiDeps
     const routes = makeRoutes({ deps, getDelegate: () => null, maybePrefix: (_c, t) => t })

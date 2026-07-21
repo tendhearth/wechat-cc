@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { buildBootstrap, resolveAdminChatId } from './bootstrap'
@@ -34,6 +34,29 @@ function serveMockOpenai(content: string): ReturnType<typeof Bun.serve> {
     port: 0,
     fetch: () => new Response(body, { headers: { 'content-type': 'text/event-stream' } }),
   })
+}
+
+// Routing variant of the cheapEval mock: the verdict `content` is computed
+// per-request from the gate prompt text (which embeds the topic being gated),
+// so ONE server can pass some topics and block others. `hits` counts requests
+// so a test can wait for a re-gate to actually have run before asserting a
+// negative (no send). Used by the C1 resume discriminator tests below.
+function serveMockOpenaiRouting(route: (promptText: string) => string) {
+  let hits = 0
+  const chunk = (delta: object, finish: string | null) =>
+    `data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 0, model: 'test-model', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`
+  const server = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    fetch: async (req) => {
+      hits++
+      const reqText = await req.text()
+      const content = route(reqText)
+      const body = chunk({ role: 'assistant', content }, null) + chunk({}, 'stop') + 'data: [DONE]\n\n'
+      return new Response(body, { headers: { 'content-type': 'text/event-stream' } })
+    },
+  })
+  return Object.assign(server, { hits: () => hits })
 }
 
 function makeIlinkStub() {
@@ -1085,7 +1108,8 @@ describe('bootstrap agent-social M1 wiring', () => {
       // The broker + revealer + pledgeStore are exposed on the bootstrap
       // return so main.ts can late-bind them into internal-api (setSocial).
       expect(boot.social).toBeDefined()
-      expect(typeof boot.social!.broker.seek).toBe('function')
+      expect(typeof boot.social!.broker.propose).toBe('function')
+      expect(typeof boot.social!.broker.confirmSeek).toBe('function')
       expect(typeof boot.social!.revealer.revealEcho).toBe('function')
       expect(typeof boot.social!.pledgeStore.list).toBe('function')
       expect(card.capabilities.some(c => c.name === 'reveal')).toBe(true)
@@ -1329,11 +1353,11 @@ describe('bootstrap agent-social M1 wiring', () => {
     // provider-registry.ts CHEAP_EVAL_PREFERENCE) once an openai-compatible
     // provider is registered — so we point it at a local SSE mock instead of
     // shelling out to a real `claude` subprocess (slow/flaky/CI-unavailable).
-    // The broker now GATES the outbound topic via cheapEval *before* sowing
-    // the seek row, so the mock must return a non-violation verdict for the
-    // `foraging` row to appear (a refused port would fail the gate closed →
-    // no sow). discover() returns no peers here, so the background forage
-    // settles the row to `closed`.
+    // The broker GATES the outbound topic via cheapEval at propose time, so the
+    // mock must return a non-violation verdict for the `proposed` row to appear
+    // (a refused port would fail the gate closed → propose returns ok:false, no
+    // row). discover() returns no peers here, so the confirm-scheduled background
+    // forage settles the row to `closed`.
     const openaiMock = serveMockOpenai('{"violation": false, "redacted": "找个会修老相机的"}')
     const prevKey = process.env.WECHAT_OPENAI_API_KEY
     process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
@@ -1363,14 +1387,17 @@ describe('bootstrap agent-social M1 wiring', () => {
         log: () => {},
       })
       // discover() returns no peers in this fixture (no paired a2a agents),
-      // so the outcome is empty — sow must STILL persist the seek row
-      // (foraging → closed) even when nothing matched.
-      await boot.social!.broker.seek('找个会修老相机的')
-      // Non-blocking: the sync leg sows `foraging`; the background forage
-      // (0 peers here) settles it to `closed`. Poll briefly for the terminal row.
+      // so the outcome is empty — propose persists a `proposed` row and
+      // confirm (派) forages it (0 peers → `closed`) even when nothing matched.
+      const proposed = await boot.social!.broker.propose('找个会修老相机的')
+      expect(proposed.ok).toBe(true)
+      boot.social!.broker.confirmSeek((proposed as { ok: true; intent_id: string }).intent_id)
+      // Non-blocking: propose stores `proposed`; confirm flips it to `foraging`
+      // and the background forage (0 peers here) settles it to `closed`. Poll
+      // briefly for any point in that proposed→foraging→closed progression.
       const seen = await pollFor(() => {
         const rows = db.query('SELECT topic, status FROM social_seek').all() as Array<{ topic: string; status: string }>
-        return rows.find(r => r.topic.includes('相机') && (r.status === 'closed' || r.status === 'foraging')) ?? null
+        return rows.find(r => r.topic.includes('相机') && (r.status === 'proposed' || r.status === 'foraging' || r.status === 'closed')) ?? null
       })
       expect(seen).not.toBeNull()
     } finally {
@@ -1386,8 +1413,9 @@ describe('bootstrap agent-social M1 wiring', () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-record-throw-'))
     const port = 19905
     // Gate must PASS (mock returns a non-violation verdict) so the broker
-    // reaches its sow leg — the point of this test is that a persistence
-    // failure inside sow/finishSeek is swallowed, not that the gate blocks.
+    // reaches its propose write leg — the point of this test is that a
+    // persistence failure inside proposeRow/finishSeek is swallowed, not that
+    // the gate blocks.
     const openaiMock = serveMockOpenai('{"violation": false, "redacted": "找个会修老相机的"}')
     const prevKey = process.env.WECHAT_OPENAI_API_KEY
     process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
@@ -1416,16 +1444,18 @@ describe('bootstrap agent-social M1 wiring', () => {
         lastActiveChatId: () => null,
         log: () => {},
       })
-      // Drop the table the sow leg writes to AFTER bootstrap has already
-      // prepared its statements, so the INSERT inside the broker's sow()
+      // Drop the table the propose leg writes to AFTER bootstrap has already
+      // prepared its statements, so the INSERT inside the broker's proposeRow()
       // throws ("no such table: social_seek") — this simulates a persistence
       // error (locked db / disk full / duplicate PK) without faking those
-      // conditions directly. sow/recordEcho/finishSeek each guard their own
-      // writes, so a store failure must never turn seek() into a rejection.
+      // conditions directly. proposeRow/recordEcho/finishSeek each guard their
+      // own writes, so a store failure must never turn propose() into a rejection.
       db.exec('DROP TABLE social_seek')
-      const out = await boot.social!.broker.seek('找个会修老相机的')
-      expect(typeof out.intent_id).toBe('string')   // never rejects; background write failures are swallowed
-      expect(out.intent_id.length).toBeGreaterThan(0)
+      const out = await boot.social!.broker.propose('找个会修老相机的')
+      expect(out.ok).toBe(true)   // never rejects; the persistence write failure is swallowed
+      const okOut = out as { ok: true; intent_id: string }
+      expect(typeof okOut.intent_id).toBe('string')
+      expect(okOut.intent_id.length).toBeGreaterThan(0)
     } finally {
       openaiMock.stop()
       await boot?.a2aServer?.stop()
@@ -1486,9 +1516,9 @@ describe('bootstrap agent-social M1 wiring', () => {
       }),
     )
     const db = openTestDb()
-    // Seed the "crash mid-forage" state directly (bypassing broker.seek's
-    // real gate/discover round trip, since we only need the terminal DB
-    // state a crashed prior run would have left behind).
+    // Seed the "crash mid-forage" state directly (bypassing the broker's
+    // real propose/confirm gate/discover round trip, since we only need the
+    // terminal DB state a crashed prior run would have left behind).
     const seekStore = makeSeekStore(db)
     const echoStore = makeEchoStore(db)
     seekStore.create({ id: seekResume, kind: 'seek', topic: '找摄影搭子（续）' })
@@ -1528,6 +1558,166 @@ describe('bootstrap agent-social M1 wiring', () => {
       // seekResume's resumed (duplicate) echo must NOT have re-fired it.
       expect(firstEchoSends).toHaveLength(1)
       expect(firstEchoSends[0]?.[0]).toBe('op_chat')
+    } finally {
+      openaiMock.stop()
+      peerMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
+  // C1 (P4) — the resume DISCRIMINATOR. forage() is now DE-GATED, so what
+  // actually goes out on a boot-scan resume is decided entirely by
+  // resumeForaging/socialResumeRow. This peer CAPTURES the outbound card.topic
+  // (the wording that leaves this daemon) and asserts on it directly — the
+  // assertion the old crash-mid-forage test lacked (it seeded redacted_topic=
+  // null and never checked card.topic).
+  it('resume forages the STORED redacted wording verbatim for a redacted row, and RE-GATES a null-redacted (legacy) row — never the raw topic', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-resume-wysiwyg-'))
+    const port = 19911
+    // Routing gate: only the null-redacted row (rawB) is re-gated at resume;
+    // when its raw text arrives, return a DISTINCT redacted string so the test
+    // can tell a re-gate ('REGATED清理版') from a verbatim forage of the stored
+    // string. The redacted row never reaches the gate at all.
+    const openaiMock = serveMockOpenaiRouting((reqText) =>
+      reqText.includes('原始寻友')
+        ? JSON.stringify({ violation: false, redacted: 'REGATED清理版' })
+        : JSON.stringify({ violation: false, redacted: '默认清理' }))
+    // Capturing peer — records every card.topic it is asked about.
+    const captured: string[] = []
+    const peerMock = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: async (req) => {
+        const body = await req.json() as { card: { intent_id: string; topic: string } }
+        captured.push(body.card.topic)
+        return Response.json({ intent_id: body.card.intent_id, match: 'yes', blurb: 'ok' })
+      },
+    })
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    const rowRedacted = 'seek-redacted'   // propose→confirm row: carries redacted_topic, raw differs
+    const rowLegacy = 'seek-legacy-null'  // legacy/bridge row: redacted_topic=null → re-gate at resume
+    const rawRedacted = '找搭子 联系我 138xxxx'
+    const rawLegacy = '原始寻友话题-待清理'
+    const storedRedacted = '寻找搭子【已清理】'
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: `http://127.0.0.1:${openaiMock.port}/v1`,
+        openaiModel: 'test-model',
+        a2a_agents: [{
+          id: 'ccb', name: '小B', url: `http://127.0.0.1:${peerMock.port}/a2a`,
+          inbound_api_key: 'peer-inbound-key-abc123', outbound_api_key: 'peer-outbound-key-xyz',
+          capabilities: [], paused: false, transport: 'push',
+        }],
+      }),
+    )
+    const db = openTestDb()
+    // Seed the crash-mid-forage state: a redacted-carrying foraging row (propose
+    // then flip to foraging) and a null-redacted legacy foraging row.
+    const seekStore = makeSeekStore(db)
+    seekStore.propose({ id: rowRedacted, kind: 'seek', topic: rawRedacted, redactedTopic: storedRedacted })
+    seekStore.update(rowRedacted, { status: 'foraging' })
+    seekStore.create({ id: rowLegacy, kind: 'seek', topic: rawLegacy })
+
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      // Both resume forages were scheduled fire-and-forget inside buildBootstrap.
+      await pollFor(() => (captured.length >= 2 ? true : null))
+
+      // Redacted row: forwarded VERBATIM — the stored redacted string, NOT the
+      // raw topic, NOT a re-gate output.
+      expect(captured).toContain(storedRedacted)
+      // Legacy null-redacted row: RE-GATED — the gate's output, never the raw.
+      expect(captured).toContain('REGATED清理版')
+      expect(openaiMock.hits()).toBeGreaterThan(0)   // re-gate actually ran
+      // The raw topics MUST NEVER leave this daemon.
+      expect(captured).not.toContain(rawRedacted)
+      expect(captured).not.toContain(rawLegacy)
+    } finally {
+      openaiMock.stop()
+      peerMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
+  it('resume of a null-redacted row whose re-gate is BLOCKED sends nothing (safe-closed)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-resume-blocked-'))
+    const port = 19912
+    // Gate BLOCKS every topic — the legacy row's re-gate at resume fails closed.
+    const openaiMock = serveMockOpenaiRouting(() => JSON.stringify({ violation: true, redacted: '', reasons: ['leak'] }))
+    const captured: string[] = []
+    const peerMock = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: async (req) => {
+        const body = await req.json() as { card: { intent_id: string; topic: string } }
+        captured.push(body.card.topic)
+        return Response.json({ intent_id: body.card.intent_id, match: 'yes', blurb: 'ok' })
+      },
+    })
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: `http://127.0.0.1:${openaiMock.port}/v1`,
+        openaiModel: 'test-model',
+        a2a_agents: [{
+          id: 'ccb', name: '小B', url: `http://127.0.0.1:${peerMock.port}/a2a`,
+          inbound_api_key: 'peer-inbound-key-abc123', outbound_api_key: 'peer-outbound-key-xyz',
+          capabilities: [], paused: false, transport: 'push',
+        }],
+      }),
+    )
+    const db = openTestDb()
+    const seekStore = makeSeekStore(db)
+    seekStore.create({ id: 'seek-blocked', kind: 'seek', topic: '要被拦截的原始话题-含联系方式' })
+
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      // Wait until the re-gate has actually run (mock was hit), so the negative
+      // assertion below is not merely racing an unstarted resume.
+      await pollFor(() => (openaiMock.hits() > 0 ? true : null))
+      // Give any (erroneous) send a chance to land, then assert none did.
+      await new Promise(r => setTimeout(r, 50))
+      expect(captured).toEqual([])   // gate blocked → nothing was exposed
     } finally {
       openaiMock.stop()
       peerMock.stop()
@@ -1655,16 +1845,17 @@ describe('bootstrap agent-social M1 wiring', () => {
     }
   })
 
-  it('POST /v1/social/seek returns 503 when the social broker is not wired (deps.social absent)', async () => {
+  it('POST /v1/social/seek/propose returns 503 when the social broker is not wired (deps.social absent)', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'internal-api-social-503-'))
     const api = createInternalApi({ stateDir, daemonPid: 1 } as any)
     try {
       const { port } = await api.start()
-      // social_seek is admin-tier (route-tiers.ts) — the daemon-wide file
-      // token is only 'trusted', so mint an admin-tier session token
-      // (mirrors how a real admin-tier MCP child would authenticate).
+      // POST /v1/social/seek/propose is trusted-tier (route-tiers.ts, P4) —
+      // the daemon-wide file token is already 'trusted', but an admin-tier
+      // session token meets a trusted bar too (admin > trusted), so minting
+      // admin here still exercises the same 503-before-authz-matters path.
       const token = api.mintSessionToken('admin', 'test-session')
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/seek`, {
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/seek/propose`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: JSON.stringify({ topic: '找摄影搭子' }),
@@ -1875,6 +2066,322 @@ describe('bootstrap agent-social M1 wiring', () => {
       expect(sendMessage.mock.calls.some((c: unknown[]) => String(c[1]).includes('给你写信了'))).toBe(false)
     } finally {
       peerMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── url-less mailbox peer guard (pairing-code Task 3, review IMPORTANT-2) ──
+// Making A2AAgentRecord.url optional for transport:'mailbox' lets a url-less
+// mailbox peer sit in the registry — that's the whole point of the pairing
+// feature (a pure-NAT peer has no public url). But intentUrl/revealUrl both
+// open with `agentUrl.replace(...)`, which throws on undefined, and three
+// wire-social.ts sites read hand.url unconditionally: broker.discover,
+// forwardTargets, and postPeerReveal. Each test below drives ONE of those
+// three sites with only a url-less mailbox peer registered and proves the
+// peer is cleanly skipped (seek/reveal-over-mailbox deferred, spec §10) —
+// not merely that some outer try/catch happened to swallow a throw.
+describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPORTANT-2)', () => {
+  const mailboxPeer = {
+    id: 'cc-aaaa1111', name: 'Alice', inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o',
+    capabilities: [], paused: false, transport: 'mailbox' as const,
+    mailbox_addr: 'A', mailbox_enc_pub: 'E', relays: ['https://brain.example/mailbox'],
+  }
+
+  it('discover: broker propose→confirm with ONLY a url-less mailbox peer registered never reaches intentUrl(undefined) — peer skipped, seek closes with 0 peers asked', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-guard-discover-'))
+    const port = 19912
+    const openaiMock = serveMockOpenai(JSON.stringify({ violation: false, redacted: '找摄影搭子' }))
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'openai',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: `http://127.0.0.1:${openaiMock.port}/v1`,
+        openaiModel: 'test-model',
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      boot.a2aDeps.registry.add(mailboxPeer)
+
+      const proposed = await boot.social!.broker.propose('找摄影搭子')
+      const intent_id = (proposed as { ok: true; intent_id: string }).intent_id
+      boot.social!.broker.confirmSeek(intent_id)
+      const row = await pollFor(() => {
+        const r = boot!.social!.seekStore.get(intent_id)
+        return r && r.status !== 'proposed' && r.status !== 'foraging' ? r : null
+      })
+      expect(row).not.toBeNull()
+      // Closed (no yes echo) with 0 peers asked — proves discover filtered
+      // the url-less mailbox peer OUT before any send was attempted, not
+      // merely that a throw somewhere was swallowed.
+      expect(row!.status).toBe('closed')
+      expect(row!.peers_asked).toBe(0)
+    } finally {
+      openaiMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
+  it('forwardTargets: an inbound /a2a/intent with ONLY a url-less mailbox peer as a forward target never reaches intentUrl(undefined) — 200, no forward', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-guard-forward-'))
+    const port = 19913
+    const openaiMock = serveMockOpenai('{"match":"no"}')
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'openai',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: `http://127.0.0.1:${openaiMock.port}/v1`,
+        openaiModel: 'test-model',
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      const senderKey = 'sender-inbound-key-guard1'
+      boot.a2aDeps.registry.add({
+        id: 'ccs', name: '小S', url: 'http://127.0.0.1:1/a2a',
+        inbound_api_key: senderKey, outbound_api_key: 'unused',
+        capabilities: [], paused: false, transport: 'push',
+      })
+      // The ONLY possible forward target is the url-less mailbox peer.
+      boot.a2aDeps.registry.add(mailboxPeer)
+
+      const resp = await fetch(`http://127.0.0.1:${port}/a2a/intent`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${senderKey}` },
+        body: JSON.stringify({
+          agent_id: 'ccs',
+          card: {
+            intent_id: 'guard-fwd-1', kind: 'seek', topic: '找摄影搭子', hop: 1,
+            expires_at: new Date(Date.now() + 600_000).toISOString(),
+          },
+        }),
+      })
+      // No throw (a TypeError deep in forwardTargets/forwardSend would have
+      // surfaced as a 500 here).
+      expect(resp.status).toBe(200)
+      const receipt = await resp.json() as { match: string; forwarded?: unknown }
+      // No forward happened — the mailbox peer was filtered out of forwardTargets.
+      expect(receipt.forwarded).toBeUndefined()
+    } finally {
+      openaiMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
+  it('postPeerReveal: revealEcho against a url-less mailbox peer never reaches revealUrl(undefined) — short-circuits to peer_unreachable, no throw', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-guard-reveal-'))
+    const port = 19914
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      boot.a2aDeps.registry.add(mailboxPeer)
+
+      // Seed an echo whose peer is the url-less mailbox peer — revealEcho's
+      // postPeerReveal call is the site under test.
+      const intentId = 'guard-reveal-1'
+      const echoId = `${intentId}:${mailboxPeer.id}`
+      boot.social!.seekStore.create({ id: intentId, kind: 'seek', topic: '找摄影搭子' })
+      boot.social!.echoStore.create({
+        id: echoId, seekId: intentId, peerMasked: '第 1 度的某人',
+        degree: 1, content: '南京摄影爱好者', peerAgentId: mailboxPeer.id,
+      })
+
+      const outcome = await boot.social!.revealer.revealEcho(echoId)
+      expect(outcome).toEqual({ state: 'peer_unreachable' })
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── Pairing-code (spec §7) — boot.pairing wiring ──────────────────────────
+// Gated ONLY on mailbox_relays?.length (the rendezvous relay), independent
+// of social_enabled — a daemon that hasn't turned social on can still pair.
+// See src/daemon/bootstrap/wire-pairing.ts + docs/superpowers/specs/
+// 2026-07-20-pairing-code-design.md §7.
+describe('bootstrap pairing-code wiring', () => {
+  it('wires boot.pairing when mailbox_relays is configured', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-pairing-on-'))
+    writeFileSync(join(stateDir, 'agent-config.json'),
+      JSON.stringify({ provider: 'claude', mailbox_relays: ['https://brain.example/mailbox'] }))
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(boot.pairing).toBeDefined()
+      expect(typeof boot.pairing!.start).toBe('function')
+      expect(typeof boot.pairing!.accept).toBe('function')
+      expect(typeof boot.pairing!.stop).toBe('function')
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves boot.pairing undefined with no mailbox_relays', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-pairing-off-'))
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(boot.pairing).toBeUndefined()
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  // T2/T6 identity split (carried review item 1) — boot.selfId is what every
+  // outbound wiring seam (wireSocial, wirePairing, pipeline-deps' delegate
+  // path) shares. Asserted directly here so a future regression that
+  // reintroduces a second, independently-resolved selfId somewhere is caught
+  // at the bootstrap layer, not just by re-deriving the expected value.
+  it('exposes boot.selfId — the single resolveSelfAgentId result shared by every wiring seam', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-selfid-'))
+    writeFileSync(join(stateDir, 'agent-config.json'),
+      JSON.stringify({ provider: 'claude', mailbox_relays: ['https://brain.example/mailbox'] }))
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(typeof boot.selfId).toBe('string')
+      expect(boot.selfId.length).toBeGreaterThan(0)
+      // Persisted to disk by resolveSelfAgentId's fresh-daemon mint branch —
+      // proves this is the SAME resolution wire-pairing/wire-social read,
+      // not a second independent one.
+      const disk = JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))
+      expect(disk.self_agent_id).toBe(boot.selfId)
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  // Double-notify fix (T7 review) — start()/accept() are SYNC calls the
+  // caller (WeChat 配对 dispatch seam / internal-api / CLI) is waiting on
+  // and renders every outcome for; boot.pairing's wired `notify` (→
+  // resolveOperatorChatId + sendMessage) is reserved for the initiator's
+  // ASYNC poller only (see pairing.ts's notify doc comment). Previously
+  // start()'s relay_drop_failed branch ALSO fired notify synchronously,
+  // which — since resolveOperatorChatId resolves to the same chat as the
+  // one that typed "配对" in a solo-owner install — meant the owner got the
+  // honest failure copy twice (once from here, once from the pipeline
+  // dispatch seam). Locking in: the real wired engine must NOT send
+  // anything on a sync relay-drop failure; the caller alone renders it
+  // (covered end-to-end for the WeChat seam in
+  // pipeline-deps-pairing-dispatch.test.ts).
+  it('a failed relay drop on start() does NOT notify via the wired notify path (sync outcome — caller renders it)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-pairing-notify-'))
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({
+      provider: 'claude',
+      // Port 1 is never a live relay in this test env — drop() will fail
+      // (fetch throws / non-2xx), driving the honest relay_drop_failed path.
+      mailbox_relays: ['http://127.0.0.1:1/mailbox'],
+    }))
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      const sent: Array<{ chatId: string; text: string }> = []
+      const db = openTestDb()
+      const ilink = makeIlinkStub()
+      ilink.sendMessage = (async (chatId: string, text: string) => { sent.push({ chatId, text }); return { msgId: 'm1' } }) as any
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: ilink as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      // Seed a conversation row so resolveOperatorChatId() (earliest-updated
+      // conversation) resolves to a real chat instead of null — proves the
+      // silence below isn't just "no operator chat to notify".
+      boot.conversationStore.set('op_chat', { kind: 'solo', provider: 'claude' })
+      expect(boot.pairing).toBeDefined()
+      const res = await boot.pairing!.start()
+      expect(res.ok).toBe(false)
+      if (res.ok) throw new Error('unreachable')
+      expect(res.reason).toBe('relay_drop_failed')
+      expect(sent.length).toBe(0)
+    } finally {
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })
     }

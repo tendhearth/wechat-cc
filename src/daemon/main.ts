@@ -151,6 +151,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     if (didStartup) { try { await lc.stopAll() } catch { /* logged by lc */ } }
     // Stop A2A server if it was started (a2a_listen was configured).
     try { await bootRef?.a2aServer?.stop() } catch (err) { log('A2A', `server stop error: ${err instanceof Error ? err.message : String(err)}`) }
+    // Cancel any in-flight pairing-code poller (spec §7) if boot.pairing was
+    // wired (mailbox_relays configured) — mirrors the a2aServer stop above.
+    // Undefined/no active code ⇒ a clean no-op (PairingEngine.stop() is
+    // itself a no-op when nothing is active).
+    try { bootRef?.pairing?.stop() } catch (err) { log('PAIR', `stop error: ${err instanceof Error ? err.message : String(err)}`) }
     try { db.close() } catch (err) { console.error('db close failed:', err) }
     releaseInstanceLock(PID_PATH)
   }
@@ -285,8 +290,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setA2A(boot.a2aDeps)
     // Wire the agent-social M1 broker (T7b-core) — only present when
     // social_enabled + social_disclosure_policy are both configured. So
-    // POST /v1/social/seek works when the feature is on.
+    // POST /v1/social/seek/{propose,confirm,cancel} work when the feature is on.
     if (boot.social) internalApi.setSocial(boot.social)
+    // Wire the 配对码 engine (spec §7) — only present when mailbox_relays is
+    // configured. So POST /v1/pair/start + /v1/pair/accept work when wired.
+    if (boot.pairing) internalApi.setPairing(boot.pairing)
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({
       stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,

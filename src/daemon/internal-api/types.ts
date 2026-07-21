@@ -198,16 +198,29 @@ export interface InternalApiDeps {
   /**
    * Agent-social M1 (T7b-core) — undefined when `social_enabled` +
    * `social_disclosure_policy` aren't both configured (or bootstrap hasn't
-   * late-bound it yet). POST /v1/social/seek returns 503 until this is set.
-   * Late-bound by main.ts from `bootstrap.social` (mirrors the `a2a` dep
-   * above / `setA2A`).
+   * late-bound it yet). POST /v1/social/seek/{propose,confirm,cancel} return
+   * 503 until this is set. Late-bound by main.ts from `bootstrap.social`
+   * (mirrors the `a2a` dep above / `setA2A`).
+   *
+   * P4 派心愿: `propose`/`confirmSeek`/`cancelSeek` back the propose→confirm
+   * routes.
    */
   social?: {
-    broker: { seek(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').SeekOutcome> }
+    broker: {
+      propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
+      confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
+      cancelSeek(id: string): import('../../core/social-broker').CancelOutcome
+    }
     seekStore: import('../../core/social-seek-store').SeekStore
     echoStore: import('../../core/social-echo-store').EchoStore
     pledgeStore: import('../../core/social-pledge-store').PledgeStore
     revealer: import('../../core/social-reveal').Revealer
+  }
+  /** 配对码 (spec §7) — late-bound by main.ts from bootstrap.pairing. Undefined
+   *  (⇒ /v1/pair/* 503) until mailbox_relays is configured AND late-bind runs. */
+  pairing?: {
+    start(): Promise<import('../../core/pairing').PairStartResult>
+    accept(code: string): Promise<import('../../core/pairing').PairResult>
   }
   /**
    * Optional per-turn outcome store — backs GET /v1/turns. Undefined in
@@ -310,11 +323,17 @@ export interface InternalApi {
   setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
   /**
    * Late-bind the agent-social M1 broker (T7b-core) after bootstrap has
-   * constructed it. POST /v1/social/seek returns 503 until this is called
-   * (only happens when social_enabled + social_disclosure_policy are both
-   * configured).
+   * constructed it. POST /v1/social/seek/{propose,confirm,cancel} return 503
+   * until this is called (only happens when social_enabled +
+   * social_disclosure_policy are both configured).
    */
   setSocial(social: NonNullable<InternalApiDeps['social']>): void
+  /**
+   * Late-bind the 配对码 engine (spec §7) after bootstrap has constructed it
+   * (only happens when mailbox_relays is configured). POST /v1/pair/start
+   * and POST /v1/pair/accept return 503 until this is called.
+   */
+  setPairing(pairing: NonNullable<InternalApiDeps['pairing']>): void
   /** Mint an env-only per-session token granting `tier`, keyed by `sessionKey`
    *  (`provider/alias/chatId`). The daemon injects it into that session's MCP
    *  children; the route layer resolves the tier from it. */

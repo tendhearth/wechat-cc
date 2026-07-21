@@ -1,7 +1,7 @@
 /**
  * Async foraging spine end-to-end (deterministic, in-process).
  *
- * Composes the REAL modules — makeBroker (sync sow + background forage) →
+ * Composes the REAL modules — makeBroker (propose→派/confirm + background forage) →
  * makeAnswerIntent (the peer's judge) → gateOutbound (disclosure) → makeRevealer
  * (mutual async reveal) — with injected deterministic judge + checker + stores.
  * The peer's SECOND reveal is simulated by stubbing the seeker's
@@ -66,7 +66,7 @@ const passingCheck = async (prompt: string) => {
 }
 
 describe('async foraging spine e2e', () => {
-  it('sow → background echo → desktop reveal → peer reveals back → connected + channel opens, mask never lifts', async () => {
+  it('propose → 派/confirm → background echo → desktop reveal → peer reveals back → connected + channel opens, mask never lifts', async () => {
     const db = openDb({ path: ':memory:' })
     const seekStore = makeSeekStore(db)
     const echoStore = makeEchoStore(db)
@@ -83,14 +83,22 @@ describe('async foraging spine e2e', () => {
       policy: POLICY, cheapEval: passingCheck,
       discover: async () => [recB],
       send: async (_hand, card) => answerB({ agent: { id: 'cca' } as any, card }),
-      sow: (id, topic) => seekStore.create({ id, kind: 'seek', topic }),
+      proposeRow: (id, r) => seekStore.propose({ id, kind: 'seek', topic: r.topic, redactedTopic: r.redactedTopic, ...(r.redactedCity ? { redactedCity: r.redactedCity } : {}) }),
+      readSeek: (id) => seekStore.get(id),
+      markStatus: (id, status) => seekStore.update(id, { status }),
       recordEcho: (e) => echoStore.create({ id: `${e.intentId}:${e.peerAgentId}`, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId }),
       finishSeek: (id, status, peersAsked) => seekStore.update(id, { status, peersAsked }),
       schedule: (fn) => { jobs.push(fn) },
     })
 
-    // 1) Sow — returns immediately; no echo yet (background not run).
-    const { intent_id } = await broker.seek('找周末拍照搭子', { city: '南京' })
+    // 1) Propose (creates a `proposed` row, exposes nothing) then 派/confirm —
+    //    flips to `foraging` + schedules the (deferred) forage; no echo yet.
+    const proposed = await broker.propose('找周末拍照搭子', { city: '南京' })
+    expect(proposed.ok).toBe(true)
+    const intent_id = (proposed as { ok: true; intent_id: string }).intent_id
+    expect(seekStore.get(intent_id)!.status).toBe('proposed')
+    expect(jobs).toHaveLength(0)                               // propose scheduled NOTHING
+    broker.confirmSeek(intent_id)
     expect(seekStore.get(intent_id)!.status).toBe('foraging')
     expect(echoStore.listForSeek(intent_id)).toHaveLength(0)   // did NOT block on the peer
 
@@ -147,6 +155,65 @@ describe('async foraging spine e2e', () => {
     expect(openChannel.peer_channel_id).toBe(peerHandle.channel_id)
   })
 
+  it('派心愿 full chain: propose stores the redacted wording, 派/confirm broadcasts THAT stored string verbatim (WYSIWYG), a cancelled row never forages', async () => {
+    const db = openDb({ path: ':memory:' })
+    const seekStore = makeSeekStore(db)
+    const echoStore = makeEchoStore(db)
+    const answerB = makeAnswerIntent({ judge: async () => ({ match: 'yes', blurb: '南京摄影同好' }), policy: POLICY, cheapEval: passingCheck })
+    const jobs: Array<() => Promise<void>> = []
+    let sentCard: any = null
+    const broker = makeBroker({
+      policy: POLICY, cheapEval: passingCheck,
+      discover: async () => [recB],
+      send: async (_hand, card) => { sentCard = card; return answerB({ agent: { id: 'cca' } as any, card }) },
+      proposeRow: (id, r) => seekStore.propose({ id, kind: 'seek', topic: r.topic, redactedTopic: r.redactedTopic, ...(r.redactedCity ? { redactedCity: r.redactedCity } : {}) }),
+      readSeek: (id) => seekStore.get(id),
+      markStatus: (id, status) => seekStore.update(id, { status }),
+      recordEcho: (e) => echoStore.create({ id: `${e.intentId}:${e.peerAgentId}`, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId }),
+      finishSeek: (id, status, peersAsked) => seekStore.update(id, { status, peersAsked }),
+      schedule: (fn) => { jobs.push(fn) },
+    })
+
+    // 1) Propose — a `proposed` row with a persisted redacted_topic; the peer is
+    //    NEVER contacted and nothing is scheduled (GATE-EVERY-BROADCAST: propose
+    //    exposes zero, 派 is the only thing that forages).
+    const proposed = await broker.propose('找周末拍照搭子', { city: '南京' })
+    expect(proposed.ok).toBe(true)
+    const intent_id = (proposed as { ok: true; intent_id: string }).intent_id
+    const proposedRow = seekStore.get(intent_id)!
+    expect(proposedRow.status).toBe('proposed')
+    expect(proposedRow.redacted_topic).toBe('找周末拍照搭子')   // owner-approved wording persisted
+    expect(echoStore.listForSeek(intent_id)).toHaveLength(0)
+    expect(jobs).toHaveLength(0)          // NO peer contacted at propose time
+    expect(sentCard).toBeNull()
+
+    // 2) 派/confirm — flips to `foraging` + schedules the forage of the STORED
+    //    redacted string (no re-gate). Then run the deferred forage.
+    const confirmed = broker.confirmSeek(intent_id)
+    expect(confirmed).toEqual({ ok: true, intent_id })
+    expect(seekStore.get(intent_id)!.status).toBe('foraging')
+    await Promise.all(jobs.map(j => j()))
+
+    // 3) The echo landed AND the peer's captured card carries the BYTE-IDENTICAL
+    //    stored string (topic + city) — WYSIWYG end-to-end.
+    const echoes = echoStore.listForSeek(intent_id)
+    expect(echoes).toHaveLength(1)
+    expect(sentCard.topic).toBe(proposedRow.redacted_topic)
+    expect(sentCard.city).toBe(proposedRow.redacted_city)
+    expect(seekStore.get(intent_id)!.status).toBe('echoed')
+
+    // 4) A fresh `proposed` row that is cancelled NEVER forages — cancel schedules
+    //    nothing and a later confirm of a cancelled row is rejected.
+    const jobsBefore = jobs.length
+    const p2 = await broker.propose('找露营搭子')
+    const id2 = (p2 as { ok: true; intent_id: string }).intent_id
+    expect(broker.cancelSeek(id2)).toEqual({ ok: true })
+    expect(seekStore.get(id2)!.status).toBe('cancelled')
+    expect(jobs).toHaveLength(jobsBefore)                 // cancel scheduled no forage
+    expect(broker.confirmSeek(id2)).toEqual({ ok: false, reason: 'not_proposed' })
+    expect(jobs).toHaveLength(jobsBefore)                 // rejected confirm still forages nothing
+  })
+
   it('the disclosure gate still downgrades a leaky blurb (never recorded as an echo)', async () => {
     const db = openDb({ path: ':memory:' })
     const seekStore = makeSeekStore(db)
@@ -157,12 +224,16 @@ describe('async foraging spine e2e', () => {
       policy: POLICY, cheapEval: passingCheck,
       discover: async () => [recB],
       send: async (_h, card) => answerLeaky({ agent: { id: 'cca' } as any, card }),
-      sow: (id, topic) => seekStore.create({ id, kind: 'seek', topic }),
+      proposeRow: (id, r) => seekStore.propose({ id, kind: 'seek', topic: r.topic, redactedTopic: r.redactedTopic, ...(r.redactedCity ? { redactedCity: r.redactedCity } : {}) }),
+      readSeek: (id) => seekStore.get(id),
+      markStatus: (id, status) => seekStore.update(id, { status }),
       recordEcho: (e) => echoStore.create({ id: `${e.intentId}:${e.peerAgentId}`, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId }),
       finishSeek: (id, status, peersAsked) => seekStore.update(id, { status, peersAsked }),
       schedule: (fn) => { jobs.push(fn) },
     })
-    const { intent_id } = await broker.seek('找周末拍照搭子')
+    const proposed = await broker.propose('找周末拍照搭子')
+    const intent_id = (proposed as { ok: true; intent_id: string }).intent_id
+    broker.confirmSeek(intent_id)
     await Promise.all(jobs.map(j => j()))
     expect(echoStore.listForSeek(intent_id)).toHaveLength(0)     // leaky blurb downgraded to match:no
     expect(seekStore.get(intent_id)!.status).toBe('closed')
@@ -216,7 +287,9 @@ describe('forwarding hop e2e (S → W → Q)', () => {
       policy: POLICY, cheapEval: passingCheck,
       discover: async () => [W as any],
       send: async (_hand, card) => wForwarder({ agent: S as any, card }),
-      sow: (id, topic) => sSeek.create({ id, kind: 'seek', topic }),
+      proposeRow: (id, r) => sSeek.propose({ id, kind: 'seek', topic: r.topic, redactedTopic: r.redactedTopic, ...(r.redactedCity ? { redactedCity: r.redactedCity } : {}) }),
+      readSeek: (id) => sSeek.get(id),
+      markStatus: (id, status) => sSeek.update(id, { status }),
       recordEcho: (e) => {
         const id = e.peerAgentId != null ? `${e.intentId}:${e.peerAgentId}` : `${e.intentId}:${e.relayVia}:${e.relayToken}`
         sEcho.create({ id, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId, relayVia: e.relayVia, relayToken: e.relayToken })
@@ -225,8 +298,10 @@ describe('forwarding hop e2e (S → W → Q)', () => {
       schedule: (fn) => { jobs.push(fn) },
     })
 
-    // 1) Sow + forage: S ends with ONE degree-2 relay echo, still masked.
-    const { intent_id } = await sBroker.seek('找周末拍照搭子')
+    // 1) Propose + 派/confirm + forage: S ends with ONE degree-2 relay echo, still masked.
+    const proposed = await sBroker.propose('找周末拍照搭子')
+    const intent_id = (proposed as { ok: true; intent_id: string }).intent_id
+    sBroker.confirmSeek(intent_id)
     await Promise.all(jobs.map(j => j()))
     const echoes = sEcho.listForSeek(intent_id)
     expect(echoes).toHaveLength(1)

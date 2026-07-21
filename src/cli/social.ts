@@ -22,6 +22,7 @@ import { openWechatDb } from '../lib/db'
 import { makeSeekStore } from '../core/social-seek-store'
 import { makeEchoStore, toPublicEcho, type PublicEchoRow } from '../core/social-echo-store'
 import { makePledgeStore } from '../core/social-pledge-store'
+import type { ProposeOutcome, ConfirmOutcome, CancelOutcome } from '../core/social-broker'
 
 export interface SocialReadOpts { limit: number; json: boolean }
 
@@ -137,4 +138,135 @@ export async function cmdSocialReveal(
     : state === 'peer_unreachable' ? '揭晓已发出,但对面暂时够不着 — 可稍后重试(你的同意已保存)'
     : state
   console.log(`${state} — ${note}`)
+}
+
+// ── P4 派心愿 — propose / confirm / cancel (CLI mirror of the WeChat
+// 派 <id> / 取消 <id> commands, see pipeline-deps.ts's dispatch seam and
+// seek-command.ts). Same daemon-call posture as `reveal`: these need the
+// RUNNING daemon (propose gates via the model, confirm/cancel touch the
+// broker), so they go through the internal-api rather than the db. Results
+// are unions ({ok:true,...}/{ok:false,reason}) — branch on `.ok`, never
+// assume success.
+
+export interface SocialDaemonDeps {
+  fetch?: typeof fetch
+  readInfo?: () => { baseUrl: string; tokenFilePath: string } | null
+  readToken?: (p: string) => string
+  fail?: (msg: string) => never
+}
+
+interface DaemonConn { baseUrl: string; token: string; doFetch: typeof fetch; fail: (msg: string) => never }
+
+/** Shared readInfo/readToken/fail scaffold — mirrors cmdSocialReveal's inline version. */
+function connectDaemon(stateDir: string, deps: SocialDaemonDeps, label: string): DaemonConn {
+  const doFetch = deps.fetch ?? fetch
+  const fail = deps.fail ?? ((msg: string): never => { console.error(`${label}: ${msg}`); throw new Error(msg) })
+  const readInfo = deps.readInfo ?? (() => {
+    const p = join(stateDir, 'internal-api-info.json')
+    if (!existsSync(p)) return null
+    try {
+      const parsed = JSON.parse(readFileSync(p, 'utf8')) as { baseUrl?: string; tokenFilePath?: string }
+      return parsed.baseUrl && parsed.tokenFilePath ? { baseUrl: parsed.baseUrl, tokenFilePath: parsed.tokenFilePath } : null
+    } catch { return null }
+  })
+  const readToken = deps.readToken ?? ((p: string) => readFileSync(p, 'utf8').trim())
+
+  const info = readInfo()
+  if (!info) fail('daemon not running (internal-api-info.json missing or malformed — start the daemon first)')
+
+  let token: string
+  try { token = readToken(info!.tokenFilePath) }
+  catch (err) { fail(`could not read token file: ${err instanceof Error ? err.message : String(err)}`) }
+
+  return { baseUrl: info!.baseUrl, token: token!, doFetch, fail }
+}
+
+async function postJson(conn: DaemonConn, path: string, body: unknown): Promise<Response> {
+  return conn.doFetch(`${conn.baseUrl}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'authorization': `Bearer ${conn.token}` },
+    body: JSON.stringify(body),
+  })
+}
+
+/**
+ * 派 <topic> (预览) — gates the topic (+ optional city) and persists a
+ * `proposed` row carrying the redacted wording; sends NOTHING yet. Prints
+ * the redacted preview WYSIWYG-style (the owner sees exactly what confirm
+ * will broadcast) plus the 派/取消 follow-up hint, or the gate-reject reason.
+ */
+export async function cmdSocialPropose(
+  stateDir: string,
+  topic: string,
+  opts: { city?: string; json: boolean },
+  deps: SocialDaemonDeps = {},
+): Promise<void> {
+  const conn = connectDaemon(stateDir, deps, 'social propose')
+
+  let resp: Response
+  try { resp = await postJson(conn, '/v1/social/seek/propose', { topic, ...(opts.city ? { city: opts.city } : {}) }) }
+  catch (err) { return void conn.fail(`could not reach the daemon: ${err instanceof Error ? err.message : String(err)}`) }
+  if (!resp.ok) conn.fail(`daemon returned ${resp.status}`)
+
+  let body: ProposeOutcome
+  try { body = await resp.json() as ProposeOutcome }
+  catch { return void conn.fail('daemon returned a non-JSON response') }
+
+  if (opts.json) { console.log(JSON.stringify(body)); return }
+  if (!body.ok) { console.log(`没能生成预览 — ${body.reason}`); return }
+  const cityPart = body.redacted_city ? `(${body.redacted_city}) ` : ''
+  console.log(`心愿预览: ${cityPart}「${body.redacted}」  [${body.intent_id}]`)
+  console.log(`微信里回「派 ${body.intent_id}」发出 / 「取消 ${body.intent_id}」作废`)
+}
+
+/**
+ * 派 <id> — confirm a still-`proposed` row: flips it to foraging and
+ * broadcasts the STORED redacted wording verbatim (no re-gate). Success/
+ * failure copy mirrors pipeline-deps.ts's WeChat 派 handler exactly.
+ */
+export async function cmdSocialConfirm(
+  stateDir: string,
+  id: string,
+  opts: { json: boolean },
+  deps: SocialDaemonDeps = {},
+): Promise<void> {
+  const conn = connectDaemon(stateDir, deps, 'social confirm')
+
+  let resp: Response
+  try { resp = await postJson(conn, '/v1/social/seek/confirm', { id }) }
+  catch (err) { return void conn.fail(`could not reach the daemon: ${err instanceof Error ? err.message : String(err)}`) }
+  if (!resp.ok) conn.fail(`daemon returned ${resp.status}`)
+
+  let body: ConfirmOutcome
+  try { body = await resp.json() as ConfirmOutcome }
+  catch { return void conn.fail('daemon returned a non-JSON response') }
+
+  if (opts.json) { console.log(JSON.stringify(body)); return }
+  console.log(body.ok ? '已发出,觅食中…(稍后回来看回声)' : '这条心愿不存在或已处理')
+}
+
+/**
+ * 取消 <id> — void a still-`proposed` row before it ever goes out.
+ * Idempotent server-side (a non-proposed row returns ok without a
+ * re-write); success copy mirrors pipeline-deps.ts's WeChat 取消 handler.
+ */
+export async function cmdSocialCancel(
+  stateDir: string,
+  id: string,
+  opts: { json: boolean },
+  deps: SocialDaemonDeps = {},
+): Promise<void> {
+  const conn = connectDaemon(stateDir, deps, 'social cancel')
+
+  let resp: Response
+  try { resp = await postJson(conn, '/v1/social/seek/cancel', { id }) }
+  catch (err) { return void conn.fail(`could not reach the daemon: ${err instanceof Error ? err.message : String(err)}`) }
+  if (!resp.ok) conn.fail(`daemon returned ${resp.status}`)
+
+  let body: CancelOutcome
+  try { body = await resp.json() as CancelOutcome }
+  catch { return void conn.fail('daemon returned a non-JSON response') }
+
+  if (opts.json) { console.log(JSON.stringify(body)); return }
+  console.log(body.ok ? '已作废' : `没能作废 — ${body.reason}`)
 }

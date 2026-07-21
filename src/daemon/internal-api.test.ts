@@ -2732,7 +2732,8 @@ describe('internal-api', () => {
   describe('social read routes (GET /v1/social/seeks, GET /v1/social/echoes)', () => {
     const seekRow: SeekRow = {
       id: 'k1', kind: 'seek', topic: '找个会修老相机的',
-      status: 'foraging', hop: 1, peers_asked: 0, created_at: 't', updated_at: 't',
+      status: 'foraging', redacted_topic: null, redacted_city: null,
+      hop: 1, peers_asked: 0, created_at: 't', updated_at: 't',
     }
     const echoRow: EchoRow = {
       id: 'e1', seek_id: 'k1', peer_masked: 'p***', degree: 1,
@@ -2751,9 +2752,13 @@ describe('internal-api', () => {
         stateDir, daemonPid: 1,
         ...(opts ? {
           social: {
-            broker: { seek: async () => ({ intent_id: 'x', matched: [], lit: [] }) },
+            broker: {
+              propose: async () => ({ ok: true as const, intent_id: 'x', redacted: 'x' }),
+              confirmSeek: () => ({ ok: true as const, intent_id: 'x' }),
+              cancelSeek: () => ({ ok: true as const }),
+            },
             seekStore: {
-              create: () => {}, update: () => {},
+              create: () => {}, propose: () => {}, update: () => {},
               list: () => opts.seeks ?? [], get: () => null,
             },
             echoStore: {
@@ -3379,7 +3384,7 @@ describe('internal-api request validation', () => {
       serverEnabled?: boolean
       baseUrl?: string | null
     } = {}) {
-      type AgentEntry = { id: string; name: string; url: string; outbound_api_key: string; inbound_api_key: string; capabilities: string[]; paused: boolean; transport: 'push' | 'ws' | 'mailbox' }
+      type AgentEntry = { id: string; name: string; url?: string; outbound_api_key: string; inbound_api_key: string; capabilities: string[]; paused: boolean; transport: 'push' | 'ws' | 'mailbox' }
       const agentsList: AgentEntry[] = (opts.agents ?? []).map(a => ({
         id: a.id, name: a.name ?? a.id, url: a.url,
         outbound_api_key: a.outbound_api_key, inbound_api_key: 'unused-inbound',

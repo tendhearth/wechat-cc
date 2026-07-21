@@ -201,7 +201,7 @@ export async function cmdAgentTest(
  * Validates outbound_api_key + URL reachability without going through the
  * operator's chat or claude/codex session.
  */
-async function testOutbound(stateDir: string, id: string, text: string, agent: { url: string }): Promise<void> {
+async function testOutbound(stateDir: string, id: string, text: string, agent: { url?: string }): Promise<void> {
   // Internal-api auth: read base URL from internal-api-info.json + token from tokenFilePath.
   const infoPath = join(stateDir, 'internal-api-info.json')
   if (!existsSync(infoPath)) {
@@ -229,7 +229,7 @@ async function testOutbound(stateDir: string, id: string, text: string, agent: {
   const body = parsed as { ok?: boolean; http_status?: number; error?: string; response?: unknown }
 
   if (body.ok) {
-    console.log(`✅ outbound delivered to ${agent.url}`)
+    console.log(`✅ outbound delivered to ${agent.url ?? '(mailbox peer, no url)'}`)
     if (body.http_status) console.log(`   external agent returned HTTP ${body.http_status}`)
     if (body.response) console.log(`   response: ${JSON.stringify(body.response)}`)
   } else {

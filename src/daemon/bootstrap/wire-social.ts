@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { makeJudge } from '../../core/social-judge'
 import { makeAnswerIntent } from '../../core/social-answer'
-import { makeBroker, type SeekOutcome } from '../../core/social-broker'
+import { makeBroker } from '../../core/social-broker'
 import { makeSeekStore } from '../../core/social-seek-store'
 import { makeEchoStore } from '../../core/social-echo-store'
 import { makePledgeStore } from '../../core/social-pledge-store'
@@ -17,6 +17,7 @@ import { makeLetterRelay } from '../../core/penpal-relay-letter'
 import { generateKeypair, type PenpalHandle } from '../../core/penpal-crypto'
 import { intentUrl, revealUrl, letterUrl } from '../../core/a2a-delegate'
 import { MatchReceiptSchema } from '../../core/a2a-intent'
+import { gateOutbound } from '../../core/a2a-disclosure'
 import { applyFinishSeek } from './social-finish-seek'
 import { makeMailboxSender } from '../../core/mailbox-sender'
 import { makeMailboxClient } from '../../core/mailbox-client'
@@ -42,6 +43,12 @@ export interface SocialDeps {
   stateDir: string
   db: Db
   configuredAgent: AgentConfig
+  /** Resolved ONCE by bootstrap/index.ts (resolveSelfAgentId) — spec §2's
+   *  stable-unique slug, shared with wirePairing + pipeline-deps' delegate
+   *  path so every outbound seam self-reports the identical agent_id.
+   *  Replaces the old per-call `resolveSelfAgentId(configuredAgent,
+   *  deps.stateDir)` here (never re-resolve; see wire-pairing.ts's header). */
+  selfId: string
   registry: ProviderRegistry
   defaultProviderId: ProviderId
   pluginMcp: Record<string, McpStdioSpec>
@@ -72,7 +79,11 @@ export interface SocialWiring {
    */
   onMailboxLetter?: A2AServerOpts['onLetter']
   social?: {
-    broker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> }
+    broker: {
+      propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
+      confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
+      cancelSeek(id: string): import('../../core/social-broker').CancelOutcome
+    }
     seekStore: import('../../core/social-seek-store').SeekStore
     echoStore: import('../../core/social-echo-store').EchoStore
     pledgeStore: import('../../core/social-pledge-store').PledgeStore
@@ -86,7 +97,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   const {
     registry, defaultProviderId, pluginMcp, currentClaudeModel, claudeBin,
     configuredAgent, resolveOperatorChatId, sendAssistantText, a2aRegistry,
-    a2aClient,
+    a2aClient, selfId,
   } = deps
 
   // ── Agent-social M1 wiring (async foraging spine) ───────────────────────
@@ -94,15 +105,22 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   // either, the feature stays fully inert: no onIntent/onReveal wired into
   // the a2a server below, no broker constructed, no /v1/social/seek
   // functionality (the route 503s). Wires the row-driven mutual reveal
-  // (revealer + inbound onReveal), the non-blocking broker (sow/forage/
+  // (revealer + inbound onReveal), the non-blocking broker (propose/forage/
   // recordEcho/finishSeek), the answer-side pledge, and boot resume of any
   // seeks still `foraging` after a restart.
   let socialOnIntent: A2AServerOpts['onIntent']
   let socialOnReveal: A2AServerOpts['onReveal']
   let socialOnLetter: A2AServerOpts['onLetter']
   let socialOnMailboxLetter: A2AServerOpts['onLetter']
-  let socialBroker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> } | undefined
-  let socialForage: ((intentId: string, topic: string, opts?: { city?: string }) => Promise<void>) | undefined
+  let socialBroker: {
+    propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
+    confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
+    cancelSeek(id: string): import('../../core/social-broker').CancelOutcome
+  } | undefined
+  // Per-row resume closure (replaces the old raw socialForage). It knows how to
+  // gate a legacy/bridge row before it reaches the now-DE-GATED forage — see its
+  // assignment inside the social block for the full rationale.
+  let socialResumeRow: ((row: import('../../core/social-seek-store').SeekRow) => Promise<void>) | undefined
   let socialSeekStore: import('../../core/social-seek-store').SeekStore | undefined
   let socialEchoStore: import('../../core/social-echo-store').EchoStore | undefined
   let socialPledgeStore: import('../../core/social-pledge-store').PledgeStore | undefined
@@ -119,7 +137,12 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // must degrade gracefully like every other optional wiring here.
       deps.log('BOOT', 'social: no cheapEval available from any registered provider — social_enabled is on but wiring is skipped (inert)')
     } else {
-      const SOCIAL_SELF_ID = process.env.WECHAT_A2A_SELF_ID || 'wechat-cc'
+      // spec §2 — one stable-unique slug per daemon (env > config > generated),
+      // resolved ONCE by bootstrap/index.ts and threaded in as `deps.selfId`
+      // (shared with wirePairing + pipeline-deps' delegate path — see
+      // SocialDeps.selfId's doc comment). Legacy 'wechat-cc' preserved when
+      // no mailbox_relays is configured.
+      const SOCIAL_SELF_ID = selfId
       const socialOpenaiKey = process.env.WECHAT_OPENAI_API_KEY
       // Mailbox transport (sub-project B): the third dispatch arm alongside
       // push (a2aClient). Constructed once and reused by postReveal (and, per
@@ -203,6 +226,10 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         pushSend: async (target, body) => {
           const hand = a2aRegistry.get(target.relayVia ?? target.agentId)
           if (!hand) return false
+          // A url-less mailbox peer never reaches here in practice (mailbox
+          // targets go via mailboxSend above), but guard anyway — a
+          // malformed/partial mailbox record must fail closed, not throw.
+          if (!hand.url) return false
           const r = await a2aClient.send({ url: letterUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
           return r.ok
         },
@@ -281,6 +308,12 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       const postPeerReveal = async (agentId: string, intentId: string, relayToken?: string): Promise<{ mutual: boolean; handle?: PenpalHandle } | null> => {
         const hand = a2aRegistry.get(agentId)
         if (!hand) return null
+        // reveal-over-mailbox is deferred (spec §10): a mailbox peer has no
+        // url for revealUrl(). Mirror postReveal's peerMailboxOf short-
+        // circuit — skip cleanly. (Only transport:'mailbox' can lack a url
+        // per the A2AAgentRecord schema, but this also fails closed on any
+        // other malformed/url-less record rather than throwing.)
+        if (!hand.url) return null
         const rowId = relayToken ? `${intentId}:${agentId}:${relayToken}` : `${intentId}:${agentId}`
         const ch = channelStore.get(rowId)
         const myHandle = ch ? buildCrossedHandle({ my_pubkey: ch.my_pubkey, my_channel_id: ch.my_channel_id }, myMailbox) : undefined
@@ -305,6 +338,11 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
             .catch(err => deps.log('SOCIAL_REC', `mailbox reveal drop failed intent=${body.intent_id} agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`))
           return
         }
+        // peerMailboxOf(hand) returned null — normally this means push/ws
+        // (url guaranteed by schema), but a partially-configured mailbox
+        // record (missing one of mailbox_addr/enc_pub/relays) also lands
+        // here and may have no url either. Fail closed instead of throwing.
+        if (!hand.url) return
         void a2aClient.send({ url: revealUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
           .catch(err => deps.log('SOCIAL_REC', `relay reveal post failed intent=${body.intent_id} agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`))
       }
@@ -371,13 +409,20 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         // Guarded: a registry lookup failure must NOT reject the whole /a2a/intent
         // — W still returns its own local match (fail-closed: forward nothing).
         forwardTargets: (excludeAgentId) => {
-          try { return a2aRegistry.list().filter(a => !a.paused && a.id !== excludeAgentId).slice(0, 5) }
+          // url-less mailbox peers can't take a push /a2a/intent (intentUrl
+          // needs a url); seek-over-mailbox is deferred (spec §10) — skip
+          // them here.
+          try { return a2aRegistry.list().filter(a => !a.paused && a.id !== excludeAgentId && !(a.transport === 'mailbox' && !a.url)).slice(0, 5) }
           catch (err) {
             deps.log('SOCIAL_REC', `forwardTargets lookup failed exclude=${excludeAgentId}: ${err instanceof Error ? err.message : String(err)}`)
             return []
           }
         },
         forwardSend: async (hand, card) => {
+          // forwardTargets already filters url-less mailbox peers out, but
+          // this closure's own type doesn't carry that guarantee — guard
+          // here too (treated the same as any other unreachable target).
+          if (!hand.url) return null
           const r = await a2aClient.send({ url: intentUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, card } })
           return r.ok ? MatchReceiptSchema.parse(r.response) : null
         },
@@ -408,14 +453,30 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         cheapEval: socialCheapEval,
         // TODO(v1+): rank candidates via wxgraph closeness/topical relevance
         // instead of "every paired peer, capped".
-        discover: async (_topic) => a2aRegistry.list().filter(a => !a.paused).slice(0, 5),
+        // url-less mailbox peers can't take a push /a2a/intent (intentUrl
+        // needs a url); seek-over-mailbox is deferred (spec §10) — skip
+        // them here.
+        discover: async (_topic) => a2aRegistry.list().filter(a => !a.paused && !(a.transport === 'mailbox' && !a.url)).slice(0, 5),
         send: async (hand, card) => {
+          // discover already filters url-less mailbox peers out, but this
+          // closure's own type doesn't carry that guarantee — guard here
+          // too (treated the same as any other unreachable target).
+          if (!hand.url) return null
           const r = await a2aClient.send({ url: intentUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, card } })
           return r.ok ? MatchReceiptSchema.parse(r.response) : null
         },
-        sow: (intentId, topic) => {
-          try { seekStore.create({ id: intentId, kind: 'seek', topic }) }
-          catch (err) { deps.log('SOCIAL_REC', `sow failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
+        // P4 propose leg: persist a `proposed` row carrying the owner-approved
+        // redacted wording (+ optional redacted city) so confirmSeek can forage
+        // it verbatim, and a crash-resumed row survives WYSIWYG (redacted_topic
+        // is non-null → resume forages it without re-gating).
+        proposeRow: (intentId, r) => {
+          try { seekStore.propose({ id: intentId, kind: 'seek', topic: r.topic, redactedTopic: r.redactedTopic, ...(r.redactedCity ? { redactedCity: r.redactedCity } : {}) }) }
+          catch (err) { deps.log('SOCIAL_REC', `propose failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
+        },
+        readSeek: (intentId) => seekStore.get(intentId),
+        markStatus: (intentId, status) => {
+          try { seekStore.update(intentId, { status }) }
+          catch (err) { deps.log('SOCIAL_REC', `markStatus failed intent=${intentId} status=${status}: ${err instanceof Error ? err.message : String(err)}`) }
         },
         recordEcho: (e) => {
           // M2 — `e.first` is the broker's "first yes of THIS forage run"
@@ -448,8 +509,27 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           catch (err) { deps.log('SOCIAL_REC', `finishSeek failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
         },
       })
-      socialBroker = { seek: (topic, opts) => broker.seek(topic, opts) }
-      socialForage = (intentId, topic, opts) => broker.forage(intentId, topic, opts)
+      socialBroker = {
+        propose: (topic, opts) => broker.propose(topic, opts),
+        confirmSeek: (id) => broker.confirmSeek(id),
+        cancelSeek: (id) => broker.cancelSeek(id),
+      }
+      socialResumeRow = async (row) => {
+        // forage() is now DE-GATED (Task 2) — it broadcasts its argument
+        // verbatim. A propose→confirm row carries redacted_topic (+ optional
+        // redacted_city): forage it verbatim so WYSIWYG survives the restart.
+        // A legacy row has redacted_topic=null (pre-v24 rows) — RE-GATE here
+        // so a RAW topic can never reach the de-gated forage. (M1 city fix:
+        // resume now carries redacted_city too;
+        // a re-gated legacy row has no persisted city to carry.)
+        if (row.redacted_topic != null) {
+          await broker.forage(row.id, row.redacted_topic, row.redacted_city ? { city: row.redacted_city } : undefined)
+          return
+        }
+        const gated = await gateOutbound(row.topic, { policy: socialPolicy, cheapEval: socialCheapEval })
+        if (!gated.ok) return   // blocked at resume → nothing exposed
+        await broker.forage(row.id, gated.redacted)
+      }
     }
   }
 
@@ -457,13 +537,11 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   // buildBootstrap calls this after wireA2aServer starts the server, so a
   // resumed forage's outbound sends can reach peers over a live listener.
   const resumeForaging = (): void => {
-    if (socialForage && socialSeekStore) {
-      const forage = socialForage
+    if (socialResumeRow && socialSeekStore) {
+      const resume = socialResumeRow
       for (const row of socialSeekStore.list()) {
         if (row.status === 'foraging') {
-          // M3: social_seek doesn't persist `city`, so a resumed forage sends
-          // without it — safe degradation, city is an optional discovery hint.
-          void forage(row.id, row.topic).catch(err => deps.log('SOCIAL_REC', `resume forage failed intent=${row.id}: ${err instanceof Error ? err.message : String(err)}`))
+          void resume(row).catch(err => deps.log('SOCIAL_REC', `resume forage failed intent=${row.id}: ${err instanceof Error ? err.message : String(err)}`))
         }
       }
     }

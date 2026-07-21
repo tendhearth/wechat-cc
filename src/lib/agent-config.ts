@@ -68,6 +68,11 @@ export interface AgentConfig {
   // Optional/additive, same posture as mailbox_relays?/a2a_listen? — absent
   // means "use resolveForwardBudget's default", not "budget disabled".
   forward_budget?: { per_sender: number; window_ms: number }
+  // Stable-unique self slug (spec §2): this daemon's own a2a id, crossed on the
+  // pairing card and used as the registry id peers file this daemon under.
+  // Additive/optional, same posture as mailbox_relays?/forward_budget?. Resolved
+  // (and persisted here on first need) by resolveSelfAgentId in core/self-agent-id.ts.
+  self_agent_id?: string
 }
 
 // ── A2A sub-schemas ──────────────────────────────────────────────────────────
@@ -75,7 +80,7 @@ export interface AgentConfig {
 export const A2AAgentRecord = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, 'agent id must match ^[a-z0-9][a-z0-9-]{0,63}$ (lowercase slug)'),
   name: z.string().min(1).max(128),
-  url: z.string().url(),
+  url: z.string().url().optional(),
   inbound_api_key: z.string().min(16),
   outbound_api_key: z.string().min(1),
   capabilities: z.array(z.string()),
@@ -89,6 +94,12 @@ export const A2AAgentRecord = z.object({
   relays: z.array(z.string().url()).optional(),
   /** Peer's A2A proto_version captured at install time; unset = unknown (treat as 1). */
   proto_version: z.number().int().optional(),
+}).superRefine((rec, ctx) => {
+  // url is optional ONLY for mailbox transport (pure-NAT peers have no public
+  // url). push/ws still require a reachable url. spec §6.
+  if (rec.transport !== 'mailbox' && !rec.url) {
+    ctx.addIssue({ code: 'custom', path: ['url'], message: `url is required for transport '${rec.transport}'` })
+  }
 })
 
 export const A2AListen = z.object({
@@ -137,6 +148,7 @@ const AgentConfigSchema = z.object({
   social_disclosure_policy: z.string().optional(),
   mailbox_relays: z.array(z.string().url()).optional(),
   forward_budget: ForwardBudgetConfig.optional(),
+  self_agent_id: z.string().optional(),
 })
 
 /**
@@ -210,6 +222,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.social_disclosure_policy === 'string' ? { social_disclosure_policy: parsed.social_disclosure_policy } : {}),
       ...(Array.isArray(parsed.mailbox_relays) ? { mailbox_relays: parsed.mailbox_relays } : {}),
       ...(forwardBudget ? { forward_budget: forwardBudget } : {}),
+      ...(typeof parsed.self_agent_id === 'string' ? { self_agent_id: parsed.self_agent_id } : {}),
     }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }
