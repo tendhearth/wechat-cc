@@ -36,6 +36,29 @@ function serveMockOpenai(content: string): ReturnType<typeof Bun.serve> {
   })
 }
 
+// Routing variant of the cheapEval mock: the verdict `content` is computed
+// per-request from the gate prompt text (which embeds the topic being gated),
+// so ONE server can pass some topics and block others. `hits` counts requests
+// so a test can wait for a re-gate to actually have run before asserting a
+// negative (no send). Used by the C1 resume discriminator tests below.
+function serveMockOpenaiRouting(route: (promptText: string) => string) {
+  let hits = 0
+  const chunk = (delta: object, finish: string | null) =>
+    `data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 0, model: 'test-model', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`
+  const server = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    fetch: async (req) => {
+      hits++
+      const reqText = await req.text()
+      const content = route(reqText)
+      const body = chunk({ role: 'assistant', content }, null) + chunk({}, 'stop') + 'data: [DONE]\n\n'
+      return new Response(body, { headers: { 'content-type': 'text/event-stream' } })
+    },
+  })
+  return Object.assign(server, { hits: () => hits })
+}
+
 function makeIlinkStub() {
   return {
     sendMessage: vi.fn(),
@@ -1528,6 +1551,166 @@ describe('bootstrap agent-social M1 wiring', () => {
       // seekResume's resumed (duplicate) echo must NOT have re-fired it.
       expect(firstEchoSends).toHaveLength(1)
       expect(firstEchoSends[0]?.[0]).toBe('op_chat')
+    } finally {
+      openaiMock.stop()
+      peerMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
+  // C1 (P4) — the resume DISCRIMINATOR. forage() is now DE-GATED, so what
+  // actually goes out on a boot-scan resume is decided entirely by
+  // resumeForaging/socialResumeRow. This peer CAPTURES the outbound card.topic
+  // (the wording that leaves this daemon) and asserts on it directly — the
+  // assertion the old crash-mid-forage test lacked (it seeded redacted_topic=
+  // null and never checked card.topic).
+  it('resume forages the STORED redacted wording verbatim for a redacted row, and RE-GATES a null-redacted (legacy) row — never the raw topic', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-resume-wysiwyg-'))
+    const port = 19911
+    // Routing gate: only the null-redacted row (rawB) is re-gated at resume;
+    // when its raw text arrives, return a DISTINCT redacted string so the test
+    // can tell a re-gate ('REGATED清理版') from a verbatim forage of the stored
+    // string. The redacted row never reaches the gate at all.
+    const openaiMock = serveMockOpenaiRouting((reqText) =>
+      reqText.includes('原始寻友')
+        ? JSON.stringify({ violation: false, redacted: 'REGATED清理版' })
+        : JSON.stringify({ violation: false, redacted: '默认清理' }))
+    // Capturing peer — records every card.topic it is asked about.
+    const captured: string[] = []
+    const peerMock = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: async (req) => {
+        const body = await req.json() as { card: { intent_id: string; topic: string } }
+        captured.push(body.card.topic)
+        return Response.json({ intent_id: body.card.intent_id, match: 'yes', blurb: 'ok' })
+      },
+    })
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    const rowRedacted = 'seek-redacted'   // propose→confirm row: carries redacted_topic, raw differs
+    const rowLegacy = 'seek-legacy-null'  // legacy/bridge row: redacted_topic=null → re-gate at resume
+    const rawRedacted = '找搭子 联系我 138xxxx'
+    const rawLegacy = '原始寻友话题-待清理'
+    const storedRedacted = '寻找搭子【已清理】'
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: `http://127.0.0.1:${openaiMock.port}/v1`,
+        openaiModel: 'test-model',
+        a2a_agents: [{
+          id: 'ccb', name: '小B', url: `http://127.0.0.1:${peerMock.port}/a2a`,
+          inbound_api_key: 'peer-inbound-key-abc123', outbound_api_key: 'peer-outbound-key-xyz',
+          capabilities: [], paused: false, transport: 'push',
+        }],
+      }),
+    )
+    const db = openTestDb()
+    // Seed the crash-mid-forage state: a redacted-carrying foraging row (propose
+    // then flip to foraging) and a null-redacted legacy foraging row.
+    const seekStore = makeSeekStore(db)
+    seekStore.propose({ id: rowRedacted, kind: 'seek', topic: rawRedacted, redactedTopic: storedRedacted })
+    seekStore.update(rowRedacted, { status: 'foraging' })
+    seekStore.create({ id: rowLegacy, kind: 'seek', topic: rawLegacy })
+
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      // Both resume forages were scheduled fire-and-forget inside buildBootstrap.
+      await pollFor(() => (captured.length >= 2 ? true : null))
+
+      // Redacted row: forwarded VERBATIM — the stored redacted string, NOT the
+      // raw topic, NOT a re-gate output.
+      expect(captured).toContain(storedRedacted)
+      // Legacy null-redacted row: RE-GATED — the gate's output, never the raw.
+      expect(captured).toContain('REGATED清理版')
+      expect(openaiMock.hits()).toBeGreaterThan(0)   // re-gate actually ran
+      // The raw topics MUST NEVER leave this daemon.
+      expect(captured).not.toContain(rawRedacted)
+      expect(captured).not.toContain(rawLegacy)
+    } finally {
+      openaiMock.stop()
+      peerMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
+  it('resume of a null-redacted row whose re-gate is BLOCKED sends nothing (safe-closed)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-resume-blocked-'))
+    const port = 19912
+    // Gate BLOCKS every topic — the legacy row's re-gate at resume fails closed.
+    const openaiMock = serveMockOpenaiRouting(() => JSON.stringify({ violation: true, redacted: '', reasons: ['leak'] }))
+    const captured: string[] = []
+    const peerMock = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: async (req) => {
+        const body = await req.json() as { card: { intent_id: string; topic: string } }
+        captured.push(body.card.topic)
+        return Response.json({ intent_id: body.card.intent_id, match: 'yes', blurb: 'ok' })
+      },
+    })
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: `http://127.0.0.1:${openaiMock.port}/v1`,
+        openaiModel: 'test-model',
+        a2a_agents: [{
+          id: 'ccb', name: '小B', url: `http://127.0.0.1:${peerMock.port}/a2a`,
+          inbound_api_key: 'peer-inbound-key-abc123', outbound_api_key: 'peer-outbound-key-xyz',
+          capabilities: [], paused: false, transport: 'push',
+        }],
+      }),
+    )
+    const db = openTestDb()
+    const seekStore = makeSeekStore(db)
+    seekStore.create({ id: 'seek-blocked', kind: 'seek', topic: '要被拦截的原始话题-含联系方式' })
+
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      // Wait until the re-gate has actually run (mock was hit), so the negative
+      // assertion below is not merely racing an unstarted resume.
+      await pollFor(() => (openaiMock.hits() > 0 ? true : null))
+      // Give any (erroneous) send a chance to land, then assert none did.
+      await new Promise(r => setTimeout(r, 50))
+      expect(captured).toEqual([])   // gate blocked → nothing was exposed
     } finally {
       openaiMock.stop()
       peerMock.stop()

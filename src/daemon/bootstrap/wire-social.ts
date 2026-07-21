@@ -17,6 +17,7 @@ import { makeLetterRelay } from '../../core/penpal-relay-letter'
 import { generateKeypair, type PenpalHandle } from '../../core/penpal-crypto'
 import { intentUrl, revealUrl, letterUrl } from '../../core/a2a-delegate'
 import { MatchReceiptSchema } from '../../core/a2a-intent'
+import { gateOutbound } from '../../core/a2a-disclosure'
 import { applyFinishSeek } from './social-finish-seek'
 import { makeMailboxSender } from '../../core/mailbox-sender'
 import { makeMailboxClient } from '../../core/mailbox-client'
@@ -108,7 +109,10 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   let socialOnLetter: A2AServerOpts['onLetter']
   let socialOnMailboxLetter: A2AServerOpts['onLetter']
   let socialBroker: { seek(topic: string, opts?: { city?: string }): Promise<SeekOutcome> } | undefined
-  let socialForage: ((intentId: string, topic: string, opts?: { city?: string }) => Promise<void>) | undefined
+  // Per-row resume closure (replaces the old raw socialForage). It knows how to
+  // gate a legacy/bridge row before it reaches the now-DE-GATED forage — see its
+  // assignment inside the social block for the full rationale.
+  let socialResumeRow: ((row: import('../../core/social-seek-store').SeekRow) => Promise<void>) | undefined
   let socialSeekStore: import('../../core/social-seek-store').SeekStore | undefined
   let socialEchoStore: import('../../core/social-echo-store').EchoStore | undefined
   let socialPledgeStore: import('../../core/social-pledge-store').PledgeStore | undefined
@@ -457,6 +461,19 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           try { seekStore.create({ id: intentId, kind: 'seek', topic }) }
           catch (err) { deps.log('SOCIAL_REC', `sow failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
         },
+        // P4 propose leg: persist a `proposed` row carrying the owner-approved
+        // redacted wording (+ optional redacted city) so confirmSeek can forage
+        // it verbatim, and a crash-resumed row survives WYSIWYG (redacted_topic
+        // is non-null → resume forages it without re-gating).
+        proposeRow: (intentId, r) => {
+          try { seekStore.propose({ id: intentId, kind: 'seek', topic: r.topic, redactedTopic: r.redactedTopic, ...(r.redactedCity ? { redactedCity: r.redactedCity } : {}) }) }
+          catch (err) { deps.log('SOCIAL_REC', `propose failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
+        },
+        readSeek: (intentId) => seekStore.get(intentId),
+        markStatus: (intentId, status) => {
+          try { seekStore.update(intentId, { status }) }
+          catch (err) { deps.log('SOCIAL_REC', `markStatus failed intent=${intentId} status=${status}: ${err instanceof Error ? err.message : String(err)}`) }
+        },
         recordEcho: (e) => {
           // M2 — `e.first` is the broker's "first yes of THIS forage run"
           // flag, computed from an in-memory counter local to one forage()
@@ -489,7 +506,22 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         },
       })
       socialBroker = { seek: (topic, opts) => broker.seek(topic, opts) }
-      socialForage = (intentId, topic, opts) => broker.forage(intentId, topic, opts)
+      socialResumeRow = async (row) => {
+        // forage() is now DE-GATED (Task 2) — it broadcasts its argument
+        // verbatim. A propose→confirm row carries redacted_topic (+ optional
+        // redacted_city): forage it verbatim so WYSIWYG survives the restart.
+        // A legacy/bridge row has redacted_topic=null (pre-v24 rows + seek()-
+        // alias sows) — RE-GATE here so a RAW topic can never reach the
+        // de-gated forage. (M1 city fix: resume now carries redacted_city too;
+        // a re-gated legacy row has no persisted city to carry.)
+        if (row.redacted_topic != null) {
+          await broker.forage(row.id, row.redacted_topic, row.redacted_city ? { city: row.redacted_city } : undefined)
+          return
+        }
+        const gated = await gateOutbound(row.topic, { policy: socialPolicy, cheapEval: socialCheapEval })
+        if (!gated.ok) return   // blocked at resume → nothing exposed
+        await broker.forage(row.id, gated.redacted)
+      }
     }
   }
 
@@ -497,13 +529,11 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   // buildBootstrap calls this after wireA2aServer starts the server, so a
   // resumed forage's outbound sends can reach peers over a live listener.
   const resumeForaging = (): void => {
-    if (socialForage && socialSeekStore) {
-      const forage = socialForage
+    if (socialResumeRow && socialSeekStore) {
+      const resume = socialResumeRow
       for (const row of socialSeekStore.list()) {
         if (row.status === 'foraging') {
-          // M3: social_seek doesn't persist `city`, so a resumed forage sends
-          // without it — safe degradation, city is an optional discovery hint.
-          void forage(row.id, row.topic).catch(err => deps.log('SOCIAL_REC', `resume forage failed intent=${row.id}: ${err instanceof Error ? err.message : String(err)}`))
+          void resume(row).catch(err => deps.log('SOCIAL_REC', `resume forage failed intent=${row.id}: ${err instanceof Error ? err.message : String(err)}`))
         }
       }
     }
