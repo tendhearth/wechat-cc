@@ -5058,7 +5058,6 @@ input { font: inherit; color: inherit; }
 .fd-frog { width:30px; height:30px; flex:none; }
 .fd-dot-sep { width:3px; height:3px; border-radius:50%; background:var(--fd-ink-faint); display:inline-block; }
 .fd-sow { margin-left:auto; }
-.fd-sow-hint { margin-top:10px; font-size:12.5px; color:var(--fd-ink-faint); }
 .fd-social-note { margin-top:10px; font-size:13px; color:var(--fd-ink-soft); background:var(--fd-ground-2); border:1px solid var(--fd-line); border-radius:10px; padding:10px 12px; }
 
 /* fd buttons (do NOT reuse the app's global .btn) */
