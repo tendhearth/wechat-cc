@@ -599,7 +599,6 @@
                     <span class="fd-status-line">加载中…</span>
                     <button class="fd-btn fd-btn-primary fd-sow" id="fd-sow" type="button">＋ 撒一个新心愿</button>
                   </div>
-                  <div class="fd-sow-hint" id="fd-sow-hint" hidden>在微信里跟 CC 说「帮我悄悄找…」，它会替你撒出去</div>
                   <div class="fd-social-note" id="fd-social-note" hidden></div>
                 </header>
 
@@ -608,6 +607,15 @@
                 <!-- ① 我派出去的心愿 -->
                 <section class="fd-section">
                   <div class="fd-sec-head"><h2>我派出去的心愿</h2><span class="fd-count" id="fd-wishes-count"></span><span class="fd-hint">出面的是 bot，不是你 · 成交前谁都不露脸</span></div>
+                  <div class="fd-compose" id="fd-compose" hidden>
+                    <form id="fd-compose-form">
+                      <input type="text" name="topic" id="fd-compose-topic" placeholder="想找什么？比如：找个会修老相机的师傅" maxlength="120" autocomplete="off">
+                      <input type="text" name="city" id="fd-compose-city" placeholder="城市（可选）" maxlength="20" autocomplete="off">
+                      <button class="fd-btn fd-btn-primary" type="submit" id="fd-compose-submit">派出去</button>
+                    </form>
+                    <div class="fd-compose-note" id="fd-compose-note" hidden></div>
+                    <div class="fd-preview" id="fd-preview" hidden></div>
+                  </div>
                   <div class="fd-wishes" id="fd-wishes"></div>
                 </section>
 

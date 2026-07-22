@@ -36,7 +36,8 @@ function fakeEl() {
 function installDom(extra: Record<string, any> = {}) {
   const ids = ['fd-hero-status','fd-wishes','fd-postcards','fd-wishes-count',
     'fd-postcards-count','fd-peers','fd-peers-count','fd-inbound-toggle',
-    'fd-inbound-note','fd-social-note','fd-sow','fd-sow-hint',
+    'fd-inbound-note','fd-social-note','fd-sow',
+    'fd-compose','fd-compose-form','fd-compose-topic','fd-compose-city','fd-compose-note','fd-compose-submit','fd-preview',
     'a2a-agents-list','a2a-server-banner']
   const byId: Record<string, any> = {}
   for (const id of ids) byId[id] = fakeEl()
@@ -227,5 +228,93 @@ describe('inbound toggle', () => {
     expect((invokeApi as any)).toHaveBeenCalledWith('POST', '/v1/social/inbound', { enabled: true })
     expect(toggle.classList.contains('fd-on')).toBe(true)
     expect(note.textContent).toContain('需重启')
+  })
+})
+
+describe('心愿 compose → propose → preview', () => {
+  function composeEvent() {
+    return { preventDefault() {}, target: null } as any
+  }
+
+  it('propose 成功 → 预览卡只含 redacted,原文不进 DOM', async () => {
+    const el = installDom()
+    el['fd-compose-topic'].value = '想找会修禄来福来的老师傅,预算两千'
+    el['fd-compose-city'].value = '上海'
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: true, intent_id: 'i1', redacted: '【求助】想找懂老相机维修的朋友', redacted_city: '上海' })
+    const { __onComposeSubmitForTest } = await import('./a2a-agents.js')
+    await __onComposeSubmitForTest?.(composeEvent())
+    expect((invokeApi as any)).toHaveBeenCalledWith('POST', '/v1/social/seek/propose', { topic: '想找会修禄来福来的老师傅,预算两千', city: '上海' })
+    const html = el['fd-preview'].innerHTML
+    expect(el['fd-preview'].hidden).toBe(false)
+    expect(html).toContain('外面只会看到这个')
+    expect(html).toContain('【求助】想找懂老相机维修的朋友')
+    expect(html).toContain('data-action="seek-confirm"')
+    expect(html).toContain('data-action="seek-cancel"')
+    expect(html).toContain('data-id="i1"')
+    expect(html).not.toContain('禄来福来')          // 隐私锁:原文绝不渲染
+  })
+
+  it('topic 为空 → 不发请求,提示先写内容', async () => {
+    const el = installDom()
+    el['fd-compose-topic'].value = '   '
+    ;(invokeApi as any).mockClear()
+    const { __onComposeSubmitForTest } = await import('./a2a-agents.js')
+    await __onComposeSubmitForTest?.(composeEvent())
+    expect((invokeApi as any)).not.toHaveBeenCalled()
+    expect(el['fd-compose-note'].textContent).toContain('先写下')
+  })
+
+  it('propose 返回 ok:false → reason 落 note', async () => {
+    const el = installDom()
+    el['fd-compose-topic'].value = '找人'
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: false, reason: 'judge_unavailable' })
+    const { __onComposeSubmitForTest } = await import('./a2a-agents.js')
+    await __onComposeSubmitForTest?.(composeEvent())
+    expect(el['fd-compose-note'].textContent).toContain('judge_unavailable')
+  })
+
+  it('503 social_not_wired → social enable 引导文案', async () => {
+    const el = installDom()
+    el['fd-compose-topic'].value = '找人'
+    ;(invokeApi as any).mockRejectedValueOnce(new Error('social_not_wired'))
+    const { __onComposeSubmitForTest } = await import('./a2a-agents.js')
+    await __onComposeSubmitForTest?.(composeEvent())
+    expect(el['fd-compose-note'].textContent).toContain('wechat-cc social enable')
+  })
+
+  it('确认派出 → POST confirm 成功后收起 compose 并清空输入', async () => {
+    const el = installDom()
+    el['fd-compose-topic'].value = 'x'; el['fd-compose-city'].value = 'y'
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: true, intent_id: 'i1' })  // confirm
+    ;(invokeApi as any).mockResolvedValue({})                                // refresh 级联
+    const btn = fakeEl(); btn.dataset.action = 'seek-confirm'; btn.dataset.id = 'i1'
+    const { __onSeekActionForTest } = await import('./a2a-agents.js')
+    await __onSeekActionForTest?.({ target: btn } as any)
+    expect((invokeApi as any)).toHaveBeenCalledWith('POST', '/v1/social/seek/confirm', { id: 'i1' })
+    expect(el['fd-compose'].hidden).toBe(true)
+    expect(el['fd-compose-topic'].value).toBe('')
+  })
+
+  it('取消 → POST cancel 成功后 compose 留着可改,note 提示已取消', async () => {
+    const el = installDom()
+    el['fd-compose'].hidden = false
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: true })
+    ;(invokeApi as any).mockResolvedValue({})
+    const btn = fakeEl(); btn.dataset.action = 'seek-cancel'; btn.dataset.id = 'i1'
+    const { __onSeekActionForTest } = await import('./a2a-agents.js')
+    await __onSeekActionForTest?.({ target: btn } as any)
+    expect((invokeApi as any)).toHaveBeenCalledWith('POST', '/v1/social/seek/cancel', { id: 'i1' })
+    expect(el['fd-compose'].hidden).toBe(false)
+    expect(el['fd-compose-note'].textContent).toContain('已取消')
+  })
+
+  it('confirm 失败(ok:false)→ note 显示原因,按钮恢复可点', async () => {
+    const el = installDom()
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: false, reason: 'not_proposed' })
+    const btn = fakeEl(); btn.dataset.action = 'seek-confirm'; btn.dataset.id = 'i1'
+    const { __onSeekActionForTest } = await import('./a2a-agents.js')
+    await __onSeekActionForTest?.({ target: btn } as any)
+    expect(btn.disabled).toBe(false)
+    expect(el['fd-compose-note'].textContent).toContain('not_proposed')
   })
 })

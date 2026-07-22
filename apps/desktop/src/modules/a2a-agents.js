@@ -64,13 +64,17 @@ export async function initA2AAgentsTab() {
     if (e instanceof KeyboardEvent && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onInboundToggle() }
   })
   // #fd-sow / #a2a-add-btn are re-rendered by renderForageDesk, so the sow
-  // hint is delegated from the hero container instead of bound to the node.
+  // action is delegated from the hero container instead of bound to the node.
   document.getElementById('fd-hero-status')?.addEventListener('click', (e) => {
     if (e.target instanceof HTMLElement && e.target.closest('#fd-sow')) {
-      const hint = document.getElementById('fd-sow-hint')
-      if (hint) hint.hidden = false
+      const compose = document.getElementById('fd-compose')
+      if (compose) compose.hidden = false
+      const topic = /** @type {HTMLInputElement | null} */ (document.getElementById('fd-compose-topic'))
+      if (topic && typeof topic.focus === 'function') topic.focus()
     }
   })
+  document.getElementById('fd-compose-form')?.addEventListener('submit', onComposeSubmit)
+  document.getElementById('fd-compose')?.addEventListener('click', onSeekAction)
 }
 
 export async function refresh() {
@@ -440,11 +444,119 @@ async function onInboundToggle() {
   }
 }
 
+// 觅愿撰写 — propose→脱敏预览→confirm/cancel。守卫同样鸭子类型(测试
+// 环境是 bare-object stub)。invokeApi 对 503 会 throw Error('social_not_wired')。
+
+/** @param {unknown} err */
+function composeErrText(err) {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (msg === 'social_not_wired') return '社交觅食未启用 —— 先在命令行运行 wechat-cc social enable 并重启守护进程。'
+  return `派心愿失败：${msg}`
+}
+
+/** @param {SubmitEvent} e */
+async function onComposeSubmit(e) {
+  e.preventDefault()
+  const topicInput = /** @type {HTMLInputElement | null} */ (document.getElementById('fd-compose-topic'))
+  const cityInput = /** @type {HTMLInputElement | null} */ (document.getElementById('fd-compose-city'))
+  const note = document.getElementById('fd-compose-note')
+  const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById('fd-compose-submit'))
+  const topic = String(topicInput?.value ?? '').trim()
+  const city = String(cityInput?.value ?? '').trim()
+  if (!topic) {
+    if (note) { note.hidden = false; note.textContent = '先写下你想找什么' }
+    return
+  }
+  if (btn) btn.disabled = true
+  try {
+    const r = /** @type {{ok?:boolean, intent_id?:string, redacted?:string, redacted_city?:string, reason?:string}} */ (
+      await invokeApi('POST', '/v1/social/seek/propose', city ? { topic, city } : { topic }))
+    if (r?.ok) {
+      renderProposePreview(r)
+      if (note) { note.hidden = true; note.textContent = '' }
+    } else {
+      if (note) { note.hidden = false; note.textContent = `没能生成预览：${String(r?.reason ?? '未知错误')}` }
+    }
+  } catch (err) {
+    if (note) { note.hidden = false; note.textContent = composeErrText(err) }
+  } finally {
+    if (btn) btn.disabled = false
+  }
+}
+
+/**
+ * 脱敏预览卡 —— 隐私锁:只渲染 redacted / redacted_city,原始 topic 绝不进 DOM。
+ * @param {{intent_id?:string, redacted?:string, redacted_city?:string}} r
+ */
+function renderProposePreview(r) {
+  const preview = document.getElementById('fd-preview')
+  if (!preview) return
+  const cityLine = r.redacted_city ? `<div class="fd-preview-city">📍 ${escapeHtml(r.redacted_city)}</div>` : ''
+  preview.hidden = false
+  preview.innerHTML = `<div class="fd-preview-card" data-intent-id="${escapeHtml(String(r.intent_id ?? ''))}">` +
+    `<div class="fd-preview-eyebrow">🕶️ 外面只会看到这个</div>` +
+    `<div class="fd-preview-topic">「${escapeHtml(String(r.redacted ?? ''))}」</div>` + cityLine +
+    `<div class="fd-preview-actions">` +
+    `<button class="fd-btn fd-btn-primary" data-action="seek-confirm" data-id="${escapeHtml(String(r.intent_id ?? ''))}">确认派出</button>` +
+    `<button class="fd-btn fd-btn-wait" data-action="seek-cancel" data-id="${escapeHtml(String(r.intent_id ?? ''))}">算了，取消</button>` +
+    `</div>` +
+    `<div class="fd-preview-note">确认后，你的 bot 才会真的把它撒出去。</div>` +
+    `</div>`
+}
+
+/** @param {boolean} confirmed */
+function clearComposePreview(confirmed) {
+  const preview = document.getElementById('fd-preview')
+  if (preview) { preview.hidden = true; preview.innerHTML = '' }
+  const note = document.getElementById('fd-compose-note')
+  if (confirmed) {
+    const compose = document.getElementById('fd-compose')
+    const topicInput = /** @type {HTMLInputElement | null} */ (document.getElementById('fd-compose-topic'))
+    const cityInput = /** @type {HTMLInputElement | null} */ (document.getElementById('fd-compose-city'))
+    if (topicInput) topicInput.value = ''
+    if (cityInput) cityInput.value = ''
+    if (compose) compose.hidden = true
+    if (note) { note.hidden = true; note.textContent = '' }
+  } else {
+    if (note) { note.hidden = false; note.textContent = '已取消 —— 想改改措辞再派也行。' }
+  }
+}
+
+/**
+ * Delegated:预览卡与(Task 2 起)心愿列表里 proposed 行的 确认/取消。
+ * @param {MouseEvent} e
+ */
+async function onSeekAction(e) {
+  const target = /** @type {any} */ (e.target)
+  if (!target || !target.dataset) return
+  const action = target.dataset.action
+  const id = target.dataset.id
+  if ((action !== 'seek-confirm' && action !== 'seek-cancel') || !id) return
+  const note = document.getElementById('fd-compose-note')
+  target.disabled = true
+  try {
+    const path = action === 'seek-confirm' ? '/v1/social/seek/confirm' : '/v1/social/seek/cancel'
+    const r = /** @type {{ok?:boolean, reason?:string}} */ (await invokeApi('POST', path, { id }))
+    if (r?.ok) {
+      clearComposePreview(action === 'seek-confirm')
+      await refresh().catch(() => {})
+    } else {
+      target.disabled = false
+      if (note) { note.hidden = false; note.textContent = `${action === 'seek-confirm' ? '确认' : '取消'}失败：${String(r?.reason ?? '未知错误')}` }
+    }
+  } catch (err) {
+    target.disabled = false
+    if (note) { note.hidden = false; note.textContent = composeErrText(err) }
+  }
+}
+
 // Test seams — onPostcardAction/onInboundToggle are module-private (wired
 // via addEventListener in initA2AAgentsTab), so unit tests reach them
 // through these thin re-exports rather than simulating real DOM events.
 export const __onPostcardActionForTest = onPostcardAction
 export const __onInboundToggleForTest = onInboundToggle
+export const __onComposeSubmitForTest = onComposeSubmit
+export const __onSeekActionForTest = onSeekAction
 
 // ── Test modal ────────────────────────────────────────────────────────────
 // Lets the operator validate either direction of the A2A loop without
