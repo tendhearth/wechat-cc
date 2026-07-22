@@ -133,6 +133,16 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // (trusted). Acts on an operator-driven pairing, not a world-open broadcast.
   'POST /v1/pair/start': 'trusted',
   'POST /v1/pair/accept': 'trusted',
+  // 笔友信箱(spec 2026-07-22-penpal-mailbox-desktop)。读=admin(P2
+  // seeks/echoes 读路由先例:桌面 token 是 admin)。发信=trusted —
+  // ⚠️ RELEASE-REVIEW FLAG(下次 dev→master 发布时在 PR body surface):
+  // 作用于已互揭的既有信道(同 reveal / a2a/send 类),不产生新广播或
+  // 新关系;localhost-only internal-api + 0600 文件 token。顺带解锁
+  // 未来的 CLI 回信入口。
+  'GET /v1/penpal/channels': 'admin',
+  'GET /v1/penpal/letters': 'admin',
+  'POST /v1/penpal/letters': 'trusted',
+  'POST /v1/penpal/letters/read': 'admin',
 }
 
 export function minTierFor(routeKey: string): UserTier {

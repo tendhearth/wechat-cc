@@ -263,7 +263,11 @@ export interface Bootstrap {
     echoStore: import('../../core/social-echo-store').EchoStore
     pledgeStore: import('../../core/social-pledge-store').PledgeStore
     revealer: Revealer
-    penpal: { sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }> }
+    penpal: {
+      sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }>
+      channelStore: import('../../core/penpal-channel-store').ChannelStore
+      letterStore: import('../../core/penpal-letter-store').LetterStore
+    }
   }
   /**
    * Anonymous pen-pal channel (Task 8/10/11) — present only once a channel

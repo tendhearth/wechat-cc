@@ -18,6 +18,7 @@ import { makeEventsStore } from '../events/store'
 import { a2aRoutes } from './routes-a2a'
 import { socialRoutes } from './routes-social'
 import { pairRoutes } from './routes-pair'
+import { penpalRoutes } from './routes-penpal'
 import { pluginRoutes } from './routes-plugins'
 import { licenseRoutes } from './routes-license'
 import { daemonControlRoutes } from './routes-daemon-control'
@@ -691,6 +692,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     ...a2aRoutes(deps),
     ...socialRoutes(deps),
     ...pairRoutes(deps),
+    ...penpalRoutes(deps),
     ...pluginRoutes(deps),
     ...licenseRoutes(deps),
     ...daemonControlRoutes(deps),

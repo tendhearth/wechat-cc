@@ -48,6 +48,13 @@ describe('route-tiers', () => {
     expect(ROUTE_MIN_TIER['POST /v1/social/seek']).toBeUndefined()
   })
 
+  it('penpal 信箱路由:读 admin,发信 trusted', () => {
+    expect(minTierFor('GET /v1/penpal/channels')).toBe('admin')
+    expect(minTierFor('GET /v1/penpal/letters')).toBe('admin')
+    expect(minTierFor('POST /v1/penpal/letters')).toBe('trusted')
+    expect(minTierFor('POST /v1/penpal/letters/read')).toBe('admin')
+  })
+
   it('every registered route has an explicit min tier (no accidental default-deny)', () => {
     const deps = { stateDir: '/tmp', daemonPid: 1 } as unknown as InternalApiDeps
     const routes = makeRoutes({ deps, getDelegate: () => null, maybePrefix: (_c, t) => t })

@@ -88,7 +88,11 @@ export interface SocialWiring {
     echoStore: import('../../core/social-echo-store').EchoStore
     pledgeStore: import('../../core/social-pledge-store').PledgeStore
     revealer: Revealer
-    penpal: { sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }> }
+    penpal: {
+      sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }>
+      channelStore: import('../../core/penpal-channel-store').ChannelStore
+      letterStore: import('../../core/penpal-letter-store').LetterStore
+    }
   }
   resumeForaging: () => void
 }
@@ -125,7 +129,11 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   let socialEchoStore: import('../../core/social-echo-store').EchoStore | undefined
   let socialPledgeStore: import('../../core/social-pledge-store').PledgeStore | undefined
   let socialRevealer: Revealer | undefined
-  let socialPenpal: { sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }> } | undefined
+  let socialPenpal: {
+    sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }>
+    channelStore: import('../../core/penpal-channel-store').ChannelStore
+    letterStore: import('../../core/penpal-letter-store').LetterStore
+  } | undefined
 
   if (configuredAgent.social_enabled && configuredAgent.social_disclosure_policy) {
     const socialPolicy = configuredAgent.social_disclosure_policy
@@ -266,7 +274,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         getByMyChannelId: (c) => channelStore.getByMyChannelId(c),
         receiveLetter: (ev) => correspondent.receiveLetter(ev),
       })
-      socialPenpal = { sendLetter: (channel, text) => correspondent.sendLetter(channel, text) }
+      socialPenpal = { sendLetter: (channel, text) => correspondent.sendLetter(channel, text), channelStore, letterStore }
 
       // Notification beats (克制三拍). Content-free by design — reveal crosses
       // pubkey handles, never a real name or url, so no beat text may carry one.
