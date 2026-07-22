@@ -38,7 +38,8 @@ function installDom(extra: Record<string, any> = {}) {
     'fd-postcards-count','fd-peers','fd-peers-count','fd-inbound-toggle',
     'fd-inbound-note','fd-social-note','fd-sow',
     'fd-compose','fd-compose-form','fd-compose-topic','fd-compose-city','fd-compose-note','fd-compose-submit','fd-preview',
-    'a2a-agents-list','a2a-server-banner']
+    'a2a-agents-list','a2a-server-banner',
+    'fd-pair-start','fd-pair-accept','fd-pair-code','fd-pair-panel','fd-pair-note','fd-pair-countdown']
   const byId: Record<string, any> = {}
   for (const id of ids) byId[id] = fakeEl()
   Object.assign(byId, extra)
@@ -356,5 +357,86 @@ describe('renderForageDesk — proposed/cancelled 行', () => {
     const el = installDom()
     renderForageDesk({ agents: [], seeks: [proposedSeek, foragingSeek], echoes: [], inbound: null })
     expect(el['fd-wishes-count'].textContent).toContain('1 条在外面')
+  })
+})
+
+describe('配对面板', () => {
+  it('start 成功 → 面板显示 6 位码 + 倒计时文本', async () => {
+    const el = installDom()
+    ;(invokeApi as any).mockResolvedValueOnce({ agents: [{ id: 'old', name: '旧友' }] })  // 快照
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: true, code: '277499', expiresAt: Date.now() + 600_000 })
+    const { __onPairStartForTest, __stopPairTimersForTest } = await import('./a2a-agents.js')
+    await __onPairStartForTest?.()
+    __stopPairTimersForTest?.()
+    expect((invokeApi as any)).toHaveBeenCalledWith('POST', '/v1/pair/start')
+    expect(el['fd-pair-panel'].hidden).toBe(false)
+    expect(el['fd-pair-panel'].innerHTML).toContain('277499')
+    expect(el['fd-pair-panel'].innerHTML).toContain('wechat-cc pair 277499')
+    expect(el['fd-pair-countdown'].textContent).toContain('有效期还剩')
+  })
+
+  it('start relay_drop_failed → 中继文案', async () => {
+    const el = installDom()
+    ;(invokeApi as any).mockResolvedValueOnce({ agents: [] })
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: false, reason: 'relay_drop_failed' })
+    const { __onPairStartForTest } = await import('./a2a-agents.js')
+    await __onPairStartForTest?.()
+    expect(el['fd-pair-note'].textContent).toContain('中继')
+  })
+
+  it('start 503 pairing_not_wired → social enable 引导', async () => {
+    const el = installDom()
+    ;(invokeApi as any).mockResolvedValueOnce({ agents: [] })
+    ;(invokeApi as any).mockRejectedValueOnce(new Error('pairing_not_wired'))
+    const { __onPairStartForTest } = await import('./a2a-agents.js')
+    await __onPairStartForTest?.()
+    expect(el['fd-pair-note'].textContent).toContain('wechat-cc social enable')
+  })
+
+  it('accept 本地校验:非 6 位数字不发请求', async () => {
+    const el = installDom()
+    el['fd-pair-code'].value = '12ab3'
+    ;(invokeApi as any).mockClear()
+    const { __onPairAcceptForTest } = await import('./a2a-agents.js')
+    await __onPairAcceptForTest?.()
+    expect((invokeApi as any)).not.toHaveBeenCalled()
+    expect(el['fd-pair-note'].textContent).toContain('6 位数字')
+  })
+
+  it('accept 成功 → 显示对方名字并清空输入', async () => {
+    const el = installDom()
+    el['fd-pair-code'].value = '277499'
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: true, peer: { self_id: 'cc-b', name: '老王的CC' } })
+    ;(invokeApi as any).mockResolvedValue({})   // refresh 级联
+    const { __onPairAcceptForTest } = await import('./a2a-agents.js')
+    await __onPairAcceptForTest?.()
+    expect((invokeApi as any)).toHaveBeenCalledWith('POST', '/v1/pair/accept', { code: '277499' })
+    expect(el['fd-pair-note'].textContent).toContain('老王的CC')
+    expect(el['fd-pair-code'].value).toBe('')
+  })
+
+  it.each([
+    ['expired_or_wrong', '码不对或已过期'],
+    ['self_pair', '不能和自己'],
+    ['id_conflict', '冲突'],
+    ['relay_drop_failed', '中继'],
+  ])('accept 失败 %s → 人话文案', async (reason, copy) => {
+    const el = installDom()
+    el['fd-pair-code'].value = '111111'
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: false, reason })
+    const { __onPairAcceptForTest } = await import('./a2a-agents.js')
+    await __onPairAcceptForTest?.()
+    expect(el['fd-pair-note'].textContent).toContain(copy)
+  })
+
+  it('checkPairLanded 发现新 agent → 配对成功文案 + 收起面板', async () => {
+    const el = installDom()
+    el['fd-pair-panel'].hidden = false
+    ;(invokeApi as any).mockResolvedValueOnce({ agents: [{ id: 'old' }, { id: 'fresh', name: '小李的CC' }] })
+    ;(invokeApi as any).mockResolvedValue({})   // refresh 级联
+    const { __checkPairLandedForTest } = await import('./a2a-agents.js')
+    await __checkPairLandedForTest?.(new Set(['old']))
+    expect(el['fd-pair-note'].textContent).toContain('小李的CC')
+    expect(el['fd-pair-panel'].hidden).toBe(true)
   })
 })

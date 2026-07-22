@@ -57,12 +57,14 @@ export async function initA2AAgentsTab() {
   // refresh — duplicating would multiply calls per click).
   list.addEventListener('click', onCardAction)
 
-  // 觅食台 — reveal (delegated), inbound toggle, sow hint.
+  // 觅食台 — reveal (delegated), inbound toggle, sow hint, pairing.
   document.getElementById('fd-postcards')?.addEventListener('click', onPostcardAction)
   document.getElementById('fd-inbound-toggle')?.addEventListener('click', onInboundToggle)
   document.getElementById('fd-inbound-toggle')?.addEventListener('keydown', (e) => {
     if (e instanceof KeyboardEvent && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onInboundToggle() }
   })
+  document.getElementById('fd-pair-start')?.addEventListener('click', onPairStart)
+  document.getElementById('fd-pair-accept')?.addEventListener('click', onPairAccept)
   // #fd-sow / #a2a-add-btn are re-rendered by renderForageDesk, so the sow
   // action is delegated from the hero container instead of bound to the node.
   document.getElementById('fd-hero-status')?.addEventListener('click', (e) => {
@@ -583,6 +585,128 @@ async function onSeekAction(e) {
   }
 }
 
+// 配对码 — start(生成 6 位码,完成靠后端轮询引擎异步收边)+ accept(同步出结果)。
+// 码展示期间每 15s 拉一次 agent 列表,出现新条目即判定配对完成。
+
+/** @type {ReturnType<typeof setInterval> | null} */
+let pairCountdownTimer = null
+/** @type {ReturnType<typeof setInterval> | null} */
+let pairPollTimer = null
+
+const PAIR_FAIL_COPY = /** @type {Record<string, string>} */ ({
+  expired_or_wrong: '码不对或已过期 —— 让朋友重新生成一个试试',
+  self_pair: '这是你自己的码，不能和自己配对',
+  id_conflict: '对方的名字和你已有的朋友冲突 —— 让对方改名后重试',
+  relay_drop_failed: '中继暂时联系不上，稍后再试',
+})
+
+/** @param {unknown} err */
+function pairErrText(err) {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (msg === 'pairing_not_wired') return '配对功能未启用 —— 先在命令行运行 wechat-cc social enable 并重启守护进程。'
+  return `配对失败：${msg}`
+}
+
+function stopPairTimers() {
+  if (pairCountdownTimer) { clearInterval(pairCountdownTimer); pairCountdownTimer = null }
+  if (pairPollTimer) { clearInterval(pairPollTimer); pairPollTimer = null }
+}
+
+async function onPairStart() {
+  const note = document.getElementById('fd-pair-note')
+  const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById('fd-pair-start'))
+  stopPairTimers()
+  if (note) { note.hidden = true; note.textContent = '' }
+  if (btn) btn.disabled = true
+  try {
+    // 先快照现有 agent id,轮询时用差集判断新边落地。
+    const before = /** @type {{agents?:Array<any>}|null} */ (await invokeApi('GET', '/v1/a2a/list').catch(() => null))
+    const knownIds = new Set((before?.agents ?? []).map(a => String(a.id)))
+    const r = /** @type {{ok?:boolean, code?:string, expiresAt?:number, reason?:string}} */ (
+      await invokeApi('POST', '/v1/pair/start'))
+    if (!r?.ok) {
+      if (note) { note.hidden = false; note.textContent = PAIR_FAIL_COPY[String(r?.reason)] ?? `配对失败：${String(r?.reason ?? '未知错误')}` }
+      return
+    }
+    renderPairPanel(String(r.code ?? ''), Number(r.expiresAt) || 0)
+    pairCountdownTimer = setInterval(() => updatePairCountdown(Number(r.expiresAt) || 0), 1000)
+    pairPollTimer = setInterval(() => { checkPairLanded(knownIds).catch(() => {}) }, 15_000)
+  } catch (err) {
+    if (note) { note.hidden = false; note.textContent = pairErrText(err) }
+  } finally {
+    if (btn) btn.disabled = false
+  }
+}
+
+/** @param {string} code  @param {number} expiresAt */
+function renderPairPanel(code, expiresAt) {
+  const panel = document.getElementById('fd-pair-panel')
+  if (!panel) return
+  panel.hidden = false
+  panel.innerHTML = `<div class="fd-pair-code">${escapeHtml(code)}</div>` +
+    `<div class="fd-pair-cap">念给朋友 —— 对方在他的觅食台输入，或运行 <code>wechat-cc pair ${escapeHtml(code)}</code></div>` +
+    `<div class="fd-pair-count" id="fd-pair-countdown"></div>`
+  updatePairCountdown(expiresAt)
+}
+
+/** @param {number} expiresAt */
+function updatePairCountdown(expiresAt) {
+  const left = Math.floor((expiresAt - Date.now()) / 1000)
+  if (left <= 0) {
+    stopPairTimers()
+    const panel = document.getElementById('fd-pair-panel')
+    if (panel) { panel.hidden = true; panel.innerHTML = '' }
+    const note = document.getElementById('fd-pair-note')
+    if (note) { note.hidden = false; note.textContent = '配对码已过期 —— 需要时再生成一个。' }
+    return
+  }
+  const el = document.getElementById('fd-pair-countdown')
+  if (el) el.textContent = `有效期还剩 ${Math.floor(left / 60)} 分 ${left % 60} 秒`
+}
+
+/**
+ * 轮询判定:agent 列表出现快照之外的新 id ⇒ 对方接受了码,配对完成。
+ * @param {Set<string>} knownIds
+ */
+async function checkPairLanded(knownIds) {
+  const r = /** @type {{agents?:Array<any>}|null} */ (await invokeApi('GET', '/v1/a2a/list').catch(() => null))
+  const fresh = (r?.agents ?? []).find(a => !knownIds.has(String(a.id)))
+  if (!fresh) return
+  stopPairTimers()
+  const panel = document.getElementById('fd-pair-panel')
+  if (panel) { panel.hidden = true; panel.innerHTML = '' }
+  const note = document.getElementById('fd-pair-note')
+  if (note) { note.hidden = false; note.textContent = `🎉 配对成功：已和 ${fresh.name || fresh.id} 成为邻居` }
+  refresh().catch(() => {})
+}
+
+async function onPairAccept() {
+  const input = /** @type {HTMLInputElement | null} */ (document.getElementById('fd-pair-code'))
+  const note = document.getElementById('fd-pair-note')
+  const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById('fd-pair-accept'))
+  const code = String(input?.value ?? '').trim()
+  if (!/^\d{6}$/.test(code)) {
+    if (note) { note.hidden = false; note.textContent = '配对码是 6 位数字' }
+    return
+  }
+  if (btn) { btn.disabled = true; btn.textContent = '配对中…' }
+  try {
+    const r = /** @type {{ok?:boolean, peer?:{self_id?:string, name?:string}, reason?:string}} */ (
+      await invokeApi('POST', '/v1/pair/accept', { code }))
+    if (r?.ok) {
+      if (note) { note.hidden = false; note.textContent = `🎉 已和 ${r.peer?.name ?? r.peer?.self_id ?? '对方'} 成为邻居` }
+      if (input) input.value = ''
+      refresh().catch(() => {})
+    } else {
+      if (note) { note.hidden = false; note.textContent = PAIR_FAIL_COPY[String(r?.reason)] ?? `配对失败：${String(r?.reason ?? '未知错误')}` }
+    }
+  } catch (err) {
+    if (note) { note.hidden = false; note.textContent = pairErrText(err) }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '配对' }
+  }
+}
+
 // Test seams — onPostcardAction/onInboundToggle are module-private (wired
 // via addEventListener in initA2AAgentsTab), so unit tests reach them
 // through these thin re-exports rather than simulating real DOM events.
@@ -590,6 +714,10 @@ export const __onPostcardActionForTest = onPostcardAction
 export const __onInboundToggleForTest = onInboundToggle
 export const __onComposeSubmitForTest = onComposeSubmit
 export const __onSeekActionForTest = onSeekAction
+export const __onPairStartForTest = onPairStart
+export const __onPairAcceptForTest = onPairAccept
+export const __checkPairLandedForTest = checkPairLanded
+export const __stopPairTimersForTest = stopPairTimers
 
 // ── Test modal ────────────────────────────────────────────────────────────
 // Lets the operator validate either direction of the A2A loop without
