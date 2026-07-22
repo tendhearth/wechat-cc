@@ -599,7 +599,6 @@
                     <span class="fd-status-line">加载中…</span>
                     <button class="fd-btn fd-btn-primary fd-sow" id="fd-sow" type="button">＋ 撒一个新心愿</button>
                   </div>
-                  <div class="fd-sow-hint" id="fd-sow-hint" hidden>在微信里跟 CC 说「帮我悄悄找…」，它会替你撒出去</div>
                   <div class="fd-social-note" id="fd-social-note" hidden></div>
                 </header>
 
@@ -608,6 +607,15 @@
                 <!-- ① 我派出去的心愿 -->
                 <section class="fd-section">
                   <div class="fd-sec-head"><h2>我派出去的心愿</h2><span class="fd-count" id="fd-wishes-count"></span><span class="fd-hint">出面的是 bot，不是你 · 成交前谁都不露脸</span></div>
+                  <div class="fd-compose" id="fd-compose" hidden>
+                    <form id="fd-compose-form">
+                      <input type="text" name="topic" id="fd-compose-topic" placeholder="想找什么？比如：找个会修老相机的师傅" maxlength="120" autocomplete="off">
+                      <input type="text" name="city" id="fd-compose-city" placeholder="城市（可选）" maxlength="20" autocomplete="off">
+                      <button class="fd-btn fd-btn-primary" type="submit" id="fd-compose-submit">派出去</button>
+                    </form>
+                    <div class="fd-compose-note" id="fd-compose-note" hidden></div>
+                    <div class="fd-preview" id="fd-preview" hidden></div>
+                  </div>
                   <div class="fd-wishes" id="fd-wishes"></div>
                 </section>
 
@@ -624,6 +632,16 @@
                       <span class="fd-peers" id="fd-peers"></span>
                       <span class="fd-chev">›</span></summary>
                     <div class="fd-net-body">
+                      <div class="fd-net-row fd-net-row-pair">
+                        <div class="fd-txt"><div class="fd-t">和朋友配对</div><div class="fd-s">一个人生成 6 位码念给对方，另一个人输入 —— 两只 bot 就成了邻居</div></div>
+                        <button class="fd-btn fd-btn-primary" id="fd-pair-start" type="button">生成配对码</button>
+                      </div>
+                      <div class="fd-pair-panel" id="fd-pair-panel" hidden></div>
+                      <div class="fd-net-row fd-net-row-pair-accept">
+                        <input class="fd-pair-input" id="fd-pair-code" inputmode="numeric" maxlength="6" placeholder="输入朋友的 6 位码" autocomplete="off">
+                        <button class="fd-btn" id="fd-pair-accept" type="button">配对</button>
+                      </div>
+                      <div class="fd-inbound-note" id="fd-pair-note" hidden></div>
                       <div class="fd-net-row">
                         <div class="fd-txt"><div class="fd-t">让朋友的 bot 能找到我</div><div class="fd-s">开着，别人的心愿才能传到你这、也才有来有往</div></div>
                         <div class="fd-toggle" id="fd-inbound-toggle" role="switch" aria-checked="false" tabindex="0"></div>

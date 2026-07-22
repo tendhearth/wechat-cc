@@ -57,20 +57,27 @@ export async function initA2AAgentsTab() {
   // refresh — duplicating would multiply calls per click).
   list.addEventListener('click', onCardAction)
 
-  // 觅食台 — reveal (delegated), inbound toggle, sow hint.
+  // 觅食台 — reveal (delegated), inbound toggle, sow hint, pairing.
   document.getElementById('fd-postcards')?.addEventListener('click', onPostcardAction)
   document.getElementById('fd-inbound-toggle')?.addEventListener('click', onInboundToggle)
   document.getElementById('fd-inbound-toggle')?.addEventListener('keydown', (e) => {
     if (e instanceof KeyboardEvent && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onInboundToggle() }
   })
+  document.getElementById('fd-pair-start')?.addEventListener('click', onPairStart)
+  document.getElementById('fd-pair-accept')?.addEventListener('click', onPairAccept)
   // #fd-sow / #a2a-add-btn are re-rendered by renderForageDesk, so the sow
-  // hint is delegated from the hero container instead of bound to the node.
+  // action is delegated from the hero container instead of bound to the node.
   document.getElementById('fd-hero-status')?.addEventListener('click', (e) => {
     if (e.target instanceof HTMLElement && e.target.closest('#fd-sow')) {
-      const hint = document.getElementById('fd-sow-hint')
-      if (hint) hint.hidden = false
+      const compose = document.getElementById('fd-compose')
+      if (compose) compose.hidden = false
+      const topic = /** @type {HTMLInputElement | null} */ (document.getElementById('fd-compose-topic'))
+      if (topic && typeof topic.focus === 'function') topic.focus()
     }
   })
+  document.getElementById('fd-compose-form')?.addEventListener('submit', onComposeSubmit)
+  document.getElementById('fd-compose')?.addEventListener('click', onSeekAction)
+  document.getElementById('fd-wishes')?.addEventListener('click', onSeekAction)
 }
 
 export async function refresh() {
@@ -267,6 +274,8 @@ function fdDegBar(n) {
 
 /** @param {any} s */
 function renderWish(s) {
+  if (s.status === 'proposed') return renderProposedWish(s)
+  if (s.status === 'cancelled') return renderCancelledWish(s)
   const kindCls = s.kind === 'fun' ? 'fd-fun' : 'fd-seek'
   const kindTxt = s.kind === 'fun' ? '朋友间小乐趣' : '求物求人'
   const echoed = s.status === 'echoed' || s.status === 'connected'
@@ -280,6 +289,36 @@ function renderWish(s) {
     `<div class="fd-title">${escapeHtml(s.topic || '')}</div>` +
     `<div class="fd-meta"><span class="fd-lock">🔒 匿名传播</span><i class="fd-dot-sep"></i><span>撒出去 ${escapeHtml(fdRelTime(s.created_at))}</span></div>` +
     `<div class="fd-rightcol">${right}</div>` +
+    `</div>`
+}
+
+/**
+ * 待确认提案 —— 隐私锁:只渲染 redacted*,原始 topic 绝不进 DOM(所见即所发,
+ * 展示的就是确认后会广播的字节)。redacted_topic 为 null 只可能是 P4 之前的
+ * 老数据:给兜底文案,引导取消后重新发起。
+ * @param {any} s
+ */
+function renderProposedWish(s) {
+  const shown = s.redacted_topic
+    ? `「${escapeHtml(s.redacted_topic)}」`
+    : '（缺少预览文本 —— 取消后重新发起）'
+  const cityFrag = s.redacted_city ? `<span>📍 ${escapeHtml(s.redacted_city)}</span><i class="fd-dot-sep"></i>` : ''
+  return `<div class="fd-wish fd-proposed">` +
+    `<span class="fd-kind fd-seek">待确认</span>` +
+    `<div class="fd-title">${shown}</div>` +
+    `<div class="fd-meta"><span class="fd-lock">🕶️ 外面只会看到上面这句</span><i class="fd-dot-sep"></i>${cityFrag}<span>提案于 ${escapeHtml(fdRelTime(s.created_at))}</span></div>` +
+    `<div class="fd-rightcol"><div class="fd-pc-actions">` +
+    `<button class="fd-btn fd-btn-primary" data-action="seek-confirm" data-id="${escapeHtml(s.id)}">确认派出</button>` +
+    `<button class="fd-btn fd-btn-wait" data-action="seek-cancel" data-id="${escapeHtml(s.id)}">取消</button>` +
+    `</div></div></div>`
+}
+
+/** @param {any} s — 已取消:灰显、无操作(cancelled 从未广播,本地展示原文无隐私问题)。 */
+function renderCancelledWish(s) {
+  return `<div class="fd-wish fd-cancelled">` +
+    `<span class="fd-kind">已取消</span>` +
+    `<div class="fd-title">「${escapeHtml(s.redacted_topic || s.topic || '')}」</div>` +
+    `<div class="fd-meta"><span>取消于 ${escapeHtml(fdRelTime(s.updated_at || s.created_at))}</span></div>` +
     `</div>`
 }
 
@@ -440,11 +479,257 @@ async function onInboundToggle() {
   }
 }
 
+// 觅愿撰写 — propose→脱敏预览→confirm/cancel。守卫同样鸭子类型(测试
+// 环境是 bare-object stub)。invokeApi 对 503 会 throw Error('social_not_wired')。
+
+/** @param {unknown} err */
+function composeErrText(err) {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (msg === 'social_not_wired') return '社交觅食未启用 —— 先在命令行运行 wechat-cc social enable 并重启守护进程。'
+  return `派心愿失败：${msg}`
+}
+
+/** @param {SubmitEvent} e */
+async function onComposeSubmit(e) {
+  e.preventDefault()
+  const topicInput = /** @type {HTMLInputElement | null} */ (document.getElementById('fd-compose-topic'))
+  const cityInput = /** @type {HTMLInputElement | null} */ (document.getElementById('fd-compose-city'))
+  const note = document.getElementById('fd-compose-note')
+  const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById('fd-compose-submit'))
+  const topic = String(topicInput?.value ?? '').trim()
+  const city = String(cityInput?.value ?? '').trim()
+  if (!topic) {
+    if (note) { note.hidden = false; note.textContent = '先写下你想找什么' }
+    return
+  }
+  if (btn) btn.disabled = true
+  try {
+    const r = /** @type {{ok?:boolean, intent_id?:string, redacted?:string, redacted_city?:string, reason?:string}} */ (
+      await invokeApi('POST', '/v1/social/seek/propose', city ? { topic, city } : { topic }))
+    if (r?.ok) {
+      renderProposePreview(r)
+      if (note) { note.hidden = true; note.textContent = '' }
+    } else {
+      if (note) { note.hidden = false; note.textContent = `没能生成预览：${String(r?.reason ?? '未知错误')}` }
+    }
+  } catch (err) {
+    if (note) { note.hidden = false; note.textContent = composeErrText(err) }
+  } finally {
+    if (btn) btn.disabled = false
+  }
+}
+
+/**
+ * 脱敏预览卡 —— 隐私锁:只渲染 redacted / redacted_city,原始 topic 绝不进 DOM。
+ * @param {{intent_id?:string, redacted?:string, redacted_city?:string}} r
+ */
+function renderProposePreview(r) {
+  const preview = document.getElementById('fd-preview')
+  if (!preview) return
+  const cityLine = r.redacted_city ? `<div class="fd-preview-city">📍 ${escapeHtml(r.redacted_city)}</div>` : ''
+  preview.hidden = false
+  preview.innerHTML = `<div class="fd-preview-card" data-intent-id="${escapeHtml(String(r.intent_id ?? ''))}">` +
+    `<div class="fd-preview-eyebrow">🕶️ 外面只会看到这个</div>` +
+    `<div class="fd-preview-topic">「${escapeHtml(String(r.redacted ?? ''))}」</div>` + cityLine +
+    `<div class="fd-preview-actions">` +
+    `<button class="fd-btn fd-btn-primary" data-action="seek-confirm" data-id="${escapeHtml(String(r.intent_id ?? ''))}">确认派出</button>` +
+    `<button class="fd-btn fd-btn-wait" data-action="seek-cancel" data-id="${escapeHtml(String(r.intent_id ?? ''))}">算了，取消</button>` +
+    `</div>` +
+    `<div class="fd-preview-note">确认后，你的 bot 才会真的把它撒出去。</div>` +
+    `</div>`
+}
+
+/** @param {boolean} confirmed */
+function clearComposePreview(confirmed) {
+  const preview = document.getElementById('fd-preview')
+  if (preview) { preview.hidden = true; preview.innerHTML = '' }
+  const note = document.getElementById('fd-compose-note')
+  if (confirmed) {
+    const compose = document.getElementById('fd-compose')
+    const topicInput = /** @type {HTMLInputElement | null} */ (document.getElementById('fd-compose-topic'))
+    const cityInput = /** @type {HTMLInputElement | null} */ (document.getElementById('fd-compose-city'))
+    if (topicInput) topicInput.value = ''
+    if (cityInput) cityInput.value = ''
+    if (compose) compose.hidden = true
+    if (note) { note.hidden = true; note.textContent = '' }
+  } else {
+    if (note) { note.hidden = false; note.textContent = '已取消 —— 想改改措辞再派也行。' }
+  }
+}
+
+/**
+ * Delegated:预览卡与(Task 2 起)心愿列表里 proposed 行的 确认/取消。
+ * @param {MouseEvent} e
+ */
+async function onSeekAction(e) {
+  const target = /** @type {any} */ (e.target)
+  if (!target || !target.dataset) return
+  const action = target.dataset.action
+  const id = target.dataset.id
+  if ((action !== 'seek-confirm' && action !== 'seek-cancel') || !id) return
+  const note = document.getElementById('fd-compose-note')
+  target.disabled = true
+  try {
+    const path = action === 'seek-confirm' ? '/v1/social/seek/confirm' : '/v1/social/seek/cancel'
+    const r = /** @type {{ok?:boolean, reason?:string}} */ (await invokeApi('POST', path, { id }))
+    if (r?.ok) {
+      clearComposePreview(action === 'seek-confirm')
+      await refresh().catch(() => {})
+    } else {
+      target.disabled = false
+      if (note) { note.hidden = false; note.textContent = `${action === 'seek-confirm' ? '确认' : '取消'}失败：${String(r?.reason ?? '未知错误')}` }
+    }
+  } catch (err) {
+    target.disabled = false
+    if (note) { note.hidden = false; note.textContent = composeErrText(err) }
+  }
+}
+
+// 配对码 — start(生成 6 位码,完成靠后端轮询引擎异步收边)+ accept(同步出结果)。
+// 码展示期间每 15s 拉一次 agent 列表,出现新条目即判定配对完成。
+
+/** @type {ReturnType<typeof setInterval> | null} */
+let pairCountdownTimer = null
+/** @type {ReturnType<typeof setInterval> | null} */
+let pairPollTimer = null
+
+const PAIR_FAIL_COPY = /** @type {Record<string, string>} */ ({
+  expired_or_wrong: '码不对或已过期 —— 让朋友重新生成一个试试',
+  self_pair: '这是你自己的码，不能和自己配对',
+  id_conflict: '对方的名字和你已有的朋友冲突 —— 让对方改名后重试',
+  relay_drop_failed: '中继暂时联系不上，稍后再试',
+})
+
+/** @param {unknown} err */
+function pairErrText(err) {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (msg === 'pairing_not_wired') return '配对功能未启用 —— 先在命令行运行 wechat-cc social enable 并重启守护进程。'
+  return `配对失败：${msg}`
+}
+
+function stopPairTimers() {
+  if (pairCountdownTimer) { clearInterval(pairCountdownTimer); pairCountdownTimer = null }
+  if (pairPollTimer) { clearInterval(pairPollTimer); pairPollTimer = null }
+}
+
+async function onPairStart() {
+  const note = document.getElementById('fd-pair-note')
+  const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById('fd-pair-start'))
+  stopPairTimers()
+  if (note) { note.hidden = true; note.textContent = '' }
+  if (btn) btn.disabled = true
+  try {
+    // 先快照现有 agent id,轮询时用差集判断新边落地。
+    // 快照失败(before === null)要 fail-closed:直接中止,不然轮询会把任何已有
+    // 老友都当成刚配对成功的新边(误判)。`{agents:[]}` 才是真正的“确实没有朋友”。
+    const before = /** @type {{agents?:Array<any>}|null} */ (await invokeApi('GET', '/v1/a2a/list').catch(() => null))
+    if (before === null) {
+      if (note) { note.hidden = false; note.textContent = '暂时读不到现有朋友列表，稍后再试' }
+      return
+    }
+    const knownIds = new Set((before.agents ?? []).map(a => String(a.id)))
+    const r = /** @type {{ok?:boolean, code?:string, expiresAt?:number, reason?:string}} */ (
+      await invokeApi('POST', '/v1/pair/start'))
+    if (!r?.ok) {
+      if (note) { note.hidden = false; note.textContent = PAIR_FAIL_COPY[String(r?.reason)] ?? `配对失败：${String(r?.reason ?? '未知错误')}` }
+      return
+    }
+    renderPairPanel(String(r.code ?? ''), Number(r.expiresAt) || 0)
+    pairCountdownTimer = setInterval(() => updatePairCountdown(Number(r.expiresAt) || 0), 1000)
+    pairPollTimer = setInterval(() => { checkPairLanded(knownIds).catch(() => {}) }, 15_000)
+  } catch (err) {
+    if (note) { note.hidden = false; note.textContent = pairErrText(err) }
+  } finally {
+    if (btn) btn.disabled = false
+  }
+}
+
+/** @param {string} code  @param {number} expiresAt */
+function renderPairPanel(code, expiresAt) {
+  const panel = document.getElementById('fd-pair-panel')
+  if (!panel) return
+  panel.hidden = false
+  panel.innerHTML = `<div class="fd-pair-code">${escapeHtml(code)}</div>` +
+    `<div class="fd-pair-cap">念给朋友 —— 对方在他的觅食台输入，或运行 <code>wechat-cc pair ${escapeHtml(code)}</code></div>` +
+    `<div class="fd-pair-count" id="fd-pair-countdown"></div>`
+  updatePairCountdown(expiresAt)
+}
+
+/** @param {number} expiresAt */
+function updatePairCountdown(expiresAt) {
+  const left = Math.floor((expiresAt - Date.now()) / 1000)
+  if (left <= 0) {
+    stopPairTimers()
+    const panel = document.getElementById('fd-pair-panel')
+    if (panel) { panel.hidden = true; panel.innerHTML = '' }
+    const note = document.getElementById('fd-pair-note')
+    if (note) { note.hidden = false; note.textContent = '配对码已过期 —— 需要时再生成一个。' }
+    return
+  }
+  const el = document.getElementById('fd-pair-countdown')
+  if (el) el.textContent = `有效期还剩 ${Math.floor(left / 60)} 分 ${left % 60} 秒`
+}
+
+/**
+ * 轮询判定:agent 列表出现快照之外的新 id ⇒ 对方接受了码,配对完成。
+ * @param {Set<string>} knownIds
+ */
+async function checkPairLanded(knownIds) {
+  const r = /** @type {{agents?:Array<any>}|null} */ (await invokeApi('GET', '/v1/a2a/list').catch(() => null))
+  const fresh = (r?.agents ?? []).find(a => !knownIds.has(String(a.id)))
+  if (!fresh) return
+  stopPairTimers()
+  const panel = document.getElementById('fd-pair-panel')
+  if (panel) { panel.hidden = true; panel.innerHTML = '' }
+  const note = document.getElementById('fd-pair-note')
+  if (note) { note.hidden = false; note.textContent = `🎉 配对成功：已和 ${fresh.name || fresh.id} 成为邻居` }
+  refresh().catch(() => {})
+}
+
+async function onPairAccept() {
+  const input = /** @type {HTMLInputElement | null} */ (document.getElementById('fd-pair-code'))
+  const note = document.getElementById('fd-pair-note')
+  const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById('fd-pair-accept'))
+  const code = String(input?.value ?? '').trim()
+  if (!/^\d{6}$/.test(code)) {
+    if (note) { note.hidden = false; note.textContent = '配对码是 6 位数字' }
+    return
+  }
+  if (btn) { btn.disabled = true; btn.textContent = '配对中…' }
+  try {
+    const r = /** @type {{ok?:boolean, peer?:{self_id?:string, name?:string}, reason?:string}} */ (
+      await invokeApi('POST', '/v1/pair/accept', { code }))
+    if (r?.ok) {
+      // 接受方也可能有一份自己发起的、还在倒计时/轮询的配对码——接受成功后
+      // 那份 stale 状态必须清掉,否则过期定时器事后会用“配对码已过期”盖掉这条
+      // 成功提示,轮询定时器还可能重复触发一次“配对成功”消息。
+      stopPairTimers()
+      const panel = document.getElementById('fd-pair-panel')
+      if (panel) { panel.hidden = true; panel.innerHTML = '' }
+      if (note) { note.hidden = false; note.textContent = `🎉 已和 ${r.peer?.name ?? r.peer?.self_id ?? '对方'} 成为邻居` }
+      if (input) input.value = ''
+      refresh().catch(() => {})
+    } else {
+      if (note) { note.hidden = false; note.textContent = PAIR_FAIL_COPY[String(r?.reason)] ?? `配对失败：${String(r?.reason ?? '未知错误')}` }
+    }
+  } catch (err) {
+    if (note) { note.hidden = false; note.textContent = pairErrText(err) }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '配对' }
+  }
+}
+
 // Test seams — onPostcardAction/onInboundToggle are module-private (wired
 // via addEventListener in initA2AAgentsTab), so unit tests reach them
 // through these thin re-exports rather than simulating real DOM events.
 export const __onPostcardActionForTest = onPostcardAction
 export const __onInboundToggleForTest = onInboundToggle
+export const __onComposeSubmitForTest = onComposeSubmit
+export const __onSeekActionForTest = onSeekAction
+export const __onPairStartForTest = onPairStart
+export const __onPairAcceptForTest = onPairAccept
+export const __checkPairLandedForTest = checkPairLanded
+export const __stopPairTimersForTest = stopPairTimers
 
 // ── Test modal ────────────────────────────────────────────────────────────
 // Lets the operator validate either direction of the A2A loop without
