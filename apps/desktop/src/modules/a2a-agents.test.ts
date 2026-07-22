@@ -439,4 +439,26 @@ describe('配对面板', () => {
     expect(el['fd-pair-note'].textContent).toContain('小李的CC')
     expect(el['fd-pair-panel'].hidden).toBe(true)
   })
+
+  it('accept 成功时清理 start 的 stale 面板/定时器（收起 fd-pair-panel）', async () => {
+    const el = installDom()
+    el['fd-pair-panel'].hidden = false   // 模拟：自己此前发起过配对，面板还开着、倒计时/轮询还在跑
+    el['fd-pair-code'].value = '277499'
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: true, peer: { self_id: 'cc-b', name: '老王的CC' } })
+    ;(invokeApi as any).mockResolvedValue({})   // refresh 级联
+    const { __onPairAcceptForTest, __stopPairTimersForTest } = await import('./a2a-agents.js')
+    await __onPairAcceptForTest?.()
+    expect(el['fd-pair-panel'].hidden).toBe(true)
+    __stopPairTimersForTest?.()
+  })
+
+  it('start 快照 GET 失败 → fail-closed，不发起 POST /v1/pair/start', async () => {
+    const el = installDom()
+    ;(invokeApi as any).mockRejectedValueOnce(new Error('network down'))  // 快照失败
+    const { __onPairStartForTest } = await import('./a2a-agents.js')
+    await __onPairStartForTest?.()
+    const calls = (invokeApi as any).mock.calls
+    expect(calls.some((c: any[]) => c[0] === 'POST' && c[1] === '/v1/pair/start')).toBe(false)
+    expect(el['fd-pair-note'].textContent).toContain('稍后再试')
+  })
 })

@@ -620,8 +620,14 @@ async function onPairStart() {
   if (btn) btn.disabled = true
   try {
     // 先快照现有 agent id,轮询时用差集判断新边落地。
+    // 快照失败(before === null)要 fail-closed:直接中止,不然轮询会把任何已有
+    // 老友都当成刚配对成功的新边(误判)。`{agents:[]}` 才是真正的“确实没有朋友”。
     const before = /** @type {{agents?:Array<any>}|null} */ (await invokeApi('GET', '/v1/a2a/list').catch(() => null))
-    const knownIds = new Set((before?.agents ?? []).map(a => String(a.id)))
+    if (before === null) {
+      if (note) { note.hidden = false; note.textContent = '暂时读不到现有朋友列表，稍后再试' }
+      return
+    }
+    const knownIds = new Set((before.agents ?? []).map(a => String(a.id)))
     const r = /** @type {{ok?:boolean, code?:string, expiresAt?:number, reason?:string}} */ (
       await invokeApi('POST', '/v1/pair/start'))
     if (!r?.ok) {
@@ -694,6 +700,12 @@ async function onPairAccept() {
     const r = /** @type {{ok?:boolean, peer?:{self_id?:string, name?:string}, reason?:string}} */ (
       await invokeApi('POST', '/v1/pair/accept', { code }))
     if (r?.ok) {
+      // 接受方也可能有一份自己发起的、还在倒计时/轮询的配对码——接受成功后
+      // 那份 stale 状态必须清掉,否则过期定时器事后会用“配对码已过期”盖掉这条
+      // 成功提示,轮询定时器还可能重复触发一次“配对成功”消息。
+      stopPairTimers()
+      const panel = document.getElementById('fd-pair-panel')
+      if (panel) { panel.hidden = true; panel.innerHTML = '' }
       if (note) { note.hidden = false; note.textContent = `🎉 已和 ${r.peer?.name ?? r.peer?.self_id ?? '对方'} 成为邻居` }
       if (input) input.value = ''
       refresh().catch(() => {})
