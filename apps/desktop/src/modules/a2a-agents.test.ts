@@ -318,3 +318,43 @@ describe('心愿 compose → propose → preview', () => {
     expect(el['fd-compose-note'].textContent).toContain('not_proposed')
   })
 })
+
+describe('renderForageDesk — proposed/cancelled 行', () => {
+  const proposedSeek = { id: 'i9', kind: 'seek', topic: '原文:找禄来福来维修师傅', status: 'proposed', hop: 1, peers_asked: 0, redacted_topic: '【求助】想找懂老相机维修的朋友', redacted_city: '上海', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+
+  it('proposed 行渲染 redacted_topic + 确认/取消按钮,原文不进 DOM', () => {
+    const el = installDom()
+    renderForageDesk({ agents: [], seeks: [proposedSeek], echoes: [], inbound: null })
+    const html = el['fd-wishes'].innerHTML
+    expect(html).toContain('【求助】想找懂老相机维修的朋友')
+    expect(html).toContain('data-action="seek-confirm"')
+    expect(html).toContain('data-action="seek-cancel"')
+    expect(html).toContain('data-id="i9"')
+    expect(html).toContain('外面只会看到')
+    expect(html).not.toContain('禄来福来')            // 隐私锁
+    expect(html).not.toContain('觅食中')              // 不是 foraging 视图
+  })
+
+  it('proposed 行缺 redacted_topic(老数据)→ 兜底文案,不渲染原文', () => {
+    const el = installDom()
+    renderForageDesk({ agents: [], seeks: [{ ...proposedSeek, redacted_topic: null, redacted_city: null }], echoes: [], inbound: null })
+    const html = el['fd-wishes'].innerHTML
+    expect(html).toContain('缺少预览文本')
+    expect(html).not.toContain('禄来福来')
+  })
+
+  it('cancelled 行灰显,无操作按钮', () => {
+    const el = installDom()
+    renderForageDesk({ agents: [], seeks: [{ ...proposedSeek, status: 'cancelled' }], echoes: [], inbound: null })
+    const html = el['fd-wishes'].innerHTML
+    expect(html).toContain('fd-cancelled')
+    expect(html).toContain('已取消')
+    expect(html).not.toContain('data-action="seek-confirm"')
+  })
+
+  it('wishes-count 只计 foraging,不把 proposed 计成在外面', () => {
+    const el = installDom()
+    renderForageDesk({ agents: [], seeks: [proposedSeek, foragingSeek], echoes: [], inbound: null })
+    expect(el['fd-wishes-count'].textContent).toContain('1 条在外面')
+  })
+})

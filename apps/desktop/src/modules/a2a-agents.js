@@ -75,6 +75,7 @@ export async function initA2AAgentsTab() {
   })
   document.getElementById('fd-compose-form')?.addEventListener('submit', onComposeSubmit)
   document.getElementById('fd-compose')?.addEventListener('click', onSeekAction)
+  document.getElementById('fd-wishes')?.addEventListener('click', onSeekAction)
 }
 
 export async function refresh() {
@@ -271,6 +272,8 @@ function fdDegBar(n) {
 
 /** @param {any} s */
 function renderWish(s) {
+  if (s.status === 'proposed') return renderProposedWish(s)
+  if (s.status === 'cancelled') return renderCancelledWish(s)
   const kindCls = s.kind === 'fun' ? 'fd-fun' : 'fd-seek'
   const kindTxt = s.kind === 'fun' ? '朋友间小乐趣' : '求物求人'
   const echoed = s.status === 'echoed' || s.status === 'connected'
@@ -284,6 +287,36 @@ function renderWish(s) {
     `<div class="fd-title">${escapeHtml(s.topic || '')}</div>` +
     `<div class="fd-meta"><span class="fd-lock">🔒 匿名传播</span><i class="fd-dot-sep"></i><span>撒出去 ${escapeHtml(fdRelTime(s.created_at))}</span></div>` +
     `<div class="fd-rightcol">${right}</div>` +
+    `</div>`
+}
+
+/**
+ * 待确认提案 —— 隐私锁:只渲染 redacted*,原始 topic 绝不进 DOM(所见即所发,
+ * 展示的就是确认后会广播的字节)。redacted_topic 为 null 只可能是 P4 之前的
+ * 老数据:给兜底文案,引导取消后重新发起。
+ * @param {any} s
+ */
+function renderProposedWish(s) {
+  const shown = s.redacted_topic
+    ? `「${escapeHtml(s.redacted_topic)}」`
+    : '（缺少预览文本 —— 取消后重新发起）'
+  const cityFrag = s.redacted_city ? `<span>📍 ${escapeHtml(s.redacted_city)}</span><i class="fd-dot-sep"></i>` : ''
+  return `<div class="fd-wish fd-proposed">` +
+    `<span class="fd-kind fd-seek">待确认</span>` +
+    `<div class="fd-title">${shown}</div>` +
+    `<div class="fd-meta"><span class="fd-lock">🕶️ 外面只会看到上面这句</span><i class="fd-dot-sep"></i>${cityFrag}<span>提案于 ${escapeHtml(fdRelTime(s.created_at))}</span></div>` +
+    `<div class="fd-rightcol"><div class="fd-pc-actions">` +
+    `<button class="fd-btn fd-btn-primary" data-action="seek-confirm" data-id="${escapeHtml(s.id)}">确认派出</button>` +
+    `<button class="fd-btn fd-btn-wait" data-action="seek-cancel" data-id="${escapeHtml(s.id)}">取消</button>` +
+    `</div></div></div>`
+}
+
+/** @param {any} s — 已取消:灰显、无操作(cancelled 从未广播,本地展示原文无隐私问题)。 */
+function renderCancelledWish(s) {
+  return `<div class="fd-wish fd-cancelled">` +
+    `<span class="fd-kind">已取消</span>` +
+    `<div class="fd-title">「${escapeHtml(s.redacted_topic || s.topic || '')}」</div>` +
+    `<div class="fd-meta"><span>取消于 ${escapeHtml(fdRelTime(s.updated_at || s.created_at))}</span></div>` +
     `</div>`
 }
 
