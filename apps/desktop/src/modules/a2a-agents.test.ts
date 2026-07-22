@@ -39,7 +39,8 @@ function installDom(extra: Record<string, any> = {}) {
     'fd-inbound-note','fd-social-note','fd-sow',
     'fd-compose','fd-compose-form','fd-compose-topic','fd-compose-city','fd-compose-note','fd-compose-submit','fd-preview',
     'a2a-agents-list','a2a-server-banner',
-    'fd-pair-start','fd-pair-accept','fd-pair-code','fd-pair-panel','fd-pair-note','fd-pair-countdown']
+    'fd-pair-start','fd-pair-accept','fd-pair-code','fd-pair-panel','fd-pair-note','fd-pair-countdown',
+    'fd-mailbox','fd-mailbox-count']
   const byId: Record<string, any> = {}
   for (const id of ids) byId[id] = fakeEl()
   Object.assign(byId, extra)
@@ -460,5 +461,107 @@ describe('配对面板', () => {
     const calls = (invokeApi as any).mock.calls
     expect(calls.some((c: any[]) => c[0] === 'POST' && c[1] === '/v1/pair/start')).toBe(false)
     expect(el['fd-pair-note'].textContent).toContain('稍后再试')
+  })
+})
+
+describe('笔友信箱', () => {
+  const chan = { id: 'ch1', title: '找修相机师傅', peer_label: '老王的CC', degree: 1, unread: 2, last_preview: '你好呀', last_at: new Date().toISOString() }
+
+  it('信道卡渲染:标题/对端/未读角标/预览;总未读进区块头', () => {
+    const el = installDom()
+    renderForageDesk({ agents: [], seeks: [], echoes: [], inbound: null, mailbox: [chan, { ...chan, id: 'ch2', unread: 0, peer_label: '第2度笔友', title: '' }] })
+    const html = el['fd-mailbox'].innerHTML
+    expect(html).toContain('老王的CC')
+    expect(html).toContain('找修相机师傅')
+    expect(html).toContain('fd-mail-unread')
+    expect(html).toContain('第2度笔友')
+    expect(html).toContain('data-action="mail-toggle"')
+    expect(el['fd-mailbox-count'].textContent).toContain('2 封未读')
+  })
+
+  it('mailbox:null → 未启用引导;[] → 空态文案', () => {
+    const el = installDom()
+    renderForageDesk({ agents: [], seeks: [], echoes: [], inbound: null, mailbox: null })
+    expect(el['fd-mailbox'].innerHTML).toContain('social enable')
+    renderForageDesk({ agents: [], seeks: [], echoes: [], inbound: null, mailbox: [] })
+    expect(el['fd-mailbox'].innerHTML).toContain('还没有笔友')
+  })
+
+  function mailCard() {
+    const thread = { ...fakeEl(), hidden: true }
+    const badge = fakeEl()
+    const bubbles = fakeEl()
+    const input = fakeEl(); const note = fakeEl()
+    const card = { ...fakeEl(), querySelector: (sel: string) =>
+      sel === '.fd-mail-thread' ? thread : sel === '.fd-mail-unread' ? badge :
+      sel === '.fd-mail-bubbles' ? bubbles : sel === '.fd-mail-input' ? input :
+      sel === '.fd-mail-note' ? note : null }
+    return { card, thread, badge, bubbles, input, note }
+  }
+
+  it('展开线程:拉信渲染气泡、触发标已读、去掉角标', async () => {
+    installDom()
+    const { card, thread, badge } = mailCard()
+    const btn = fakeEl(); btn.dataset.action = 'mail-toggle'; btn.dataset.id = 'ch1'
+    ;(btn as any).closest = (sel: string) => sel === '.fd-mail-chan' ? card : null
+    ;(invokeApi as any).mockResolvedValueOnce({ letters: [
+      { id: 'l2', direction: 'out', plaintext: '我回的', created_at: new Date().toISOString(), read_at: null },
+      { id: 'l1', direction: 'in',  plaintext: '你好呀', created_at: new Date().toISOString(), read_at: null },
+    ] })
+    ;(invokeApi as any).mockResolvedValue({ ok: true })   // read + 后续
+    const { __onMailboxActionForTest } = await import('./a2a-agents.js')
+    await __onMailboxActionForTest?.({ target: btn } as any)
+    expect((invokeApi as any)).toHaveBeenCalledWith('GET', '/v1/penpal/letters?channel_id=ch1')
+    expect((invokeApi as any)).toHaveBeenCalledWith('POST', '/v1/penpal/letters/read', { channel_id: 'ch1' })
+    expect(thread.hidden).toBe(false)
+    expect(thread.innerHTML).toContain('你好呀')
+    expect(thread.innerHTML).toContain('fd-out')          // 方向分侧
+    expect(thread.innerHTML).toContain('data-action="mail-send"')
+    expect(badge.remove).toHaveBeenCalled()
+  })
+
+  it('再点收起线程', async () => {
+    installDom()
+    const { card, thread } = mailCard(); thread.hidden = false; thread.innerHTML = 'x'
+    const btn = fakeEl(); btn.dataset.action = 'mail-toggle'; btn.dataset.id = 'ch1'
+    ;(btn as any).closest = (sel: string) => sel === '.fd-mail-chan' ? card : null
+    const { __onMailboxActionForTest } = await import('./a2a-agents.js')
+    await __onMailboxActionForTest?.({ target: btn } as any)
+    expect(thread.hidden).toBe(true)
+  })
+
+  it('回信成功:乐观追加气泡、清输入;空文本不发请求', async () => {
+    installDom()
+    const { card, bubbles, input, note } = mailCard()
+    const btn = fakeEl(); btn.dataset.action = 'mail-send'; btn.dataset.id = 'ch1'
+    ;(btn as any).closest = (sel: string) => sel === '.fd-mail-chan' ? card : null
+    input.value = '  '
+    ;(invokeApi as any).mockClear()
+    const { __onMailboxActionForTest } = await import('./a2a-agents.js')
+    await __onMailboxActionForTest?.({ target: btn } as any)
+    expect((invokeApi as any)).not.toHaveBeenCalled()
+    input.value = '这是一封回信'
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: true })
+    await __onMailboxActionForTest?.({ target: btn } as any)
+    expect((invokeApi as any)).toHaveBeenCalledWith('POST', '/v1/penpal/letters', { channel_id: 'ch1', text: '这是一封回信' })
+    expect(bubbles.innerHTML).toContain('这是一封回信')
+    expect(input.value).toBe('')
+    expect(note.hidden).toBe(true)
+  })
+
+  it.each([
+    ['channel_not_open', '还没打开'],
+    ['no_route', '找不到'],
+    ['send_failed', '联系不上'],
+  ])('回信失败 %s → 人话文案,按钮恢复', async (error, copy) => {
+    installDom()
+    const { card, input, note } = mailCard(); input.value = 'x'
+    const btn = fakeEl(); btn.dataset.action = 'mail-send'; btn.dataset.id = 'ch1'
+    ;(btn as any).closest = (sel: string) => sel === '.fd-mail-chan' ? card : null
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: false, error })
+    const { __onMailboxActionForTest } = await import('./a2a-agents.js')
+    await __onMailboxActionForTest?.({ target: btn } as any)
+    expect(note.textContent).toContain(copy)
+    expect(btn.disabled).toBe(false)
   })
 })

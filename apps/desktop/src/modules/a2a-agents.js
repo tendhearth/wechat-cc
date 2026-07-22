@@ -78,17 +78,19 @@ export async function initA2AAgentsTab() {
   document.getElementById('fd-compose-form')?.addEventListener('submit', onComposeSubmit)
   document.getElementById('fd-compose')?.addEventListener('click', onSeekAction)
   document.getElementById('fd-wishes')?.addEventListener('click', onSeekAction)
+  document.getElementById('fd-mailbox')?.addEventListener('click', onMailboxAction)
 }
 
 export async function refresh() {
   const wishes = document.getElementById('fd-wishes')
   if (wishes && !wishes.innerHTML) wishes.innerHTML = '<div class="fd-empty">加载中…</div>'
 
-  const [listResp, seeksResp, echoesResp, inbound] = await Promise.all([
-    /** @type {Promise<{agents?:Array<any>}|null>} */ (invokeApi('GET', '/v1/a2a/list').catch(() => null)),
-    /** @type {Promise<{seeks?:Array<any>}|null>}  */ (invokeApi('GET', '/v1/social/seeks').catch(() => null)),
-    /** @type {Promise<{echoes?:Array<any>}|null>} */ (invokeApi('GET', '/v1/social/echoes').catch(() => null)),
-    /** @type {Promise<any>}                        */ (invokeApi('GET', '/v1/social/inbound').catch(() => null)),
+  const [listResp, seeksResp, echoesResp, inbound, mailResp] = await Promise.all([
+    /** @type {Promise<{agents?:Array<any>}|null>}   */ (invokeApi('GET', '/v1/a2a/list').catch(() => null)),
+    /** @type {Promise<{seeks?:Array<any>}|null>}    */ (invokeApi('GET', '/v1/social/seeks').catch(() => null)),
+    /** @type {Promise<{echoes?:Array<any>}|null>}   */ (invokeApi('GET', '/v1/social/echoes').catch(() => null)),
+    /** @type {Promise<any>}                          */ (invokeApi('GET', '/v1/social/inbound').catch(() => null)),
+    /** @type {Promise<{channels?:Array<any>}|null>} */ (invokeApi('GET', '/v1/penpal/channels').catch(() => null)),
   ])
 
   // keep the server-status banner (best-effort, as before)
@@ -103,6 +105,7 @@ export async function refresh() {
     seeks:  seeksResp ? (seeksResp.seeks ?? []) : null,
     echoes: echoesResp ? (echoesResp.echoes ?? []) : null,
     inbound,
+    mailbox: mailResp ? (mailResp.channels ?? []) : null,
   })
 }
 
@@ -161,7 +164,7 @@ function renderAgents(agents, list) {
 
 /**
  * Render the whole 觅食台 from live data.
- * @param {{ agents:Array<any>|null, seeks:Array<any>|null, echoes:Array<any>|null, inbound:any }} data
+ * @param {{ agents:Array<any>|null, seeks:Array<any>|null, echoes:Array<any>|null, inbound:any, mailbox:Array<any>|null }} data
  */
 export function renderForageDesk(data) {
   const agents = Array.isArray(data.agents) ? data.agents : []
@@ -224,6 +227,24 @@ export function renderForageDesk(data) {
   if (pcCount) {
     const pending = echoes.filter(e => e.status === 'pending').length
     pcCount.textContent = pending ? `${pending} 张待你揭晓` : (echoes.length ? '已处理' : '')
+  }
+
+  // ── ✉️ mailbox ───────────────────────────────────────────────────────
+  const mailbox = document.getElementById('fd-mailbox')
+  const mbCount = document.getElementById('fd-mailbox-count')
+  const chans = Array.isArray(data.mailbox) ? data.mailbox : []
+  if (mailbox) {
+    if (data.mailbox == null) {
+      mailbox.innerHTML = `<div class="fd-empty">笔友信箱未启用 —— 先在命令行运行 wechat-cc social enable 并重启守护进程。</div>`
+    } else if (chans.length === 0) {
+      mailbox.innerHTML = `<div class="fd-empty">还没有笔友 —— 等一张明信片揭晓牵线后，就能在这里通信了。</div>`
+    } else {
+      mailbox.innerHTML = chans.map(c => renderMailChannel(c)).join('')
+    }
+  }
+  if (mbCount) {
+    const totalUnread = chans.reduce((s, c) => s + (Number(c.unread) || 0), 0)
+    mbCount.textContent = totalUnread ? `${totalUnread} 封未读` : ''
   }
 
   // ── ③ net: inbound toggle + peers summary + agent cards ──────────────
@@ -363,6 +384,36 @@ function renderPostcard(e, seek) {
  */
 function lastGlyph(s) { const g = Array.from(String(s || '?')); return g[g.length - 1] || '?' }
 
+/** @param {any} c — GET /v1/penpal/channels 的一行。 */
+function renderMailChannel(c) {
+  const unread = Number(c.unread) || 0
+  return `<div class="fd-mail-chan" data-chan-id="${escapeHtml(c.id)}">` +
+    `<div class="fd-mail-head" data-action="mail-toggle" data-id="${escapeHtml(c.id)}">` +
+    `<span class="fd-mail-peer">${escapeHtml(c.peer_label || '笔友')}</span>` +
+    (c.title ? `<span class="fd-mail-title">「${escapeHtml(c.title)}」</span>` : '') +
+    (unread ? `<span class="fd-mail-unread">${unread}</span>` : '') +
+    (c.last_preview ? `<span class="fd-mail-preview">${escapeHtml(c.last_preview)}</span>` : '') +
+    `</div>` +
+    `<div class="fd-mail-thread" hidden></div>` +
+    `</div>`
+}
+
+/** @param {Array<any>} letters — 路由返回 newest-first;渲染 reverse 成正序。
+ *  @param {string} channelId */
+function renderMailThread(letters, channelId) {
+  const bubbles = letters.slice().reverse().map(l =>
+    `<div class="fd-mail-bubble ${l.direction === 'out' ? 'fd-out' : 'fd-in'}">` +
+    `<div class="fd-mail-text">${escapeHtml(l.plaintext ?? '')}</div>` +
+    `<div class="fd-mail-time">${escapeHtml(fdRelTime(l.created_at))}</div>` +
+    `</div>`).join('')
+  return `<div class="fd-mail-bubbles">${bubbles || '<div class="fd-empty">还没有信 —— 写下第一封吧。</div>'}</div>` +
+    `<div class="fd-mail-replyrow">` +
+    `<input class="fd-mail-input" placeholder="写封信…" maxlength="2000">` +
+    `<button class="fd-btn fd-btn-primary" data-action="mail-send" data-id="${escapeHtml(channelId)}">寄出</button>` +
+    `</div>` +
+    `<div class="fd-mail-note" hidden></div>`
+}
+
 // ── event handlers ────────────────────────────────────────────────────────
 
 /** @param {MouseEvent} e */
@@ -454,6 +505,76 @@ async function onPostcardAction(e) {
     target.textContent = '揭晓牵线'
     const note = card.querySelector('.fd-reveal-note')
     if (note) { note.className = 'fd-reveal-note'; note.textContent = `揭晓失败：${escapeHtml(err instanceof Error ? err.message : String(err))}` }
+  }
+}
+
+// ✉️ 信箱 — 展开看信(即读即清未读) + 回信。同时只展开一个线程。
+/** @type {any} */
+let openMailThreadEl = null
+
+const MAIL_FAIL_COPY = /** @type {Record<string, string>} */ ({
+  channel_not_open: '这条信道还没打开 —— 双方都揭晓后才能通信',
+  no_route: '找不到通往对方的路 —— 稍后再试',
+  send_failed: '寄出失败 —— 对方的 bot 暂时联系不上，稍后再试',
+})
+
+/** @param {MouseEvent} e */
+async function onMailboxAction(e) {
+  const target = /** @type {any} */ (e.target)
+  if (!target || !target.dataset) return
+  if (target.dataset.action === 'mail-toggle') return openMailThread(target)
+  if (target.dataset.action === 'mail-send') return sendMailReply(target)
+}
+
+/** @param {any} target */
+async function openMailThread(target) {
+  const card = typeof target.closest === 'function' ? target.closest('.fd-mail-chan') : null
+  const thread = card ? card.querySelector('.fd-mail-thread') : null
+  const id = target.dataset.id
+  if (!card || !thread || !id) return
+  if (!thread.hidden) { thread.hidden = true; thread.innerHTML = ''; openMailThreadEl = null; return }
+  if (openMailThreadEl && openMailThreadEl !== thread) { openMailThreadEl.hidden = true; openMailThreadEl.innerHTML = '' }
+  openMailThreadEl = thread
+  thread.hidden = false
+  thread.innerHTML = '<div class="fd-empty">加载中…</div>'
+  try {
+    const r = /** @type {{letters?:Array<any>}} */ (await invokeApi('GET', `/v1/penpal/letters?channel_id=${encodeURIComponent(id)}`))
+    thread.innerHTML = renderMailThread(r?.letters ?? [], id)
+    // 展开即读:后端清 + 本地摘角标(fire-and-forget,失败不打断看信)。
+    invokeApi('POST', '/v1/penpal/letters/read', { channel_id: id }).catch(() => {})
+    const badge = card.querySelector('.fd-mail-unread')
+    if (badge && typeof badge.remove === 'function') badge.remove()
+  } catch (err) {
+    thread.innerHTML = `<div class="fd-empty">看信失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</div>`
+  }
+}
+
+/** @param {any} target */
+async function sendMailReply(target) {
+  const id = target.dataset.id
+  const card = typeof target.closest === 'function' ? target.closest('.fd-mail-chan') : null
+  if (!id || !card) return
+  const input = card.querySelector('.fd-mail-input')
+  const note = card.querySelector('.fd-mail-note')
+  const text = String(input?.value ?? '').trim()
+  if (!text) { if (note) { note.hidden = false; note.textContent = '先写点什么' } return }
+  target.disabled = true
+  try {
+    const r = /** @type {{ok?:boolean, error?:string}} */ (
+      await invokeApi('POST', '/v1/penpal/letters', { channel_id: id, text }))
+    if (r?.ok) {
+      const bubbles = card.querySelector('.fd-mail-bubbles')
+      if (bubbles) bubbles.innerHTML += `<div class="fd-mail-bubble fd-out"><div class="fd-mail-text">${escapeHtml(text)}</div><div class="fd-mail-time">刚刚</div></div>`
+      if (input) input.value = ''
+      if (note) { note.hidden = true; note.textContent = '' }
+    } else {
+      if (note) { note.hidden = false; note.textContent = MAIL_FAIL_COPY[String(r?.error)] ?? `寄出失败：${String(r?.error ?? '未知错误')}` }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (note) { note.hidden = false; note.textContent = msg === 'penpal_not_wired' ? '笔友功能未启用 —— 先在命令行运行 wechat-cc social enable 并重启守护进程。' : `寄出失败：${msg}` }
+  } finally {
+    target.disabled = false
   }
 }
 
@@ -726,6 +847,7 @@ export const __onPostcardActionForTest = onPostcardAction
 export const __onInboundToggleForTest = onInboundToggle
 export const __onComposeSubmitForTest = onComposeSubmit
 export const __onSeekActionForTest = onSeekAction
+export const __onMailboxActionForTest = onMailboxAction
 export const __onPairStartForTest = onPairStart
 export const __onPairAcceptForTest = onPairAccept
 export const __checkPairLandedForTest = checkPairLanded
