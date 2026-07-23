@@ -82,12 +82,23 @@ describe('async foraging spine e2e', () => {
     const broker = makeBroker({
       policy: POLICY, cheapEval: passingCheck,
       discover: async () => [recB],
-      send: async (_hand, card) => answerB({ agent: { id: 'cca' } as any, card }),
+      // v2: send is fast-ack fire-and-forget (bool). The echo itself now
+      // arrives later, out of band, via /a2a/echo → social-echo-intake.ts —
+      // simulated here inline (this file's full async rebuild is Task 9) by
+      // having the stub do what intake will do: land the echo + flip the
+      // seek to `echoed` on a match.
+      send: async (hand, card) => {
+        const r = await answerB({ agent: { id: 'cca' } as any, card })
+        if (r.match === 'yes') {
+          echoStore.create({ id: `${card.intent_id}:${hand.id}`, seekId: card.intent_id, peerMasked: '第 1 度的某人', degree: 1, content: r.blurb ?? '', peerAgentId: hand.id })
+          seekStore.update(card.intent_id, { status: 'echoed' })
+        }
+        return r.match === 'yes'
+      },
       proposeRow: (id, r) => seekStore.propose({ id, kind: 'seek', topic: r.topic, redactedTopic: r.redactedTopic, ...(r.redactedCity ? { redactedCity: r.redactedCity } : {}) }),
       readSeek: (id) => seekStore.get(id),
       markStatus: (id, status) => seekStore.update(id, { status }),
-      recordEcho: (e) => echoStore.create({ id: `${e.intentId}:${e.peerAgentId}`, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId }),
-      finishSeek: (id, status, peersAsked) => seekStore.update(id, { status, peersAsked }),
+      markForaged: (id, peersAsked) => seekStore.update(id, { peersAsked }),
       schedule: (fn) => { jobs.push(fn) },
     })
 
@@ -165,12 +176,21 @@ describe('async foraging spine e2e', () => {
     const broker = makeBroker({
       policy: POLICY, cheapEval: passingCheck,
       discover: async () => [recB],
-      send: async (_hand, card) => { sentCard = card; return answerB({ agent: { id: 'cca' } as any, card }) },
+      // v2 fast-ack — see the first test's comment for why this stub inlines
+      // the intake-equivalent echo landing (full rebuild deferred to Task 9).
+      send: async (hand, card) => {
+        sentCard = card
+        const r = await answerB({ agent: { id: 'cca' } as any, card })
+        if (r.match === 'yes') {
+          echoStore.create({ id: `${card.intent_id}:${hand.id}`, seekId: card.intent_id, peerMasked: '第 1 度的某人', degree: 1, content: r.blurb ?? '', peerAgentId: hand.id })
+          seekStore.update(card.intent_id, { status: 'echoed' })
+        }
+        return r.match === 'yes'
+      },
       proposeRow: (id, r) => seekStore.propose({ id, kind: 'seek', topic: r.topic, redactedTopic: r.redactedTopic, ...(r.redactedCity ? { redactedCity: r.redactedCity } : {}) }),
       readSeek: (id) => seekStore.get(id),
       markStatus: (id, status) => seekStore.update(id, { status }),
-      recordEcho: (e) => echoStore.create({ id: `${e.intentId}:${e.peerAgentId}`, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId }),
-      finishSeek: (id, status, peersAsked) => seekStore.update(id, { status, peersAsked }),
+      markForaged: (id, peersAsked) => seekStore.update(id, { peersAsked }),
       schedule: (fn) => { jobs.push(fn) },
     })
 
@@ -223,12 +243,17 @@ describe('async foraging spine e2e', () => {
     const broker = makeBroker({
       policy: POLICY, cheapEval: passingCheck,
       discover: async () => [recB],
-      send: async (_h, card) => answerLeaky({ agent: { id: 'cca' } as any, card }),
+      // v2 fast-ack: the leaky blurb never even gets far enough to be a
+      // "would-be echo" — answerLeaky's own gateOutbound downgrades it to
+      // match:'no' before it leaves the peer, so there's nothing to land.
+      send: async (_h, card) => {
+        const r = await answerLeaky({ agent: { id: 'cca' } as any, card })
+        return r.match === 'yes'
+      },
       proposeRow: (id, r) => seekStore.propose({ id, kind: 'seek', topic: r.topic, redactedTopic: r.redactedTopic, ...(r.redactedCity ? { redactedCity: r.redactedCity } : {}) }),
       readSeek: (id) => seekStore.get(id),
       markStatus: (id, status) => seekStore.update(id, { status }),
-      recordEcho: (e) => echoStore.create({ id: `${e.intentId}:${e.peerAgentId}`, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId }),
-      finishSeek: (id, status, peersAsked) => seekStore.update(id, { status, peersAsked }),
+      markForaged: (id, peersAsked) => seekStore.update(id, { peersAsked }),
       schedule: (fn) => { jobs.push(fn) },
     })
     const proposed = await broker.propose('找周末拍照搭子')
@@ -236,7 +261,7 @@ describe('async foraging spine e2e', () => {
     broker.confirmSeek(intent_id)
     await Promise.all(jobs.map(j => j()))
     expect(echoStore.listForSeek(intent_id)).toHaveLength(0)     // leaky blurb downgraded to match:no
-    expect(seekStore.get(intent_id)!.status).toBe('closed')
+    expect(seekStore.get(intent_id)!.status).toBe('foraging')    // v2: forage never auto-closes, stays foraging
   })
 })
 
@@ -286,15 +311,27 @@ describe('forwarding hop e2e (S → W → Q)', () => {
     const sBroker = makeBroker({
       policy: POLICY, cheapEval: passingCheck,
       discover: async () => [W as any],
-      send: async (_hand, card) => wForwarder({ agent: S as any, card }),
+      // v2 fast-ack: wForwarder (spec #2's forward+aggregate leg, untouched
+      // by this task) still returns a MatchReceipt-shaped result carrying
+      // any forwarded[] degree-2 echoes; the stub lands those into sEcho
+      // exactly as the retired broker.recordEcho closure used to (a stand-in
+      // for the eventual /a2a/echo intake path — see Task 9), then reports
+      // only bool upstream.
+      send: async (hand, card) => {
+        const r = await wForwarder({ agent: S as any, card })
+        if (r.match === 'yes') {
+          sEcho.create({ id: `${card.intent_id}:${hand.id}`, seekId: card.intent_id, peerMasked: '第 1 度的某人', degree: 1, content: r.blurb ?? '', peerAgentId: hand.id })
+        }
+        for (const fe of r.forwarded ?? []) {
+          const id = `${card.intent_id}:${hand.id}:${fe.relay_token}`
+          sEcho.create({ id, seekId: card.intent_id, peerMasked: `第 ${fe.degree} 度的某人`, degree: fe.degree, content: fe.blurb, peerAgentId: null, relayVia: hand.id, relayToken: fe.relay_token })
+        }
+        return r.match === 'yes' || (r.forwarded?.length ?? 0) > 0
+      },
       proposeRow: (id, r) => sSeek.propose({ id, kind: 'seek', topic: r.topic, redactedTopic: r.redactedTopic, ...(r.redactedCity ? { redactedCity: r.redactedCity } : {}) }),
       readSeek: (id) => sSeek.get(id),
       markStatus: (id, status) => sSeek.update(id, { status }),
-      recordEcho: (e) => {
-        const id = e.peerAgentId != null ? `${e.intentId}:${e.peerAgentId}` : `${e.intentId}:${e.relayVia}:${e.relayToken}`
-        sEcho.create({ id, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId, relayVia: e.relayVia, relayToken: e.relayToken })
-      },
-      finishSeek: (id, status, n) => sSeek.update(id, { status, peersAsked: n }),
+      markForaged: (id, peersAsked) => sSeek.update(id, { peersAsked }),
       schedule: (fn) => { jobs.push(fn) },
     })
 
