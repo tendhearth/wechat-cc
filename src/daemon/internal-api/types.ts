@@ -215,6 +215,14 @@ export interface InternalApiDeps {
     echoStore: import('../../core/social-echo-store').EchoStore
     pledgeStore: import('../../core/social-pledge-store').PledgeStore
     revealer: import('../../core/social-reveal').Revealer
+    /** 笔友信箱(spec 2026-07-22-penpal-mailbox-desktop)— boot.social.penpal
+     *  原样带入。可选:老 fixture/未接线时 undefined ⇒ /v1/penpal/* 503。 */
+    penpal?: {
+      sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
+      resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
+      channelStore: import('../../core/penpal-channel-store').ChannelStore
+      letterStore: import('../../core/penpal-letter-store').LetterStore
+    }
   }
   /** 配对码 (spec §7) — late-bound by main.ts from bootstrap.pairing. Undefined
    *  (⇒ /v1/pair/* 503) until mailbox_relays is configured AND late-bind runs. */

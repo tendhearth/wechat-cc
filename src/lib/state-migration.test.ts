@@ -77,7 +77,9 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // (no new tables — the set below is unchanged from v22).
     // v24 (派心愿 propose→confirm, P4): social_seek gains nullable redacted_topic /
     // redacted_city columns (no new tables — the set below is unchanged from v22).
-    expect(v).toBe(24)
+    // v25 (async discovery): social_seen_intent gains a nullable origin_agent_id column
+    // (no new tables — the set below is unchanged from v24).
+    expect(v).toBe(25)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'events', 'handled_messages', 'message_attempts', 'messages',

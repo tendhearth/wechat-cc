@@ -2831,24 +2831,36 @@ describe('internal-api', () => {
       expect(await resp.json()).toEqual({ error: 'social_not_wired' })
     })
 
-    it('tier gate: a trusted session token gets 403 on GET /v1/social/seeks (admin-only route)', async () => {
+    // 2026-07-22 demotion (route-tiers.ts): the desktop/CLI file token is
+    // trusted, so the 觅食台 read surface is trusted-gated now — trusted
+    // passes, guest still 403s.
+    it('tier gate: a trusted session token passes GET /v1/social/seeks; guest still 403', async () => {
       const { port } = await startWithSocial({ seeks: [seekRow] })
       const tok = api!.mintSessionToken('trusted', 'test')
       const resp = await fetch(`http://127.0.0.1:${port}/v1/social/seeks`, {
         headers: { Authorization: `Bearer ${tok}` },
       })
-      expect(resp.status).toBe(403)
-      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+      expect(resp.status).toBe(200)
+      const guest = api!.mintSessionToken('guest', 'test')
+      const g = await fetch(`http://127.0.0.1:${port}/v1/social/seeks`, {
+        headers: { Authorization: `Bearer ${guest}` },
+      })
+      expect(g.status).toBe(403)
+      expect(await g.json()).toMatchObject({ error: 'forbidden', required: 'trusted' })
     })
 
-    it('tier gate: a trusted session token gets 403 on GET /v1/social/echoes (admin-only route)', async () => {
+    it('tier gate: a trusted session token passes GET /v1/social/echoes; guest still 403', async () => {
       const { port } = await startWithSocial({ echoes: [echoRow] })
       const tok = api!.mintSessionToken('trusted', 'test')
       const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes`, {
         headers: { Authorization: `Bearer ${tok}` },
       })
-      expect(resp.status).toBe(403)
-      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+      expect(resp.status).toBe(200)
+      const guest = api!.mintSessionToken('guest', 'test')
+      const g = await fetch(`http://127.0.0.1:${port}/v1/social/echoes`, {
+        headers: { Authorization: `Bearer ${guest}` },
+      })
+      expect(g.status).toBe(403)
     })
 
     // ─── reveal + pledge routes (async foraging spine) — nested here to
@@ -3028,7 +3040,9 @@ describe('internal-api', () => {
       expect(await post.json()).toEqual({ enabled: false, restart_required: true })
     })
 
-    it('tier gate: a trusted session token gets 403 on POST /v1/social/inbound (admin-only route)', async () => {
+    // 2026-07-22 demotion (route-tiers.ts): inbound toggle is trusted now
+    // (the desktop's file token is trusted) — trusted passes, guest 403s.
+    it('tier gate: a trusted session token passes POST /v1/social/inbound; guest still 403', async () => {
       saveAgentConfig(stateDir, { provider: 'claude', model: 'claude-opus-4-8', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
       api = createInternalApi({ stateDir, daemonPid: 1 })
       const { port } = await api.start()
@@ -3038,11 +3052,17 @@ describe('internal-api', () => {
         method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
         body: JSON.stringify({ enabled: true }),
       })
-      expect(resp.status).toBe(403)
-      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+      expect(resp.status).toBe(200)
+      const guest = api.mintSessionToken('guest', 'test')
+      const g = await fetch(`http://127.0.0.1:${port}/v1/social/inbound`, {
+        method: 'POST', headers: { Authorization: `Bearer ${guest}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true }),
+      })
+      expect(g.status).toBe(403)
+      expect(await g.json()).toMatchObject({ error: 'forbidden', required: 'trusted' })
     })
 
-    it('tier gate: a trusted session token gets 403 on GET /v1/social/inbound (admin-only route)', async () => {
+    it('tier gate: a trusted session token passes GET /v1/social/inbound; guest still 403', async () => {
       saveAgentConfig(stateDir, { provider: 'claude', model: 'claude-opus-4-8', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
       api = createInternalApi({ stateDir, daemonPid: 1 })
       const { port } = await api.start()
@@ -3051,8 +3071,12 @@ describe('internal-api', () => {
       const resp = await fetch(`http://127.0.0.1:${port}/v1/social/inbound`, {
         headers: { Authorization: `Bearer ${tok}` },
       })
-      expect(resp.status).toBe(403)
-      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+      expect(resp.status).toBe(200)
+      const guest = api.mintSessionToken('guest', 'test')
+      const g = await fetch(`http://127.0.0.1:${port}/v1/social/inbound`, {
+        headers: { Authorization: `Bearer ${guest}` },
+      })
+      expect(g.status).toBe(403)
     })
   })
 })
@@ -3580,6 +3604,8 @@ describe('internal-api request validation', () => {
 
     it('preview surfaces proto_version + proto_mismatch (missing field defaults to 1)', async () => {
       // Stub fetchAgentCard to return a card WITHOUT proto_version.
+      // A missing field means a pre-versioning peer ⇒ defaults to 1, which
+      // no longer matches ours (A2A_PROTO_VERSION === 2) ⇒ mismatch.
       const a2aDeps = buildA2ADeps({ cardResult: { name: 'x' } })
       const { port, token } = await startWithA2A(a2aDeps)
       const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/preview`, {
@@ -3590,7 +3616,7 @@ describe('internal-api request validation', () => {
       expect(resp.status).toBe(200)
       const body = await resp.json() as { proto_version: number; proto_mismatch: boolean }
       expect(body.proto_version).toBe(1)
-      expect(body.proto_mismatch).toBe(false)
+      expect(body.proto_mismatch).toBe(true)
     })
 
     it('preview flags a mismatching proto_version', async () => {

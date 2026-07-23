@@ -25,8 +25,27 @@ export interface CorrespondentDeps {
 }
 
 export interface Correspondent {
-  sendLetter(channelRowId: string, plaintext: string): Promise<{ ok: boolean; error?: string }>
+  /** `send_failed` carries the stored row's `letter_id` so the caller can
+   *  retry via `resendLetter` — same bytes ⇒ same nonce ⇒ the receiver's
+   *  (channel_id, nonce) dedupe (M3) makes the retry idempotent. Re-calling
+   *  sendLetter with the same text instead would seal a NEW nonce and
+   *  double-deliver whenever the first post actually landed but its ack was
+   *  lost. */
+  sendLetter(channelRowId: string, plaintext: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
+  resendLetter(letterRowId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
   receiveLetter(event: { channel_id: string; nonce: string; ct: string; tag: string }): { ok: boolean; error?: string }
+}
+
+/** Relay (degree-2) letters post to the intermediary (relay_via) so the 2-hop
+ *  path stays content-blind; direct letters post straight to peer_agent_id.
+ *  Mirrors social-reveal.ts's `echo.relay_via ?? echo.peer_agent_id`. A peer
+ *  that crossed a mailbox at reveal (Task 10) additionally carries `mailbox`
+ *  (relay-direct, Task 11) — W is never consulted for that leg. */
+function routeOf(ch: NonNullable<ReturnType<ChannelStore['get']>>): { agentId: string; relayVia: string | null; mailbox?: PeerMailbox } | null {
+  const agentId = ch.relay_via ?? ch.peer_agent_id
+  if (!agentId) return null
+  const mailbox = peerMailboxOfRow(ch)
+  return { agentId, relayVia: ch.relay_via, ...(mailbox ? { mailbox } : {}) }
 }
 
 export function makeCorrespondent(deps: CorrespondentDeps): Correspondent {
@@ -34,21 +53,26 @@ export function makeCorrespondent(deps: CorrespondentDeps): Correspondent {
     sendLetter(channelRowId, plaintext) {
       const ch = deps.channelStore.get(channelRowId)
       if (!ch || ch.status !== 'open' || !ch.peer_pubkey || !ch.peer_channel_id) return Promise.resolve({ ok: false, error: 'channel_not_open' })
-      // Relay (degree-2) letters post to the intermediary (relay_via) so the 2-hop
-      // path stays content-blind — the intermediary routes the ciphertext onward
-      // without seeing it; direct letters post straight to peer_agent_id.
-      // Mirrors social-reveal.ts's `echo.relay_via ?? echo.peer_agent_id`.
-      const agentId = ch.relay_via ?? ch.peer_agent_id
-      if (!agentId) return Promise.resolve({ ok: false, error: 'no_route' })
-      // Task 11: a peer that crossed a mailbox at reveal (Task 10) goes
-      // relay-direct — W is never consulted for this leg. A push-only peer
-      // (no mailbox) keeps A's Task-9 relayVia/push behavior unchanged.
-      const mailbox = peerMailboxOfRow(ch)
+      const route = routeOf(ch)
+      if (!route) return Promise.resolve({ ok: false, error: 'no_route' })
       const key = deriveSharedKey(ch.my_privkey, ch.peer_pubkey)
       const sealed = sealLetter(key, plaintext)
-      deps.letterStore.create({ id: randomUUID(), channelId: channelRowId, direction: 'out', sealedCiphertext: sealed.ct, nonce: sealed.nonce, tag: sealed.tag, plaintext })
-      return deps.postLetter({ agentId, relayVia: ch.relay_via, ...(mailbox ? { mailbox } : {}) }, { channel_id: ch.peer_channel_id, nonce: sealed.nonce, ct: sealed.ct, tag: sealed.tag })
-        .then(ok => ok ? { ok: true } : { ok: false, error: 'send_failed' })
+      const id = randomUUID()
+      deps.letterStore.create({ id, channelId: channelRowId, direction: 'out', sealedCiphertext: sealed.ct, nonce: sealed.nonce, tag: sealed.tag, plaintext })
+      return deps.postLetter(route, { channel_id: ch.peer_channel_id, nonce: sealed.nonce, ct: sealed.ct, tag: sealed.tag })
+        .then(ok => ok ? { ok: true } : { ok: false, error: 'send_failed', letter_id: id })
+    },
+    resendLetter(letterRowId) {
+      const row = deps.letterStore.get(letterRowId)
+      // Inbound rows are not resendable — same error as unknown so a caller
+      // can't probe which ids exist in the other direction.
+      if (!row || row.direction !== 'out') return Promise.resolve({ ok: false, error: 'unknown_letter' })
+      const ch = deps.channelStore.get(row.channel_id)
+      if (!ch || ch.status !== 'open' || !ch.peer_pubkey || !ch.peer_channel_id) return Promise.resolve({ ok: false, error: 'channel_not_open' })
+      const route = routeOf(ch)
+      if (!route) return Promise.resolve({ ok: false, error: 'no_route' })
+      return deps.postLetter(route, { channel_id: ch.peer_channel_id, nonce: row.nonce, ct: row.sealed_ciphertext, tag: row.tag })
+        .then(ok => ok ? { ok: true } : { ok: false, error: 'send_failed', letter_id: row.id })
     },
     receiveLetter(ev) {
       const ch = deps.channelStore.getByMyChannelId(ev.channel_id)

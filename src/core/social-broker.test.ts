@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { makeBroker, type BrokerSeekRow } from './social-broker'
 
 const cheapEval = async () => JSON.stringify({ violation: false, redacted: '找摄影搭子' })
@@ -30,12 +30,11 @@ function stubDeps(over: Partial<Parameters<typeof makeBroker>[0]> = {}) {
   return {
     policy: 'p', cheapEval,
     discover: async () => [peerB],
-    send: async () => ({ intent_id: 'x', match: 'yes' as const, blurb: '也爱摄影' }),
+    send: async () => true,
     proposeRow: map.proposeRow,
     readSeek: map.readSeek,
     markStatus: map.markStatus,
-    recordEcho: () => {},
-    finishSeek: () => {},
+    markForaged: () => {},
     ...over,
   }
 }
@@ -48,7 +47,7 @@ describe('makeBroker.propose — gates + persists, sends nothing', () => {
       cheapEval: async () => JSON.stringify({ violation: false, redacted: '找搭子' }),
       proposeRow: (id, r) => proposed.push({ id, r }),
       discover: async () => { discovered++; return [peerB] },
-      send: async () => { sent++; return { intent_id: 'x', match: 'yes' as const } },
+      send: async () => { sent++; return true },
       schedule: () => { scheduled++ },
     }))
     const out = await broker.propose('找搭子')
@@ -109,7 +108,7 @@ describe('makeBroker.confirmSeek — WYSIWYG, no re-gate', () => {
       cheapEval: async () => { evalCount++; return JSON.stringify({ violation: false, redacted: '不该出现' }) },
       readSeek: map.readSeek,
       markStatus: (id, s) => { marked.push([id, s]); map.markStatus(id, s) },
-      send: async (_h: any, card: any) => { sentCard = card; return { intent_id: 'x', match: 'yes' as const } },
+      send: async (_h: any, card: any) => { sentCard = card; return true },
       schedule: d.schedule,
     }))
     const evalBefore = evalCount
@@ -128,7 +127,7 @@ describe('makeBroker.confirmSeek — WYSIWYG, no re-gate', () => {
     const d = deferred()
     const broker = makeBroker(stubDeps({
       readSeek: map.readSeek, markStatus: map.markStatus,
-      send: async (_h: any, card: any) => { sentCard = card; return { intent_id: 'x', match: 'yes' as const } },
+      send: async (_h: any, card: any) => { sentCard = card; return true },
       schedule: d.schedule,
     }))
     broker.confirmSeek('i2')
@@ -169,7 +168,7 @@ describe('makeBroker.cancelSeek', () => {
   })
 })
 
-describe('makeBroker.forage (pre-gated) — invariants, driven via propose+confirmSeek', () => {
+describe('makeBroker.forage v2 (pre-gated, fast-ack fire-and-forget) — driven via propose+confirmSeek', () => {
   // Seed a proposed row, confirm it, then drive the deferred forage. Because
   // forage is de-gated, these prove the network-leg invariants unchanged.
   function seedConfirm(over: Partial<Parameters<typeof makeBroker>[0]> = {}) {
@@ -177,45 +176,44 @@ describe('makeBroker.forage (pre-gated) — invariants, driven via propose+confi
     map.rows.set('f1', { status: 'proposed', topic: '找摄影搭子', redacted_topic: '找摄影搭子', redacted_city: null })
     const d = deferred()
     const broker = makeBroker(stubDeps({ readSeek: map.readSeek, markStatus: map.markStatus, schedule: d.schedule, ...over }))
-    return { broker, d }
+    return { broker, d, map }
   }
 
-  it('the FIRST echo per seek is flagged first:true, the rest first:false', async () => {
-    const flags: boolean[] = []
-    const { broker, d } = seedConfirm({
+  it('forage v2:对每个候选 send(bool);结束只 markForaged(峰值计数),不落回音、状态不 close', async () => {
+    const send = vi.fn(async () => true)
+    const markForaged = vi.fn()
+    const { broker, d, map } = seedConfirm({
       discover: async () => [peerB, { id: 'ccc', name: 'CC-C' } as any],
-      recordEcho: (e) => { flags.push(e.first) },
+      send, markForaged,
     })
     broker.confirmSeek('f1'); await d.run()
-    expect(flags).toEqual([true, false])
+    expect(send).toHaveBeenCalledTimes(2)
+    expect(markForaged).toHaveBeenCalledWith('f1', 2)
+    expect(map.rows.get('f1')!.status).toBe('foraging')   // no auto-close/echoed — that's intake's job now
   })
 
-  it('one bad peer does not abort the forage — the good peer still records', async () => {
-    const recorded: Array<string | null> = []
+  it('forage v2:单个 send 崩不中断其余(fail-closed skip-and-continue);markForaged 只数成功送达', async () => {
     const bad = { id: 'bad', name: 'BAD' } as any
-    const { broker, d } = seedConfirm({
-      discover: async () => [bad, peerB],
-      send: async (hand: any) => { if (hand.id === 'bad') throw new Error('boom'); return { intent_id: 'x', match: 'yes' as const, blurb: 'ok' } },
-      recordEcho: (e) => { recorded.push(e.peerAgentId) },
-    })
+    const send = vi.fn(async (hand: any) => { if (hand.id === 'bad') throw new Error('boom'); return true })
+    const markForaged = vi.fn()
+    const { broker, d } = seedConfirm({ discover: async () => [bad, peerB], send, markForaged })
     broker.confirmSeek('f1'); await d.run()
-    expect(recorded).toEqual(['ccb'])
+    expect(send).toHaveBeenCalledTimes(2)             // both tried — the bad one didn't abort the rest
+    expect(markForaged).toHaveBeenCalledWith('f1', 1)  // only the good peer counted
   })
 
-  it('a recordEcho store failure never throws out of the forage', async () => {
-    const { broker, d } = seedConfirm({ recordEcho: () => { throw new Error('db locked') } })
+  it('forage v2:discover 崩 fail-closed —— 零候选、零发送、markForaged(0)', async () => {
+    const send = vi.fn(async () => true)
+    const markForaged = vi.fn()
+    const { broker, d } = seedConfirm({ discover: async () => { throw new Error('down') }, send, markForaged })
+    broker.confirmSeek('f1'); await d.run()
+    expect(send).not.toHaveBeenCalled()
+    expect(markForaged).toHaveBeenCalledWith('f1', 0)
+  })
+
+  it('a markForaged store failure never throws out of the forage', async () => {
+    const { broker, d } = seedConfirm({ markForaged: () => { throw new Error('db locked') } })
     broker.confirmSeek('f1')
     await expect(d.run()).resolves.toBeDefined()   // forage swallows the write failure
-  })
-
-  it('records degree-2 relay echoes from a response forwarded[] (spec #2)', async () => {
-    const recorded: any[] = []
-    const { broker, d } = seedConfirm({
-      send: async () => ({ intent_id: 'x', match: 'no' as const, forwarded: [{ blurb: '经W的回声', degree: 2, relay_token: 'T' }] }),
-      recordEcho: (e: any) => recorded.push(e),
-    })
-    broker.confirmSeek('f1'); await d.run()
-    const relay = recorded.find(r => r.relayToken === 'T')
-    expect(relay).toMatchObject({ intentId: 'f1', peerAgentId: null, relayVia: expect.any(String), relayToken: 'T', degree: 2 })
   })
 })

@@ -68,6 +68,23 @@ export function letterUrl(agentUrl: string): string {
   return `${u}/a2a/letter`
 }
 
+/**
+ * Derive a peer's /a2a/echo URL from its registered url, tolerating the same
+ * shapes as {@link letterUrl}: a bare base, `/a2a`, `/a2a/notify`, `/a2a/exec`,
+ * `/a2a/intent`, `/a2a/reveal`, `/a2a/letter`, or already `/a2a/echo`.
+ */
+export function echoUrl(agentUrl: string): string {
+  const u = agentUrl.replace(/\/+$/, '')
+  if (u.endsWith('/a2a/echo')) return u
+  if (u.endsWith('/a2a/notify')) return u.replace(/\/a2a\/notify$/, '/a2a/echo')
+  if (u.endsWith('/a2a/exec')) return u.replace(/\/a2a\/exec$/, '/a2a/echo')
+  if (u.endsWith('/a2a/intent')) return u.replace(/\/a2a\/intent$/, '/a2a/echo')
+  if (u.endsWith('/a2a/reveal')) return u.replace(/\/a2a\/reveal$/, '/a2a/echo')
+  if (u.endsWith('/a2a/letter')) return u.replace(/\/a2a\/letter$/, '/a2a/echo')
+  if (u.endsWith('/a2a')) return `${u}/echo`
+  return `${u}/a2a/echo`
+}
+
 export interface DelegateToHandReq {
   hand: A2AAgentRecord
   /** The brain's agent id as the HAND knows it (the hand's Bearer check keys on this). */

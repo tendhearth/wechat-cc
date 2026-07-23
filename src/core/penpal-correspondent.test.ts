@@ -168,6 +168,66 @@ describe('makeCorrespondent', () => {
     expect(target).toEqual({ agentId: 'ccb', relayVia: null, mailbox: { addr: 'A', enc_pub: 'E', relays: ['https://r/'] } })
   })
 
+  it('send_failed 返回落库行的 letter_id;resendLetter 重投同 nonce/ct/tag,不落第二行', async () => {
+    const { channelStoreA, letterStoreA } = makeCrossedChannels()
+    const postLetter = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true)
+    const correspondent = makeCorrespondent({ channelStore: channelStoreA, letterStore: letterStoreA, postLetter, notifyInbound: vi.fn() })
+
+    const fail = await correspondent.sendLetter('a:chan', '第一封')
+    expect(fail.ok).toBe(false)
+    expect(fail.error).toBe('send_failed')
+    expect(fail.letter_id).toBeTruthy()
+
+    const retry = await correspondent.resendLetter(fail.letter_id!)
+    expect(retry).toEqual({ ok: true })
+
+    expect(postLetter).toHaveBeenCalledTimes(2)
+    const [, firstBody] = postLetter.mock.calls[0]!
+    const [target2, secondBody] = postLetter.mock.calls[1]!
+    expect(secondBody).toEqual(firstBody)                          // 同字节:同 nonce,接收端可去重
+    expect(target2).toEqual({ agentId: 'ccb', relayVia: null })
+    expect(letterStoreA.listForChannel('a:chan')).toHaveLength(1)  // 没有第二行
+  })
+
+  it('resend 全链路:原投递+重投都到达时,接收端只收一封、只提醒一次(nonce 去重)', async () => {
+    const { channelStoreA, letterStoreA, channelStoreB, letterStoreB } = makeCrossedChannels()
+    const postLetter = vi.fn().mockResolvedValue(true)
+    const correspondentA = makeCorrespondent({ channelStore: channelStoreA, letterStore: letterStoreA, postLetter, notifyInbound: vi.fn() })
+    await correspondentA.sendLetter('a:chan', '只此一封')
+    const [, body1] = postLetter.mock.calls[0]!
+
+    const notifyInbound = vi.fn()
+    const correspondentB = makeCorrespondent({ channelStore: channelStoreB, letterStore: letterStoreB, postLetter: vi.fn(), notifyInbound })
+    expect(correspondentB.receiveLetter(body1)).toEqual({ ok: true })
+
+    // “投到了但 ack 丢了”场景:发送端重投同一封
+    const letterId = letterStoreA.listForChannel('a:chan')[0]!.id
+    await correspondentA.resendLetter(letterId)
+    const [, body2] = postLetter.mock.calls[1]!
+    expect(correspondentB.receiveLetter(body2)).toEqual({ ok: true })   // 幂等 no-op
+
+    expect(letterStoreB.listForChannel('b:chan')).toHaveLength(1)
+    expect(notifyInbound).toHaveBeenCalledTimes(1)
+  })
+
+  it('resendLetter 守卫:未知 id / inbound 行 / 信道未开', async () => {
+    const { channelStoreA, letterStoreA, channelStoreB, letterStoreB } = makeCrossedChannels()
+    const postLetter = vi.fn().mockResolvedValue(true)
+    const correspondentA = makeCorrespondent({ channelStore: channelStoreA, letterStore: letterStoreA, postLetter, notifyInbound: vi.fn() })
+    expect(await correspondentA.resendLetter('nope')).toEqual({ ok: false, error: 'unknown_letter' })
+
+    await correspondentA.sendLetter('a:chan', 'x')
+    const [, body] = postLetter.mock.calls[0]!
+    const correspondentB = makeCorrespondent({ channelStore: channelStoreB, letterStore: letterStoreB, postLetter: vi.fn(), notifyInbound: vi.fn() })
+    correspondentB.receiveLetter(body)
+    const inId = letterStoreB.listForChannel('b:chan')[0]!.id
+    expect(await correspondentB.resendLetter(inId)).toEqual({ ok: false, error: 'unknown_letter' })   // in 行不可重投
+
+    const outId = letterStoreA.listForChannel('a:chan')[0]!.id
+    channelStoreA.setStatus('a:chan', 'pending')
+    expect(await correspondentA.resendLetter(outId)).toEqual({ ok: false, error: 'channel_not_open' })
+  })
+
   it('receiveLetter is a safe no-op on a channel that exists but is still pending (not yet open)', () => {
     const dbB = openDb({ path: ':memory:' })
     const channelStore = makeChannelStore(dbB)

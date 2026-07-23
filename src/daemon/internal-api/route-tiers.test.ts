@@ -48,6 +48,22 @@ describe('route-tiers', () => {
     expect(ROUTE_MIN_TIER['POST /v1/social/seek']).toBeUndefined()
   })
 
+  it('penpal 信箱路由全部 trusted(桌面凭据是 trusted 文件 token — 真机验收 2026-07-22 发现 admin 定级把桌面读挡成 403)', () => {
+    expect(minTierFor('GET /v1/penpal/channels')).toBe('trusted')
+    expect(minTierFor('GET /v1/penpal/letters')).toBe('trusted')
+    expect(minTierFor('POST /v1/penpal/letters')).toBe('trusted')
+    expect(minTierFor('POST /v1/penpal/letters/read')).toBe('trusted')
+    expect(minTierFor('POST /v1/penpal/letters/resend')).toBe('trusted')
+  })
+
+  it('觅食台读面 + inbound toggle 是 trusted(同上:桌面/CLI 的唯一凭据是文件 token)', () => {
+    expect(minTierFor('GET /v1/social/seeks')).toBe('trusted')
+    expect(minTierFor('GET /v1/social/echoes')).toBe('trusted')
+    expect(minTierFor('GET /v1/social/pledges')).toBe('trusted')
+    expect(minTierFor('GET /v1/social/inbound')).toBe('trusted')
+    expect(minTierFor('POST /v1/social/inbound')).toBe('trusted')
+  })
+
   it('every registered route has an explicit min tier (no accidental default-deny)', () => {
     const deps = { stateDir: '/tmp', daemonPid: 1 } as unknown as InternalApiDeps
     const routes = makeRoutes({ deps, getDelegate: () => null, maybePrefix: (_c, t) => t })

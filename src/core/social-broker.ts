@@ -1,7 +1,6 @@
 import type { CheapEval } from './agent-provider'
 import type { A2AAgentRecord } from '../lib/agent-config'
 import { newIntentId, type IntentCard } from './a2a-intent'
-import type { MatchReceipt } from './a2a-intent'
 import { gateOutbound } from './a2a-disclosure'
 
 export interface EchoRecord {
@@ -18,7 +17,10 @@ export interface BrokerSeekRow {
 
 export interface BrokerDeps {
   discover: (topic: string) => Promise<A2AAgentRecord[]>
-  send: (hand: A2AAgentRecord, card: IntentCard) => Promise<MatchReceipt | null>
+  /** v2: fast-ack fire-and-forget — true iff the peer accepted delivery (not
+   *  whether they matched). The peer's own async judge decides match/no and
+   *  posts any echo back later via /a2a/echo → social-echo-intake.ts. */
+  send: (hand: A2AAgentRecord, card: IntentCard) => Promise<boolean>
   policy: string
   cheapEval: CheapEval
   ttlMs?: number
@@ -28,10 +30,15 @@ export interface BrokerDeps {
   readSeek: (intentId: string) => BrokerSeekRow | null
   /** Flip a seek row's status (proposed → foraging on confirm, → cancelled on cancel). */
   markStatus: (intentId: string, status: 'foraging' | 'cancelled') => void
-  /** Background leg: persist one `match:'yes'` echo. `first` = the seek had 0 echoes. */
-  recordEcho: (e: EchoRecord) => void
-  /** Background leg completion: `echoed` (≥1 echo) or `closed` (0). */
-  finishSeek: (intentId: string, status: 'echoed' | 'closed', peersAsked: number) => void
+  /**
+   * v2 forage completion: record how many peers accepted delivery (peers_asked).
+   * The seek row's status is left AS-IS (foraging) — echoes now arrive out of
+   * band, one at a time, via /a2a/echo → social-echo-intake.ts, which is what
+   * flips foraging → echoed on the first accepted echo. There is no automatic
+   * close: a forage that lands zero fast-acks simply stays foraging forever
+   * (matches spec — cheap to leave open, the owner can always cancel).
+   */
+  markForaged: (intentId: string, peersAsked: number) => void
   /** Schedule the background coroutine off the caller's turn. Default: fire-and-forget. */
   schedule?: (fn: () => Promise<void>) => void
 }
@@ -45,17 +52,6 @@ export type CancelOutcome =
   | { ok: true }
   | { ok: false; reason: string }
 
-/**
- * Sanitize a peer-controlled blurb before it lands in a `social_echo.content`
- * row (and, downstream, a WeChat message). The blurb passed the PEER's own
- * gateOutbound (social-answer.ts), but that's the peer's CC, not ours — a
- * hostile/buggy peer could still stuff newlines/control chars or an oversized
- * payload. Defence-in-depth: collapse whitespace, cap length.
- */
-function sanitizeBlurb(blurb: string): string {
-  return blurb.replace(/\s+/g, ' ').trim().slice(0, 120)
-}
-
 export function makeBroker(deps: BrokerDeps) {
   const schedule = deps.schedule ?? ((fn: () => Promise<void>) => { void fn() })
 
@@ -63,9 +59,17 @@ export function makeBroker(deps: BrokerDeps) {
   // broadcasts them VERBATIM and performs NO disclosure gating of its own
   // (P4 WYSIWYG: the owner saw and approved this exact wording at propose
   // time). Every caller (confirmSeek, resume, the seek() bridge) is
-  // responsible for gating BEFORE it hands a string in here. Idempotent via
-  // the echo PK (`intent_id:peer_agent_id`), so a duplicate send does not
-  // double-insert.
+  // responsible for gating BEFORE it hands a string in here.
+  //
+  // v2: `send` is a fast-ack fire-and-forget (true iff the peer accepted
+  // delivery). Forage does NOT wait for a verdict and does NOT record any
+  // echo itself — the peer's own async judge decides match/no and, on a
+  // match, posts the echo back later via /a2a/echo, which lands through
+  // social-echo-intake.ts (idempotent there via the echo PK
+  // `intent_id:peer_agent_id`, so a duplicate return-echo does not
+  // double-insert). Forage's only job is to fan the card out and, once every
+  // candidate has been tried, record how many accepted (markForaged) — the
+  // seek row's status is left untouched (still `foraging`).
   async function forage(intentId: string, topic: string, opts?: { city?: string }): Promise<void> {
     const ttl = deps.ttlMs ?? 10 * 60_000
     const card: IntentCard = {
@@ -78,35 +82,12 @@ export function makeBroker(deps: BrokerDeps) {
     try { candidates = await deps.discover(topic) }
     catch { candidates = [] }   // discovery failure is fail-closed — no candidates, no exposure
 
-    let echoCount = 0
+    let asked = 0
     for (const hand of candidates) {
-      try {
-        const r = await deps.send(hand, card)
-        if (r && r.match === 'yes') {
-          echoCount++
-          deps.recordEcho({
-            intentId, peerAgentId: hand.id, peerMasked: '第 1 度的某人', degree: 1,
-            content: r.blurb ? sanitizeBlurb(r.blurb) : '', first: echoCount === 1,
-          })
-        }
-        // spec #2: degree-2 echoes this peer forwarded on our behalf. peer_agent_id
-        // is null (we can't reach the downstream peer); the relay is keyed to the
-        // intermediary (hand.id) + the opaque relay_token.
-        for (const fe of r?.forwarded ?? []) {
-          echoCount++
-          deps.recordEcho({
-            intentId, peerAgentId: null, relayVia: hand.id, relayToken: fe.relay_token,
-            peerMasked: '第 2 度的某人', degree: fe.degree,
-            content: sanitizeBlurb(fe.blurb), first: echoCount === 1,
-          })
-        }
-      } catch {
-        // One bad/unreachable peer (or a store write that threw) must not abort
-        // the rest of the forage. Fail closed — skip and continue.
-        continue
-      }
+      try { if (await deps.send(hand, card)) asked++ }
+      catch { continue }   // one bad/unreachable peer must not abort the rest
     }
-    try { deps.finishSeek(intentId, echoCount > 0 ? 'echoed' : 'closed', candidates.length) }
+    try { deps.markForaged(intentId, asked) }
     catch { /* persistence error must not undo the network actions already done */ }
   }
 

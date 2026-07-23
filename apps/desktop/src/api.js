@@ -49,9 +49,12 @@ async function getApiCredentials() {
  * @param {'GET' | 'POST'} method
  * @param {string} path  e.g. '/v1/a2a/list' or '/v1/a2a/activity?agent_id=x&limit=50'
  * @param {Record<string, unknown>} [body]
+ * @param {{ timeoutMs?: number }} [opts]  timeoutMs overrides the 10s default —
+ *   for routes that do model work inline (seek propose runs the grounded
+ *   judge, ~15s cold).
  * @returns {Promise<unknown>}
  */
-export async function invokeApi(method, path, body) {
+export async function invokeApi(method, path, body, opts) {
   const { baseUrl, token } = await getApiCredentials()
   const url = baseUrl + path
   /** @type {RequestInit} */
@@ -64,7 +67,7 @@ export async function invokeApi(method, path, body) {
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     // Bound the request so a blocked/unreachable daemon surfaces as an error
     // instead of an indefinite "加载中…" spinner (e.g. a CSP connect-src gap).
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(opts?.timeoutMs ?? 10_000),
   }
   const resp = await fetch(url, init)
   if (!resp.ok) {

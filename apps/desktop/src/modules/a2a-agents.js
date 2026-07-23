@@ -78,17 +78,19 @@ export async function initA2AAgentsTab() {
   document.getElementById('fd-compose-form')?.addEventListener('submit', onComposeSubmit)
   document.getElementById('fd-compose')?.addEventListener('click', onSeekAction)
   document.getElementById('fd-wishes')?.addEventListener('click', onSeekAction)
+  document.getElementById('fd-mailbox')?.addEventListener('click', onMailboxAction)
 }
 
 export async function refresh() {
   const wishes = document.getElementById('fd-wishes')
   if (wishes && !wishes.innerHTML) wishes.innerHTML = '<div class="fd-empty">加载中…</div>'
 
-  const [listResp, seeksResp, echoesResp, inbound] = await Promise.all([
-    /** @type {Promise<{agents?:Array<any>}|null>} */ (invokeApi('GET', '/v1/a2a/list').catch(() => null)),
-    /** @type {Promise<{seeks?:Array<any>}|null>}  */ (invokeApi('GET', '/v1/social/seeks').catch(() => null)),
-    /** @type {Promise<{echoes?:Array<any>}|null>} */ (invokeApi('GET', '/v1/social/echoes').catch(() => null)),
-    /** @type {Promise<any>}                        */ (invokeApi('GET', '/v1/social/inbound').catch(() => null)),
+  const [listResp, seeksResp, echoesResp, inbound, mailResp] = await Promise.all([
+    /** @type {Promise<{agents?:Array<any>}|null>}   */ (invokeApi('GET', '/v1/a2a/list').catch(() => null)),
+    /** @type {Promise<{seeks?:Array<any>}|null>}    */ (invokeApi('GET', '/v1/social/seeks').catch(() => null)),
+    /** @type {Promise<{echoes?:Array<any>}|null>}   */ (invokeApi('GET', '/v1/social/echoes').catch(() => null)),
+    /** @type {Promise<any>}                          */ (invokeApi('GET', '/v1/social/inbound').catch(() => null)),
+    /** @type {Promise<{channels?:Array<any>}|null>} */ (invokeApi('GET', '/v1/penpal/channels').catch(() => null)),
   ])
 
   // keep the server-status banner (best-effort, as before)
@@ -103,6 +105,7 @@ export async function refresh() {
     seeks:  seeksResp ? (seeksResp.seeks ?? []) : null,
     echoes: echoesResp ? (echoesResp.echoes ?? []) : null,
     inbound,
+    mailbox: mailResp ? (mailResp.channels ?? []) : null,
   })
 }
 
@@ -161,7 +164,7 @@ function renderAgents(agents, list) {
 
 /**
  * Render the whole 觅食台 from live data.
- * @param {{ agents:Array<any>|null, seeks:Array<any>|null, echoes:Array<any>|null, inbound:any }} data
+ * @param {{ agents:Array<any>|null, seeks:Array<any>|null, echoes:Array<any>|null, inbound:any, mailbox?:Array<any>|null }} data
  */
 export function renderForageDesk(data) {
   const agents = Array.isArray(data.agents) ? data.agents : []
@@ -226,6 +229,31 @@ export function renderForageDesk(data) {
     pcCount.textContent = pending ? `${pending} 张待你揭晓` : (echoes.length ? '已处理' : '')
   }
 
+  // ── ✉️ mailbox ───────────────────────────────────────────────────────
+  // 有线程展开时跳过整块重建:回信输入框里可能有未寄出的草稿,而 refresh()
+  // 会被许多无关操作触发(暂停 agent/揭晓/配对轮询…)。收起后的下一次
+  // refresh 正常重建对齐服务端。
+  const mailbox = document.getElementById('fd-mailbox')
+  const mbCount = document.getElementById('fd-mailbox-count')
+  const chans = Array.isArray(data.mailbox) ? data.mailbox : []
+  const mailThreadOpen = !!(openMailThreadEl && !openMailThreadEl.hidden)
+  if (mailbox && !mailThreadOpen) {
+    openMailThreadEl = null   // 整块重建换掉了旧节点,清引用防 stale
+  }
+  if (mailbox && !mailThreadOpen) {
+    if (data.mailbox == null) {
+      mailbox.innerHTML = `<div class="fd-empty">笔友信箱未启用 —— 先在命令行运行 wechat-cc social enable 并重启守护进程。</div>`
+    } else if (chans.length === 0) {
+      mailbox.innerHTML = `<div class="fd-empty">还没有笔友 —— 等一张明信片揭晓牵线后，就能在这里通信了。</div>`
+    } else {
+      mailbox.innerHTML = chans.map(c => renderMailChannel(c)).join('')
+    }
+  }
+  if (mbCount && !mailThreadOpen) {
+    const totalUnread = chans.reduce((s, c) => s + (Number(c.unread) || 0), 0)
+    mbCount.textContent = totalUnread ? `${totalUnread} 封未读` : ''
+  }
+
   // ── ③ net: inbound toggle + peers summary + agent cards ──────────────
   const toggle = document.getElementById('fd-inbound-toggle')
   if (toggle) {
@@ -276,6 +304,7 @@ function fdDegBar(n) {
 function renderWish(s) {
   if (s.status === 'proposed') return renderProposedWish(s)
   if (s.status === 'cancelled') return renderCancelledWish(s)
+  if (s.status === 'closed') return renderClosedWish(s)
   const kindCls = s.kind === 'fun' ? 'fd-fun' : 'fd-seek'
   const kindTxt = s.kind === 'fun' ? '朋友间小乐趣' : '求物求人'
   const echoed = s.status === 'echoed' || s.status === 'connected'
@@ -322,6 +351,16 @@ function renderCancelledWish(s) {
     `</div>`
 }
 
+/** @param {any} s — 收官的心愿(seek-close)。真机验收 07-22 发现 closed
+ *  落进 foraging 分支渲染成永远的「觅食中」— 给它自己的灰显收尾。 */
+function renderClosedWish(s) {
+  return `<div class="fd-wish fd-cancelled">` +
+    `<span class="fd-kind">已结束</span>` +
+    `<div class="fd-title">${escapeHtml(s.topic || '')}</div>` +
+    `<div class="fd-meta"><span>收官于 ${escapeHtml(fdRelTime(s.updated_at || s.created_at))}</span></div>` +
+    `</div>`
+}
+
 /** @param {any} e  @param {any} seek */
 function renderPostcard(e, seek) {
   const deg = Number(e.degree) || 1
@@ -362,6 +401,36 @@ function renderPostcard(e, seek) {
  * @param {string} s
  */
 function lastGlyph(s) { const g = Array.from(String(s || '?')); return g[g.length - 1] || '?' }
+
+/** @param {any} c — GET /v1/penpal/channels 的一行。 */
+function renderMailChannel(c) {
+  const unread = Number(c.unread) || 0
+  return `<div class="fd-mail-chan" data-chan-id="${escapeHtml(c.id)}">` +
+    `<div class="fd-mail-head" data-action="mail-toggle" data-id="${escapeHtml(c.id)}">` +
+    `<span class="fd-mail-peer">${escapeHtml(c.peer_label || '笔友')}</span>` +
+    (c.title ? `<span class="fd-mail-title">「${escapeHtml(c.title)}」</span>` : '') +
+    (unread ? `<span class="fd-mail-unread">${unread}</span>` : '') +
+    (c.last_preview ? `<span class="fd-mail-preview">${escapeHtml(c.last_preview)}</span>` : '') +
+    `</div>` +
+    `<div class="fd-mail-thread" hidden></div>` +
+    `</div>`
+}
+
+/** @param {Array<any>} letters — 路由返回 newest-first;渲染 reverse 成正序。
+ *  @param {string} channelId */
+function renderMailThread(letters, channelId) {
+  const bubbles = letters.slice().reverse().map(l =>
+    `<div class="fd-mail-bubble ${l.direction === 'out' ? 'fd-out' : 'fd-in'}">` +
+    `<div class="fd-mail-text">${escapeHtml(l.plaintext ?? '')}</div>` +
+    `<div class="fd-mail-time">${escapeHtml(fdRelTime(l.created_at))}</div>` +
+    `</div>`).join('')
+  return `<div class="fd-mail-bubbles">${bubbles || '<div class="fd-empty">还没有信 —— 写下第一封吧。</div>'}</div>` +
+    `<div class="fd-mail-replyrow">` +
+    `<input class="fd-mail-input" placeholder="写封信…" maxlength="2000">` +
+    `<button class="fd-btn fd-btn-primary" data-action="mail-send" data-id="${escapeHtml(channelId)}">寄出</button>` +
+    `</div>` +
+    `<div class="fd-mail-note" hidden></div>`
+}
 
 // ── event handlers ────────────────────────────────────────────────────────
 
@@ -457,6 +526,130 @@ async function onPostcardAction(e) {
   }
 }
 
+// ✉️ 信箱 — 展开看信(即读即清未读) + 回信。同时只展开一个线程。
+/** @type {any} */
+let openMailThreadEl = null
+
+const MAIL_FAIL_COPY = /** @type {Record<string, string>} */ ({
+  channel_not_open: '这条信道还没打开 —— 双方都揭晓后才能通信',
+  no_route: '找不到通往对方的路 —— 稍后再试',
+  send_failed: '寄出失败 —— 对方的 bot 暂时联系不上，稍后再试',
+  unknown_letter: '找不到要重寄的那封信 —— 重新写一封吧',
+})
+
+/** @param {MouseEvent} e */
+async function onMailboxAction(e) {
+  let target = /** @type {any} */ (e.target)
+  if (!target || !target.dataset) return
+  // 真实 DOM 里点击多半落在 .fd-mail-head 的子 span 上(e.target 无
+  // data-action)—— closest 走一级找到携带 action 的容器;线程气泡等
+  // 无 [data-action] 祖先的点击在这里自然滤掉。
+  if (!target.dataset.action && typeof target.closest === 'function') {
+    target = target.closest('[data-action]')
+    if (!target || !target.dataset) return
+  }
+  if (target.dataset.action === 'mail-toggle') return openMailThread(target)
+  if (target.dataset.action === 'mail-send') return sendMailReply(target)
+}
+
+/** @param {any} target */
+async function openMailThread(target) {
+  const card = typeof target.closest === 'function' ? target.closest('.fd-mail-chan') : null
+  const thread = card ? card.querySelector('.fd-mail-thread') : null
+  const id = target.dataset.id
+  if (!card || !thread || !id) return
+  if (!thread.hidden) { thread.hidden = true; thread.innerHTML = ''; openMailThreadEl = null; return }
+  if (openMailThreadEl && openMailThreadEl !== thread) { openMailThreadEl.hidden = true; openMailThreadEl.innerHTML = '' }
+  openMailThreadEl = thread
+  thread.hidden = false
+  thread.innerHTML = '<div class="fd-empty">加载中…</div>'
+  try {
+    const r = /** @type {{letters?:Array<any>}} */ (await invokeApi('GET', `/v1/penpal/letters?channel_id=${encodeURIComponent(id)}`))
+    thread.innerHTML = renderMailThread(r?.letters ?? [], id)
+    // 展开即读:后端清 + 本地摘角标(fire-and-forget,失败不打断看信)。
+    invokeApi('POST', '/v1/penpal/letters/read', { channel_id: id }).catch(() => {})
+    const badge = card.querySelector('.fd-mail-unread')
+    if (badge && typeof badge.remove === 'function') badge.remove()
+  } catch (err) {
+    thread.innerHTML = `<div class="fd-empty">看信失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</div>`
+  }
+}
+
+// 失败重试登记:channel id → { letterId, text }。send_failed 时信已落库,
+// 同文本重按「寄出」走 /resend 重投同字节(接收端 nonce 去重 ⇒ 幂等),
+// 而不是再封一封新 nonce 的信在“投到了但 ack 丢了”时重复投递。
+/** @type {Record<string, { letterId: string, text: string }>} */
+const mailRetry = Object.create(null)
+
+/** @param {any} target */
+async function sendMailReply(target) {
+  const id = target.dataset.id
+  const card = typeof target.closest === 'function' ? target.closest('.fd-mail-chan') : null
+  if (!id || !card) return
+  const input = card.querySelector('.fd-mail-input')
+  const note = card.querySelector('.fd-mail-note')
+  const text = String(input?.value ?? '').trim()
+  if (!text) { if (note) { note.hidden = false; note.textContent = '先写点什么' } return }
+  const pending = mailRetry[id]
+  if (pending && pending.text === text) return resendMailReply(target, id, pending, card)
+  delete mailRetry[id]   // 文本改了 ⇒ 当新信寄;旧的落库行维持现状
+  target.disabled = true
+  try {
+    const r = /** @type {{ok?:boolean, error?:string, letter_id?:string}} */ (
+      await invokeApi('POST', '/v1/penpal/letters', { channel_id: id, text }))
+    if (r?.ok) {
+      const bubbles = card.querySelector('.fd-mail-bubbles')
+      if (bubbles) bubbles.innerHTML += `<div class="fd-mail-bubble fd-out"><div class="fd-mail-text">${escapeHtml(text)}</div><div class="fd-mail-time">刚刚</div></div>`
+      if (input) input.value = ''
+      if (note) { note.hidden = true; note.textContent = '' }
+    } else if (r?.error === 'send_failed' && typeof r?.letter_id === 'string') {
+      mailRetry[id] = { letterId: r.letter_id, text }
+      if (note) { note.hidden = false; note.textContent = '寄出失败 —— 对方的 bot 暂时联系不上，再点一次「寄出」会重试同一封' }
+    } else {
+      if (note) { note.hidden = false; note.textContent = MAIL_FAIL_COPY[String(r?.error)] ?? `寄出失败：${String(r?.error ?? '未知错误')}` }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (note) { note.hidden = false; note.textContent = msg === 'penpal_not_wired' ? '笔友功能未启用 —— 先在命令行运行 wechat-cc social enable 并重启守护进程。' : `寄出失败：${msg}` }
+  } finally {
+    target.disabled = false
+  }
+}
+
+/** 重投同一封(见 mailRetry 注释)。成功才乐观追加气泡 —— 原发失败时没追加过。
+ *  气泡/清空用 pending.text(重投的真实内容),不能等 await 回来再读输入框:
+ *  在途中用户可能改了字,重读会把没寄过的内容画进线程、还吞掉新草稿。
+ *  @param {any} target  @param {string} channelId
+ *  @param {{ letterId: string, text: string }} pending  @param {any} card */
+async function resendMailReply(target, channelId, pending, card) {
+  const input = card.querySelector('.fd-mail-input')
+  const note = card.querySelector('.fd-mail-note')
+  target.disabled = true
+  try {
+    const r = /** @type {{ok?:boolean, error?:string}} */ (
+      await invokeApi('POST', '/v1/penpal/letters/resend', { letter_id: pending.letterId }))
+    if (r?.ok) {
+      delete mailRetry[channelId]
+      const bubbles = card.querySelector('.fd-mail-bubbles')
+      if (bubbles) bubbles.innerHTML += `<div class="fd-mail-bubble fd-out"><div class="fd-mail-text">${escapeHtml(pending.text)}</div><div class="fd-mail-time">刚刚</div></div>`
+      // 只有输入框仍是这封信的内容才清空 —— 在途中打的新草稿不动。
+      if (input && String(input.value ?? '').trim() === pending.text) input.value = ''
+      if (note) { note.hidden = true; note.textContent = '' }
+    } else if (r?.error === 'send_failed') {
+      // 落库行还在,登记保留 —— 下次点击继续重投同一封。
+      if (note) { note.hidden = false; note.textContent = '还是没寄出去 —— 稍后再点一次「寄出」重试同一封' }
+    } else {
+      // channel_not_open / unknown_letter 等:重投救不了,放弃登记走人话文案。
+      delete mailRetry[channelId]
+      if (note) { note.hidden = false; note.textContent = MAIL_FAIL_COPY[String(r?.error)] ?? `寄出失败：${String(r?.error ?? '未知错误')}` }
+    }
+  } catch (err) {
+    if (note) { note.hidden = false; note.textContent = `寄出失败：${err instanceof Error ? err.message : String(err)}` }
+  } finally {
+    target.disabled = false
+  }
+}
+
 async function onInboundToggle() {
   const toggle = document.getElementById('fd-inbound-toggle')
   const note = document.getElementById('fd-inbound-note')
@@ -505,7 +698,7 @@ async function onComposeSubmit(e) {
   if (btn) btn.disabled = true
   try {
     const r = /** @type {{ok?:boolean, intent_id?:string, redacted?:string, redacted_city?:string, reason?:string}} */ (
-      await invokeApi('POST', '/v1/social/seek/propose', city ? { topic, city } : { topic }))
+      await invokeApi('POST', '/v1/social/seek/propose', city ? { topic, city } : { topic }, { timeoutMs: 45_000 }))
     if (r?.ok) {
       renderProposePreview(r)
       if (note) { note.hidden = true; note.textContent = '' }
@@ -726,6 +919,7 @@ export const __onPostcardActionForTest = onPostcardAction
 export const __onInboundToggleForTest = onInboundToggle
 export const __onComposeSubmitForTest = onComposeSubmit
 export const __onSeekActionForTest = onSeekAction
+export const __onMailboxActionForTest = onMailboxAction
 export const __onPairStartForTest = onPairStart
 export const __onPairAcceptForTest = onPairAccept
 export const __checkPairLandedForTest = checkPairLanded
