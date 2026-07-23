@@ -59,6 +59,19 @@ describe('synthesizeMemory', () => {
     expect(statusEl.textContent).toContain('需要守护进程运行后才能重新整理记忆')
     expect(statusEl.hidden).toBe(false)
   })
+
+  it('daemon 掉线的真实 fetch 错误(TimeoutError / 连接拒绝)也认作 daemon-required', async () => {
+    for (const err of [
+      Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' }),
+      new Error('Unable to connect. Is the computer able to access the url?'),
+    ]) {
+      const statusEl = fakeEl()
+      ;(globalThis as any).document.getElementById = (id: string) => (id === 'memory-status' ? statusEl : null)
+      const deps = makeDeps({ invokeApi: vi.fn().mockRejectedValue(err) })
+      await expect(synthesizeMemory(deps as any)).rejects.toThrow('需要守护进程运行后才能重新整理记忆')
+      expect(statusEl.textContent).toContain('需要守护进程运行后才能重新整理记忆')
+    }
+  })
 })
 
 describe('generateMemoryProfile', () => {

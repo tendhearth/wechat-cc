@@ -311,8 +311,18 @@ async function saveCurrent(deps) {
  * @param {string} action e.g. "重新整理记忆" / "刷新画像"
  */
 function daemonRequiredMessage(err, action) {
+  const name = err instanceof Error ? err.name : ""
   const msg = err instanceof Error ? err.message : String(err)
-  if (msg === "memory_not_wired" || /fetch|network|abort|timeout/i.test(msg)) {
+  // Bun's real fetch failures are `TimeoutError`/`AbortError` (name) with
+  // messages like "The operation timed out." / "Unable to connect. …" — the
+  // old substring regex missed both ("timed out" ≠ "timeout"). Match on name
+  // AND a broadened message set so a down/unreachable daemon shows the
+  // actionable copy, not a raw fetch string.
+  if (
+    name === "TimeoutError" || name === "AbortError" ||
+    msg === "memory_not_wired" ||
+    /memory_not_wired|fetch|network|abort|timeout|timed out|unable to connect|could not reach|econnrefused|refused|unreachable/i.test(msg)
+  ) {
     return `需要守护进程运行后才能${action}`
   }
   return `${action}失败：${msg}`
