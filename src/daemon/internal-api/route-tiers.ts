@@ -148,6 +148,7 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'GET /v1/penpal/letters': 'trusted',
   'POST /v1/penpal/letters': 'trusted',
   'POST /v1/penpal/letters/read': 'trusted',
+  'POST /v1/penpal/letters/resend': 'trusted',
 }
 
 export function minTierFor(routeKey: string): UserTier {

@@ -218,7 +218,8 @@ export interface InternalApiDeps {
     /** 笔友信箱(spec 2026-07-22-penpal-mailbox-desktop)— boot.social.penpal
      *  原样带入。可选:老 fixture/未接线时 undefined ⇒ /v1/penpal/* 503。 */
     penpal?: {
-      sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }>
+      sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
+      resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       channelStore: import('../../core/penpal-channel-store').ChannelStore
       letterStore: import('../../core/penpal-letter-store').LetterStore
     }

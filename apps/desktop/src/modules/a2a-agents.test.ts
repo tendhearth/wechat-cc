@@ -577,6 +577,43 @@ describe('笔友信箱', () => {
     expect(btn.disabled).toBe(false)
   })
 
+  it('send_failed 带 letter_id → 同文本重按「寄出」走 resend 而非再封新信', async () => {
+    installDom()
+    const { card, bubbles, input, note } = mailCard()
+    const btn = fakeEl(); btn.dataset.action = 'mail-send'; btn.dataset.id = 'chR'
+    ;(btn as any).closest = (sel: string) => sel === '.fd-mail-chan' ? card : null
+    input.value = '重要的一封信'
+    ;(invokeApi as any).mockClear()
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: false, error: 'send_failed', letter_id: 'lx1' })
+    const { __onMailboxActionForTest } = await import('./a2a-agents.js')
+    await __onMailboxActionForTest?.({ target: btn } as any)
+    expect(note.textContent).toContain('重试同一封')
+    expect(input.value).toBe('重要的一封信')             // 草稿保留
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: true })
+    await __onMailboxActionForTest?.({ target: btn } as any)
+    const calls = (invokeApi as any).mock.calls
+    expect(calls[calls.length - 1]).toEqual(['POST', '/v1/penpal/letters/resend', { letter_id: 'lx1' }])
+    expect(bubbles.innerHTML).toContain('重要的一封信')   // 成功后才乐观追加
+    expect(input.value).toBe('')
+  })
+
+  it('失败后改了文本再寄 → 走正常 send(新信),不再 resend 旧 id', async () => {
+    installDom()
+    const { card, input } = mailCard()
+    const btn = fakeEl(); btn.dataset.action = 'mail-send'; btn.dataset.id = 'chR2'
+    ;(btn as any).closest = (sel: string) => sel === '.fd-mail-chan' ? card : null
+    input.value = '第一稿'
+    ;(invokeApi as any).mockClear()
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: false, error: 'send_failed', letter_id: 'lx2' })
+    const { __onMailboxActionForTest } = await import('./a2a-agents.js')
+    await __onMailboxActionForTest?.({ target: btn } as any)
+    input.value = '改过的第二稿'
+    ;(invokeApi as any).mockResolvedValueOnce({ ok: true })
+    await __onMailboxActionForTest?.({ target: btn } as any)
+    const calls = (invokeApi as any).mock.calls
+    expect(calls[calls.length - 1]).toEqual(['POST', '/v1/penpal/letters', { channel_id: 'chR2', text: '改过的第二稿' }])
+  })
+
   it('点击卡头内的子元素(span,无 data-action)也能展开线程 —— closest 走一级', async () => {
     installDom()
     const { card, thread } = mailCard()

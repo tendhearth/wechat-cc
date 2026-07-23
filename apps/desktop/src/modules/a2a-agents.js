@@ -534,6 +534,7 @@ const MAIL_FAIL_COPY = /** @type {Record<string, string>} */ ({
   channel_not_open: '这条信道还没打开 —— 双方都揭晓后才能通信',
   no_route: '找不到通往对方的路 —— 稍后再试',
   send_failed: '寄出失败 —— 对方的 bot 暂时联系不上，稍后再试',
+  unknown_letter: '找不到要重寄的那封信 —— 重新写一封吧',
 })
 
 /** @param {MouseEvent} e */
@@ -574,6 +575,12 @@ async function openMailThread(target) {
   }
 }
 
+// 失败重试登记:channel id → { letterId, text }。send_failed 时信已落库,
+// 同文本重按「寄出」走 /resend 重投同字节(接收端 nonce 去重 ⇒ 幂等),
+// 而不是再封一封新 nonce 的信在“投到了但 ack 丢了”时重复投递。
+/** @type {Record<string, { letterId: string, text: string }>} */
+const mailRetry = Object.create(null)
+
 /** @param {any} target */
 async function sendMailReply(target) {
   const id = target.dataset.id
@@ -583,21 +590,61 @@ async function sendMailReply(target) {
   const note = card.querySelector('.fd-mail-note')
   const text = String(input?.value ?? '').trim()
   if (!text) { if (note) { note.hidden = false; note.textContent = '先写点什么' } return }
+  const pending = mailRetry[id]
+  if (pending && pending.text === text) return resendMailReply(target, id, pending, card)
+  delete mailRetry[id]   // 文本改了 ⇒ 当新信寄;旧的落库行维持现状
   target.disabled = true
   try {
-    const r = /** @type {{ok?:boolean, error?:string}} */ (
+    const r = /** @type {{ok?:boolean, error?:string, letter_id?:string}} */ (
       await invokeApi('POST', '/v1/penpal/letters', { channel_id: id, text }))
     if (r?.ok) {
       const bubbles = card.querySelector('.fd-mail-bubbles')
       if (bubbles) bubbles.innerHTML += `<div class="fd-mail-bubble fd-out"><div class="fd-mail-text">${escapeHtml(text)}</div><div class="fd-mail-time">刚刚</div></div>`
       if (input) input.value = ''
       if (note) { note.hidden = true; note.textContent = '' }
+    } else if (r?.error === 'send_failed' && typeof r?.letter_id === 'string') {
+      mailRetry[id] = { letterId: r.letter_id, text }
+      if (note) { note.hidden = false; note.textContent = '寄出失败 —— 对方的 bot 暂时联系不上，再点一次「寄出」会重试同一封' }
     } else {
       if (note) { note.hidden = false; note.textContent = MAIL_FAIL_COPY[String(r?.error)] ?? `寄出失败：${String(r?.error ?? '未知错误')}` }
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     if (note) { note.hidden = false; note.textContent = msg === 'penpal_not_wired' ? '笔友功能未启用 —— 先在命令行运行 wechat-cc social enable 并重启守护进程。' : `寄出失败：${msg}` }
+  } finally {
+    target.disabled = false
+  }
+}
+
+/** 重投同一封(见 mailRetry 注释)。成功才乐观追加气泡 —— 原发失败时没追加过。
+ *  气泡/清空用 pending.text(重投的真实内容),不能等 await 回来再读输入框:
+ *  在途中用户可能改了字,重读会把没寄过的内容画进线程、还吞掉新草稿。
+ *  @param {any} target  @param {string} channelId
+ *  @param {{ letterId: string, text: string }} pending  @param {any} card */
+async function resendMailReply(target, channelId, pending, card) {
+  const input = card.querySelector('.fd-mail-input')
+  const note = card.querySelector('.fd-mail-note')
+  target.disabled = true
+  try {
+    const r = /** @type {{ok?:boolean, error?:string}} */ (
+      await invokeApi('POST', '/v1/penpal/letters/resend', { letter_id: pending.letterId }))
+    if (r?.ok) {
+      delete mailRetry[channelId]
+      const bubbles = card.querySelector('.fd-mail-bubbles')
+      if (bubbles) bubbles.innerHTML += `<div class="fd-mail-bubble fd-out"><div class="fd-mail-text">${escapeHtml(pending.text)}</div><div class="fd-mail-time">刚刚</div></div>`
+      // 只有输入框仍是这封信的内容才清空 —— 在途中打的新草稿不动。
+      if (input && String(input.value ?? '').trim() === pending.text) input.value = ''
+      if (note) { note.hidden = true; note.textContent = '' }
+    } else if (r?.error === 'send_failed') {
+      // 落库行还在,登记保留 —— 下次点击继续重投同一封。
+      if (note) { note.hidden = false; note.textContent = '还是没寄出去 —— 稍后再点一次「寄出」重试同一封' }
+    } else {
+      // channel_not_open / unknown_letter 等:重投救不了,放弃登记走人话文案。
+      delete mailRetry[channelId]
+      if (note) { note.hidden = false; note.textContent = MAIL_FAIL_COPY[String(r?.error)] ?? `寄出失败：${String(r?.error ?? '未知错误')}` }
+    }
+  } catch (err) {
+    if (note) { note.hidden = false; note.textContent = `寄出失败：${err instanceof Error ? err.message : String(err)}` }
   } finally {
     target.disabled = false
   }

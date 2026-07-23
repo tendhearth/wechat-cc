@@ -89,7 +89,8 @@ export interface SocialWiring {
     pledgeStore: import('../../core/social-pledge-store').PledgeStore
     revealer: Revealer
     penpal: {
-      sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }>
+      sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
+      resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       channelStore: import('../../core/penpal-channel-store').ChannelStore
       letterStore: import('../../core/penpal-letter-store').LetterStore
     }
@@ -130,7 +131,8 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   let socialPledgeStore: import('../../core/social-pledge-store').PledgeStore | undefined
   let socialRevealer: Revealer | undefined
   let socialPenpal: {
-    sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }>
+    sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
+    resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
     channelStore: import('../../core/penpal-channel-store').ChannelStore
     letterStore: import('../../core/penpal-letter-store').LetterStore
   } | undefined
@@ -274,7 +276,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         getByMyChannelId: (c) => channelStore.getByMyChannelId(c),
         receiveLetter: (ev) => correspondent.receiveLetter(ev),
       })
-      socialPenpal = { sendLetter: (channel, text) => correspondent.sendLetter(channel, text), channelStore, letterStore }
+      socialPenpal = { sendLetter: (channel, text) => correspondent.sendLetter(channel, text), resendLetter: (id) => correspondent.resendLetter(id), channelStore, letterStore }
 
       // Notification beats (克制三拍). Content-free by design — reveal crosses
       // pubkey handles, never a real name or url, so no beat text may carry one.

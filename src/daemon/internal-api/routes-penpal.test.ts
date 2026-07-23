@@ -18,15 +18,16 @@ function makeDeps(over: Record<string, unknown> = {}) {
     get: vi.fn((id: string) => [CH_OPEN, CH_RELAY, CH_PENDING].find(c => c.id === id) ?? null),
   }
   const sendLetter = vi.fn(async () => ({ ok: true }))
+  const resendLetter = vi.fn(async () => ({ ok: true }))
   const deps = {
     social: {
-      penpal: { sendLetter, channelStore, letterStore },
+      penpal: { sendLetter, resendLetter, channelStore, letterStore },
       seekStore: { get: vi.fn((id: string) => id === 's1' ? { id: 's1', topic: '找修相机师傅' } : null) },
     },
     a2a: { registry: { get: vi.fn((id: string) => id === 'buddy' ? { id: 'buddy', name: '老王的CC' } : null) } },
     ...over,
   } as unknown as InternalApiDeps
-  return { deps, letterStore, channelStore, sendLetter }
+  return { deps, letterStore, channelStore, sendLetter, resendLetter }
 }
 const q = (s = '') => new URLSearchParams(s)
 
@@ -81,5 +82,17 @@ describe('POST /v1/penpal/letters/read', () => {
     const r = await penpalRoutes(deps)['POST /v1/penpal/letters/read']!(q(), { channel_id: 'ch1' })
     expect(r.status).toBe(200); expect((r.body as any).ok).toBe(true)
     expect(letterStore.markAllRead).toHaveBeenCalledWith('ch1', expect.any(String))
+  })
+})
+
+describe('POST /v1/penpal/letters/resend', () => {
+  it('透传 resendLetter;缺参 400;未接线 503', async () => {
+    const { deps, resendLetter } = makeDeps()
+    const r = await penpalRoutes(deps)['POST /v1/penpal/letters/resend']!(q(), { letter_id: 'l1' })
+    expect(r.status).toBe(200); expect((r.body as any).ok).toBe(true)
+    expect(resendLetter).toHaveBeenCalledWith('l1')
+    expect((await penpalRoutes(deps)['POST /v1/penpal/letters/resend']!(q(), {})).status).toBe(400)
+    const bare = await penpalRoutes({ social: undefined } as unknown as InternalApiDeps)['POST /v1/penpal/letters/resend']!(q(), { letter_id: 'l1' })
+    expect(bare.status).toBe(503)
   })
 })

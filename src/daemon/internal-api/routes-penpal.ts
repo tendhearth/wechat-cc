@@ -53,6 +53,16 @@ export function penpalRoutes(deps: InternalApiDeps): RouteTable {
       if (typeof text !== 'string' || text.length === 0) return { status: 400, body: { error: 'missing_text' } }
       return { status: 200, body: await p.sendLetter(channel_id, text) }
     },
+    // 失败重试 = 重投同一封的原字节(同 nonce ⇒ 接收端 (channel_id,nonce)
+    // 去重幂等)。重新 sendLetter 会封新 nonce,在“投到了但 ack 丢了”时
+    // 重复投递 — 终审 2026-07-22 记录的洞,这条路由是它的修复面。
+    'POST /v1/penpal/letters/resend': async (_q, body) => {
+      const p = deps.social?.penpal
+      if (!p) return { status: 503, body: { error: 'penpal_not_wired' } }
+      const letterId = ((body ?? {}) as { letter_id?: unknown }).letter_id
+      if (typeof letterId !== 'string' || letterId.length === 0) return { status: 400, body: { error: 'missing_letter_id' } }
+      return { status: 200, body: await p.resendLetter(letterId) }
+    },
     'POST /v1/penpal/letters/read': async (_q, body) => {
       const p = deps.social?.penpal
       if (!p) return { status: 503, body: { error: 'penpal_not_wired' } }

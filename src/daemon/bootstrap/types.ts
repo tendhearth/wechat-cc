@@ -264,7 +264,8 @@ export interface Bootstrap {
     pledgeStore: import('../../core/social-pledge-store').PledgeStore
     revealer: Revealer
     penpal: {
-      sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }>
+      sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
+      resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       channelStore: import('../../core/penpal-channel-store').ChannelStore
       letterStore: import('../../core/penpal-letter-store').LetterStore
     }
