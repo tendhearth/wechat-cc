@@ -30,7 +30,9 @@ import { makeRevealer, type ChannelPort } from './social-reveal'
 import { makeSeekStore } from './social-seek-store'
 import { makeEchoStore } from './social-echo-store'
 import { makePledgeStore } from './social-pledge-store'
-import { makeForwarder } from './social-forwarder'
+import { makeAsyncResponder } from './social-async-responder'
+import { makeEchoIntake } from './social-echo-intake'
+import { makeEchoHandler } from './social-echo-relay'
 import { makeRelayStore } from './social-relay-store'
 import { makeSeenIntentStore } from './social-seen-intent-store'
 import { makeRelayReconciler } from './social-relay-reveal'
@@ -266,7 +268,7 @@ describe('async foraging spine e2e', () => {
 })
 
 describe('forwarding hop e2e (S → W → Q)', () => {
-  it('2-hop forage → relay echo → proxied mutual reveal → handle crossing, mask never lifts', async () => {
+  it('2-hop forage → async fast-ack forward → async echo relay back → proxied mutual reveal → handle crossing, mask never lifts', async () => {
     // Three dbs (three daemons).
     const sDb = openDb({ path: ':memory:' }); const wDb = openDb({ path: ':memory:' }); const qDb = openDb({ path: ':memory:' })
     const sSeek = makeSeekStore(sDb); const sEcho = makeEchoStore(sDb); const sPledge = makePledgeStore(sDb)
@@ -284,62 +286,111 @@ describe('forwarding hop e2e (S → W → Q)', () => {
     // Q's answer: matches. W's answer: no-match (forces the forward).
     const qAnswer = makeAnswerIntent({ judge: async () => ({ match: 'yes', blurb: '我主人认识个摄影师' }), policy: POLICY, cheapEval: passingCheck })
     const wAnswerLocal = makeAnswerIntent({ judge: async () => ({ match: 'no' }), policy: POLICY, cheapEval: passingCheck })
-
-    // Q's /a2a/intent — records a pledge on yes (seeker, as Q sees it, is W).
-    const qOnIntent = async (event: any) => {
+    // Q's local answer wraps the judge with pledge-on-yes — the seeker, as Q
+    // sees it, is whoever posted the (already hop+1) card to Q: W.
+    const qAnswerLocally = async (event: any) => {
       const r = await qAnswer(event)
       if (r.match === 'yes') qPledge.create({ id: `${event.card.intent_id}:${event.agent.id}`, intentId: event.card.intent_id, seekerAgentId: event.agent.id, topic: event.card.topic })
       return r
     }
-    // W's forwarder: forwards to Q, mints a relay row.
-    const wForwarder = makeForwarder({
-      answerLocally: wAnswerLocal,
-      forwardTargets: (exclude) => [Q].filter(t => t.id !== exclude),
-      forwardSend: async (target, card) => target.id === Q.id ? qOnIntent({ agent: W, card }) : null,
+
+    // Each daemon's async responder schedules its background judge/echo/
+    // forward leg onto its OWN job queue (mirrors wire-social.ts's default
+    // fire-and-forget `schedule`, deferred here so the test can drive each
+    // hop deterministically instead of racing real timers).
+    const sJobs: Array<() => Promise<void>> = []
+    const wJobs: Array<() => Promise<void>> = []
+    const qJobs: Array<() => Promise<void>> = []
+
+    // S's own /a2a/echo handler — S is the ORIGIN of this intent, so intake
+    // always resolves it as "my own seek" (echoIntake); S never relays.
+    const sEchoIntake = makeEchoIntake({
+      seekStatus: (id) => sSeek.get(id)?.status ?? null,
+      recordEcho: (e) => {
+        const id = e.peerAgentId != null ? `${e.intentId}:${e.peerAgentId}` : `${e.intentId}:${e.relayVia}:${e.relayToken}`
+        sEcho.create({ id, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId, relayVia: e.relayVia, relayToken: e.relayToken })
+      },
+      markEchoed: (id) => { const cur = sSeek.get(id); if (cur?.status === 'foraging') sSeek.update(id, { status: 'echoed' }) },
+    })
+    const sOnEcho = (senderAgentId: string, msg: any) => makeEchoHandler({
+      intake: sEchoIntake,
+      originOf: () => null,                 // S never relays — it's always the origin
+      recordRelay: () => { throw new Error('S should never relay') },
+      postEcho: async () => { throw new Error('S should never post further') },
+    })(senderAgentId, msg)
+
+    // W's /a2a/echo handler — W has no seeks of its own; every echo it
+    // receives is a downstream reply to an intent it forwarded, resolved via
+    // its own seen-intent origin record (written by wOnIntent's markSeen).
+    const wOnEcho = (senderAgentId: string, msg: any) => makeEchoHandler({
+      intake: () => 'unknown' as const,
+      originOf: (intentId) => wSeen.originOf(intentId),
       recordRelay: (intentId, upstreamAgentId, downstreamAgentId) => {
         const tok = 'TOK'
         wRelay.create({ id: `${intentId}:${tok}`, intentId, relayToken: tok, upstreamAgentId, downstreamAgentId })
         return tok
       },
-      markSeen: (i, e) => wSeen.markSeen({ intentId: i, expiresAt: e }),
-      hasSeen: (i) => wSeen.hasSeen(i),
-      hopCap: 2,
+      // Only one target (S) in this test — always the relay leg's origin.
+      postEcho: async (_to, m) => { const r = await sOnEcho('ccw', m); return r.ok },
+    })(senderAgentId, msg)
+
+    // Q's /a2a/intent — v2 async responder: judge locally, echo the sender
+    // (W, as Q sees it) via wOnEcho. Q never forwards further (empty targets).
+    const qOnIntent = makeAsyncResponder({
+      answerLocally: qAnswerLocally,
+      postEcho: async (_to, m) => { const r = await wOnEcho('ccq', m); return r.ok },
+      forwardTargets: () => [],
+      forwardSend: async () => false,
+      markSeen: () => {}, hasSeen: () => false,
+      schedule: (fn) => { qJobs.push(fn) },
     })
 
-    // S's broker: forwards a seek to W, records the degree-2 relay echo.
-    const jobs: Array<() => Promise<void>> = []
+    // W's /a2a/intent — v2 async responder: judges locally (always no here),
+    // fans out hop+1 to Q. markSeen records the ORIGIN (S) so wOnEcho's
+    // originOf can resolve who a downstream echo relays back to.
+    const wOnIntent = makeAsyncResponder({
+      answerLocally: wAnswerLocal,
+      postEcho: async () => false,   // W never matches locally in this test
+      forwardTargets: (exclude) => [Q].filter(t => t.id !== exclude),
+      forwardSend: async (target, card) => {
+        if (target.id !== Q.id) return false
+        await qOnIntent({ agent: W as any, card })   // fast-ack only; Q's own job lands in qJobs
+        return true
+      },
+      markSeen: (intentId, expiresAt, origin) => wSeen.markSeen({ intentId, expiresAt, originAgentId: origin }),
+      hasSeen: (intentId) => wSeen.hasSeen(intentId),
+      hopCap: 2,
+      schedule: (fn) => { wJobs.push(fn) },
+    })
+
+    // S's broker: forwards a seek to W. v2 fast-ack — `send` only proves
+    // delivery was accepted; the degree-2 relay echo lands later, out of
+    // band, via S's OWN /a2a/echo (sOnEcho), driven below by draining each
+    // daemon's job queue in hop order (S → W → Q).
     const sBroker = makeBroker({
       policy: POLICY, cheapEval: passingCheck,
       discover: async () => [W as any],
-      // v2 fast-ack: wForwarder (spec #2's forward+aggregate leg, untouched
-      // by this task) still returns a MatchReceipt-shaped result carrying
-      // any forwarded[] degree-2 echoes; the stub lands those into sEcho
-      // exactly as the retired broker.recordEcho closure used to (a stand-in
-      // for the eventual /a2a/echo intake path — see Task 9), then reports
-      // only bool upstream.
-      send: async (hand, card) => {
-        const r = await wForwarder({ agent: S as any, card })
-        if (r.match === 'yes') {
-          sEcho.create({ id: `${card.intent_id}:${hand.id}`, seekId: card.intent_id, peerMasked: '第 1 度的某人', degree: 1, content: r.blurb ?? '', peerAgentId: hand.id })
-        }
-        for (const fe of r.forwarded ?? []) {
-          const id = `${card.intent_id}:${hand.id}:${fe.relay_token}`
-          sEcho.create({ id, seekId: card.intent_id, peerMasked: `第 ${fe.degree} 度的某人`, degree: fe.degree, content: fe.blurb, peerAgentId: null, relayVia: hand.id, relayToken: fe.relay_token })
-        }
-        return r.match === 'yes' || (r.forwarded?.length ?? 0) > 0
-      },
+      send: async (_hand, card) => { try { await wOnIntent({ agent: S as any, card }); return true } catch { return false } },
       proposeRow: (id, r) => sSeek.propose({ id, kind: 'seek', topic: r.topic, redactedTopic: r.redactedTopic, ...(r.redactedCity ? { redactedCity: r.redactedCity } : {}) }),
       readSeek: (id) => sSeek.get(id),
       markStatus: (id, status) => sSeek.update(id, { status }),
       markForaged: (id, peersAsked) => sSeek.update(id, { peersAsked }),
-      schedule: (fn) => { jobs.push(fn) },
+      schedule: (fn) => { sJobs.push(fn) },
     })
 
-    // 1) Propose + 派/confirm + forage: S ends with ONE degree-2 relay echo, still masked.
+    // 1) Propose + 派/confirm + forage: S's send reaches W synchronously
+    //    (fast-ack), which only SCHEDULES its own background judge+forward job.
     const proposed = await sBroker.propose('找周末拍照搭子')
     const intent_id = (proposed as { ok: true; intent_id: string }).intent_id
     sBroker.confirmSeek(intent_id)
-    await Promise.all(jobs.map(j => j()))
+    await Promise.all(sJobs.splice(0).map(j => j()))
+    // 2) Drain W's background leg: judges locally (no), forwards to Q — which
+    //    itself only schedules its OWN background leg (fast-ack), not runs it.
+    await Promise.all(wJobs.splice(0).map(j => j()))
+    // 3) Drain Q's background leg: judges yes, pledges, echoes W — which mints
+    //    the relay leg and posts the relayed echo onward to S's own /a2a/echo.
+    await Promise.all(qJobs.splice(0).map(j => j()))
+
     const echoes = sEcho.listForSeek(intent_id)
     expect(echoes).toHaveLength(1)
     expect(echoes[0]!.degree).toBe(2)

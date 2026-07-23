@@ -451,6 +451,17 @@ describe('a2a-server', () => {
         expect(res.status).toBe(501)
       } finally { await server.stop() }
     })
+
+    it('advertises the echo capability in the Agent Card only when wired', async () => {
+      const withEcho = await startServer({ onEcho: async () => ({ ok: true }) })
+      const without = await startServer()
+      try {
+        const a = await (await fetch(`${withEcho.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        const b = await (await fetch(`${without.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        expect(a.capabilities.some(c => c.name === 'echo')).toBe(true)
+        expect(b.capabilities.some(c => c.name === 'echo')).toBe(false)
+      } finally { await withEcho.server.stop(); await without.server.stop() }
+    })
   })
 
   describe('POST /a2a/reveal (async foraging spine)', () => {

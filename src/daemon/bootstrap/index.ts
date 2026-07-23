@@ -723,6 +723,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     resolveOperatorChatId,
     sendAssistantText,
     onIntent: socialWiring.onIntent,
+    onEcho: socialWiring.onEcho,
     onReveal: socialWiring.onReveal,
     onLetter: socialWiring.onLetter,
   })
@@ -768,6 +769,14 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
         a2aRegistry,
         onReveal: socialWiring.onReveal,
         onMailboxLetter: socialWiring.onMailboxLetter,
+        // v2 (Task 8): the mailbox transport is now a first-class dispatch arm
+        // for intent/echo too (see wire-social.ts's postToHand + broker.discover
+        // opening to mailbox peers) — a mailbox-dropped /a2a/intent or /a2a/echo
+        // envelope must reach the SAME onIntent/onEcho the HTTP routes use, or
+        // a mailbox-only peer's seek/echo traffic silently vanishes at the
+        // poller. Same undefined-gate posture as onReveal/onMailboxLetter above.
+        onIntent: socialWiring.onIntent,
+        onEcho: socialWiring.onEcho,
         relays: mailboxRelays,
         // Re-checked at every tick (mtime-cached read) so a `/set` toggle of
         // social_enabled takes effect without a daemon restart, same posture

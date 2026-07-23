@@ -211,6 +211,15 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         method: 'POST',
         request_schema: { agent_id: 'string', card: 'IntentCard' },
       }] : []),
+      // v2 async echo return — advertised only when this machine is wired
+      // to receive echo returns (onEcho set). Same shape/gate as `intent`.
+      ...(opts.onEcho ? [{
+        name: 'echo',
+        description: 'v2 async echo return: post the judged result of an earlier "seek" intent back to its sender (or relay it onward), out-of-band from the original synchronous /a2a/intent call.',
+        endpoint: '/a2a/echo',
+        method: 'POST',
+        request_schema: { agent_id: 'string', intent_id: 'string', echo: '{ blurb: string, degree: number, relay_token?: string }' },
+      }] : []),
       // Advertised only when this machine is wired to receive inbound reveals.
       ...(opts.onReveal ? [{
         name: 'reveal',

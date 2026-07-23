@@ -23,6 +23,13 @@ export interface MailboxPollerDeps {
    *  NEVER the HTTP `socialOnLetter` (which falls through to
    *  letterRelay.routeLetter for non-own channels). */
   onMailboxLetter: A2AServerOpts['onLetter']
+  /** v2 (Task 8) — same onIntent/onEcho the HTTP /a2a/intent + /a2a/echo
+   *  routes use; a mailbox-dropped envelope replays into the identical
+   *  handler (bearer-verified via the registry, same as HTTP). Undefined ⇒
+   *  makeEnvelopeDispatch drops the envelope, same posture as every other
+   *  optional capability. */
+  onIntent?: A2AServerOpts['onIntent']
+  onEcho?: A2AServerOpts['onEcho']
   relays: string[]
   shouldRun: () => boolean
   log: (tag: string, line: string) => void
@@ -32,7 +39,7 @@ export function registerMailboxPoller(deps: MailboxPollerDeps): Lifecycle {
   const identity = loadMailboxIdentity(deps.stateDir)
   const poller = makeMailboxPoller({
     identity, relays: deps.relays, client: makeMailboxClient(),
-    dispatch: makeEnvelopeDispatch({ registry: deps.a2aRegistry, onReveal: deps.onReveal, onLetter: deps.onMailboxLetter, log: deps.log }),
+    dispatch: makeEnvelopeDispatch({ registry: deps.a2aRegistry, onReveal: deps.onReveal, onLetter: deps.onMailboxLetter, onIntent: deps.onIntent, onEcho: deps.onEcho, log: deps.log }),
     cursors: makeCursorStore(deps.stateDir), log: deps.log,
   })
   const stop = startCompanionScheduler({

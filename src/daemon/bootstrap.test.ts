@@ -10,6 +10,7 @@ import { makeEchoStore } from '../core/social-echo-store'
 import { makeChannelStore } from '../core/penpal-channel-store'
 import { makeRelayStore } from '../core/social-relay-store'
 import { generateKeypair, deriveSharedKey, sealLetter } from '../core/penpal-crypto'
+import { generateMailboxIdentity } from '../core/mailbox-crypto'
 import { TIER_PROFILES } from '../core/user-tier'
 import { MANIFEST_FILE } from './plugins/paths'
 import type { Access } from '../lib/access'
@@ -1105,6 +1106,10 @@ describe('bootstrap agent-social M1 wiring', () => {
         capabilities: Array<{ name: string }>
       }
       expect(card.capabilities.some(c => c.name === 'intent')).toBe(true)
+      // v2 async echo return — wired + advertised alongside intent whenever
+      // social is fully configured (Task 8: onEcho threaded through
+      // wireSocial → wireA2aServer, same gate as onIntent).
+      expect(card.capabilities.some(c => c.name === 'echo')).toBe(true)
       // The broker + revealer + pledgeStore are exposed on the bootstrap
       // return so main.ts can late-bind them into internal-api (setSocial).
       expect(boot.social).toBeDefined()
@@ -1482,14 +1487,24 @@ describe('bootstrap agent-social M1 wiring', () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-resume-'))
     const port = 19909
     const openaiMock = serveMockOpenai('{"violation": false, "redacted": "找搭子"}')
-    // Stand-in peer — always answers "yes" to whatever intent it's asked
-    // about, echoing the caller's intent_id back so the MatchReceipt parses.
+    // Stand-in v2 peer — fast-acks every /a2a/intent it's asked about, then
+    // asynchronously posts a matching echo back to THIS daemon's own
+    // /a2a/echo (mirroring what a real v2 responder does in the background:
+    // judge → postEcho). The old sync-receipt shape ({match:'yes', blurb})
+    // is no longer consumed by the seeker's `send` (v2's `send` only cares
+    // whether delivery was accepted) — the echo must actually round-trip
+    // through /a2a/echo for echoStore to see it.
     const peerMock = Bun.serve({
       hostname: '127.0.0.1',
       port: 0,
       fetch: async (req) => {
         const body = await req.json() as { card: { intent_id: string } }
-        return Response.json({ intent_id: body.card.intent_id, match: 'yes', blurb: '摄影爱好者' })
+        void fetch(`http://127.0.0.1:${port}/a2a/echo`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer peer-inbound-key-abc123' },
+          body: JSON.stringify({ agent_id: 'ccb', intent_id: body.card.intent_id, echo: { blurb: '摄影爱好者', degree: 1 } }),
+        })
+        return Response.json({ intent_id: body.card.intent_id, match: 'no', async: true })
       },
     })
     const prevKey = process.env.WECHAT_OPENAI_API_KEY
@@ -1757,6 +1772,7 @@ describe('bootstrap agent-social M1 wiring', () => {
         capabilities: Array<{ name: string }>
       }
       expect(card.capabilities.some(c => c.name === 'intent')).toBe(false)
+      expect(card.capabilities.some(c => c.name === 'echo')).toBe(false)
       expect(card.capabilities.some(c => c.name === 'reveal')).toBe(false)
       expect(boot.social).toBeUndefined()
     } finally {
@@ -2086,10 +2102,26 @@ describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPO
   const mailboxPeer = {
     id: 'cc-aaaa1111', name: 'Alice', inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o',
     capabilities: [], paused: false, transport: 'mailbox' as const,
-    mailbox_addr: 'A', mailbox_enc_pub: 'E', relays: ['https://brain.example/mailbox'],
+    // A REAL X25519 enc_pub (sealEnvelope's deriveSharedKey rejects a bogus
+    // short string like 'E' before any network call is even attempted) —
+    // only the addr/relay strings are arbitrary/unreachable placeholders.
+    mailbox_addr: 'A', mailbox_enc_pub: generateMailboxIdentity().enc_pub, relays: ['https://brain.example/mailbox'],
   }
 
-  it('discover: broker propose→confirm with ONLY a url-less mailbox peer registered never reaches intentUrl(undefined) — peer skipped, seek closes with 0 peers asked', async () => {
+  // v2 (Task 8): discover no longer filters mailbox peers out at all — a
+  // COMPLETE mailbox peer (mailbox_addr + mailbox_enc_pub + relays all
+  // present, as `mailboxPeer` is here) is now a first-class degree-1
+  // candidate; postToHand picks the mailbox coord over push and NEVER
+  // touches intentUrl(hand.url) for it (still true — the guard this
+  // describe block is named for still holds, just via a different route
+  // than "filtered out of discover"). The v2 transport is fire-and-forget —
+  // postToHand reports `asked` the moment the seal+drop is attempted,
+  // regardless of whether the (fake, unreachable) relay actually received
+  // it — so peers_asked becomes 1. And since v2 seeks have no auto-close
+  // (markForaged only bumps peers_asked — see wire-social.ts's broker
+  // deps), the row stays `foraging` forever absent a real echo or the resume
+  // sweep's 7-day cutoff, neither of which fires here.
+  it('discover: broker propose→confirm now includes a url-less mailbox peer (v2 fire-and-forget) — never reaches intentUrl(undefined), peers_asked becomes 1, seek stays foraging (no auto-close)', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-guard-discover-'))
     const port = 19912
     const openaiMock = serveMockOpenai(JSON.stringify({ violation: false, redacted: '找摄影搭子' }))
@@ -2124,16 +2156,23 @@ describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPO
       const proposed = await boot.social!.broker.propose('找摄影搭子')
       const intent_id = (proposed as { ok: true; intent_id: string }).intent_id
       boot.social!.broker.confirmSeek(intent_id)
+      // Generous budget (default pollFor is 500ms): postToHand's mailbox leg
+      // is a REAL DNS lookup against an unreachable relay host before it
+      // fails and falls back — under load that can occasionally take longer
+      // than the default window, so this poll gets extra headroom (still
+      // well under mailbox-client's own 10s per-request timeout).
       const row = await pollFor(() => {
         const r = boot!.social!.seekStore.get(intent_id)
-        return r && r.status !== 'proposed' && r.status !== 'foraging' ? r : null
-      })
+        return r && r.peers_asked > 0 ? r : null
+      }, 300, 20)
       expect(row).not.toBeNull()
-      // Closed (no yes echo) with 0 peers asked — proves discover filtered
-      // the url-less mailbox peer OUT before any send was attempted, not
-      // merely that a throw somewhere was swallowed.
-      expect(row!.status).toBe('closed')
-      expect(row!.peers_asked).toBe(0)
+      // peers_asked=1 — the mailbox peer WAS asked (v2 opened discover to
+      // it); no throw ever reached intentUrl(undefined) (a TypeError there
+      // would have surfaced as an unhandled rejection / hung poll, not this
+      // clean peers_asked bump). Status stays `foraging` — v2 has no
+      // auto-close, unlike the old sync forage this test used to exercise.
+      expect(row!.peers_asked).toBe(1)
+      expect(row!.status).toBe('foraging')
     } finally {
       openaiMock.stop()
       await boot?.a2aServer?.stop()

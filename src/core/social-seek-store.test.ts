@@ -54,6 +54,24 @@ describe('makeSeekStore', () => {
     expect(s.get('p2')!.redacted_city).toBeNull()
   })
 
+  // v2 (Task 8) — wire-social.ts's broker.markForaged dep needs a
+  // peers_asked-ONLY write (the seek row's status is deliberately left
+  // AS-IS post-forage; echoes now land one at a time via /a2a/echo, which is
+  // what flips foraging → echoed). `update` already supports this via a
+  // patch that omits `status` — no dedicated `setPeersAsked` method needed
+  // on top of it. This regression-guards that omitting `status` never
+  // touches the status column.
+  it('update with only peersAsked (status omitted) bumps peers_asked and leaves status untouched', () => {
+    const db = openDb({ path: ':memory:' })
+    const s = makeSeekStore(db)
+    s.create({ id: 'k3', kind: 'seek', topic: '找搭子' })
+    expect(s.get('k3')!.status).toBe('foraging')
+    s.update('k3', { peersAsked: 3 })
+    const r = s.get('k3')!
+    expect(r.status).toBe('foraging')   // untouched
+    expect(r.peers_asked).toBe(3)
+  })
+
   it('transitions proposed -> foraging -> cancelled via update', () => {
     const db = openDb({ path: ':memory:' })
     const s = makeSeekStore(db)
