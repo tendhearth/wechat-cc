@@ -164,7 +164,7 @@ function renderAgents(agents, list) {
 
 /**
  * Render the whole 觅食台 from live data.
- * @param {{ agents:Array<any>|null, seeks:Array<any>|null, echoes:Array<any>|null, inbound:any, mailbox:Array<any>|null }} data
+ * @param {{ agents:Array<any>|null, seeks:Array<any>|null, echoes:Array<any>|null, inbound:any, mailbox?:Array<any>|null }} data
  */
 export function renderForageDesk(data) {
   const agents = Array.isArray(data.agents) ? data.agents : []

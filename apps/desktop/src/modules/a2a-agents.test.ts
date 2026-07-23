@@ -15,7 +15,7 @@ const { invokeApi } = await import('../api.js')
 
 function fakeEl() {
   return {
-    textContent: '', innerHTML: '', hidden: false, disabled: false, title: '',
+    textContent: '', innerHTML: '', hidden: false, disabled: false, title: '', value: '',
     dataset: {} as Record<string, string>, childNodes: [] as any[],
     classList: {
       values: new Set<string>(),
