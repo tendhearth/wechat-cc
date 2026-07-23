@@ -47,4 +47,56 @@ describe('makeEnvelopeDispatch', () => {
     await expect(d.dispatch({ path: '/a2a/intent', bearer: 'b', body: {} })).resolves.toBeUndefined()
     await expect(d.dispatch({ path: '/a2a/letter', bearer: 'b', body: null })).resolves.toBeUndefined()
   })
+  it('intent envelope: bearer 验证过 → onIntent({agent, card}); 坏卡 drop', async () => {
+    const onIntent = vi.fn(async () => ({ intent_id: 'i1', match: 'yes' as const }))
+    const agent = rec('cc-s')
+    const d = makeEnvelopeDispatch({
+      registry: registry((id, b) => (id === 'cc-s' && b === 'k') ? agent : null),
+      onReveal: async () => ({ mutual: false }), onLetter: async () => ({ ok: true }), onIntent, log,
+    })
+    const card = { intent_id: 'i1', kind: 'seek' as const, topic: '找摄影搭子', expires_at: new Date(Date.now() + 60000).toISOString() }
+    await d.dispatch({ path: '/a2a/intent', bearer: 'k', body: { agent_id: 'cc-s', card } })
+    expect(onIntent).toHaveBeenCalledWith({ agent, card: expect.objectContaining({ intent_id: 'i1', topic: '找摄影搭子' }) })
+
+    onIntent.mockClear()
+    const badCard = { intent_id: 'i2', kind: 'seek' as const, expires_at: new Date(Date.now() + 60000).toISOString() }  // missing topic
+    await d.dispatch({ path: '/a2a/intent', bearer: 'k', body: { agent_id: 'cc-s', card: badCard } })
+    expect(onIntent).not.toHaveBeenCalled()
+  })
+  it('intent envelope: 坏 bearer → onIntent 不被调', async () => {
+    const onIntent = vi.fn(async () => ({ intent_id: 'i1', match: 'yes' as const }))
+    const d = makeEnvelopeDispatch({
+      registry: registry(() => null),
+      onReveal: async () => ({ mutual: false }), onLetter: async () => ({ ok: true }), onIntent, log,
+    })
+    const card = { intent_id: 'i1', kind: 'seek' as const, topic: 'x', expires_at: new Date(Date.now() + 60000).toISOString() }
+    await d.dispatch({ path: '/a2a/intent', bearer: 'bad', body: { agent_id: 'cc-s', card } })
+    expect(onIntent).not.toHaveBeenCalled()
+  })
+  it('echo envelope: bearer 验证过(against parsed.agent_id) → onEcho({agent, msg}); 坏 shape drop', async () => {
+    const onEcho = vi.fn(async () => ({ ok: true }))
+    const agent = rec('cc-s')
+    const d = makeEnvelopeDispatch({
+      registry: registry((id, b) => (id === 'cc-s' && b === 'k') ? agent : null),
+      onReveal: async () => ({ mutual: false }), onLetter: async () => ({ ok: true }), onEcho, log,
+    })
+    const msg = { agent_id: 'cc-s', intent_id: 'i1', echo: { blurb: '也爱摄影', degree: 1 } }
+    await d.dispatch({ path: '/a2a/echo', bearer: 'k', body: msg })
+    expect(onEcho).toHaveBeenCalledWith({ agent, msg: expect.objectContaining({ intent_id: 'i1' }) })
+
+    onEcho.mockClear()
+    // bad shape (missing echo.blurb) → dropped before bearer is even checked
+    await d.dispatch({ path: '/a2a/echo', bearer: 'k', body: { agent_id: 'cc-s', intent_id: 'i1', echo: { degree: 1 } } })
+    expect(onEcho).not.toHaveBeenCalled()
+  })
+  it('echo envelope: 坏 bearer → onEcho 不被调', async () => {
+    const onEcho = vi.fn(async () => ({ ok: true }))
+    const d = makeEnvelopeDispatch({
+      registry: registry(() => null),
+      onReveal: async () => ({ mutual: false }), onLetter: async () => ({ ok: true }), onEcho, log,
+    })
+    const msg = { agent_id: 'cc-s', intent_id: 'i1', echo: { blurb: 'x', degree: 1 } }
+    await d.dispatch({ path: '/a2a/echo', bearer: 'bad', body: msg })
+    expect(onEcho).not.toHaveBeenCalled()
+  })
 })

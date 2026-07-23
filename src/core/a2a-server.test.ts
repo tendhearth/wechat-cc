@@ -31,6 +31,7 @@ async function startServer(opts: {
   onIntent?: (event: import('./a2a-server').IntentEvent) => Promise<import('./a2a-intent').MatchReceipt>
   onReveal?: (event: import('./a2a-server').RevealEvent) => Promise<{ mutual: boolean; handle?: import('./penpal-crypto').PenpalHandle }>
   onLetter?: (event: import('./a2a-server').LetterEvent) => Promise<{ ok: boolean; error?: string }>
+  onEcho?: (event: import('./a2a-server').EchoEvent) => Promise<{ ok: boolean }>
 } = {}) {
   const onNotify: (event: import('./a2a-server').NotifyEvent) => Promise<void> = opts.onNotify ?? vi.fn(async () => {})
   const server = createA2AServer({
@@ -41,6 +42,7 @@ async function startServer(opts: {
     ...(opts.onIntent ? { onIntent: opts.onIntent } : {}),
     ...(opts.onReveal ? { onReveal: opts.onReveal } : {}),
     ...(opts.onLetter ? { onLetter: opts.onLetter } : {}),
+    ...(opts.onEcho ? { onEcho: opts.onEcho } : {}),
     daemonInfo: { name: 'wechat-cc', version: '0.6.x' },
   })
   await server.start()
@@ -336,6 +338,117 @@ describe('a2a-server', () => {
         expect(a.capabilities.some(c => c.name === 'intent')).toBe(true)
         expect(b.capabilities.some(c => c.name === 'intent')).toBe(false)
       } finally { await withIntent.server.stop(); await without.server.stop() }
+    })
+  })
+
+  describe('POST /a2a/echo (v2 async echo return)', () => {
+    it('runs onEcho and returns { ok: true } when authed', async () => {
+      const onEcho = vi.fn(async (_e: import('./a2a-server').EchoEvent) => ({ ok: true }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onEcho })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/echo`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({
+            agent_id: 'alpha', intent_id: 'i1',
+            echo: { blurb: '也爱摄影', degree: 1 },
+          }),
+        })
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual({ ok: true })
+        expect(onEcho).toHaveBeenCalledWith(expect.objectContaining({
+          agent: expect.objectContaining({ id: 'alpha' }),
+          msg: expect.objectContaining({ intent_id: 'i1', agent_id: 'alpha' }),
+        }))
+      } finally { await server.stop() }
+    })
+
+    it('POST /a2a/echo without Authorization → 401, onEcho not called', async () => {
+      const onEcho = vi.fn(async () => ({ ok: true }))
+      const { server, baseUrl } = await startServer({ onEcho })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/echo`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', echo: { blurb: 'x', degree: 1 } }),
+        })
+        expect(res.status).toBe(401)
+        expect(onEcho).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('POST /a2a/echo with wrong Bearer → 401, onEcho not called', async () => {
+      const onEcho = vi.fn(async () => ({ ok: true }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onEcho })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/echo`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': 'Bearer wrong-key-completely' },
+          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', echo: { blurb: 'x', degree: 1 } }),
+        })
+        expect(res.status).toBe(401)
+        expect(onEcho).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('POST /a2a/echo with body.agent_id != bearer-owning agent → 403, onEcho not called', async () => {
+      const onEcho = vi.fn(async () => ({ ok: true }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec, rec('beta')], onEcho })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/echo`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'beta', intent_id: 'i1', echo: { blurb: 'x', degree: 1 } }),
+        })
+        expect([401, 403]).toContain(res.status)
+        expect(onEcho).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('POST /a2a/echo with paused agent → 202 (silently drop), onEcho not called', async () => {
+      const onEcho = vi.fn(async () => ({ ok: true }))
+      const alphaRec = rec('alpha', { paused: true })
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onEcho })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/echo`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', echo: { blurb: 'x', degree: 1 } }),
+        })
+        expect(res.status).toBe(202)
+        expect(onEcho).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('POST /a2a/echo with a bad shape (missing echo.blurb) → 400, onEcho not called', async () => {
+      const onEcho = vi.fn(async () => ({ ok: true }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onEcho })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/echo`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', echo: { degree: 1 } }),
+        })
+        expect(res.status).toBe(400)
+        expect(onEcho).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('returns 501 when this machine is not wired for echo (no onEcho)', async () => {
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec] })  // no onEcho
+      try {
+        const res = await fetch(`${baseUrl}/a2a/echo`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', echo: { blurb: 'x', degree: 1 } }),
+        })
+        expect(res.status).toBe(501)
+      } finally { await server.stop() }
     })
   })
 

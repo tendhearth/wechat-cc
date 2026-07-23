@@ -1,10 +1,12 @@
 /**
  * mailbox-dispatch.ts — replay a decrypted envelope's {path,bearer,body} into
  * the SAME inbound handlers the HTTP routes call. Per-message auth mirrors the
- * HTTP server: reveal envelopes are verifyBearer-gated (reveal-completion legs
- * are paired W↔endpoint); letter envelopes are NOT (S↔Q strangers — the
- * sealed-box + A's channel-key E2E in onLetter is the auth). Returns discard —
- * mailbox is one-way, the row-driven reveal reconciles. See spec §3.3 / §5.
+ * HTTP server: reveal/intent/echo envelopes are verifyBearer-gated (度一 =
+ * paired friend — reveal-completion legs are paired W↔endpoint, intent/echo
+ * are the broker flow between registered agents); letter envelopes are NOT
+ * (S↔Q strangers — the sealed-box + A's channel-key E2E in onLetter is the
+ * auth). Returns discard — mailbox is one-way, the row-driven reveal/intake
+ * reconciles. See spec §3.3 / §5.
  *
  * I1 CONTRACT: the `onLetter` handed to makeEnvelopeDispatch MUST be an
  * own-channel-ONLY handler (getByMyChannelId → receiveLetter, else DROP) —
@@ -17,6 +19,7 @@
 import type { A2ARegistry } from './a2a-registry'
 import type { A2AServerOpts } from './a2a-server'
 import type { EnvelopeInner } from './mailbox-crypto'
+import { IntentCardSchema, EchoMessageSchema } from './a2a-intent'
 
 export interface EnvelopeDispatch { dispatch(inner: EnvelopeInner): Promise<void> }
 
@@ -26,6 +29,8 @@ export function makeEnvelopeDispatch(deps: {
   /** MUST be an own-channel-only handler (getByMyChannelId → receiveLetter,
    *  else DROP). NEVER pass the HTTP socialOnLetter here — see file header. */
   onLetter: A2AServerOpts['onLetter']
+  onIntent?: A2AServerOpts['onIntent']
+  onEcho?: A2AServerOpts['onEcho']
   log: (tag: string, line: string) => void
 }): EnvelopeDispatch {
   return {
@@ -66,6 +71,25 @@ export function makeEnvelopeDispatch(deps: {
           // sealed-box (only we could open the envelope) + channel-key E2E open
           // inside onLetter is the authentication. agent_id is routing metadata.
           await deps.onLetter({ agent_id: typeof body.agent_id === 'string' ? body.agent_id : 'mailbox', channel_id: body.channel_id, nonce: body.nonce, ct: body.ct, tag: body.tag })
+          return
+        }
+        if (inner.path === '/a2a/intent') {
+          if (!deps.onIntent) return
+          if (typeof body.agent_id !== 'string') return
+          const agent = deps.registry.verifyBearer(body.agent_id, inner.bearer)
+          if (!agent) { deps.log('MAILBOX', `intent drop: bearer rejected for agent_id=${body.agent_id}`); return }
+          const parsed = IntentCardSchema.safeParse(body.card)
+          if (!parsed.success) { deps.log('MAILBOX', 'intent drop: invalid card'); return }
+          await deps.onIntent({ agent, card: parsed.data })   // fast-ack receipt 丢弃 — mailbox 单向
+          return
+        }
+        if (inner.path === '/a2a/echo') {
+          if (!deps.onEcho) return
+          const parsed = EchoMessageSchema.safeParse(body)
+          if (!parsed.success) { deps.log('MAILBOX', 'echo drop: invalid shape'); return }
+          const agent = deps.registry.verifyBearer(parsed.data.agent_id, inner.bearer)
+          if (!agent) { deps.log('MAILBOX', `echo drop: bearer rejected for agent_id=${parsed.data.agent_id}`); return }
+          await deps.onEcho({ agent, msg: parsed.data })
           return
         }
         deps.log('MAILBOX', `unhandled envelope path=${inner.path} (v0 seam — not wired)`)

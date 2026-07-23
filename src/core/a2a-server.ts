@@ -20,7 +20,7 @@
 import type { A2ARegistry } from './a2a-registry'
 import type { A2AAgentRecord } from '../lib/agent-config'
 import type { ProviderId } from './conversation'
-import { A2A_PROTO_VERSION, IntentCardSchema, type IntentCard, type MatchReceipt } from './a2a-intent'
+import { A2A_PROTO_VERSION, IntentCardSchema, EchoMessageSchema, type IntentCard, type MatchReceipt, type EchoMessage } from './a2a-intent'
 
 export interface NotifyEvent {
   agent: A2AAgentRecord
@@ -63,6 +63,17 @@ export interface PairEvent {
 export interface IntentEvent {
   agent: A2AAgentRecord
   card: IntentCard
+}
+
+/**
+ * v2 async echo return (spec §1): a responder (or a relay) posts the judged
+ * result of an earlier "seek" intent back to the sender, out-of-band from
+ * the original synchronous /a2a/intent call. `agent` is the verified Bearer
+ * identity — body.agent_id is never trusted as the acting identity.
+ */
+export interface EchoEvent {
+  agent: A2AAgentRecord
+  msg: EchoMessage
 }
 
 /**
@@ -125,6 +136,8 @@ export interface A2AServerOpts {
    *  Card against the owner's derived facts and return a Match Receipt.
    *  Undefined → /a2a/intent returns 501. */
   onIntent?: (event: IntentEvent) => Promise<MatchReceipt>
+  /** v2 async echo return (spec §1). Undefined → /a2a/echo returns 501. */
+  onEcho?: (event: EchoEvent) => Promise<{ ok: boolean }>
   /** Optional. When wired, enables POST /a2a/reveal — a peer signals its owner
    *  revealed; mark my matching row + return { mutual, handle? }. Undefined → 501. */
   onReveal?: (event: RevealEvent) => Promise<{ mutual: boolean; handle?: { pubkey: string; channel_id: string; mailbox?: { addr: string; enc_pub: string; relays: string[] } } }>
@@ -459,6 +472,47 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         return new Response(JSON.stringify({ error: 'intent_failed', detail: msg }), { status: 500 })
+      }
+    }
+    if (url.pathname === '/a2a/echo') {
+      if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
+      if (!opts.onEcho) return new Response(JSON.stringify({ error: 'echo_not_supported' }), { status: 501 })
+
+      let body: { agent_id?: unknown; intent_id?: unknown; echo?: unknown }
+      try {
+        body = await req.json() as typeof body
+      } catch {
+        return new Response(JSON.stringify({ error: 'invalid_json' }), { status: 400 })
+      }
+      if (typeof body.agent_id !== 'string') return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
+      const claimedId = body.agent_id
+
+      const auth = req.headers.get('authorization')
+      if (!auth?.startsWith('Bearer ')) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'missing_bearer' })
+        return new Response(JSON.stringify({ error: 'missing_bearer' }), { status: 401 })
+      }
+      const agent = opts.registry.verifyBearer(claimedId, auth.slice('Bearer '.length).trim())
+      if (!agent) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'wrong_bearer' })
+        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
+      }
+      if (agent.id !== claimedId) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'agent_id_mismatch' })
+        return new Response(JSON.stringify({ error: 'agent_id_mismatch' }), { status: 403 })
+      }
+      if (agent.paused) return new Response(JSON.stringify({ ok: false, reason: 'paused' }), { status: 202 })
+
+      // /a2a/echo's body IS the EchoMessage at top level (agent_id lives on the
+      // schema itself) — unlike /a2a/intent's {agent_id, card} wrapper.
+      const parsed = EchoMessageSchema.safeParse(body)
+      if (!parsed.success) return new Response(JSON.stringify({ error: 'invalid_echo' }), { status: 400 })
+      try {
+        const result = await opts.onEcho({ agent, msg: parsed.data })
+        return new Response(JSON.stringify(result), { status: 200 })
+      } catch (err) {
+        const msg2 = err instanceof Error ? err.message : String(err)
+        return new Response(JSON.stringify({ error: 'echo_failed', detail: msg2 }), { status: 500 })
       }
     }
     if (url.pathname === '/a2a/pair') {
