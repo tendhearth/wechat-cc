@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createA2AServer } from './a2a-server'
 import type { A2ARegistry } from './a2a-registry'
 import type { A2AAgentRecord } from '../lib/agent-config'
+import { A2A_PROTO_VERSION } from './a2a-intent'
 
 function rec(id: string, overrides: Partial<A2AAgentRecord> = {}): A2AAgentRecord {
   return {
@@ -67,7 +68,7 @@ describe('a2a-server', () => {
     const { server, baseUrl } = await startServer({})
     try {
       const card = await (await fetch(`${baseUrl}/.well-known/agent.json`)).json() as { proto_version?: number }
-      expect(card.proto_version).toBe(1)
+      expect(card.proto_version).toBe(A2A_PROTO_VERSION)
     } finally { await server.stop() }
   })
 
