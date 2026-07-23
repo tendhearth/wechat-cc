@@ -224,9 +224,18 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       })
       const socialRunTurn: (systemPrompt: string, userPrompt: string) => Promise<string> =
         groundedRunTurn ?? (async (systemPrompt, userPrompt) => socialCheapEval(`${systemPrompt}\n\n${userPrompt}`))
+      const pluginToolCount = Object.keys(pluginMcp).length
       deps.log('BOOT', groundedRunTurn
-        ? `social: plugin-grounded judge via ${defaultProviderId} (pluginMcp only, no wechat/delegate)`
-        : `social: grounded judging unavailable for provider=${defaultProviderId} — judge falls back to cheapEval (no tools)`)
+        ? `social: plugin-grounded judge via ${defaultProviderId} (${pluginToolCount} plugin server(s), no wechat/delegate)`
+        : pluginToolCount === 0
+          // Honest signal for the fresh/dev/bench case: the adapter fits but
+          // 0 plugin tools are mounted (plugins not ready — need wxvault-
+          // decrypted facts), so grounding is impossible and the judge is
+          // BLIND (cheapEval sees only the topic text → conservatively no).
+          // This is the diagnostic that was missing when the ws bench looked
+          // "stuck" (2026-07-22).
+          ? `social: judge falls back to cheapEval — 0 plugin tools mounted (plugins not ready? needs wxvault-decrypted facts). Judging is BLIND — will conservatively return no.`
+          : `social: grounded judging unavailable for provider=${defaultProviderId} — judge falls back to cheapEval (no tools)`)
 
       const socialJudge = makeJudge({ runTurn: socialRunTurn, policy: socialPolicy })
       const answerIntent = makeAnswerIntent({ judge: socialJudge, policy: socialPolicy, cheapEval: socialCheapEval })

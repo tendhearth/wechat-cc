@@ -1861,6 +1861,40 @@ describe('bootstrap agent-social M1 wiring', () => {
     }
   })
 
+  it('claude-default daemon with NO ready plugins logs the honest BLIND-cheapEval fallback (not a false "plugin-grounded" claim) — ws-bench stall root cause', async () => {
+    // No bundled plugin dir → pluginMcp empty → grounded judge cannot ground.
+    // The boot log must say so (BLIND / cheapEval), NOT claim "plugin-grounded".
+    const base = mkdtempSync(join(tmpdir(), 'bootstrap-blind-judge-'))
+    const bundledDir = join(base, 'bundled')
+    mkdirSync(bundledDir, { recursive: true })   // exists but empty — zero plugins
+    writeFileSync(
+      join(base, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude', dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false,
+        social_enabled: true, social_disclosure_policy: '兴趣可说；住址不可',
+      }),
+    )
+    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = bundledDir
+    const logs: string[] = []
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(), stateDir: base, ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null, log: (_tag, m) => logs.push(m),
+      })
+      expect(logs.some(m => m.includes('BLIND'))).toBe(true)
+      expect(logs.some(m => m.includes('0 plugin tools mounted'))).toBe(true)
+      expect(logs.some(m => m.includes('plugin-grounded judge via'))).toBe(false)
+    } finally {
+      await boot?.a2aServer?.stop()
+      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
   it('POST /v1/social/seek/propose returns 503 when the social broker is not wired (deps.social absent)', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'internal-api-social-503-'))
     const api = createInternalApi({ stateDir, daemonPid: 1 } as any)
