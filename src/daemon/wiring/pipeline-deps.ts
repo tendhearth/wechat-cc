@@ -364,6 +364,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       log,
     },
     attachments: { materializeAttachments, inboxDir, log },
+    transcribeVoice: {
+      // ilink.voice.transcribe loads STT config internally and throws
+      // `no_stt_config` when unset — the middleware catches it (no-op).
+      transcribeVoice: (audio, mime) => ilink.voice.transcribe!(audio, mime),
+      log,
+    },
     dedup: {
       isHandled: id => dedupStore.isHandled(id),
       markHandled: id => dedupStore.markHandled(id, new Date().toISOString()),
