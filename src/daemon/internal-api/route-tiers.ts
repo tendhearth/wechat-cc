@@ -100,20 +100,22 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/daemon/restart': 'admin',
   // admin — on-demand file locate over the owner's computer (file_locate)
   'GET /v1/locate': 'admin',
-  // admin — 觅食台 P2: read-only, but exposes the owner's stored
-  // seeks/echoes (topics + peer exchanges). (The old one-shot
-  // POST /v1/social/seek this comment used to point to was deleted in P4 —
-  // see the trusted seek/propose|confirm|cancel block in the operator/agent
-  // ops section above.)
-  'GET /v1/social/seeks': 'admin',
-  'GET /v1/social/echoes': 'admin',
-  // admin — inbound on/off toggle (觅食台 P2 Task 3): writes a2a_listen in
-  // agent-config.json, the same trust surface as hand-editing the config.
-  'GET /v1/social/inbound': 'admin',
-  'POST /v1/social/inbound': 'admin',
-  // admin — async foraging spine: read the answerer's pledges (exposes
-  // stored topics/peer exchanges, same trust class as seeks/echoes above).
-  'GET /v1/social/pledges': 'admin',
+  // trusted — 觅食台 read surface + inbound toggle. DEMOTED admin→trusted
+  // 2026-07-22: the desktop's ONLY credential is the daemon-wide FILE token
+  // (= trusted; `daemon api-info` hands out the file token, and the admin
+  // operator token is route-scoped to converse/speak) — admin here 403'd
+  // every real-daemon 觅食台 read, silently rendering "社交觅食未启用"
+  // even when wired. Found by live visual acceptance; same root cause as
+  // the earlier reveal-route demotion below. Trust analysis: these expose
+  // the owner's own stored seeks/echoes/pledges to a local caller who
+  // already holds the credential that can pair, propose+confirm seeks and
+  // send letters — the read is the weaker capability. localhost-only,
+  // 0600 file token. ⚠️ RELEASE-REVIEW FLAG (surface at next dev→master).
+  'GET /v1/social/seeks': 'trusted',
+  'GET /v1/social/echoes': 'trusted',
+  'GET /v1/social/inbound': 'trusted',
+  'POST /v1/social/inbound': 'trusted',
+  'GET /v1/social/pledges': 'trusted',
   // trusted, not admin — despite living in the same "async foraging spine"
   // batch as the admin-tiered routes above. Reveal acts on an ALREADY
   // established seek/pledge (double opt-in on a match), not a new broadcast —
@@ -139,10 +141,13 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // 作用于已互揭的既有信道(同 reveal / a2a/send 类),不产生新广播或
   // 新关系;localhost-only internal-api + 0600 文件 token。顺带解锁
   // 未来的 CLI 回信入口。
-  'GET /v1/penpal/channels': 'admin',
-  'GET /v1/penpal/letters': 'admin',
+  // (2026-07-22 same-day demotion: reads were born admin copying the P2
+  // precedent — which the live acceptance above proved wrong for the
+  // desktop's trusted file token. All four are trusted now.)
+  'GET /v1/penpal/channels': 'trusted',
+  'GET /v1/penpal/letters': 'trusted',
   'POST /v1/penpal/letters': 'trusted',
-  'POST /v1/penpal/letters/read': 'admin',
+  'POST /v1/penpal/letters/read': 'trusted',
 }
 
 export function minTierFor(routeKey: string): UserTier {
