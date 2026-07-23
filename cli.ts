@@ -8,7 +8,8 @@ import { STATE_DIR } from './src/lib/config'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider, activeModel, type AgentConfig, type AgentProviderKind } from './src/lib/agent-config'
 import { analyzeDoctor, defaultDoctorDeps, printDoctor, serviceStatus, setupStatus } from './src/cli/doctor'
 import { buildServicePlan, installService, startService, stopService, uninstallService } from './src/cli/service-manager'
-import { compiledBinaryPath, compiledRepoRoot } from './src/lib/runtime-info'
+import { compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from './src/lib/runtime-info'
+import { delegateMemoryOp, type CliApiInfo } from './src/lib/cli-llm-eval'
 import {
   DoctorOutput, SetupPollOutput, SetupStatusOutput, SetupQrJsonOutput,
   ServiceStatusOutput, ServiceInstallOutput, ServiceStartOutput, ServiceStopOutput, ServiceUninstallOutput,
@@ -519,6 +520,16 @@ const sessionsListProjectsCmd = defineCommand({
     if (process.env.WECHAT_CC_DISABLE_SUMMARIZER !== '1') {
       void (async () => {
         try {
+          // Guardrail #1 (2026-07-23-daemon-owns-llm-memory-ops, Task 3): this
+          // is fire-and-forget background work, not a user-facing command, so
+          // there's no result to delegate/print — a compiled sidecar just
+          // skips the inline query() spawn and logs once. The next `list-
+          // projects` call (possibly against a running daemon) picks summaries
+          // back up; this path never had a hard freshness guarantee anyway.
+          if (isCompiledBundle()) {
+            console.error('[summarizer] skip inline refresh in compiled sidecar (daemon-owned LLM ops)')
+            return
+          }
           const { triggerStaleSummaryRefresh } = await import('./src/daemon/sessions/summarizer-runtime')
           // resolveIntrospectChatId is named for its first caller (introspect)
           // but it's actually a generic "default chat" resolver that reads
@@ -1088,6 +1099,26 @@ const memoryProfileReadCmd = defineCommand({
   },
 })
 
+// Shared by the compiled-sidecar delegation path in `memory synthesize` /
+// `memory profile generate` (guardrail #1 — see src/lib/cli-llm-eval.ts).
+// Reads STATE_DIR/internal-api-info.json (baseUrl + tokenFilePath) → token,
+// mirroring the `mode set` command's own read (line ~2242) but returning
+// null instead of exiting, since delegateMemoryOp needs a value to branch
+// on rather than a process.exit.
+async function readCliApiInfo(): Promise<CliApiInfo | null> {
+  const { existsSync, readFileSync } = await import('node:fs')
+  const infoPath = join(STATE_DIR, 'internal-api-info.json')
+  if (!existsSync(infoPath)) return null
+  try {
+    const info = JSON.parse(readFileSync(infoPath, 'utf8')) as { baseUrl?: string; tokenFilePath?: string }
+    if (!info.baseUrl || !info.tokenFilePath) return null
+    const token = readFileSync(info.tokenFilePath, 'utf8').trim()
+    return { baseUrl: info.baseUrl, token }
+  } catch {
+    return null
+  }
+}
+
 const memorySynthesizeCmd = defineCommand({
   meta: {
     name: 'synthesize',
@@ -1100,6 +1131,23 @@ const memorySynthesizeCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
+    // Guardrail #1 (2026-07-23-daemon-owns-llm-memory-ops, Task 3): a
+    // compiled sidecar never inline-spawns claude/codex for this op — it
+    // delegates to the running daemon's /v1/memory/synthesize instead,
+    // where the correct provider config lives. Must return before any of
+    // the inline sdkEval closures below are even constructed.
+    if (isCompiledBundle()) {
+      const apiInfo = await readCliApiInfo()
+      const r = await delegateMemoryOp('synthesize', { chatId: args['chat-id'] }, { readApiInfo: () => apiInfo, fetch })
+      if (args.json) { console.log(JSON.stringify(r, null, 2)); return }
+      const out = r as { ok?: boolean; error?: string; written?: { path: string; bytesWritten: number } }
+      if (out.ok === false) { console.error(`memory synthesize failed (delegated to daemon): ${out.error ?? 'unknown error'}`); process.exit(1) }
+      console.log(out.written
+        ? `已写入 ${out.written.path} (${out.written.bytesWritten}B) [via daemon]`
+        : '未写入(daemon 返回无写入结果) [via daemon]')
+      return
+    }
+
     const { readFileSync } = await import('node:fs')
 
     // ── Resolve admin chat-id (same pattern as `dialogue backfill`) ──────
@@ -1266,6 +1314,23 @@ async function runMemoryProfileGenerate(args: {
   json?: boolean
   auto?: boolean
 }) {
+  // Guardrail #1 (2026-07-23-daemon-owns-llm-memory-ops, Task 3): see the
+  // matching block in memorySynthesizeCmd.run() above — compiled sidecar
+  // delegates to the daemon's /v1/memory/profile/generate instead of
+  // inline-spawning claude/codex. chat-id resolution (admin default) is
+  // left to the daemon route (resolveAdminChatId) when omitted here.
+  if (isCompiledBundle()) {
+    const apiInfo = await readCliApiInfo()
+    const r = await delegateMemoryOp('profile-generate', { chatId: args['chat-id'] }, { readApiInfo: () => apiInfo, fetch })
+    if (args.json) { console.log(JSON.stringify(r, null, 2)); return }
+    const out = r as { ok?: boolean; error?: string; written?: { path: string; bytesWritten: number } }
+    if (out.ok === false) { console.error(`memory profile generate failed (delegated to daemon): ${out.error ?? 'unknown error'}`); process.exit(1) }
+    console.log(out.written
+      ? `已写入 ${out.written.path} (${out.written.bytesWritten}B) [via daemon]`
+      : '未写入(daemon 返回无写入结果) [via daemon]')
+    return
+  }
+
   try {
     const chatId = await resolveProfileChatId(args['chat-id'])
     const { openWechatDb } = await import('./src/lib/db')
