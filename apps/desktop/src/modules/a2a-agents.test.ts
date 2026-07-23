@@ -245,7 +245,9 @@ describe('心愿 compose → propose → preview', () => {
     ;(invokeApi as any).mockResolvedValueOnce({ ok: true, intent_id: 'i1', redacted: '【求助】想找懂老相机维修的朋友', redacted_city: '上海' })
     const { __onComposeSubmitForTest } = await import('./a2a-agents.js')
     await __onComposeSubmitForTest?.(composeEvent())
-    expect((invokeApi as any)).toHaveBeenCalledWith('POST', '/v1/social/seek/propose', { topic: '想找会修禄来福来的老师傅,预算两千', city: '上海' })
+    // 45s timeout override: the grounded judge takes ~15s cold — the default
+    // 10s invokeApi abort killed real-daemon proposes (live acceptance 07-22).
+    expect((invokeApi as any)).toHaveBeenCalledWith('POST', '/v1/social/seek/propose', { topic: '想找会修禄来福来的老师傅,预算两千', city: '上海' }, { timeoutMs: 45_000 })
     const html = el['fd-preview'].innerHTML
     expect(el['fd-preview'].hidden).toBe(false)
     expect(html).toContain('外面只会看到这个')
@@ -343,6 +345,16 @@ describe('renderForageDesk — proposed/cancelled 行', () => {
     const html = el['fd-wishes'].innerHTML
     expect(html).toContain('缺少预览文本')
     expect(html).not.toContain('禄来福来')
+  })
+
+  it('closed 心愿灰显收官,不再显示觅食中(真机验收发现 closed 落进 foraging 分支)', () => {
+    const el = installDom()
+    renderForageDesk({ agents: [], seeks: [{ ...proposedSeek, status: 'closed', topic: '周末爬山搭子' }], echoes: [], inbound: null })
+    const html = el['fd-wishes'].innerHTML
+    expect(html).toContain('已结束')
+    expect(html).toContain('周末爬山搭子')
+    expect(html).toContain('fd-cancelled')
+    expect(html).not.toContain('觅食中')
   })
 
   it('cancelled 行灰显,无操作按钮', () => {

@@ -304,6 +304,7 @@ function fdDegBar(n) {
 function renderWish(s) {
   if (s.status === 'proposed') return renderProposedWish(s)
   if (s.status === 'cancelled') return renderCancelledWish(s)
+  if (s.status === 'closed') return renderClosedWish(s)
   const kindCls = s.kind === 'fun' ? 'fd-fun' : 'fd-seek'
   const kindTxt = s.kind === 'fun' ? '朋友间小乐趣' : '求物求人'
   const echoed = s.status === 'echoed' || s.status === 'connected'
@@ -347,6 +348,16 @@ function renderCancelledWish(s) {
     `<span class="fd-kind">已取消</span>` +
     `<div class="fd-title">「${escapeHtml(s.redacted_topic || s.topic || '')}」</div>` +
     `<div class="fd-meta"><span>取消于 ${escapeHtml(fdRelTime(s.updated_at || s.created_at))}</span></div>` +
+    `</div>`
+}
+
+/** @param {any} s — 收官的心愿(seek-close)。真机验收 07-22 发现 closed
+ *  落进 foraging 分支渲染成永远的「觅食中」— 给它自己的灰显收尾。 */
+function renderClosedWish(s) {
+  return `<div class="fd-wish fd-cancelled">` +
+    `<span class="fd-kind">已结束</span>` +
+    `<div class="fd-title">${escapeHtml(s.topic || '')}</div>` +
+    `<div class="fd-meta"><span>收官于 ${escapeHtml(fdRelTime(s.updated_at || s.created_at))}</span></div>` +
     `</div>`
 }
 
@@ -640,7 +651,7 @@ async function onComposeSubmit(e) {
   if (btn) btn.disabled = true
   try {
     const r = /** @type {{ok?:boolean, intent_id?:string, redacted?:string, redacted_city?:string, reason?:string}} */ (
-      await invokeApi('POST', '/v1/social/seek/propose', city ? { topic, city } : { topic }))
+      await invokeApi('POST', '/v1/social/seek/propose', city ? { topic, city } : { topic }, { timeoutMs: 45_000 }))
     if (r?.ok) {
       renderProposePreview(r)
       if (note) { note.hidden = true; note.textContent = '' }
