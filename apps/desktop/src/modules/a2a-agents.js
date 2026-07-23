@@ -230,10 +230,17 @@ export function renderForageDesk(data) {
   }
 
   // ── ✉️ mailbox ───────────────────────────────────────────────────────
+  // 有线程展开时跳过整块重建:回信输入框里可能有未寄出的草稿,而 refresh()
+  // 会被许多无关操作触发(暂停 agent/揭晓/配对轮询…)。收起后的下一次
+  // refresh 正常重建对齐服务端。
   const mailbox = document.getElementById('fd-mailbox')
   const mbCount = document.getElementById('fd-mailbox-count')
   const chans = Array.isArray(data.mailbox) ? data.mailbox : []
-  if (mailbox) {
+  const mailThreadOpen = !!(openMailThreadEl && !openMailThreadEl.hidden)
+  if (mailbox && !mailThreadOpen) {
+    openMailThreadEl = null   // 整块重建换掉了旧节点,清引用防 stale
+  }
+  if (mailbox && !mailThreadOpen) {
     if (data.mailbox == null) {
       mailbox.innerHTML = `<div class="fd-empty">笔友信箱未启用 —— 先在命令行运行 wechat-cc social enable 并重启守护进程。</div>`
     } else if (chans.length === 0) {
@@ -242,7 +249,7 @@ export function renderForageDesk(data) {
       mailbox.innerHTML = chans.map(c => renderMailChannel(c)).join('')
     }
   }
-  if (mbCount) {
+  if (mbCount && !mailThreadOpen) {
     const totalUnread = chans.reduce((s, c) => s + (Number(c.unread) || 0), 0)
     mbCount.textContent = totalUnread ? `${totalUnread} 封未读` : ''
   }
@@ -520,8 +527,15 @@ const MAIL_FAIL_COPY = /** @type {Record<string, string>} */ ({
 
 /** @param {MouseEvent} e */
 async function onMailboxAction(e) {
-  const target = /** @type {any} */ (e.target)
+  let target = /** @type {any} */ (e.target)
   if (!target || !target.dataset) return
+  // 真实 DOM 里点击多半落在 .fd-mail-head 的子 span 上(e.target 无
+  // data-action)—— closest 走一级找到携带 action 的容器;线程气泡等
+  // 无 [data-action] 祖先的点击在这里自然滤掉。
+  if (!target.dataset.action && typeof target.closest === 'function') {
+    target = target.closest('[data-action]')
+    if (!target || !target.dataset) return
+  }
   if (target.dataset.action === 'mail-toggle') return openMailThread(target)
   if (target.dataset.action === 'mail-send') return sendMailReply(target)
 }

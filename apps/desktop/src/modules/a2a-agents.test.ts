@@ -564,4 +564,38 @@ describe('笔友信箱', () => {
     expect(note.textContent).toContain(copy)
     expect(btn.disabled).toBe(false)
   })
+
+  it('点击卡头内的子元素(span,无 data-action)也能展开线程 —— closest 走一级', async () => {
+    installDom()
+    const { card, thread } = mailCard()
+    const head = fakeEl(); head.dataset.action = 'mail-toggle'; head.dataset.id = 'ch1'
+    ;(head as any).closest = (sel: string) => sel === '.fd-mail-chan' ? card : null
+    const span = fakeEl()   // 真实浏览器里 e.target 是子 span:没有 dataset.action
+    ;(span as any).closest = (sel: string) => sel === '[data-action]' ? head : null
+    ;(invokeApi as any).mockResolvedValueOnce({ letters: [] })
+    ;(invokeApi as any).mockResolvedValue({ ok: true })
+    const { __onMailboxActionForTest } = await import('./a2a-agents.js')
+    await __onMailboxActionForTest?.({ target: span } as any)
+    expect(thread.hidden).toBe(false)
+    // 清场:收起,复位模块级 openMailThreadEl
+    await __onMailboxActionForTest?.({ target: head } as any)
+  })
+
+  it('线程展开期间 refresh 不重建信箱块(未寄出的草稿不被吞);收起后恢复重建', async () => {
+    const el = installDom()
+    const { card, thread } = mailCard()
+    const btn = fakeEl(); btn.dataset.action = 'mail-toggle'; btn.dataset.id = 'ch1'
+    ;(btn as any).closest = (sel: string) => sel === '.fd-mail-chan' ? card : null
+    ;(invokeApi as any).mockResolvedValueOnce({ letters: [] })
+    ;(invokeApi as any).mockResolvedValue({ ok: true })
+    const { __onMailboxActionForTest } = await import('./a2a-agents.js')
+    await __onMailboxActionForTest?.({ target: btn } as any)          // 展开
+    expect(thread.hidden).toBe(false)
+    el['fd-mailbox'].innerHTML = 'SENTINEL'
+    renderForageDesk({ agents: [], seeks: [], echoes: [], inbound: null, mailbox: [chan] })
+    expect(el['fd-mailbox'].innerHTML).toBe('SENTINEL')               // 跳过重建
+    await __onMailboxActionForTest?.({ target: btn } as any)          // 收起
+    renderForageDesk({ agents: [], seeks: [], echoes: [], inbound: null, mailbox: [chan] })
+    expect(el['fd-mailbox'].innerHTML).toContain('fd-mail-chan')      // 恢复重建
+  })
 })
