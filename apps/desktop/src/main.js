@@ -15,6 +15,7 @@
 // subscribers + invokes refresh from action handlers.
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
+import { invokeApi } from "./api.js"
 import { initialMode, restartButtonState, afterScanTarget } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
 import { createConversationsPoller } from "./conversations-poller.js"
@@ -123,6 +124,7 @@ const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 1000
 // in a JSDOM/happy-dom harness).
 const deps = {
   invoke,
+  invokeApi,
   formatInvokeError,
   doctorPoller,
   mock,
