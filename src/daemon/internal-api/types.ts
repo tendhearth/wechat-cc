@@ -293,6 +293,25 @@ export interface InternalApiDeps {
     list(): { file: string; tags: string[]; desc?: string }[]
     allTags(): string[]
   }
+  /**
+   * LLM 记忆操作(daemon-only, spec 2026-07-23-daemon-owns-llm-memory-ops) —
+   * synthesize/generateProfile, late-bound by main.ts's `setMemory()` after
+   * bootstrap builds the coordinator + provider registry (mirrors `social`/
+   * `pairing` above). undefined ⇒ POST /v1/memory/{synthesize,profile/generate}
+   * 503.
+   *
+   * Named `memoryLlm` (NOT `memory`) — `memory` above is already the sandbox
+   * MemoryFS backing memory_read/write/list; a distinct field avoids
+   * colliding with that unrelated, pre-existing dep.
+   */
+  memoryLlm?: import('../memory-llm-ops').MemoryLlmOps
+  /**
+   * Resolves the default admin chat_id (access.json's single admin) when a
+   * memory route's request body omits `chat_id`. Wired eagerly in main.ts
+   * (not late-bound — it only needs loadAccess + loadCompanionConfig, both
+   * available before bootstrap runs).
+   */
+  resolveAdminChatId?: () => string | null
 }
 
 export interface InternalApi {
@@ -342,6 +361,13 @@ export interface InternalApi {
    * and POST /v1/pair/accept return 503 until this is called.
    */
   setPairing(pairing: NonNullable<InternalApiDeps['pairing']>): void
+  /**
+   * Late-bind the LLM memory ops (spec 2026-07-23-daemon-owns-llm-memory-ops)
+   * after bootstrap has constructed the coordinator + provider registry.
+   * POST /v1/memory/{synthesize,profile/generate} return 503 until this is
+   * called.
+   */
+  setMemory(memory: NonNullable<InternalApiDeps['memoryLlm']>): void
   /** Mint an env-only per-session token granting `tier`, keyed by `sessionKey`
    *  (`provider/alias/chatId`). The daemon injects it into that session's MCP
    *  children; the route layer resolves the tier from it. */

@@ -8,8 +8,9 @@ import { LifecycleSet, wireRef } from '../lib/lifecycle'
 import { log } from '../lib/log'
 import { dedupeAccountsByUserId } from '../lib/dedupe-accounts'
 import { loadAccess, AccessConfigCorruptError } from '../lib/access'
-import { buildBootstrap } from './bootstrap'
+import { buildBootstrap, resolveAdminChatId } from './bootstrap'
 import { makeMemoryFS } from './memory/fs-api'
+import { makeMemoryLlmOps } from './memory-llm-ops'
 import { CORE_MEMORY_MAX_CHARS, KNOWLEDGE_MEMORY_MAX_CHARS } from '../core/prompt-builder'
 import { makeConversationStore } from '../core/conversation-store'
 import { makeTurnRecordStore } from '../core/turn-record-store'
@@ -213,6 +214,13 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         setTimeout(() => { void shutdown().finally(() => process.exit(0)) }, 500)
       },
       log: (t, l) => log(t, l),
+      // LLM memory routes' chat_id default (spec 2026-07-23-daemon-owns-llm-
+      // memory-ops): access.json's single admin. Wired eagerly (not late-
+      // bound) — it only needs loadAccess + loadCompanionConfig, both
+      // available before bootstrap runs. No initiatingChatId (null) since
+      // this isn't scoped to any one session — mirrors the CLI's own
+      // admin-resolution posture.
+      resolveAdminChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null),
     })
     lc.register(internalApi)
     // 2. bootstrap composes provider registry / session manager / coordinator
@@ -295,6 +303,14 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // Wire the 配对码 engine (spec §7) — only present when mailbox_relays is
     // configured. So POST /v1/pair/start + /v1/pair/accept work when wired.
     if (boot.pairing) internalApi.setPairing(boot.pairing)
+    // Wire the daemon-owned LLM memory ops (spec 2026-07-23-daemon-owns-llm-
+    // memory-ops, Task 1's makeMemoryLlmOps) now that the coordinator +
+    // provider registry are available. So POST /v1/memory/{synthesize,
+    // profile/generate} work — this is now the ONLY place LLM memory ops
+    // run (never the compiled CLI sidecar).
+    internalApi.setMemory(makeMemoryLlmOps({
+      stateDir, db, getMode: (c) => boot.coordinator.getMode(c), registry: boot.registry,
+    }))
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({
       stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,

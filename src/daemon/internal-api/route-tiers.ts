@@ -149,6 +149,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/penpal/letters': 'trusted',
   'POST /v1/penpal/letters/read': 'trusted',
   'POST /v1/penpal/letters/resend': 'trusted',
+  // LLM 记忆操作(spec 2026-07-23-daemon-owns-llm-memory-ops)。trusted:桌面/CLI
+  // 唯一凭据是 0600 文件 token;localhost、动主人自己的记忆、烧一次 LLM。
+  // ⚠️ RELEASE-REVIEW FLAG(下次 dev→master surface)。
+  'POST /v1/memory/synthesize': 'trusted',
+  'POST /v1/memory/profile/generate': 'trusted',
 }
 
 export function minTierFor(routeKey: string): UserTier {
