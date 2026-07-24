@@ -317,6 +317,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setPairing(pairing) {
       deps.pairing = pairing
     },
+    setMemory(memory) {
+      deps.memoryLlm = memory
+    },
     mintSessionToken(tier: UserTier, sessionKey: string) {
       return registry.mint(tier, sessionKey)
     },

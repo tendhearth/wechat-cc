@@ -54,6 +54,15 @@ jobs:
       - name: Build log-viewer.ts
         run: bun build log-viewer.ts --target=node --outfile=dist/log-viewer.js
 
+      - name: Compiled-sidecar smoke
+        # Proves guardrail #1 (compiled sidecar delegates LLM memory ops to
+        # the daemon instead of inline-spawning claude, which crashes under
+        # bunfs) against a real `bun build --compile` artifact, not just
+        # source-mode unit tests. Linux-only to keep matrix parallelism cheap
+        # — the guardrail logic is platform-independent.
+        if: matrix.os == 'ubuntu-latest'
+        run: bun scripts/smoke-compiled-sidecar.ts
+
       - name: Run tests
         # `bun run test` invokes `bun --bun vitest run` per package.json
         # (PR7 — vitest needs Bun's runtime to resolve `bun:sqlite`).

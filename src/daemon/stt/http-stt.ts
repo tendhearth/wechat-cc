@@ -8,6 +8,14 @@ export interface HttpSTTProviderOptions {
   model: string
   /** Optional. Omit for a local/LAN gateway; required for real OpenAI. */
   apiKey?: string
+  /** Request timeout (ms). Bounds the fetch so a wedged/hung whisper server
+   *  can NEVER stall the serial per-account inbound pipeline forever — this
+   *  call sits inline BEFORE mw-dispatch's per-turn watchdog. On timeout the
+   *  fetch aborts → throws → the caller's fail-closed path (leave text +
+   *  attachment untouched) runs, exactly like any other error. Default 30s
+   *  (whisper large-v3-turbo on a long clip can take several seconds; longer
+   *  than the 10s TTS bound). */
+  timeoutMs?: number
 }
 
 export interface HttpSTTProviderDeps {
@@ -22,6 +30,7 @@ function reasonFor(detail: string): string {
     : status === '404' ? 'endpoint not found (check base_url)'
     : status === '429' ? 'rate limited'
     : /^5\d\d/.test(status ?? '') ? 'stt service error'
+    : /timed out|timeout|aborted/i.test(detail) ? 'timed out (whisper server too slow / unreachable)'
     : /ECONNREFUSED|fetch failed/i.test(detail) ? 'cannot connect (is the whisper server running?)'
     : 'unknown'
 }
@@ -39,7 +48,9 @@ export function makeHttpSTTProvider(opts: HttpSTTProviderOptions, deps?: HttpSTT
     const headers: Record<string, string> = {}
     if (opts.apiKey) headers['Authorization'] = `Bearer ${opts.apiKey}`
     // NB: do NOT set Content-Type — fetch sets the multipart boundary itself.
-    const res = await doFetch(opts.baseUrl, { method: 'POST', headers, body: form })
+    // Bounded so a hung whisper server aborts instead of stalling the serial
+    // per-account inbound pipeline (this runs before mw-dispatch's watchdog).
+    const res = await doFetch(opts.baseUrl, { method: 'POST', headers, body: form, signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000) })
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       throw new Error(`HTTP STT ${res.status}: ${body.slice(0, 200)}`)

@@ -64,6 +64,11 @@ describe('route-tiers', () => {
     expect(minTierFor('POST /v1/social/inbound')).toBe('trusted')
   })
 
+  it('memory LLM 路由 trusted', () => {
+    expect(minTierFor('POST /v1/memory/synthesize')).toBe('trusted')
+    expect(minTierFor('POST /v1/memory/profile/generate')).toBe('trusted')
+  })
+
   it('every registered route has an explicit min tier (no accidental default-deny)', () => {
     const deps = { stateDir: '/tmp', daemonPid: 1 } as unknown as InternalApiDeps
     const routes = makeRoutes({ deps, getDelegate: () => null, maybePrefix: (_c, t) => t })

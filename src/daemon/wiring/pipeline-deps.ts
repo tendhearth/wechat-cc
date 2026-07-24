@@ -38,6 +38,7 @@ import { materializeAttachments } from '../media'
 import { loadGuardConfig } from '../guard/store'
 import { makeFireMilestonesFor, makeRecordInbound, makeMaybeWriteWelcomeObservation } from './side-effects'
 import { makeMessagesStore } from '../../lib/messages-store'
+import { makeMemoryLlmOps } from '../memory-llm-ops'
 import { makeDedupStore } from '../../lib/dedup-store'
 import type { YiHub, YiDispatch } from '../../core/yi-hub'
 import type { ExecResult } from '../../core/a2a-server'
@@ -186,6 +187,16 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const recordInbound = makeRecordInbound({ stateDir, db })
   const messagesStore = makeMessagesStore(db)
   const dedupStore = makeDedupStore(db)
+  // Shared LLM-backed memory ops (overview synthesis + profile generation),
+  // wired with the daemon's OWN provider registry/coordinator so both the
+  // WeChat admin-command path (below) and the internal-api routes the
+  // desktop calls resolve cheapEval identically. Built once and reused.
+  const memoryLlmOps = makeMemoryLlmOps({
+    stateDir,
+    db,
+    getMode: (cid) => boot.coordinator.getMode(cid),
+    registry: boot.registry,
+  })
   const maybeWriteWelcomeObservation = makeMaybeWriteWelcomeObservation({
     stateDir,
     db,
@@ -216,19 +227,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     getBotName,
     setBotName,
     botNameFallback: (cid) => botNameFromModeFallback(boot.coordinator.getMode(cid)),
-    synthesizeMemory: async (adminChatId) => {
-      const { synthesizeOverview } = await import('../../lib/memory-synthesis')
-      const { makeLifeStoresReader } = await import('../life-stores')
-      // Follow the admin conversation's provider (decided design); fall back
-      // to the registry's cheapest eval when the mode isn't solo / unknown.
-      const mode = boot.coordinator.getMode(adminChatId)
-      const provider = mode && mode.kind === 'solo' ? mode.provider : undefined
-      const cheapEval = (provider ? boot.registry.get(provider)?.provider.cheapEval : null) ?? boot.registry.getCheapEval()
-      if (!cheapEval) throw new Error('no LLM provider available for synthesis')
-      // Bridge the daemon db → life stores so the overview also folds in the
-      // life-side memory (kept on the daemon side of the cli/daemon boundary).
-      return synthesizeOverview({ stateDir, adminChatId, sdkEval: (p) => cheapEval(p), lifeStores: makeLifeStoresReader(db, stateDir), includeFileSurvey: true })
-    },
+    // Follows the admin conversation's provider (decided design); falls back
+    // to the registry's cheapest eval when the mode isn't solo / unknown.
+    // Delegates to the shared factory (memory-llm-ops.ts) so this path and
+    // the internal-api routes the desktop calls resolve cheapEval identically.
+    synthesizeMemory: (adminChatId) => memoryLlmOps.synthesize(adminChatId),
     // Read back the synthesized overview so the admin can see what the bot
     // understands about them ("看记忆" / "你对我的理解" from WeChat).
     readOverview: async (adminChatId) => {
@@ -364,6 +367,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       log,
     },
     attachments: { materializeAttachments, inboxDir, log },
+    transcribeVoice: {
+      // ilink.voice.transcribe loads STT config internally and throws
+      // `no_stt_config` when unset — the middleware catches it (no-op).
+      transcribeVoice: (audio, mime) => ilink.voice.transcribe!(audio, mime),
+      log,
+    },
     dedup: {
       isHandled: id => dedupStore.isHandled(id),
       markHandled: id => dedupStore.markHandled(id, new Date().toISOString()),

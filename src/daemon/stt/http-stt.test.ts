@@ -55,4 +55,21 @@ describe('makeHttpSTTProvider', () => {
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.reason).toMatch(/unauthorized/)
   })
+
+  it('passes an AbortSignal so a hung whisper server cannot stall the inbound pipeline forever', async () => {
+    let seenSignal: AbortSignal | undefined
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => { seenSignal = init.signal as AbortSignal | undefined; return okResponse('ok') })
+    const p = makeHttpSTTProvider({ baseUrl: 'http://vps', model: 'm' }, { fetch: fetchMock as unknown as typeof fetch })
+    await p.transcribe(Buffer.from('a'), 'audio/wav')
+    expect(seenSignal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('a timed-out fetch maps to a "timed out" reason via test()', async () => {
+    const p = makeHttpSTTProvider({ baseUrl: 'http://vps', model: 'm', timeoutMs: 5 }, {
+      fetch: (async () => { const e = new Error('The operation timed out.'); e.name = 'TimeoutError'; throw e }) as unknown as typeof fetch,
+    })
+    const r = await p.test()
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toMatch(/timed out/)
+  })
 })
