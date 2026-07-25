@@ -102,6 +102,17 @@ function buildClaudeJudgeProvider(deps: GroundedJudgeDeps): AgentProvider | null
 }
 
 export function makeGroundedJudgeRunTurn(deps: GroundedJudgeDeps): JudgeRunTurn | null {
+  // A plugins-ONLY judge with zero plugin tools is structurally blind — it
+  // cannot read the owner's wx* facts, so it spawns a full (≈15-26s) agent
+  // session that can only conservatively return `no`, strictly worse than the
+  // cheapEval fallback (same blind result, one cheap call). On a fresh/dev/
+  // bench box the bundled wx plugins default enabled but aren't READY (their
+  // healthcheck needs wxvault-decrypted output), so pluginMcp is empty here.
+  // Return null so the caller falls back to cheapEval and logs it honestly.
+  // (ws-bench "judge stall" root cause, 2026-07-22 — it never stalled; it
+  // completed with match:no because it had no wx tools, and the boot log
+  // falsely claimed "plugin-grounded".)
+  if (Object.keys(deps.pluginMcp).length === 0) return null
   let provider: AgentProvider | null = null
   if (deps.providerId === 'openai') provider = buildOpenaiJudgeProvider(deps)
   else if (deps.providerId === 'claude') provider = buildClaudeJudgeProvider(deps)

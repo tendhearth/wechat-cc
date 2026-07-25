@@ -8,8 +8,9 @@ import { LifecycleSet, wireRef } from '../lib/lifecycle'
 import { log } from '../lib/log'
 import { dedupeAccountsByUserId } from '../lib/dedupe-accounts'
 import { loadAccess, AccessConfigCorruptError } from '../lib/access'
-import { buildBootstrap } from './bootstrap'
+import { buildBootstrap, resolveAdminChatId } from './bootstrap'
 import { makeMemoryFS } from './memory/fs-api'
+import { makeMemoryLlmOps } from './memory-llm-ops'
 import { CORE_MEMORY_MAX_CHARS, KNOWLEDGE_MEMORY_MAX_CHARS } from '../core/prompt-builder'
 import { makeConversationStore } from '../core/conversation-store'
 import { makeTurnRecordStore } from '../core/turn-record-store'
@@ -21,6 +22,7 @@ import { registerGuard } from './guard/lifecycle'
 import { registerPolling } from './polling-lifecycle'
 import { registerSessions } from './sessions-lifecycle'
 import { registerIlink } from './ilink-lifecycle'
+import { registerMailboxPoller } from './bootstrap/wire-mailbox'
 import { buildInboundPipeline } from './inbound/build'
 import { runStartupSweeps } from './startup-sweeps'
 import { wireMain } from './wiring'
@@ -151,6 +153,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     if (didStartup) { try { await lc.stopAll() } catch { /* logged by lc */ } }
     // Stop A2A server if it was started (a2a_listen was configured).
     try { await bootRef?.a2aServer?.stop() } catch (err) { log('A2A', `server stop error: ${err instanceof Error ? err.message : String(err)}`) }
+    // Cancel any in-flight pairing-code poller (spec §7) if boot.pairing was
+    // wired (mailbox_relays configured) — mirrors the a2aServer stop above.
+    // Undefined/no active code ⇒ a clean no-op (PairingEngine.stop() is
+    // itself a no-op when nothing is active).
+    try { bootRef?.pairing?.stop() } catch (err) { log('PAIR', `stop error: ${err instanceof Error ? err.message : String(err)}`) }
     try { db.close() } catch (err) { console.error('db close failed:', err) }
     releaseInstanceLock(PID_PATH)
   }
@@ -208,6 +215,13 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         setTimeout(() => { void shutdown().finally(() => process.exit(0)) }, 500)
       },
       log: (t, l) => log(t, l),
+      // LLM memory routes' chat_id default (spec 2026-07-23-daemon-owns-llm-
+      // memory-ops): access.json's single admin. Wired eagerly (not late-
+      // bound) — it only needs loadAccess + loadCompanionConfig, both
+      // available before bootstrap runs. No initiatingChatId (null) since
+      // this isn't scoped to any one session — mirrors the CLI's own
+      // admin-resolution posture.
+      resolveAdminChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null),
     })
     lc.register(internalApi)
     // 2. bootstrap composes provider registry / session manager / coordinator
@@ -285,7 +299,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setA2A(boot.a2aDeps)
     // Wire the agent-social M1 broker (T7b-core) — only present when
     // social_enabled + social_disclosure_policy are both configured. So
-    // POST /v1/social/seek works when the feature is on.
+    // POST /v1/social/seek/{propose,confirm,cancel} work when the feature is on.
     if (boot.social) internalApi.setSocial(boot.social)
     // Customer Review is optional: a missing/unready wxvault or eval provider
     // leaves the daemon healthy and its owner-only routes return 503.
@@ -300,6 +314,17 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       internalApi.setCustomerReview(customerReview.service)
       lc.register(customerReview)
     }
+    // Wire the 配对码 engine (spec §7) — only present when mailbox_relays is
+    // configured. So POST /v1/pair/start + /v1/pair/accept work when wired.
+    if (boot.pairing) internalApi.setPairing(boot.pairing)
+    // Wire the daemon-owned LLM memory ops (spec 2026-07-23-daemon-owns-llm-
+    // memory-ops, Task 1's makeMemoryLlmOps) now that the coordinator +
+    // provider registry are available. So POST /v1/memory/{synthesize,
+    // profile/generate} work — this is now the ONLY place LLM memory ops
+    // run (never the compiled CLI sidecar).
+    internalApi.setMemory(makeMemoryLlmOps({
+      stateDir, db, getMode: (c) => boot.coordinator.getMode(c), registry: boot.registry,
+    }))
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({
       stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,
@@ -329,6 +354,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     lc.register(registerIlink(wired.ilinkDeps))
     const pollingLc = registerPolling({ ...wired.pollingDeps, runPipeline: pipeline })
     wireRef(wired.refs.polling, pollingLc); lc.register(pollingLc); pollingLcRef = pollingLc
+    // Content-blind mailbox transport (Task 8) — mounted only when bootstrap
+    // produced mailboxPollerDeps (social_enabled + at least one configured
+    // mailbox_relays entry + a live onMailboxLetter). Absent ⇒ no poll timer,
+    // no relay traffic — same "undefined ⇒ fully inert" posture as every
+    // other optional companion/social wiring above.
+    if (boot.mailboxPollerDeps) lc.register(registerMailboxPoller(boot.mailboxPollerDeps))
     // 5. one-shot startup sweeps — fire-and-forget
     runStartupSweeps(wired.startupDeps)
     const modeStr = dangerously ? 'mode=dangerouslySkipPermissions=true (no WeChat permission prompts will fire)' : 'mode=strict (Phase 1 permission relay active)'

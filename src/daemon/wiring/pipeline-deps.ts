@@ -25,6 +25,10 @@ import type { CareLedger } from '../companion/care-ledger'
 import type { ReplySinks } from '../reply-sinks'
 import { loadCompanionConfig } from '../companion/config'
 import type { InboundMsg } from '../../core/prompt-format'
+import { parseRevealCommand } from '../../core/reveal-command'
+import { parseLetterCommand } from '../../core/penpal-letter-command'
+import { parsePairCommand } from '../../core/pair-command'
+import { parseSeekCommand, resolveSeekRef } from '../../core/seek-command'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider } from '../../lib/agent-config'
@@ -34,6 +38,7 @@ import { materializeAttachments } from '../media'
 import { loadGuardConfig } from '../guard/store'
 import { makeFireMilestonesFor, makeRecordInbound, makeMaybeWriteWelcomeObservation } from './side-effects'
 import { makeMessagesStore } from '../../lib/messages-store'
+import { makeMemoryLlmOps } from '../memory-llm-ops'
 import { makeDedupStore } from '../../lib/dedup-store'
 import type { YiHub, YiDispatch } from '../../core/yi-hub'
 import type { ExecResult } from '../../core/a2a-server'
@@ -182,6 +187,16 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const recordInbound = makeRecordInbound({ stateDir, db })
   const messagesStore = makeMessagesStore(db)
   const dedupStore = makeDedupStore(db)
+  // Shared LLM-backed memory ops (overview synthesis + profile generation),
+  // wired with the daemon's OWN provider registry/coordinator so both the
+  // WeChat admin-command path (below) and the internal-api routes the
+  // desktop calls resolve cheapEval identically. Built once and reused.
+  const memoryLlmOps = makeMemoryLlmOps({
+    stateDir,
+    db,
+    getMode: (cid) => boot.coordinator.getMode(cid),
+    registry: boot.registry,
+  })
   const maybeWriteWelcomeObservation = makeMaybeWriteWelcomeObservation({
     stateDir,
     db,
@@ -212,19 +227,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     getBotName,
     setBotName,
     botNameFallback: (cid) => botNameFromModeFallback(boot.coordinator.getMode(cid)),
-    synthesizeMemory: async (adminChatId) => {
-      const { synthesizeOverview } = await import('../../lib/memory-synthesis')
-      const { makeLifeStoresReader } = await import('../life-stores')
-      // Follow the admin conversation's provider (decided design); fall back
-      // to the registry's cheapest eval when the mode isn't solo / unknown.
-      const mode = boot.coordinator.getMode(adminChatId)
-      const provider = mode && mode.kind === 'solo' ? mode.provider : undefined
-      const cheapEval = (provider ? boot.registry.get(provider)?.provider.cheapEval : null) ?? boot.registry.getCheapEval()
-      if (!cheapEval) throw new Error('no LLM provider available for synthesis')
-      // Bridge the daemon db → life stores so the overview also folds in the
-      // life-side memory (kept on the daemon side of the cli/daemon boundary).
-      return synthesizeOverview({ stateDir, adminChatId, sdkEval: (p) => cheapEval(p), lifeStores: makeLifeStoresReader(db, stateDir), includeFileSurvey: true })
-    },
+    // Follows the admin conversation's provider (decided design); falls back
+    // to the registry's cheapest eval when the mode isn't solo / unknown.
+    // Delegates to the shared factory (memory-llm-ops.ts) so this path and
+    // the internal-api routes the desktop calls resolve cheapEval identically.
+    synthesizeMemory: (adminChatId) => memoryLlmOps.synthesize(adminChatId),
     // Read back the synthesized overview so the admin can see what the bot
     // understands about them ("看记忆" / "你对我的理解" from WeChat).
     readOverview: async (adminChatId) => {
@@ -239,7 +246,13 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     delegateToHand: async (handName, task) => {
       const a2a = boot.a2aDeps
       if (!a2a) return { ok: false as const, reason: 'A2A 未启用(agent-config 没配 a2a_listen / 没注册手)' }
-      const selfId = process.env.WECHAT_A2A_SELF_ID || 'wechat-cc'
+      // T2 review finding (split identity) — this used to independently
+      // resolve `process.env.WECHAT_A2A_SELF_ID || 'wechat-cc'`, so a
+      // slug-minting daemon (spec §2) broadcast one identity via
+      // wireSocial/wirePairing and a DIFFERENT ('wechat-cc') identity here.
+      // boot.selfId is resolved exactly once at bootstrap and shared by
+      // every outbound seam — see Bootstrap['selfId']'s doc comment.
+      const selfId = boot.selfId
       const timeoutMs = Number(process.env.WECHAT_A2A_EXEC_TIMEOUT_MS) || 300_000
       // Stub hub: when Part B hasn't wired yiHub yet, ws hands fall back to
       // a graceful offline error rather than crashing.
@@ -354,6 +367,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       log,
     },
     attachments: { materializeAttachments, inboxDir, log },
+    transcribeVoice: {
+      // ilink.voice.transcribe loads STT config internally and throws
+      // `no_stt_config` when unset — the middleware catches it (no-op).
+      transcribeVoice: (audio, mime) => ilink.voice.transcribe!(audio, mime),
+      log,
+    },
     dedup: {
       isHandled: id => dedupStore.isHandled(id),
       markHandled: id => dedupStore.markHandled(id, new Date().toISOString()),
@@ -376,22 +395,115 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     welcome: { maybeWriteWelcomeObservation, log },
     dispatch: {
       coordinator: {
-        // Agent-social M1 (T7b-2) — before running a normal turn, check
-        // whether this inbound is the operator's own chat AND there's a
-        // pending confirm awaiting their yes/no (asked out-of-band by
-        // confirmWithOwner via boot.social.pendingConfirms.ask, wired in
-        // bootstrap/index.ts's T7b-core social block). If so, try to
-        // consume it as a confirm answer instead of dispatching a normal
-        // agent turn — a clear yes/no settles the pending broker Promise
-        // directly (see pending-confirm.ts's resolveByOwner); the reveal/
-        // opener that follows is driven entirely by the broker, so there's
-        // nothing more to send from here. An `'unclear'` verdict leaves the
-        // pending confirm untouched and falls through to a normal turn, so
-        // a genuine question from the operator is never swallowed.
-        dispatch: (msg) => {
-          if (boot.social && isAdmin(msg.chatId) && boot.social.pendingConfirms.hasPending(msg.chatId)) {
-            const r = boot.social.pendingConfirms.resolveByOwner(msg.chatId, msg.text)
-            if (r !== 'unclear') return Promise.resolve()
+        // Async foraging spine — an operator "揭晓 <id>" reply triggers the
+        // reveal flow (their action IS their consent) instead of dispatching a
+        // normal agent turn. Try the echo side first; a null lookup means the
+        // id is a pledge (I answered THEIR wish), so fall back to revealPledge.
+        // Anything that isn't a reveal command falls through to a normal turn.
+        // T9 — when BOTH lookups come back null (typo / expired / already-
+        // connected id), the operator previously got silence; now a gentle
+        // one-line "not found" reply so a mistyped id doesn't look like the
+        // bot ignored them.
+        dispatch: async (msg) => {
+          if (boot.social && isAdmin(msg.chatId)) {
+            const cmd = parseRevealCommand(msg.text)
+            if (cmd) {
+              const echoOutcome = await boot.social.revealer.revealEcho(cmd.id)
+              const outcome = echoOutcome === null ? await boot.social.revealer.revealPledge(cmd.id) : echoOutcome
+              if (outcome === null && boot.sendAssistantText) {
+                void boot.sendAssistantText(msg.chatId, `没找到「${cmd.id}」这条,可能已过期或已牵线。`)
+              }
+              return
+            }
+          }
+          // Pen-pal outbound reply (Task 10) — the owner's "回信 <channel>
+          // <text>" WeChat reply sends a letter on that open channel instead
+          // of dispatching a normal agent turn. Guarded on boot.penpal being
+          // wired (Task 11); until then this block is inert and every
+          // message — including a well-formed "回信" — falls through to a
+          // normal turn, same as boot.social above.
+          if (boot.penpal && isAdmin(msg.chatId)) {
+            const letterCmd = parseLetterCommand(msg.text)
+            if (letterCmd) {
+              const r = await boot.penpal.sendLetter(letterCmd.channel, letterCmd.text)
+              if (!r.ok && boot.sendAssistantText) {
+                void boot.sendAssistantText(msg.chatId, '没找到这条笔友通道 / 发送失败。')
+              }
+              return
+            }
+          }
+          // 配对 (spec §7) — admin-gated, deterministic parse, mirrors 揭晓/回信.
+          // Inert (falls through to a normal turn) until boot.pairing is wired
+          // (Task 6, i.e. mailbox_relays configured). start()/accept() are
+          // SYNC calls the caller is waiting on — this seam renders EVERY
+          // outcome itself (success + all failure reasons). boot.pairing's
+          // own `notify` dep is reserved for the initiator's ASYNC poller
+          // (card found later / TTL expiry) — see pairing.ts's notify doc
+          // comment; it does NOT fire for anything start()/accept() resolve
+          // synchronously, so there is no double-message here.
+          if (boot.pairing && isAdmin(msg.chatId)) {
+            const pair = parsePairCommand(msg.text)
+            if (pair) {
+              if (pair.kind === 'start') {
+                const r = await boot.pairing.start()
+                if (boot.sendAssistantText) {
+                  const text = r.ok
+                    ? `配对码 ${r.code},发给朋友,10 分钟内有效`
+                    : '中继暂时够不着,配对码没能生成——稍后再试'
+                  void boot.sendAssistantText(msg.chatId, text)
+                }
+              } else {
+                const r = await boot.pairing.accept(pair.code)
+                if (boot.sendAssistantText) {
+                  const text = r.ok
+                    ? `和 ${r.peer.name} 的 bot 连上了 ✓ 现在可以互相觅食/写信了`
+                    : r.reason === 'self_pair'
+                      ? '这是你自己的码,换个朋友的码试试'
+                      : r.reason === 'id_conflict'
+                        ? '对方 bot 使用旧版共享身份且与你已有的朋友撞名——请让对方升级出唯一身份后重试'
+                        : r.reason === 'relay_drop_failed'
+                          ? '名片没能投到中继,配对没完成——请重试'
+                          : '码不对或已过期,让朋友重新生成一个'
+                  void boot.sendAssistantText(msg.chatId, text)
+                }
+              }
+              return
+            }
+          }
+          // 派 / 取消 (P4 派心愿) — admin-gated confirm/cancel of a `proposed`
+          // social_seek row, mirrors the 揭晓/配对 blocks above (renders every
+          // outcome itself, no engine notify). `派` is ALREADY the delegate
+          // imperative (admin-commands.ts's DELEGATE_RE: 让/派 <hand> 执行/跑
+          // <task>) — parseSeekCommand's id-charset guard ([0-9a-fA-F-]+)
+          // keeps a delegate command like "派 家里 跑 拉日志" from ever
+          // matching here (belt); makeMwAdmin already runs before this
+          // dispatch seam in the wired pipeline and consumes DELEGATE_RE
+          // first (suspenders). Inert (falls through) until boot.social is
+          // wired, same posture as the 揭晓/配对 blocks.
+          if (boot.social && isAdmin(msg.chatId)) {
+            const cmd = parseSeekCommand(msg.text)
+            if (cmd) {
+              const res = resolveSeekRef(cmd.ref, boot.social.seekStore.list())
+              if (!res.ok) {
+                if (boot.sendAssistantText) {
+                  const text = res.reason === 'ambiguous'
+                    ? '有多条心愿匹配这个开头,请给更长的编号(≥6 位)'
+                    : '这条心愿不存在或已处理'
+                  void boot.sendAssistantText(msg.chatId, text)
+                }
+                return
+              }
+              if (cmd.kind === 'confirm') {
+                const r = await boot.social.broker.confirmSeek(res.id)
+                if (boot.sendAssistantText) {
+                  void boot.sendAssistantText(msg.chatId, r.ok ? '已发出,觅食中…(稍后回来看回声)' : '这条心愿不存在或已处理')
+                }
+              } else {
+                await boot.social.broker.cancelSeek(res.id)
+                if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, '已作废')
+              }
+              return
+            }
           }
           return boot.coordinator.dispatch(msg)
         },

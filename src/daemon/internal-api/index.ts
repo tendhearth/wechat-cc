@@ -318,6 +318,12 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setSocial(social) {
       deps.social = social
     },
+    setPairing(pairing) {
+      deps.pairing = pairing
+    },
+    setMemory(memory) {
+      deps.memoryLlm = memory
+    },
     mintSessionToken(tier: UserTier, sessionKey: string) {
       return registry.mint(tier, sessionKey)
     },

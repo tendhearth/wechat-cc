@@ -39,6 +39,7 @@ function fakeDeps(over: Partial<{
       log,
     },
     attachments: { materializeAttachments: async () => {}, inboxDir: '/tmp', log },
+    transcribeVoice: { log },
     messages: { append: async () => 1, log },
     activity: { recordInbound: activity, log },
     milestone: { fireMilestonesFor: milestone, log },

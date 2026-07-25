@@ -5,6 +5,7 @@ const card = {
   intent_id: 'i1',
   kind: 'seek' as const,
   topic: '找摄影搭子',
+  hop: 1,
   expires_at: new Date(Date.now() + 60_000).toISOString(),
 }
 

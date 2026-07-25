@@ -17,6 +17,9 @@ import type { UserTier } from '../../core/user-tier'
 import { makeEventsStore } from '../events/store'
 import { a2aRoutes } from './routes-a2a'
 import { socialRoutes } from './routes-social'
+import { pairRoutes } from './routes-pair'
+import { memoryRoutes } from './routes-memory'
+import { penpalRoutes } from './routes-penpal'
 import { pluginRoutes } from './routes-plugins'
 import { licenseRoutes } from './routes-license'
 import { daemonControlRoutes } from './routes-daemon-control'
@@ -690,6 +693,9 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     //    / restart / turns) live in sibling files — spread in here. ──────────
     ...a2aRoutes(deps),
     ...socialRoutes(deps),
+    ...pairRoutes(deps),
+    ...memoryRoutes(deps),
+    ...penpalRoutes(deps),
     ...pluginRoutes(deps),
     ...licenseRoutes(deps),
     ...daemonControlRoutes(deps),

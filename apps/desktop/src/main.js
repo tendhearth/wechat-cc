@@ -15,6 +15,7 @@
 // subscribers + invokes refresh from action handlers.
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
+import { invokeApi } from "./api.js"
 import { initialMode, restartButtonState, afterScanTarget } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
 import { createConversationsPoller } from "./conversations-poller.js"
@@ -125,6 +126,7 @@ const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 1000
 // in a JSDOM/happy-dom harness).
 const deps = {
   invoke,
+  invokeApi,
   formatInvokeError,
   doctorPoller,
   mock,
@@ -409,7 +411,7 @@ function setToggle(id, on) {
 
 /** @param {string} name */
 function switchPane(name) {
-  const overviewWasHidden = name === "overview" && !!document.querySelector('.dash-pane[data-pane="overview"]')?.hidden
+  const overviewWasHidden = name === "overview" && !!(/** @type {HTMLElement | null} */ (document.querySelector('.dash-pane[data-pane="overview"]')))?.hidden
   document.querySelectorAll(".dash-nav-link[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
     htmlEl.classList.toggle("active", htmlEl.dataset.pane === name && !htmlEl.classList.contains("disabled"))
@@ -926,11 +928,13 @@ function wireEvents() {
   const companionImmersiveExit = document.getElementById("companion-immersive-exit")
   const companionUsersToggle = document.getElementById("companion-users-toggle")
   const companionUsersScrim = document.getElementById("companion-users-scrim")
+  /** @param {boolean} open */
   const setCompanionUsersOpen = (open) => {
     if (!companionBody) return
     companionBody.classList.toggle("is-companion-users-open", open)
     companionUsersToggle?.setAttribute("aria-expanded", String(open))
   }
+  /** @param {boolean} active */
   const setCompanionImmersive = (active) => {
     if (!companionBody) return
     companionBody.classList.toggle("is-companion-immersive", active)

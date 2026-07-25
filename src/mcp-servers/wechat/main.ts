@@ -104,9 +104,11 @@ registerA2ASendTool(server, client)
 if (SESSION_IS_ADMIN) {
   registerDaemonTools(server, client)
   registerFileTools(server, client)
-  // agent-social M1 (T7b-core): social_seek actively broadcasts an intent
-  // to external A2A agents (unlike a2a_send's reply-to-an-established-peer),
-  // so it's admin-only — mirrors user-tier.ts's ADMIN_ONLY gate.
+  // agent-social M1 (T7b-core), P4 派心愿: social_seek proposes an outbound
+  // intent to external A2A agents (unlike a2a_send's
+  // reply-to-an-established-peer) — the owner's 派/取消 reply is what
+  // actually confirms/cancels the broadcast, so it's admin-only — mirrors
+  // user-tier.ts's ADMIN_ONLY gate.
   registerSocialSeekTool(server, client)
 }
 

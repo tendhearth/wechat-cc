@@ -23,7 +23,7 @@ describe("orderReviewItems", () => {
       { sourceKey: "b", aiStatus: "completed" as const },
       { sourceKey: "a", aiStatus: "open" as const },
     ]
-    const output = orderReviewItems(input as never)
+    const output = orderReviewItems(input)
     expect(output.map(item => item.sourceKey)).toEqual(["a", "b"])
     expect(input.map(item => item.sourceKey)).toEqual(["b", "a"])
   })

@@ -51,10 +51,13 @@ async function getApiCredentials(operator = false) {
  * @param {'GET' | 'POST'} method
  * @param {string} path  e.g. '/v1/a2a/list' or '/v1/a2a/activity?agent_id=x&limit=50'
  * @param {Record<string, unknown>} [body]
+ * @param {{ timeoutMs?: number }} [opts]  timeoutMs overrides the 10s default —
+ *   for routes that do model work inline (seek propose runs the grounded
+ *   judge, ~15s cold).
  * @returns {Promise<unknown>}
  */
-export async function invokeApi(method, path, body) {
-  return callApi(method, path, body, false)
+export async function invokeApi(method, path, body, opts) {
+  return callApi(method, path, body, false, opts)
 }
 
 /**
@@ -65,9 +68,10 @@ export async function invokeApi(method, path, body) {
  * @param {string} path
  * @param {Record<string, unknown> | undefined} body
  * @param {boolean} retried
+ * @param {{ timeoutMs?: number } | undefined} opts
  * @returns {Promise<unknown>}
  */
-async function callApi(method, path, body, retried) {
+async function callApi(method, path, body, retried, opts) {
   // Customer review is intentionally owner-only. It gets the separately
   // scoped operator token; all established desktop surfaces retain their
   // regular token and existing permissions.
@@ -84,7 +88,7 @@ async function callApi(method, path, body, retried) {
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     // Bound the request so a blocked/unreachable daemon surfaces as an error
     // instead of an indefinite "加载中…" spinner (e.g. a CSP connect-src gap).
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(opts?.timeoutMs ?? 10_000),
   }
   let resp
   try {
@@ -96,14 +100,14 @@ async function callApi(method, path, body, retried) {
     // “operation failed” state.
     if (!retried) {
       resetApiCredentials()
-      return callApi(method, path, body, true)
+      return callApi(method, path, body, true, opts)
     }
     throw error
   }
   if (!resp.ok) {
     if (!retried && (resp.status === 401 || resp.status === 403)) {
       resetApiCredentials()
-      return callApi(method, path, body, true)
+      return callApi(method, path, body, true, opts)
     }
     let errText = `HTTP ${resp.status}`
     try { const j = await resp.json(); errText = j?.error ?? errText } catch { /* ignore */ }

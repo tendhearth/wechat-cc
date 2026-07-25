@@ -26,6 +26,14 @@ describe('makeGroundedJudgeRunTurn — provider dispatch', () => {
   it('returns null for a provider with no adapter yet (gemini)', () => {
     expect(makeGroundedJudgeRunTurn({ ...baseDeps, providerId: 'gemini' })).toBeNull()
   })
+
+  it('returns null when pluginMcp is EMPTY even for a fitting adapter — a plugins-only judge with 0 plugin tools is structurally blind (ws-bench stall root cause 2026-07-22)', () => {
+    // claude adapter fits, but no wx* servers are mounted (fresh/dev/bench box
+    // without wxvault-decrypted facts). Grounding is impossible → the caller
+    // must fall back to cheapEval, NOT spawn a pointless 26s blind judge.
+    expect(makeGroundedJudgeRunTurn({ ...baseDeps, pluginMcp: {}, providerId: 'claude', claude: { model: () => 'claude-x' } })).toBeNull()
+    expect(makeGroundedJudgeRunTurn({ ...baseDeps, pluginMcp: {}, providerId: 'openai', openai: { apiKey: 'k', baseUrl: 'http://x', model: 'm' } })).toBeNull()
+  })
 })
 
 describe('buildClaudeJudgeOptions — isolation', () => {

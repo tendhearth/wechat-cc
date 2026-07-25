@@ -601,12 +601,15 @@ describe('ConversationSetModeResponse', () => {
 // ── schema lookup tables ─────────────────────────────────────────────────────
 
 describe('schema lookup tables', () => {
-  it('REQUEST_SCHEMAS has 39 entries', () => {
+  it('REQUEST_SCHEMAS has 38 entries', () => {
     // 19 original + 4 a2a dashboard routes (preview, install, remove, pause)
     // + 1 a2a server-side test route (Test button) + 1 memory/delete
     // + 1 companion/import-local + 3 plugins (toggle, install, upgrade)
-    // + 1 license/activate + 1 social/seek + 8 customer-review routes
-    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(39)
+    // + 1 license/activate + 8 customer-review routes
+    // (P4: social/seek's SocialSeekRequest was deleted — the propose/
+    // confirm/cancel routes that replaced it are inline-validated, no
+    // REQUEST_SCHEMAS entry, per the pair/inbound routes' precedent.)
+    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(38)
   })
   it('RESPONSE_SCHEMAS has 30 entries (one per route)', () => {
     // 25 original + 2 a2a dashboard response schemas (preview, install)

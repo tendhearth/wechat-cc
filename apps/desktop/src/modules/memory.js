@@ -10,7 +10,7 @@
 /** @typedef {import('../../../../src/cli/schema').MilestonesListOutputT} MilestonesList */
 /** @typedef {import('../../../../src/cli/schema').EventsListOutputT} EventsList */
 /**
- * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, formatInvokeError: (err: unknown) => string, doctorPoller: { current: { userNames?: Record<string, string> } | null } }} Deps
+ * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, invokeApi: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>, opts?: { timeoutMs?: number }) => Promise<unknown>, formatInvokeError: (err: unknown) => string, doctorPoller: { current: { userNames?: Record<string, string> } | null } }} Deps
  */
 
 // Memory pane module. Lists Companion v2 memory files (per-user grouping),
@@ -300,6 +300,34 @@ async function saveCurrent(deps) {
   await loadMemoryPane(deps).catch(() => {})
 }
 
+// Daemon-owned LLM memory ops (spec 2026-07-23-daemon-owns-llm-memory-ops):
+// the compiled CLI sidecar no longer runs these inline — it delegates to the
+// same daemon route the desktop hits here. A daemon that hasn't wired
+// MemoryLlmOps yet (or isn't running) answers 503 memory_not_wired / a
+// network error, which we turn into a clear "需要守护进程运行" message
+// instead of a raw fetch/JSON error the user can't act on.
+/**
+ * @param {unknown} err
+ * @param {string} action e.g. "重新整理记忆" / "刷新画像"
+ */
+function daemonRequiredMessage(err, action) {
+  const name = err instanceof Error ? err.name : ""
+  const msg = err instanceof Error ? err.message : String(err)
+  // Bun's real fetch failures are `TimeoutError`/`AbortError` (name) with
+  // messages like "The operation timed out." / "Unable to connect. …" — the
+  // old substring regex missed both ("timed out" ≠ "timeout"). Match on name
+  // AND a broadened message set so a down/unreachable daemon shows the
+  // actionable copy, not a raw fetch string.
+  if (
+    name === "TimeoutError" || name === "AbortError" ||
+    msg === "memory_not_wired" ||
+    /memory_not_wired|fetch|network|abort|timeout|timed out|unable to connect|could not reach|econnrefused|refused|unreachable/i.test(msg)
+  ) {
+    return `需要守护进程运行后才能${action}`
+  }
+  return `${action}失败：${msg}`
+}
+
 // Trigger a fresh synthesis of the admin's local Claude per-project memory
 // into the "overview memory" (_overview.md) the bot reads, then reload the
 // pane so the regenerated overview surfaces. Slow — one LLM call via the
@@ -310,10 +338,18 @@ async function saveCurrent(deps) {
  * @returns {Promise<{ ok?: boolean, error?: string, projectsFound?: number, projectNames?: string[], written?: { bytesWritten: number } }>}
  */
 export async function synthesizeMemory(deps) {
-  const result = /** @type {{ ok?: boolean, error?: string, projectsFound?: number, projectNames?: string[], written?: { bytesWritten: number } }} */ (
-    await deps.invoke("wechat_cli_json", { args: ["memory", "synthesize", "--json"] })
-  )
+  let result
+  try {
+    result = /** @type {{ ok?: boolean, error?: string, projectsFound?: number, projectNames?: string[], written?: { bytesWritten: number } }} */ (
+      await deps.invokeApi("POST", "/v1/memory/synthesize", undefined, { timeoutMs: 60_000 })
+    )
+  } catch (err) {
+    const message = daemonRequiredMessage(err, "重新整理记忆")
+    setStatus(message, "bad")
+    throw new Error(message)
+  }
   if (result && result.ok === false) {
+    setStatus(`重新整理记忆失败：${result.error || "unknown"}`, "bad")
     throw new Error(result.error || "synthesize failed")
   }
   // Surface the freshly written _overview.md (and any list changes).
@@ -380,10 +416,18 @@ export async function generateMemoryProfile(deps) {
   if (status && status.status === "empty") {
     return { ok: true, skipped: true, status: status.status, reason: "还没有足够的长期记忆" }
   }
-  const result = /** @type {MemoryProfileOutput} */ (await deps.invoke("wechat_cli_json", {
-    args: ["memory", "profile", "generate", "--chat-id", chatId, "--json"],
-  }))
+  let result
+  try {
+    result = /** @type {MemoryProfileOutput} */ (
+      await deps.invokeApi("POST", "/v1/memory/profile/generate", { chat_id: chatId })
+    )
+  } catch (err) {
+    const message = daemonRequiredMessage(err, "刷新画像")
+    setStatus(message, "bad")
+    throw new Error(message)
+  }
   if (result && result.ok === false) {
+    setStatus(`刷新画像失败：${result.error || "unknown"}`, "bad")
     throw new Error(result.error || "profile generate failed")
   }
   await loadMemoryPane(deps).catch(() => {})

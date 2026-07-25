@@ -1,0 +1,666 @@
+import { randomUUID } from 'node:crypto'
+import { makeJudge } from '../../core/social-judge'
+import { makeAnswerIntent } from '../../core/social-answer'
+import { makeBroker } from '../../core/social-broker'
+import { makeSeekStore } from '../../core/social-seek-store'
+import { makeEchoStore } from '../../core/social-echo-store'
+import { makePledgeStore } from '../../core/social-pledge-store'
+import { makeRevealer, type Revealer, type RevealBeat, type NotifyCtx, type ChannelPort } from '../../core/social-reveal'
+import { makeAsyncResponder } from '../../core/social-async-responder'
+import { makeEchoIntake } from '../../core/social-echo-intake'
+import { makeEchoHandler } from '../../core/social-echo-relay'
+import { makeRelayStore } from '../../core/social-relay-store'
+import { makeSeenIntentStore } from '../../core/social-seen-intent-store'
+import { makeRelayReconciler } from '../../core/social-relay-reveal'
+import { makeChannelStore } from '../../core/penpal-channel-store'
+import { makeLetterStore } from '../../core/penpal-letter-store'
+import { makeCorrespondent } from '../../core/penpal-correspondent'
+import { makeLetterRelay } from '../../core/penpal-relay-letter'
+import { generateKeypair, type PenpalHandle } from '../../core/penpal-crypto'
+import { intentUrl, revealUrl, letterUrl, echoUrl } from '../../core/a2a-delegate'
+import { gateOutbound } from '../../core/a2a-disclosure'
+import { makeMailboxSender } from '../../core/mailbox-sender'
+import { makeMailboxClient } from '../../core/mailbox-client'
+import { loadMailboxIdentity } from '../../core/mailbox-crypto'
+import { peerMailboxOf, buildCrossedHandle } from './mailbox-dispatch-seam'
+import { makeMailboxLetterHandler } from './mailbox-letter-handler'
+import { makeRoutePostLetter } from './postletter-route'
+import { buildSharedForwardBudget } from './forward-budget-seam'
+import type { PeerMailbox } from '../../core/mailbox-crypto'
+import type { A2AServerOpts } from '../../core/a2a-server'
+import type { A2ARegistry } from '../../core/a2a-registry'
+import type { A2AClient } from '../../core/a2a-client'
+import type { A2AAgentRecord } from '../../lib/agent-config'
+import type { ProviderRegistry } from '../../core/provider-registry'
+import type { ProviderId } from '../../core/conversation'
+import type { AgentConfig } from '../../lib/agent-config'
+import type { Db } from '../../lib/db'
+import type { McpStdioSpec } from './mcp-specs'
+import type { SendAssistantText } from './fallback-reply'
+import type { BootstrapDeps } from './types'
+
+export interface SocialDeps {
+  log: BootstrapDeps['log']
+  stateDir: string
+  db: Db
+  configuredAgent: AgentConfig
+  /** Resolved ONCE by bootstrap/index.ts (resolveSelfAgentId) — spec §2's
+   *  stable-unique slug, shared with wirePairing + pipeline-deps' delegate
+   *  path so every outbound seam self-reports the identical agent_id.
+   *  Replaces the old per-call `resolveSelfAgentId(configuredAgent,
+   *  deps.stateDir)` here (never re-resolve; see wire-pairing.ts's header). */
+  selfId: string
+  registry: ProviderRegistry
+  defaultProviderId: ProviderId
+  pluginMcp: Record<string, McpStdioSpec>
+  currentClaudeModel: () => string
+  claudeBin: string | undefined
+  resolveOperatorChatId: () => string | null
+  sendAssistantText: SendAssistantText | undefined
+  a2aRegistry: A2ARegistry
+  a2aClient: A2AClient
+  /** Lazy read of the a2a server's base url — the server is constructed AFTER
+   *  wireSocial runs (it consumes onIntent/onReveal). Currently unused by the
+   *  penpal-repointed wiring (reveal crosses pubkey handles, not URLs/names);
+   *  kept on the interface for index.ts's existing wiring + any future use. */
+  getServerBaseUrl: () => string | null
+}
+
+export interface SocialWiring {
+  onIntent: A2AServerOpts['onIntent']
+  /** v2 async echo return (spec §1) — undefined whenever social wiring itself
+   *  is inert, same gate as `onIntent`/`onReveal`. */
+  onEcho: A2AServerOpts['onEcho']
+  onReveal: A2AServerOpts['onReveal']
+  onLetter: A2AServerOpts['onLetter']
+  /**
+   * I1 — the own-channel-ONLY letter handler for the mailbox poller (Task 8).
+   * MUST be used instead of `onLetter` when replaying a decrypted mailbox
+   * envelope: a mailbox drop carries no verified bearer, so it must never be
+   * able to make this daemon forward junk via `letterRelay.routeLetter`
+   * (which `onLetter` falls through to for non-own channels). Undefined
+   * whenever social wiring itself is inert, same gate as `onLetter`.
+   */
+  onMailboxLetter?: A2AServerOpts['onLetter']
+  social?: {
+    broker: {
+      propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
+      confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
+      cancelSeek(id: string): import('../../core/social-broker').CancelOutcome
+    }
+    seekStore: import('../../core/social-seek-store').SeekStore
+    echoStore: import('../../core/social-echo-store').EchoStore
+    pledgeStore: import('../../core/social-pledge-store').PledgeStore
+    revealer: Revealer
+    penpal: {
+      sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
+      resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
+      channelStore: import('../../core/penpal-channel-store').ChannelStore
+      letterStore: import('../../core/penpal-letter-store').LetterStore
+    }
+  }
+  resumeForaging: () => void
+}
+
+export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
+  const {
+    registry, defaultProviderId, pluginMcp, currentClaudeModel, claudeBin,
+    configuredAgent, resolveOperatorChatId, sendAssistantText, a2aRegistry,
+    a2aClient, selfId,
+  } = deps
+
+  // ── Agent-social M1 wiring (async foraging spine) ───────────────────────
+  // Gated on BOTH social_enabled and social_disclosure_policy — absent
+  // either, the feature stays fully inert: no onIntent/onReveal wired into
+  // the a2a server below, no broker constructed, no /v1/social/seek
+  // functionality (the route 503s). Wires the row-driven mutual reveal
+  // (revealer + inbound onReveal), the non-blocking broker (propose/forage/
+  // recordEcho/finishSeek), the answer-side pledge, and boot resume of any
+  // seeks still `foraging` after a restart.
+  let socialOnIntent: A2AServerOpts['onIntent']
+  let socialOnEcho: A2AServerOpts['onEcho']
+  let socialOnReveal: A2AServerOpts['onReveal']
+  let socialOnLetter: A2AServerOpts['onLetter']
+  let socialOnMailboxLetter: A2AServerOpts['onLetter']
+  let socialBroker: {
+    propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
+    confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
+    cancelSeek(id: string): import('../../core/social-broker').CancelOutcome
+  } | undefined
+  // Per-row resume closure (replaces the old raw socialForage). It knows how to
+  // gate a legacy/bridge row before it reaches the now-DE-GATED forage — see its
+  // assignment inside the social block for the full rationale.
+  let socialResumeRow: ((row: import('../../core/social-seek-store').SeekRow) => Promise<void>) | undefined
+  let socialSeekStore: import('../../core/social-seek-store').SeekStore | undefined
+  let socialEchoStore: import('../../core/social-echo-store').EchoStore | undefined
+  let socialPledgeStore: import('../../core/social-pledge-store').PledgeStore | undefined
+  let socialRevealer: Revealer | undefined
+  let socialPenpal: {
+    sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
+    resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
+    channelStore: import('../../core/penpal-channel-store').ChannelStore
+    letterStore: import('../../core/penpal-letter-store').LetterStore
+  } | undefined
+
+  if (configuredAgent.social_enabled && configuredAgent.social_disclosure_policy) {
+    const socialPolicy = configuredAgent.social_disclosure_policy
+    const socialCheapEval = registry.getCheapEval()
+    if (!socialCheapEval) {
+      // Same degrade pattern as the openai provider block above: log and
+      // skip rather than throw. No registered provider implements cheapEval
+      // is exotic in practice (claude always registers one), but the seam
+      // must degrade gracefully like every other optional wiring here.
+      deps.log('BOOT', 'social: no cheapEval available from any registered provider — social_enabled is on but wiring is skipped (inert)')
+    } else {
+      // spec §2 — one stable-unique slug per daemon (env > config > generated),
+      // resolved ONCE by bootstrap/index.ts and threaded in as `deps.selfId`
+      // (shared with wirePairing + pipeline-deps' delegate path — see
+      // SocialDeps.selfId's doc comment). Legacy 'wechat-cc' preserved when
+      // no mailbox_relays is configured.
+      const SOCIAL_SELF_ID = selfId
+      const socialOpenaiKey = process.env.WECHAT_OPENAI_API_KEY
+      // Mailbox transport (sub-project B): the third dispatch arm alongside
+      // push (a2aClient). Constructed once and reused by postReveal (and, per
+      // Task 11, postLetter's peer-mailbox branch).
+      const mailboxSender = makeMailboxSender({ client: makeMailboxClient() })
+      // C1 (Task 10): THIS daemon's own mailbox routing, loaded once. Used to
+      // enrich the crossing PenpalHandle AT ITS SOURCE (postPeerReveal,
+      // postReveal's forwarded peer_handle, and channel.openLocal's return) —
+      // NOT derived from the bare channel row, which never holds it. undefined
+      // when this daemon has no mailbox_relays configured, so the crossed
+      // handle omits `mailbox` entirely — byte-identical to a push-only peer's
+      // handle today (additive, backward-compatible). Gated (Task 10 review
+      // Minor): loadMailboxIdentity generates+persists mailbox-key.json as a
+      // side effect, so it must not run at all for a push-only daemon (no
+      // mailbox_relays configured) — only called when the identity is
+      // actually going to be used below.
+      const myMailbox: PeerMailbox | undefined = configuredAgent.mailbox_relays?.length
+        ? (() => {
+            const mailboxIdentity = loadMailboxIdentity(deps.stateDir)
+            return { addr: mailboxIdentity.addr, enc_pub: mailboxIdentity.enc_pub, relays: configuredAgent.mailbox_relays! }
+          })()
+        : undefined
+
+      // v2: transport-selected fire-and-forget POST to a registry peer —
+      // mailbox coords when present, else push HTTP. Used by intent sends,
+      // echo returns and relay echo returns alike (spec §1 selection rule).
+      // Declared early (only needs mailboxSender/a2aRegistry/a2aClient,
+      // already in scope) so every downstream construct below (broker.send,
+      // socialOnIntent's postEcho, socialOnEcho's postEcho) can share it.
+      const postToHand = async (hand: A2AAgentRecord, path: '/a2a/intent' | '/a2a/echo', body: Record<string, unknown>): Promise<boolean> => {
+        const peer = peerMailboxOf(hand)
+        if (peer) {
+          try { await mailboxSender.send({ path, bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } }, peer); return true }
+          catch (err) { deps.log('SOCIAL_REC', `mailbox ${path} drop failed agent=${hand.id}: ${err instanceof Error ? err.message : String(err)}`); return false }
+        }
+        if (!hand.url) return false
+        const url = path === '/a2a/intent' ? intentUrl(hand.url) : echoUrl(hand.url)
+        const r = await a2aClient.send({ url, bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
+        return r.ok
+      }
+      const postToPeer = async (agentId: string, path: '/a2a/intent' | '/a2a/echo', body: Record<string, unknown>): Promise<boolean> => {
+        const hand = a2aRegistry.get(agentId)
+        if (!hand) return false
+        return postToHand(hand, path, body)
+      }
+
+      // The judge's runTurn seam (daemon/social/grounded-judge.ts). Provider-
+      // specific adapters spawn a one-shot session carrying ONLY the plugin
+      // MCP tools — the answerer must never get wechat tools (could
+      // send-as-owner) or delegate-mcp (could recurse). Falls back to the
+      // registry's cheapEval (no tools at all) when the default provider has
+      // no grounded adapter yet — judging still works, just without
+      // plugin-grounded facts.
+      const { makeGroundedJudgeRunTurn } = await import('../social/grounded-judge')
+      const groundedRunTurn = makeGroundedJudgeRunTurn({
+        providerId: defaultProviderId,
+        pluginMcp,
+        stateDir: deps.stateDir,
+        log: deps.log,
+        openai: (socialOpenaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel)
+          ? { apiKey: socialOpenaiKey, baseUrl: configuredAgent.openaiBaseUrl, model: configuredAgent.openaiModel }
+          : undefined,
+        claude: { model: () => currentClaudeModel(), ...(claudeBin ? { claudeBin } : {}) },
+      })
+      const socialRunTurn: (systemPrompt: string, userPrompt: string) => Promise<string> =
+        groundedRunTurn ?? (async (systemPrompt, userPrompt) => socialCheapEval(`${systemPrompt}\n\n${userPrompt}`))
+      const pluginToolCount = Object.keys(pluginMcp).length
+      deps.log('BOOT', groundedRunTurn
+        ? `social: plugin-grounded judge via ${defaultProviderId} (${pluginToolCount} plugin server(s), no wechat/delegate)`
+        : pluginToolCount === 0
+          // Honest signal for the fresh/dev/bench case: the adapter fits but
+          // 0 plugin tools are mounted (plugins not ready — need wxvault-
+          // decrypted facts), so grounding is impossible and the judge is
+          // BLIND (cheapEval sees only the topic text → conservatively no).
+          // This is the diagnostic that was missing when the ws bench looked
+          // "stuck" (2026-07-22).
+          ? `social: judge falls back to cheapEval — 0 plugin tools mounted (plugins not ready? needs wxvault-decrypted facts). Judging is BLIND — will conservatively return no.`
+          : `social: grounded judging unavailable for provider=${defaultProviderId} — judge falls back to cheapEval (no tools)`)
+
+      const socialJudge = makeJudge({ runTurn: socialRunTurn, policy: socialPolicy })
+      const answerIntent = makeAnswerIntent({ judge: socialJudge, policy: socialPolicy, cheapEval: socialCheapEval })
+
+      // Stores.
+      const seekStore = makeSeekStore(deps.db)
+      const echoStore = makeEchoStore(deps.db)
+      const pledgeStore = makePledgeStore(deps.db)
+      // spec #2 forwarding: the intermediary's durable relay rows + the
+      // loop-prevention seen-intent dedup.
+      const relayStore = makeRelayStore(deps.db)
+      const seenIntentStore = makeSeenIntentStore(deps.db)
+      // A3 (anonymous pen-pal channel): the per-connection channel row — mints
+      // an X25519 keypair + channel id per row, holds the peer's crossed
+      // PenpalHandle once mutual. Real identity NEVER crosses this daemon's
+      // boundary; only these ephemeral handles do.
+      const channelStore = makeChannelStore(deps.db)
+      socialSeekStore = seekStore
+      socialEchoStore = echoStore
+      socialPledgeStore = pledgeStore
+
+      // A3 (anonymous pen-pal channel, Task 11): the correspondent handles
+      // THIS daemon's own open channels (seal/persist outbound, open/persist+
+      // notify inbound); the letter relay handles the content-blind 2-hop
+      // forward for channels where WE are the introducer (介绍人), never the
+      // endpoint. Shared `postLetter` — relayVia routes through the
+      // intermediary's own a2a address when set, else straight to the peer.
+      const letterStore = makeLetterStore(deps.db)
+      // Task 11: a target carrying a `mailbox` (the peer crossed one at
+      // reveal — Task 10) goes relay-direct — sealed+dropped straight to the
+      // peer's own mailbox, W never sees it. A push-only target (no mailbox)
+      // falls through to A's existing Task-9 push/W-forward path unchanged.
+      const postLetter = makeRoutePostLetter({
+        mailboxSend: (inner, peer) => mailboxSender.send(inner, peer),
+        pushSend: async (target, body) => {
+          const hand = a2aRegistry.get(target.relayVia ?? target.agentId)
+          if (!hand) return false
+          // A url-less mailbox peer never reaches here in practice (mailbox
+          // targets go via mailboxSend above), but guard anyway — a
+          // malformed/partial mailbox record must fail closed, not throw.
+          if (!hand.url) return false
+          const r = await a2aClient.send({ url: letterUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
+          return r.ok
+        },
+        selfId: SOCIAL_SELF_ID,
+      })
+      // Sub-project C: ONE shared per-sender forward budget, injected into BOTH
+      // consume points below (letterRelay + the seek forwarder further down) —
+      // see forward-budget-seam.ts for why this must be a single instance.
+      const withinForwardBudget = buildSharedForwardBudget(configuredAgent, deps.log)
+      const notifyInbound = (rowId: string, preview: string): void => {
+        const op = resolveOperatorChatId()
+        if (!op || !sendAssistantText) return
+        const ch = channelStore.get(rowId)
+        const mask = ch ? `第 ${ch.degree} 度的某人` : '某人'
+        void sendAssistantText(op, `📬 ${mask}给你写信了:${preview}\n(回信 ${rowId} <你的话>)`)
+      }
+      const correspondent = makeCorrespondent({ channelStore, letterStore, postLetter, notifyInbound })
+      const letterRelay = makeLetterRelay({ relayStore, postLetter, withinBudget: withinForwardBudget })
+      // Dispatch order matters (Task 9 review flag): try OUR OWN endpoint
+      // first (getByMyChannelId / receiveLetter) — only when that channel_id
+      // is NOT one of this daemon's own open channels does it fall through
+      // to the relay forward. Never both; never relay-first.
+      socialOnLetter = async (ev) => {
+        const mine = channelStore.getByMyChannelId(ev.channel_id)
+        return mine ? correspondent.receiveLetter(ev) : letterRelay.routeLetter(ev)
+      }
+      // I1 (Task 8) — the mailbox-poller-safe variant: own-channel ONLY, NEVER
+      // falls through to letterRelay.routeLetter. A mailbox drop carries no
+      // verified bearer (unlike the HTTP /a2a/letter route, which at least
+      // authenticates the caller as a registered peer before onLetter runs
+      // at all) — an un-bearer'd mailbox drop must not make this daemon
+      // forward junk into a relay leg on some stranger's behalf.
+      socialOnMailboxLetter = makeMailboxLetterHandler({
+        getByMyChannelId: (c) => channelStore.getByMyChannelId(c),
+        receiveLetter: (ev) => correspondent.receiveLetter(ev),
+      })
+      socialPenpal = { sendLetter: (channel, text) => correspondent.sendLetter(channel, text), resendLetter: (id) => correspondent.resendLetter(id), channelStore, letterStore }
+
+      // Notification beats (克制三拍). Content-free by design — reveal crosses
+      // pubkey handles, never a real name or url, so no beat text may carry one.
+      const notify = (beat: RevealBeat, _ctx: NotifyCtx): void => {
+        const op = resolveOperatorChatId()
+        if (!op || !sendAssistantText) return
+        const text = beat === 'first_echo'
+          ? '✨ 你的心愿有回声了,去瞧瞧'
+          : beat === 'await_reveal'
+            ? '👀 有人想和你牵线,去看看'
+            : '🤝 你俩接上头了~ 可以写信了'
+        void sendAssistantText(op, text)
+      }
+
+      // The ChannelPort: mints/persists the per-connection PenpalHandle, backed
+      // by the durable channel store so it survives a restart. openLocal is
+      // idempotent — an existing row just returns its already-minted handle.
+      const channel: ChannelPort = {
+        openLocal(rowId, ctx) {
+          const existing = channelStore.get(rowId)
+          if (existing) return buildCrossedHandle({ my_pubkey: existing.my_pubkey, my_channel_id: existing.my_channel_id }, myMailbox)
+          const kp = generateKeypair()
+          const myChannelId = randomUUID()
+          channelStore.create({ id: rowId, seekId: ctx.seekId, myPrivkey: kp.privateKey, myPubkey: kp.publicKey, myChannelId, degree: ctx.degree, relayVia: ctx.relayVia ?? null, peerAgentId: ctx.peerAgentId ?? null })
+          return buildCrossedHandle({ my_pubkey: kp.publicKey, my_channel_id: myChannelId }, myMailbox)
+        },
+        finalize(rowId, peerHandle) { channelStore.setPeerHandle(rowId, peerHandle) },
+      }
+
+      // Outbound reveal POST to a peer's /a2a/reveal. null on unreachable/unknown.
+      // relayToken addresses a 2-hop relay leg (routed to the intermediary).
+      // Carries THIS side's already-minted PenpalHandle so the peer can finalize
+      // it (I2 — the rowId reconstruction below MUST exactly match how
+      // `channel.openLocal` was keyed inside revealEcho/revealPledge (direct
+      // echo/pledge: `${intentId}:${agentId}`; relay echo:
+      // `${intentId}:${agentId}:${relayToken}`) and onInboundReveal's rowId — a
+      // mismatch silently means channelStore.get(rowId) misses, myHandle stays
+      // undefined, the peer never finalizes, and no letter can ever send).
+      const postPeerReveal = async (agentId: string, intentId: string, relayToken?: string): Promise<{ mutual: boolean; handle?: PenpalHandle } | null> => {
+        const hand = a2aRegistry.get(agentId)
+        if (!hand) return null
+        // reveal-over-mailbox is deferred (spec §10): a mailbox peer has no
+        // url for revealUrl(). Mirror postReveal's peerMailboxOf short-
+        // circuit — skip cleanly. (Only transport:'mailbox' can lack a url
+        // per the A2AAgentRecord schema, but this also fails closed on any
+        // other malformed/url-less record rather than throwing.)
+        if (!hand.url) return null
+        const rowId = relayToken ? `${intentId}:${agentId}:${relayToken}` : `${intentId}:${agentId}`
+        const ch = channelStore.get(rowId)
+        const myHandle = ch ? buildCrossedHandle({ my_pubkey: ch.my_pubkey, my_channel_id: ch.my_channel_id }, myMailbox) : undefined
+        const r = await a2aClient.send({
+          url: revealUrl(hand.url), bearer: hand.outbound_api_key,
+          body: { agent_id: SOCIAL_SELF_ID, intent_id: intentId, ...(relayToken ? { relay_token: relayToken } : {}), ...(myHandle ? { peer_handle: myHandle } : {}) },
+        })
+        if (!r.ok) return null
+        return r.response as { mutual: boolean; handle?: PenpalHandle }
+      }
+
+      // Fire-and-forget reveal POST used by the relay reconciler's complete/nudge
+      // deps — posts to a peer's /a2a/reveal with arbitrary relay fields. Never
+      // throws to the reconciler (fail-closed; the row is durable so a lost post
+      // is recoverable by a later retry from either endpoint).
+      const postReveal = (agentId: string, body: { intent_id: string; relay_token?: string; peer_handle?: PenpalHandle }): void => {
+        const hand = a2aRegistry.get(agentId)
+        if (!hand) return
+        const peer = peerMailboxOf(hand)
+        if (peer) {
+          void mailboxSender.send({ path: '/a2a/reveal', bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } }, peer)
+            .catch(err => deps.log('SOCIAL_REC', `mailbox reveal drop failed intent=${body.intent_id} agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`))
+          return
+        }
+        // peerMailboxOf(hand) returned null — normally this means push/ws
+        // (url guaranteed by schema), but a partially-configured mailbox
+        // record (missing one of mailbox_addr/enc_pub/relays) also lands
+        // here and may have no url either. Fail closed instead of throwing.
+        if (!hand.url) return
+        void a2aClient.send({ url: revealUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
+          .catch(err => deps.log('SOCIAL_REC', `relay reveal post failed intent=${body.intent_id} agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`))
+      }
+
+      const revealer = makeRevealer({ echoStore, pledgeStore, seekStore, postPeerReveal, channel, notify })
+      socialRevealer = revealer
+
+      // spec #2: the intermediary's (介绍人 / W) reveal reconciler. Both endpoints
+      // reveal TO W; W pivots the two legs on the durable social_relay row and
+      // crosses their EPHEMERAL PenpalHandles — W stays content-blind, it never
+      // resolves or forwards a real identity, only the pubkey handles each leg
+      // presented. Row-driven → survives a W restart.
+      const relayReconciler = makeRelayReconciler({
+        relayStore,
+        completeUpstream: (upstreamId, intentId, relayToken, downstreamHandle) =>
+          postReveal(upstreamId, { intent_id: intentId, relay_token: relayToken, peer_handle: downstreamHandle }),
+        completeDownstream: (downstreamId, intentId, upstreamHandle) =>
+          postReveal(downstreamId, { intent_id: intentId, peer_handle: upstreamHandle }),
+        nudge: (agentId, intentId, relayToken) =>
+          postReveal(agentId, { intent_id: intentId, ...(relayToken ? { relay_token: relayToken } : {}) }),
+        notify3way: (_intentId, _upstream, _downstream) => {
+          // 介绍人 warmth: only W's own owner is told, content-free — W never had
+          // either endpoint's real identity, only their ephemeral handles. S/Q
+          // get their own beats via the complete* posts back to their daemons
+          // (which notify their own owners).
+          const op = resolveOperatorChatId()
+          if (op && sendAssistantText) void sendAssistantText(op, '🎉 你把两位笔友牵上线了')
+        },
+      })
+
+      socialOnReveal = async (ev) => {
+        // First: is this a relay leg addressed to US as the intermediary? The
+        // reconciler resolves via a social_relay row; null ⇒ not ours, fall through.
+        const relayResult = relayReconciler.onRelayReveal({ callerAgentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token, peerHandle: ev.peer_handle })
+        if (relayResult) return relayResult
+
+        // Otherwise WE are an endpoint: mark our own echo/pledge. The mutual
+        // instant finalizes the channel with the peer's presented handle
+        // entirely inside the revealer (channel.finalize) — there is no
+        // identity-crossing side path here anymore; the masked placeholder is
+        // permanent.
+        return revealer.onInboundReveal({ agentId: ev.agent_id, intentId: ev.intent_id, relayToken: ev.relay_token, peerHandle: ev.peer_handle })
+      }
+
+      // v2 echo intake (spec §2) — the seeker-side landing of an async /a2a/echo:
+      // maps a bearer-verified EchoMessage onto the durable EchoRecord shape.
+      // `recordEcho` is the SAME closure the pre-v2 sync broker.recordEcho dep
+      // used to be (byte-identical id/mask shapes + the M2 durable-first-echo
+      // check + notify beat) — moved here unchanged since it no longer belongs
+      // on BrokerDeps (forage's fast-ack send never sees an echo synchronously
+      // any more; the intake is the only place echoes land now).
+      const recordEcho = (e: import('../../core/social-broker').EchoRecord): void => {
+        // M2 — `e.first` is unused here (always false from the intake — see
+        // social-echo-intake.ts's comment); durable first-echo detection is
+        // done BELOW from the store itself, so a restart-resume re-arrival
+        // can never re-fire the "有回声了" beat for an echo the operator
+        // already saw. Ask the durable store: this is the seek's first-ever
+        // echo iff it currently has zero echo rows, checked BEFORE the
+        // (possibly-duplicate) insert below.
+        const isSeekFirstEcho = echoStore.listForSeek(e.intentId).length === 0
+        // A persistence error must never undo a network action already done.
+        // A degree-2 relay echo (peerAgentId null) is keyed by intent:relayVia:
+        // relayToken (S may hold several relay echoes per intent); a direct echo
+        // by intent:peerAgentId.
+        try {
+          const id = e.peerAgentId != null ? `${e.intentId}:${e.peerAgentId}` : `${e.intentId}:${e.relayVia}:${e.relayToken}`
+          echoStore.create({ id, seekId: e.intentId, peerMasked: e.peerMasked, degree: e.degree, content: e.content, peerAgentId: e.peerAgentId, relayVia: e.relayVia, relayToken: e.relayToken })
+        } catch (err) {
+          deps.log('SOCIAL_REC', `echo record failed intent=${e.intentId} peer=${e.peerAgentId ?? e.relayVia}: ${err instanceof Error ? err.message : String(err)}`)
+        }
+        if (isSeekFirstEcho) notify('first_echo', { intentId: e.intentId })
+      }
+      // markEchoed — flip foraging → echoed on the first accepted echo. NOTE:
+      // applyFinishSeek's real signature is `(stores, intentId, peersAsked)`
+      // (peersAsked REQUIRED — see social-finish-seek.ts) and this call site
+      // has no peersAsked to give it (an inbound echo isn't a forage
+      // completion), so this is the plain direct version the brief calls for
+      // instead of reusing applyFinishSeek: only flip foraging → echoed,
+      // touch nothing else. `connected` must never be downgraded here either
+      // — untouched, since only a `foraging` row is flipped.
+      const markEchoed = (intentId: string): void => {
+        try {
+          const cur = seekStore.get(intentId)
+          if (cur?.status === 'foraging') seekStore.update(intentId, { status: 'echoed' })
+        } catch (err) {
+          deps.log('SOCIAL_REC', `markEchoed failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+      const echoIntake = makeEchoIntake({
+        seekStatus: (intentId) => { try { return seekStore.get(intentId)?.status ?? null } catch { return null } },
+        recordEcho,
+        markEchoed,
+      })
+      // v2 shared /a2a/echo handler (spec §2+§4) — one bearer-verified entry,
+      // two roles resolved from OUR OWN records only: my own seek → echoIntake;
+      // an intent I forwarded (seenIntentStore.originOf) → mint the relay leg
+      // NOW (async echoes arrive later, possibly after a restart — unlike the
+      // old sync forwarder, which minted relays at forward-time) and pass the
+      // echo onward to the origin. Hoisted once (not rebuilt per call) since
+      // its deps are all stable closures.
+      const echoHandler = makeEchoHandler({
+        intake: echoIntake,
+        originOf: (intentId) => { try { return seenIntentStore.originOf(intentId) } catch { return null } },
+        recordRelay: (intentId, upstreamAgentId, downstreamAgentId) => {
+          // upstreamAgentId = origin (the ORIGINAL sender we forwarded FOR),
+          // downstreamAgentId = the peer who just echoed back. Same shape as
+          // the retired forwarder's recordRelay — NOT SOCIAL_SELF_ID.
+          const relayToken = randomUUID()
+          try {
+            relayStore.create({ id: `${intentId}:${relayToken}`, intentId, relayToken, upstreamAgentId, downstreamAgentId })
+          } catch (err) {
+            deps.log('SOCIAL_REC', `relay record failed intent=${intentId} downstream=${downstreamAgentId}: ${err instanceof Error ? err.message : String(err)}`)
+          }
+          return relayToken
+        },
+        postEcho: (to, m) => postToPeer(to, '/a2a/echo', m),
+        log: deps.log,
+      })
+      socialOnEcho = async ({ agent, msg }) => echoHandler(agent.id, msg)
+
+      // Answer path: the spine's judge + pledge-on-yes is the LOCAL answer. The
+      // v2 async responder wraps it with fast-ack + background judge/echo/
+      // forward (spec §3/§4) — judge locally then async-echo the sender on a
+      // match; separately (within the hop cap + not-already-seen) forward the
+      // hop+1 card to OUR own paired peers (minus the sender). Downstream
+      // echoes come back later via /a2a/echo → the echoHandler's relay leg
+      // above, not synchronously aggregated onto this response any more.
+      const answerLocally = async (event: import('../../core/a2a-server').IntentEvent): Promise<import('../../core/a2a-intent').MatchReceipt> => {
+        const receipt = await answerIntent(event)
+        if (receipt.match === 'yes') {
+          try {
+            pledgeStore.create({ id: `${event.card.intent_id}:${event.agent.id}`, intentId: event.card.intent_id, seekerAgentId: event.agent.id, topic: event.card.topic })
+          } catch (err) {
+            deps.log('SOCIAL_REC', `pledge record failed intent=${event.card.intent_id} agent=${event.agent.id}: ${err instanceof Error ? err.message : String(err)}`)
+          }
+        }
+        return receipt
+      }
+      socialOnIntent = makeAsyncResponder({
+        answerLocally,
+        postEcho: (to, m) => postToPeer(to, '/a2a/echo', m),
+        // Forward to our OWN paired peers, minus the sender; same cap as discover.
+        // Guarded: a registry lookup failure must NOT reject the whole /a2a/intent
+        // — W still returns its own local match (fail-closed: forward nothing).
+        forwardTargets: (excludeAgentId) => {
+          // url-less mailbox peers can't take a push /a2a/intent (intentUrl
+          // needs a url); 2-hop forward transport is STILL push-only (spec
+          // §4) even though degree-1 discover now opens to mailbox peers
+          // (see broker.discover below) — skip them here.
+          try { return a2aRegistry.list().filter(a => !a.paused && a.id !== excludeAgentId && !(a.transport === 'mailbox' && !a.url)).slice(0, 5) }
+          catch (err) {
+            deps.log('SOCIAL_REC', `forwardTargets lookup failed exclude=${excludeAgentId}: ${err instanceof Error ? err.message : String(err)}`)
+            return []
+          }
+        },
+        forwardSend: async (hand, card) => {
+          // forwardTargets already filters url-less mailbox peers out, but
+          // this closure's own type doesn't carry that guarantee — guard
+          // here too (treated the same as any other unreachable target).
+          if (!hand.url) return false
+          const r = await a2aClient.send({ url: intentUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, card } })
+          return r.ok
+        },
+        markSeen: (intentId, expiresAt, origin) => {
+          // The responder core swallows a markSeen throw (empty catch); log it
+          // here so a dedup-write failure is observable at the wiring seam.
+          // origin (the sender) is now recorded too — the async echo-relay
+          // leg (echoHandler.originOf) routes a downstream echo home by it.
+          try { seenIntentStore.markSeen({ intentId, expiresAt, originAgentId: origin }) }
+          catch (err) { deps.log('SOCIAL_REC', `seen mark failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
+        },
+        hasSeen: (intentId) => { try { return seenIntentStore.hasSeen(intentId) } catch { return false } },
+        withinBudget: withinForwardBudget,
+        hopCap: 2,
+        log: deps.log,
+      })
+
+      const broker = makeBroker({
+        policy: socialPolicy,
+        cheapEval: socialCheapEval,
+        // TODO(v1+): rank candidates via wxgraph closeness/topical relevance
+        // instead of "every paired peer, capped".
+        // v2: mailbox peers now first-class for degree-1 intents — postToHand
+        // (via `send` below) picks the mailbox coord when the peer has one,
+        // else falls back to push. Only `paused` still filters.
+        discover: async (_topic) => a2aRegistry.list().filter(a => !a.paused).slice(0, 5),
+        send: (hand, card) => postToHand(hand, '/a2a/intent', { card }),
+        // P4 propose leg: persist a `proposed` row carrying the owner-approved
+        // redacted wording (+ optional redacted city) so confirmSeek can forage
+        // it verbatim, and a crash-resumed row survives WYSIWYG (redacted_topic
+        // is non-null → resume forages it without re-gating).
+        proposeRow: (intentId, r) => {
+          try { seekStore.propose({ id: intentId, kind: 'seek', topic: r.topic, redactedTopic: r.redactedTopic, ...(r.redactedCity ? { redactedCity: r.redactedCity } : {}) }) }
+          catch (err) { deps.log('SOCIAL_REC', `propose failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
+        },
+        readSeek: (intentId) => seekStore.get(intentId),
+        markStatus: (intentId, status) => {
+          try { seekStore.update(intentId, { status }) }
+          catch (err) { deps.log('SOCIAL_REC', `markStatus failed intent=${intentId} status=${status}: ${err instanceof Error ? err.message : String(err)}`) }
+        },
+        // v2 forage completion: record peers_asked only — the seek row's
+        // status is left AS-IS (foraging), echoes now land one at a time via
+        // /a2a/echo → echoIntake above, which is what flips foraging → echoed.
+        // seekStore.update already treats an omitted `status` key as a
+        // peers_asked-ONLY write (see social-seek-store.ts), so no dedicated
+        // setPeersAsked method is needed on top of it.
+        markForaged: (intentId, peersAsked) => {
+          try { seekStore.update(intentId, { peersAsked }) }
+          catch (err) { deps.log('SOCIAL_REC', `markForaged failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
+        },
+      })
+      socialBroker = {
+        propose: (topic, opts) => broker.propose(topic, opts),
+        confirmSeek: (id) => broker.confirmSeek(id),
+        cancelSeek: (id) => broker.cancelSeek(id),
+      }
+      socialResumeRow = async (row) => {
+        // v2 心愿无自动 close(markForaged only bumps peers_asked, never status
+        // — see broker.markForaged above) — a seek with zero yes-echoes would
+        // otherwise stay `foraging` forever and get RE-FORAGED on every single
+        // restart, indefinitely. Boot-resume is the scan-and-sweep backstop:
+        // a `foraging` row older than 7 days is presumed abandoned and closed
+        // here instead of being re-broadcast yet again (the owner can always
+        // start a fresh seek; a live one that's still worth asking around for
+        // gets re-forage'd below as before, well inside the 7-day window).
+        if (Date.parse(row.created_at) < Date.now() - 7 * 24 * 3600_000) {
+          try { seekStore.update(row.id, { status: 'closed', peersAsked: row.peers_asked ?? 0 }) }
+          catch (err) { deps.log('SOCIAL_REC', `resume close (7d) failed intent=${row.id}: ${err instanceof Error ? err.message : String(err)}`) }
+          return
+        }
+        // forage() is now DE-GATED (Task 2) — it broadcasts its argument
+        // verbatim. A propose→confirm row carries redacted_topic (+ optional
+        // redacted_city): forage it verbatim so WYSIWYG survives the restart.
+        // A legacy row has redacted_topic=null (pre-v24 rows) — RE-GATE here
+        // so a RAW topic can never reach the de-gated forage. (M1 city fix:
+        // resume now carries redacted_city too;
+        // a re-gated legacy row has no persisted city to carry.)
+        if (row.redacted_topic != null) {
+          await broker.forage(row.id, row.redacted_topic, row.redacted_city ? { city: row.redacted_city } : undefined)
+          return
+        }
+        const gated = await gateOutbound(row.topic, { policy: socialPolicy, cheapEval: socialCheapEval })
+        if (!gated.ok) return   // blocked at resume → nothing exposed
+        await broker.forage(row.id, gated.redacted)
+      }
+    }
+  }
+
+  // Boot-resume loop, wrapped as a returnable closure. index.ts's
+  // buildBootstrap calls this after wireA2aServer starts the server, so a
+  // resumed forage's outbound sends can reach peers over a live listener.
+  const resumeForaging = (): void => {
+    if (socialResumeRow && socialSeekStore) {
+      const resume = socialResumeRow
+      for (const row of socialSeekStore.list()) {
+        if (row.status === 'foraging') {
+          void resume(row).catch(err => deps.log('SOCIAL_REC', `resume forage failed intent=${row.id}: ${err instanceof Error ? err.message : String(err)}`))
+        }
+      }
+    }
+  }
+
+  return {
+    onIntent: socialOnIntent,
+    onEcho: socialOnEcho,
+    onReveal: socialOnReveal,
+    onLetter: socialOnLetter,
+    onMailboxLetter: socialOnMailboxLetter,
+    ...(socialBroker
+      ? { social: { broker: socialBroker, seekStore: socialSeekStore!, echoStore: socialEchoStore!, pledgeStore: socialPledgeStore!, revealer: socialRevealer!, penpal: socialPenpal! } }
+      : {}),
+    resumeForaging,
+  }
+}

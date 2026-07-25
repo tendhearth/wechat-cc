@@ -59,12 +59,17 @@ jobs:
           WXVAULT_PAT: ${{ secrets.RELEASE_PAT_WECHAT_CC }}
         run: |
           if [ -z "${WXVAULT_PAT}" ]; then
-            echo "::notice::no RELEASE_PAT_WECHAT_CC — building without bundled wxvault"
+            if [[ "${GITHUB_REF}" == refs/tags/desktop-v* ]]; then
+              echo "::error::RELEASE_PAT_WECHAT_CC is required for desktop releases; refusing to publish an installer without wxvault"
+              exit 1
+            fi
+            echo "::notice::no RELEASE_PAT_WECHAT_CC — validation build will omit bundled wxvault"
             exit 0
           fi
           rm -rf plugins/wxvault
           git clone --depth 1 "https://x-access-token:${WXVAULT_PAT}@github.com/tendhearth/wxvault.git" plugins/wxvault
           rm -rf plugins/wxvault/.git
+          test -f plugins/wxvault/wechat-cc.plugin.json
           echo "bundled wxvault ($(ls plugins/wxvault | wc -l | tr -d ' ') files)"
 
       - name: Install Linux system deps

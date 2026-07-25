@@ -12,6 +12,7 @@ import { makeMwOnboarding, type OnboardingMwDeps } from './mw-onboarding'
 import { makeMwPermissionReply, type PermissionReplyMwDeps } from './mw-permission-reply'
 import { makeMwGuard, type GuardMwDeps } from './mw-guard'
 import { makeMwAttachments, type AttachmentsMwDeps } from './mw-attachments'
+import { makeMwTranscribeVoice, type TranscribeVoiceMwDeps } from './mw-transcribe-voice'
 import { makeMwMessages, type MessagesMwDeps } from './mw-messages'
 import { makeMwActivity, type ActivityMwDeps } from './mw-activity'
 import { makeMwMilestone, type MilestoneMwDeps } from './mw-milestone'
@@ -31,6 +32,7 @@ export interface InboundPipelineDeps {
   permissionReply: PermissionReplyMwDeps
   guard: GuardMwDeps
   attachments: AttachmentsMwDeps
+  transcribeVoice: TranscribeVoiceMwDeps
   messages: MessagesMwDeps
   activity: ActivityMwDeps
   milestone: MilestoneMwDeps
@@ -67,6 +69,7 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     makeMwGuard(d.guard),
     makeMwPermissionReply(d.permissionReply),
     makeMwAttachments(d.attachments),
+    makeMwTranscribeVoice(d.transcribeVoice),
     makeMwActivity(d.activity),
     makeMwMilestone(d.milestone),
     makeMwWelcome(d.welcome),

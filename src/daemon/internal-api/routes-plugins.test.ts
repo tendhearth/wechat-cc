@@ -69,6 +69,26 @@ describe('plugin discovery routes (hidden filtering)', () => {
       expect(names).toContain('visible')
       expect(names).not.toContain('secret')
     })
+
+    it('surfaces declared sync capability and sanitized local sync status', async () => {
+      writePlugin(bundledDir, 'wxvault', good('wxvault', {
+        sync: { command: process.execPath, args: ['${pluginDir}/sync.py'] },
+      }))
+      const dataDir = join(stateDir, 'plugin-data', 'wxvault')
+      mkdirSync(dataDir, { recursive: true })
+      writeFileSync(join(dataDir, 'sync-status.json'), JSON.stringify({
+        state: 'success', running: false, last_success_at: '2026-07-17T12:00:00+08:00',
+        error: null, private_extra: 'must not leak',
+      }))
+      const res = await pluginRoutes(deps)['GET /v1/plugins/list']!(new URLSearchParams(), undefined)
+      const body = res.body as { plugins: Array<Record<string, unknown>> }
+      const p = body.plugins.find(x => x.name === 'wxvault')!
+      expect(p.has_sync).toBe(true)
+      expect(p.sync_status).toEqual({
+        state: 'success', running: false,
+        last_success_at: '2026-07-17T12:00:00+08:00', error: null,
+      })
+    })
   })
 
   describe('GET /v1/plugins/registry', () => {

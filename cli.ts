@@ -8,7 +8,8 @@ import { STATE_DIR } from './src/lib/config'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider, activeModel, type AgentConfig, type AgentProviderKind } from './src/lib/agent-config'
 import { analyzeDoctor, defaultDoctorDeps, printDoctor, serviceStatus, setupStatus } from './src/cli/doctor'
 import { buildServicePlan, installService, startService, stopService, uninstallService } from './src/cli/service-manager'
-import { compiledBinaryPath, compiledRepoRoot } from './src/lib/runtime-info'
+import { compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from './src/lib/runtime-info'
+import { delegateMemoryOp, type CliApiInfo } from './src/lib/cli-llm-eval'
 import {
   DoctorOutput, SetupPollOutput, SetupStatusOutput, SetupQrJsonOutput,
   ServiceStatusOutput, ServiceInstallOutput, ServiceStartOutput, ServiceStopOutput, ServiceUninstallOutput,
@@ -162,6 +163,20 @@ Usage:
   wechat-cc agent test <id> [--text MSG] [--outbound]
                         Send a synthetic notify to validate inbound→chat path
                         (default) or outbound (--outbound: send to external URL)
+  wechat-cc social seeks [--limit N] [--json]
+  wechat-cc social echoes [--seek <id>] [--limit N] [--json]
+  wechat-cc social pledges [--limit N] [--json]
+  wechat-cc social propose <topic> [--city X] [--json]
+                        派心愿(预览)— gate + persist a redacted preview; nothing
+                          sent yet (needs running daemon)
+  wechat-cc social confirm <id> [--json]
+                        派 <id> — confirm a proposed wish and broadcast it
+  wechat-cc social cancel <id> [--json]
+                        取消 <id> — void a proposed wish before it ever goes out
+  wechat-cc social reveal <id> [--json]
+  wechat-cc social enable [--status]
+                        一键开启觅食台社交(merge-persist,不覆盖已有设置);
+                          --status 只打印当前三项设置,不写入
   wechat-cc provider show [--json]  Show selected agent provider
   wechat-cc provider set <claude|codex|cursor|openai|gemini> [--model MODEL] [--unattended true|false]
                         --unattended: when true (default for new installs), the
@@ -505,6 +520,16 @@ const sessionsListProjectsCmd = defineCommand({
     if (process.env.WECHAT_CC_DISABLE_SUMMARIZER !== '1') {
       void (async () => {
         try {
+          // Guardrail #1 (2026-07-23-daemon-owns-llm-memory-ops, Task 3): this
+          // is fire-and-forget background work, not a user-facing command, so
+          // there's no result to delegate/print — a compiled sidecar just
+          // skips the inline query() spawn and logs once. The next `list-
+          // projects` call (possibly against a running daemon) picks summaries
+          // back up; this path never had a hard freshness guarantee anyway.
+          if (isCompiledBundle()) {
+            console.error('[summarizer] skip inline refresh in compiled sidecar (daemon-owned LLM ops)')
+            return
+          }
           const { triggerStaleSummaryRefresh } = await import('./src/daemon/sessions/summarizer-runtime')
           // resolveIntrospectChatId is named for its first caller (introspect)
           // but it's actually a generic "default chat" resolver that reads
@@ -1074,6 +1099,26 @@ const memoryProfileReadCmd = defineCommand({
   },
 })
 
+// Shared by the compiled-sidecar delegation path in `memory synthesize` /
+// `memory profile generate` (guardrail #1 — see src/lib/cli-llm-eval.ts).
+// Reads STATE_DIR/internal-api-info.json (baseUrl + tokenFilePath) → token,
+// mirroring the `mode set` command's own read (line ~2242) but returning
+// null instead of exiting, since delegateMemoryOp needs a value to branch
+// on rather than a process.exit.
+async function readCliApiInfo(): Promise<CliApiInfo | null> {
+  const { existsSync, readFileSync } = await import('node:fs')
+  const infoPath = join(STATE_DIR, 'internal-api-info.json')
+  if (!existsSync(infoPath)) return null
+  try {
+    const info = JSON.parse(readFileSync(infoPath, 'utf8')) as { baseUrl?: string; tokenFilePath?: string }
+    if (!info.baseUrl || !info.tokenFilePath) return null
+    const token = readFileSync(info.tokenFilePath, 'utf8').trim()
+    return { baseUrl: info.baseUrl, token }
+  } catch {
+    return null
+  }
+}
+
 const memorySynthesizeCmd = defineCommand({
   meta: {
     name: 'synthesize',
@@ -1086,6 +1131,23 @@ const memorySynthesizeCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
+    // Guardrail #1 (2026-07-23-daemon-owns-llm-memory-ops, Task 3): a
+    // compiled sidecar never inline-spawns claude/codex for this op — it
+    // delegates to the running daemon's /v1/memory/synthesize instead,
+    // where the correct provider config lives. Must return before any of
+    // the inline sdkEval closures below are even constructed.
+    if (isCompiledBundle()) {
+      const apiInfo = await readCliApiInfo()
+      const r = await delegateMemoryOp('synthesize', { chatId: args['chat-id'] }, { readApiInfo: () => apiInfo, fetch })
+      if (args.json) { console.log(JSON.stringify(r, null, 2)); return }
+      const out = r as { ok?: boolean; error?: string; written?: { path: string; bytesWritten: number } }
+      if (out.ok === false) { console.error(`memory synthesize failed (delegated to daemon): ${out.error ?? 'unknown error'}`); process.exit(1) }
+      console.log(out.written
+        ? `已写入 ${out.written.path} (${out.written.bytesWritten}B) [via daemon]`
+        : '未写入(daemon 返回无写入结果) [via daemon]')
+      return
+    }
+
     const { readFileSync } = await import('node:fs')
 
     // ── Resolve admin chat-id (same pattern as `dialogue backfill`) ──────
@@ -1252,6 +1314,23 @@ async function runMemoryProfileGenerate(args: {
   json?: boolean
   auto?: boolean
 }) {
+  // Guardrail #1 (2026-07-23-daemon-owns-llm-memory-ops, Task 3): see the
+  // matching block in memorySynthesizeCmd.run() above — compiled sidecar
+  // delegates to the daemon's /v1/memory/profile/generate instead of
+  // inline-spawning claude/codex. chat-id resolution (admin default) is
+  // left to the daemon route (resolveAdminChatId) when omitted here.
+  if (isCompiledBundle()) {
+    const apiInfo = await readCliApiInfo()
+    const r = await delegateMemoryOp('profile-generate', { chatId: args['chat-id'] }, { readApiInfo: () => apiInfo, fetch })
+    if (args.json) { console.log(JSON.stringify(r, null, 2)); return }
+    const out = r as { ok?: boolean; error?: string; written?: { path: string; bytesWritten: number } }
+    if (out.ok === false) { console.error(`memory profile generate failed (delegated to daemon): ${out.error ?? 'unknown error'}`); process.exit(1) }
+    console.log(out.written
+      ? `已写入 ${out.written.path} (${out.written.bytesWritten}B) [via daemon]`
+      : '未写入(daemon 返回无写入结果) [via daemon]')
+    return
+  }
+
   try {
     const chatId = await resolveProfileChatId(args['chat-id'])
     const { openWechatDb } = await import('./src/lib/db')
@@ -2512,6 +2591,184 @@ const agentCmd = defineCommand({
   },
 })
 
+// ── 觅食台 social surface — wechat-cc social {seeks,echoes,pledges,reveal} ──
+// Reads go straight to the daemon's SQLite (work with the daemon down);
+// reveal needs the running daemon (network + notify). See
+// docs/superpowers/specs/2026-07-17-cli-social-surface-design.md.
+
+const socialSeeksCmd = defineCommand({
+  meta: { name: 'seeks', description: 'List my wishes (心愿) + status — newest first' },
+  args: {
+    limit: { type: 'string', description: 'Max rows (default 20)' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const n = args.limit ? Number.parseInt(args.limit, 10) : 20
+    const limit = Number.isFinite(n) && n > 0 ? n : 20
+    const { cmdSocialSeeks } = await import('./src/cli/social.ts')
+    cmdSocialSeeks(STATE_DIR, { limit, json: Boolean(args.json) })
+  },
+})
+
+const socialEchoesCmd = defineCommand({
+  meta: { name: 'echoes', description: 'List postcards that came back (回声) — masked until a mutual reveal' },
+  args: {
+    seek: { type: 'string', description: 'Only echoes for this wish (intent id)' },
+    limit: { type: 'string', description: 'Max rows (default 20)' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const n = args.limit ? Number.parseInt(args.limit, 10) : 20
+    const limit = Number.isFinite(n) && n > 0 ? n : 20
+    const { cmdSocialEchoes } = await import('./src/cli/social.ts')
+    cmdSocialEchoes(STATE_DIR, { limit, json: Boolean(args.json), ...(args.seek ? { seek: args.seek } : {}) })
+  },
+})
+
+const socialPledgesCmd = defineCommand({
+  meta: { name: 'pledges', description: "List others' wishes I answered (应答)" },
+  args: {
+    limit: { type: 'string', description: 'Max rows (default 20)' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const n = args.limit ? Number.parseInt(args.limit, 10) : 20
+    const limit = Number.isFinite(n) && n > 0 ? n : 20
+    const { cmdSocialPledges } = await import('./src/cli/social.ts')
+    cmdSocialPledges(STATE_DIR, { limit, json: Boolean(args.json) })
+  },
+})
+
+const socialRevealCmd = defineCommand({
+  meta: { name: 'reveal', description: '揭晓 — reveal your side of an echo or pledge (calls the running daemon)' },
+  args: {
+    id: { type: 'positional', required: true, description: 'Echo id or pledge id', valueHint: 'id' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { cmdSocialReveal } = await import('./src/cli/social.ts')
+    try {
+      await cmdSocialReveal(STATE_DIR, args.id, { json: Boolean(args.json) })
+    } catch {
+      // cmdSocialReveal's default `fail` already printed the message.
+      process.exit(1)
+    }
+  },
+})
+
+// P4 派心愿 — propose (preview) → confirm/cancel. All three call the running
+// daemon's internal-api (propose gates via the model, confirm/cancel touch
+// the broker) — same posture as `reveal` above. Default `fail` already
+// prints the message, so the catch here just sets the exit code.
+const socialProposeCmd = defineCommand({
+  meta: { name: 'propose', description: '派心愿(预览)— gate + persist a redacted preview; nothing sent yet (needs running daemon)' },
+  args: {
+    topic: { type: 'positional', required: true, description: 'What to seek (raw text; gated + redacted before storage)', valueHint: 'topic' },
+    city: { type: 'string', description: 'Optional city context (also gated)' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { cmdSocialPropose } = await import('./src/cli/social.ts')
+    try {
+      await cmdSocialPropose(STATE_DIR, args.topic, { ...(args.city ? { city: args.city } : {}), json: Boolean(args.json) })
+    } catch {
+      process.exit(1)
+    }
+  },
+})
+
+const socialConfirmCmd = defineCommand({
+  meta: { name: 'confirm', description: '派 <id> — confirm a proposed wish and broadcast it (needs running daemon)' },
+  args: {
+    id: { type: 'positional', required: true, description: 'Proposed wish id (intent id)', valueHint: 'id' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { cmdSocialConfirm } = await import('./src/cli/social.ts')
+    try {
+      await cmdSocialConfirm(STATE_DIR, args.id, { json: Boolean(args.json) })
+    } catch {
+      process.exit(1)
+    }
+  },
+})
+
+const socialCancelCmd = defineCommand({
+  meta: { name: 'cancel', description: '取消 <id> — void a proposed wish before it ever goes out (needs running daemon)' },
+  args: {
+    id: { type: 'positional', required: true, description: 'Proposed wish id (intent id)', valueHint: 'id' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { cmdSocialCancel } = await import('./src/cli/social.ts')
+    try {
+      await cmdSocialCancel(STATE_DIR, args.id, { json: Boolean(args.json) })
+    } catch {
+      process.exit(1)
+    }
+  },
+})
+
+// `enable` is a one-toggle onramp: sets social_enabled + fills in the two
+// other social-boot settings ONLY when absent (merge-persist, same
+// read-modify-write idiom as self-agent-id.ts). No `disable` — turning
+// social off is an operator-config edit, not part of this onramp.
+const socialEnableCmd = defineCommand({
+  meta: { name: 'enable', description: '一键开启觅食台社交(merge-persist,不覆盖已有设置)' },
+  args: {
+    status: { type: 'boolean', description: '只打印当前三项设置,不写入' },
+  },
+  async run({ args }) {
+    const { cmdSocialEnable } = await import('./src/cli/social-enable.ts')
+    cmdSocialEnable(STATE_DIR, { status: Boolean(args.status) })
+  },
+})
+
+const socialCmd = defineCommand({
+  meta: { name: 'social', description: '觅食台 — list wishes/echoes/pledges, propose/confirm/cancel (派心愿), reveal (揭晓), and enable (开启)' },
+  subCommands: {
+    seeks: socialSeeksCmd,
+    echoes: socialEchoesCmd,
+    pledges: socialPledgesCmd,
+    propose: socialProposeCmd,
+    confirm: socialConfirmCmd,
+    cancel: socialCancelCmd,
+    reveal: socialRevealCmd,
+    enable: socialEnableCmd,
+  },
+})
+
+// ── 配对码 — friend pairing (spec §7) ─────────────────────────────────
+// wechat-cc pair          → mint + print a 6-digit code (share with a friend)
+// wechat-cc pair <code>   → redeem a friend's code and connect
+// Both need the RUNNING daemon (internal-api, tier trusted) — same idiom as
+// `social reveal`. NOT to be confused with `hand invite`/`hand join`, which
+// pair two WORKER hands (delegated-agent capacity), not two people's bots.
+const pairCmd = defineCommand({
+  meta: {
+    name: 'pair',
+    description: '配对码 — 和朋友的 bot 建边:无参生成码,带 6 位码接受(≠ hand invite/join 的干活手配对;需运行中的 daemon)',
+  },
+  args: {
+    code: { type: 'positional', required: false, description: '朋友的 6 位配对码', valueHint: 'code' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    try {
+      if (args.code) {
+        const { cmdPairAccept } = await import('./src/cli/pair.ts')
+        await cmdPairAccept(STATE_DIR, String(args.code), { json: Boolean(args.json) })
+      } else {
+        const { cmdPairStart } = await import('./src/cli/pair.ts')
+        await cmdPairStart(STATE_DIR, { json: Boolean(args.json) })
+      }
+    } catch {
+      // cmdPairStart/cmdPairAccept's default `fail` already printed the message.
+      process.exit(1)
+    }
+  },
+})
+
 // ── dialogue — backfill + (future) query commands ────────────────────
 //
 // Task 5: `wechat-cc dialogue backfill` imports agent session JSONLs into
@@ -3111,9 +3368,38 @@ const pluginSetupStatusCmd = defineCommand({
   },
 })
 
+const pluginSyncCmd = defineCommand({
+  meta: { name: 'sync', description: "Run a plugin's repeatable local refresh action" },
+  args: { name: { type: 'positional', required: true, description: 'Plugin name', valueHint: 'name' } },
+  async run({ args }) {
+    const { loadPlugins } = await import('./src/daemon/plugins/registry')
+    const { bundledPluginsDir, pluginDataDir } = await import('./src/daemon/plugins/paths')
+    const { spawn } = await import('node:child_process')
+    const { mkdirSync } = await import('node:fs')
+    const p = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() }).find(x => x.name === args.name)
+    if (!p) { console.error(`plugin "${args.name}" not found`); process.exit(1) }
+    if (!p.enabled || !p.ready) { console.error(`plugin "${args.name}" is not enabled + ready`); process.exit(1) }
+    if (!p.manifest.sync) { console.error(`plugin "${args.name}" declares no runnable sync action`); process.exit(1) }
+    const dataDir = pluginDataDir(STATE_DIR, p.name)
+    mkdirSync(dataDir, { recursive: true })
+    const sub = (s: string) => s.split('${pluginDir}').join(p.dir).split('${dataDir}').join(dataDir)
+    const action = p.manifest.sync
+    const env = { ...process.env, ...Object.fromEntries(Object.entries(action.env ?? {}).map(([k, v]) => [k, sub(v)])) }
+    const child = spawn(sub(action.command), (action.args ?? []).map(sub), { env, stdio: 'inherit' })
+    const code: number = await new Promise<number>((resolve) => {
+      child.on('error', (err) => {
+        console.error(`failed to start "${sub(action.command)}": ${err instanceof Error ? err.message : String(err)}`)
+        resolve(127)
+      })
+      child.on('close', (c) => resolve(c ?? 1))
+    })
+    process.exit(code)
+  },
+})
+
 const pluginCmd = defineCommand({
   meta: { name: 'plugin', description: 'Manage plugins (MCP tool providers)' },
-  subCommands: { list: pluginListCmd, search: pluginSearchCmd, install: pluginInstallCmd, upgrade: pluginUpgradeCmd, setup: pluginSetupCmd, 'setup-status': pluginSetupStatusCmd, enable: pluginEnableCmd, disable: pluginDisableCmd },
+  subCommands: { list: pluginListCmd, search: pluginSearchCmd, install: pluginInstallCmd, upgrade: pluginUpgradeCmd, setup: pluginSetupCmd, sync: pluginSyncCmd, 'setup-status': pluginSetupStatusCmd, enable: pluginEnableCmd, disable: pluginDisableCmd },
 })
 
 // License / Pro entitlement. `activate DEV-anything` unlocks Pro locally for
@@ -3194,6 +3480,10 @@ const SUBCOMMANDS = {
   'mcp-server': mcpServerCmd,
   // A2A agent management (Task 7).
   agent: agentCmd,
+  // 觅食台 social surface — seeks/echoes/pledges/reveal.
+  social: socialCmd,
+  // 配对码 — automatic edge-building (spec §7).
+  pair: pairCmd,
   // Dialogue backfill (Task 5). Query subcommands arrive in Task 9.
   dialogue: dialogueCmd,
 } as const

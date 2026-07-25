@@ -233,7 +233,8 @@ function toolsSection(): string {
 - \`resurface_page({slug?, title_fragment?})\` — 根据 slug 或标题片段重新生成 URL。
 
 Companion / 主动推送（详见末尾段）：
-- \`companion_status()\` / \`companion_enable()\` / \`companion_disable()\` / \`companion_snooze({minutes})\` / \`companion_import_local({enabled})\`（开关本机历史自动导入）`
+- \`companion_status()\` / \`companion_enable()\` / \`companion_disable()\` / \`companion_snooze({minutes})\` / \`companion_import_local({enabled})\`（仅开关本机 Claude/Codex 历史自动导入；不是微信聊天记录）
+- 用户说“同步微信记忆 / 刷新聊天记录 / 同步聊天记录 / 查询微信最新消息”时，必须调用 wxvault 的 \`sync_wechat_data\` 或 \`get_messages\`，绝不可调用 \`companion_import_local\`。wxvault 仅能读取本机 Mac 微信已落库的数据，不能读取尚未同步到 Mac 的手机消息。`
 }
 
 /**

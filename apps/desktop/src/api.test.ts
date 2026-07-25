@@ -27,9 +27,10 @@ describe('invokeApi', () => {
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError('Failed to fetch'))
       .mockResolvedValueOnce(new Response(JSON.stringify({ contacts: [] }), { status: 200 }))
-    globalThis.fetch = fetchMock as typeof fetch
+    globalThis.fetch = fetchMock as unknown as typeof fetch
 
-    const { invokeApi } = await import('./api.js?stale-port-test')
+    vi.resetModules()
+    const { invokeApi } = await import('./api.js')
     await expect(invokeApi('GET', '/v1/customer-review/contacts?query=x')).resolves.toEqual({ contacts: [] })
 
     expect(credentialCalls).toBe(2)

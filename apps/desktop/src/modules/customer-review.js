@@ -30,6 +30,11 @@ let detailSeq = 0
 let api = invokeApi
 
 /** The daemon's HTTP listener starts before the optional customer-review runtime. */
+/**
+ * @param {'GET'|'POST'} method
+ * @param {string} path
+ * @param {Record<string, unknown>} [body]
+ */
 async function customerReviewApi(method, path, body) {
   /** @type {unknown} */
   let lastError

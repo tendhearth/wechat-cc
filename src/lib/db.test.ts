@@ -1,9 +1,38 @@
 import { describe, expect, it } from 'vitest'
 import { Database } from 'bun:sqlite'
-import { openTestDb, openDb, renameMigrated, runMigrations } from './db'
+import { openTestDb, openDb, renameMigrated, runMigrations, withLockRetry } from './db'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+describe('withLockRetry', () => {
+  const noop = () => {}
+
+  it('retries a "database is locked" failure and returns once it succeeds', () => {
+    let calls = 0
+    const r = withLockRetry(() => {
+      calls++
+      if (calls < 3) throw new Error('database is locked')
+      return 42
+    }, { attempts: 5, sleep: noop })
+    expect(r).toBe(42)
+    expect(calls).toBe(3) // failed twice, succeeded on the third
+  })
+
+  it('rethrows a non-lock error immediately without retrying', () => {
+    let calls = 0
+    expect(() => withLockRetry(() => { calls++; throw new Error('disk I/O error') }, { attempts: 5, sleep: noop }))
+      .toThrow('disk I/O error')
+    expect(calls).toBe(1)
+  })
+
+  it('gives up after `attempts` locked failures and rethrows the last', () => {
+    let calls = 0
+    expect(() => withLockRetry(() => { calls++; throw new Error('database is locked') }, { attempts: 3, sleep: noop }))
+      .toThrow('database is locked')
+    expect(calls).toBe(3)
+  })
+})
 
 describe('openDb', () => {
   it('returns a database with all migrations applied', () => {
@@ -150,12 +179,12 @@ describe('migration v12 — a2a_events table', () => {
   })
 })
 
-describe('migration v20/v21 — customer review completed elsewhere and analysis coverage', () => {
-  it('upgrades v19 review feedback without losing items or evidence', () => {
+describe('migration v27/v28 — customer review completed elsewhere and analysis coverage', () => {
+  it('upgrades v26 review feedback without losing items or evidence', () => {
     const db = new Database(':memory:')
     db.exec(`
       PRAGMA foreign_keys = ON;
-      PRAGMA user_version = 19;
+      PRAGMA user_version = 26;
       CREATE TABLE customer_reviews (id TEXT PRIMARY KEY NOT NULL) STRICT;
       CREATE TABLE customer_review_items (
         review_id TEXT NOT NULL REFERENCES customer_reviews(id) ON DELETE CASCADE,
@@ -189,7 +218,7 @@ describe('migration v20/v21 — customer review completed elsewhere and analysis
     runMigrations(db)
 
     const version = db.query('PRAGMA user_version').get() as { user_version: number }
-    expect(version.user_version).toBe(21)
+    expect(version.user_version).toBe(28)
     expect(db.query('SELECT commitment FROM customer_review_items').get()).toMatchObject({ commitment: '发送报价' })
     expect(db.query('SELECT evidence_key FROM customer_review_evidence').get()).toMatchObject({ evidence_key: 'e1' })
     expect(db.query("SELECT name FROM sqlite_master WHERE name = 'customer_review_analysis_issues'").get()).toMatchObject({ name: 'customer_review_analysis_issues' })
@@ -354,5 +383,21 @@ describe('migration v11 — participants column', () => {
     ).get()
     expect(row).toBeDefined()
     expect(row!.participants).toBeNull()
+  })
+})
+
+describe('migration v24 — social_seek redacted columns', () => {
+  it('adds nullable redacted_topic / redacted_city columns to social_seek', () => {
+    const db = openTestDb()
+    const cols = db.query<{ name: string }, []>("PRAGMA table_info('social_seek')").all()
+    const names = cols.map(c => c.name)
+    expect(names).toContain('redacted_topic')
+    expect(names).toContain('redacted_city')
+  })
+
+  it('PRAGMA user_version is at least 24', () => {
+    const db = openTestDb()
+    const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
+    expect(v).toBeGreaterThanOrEqual(24)
   })
 })

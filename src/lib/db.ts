@@ -450,7 +450,166 @@ const migrations: Migration[] = [
       ) STRICT;
     `)
   },
-  // v19 — customer review tasks, grounded commitment candidates, evidence
+  // agent-social 觅食台 state (M2 P1): persisted seeks + echoes so the
+  // desktop forager's-desk has queryable state. See
+  // docs/superpowers/specs/2026-07-15-forage-desk-agent-page-design.md.
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS social_seek (
+        id           TEXT PRIMARY KEY,
+        kind         TEXT NOT NULL,          -- 'seek' | 'fun'
+        topic        TEXT NOT NULL,
+        status       TEXT NOT NULL,          -- 'foraging' | 'echoed' | 'connected' | 'closed'
+        hop          INTEGER NOT NULL DEFAULT 1,
+        peers_asked  INTEGER NOT NULL DEFAULT 0,
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS social_echo (
+        id           TEXT PRIMARY KEY,
+        seek_id      TEXT NOT NULL,
+        peer_masked  TEXT NOT NULL,          -- e.g. "第 1 度的某人"
+        degree       INTEGER NOT NULL DEFAULT 1,
+        content      TEXT NOT NULL,
+        status       TEXT NOT NULL,          -- 'pending' | 'revealed' | 'declined'
+        created_at   TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS idx_social_echo_seek ON social_echo(seek_id);
+    `)
+  },
+  // v20 — async foraging spine. Adds the reveal columns to social_echo (the
+  // seeker's side) + the social_pledge table (the answerer's mirror side) so
+  // dual-confirm can move OUT of the seek broker call into a durable, row-driven,
+  // restart-survivable mutual reveal. Nullable-TEXT ADD COLUMN is safe on a
+  // STRICT table; social_echo is created unconditionally by v19 above, so no
+  // table-exists guard is needed even for the user_version=9 test harnesses.
+  // See docs/superpowers/specs/2026-07-15-async-foraging-spine-design.md.
+  (db) => {
+    db.exec(`
+      ALTER TABLE social_echo ADD COLUMN peer_agent_id TEXT;
+      ALTER TABLE social_echo ADD COLUMN self_revealed_at TEXT;
+      ALTER TABLE social_echo ADD COLUMN peer_revealed_at TEXT;
+      CREATE TABLE IF NOT EXISTS social_pledge (
+        id                TEXT PRIMARY KEY,
+        intent_id         TEXT NOT NULL,
+        seeker_agent_id   TEXT NOT NULL,      -- who sought (POST back their /a2a/reveal)
+        topic             TEXT NOT NULL,
+        self_revealed_at  TEXT,               -- when THIS owner revealed (nullable)
+        peer_revealed_at  TEXT,               -- when the seeker revealed (nullable)
+        created_at        TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS idx_social_pledge_intent ON social_pledge(intent_id);
+    `)
+  },
+  // v21 — forwarding hop (spec #2). Two nullable relay columns on social_echo
+  // (the seeker's degree-2 echoes) + the intermediary's social_relay table
+  // (links the two proxied reveal legs) + social_seen_intent (loop-prevention
+  // dedup). Nullable-TEXT ADD COLUMN is safe on STRICT; social_echo is created
+  // unconditionally by v19, so the ALTER is safe even in user_version=9 harnesses.
+  // See docs/superpowers/specs/2026-07-15-forwarding-hop-design.md.
+  (db) => {
+    db.exec(`
+      ALTER TABLE social_echo ADD COLUMN relay_via TEXT;
+      ALTER TABLE social_echo ADD COLUMN relay_token TEXT;
+      CREATE TABLE IF NOT EXISTS social_relay (
+        id                     TEXT PRIMARY KEY,   -- intent_id:relay_token
+        intent_id              TEXT NOT NULL,
+        relay_token            TEXT NOT NULL,
+        upstream_agent_id      TEXT NOT NULL,       -- who W received the card from (the seeker S)
+        downstream_agent_id    TEXT NOT NULL,       -- who W forwarded to + got the yes from (Q)
+        upstream_revealed_at   TEXT,                -- S revealed to W (nullable)
+        downstream_revealed_at TEXT,                -- Q revealed to W (nullable)
+        created_at             TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS idx_social_relay_intent_downstream ON social_relay(intent_id, downstream_agent_id);
+      CREATE TABLE IF NOT EXISTS social_seen_intent (
+        intent_id     TEXT PRIMARY KEY,
+        first_seen_at TEXT NOT NULL,
+        expires_at    TEXT NOT NULL
+      ) STRICT;
+    `)
+  },
+  // v22 — 匿名笔友通道 (sub-project A). The E2E pen-pal channel: penpal_channel
+  // holds the per-connection X25519 keypair (my_privkey LOCAL-only) + the peer's
+  // crossed handle (pubkey + channel id), nullable until mutual reveal opens the
+  // channel. penpal_letter is the local correspondence thread — sealed ct+nonce+tag
+  // on the wire, decrypted plaintext kept locally for the owner. social_relay gains
+  // two nullable handle columns so the intermediary (W) can persist each endpoint's
+  // presented pubkey handle to hand to the OTHER leg — W crosses pubkeys the
+  // endpoints supplied, never a real identity. Nullable-TEXT ADD COLUMN is safe on
+  // STRICT; social_relay is created unconditionally by v21, so the ALTER is safe
+  // even in the user_version=9 test harnesses.
+  // See docs/superpowers/specs/2026-07-18-anonymous-penpal-social-layer-design.md.
+  (db) => {
+    db.exec(`
+      ALTER TABLE social_relay ADD COLUMN upstream_handle TEXT;
+      ALTER TABLE social_relay ADD COLUMN downstream_handle TEXT;
+      CREATE TABLE IF NOT EXISTS penpal_channel (
+        id                TEXT PRIMARY KEY,        -- = the echo/pledge/relay-leg id it opened from
+        seek_id           TEXT NOT NULL,           -- the local seek (or intent) this channel belongs to
+        my_privkey        TEXT NOT NULL,           -- LOCAL-only X25519 private (pkcs8 DER base64url)
+        my_pubkey         TEXT NOT NULL,           -- crossed to the peer (spki DER base64url)
+        my_channel_id     TEXT NOT NULL,           -- my inbound address; peer addresses letters TO me by it
+        peer_pubkey       TEXT,                    -- crossed FROM the peer (nullable until reveal)
+        peer_channel_id   TEXT,                    -- peer's inbound address (nullable until reveal)
+        degree            INTEGER NOT NULL DEFAULT 1,
+        relay_via         TEXT,                    -- the intermediary agent id for a 2-hop channel (nullable)
+        peer_agent_id     TEXT,                    -- direct peer's agent id (nullable for relay channels)
+        status            TEXT NOT NULL,           -- 'pending' | 'open'
+        created_at        TEXT NOT NULL
+      ) STRICT;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_penpal_channel_mychan ON penpal_channel(my_channel_id);
+      CREATE TABLE IF NOT EXISTS penpal_letter (
+        id                TEXT PRIMARY KEY,
+        channel_id        TEXT NOT NULL,
+        direction         TEXT NOT NULL,           -- 'in' | 'out'
+        sealed_ciphertext TEXT NOT NULL,           -- base64url AES-GCM ct (the ONLY thing on the wire)
+        nonce             TEXT NOT NULL,           -- base64url 12-byte GCM nonce
+        tag               TEXT NOT NULL,           -- base64url GCM auth tag
+        plaintext         TEXT NOT NULL,           -- decrypted, kept LOCAL for the owner's thread
+        created_at        TEXT NOT NULL,
+        read_at           TEXT                     -- nullable; set when the owner has seen it
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS idx_penpal_letter_channel ON penpal_letter(channel_id);
+    `)
+  },
+  // v23 — mailbox plumbing (sub-project B, additive/GREEN checkpoint). Adds a
+  // nullable peer_mailbox column to penpal_channel so the peer's relay-direct
+  // mailbox coordinates (PeerMailbox: addr/enc_pub/relays, JSON) can ride the
+  // pen-pal reveal alongside pubkey/channel_id. Nothing populates it yet —
+  // setPeerHandle just carries handle.mailbox through when present; the C1
+  // fix that actually crosses a mailbox at reveal is a separate task.
+  // Nullable-TEXT ADD COLUMN is safe on STRICT; penpal_channel is created
+  // unconditionally by v22, so the ALTER is safe even in older test harnesses.
+  // See docs/superpowers/plans/2026-07-19-penpal-mailbox-B.md.
+  (db) => {
+    db.exec(`
+      ALTER TABLE penpal_channel ADD COLUMN peer_mailbox TEXT;
+    `)
+  },
+  // v24 — 派心愿 propose→confirm (P4). Two nullable columns on social_seek hold
+  // the redacted wording the owner approved at PROPOSE time; confirmSeek forages
+  // this stored string verbatim (WYSIWYG — no second gate). The status union
+  // also gains 'proposed'/'cancelled' but the column has no CHECK constraint, so
+  // that is a TypeScript-only change (no SQL here). Nullable-TEXT ADD COLUMN is
+  // safe on the STRICT table; social_seek is created unconditionally by v19.
+  // See docs/superpowers/specs/2026-07-20-p4-seek-confirm-design.md.
+  (db) => {
+    db.exec(`
+      ALTER TABLE social_seek ADD COLUMN redacted_topic TEXT;
+      ALTER TABLE social_seek ADD COLUMN redacted_city TEXT;
+    `)
+  },
+  // v25 — async discovery (spec 2026-07-22-async-discovery-over-mailbox).
+  // origin_agent_id on social_seen_intent: who SENT us this intent. A relay
+  // (W) needs it to route a downstream echo onward after a restart — a
+  // null-origin row (pre-v25) fails closed: the late echo is dropped.
+  // Nullable-TEXT ADD COLUMN is safe on STRICT; social_seen_intent is
+  // created unconditionally by v21.
+  (db) => {
+    db.exec(`ALTER TABLE social_seen_intent ADD COLUMN origin_agent_id TEXT;`)
+  },
+  // v26 — customer review tasks, grounded commitment candidates, evidence
   // references, and durable user feedback overlays. Raw WeChat message text is
   // deliberately NOT stored here; evidence rows only keep the app-generated
   // key, timestamp, sender side, and role so the UI can re-read source content
@@ -517,12 +676,12 @@ const migrations: Migration[] = [
       ) STRICT;
     `)
   },
-  // v20 — a user can complete an otherwise-valid commitment through email,
+  // v27 — a user can complete an otherwise-valid commitment through email,
   // phone, a client system, or offline. Keep that human fact separate from an
   // AI completion inference that has WeChat evidence.
   (db) => {
     db.exec(`
-      CREATE TABLE customer_review_items_v20 (
+      CREATE TABLE customer_review_items_v27 (
         review_id        TEXT NOT NULL REFERENCES customer_reviews(id) ON DELETE CASCADE,
         source_key       TEXT NOT NULL,
         commitment       TEXT NOT NULL,
@@ -536,12 +695,12 @@ const migrations: Migration[] = [
         updated_at       TEXT NOT NULL,
         PRIMARY KEY (review_id, source_key)
       ) STRICT;
-      INSERT INTO customer_review_items_v20
+      INSERT INTO customer_review_items_v27
         SELECT review_id, source_key, commitment, ai_status, due_date, confidence,
                review_status, corrected_text, created_at, updated_at
         FROM customer_review_items;
 
-      CREATE TABLE customer_review_evidence_v20 (
+      CREATE TABLE customer_review_evidence_v27 (
         review_id    TEXT NOT NULL,
         source_key   TEXT NOT NULL,
         evidence_key TEXT NOT NULL,
@@ -550,13 +709,13 @@ const migrations: Migration[] = [
         sender_side  TEXT NOT NULL CHECK (sender_side IN ('me','contact')),
         PRIMARY KEY (review_id, source_key, evidence_key, role),
         FOREIGN KEY (review_id, source_key)
-          REFERENCES customer_review_items_v20(review_id, source_key) ON DELETE CASCADE
+          REFERENCES customer_review_items_v27(review_id, source_key) ON DELETE CASCADE
       ) STRICT;
-      INSERT INTO customer_review_evidence_v20
+      INSERT INTO customer_review_evidence_v27
         SELECT review_id, source_key, evidence_key, role, message_time, sender_side
         FROM customer_review_evidence;
 
-      CREATE TABLE customer_review_feedback_v20 (
+      CREATE TABLE customer_review_feedback_v27 (
         contact_id     TEXT NOT NULL,
         source_key     TEXT NOT NULL,
         review_status  TEXT NOT NULL
@@ -565,21 +724,21 @@ const migrations: Migration[] = [
         updated_at     TEXT NOT NULL,
         PRIMARY KEY (contact_id, source_key)
       ) STRICT;
-      INSERT INTO customer_review_feedback_v20
+      INSERT INTO customer_review_feedback_v27
         SELECT contact_id, source_key, review_status, corrected_text, updated_at
         FROM customer_review_feedback;
 
       DROP TABLE customer_review_evidence;
       DROP TABLE customer_review_items;
       DROP TABLE customer_review_feedback;
-      ALTER TABLE customer_review_items_v20 RENAME TO customer_review_items;
-      ALTER TABLE customer_review_evidence_v20 RENAME TO customer_review_evidence;
-      ALTER TABLE customer_review_feedback_v20 RENAME TO customer_review_feedback;
+      ALTER TABLE customer_review_items_v27 RENAME TO customer_review_items;
+      ALTER TABLE customer_review_evidence_v27 RENAME TO customer_review_evidence;
+      ALTER TABLE customer_review_feedback_v27 RENAME TO customer_review_feedback;
       CREATE INDEX customer_review_items_review_status
         ON customer_review_items(review_id, review_status);
     `)
   },
-  // v21 — analysis coverage metadata. Long histories can yield a grounded
+  // v28 — analysis coverage metadata. Long histories can yield a grounded
   // partial result while one model window remains untrusted; persist only the
   // uncovered time span and safe error code, never raw chat text.
   (db) => {
@@ -617,13 +776,52 @@ export function openWechatDb(stateDir: string): Database {
   return openDb({ path: join(stateDir, 'wechat-cc.db') })
 }
 
+function isLockedError(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e)
+  return /database is locked|database is busy|SQLITE_BUSY/i.test(m)
+}
+
+/**
+ * Run `fn`, retrying briefly on a SQLite "database is locked" error. Sync,
+ * since openDb is sync. Survives the WAL-lock race when the daemon restarts
+ * before the SIGKILLed old process released the lock — `busy_timeout` doesn't
+ * cover the journal-mode switch, so that switch would otherwise crash the boot
+ * with "database is locked". Non-lock errors rethrow immediately; `sleep` is
+ * injectable for tests.
+ */
+export function withLockRetry<T>(
+  fn: () => T,
+  opts: { attempts?: number; delayMs?: number; sleep?: (ms: number) => void } = {},
+): T {
+  const attempts = opts.attempts ?? 12
+  const delayMs = opts.delayMs ?? 250
+  const sleep = opts.sleep ?? ((ms: number) => { Bun.sleepSync(ms) })
+  let lastErr: unknown
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return fn()
+    } catch (e) {
+      lastErr = e
+      if (!isLockedError(e)) throw e
+      if (i < attempts - 1) sleep(delayMs)
+    }
+  }
+  throw lastErr
+}
+
 export function openDb(opts: OpenDbOpts): Database {
   if (opts.path !== ':memory:') {
     const dir = dirname(opts.path)
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
-  const db = new Database(opts.path, { create: true })
-  db.exec('PRAGMA journal_mode = WAL;')
+  // Opening + switching to WAL takes a brief exclusive lock; on a daemon
+  // restart the SIGKILLed old process may still hold it (busy_timeout doesn't
+  // cover the journal-mode switch). Retry instead of crashing the boot.
+  const db = withLockRetry(() => {
+    const d = new Database(opts.path, { create: true })
+    d.exec('PRAGMA journal_mode = WAL;')
+    return d
+  })
   db.exec('PRAGMA foreign_keys = ON;')
   // 5s busy_timeout — the CLI process and daemon may try to write the same
   // db simultaneously (e.g. `wechat-cc sessions delete` while the daemon
