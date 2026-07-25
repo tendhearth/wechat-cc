@@ -450,6 +450,151 @@ const migrations: Migration[] = [
       ) STRICT;
     `)
   },
+  // v19 — customer review tasks, grounded commitment candidates, evidence
+  // references, and durable user feedback overlays. Raw WeChat message text is
+  // deliberately NOT stored here; evidence rows only keep the app-generated
+  // key, timestamp, sender side, and role so the UI can re-read source content
+  // from wxvault on demand.
+  (db) => {
+    db.exec(`
+      CREATE TABLE customer_reviews (
+        id                   TEXT PRIMARY KEY NOT NULL,
+        contact_id           TEXT NOT NULL,
+        contact_display_name TEXT NOT NULL,
+        range_from           TEXT NOT NULL,
+        range_to             TEXT NOT NULL,
+        status               TEXT NOT NULL CHECK (status IN ('queued','analyzing','ready','failed')),
+        provider             TEXT NOT NULL,
+        model                TEXT,
+        source_message_count INTEGER NOT NULL DEFAULT 0,
+        source_first_at      TEXT,
+        source_last_at       TEXT,
+        error_code           TEXT,
+        created_at           TEXT NOT NULL,
+        updated_at           TEXT NOT NULL,
+        completed_at         TEXT
+      ) STRICT;
+      CREATE INDEX customer_reviews_contact_created
+        ON customer_reviews(contact_id, created_at DESC);
+
+      CREATE TABLE customer_review_items (
+        review_id        TEXT NOT NULL REFERENCES customer_reviews(id) ON DELETE CASCADE,
+        source_key       TEXT NOT NULL,
+        commitment       TEXT NOT NULL,
+        ai_status        TEXT NOT NULL CHECK (ai_status IN ('open','completed')),
+        due_date         TEXT,
+        confidence       TEXT NOT NULL CHECK (confidence IN ('medium','high')),
+        review_status    TEXT NOT NULL DEFAULT 'unreviewed'
+          CHECK (review_status IN ('unreviewed','confirmed','corrected','rejected','ignored')),
+        corrected_text   TEXT,
+        created_at       TEXT NOT NULL,
+        updated_at       TEXT NOT NULL,
+        PRIMARY KEY (review_id, source_key)
+      ) STRICT;
+      CREATE INDEX customer_review_items_review_status
+        ON customer_review_items(review_id, review_status);
+
+      CREATE TABLE customer_review_evidence (
+        review_id    TEXT NOT NULL,
+        source_key   TEXT NOT NULL,
+        evidence_key TEXT NOT NULL,
+        role         TEXT NOT NULL CHECK (role IN ('commitment','completion','due_date')),
+        message_time TEXT NOT NULL,
+        sender_side  TEXT NOT NULL CHECK (sender_side IN ('me','contact')),
+        PRIMARY KEY (review_id, source_key, evidence_key, role),
+        FOREIGN KEY (review_id, source_key)
+          REFERENCES customer_review_items(review_id, source_key) ON DELETE CASCADE
+      ) STRICT;
+
+      CREATE TABLE customer_review_feedback (
+        contact_id     TEXT NOT NULL,
+        source_key     TEXT NOT NULL,
+        review_status  TEXT NOT NULL
+          CHECK (review_status IN ('confirmed','corrected','rejected','ignored')),
+        corrected_text TEXT,
+        updated_at     TEXT NOT NULL,
+        PRIMARY KEY (contact_id, source_key)
+      ) STRICT;
+    `)
+  },
+  // v20 — a user can complete an otherwise-valid commitment through email,
+  // phone, a client system, or offline. Keep that human fact separate from an
+  // AI completion inference that has WeChat evidence.
+  (db) => {
+    db.exec(`
+      CREATE TABLE customer_review_items_v20 (
+        review_id        TEXT NOT NULL REFERENCES customer_reviews(id) ON DELETE CASCADE,
+        source_key       TEXT NOT NULL,
+        commitment       TEXT NOT NULL,
+        ai_status        TEXT NOT NULL CHECK (ai_status IN ('open','completed')),
+        due_date         TEXT,
+        confidence       TEXT NOT NULL CHECK (confidence IN ('medium','high')),
+        review_status    TEXT NOT NULL DEFAULT 'unreviewed'
+          CHECK (review_status IN ('unreviewed','confirmed','corrected','completed_elsewhere','rejected','ignored')),
+        corrected_text   TEXT,
+        created_at       TEXT NOT NULL,
+        updated_at       TEXT NOT NULL,
+        PRIMARY KEY (review_id, source_key)
+      ) STRICT;
+      INSERT INTO customer_review_items_v20
+        SELECT review_id, source_key, commitment, ai_status, due_date, confidence,
+               review_status, corrected_text, created_at, updated_at
+        FROM customer_review_items;
+
+      CREATE TABLE customer_review_evidence_v20 (
+        review_id    TEXT NOT NULL,
+        source_key   TEXT NOT NULL,
+        evidence_key TEXT NOT NULL,
+        role         TEXT NOT NULL CHECK (role IN ('commitment','completion','due_date')),
+        message_time TEXT NOT NULL,
+        sender_side  TEXT NOT NULL CHECK (sender_side IN ('me','contact')),
+        PRIMARY KEY (review_id, source_key, evidence_key, role),
+        FOREIGN KEY (review_id, source_key)
+          REFERENCES customer_review_items_v20(review_id, source_key) ON DELETE CASCADE
+      ) STRICT;
+      INSERT INTO customer_review_evidence_v20
+        SELECT review_id, source_key, evidence_key, role, message_time, sender_side
+        FROM customer_review_evidence;
+
+      CREATE TABLE customer_review_feedback_v20 (
+        contact_id     TEXT NOT NULL,
+        source_key     TEXT NOT NULL,
+        review_status  TEXT NOT NULL
+          CHECK (review_status IN ('confirmed','corrected','completed_elsewhere','rejected','ignored')),
+        corrected_text TEXT,
+        updated_at     TEXT NOT NULL,
+        PRIMARY KEY (contact_id, source_key)
+      ) STRICT;
+      INSERT INTO customer_review_feedback_v20
+        SELECT contact_id, source_key, review_status, corrected_text, updated_at
+        FROM customer_review_feedback;
+
+      DROP TABLE customer_review_evidence;
+      DROP TABLE customer_review_items;
+      DROP TABLE customer_review_feedback;
+      ALTER TABLE customer_review_items_v20 RENAME TO customer_review_items;
+      ALTER TABLE customer_review_evidence_v20 RENAME TO customer_review_evidence;
+      ALTER TABLE customer_review_feedback_v20 RENAME TO customer_review_feedback;
+      CREATE INDEX customer_review_items_review_status
+        ON customer_review_items(review_id, review_status);
+    `)
+  },
+  // v21 — analysis coverage metadata. Long histories can yield a grounded
+  // partial result while one model window remains untrusted; persist only the
+  // uncovered time span and safe error code, never raw chat text.
+  (db) => {
+    db.exec(`
+      CREATE TABLE customer_review_analysis_issues (
+        review_id    TEXT NOT NULL REFERENCES customer_reviews(id) ON DELETE CASCADE,
+        window_index INTEGER NOT NULL,
+        range_from   TEXT NOT NULL,
+        range_to     TEXT NOT NULL,
+        error_code   TEXT NOT NULL,
+        attempts     INTEGER NOT NULL CHECK (attempts >= 1 AND attempts <= 3),
+        PRIMARY KEY (review_id, window_index)
+      ) STRICT;
+    `)
+  },
 ]
 
 export interface OpenDbOpts {

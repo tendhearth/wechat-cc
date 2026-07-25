@@ -174,6 +174,11 @@ export interface InternalApiDeps {
    */
   companionConverse?: (text: string) => Promise<{ reply: string }>
   /**
+   * Owner-only Customer Review application service. Late-bound after
+   * bootstrap because it needs the active provider registry and wxvault MCP.
+   */
+  customerReview?: import('../customer-review/service').CustomerReviewService
+  /**
    * Optional A2A deps — undefined when a2a_listen is not configured.
    * When absent, POST /v1/a2a/send returns 503.
    */
@@ -298,6 +303,8 @@ export interface InternalApi {
    * until this is called.
    */
   setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
+  /** Late-bind Customer Review after wxvault + an eval provider are ready. */
+  setCustomerReview(service: NonNullable<InternalApiDeps['customerReview']>): void
   /**
    * Late-bind A2A deps after bootstrap has constructed the registry,
    * client, and events store. POST /v1/a2a/send returns 503 until this

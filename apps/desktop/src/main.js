@@ -31,6 +31,7 @@ import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
+import { initCustomerReviewPage, stopCustomerReviewPolling } from "./modules/customer-review.js"
 import { initConversePage } from "./modules/converse.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
 import { initPluginsTab, refresh as refreshPlugins } from "./modules/plugins.js"
@@ -39,6 +40,7 @@ import { loadUpdateProbe, applyUpdate } from "./modules/update.js"
 import { wireSettingsDrawer, openSettingsDrawer } from "./modules/settings-drawer.js"
 import { mountHugeicons } from "./modules/icons.js"
 import { pingHealth } from "./health-probe.js"
+import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
 
 const state = {
   setup: /** @type {SetupQrJson | null} */ (null),
@@ -438,11 +440,12 @@ function switchPane(name) {
     loadMemoryTopZone(deps).catch(err => console.error("memory top zone failed", err))
   }
   if (name === "sessions") {
-    initDialoguePage(deps)
+    activateDialogueWorkspace()
   } else {
     // Stop the dialogue pane's 30s auto-refresh tick when leaving it
     // (mirrors the logs/sessions auto-refresh lifecycle).
     stopDialogueAutoRefresh()
+    stopCustomerReviewPolling()
   }
   if (name === "converse") {
     initConversePage(deps)
@@ -455,9 +458,37 @@ function switchPane(name) {
   }
 }
 
+function activateDialogueWorkspace() {
+  const active = document.querySelector(".dialogue-workspace-tab.is-active")
+  const mode = active instanceof HTMLElement ? active.dataset.dialogueMode : "cc"
+  const dialogueRoot = document.getElementById("dialogue-root")
+  const reviewRoot = document.getElementById("customer-review-root")
+  if (mode === "customer-review") {
+    if (dialogueRoot) dialogueRoot.hidden = true
+    if (reviewRoot) reviewRoot.hidden = false
+    stopDialogueAutoRefresh()
+    initCustomerReviewPage()
+  } else {
+    if (dialogueRoot) dialogueRoot.hidden = false
+    if (reviewRoot) reviewRoot.hidden = true
+    stopCustomerReviewPolling()
+    initDialoguePage(deps)
+  }
+}
+
 // ─── DOM event wiring ────────────────────────────────────────────────
 
 function wireEvents() {
+  document.querySelectorAll(".dialogue-workspace-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".dialogue-workspace-tab").forEach(other => {
+        const selected = other === tab
+        other.classList.toggle("is-active", selected)
+        other.setAttribute("aria-selected", selected ? "true" : "false")
+      })
+      activateDialogueWorkspace()
+    })
+  })
   // `data-tauri-drag-region` alone is not reliable with the macOS overlay
   // titlebar in every Tauri/WebKit combination. Explicitly start a native
   // window drag when the user presses the transparent frame handles.
@@ -1207,6 +1238,14 @@ async function boot() {
   mountHugeicons()
   wireDoctorSubscribers()
   wireEvents()
+  // Refresh an already-configured local WeChat archive on every desktop
+  // launch. Keep it off the critical render path: decrypting larger archives
+  // can take seconds, while the dashboard should remain immediately usable.
+  void refreshWxvaultOnAppStart({ invoke })
+    .then(result => {
+      if (result.refreshed) console.info('[wxvault] startup refresh complete')
+    })
+    .catch(err => console.warn('[wxvault] startup refresh failed:', err))
   await loadAgentConfig().catch(err => console.error("agent config load failed", err))
   // Wire the A2A agents tab (event listeners attached once; first list load
   // is deferred until the user actually switches to that pane).

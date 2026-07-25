@@ -4,7 +4,6 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileRoutes } from './routes-files'
-import { defaultLifeDirs } from '../../lib/file-survey'
 import { minTierFor } from './route-tiers'
 
 let dir: string
@@ -36,14 +35,10 @@ describe('GET /v1/locate', () => {
     expect(body.candidates.map(c => c.name)).toContain('预算表.xlsx')
   })
 
-  it('default life dirs are Desktop/Documents/Downloads under home', () => {
-    // Same reasoning as file-survey.test.ts: native fs paths, so build the
-    // expectation via path.join rather than a '/'-literal (Windows → '\').
-    expect(defaultLifeDirs('/home/me')).toEqual([
-      join('/home/me', 'Desktop'),
-      join('/home/me', 'Documents'),
-      join('/home/me', 'Downloads'),
-    ])
+  it('does not search any implicit directories when roots are omitted', async () => {
+    const res = await handler()(new URLSearchParams({ q: '预算' }), undefined)
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ candidates: [], truncated: false })
   })
 
   it('route is admin-tier', () => {

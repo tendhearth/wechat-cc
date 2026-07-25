@@ -97,6 +97,16 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // reply-to-an-established-peer). Would default to admin anyway (unlisted
   // routes fail-closed) — listed explicitly for documentation.
   'POST /v1/social/seek': 'admin',
+  // admin — reads the owner's private wxvault history and stores personal
+  // customer judgments. Never expose to guest/trusted chat sessions.
+  'GET /v1/customer-review/contacts': 'admin',
+  'POST /v1/customer-review': 'admin',
+  'POST /v1/customer-review/run': 'admin',
+  'GET /v1/customer-review': 'admin',
+  'GET /v1/customer-review/evidence': 'admin',
+  'GET /v1/customer-review/recent': 'admin',
+  'GET /v1/customer-review/history': 'admin',
+  'POST /v1/customer-review/item': 'admin',
 }
 
 export function minTierFor(routeKey: string): UserTier {

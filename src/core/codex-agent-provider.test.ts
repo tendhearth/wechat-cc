@@ -541,7 +541,7 @@ describe('Codex agent provider', () => {
   })
 
   describe('cheapEval (PR F)', () => {
-    it('builds an ephemeral one-shot thread with minimal reasoning + no tools/network/sandbox-write', async () => {
+    it('builds an ephemeral one-shot thread with low reasoning + no tools/network/sandbox-write', async () => {
       const { provider: p, fake } = provider()
       fake.thread.pushRunResult([
         { type: 'agent_message', text: '8' },
@@ -555,7 +555,7 @@ describe('Codex agent provider', () => {
       // Resolver picks something — exact value depends on local cache;
       // here we just assert it's set, the helper has its own tests.
       expect(typeof o.model).toBe('string')
-      expect(o.modelReasoningEffort).toBe('minimal')
+      expect(o.modelReasoningEffort).toBe('low')
       expect(o.sandboxMode).toBe('read-only')
       expect(o.approvalPolicy).toBe('never')
       expect(o.webSearchEnabled).toBe(false)

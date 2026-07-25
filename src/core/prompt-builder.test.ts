@@ -173,6 +173,14 @@ describe('buildSystemPrompt', () => {
     expect(out).toContain("Today's date")
   })
 
+  it('routes owner WeChat history questions to wxvault before memory', () => {
+    const out = buildSystemPrompt(defaults())
+    expect(out).toContain('微信原始聊天内容')
+    expect(out).toContain('默认先调用 wxvault')
+    expect(out).toContain('长期记忆只用于辅助理解，不能代替原始聊天记录')
+    expect(out).toContain('档案的最新活动时间')
+  })
+
   it('handles unknown / future providerId pairs without crashing', () => {
     expect(() => buildSystemPrompt({
       providerId: 'gemini' as const, peerProviderId: 'mistral' as const,

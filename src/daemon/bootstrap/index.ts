@@ -1270,6 +1270,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const dispatchDelegate = buildDelegateDispatch({
     stateDir: deps.stateDir,
     ...(claudeBin ? { claudeBin } : {}),
+    ...(codexBinary && codexVersionCheck?.ok ? { codexPathOverride: codexBinary } : {}),
   })
 
   // ── A2A wiring ────────────────────────────────────────────────────────

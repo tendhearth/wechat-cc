@@ -22,14 +22,27 @@ describe('token-registry', () => {
     expect(makeTokenRegistry().resolve('ff'.repeat(32))).toBeNull()
   })
 
-  it('resolves a registered operator token as admin/operator, route-scoped to converse + speak only', () => {
+  it('resolves an operator token as admin, scoped to explicit desktop owner surfaces', () => {
     const r = makeTokenRegistry()
     r.registerFileToken('cc'.repeat(32))
     r.registerOperatorToken('dd'.repeat(32))
     const opInfo = r.resolve('dd'.repeat(32))
     expect(opInfo?.tier).toBe('admin')
     expect(opInfo?.origin).toBe('operator')
-    expect(opInfo?.routeAllow).toEqual(new Set(['POST /v1/companion/converse', 'POST /v1/companion/speak', 'POST /v1/companion/transcribe']))
+    expect(opInfo?.routeAllow).toEqual(new Set([
+      'POST /v1/companion/converse',
+      'POST /v1/companion/speak',
+      'POST /v1/companion/transcribe',
+      'GET /v1/customer-review/contacts',
+      'POST /v1/customer-review',
+      'POST /v1/customer-review/run',
+      'GET /v1/customer-review',
+      'GET /v1/customer-review/evidence',
+      'GET /v1/customer-review/recent',
+      'GET /v1/customer-review/history',
+      'POST /v1/customer-review/item',
+    ]))
+    expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
   })
 

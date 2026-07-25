@@ -543,7 +543,12 @@
 
           <!-- ── pane: sessions ─────────────────────────────────────── -->
           <article class="dash-pane" data-pane="sessions" hidden>
+            <div class="dialogue-workspace-tabs" role="tablist" aria-label="对话视图">
+              <button class="dialogue-workspace-tab is-active" type="button" role="tab" data-dialogue-mode="cc" aria-selected="true">CC 对话</button>
+              <button class="dialogue-workspace-tab" type="button" role="tab" data-dialogue-mode="customer-review" aria-selected="false">客户回顾</button>
+            </div>
             <div id="dialogue-root" class="dialogue-page"></div>
+            <div id="customer-review-root" class="customer-review-page" hidden></div>
           </article>
 
           <!-- ── pane: converse (in-app compose UI) ─────────────────── -->

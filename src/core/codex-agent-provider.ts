@@ -161,7 +161,10 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
       // moderator + companion introspect via ProviderRegistry.getCheapEval().
       const thread = cheapCodex.startThread({
         model: cheapModel,
-        modelReasoningEffort: 'minimal',
+        // Codex currently rejects `minimal` when the CLI advertises image_gen
+        // in its tool catalog (400: tool cannot be used with minimal). `low`
+        // remains the cheapest compatible one-shot setting.
+        modelReasoningEffort: 'low',
         sandboxMode: 'read-only',
         approvalPolicy: 'never',
         webSearchEnabled: false,

@@ -18,29 +18,31 @@
 
 import { invoke as ipcInvoke } from './ipc.js'
 
-/** @type {{ baseUrl: string; token: string } | null} */
-let _cache = null
+/** @type {Record<'standard'|'operator', { baseUrl: string; token: string } | null>} */
+const _cache = { standard: null, operator: null }
 
-/** @type {Promise<{ baseUrl: string; token: string }> | null} */
-let _inflight = null
+/** @type {Record<'standard'|'operator', Promise<{ baseUrl: string; token: string }> | null>} */
+const _inflight = { standard: null, operator: null }
 
-async function getApiCredentials() {
-  if (_cache) return _cache
-  if (_inflight) return _inflight
-  _inflight = (async () => {
-    const r = /** @type {{ ok?: boolean; baseUrl?: string; token?: string; error?: string }} */ (
-      await ipcInvoke('wechat_cli_json', { args: ['daemon', 'api-info', '--json'] }, undefined)
+/** @param {boolean} operator */
+async function getApiCredentials(operator = false) {
+  const key = operator ? 'operator' : 'standard'
+  if (_cache[key]) return _cache[key]
+  if (_inflight[key]) return _inflight[key]
+  _inflight[key] = (async () => {
+      const r = /** @type {{ ok?: boolean; baseUrl?: string; token?: string; error?: string }} */ (
+      await ipcInvoke('wechat_cli_json', { args: ['daemon', 'api-info', '--json', ...(operator ? ['--operator'] : [])] }, undefined)
     )
     if (!r || !r.ok || !r.baseUrl || !r.token) {
       throw new Error(r?.error ?? 'daemon api-info returned no credentials')
     }
-    _cache = { baseUrl: r.baseUrl, token: r.token }
-    return _cache
+    _cache[key] = { baseUrl: r.baseUrl, token: r.token }
+    return _cache[key]
   })()
   try {
-    return await _inflight
+    return await _inflight[key]
   } finally {
-    _inflight = null
+    _inflight[key] = null
   }
 }
 
@@ -52,7 +54,25 @@ async function getApiCredentials() {
  * @returns {Promise<unknown>}
  */
 export async function invokeApi(method, path, body) {
-  const { baseUrl, token } = await getApiCredentials()
+  return callApi(method, path, body, false)
+}
+
+/**
+ * Send one internal API request. A daemon restart rotates the local token;
+ * retry once with newly read credentials on 401/403 instead of leaving the
+ * desktop on a generic failure message.
+ * @param {'GET' | 'POST'} method
+ * @param {string} path
+ * @param {Record<string, unknown> | undefined} body
+ * @param {boolean} retried
+ * @returns {Promise<unknown>}
+ */
+async function callApi(method, path, body, retried) {
+  // Customer review is intentionally owner-only. It gets the separately
+  // scoped operator token; all established desktop surfaces retain their
+  // regular token and existing permissions.
+  const operator = path.startsWith('/v1/customer-review')
+  const { baseUrl, token } = await getApiCredentials(operator)
   const url = baseUrl + path
   /** @type {RequestInit} */
   const init = {
@@ -66,8 +86,25 @@ export async function invokeApi(method, path, body) {
     // instead of an indefinite "加载中…" spinner (e.g. a CSP connect-src gap).
     signal: AbortSignal.timeout(10_000),
   }
-  const resp = await fetch(url, init)
+  let resp
+  try {
+    resp = await fetch(url, init)
+  } catch (error) {
+    // A daemon restart also changes its ephemeral localhost port. The first
+    // request can therefore fail before it receives a 401/403 at all; refresh
+    // discovery once and retry instead of leaving the feature on a generic
+    // “operation failed” state.
+    if (!retried) {
+      resetApiCredentials()
+      return callApi(method, path, body, true)
+    }
+    throw error
+  }
   if (!resp.ok) {
+    if (!retried && (resp.status === 401 || resp.status === 403)) {
+      resetApiCredentials()
+      return callApi(method, path, body, true)
+    }
     let errText = `HTTP ${resp.status}`
     try { const j = await resp.json(); errText = j?.error ?? errText } catch { /* ignore */ }
     throw new Error(errText)
@@ -77,5 +114,6 @@ export async function invokeApi(method, path, body) {
 
 /** Invalidate the cached credentials (e.g. after a daemon restart). */
 export function resetApiCredentials() {
-  _cache = null
+  _cache.standard = null
+  _cache.operator = null
 }

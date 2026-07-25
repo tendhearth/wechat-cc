@@ -21,6 +21,7 @@ import { pluginRoutes } from './routes-plugins'
 import { licenseRoutes } from './routes-license'
 import { daemonControlRoutes } from './routes-daemon-control'
 import { fileRoutes } from './routes-files'
+import { customerReviewRoutes } from './routes-customer-review'
 import type {
   MemoryReadRequestT, MemoryWriteRequestT, MemoryDeleteRequestT,
   ProjectsSwitchRequestT, ProjectsAddRequestT, ProjectsRemoveRequestT,
@@ -692,6 +693,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     ...pluginRoutes(deps),
     ...licenseRoutes(deps),
     ...daemonControlRoutes(deps),
+    ...customerReviewRoutes(deps),
     ...fileRoutes(),
   }
 }

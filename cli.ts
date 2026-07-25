@@ -1737,15 +1737,16 @@ const daemonApiInfoCmd = defineCommand({
   meta: { name: 'api-info', description: 'Read internal-api-info.json (base URL + token) — used by the desktop GUI to call /v1/* endpoints' },
   args: {
     json: { type: 'boolean', description: 'JSON envelope (always emits JSON; flag is for CLI consistency)' },
+    operator: { type: 'boolean', description: 'Read the scoped desktop operator credential for owner-only workspaces' },
   },
-  async run() {
+  async run({ args }) {
     const { existsSync, readFileSync } = await import('node:fs')
     const infoPath = join(STATE_DIR, 'internal-api-info.json')
     if (!existsSync(infoPath)) {
       console.log(JSON.stringify({ ok: false, error: 'daemon not running (internal-api-info.json not found)' }))
       process.exit(1)
     }
-    let info: { baseUrl?: string; tokenFilePath?: string }
+    let info: { baseUrl?: string; tokenFilePath?: string; operatorTokenFilePath?: string }
     try {
       info = JSON.parse(readFileSync(infoPath, 'utf8'))
     } catch (err) {
@@ -1756,9 +1757,16 @@ const daemonApiInfoCmd = defineCommand({
       console.log(JSON.stringify({ ok: false, error: 'internal-api-info.json is malformed (missing baseUrl or tokenFilePath)' }))
       process.exit(1)
     }
+    // The desktop has a deliberately narrow operator credential for its
+    // owner-only workspaces (such as customer review). It must be requested
+    // explicitly: using it for every desktop API call would prevent normal
+    // plugin/agent surfaces from reaching their own allowed routes.
+    const credentialPath = args.operator && info.operatorTokenFilePath
+      ? info.operatorTokenFilePath
+      : info.tokenFilePath
     let token: string
     try {
-      token = readFileSync(info.tokenFilePath, 'utf8').trim()
+      token = readFileSync(credentialPath, 'utf8').trim()
     } catch (err) {
       console.log(JSON.stringify({ ok: false, error: `could not read token file: ${err instanceof Error ? err.message : String(err)}` }))
       process.exit(1)
