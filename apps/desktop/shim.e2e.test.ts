@@ -35,6 +35,12 @@ beforeAll(async () => {
         ...process.env,
         WECHAT_CC_DRY_RUN: '1',
         WECHAT_CC_SHIM_PORT: String(PORT),
+        // This file pins the CLI's *invoke contracts* (what JSON shape main.js
+        // can rely on), so it has to reach the real CLI — including the
+        // `memory write` rejection path. dev-guard would otherwise refuse
+        // that command in every mode. Opening the valve here is scoped to
+        // this harness and does not weaken the dev server itself.
+        WECHAT_CC_DEV_ALLOW_MUTATIONS: '1',
       },
       stdio: 'pipe',
       detached: false,

@@ -221,8 +221,26 @@ if (injectCsp) {
 }
 const CSP_META = cspContent ? `<meta http-equiv="Content-Security-Policy" content="${cspContent}">` : ''
 
+/**
+ * True when a browser tells us this request came from another site. Absent
+ * headers mean "not a browser" (curl, Playwright's request fixture) and are
+ * treated as same-site — this is a localhost dev tool, not a public server.
+ */
+export function isCrossSiteRequest(req: Request): boolean {
+  const site = req.headers.get('sec-fetch-site')
+  if (site && site !== 'same-origin' && site !== 'none') return true
+  const origin = req.headers.get('origin')
+  if (!origin) return false
+  try {
+    const host = new URL(origin).hostname
+    return host !== '127.0.0.1' && host !== 'localhost' && host !== '[::1]'
+  } catch {
+    return true
+  }
+}
+
 async function runCli(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
-  const verdict = guardCliInvoke(args, { dryRun, allowMutations })
+  const verdict = guardCliInvoke(args, { allowMutations })
   if (!verdict.ok) {
     // 抛出去由 /__invoke 的 try/catch 变成 { error } 交给前端
     // (ipc.js 的 formatInvokeError 会原样展示这段人话)。
@@ -301,6 +319,20 @@ Bun.serve({
     }
 
     if (url.pathname === '/__invoke' && req.method === 'POST') {
+      // CSRF: /__invoke executes commands as the developer, and since the dev
+      // server became `tauri dev`'s beforeDevCommand it is open for the whole
+      // session rather than only during an explicit `bun run shim:live`.
+      // Bun's req.json() ignores content-type, so a cross-site
+      // `<form enctype="text/plain">` POST — a simple request, no preflight —
+      // would reach this handler. Browsers always send Sec-Fetch-Site; refuse
+      // anything they mark as cross-site (curl/Playwright send neither header
+      // and stay allowed).
+      if (isCrossSiteRequest(req)) {
+        return new Response(JSON.stringify({ error: 'cross_site_invoke_blocked' }), {
+          status: 403,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
       const body = (await req.json()) as { command: string; args?: { args?: string[] } & Record<string, unknown> }
       try {
         // ── Playwright test-control commands ───────────────────────────────

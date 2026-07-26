@@ -35,6 +35,13 @@ describe('横幅三态', () => {
   it('main.js 横幅区分 mock / live / live+可改状态', () => {
     expect(mainJs).toContain('__WECHAT_CC_ALLOW_MUTATIONS__')
     expect(mainJs).toContain('演示模式')          // mock 态文案保留
-    expect(mainJs).toContain('可改真实状态')       // allow-mutations 态新文案
+    expect(mainJs).toContain('安全阀已关闭')       // allow-mutations 态文案
+  })
+
+  it('关阀态换配色,不只是换文案(spec §3)', () => {
+    // 文案在横幅里字号很小,单靠文字区分"能毁真实状态"和普通 live 太弱。
+    expect(mainJs).toContain('is-unsafe')
+    const css = readFileSync(join(import.meta.dirname, 'src', 'styles.css'), 'utf8')
+    expect(css).toContain('.dev-banner.is-unsafe')
   })
 })

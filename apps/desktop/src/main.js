@@ -1251,10 +1251,12 @@ function showDevBannerIfShim() {
   if (!banner) return
   const allowMut = w.__WECHAT_CC_ALLOW_MUTATIONS__
   banner.innerHTML = w.__WECHAT_CC_DRY_RUN__
-    ? `<b>演示模式 (DRY_RUN)</b> · service install / stop / start 不会真实生效，但能演练交互流程`
+    ? `<b>演示模式 (DRY_RUN)</b> · 界面状态是假的，但未被拦下的命令仍会走真实 CLI`
     : allowMut
-      ? `<b>开发模式 · 可改真实状态</b> · setup / service / daemon kill / update 会真实生效`
-      : `<b>开发模式</b> · 操作走真实 CLI 与真实 daemon；会改真实状态的命令已拦下`
+      ? `<b>开发模式 · 安全阀已关闭</b> · 删账号 / service / setup / update 会真实生效`
+      : `<b>开发模式</b> · 操作走真实 CLI 与真实 daemon；只放行已知只读的命令`
+  // 关阀是唯一能毁掉真实状态的模式，颜色上必须一眼可辨（spec §3）。
+  banner.classList.toggle("is-unsafe", Boolean(allowMut) && !w.__WECHAT_CC_DRY_RUN__)
   banner.hidden = false
 }
 

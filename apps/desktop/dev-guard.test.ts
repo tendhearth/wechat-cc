@@ -1,31 +1,76 @@
 import { describe, it, expect } from 'vitest'
-import { isMutatingCli, guardCliInvoke } from './dev-guard'
+import { commandPath, isReadonlyCli, guardCliInvoke } from './dev-guard'
 
-describe('isMutatingCli', () => {
-  it('认出会改真实状态的命令(按子命令前缀)', () => {
-    expect(isMutatingCli(['setup'])).toBe(true)
-    expect(isMutatingCli(['setup-poll'])).toBe(true)
-    expect(isMutatingCli(['service', 'install'])).toBe(true)
-    expect(isMutatingCli(['daemon', 'kill'])).toBe(true)
-    expect(isMutatingCli(['daemon', 'kill-residual'])).toBe(true)
-    expect(isMutatingCli(['update'])).toBe(true)
+const live = { allowMutations: false }
+
+describe('commandPath', () => {
+  it('取开头连续的位置参数', () => {
+    expect(commandPath(['memory', 'read', 'u', 'p', '--json'])).toEqual(['memory', 'read', 'u', 'p'])
+    expect(commandPath(['doctor'])).toEqual(['doctor'])
   })
 
-  it('读类命令不算(整理/画像走 daemon 路由,不经这里)', () => {
-    expect(isMutatingCli(['memory', 'list', '--json'])).toBe(false)
-    expect(isMutatingCli(['memory', 'read', 'u', 'p', '--json'])).toBe(false)
-    expect(isMutatingCli(['doctor', '--json'])).toBe(false)
-    expect(isMutatingCli(['sessions', 'list', '--json'])).toBe(false)
-    expect(isMutatingCli(['daemon', 'api-info', '--json'])).toBe(false)  // daemon 但只读
-    expect(isMutatingCli([])).toBe(false)
+  it('argv 以 flag 开头时返回 null(fail-closed)', () => {
+    // citty 的 findSubCommandIndex 会跳过前导 flag,所以 ['--json','setup']
+    // 真的会跑 setup。桌面永远不会产生这种形状,直接拒绝。
+    expect(commandPath(['--json', 'setup'])).toBeNull()
+    expect(commandPath(['-v', 'service', 'status'])).toBeNull()
+    expect(commandPath([])).toBeNull()
+  })
+
+  it('`--` 终止命令路径', () => {
+    expect(commandPath(['memory', 'read', '--', 'not-a-subcommand'])).toEqual(['memory', 'read'])
+  })
+})
+
+describe('isReadonlyCli', () => {
+  it('认出桌面实际用的读类命令', () => {
+    expect(isReadonlyCli(['memory', 'list', '--json'])).toBe(true)
+    expect(isReadonlyCli(['memory', 'read', 'u', 'p', '--json'])).toBe(true)
+    expect(isReadonlyCli(['doctor', '--json'])).toBe(true)
+    expect(isReadonlyCli(['sessions', 'list-chats', '--json'])).toBe(true)
+    expect(isReadonlyCli(['daemon', 'api-info', '--json'])).toBe(true)
+    expect(isReadonlyCli(['service', 'status', '--json'])).toBe(true)
+    expect(isReadonlyCli(['dialogue', 'threads', '--chat-id', 'c', '--json'])).toBe(true)
+  })
+
+  it('改真实状态的命令一律不在白名单', () => {
+    expect(isReadonlyCli(['setup'])).toBe(false)
+    expect(isReadonlyCli(['setup-poll', '--qrcode', 'x'])).toBe(false)
+    expect(isReadonlyCli(['update', '--json'])).toBe(false)
+    expect(isReadonlyCli(['daemon', 'kill-residual', '--json'])).toBe(false)
+    // 评审发现的漏网之鱼——每个都对应仪表盘上一个按钮
+    expect(isReadonlyCli(['account', 'remove', 'bot1', '--json'])).toBe(false)
+    expect(isReadonlyCli(['provider', 'set', 'kimi'])).toBe(false)
+    expect(isReadonlyCli(['memory', 'write', 'u', 'p', '--body-base64', 'x'])).toBe(false)
+    expect(isReadonlyCli(['avatar', 'set', 'k', '--base64', 'x'])).toBe(false)
+    expect(isReadonlyCli(['sessions', 'delete', 'a', '--json'])).toBe(false)
+    expect(isReadonlyCli(['mode', 'set', 'c', 'auto', '--json'])).toBe(false)
+    expect(isReadonlyCli(['observations', 'archive', 'c', 'o', '--json'])).toBe(false)
+    expect(isReadonlyCli(['service', 'install', '--json'])).toBe(false)
+    expect(isReadonlyCli(['service', 'stop', '--json'])).toBe(false)
+  })
+
+  it('未知/未来的命令默认不放行(白名单的意义)', () => {
+    expect(isReadonlyCli(['some-new-command', '--json'])).toBe(false)
+  })
+
+  it('requireFlag:update 只有 --check 算读类', () => {
+    expect(isReadonlyCli(['update', '--check', '--json'])).toBe(true)
+    expect(isReadonlyCli(['update', '--json'])).toBe(false)
+  })
+
+  it('前导 flag 绕过被堵死(评审实测过的洞)', () => {
+    // 修复前:['--json','service','status'] 会被放行并真的执行
+    expect(isReadonlyCli(['--json', 'service', 'status'])).toBe(false)
+    expect(isReadonlyCli(['--json', 'setup'])).toBe(false)
+    // 命令路径被 flag 打断时也不当成更长的白名单项
+    expect(isReadonlyCli(['memory', '--chat', 'read'])).toBe(false)
   })
 })
 
 describe('guardCliInvoke', () => {
-  const live = { dryRun: false, allowMutations: false }
-
-  it('live 模式拦危险命令,给结构化错误 + hint', () => {
-    const r = guardCliInvoke(['service', 'install'], live)
+  it('拦下非只读命令,给结构化错误 + hint', () => {
+    const r = guardCliInvoke(['account', 'remove', 'bot1'], live)
     expect(r.ok).toBe(false)
     if (!r.ok) {
       expect(r.error).toBe('mutating_command_blocked_in_dev')
@@ -33,15 +78,17 @@ describe('guardCliInvoke', () => {
     }
   })
 
-  it('live 模式放行读类命令', () => {
+  it('放行只读命令', () => {
     expect(guardCliInvoke(['memory', 'list', '--json'], live).ok).toBe(true)
   })
 
   it('--allow-mutations 显式放行', () => {
-    expect(guardCliInvoke(['setup'], { dryRun: false, allowMutations: true }).ok).toBe(true)
+    expect(guardCliInvoke(['setup'], { allowMutations: true }).ok).toBe(true)
   })
 
-  it('mock 模式不拦(本就不碰真实状态)', () => {
-    expect(guardCliInvoke(['setup'], { dryRun: true, allowMutations: false }).ok).toBe(true)
+  it('mock/DRY_RUN 不再是免死金牌(评审 #4)', () => {
+    // DRY_RUN 只拦截显式列出的命令,其余照样落到真 cli.ts —— 所以阀门
+    // 必须在每个模式下都生效,签名里干脆没有 dryRun 这个逃生口。
+    expect(guardCliInvoke(['account', 'remove', 'bot1'], live).ok).toBe(false)
   })
 })

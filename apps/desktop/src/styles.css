@@ -189,6 +189,17 @@ input { font: inherit; color: inherit; }
 .dev-banner[hidden] { display: none !important; }
 .dev-banner b { color: #ffe3b8; font-weight: 500; }
 
+/* --allow-mutations: the valve is off and dev actions hit real state
+ * (delete an account, rewrite the launchd plist). Spec 2026-07-26 §3 asks
+ * for an unmistakably different colour so this mode is never mistaken for
+ * ordinary live dev. */
+.dev-banner.is-unsafe {
+  background: #4a1214;
+  color: #ffd0d0;
+  border-bottom-color: #a12a2a;
+}
+.dev-banner.is-unsafe b { color: #fff0f0; }
+
 /* ─── shared button vocabulary ───────────────────────────────────────── */
 /* Force [hidden] to always win — without !important, any class with an
    explicit `display` property (e.g. `.btn { display: inline-flex }` below,
