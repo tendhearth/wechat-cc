@@ -9,7 +9,7 @@
 
 use serde_json::Value;
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
@@ -84,6 +84,87 @@ fn render_qr_svg(text: String) -> Result<String, String> {
         .dark_color(svg::Color("#111111"))
         .light_color(svg::Color("#ffffff"))
         .build())
+}
+
+// Opens the companion as its own transparent desktop window. The aquarium
+// itself remains a regular webview page, so it can reuse the same Canvas scene
+// and assets as the dashboard rather than keeping a second animation engine in
+// Rust. A second request focuses the existing window instead of stacking copies.
+#[tauri::command]
+fn open_companion_window(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("companion") {
+        window.show().map_err(|err| format!("show companion window: {err}"))?;
+        window.set_focus().map_err(|err| format!("focus companion window: {err}"))?;
+        return Ok(());
+    }
+
+    WebviewWindowBuilder::new(
+        &app,
+        "companion",
+        WebviewUrl::App("companion-window.html".into()),
+    )
+    .title("陪伴小世界")
+    // Desktop mode begins at the compact size, so it behaves like a quiet
+    // companion rather than competing with the main workspace. The user can
+    // expand it at any time with the in-window + control.
+    .inner_size(280.0, 210.0)
+    .min_inner_size(280.0, 210.0)
+    .transparent(true)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .resizable(true)
+    .build()
+    .map_err(|err| format!("create companion window: {err}"))?;
+
+    Ok(())
+}
+
+// Keep companion controls on the Rust side. Dynamic windows have a more
+// restrictive capability surface than the main webview, whereas these
+// commands always target the one trusted companion window by label.
+#[tauri::command]
+fn close_companion_window(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("companion")
+        .ok_or_else(|| "companion window is not open".to_string())?;
+    window
+        .close()
+        .map_err(|err| format!("close companion window: {err}"))
+}
+
+#[tauri::command]
+fn start_companion_drag(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("companion")
+        .ok_or_else(|| "companion window is not open".to_string())?;
+    window
+        .start_dragging()
+        .map_err(|err| format!("start companion drag: {err}"))
+}
+
+#[tauri::command]
+fn resize_companion_window(app: AppHandle, direction: String) -> Result<(), String> {
+    let window = app
+        .get_webview_window("companion")
+        .ok_or_else(|| "companion window is not open".to_string())?;
+    let factor = match direction.as_str() {
+        "in" => 1.12,
+        "out" => 1.0 / 1.12,
+        _ => return Err("invalid companion resize direction".to_string()),
+    };
+    let scale_factor = window
+        .scale_factor()
+        .map_err(|err| format!("read companion scale factor: {err}"))?;
+    let current = window
+        .inner_size()
+        .map_err(|err| format!("read companion size: {err}"))?
+        .to_logical::<f64>(scale_factor);
+    let width = (current.width * factor).clamp(280.0, 1100.0);
+    let height = (current.height * factor).clamp(210.0, 780.0);
+    window
+        .set_size(LogicalSize::new(width, height))
+        .map_err(|err| format!("resize companion window: {err}"))
 }
 
 // Spawn the bundled sidecar and collect its stdout. Stderr is forwarded as
@@ -662,6 +743,10 @@ pub fn run() {
             wechat_cli_text,
             save_text_file,
             render_qr_svg,
+            open_companion_window,
+            close_companion_window,
+            start_companion_drag,
+            resize_companion_window,
             wechat_daemon_pid,
             notify_user,
             wechat_health_ping,
@@ -669,6 +754,20 @@ pub fn run() {
             agent_speak,
             agent_transcribe
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running wechat-cc desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building wechat-cc desktop")
+        .run(|app, event| {
+            // On macOS, clicking the Dock icon (or opening the app again) emits
+            // `Reopen`. The companion aquarium is always-on-top, so without an
+            // explicit main-window focus it can look as though the dashboard
+            // never opened. Keep the companion running, but bring the real app
+            // window back whenever the user re-enters WeChat-cc.
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                if let Some(main) = app.get_webview_window("main") {
+                    let _ = main.show();
+                    let _ = main.set_focus();
+                }
+            }
+        });
 }

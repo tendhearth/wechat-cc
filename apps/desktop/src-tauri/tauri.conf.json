@@ -10,6 +10,7 @@
     "devUrl": "http://127.0.0.1:4173"
   },
   "app": {
+    "macOSPrivateApi": true,
     "withGlobalTauri": true,
     "windows": [
       {

@@ -378,10 +378,16 @@
                   <p id="hero-meta">把鼠标轻轻移进鱼缸，看看谁会先回应你</p>
                 </div>
                 <div class="ai-orbit-visual">
-                  <button id="companion-immersive-start" class="companion-immersive-trigger" type="button" aria-pressed="false">
-                    <span class="companion-immersive-icon" aria-hidden="true">⤢</span>
-                    <span>进入这一刻</span>
-                  </button>
+                  <div class="companion-mode-actions" aria-label="陪伴显示方式">
+                    <button id="companion-immersive-start" class="companion-immersive-trigger" type="button" aria-pressed="false">
+                      <span class="companion-immersive-icon" aria-hidden="true">⤢</span>
+                      <span>进入这一刻</span>
+                    </button>
+                    <button id="companion-desktop-start" class="companion-desktop-trigger" type="button" title="在桌面打开可拖动的陪伴鱼缸">
+                      <span aria-hidden="true">↗</span>
+                      <span>浮到桌面</span>
+                    </button>
+                  </div>
                   <div class="moment-animation-stage moment-illustration-online" aria-label="可交互的陪伴鱼缸">
                     <canvas id="companion-stage"></canvas>
                     <div class="stage-hint" id="stage-hint">把鼠标轻轻移进鱼缸水面下方</div>

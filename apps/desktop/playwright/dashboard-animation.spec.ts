@@ -18,12 +18,12 @@ test('inline companion animation replaces the overview illustration', async ({ p
   await page.mouse.move(box.x + box.width * .72, box.y + box.height * .52)
   await expect(page.locator('#stage-hint')).toContainText('它们发现你了')
 
-  await page.mouse.move(box.x + box.width * .84, box.y + box.height * .64)
-  await expect(page.locator('#stage-hint')).toContainText('点一点水草')
-  await page.mouse.click(box.x + box.width * .84, box.y + box.height * .64)
-  await expect(page.locator('#stage-hint')).toContainText('小螃蟹溜出去')
-  await page.waitForTimeout(1750)
-  await expect(page.locator('#crab-escape')).not.toHaveCSS('opacity', '0')
+  await page.mouse.move(box.x + box.width * .846, box.y + box.height * .754)
+  await expect(page.locator('#stage-hint')).toContainText('点点小螃蟹')
+  await page.mouse.click(box.x + box.width * .846, box.y + box.height * .754)
+  await expect(page.locator('#stage-hint')).toContainText('它要换个地方藏起来')
+  await page.waitForTimeout(1250)
+  await expect(page.locator('#crab-escape')).toHaveCSS('opacity', '0')
 
   await page.mouse.move(box.x + box.width * .25, box.y + box.height * .55)
   await expect(page.locator('#bear-message')).toHaveText('我在这儿陪你看鱼。')
@@ -43,4 +43,12 @@ test('inline companion animation replaces the overview illustration', async ({ p
   await expect(page.locator('.moment-body')).not.toHaveClass(/is-companion-users-open/)
   await page.locator('#companion-immersive-exit').click()
   await expect(page.locator('.moment-body')).not.toHaveClass(/is-companion-immersive/)
+
+  const desktopPagePromise = page.context().waitForEvent('page')
+  await page.locator('#companion-desktop-start').click()
+  const desktopPage = await desktopPagePromise
+  await desktopPage.waitForLoadState()
+  await expect(desktopPage.locator('#companion-stage')).toBeVisible()
+  await expect(desktopPage.locator('#companion-window-close')).toBeVisible()
+  await desktopPage.close()
 })

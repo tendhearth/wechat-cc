@@ -925,6 +925,7 @@ function wireEvents() {
 
   const companionBody = document.querySelector(".moment-body")
   const companionImmersiveStart = document.getElementById("companion-immersive-start")
+  const companionDesktopStart = document.getElementById("companion-desktop-start")
   const companionImmersiveExit = document.getElementById("companion-immersive-exit")
   const companionUsersToggle = document.getElementById("companion-users-toggle")
   const companionUsersScrim = document.getElementById("companion-users-scrim")
@@ -942,6 +943,23 @@ function wireEvents() {
     companionImmersiveStart?.setAttribute("aria-pressed", String(active))
   }
   companionImmersiveStart?.addEventListener("click", () => setCompanionImmersive(true))
+  companionDesktopStart?.addEventListener("click", async () => {
+    // The browser/dev shim cannot spawn a native Tauri window. Open the same
+    // isolated scene in a popup there so visual work remains previewable.
+    if (mock || /** @type {any} */ (window).__WECHAT_CC_SHIM__) {
+      window.open("./companion-window.html", "wechat-cc-companion", "popup,width=600,height=430")
+      return
+    }
+    companionDesktopStart.disabled = true
+    try {
+      await invoke("open_companion_window", {})
+    } catch (err) {
+      console.error("open companion window failed:", err)
+      alert(`无法打开桌面陪伴：${formatInvokeError(err)}`)
+    } finally {
+      companionDesktopStart.disabled = false
+    }
+  })
   companionImmersiveExit?.addEventListener("click", () => setCompanionImmersive(false))
   companionUsersToggle?.addEventListener("click", () => {
     if (!companionBody?.classList.contains("is-companion-immersive")) return
