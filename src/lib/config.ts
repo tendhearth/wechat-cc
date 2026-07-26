@@ -6,11 +6,36 @@
  * in the respective files — see the note on CLIENT_VERSION below.
  */
 
-import { homedir } from 'os'
+import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 
-/** Root state directory — all persistent wechat-cc data lives under here. */
-export const STATE_DIR = process.env.WECHAT_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'wechat')
+/**
+ * True while a test runner is driving this process. vitest sets VITEST (and
+ * NODE_ENV=test); bun's native runner sets NODE_ENV=test (verified 2026-07-26).
+ */
+const UNDER_TEST_RUNNER = process.env.VITEST != null || process.env.NODE_ENV === 'test'
+
+/**
+ * Root state directory — all persistent wechat-cc data lives under here.
+ *
+ * TEST-RUNNER GUARD (incident 2026-07-26): tests redirect this constant with
+ * vitest's `vi.mock('./config')`, which does NOT reliably apply under bun's
+ * native runner (`bun test`). A whole-repo `bun test` therefore let
+ * `src/lib/access.test.ts`'s `saveAccess({admins:['alice@im.wechat'], …})`
+ * fall through to the operator's REAL ~/.claude/channels/wechat/access.json —
+ * dropping them out of `allowFrom`, so the live bot would have silently
+ * discarded their own WeChat messages (mw-access `not_in_allowlist`).
+ * Reproduced byte-for-byte with a fake $HOME.
+ *
+ * So: under a test runner, the DEFAULT never points at the real home dir. An
+ * explicit WECHAT_STATE_DIR always wins (that is how e2e tests share a state
+ * dir with a spawned daemon), and production resolution is unchanged.
+ * Contract pinned by config.test.ts.
+ */
+export const STATE_DIR = process.env.WECHAT_STATE_DIR
+  ?? (UNDER_TEST_RUNNER
+    ? join(tmpdir(), `wechat-cc-test-state-${process.pid}`)
+    : join(homedir(), '.claude', 'channels', 'wechat'))
 
 /** ilink API base URL (shared by server + setup). */
 export const ILINK_BASE_URL = 'https://ilinkai.weixin.qq.com'
