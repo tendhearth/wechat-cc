@@ -925,7 +925,7 @@ function wireEvents() {
 
   const companionBody = document.querySelector(".moment-body")
   const companionImmersiveStart = document.getElementById("companion-immersive-start")
-  const companionDesktopStart = document.getElementById("companion-desktop-start")
+  const companionDesktopStart = /** @type {HTMLButtonElement | null} */ (document.getElementById("companion-desktop-start"))
   const companionImmersiveExit = document.getElementById("companion-immersive-exit")
   const companionUsersToggle = document.getElementById("companion-users-toggle")
   const companionUsersScrim = document.getElementById("companion-users-scrim")
