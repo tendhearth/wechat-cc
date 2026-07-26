@@ -27,12 +27,17 @@
 
 import { spawn } from 'bun'
 import { join, resolve, relative, isAbsolute } from 'node:path'
+import { guardCliInvoke } from './dev-guard'
+import { makeLiveReload, injectReloadScript } from './dev-reload'
 
 const ROOT = process.env.WECHAT_CC_ROOT ?? join(import.meta.dir, '..', '..')
 const SRC = join(import.meta.dir, 'src')
 const PORT = Number(process.env.WECHAT_CC_SHIM_PORT ?? 4174)
 
 const dryRun = process.env.WECHAT_CC_DRY_RUN === '1'
+// live 模式默认不跑会改真实状态的 CLI 命令(spec 2026-07-26 §3)。
+const allowMutations = process.env.WECHAT_CC_DEV_ALLOW_MUTATIONS === '1'
+  || process.argv.includes('--allow-mutations')
 
 // ─── Playwright mock state ────────────────────────────────────────────────────
 // Shared mutable bag for test-controlled data. Playwright tests seed this via
@@ -190,6 +195,7 @@ window.__TAURI__ = window.__TAURI__ ?? { core: {
 }}
 window.__WECHAT_CC_SHIM__ = true
 window.__WECHAT_CC_DRY_RUN__ = ${dryRun ? 'true' : 'false'}
+window.__WECHAT_CC_ALLOW_MUTATIONS__ = ${allowMutations ? 'true' : 'false'}
 `
 const POLYFILL_INLINE = `<script>${POLYFILL_BODY}</script>`
 const POLYFILL_EXTERNAL = `<script src="/__tauri_polyfill.js"></script>`
@@ -216,6 +222,12 @@ if (injectCsp) {
 const CSP_META = cspContent ? `<meta http-equiv="Content-Security-Policy" content="${cspContent}">` : ''
 
 async function runCli(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+  const verdict = guardCliInvoke(args, { dryRun, allowMutations })
+  if (!verdict.ok) {
+    // 抛出去由 /__invoke 的 try/catch 变成 { error } 交给前端
+    // (ipc.js 的 formatInvokeError 会原样展示这段人话)。
+    throw new Error(`${verdict.error}: ${verdict.hint}`)
+  }
   const proc = spawn(['bun', join(ROOT, 'cli.ts'), ...args], {
     cwd: ROOT,
     stdout: 'pipe',
@@ -247,12 +259,17 @@ const CONTENT_TYPES: Record<string, string> = {
   '.ico': 'image/x-icon',
 }
 
+const liveReload = makeLiveReload({ root: SRC, log: (l) => console.error(`[dev] ${l}`) })
+
 Bun.serve({
   hostname: '127.0.0.1',
   port: PORT,
   development: true,
   async fetch(req) {
     const url = new URL(req.url)
+
+    const reloadRes = liveReload.handle(url.pathname)
+    if (reloadRes) return reloadRes
 
     // Local-file attachment endpoint — restricted to the wechat-cc
     // inbox tree so the dev shim doesn't double as an open file server.
@@ -1378,7 +1395,7 @@ Bun.serve({
       const html = await file.text()
       const polyfillTag = injectCsp ? POLYFILL_EXTERNAL : POLYFILL_INLINE
       const injection = `${CSP_META}\n${polyfillTag}\n</head>`
-      return new Response(html.replace('</head>', injection), {
+      return new Response(injectReloadScript(html.replace('</head>', injection)), {
         headers: { 'content-type': 'text/html; charset=utf-8' },
       })
     }
@@ -1388,8 +1405,12 @@ Bun.serve({
   },
 })
 
-console.log(`shim: http://localhost:${PORT}  root=${ROOT}  dry-run=${dryRun ? 'on' : 'off'}`)
-if (!dryRun) {
-  console.log('  ⚠️  WECHAT_CC_DRY_RUN is off — service install/uninstall will hit launchctl.')
-  console.log('     For safe e2e, prefix with `WECHAT_CC_DRY_RUN=1`.')
+liveReload.watch()
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(sig, () => { liveReload.close(); process.exit(0) })
+}
+
+console.log(`shim: http://localhost:${PORT}  root=${ROOT}  mode=${dryRun ? 'mock' : 'live'}  mutations=${allowMutations ? 'ALLOWED' : 'blocked'}`)
+if (!dryRun && allowMutations) {
+  console.log('  ⚠️  --allow-mutations 已开:setup / service / daemon kill / update 会真实生效。')
 }

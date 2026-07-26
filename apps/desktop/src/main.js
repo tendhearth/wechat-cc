@@ -1249,9 +1249,12 @@ function showDevBannerIfShim() {
   if (!w.__WECHAT_CC_SHIM__) return
   const banner = document.getElementById("dev-banner")
   if (!banner) return
+  const allowMut = w.__WECHAT_CC_ALLOW_MUTATIONS__
   banner.innerHTML = w.__WECHAT_CC_DRY_RUN__
     ? `<b>演示模式 (DRY_RUN)</b> · service install / stop / start 不会真实生效，但能演练交互流程`
-    : `<b>开发 shim 模式</b> · 操作走真实 CLI（未启用 DRY_RUN）`
+    : allowMut
+      ? `<b>开发模式 · 可改真实状态</b> · setup / service / daemon kill / update 会真实生效`
+      : `<b>开发模式</b> · 操作走真实 CLI 与真实 daemon；会改真实状态的命令已拦下`
   banner.hidden = false
 }
 
