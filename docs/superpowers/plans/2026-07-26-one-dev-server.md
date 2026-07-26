@@ -533,8 +533,11 @@ git commit -m "feat(dev): test-shim 接入热重载 + 安全阀 + 三模式横�
 
 - [ ] **Step 1: package.json scripts** —— 删 `dev-server` / `preview`,`shim`/`shim:live` 收敛为显式三入口(`tauri` / `build` / `build-sidecar` / `test:e2e:browser` 保持不动):
 
+> **计划缺陷更正(实施时发现)**:下面这段把浏览器入口命名为 `dev`,但 `dev` 早已存在且等于 `tauri dev`(启动桌面应用)。照抄会①删掉唯一启动应用的入口,②与 Step 2 的 `beforeDevCommand: "bun run dev"` 构成无限递归。实际实现改为四入口:`dev` 保持 `tauri dev`,浏览器入口叫 `dev:web`,`beforeDevCommand` 指向 `bun run dev:web`。
+
 ```json
-    "dev": "bun test-shim.ts",
+    "dev": "tauri dev",
+    "dev:web": "bun test-shim.ts",
     "dev:mock": "WECHAT_CC_DRY_RUN=1 bun test-shim.ts",
     "dev:unsafe": "WECHAT_CC_DEV_ALLOW_MUTATIONS=1 bun test-shim.ts",
 ```
@@ -545,7 +548,7 @@ git commit -m "feat(dev): test-shim 接入热重载 + 安全阀 + 三模式横�
 ```json
   "build": {
     "frontendDist": "../src",
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "bun run dev:web",
     "beforeBuildCommand": "bun run build-sidecar",
     "devUrl": "http://127.0.0.1:4174"
   },
