@@ -1400,6 +1400,16 @@ Bun.serve({
       })
     }
     const ext = path.slice(path.lastIndexOf('.'))
+    // Any other .html response (e.g. test fixtures) still gets the live-reload
+    // script injected — only the tauri-polyfill/CSP wiring above is specific
+    // to the SPA entry point. Without this, hitting a non-index .html file
+    // through the dev server silently drops live reload for it.
+    if (ext === '.html') {
+      const html = await file.text()
+      return new Response(injectReloadScript(html), {
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      })
+    }
     const ct = CONTENT_TYPES[ext]
     return new Response(file, ct ? { headers: { 'content-type': ct } } : undefined)
   },

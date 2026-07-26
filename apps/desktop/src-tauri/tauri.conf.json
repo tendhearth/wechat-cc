@@ -5,9 +5,9 @@
   "identifier": "dev.wechat-cc.installer",
   "build": {
     "frontendDist": "../src",
-    "beforeDevCommand": "bun run dev-server",
+    "beforeDevCommand": "bun run dev:web",
     "beforeBuildCommand": "bun run build-sidecar",
-    "devUrl": "http://127.0.0.1:4173"
+    "devUrl": "http://127.0.0.1:4174"
   },
   "app": {
     "macOSPrivateApi": true,
