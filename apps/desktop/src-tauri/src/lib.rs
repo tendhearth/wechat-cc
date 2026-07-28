@@ -732,6 +732,115 @@ async fn agent_transcribe(audio_b64: String, mime: String) -> Result<String, Str
     }
 }
 
+// Owner-only workspace proxy — keeps the admin operator token in this host
+// process instead of the webview.
+//
+// WHY (2026-07-28 security review of 45a5211): the customer-review workspace
+// originally fetched the daemon straight from JS, obtaining the operator token
+// through `wechat_cli_json ['daemon','api-info','--operator']`. That put an
+// admin-tier credential in the renderer's heap for the first time — and
+// `wechat_cli_json` applies no argument filtering in the production app, so
+// any script that can run in the webview (a future innerHTML hole rendering
+// content from a stranger agent, a poisoned frontend dep, devtools) could take
+// it and then reach every route in the operator token's routeAllow, including
+// POST /v1/companion/converse — i.e. speak to WeChat as the owner. This
+// command restores the invariant the other three owner-only commands hold: the
+// renderer names an operation, the token never leaves Rust.
+//
+// The customer-review routes stay `admin` rather than being demoted to
+// `trusted` (the other obvious fix): ordinary chat sessions are minted
+// `trusted` (tierNameFromProfile), so demoting would let anyone talking to the
+// bot read the owner's private customer judgments.
+#[tauri::command]
+async fn customer_review_api(
+    method: String,
+    path: String,
+    body: Option<String>,
+) -> Result<String, String> {
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    // Hard allow-list: this hands out admin authority, so it must never become
+    // a generic daemon proxy. Reject anything outside the workspace's own
+    // prefix, and any traversal-ish path, before touching the token.
+    let route = path.split('?').next().unwrap_or("");
+    if !(route == "/v1/customer-review" || route.starts_with("/v1/customer-review/"))
+        || path.contains("..")
+    {
+        return Err(format!("customer_review_api refuses path: {path}"));
+    }
+    if method != "GET" && method != "POST" {
+        return Err(format!("customer_review_api refuses method: {method}"));
+    }
+
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|e| format!("cannot resolve home dir: {e}"))?;
+    let state_dir = std::env::var("WECHAT_STATE_DIR").unwrap_or_else(|_| {
+        PathBuf::from(home)
+            .join(".claude")
+            .join("channels")
+            .join("wechat")
+            .to_string_lossy()
+            .to_string()
+    });
+    let info_path = PathBuf::from(&state_dir).join("internal-api-info.json");
+
+    let info_raw = std::fs::read_to_string(&info_path)
+        .map_err(|e| format!("read {}: {e}", info_path.display()))?;
+    let info: Value = serde_json::from_str(&info_raw)
+        .map_err(|e| format!("invalid JSON in {}: {e}", info_path.display()))?;
+
+    let base_url = info
+        .get("baseUrl")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("missing baseUrl in {}", info_path.display()))?;
+    // Same rule as agent_converse: never fall back to tokenFilePath.
+    let operator_token_file_path = info
+        .get("operatorTokenFilePath")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "operator token unavailable — daemon too old".to_string())?;
+    let token = std::fs::read_to_string(operator_token_file_path)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| format!("token read error: {e}"))?;
+
+    let url = format!("{base_url}{path}");
+    let result = timeout(Duration::from_secs(30), async {
+        let client = reqwest::Client::new();
+        let req = if method == "GET" {
+            client.get(&url)
+        } else {
+            client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .body(body.unwrap_or_else(|| "{}".to_string()))
+        };
+        req.header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+    })
+    .await;
+
+    let resp = match result {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => return Err(format!("request error: {e}")),
+        Err(_) => return Err("request timed out".to_string()),
+    };
+    let status = resp.status();
+    let body_text = resp
+        .text()
+        .await
+        .map_err(|e| format!("failed to read response body ({status}): {e}"))?;
+    if !status.is_success() {
+        let err_msg = serde_json::from_str::<Value>(&body_text)
+            .ok()
+            .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(|s| s.to_string()))
+            .unwrap_or_else(|| format!("HTTP {status}"));
+        return Err(err_msg);
+    }
+    Ok(body_text)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -752,7 +861,8 @@ pub fn run() {
             wechat_health_ping,
             agent_converse,
             agent_speak,
-            agent_transcribe
+            agent_transcribe,
+            customer_review_api
         ])
         .build(tauri::generate_context!())
         .expect("error while building wechat-cc desktop")

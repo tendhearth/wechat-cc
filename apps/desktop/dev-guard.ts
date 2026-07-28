@@ -123,9 +123,10 @@ export const READONLY_CLI_COMMANDS: readonly ReadonlyCliCommand[] = [
   // persisted by cli.ts BEFORE it looks at which action was requested.
   { path: ['service', 'status'] },
   // daemon api-info is how the desktop learns the daemon's port + token.
-  // --operator asks for the route-scoped operator token instead of the
-  // daemon-wide one; api.js sends it for /v1/customer-review.
-  { path: ['daemon', 'api-info'], flags: ['--operator'] },
+  // No --operator: that flag was removed (see cli.ts) so the admin credential
+  // is never obtainable through the CLI. Owner-only workspaces go through the
+  // host's customer_review_api command instead.
+  { path: ['daemon', 'api-info'] },
   { path: ['update'], requireFlag: '--check' },
 ]
 

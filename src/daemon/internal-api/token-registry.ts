@@ -85,6 +85,10 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           'POST /v1/companion/converse',
           'POST /v1/companion/speak',
           'POST /v1/companion/transcribe',
+          // Owner-only workspace (admin-tier reads of the owner's wxvault
+          // history + stored customer judgments). Reached ONLY through the
+          // Tauri host's customer_review_api command / the dev server's mirror
+          // of it — never from webview JS, which must not hold this token.
           'GET /v1/customer-review/contacts',
           'POST /v1/customer-review',
           'POST /v1/customer-review/run',

@@ -18,31 +18,66 @@
 
 import { invoke as ipcInvoke } from './ipc.js'
 
-/** @type {Record<'standard'|'operator', { baseUrl: string; token: string } | null>} */
-const _cache = { standard: null, operator: null }
+/** @type {{ baseUrl: string; token: string } | null} */
+let _cache = null
 
-/** @type {Record<'standard'|'operator', Promise<{ baseUrl: string; token: string }> | null>} */
-const _inflight = { standard: null, operator: null }
+/** @type {Promise<{ baseUrl: string; token: string }> | null} */
+let _inflight = null
 
-/** @param {boolean} operator */
-async function getApiCredentials(operator = false) {
-  const key = operator ? 'operator' : 'standard'
-  if (_cache[key]) return _cache[key]
-  if (_inflight[key]) return _inflight[key]
-  _inflight[key] = (async () => {
-      const r = /** @type {{ ok?: boolean; baseUrl?: string; token?: string; error?: string }} */ (
-      await ipcInvoke('wechat_cli_json', { args: ['daemon', 'api-info', '--json', ...(operator ? ['--operator'] : [])] }, undefined)
+async function getApiCredentials() {
+  if (_cache) return _cache
+  if (_inflight) return _inflight
+  _inflight = (async () => {
+    const r = /** @type {{ ok?: boolean; baseUrl?: string; token?: string; error?: string }} */ (
+      await ipcInvoke('wechat_cli_json', { args: ['daemon', 'api-info', '--json'] }, undefined)
     )
     if (!r || !r.ok || !r.baseUrl || !r.token) {
       throw new Error(r?.error ?? 'daemon api-info returned no credentials')
     }
-    _cache[key] = { baseUrl: r.baseUrl, token: r.token }
-    return _cache[key]
+    _cache = { baseUrl: r.baseUrl, token: r.token }
+    return _cache
   })()
   try {
-    return await _inflight[key]
+    return await _inflight
   } finally {
-    _inflight[key] = null
+    _inflight = null
+  }
+}
+
+/**
+ * Owner-only workspaces never see their credential.
+ *
+ * The customer-review routes are admin-tier, and admin is NOT what this file's
+ * cached token carries. The earlier approach — fetch the operator token via
+ * `daemon api-info --operator` and use it here — put an admin credential in the
+ * renderer's heap, where any script running in the webview could take it and
+ * then reach everything in that token's routeAllow, including
+ * POST /v1/companion/converse (speak to WeChat as the owner).
+ *
+ * So the host performs the call instead: `customer_review_api` reads the token
+ * in Rust, enforces the /v1/customer-review path prefix, and returns only the
+ * response body. The dev server implements the same command (test-shim.ts), so
+ * browser dev keeps the token server-side too.
+ *
+ * Demoting the routes to `trusted` was the other candidate and is unsafe:
+ * ordinary chat sessions are minted `trusted`, so anyone talking to the bot
+ * would be able to read the owner's private customer judgments.
+ * @param {'GET' | 'POST'} method
+ * @param {string} path
+ * @param {Record<string, unknown>} [body]
+ * @returns {Promise<unknown>}
+ */
+async function callOwnerWorkspace(method, path, body) {
+  const raw = /** @type {string} */ (await ipcInvoke('customer_review_api', {
+    method,
+    path,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  }, undefined))
+  if (typeof raw !== 'string') return raw
+  try {
+    return JSON.parse(raw)
+  } catch {
+    throw new Error(`customer review returned a non-JSON response: ${raw.slice(0, 120)}`)
   }
 }
 
@@ -72,11 +107,10 @@ export async function invokeApi(method, path, body, opts) {
  * @returns {Promise<unknown>}
  */
 async function callApi(method, path, body, retried, opts) {
-  // Customer review is intentionally owner-only. It gets the separately
-  // scoped operator token; all established desktop surfaces retain their
-  // regular token and existing permissions.
-  const operator = path.startsWith('/v1/customer-review')
-  const { baseUrl, token } = await getApiCredentials(operator)
+  // Customer review is intentionally owner-only: the host holds that
+  // credential, so the request never runs in this file. See callOwnerWorkspace.
+  if (path.startsWith('/v1/customer-review')) return callOwnerWorkspace(method, path, body)
+  const { baseUrl, token } = await getApiCredentials()
   const url = baseUrl + path
   /** @type {RequestInit} */
   const init = {
@@ -130,6 +164,5 @@ async function callApi(method, path, body, retried, opts) {
 
 /** Invalidate the cached credentials (e.g. after a daemon restart). */
 export function resetApiCredentials() {
-  _cache.standard = null
-  _cache.operator = null
+  _cache = null
 }

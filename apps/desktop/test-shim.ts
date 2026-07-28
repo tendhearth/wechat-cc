@@ -31,6 +31,11 @@ import { guardCliInvoke } from './dev-guard'
 import { makeLiveReload, injectReloadScript } from './dev-reload'
 
 const ROOT = process.env.WECHAT_CC_ROOT ?? join(import.meta.dir, '..', '..')
+// Accepts both spellings: src/lib/config.ts and lib.rs read WECHAT_STATE_DIR,
+// while the /attachment guard below already used WECHAT_CC_STATE_DIR.
+const STATE_DIR = process.env.WECHAT_STATE_DIR
+  ?? process.env.WECHAT_CC_STATE_DIR
+  ?? join(process.env.HOME ?? '', '.claude', 'channels', 'wechat')
 const SRC = join(import.meta.dir, 'src')
 const PORT = Number(process.env.WECHAT_CC_SHIM_PORT ?? 4174)
 
@@ -1316,6 +1321,56 @@ Bun.serve({
           // callers, and the path is basename-only under ~/Downloads.
           fs.writeFileSync(target, content)
           return Response.json({ result: target })
+        }
+        // Mirror of lib.rs's customer_review_api. The whole point of that
+        // command is that the admin operator token stays out of the page, so
+        // the dev server proxies here rather than handing the token to JS —
+        // otherwise browser dev would quietly reintroduce exactly the exposure
+        // the Rust command exists to prevent.
+        if (body.command === 'customer_review_api') {
+          const a = body.args as unknown as { method?: string; path?: string; body?: string }
+          const method = a?.method ?? 'GET'
+          const path = a?.path ?? ''
+          const route = path.split('?')[0] ?? ''
+          if (!(route === '/v1/customer-review' || route.startsWith('/v1/customer-review/')) || path.includes('..')) {
+            return Response.json({ error: `customer_review_api refuses path: ${path}` })
+          }
+          if (method !== 'GET' && method !== 'POST') {
+            return Response.json({ error: `customer_review_api refuses method: ${method}` })
+          }
+          if (dryRun) {
+            // Playwright intercepts these at the network layer; answering with
+            // an explicit "not wired" keeps mock mode from touching a daemon.
+            return Response.json({ error: 'customer_review_not_wired' })
+          }
+          try {
+            const infoRaw = await Bun.file(join(STATE_DIR, 'internal-api-info.json')).text()
+            const info = JSON.parse(infoRaw) as { baseUrl?: string; operatorTokenFilePath?: string }
+            if (!info.baseUrl) return Response.json({ error: 'missing baseUrl in internal-api-info.json' })
+            // Same rule as the Rust host: never fall back to the trusted token.
+            if (!info.operatorTokenFilePath) {
+              return Response.json({ error: 'operator token unavailable — daemon too old' })
+            }
+            const token = (await Bun.file(info.operatorTokenFilePath).text()).trim()
+            const r = await fetch(info.baseUrl + path, {
+              method,
+              headers: {
+                authorization: `Bearer ${token}`,
+                ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
+              },
+              ...(method === 'POST' ? { body: a?.body ?? '{}' } : {}),
+              signal: AbortSignal.timeout(30_000),
+            })
+            const text = await r.text()
+            if (!r.ok) {
+              let msg = `HTTP ${r.status}`
+              try { msg = (JSON.parse(text) as { error?: string }).error ?? msg } catch { /* keep */ }
+              return Response.json({ error: msg })
+            }
+            return Response.json({ result: text })
+          } catch (err) {
+            return Response.json({ error: err instanceof Error ? err.message : String(err) })
+          }
         }
         if (body.command === 'render_qr_svg') {
           const text = (body.args as { text?: string } | undefined)?.text ?? ''

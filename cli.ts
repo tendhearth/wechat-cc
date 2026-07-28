@@ -1816,7 +1816,15 @@ const daemonApiInfoCmd = defineCommand({
   meta: { name: 'api-info', description: 'Read internal-api-info.json (base URL + token) — used by the desktop GUI to call /v1/* endpoints' },
   args: {
     json: { type: 'boolean', description: 'JSON envelope (always emits JSON; flag is for CLI consistency)' },
-    operator: { type: 'boolean', description: 'Read the scoped desktop operator credential for owner-only workspaces' },
+    // NO --operator FLAG, deliberately. The admin operator credential is read
+    // only by processes that hold it natively — the Tauri host (lib.rs:
+    // agent_converse / agent_speak / agent_transcribe / customer_review_api)
+    // and the dev server. Exposing it through the CLI would mean anything able
+    // to run `wechat-cc` — including the webview, since the production
+    // `wechat_cli_json` command applies no argument filtering — could obtain
+    // admin authority and reach POST /v1/companion/converse, i.e. speak to
+    // WeChat as the owner. A --operator flag existed briefly in 45a5211 and
+    // was removed in the 2026-07-28 review.
   },
   async run({ args }) {
     const { existsSync, readFileSync } = await import('node:fs')
@@ -1836,22 +1844,8 @@ const daemonApiInfoCmd = defineCommand({
       console.log(JSON.stringify({ ok: false, error: 'internal-api-info.json is malformed (missing baseUrl or tokenFilePath)' }))
       process.exit(1)
     }
-    // The desktop has a deliberately narrow operator credential for its
-    // owner-only workspaces (such as customer review). It must be requested
-    // explicitly: using it for every desktop API call would prevent normal
-    // plugin/agent surfaces from reaching their own allowed routes.
-    //
-    // Do NOT fall back to tokenFilePath when --operator was asked for and the
-    // daemon did not publish one — same rule the Rust host already enforces
-    // (src-tauri/src/lib.rs, agent_converse). A newer desktop against an older
-    // daemon would otherwise silently receive the trusted token, get a 403
-    // route_not_allowed, and surface as "forbidden" with nothing in the logs
-    // pointing at the real cause: a version mismatch.
-    if (args.operator && !info.operatorTokenFilePath) {
-      console.log(JSON.stringify({ ok: false, error: 'operator token unavailable — daemon too old, restart it after updating' }))
-      process.exit(1)
-    }
-    const credentialPath = args.operator ? info.operatorTokenFilePath! : info.tokenFilePath
+    // Always the trusted token — see the note on the missing --operator flag.
+    const credentialPath = info.tokenFilePath
     let token: string
     try {
       token = readFileSync(credentialPath, 'utf8').trim()
