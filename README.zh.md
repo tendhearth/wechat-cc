@@ -445,7 +445,7 @@ bun x tsc --noEmit      # 类型检查
 - `bun run dev:mock` —— mock 状态，Playwright 用的就是这个
 - `bun run dev:unsafe` —— 同 `dev:web`，但关掉安全阀
 
-除 `dev:unsafe` 外，dev server 只转发已知只读的 CLI 命令；会改真实状态的一律拒绝并给出提示。
+三个浏览器模式下，dev server 只转发已知只读的 CLI 命令；会改真实状态的一律拒绝并给出提示（`dev:unsafe` 关掉这层，横幅变红）。`bun run dev` 是真应用，invoke 走 Rust IPC，**不受安全阀保护**。
 
 ---
 

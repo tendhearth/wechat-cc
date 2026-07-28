@@ -964,8 +964,10 @@ live reload:
 - `bun run dev:mock` — mock state, what Playwright drives
 - `bun run dev:unsafe` — same as `dev:web` with the safety valve off
 
-Outside `dev:unsafe`, the dev server only forwards CLI commands it knows to
-be read-only; anything that would mutate real state is refused with a hint.
+In the three browser modes the dev server only forwards CLI commands it knows
+to be read-only; anything that would mutate real state is refused with a hint
+(`dev:unsafe` turns that off and the banner goes red). `bun run dev` is the
+real app: invoke goes through Rust IPC, so the valve does not apply there.
 
 ---
 

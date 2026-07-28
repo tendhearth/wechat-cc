@@ -14,6 +14,7 @@
 
 - **shim 的 Tauri polyfill 必须保持 `window.__TAURI__ = window.__TAURI__ ?? {…}` 的守卫写法** —— 真 Tauri webview 里绝不能被覆盖(这是 `tauri dev` 能指向 shim 的前提)。
 - **mock 模式行为零变化**:Playwright 全套在 mock 模式下与合并前同结果(该套件本就非必需红,以"合并前后同结果"为准,不追既有 flake)。
+  - *实施后修订*:安全阀最终在 mock 模式**也生效**(DRY_RUN 只拦截显式列出的命令,未命中的落到真 CLI,并非沙箱)。实测 Playwright 结果未变;唯一从"真跑 CLI"变成"被拦"的是 `guard enable/disable`,那两个测试本就只断言 UI class,属净收益——改动前跑 e2e 会真的开关主人机器的网络守卫。
 - 安全阀只拦 `/__invoke` 转发的 CLI 命令;**所有 daemon HTTP 路由不受影响**(记忆整理/画像走 daemon 路由,必须照常真跑)。
 - 热重载客户端脚本必须以**外链** `/__dev_reload.js` 注入(CSP `script-src 'self'`,不能 inline)。
 - 新模块要能单测(纯函数 / 注入式),不要求起服务器。

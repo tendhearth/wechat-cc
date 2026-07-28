@@ -89,7 +89,7 @@ export const READONLY_CLI_COMMANDS: readonly ReadonlyCliCommand[] = [
   { path: ['conversations', 'list'] },
   { path: ['dialogue', 'search'], flags: ['--chat-id'] },
   { path: ['dialogue', 'thread-detail'] },
-  { path: ['dialogue', 'threads'], flags: ['--chat-id', '--facet'] },
+  { path: ['dialogue', 'threads'], flags: ['--chat-id', '--facet', '--include-private'] },
   { path: ['dialogue', 'timeline'], flags: ['--chat-id', '--limit', '--before'] },
   { path: ['dialogue', 'unlock'], flags: ['--passphrase'] },
   { path: ['events', 'list'], flags: ['--limit'] },
@@ -103,7 +103,15 @@ export const READONLY_CLI_COMMANDS: readonly ReadonlyCliCommand[] = [
   { path: ['memory', 'projects'] },
   { path: ['milestones', 'list'] },
   { path: ['observations', 'list'] },
+  { path: ['plugin', 'list'] },
+  { path: ['plugin', 'setup-status'] },
   { path: ['provider', 'show'] },
+  // SECOND DOCUMENTED EXCEPTION — `log` appends one structured line to
+  // channel.log (src/lib/log.ts: fixed LOG_FILE under STATE_DIR, no
+  // caller-controlled path). It is the desktop's own telemetry, and dev:web is
+  // the one place anybody reads it, so blocking it would silently discard the
+  // reconnect-diagnose trail exactly where it is wanted.
+  { path: ['log'], flags: ['--fields'] },
   { path: ['sessions', 'list-chats'], flags: ['--chat'] },
   { path: ['sessions', 'list-projects'], flags: ['--chat'] },
   { path: ['sessions', 'read-jsonl'], flags: ['--chat'] },
@@ -115,7 +123,9 @@ export const READONLY_CLI_COMMANDS: readonly ReadonlyCliCommand[] = [
   // persisted by cli.ts BEFORE it looks at which action was requested.
   { path: ['service', 'status'] },
   // daemon api-info is how the desktop learns the daemon's port + token.
-  { path: ['daemon', 'api-info'] },
+  // --operator asks for the route-scoped operator token instead of the
+  // daemon-wide one; api.js sends it for /v1/customer-review.
+  { path: ['daemon', 'api-info'], flags: ['--operator'] },
   { path: ['update'], requireFlag: '--check' },
 ]
 

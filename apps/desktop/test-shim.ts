@@ -178,7 +178,15 @@ const A2A_TOKEN = 'fake-shim-token'
 // (inline scripts are blocked when WECHAT_CC_INJECT_CSP=1). The injected
 // reference in index.html toggles between inline <script>...</script> and
 // <script src="/__tauri_polyfill.js"></script> depending on the env flag.
+// __WECHAT_CC_SHIM__ must describe the TRANSPORT ACTUALLY IN USE, not "this
+// HTML came from the shim". Since `tauri dev`'s devUrl now points here, the
+// real Tauri webview also loads this script — but there `window.__TAURI__`
+// already exists, the `??` leaves it alone, and invoke goes through real Rust
+// IPC which never passes dev-guard. Setting the flag unconditionally made the
+// banner promise "只放行已知只读的命令" inside `tauri dev`, where a click on
+// 删除子用户 really does rmSync the account dir (2026-07-27 review A3).
 const POLYFILL_BODY = `
+window.__WECHAT_CC_SHIM__ = window.__TAURI__ === undefined
 window.__TAURI__ = window.__TAURI__ ?? { core: {
   invoke: async (command, args) => {
     const r = await fetch("/__invoke", {
@@ -193,7 +201,6 @@ window.__TAURI__ = window.__TAURI__ ?? { core: {
 }, window: {
   getCurrentWindow: () => ({ startDragging: async () => {} })
 }}
-window.__WECHAT_CC_SHIM__ = true
 window.__WECHAT_CC_DRY_RUN__ = ${dryRun ? 'true' : 'false'}
 window.__WECHAT_CC_ALLOW_MUTATIONS__ = ${allowMutations ? 'true' : 'false'}
 `
@@ -1301,15 +1308,12 @@ Bun.serve({
             return Response.json({ error: `illegal filename: ${filename}` })
           }
           const target = join(downloads, basename)
-          // This branch writes to disk without going through runCli, so the
-          // CLI valve never sees it. Traversal is already handled (basename
-          // only), but overwriting is not: a page could name the file after
-          // something already in ~/Downloads and destroy it. The real app
-          // overwrites; the dev server refuses, because in dev the caller may
-          // be any page the developer happened to have open.
-          if (fs.existsSync(target)) {
-            return Response.json({ error: `refusing to overwrite existing file in dev: ${target}` })
-          }
+          // Overwrites, exactly like lib.rs — export filenames are stable
+          // (`dialogue-<name>.md`), so refusing to overwrite would make the
+          // SECOND export fail in dev while succeeding in the real app. That
+          // divergence is the thing this merged dev server exists to remove.
+          // The write is safe because /__invoke already refuses cross-site
+          // callers, and the path is basename-only under ~/Downloads.
           fs.writeFileSync(target, content)
           return Response.json({ result: target })
         }
