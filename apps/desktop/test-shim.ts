@@ -239,13 +239,28 @@ export function isCrossSiteRequest(req: Request): boolean {
   }
 }
 
-async function runCli(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+/**
+ * Run the real CLI behind the safety valve.
+ *
+ * `outFile` is the ONLY way to reach cli.ts's `--out-file`, and it is appended
+ * AFTER the guard runs. Client-supplied args can never carry that flag —
+ * dev-guard refuses it — because `--out-file` on an otherwise read-only
+ * command (`logs`, `sessions *`) is an arbitrary-file-overwrite primitive:
+ * cli.ts's emitJson does `writeFileSync(outFile, body)`. Aimed at access.json
+ * it silently deafens the operator's bot, which is the incident this whole
+ * valve exists to prevent (2026-07-27 security review).
+ */
+async function runCli(
+  args: string[],
+  opts: { outFile?: string } = {},
+): Promise<{ stdout: string; stderr: string; code: number }> {
   const verdict = guardCliInvoke(args, { allowMutations })
   if (!verdict.ok) {
     // 抛出去由 /__invoke 的 try/catch 变成 { error } 交给前端
     // (ipc.js 的 formatInvokeError 会原样展示这段人话)。
     throw new Error(`${verdict.error}: ${verdict.hint}`)
   }
+  if (opts.outFile) args = [...args, '--out-file', opts.outFile]
   const proc = spawn(['bun', join(ROOT, 'cli.ts'), ...args], {
     cwd: ROOT,
     stdout: 'pipe',
@@ -297,6 +312,10 @@ Bun.serve({
     // path.relative. Naive startsWith lets a sibling like `inbox-evil/`
     // bypass `inbox`, and `..` segments slip past entirely.
     if (url.pathname === '/attachment' && req.method === 'GET') {
+      // Same cross-site rule as /__invoke: this reads the operator's inbox
+      // (message attachments, avatars), so another site should not be able to
+      // pull those out of the dev server just because it is listening.
+      if (isCrossSiteRequest(req)) return new Response('forbidden', { status: 403 })
       const requested = url.searchParams.get('path') || ''
       const inboxRoot = join(ROOT, 'apps', 'desktop')  // for tauri-localhost dev cache
       const stateInbox = (process.env.WECHAT_CC_STATE_DIR
@@ -1257,7 +1276,7 @@ Bun.serve({
           }
 
           const tmp = join(process.env.TMPDIR ?? '/tmp', `wechat-cc-shim-${Date.now()}-${process.pid}.json`)
-          const r = await runCli([...cliArgs, '--out-file', tmp])
+          const r = await runCli(cliArgs, { outFile: tmp })
           if (r.code !== 0) return Response.json({ error: r.stderr.trim() || `cli exit ${r.code}` })
           try {
             const body = await Bun.file(tmp).text()
@@ -1282,6 +1301,15 @@ Bun.serve({
             return Response.json({ error: `illegal filename: ${filename}` })
           }
           const target = join(downloads, basename)
+          // This branch writes to disk without going through runCli, so the
+          // CLI valve never sees it. Traversal is already handled (basename
+          // only), but overwriting is not: a page could name the file after
+          // something already in ~/Downloads and destroy it. The real app
+          // overwrites; the dev server refuses, because in dev the caller may
+          // be any page the developer happened to have open.
+          if (fs.existsSync(target)) {
+            return Response.json({ error: `refusing to overwrite existing file in dev: ${target}` })
+          }
           fs.writeFileSync(target, content)
           return Response.json({ result: target })
         }

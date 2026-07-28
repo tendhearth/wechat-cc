@@ -73,6 +73,49 @@ describe('isReadonlyCli', () => {
     expect(isReadonlyCli(['update', '--json'])).toBe(false)
   })
 
+  it('--out-file 一律拒绝(任意文件覆写,评审实测过的 CRITICAL)', () => {
+    // cli.ts 的 emitJson 对 --out-file 做 writeFileSync(outFile, body)。
+    // 指向 access.json 就是主人的 bot 再次被静默 deafen —— 正是本阀门要挡的事故。
+    // shim 自己需要 --out-file 时走 runCli 的 outFile 选项,不经客户端 args。
+    expect(isReadonlyCli(['logs', '--json', '--out-file', '/tmp/x'])).toBe(false)
+    expect(isReadonlyCli(['sessions', 'list-chats', '--json', '--out-file', '/tmp/x'])).toBe(false)
+    expect(isReadonlyCli(['sessions', 'search', 'q', '--out-file=/tmp/x'])).toBe(false)
+  })
+
+  it('service status 不许带任何 flag(--unattended 会先落盘再看 action)', () => {
+    // cli.ts:2086 的 saveAgentConfig 在 `if (action === 'status')` 之前无条件执行,
+    // 一个"只读状态查询"就能把 daemon 翻成交互模式,bot 从此不回消息。
+    expect(isReadonlyCli(['service', 'status', '--json'])).toBe(true)
+    expect(isReadonlyCli(['service', 'status', '--unattended', 'false', '--json'])).toBe(false)
+    expect(isReadonlyCli(['service', 'status', '--auto-start', 'false'])).toBe(false)
+  })
+
+  it('--check 被显式证伪时不算只读', () => {
+    // citty 的 boolean 认 `=false`,所以"出现过"不等于"为真"。
+    expect(isReadonlyCli(['update', '--check', '--json'])).toBe(true)
+    expect(isReadonlyCli(['update', '--check=true'])).toBe(true)
+    expect(isReadonlyCli(['update', '--check=false'])).toBe(false)
+    expect(isReadonlyCli(['update', '--check=0'])).toBe(false)
+    expect(isReadonlyCli(['update', '--check=no'])).toBe(false)
+    // --no-check 作为未列出的 flag 被拒
+    expect(isReadonlyCli(['update', '--check', '--no-check'])).toBe(false)
+  })
+
+  it('未列出的 flag 一律拒绝(flag 也是白名单)', () => {
+    expect(isReadonlyCli(['logs', '--tail', '10', '--json'])).toBe(true)
+    expect(isReadonlyCli(['logs', '--tail', '10', '--some-future-flag'])).toBe(false)
+    expect(isReadonlyCli(['doctor', '--fix'])).toBe(false)
+  })
+
+  it('桌面实际用的带 flag 调用都放行', () => {
+    expect(isReadonlyCli(['dialogue', 'threads', '--chat-id', 'c', '--facet', 'f', '--json'])).toBe(true)
+    expect(isReadonlyCli(['dialogue', 'timeline', '--chat-id', 'c', '--limit', '20', '--before', 't', '--json'])).toBe(true)
+    expect(isReadonlyCli(['dialogue', 'unlock', '--passphrase', 'p', '--json'])).toBe(true)
+    expect(isReadonlyCli(['events', 'list', 'c', '--json', '--limit', '30'])).toBe(true)
+    expect(isReadonlyCli(['memory', 'profile', 'status', '--chat-id', 'c', '--json'])).toBe(true)
+    expect(isReadonlyCli(['sessions', 'read-jsonl', 'a', '--json', '--chat', 'c'])).toBe(true)
+  })
+
   it('前导 flag 绕过被堵死(评审实测过的洞)', () => {
     // 修复前:['--json','service','status'] 会被放行并真的执行
     expect(isReadonlyCli(['--json', 'service', 'status'])).toBe(false)
