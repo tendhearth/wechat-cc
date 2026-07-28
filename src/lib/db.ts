@@ -616,7 +616,7 @@ const migrations: Migration[] = [
   // from wxvault on demand.
   (db) => {
     db.exec(`
-      CREATE TABLE customer_reviews (
+      CREATE TABLE IF NOT EXISTS customer_reviews (
         id                   TEXT PRIMARY KEY NOT NULL,
         contact_id           TEXT NOT NULL,
         contact_display_name TEXT NOT NULL,
@@ -633,10 +633,10 @@ const migrations: Migration[] = [
         updated_at           TEXT NOT NULL,
         completed_at         TEXT
       ) STRICT;
-      CREATE INDEX customer_reviews_contact_created
+      CREATE INDEX IF NOT EXISTS customer_reviews_contact_created
         ON customer_reviews(contact_id, created_at DESC);
 
-      CREATE TABLE customer_review_items (
+      CREATE TABLE IF NOT EXISTS customer_review_items (
         review_id        TEXT NOT NULL REFERENCES customer_reviews(id) ON DELETE CASCADE,
         source_key       TEXT NOT NULL,
         commitment       TEXT NOT NULL,
@@ -650,10 +650,10 @@ const migrations: Migration[] = [
         updated_at       TEXT NOT NULL,
         PRIMARY KEY (review_id, source_key)
       ) STRICT;
-      CREATE INDEX customer_review_items_review_status
+      CREATE INDEX IF NOT EXISTS customer_review_items_review_status
         ON customer_review_items(review_id, review_status);
 
-      CREATE TABLE customer_review_evidence (
+      CREATE TABLE IF NOT EXISTS customer_review_evidence (
         review_id    TEXT NOT NULL,
         source_key   TEXT NOT NULL,
         evidence_key TEXT NOT NULL,
@@ -665,7 +665,7 @@ const migrations: Migration[] = [
           REFERENCES customer_review_items(review_id, source_key) ON DELETE CASCADE
       ) STRICT;
 
-      CREATE TABLE customer_review_feedback (
+      CREATE TABLE IF NOT EXISTS customer_review_feedback (
         contact_id     TEXT NOT NULL,
         source_key     TEXT NOT NULL,
         review_status  TEXT NOT NULL
@@ -681,7 +681,7 @@ const migrations: Migration[] = [
   // AI completion inference that has WeChat evidence.
   (db) => {
     db.exec(`
-      CREATE TABLE customer_review_items_v27 (
+      CREATE TABLE IF NOT EXISTS customer_review_items_v27 (
         review_id        TEXT NOT NULL REFERENCES customer_reviews(id) ON DELETE CASCADE,
         source_key       TEXT NOT NULL,
         commitment       TEXT NOT NULL,
@@ -700,7 +700,7 @@ const migrations: Migration[] = [
                review_status, corrected_text, created_at, updated_at
         FROM customer_review_items;
 
-      CREATE TABLE customer_review_evidence_v27 (
+      CREATE TABLE IF NOT EXISTS customer_review_evidence_v27 (
         review_id    TEXT NOT NULL,
         source_key   TEXT NOT NULL,
         evidence_key TEXT NOT NULL,
@@ -715,7 +715,7 @@ const migrations: Migration[] = [
         SELECT review_id, source_key, evidence_key, role, message_time, sender_side
         FROM customer_review_evidence;
 
-      CREATE TABLE customer_review_feedback_v27 (
+      CREATE TABLE IF NOT EXISTS customer_review_feedback_v27 (
         contact_id     TEXT NOT NULL,
         source_key     TEXT NOT NULL,
         review_status  TEXT NOT NULL
@@ -734,7 +734,7 @@ const migrations: Migration[] = [
       ALTER TABLE customer_review_items_v27 RENAME TO customer_review_items;
       ALTER TABLE customer_review_evidence_v27 RENAME TO customer_review_evidence;
       ALTER TABLE customer_review_feedback_v27 RENAME TO customer_review_feedback;
-      CREATE INDEX customer_review_items_review_status
+      CREATE INDEX IF NOT EXISTS customer_review_items_review_status
         ON customer_review_items(review_id, review_status);
     `)
   },
@@ -743,7 +743,7 @@ const migrations: Migration[] = [
   // uncovered time span and safe error code, never raw chat text.
   (db) => {
     db.exec(`
-      CREATE TABLE customer_review_analysis_issues (
+      CREATE TABLE IF NOT EXISTS customer_review_analysis_issues (
         review_id    TEXT NOT NULL REFERENCES customer_reviews(id) ON DELETE CASCADE,
         window_index INTEGER NOT NULL,
         range_from   TEXT NOT NULL,

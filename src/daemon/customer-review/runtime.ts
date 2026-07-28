@@ -7,7 +7,8 @@ import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
 import { bundledPluginsDir } from '../plugins/paths'
 import { makeCustomerReviewStore } from './store'
 import { makeCustomerReviewService, type CustomerReviewService } from './service'
-import { WxvaultCustomerChatSource } from './wxvault-source'
+import { WxvaultCustomerChatSource, CustomerChatSourceError } from './wxvault-source'
+import type { CustomerChatSource, CustomerContact, CustomerMessage, CustomerMessageQuery } from './types'
 import selfPkg from '../../../package.json' with { type: 'json' }
 
 export interface CustomerReviewRuntime extends Lifecycle {
@@ -34,10 +35,18 @@ function evaluator(deps: StartCustomerReviewRuntimeDeps): {
   const preferred = deps.registry.get(deps.defaultProviderId)?.provider.cheapEval
   if (preferred) return { provider: deps.defaultProviderId, evaluate: preferred }
 
-  const fallback = deps.registry.getCheapEval()
-  if (!fallback) return null
-  const owner = deps.registry.list().find(id => deps.registry.get(id)?.provider.cheapEval === fallback)
-  return owner ? { provider: owner, evaluate: fallback } : null
+  // Resolve the fallback by scanning the registry in the same preference order
+  // getCheapEval() uses, rather than asking it for a function and then trying
+  // to recognise that function again by reference identity. provider-registry
+  // documents that a future provider may need `.bind(entry.provider)` — the day
+  // that happens, identity comparison fails, `owner` is undefined, and the
+  // whole workspace silently disables itself (routes 503) instead of merely
+  // mislabelling which model ran.
+  for (const id of deps.registry.list()) {
+    const evaluate = deps.registry.get(id)?.provider.cheapEval
+    if (evaluate) return { provider: id, evaluate }
+  }
+  return null
 }
 
 /**
@@ -93,13 +102,16 @@ async function startCustomerReviewRuntimeInner(
     return null
   }
 
-  let bridge: McpToolBridge | null = null
-  try {
-    const connect = (options.connect ?? createMcpToolBridge)({ wxvault })
+  const connect = options.connect ?? createMcpToolBridge
+
+  /** Open a bridge, bounded by CONNECT_TIMEOUT_MS, and verify its tools. */
+  async function openBridge(): Promise<McpToolBridge> {
+    const pending = connect({ wxvault: wxvault! })
     let timer: ReturnType<typeof setTimeout> | undefined
+    let bridge: McpToolBridge | undefined
     try {
       bridge = await Promise.race([
-        connect,
+        pending,
         new Promise<never>((_, reject) => {
           timer = setTimeout(
             () => reject(new Error(`wxvault MCP handshake exceeded ${CONNECT_TIMEOUT_MS}ms`)),
@@ -109,38 +121,86 @@ async function startCustomerReviewRuntimeInner(
       ])
     } finally {
       if (timer) clearTimeout(timer)
-      // The losing connect may still resolve later; close it so a late bridge
-      // does not leave an orphaned python child holding the decrypted sqlite.
-      void connect.then(late => { if (late !== bridge) void late.close().catch(() => {}) }).catch(() => {})
+      // A connect that lost the race may still resolve; close it so no orphaned
+      // python child is left holding the decrypted sqlite open.
+      const settled = bridge
+      void pending.then(late => { if (late !== settled) void late.close().catch(() => {}) }).catch(() => {})
     }
     const tools = new Set(bridge.tools.map(tool => tool.name))
     if (!tools.has('list_conversations') || !tools.has('get_messages')) {
-      await bridge.close()
-      deps.log?.('CUSTOMER_REVIEW', 'disabled: wxvault does not expose the required read tools')
-      return null
+      await bridge.close().catch(() => {})
+      throw new CustomerChatSourceError('WXVAULT_ERROR', 'wxvault does not expose the required read tools')
     }
+    return bridge
+  }
 
-    const service = makeCustomerReviewService({
-      source: new WxvaultCustomerChatSource(bridge, { messageLimit: 2000 }),
-      store: makeCustomerReviewStore(deps.db),
-      evaluate: evalConfig.evaluate,
-      provider: evalConfig.provider,
-      messageLimit: 2000,
-    })
-    deps.log?.('CUSTOMER_REVIEW', `ready: wxvault + ${evalConfig.provider}`)
-    let stopped = false
-    return {
-      name: 'customer-review',
-      service,
-      async stop() {
-        if (stopped) return
-        stopped = true
-        await bridge!.close()
-      },
+  const store = makeCustomerReviewStore(deps.db)
+  // An analysis interrupted by a restart owns no in-memory task any more, and
+  // markAnalyzing refuses to re-enter from `analyzing` — so without this the
+  // row sits at 分析中 forever and 重新分析 answers INVALID_REVIEW_TRANSITION.
+  const reclaimed = await store.reclaimStranded()
+  if (reclaimed > 0) {
+    deps.log?.('CUSTOMER_REVIEW', `reclaimed ${reclaimed} review(s) stranded in analyzing by a restart`)
+  }
+
+  const service = makeCustomerReviewService({
+    source: new TransientWxvaultSource(openBridge),
+    store,
+    evaluate: evalConfig.evaluate,
+    provider: evalConfig.provider,
+    messageLimit: 2000,
+  })
+  deps.log?.('CUSTOMER_REVIEW', `ready: wxvault + ${evalConfig.provider} (connects on demand)`)
+  return {
+    name: 'customer-review',
+    service,
+    async stop() { /* nothing is held open between requests */ },
+  }
+}
+
+/**
+ * Opens a wxvault bridge per operation and closes it again.
+ *
+ * WHY NOT ONE LONG-LIVED BRIDGE (which is what this shipped as): wxvault's
+ * macOS backend is a plain `Archive` — it loads contacts/conversations into
+ * memory once and keeps sqlite handles open on the decrypted message DBs
+ * (`RefreshingArchive` is Windows-only). Holding that for the daemon's whole
+ * life meant two things, both bad:
+ *
+ *  - The workspace served the daemon's BOOT-TIME snapshot forever. A review of
+ *    "the last 3 months" silently returned nothing after the daemon started —
+ *    for a product whose entire premise is reading current WeChat history.
+ *  - The desktop runs `plugin setup wxvault` on every launch, and that rewrites
+ *    the decrypted DBs in place (`open(dec_path,"wb")`, truncate + rewrite, not
+ *    an atomic rename). A held-open handle reading mid-rewrite yields
+ *    `database disk image is malformed` or garbage rows.
+ *
+ * Every other wxvault consumer in this codebase already uses a transient
+ * bridge — see the ingest tick's note about not opening a second set of MCP
+ * processes on the same sqlite. This makes customer review behave the same,
+ * and as a side effect keeps daemon boot off the MCP handshake entirely.
+ *
+ * The cost is one python spawn per operation. Reviews are minutes of
+ * sequential LLM calls, so it does not register there; evidence expansion pays
+ * it too, which is acceptable until it proves otherwise.
+ */
+export class TransientWxvaultSource implements CustomerChatSource {
+  constructor(private readonly open: () => Promise<McpToolBridge>) {}
+
+  private async withSource<T>(fn: (source: WxvaultCustomerChatSource) => Promise<T>): Promise<T> {
+    const bridge = await this.open()
+    try {
+      return await fn(new WxvaultCustomerChatSource(bridge, { messageLimit: 2000 }))
+    } finally {
+      await bridge.close().catch(() => {})
     }
-  } catch (error) {
-    await bridge?.close().catch(() => {})
-    deps.log?.('CUSTOMER_REVIEW', `disabled: wxvault connection failed (${error instanceof Error ? error.name : 'unknown error'})`)
-    return null
+  }
+
+  searchContacts(query: string): Promise<CustomerContact[]> {
+    return this.withSource(source => source.searchContacts(query))
+  }
+
+  getMessages(input: CustomerMessageQuery): Promise<CustomerMessage[]> {
+    return this.withSource(source => source.getMessages(input))
   }
 }

@@ -23,7 +23,10 @@ export interface CommitmentWindowIssue {
   windowIndex: number
   from: string
   to: string
-  errorCode: CommitmentValidationError['code']
+  // Includes TOO_MANY_OPEN_COMMITMENTS: a window whose carried context had to
+  // be trimmed is partially grounded, not failed — same class as an
+  // unparseable model response, so it rides the same channel.
+  errorCode: CommitmentValidationError['code'] | 'TOO_MANY_OPEN_COMMITMENTS'
   attempts: number
 }
 
@@ -70,9 +73,58 @@ export function chunkCommitmentMessages(
   return windows
 }
 
+/** Strip whitespace and punctuation so paraphrase-free rewordings compare equal. */
+function normalizeCommitmentText(text: string): string {
+  return text.replace(/[\s，。、；;,.!！?？"'“”‘’()（）]/g, '').toLowerCase()
+}
+
+function bigrams(text: string): Set<string> {
+  const out = new Set<string>()
+  for (let i = 0; i + 1 < text.length; i += 1) out.add(text.slice(i, i + 2))
+  return out
+}
+
+/**
+ * Dice coefficient over character bigrams — word-order tolerant, which matters
+ * because Chinese rewordings reorder freely ("发送新版报价" ↔ "把新版报价发送
+ * 给客户" is one promise) while two promises in one sentence share only the
+ * boilerplate ("把方案发给客户" vs "把合同寄给客户" ≈ 0.33).
+ */
+function textSimilarity(a: string, b: string): number {
+  const ga = bigrams(a)
+  const gb = bigrams(b)
+  if (ga.size === 0 || gb.size === 0) return a === b ? 1 : 0
+  let shared = 0
+  for (const gram of ga) if (gb.has(gram)) shared += 1
+  return (2 * shared) / (ga.size + gb.size)
+}
+
+const SAME_COMMITMENT_SIMILARITY = 0.5
+
+/**
+ * Do two candidates describe the SAME promise?
+ *
+ * Sharing an evidence key is necessary but NOT sufficient. One message very
+ * often contains two promises — "我明天把方案发你，周五前把合同寄出" is
+ * ordinary sales chat — and both candidates then cite the same key. Matching on
+ * the key alone merged them and `mergePair` kept only the incoming one, so the
+ * first promise vanished with no issue recorded (verified against the real
+ * pipeline, 2026-07-28 review).
+ *
+ * So the text has to agree too. Containment (not just equality) absorbs the
+ * mild rewording the model does when the same promise reappears in the next
+ * overlapping window, while keeping genuinely different promises apart. When
+ * in doubt this errs toward NOT merging: a duplicate is visible to the owner
+ * and correctable, a silent drop is neither.
+ */
 function sameCommitment(a: GroundedCommitment, b: GroundedCommitment): boolean {
   const aKeys = new Set(a.commitmentEvidenceKeys)
-  return b.commitmentEvidenceKeys.some(key => aKeys.has(key))
+  if (!b.commitmentEvidenceKeys.some(key => aKeys.has(key))) return false
+  const textA = normalizeCommitmentText(a.commitment)
+  const textB = normalizeCommitmentText(b.commitment)
+  if (!textA || !textB) return textA === textB
+  if (textA === textB || textA.includes(textB) || textB.includes(textA)) return true
+  return textSimilarity(textA, textB) >= SAME_COMMITMENT_SIMILARITY
 }
 
 function unique(values: readonly string[]): string[] {
@@ -150,6 +202,11 @@ export async function analyzeCommitmentRange(
   const result = await analyzeCommitmentRangeRecovering(messages, evaluate, options)
   if (result.issues.length > 0) {
     const issue = result.issues[0]!
+    // A trimmed-carry window is a coverage limit, not malformed model output —
+    // keep the two error families distinct for callers that branch on them.
+    if (issue.errorCode === 'TOO_MANY_OPEN_COMMITMENTS') {
+      throw new CommitmentPipelineError('TOO_MANY_OPEN_COMMITMENTS', 'too many open commitments to reconcile in one analysis window')
+    }
     throw new CommitmentValidationError(issue.errorCode, 'one or more commitment analysis windows failed validation')
   }
   return result.extraction
@@ -174,10 +231,30 @@ export async function analyzeCommitmentRangeRecovering(
   const issues: CommitmentWindowIssue[] = []
 
   for (const [windowIndex, window] of windows.entries()) {
-    const carry = carryEvidence(result, messageByKey)
+    let carry = carryEvidence(result, messageByKey)
       .filter(message => !window.some(item => item.evidenceKey === message.evidenceKey))
     if (carry.length > maxCarry || window.length + carry.length > 200) {
-      throw new CommitmentPipelineError('TOO_MANY_OPEN_COMMITMENTS', 'too many open commitments to reconcile in one analysis window')
+      // DEGRADE, DON'T ABORT. This used to throw, and the throw escaped the
+      // per-window recovery below (which only catches CommitmentValidationError)
+      // — so a contact who accumulated more than `maxCarry` open commitments
+      // failed the ENTIRE review and lost every window analyzed so far.
+      // Deterministically, too, so retrying never helped. That is exactly the
+      // heavy user this feature is for.
+      //
+      // Instead keep the most recent carry messages (the ones most likely to be
+      // completed by what follows) and record the window as partially grounded,
+      // the same way an unparseable model response degrades.
+      const budget = Math.max(0, Math.min(maxCarry, 200 - window.length))
+      carry = carry.slice(-budget)
+      const firstMsg = window[0]!
+      const lastMsg = window.at(-1)!
+      issues.push({
+        windowIndex,
+        from: firstMsg.time,
+        to: lastMsg.time,
+        errorCode: 'TOO_MANY_OPEN_COMMITMENTS',
+        attempts: 0,
+      })
     }
     let extraction: GroundedCommitmentExtraction | null = null
     let validationError: CommitmentValidationError | null = null

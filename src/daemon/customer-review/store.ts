@@ -88,6 +88,17 @@ export interface CompleteCustomerReviewInput {
 
 export interface CustomerReviewStore {
   create(input: CreateCustomerReviewInput): Promise<string>
+  /**
+   * Move every review stranded in `analyzing` to `failed`, returning how many.
+   *
+   * A run is minutes of sequential LLM calls held entirely in memory, so a
+   * daemon restart (or a watchdog SIGKILL) in the middle leaves the row in
+   * `analyzing` with nobody working on it. `markAnalyzing` only accepts
+   * `queued`/`failed`, so nothing could ever move it again: the UI showed
+   * 分析中 forever and 重新分析 answered INVALID_REVIEW_TRANSITION. Called once
+   * at startup, before any request can arrive.
+   */
+  reclaimStranded(): Promise<number>
   markAnalyzing(id: string): Promise<void>
   complete(id: string, input: CompleteCustomerReviewInput): Promise<void>
   fail(id: string, errorCode: string): Promise<void>
@@ -295,6 +306,19 @@ export function makeCustomerReviewStore(
         input.provider, input.model ?? null, ts, ts,
       )
       return id
+    },
+
+    async reclaimStranded() {
+      const stranded = db.query<{ id: string }, []>(
+        `SELECT id FROM customer_reviews WHERE status = 'analyzing'`,
+      ).all()
+      if (stranded.length === 0) return 0
+      db.prepare(`
+        UPDATE customer_reviews
+        SET status = 'failed', error_code = 'INTERRUPTED_BY_RESTART', updated_at = ?
+        WHERE status = 'analyzing'
+      `).run(now())
+      return stranded.length
     },
 
     async markAnalyzing(id) {

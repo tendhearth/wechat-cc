@@ -39,6 +39,7 @@ export interface WxvaultMessagesResponse {
 
 export type CustomerChatSourceErrorCode =
   | 'WXVAULT_ERROR'
+  | 'RANGE_TOO_LARGE'
   | 'AMBIGUOUS_CONTACT'
   | 'INVALID_RESPONSE'
   | 'UNSUPPORTED_CONVERSATION'
@@ -63,6 +64,16 @@ function parsePluginJson(text: string): unknown {
     throw new CustomerChatSourceError('INVALID_RESPONSE', 'wxvault returned invalid JSON')
   }
 }
+
+/** Messages fetched per wxvault call while paging a range. */
+const PAGE_SIZE = 2000
+
+/**
+ * Upper bound on a single review's message count. Past this we stop and ask
+ * the owner to narrow the range instead of analyzing a silent prefix — every
+ * message becomes LLM input, so an unbounded range is unbounded cost too.
+ */
+const HARD_MESSAGE_CAP = 20_000
 
 const LOCAL_TIME_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -208,7 +219,7 @@ export function normalizeWxvaultMessagesResponse(
 export class WxvaultCustomerChatSource implements CustomerChatSource {
   constructor(
     private readonly bridge: WxvaultToolBridge,
-    private readonly options: { ownerLabel?: string; contactLimit?: number; messageLimit?: number } = {},
+    private readonly options: { ownerLabel?: string; contactLimit?: number; messageLimit?: number; hardCap?: number } = {},
   ) {}
 
   async searchContacts(query: string): Promise<CustomerContact[]> {
@@ -225,27 +236,79 @@ export class WxvaultCustomerChatSource implements CustomerChatSource {
       .filter((contact): contact is CustomerContact => contact !== null)
   }
 
+  /**
+   * Read every message in the range, paging through wxvault.
+   *
+   * WHY PAGING (this shipped as a single capped call): wxvault takes the
+   * `after` branch and returns `order="ASC", limit=N` — the OLDEST N in the
+   * range. With the cap at 2000, an active client's 3-month review silently
+   * analyzed the first 2000 messages and reported `status: ready`. Commitments
+   * made in the dropped tail never appeared, and commitments *completed* in
+   * the tail were reported still-open — a confident, wrong list with no
+   * warning anywhere. Nothing checked `messages.length === limit`.
+   *
+   * So: page forward on the last message's timestamp until wxvault returns a
+   * short page. If the range is genuinely enormous we stop and say so (see
+   * RANGE_TOO_LARGE) rather than quietly analyzing a prefix.
+   */
   async getMessages(input: CustomerMessageQuery): Promise<CustomerMessage[]> {
-    const requestedLimit = input.limit ?? this.options.messageLimit ?? 1000
-    const limit = Math.max(1, Math.min(requestedLimit, this.options.messageLimit ?? 2000))
-    const output = await this.call('get_messages', {
-      // Always use the stable username selected from list_conversations; never
-      // pass a mutable display name that may resolve ambiguously.
-      conversation: input.contactId,
-      limit,
-      after: wxvaultBoundary(input.from, 'from'),
-      before: wxvaultBoundary(input.to, 'to'),
-    })
-    const parsed = parsePluginJson(output)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new CustomerChatSourceError('INVALID_RESPONSE', 'wxvault returned an invalid conversation response')
+    // `messageLimit` now bounds ONE page rather than the whole range — the
+    // range itself is bounded by hardCap below.
+    const maxPage = this.options.messageLimit ?? PAGE_SIZE
+    const pageSize = Math.max(1, Math.min(input.limit ?? maxPage, maxPage))
+    const hardCap = this.options.hardCap ?? HARD_MESSAGE_CAP
+    const collected: CustomerMessage[] = []
+    const seen = new Set<string>()
+    let after = input.from
+
+    for (;;) {
+      const output = await this.call('get_messages', {
+        // Always use the stable username selected from list_conversations;
+        // never pass a mutable display name that may resolve ambiguously.
+        conversation: input.contactId,
+        limit: pageSize,
+        after: wxvaultBoundary(after, 'from'),
+        before: wxvaultBoundary(input.to, 'to'),
+      })
+      const parsed = parsePluginJson(output)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new CustomerChatSourceError('INVALID_RESPONSE', 'wxvault returned an invalid conversation response')
+      }
+      const page = normalizeWxvaultMessagesResponse(parsed as WxvaultMessagesResponse, {
+        contactId: input.contactId,
+        from: after,
+        to: input.to,
+        ownerLabel: this.options.ownerLabel,
+      })
+
+      let added = 0
+      for (const message of page) {
+        // Pages overlap by one timestamp (`after` is inclusive on the plugin
+        // side), and several messages can share a second — dedupe by identity.
+        if (seen.has(message.evidenceKey)) continue
+        seen.add(message.evidenceKey)
+        collected.push(message)
+        added += 1
+      }
+
+      if (collected.length > hardCap) {
+        throw new CustomerChatSourceError(
+          'RANGE_TOO_LARGE',
+          `这段时间里的消息超过 ${hardCap} 条，请把时间范围缩小一些再回顾`,
+        )
+      }
+      // A short page means the range is exhausted. `added === 0` also stops us
+      // when every message in a page was a duplicate (all sharing one second),
+      // which would otherwise loop forever on the same cursor.
+      if (page.length < pageSize || added === 0) break
+
+      const last = page[page.length - 1]
+      if (!last || last.time <= after) break
+      after = last.time
     }
-    return normalizeWxvaultMessagesResponse(parsed as WxvaultMessagesResponse, {
-      contactId: input.contactId,
-      from: input.from,
-      to: input.to,
-      ownerLabel: this.options.ownerLabel,
-    })
+
+    collected.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0))
+    return collected
   }
 
   private async call(tool: string, input: unknown): Promise<string> {

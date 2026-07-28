@@ -38,15 +38,17 @@ describe('customer review daemon runtime', () => {
     return r
   }
 
-  it('uses the daemon default provider and closes its dedicated wxvault bridge', async () => {
+  it('uses the daemon default provider and opens no bridge until asked', async () => {
     const b = bridge()
+    const connect = vi.fn(async () => b)
     const runtime = await startCustomerReviewRuntime({
       stateDir: '/unused', db, registry: registry(), defaultProviderId: 'codex',
-    }, {
-      loadSpecs: () => ({ wxvault: SPEC }),
-      connect: async () => b,
-    })
+    }, { loadSpecs: () => ({ wxvault: SPEC }), connect })
     expect(runtime).not.toBeNull()
+    // Boot must not touch wxvault: it happens before wireMain(), so anything
+    // slow here is dead air on WeChat.
+    expect(connect).not.toHaveBeenCalled()
+
     const id = await runtime!.service.createReview({
       contact: { id: 'wxid_customer', displayName: '测试客户', kind: 'private' },
       rangeFrom: '2026-04-15', rangeTo: '2026-07-15',
@@ -54,7 +56,23 @@ describe('customer review daemon runtime', () => {
     expect(await runtime!.service.getReview(id)).toMatchObject({ provider: 'codex' })
     await runtime!.stop()
     await runtime!.stop()
-    expect(b.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens a fresh bridge per operation and always closes it', async () => {
+    // A long-lived bridge pinned wxvault's boot-time snapshot (macOS Archive
+    // loads once) AND kept sqlite handles open while `plugin setup wxvault`
+    // truncates and rewrites those same files.
+    const bridges: ReturnType<typeof bridge>[] = []
+    const connect = vi.fn(async () => { const b = bridge(); bridges.push(b); return b })
+    const runtime = await startCustomerReviewRuntime({
+      stateDir: '/unused', db, registry: registry(), defaultProviderId: 'codex',
+    }, { loadSpecs: () => ({ wxvault: SPEC }), connect })
+
+    await runtime!.service.searchContacts('测试')
+    await runtime!.service.searchContacts('测试')
+    expect(connect).toHaveBeenCalledTimes(2)
+    expect(bridges).toHaveLength(2)
+    for (const b of bridges) expect(b.close).toHaveBeenCalledTimes(1)
   })
 
   it('stays disabled without wxvault or without an evaluation provider', async () => {
@@ -72,27 +90,33 @@ describe('customer review daemon runtime', () => {
     expect(connect).not.toHaveBeenCalled()
   })
 
-  it('closes and disables a wxvault bridge missing required read tools', async () => {
+  it('closes a wxvault bridge missing required read tools and surfaces it on use', async () => {
     const b = bridge(['list_conversations'])
-    expect(await startCustomerReviewRuntime({
+    const runtime = await startCustomerReviewRuntime({
       stateDir: '/unused', db, registry: registry(), defaultProviderId: 'codex',
-    }, { loadSpecs: () => ({ wxvault: SPEC }), connect: async () => b })).toBeNull()
+    }, { loadSpecs: () => ({ wxvault: SPEC }), connect: async () => b })
+    // Startup succeeds now — the tool check moved to first use, where the
+    // caller gets a real error instead of a silent 503 from boot.
+    expect(runtime).not.toBeNull()
+    await expect(runtime!.service.searchContacts('x')).rejects.toThrow(/required read tools/)
     expect(b.close).toHaveBeenCalledTimes(1)
   })
 
-  it('gives up on a hung wxvault handshake instead of holding daemon boot', async () => {
-    // This runs BEFORE wireMain(), so a hung handshake means nobody polls
-    // WeChat. The MCP SDK's own fallback is 60s per request × 2 requests.
+  it('gives up on a hung wxvault handshake instead of hanging the caller', async () => {
+    // The MCP SDK's own fallback is 60s per request × 2 requests. Boot no
+    // longer waits on this at all, but a request still must not hang forever.
     const b = bridge()
     let release: (v: typeof b) => void = () => {}
-    const started = Date.now()
     const runtime = await startCustomerReviewRuntime({
       stateDir: '/unused', db, registry: registry(), defaultProviderId: 'codex',
     }, {
       loadSpecs: () => ({ wxvault: SPEC }),
       connect: () => new Promise(res => { release = res }),
     })
-    expect(runtime).toBeNull()
+    expect(runtime).not.toBeNull()
+
+    const started = Date.now()
+    await expect(runtime!.service.searchContacts('x')).rejects.toThrow(/exceeded/)
     expect(Date.now() - started).toBeLessThan(30_000)
     // A late bridge must be closed, not left holding the decrypted sqlite.
     release(b)

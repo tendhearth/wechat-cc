@@ -64,6 +64,24 @@ describe('chunkCommitmentMessages', () => {
 })
 
 describe('mergeCommitmentExtractions', () => {
+  it('keeps two promises made in ONE message apart', () => {
+    // "我明天把方案发你，周五前把合同寄出" — ordinary sales chat. Both
+    // candidates cite the same evidence key, and matching on the key alone
+    // merged them so the first promise vanished with no issue recorded
+    // (reproduced against the real pipeline, 2026-07-28 review).
+    const proposal = extraction({ id: 'a', commitment: '把方案发给客户' })
+    const contract = extraction({ id: 'b', commitment: '把合同寄给客户' })
+    const merged = mergeCommitmentExtractions(proposal, contract)
+    expect(merged.commitments.map(c => c.commitment)).toEqual(['把方案发给客户', '把合同寄给客户'])
+  })
+
+  it('still merges one promise reworded across overlapping windows', () => {
+    const first = extraction({ id: 'a', commitment: '发送新版报价' })
+    const reworded = extraction({ id: 'b', commitment: '把新版报价发送给客户' })
+    expect(mergeCommitmentExtractions(first, reworded).commitments).toHaveLength(1)
+  })
+
+
   it('merges candidates sharing commitment evidence and lets completed win', () => {
     const result = mergeCommitmentExtractions(extraction(), extraction({
       id: 'new-id',

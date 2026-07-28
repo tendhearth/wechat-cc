@@ -263,4 +263,28 @@ describe('customer review store', () => {
     expect(first).toBe('crv_test_1')
     expect(second).toBe('crv_test_2')
   })
+
+  it('reclaims reviews stranded in analyzing by a restart', async () => {
+    // A run is minutes of in-memory LLM calls; a restart mid-run left the row
+    // in `analyzing` with nobody working on it, and markAnalyzing only accepts
+    // queued/failed — so 分析中 was permanent and 重新分析 always errored.
+    const store = makeCustomerReviewStore(db)
+    const id = await store.create({
+      contactId: 'wxid_customer', contactDisplayName: '测试客户',
+      rangeFrom: '2026-04-15', rangeTo: '2026-07-15', provider: 'claude',
+    })
+    await store.markAnalyzing(id)
+    expect(await store.get(id)).toMatchObject({ status: 'analyzing' })
+
+    expect(await store.reclaimStranded()).toBe(1)
+    expect(await store.get(id)).toMatchObject({ status: 'failed', errorCode: 'INTERRUPTED_BY_RESTART' })
+
+    // …and the row is workable again, which is the whole point.
+    await store.markAnalyzing(id)
+    expect(await store.get(id)).toMatchObject({ status: 'analyzing' })
+
+    // No-op when nothing is stranded.
+    await store.fail(id, 'X')
+    expect(await store.reclaimStranded()).toBe(0)
+  })
 })

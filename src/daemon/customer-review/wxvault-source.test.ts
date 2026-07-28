@@ -222,6 +222,49 @@ describe('WxvaultCustomerChatSource', () => {
     }])
   })
 
+  it('pages through the whole range instead of silently analyzing the oldest N', async () => {
+    // wxvault takes the `after` branch and returns order=ASC limit=N, i.e. the
+    // OLDEST N. Capping at one call meant an active client's review analyzed a
+    // prefix and still reported `ready` — commitments in the dropped tail were
+    // invisible, and commitments COMPLETED in the tail were reported open.
+    const calls: Array<Record<string, unknown>> = []
+    const msg = (time: string, text: string) => ({ time, sender: '我', type: 'text', text })
+    const page = (messages: unknown[]) => JSON.stringify({
+      conversation: '张总', username: 'wxid_zhang', kind: '单聊', count: messages.length, messages,
+    })
+    const source = new WxvaultCustomerChatSource(fakeBridge((_tool, input) => {
+      calls.push(input as Record<string, unknown>)
+      // Two full pages of 2, then a short page ⇒ range exhausted.
+      if (calls.length === 1) return page([msg('2026-07-01 09:00:00', 'a'), msg('2026-07-02 09:00:00', 'b')])
+      if (calls.length === 2) return page([msg('2026-07-02 09:00:00', 'b'), msg('2026-07-03 09:00:00', 'c')])
+      return page([msg('2026-07-03 09:00:00', 'c')])
+    }), { messageLimit: 2 })
+
+    const messages = await source.getMessages({ contactId: 'wxid_zhang', from: '2026-07-01', to: '2026-07-31' })
+    expect(messages.map(m => m.text)).toEqual(['a', 'b', 'c'])  // deduped across page overlap
+    expect(calls).toHaveLength(3)
+    expect(calls.map(c => c.after)).toEqual([
+      '2026-07-01 00:00:00', '2026-07-02 09:00:00', '2026-07-03 09:00:00',
+    ])
+  })
+
+  it('refuses a range beyond the hard cap rather than analyzing a prefix', async () => {
+    let day = 0
+    const source = new WxvaultCustomerChatSource(fakeBridge(() => {
+      day += 1
+      return JSON.stringify({
+        conversation: '张总', username: 'wxid_zhang', kind: '单聊', count: 2,
+        messages: [
+          { time: `2026-07-${String(day).padStart(2, '0')} 09:00:00`, sender: '我', type: 'text', text: `m${day}a` },
+          { time: `2026-07-${String(day).padStart(2, '0')} 10:00:00`, sender: '我', type: 'text', text: `m${day}b` },
+        ],
+      })
+    }), { messageLimit: 2, hardCap: 4 })
+
+    await expect(source.getMessages({ contactId: 'wxid_zhang', from: '2026-07-01', to: '2026-07-31' }))
+      .rejects.toThrow(/缩小/)
+  })
+
   it('preserves explicit times while expanding date-only ranges for wxvault', async () => {
     const calls: Array<{ tool: string; input: any }> = []
     const source = new WxvaultCustomerChatSource(fakeBridge((tool, input) => {
