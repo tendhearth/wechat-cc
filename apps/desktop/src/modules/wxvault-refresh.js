@@ -32,6 +32,12 @@ export function refreshWxvaultOnAppStart(deps) {
     await deps.invoke('wechat_cli_text', { args: ['plugin', 'setup', 'wxvault'] })
     return { refreshed: true }
   })()
+  // A FAILED refresh must not be cached. Coalescing exists so two boot paths
+  // don't rewrite the decrypted SQLite at once — but keeping the rejected
+  // promise meant one transient failure disabled re-decryption for the rest of
+  // the page's life, and customer review would then analyze a stale archive
+  // with nothing anywhere saying the data was old.
+  inFlight.catch(() => { inFlight = null })
   return inFlight
 }
 

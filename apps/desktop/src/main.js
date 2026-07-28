@@ -1270,7 +1270,11 @@ async function boot() {
   // can take seconds, while the dashboard should remain immediately usable.
   void refreshWxvaultOnAppStart({ invoke })
     .then(result => {
+      // Log the skip reason too. A silent no-op here means customer review
+      // reads a stale archive, and "not-ready"/"disabled" is indistinguishable
+      // from success unless we say so.
       if (result.refreshed) console.info('[wxvault] startup refresh complete')
+      else console.info(`[wxvault] startup refresh skipped: ${result.reason}`)
     })
     .catch(err => console.warn('[wxvault] startup refresh failed:', err))
   await loadAgentConfig().catch(err => console.error("agent config load failed", err))

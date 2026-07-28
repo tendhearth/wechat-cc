@@ -191,6 +191,45 @@ test("contact selection, analysis result and confirmation form one usable flow",
   await expect(page.locator(".customer-review-item-actions")).toBeHidden()
 })
 
+test("an action on one item keeps an unsaved correction on another", async ({ page, shimUrl }) => {
+  // renderDetail rewrites the whole panel and runs on every item action and
+  // every poll tick, so editing item A and then acting on item B silently
+  // destroyed A's draft with no way to get it back (2026-07-28 review).
+  const item = (sourceKey: string, commitment: string) => ({
+    sourceKey, commitment, aiStatus: "open", confidence: "high", reviewStatus: "unreviewed",
+    createdAt: "2026-07-15T10:00:05.000Z", updatedAt: "2026-07-15T10:00:05.000Z", evidence: [],
+  })
+  const review = {
+    id: "review-draft", contactId: "contact-1", contactDisplayName: "章超",
+    rangeFrom: "2026-04-15", rangeTo: "2026-07-15", status: "ready", provider: "codex",
+    sourceMessageCount: 42, createdAt: "2026-07-15T10:00:00.000Z", completedAt: "2026-07-15T10:00:05.000Z",
+    items: [
+      item("0123456789abcdef01234567", "把新版报价单发给客户"),
+      item("89abcdef0123456789abcdef", "把合同寄给客户"),
+    ],
+  }
+  await page.route("**/v1/customer-review**", async route => {
+    const url = new URL(route.request().url())
+    if (url.pathname.endsWith("/recent")) return route.fulfill({ json: { contacts: [{ contactId: "contact-1", displayName: "章超", reviewCount: 1, lastReviewAt: "2026-07-15T10:00:05.000Z", lastStatus: "ready" }] } })
+    if (url.pathname.endsWith("/history")) return route.fulfill({ json: { reviews: [review] } })
+    if (url.pathname.endsWith("/item")) return route.fulfill({ json: { review } })
+    return route.fulfill({ json: { review } })
+  })
+  await openDialogue(page, shimUrl)
+  await page.locator('[data-dialogue-mode="customer-review"]').click()
+  await page.locator('[data-recent-contact-id="contact-1"]').click()
+  await page.locator('[data-review-id="review-draft"]').click()
+  await page.locator('[data-source-key="0123456789abcdef01234567"] [data-item-action="edit"]').click()
+
+  const draft = page.locator('[data-source-key="0123456789abcdef01234567"] textarea')
+  await draft.fill("把新版报价单在周五前发给章总")
+  // Act on the OTHER item — this is what used to wipe the draft above.
+  await page.locator('[data-source-key="89abcdef0123456789abcdef"] [data-item-action="confirm"]').click()
+
+  await expect(draft).toHaveValue("把新版报价单在周五前发给章总")
+  await expect(page.locator('[data-source-key="0123456789abcdef01234567"] .customer-review-edit')).toBeVisible()
+})
+
 test("withheld AI output explains the reliability safeguard instead of a generic failure", async ({ page, shimUrl }) => {
   await page.route("**/v1/customer-review**", async route => {
     const url = new URL(route.request().url())

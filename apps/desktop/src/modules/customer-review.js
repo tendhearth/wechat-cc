@@ -51,25 +51,55 @@ async function customerReviewApi(method, path, body) {
   throw lastError
 }
 
-/** @param {string|undefined} value */
+/**
+ * Both helpers escape their fallback path: each can return the RAW input when
+ * it cannot parse it, and both are interpolated into innerHTML at several call
+ * sites (one escaped, the others not — an inconsistency that reads as
+ * accidental). These carry daemon-shaped timestamps rather than chat text, so
+ * this is hardening, not a live hole; escaping inside the helper makes the
+ * property hold everywhere by construction.
+ * @param {string|undefined} value
+ */
 function formatDateTime(value) {
   if (!value) return "—"
   const date = new Date(value)
-  if (!Number.isFinite(date.getTime())) return value.slice(0, 16)
+  if (!Number.isFinite(date.getTime())) return escapeHtml(value.slice(0, 16))
   return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(date)
 }
 
 /** @param {string} value */
 function dateLabel(value) {
   const [y, m, d] = value.split("-")
-  return y && m && d ? `${y}.${m}.${d}` : value
+  return y && m && d ? `${y}.${m}.${d}` : escapeHtml(value)
 }
 
-/** @param {unknown} error */
-function safeError(error) {
+/**
+ * User-facing failure copy.
+ *
+ * TELL PERMANENT AND TRANSIENT APART. The first version collapsed every
+ * infrastructure error into "请稍后再试" — but the most common one by far is
+ * "wxvault 插件没装", the default state for most installs, which will never fix
+ * itself by waiting. A new user clicking 客户回顾 was told to try again later,
+ * forever, while the panel kept showing the cheerful onboarding copy. Every
+ * catch also logs the raw error now: previously nothing reached the console
+ * either, so a broken install produced no signal anywhere.
+ * @param {unknown} error
+ */
+export function safeError(error) {
   const message = error instanceof Error ? error.message : String(error)
-  if (/customer_review_not_wired|WXVAULT|PROVIDER|MODEL/i.test(message)) return "客户回顾服务暂时不可用，请稍后再试。"
+  console.warn("[customer-review]", message)
+  // wxvault is a separate plugin the owner installs; without it this workspace
+  // has no data source at all.
+  if (/WXVAULT|wxvault/.test(message)) {
+    return "客户回顾需要 wxvault 插件来读取本机微信记录，当前还没有装好。请到「插件」页安装并完成一次同步。"
+  }
+  if (/customer_review_not_wired/i.test(message)) {
+    return "客户回顾还没有在后台就绪。若刚装好 wxvault 插件，请重启一次 wechat-cc 服务。"
+  }
+  if (/PROVIDER|MODEL/i.test(message)) return "没有可用的分析模型，请先在设置里配置好模型。"
+  if (/RANGE_TOO_LARGE|缩小/.test(message)) return message
   if (/INVALID_RANGE/i.test(message)) return "请选择有效的时间范围。"
+  if (/daemon too old/i.test(message)) return "后台服务版本过旧，请重启 wechat-cc 服务后再试。"
   return "操作没有完成，请稍后再试。"
 }
 
@@ -110,15 +140,115 @@ function renderShell(root) {
         <div id="customer-review-history" class="customer-review-history"><p class="customer-review-muted">选择客户后查看历史。</p></div>
       </section>
     </aside>
-    <main id="customer-review-detail" class="customer-review-detail" aria-live="polite"></main>
+    <!-- No aria-live on this container: renderDetail rewrites the WHOLE panel
+         every 1.5s while analyzing and after every item action, so a live
+         region here made a screen reader re-announce the entire result list on
+         every tick. Progress announcements belong on the small status node. -->
+    <main id="customer-review-detail" class="customer-review-detail"></main>
   `
   renderDetail(root)
 }
 
-/** @param {HTMLElement} root */
-function renderDetail(root) {
+/**
+ * Snapshot the transient UI state a full re-render would destroy.
+ *
+ * renderDetail rewrites the whole panel, and it runs on every item action and
+ * every poll tick. So typing a correction into item A and then clicking
+ * 仍待处理 on item B silently threw away A's draft, A's open editor, every
+ * expanded 聊天依据 panel, and the scroll position — unrecoverable. Capturing
+ * here rather than at each call site covers every current and future caller.
+ * @param {HTMLElement} detail
+ */
+function captureDetailUi(detail) {
+  /** @type {Record<string, string>} */
+  const drafts = {}
+  /** @type {string[]} */
+  const editing = []
+  for (const card of detail.querySelectorAll("[data-source-key]")) {
+    if (!(card instanceof HTMLElement)) continue
+    const key = card.dataset.sourceKey
+    if (!key) continue
+    const editor = card.querySelector(".customer-review-edit")
+    if (editor instanceof HTMLElement && !editor.hidden) editing.push(key)
+    const textarea = card.querySelector("textarea")
+    if (textarea instanceof HTMLTextAreaElement && textarea.value.trim()) drafts[key] = textarea.value
+  }
+  /** @type {Record<string, string>} */
+  const evidenceHtmlByKey = {}
+  /** @type {string[]} */
+  const expanded = []
+  for (const node of detail.querySelectorAll("details[data-evidence-source-key]")) {
+    if (!(node instanceof HTMLDetailsElement)) continue
+    const key = node.dataset.evidenceSourceKey
+    if (!key) continue
+    if (node.open) expanded.push(key)
+    // Evidence is lazy-loaded into this list; a re-render dropped both the
+    // markup and `dataset.evidenceLoaded`, so re-expanding refetched what was
+    // already in the DOM.
+    if (node.dataset.evidenceLoaded === "1") {
+      const list = node.querySelector("ul")
+      if (list) evidenceHtmlByKey[key] = list.innerHTML
+    }
+  }
+  return { drafts, editing, expanded, evidenceHtmlByKey, scrollTop: detail.scrollTop }
+}
+
+/** @param {HTMLElement} detail @param {ReturnType<typeof captureDetailUi>} state */
+function restoreDetailUi(detail, state) {
+  for (const card of detail.querySelectorAll("[data-source-key]")) {
+    if (!(card instanceof HTMLElement)) continue
+    const key = card.dataset.sourceKey
+    if (!key) continue
+    const draft = state.drafts[key]
+    const textarea = card.querySelector("textarea")
+    if (draft !== undefined && textarea instanceof HTMLTextAreaElement) textarea.value = draft
+    if (state.editing.includes(key)) {
+      const editor = card.querySelector(".customer-review-edit")
+      const actions = card.querySelector(".customer-review-item-actions")
+      if (editor instanceof HTMLElement) editor.hidden = false
+      if (actions instanceof HTMLElement) actions.hidden = true
+    }
+  }
+  for (const node of detail.querySelectorAll("details[data-evidence-source-key]")) {
+    if (!(node instanceof HTMLDetailsElement)) continue
+    const key = node.dataset.evidenceSourceKey
+    if (!key) continue
+    const cached = state.evidenceHtmlByKey[key]
+    if (cached !== undefined) {
+      const list = node.querySelector("ul")
+      if (list) { list.innerHTML = cached; node.dataset.evidenceLoaded = "1" }
+    }
+    if (state.expanded.includes(key)) node.open = true
+  }
+  detail.scrollTop = state.scrollTop
+}
+
+/**
+ * @param {HTMLElement} root
+ * @param {{ resetItem?: string }} [opts] sourceKey of an item that was just
+ *   acted on — its editor must NOT be restored, because the action closed it.
+ *   A saved correction that reopens its own editor leaves that item's action
+ *   buttons hidden and unclickable.
+ */
+function renderDetail(root, opts) {
   const detail = root.querySelector("#customer-review-detail")
   if (!(detail instanceof HTMLElement)) return
+  const preserved = captureDetailUi(detail)
+  const reset = opts?.resetItem
+  if (reset) {
+    preserved.editing = preserved.editing.filter(key => key !== reset)
+    delete preserved.drafts[reset]
+  }
+  try {
+    renderDetailInner(root, detail)
+  } finally {
+    restoreDetailUi(detail, preserved)
+  }
+}
+
+/** @param {HTMLElement} root @param {HTMLElement} detail */
+function renderDetailInner(root, detail) {
+  void root
   if (!currentReview) {
     detail.innerHTML = `<div class="customer-review-empty">
       <span class="customer-review-empty-icon">${icon("user", { size: 24 })}</span>
@@ -133,7 +263,7 @@ function renderDetail(root) {
     const progress = reviewProgressCopy(review.status, review.createdAt)
     detail.innerHTML = `<div class="customer-review-progress">
       <span class="customer-review-spinner" aria-hidden="true"></span>
-      <span class="customer-review-kicker">${progress.kicker}</span>
+      <span class="customer-review-kicker" role="status" aria-live="polite">${progress.kicker}</span>
       <h2>正在回顾与 ${escapeHtml(review.contactDisplayName)} 的沟通</h2>
       <p>${dateLabel(review.rangeFrom)} — ${dateLabel(review.rangeTo)}</p>
       <small>正在限定范围内读取聊天并核对承诺。${escapeHtml(progress.detail)}</small>
@@ -314,6 +444,11 @@ async function loadHistory(root) {
 
 /** @param {HTMLElement} root @param {string} id */
 async function loadReview(root, id) {
+  // Cancel any armed poll FIRST. Its guard is `currentReview?.id === id`, and
+  // currentReview still points at the previous review while this request is in
+  // flight — so clicking history entry B could be overwritten by a poll tick
+  // that re-fetched A and won the race, leaving B's click rendering A.
+  stopCustomerReviewPolling()
   const seq = ++detailSeq
   try {
     const response = /** @type {{review:CustomerReview}} */ (await customerReviewApi("GET", `/v1/customer-review?id=${encodeURIComponent(id)}`))
@@ -335,7 +470,12 @@ async function loadReview(root, id) {
 function schedulePoll(root, id) {
   stopCustomerReviewPolling()
   pollTimer = setTimeout(() => {
-    if (!root.hidden && currentReview?.id === id) loadReview(root, id)
+    // `root` is #customer-review-root, but switchPane hides the ANCESTOR
+    // article[data-pane] — so root.hidden stayed false after leaving the pane
+    // and a poll kept re-arming itself at 1.5s behind the user's back. Ask the
+    // question the way switchPane answers it: is anything above us hidden?
+    if (root.closest("[hidden]")) return
+    if (currentReview?.id === id) loadReview(root, id)
   }, 1500)
 }
 
@@ -396,7 +536,7 @@ async function reviewItem(root, card, action) {
   try {
     const response = /** @type {{review:CustomerReview}} */ (await customerReviewApi("POST", "/v1/customer-review/item", { id: currentReview.id, source_key: sourceKey, status, ...(corrected ? { corrected_text: corrected } : {}) }))
     currentReview = response.review
-    renderDetail(root)
+    renderDetail(root, { resetItem: sourceKey })
     history = history.map(review => review.id === currentReview?.id ? currentReview : review)
     renderHistory(root)
   } catch (error) {
@@ -473,10 +613,19 @@ function wire(root) {
     const target = event.target instanceof Element ? event.target : null
     const retry = target?.closest("[data-review-action='retry']")
     if (retry && currentReview) {
+      // 重新分析 is the ONLY action available in the failed state, and its
+      // failures used to go to the console alone — the screen did not change at
+      // all, so the button read as broken and invited repeated clicking.
+      if (retry instanceof HTMLButtonElement) retry.disabled = true
       customerReviewApi("POST", "/v1/customer-review/run", { id: currentReview.id }).then(() => {
         if (!currentReview) return
         currentReview.status = "queued"; renderDetail(root); schedulePoll(root, currentReview.id)
-      }).catch(error => console.error("customer review retry failed", error))
+      }).catch(error => {
+        if (retry instanceof HTMLButtonElement) retry.disabled = false
+        const box = retry.parentElement
+        box?.querySelector(".customer-review-inline-error")?.remove()
+        box?.insertAdjacentHTML("beforeend", `<p class="customer-review-inline-error">${escapeHtml(safeError(error))}</p>`)
+      })
       return
     }
     const action = target?.closest("[data-item-action]")

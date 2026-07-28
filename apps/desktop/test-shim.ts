@@ -194,6 +194,21 @@ const POLYFILL_BODY = `
 window.__WECHAT_CC_SHIM__ = window.__TAURI__ === undefined
 window.__TAURI__ = window.__TAURI__ ?? { core: {
   invoke: async (command, args) => {
+    // Owner-only workspace: hit the proxied path directly so the request is a
+    // real HTTP call (Playwright intercepts it) and the token stays server-side.
+    if (command === "customer_review_api") {
+      const res = await fetch(args.path, {
+        method: args.method,
+        ...(args.method === "POST" ? { headers: { "content-type": "application/json" }, body: args.body ?? "{}" } : {})
+      })
+      const text = await res.text()
+      if (!res.ok) {
+        let msg = "HTTP " + res.status
+        try { msg = JSON.parse(text).error ?? msg } catch (e) { /* keep */ }
+        throw new Error(msg)
+      }
+      return text
+    }
     const r = await fetch("/__invoke", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -347,6 +362,51 @@ Bun.serve({
       const file = Bun.file(filePath)
       if (!(await file.exists())) return new Response('not found', { status: 404 })
       return new Response(file)
+    }
+
+    // Owner-only workspace proxy, same contract as lib.rs's customer_review_api:
+    // the admin operator token is read HERE and never handed to the page.
+    //
+    // Served on the real /v1/customer-review path (rather than only through
+    // /__invoke) for one concrete reason: Playwright's customer-review specs
+    // intercept with `page.route("**/v1/customer-review**")`. Routing this
+    // through an IPC command would make those interceptions silently stop
+    // matching — the browser would never issue a request to match.
+    if (url.pathname === '/v1/customer-review' || url.pathname.startsWith('/v1/customer-review/')) {
+      if (isCrossSiteRequest(req)) return new Response('forbidden', { status: 403 })
+      if (req.method !== 'GET' && req.method !== 'POST') {
+        return new Response('method not allowed', { status: 405 })
+      }
+      if (dryRun) {
+        // Playwright intercepts before this ever runs; answering explicitly
+        // keeps mock mode from touching a real daemon if one is running.
+        return Response.json({ error: 'customer_review_not_wired' }, { status: 503 })
+      }
+      try {
+        const infoRaw = await Bun.file(join(STATE_DIR, 'internal-api-info.json')).text()
+        const info = JSON.parse(infoRaw) as { baseUrl?: string; operatorTokenFilePath?: string }
+        if (!info.baseUrl) return Response.json({ error: 'missing baseUrl in internal-api-info.json' }, { status: 500 })
+        // Same rule as the Rust host: never fall back to the trusted token.
+        if (!info.operatorTokenFilePath) {
+          return Response.json({ error: 'operator token unavailable — daemon too old' }, { status: 503 })
+        }
+        const token = (await Bun.file(info.operatorTokenFilePath).text()).trim()
+        const upstream = await fetch(info.baseUrl + url.pathname + url.search, {
+          method: req.method,
+          headers: {
+            authorization: `Bearer ${token}`,
+            ...(req.method === 'POST' ? { 'content-type': 'application/json' } : {}),
+          },
+          ...(req.method === 'POST' ? { body: await req.text() } : {}),
+          signal: AbortSignal.timeout(30_000),
+        })
+        return new Response(await upstream.text(), {
+          status: upstream.status,
+          headers: { 'content-type': 'application/json' },
+        })
+      } catch (err) {
+        return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 502 })
+      }
     }
 
     if (url.pathname === '/__invoke' && req.method === 'POST') {
@@ -1321,56 +1381,6 @@ Bun.serve({
           // callers, and the path is basename-only under ~/Downloads.
           fs.writeFileSync(target, content)
           return Response.json({ result: target })
-        }
-        // Mirror of lib.rs's customer_review_api. The whole point of that
-        // command is that the admin operator token stays out of the page, so
-        // the dev server proxies here rather than handing the token to JS —
-        // otherwise browser dev would quietly reintroduce exactly the exposure
-        // the Rust command exists to prevent.
-        if (body.command === 'customer_review_api') {
-          const a = body.args as unknown as { method?: string; path?: string; body?: string }
-          const method = a?.method ?? 'GET'
-          const path = a?.path ?? ''
-          const route = path.split('?')[0] ?? ''
-          if (!(route === '/v1/customer-review' || route.startsWith('/v1/customer-review/')) || path.includes('..')) {
-            return Response.json({ error: `customer_review_api refuses path: ${path}` })
-          }
-          if (method !== 'GET' && method !== 'POST') {
-            return Response.json({ error: `customer_review_api refuses method: ${method}` })
-          }
-          if (dryRun) {
-            // Playwright intercepts these at the network layer; answering with
-            // an explicit "not wired" keeps mock mode from touching a daemon.
-            return Response.json({ error: 'customer_review_not_wired' })
-          }
-          try {
-            const infoRaw = await Bun.file(join(STATE_DIR, 'internal-api-info.json')).text()
-            const info = JSON.parse(infoRaw) as { baseUrl?: string; operatorTokenFilePath?: string }
-            if (!info.baseUrl) return Response.json({ error: 'missing baseUrl in internal-api-info.json' })
-            // Same rule as the Rust host: never fall back to the trusted token.
-            if (!info.operatorTokenFilePath) {
-              return Response.json({ error: 'operator token unavailable — daemon too old' })
-            }
-            const token = (await Bun.file(info.operatorTokenFilePath).text()).trim()
-            const r = await fetch(info.baseUrl + path, {
-              method,
-              headers: {
-                authorization: `Bearer ${token}`,
-                ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
-              },
-              ...(method === 'POST' ? { body: a?.body ?? '{}' } : {}),
-              signal: AbortSignal.timeout(30_000),
-            })
-            const text = await r.text()
-            if (!r.ok) {
-              let msg = `HTTP ${r.status}`
-              try { msg = (JSON.parse(text) as { error?: string }).error ?? msg } catch { /* keep */ }
-              return Response.json({ error: msg })
-            }
-            return Response.json({ result: text })
-          } catch (err) {
-            return Response.json({ error: err instanceof Error ? err.message : String(err) })
-          }
         }
         if (body.command === 'render_qr_svg') {
           const text = (body.args as { text?: string } | undefined)?.text ?? ''
