@@ -1840,9 +1840,18 @@ const daemonApiInfoCmd = defineCommand({
     // owner-only workspaces (such as customer review). It must be requested
     // explicitly: using it for every desktop API call would prevent normal
     // plugin/agent surfaces from reaching their own allowed routes.
-    const credentialPath = args.operator && info.operatorTokenFilePath
-      ? info.operatorTokenFilePath
-      : info.tokenFilePath
+    //
+    // Do NOT fall back to tokenFilePath when --operator was asked for and the
+    // daemon did not publish one — same rule the Rust host already enforces
+    // (src-tauri/src/lib.rs, agent_converse). A newer desktop against an older
+    // daemon would otherwise silently receive the trusted token, get a 403
+    // route_not_allowed, and surface as "forbidden" with nothing in the logs
+    // pointing at the real cause: a version mismatch.
+    if (args.operator && !info.operatorTokenFilePath) {
+      console.log(JSON.stringify({ ok: false, error: 'operator token unavailable — daemon too old, restart it after updating' }))
+      process.exit(1)
+    }
+    const credentialPath = args.operator ? info.operatorTokenFilePath! : info.tokenFilePath
     let token: string
     try {
       token = readFileSync(credentialPath, 'utf8').trim()

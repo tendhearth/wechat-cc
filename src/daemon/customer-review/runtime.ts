@@ -44,7 +44,35 @@ function evaluator(deps: StartCustomerReviewRuntimeDeps): {
  * Optional daemon runtime. Missing wxvault/model leaves the rest of wechat-cc
  * healthy and simply keeps Customer Review unwired (HTTP routes return 503).
  */
+/**
+ * How long the wxvault MCP handshake may hold up daemon boot.
+ *
+ * WHY THIS EXISTS: this runtime starts BEFORE wireMain(), so nothing polls
+ * WeChat until it returns. The MCP SDK's own fallback is 60s per request and
+ * boot needs two (initialize + listTools) — so a wxvault python child stuck on
+ * a Full-Disk-Access prompt or a missing dependency used to mean ~2 minutes of
+ * a totally unresponsive bot, with only a `CUSTOMER_REVIEW disabled:` line in
+ * channel.log to explain it. An optional feature must not be able to do that.
+ */
+const CONNECT_TIMEOUT_MS = 8_000
+
 export async function startCustomerReviewRuntime(
+  deps: StartCustomerReviewRuntimeDeps,
+  options: StartCustomerReviewRuntimeOptions = {},
+): Promise<CustomerReviewRuntime | null> {
+  // Whole-body guard: everything below is best-effort. Before this, a throw
+  // from evaluator()/loadPlugins()/bundledPluginsDir() — all outside the inner
+  // try — propagated to main.ts's catch, which shuts the daemon down. An
+  // optional workspace must never be able to take the bot offline.
+  try {
+    return await startCustomerReviewRuntimeInner(deps, options)
+  } catch (err) {
+    deps.log?.('CUSTOMER_REVIEW', `disabled: startup failed — ${err instanceof Error ? err.message : String(err)}`)
+    return null
+  }
+}
+
+async function startCustomerReviewRuntimeInner(
   deps: StartCustomerReviewRuntimeDeps,
   options: StartCustomerReviewRuntimeOptions = {},
 ): Promise<CustomerReviewRuntime | null> {
@@ -67,7 +95,24 @@ export async function startCustomerReviewRuntime(
 
   let bridge: McpToolBridge | null = null
   try {
-    bridge = await (options.connect ?? createMcpToolBridge)({ wxvault })
+    const connect = (options.connect ?? createMcpToolBridge)({ wxvault })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      bridge = await Promise.race([
+        connect,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`wxvault MCP handshake exceeded ${CONNECT_TIMEOUT_MS}ms`)),
+            CONNECT_TIMEOUT_MS,
+          )
+        }),
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+      // The losing connect may still resolve later; close it so a late bridge
+      // does not leave an orphaned python child holding the decrypted sqlite.
+      void connect.then(late => { if (late !== bridge) void late.close().catch(() => {}) }).catch(() => {})
+    }
     const tools = new Set(bridge.tools.map(tool => tool.name))
     if (!tools.has('list_conversations') || !tools.has('get_messages')) {
       await bridge.close()

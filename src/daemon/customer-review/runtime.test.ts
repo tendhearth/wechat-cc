@@ -79,4 +79,36 @@ describe('customer review daemon runtime', () => {
     }, { loadSpecs: () => ({ wxvault: SPEC }), connect: async () => b })).toBeNull()
     expect(b.close).toHaveBeenCalledTimes(1)
   })
+
+  it('gives up on a hung wxvault handshake instead of holding daemon boot', async () => {
+    // This runs BEFORE wireMain(), so a hung handshake means nobody polls
+    // WeChat. The MCP SDK's own fallback is 60s per request × 2 requests.
+    const b = bridge()
+    let release: (v: typeof b) => void = () => {}
+    const started = Date.now()
+    const runtime = await startCustomerReviewRuntime({
+      stateDir: '/unused', db, registry: registry(), defaultProviderId: 'codex',
+    }, {
+      loadSpecs: () => ({ wxvault: SPEC }),
+      connect: () => new Promise(res => { release = res }),
+    })
+    expect(runtime).toBeNull()
+    expect(Date.now() - started).toBeLessThan(30_000)
+    // A late bridge must be closed, not left holding the decrypted sqlite.
+    release(b)
+    await new Promise(r => setTimeout(r, 10))
+    expect(b.close).toHaveBeenCalled()
+  }, 40_000)
+
+  it('never lets a startup throw take the daemon down', async () => {
+    // loadPlugins()/bundledPluginsDir()/evaluator() used to sit outside the
+    // try, so a throw reached main.ts's catch → await shutdown() → daemon exits.
+    const lines: string[] = []
+    const runtime = await startCustomerReviewRuntime({
+      stateDir: '/unused', db, registry: registry(), defaultProviderId: 'codex',
+      log: (_tag, line) => { lines.push(line) },
+    }, { loadSpecs: () => { throw new Error('plugin manifest is corrupt') } })
+    expect(runtime).toBeNull()
+    expect(lines.join('\n')).toMatch(/plugin manifest is corrupt/)
+  })
 })

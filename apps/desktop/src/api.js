@@ -98,7 +98,19 @@ async function callApi(method, path, body, retried, opts) {
     // request can therefore fail before it receives a 401/403 at all; refresh
     // discovery once and retry instead of leaving the feature on a generic
     // “operation failed” state.
-    if (!retried) {
+    //
+    // GET ONLY, AND NEVER AFTER AN ABORT. A transport rejection does not tell
+    // us whether the daemon already received and acted on the request, so
+    // replaying a POST can duplicate its effect — and this is shared code, so
+    // it would do that to every surface: a second 60s memory synthesize, the
+    // grounded judge run twice, the SAME pen-pal letter delivered twice, two
+    // customer-review records for one click. A timeout is the worst case to
+    // replay, because the daemon is most likely still working on the first
+    // one. The 401/403 path below stays for both methods: that is a response,
+    // and it proves the daemon refused rather than acted.
+    const name = /** @type {{ name?: string } | undefined} */ (error)?.name
+    const aborted = name === 'AbortError' || name === 'TimeoutError'
+    if (!retried && method === 'GET' && !aborted) {
       resetApiCredentials()
       return callApi(method, path, body, true, opts)
     }
