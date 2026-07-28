@@ -189,6 +189,17 @@ input { font: inherit; color: inherit; }
 .dev-banner[hidden] { display: none !important; }
 .dev-banner b { color: #ffe3b8; font-weight: 500; }
 
+/* --allow-mutations: the valve is off and dev actions hit real state
+ * (delete an account, rewrite the launchd plist). Spec 2026-07-26 §3 asks
+ * for an unmistakably different colour so this mode is never mistaken for
+ * ordinary live dev. */
+.dev-banner.is-unsafe {
+  background: #4a1214;
+  color: #ffd0d0;
+  border-bottom-color: #a12a2a;
+}
+.dev-banner.is-unsafe b { color: #fff0f0; }
+
 /* ─── shared button vocabulary ───────────────────────────────────────── */
 /* Force [hidden] to always win — without !important, any class with an
    explicit `display` property (e.g. `.btn { display: inline-flex }` below,
@@ -1621,11 +1632,47 @@ input { font: inherit; color: inherit; }
     rgba(254, 249, 239, 0) 100%
   );
 }
+.dialogue-workspace-tabs {
+  position: absolute;
+  z-index: 30;
+  top: 16px;
+  left: 50%;
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid rgba(89, 63, 44, .12);
+  border-radius: 10px;
+  background: rgba(254, 249, 239, .92);
+  box-shadow: 0 5px 18px rgba(89, 63, 44, .05);
+  transform: translateX(-50%);
+  backdrop-filter: blur(12px);
+}
+.dialogue-workspace-tab {
+  min-width: 82px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #8d7563;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.dialogue-workspace-tab:hover { color: #593F2C; background: rgba(248, 234, 211, .48); }
+.dialogue-workspace-tab.is-active {
+  color: #593F2C;
+  background: #fffdf8;
+  box-shadow: 0 1px 4px rgba(89, 63, 44, .1);
+  font-weight: 600;
+}
 .dialogue-page {
   --dialogue-ink: #593F2C;
   --dialogue-muted: #8d7563;
   --dialogue-blue: #6a9de8;
   display: grid;
+  position: relative;
+  z-index: 1;
   grid-template-columns: 310px minmax(0, 1fr);
   flex: 1;
   min-width: 0;
@@ -1633,6 +1680,226 @@ input { font: inherit; color: inherit; }
   color: var(--dialogue-ink);
   font-size: 14px;
   line-height: 1.6;
+}
+
+/* ─── customer review (secondary view inside 对话) ─────────────────── */
+.customer-review-page {
+  --review-ink: #593F2C;
+  --review-muted: #8d7563;
+  display: grid;
+  position: relative;
+  z-index: 1;
+  grid-template-columns: 328px minmax(0, 1fr);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  color: var(--review-ink);
+  font-size: 13px;
+}
+.customer-review-page[hidden] { display: none !important; }
+.customer-review-sidebar {
+  min-width: 0;
+  padding: 76px 24px 28px 30px;
+  overflow-y: auto;
+  border-right: 1px solid rgba(89, 63, 44, .1);
+  scrollbar-width: thin;
+}
+.customer-review-heading { margin-bottom: 25px; }
+.customer-review-kicker {
+  display: block;
+  margin-bottom: 4px;
+  color: #aa8c72;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+.customer-review-heading h1,
+.customer-review-result-head h2,
+.customer-review-empty h2,
+.customer-review-progress h2 { margin: 0; color: var(--review-ink); font-weight: 650; }
+.customer-review-heading h1 { font-size: 24px; letter-spacing: -.02em; }
+.customer-review-heading p { margin: 5px 0 0; color: var(--review-muted); font-size: 12px; }
+.customer-review-create { padding-bottom: 24px; border-bottom: 1px solid rgba(89, 63, 44, .1); }
+.customer-review-create h2,
+.customer-review-recent-section h2,
+.customer-review-history-section h2 { margin: 0 0 12px; font-size: 13px; font-weight: 650; }
+.customer-review-label { display: block; margin-bottom: 6px; color: var(--review-muted); font-size: 11px; }
+.customer-review-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid rgba(89, 63, 44, .16);
+  border-radius: 9px;
+  background: rgba(255, 253, 248, .74);
+  color: #aa8c72;
+}
+.customer-review-search-wrap:focus-within { border-color: rgba(89, 63, 44, .42); box-shadow: 0 0 0 3px rgba(248, 234, 211, .65); }
+.customer-review-search-wrap input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--review-ink); font: inherit; }
+.customer-review-search-wrap input::placeholder { color: #b9a493; }
+.customer-review-search-wrap:has(input[hidden]) { display: none; }
+.customer-review-contact-results {
+  max-height: 214px;
+  margin-top: 6px;
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid rgba(89, 63, 44, .11);
+  border-radius: 9px;
+  background: #fffdf8;
+  box-shadow: 0 9px 24px rgba(89, 63, 44, .08);
+}
+.customer-review-contact-results[hidden] { display: none; }
+.customer-review-contact-results button,
+.customer-review-selected-contact {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+}
+.customer-review-contact-results button {
+  padding: 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--review-ink);
+  text-align: left;
+  cursor: pointer;
+}
+.customer-review-contact-results button:hover { background: rgba(248, 234, 211, .55); }
+.customer-review-contact-results button > span:nth-child(2),
+.customer-review-selected-contact > span:nth-child(2) { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+.customer-review-contact-results strong,
+.customer-review-selected-contact strong { overflow: hidden; font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.customer-review-contact-results small,
+.customer-review-selected-contact small { overflow: hidden; color: var(--review-muted); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.customer-review-contact-avatar {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9px;
+  background: #f4dfbe;
+  color: #704e36;
+  font-size: 12px;
+  font-weight: 650;
+}
+.customer-review-selected-contact { margin-top: 7px; padding: 8px; border-radius: 9px; background: rgba(248, 234, 211, .52); }
+.customer-review-selected-contact[hidden] { display: none; }
+.customer-review-selected-contact > button { display: grid; width: 26px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--review-muted); cursor: pointer; }
+.customer-review-selected-contact > button:hover { background: rgba(89, 63, 44, .08); }
+.customer-review-range { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.customer-review-range label { display: flex; min-width: 0; flex-direction: column; gap: 5px; color: var(--review-muted); font-size: 10.5px; }
+.customer-review-range input { min-width: 0; height: 34px; padding: 0 7px; border: 1px solid rgba(89, 63, 44, .14); border-radius: 8px; outline: 0; background: rgba(255, 253, 248, .72); color: var(--review-ink); font: inherit; font-size: 11px; }
+.customer-review-primary,
+.customer-review-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 8px;
+  color: #fffaf2;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.customer-review-primary { width: 100%; height: 37px; margin-top: 12px; border: 0; background: #684a35; }
+.customer-review-primary:hover:not(:disabled) { background: #593f2c; }
+.customer-review-primary:disabled { cursor: default; opacity: .42; }
+.customer-review-secondary { padding: 8px 12px; border: 1px solid rgba(89, 63, 44, .15); background: #684a35; }
+.customer-review-inline-error { margin: 7px 0 0; color: #a84f3b; font-size: 11px; }
+.customer-review-recent-section { padding: 22px 0; border-bottom: 1px solid rgba(89, 63, 44, .1); }
+.customer-review-history-section { padding-top: 22px; }
+.customer-review-section-head { display: flex; align-items: baseline; justify-content: space-between; }
+.customer-review-section-head span { color: var(--review-muted); font-size: 10.5px; }
+.customer-review-recent,
+.customer-review-history { display: flex; flex-direction: column; gap: 3px; }
+.customer-review-recent button { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; padding: 7px; border: 0; border-radius: 8px; background: transparent; color: var(--review-ink); text-align: left; cursor: pointer; }
+.customer-review-recent button:hover { background: rgba(248, 234, 211, .58); }
+.customer-review-recent button > span:nth-child(2) { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.customer-review-recent strong { overflow: hidden; font-size: 11.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.customer-review-recent small { overflow: hidden; color: var(--review-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.customer-review-recent .customer-review-contact-avatar { width: 26px; height: 26px; border-radius: 8px; font-size: 11px; }
+.customer-review-history button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; border: 0; border-radius: 8px; background: transparent; color: var(--review-ink); text-align: left; cursor: pointer; }
+.customer-review-history button:hover,
+.customer-review-history button.is-active { background: rgba(248, 234, 211, .58); }
+.customer-review-history button span { display: flex; min-width: 0; flex-direction: column; }
+.customer-review-history strong { font-size: 11.5px; font-weight: 600; }
+.customer-review-history small,
+.customer-review-history time { color: var(--review-muted); font-size: 10px; font-style: normal; }
+.customer-review-muted { margin: 8px 2px; color: var(--review-muted); font-size: 11.5px; line-height: 1.55; }
+.customer-review-detail { min-width: 0; min-height: 0; padding: 76px clamp(34px, 5vw, 76px) 44px; overflow-y: auto; }
+.customer-review-empty,
+.customer-review-progress { display: flex; width: min(520px, 100%); min-height: 64%; margin: 0 auto; align-items: center; justify-content: center; flex-direction: column; text-align: center; }
+.customer-review-empty-icon { display: grid; width: 46px; height: 46px; margin-bottom: 16px; place-items: center; border-radius: 15px; background: rgba(248, 234, 211, .72); color: #76543d; }
+.customer-review-empty h2,
+.customer-review-progress h2 { font-size: 19px; }
+.customer-review-empty p,
+.customer-review-progress p { max-width: 460px; margin: 7px 0 0; color: var(--review-muted); line-height: 1.65; }
+.customer-review-empty ol { width: min(360px, 100%); margin: 22px 0 0; padding: 15px 18px 15px 38px; border-top: 1px solid rgba(89, 63, 44, .1); border-bottom: 1px solid rgba(89, 63, 44, .1); color: var(--review-muted); text-align: left; line-height: 2; }
+.customer-review-failed .customer-review-secondary { margin-top: 18px; }
+.customer-review-failed small { max-width: 420px; margin-top: 11px; color: #9c826f; line-height: 1.55; }
+.customer-review-spinner { width: 28px; height: 28px; margin-bottom: 18px; border: 2px solid rgba(89, 63, 44, .13); border-top-color: #684a35; border-radius: 50%; animation: customer-review-spin .8s linear infinite; }
+.customer-review-progress small { margin-top: 18px; color: #aa8c72; }
+@keyframes customer-review-spin { to { transform: rotate(360deg); } }
+.customer-review-result { width: min(760px, 100%); margin: 0 auto; }
+.customer-review-result-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding-bottom: 20px; border-bottom: 1px solid rgba(89, 63, 44, .12); }
+.customer-review-result-head h2 { font-size: 23px; letter-spacing: -.02em; }
+.customer-review-result-head p { margin: 4px 0 0; color: var(--review-muted); font-size: 11.5px; }
+.customer-review-result-note { margin: 12px 0 0; color: #9c826f; font-size: 11px; line-height: 1.55; }
+.customer-review-coverage { margin-top: 13px; padding: 9px 11px; border: 1px solid rgba(186, 134, 75, .2); border-radius: 8px; background: rgba(248, 234, 211, .35); color: #80634e; }
+.customer-review-coverage summary { display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 11px; list-style: none; }
+.customer-review-coverage summary::-webkit-details-marker { display: none; }
+.customer-review-coverage ul { margin: 7px 0 0; padding-left: 18px; color: var(--review-muted); font-size: 10.5px; line-height: 1.65; }
+.customer-review-result-count { display: flex; align-items: baseline; gap: 4px; color: var(--review-muted); white-space: nowrap; }
+.customer-review-result-count strong { color: var(--review-ink); font-size: 24px; font-weight: 650; }
+.customer-review-items { display: flex; flex-direction: column; }
+.customer-review-item { padding: 22px 0; border-bottom: 1px solid rgba(89, 63, 44, .11); transition: opacity .15s; }
+.customer-review-item.is-completed { opacity: .66; }
+.customer-review-item.is-saving { pointer-events: none; opacity: .5; }
+.customer-review-item-top { display: flex; align-items: center; justify-content: space-between; }
+.customer-review-item-state { color: #9b633c; font-size: 10.5px; font-weight: 650; }
+.customer-review-review-status { padding: 2px 7px; border-radius: 999px; background: rgba(248, 234, 211, .72); color: var(--review-muted); font-size: 9.5px; }
+.customer-review-review-status:not(.is-unreviewed) { background: rgba(106, 144, 105, .11); color: #5f795c; }
+.customer-review-review-status.is-corrected { background: rgba(186, 134, 75, .13); color: #98653a; }
+.customer-review-review-status.is-completed_elsewhere { background: rgba(94, 129, 111, .14); color: #4f715a; }
+.customer-review-review-status.is-rejected,
+.customer-review-review-status.is-ignored { background: rgba(89, 63, 44, .06); color: #9d8d80; }
+.customer-review-item h3 { margin: 9px 0 7px; color: var(--review-ink); font-size: 16px; font-weight: 600; line-height: 1.55; }
+.customer-review-item-meta { display: flex; gap: 14px; color: var(--review-muted); font-size: 10.5px; }
+.customer-review-evidence { margin-top: 12px; }
+.customer-review-evidence summary { display: inline-flex; align-items: center; gap: 5px; color: #80634e; font-size: 11px; cursor: pointer; list-style: none; }
+.customer-review-evidence summary::-webkit-details-marker { display: none; }
+.customer-review-evidence ul { margin: 10px 0 2px; padding: 8px 0; border-top: 1px dashed rgba(89, 63, 44, .12); list-style: none; }
+.customer-review-evidence li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; color: var(--review-muted); font-size: 10.5px; }
+.customer-review-evidence li > div { min-width: 0; }
+.customer-review-evidence li span { color: #927866; }
+.customer-review-evidence li p { margin: 4px 0 0; color: var(--review-ink); font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.customer-review-evidence .customer-review-evidence-loading { display: block; color: #9d8d80; }
+.customer-review-evidence em { color: #ad927e; font-style: normal; }
+.customer-review-item-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 15px; }
+.customer-review-item-actions[hidden] { display: none; }
+.customer-review-completion-prompt { width: 100%; margin-bottom: 2px; color: #80634e; font-size: 10.5px; }
+.customer-review-item-actions button,
+.customer-review-edit button { padding: 5px 9px; border: 1px solid rgba(89, 63, 44, .13); border-radius: 7px; background: rgba(255, 253, 248, .7); color: #76543d; font: inherit; font-size: 10.5px; cursor: pointer; }
+.customer-review-item-actions button { display: inline-flex; align-items: center; gap: 4px; }
+.customer-review-item-actions [data-item-action="complete-elsewhere"] { border-color: rgba(81, 117, 93, .24); color: #4f715a; }
+.customer-review-item-actions button:hover,
+.customer-review-edit button:hover { background: rgba(248, 234, 211, .64); }
+.customer-review-edit { margin-top: 14px; padding: 12px; border-radius: 9px; background: rgba(248, 234, 211, .42); }
+.customer-review-edit[hidden] { display: none; }
+.customer-review-edit label { display: block; margin-bottom: 6px; color: var(--review-muted); font-size: 10.5px; }
+.customer-review-edit textarea { box-sizing: border-box; width: 100%; min-height: 70px; padding: 8px 9px; resize: vertical; border: 1px solid rgba(89, 63, 44, .15); border-radius: 7px; outline: 0; background: #fffdf8; color: var(--review-ink); font: inherit; line-height: 1.5; }
+.customer-review-edit > div { display: flex; gap: 5px; margin-top: 7px; }
+.customer-review-empty-inline { min-height: 420px; }
+
+@media (max-width: 900px) {
+  .customer-review-page { grid-template-columns: 286px minmax(0, 1fr); }
+  .customer-review-sidebar { padding-right: 18px; padding-left: 22px; }
+  .customer-review-detail { padding-right: 28px; padding-left: 28px; }
 }
 .dialogue-sidebar {
   min-width: 0;
@@ -2302,16 +2569,24 @@ input { font: inherit; color: inherit; }
   line-height: 1.6;
   letter-spacing: .015em;
 }
-.companion-immersive-trigger {
+.companion-mode-actions {
   position: absolute;
   z-index: 5;
   top: 65px;
   right: 0;
   display: inline-flex;
   align-items: center;
+  gap: 6px;
+  left: auto;
+  margin: 0;
+  transform: translateY(-100%);
+}
+.companion-immersive-trigger,
+.companion-desktop-trigger {
+  display: inline-flex;
+  align-items: center;
   gap: 5px;
   min-height: 30px;
-  left: auto;
   margin: 0;
   padding: 5px 9px 5px 7px;
   border: 1px solid rgba(139, 96, 54, .26);
@@ -2322,9 +2597,9 @@ input { font: inherit; color: inherit; }
   font-size: 11px;
   font-weight: 650;
   cursor: pointer;
-  transform: translateY(-100%);
-  transition: transform .18s ease, background-color .18s ease, box-shadow .18s ease;
+  transition: transform .18s ease, background-color .18s ease, box-shadow .18s ease, opacity .18s ease;
 }
+.companion-desktop-trigger { color: rgba(107, 73, 45, .78); }
 .companion-immersive-icon {
   display: grid;
   width: 16px;
@@ -2336,12 +2611,14 @@ input { font: inherit; color: inherit; }
   font-size: 14px;
   line-height: 1;
 }
-.companion-immersive-trigger:hover {
+.companion-immersive-trigger:hover,
+.companion-desktop-trigger:hover {
   background: rgba(255, 241, 214, .96);
   box-shadow: 0 6px 15px rgba(112, 76, 42, .16);
-  transform: translateY(calc(-100% - 2px));
+  transform: translateY(-2px);
 }
 .companion-immersive-trigger:focus-visible,
+.companion-desktop-trigger:focus-visible,
 .companion-immersive-tools button:focus-visible {
   outline: 2px solid rgba(185, 129, 72, .60);
   outline-offset: 3px;
@@ -2615,7 +2892,7 @@ input { font: inherit; color: inherit; }
   margin: 0;
   transform: translateX(-50%);
 }
-.moment-body.is-companion-immersive .companion-immersive-trigger,
+.moment-body.is-companion-immersive .companion-mode-actions,
 .moment-body.is-companion-immersive .moment-actions {
   display: none;
 }

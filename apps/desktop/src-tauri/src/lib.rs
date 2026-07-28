@@ -9,7 +9,7 @@
 
 use serde_json::Value;
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
@@ -84,6 +84,87 @@ fn render_qr_svg(text: String) -> Result<String, String> {
         .dark_color(svg::Color("#111111"))
         .light_color(svg::Color("#ffffff"))
         .build())
+}
+
+// Opens the companion as its own transparent desktop window. The aquarium
+// itself remains a regular webview page, so it can reuse the same Canvas scene
+// and assets as the dashboard rather than keeping a second animation engine in
+// Rust. A second request focuses the existing window instead of stacking copies.
+#[tauri::command]
+fn open_companion_window(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("companion") {
+        window.show().map_err(|err| format!("show companion window: {err}"))?;
+        window.set_focus().map_err(|err| format!("focus companion window: {err}"))?;
+        return Ok(());
+    }
+
+    WebviewWindowBuilder::new(
+        &app,
+        "companion",
+        WebviewUrl::App("companion-window.html".into()),
+    )
+    .title("陪伴小世界")
+    // Desktop mode begins at the compact size, so it behaves like a quiet
+    // companion rather than competing with the main workspace. The user can
+    // expand it at any time with the in-window + control.
+    .inner_size(280.0, 210.0)
+    .min_inner_size(280.0, 210.0)
+    .transparent(true)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .resizable(true)
+    .build()
+    .map_err(|err| format!("create companion window: {err}"))?;
+
+    Ok(())
+}
+
+// Keep companion controls on the Rust side. Dynamic windows have a more
+// restrictive capability surface than the main webview, whereas these
+// commands always target the one trusted companion window by label.
+#[tauri::command]
+fn close_companion_window(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("companion")
+        .ok_or_else(|| "companion window is not open".to_string())?;
+    window
+        .close()
+        .map_err(|err| format!("close companion window: {err}"))
+}
+
+#[tauri::command]
+fn start_companion_drag(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("companion")
+        .ok_or_else(|| "companion window is not open".to_string())?;
+    window
+        .start_dragging()
+        .map_err(|err| format!("start companion drag: {err}"))
+}
+
+#[tauri::command]
+fn resize_companion_window(app: AppHandle, direction: String) -> Result<(), String> {
+    let window = app
+        .get_webview_window("companion")
+        .ok_or_else(|| "companion window is not open".to_string())?;
+    let factor = match direction.as_str() {
+        "in" => 1.12,
+        "out" => 1.0 / 1.12,
+        _ => return Err("invalid companion resize direction".to_string()),
+    };
+    let scale_factor = window
+        .scale_factor()
+        .map_err(|err| format!("read companion scale factor: {err}"))?;
+    let current = window
+        .inner_size()
+        .map_err(|err| format!("read companion size: {err}"))?
+        .to_logical::<f64>(scale_factor);
+    let width = (current.width * factor).clamp(280.0, 1100.0);
+    let height = (current.height * factor).clamp(210.0, 780.0);
+    window
+        .set_size(LogicalSize::new(width, height))
+        .map_err(|err| format!("resize companion window: {err}"))
 }
 
 // Spawn the bundled sidecar and collect its stdout. Stderr is forwarded as
@@ -651,6 +732,115 @@ async fn agent_transcribe(audio_b64: String, mime: String) -> Result<String, Str
     }
 }
 
+// Owner-only workspace proxy — keeps the admin operator token in this host
+// process instead of the webview.
+//
+// WHY (2026-07-28 security review of 45a5211): the customer-review workspace
+// originally fetched the daemon straight from JS, obtaining the operator token
+// through `wechat_cli_json ['daemon','api-info','--operator']`. That put an
+// admin-tier credential in the renderer's heap for the first time — and
+// `wechat_cli_json` applies no argument filtering in the production app, so
+// any script that can run in the webview (a future innerHTML hole rendering
+// content from a stranger agent, a poisoned frontend dep, devtools) could take
+// it and then reach every route in the operator token's routeAllow, including
+// POST /v1/companion/converse — i.e. speak to WeChat as the owner. This
+// command restores the invariant the other three owner-only commands hold: the
+// renderer names an operation, the token never leaves Rust.
+//
+// The customer-review routes stay `admin` rather than being demoted to
+// `trusted` (the other obvious fix): ordinary chat sessions are minted
+// `trusted` (tierNameFromProfile), so demoting would let anyone talking to the
+// bot read the owner's private customer judgments.
+#[tauri::command]
+async fn customer_review_api(
+    method: String,
+    path: String,
+    body: Option<String>,
+) -> Result<String, String> {
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    // Hard allow-list: this hands out admin authority, so it must never become
+    // a generic daemon proxy. Reject anything outside the workspace's own
+    // prefix, and any traversal-ish path, before touching the token.
+    let route = path.split('?').next().unwrap_or("");
+    if !(route == "/v1/customer-review" || route.starts_with("/v1/customer-review/"))
+        || path.contains("..")
+    {
+        return Err(format!("customer_review_api refuses path: {path}"));
+    }
+    if method != "GET" && method != "POST" {
+        return Err(format!("customer_review_api refuses method: {method}"));
+    }
+
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|e| format!("cannot resolve home dir: {e}"))?;
+    let state_dir = std::env::var("WECHAT_STATE_DIR").unwrap_or_else(|_| {
+        PathBuf::from(home)
+            .join(".claude")
+            .join("channels")
+            .join("wechat")
+            .to_string_lossy()
+            .to_string()
+    });
+    let info_path = PathBuf::from(&state_dir).join("internal-api-info.json");
+
+    let info_raw = std::fs::read_to_string(&info_path)
+        .map_err(|e| format!("read {}: {e}", info_path.display()))?;
+    let info: Value = serde_json::from_str(&info_raw)
+        .map_err(|e| format!("invalid JSON in {}: {e}", info_path.display()))?;
+
+    let base_url = info
+        .get("baseUrl")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("missing baseUrl in {}", info_path.display()))?;
+    // Same rule as agent_converse: never fall back to tokenFilePath.
+    let operator_token_file_path = info
+        .get("operatorTokenFilePath")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "operator token unavailable — daemon too old".to_string())?;
+    let token = std::fs::read_to_string(operator_token_file_path)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| format!("token read error: {e}"))?;
+
+    let url = format!("{base_url}{path}");
+    let result = timeout(Duration::from_secs(30), async {
+        let client = reqwest::Client::new();
+        let req = if method == "GET" {
+            client.get(&url)
+        } else {
+            client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .body(body.unwrap_or_else(|| "{}".to_string()))
+        };
+        req.header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+    })
+    .await;
+
+    let resp = match result {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => return Err(format!("request error: {e}")),
+        Err(_) => return Err("request timed out".to_string()),
+    };
+    let status = resp.status();
+    let body_text = resp
+        .text()
+        .await
+        .map_err(|e| format!("failed to read response body ({status}): {e}"))?;
+    if !status.is_success() {
+        let err_msg = serde_json::from_str::<Value>(&body_text)
+            .ok()
+            .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(|s| s.to_string()))
+            .unwrap_or_else(|| format!("HTTP {status}"));
+        return Err(err_msg);
+    }
+    Ok(body_text)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -662,13 +852,32 @@ pub fn run() {
             wechat_cli_text,
             save_text_file,
             render_qr_svg,
+            open_companion_window,
+            close_companion_window,
+            start_companion_drag,
+            resize_companion_window,
             wechat_daemon_pid,
             notify_user,
             wechat_health_ping,
             agent_converse,
             agent_speak,
-            agent_transcribe
+            agent_transcribe,
+            customer_review_api
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running wechat-cc desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building wechat-cc desktop")
+        .run(|app, event| {
+            // On macOS, clicking the Dock icon (or opening the app again) emits
+            // `Reopen`. The companion aquarium is always-on-top, so without an
+            // explicit main-window focus it can look as though the dashboard
+            // never opened. Keep the companion running, but bring the real app
+            // window back whenever the user re-enters WeChat-cc.
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                if let Some(main) = app.get_webview_window("main") {
+                    let _ = main.show();
+                    let _ = main.set_focus();
+                }
+            }
+        });
 }

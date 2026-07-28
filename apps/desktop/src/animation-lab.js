@@ -39,7 +39,7 @@ const plantLayers = [
   { source: "./assets/animation/plant-round-ai.png", box: [.695, .541, .092, .224], phase: 4.4, amplitude: .0046 },
   // Keep the root on the sand and right glass, while giving this long-leaf
   // plant more vertical presence than the surrounding round leaves.
-  { source: "./assets/animation/plant-grass-ai.png", box: [.767, .4626, .1232, .3224], offsetX: 20, offsetY: -10, phase: 5.2, amplitude: .014 },
+  { source: "./assets/animation/plant-grass-ai.png", box: [.767, .4626, .1232, .3224], offsetX: 20, offsetY: -10, compactAnchor: true, phase: 5.2, amplitude: .014 },
 ].map(layer => {
   const image = new Image()
   image.src = layer.source
@@ -53,6 +53,8 @@ const lotusBud = new Image()
 lotusBud.src = "./assets/animation/lotus-bud-cropped.png"
 const crabSprite = new Image()
 crabSprite.src = "./assets/animation/crab-watercolor-v1.png"
+const crabWalkSheet = new Image()
+crabWalkSheet.src = "./assets/animation/crab-walk-sheet-v1.png"
 
 const fish = []
 const bubbles = []
@@ -73,6 +75,10 @@ let calm = false
 let bearAwake = 0
 let bearWaveStartedAt = -Infinity
 let bearHovering = false
+const bearIdleGreetingInterval = 5_000
+const bearWaveDuration = 1360
+const bearMessageDuration = 2_700
+let nextBearIdleGreetingAt = performance.now() + bearIdleGreetingInterval
 const bearGreetings = [
   "我在这儿陪你看鱼。",
   "今天的水光很好看呀。",
@@ -81,9 +87,35 @@ const bearGreetings = [
   "要不要一起看看水草后面？",
 ]
 let bearGreetingIndex = -1
+let bearMessageUntil = -Infinity
 let lotusClosed = 0
 let lotusClosedTarget = 0
+let lotusHovering = false
+const lotusAutoCycleInterval = 5_000
+let lotusAutoCycleStartedAt = -Infinity
+let nextLotusAutoCycleAt = performance.now() + lotusAutoCycleInterval
+const crabHideSpots = [
+  // Keep the crab in the middle of the foliage: the lower part remains
+  // occluded by leaves instead of appearing at the roots in the sand.
+  { x: .846, y: .690, rotation: -.10 }, // tall right-hand grass
+  { x: .724, y: .704, rotation: -.30 }, // right round water plant
+  { x: .658, y: .708, rotation: -.22 }, // small middle water plant
+  { x: .414, y: .703, rotation: -.12 }, // left round water plant
+]
+let crabHideIndex = 0
+let crabHideSpot = crabHideSpots[crabHideIndex]
+let crabRoute = null
+let crabMoveStartedAt = -Infinity
+// A crab should react like it has been startled: a quick sideways scuttle,
+// not a slow glide from one plant to the next.
+const crabMoveDuration = 720
 let crabEscapeStartedAt = -Infinity
+let crabEscapeFrom = null
+let crabClickStreak = 0
+const crabEscapeThreshold = 3
+const crabEscapeChance = .3
+const crabEscapeApproachDuration = 520
+const crabEscapeCanvasDuration = 1600
 let lastTime = performance.now()
 let lastFleePointer = { x: -1, y: -1 }
 
@@ -200,21 +232,37 @@ function canvasXForCssPixels(pixels) {
 function canvasYForCssPixels(pixels) {
   return pixels * Math.min(devicePixelRatio || 1, 2) / canvas.height
 }
-// The tall right-hand plant hides the crab's little starting spot.
-function crabPlantContains(x, y) {
-  const offsetX = canvasXForCssPixels(20)
-  const offsetY = canvasYForCssPixels(-10)
-  return x > .767 + offsetX && x < .90 + offsetX && y > .46 + offsetY && y < .79 + offsetY
+function clamp(value, min, max) { return Math.max(min, Math.min(max, value)) }
+
+function canvasCssWidth() {
+  return canvas.width / Math.min(devicePixelRatio || 1, 2)
 }
 
-function clamp(value, min, max) { return Math.max(min, Math.min(max, value)) }
+// A compact floating window should still read as a living aquarium rather
+// than a thumbnail. Increase only the fish at small CSS widths; scenery and
+// the bear keep their normal scale so the composition does not feel crowded.
+function compactFishScale() {
+  return 1 + clamp((480 - canvasCssWidth()) / 220, 0, 1) * .38
+}
+
+// Preserve the first eight deliberately colour-balanced fish in a compact
+// aquarium, then add the remaining fish back one by one as room becomes
+// available. Hidden fish are not updated or hit-tested, so density really
+// drops instead of merely becoming invisible.
+function activeFish() {
+  const minimum = Math.min(8, fish.length)
+  const room = clamp((canvasCssWidth() - 300) / 180, 0, 1)
+  const count = Math.round(minimum + (fish.length - minimum) * room)
+  return fish.slice(0, count)
+}
 
 function swimBounds(f) {
   const sprite = fishSprites[f.kind]
   const aspect = sprite?.naturalWidth ? sprite.naturalHeight / sprite.naturalWidth : .42
-  const width = f.size * canvas.width * (f.kind === 5 ? 5.45 : 5.1)
+  const scale = compactFishScale()
+  const width = f.size * scale * canvas.width * (f.kind === 5 ? 5.45 : 5.1)
   const horizontalPadding = width / canvas.width / 2 + .008
-  const verticalPadding = width * aspect / canvas.height / 2 + f.size * canvas.width * .15 / canvas.height + .008
+  const verticalPadding = width * aspect / canvas.height / 2 + f.size * scale * canvas.width * .15 / canvas.height + .008
   return {
     left: .365 + horizontalPadding,
     right: .89 - horizontalPadding,
@@ -224,16 +272,16 @@ function swimBounds(f) {
 }
 
 function fishTouchRadius(f) {
-  return f.size * (f.kind === 5 ? 5.45 : 5.1) / 2 + .008
+  return f.size * compactFishScale() * (f.kind === 5 ? 5.45 : 5.1) / 2 + .008
 }
 
-function triggerFishEscape(time) {
-  if (!pointer.active || !waterContains(pointer.x, pointer.y) || lotusContains(pointer.x, pointer.y) || crabPlantContains(pointer.x, pointer.y)) return
+function triggerFishEscape(time, school) {
+  if (!pointer.active || !waterContains(pointer.x, pointer.y) || lotusContains(pointer.x, pointer.y)) return
   if (Math.hypot(pointer.x - lastFleePointer.x, pointer.y - lastFleePointer.y) < .05) return
 
   let closest = null
   let closestDistance = Infinity
-  for (const f of fish) {
+  for (const f of school) {
     if (time < f.fleeUntil) continue
     const distance = Math.hypot(f.x - pointer.x, f.y - pointer.y)
     if (distance < fishTouchRadius(f) * f.startleRadius && distance < closestDistance) {
@@ -266,18 +314,22 @@ function drawSceneBackground() {
 }
 
 function drawPlantLayer(layer, time) {
-  const { image, box, offsetX = 0, offsetY = 0, phase, amplitude } = layer
+  const { image, box, offsetX = 0, offsetY = 0, compactAnchor = false, phase, amplitude } = layer
   if (!image.complete || !image.naturalWidth) return
   const w = canvas.width
   const h = canvas.height
   const displayScale = Math.min(devicePixelRatio || 1, 2)
+  // Fixed CSS-pixel offsets look disproportionately large in the compact
+  // window. Fade the long right plant's decorative offset to zero there so
+  // its root remains in the sand and its leaves stay inside the glass.
+  const compactOffset = compactAnchor ? clamp((canvasCssWidth() - 300) / 180, 0, 1) : 1
   const slices = 18
   const [x, y, width, height] = box
   for (let index = 0; index < slices; index += 1) {
     const progress = index / slices
     const sourceY = progress * image.naturalHeight
     const sourceHeight = image.naturalHeight / slices + 1
-    const destinationY = (y + height * progress) * h + offsetY * displayScale
+    const destinationY = (y + height * progress) * h + offsetY * displayScale * compactOffset
     const destinationHeight = height / slices * h + 1
     const flexibility = 1 - progress
     const offset = Math.sin(time * .00135 + phase + progress * 1.45) * amplitude * w * flexibility
@@ -287,7 +339,7 @@ function drawPlantLayer(layer, time) {
       sourceY,
       image.naturalWidth,
       sourceHeight,
-      x * w + offsetX * displayScale + offset,
+      x * w + offsetX * displayScale * compactOffset + offset,
       destinationY,
       width * w,
       destinationHeight,
@@ -362,70 +414,140 @@ function drawInteractiveLotus() {
   drawLotusSprite(lotusBud, centerX, baseY + h * .005, budWidth)
 }
 
+function automaticLotusClosure(time) {
+  const elapsed = time - lotusAutoCycleStartedAt
+  if (!Number.isFinite(elapsed) || elapsed < 0) return 0
+  // One gentle five-second ritual: rest open, fold into a small bud, then
+  // open again. It leaves enough quiet time between cycles to feel alive
+  // instead of continuously mechanical.
+  if (elapsed < 1_100) return smoothstep(0, 1_100, elapsed)
+  if (elapsed < 1_600) return 1
+  if (elapsed < 2_700) return 1 - smoothstep(1_600, 2_700, elapsed)
+  return 0
+}
+
 function crabCanvasPose(time) {
-  const elapsed = time - crabEscapeStartedAt
-  const innerRailTop = .398 - canvasYForCssPixels(60)
-  if (elapsed < 0 || elapsed >= 1600) return null
-  if (elapsed < 560) {
-    const progress = smoothstep(0, 560, elapsed)
+  const escapeElapsed = time - crabEscapeStartedAt
+  if (Number.isFinite(escapeElapsed) && escapeElapsed >= 0) {
+    const escapeStart = crabHideSpots[0]
+    if (escapeElapsed < crabEscapeApproachDuration) {
+      const progress = smoothstep(0, crabEscapeApproachDuration, escapeElapsed)
+      const from = crabEscapeFrom || crabHideSpot
+      return {
+        x: from.x + (escapeStart.x - from.x) * progress,
+        y: from.y + (escapeStart.y - from.y) * progress - Math.sin(progress * Math.PI) * .035,
+        rotation: from.rotation + (escapeStart.rotation - from.rotation) * progress,
+        opacity: 1,
+        hiding: false,
+        walking: true,
+      }
+    }
+    const routeElapsed = escapeElapsed - crabEscapeApproachDuration
+    if (routeElapsed >= crabEscapeCanvasDuration) return null
+    const innerRailTop = .398 - canvasYForCssPixels(60)
+    if (routeElapsed < 560) {
+      const progress = smoothstep(0, 560, routeElapsed)
+      return {
+        x: escapeStart.x + progress * .028,
+        y: escapeStart.y - progress * .070,
+        rotation: -.06 - progress * .18,
+        opacity: 1,
+        hiding: true,
+        walking: true,
+      }
+    }
+    const progress = smoothstep(560, crabEscapeCanvasDuration, routeElapsed)
     return {
-      x: .846 + progress * .028,
-      y: .754 - progress * .070,
-      rotation: -.06 - progress * .18,
-      opacity: Math.min(1, elapsed / 180),
+      x: .874,
+      y: escapeStart.y - .070 + (innerRailTop - (escapeStart.y - .070)) * progress,
+      rotation: -.24 - progress * 1.22,
+      opacity: 1,
+      hiding: false,
+      walking: true,
     }
   }
-  const progress = smoothstep(560, 1600, elapsed)
-  return {
-    x: .874,
-    y: .684 + (innerRailTop - .684) * progress,
-    rotation: -.24 - progress * 1.22,
-    opacity: 1,
+  const elapsed = time - crabMoveStartedAt
+  if (!crabRoute || !Number.isFinite(elapsed) || elapsed < 0) {
+    return { ...crabHideSpot, opacity: .84, hiding: true }
   }
+  if (elapsed >= crabMoveDuration) {
+    crabHideSpot = crabRoute.to
+    crabRoute = null
+    crabMoveStartedAt = -Infinity
+    return { ...crabHideSpot, opacity: .84, hiding: true }
+  }
+  const progress = clamp(elapsed / crabMoveDuration, 0, 1)
+  // Fast at take-off, then gently decelerating into the next clump of grass.
+  const travel = 1 - Math.pow(1 - progress, 2.4)
+  const { from, to, arc } = crabRoute
+  return {
+    x: from.x + (to.x - from.x) * travel,
+    y: from.y + (to.y - from.y) * travel - Math.sin(travel * Math.PI) * arc,
+    rotation: from.rotation + (to.rotation - from.rotation) * travel,
+    opacity: 1,
+    hiding: false,
+    walking: true,
+  }
+}
+
+function drawCrabWalkingFrame(width, motionTime) {
+  if (!crabWalkSheet.complete || !crabWalkSheet.naturalWidth) {
+    ctx.drawImage(crabSprite, -width / 2, -width / 2, width, width)
+    return
+  }
+  // Each frame is an actual illustrated leg pose. A calm 8fps cadence reads
+  // as a short sideways scuttle, without vibrating the whole crab.
+  const frame = Math.floor(motionTime / 125) % 3
+  const frameWidth = crabWalkSheet.naturalWidth / 3
+  ctx.drawImage(
+    crabWalkSheet,
+    frame * frameWidth,
+    0,
+    frameWidth,
+    crabWalkSheet.naturalHeight,
+    -width / 2,
+    -width / 2,
+    width,
+    width,
+  )
 }
 
 function drawCrab(time, behindPlants) {
   if (!crabSprite.complete || !crabSprite.naturalWidth) return
-  const elapsed = time - crabEscapeStartedAt
-  const emerging = elapsed >= 0 && elapsed < 560
-  if (behindPlants !== emerging) return
   const pose = crabCanvasPose(time)
   if (!pose) return
+  if (behindPlants !== pose.hiding) return
   const width = canvas.width * .086
-  const bounce = Math.sin(elapsed * .026) * width * .025
+  const motionTime = Number.isFinite(crabEscapeStartedAt) ? time - crabEscapeStartedAt : (crabRoute ? time - crabMoveStartedAt : time)
+  const frame = pose.walking ? Math.floor(motionTime / 125) % 3 : 0
+  const bounce = pose.walking && frame === 1 ? -width * .012 : 0
   ctx.save()
   ctx.translate(pose.x * canvas.width, pose.y * canvas.height + bounce)
-  ctx.rotate(pose.rotation + Math.sin(elapsed * .032) * .025)
-  ctx.scale(1 + Math.sin(elapsed * .026) * .018, 1 - Math.sin(elapsed * .026) * .014)
+  ctx.rotate(pose.rotation)
   ctx.globalAlpha = pose.opacity
-  ctx.drawImage(crabSprite, -width / 2, -width / 2, width, width)
+  if (pose.walking) drawCrabWalkingFrame(width, motionTime)
+  else ctx.drawImage(crabSprite, -width / 2, -width / 2, width, width)
   ctx.restore()
 }
 
 function updateCrabEscapeOverlay(time) {
   const elapsed = time - crabEscapeStartedAt
-  const overlayStart = 1600
+  const overlayStart = crabEscapeApproachDuration + crabEscapeCanvasDuration
   const overlayDuration = 3300
-  if (elapsed < overlayStart || elapsed > overlayStart + overlayDuration) {
+  if (!Number.isFinite(elapsed) || elapsed < overlayStart || elapsed > overlayStart + overlayDuration) {
     crabEscapeOverlay.style.opacity = "0"
     return
   }
   const stageRect = canvas.getBoundingClientRect()
   const size = stageRect.width * .086
   const innerRailTop = stageRect.top + stageRect.height * (.398 - canvasYForCssPixels(60))
-  // The hand-painted tank's actual outer rail is near x=93.2%, with the
-  // bottom edge near y=84%. These image coordinates keep both display modes
-  // on the same illustrated route.
   const tankOuterRight = stageRect.left + stageRect.width * .932
   const outerRailX = tankOuterRight + 30
   const tankBottom = stageRect.top + stageRect.height * .84
   const outerRailBottom = tankBottom + 100
   const progress = clamp((elapsed - overlayStart) / overlayDuration, 0, 1)
-  // The canvas leg first climbs upward. The overlay then moves right across
-  // the rim, down the real outer rail, and right again to leave the page.
-  // This keeps
-  // the crab reading as a crawler crossing the page rather than a sprite
-  // flying through empty space.
+  // Same illustrated route as the original escape: cross the top rim, crawl
+  // down the true outer rail, then leave the page to the right.
   const path = [
     { x: stageRect.left + stageRect.width * .874, y: innerRailTop },
     { x: outerRailX, y: innerRailTop },
@@ -451,9 +573,47 @@ function updateCrabEscapeOverlay(time) {
   crabEscapeOverlay.style.transform = `translate3d(${x}px, ${y}px, 0) rotate(${rotation}rad)`
 }
 
+function crabContains(x, y) {
+  if (crabRoute || Number.isFinite(crabEscapeStartedAt)) return false
+  return Math.hypot(x - crabHideSpot.x, y - crabHideSpot.y) < .068
+}
+
+function startCrabHideSearch(time) {
+  let nextIndex = Math.floor(Math.random() * crabHideSpots.length)
+  if (crabHideSpots.length > 1 && nextIndex === crabHideIndex) {
+    nextIndex = (nextIndex + 1) % crabHideSpots.length
+  }
+  crabRoute = {
+    from: crabHideSpot,
+    to: crabHideSpots[nextIndex],
+    arc: .028 + Math.random() * .030,
+  }
+  crabHideIndex = nextIndex
+  crabMoveStartedAt = time
+  crabEscapeOverlay.style.opacity = "0"
+}
+
 function startCrabEscape(time) {
+  crabRoute = null
+  crabEscapeFrom = crabHideSpot
   crabEscapeStartedAt = time
   crabEscapeOverlay.style.opacity = "0"
+}
+
+function startCrabInteraction(time) {
+  const canEscape = canvasCssWidth() >= 480
+  if (canEscape) {
+    crabClickStreak += 1
+    if (crabClickStreak >= crabEscapeThreshold) {
+      crabClickStreak = 0
+      if (Math.random() < crabEscapeChance) {
+        startCrabEscape(time)
+        return "escape"
+      }
+    }
+  }
+  startCrabHideSearch(time)
+  return "hide"
 }
 
 function drawHandDrawnBubbleContour(x, y, radius, phase, variation = 0) {
@@ -713,9 +873,8 @@ function drawBearArm(time, lift, scale) {
   const w = canvas.width
   const h = canvas.height
   const elapsed = time - bearWaveStartedAt
-  const duration = 1360
-  const waving = elapsed >= 0 && elapsed < duration
-  const progress = waving ? elapsed / duration : 0
+  const waving = elapsed >= 0 && elapsed < bearWaveDuration
+  const progress = waving ? elapsed / bearWaveDuration : 0
   // The source arm already points from its lower-left shoulder joint to the
   // upper-right fish. Keep that direction intact: no horizontal mirroring.
   const liftAmount = waving ? Math.sin(progress * Math.PI) : 0
@@ -776,7 +935,7 @@ function drawFish(f, time) {
   const w = canvas.width
   const speed = Math.hypot(f.vx, f.vy)
   const facing = f.vx < 0 ? -1 : 1
-  const s = f.size * w
+  const s = f.size * compactFishScale() * w
   const fishWidth = s * (f.kind === 5 ? 5.45 : 5.1)
   const fishHeight = fishWidth * (fishSprite.naturalHeight / fishSprite.naturalWidth)
   const bob = Math.sin(time * .0035 + f.phase) * s * .14
@@ -789,7 +948,7 @@ function drawFish(f, time) {
   ctx.restore()
 }
 
-function update(f, dt, time) {
+function update(f, dt, time, school) {
   const factor = calm ? .48 : 1
   f.phase += dt * .002
   f.vx += Math.sin(f.phase) * .000000018 * dt
@@ -818,12 +977,12 @@ function update(f, dt, time) {
     f.vx += dx * pull * factor
     f.vy += dy * pull * factor
   }
-  for (const other of fish) {
+  for (const other of school) {
     if (other === f) continue
     const dx = f.x - other.x
     const dy = f.y - other.y
     const d = Math.hypot(dx, dy)
-    if (d < .038 && d > 0) { f.vx += dx / d * .00000011 * dt; f.vy += dy / d * .000000085 * dt }
+    if (d < .038 * compactFishScale() && d > 0) { f.vx += dx / d * .00000011 * dt; f.vy += dy / d * .000000085 * dt }
   }
   const max = fleeing
     ? .00016 * factor * f.speedScale
@@ -837,7 +996,7 @@ function update(f, dt, time) {
 }
 
 function scatterFish(time, x, y) {
-  for (const f of fish) {
+  for (const f of activeFish()) {
     let dx = f.x - x
     let dy = f.y - y
     if (Math.hypot(dx, dy) < .004) {
@@ -855,7 +1014,7 @@ function scatterFish(time, x, y) {
 }
 
 function drawPointerSignal(time) {
-  if (!pointer.active || !waterContains(pointer.x, pointer.y) || lotusContains(pointer.x, pointer.y) || crabPlantContains(pointer.x, pointer.y)) return
+  if (!pointer.active || !waterContains(pointer.x, pointer.y) || lotusContains(pointer.x, pointer.y)) return
   const w = canvas.width
   const h = canvas.height
   const pulse = .5 + .5 * Math.sin(time * .004)
@@ -870,6 +1029,15 @@ function drawPointerSignal(time) {
 
 function frame(time) {
   const dt = Math.min(32, time - lastTime); lastTime = time
+  // When nobody is visiting the bear, let it make a small periodic greeting.
+  // Each wave uses the same rotating spoken line as hover/leave gestures.
+  if (!bearHovering && time >= nextBearIdleGreetingAt) startBearWave(time)
+  if (time >= bearMessageUntil) bearMessage.classList.remove("is-visible")
+  if (!lotusHovering && time >= nextLotusAutoCycleAt) {
+    lotusAutoCycleStartedAt = time
+    nextLotusAutoCycleAt = time + lotusAutoCycleInterval
+  }
+  lotusClosedTarget = lotusHovering ? 1 : automaticLotusClosure(time)
   lotusClosed += (lotusClosedTarget - lotusClosed) * Math.min(1, dt / (lotusClosedTarget ? 180 : 300))
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   drawSceneBackground()
@@ -878,8 +1046,9 @@ function frame(time) {
   drawAquariumPlants(time)
   drawInteractiveLotus()
   drawPointerSignal(time)
-  triggerFishEscape(time)
-  for (const f of fish) { update(f, dt, time); drawFish(f, time) }
+  const school = activeFish()
+  triggerFishEscape(time, school)
+  for (const f of school) { update(f, dt, time, school); drawFish(f, time) }
   drawCrab(time, false)
   drawBearPuppet(time)
   updateCrabEscapeOverlay(time)
@@ -907,7 +1076,7 @@ function positionHint(x, y) {
 }
 
 function releaseFish() {
-  for (const f of fish) {
+  for (const f of activeFish()) {
     f.pointerMix = 0
     const angle = f.phase + f.orbit
     const cruise = .000028 * f.speedScale
@@ -916,63 +1085,68 @@ function releaseFish() {
   }
 }
 
-function startBearWave() {
+function startBearWave(time = performance.now()) {
   bearAwake = 1
-  bearWaveStartedAt = performance.now()
+  bearWaveStartedAt = time
+  nextBearIdleGreetingAt = time + bearIdleGreetingInterval
+  showNextBearGreeting(time)
 }
 
-function showNextBearGreeting() {
+function showNextBearGreeting(time = performance.now()) {
   bearGreetingIndex = (bearGreetingIndex + 1) % bearGreetings.length
   bearMessage.textContent = bearGreetings[bearGreetingIndex]
   bearMessage.classList.add("is-visible")
+  bearMessageUntil = time + bearMessageDuration
 }
 
 canvas.addEventListener("pointermove", event => {
   Object.assign(pointer, positionFromEvent(event), { active: true })
   const overLotus = lotusContains(pointer.x, pointer.y)
-  const overCrabPlant = crabPlantContains(pointer.x, pointer.y)
-  lotusClosedTarget = overLotus ? 1 : 0
-  const inTank = waterContains(pointer.x, pointer.y) && !overLotus && !overCrabPlant
+  const overCrab = crabContains(pointer.x, pointer.y)
+  if (lotusHovering && !overLotus) nextLotusAutoCycleAt = performance.now() + lotusAutoCycleInterval
+  lotusHovering = overLotus
+  const inTank = waterContains(pointer.x, pointer.y) && !overLotus
   if (!inTank) releaseFish()
   const overBear = bearContains(pointer.x, pointer.y)
-  canvas.style.cursor = overBear || overLotus || overCrabPlant ? "pointer" : waterContains(pointer.x, pointer.y) ? "crosshair" : "default"
+  canvas.style.cursor = overBear || overLotus || overCrab ? "pointer" : waterContains(pointer.x, pointer.y) ? "crosshair" : "default"
   if (overBear) {
     bearAwake = 1
     // Entering the bear zone starts one complete wave. Moving around inside
     // it does not restart the animation on every pointer event.
     if (!bearHovering) {
       startBearWave()
-      showNextBearGreeting()
     }
   } else {
     // Leaving the bear zone gives a small goodbye wave before the character
     // settles back into its resting pose.
     if (bearHovering) startBearWave()
-    bearMessage.classList.remove("is-visible")
   }
   bearHovering = overBear
-  if (inTank || overCrabPlant) positionHint(pointer.x, pointer.y)
-  hint.classList.toggle("is-visible", inTank || overCrabPlant)
+  if (inTank || overCrab) positionHint(pointer.x, pointer.y)
+  hint.classList.toggle("is-visible", inTank || overCrab)
   hint.classList.toggle("is-water-hint", inTank)
-  hint.classList.toggle("is-grass-hint", overCrabPlant)
-  hint.textContent = overCrabPlant ? "点一点水草，看看谁躲在后面" : inTank ? "它们发现你了 · 轻点水面试试看" : "把鼠标轻轻移进鱼缸水面下方"
+  hint.classList.toggle("is-grass-hint", overCrab)
+  hint.textContent = overCrab ? "点点小螃蟹，它会换个地方躲" : inTank ? "它们发现你了 · 轻点水面试试看" : "把鼠标轻轻移进鱼缸水面下方"
 })
 canvas.addEventListener("pointerleave", () => {
   pointer.active = false
-  lotusClosedTarget = 0
+  if (lotusHovering) nextLotusAutoCycleAt = performance.now() + lotusAutoCycleInterval
+  lotusHovering = false
   if (bearHovering) startBearWave()
   bearHovering = false
   releaseFish()
   hint.classList.remove("is-visible")
   hint.classList.remove("is-water-hint", "is-grass-hint")
-  bearMessage.classList.remove("is-visible")
 })
 canvas.addEventListener("click", event => {
   const p = positionFromEvent(event)
-  if (crabPlantContains(p.x, p.y)) {
-    startCrabEscape(performance.now())
-    hint.textContent = "小螃蟹溜出去啦～"
+  if (crabContains(p.x, p.y)) {
+    const action = startCrabInteraction(performance.now())
+    positionHint(p.x, p.y)
+    hint.textContent = action === "escape" ? "呀，它沿着鱼缸逃走啦～" : "它要换个地方藏起来啦～"
     hint.classList.add("is-visible")
+    hint.classList.remove("is-water-hint")
+    hint.classList.add("is-grass-hint")
     return
   }
   if (waterContains(p.x, p.y) && !lotusContains(p.x, p.y)) {
@@ -982,8 +1156,7 @@ canvas.addEventListener("click", event => {
     return
   }
   if (!bearContains(p.x, p.y)) return
-  bearAwake = 1
-  bearMessage.classList.add("is-visible")
+  startBearWave()
 })
 if (calmToggle) calmToggle.addEventListener("click", () => { calm = !calm; calmToggle.setAttribute("aria-pressed", String(calm)); calmToggle.textContent = calm ? "安静模式 · 开" : "安静模式" })
 document.getElementById("reset-fish")?.addEventListener("click", seedFish)

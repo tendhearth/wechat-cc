@@ -15,7 +15,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri = { version = "2", features = ["protocol-asset"] }
+# The companion window uses transparent pixels around the hand-painted tank.
+# Tauri exposes that native macOS capability behind this opt-in feature.
+tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-shell = "2"
 tauri-plugin-notification = "2"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }

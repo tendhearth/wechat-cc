@@ -35,6 +35,15 @@ beforeAll(async () => {
         ...process.env,
         WECHAT_CC_DRY_RUN: '1',
         WECHAT_CC_SHIM_PORT: String(PORT),
+        // NOTE: the valve stays ON here. An earlier version set
+        // WECHAT_CC_DEV_ALLOW_MUTATIONS=1 so one case could exercise `memory
+        // write`'s rejection path — but this harness inherits the real
+        // process.env (no WECHAT_STATE_DIR override), so with the valve open
+        // the only thing between `bun run test` and a write into the
+        // operator's real memory dir was the CLI's own `.md` check. Making a
+        // test's safety depend on the code under test is precisely what this
+        // valve exists to end. That case is gone; src/lib/memory.test.ts:66
+        // and :116 already pin the same rejection.
       },
       stdio: 'pipe',
       detached: false,
@@ -145,8 +154,13 @@ describe('apps/desktop shim — HTML structure', () => {
     const res = await fetch(`${BASE}/`)
     const html = await res.text()
     expect(html).toContain('window.__TAURI__')
-    expect(html).toContain('window.__WECHAT_CC_SHIM__ = true')
     expect(html).toContain('window.__WECHAT_CC_DRY_RUN__ = true')
+    // __WECHAT_CC_SHIM__ must track the TRANSPORT, not "this HTML came from
+    // the shim" — `tauri dev` loads this same page but invokes through real
+    // Rust IPC, where the dev valve does not apply. A hard `= true` made the
+    // banner promise protection that isn't there (2026-07-27 review A3).
+    expect(html).toContain('window.__WECHAT_CC_SHIM__ = window.__TAURI__ === undefined')
+    expect(html).not.toContain('window.__WECHAT_CC_SHIM__ = true')
   })
 
   it('serves main.js + view.js + styles.css', async () => {
@@ -249,15 +263,14 @@ describe('apps/desktop shim — CLI invoke contracts', () => {
     }
   })
 
-  it('memory write --json returns ok:false with structured error on sandbox reject', async () => {
-    // We can't safely write to the user's real ~/.claude/channels/wechat
-    // memory dir from a test (would clobber actual notes), but we CAN
-    // assert the sandbox error path: a base64'd body for a non-.md
-    // extension MUST reject with `ok:false, error:<msg>` JSON. This locks
-    // the contract main.js's memory-edit save handler depends on.
+  it('memory write is refused by the dev valve, not by luck', async () => {
+    // The sandbox-rejection contract itself lives in src/lib/memory.test.ts
+    // (:66, :116). What matters HERE is that the dev server never forwards a
+    // writing command at all — so this harness can never reach the operator's
+    // real memory dir even if that CLI-side check were relaxed.
     const bodyB64 = Buffer.from('hello').toString('base64')
-    const r = await invoke('wechat_cli_json', ['memory', 'write', 'fake@example', 'note.txt', '--body-base64', bodyB64, '--json']) as Record<string, unknown>
-    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/only \.md files/) })
+    await expect(invoke('wechat_cli_json', ['memory', 'write', 'fake@example', 'note.txt', '--body-base64', bodyB64, '--json']))
+      .rejects.toThrow(/mutating_command_blocked_in_dev/)
   })
 
   it('rejects an unknown command with a helpful error', async () => {

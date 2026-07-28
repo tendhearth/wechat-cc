@@ -34,6 +34,7 @@ import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
 import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
+import { startCustomerReviewRuntime } from './customer-review/runtime'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -300,6 +301,19 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // social_enabled + social_disclosure_policy are both configured. So
     // POST /v1/social/seek/{propose,confirm,cancel} work when the feature is on.
     if (boot.social) internalApi.setSocial(boot.social)
+    // Customer Review is optional: a missing/unready wxvault or eval provider
+    // leaves the daemon healthy and its owner-only routes return 503.
+    const customerReview = await startCustomerReviewRuntime({
+      stateDir,
+      db,
+      registry: boot.registry,
+      defaultProviderId: boot.defaultProviderId,
+      log: (tag, line) => log(tag, line),
+    })
+    if (customerReview) {
+      internalApi.setCustomerReview(customerReview.service)
+      lc.register(customerReview)
+    }
     // Wire the 配对码 engine (spec §7) — only present when mailbox_relays is
     // configured. So POST /v1/pair/start + /v1/pair/accept work when wired.
     if (boot.pairing) internalApi.setPairing(boot.pairing)

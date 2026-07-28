@@ -154,6 +154,16 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // ⚠️ RELEASE-REVIEW FLAG(下次 dev→master surface)。
   'POST /v1/memory/synthesize': 'trusted',
   'POST /v1/memory/profile/generate': 'trusted',
+  // admin — reads the owner's private wxvault history and stores personal
+  // customer judgments. Never expose to guest/trusted chat sessions.
+  'GET /v1/customer-review/contacts': 'admin',
+  'POST /v1/customer-review': 'admin',
+  'POST /v1/customer-review/run': 'admin',
+  'GET /v1/customer-review': 'admin',
+  'GET /v1/customer-review/evidence': 'admin',
+  'GET /v1/customer-review/recent': 'admin',
+  'GET /v1/customer-review/history': 'admin',
+  'POST /v1/customer-review/item': 'admin',
 }
 
 export function minTierFor(routeKey: string): UserTier {

@@ -378,10 +378,16 @@
                   <p id="hero-meta">把鼠标轻轻移进鱼缸，看看谁会先回应你</p>
                 </div>
                 <div class="ai-orbit-visual">
-                  <button id="companion-immersive-start" class="companion-immersive-trigger" type="button" aria-pressed="false">
-                    <span class="companion-immersive-icon" aria-hidden="true">⤢</span>
-                    <span>进入这一刻</span>
-                  </button>
+                  <div class="companion-mode-actions" aria-label="陪伴显示方式">
+                    <button id="companion-immersive-start" class="companion-immersive-trigger" type="button" aria-pressed="false">
+                      <span class="companion-immersive-icon" aria-hidden="true">⤢</span>
+                      <span>进入这一刻</span>
+                    </button>
+                    <button id="companion-desktop-start" class="companion-desktop-trigger" type="button" title="在桌面打开可拖动的陪伴鱼缸">
+                      <span aria-hidden="true">↗</span>
+                      <span>浮到桌面</span>
+                    </button>
+                  </div>
                   <div class="moment-animation-stage moment-illustration-online" aria-label="可交互的陪伴鱼缸">
                     <canvas id="companion-stage"></canvas>
                     <div class="stage-hint" id="stage-hint">把鼠标轻轻移进鱼缸水面下方</div>
@@ -543,7 +549,12 @@
 
           <!-- ── pane: sessions ─────────────────────────────────────── -->
           <article class="dash-pane" data-pane="sessions" hidden>
+            <div class="dialogue-workspace-tabs" role="tablist" aria-label="对话视图">
+              <button class="dialogue-workspace-tab is-active" type="button" role="tab" data-dialogue-mode="cc" aria-selected="true">CC 对话</button>
+              <button class="dialogue-workspace-tab" type="button" role="tab" data-dialogue-mode="customer-review" aria-selected="false">客户回顾</button>
+            </div>
             <div id="dialogue-root" class="dialogue-page"></div>
+            <div id="customer-review-root" class="customer-review-page" hidden></div>
           </article>
 
           <!-- ── pane: converse (in-app compose UI) ─────────────────── -->

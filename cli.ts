@@ -1816,15 +1816,24 @@ const daemonApiInfoCmd = defineCommand({
   meta: { name: 'api-info', description: 'Read internal-api-info.json (base URL + token) — used by the desktop GUI to call /v1/* endpoints' },
   args: {
     json: { type: 'boolean', description: 'JSON envelope (always emits JSON; flag is for CLI consistency)' },
+    // NO --operator FLAG, deliberately. The admin operator credential is read
+    // only by processes that hold it natively — the Tauri host (lib.rs:
+    // agent_converse / agent_speak / agent_transcribe / customer_review_api)
+    // and the dev server. Exposing it through the CLI would mean anything able
+    // to run `wechat-cc` — including the webview, since the production
+    // `wechat_cli_json` command applies no argument filtering — could obtain
+    // admin authority and reach POST /v1/companion/converse, i.e. speak to
+    // WeChat as the owner. A --operator flag existed briefly in 45a5211 and
+    // was removed in the 2026-07-28 review.
   },
-  async run() {
+  async run({ args }) {
     const { existsSync, readFileSync } = await import('node:fs')
     const infoPath = join(STATE_DIR, 'internal-api-info.json')
     if (!existsSync(infoPath)) {
       console.log(JSON.stringify({ ok: false, error: 'daemon not running (internal-api-info.json not found)' }))
       process.exit(1)
     }
-    let info: { baseUrl?: string; tokenFilePath?: string }
+    let info: { baseUrl?: string; tokenFilePath?: string; operatorTokenFilePath?: string }
     try {
       info = JSON.parse(readFileSync(infoPath, 'utf8'))
     } catch (err) {
@@ -1835,9 +1844,11 @@ const daemonApiInfoCmd = defineCommand({
       console.log(JSON.stringify({ ok: false, error: 'internal-api-info.json is malformed (missing baseUrl or tokenFilePath)' }))
       process.exit(1)
     }
+    // Always the trusted token — see the note on the missing --operator flag.
+    const credentialPath = info.tokenFilePath
     let token: string
     try {
-      token = readFileSync(info.tokenFilePath, 'utf8').trim()
+      token = readFileSync(credentialPath, 'utf8').trim()
     } catch (err) {
       console.log(JSON.stringify({ ok: false, error: `could not read token file: ${err instanceof Error ? err.message : String(err)}` }))
       process.exit(1)

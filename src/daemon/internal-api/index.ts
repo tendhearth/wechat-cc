@@ -308,6 +308,10 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       deps.companionConverse = fn
     },
 
+    setCustomerReview(service) {
+      deps.customerReview = service
+    },
+
     setA2A(a2a) {
       deps.a2a = a2a
     },

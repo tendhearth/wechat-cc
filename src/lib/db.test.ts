@@ -179,6 +179,57 @@ describe('migration v12 — a2a_events table', () => {
   })
 })
 
+describe('migration v27/v28 — customer review completed elsewhere and analysis coverage', () => {
+  it('upgrades v26 review feedback without losing items or evidence', () => {
+    const db = new Database(':memory:')
+    db.exec(`
+      PRAGMA foreign_keys = ON;
+      PRAGMA user_version = 26;
+      CREATE TABLE customer_reviews (id TEXT PRIMARY KEY NOT NULL) STRICT;
+      CREATE TABLE customer_review_items (
+        review_id TEXT NOT NULL REFERENCES customer_reviews(id) ON DELETE CASCADE,
+        source_key TEXT NOT NULL, commitment TEXT NOT NULL,
+        ai_status TEXT NOT NULL CHECK (ai_status IN ('open','completed')),
+        due_date TEXT, confidence TEXT NOT NULL CHECK (confidence IN ('medium','high')),
+        review_status TEXT NOT NULL DEFAULT 'unreviewed'
+          CHECK (review_status IN ('unreviewed','confirmed','corrected','rejected','ignored')),
+        corrected_text TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        PRIMARY KEY (review_id, source_key)
+      ) STRICT;
+      CREATE TABLE customer_review_evidence (
+        review_id TEXT NOT NULL, source_key TEXT NOT NULL, evidence_key TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('commitment','completion','due_date')),
+        message_time TEXT NOT NULL, sender_side TEXT NOT NULL CHECK (sender_side IN ('me','contact')),
+        PRIMARY KEY (review_id, source_key, evidence_key, role),
+        FOREIGN KEY (review_id, source_key)
+          REFERENCES customer_review_items(review_id, source_key) ON DELETE CASCADE
+      ) STRICT;
+      CREATE TABLE customer_review_feedback (
+        contact_id TEXT NOT NULL, source_key TEXT NOT NULL,
+        review_status TEXT NOT NULL CHECK (review_status IN ('confirmed','corrected','rejected','ignored')),
+        corrected_text TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (contact_id, source_key)
+      ) STRICT;
+      INSERT INTO customer_reviews VALUES ('r1');
+      INSERT INTO customer_review_items VALUES ('r1','k1','发送报价','open',NULL,'high','confirmed',NULL,'2026-01-01','2026-01-01');
+      INSERT INTO customer_review_evidence VALUES ('r1','k1','e1','commitment','2026-01-01','me');
+      INSERT INTO customer_review_feedback VALUES ('c1','k1','confirmed',NULL,'2026-01-01');
+    `)
+
+    runMigrations(db)
+
+    const version = db.query('PRAGMA user_version').get() as { user_version: number }
+    expect(version.user_version).toBe(28)
+    expect(db.query('SELECT commitment FROM customer_review_items').get()).toMatchObject({ commitment: '发送报价' })
+    expect(db.query('SELECT evidence_key FROM customer_review_evidence').get()).toMatchObject({ evidence_key: 'e1' })
+    expect(db.query("SELECT name FROM sqlite_master WHERE name = 'customer_review_analysis_issues'").get()).toMatchObject({ name: 'customer_review_analysis_issues' })
+    expect(() => db.prepare(`
+      INSERT INTO customer_review_feedback(contact_id, source_key, review_status, corrected_text, updated_at)
+      VALUES ('c1', 'k2', 'completed_elsewhere', NULL, '2026-01-02')
+    `).run()).not.toThrow()
+    db.close()
+  })
+})
+
 describe('migration v13 — events.kind adds memory_deleted + memory_path column', () => {
   it('extends events.kind CHECK to include memory_deleted', () => {
     const db = openDb({ path: ':memory:' })

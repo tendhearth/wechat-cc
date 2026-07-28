@@ -27,12 +27,22 @@
 
 import { spawn } from 'bun'
 import { join, resolve, relative, isAbsolute } from 'node:path'
+import { guardCliInvoke } from './dev-guard'
+import { makeLiveReload, injectReloadScript } from './dev-reload'
 
 const ROOT = process.env.WECHAT_CC_ROOT ?? join(import.meta.dir, '..', '..')
+// Accepts both spellings: src/lib/config.ts and lib.rs read WECHAT_STATE_DIR,
+// while the /attachment guard below already used WECHAT_CC_STATE_DIR.
+const STATE_DIR = process.env.WECHAT_STATE_DIR
+  ?? process.env.WECHAT_CC_STATE_DIR
+  ?? join(process.env.HOME ?? '', '.claude', 'channels', 'wechat')
 const SRC = join(import.meta.dir, 'src')
 const PORT = Number(process.env.WECHAT_CC_SHIM_PORT ?? 4174)
 
 const dryRun = process.env.WECHAT_CC_DRY_RUN === '1'
+// live 模式默认不跑会改真实状态的 CLI 命令(spec 2026-07-26 §3)。
+const allowMutations = process.env.WECHAT_CC_DEV_ALLOW_MUTATIONS === '1'
+  || process.argv.includes('--allow-mutations')
 
 // ─── Playwright mock state ────────────────────────────────────────────────────
 // Shared mutable bag for test-controlled data. Playwright tests seed this via
@@ -173,9 +183,32 @@ const A2A_TOKEN = 'fake-shim-token'
 // (inline scripts are blocked when WECHAT_CC_INJECT_CSP=1). The injected
 // reference in index.html toggles between inline <script>...</script> and
 // <script src="/__tauri_polyfill.js"></script> depending on the env flag.
+// __WECHAT_CC_SHIM__ must describe the TRANSPORT ACTUALLY IN USE, not "this
+// HTML came from the shim". Since `tauri dev`'s devUrl now points here, the
+// real Tauri webview also loads this script — but there `window.__TAURI__`
+// already exists, the `??` leaves it alone, and invoke goes through real Rust
+// IPC which never passes dev-guard. Setting the flag unconditionally made the
+// banner promise "只放行已知只读的命令" inside `tauri dev`, where a click on
+// 删除子用户 really does rmSync the account dir (2026-07-27 review A3).
 const POLYFILL_BODY = `
+window.__WECHAT_CC_SHIM__ = window.__TAURI__ === undefined
 window.__TAURI__ = window.__TAURI__ ?? { core: {
   invoke: async (command, args) => {
+    // Owner-only workspace: hit the proxied path directly so the request is a
+    // real HTTP call (Playwright intercepts it) and the token stays server-side.
+    if (command === "customer_review_api") {
+      const res = await fetch(args.path, {
+        method: args.method,
+        ...(args.method === "POST" ? { headers: { "content-type": "application/json" }, body: args.body ?? "{}" } : {})
+      })
+      const text = await res.text()
+      if (!res.ok) {
+        let msg = "HTTP " + res.status
+        try { msg = JSON.parse(text).error ?? msg } catch (e) { /* keep */ }
+        throw new Error(msg)
+      }
+      return text
+    }
     const r = await fetch("/__invoke", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -188,8 +221,8 @@ window.__TAURI__ = window.__TAURI__ ?? { core: {
 }, window: {
   getCurrentWindow: () => ({ startDragging: async () => {} })
 }}
-window.__WECHAT_CC_SHIM__ = true
 window.__WECHAT_CC_DRY_RUN__ = ${dryRun ? 'true' : 'false'}
+window.__WECHAT_CC_ALLOW_MUTATIONS__ = ${allowMutations ? 'true' : 'false'}
 `
 const POLYFILL_INLINE = `<script>${POLYFILL_BODY}</script>`
 const POLYFILL_EXTERNAL = `<script src="/__tauri_polyfill.js"></script>`
@@ -215,7 +248,46 @@ if (injectCsp) {
 }
 const CSP_META = cspContent ? `<meta http-equiv="Content-Security-Policy" content="${cspContent}">` : ''
 
-async function runCli(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+/**
+ * True when a browser tells us this request came from another site. Absent
+ * headers mean "not a browser" (curl, Playwright's request fixture) and are
+ * treated as same-site — this is a localhost dev tool, not a public server.
+ */
+export function isCrossSiteRequest(req: Request): boolean {
+  const site = req.headers.get('sec-fetch-site')
+  if (site && site !== 'same-origin' && site !== 'none') return true
+  const origin = req.headers.get('origin')
+  if (!origin) return false
+  try {
+    const host = new URL(origin).hostname
+    return host !== '127.0.0.1' && host !== 'localhost' && host !== '[::1]'
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Run the real CLI behind the safety valve.
+ *
+ * `outFile` is the ONLY way to reach cli.ts's `--out-file`, and it is appended
+ * AFTER the guard runs. Client-supplied args can never carry that flag —
+ * dev-guard refuses it — because `--out-file` on an otherwise read-only
+ * command (`logs`, `sessions *`) is an arbitrary-file-overwrite primitive:
+ * cli.ts's emitJson does `writeFileSync(outFile, body)`. Aimed at access.json
+ * it silently deafens the operator's bot, which is the incident this whole
+ * valve exists to prevent (2026-07-27 security review).
+ */
+async function runCli(
+  args: string[],
+  opts: { outFile?: string } = {},
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  const verdict = guardCliInvoke(args, { allowMutations })
+  if (!verdict.ok) {
+    // 抛出去由 /__invoke 的 try/catch 变成 { error } 交给前端
+    // (ipc.js 的 formatInvokeError 会原样展示这段人话)。
+    throw new Error(`${verdict.error}: ${verdict.hint}`)
+  }
+  if (opts.outFile) args = [...args, '--out-file', opts.outFile]
   const proc = spawn(['bun', join(ROOT, 'cli.ts'), ...args], {
     cwd: ROOT,
     stdout: 'pipe',
@@ -247,12 +319,17 @@ const CONTENT_TYPES: Record<string, string> = {
   '.ico': 'image/x-icon',
 }
 
+const liveReload = makeLiveReload({ root: SRC, log: (l) => console.error(`[dev] ${l}`) })
+
 Bun.serve({
   hostname: '127.0.0.1',
   port: PORT,
   development: true,
   async fetch(req) {
     const url = new URL(req.url)
+
+    const reloadRes = liveReload.handle(url.pathname)
+    if (reloadRes) return reloadRes
 
     // Local-file attachment endpoint — restricted to the wechat-cc
     // inbox tree so the dev shim doesn't double as an open file server.
@@ -262,6 +339,10 @@ Bun.serve({
     // path.relative. Naive startsWith lets a sibling like `inbox-evil/`
     // bypass `inbox`, and `..` segments slip past entirely.
     if (url.pathname === '/attachment' && req.method === 'GET') {
+      // Same cross-site rule as /__invoke: this reads the operator's inbox
+      // (message attachments, avatars), so another site should not be able to
+      // pull those out of the dev server just because it is listening.
+      if (isCrossSiteRequest(req)) return new Response('forbidden', { status: 403 })
       const requested = url.searchParams.get('path') || ''
       const inboxRoot = join(ROOT, 'apps', 'desktop')  // for tauri-localhost dev cache
       const stateInbox = (process.env.WECHAT_CC_STATE_DIR
@@ -283,7 +364,66 @@ Bun.serve({
       return new Response(file)
     }
 
+    // Owner-only workspace proxy, same contract as lib.rs's customer_review_api:
+    // the admin operator token is read HERE and never handed to the page.
+    //
+    // Served on the real /v1/customer-review path (rather than only through
+    // /__invoke) for one concrete reason: Playwright's customer-review specs
+    // intercept with `page.route("**/v1/customer-review**")`. Routing this
+    // through an IPC command would make those interceptions silently stop
+    // matching — the browser would never issue a request to match.
+    if (url.pathname === '/v1/customer-review' || url.pathname.startsWith('/v1/customer-review/')) {
+      if (isCrossSiteRequest(req)) return new Response('forbidden', { status: 403 })
+      if (req.method !== 'GET' && req.method !== 'POST') {
+        return new Response('method not allowed', { status: 405 })
+      }
+      if (dryRun) {
+        // Playwright intercepts before this ever runs; answering explicitly
+        // keeps mock mode from touching a real daemon if one is running.
+        return Response.json({ error: 'customer_review_not_wired' }, { status: 503 })
+      }
+      try {
+        const infoRaw = await Bun.file(join(STATE_DIR, 'internal-api-info.json')).text()
+        const info = JSON.parse(infoRaw) as { baseUrl?: string; operatorTokenFilePath?: string }
+        if (!info.baseUrl) return Response.json({ error: 'missing baseUrl in internal-api-info.json' }, { status: 500 })
+        // Same rule as the Rust host: never fall back to the trusted token.
+        if (!info.operatorTokenFilePath) {
+          return Response.json({ error: 'operator token unavailable — daemon too old' }, { status: 503 })
+        }
+        const token = (await Bun.file(info.operatorTokenFilePath).text()).trim()
+        const upstream = await fetch(info.baseUrl + url.pathname + url.search, {
+          method: req.method,
+          headers: {
+            authorization: `Bearer ${token}`,
+            ...(req.method === 'POST' ? { 'content-type': 'application/json' } : {}),
+          },
+          ...(req.method === 'POST' ? { body: await req.text() } : {}),
+          signal: AbortSignal.timeout(30_000),
+        })
+        return new Response(await upstream.text(), {
+          status: upstream.status,
+          headers: { 'content-type': 'application/json' },
+        })
+      } catch (err) {
+        return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 502 })
+      }
+    }
+
     if (url.pathname === '/__invoke' && req.method === 'POST') {
+      // CSRF: /__invoke executes commands as the developer, and since the dev
+      // server became `tauri dev`'s beforeDevCommand it is open for the whole
+      // session rather than only during an explicit `bun run shim:live`.
+      // Bun's req.json() ignores content-type, so a cross-site
+      // `<form enctype="text/plain">` POST — a simple request, no preflight —
+      // would reach this handler. Browsers always send Sec-Fetch-Site; refuse
+      // anything they mark as cross-site (curl/Playwright send neither header
+      // and stay allowed).
+      if (isCrossSiteRequest(req)) {
+        return new Response(JSON.stringify({ error: 'cross_site_invoke_blocked' }), {
+          status: 403,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
       const body = (await req.json()) as { command: string; args?: { args?: string[] } & Record<string, unknown> }
       try {
         // ── Playwright test-control commands ───────────────────────────────
@@ -1208,7 +1348,7 @@ Bun.serve({
           }
 
           const tmp = join(process.env.TMPDIR ?? '/tmp', `wechat-cc-shim-${Date.now()}-${process.pid}.json`)
-          const r = await runCli([...cliArgs, '--out-file', tmp])
+          const r = await runCli(cliArgs, { outFile: tmp })
           if (r.code !== 0) return Response.json({ error: r.stderr.trim() || `cli exit ${r.code}` })
           try {
             const body = await Bun.file(tmp).text()
@@ -1233,6 +1373,12 @@ Bun.serve({
             return Response.json({ error: `illegal filename: ${filename}` })
           }
           const target = join(downloads, basename)
+          // Overwrites, exactly like lib.rs — export filenames are stable
+          // (`dialogue-<name>.md`), so refusing to overwrite would make the
+          // SECOND export fail in dev while succeeding in the real app. That
+          // divergence is the thing this merged dev server exists to remove.
+          // The write is safe because /__invoke already refuses cross-site
+          // callers, and the path is basename-only under ~/Downloads.
           fs.writeFileSync(target, content)
           return Response.json({ result: target })
         }
@@ -1378,18 +1524,32 @@ Bun.serve({
       const html = await file.text()
       const polyfillTag = injectCsp ? POLYFILL_EXTERNAL : POLYFILL_INLINE
       const injection = `${CSP_META}\n${polyfillTag}\n</head>`
-      return new Response(html.replace('</head>', injection), {
+      return new Response(injectReloadScript(html.replace('</head>', injection)), {
         headers: { 'content-type': 'text/html; charset=utf-8' },
       })
     }
     const ext = path.slice(path.lastIndexOf('.'))
+    // Any other .html response (e.g. test fixtures) still gets the live-reload
+    // script injected — only the tauri-polyfill/CSP wiring above is specific
+    // to the SPA entry point. Without this, hitting a non-index .html file
+    // through the dev server silently drops live reload for it.
+    if (ext === '.html') {
+      const html = await file.text()
+      return new Response(injectReloadScript(html), {
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      })
+    }
     const ct = CONTENT_TYPES[ext]
     return new Response(file, ct ? { headers: { 'content-type': ct } } : undefined)
   },
 })
 
-console.log(`shim: http://localhost:${PORT}  root=${ROOT}  dry-run=${dryRun ? 'on' : 'off'}`)
-if (!dryRun) {
-  console.log('  ⚠️  WECHAT_CC_DRY_RUN is off — service install/uninstall will hit launchctl.')
-  console.log('     For safe e2e, prefix with `WECHAT_CC_DRY_RUN=1`.')
+liveReload.watch()
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(sig, () => { liveReload.close(); process.exit(0) })
+}
+
+console.log(`shim: http://localhost:${PORT}  root=${ROOT}  mode=${dryRun ? 'mock' : 'live'}  mutations=${allowMutations ? 'ALLOWED' : 'blocked'}`)
+if (!dryRun && allowMutations) {
+  console.log('  ⚠️  --allow-mutations 已开:setup / service / daemon kill / update 会真实生效。')
 }
