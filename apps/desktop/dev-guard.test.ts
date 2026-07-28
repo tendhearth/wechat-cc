@@ -54,6 +54,20 @@ describe('isReadonlyCli', () => {
     expect(isReadonlyCli(['some-new-command', '--json'])).toBe(false)
   })
 
+  it('connection probe 是有意为之的例外(它会写 session_state)', () => {
+    // 审计发现白名单里唯一会写的一条:errcode -14 时 markExpired。保留放行
+    // 的理由写在 dev-guard.ts 的注释里(桌面正常渲染就会跑它、可自愈)。
+    // 这条测试的作用是:将来谁想收紧,先看见这是个已知取舍而不是疏漏。
+    expect(isReadonlyCli(['connection', 'probe', '--json'])).toBe(true)
+  })
+
+  it('service 的 action 是位置参数,只有 status 放行', () => {
+    // `service` 没有 subCommands,action 是 positional —— 前缀匹配照样区分。
+    expect(isReadonlyCli(['service', 'status', '--json'])).toBe(true)
+    expect(isReadonlyCli(['service', 'uninstall', '--json'])).toBe(false)
+    expect(isReadonlyCli(['service', '--json', 'status'])).toBe(false)  // 形状不对 → 拒
+  })
+
   it('requireFlag:update 只有 --check 算读类', () => {
     expect(isReadonlyCli(['update', '--check', '--json'])).toBe(true)
     expect(isReadonlyCli(['update', '--json'])).toBe(false)

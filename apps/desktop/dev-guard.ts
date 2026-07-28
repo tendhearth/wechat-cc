@@ -36,7 +36,11 @@ export type ReadonlyCliCommand = { path: readonly string[]; requireFlag?: string
 /**
  * Read-only CLI commands the desktop actually invokes, plus the handful the
  * CLI exposes for diagnosis. Derived by enumerating every `wechat_cli_json`
- * call site under apps/desktop/src/ (2026-07-26).
+ * call site under apps/desktop/src/ (2026-07-26), then auditing each one's
+ * implementation in cli.ts for write primitives. 23 of the 24 entries touch
+ * nothing; the single exception is `connection probe` and it is annotated
+ * inline. Re-run that audit before adding an entry — "it sounds like a read"
+ * is not evidence.
  *
  * Deliberately NOT here (they mutate; use --allow-mutations to run them):
  *   setup, setup-poll, account remove, avatar set|remove, memory write,
@@ -46,6 +50,14 @@ export type ReadonlyCliCommand = { path: readonly string[]; requireFlag?: string
  */
 export const READONLY_CLI_COMMANDS: readonly ReadonlyCliCommand[] = [
   { path: ['doctor'] },
+  // DOCUMENTED EXCEPTION — `connection probe` is the one entry here that
+  // writes: on errcode -14 it calls sessionState.markExpired(), and on a clean
+  // probe it clears that flag (src/daemon/connection-probe.ts:70-80). Kept
+  // allowed because the dashboard runs it on every load in the SHIPPED app
+  // too, the write only records a verdict the daemon would reach on its own,
+  // and it self-heals — the next successful probe clears it. Blocking it would
+  // silently break the connection card in dev:web, which is the exact
+  // "everything degrades to 未启用" failure this dev server exists to fix.
   { path: ['connection', 'probe'] },
   { path: ['conversations', 'list'] },
   { path: ['dialogue', 'search'] },
