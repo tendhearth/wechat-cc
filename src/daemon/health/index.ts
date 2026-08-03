@@ -30,10 +30,22 @@ export function makeHealthRuntime(deps: {
   const health = makeConnectionHealth({ now: deps.now })
   const incidents = makeIncidentStore({ stateDir: deps.stateDir })
 
+  /**
+   * `deps.log` itself must never be trusted either — if it throws, that
+   * exception must not escape onFailure/onSuccess's own catch blocks (which
+   * call this from inside a catch body; an uncaught throw there would
+   * propagate out of onFailure/onSuccess and — per poll-loop.ts's own
+   * catch — take down that account's entire polling loop, a strictly worse
+   * outcome than the failure this machine exists to report).
+   */
+  function safeLog(tag: string, line: string): void {
+    try { deps.log(tag, line) } catch { /* logging must never become a failure source */ }
+  }
+
   /** 通知投递失败不重试、不阻塞 —— 记一行就够,故障记录已经落盘。 */
   function safeNotify(n: HealthNotification): void {
     try { deps.notify(n) } catch (err) {
-      deps.log('HEALTH', `notify failed: ${err instanceof Error ? err.message : String(err)}`)
+      safeLog('HEALTH', `notify failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
@@ -55,27 +67,41 @@ export function makeHealthRuntime(deps: {
           startedAt: new Date(state.firstFailureAt ?? nowMs).toISOString(),
           lastError: state.lastError,
         })
-        deps.log('HEALTH', `${dep} degraded (${klass.kind})`)
+        safeLog('HEALTH', `${dep} degraded (${klass.kind})`)
       }
       if (shouldNotifyDown(open, nowMs)) {
         safeNotify({ title: klass.title, body: klass.body, actionable: klass.actionable })
         incidents.markNotified(dep, nowIso)
       }
     } catch (err) {
-      deps.log('HEALTH', `onFailure swallowed: ${err instanceof Error ? err.message : String(err)}`)
+      safeLog('HEALTH', `onFailure swallowed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
   function onSuccess(dep: Dependency): void {
     try {
-      const wasDegraded = health.shouldSuspend(dep)
       health.recordSuccess(dep)
-      if (!wasDegraded) return
 
+      // Unconditional close — NOT gated on the in-memory shouldSuspend()
+      // read. A daemon restart resets the in-memory machine to healthy
+      // while a still-open incident survives on disk (incident-store is
+      // its own persistence, independent of connection-health's in-memory
+      // state); gating on the in-memory flag left that on-disk incident
+      // permanently open after a mid-outage restart — every future
+      // failure then found an already-open, already-notified,
+      // non-actionable incident and shouldNotifyDown() silently refused to
+      // ever notify again. incidents.close() is already a safe no-op (and
+      // does not write) when there is nothing open for this dependency, so
+      // calling it on every success is cheap and always correct.
       const nowIso = new Date(deps.now()).toISOString()
       const closed = incidents.close(dep, nowIso)
-      deps.log('HEALTH', `${dep} recovered`)
-      if (closed && shouldNotifyRecovery(closed)) {
+      if (!closed) return
+
+      safeLog('HEALTH', `${dep} recovered`)
+      // Recovery notifications stay paired to a down notification — the gate
+      // is `closed.notifiedAt !== null` (did we ever tell the owner it broke),
+      // not whether THIS process observed the degraded state.
+      if (shouldNotifyRecovery(closed)) {
         const mins = Math.round((Date.parse(closed.endedAt!) - Date.parse(closed.startedAt)) / 60_000)
         const span = mins >= 60 ? `${Math.round(mins / 60)} 小时` : `${mins} 分钟`
         safeNotify({
@@ -85,7 +111,7 @@ export function makeHealthRuntime(deps: {
         })
       }
     } catch (err) {
-      deps.log('HEALTH', `onSuccess swallowed: ${err instanceof Error ? err.message : String(err)}`)
+      safeLog('HEALTH', `onSuccess swallowed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 

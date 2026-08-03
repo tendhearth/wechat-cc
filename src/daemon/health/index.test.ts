@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { makeHealthRuntime } from './index'
 import { SUSPEND_AFTER_MS } from './connection-health'
 import { NOTIFY_NON_ACTIONABLE_MS } from './notify-policy'
+import { makeIncidentStore } from './incident-store'
 
 let dir: string
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'health-rt-')) })
@@ -22,16 +23,21 @@ function setup() {
 }
 
 describe('makeHealthRuntime', () => {
-  it('复刻 2026-08-02 那次:10.5 小时故障只产生 2 条通知', () => {
+  it('复刻 2026-08-02 那次:10.5 小时故障只产生 2 条通知,且第一条恰好发生在 15 分钟', () => {
     const { t, notes, rt } = setup()
     const start = t.ms
+    let firstNoteAtMs: number | null = null
     // 每 60 秒一次失败,持续 10.5 小时
     for (let elapsed = 0; elapsed <= 10.5 * 3600_000; elapsed += 60_000) {
       t.ms = start + elapsed
       rt.onFailure('wechat', new Error('unknown certificate verification error'))
+      if (firstNoteAtMs === null && notes.length > 0) firstNoteAtMs = t.ms
     }
     expect(notes).toHaveLength(1)          // 15 分钟时那一条
     expect(notes[0]!.title).toMatch(/网络/)
+    // 钉住"何时"而不只是"几条" —— 一个 degraded 第一 tick 就发通知的错误
+    // 实现同样能拿到 toHaveLength(1),必须验证发生的确切时刻。
+    expect(firstNoteAtMs).toBe(start + NOTIFY_NON_ACTIONABLE_MS)
 
     t.ms = start + 10.5 * 3600_000 + 60_000
     rt.onSuccess('wechat')
@@ -68,6 +74,41 @@ describe('makeHealthRuntime', () => {
     t.ms += SUSPEND_AFTER_MS - 1
     rt.onFailure('wechat', new Error('boom'))
     expect(rt.health.shouldSuspend('wechat')).toBe(false)
+    // 标题说的是"不开故障记录" —— 断言盘上真的没有记录,不能只看 shouldSuspend。
+    expect(makeIncidentStore({ stateDir: dir }).list()).toEqual([])
+  })
+
+  it('故障期间重启后,首次成功仍会关闭盘上的陈旧记录', () => {
+    const t = { ms: Date.parse('2026-08-02T14:33:00.000Z') }
+    const notes: string[] = []
+    const mk = () => makeHealthRuntime({
+      stateDir: dir, now: () => t.ms, log: () => {},
+      notify: n => { notes.push(n.title) },
+    })
+
+    // 进程 A:断线并通知
+    const a = mk()
+    const start = t.ms
+    for (let e = 0; e <= NOTIFY_NON_ACTIONABLE_MS; e += 60_000) {
+      t.ms = start + e
+      a.onFailure('wechat', new Error('tls'))
+    }
+    expect(notes).toHaveLength(1)
+
+    // 进程 B:重启后首轮成功 —— 内存态是新鲜的 healthy,但盘上那条
+    // incident 还开着,必须无条件关掉它(而不是靠内存里的 wasDegraded 判断)。
+    const b = mk()
+    t.ms = start + NOTIFY_NON_ACTIONABLE_MS + 60_000
+    b.onSuccess('wechat')
+    expect(notes).toHaveLength(2)            // 恢复通知发了
+
+    // 之后再来一次故障,必须能重新通知(不能被陈旧记录堵死)
+    const t2 = t.ms + 3600_000
+    for (let e = 0; e <= NOTIFY_NON_ACTIONABLE_MS; e += 60_000) {
+      t.ms = t2 + e
+      b.onFailure('wechat', new Error('tls'))
+    }
+    expect(notes).toHaveLength(3)
   })
 
   it('notify 抛异常不会把上报打断 —— 保护机制不能成为新故障源', () => {
