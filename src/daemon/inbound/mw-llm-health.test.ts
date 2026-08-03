@@ -80,14 +80,25 @@ describe('mw-llm-health', () => {
   })
 
   it('sendMessage 失败不把管线打断', async () => {
-    const sendMessage = vi.fn(async () => { throw new Error('wechat also down') })
+    const sendMessage = vi.fn(async () => { throw new Error('send failed') })
     const mw = makeMwLlmHealth({
-      health: { shouldSuspend: () => true, get: () => ({ consecutiveFailures: 5 }) },
+      health: {
+        // MUST be dep-aware. A mock returning true for every dep makes
+        // shouldSuspend('wechat') true too, so the middleware takes the
+        // skip-send branch and `sendMessage` is never reached — this test
+        // then passes while asserting nothing about the throw path it is
+        // named for. Caught in review 2026-08-03.
+        shouldSuspend: dep => dep === 'llm',
+        get: () => ({ consecutiveFailures: 5 }),
+      },
       sendMessage: sendMessage as never,
       now: () => 0,
       log: () => {},
     })
     await expect(mw(ctx(), vi.fn(async () => {}))).resolves.toBeUndefined()
+    // Pins the above: if the send is ever skipped again, this fails loudly
+    // instead of the test silently exercising a different branch.
+    expect(sendMessage).toHaveBeenCalledTimes(1)
   })
 
   it('拦下时把 ctx.consumedBy 记为 health(不是借用 guard 的枚举值)', async () => {
