@@ -6,12 +6,16 @@ function ctx(chatId = 'chat-1'): InboundCtx {
   return { msg: { chatId, text: 'hi' } as never, receivedAtMs: 0, requestId: 'r1' }
 }
 
-function harness(over: { suspend?: boolean; failures?: number; nowMs?: number } = {}) {
+function harness(over: { suspend?: boolean; wechatSuspend?: boolean; failures?: number; nowMs?: number } = {}) {
   const sent: string[] = []
   const t = { ms: over.nowMs ?? 0 }
   const mw = makeMwLlmHealth({
     health: {
-      shouldSuspend: () => over.suspend ?? false,
+      // dep-aware: llm reflects `suspend`, wechat defaults healthy unless
+      // explicitly overridden — a mock that ignored `dep` here would silently
+      // make every "llm degraded" test also read as "wechat degraded" (finding 3's
+      // own skip-send check), masking the two conditions from each other.
+      shouldSuspend: (dep) => dep === 'llm' ? (over.suspend ?? false) : (over.wechatSuspend ?? false),
       get: () => ({ consecutiveFailures: over.failures ?? 5 }),
     },
     sendMessage: async (_c, text) => { sent.push(text); return { msgId: 'm' } },
@@ -90,6 +94,16 @@ describe('mw-llm-health', () => {
     const { mw } = harness({ suspend: true })
     const c = ctx()
     await mw(c, vi.fn(async () => {}))
+    expect(c.consumedBy).toBe('health')
+  })
+
+  it('wechat 也 degraded 时跳过发送模板话(不往一条已知断掉的链路上再发一条)', async () => {
+    const { mw, sent } = harness({ suspend: true, wechatSuspend: true })
+    const c = ctx()
+    const next = vi.fn(async () => {})
+    await mw(c, next)
+    expect(sent).toEqual([])
+    expect(next).not.toHaveBeenCalled()
     expect(c.consumedBy).toBe('health')
   })
 })

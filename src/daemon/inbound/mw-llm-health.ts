@@ -11,6 +11,7 @@
  * 回模板话;达到间隔则放行一次真实尝试。
  */
 import { nextBackoffMs } from '../health/backoff'
+import type { Dependency } from '../health/connection-health'
 import type { Middleware } from './types'
 
 /**
@@ -21,7 +22,9 @@ const DEGRADED_REPLY = '我现在暂时没法思考(模型连接有问题),你�
 
 export interface MwLlmHealthDeps {
   health: {
-    shouldSuspend(dep: 'llm'): boolean
+    // 放宽到两种 dep(不再只是 'llm')—— 发模板话前还要看 wechat 侧是否也已
+    // 确认坏了,免得往一条已知断掉的链路上发一条注定失败的消息。
+    shouldSuspend(dep: Dependency): boolean
     get(dep: 'llm'): { consecutiveFailures: number }
   }
   sendMessage(chatId: string, text: string): Promise<{ msgId: string }>
@@ -60,11 +63,18 @@ export function makeMwLlmHealth(deps: MwLlmHealthDeps): Middleware {
 
     if (!notified.has(ctx.msg.chatId)) {
       notified.add(ctx.msg.chatId)
-      try {
-        await deps.sendMessage(ctx.msg.chatId, DEGRADED_REPLY)
-      } catch (err) {
-        // 微信可能也断了 —— 记一行就够,绝不能把入站管线打断。
-        deps.log('HEALTH', `degraded reply failed: ${err instanceof Error ? err.message : String(err)}`)
+      // wechat 侧也已确认坏了(两段网络同时抽风)—— 发送必定失败,别再往一条
+      // 已知断掉的链路上扔消息。仍然拦下、不进 LLM 轮次、仍标 consumedBy,
+      // 只是跳过这一次注定落空的 sendMessage 调用。
+      if (deps.health.shouldSuspend('wechat')) {
+        deps.log('HEALTH', 'degraded reply skipped: wechat also suspended')
+      } else {
+        try {
+          await deps.sendMessage(ctx.msg.chatId, DEGRADED_REPLY)
+        } catch (err) {
+          // 微信可能也断了 —— 记一行就够,绝不能把入站管线打断。
+          deps.log('HEALTH', `degraded reply failed: ${err instanceof Error ? err.message : String(err)}`)
+        }
       }
     }
     ctx.consumedBy = 'health'
