@@ -854,13 +854,37 @@ export async function handleAccountRowClick(deps, ev) {
   return false
 }
 
-// localStorage key for "last incident id the desktop has shown a
-// notification for". Deliberately NOT `Incident.notifiedAt` — that field
-// means "the daemon's notify hook fired" (currently log-only, see
-// wire-health.ts), so it's set on every incident and would mean the
-// desktop's unread check never fires. The desktop tracks its own
-// "have I told the owner about this one" state instead.
+// localStorage key for "which state of the latest incident has the desktop
+// already popped a notification for". Popping requires BOTH:
+//   1. `latest.notifiedAt !== null` — the daemon's staged policy
+//      (notify-policy.ts's shouldNotifyDown/shouldNotifyRecovery) already
+//      decided this incident crossed its threshold (3min actionable / 15min
+//      non-actionable) and is worth interrupting the owner for. `notifiedAt`
+//      is set ONLY when that policy returns true (see health/index.ts's
+//      onFailure), so it's the correct policy *gate* — but it is NOT by
+//      itself an "unread" marker (it stays set forever once notified, so it
+//      can't distinguish "shown" from "not yet shown").
+//   2. the owner hasn't already seen this exact state — tracked here.
+//
+// "This exact state" is a composite of the incident id AND its endedAt
+// (`${id}|${endedAt ?? "open"}`), not just the id. A bare id can't tell a
+// still-down incident apart from its own recovery (same id, `endedAt` flips
+// from null to a timestamp) — without the endedAt component, the recovery
+// notification required by spec §5 would never fire, since recovery never
+// produces a new incident id.
+//
+// Migration note: builds before 2026-08-03 stored a bare incident id here
+// (no "|" — ids themselves can contain colons from ISO timestamps, so
+// "does it look like an id" isn't a reliable test; the "|" delimiter is,
+// since incident ids never contain it). Any stored value without a "|" is
+// treated as pre-migration and handled by the same first-run branch below:
+// record the new composite key, don't notify — rather than risk misreading
+// old state as a brand-new fault.
 const LAST_SEEN_INCIDENT_KEY = "wechat-cc:health:lastSeenIncidentId"
+
+function incidentSeenKey(incident) {
+  return `${incident.id}|${incident.endedAt ?? "open"}`
+}
 
 /**
  * 上次故障横幅。桌面没开着时通知无处可去,所以下次打开必须补上 ——
@@ -868,10 +892,19 @@ const LAST_SEEN_INCIDENT_KEY = "wechat-cc:health:lastSeenIncidentId"
  * 他只有翻日志才发现)。
  *
  * Banner: shows whenever there's at least one recorded incident (latest
- * first), regardless of unread state. Notification: fires at most once per
- * incident id, tracked via LAST_SEEN_INCIDENT_KEY — first-ever run just
- * records the current latest id without notifying, so installing the app
- * doesn't immediately pop a notification for a week-old incident.
+ * first), regardless of unread/notified state.
+ *
+ * Notification: fires at most once per (incident id, endedAt) state, AND
+ * only once the daemon's own staged policy (notify-policy.ts) has already
+ * decided this deserves an interruption — see LAST_SEEN_INCIDENT_KEY's doc
+ * comment for why both conditions are required. Because the tracked state
+ * includes endedAt, a recovery (same id, endedAt flips from null to a
+ * timestamp) pops its own notification instead of being silently absorbed
+ * by the original "down" notification's already-seen record — spec §5
+ * requires recovery to be announced too, or the owner learns to ignore every
+ * alert. First-ever run (and pre-migration bare-id values) just record the
+ * current composite key without notifying, so installing the app doesn't
+ * immediately pop a notification for a week-old incident.
  */
 export async function loadLastIncident(deps) {
   const res = await deps.invokeApi("GET", "/v1/health/incidents").catch(err => {
@@ -896,17 +929,29 @@ export async function loadLastIncident(deps) {
   let lastSeen = null
   try { lastSeen = globalThis.localStorage?.getItem(LAST_SEEN_INCIDENT_KEY) ?? null } catch { /* no localStorage (non-browser test host) — treat as first run */ }
 
-  if (lastSeen === null) {
-    // First run ever — don't notify for whatever's already on record,
-    // just start tracking from here.
-    try { globalThis.localStorage?.setItem(LAST_SEEN_INCIDENT_KEY, latest.id) } catch { /* best-effort */ }
+  const seenKey = incidentSeenKey(latest)
+
+  if (lastSeen === null || !lastSeen.includes("|")) {
+    // First run ever (key never set), OR a pre-migration bare-id value —
+    // don't guess whether the underlying state changed since some earlier
+    // build; just start tracking the composite key from here without
+    // popping a notification.
+    try { globalThis.localStorage?.setItem(LAST_SEEN_INCIDENT_KEY, seenKey) } catch { /* best-effort */ }
     return
   }
-  if (lastSeen === latest.id) return
+  if (lastSeen === seenKey) return
+
+  // Policy gate (see the key's doc comment above): the daemon hasn't decided
+  // this deserves an interruption yet. Deliberately do NOT update lastSeen
+  // here — leave it stale so a later poll, once notifiedAt actually flips
+  // (same id, same endedAt, so seenKey is unchanged), still finds
+  // `lastSeen !== seenKey` and re-evaluates instead of having already
+  // "consumed" this state without ever notifying.
+  if (latest.notifiedAt === null) return
 
   try {
     await deps.invoke("notify_user", {
-      title: ended ? "wechat-cc: bot 曾经断开过" : "wechat-cc: bot 当前处于断开状态",
+      title: ended ? "wechat-cc: bot 已恢复" : "wechat-cc: bot 当前处于断开状态",
       body: banner.textContent,
     })
   } catch (err) {
@@ -914,7 +959,7 @@ export async function loadLastIncident(deps) {
     // 故障记录已经落盘,横幅仍然会显示。
     console.warn("[health] notify_user failed:", err)
   }
-  try { globalThis.localStorage?.setItem(LAST_SEEN_INCIDENT_KEY, latest.id) } catch { /* best-effort */ }
+  try { globalThis.localStorage?.setItem(LAST_SEEN_INCIDENT_KEY, seenKey) } catch { /* best-effort */ }
 }
 
 // How often loadLastIncident actually hits /v1/health/incidents when driven
