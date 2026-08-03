@@ -781,6 +781,55 @@ describe('buildTickBodies / pushTick — daily hunt branch (Task 3)', () => {
   })
 })
 
+describe('buildTickBodies / pushTick — connection health gate (Task 4)', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => {
+    for (const d of cleanup) {
+      try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ }
+    }
+  })
+
+  // The LLM-turn spy is `s.dispatch` — the session handle's dispatch()
+  // returned by `acquire()`, which dispatchToChat drives via
+  // `for await (const _ev of handle.dispatch(tickText))`. That call IS the
+  // agent turn (it's what actually invokes the LLM); asserting it was never
+  // called proves no LLM round-trip happened, not merely that no message
+  // reached WeChat. `coordinator` in this file has no `dispatch` field
+  // (only `getMode`/`runExclusive`), so the brief's draft spy name doesn't
+  // apply here — this is the real one.
+
+  it('wechat degraded 时不发主动消息,而且不调 LLM', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project' })
+    cleanup.push(s.stateDir)
+    const shouldSuspend = vi.fn(() => true)
+    const { pushTick } = buildTickBodies({ ...s.deps, health: { shouldSuspend } })
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    // "省 token" 断言:LLM 轮次(session handle 的 dispatch)根本没被发起。
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.acquire).not.toHaveBeenCalled()
+    expect(shouldSuspend).toHaveBeenCalledWith('wechat')
+    expect(s.logs.some(l => l.includes('COMPANION') && l.includes('degraded'))).toBe(true)
+  })
+
+  it('healthy 时照常发', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project' })
+    cleanup.push(s.stateDir)
+    const shouldSuspend = vi.fn(() => false)
+    const { pushTick } = buildTickBodies({ ...s.deps, health: { shouldSuspend } })
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).toHaveBeenCalledOnce()
+  })
+
+  it('health 未提供(省略)时永不暂停 —— 既有测试与 e2e harness 的默认行为', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project' })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps) // no `health` field at all
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).toHaveBeenCalledOnce()
+  })
+})
+
 describe('buildTickBodies / introspectTick — provider-agnostic cheap eval (PR F)', () => {
   let cleanup: string[]
   beforeEach(() => { cleanup = [] })

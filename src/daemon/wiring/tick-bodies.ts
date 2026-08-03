@@ -77,6 +77,12 @@ export interface TickDeps {
    * claims it BEFORE dispatch, mirroring the agenda at-most-once contract.
    */
   careLedger: CareLedger
+  /**
+   * 连接健康。degraded 时主动外发全部停手 —— 这是保护账号的措施:
+   * 往断掉的链路上反复重试是触发风控的形状(memory: no-retry-storm-when-disconnected)。
+   * 可选:省略即永不暂停(测试与 e2e 用)。
+   */
+  health?: { shouldSuspend(dep: 'wechat'): boolean }
 }
 
 export interface TickBodies {
@@ -259,6 +265,12 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     chatId: string,
     args: { claim: () => void; buildText: () => string },
   ): Promise<void> {
+    // 在 LLM 生成之前就拦下:degraded 时这条消息既发不出去,生成它也是白烧
+    // token,而且等链路恢复后内容早已过时 —— 所以直接丢弃,不排队。
+    if (deps.health?.shouldSuspend('wechat')) {
+      deps.log('COMPANION', `chat=${chatId} skipped: wechat connection degraded`)
+      return
+    }
     const snapshot = deps.ilink.loadProjects()
     const currentAlias = snapshot.current && snapshot.projects[snapshot.current] ? snapshot.current : null
     const proj = currentAlias
