@@ -42,7 +42,13 @@ function fresh(): HealthState {
 }
 
 function messageOf(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+  try {
+    return err instanceof Error ? err.message : String(err)
+  } catch {
+    // Guard against malicious toString() or message property that throws.
+    // Health machine must never become a failure vector itself.
+    return '<error>'
+  }
 }
 
 export function makeConnectionHealth(deps: { now: () => number }): ConnectionHealth {

@@ -67,4 +67,12 @@ describe('makeConnectionHealth', () => {
     h.recordFailure('wechat', 'plain string')
     expect(h.get('wechat').lastError).toBe('plain string')
   })
+
+  it('畸形错误对象也不会让健康机自己抛', () => {
+    const t = { ms: 0 }
+    const h = at(t)
+    const evil = { toString() { throw new Error('nested boom') } }
+    expect(() => h.recordFailure('wechat', evil)).not.toThrow()
+    expect(typeof h.get('wechat').lastError).toBe('string')
+  })
 })
