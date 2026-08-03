@@ -38,4 +38,22 @@ describe('classifyFailure', () => {
     const c = classifyFailure(new Error('unknown certificate verification error'))
     expect(c.title + c.body).not.toMatch(/certificate|errcode|ECONN/i)
   })
+
+  it('任何输入都不抛,含 Symbol 与畸形对象', () => {
+    expect(() => classifyFailure(Symbol('x'))).not.toThrow()
+    expect(() => classifyFailure({ toString() { throw new Error('boom') } })).not.toThrow()
+    expect(() => classifyFailure(null)).not.toThrow()
+    expect(classifyFailure(Symbol('x')).kind).toBe('unknown')
+  })
+
+  it('同时命中网络与认证时,取更保守的一侧', () => {
+    // 判不准就别打扰:可操作 = 3 分钟通知 + 每 6 小时重复提醒,
+    // 对一个会自愈的网络抖动来说是反复骚扰。
+    const c = classifyFailure(new Error('HTTP 403 Forbidden: certificate verification failed'))
+    expect(c).toMatchObject({ kind: 'network', actionable: false })
+  })
+
+  it('纯认证错误仍然是可操作的', () => {
+    expect(classifyFailure(new Error('401 Unauthorized'))).toMatchObject({ kind: 'llm_auth', actionable: true })
+  })
 })

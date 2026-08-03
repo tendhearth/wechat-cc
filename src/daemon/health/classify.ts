@@ -21,8 +21,18 @@ export interface FailureClass {
 const NETWORK_RE = /certificate|tls|ssl|ENOTFOUND|ECONNRESET|ECONNREFUSED|EHOSTUNREACH|ENETDOWN|timed out|timeout|Unable to connect|fetch failed|socket hang up/i
 const LLM_AUTH_RE = /\b401\b|\b403\b|unauthorized|forbidden|invalid api key|authentication/i
 
+function messageOf(err: unknown): string {
+  try {
+    return err instanceof Error ? err.message : String(err)
+  } catch {
+    // Guard against malicious toString() or message property that throws.
+    // Classifier must never become a failure vector itself.
+    return '<error>'
+  }
+}
+
 export function classifyFailure(err: unknown): FailureClass {
-  const msg = err instanceof Error ? err.message : String(err ?? '')
+  const msg = messageOf(err)
 
   if (/errcode=-14/.test(msg)) {
     return {
@@ -32,20 +42,20 @@ export function classifyFailure(err: unknown): FailureClass {
       body: '这个微信账号在别处被重新绑定了。打开 wechat-cc 桌面端重新扫码即可恢复。',
     }
   }
-  if (LLM_AUTH_RE.test(msg)) {
-    return {
-      kind: 'llm_auth',
-      actionable: true,
-      title: '模型登录已失效',
-      body: '消息还能收到,但暂时没法生成回复。重新登录一下模型账号即可恢复。',
-    }
-  }
   if (NETWORK_RE.test(msg)) {
     return {
       kind: 'network',
       actionable: false,
       title: '网络连接有问题',
       body: '暂时连不上服务器,通常会自行恢复,你不需要做什么。',
+    }
+  }
+  if (LLM_AUTH_RE.test(msg)) {
+    return {
+      kind: 'llm_auth',
+      actionable: true,
+      title: '模型登录已失效',
+      body: '消息还能收到,但暂时没法生成回复。重新登录一下模型账号即可恢复。',
     }
   }
   return {
