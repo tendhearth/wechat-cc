@@ -20,6 +20,7 @@ import { socialRoutes } from './routes-social'
 import { pairRoutes } from './routes-pair'
 import { memoryRoutes } from './routes-memory'
 import { penpalRoutes } from './routes-penpal'
+import { healthRoutes } from './routes-health'
 import { pluginRoutes } from './routes-plugins'
 import { licenseRoutes } from './routes-license'
 import { daemonControlRoutes } from './routes-daemon-control'
@@ -696,6 +697,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     ...pairRoutes(deps),
     ...memoryRoutes(deps),
     ...penpalRoutes(deps),
+    ...healthRoutes(deps),
     ...pluginRoutes(deps),
     ...licenseRoutes(deps),
     ...daemonControlRoutes(deps),

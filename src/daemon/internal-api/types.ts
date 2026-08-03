@@ -317,6 +317,18 @@ export interface InternalApiDeps {
    * available before bootstrap runs).
    */
   resolveAdminChatId?: () => string | null
+  /**
+   * 故障记录存取(Task 8, spec 2026-08-03-connection-health §8)— backs
+   * GET /v1/health/incidents. Late-bound by main.ts's `setIncidents()` after
+   * bootstrap constructs the health runtime (`wireHealth`'s makeHealthRuntime
+   * owns the one IncidentStore instance backed by health-incidents.json;
+   * internal-api must share that SAME instance, not a second one pointed at
+   * the same file — state-store loads its data once at construction and
+   * doesn't re-read on every `get()`, so a second instance would go stale).
+   * undefined ⇒ the route returns an empty list, not 503 — "no incidents
+   * recorded yet" is a normal state.
+   */
+  incidents?: import('../health/incident-store').IncidentStore
 }
 
 export interface InternalApi {
@@ -375,6 +387,12 @@ export interface InternalApi {
    * called.
    */
   setMemory(memory: NonNullable<InternalApiDeps['memoryLlm']>): void
+  /**
+   * Late-bind the incident store (Task 8) after bootstrap's `wireHealth`
+   * constructs the health runtime. GET /v1/health/incidents returns an
+   * empty list (not 503) until this is called.
+   */
+  setIncidents(incidents: NonNullable<InternalApiDeps['incidents']>): void
   /** Mint an env-only per-session token granting `tier`, keyed by `sessionKey`
    *  (`provider/alias/chatId`). The daemon injects it into that session's MCP
    *  children; the route layer resolves the tier from it. */

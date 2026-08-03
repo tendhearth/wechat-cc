@@ -324,6 +324,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setMemory(memory) {
       deps.memoryLlm = memory
     },
+    setIncidents(incidents) {
+      deps.incidents = incidents
+    },
     mintSessionToken(tier: UserTier, sessionKey: string) {
       return registry.mint(tier, sessionKey)
     },

@@ -17,7 +17,19 @@ beforeEach(() => {
 })
 
 // Import AFTER document stub so setPending's getElementById doesn't crash
-const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, __resetDashboardState, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy } = await import('./dashboard.js')
+const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, __resetDashboardState, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, loadLastIncident } = await import('./dashboard.js')
+
+// In-memory localStorage stub — real round-trip semantics (get after set),
+// unlike memory.test.ts's bare no-op stub, because loadLastIncident's
+// unread-detection logic depends on persistence across calls.
+function fakeLocalStorage(initial: Record<string, string> = {}) {
+  const data: Record<string, string> = { ...initial }
+  return {
+    getItem: (k: string) => (k in data ? data[k] : null),
+    setItem: (k: string, v: string) => { data[k] = v },
+    _data: data,
+  }
+}
 
 function textNode(text = '') {
   return { nodeType: 3, textContent: text }
@@ -63,6 +75,7 @@ function installDashboardDom() {
     accountsBody: fakeEl(),
     accountsCurrent: fakeEl(),
     accountsMeta: fakeEl(),
+    dashHealthBanner: { ...fakeEl(), hidden: true },
   }
   const byId: Record<string, any> = {
     'hero-card': els.heroCard,
@@ -75,6 +88,7 @@ function installDashboardDom() {
     'accounts-body': els.accountsBody,
     'accounts-current': els.accountsCurrent,
     'accounts-meta': els.accountsMeta,
+    'dash-health-banner': els.dashHealthBanner,
   }
   const fakeDocument = {
     getElementById: (id: string) => byId[id] ?? null,
@@ -1268,5 +1282,95 @@ describe('provider menu', () => {
     expect(args[2]).toBe('chat-1')
     expect(JSON.parse(args[3])).toEqual({ kind: 'solo', provider: 'gemini' })
     expect(args[4]).toBe('--json')
+  })
+})
+
+describe('loadLastIncident', () => {
+  const CLOSED = {
+    id: 'wechat-2026-08-02T14:33:00.000Z',
+    dependency: 'wechat', kind: 'network', actionable: false,
+    startedAt: '2026-08-02T14:33:00.000Z', endedAt: '2026-08-03T01:08:00.000Z',
+    notifiedAt: '2026-08-02T14:48:00.000Z', lastError: null,
+  }
+  const ONGOING = {
+    id: 'llm-2026-08-03T02:00:00.000Z',
+    dependency: 'llm', kind: 'network', actionable: false,
+    startedAt: '2026-08-03T02:00:00.000Z', endedAt: null,
+    notifiedAt: '2026-08-03T02:15:00.000Z', lastError: 'ECONNRESET',
+  }
+
+  it('没有故障记录 → 横幅保持隐藏', async () => {
+    const els = installDashboardDom()
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => ({ incidents: [] }))
+    globalThis.localStorage = fakeLocalStorage() as any
+    await loadLastIncident({ invoke, invokeApi })
+    expect(els.dashHealthBanner.hidden).toBe(true)
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('已恢复的故障 → 横幅显示时长与"现已恢复"文案', async () => {
+    const els = installDashboardDom()
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => ({ incidents: [CLOSED] }))
+    globalThis.localStorage = fakeLocalStorage() as any
+    await loadLastIncident({ invoke, invokeApi })
+    expect(els.dashHealthBanner.hidden).toBe(false)
+    expect(els.dashHealthBanner.textContent).toContain('现已恢复')
+    expect(els.dashHealthBanner.textContent).toContain('小时')
+  })
+
+  it('仍在进行的故障 → 横幅文案标"仍在进行"/断开状态,不写"现已恢复"', async () => {
+    const els = installDashboardDom()
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => ({ incidents: [ONGOING] }))
+    globalThis.localStorage = fakeLocalStorage() as any
+    await loadLastIncident({ invoke, invokeApi })
+    expect(els.dashHealthBanner.hidden).toBe(false)
+    expect(els.dashHealthBanner.textContent).toContain('断开状态')
+    expect(els.dashHealthBanner.textContent).not.toContain('现已恢复')
+  })
+
+  it('首次运行(localStorage 里没有存过)→ 不弹通知,只记录当前最新 id', async () => {
+    const els = installDashboardDom()
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => ({ incidents: [CLOSED] }))
+    const ls = fakeLocalStorage()
+    globalThis.localStorage = ls as any
+    await loadLastIncident({ invoke, invokeApi })
+    expect(invoke).not.toHaveBeenCalledWith('notify_user', expect.anything())
+    expect(ls._data['wechat-cc:health:lastSeenIncidentId']).toBe(CLOSED.id)
+  })
+
+  it('新故障 id 与已记录的不同 → 弹一次系统通知,并把新 id 写回 localStorage', async () => {
+    installDashboardDom()
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => ({ incidents: [CLOSED] }))
+    const ls = fakeLocalStorage({ 'wechat-cc:health:lastSeenIncidentId': 'some-older-id' })
+    globalThis.localStorage = ls as any
+    await loadLastIncident({ invoke, invokeApi })
+    expect(invoke).toHaveBeenCalledWith('notify_user', expect.objectContaining({
+      title: expect.any(String),
+      body: expect.any(String),
+    }))
+    expect(ls._data['wechat-cc:health:lastSeenIncidentId']).toBe(CLOSED.id)
+  })
+
+  it('已见过的故障 id(与记录相同)→ 不再弹通知', async () => {
+    installDashboardDom()
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => ({ incidents: [CLOSED] }))
+    const ls = fakeLocalStorage({ 'wechat-cc:health:lastSeenIncidentId': CLOSED.id })
+    globalThis.localStorage = ls as any
+    await loadLastIncident({ invoke, invokeApi })
+    expect(invoke).not.toHaveBeenCalledWith('notify_user', expect.anything())
+  })
+
+  it('拉取失败(daemon 未启动等)→ 吞掉错误,不抛出', async () => {
+    installDashboardDom()
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => { throw new Error('network error') })
+    globalThis.localStorage = fakeLocalStorage() as any
+    await expect(loadLastIncident({ invoke, invokeApi })).resolves.not.toThrow()
   })
 })

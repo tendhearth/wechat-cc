@@ -10,8 +10,9 @@
  * getUpdates call already needs `health.onFailure`/`onSuccess` wired.
  *
  * `notify` is log-only for now (Task 7) — the real desktop notification
- * channel lands in Task 8, which reads `health-incidents.json` written by
- * the incident store underneath makeHealthRuntime.
+ * channel lands in Task 8, which reads the incident store exposed on the
+ * returned HealthRuntime (`.incidents`, backed by health-incidents.json)
+ * via internal-api's `setIncidents()` late-bind (see main.ts).
  */
 import { makeHealthRuntime, type HealthRuntime } from '../health'
 

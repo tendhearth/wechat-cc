@@ -2857,6 +2857,20 @@ input { font: inherit; color: inherit; }
   display: block;
 }
 
+/* 上次故障横幅(Task 8) — same amber warning pair as .toggle-row.warn-edge /
+   .badge.warn: a past-tense notice, not an active-error red. */
+.dash-health-banner {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm, 6px);
+  border-left: 3px solid var(--amber);
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.dash-health-banner[hidden] { display: none; }
+
 .moment-users {
   min-width: 0;
   width: 100%;

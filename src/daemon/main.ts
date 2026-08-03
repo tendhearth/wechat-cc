@@ -325,6 +325,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setMemory(makeMemoryLlmOps({
       stateDir, db, getMode: (c) => boot.coordinator.getMode(c), registry: boot.registry,
     }))
+    // Wire the incident store (Task 8) — same live instance `wireHealth`
+    // constructed inside buildBootstrap, so GET /v1/health/incidents (the
+    // desktop's "last incident" banner + notification) reads what the
+    // health runtime actually wrote, not a second stale copy.
+    internalApi.setIncidents(boot.health.incidents)
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({
       stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,

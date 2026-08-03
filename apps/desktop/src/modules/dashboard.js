@@ -848,3 +848,66 @@ export async function handleAccountRowClick(deps, ev) {
   }
   return false
 }
+
+// localStorage key for "last incident id the desktop has shown a
+// notification for". Deliberately NOT `Incident.notifiedAt` — that field
+// means "the daemon's notify hook fired" (currently log-only, see
+// wire-health.ts), so it's set on every incident and would mean the
+// desktop's unread check never fires. The desktop tracks its own
+// "have I told the owner about this one" state instead.
+const LAST_SEEN_INCIDENT_KEY = "wechat-cc:health:lastSeenIncidentId"
+
+/**
+ * 上次故障横幅。桌面没开着时通知无处可去,所以下次打开必须补上 ——
+ * 否则主人永远不知道 bot 曾经断过(2026-08-02 那次断了 10.5 小时,
+ * 他只有翻日志才发现)。
+ *
+ * Banner: shows whenever there's at least one recorded incident (latest
+ * first), regardless of unread state. Notification: fires at most once per
+ * incident id, tracked via LAST_SEEN_INCIDENT_KEY — first-ever run just
+ * records the current latest id without notifying, so installing the app
+ * doesn't immediately pop a notification for a week-old incident.
+ */
+export async function loadLastIncident(deps) {
+  const res = await deps.invokeApi("GET", "/v1/health/incidents").catch(err => {
+    console.warn("[health] incidents load failed:", err)
+    return null
+  })
+  const list = res && Array.isArray(res.incidents) ? res.incidents : []
+  const banner = document.getElementById("dash-health-banner")
+  if (!banner) return
+  const latest = list[0]
+  if (!latest) { banner.hidden = true; return }
+
+  const started = new Date(latest.startedAt)
+  const ended = latest.endedAt ? new Date(latest.endedAt) : null
+  const mins = ended ? Math.round((ended.getTime() - started.getTime()) / 60000) : null
+  const span = mins === null ? "仍在进行" : mins >= 60 ? `约 ${Math.round(mins / 60)} 小时` : `约 ${mins} 分钟`
+  banner.textContent = ended
+    ? `你的 bot 在 ${started.toLocaleString()} 前后断开过 ${span}，现已恢复。`
+    : `你的 bot 从 ${started.toLocaleString()} 起处于断开状态（${span}）。`
+  banner.hidden = false
+
+  let lastSeen = null
+  try { lastSeen = globalThis.localStorage?.getItem(LAST_SEEN_INCIDENT_KEY) ?? null } catch { /* no localStorage (non-browser test host) — treat as first run */ }
+
+  if (lastSeen === null) {
+    // First run ever — don't notify for whatever's already on record,
+    // just start tracking from here.
+    try { globalThis.localStorage?.setItem(LAST_SEEN_INCIDENT_KEY, latest.id) } catch { /* best-effort */ }
+    return
+  }
+  if (lastSeen === latest.id) return
+
+  try {
+    await deps.invoke("notify_user", {
+      title: ended ? "wechat-cc: bot 曾经断开过" : "wechat-cc: bot 当前处于断开状态",
+      body: banner.textContent,
+    })
+  } catch (err) {
+    // 通知投递失败不重试、不阻塞 —— 桌面没开、系统通知权限被拒都是正常情况;
+    // 故障记录已经落盘,横幅仍然会显示。
+    console.warn("[health] notify_user failed:", err)
+  }
+  try { globalThis.localStorage?.setItem(LAST_SEEN_INCIDENT_KEY, latest.id) } catch { /* best-effort */ }
+}

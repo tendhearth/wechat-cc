@@ -27,7 +27,7 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, loadLastIncident } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
@@ -60,6 +60,11 @@ const state = {
   mode: "loading",
   currentStep: "doctor",
   updateProbed: false,
+  // Task 8 (connection-health): gate loadLastIncident to once per dashboard
+  // entry per session, same posture as updateProbed above — the incidents
+  // list only changes on daemon-side connectivity events, not on every
+  // pane switch.
+  incidentsProbed: false,
   connectionIntent: /** @type {"disconnected" | null} */ (null),
 }
 
@@ -251,6 +256,10 @@ function setMode(mode) {
     if (!state.updateProbed) {
       state.updateProbed = true
       loadUpdateProbe(deps).catch(err => console.error("update probe failed", err))
+    }
+    if (!state.incidentsProbed) {
+      state.incidentsProbed = true
+      loadLastIncident(deps).catch(err => console.error("[health] loadLastIncident failed", err))
     }
   } else {
     doctorPoller.stop()

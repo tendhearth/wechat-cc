@@ -56,6 +56,10 @@ describe('route-tiers', () => {
     expect(minTierFor('POST /v1/penpal/letters/resend')).toBe('trusted')
   })
 
+  it('故障记录读路由是 trusted,不是 admin(同上:桌面/CLI 的唯一凭据是文件 token)', () => {
+    expect(minTierFor('GET /v1/health/incidents')).toBe('trusted')
+  })
+
   it('觅食台读面 + inbound toggle 是 trusted(同上:桌面/CLI 的唯一凭据是文件 token)', () => {
     expect(minTierFor('GET /v1/social/seeks')).toBe('trusted')
     expect(minTierFor('GET /v1/social/echoes')).toBe('trusted')

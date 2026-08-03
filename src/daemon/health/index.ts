@@ -6,7 +6,7 @@
  */
 import { makeConnectionHealth, type ConnectionHealth, type Dependency } from './connection-health'
 import { classifyFailure } from './classify'
-import { makeIncidentStore } from './incident-store'
+import { makeIncidentStore, type IncidentStore } from './incident-store'
 import { shouldNotifyDown, shouldNotifyRecovery } from './notify-policy'
 
 export interface HealthNotification {
@@ -19,6 +19,16 @@ export interface HealthRuntime {
   health: ConnectionHealth
   onFailure(dep: Dependency, err: unknown): void
   onSuccess(dep: Dependency): void
+  /**
+   * The single incident-store instance this runtime writes through (Task 8).
+   * Exposed so internal-api's GET /v1/health/incidents route (the desktop's
+   * "last incident" banner + notification) reads the SAME live instance
+   * rather than constructing a second one pointed at the same file — the
+   * underlying state-store loads its data once at construction and doesn't
+   * re-read on every `get()`, so a second instance would never observe
+   * writes made through this one.
+   */
+  incidents: IncidentStore
 }
 
 export function makeHealthRuntime(deps: {
@@ -115,7 +125,7 @@ export function makeHealthRuntime(deps: {
     }
   }
 
-  return { health, onFailure, onSuccess }
+  return { health, onFailure, onSuccess, incidents }
 }
 
 export { SUSPEND_AFTER_MS } from './connection-health'

@@ -414,6 +414,12 @@
                 </div>
               </section>
 
+              <!-- 上次故障横幅(Task 8, spec 2026-08-03-connection-health §8):
+                   桌面没开着时通知无处可去 —— 2026-08-02 那次断了 10.5 小时,
+                   主人只有翻日志才发现。只要有故障记录就显示最新一条,不受
+                   "未读"影响;见 modules/dashboard.js 的 loadLastIncident。 -->
+              <p id="dash-health-banner" class="dash-health-banner" hidden></p>
+
               <section class="moment-users" aria-label="用户连接状态">
                 <h2>当前连接中的用户</h2>
                 <div id="accounts-current" class="current-user-card"></div>
