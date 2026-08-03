@@ -17,7 +17,7 @@ beforeEach(() => {
 })
 
 // Import AFTER document stub so setPending's getElementById doesn't crash
-const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, __resetDashboardState, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, loadLastIncident } = await import('./dashboard.js')
+const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, __resetDashboardState, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, loadLastIncident, checkIncidentsOnPoll } = await import('./dashboard.js')
 
 // In-memory localStorage stub — real round-trip semantics (get after set),
 // unlike memory.test.ts's bare no-op stub, because loadLastIncident's
@@ -1372,5 +1372,88 @@ describe('loadLastIncident', () => {
     const invokeApi = vi.fn(async () => { throw new Error('network error') })
     globalThis.localStorage = fakeLocalStorage() as any
     await expect(loadLastIncident({ invoke, invokeApi })).resolves.not.toThrow()
+  })
+})
+
+// Task 8 follow-up (spec review finding): loadLastIncident alone only ran
+// once on dashboard entry, so a NEW incident starting while the app was
+// already open (owner parked on a different pane) went undiscovered until
+// the owner happened to revisit the overview pane — the daemon's own
+// notify hook is log-only, so this poll is the only real-time path.
+// checkIncidentsOnPoll is what main.js subscribes to the doctor poller's
+// existing 5s tick to close that gap, throttled to a 60s effective cadence.
+describe('checkIncidentsOnPoll', () => {
+  const OPEN_A = {
+    id: 'wechat-2026-08-02T14:33:00.000Z',
+    dependency: 'wechat', kind: 'network', actionable: false,
+    startedAt: '2026-08-02T14:33:00.000Z', endedAt: null,
+    notifiedAt: '2026-08-02T14:48:00.000Z', lastError: null,
+  }
+  const OPEN_B = {
+    id: 'wechat-2026-08-03T09:00:00.000Z',
+    dependency: 'wechat', kind: 'network', actionable: false,
+    startedAt: '2026-08-03T09:00:00.000Z', endedAt: null,
+    notifiedAt: '2026-08-03T09:15:00.000Z', lastError: null,
+  }
+
+  it('同一会话内新出现的故障也能被发现并弹一次通知;再拉同一条时不再弹', async () => {
+    vi.useFakeTimers()
+    try {
+      installDashboardDom()
+      // Already seen OPEN_A on a previous check this session.
+      const ls = fakeLocalStorage({ 'wechat-cc:health:lastSeenIncidentId': OPEN_A.id })
+      globalThis.localStorage = ls as any
+      const invoke = vi.fn(async () => ({}))
+      let incidents = [OPEN_A]
+      const invokeApi = vi.fn(async () => ({ incidents }))
+      const deps = { invoke, invokeApi }
+
+      // First tick (poller's immediate call): still OPEN_A, already seen — no notify.
+      await checkIncidentsOnPoll(deps)
+      expect(invoke).not.toHaveBeenCalledWith('notify_user', expect.anything())
+
+      // A NEW incident appears — simulate the bot disconnecting again — and
+      // enough time passes for the 60s throttle window to open again.
+      incidents = [OPEN_B]
+      vi.advanceTimersByTime(60_000)
+      await checkIncidentsOnPoll(deps)
+      expect(invoke).toHaveBeenCalledTimes(1)
+      expect(invoke).toHaveBeenCalledWith('notify_user', expect.objectContaining({
+        title: expect.any(String), body: expect.any(String),
+      }))
+      expect(ls._data['wechat-cc:health:lastSeenIncidentId']).toBe(OPEN_B.id)
+
+      // Polling again for the SAME still-open incident must not re-notify.
+      invoke.mockClear()
+      vi.advanceTimersByTime(60_000)
+      await checkIncidentsOnPoll(deps)
+      expect(invoke).not.toHaveBeenCalledWith('notify_user', expect.anything())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('60 秒节流:密集 tick(doctor poller 的 5s 节奏)期间不会反复打 /v1/health/incidents', async () => {
+    vi.useFakeTimers()
+    try {
+      installDashboardDom()
+      globalThis.localStorage = fakeLocalStorage() as any
+      const invoke = vi.fn(async () => ({}))
+      const invokeApi = vi.fn(async () => ({ incidents: [] }))
+      const deps = { invoke, invokeApi }
+
+      await checkIncidentsOnPoll(deps)   // immediate first call
+      vi.advanceTimersByTime(5_000)
+      await checkIncidentsOnPoll(deps)   // throttled — within 60s window
+      vi.advanceTimersByTime(5_000)
+      await checkIncidentsOnPoll(deps)   // still throttled
+      expect(invokeApi).toHaveBeenCalledTimes(1)
+
+      vi.advanceTimersByTime(55_000)     // now past 60s since the first call
+      await checkIncidentsOnPoll(deps)
+      expect(invokeApi).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

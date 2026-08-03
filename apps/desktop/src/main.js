@@ -27,7 +27,7 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, loadLastIncident } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
@@ -60,11 +60,6 @@ const state = {
   mode: "loading",
   currentStep: "doctor",
   updateProbed: false,
-  // Task 8 (connection-health): gate loadLastIncident to once per dashboard
-  // entry per session, same posture as updateProbed above — the incidents
-  // list only changes on daemon-side connectivity events, not on every
-  // pane switch.
-  incidentsProbed: false,
   connectionIntent: /** @type {"disconnected" | null} */ (null),
 }
 
@@ -257,10 +252,11 @@ function setMode(mode) {
       state.updateProbed = true
       loadUpdateProbe(deps).catch(err => console.error("update probe failed", err))
     }
-    if (!state.incidentsProbed) {
-      state.incidentsProbed = true
-      loadLastIncident(deps).catch(err => console.error("[health] loadLastIncident failed", err))
-    }
+    // Incidents are checked on every doctor-poller tick (see
+    // checkIncidentsOnPoll, subscribed in wireDoctorSubscribers below) —
+    // not gated here — so a new outage is discovered within ~60s even
+    // while the owner is parked on a non-overview pane, not just on
+    // dashboard entry.
   } else {
     doctorPoller.stop()
     conversationsPoller.stop()
@@ -294,6 +290,13 @@ function wireDoctorSubscribers() {
   doctorPoller.subscribe(renderDashboardIfActive)
   doctorPoller.subscribe(renderRestartButtonIfActive)
   doctorPoller.subscribe(checkExpiredDiff)
+  // Task 8 follow-up (connection-health): piggyback on the doctor poller's
+  // existing 5s tick instead of a new isolated timer — checkIncidentsOnPoll
+  // throttles itself to a 60s effective cadence internally. Runs regardless
+  // of which pane is active (mirrors checkExpiredDiff above), so a new
+  // outage that starts while the app is open surfaces without the owner
+  // needing to revisit the overview pane.
+  doctorPoller.subscribe(() => checkIncidentsOnPoll(deps))
   conversationsPoller.subscribe(report => {
     if (state.mode === "dashboard") renderConversations(report, { invoke })
   })

@@ -502,6 +502,10 @@ let _providerSwitchInflight = false
 let _providerMenuOutsideHandler = null
 let _providerMenuKeyHandler = null
 
+// Throttle state for checkIncidentsOnPoll (Task 8 follow-up) — see that
+// function's doc comment.
+let _lastIncidentsCheckAt = 0
+
 /**
  * TEST-ONLY: Reset all module-level dashboard state.
  */
@@ -515,6 +519,7 @@ export function __resetDashboardState() {
   _providerSwitchInflight = false
   _providerMenuOutsideHandler = null
   _providerMenuKeyHandler = null
+  _lastIncidentsCheckAt = 0
 }
 
 // Smart reconnect: diagnose internally, then execute the matching recovery
@@ -910,4 +915,38 @@ export async function loadLastIncident(deps) {
     console.warn("[health] notify_user failed:", err)
   }
   try { globalThis.localStorage?.setItem(LAST_SEEN_INCIDENT_KEY, latest.id) } catch { /* best-effort */ }
+}
+
+// How often loadLastIncident actually hits /v1/health/incidents when driven
+// by checkIncidentsOnPoll below. 60s: the HTTP call is local and cheap, but
+// there's no reason to burn one on every 5s doctor tick — a minute of
+// discovery latency for "your bot disconnected" is plenty.
+const INCIDENTS_POLL_INTERVAL_MS = 60_000
+
+/**
+ * Fixes a gap in loadLastIncident's original wiring: it only ran once, on
+ * dashboard entry — so a NEW incident that starts while the app is already
+ * open (owner sitting on the memory/logs/agents pane, not overview) went
+ * unnoticed until the owner happened to leave and re-enter the dashboard.
+ * The daemon's own notify hook is log-only (wire-health.ts), so the desktop
+ * poll is the only real-time path; it has to keep checking while the app
+ * runs, not just once.
+ *
+ * Subscribed to the doctor poller's tick stream (main.js) instead of
+ * getting its own setInterval — the doctor poller already ticks every 5s
+ * for as long as the dashboard is open and is already started/stopped
+ * correctly across mode switches, so piggybacking here can't leak a timer.
+ * Throttled to INCIDENTS_POLL_INTERVAL_MS so it doesn't hit the endpoint on
+ * every 5s tick; the very first call after a reset (_lastIncidentsCheckAt
+ * === 0) always fires immediately.
+ *
+ * Returns the underlying loadLastIncident promise (already caught, never
+ * rejects) so tests can await it; main.js's doctorPoller subscriber fires
+ * it without awaiting, same fire-and-forget posture as checkExpiredDiff.
+ */
+export function checkIncidentsOnPoll(deps) {
+  const now = Date.now()
+  if (_lastIncidentsCheckAt !== 0 && now - _lastIncidentsCheckAt < INCIDENTS_POLL_INTERVAL_MS) return Promise.resolve()
+  _lastIncidentsCheckAt = now
+  return loadLastIncident(deps).catch(err => console.warn("[health] periodic incidents check failed:", err))
 }
