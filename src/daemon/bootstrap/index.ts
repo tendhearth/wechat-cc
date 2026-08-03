@@ -622,6 +622,20 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     try { deps.onTurnRecord?.(record) } catch (err) {
       deps.log('TURN', `onTurnRecord sink threw: ${err instanceof Error ? err.message : String(err)}`)
     }
+    // Connection-health (Task 9) — this is the narrowest point that sees
+    // BOTH a completed and a failed LLM round: it fires once per solo
+    // dispatch and once per participant in parallel/chatroom (see
+    // TurnRecord's doc comment), covering every provider call the
+    // coordinator makes. 'timeout'/'auth_failed'/'error' all mean the
+    // caller got no working answer from the LLM this round — exactly the
+    // failure shape mw-llm-health exists to stop hammering — so they all
+    // count as an 'llm' failure. onFailure/onSuccess already swallow their
+    // own errors internally (see health/index.ts), so no extra try/catch here.
+    if (record.outcome === 'completed') {
+      health.onSuccess('llm')
+    } else {
+      health.onFailure('llm', record.error ?? record.outcome)
+    }
   }
 
   const coordinator = createConversationCoordinator({

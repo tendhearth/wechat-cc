@@ -44,6 +44,12 @@ function fakeDeps(over: Partial<{
     activity: { recordInbound: activity, log },
     milestone: { fireMilestonesFor: milestone, log },
     welcome: { maybeWriteWelcomeObservation: welcome, log },
+    llmHealth: {
+      health: { shouldSuspend: () => false, get: () => ({ consecutiveFailures: 0 }) },
+      sendMessage: async () => ({ msgId: 'm1' }),
+      now: () => 0,
+      log,
+    },
     dispatch: { coordinator: { dispatch } },
   }
   return { deps, spy: { dispatch, activity, milestone, welcome } }

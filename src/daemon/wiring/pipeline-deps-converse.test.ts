@@ -26,6 +26,13 @@ import type { Mode } from '../../core/conversation'
 // and therefore cannot have its reply captured by the still-open app sink —
 // until the app turn's sink is closed.
 
+// Connection-health (Task 9) — buildPipelineDeps dereferences boot.health.health
+// unconditionally (llmHealth mw dep), so every `boot` fixture below needs a
+// minimal stand-in even though this file never exercises the health machine.
+const fakeHealth = {
+  health: { shouldSuspend: () => false, get: () => ({ consecutiveFailures: 0 }) },
+} as unknown as Bootstrap['health']
+
 describe('resolveOwnerSessionKey', () => {
   const baseDeps = {
     resolveProject: (chatId: string) => (chatId === 'chat1' ? { alias: 'proj1', path: '/tmp/proj1' } : null),
@@ -140,6 +147,7 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
       a2aDeps: undefined,
       a2aServer: null,
       agentConfig: { bot_name: null } as unknown as Bootstrap['agentConfig'],
+      health: fakeHealth,
     } as unknown as Bootstrap
 
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
@@ -318,6 +326,7 @@ describe('companionConverse lock spans the sink lifetime (real mutex + real repl
       a2aDeps: undefined,
       a2aServer: null,
       agentConfig: { bot_name: null } as unknown as Bootstrap['agentConfig'],
+      health: fakeHealth,
     } as unknown as Bootstrap
 
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }

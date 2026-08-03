@@ -393,6 +393,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     },
     milestone: { fireMilestonesFor, log },
     welcome: { maybeWriteWelcomeObservation, log },
+    llmHealth: {
+      health: boot.health.health,
+      sendMessage: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string }),
+      now: () => Date.now(),
+      log,
+    },
     dispatch: {
       coordinator: {
         // Async foraging spine — an operator "揭晓 <id>" reply triggers the

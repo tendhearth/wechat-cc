@@ -17,6 +17,7 @@ import { makeMwMessages, type MessagesMwDeps } from './mw-messages'
 import { makeMwActivity, type ActivityMwDeps } from './mw-activity'
 import { makeMwMilestone, type MilestoneMwDeps } from './mw-milestone'
 import { makeMwWelcome, type WelcomeMwDeps } from './mw-welcome'
+import { makeMwLlmHealth, type MwLlmHealthDeps } from './mw-llm-health'
 import { makeMwDispatch, type DispatchMwDeps } from './mw-dispatch'
 
 export interface InboundPipelineDeps {
@@ -37,6 +38,7 @@ export interface InboundPipelineDeps {
   activity: ActivityMwDeps
   milestone: MilestoneMwDeps
   welcome: WelcomeMwDeps
+  llmHealth: MwLlmHealthDeps
   dispatch: DispatchMwDeps
 }
 
@@ -73,6 +75,12 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     makeMwActivity(d.activity),
     makeMwMilestone(d.milestone),
     makeMwWelcome(d.welcome),
+    // LLM health gate runs immediately BEFORE dispatch (the terminal
+    // middleware where the LLM turn actually happens) — degraded LLM means
+    // every inbound would otherwise drive one doomed API call per message
+    // (unlike the wechat side: inbound still arrives fine when the LLM is
+    // down, so this is where "hammering a failing API" actually happens).
+    makeMwLlmHealth(d.llmHealth),
     makeMwDispatch(d.dispatch),
   ])
 }
