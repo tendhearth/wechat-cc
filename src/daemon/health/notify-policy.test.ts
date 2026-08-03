@@ -15,7 +15,7 @@ function incident(over: Partial<Incident> = {}): Incident {
 }
 
 describe('shouldNotifyDown', () => {
-  it('不可操作的要等 15 分钟 —— 短故障不打扰', () => {
+  it('不可操作的要等 30 分钟 —— 短故障不打扰(阈值按 49 天实测分布校准)', () => {
     const inc = incident()
     expect(shouldNotifyDown(inc, T0 + NOTIFY_NON_ACTIONABLE_MS - 1)).toBe(false)
     expect(shouldNotifyDown(inc, T0 + NOTIFY_NON_ACTIONABLE_MS)).toBe(true)

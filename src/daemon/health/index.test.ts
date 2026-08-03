@@ -23,7 +23,7 @@ function setup() {
 }
 
 describe('makeHealthRuntime', () => {
-  it('复刻 2026-08-02 那次:10.5 小时故障只产生 2 条通知,且第一条恰好发生在 15 分钟', () => {
+  it('复刻 2026-08-02 那次:10.5 小时故障只产生 2 条通知,且第一条恰好发生在通知阈值那一刻', () => {
     const { t, notes, rt } = setup()
     const start = t.ms
     let firstNoteAtMs: number | null = null
@@ -33,7 +33,7 @@ describe('makeHealthRuntime', () => {
       rt.onFailure('wechat', new Error('unknown certificate verification error'))
       if (firstNoteAtMs === null && notes.length > 0) firstNoteAtMs = t.ms
     }
-    expect(notes).toHaveLength(1)          // 15 分钟时那一条
+    expect(notes).toHaveLength(1)          // 跨过不可操作阈值时那一条
     expect(notes[0]!.title).toMatch(/网络/)
     // 钉住"何时"而不只是"几条" —— 一个 degraded 第一 tick 就发通知的错误
     // 实现同样能拿到 toHaveLength(1),必须验证发生的确切时刻。
