@@ -14,6 +14,7 @@ import type { YiHub } from '../../core/yi-hub'
 import type { DelegateDispatch } from './delegate'
 import type { SendAssistantText } from './fallback-reply'
 import type { Revealer } from '../../core/social-reveal'
+import type { HealthRuntime } from '../health'
 
 export interface BootstrapDeps {
   stateDir: string
@@ -307,4 +308,14 @@ export interface Bootstrap {
    * 503), same posture as `boot.social`/`boot.penpal`.
    */
   pairing?: import('../../core/pairing').PairingEngine
+  /**
+   * Connection-health runtime (connection-health design, Task 7) — wraps the
+   * two-state health machine + failure classifier + incident store + notify
+   * policy behind two entry points, `onFailure`/`onSuccess`. Constructed
+   * unconditionally via `./wire-health.ts` so it exists BEFORE
+   * `registerPolling` starts the long-poll loops (main.ts wires
+   * `health.onSuccess`/`onFailure` into `startLongPollLoops`'s `health` dep,
+   * and `health.health.shouldSuspend` into `buildTickBodies`'s `health` dep).
+   */
+  health: HealthRuntime
 }

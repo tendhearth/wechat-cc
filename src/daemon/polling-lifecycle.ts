@@ -27,6 +27,15 @@ export interface PollingDeps {
   recordHeartbeat?: (accountId: string, iso: string) => void
   /** Optional — clear a stale expired marker on each successful poll. */
   clearExpired?: (accountId: string) => void
+  /**
+   * Connection-health reporting (Task 7) — forwarded straight through to
+   * startLongPollLoops' own `health` dep. Optional: omitting it disables
+   * health tracking for wechat polling (e.g. tests that don't care).
+   */
+  health?: {
+    recordSuccess(dep: 'wechat'): void
+    recordFailure(dep: 'wechat', err: unknown): void
+  }
 }
 
 export interface PollingLifecycle extends Lifecycle {
@@ -92,6 +101,7 @@ export function registerPolling(deps: PollingDeps): PollingLifecycle {
     },
     recordHeartbeat: deps.recordHeartbeat,
     clearExpired: deps.clearExpired,
+    ...(deps.health ? { health: deps.health } : {}),
     onInbound: async (msg) => {
       // CSPRNG-backed 8-char hex; Math.random().toString(16).slice(2,10) can
       // return shorter strings for round-binary outputs (0.5 → "0.8" → "8").

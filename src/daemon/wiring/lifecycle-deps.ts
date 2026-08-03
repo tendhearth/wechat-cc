@@ -125,6 +125,13 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
       onPollCycle: () => writeHeartbeat(join(stateDir, HEARTBEAT_FILE)),
       recordHeartbeat: heartbeatStore.recordOk.bind(heartbeatStore),
       clearExpired: (id: string) => sessionStateStore.clear(id),
+      // Connection-health (Task 7) — routes each poll round-trip's outcome
+      // through boot.health's onSuccess/onFailure, which drives the two-state
+      // machine, the incident store, and (log-only for now) notifications.
+      health: {
+        recordSuccess: (dep) => boot.health.onSuccess(dep),
+        recordFailure: (dep, err) => boot.health.onFailure(dep, err),
+      },
     },
     startupDeps: {
       stateDir, db, ilink, log,

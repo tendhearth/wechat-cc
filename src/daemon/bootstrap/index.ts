@@ -8,8 +8,9 @@
  *   - ConversationCoordinator (mode-aware dispatch entry)
  *   - Bare delegate providers (RFC 03 P4 peer-as-tool)
  *
- * Boot order inside buildBootstrap(): stores (conversationStore, plugin MCP
- * specs) → sessions (sessionStore + registerProviders) →
+ * Boot order inside buildBootstrap(): wireHealth (connection-health runtime,
+ * first + unconditional) → stores (conversationStore, plugin MCP specs) →
+ * sessions (sessionStore + registerProviders) →
  * sendAssistantText / recordTurn / coordinator → dispatchDelegate → A2A
  * infra (registry/client/eventsStore + resolveOperatorChatId) → wireSocial
  * → wireA2aServer → resumeForaging() → 乙 v2 (yiHub/yiClient) → return.
@@ -22,6 +23,7 @@
  *   - ./providers.ts   — provider registrations (claude/codex/cursor/openai/gemini)
  *   - ./wire-social.ts — agent-social wiring (seeks/echoes) + boot-resume
  *   - ./wire-a2a-server.ts — A2A HTTP server + routeA2ANotify + a2a-info.json
+ *   - ./wire-health.ts — connection-health runtime (onFailure/onSuccess)
  *
  * Imported only by:
  *   - src/daemon/main.ts (production entry)
@@ -58,6 +60,7 @@ import { registerProviders } from './providers'
 import { wireSocial } from './wire-social'
 import { wireA2aServer } from './wire-a2a-server'
 import { wirePairing } from './wire-pairing'
+import { wireHealth } from './wire-health'
 import { resolveSelfAgentId } from '../../core/self-agent-id'
 import { assertNotAuthFailed, type CheapEval } from '../../core/agent-provider'
 import { createA2ARegistry } from '../../core/a2a-registry'
@@ -190,6 +193,14 @@ export function resolveAdminChatId(
 
 export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   hydrateClaudeAuthEnvFromUserSettings(deps.log)
+
+  // Connection-health runtime (Task 7) — constructed FIRST and unconditionally,
+  // no config gate, so it exists before anything that could report a failure:
+  // main.ts's registerPolling(wired.pollingDeps) starts the long-poll loops
+  // strictly after buildBootstrap() resolves, and buildTickBodies' companion
+  // ticks are wired the same way. Depends only on stateDir + log, both
+  // present from the very first line of BootstrapDeps.
+  const health = wireHealth({ stateDir: deps.stateDir, log: deps.log })
 
   const resolve = makeResolver({
     loadProjects: deps.loadProjects,
@@ -872,5 +883,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      * see Bootstrap['pairing']'s doc comment in ./types.ts.
      */
     ...(pairingEngine ? { pairing: pairingEngine } : {}),
+    /**
+     * Connection-health runtime (Task 7) — see ./wire-health.ts and the
+     * doc comment on Bootstrap['health'] in ./types.ts.
+     */
+    health,
   }
 }
