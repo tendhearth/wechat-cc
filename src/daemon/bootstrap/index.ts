@@ -60,7 +60,7 @@ import { registerProviders } from './providers'
 import { wireSocial } from './wire-social'
 import { wireA2aServer } from './wire-a2a-server'
 import { wirePairing } from './wire-pairing'
-import { wireHealth } from './wire-health'
+import { wireHealth, reportLlmTurnOutcome } from './wire-health'
 import { resolveSelfAgentId } from '../../core/self-agent-id'
 import { assertNotAuthFailed, type CheapEval } from '../../core/agent-provider'
 import { createA2ARegistry } from '../../core/a2a-registry'
@@ -626,16 +626,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // BOTH a completed and a failed LLM round: it fires once per solo
     // dispatch and once per participant in parallel/chatroom (see
     // TurnRecord's doc comment), covering every provider call the
-    // coordinator makes. 'timeout'/'auth_failed'/'error' all mean the
-    // caller got no working answer from the LLM this round — exactly the
-    // failure shape mw-llm-health exists to stop hammering — so they all
-    // count as an 'llm' failure. onFailure/onSuccess already swallow their
-    // own errors internally (see health/index.ts), so no extra try/catch here.
-    if (record.outcome === 'completed') {
-      health.onSuccess('llm')
-    } else {
-      health.onFailure('llm', record.error ?? record.outcome)
-    }
+    // coordinator makes. The outcome→failure-kind mapping (why 'unknown'
+    // business failures like step-budget/max_turns must NOT count as an
+    // 'llm' connectivity failure) lives in reportLlmTurnOutcome
+    // (./wire-health.ts) — extracted so it's unit-testable against a real
+    // health runtime without constructing a full Bootstrap.
+    reportLlmTurnOutcome(health, record.outcome, record.error)
   }
 
   const coordinator = createConversationCoordinator({
