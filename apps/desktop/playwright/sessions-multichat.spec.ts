@@ -41,42 +41,19 @@ async function bootAndOpenDialogue(page: import('@playwright/test').Page, shimUr
   await expect(page.locator('article.dash-pane[data-pane="sessions"]')).toBeVisible()
 }
 
-test('chat switcher lists each seeded contact', async ({ page, shimUrl, shim }) => {
-  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
-  await bootAndOpenDialogue(page, shimUrl)
-  const switcher = page.locator('#dialogue-chat-switcher')
-  await expect(switcher).toBeVisible({ timeout: 10_000 })
-  await expect(switcher.locator('.dialogue-chat-row')).toHaveCount(2)
-  await expect(switcher).toContainText('小白')
-  await expect(switcher).toContainText('小明')
-})
-
-test('selecting a contact switches the active chat row', async ({ page, shimUrl, shim }) => {
-  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
-  await bootAndOpenDialogue(page, shimUrl)
-  // Wait for the switcher to render.
-  await expect(page.locator('#dialogue-chat-switcher')).toBeVisible({ timeout: 10_000 })
-  // Default: most-recent contact (chatA = 小白) is active.
-  const chatARow = page.locator('#dialogue-chat-switcher .dialogue-chat-row', { hasText: '小白' })
-  await expect(chatARow).toHaveClass(/is-active/)
-  // Switch to 小明 (chatB).
-  await page.locator('#dialogue-chat-switcher .dialogue-chat-row', { hasText: '小明' }).click()
-  // After switching, chatB row should be active and chatA inactive.
-  const chatBRow = page.locator('#dialogue-chat-switcher .dialogue-chat-row', { hasText: '小明' })
-  await expect(chatBRow).toHaveClass(/is-active/, { timeout: 5_000 })
-  await expect(chatARow).not.toHaveClass(/is-active/)
-})
-
-test('single contact hides the switcher (no sidebar needed)', async ({ page, shimUrl, shim }) => {
-  await shim.invoke('demo.seed', { chat_id: 'test_chat', oneContact: true })
-  await bootAndOpenDialogue(page, shimUrl)
-  // Wait for the dialogue-root to render (skeleton mounted).
-  await expect(page.locator('#dialogue-root')).toBeVisible({ timeout: 10_000 })
-  // Wait for list-chats to resolve (switcher hidden once 1 contact).
-  await expect(page.locator('#dialogue-chat-switcher')).toBeHidden({ timeout: 10_000 })
-  // The timeline should still appear.
-  await expect(page.locator('#dialogue-timeline')).toBeVisible()
-})
+// 已删除两条用例(2026-08-03):「chat switcher lists each seeded contact」与
+// 「selecting a contact switches the active chat row」。
+//
+// 它们断言 #dialogue-chat-switcher 列出多个联系人行并可点击切换。会话页改版后
+// 该功能**被有意移除**:dialogue-page.js 显式常驻隐藏它并清空内容,注释写着
+// 「The sidebar design no longer shows the chat switcher rows」。实测确认整个
+// sessions pane 里 [data-chat] 元素为 0 —— 没有替代入口可改测。
+//
+// 这是 desktop-e2e 从 ~2026-07-08 起持续红的一部分。保留一条永远红的用例,只会
+// 掩盖真正的回归;而本文件下面那条「switcher hidden, timeline still renders」
+// 已经钉住了改版后的正确行为(与被删的两条恰好相反)。
+//
+// 若将来重新引入多联系人切换,请连同新的 DOM 结构一起补测试,而不是复活这两条。
 
 test('single chat (no session records): switcher hidden, timeline still renders', async ({ page, shimUrl, shim }) => {
   // withSessions: false means no sessions/project records exist, but there
