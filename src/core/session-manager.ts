@@ -304,6 +304,15 @@ export class SessionManager {
     return (this.inFlight.get(sessionKey(k)) ?? 0) > 0
   }
 
+  /**
+   * 是否有任何在途轮次(不分 chat)。self-restart 用它判断"现在能不能安全
+   * 退出" —— 逐 key 的 isInFlight 回答不了这个问题。
+   */
+  anyInFlight(): boolean {
+    for (const n of this.inFlight.values()) if (n > 0) return true
+    return false
+  }
+
   list() {
     return Array.from(this.sessions.values()).map(s => ({
       alias: s.handle.alias,
