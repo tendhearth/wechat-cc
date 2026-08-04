@@ -138,6 +138,26 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     }
 
     const method = req.method ?? 'GET'
+
+    // self-restart activity (spec 2026-08-03-daemon-self-restart-on-stale-code)
+    // — an authenticated non-GET is the owner DOING something in the app, and
+    // most of those never touch mw-messages OR SessionManager, so neither of
+    // the idle signals would see them. The worst case is not a race but a
+    // deterministic one: POST /v1/customer-review kicks off minutes of
+    // sequential LLM calls in its own fire-and-forget Set, so a review longer
+    // than IDLE_QUIET_MS would ALWAYS look idle, and restarting mid-review
+    // makes the next boot reclaim it as `failed` — the owner sees "分析失败"
+    // with no reason and the spent tokens gone. Marking here covers that plus
+    // plugin install/upgrade, import-local, a2a install, memory write, penpal,
+    // voice config — the whole class, at the one place they all pass through.
+    //
+    // GET is deliberately excluded: the desktop dashboard polls GETs every 5s
+    // forever, so marking those would pin quietFor() below the threshold for
+    // as long as the app is open and disable self-restart entirely.
+    if (method !== 'GET') {
+      try { deps.markInboundActivity?.() } catch { /* 绝不能因为记一笔就打断请求 */ }
+    }
+
     const rawUrl = req.url ?? '/'
     const url = new URL(rawUrl, 'http://internal')
     const routeKey = `${method} ${url.pathname}`

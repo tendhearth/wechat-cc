@@ -14,7 +14,7 @@
  * 打断那个 tick 上的其它工作。
  */
 import { shouldSelfRestart, BOOT_GRACE_MS } from './stale-code'
-import { readGitHead, readGitLockfileBlob } from './git-head'
+import { readGitHead, readGitLockfileBlob, readGitWorktreeDirty } from './git-head'
 
 /** 空闲要求:最近这么久没有任何入站消息。 */
 export const IDLE_QUIET_MS = 120_000
@@ -43,11 +43,13 @@ export interface SelfRestartDeps {
    */
   bootLockBlob: string | null
   readLockBlob?: typeof readGitLockfileBlob
+  readDirty?: typeof readGitWorktreeDirty
 }
 
 export function makeSelfRestartCheck(deps: SelfRestartDeps): () => Promise<void> {
   const readHead = deps.readHead ?? readGitHead
   const readLockBlob = deps.readLockBlob ?? readGitLockfileBlob
+  const readDirty = deps.readDirty ?? readGitWorktreeDirty
   // 重启是异步的(优雅关闭要时间),期间 tick 还会继续跑 —— 不加这个闩,
   // 每 60 秒都会再请求一次重启。
   let requested = false
@@ -82,6 +84,17 @@ export function makeSelfRestartCheck(deps: SelfRestartDeps): () => Promise<void>
       // don't restart; let `wechat-cc update`'s own install step handle it.
       const currentLockBlob = await readLockBlob({ cwd: deps.cwd })
       if (deps.bootLockBlob === null || currentLockBlob === null || deps.bootLockBlob !== currentLockBlob) return
+
+      // Dirty-worktree guard —— 见 readGitWorktreeDirty 的文档注释。HEAD 动了
+      // 不等于磁盘上的代码能跑;半截的工作树会让新进程起不来,而 launchd 会
+      // 每 10 秒重试一次,把 bot 彻底打下线。问不出来(null)一律当脏。
+      const dirty = await readDirty({ cwd: deps.cwd })
+      if (dirty !== 'clean') return
+
+      // 到这里为止已经花了最多 ~9 秒在三次 git 调用上,而空闲是在最开头
+      // 采样的。退出是不可撤销的,所以临门再查一次 —— 这期间进来的入站/
+      // App 请求会被上面那些打点记下,这一查就能看见。
+      if (deps.anyInFlight() || deps.quietFor(deps.now()) < IDLE_QUIET_MS) return
 
       requested = true
       deps.log('SELF_RESTART', `code on disk moved ${deps.loadedHead?.slice(0, 7)} → ${currentHead?.slice(0, 7)}; idle, restarting to load it`)
