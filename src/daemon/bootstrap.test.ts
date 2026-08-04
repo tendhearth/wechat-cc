@@ -2481,6 +2481,15 @@ describe('bootstrap pairing-code wiring', () => {
     })
     expect(withoutRestart.markInboundActivity).toBeUndefined()
 
+    // Passing requestRestart makes buildBootstrap really shell out to
+    // `git rev-parse` twice (HEAD + HEAD:bun.lock). Reviewed and kept
+    // deliberately: both are read-only, offline, and ~10ms in a checkout,
+    // and NOTHING here asserts on their output — a null result (no git, no
+    // repo) leaves every assertion below unchanged. The alternatives were
+    // worse: adding an injection seam to BootstrapDeps widens production
+    // API for test convenience only, and vi.mock has previously caused
+    // real-state-dir pollution in this repo. The 3s timeout inside
+    // readGitHead bounds the worst case.
     const withRestart = await buildBootstrap({
       db: openTestDb(),
       stateDir: '/tmp/state',

@@ -63,7 +63,7 @@ import { wirePairing } from './wire-pairing'
 import { wireHealth, reportLlmTurnOutcome } from './wire-health'
 import { makeActivityMarker } from '../self-restart/activity-marker'
 import { makeSelfRestartCheck } from '../self-restart/wire'
-import { readGitHead } from '../self-restart/git-head'
+import { readGitHead, readGitLockfileBlob } from '../self-restart/git-head'
 import { resolveSelfAgentId } from '../../core/self-agent-id'
 import { assertNotAuthFailed, type CheapEval } from '../../core/agent-provider'
 import { createA2ARegistry } from '../../core/a2a-registry'
@@ -598,12 +598,20 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // return false forever, which is the correct "don't move" outcome for
     // compiled binaries / non-git checkouts.
     const loadedHead = await readGitHead({ cwd: repoRootForGitHead() })
+    // bun.lock's blob at boot (Task 3 review #2) — the check refuses to
+    // restart if this drifts, so a manual `git pull` that changed the
+    // dependency tree can't restart us into a node_modules that
+    // `bun install` hasn't caught up with yet. Skipped entirely when
+    // loadedHead is already null: the check returns before ever reading
+    // it, so there's no reason to pay for a second git spawn at boot.
+    const bootLockBlob = loadedHead === null ? null : await readGitLockfileBlob({ cwd: repoRootForGitHead() })
     selfRestartActivityMarker = makeActivityMarker({ now: Date.now })
     const marker = selfRestartActivityMarker
     const requestRestart = deps.requestRestart
     selfRestartCheck = makeSelfRestartCheck({
       cwd: repoRootForGitHead(),
       loadedHead,
+      bootLockBlob,
       now: Date.now,
       bootAtMs,
       anyInFlight: () => sessionManager.anyInFlight(),

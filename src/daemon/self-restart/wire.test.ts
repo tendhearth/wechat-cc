@@ -1,9 +1,12 @@
-import { describe, it, expect, vi } from 'vitest'
-import { makeSelfRestartCheck } from './wire'
+import { describe, it, expect } from 'vitest'
+import { makeSelfRestartCheck, type SelfRestartDeps } from './wire'
 import { BOOT_GRACE_MS } from './stale-code'
 
 const BOOT = 1_000_000
-function setup(over: Record<string, unknown> = {}) {
+// Deliberately NOT `as never`: that cast is what let a newly-required dep
+// (bootLockBlob) slip past every one of these tests while the production
+// call site went unwired. Typed overrides make the compiler the guard.
+function setup(over: Partial<SelfRestartDeps> = {}) {
   const t = { ms: BOOT + BOOT_GRACE_MS }
   const restarts: number[] = []
   const check = makeSelfRestartCheck({
@@ -16,8 +19,12 @@ function setup(over: Record<string, unknown> = {}) {
     requestRestart: () => { restarts.push(t.ms) },
     log: () => {},
     readHead: async () => 'bbb222',
+    // Lockfile unchanged between boot and now ⇒ the drift guard is a no-op
+    // for every test that isn't specifically about it.
+    bootLockBlob: 'lock000',
+    readLockBlob: async () => 'lock000',
     ...over,
-  } as never)
+  })
   return { t, restarts, check }
 }
 
@@ -69,5 +76,63 @@ describe('makeSelfRestartCheck', () => {
   it('requestRestart 抛异常 ⇒ 吞掉', async () => {
     const { check } = setup({ requestRestart: () => { throw new Error('boom') } })
     await expect(check()).resolves.toBeUndefined()
+  })
+
+  // Task 3 review #2 —— 依赖树可能对不上时,宁可永远不重启。
+  it('bun.lock 在开机后变了 ⇒ 不重启(bun install 可能还没跟上)', async () => {
+    const { restarts, check } = setup({ readLockBlob: async () => 'lock999' })
+    await check()
+    expect(restarts).toEqual([])
+  })
+
+  it('开机时读不到 bun.lock ⇒ 永远不重启', async () => {
+    const { restarts, check } = setup({ bootLockBlob: null })
+    await check()
+    expect(restarts).toEqual([])
+  })
+
+  it('检查时读不到 bun.lock ⇒ 不重启', async () => {
+    const { restarts, check } = setup({ readLockBlob: async () => null })
+    await check()
+    expect(restarts).toEqual([])
+  })
+
+  it('readLockBlob 抛异常 ⇒ 吞掉,不重启', async () => {
+    const { restarts, check } = setup({ readLockBlob: async () => { throw new Error('boom') } })
+    await expect(check()).resolves.toBeUndefined()
+    expect(restarts).toEqual([])
+  })
+
+  // Task 3 review #3 —— 廉价判断前置之后,判定语义必须一字不变;
+  // 这几条钉住"该省的 spawn 真省了",省错了就会变成"该重启却不重启"。
+  it('仍在 5 分钟宽限期内 ⇒ 不重启,且根本不 spawn git', async () => {
+    let spawned = 0
+    const { t, restarts, check } = setup({ readHead: async () => { spawned++; return 'bbb222' } })
+    t.ms = BOOT + BOOT_GRACE_MS - 1
+    await check()
+    expect(restarts).toEqual([])
+    expect(spawned).toBe(0)
+  })
+
+  it('不空闲 ⇒ 不重启,且根本不 spawn git', async () => {
+    let spawned = 0
+    const { restarts, check } = setup({
+      anyInFlight: () => true,
+      readHead: async () => { spawned++; return 'bbb222' },
+    })
+    await check()
+    expect(restarts).toEqual([])
+    expect(spawned).toBe(0)
+  })
+
+  it('非 git checkout(loadedHead 为 null)⇒ 不重启,且根本不 spawn git', async () => {
+    let spawned = 0
+    const { restarts, check } = setup({
+      loadedHead: null,
+      readHead: async () => { spawned++; return 'bbb222' },
+    })
+    await check()
+    expect(restarts).toEqual([])
+    expect(spawned).toBe(0)
   })
 })

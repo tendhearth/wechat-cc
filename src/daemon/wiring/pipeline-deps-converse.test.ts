@@ -78,7 +78,7 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  function setup(opts: { inFlight: boolean; mode?: Mode }) {
+  function setup(opts: { inFlight: boolean; mode?: Mode; withMarkInboundActivity?: boolean }) {
     // `dispatch` (the LOCKING entry point) must never be called by
     // companionConverse — calling it from inside runExclusive would
     // self-deadlock (see pipeline-deps.ts). Failing loudly here catches a
@@ -98,6 +98,11 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     const isInFlight = vi.fn(() => opts.inFlight)
     const replySinksOpen = vi.fn((_chatId: string) => ({ close: () => 'reply text' }))
     const replySinks: ReplySinks = { open: replySinksOpen, capture: vi.fn(() => false) }
+    // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code, Task 3
+    // review finding #1) — companionConverse must mark inbound activity since
+    // it dispatches straight through the coordinator, bypassing mw-messages
+    // (the WeChat inbound pipeline's own activity mark point) entirely.
+    const markInboundActivity = vi.fn()
 
     const ilink = {
       sendMessage: vi.fn(async () => ({ msgId: '1' })),
@@ -148,6 +153,7 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
       a2aServer: null,
       agentConfig: { bot_name: null } as unknown as Bootstrap['agentConfig'],
       health: fakeHealth,
+      ...(opts.withMarkInboundActivity === false ? {} : { markInboundActivity }),
     } as unknown as Bootstrap
 
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
@@ -172,7 +178,7 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
       },
     )
 
-    return { companionConverse, dispatch, dispatchInner, runExclusive, isInFlight, replySinksOpen }
+    return { companionConverse, dispatch, dispatchInner, runExclusive, isInFlight, replySinksOpen, markInboundActivity }
   }
 
   it('refuses the app turn (reply_sink_busy) when the owner session is already in flight (e.g. a WeChat turn), WITHOUT dispatching, locking, or opening a reply sink', async () => {
@@ -209,6 +215,26 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     expect(dispatchInner).not.toHaveBeenCalled()
     expect(runExclusive).not.toHaveBeenCalled()
     expect(replySinksOpen).not.toHaveBeenCalled()
+  })
+
+  // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code, Task 3
+  // review finding #1, Critical) — companionConverse dispatches straight
+  // through the coordinator and never passes through mw-messages (see this
+  // file's own doc comment + wire.ts), so it's the ONE place that must call
+  // boot.markInboundActivity itself. Without this, quietFor() would read
+  // Infinity forever for an owner who only ever uses the desktop app — the
+  // idle-tick self-restart check would then be free to fire mid-conversation
+  // (owner reading a reply, about to type the next message) with zero UI.
+  it('marks inbound activity on every app turn — including a turn that goes on to reject for an unrelated reason', async () => {
+    const { companionConverse, markInboundActivity } = setup({ inFlight: false })
+    await companionConverse('how are you')
+    expect(markInboundActivity).toHaveBeenCalledTimes(1)
+  })
+
+  it('marking inbound activity never blocks or throws when boot.markInboundActivity is absent (self-restart not wired)', async () => {
+    const { companionConverse } = setup({ inFlight: false, withMarkInboundActivity: false })
+    const result = await companionConverse('how are you')
+    expect(result).toEqual({ reply: 'reply text' })
   })
 })
 
