@@ -173,6 +173,17 @@ export interface BootstrapDeps {
    * byte-identical to before this feature existed).
    */
   replySinks?: { capture: (chatId: string, text: string) => boolean }
+  /**
+   * self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
+   * graceful-shutdown-then-exit(0) so launchd's KeepAlive respawns a fresh
+   * process with fresh code. main.ts wires this to the SAME closure it
+   * passes to internal-api's requestRestart (POST /v1/daemon/restart).
+   * Optional and deliberately so: when omitted, buildBootstrap skips the
+   * self-restart mechanism entirely — no HEAD read, no activity marker, no
+   * check added to the idle-sweep tick. Tests / minimal embeddings that
+   * don't wire this stay byte-identical to before this feature existed.
+   */
+  requestRestart?: () => void
 }
 
 export interface Bootstrap {
@@ -318,4 +329,15 @@ export interface Bootstrap {
    * and `health.health.shouldSuspend` into `buildTickBodies`'s `health` dep).
    */
   health: HealthRuntime
+  /**
+   * self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) — mark
+   * "inbound activity happened now". Wired by main.ts's wireMain (via
+   * pipeline-deps' `messages` dep) into mw-messages' `markInboundActivity`,
+   * so the self-restart check's `quietFor()` signal reflects real traffic
+   * instead of staying at Infinity forever. Present only when
+   * `deps.requestRestart` was provided to buildBootstrap (self-restart
+   * enabled); undefined otherwise — mw-messages already treats
+   * `markInboundActivity` as optional, so this stays a clean no-op.
+   */
+  markInboundActivity?: () => void
 }

@@ -2459,4 +2459,40 @@ describe('bootstrap pairing-code wiring', () => {
       rmSync(stateDir, { recursive: true, force: true })
     }
   })
+
+  // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
+  // wiring-level check: markInboundActivity must be present on Bootstrap
+  // IFF deps.requestRestart was provided, and calling it must never throw.
+  // Pure-function coverage for the decision (shouldSelfRestart) and the
+  // idle-tick check itself (makeSelfRestartCheck) lives in
+  // src/daemon/self-restart/*.test.ts; this proves buildBootstrap actually
+  // honors the "requestRestart absent ⇒ mechanism fully inert" contract and
+  // exposes a callable marker when it's wired (see bootstrap/index.ts's
+  // self-restart block, which feeds the SAME activity-marker instance into
+  // both this returned markInboundActivity and the check's `quietFor`).
+  it('markInboundActivity is present only when requestRestart is wired (self-restart gate)', async () => {
+    const withoutRestart = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+    })
+    expect(withoutRestart.markInboundActivity).toBeUndefined()
+
+    const withRestart = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      requestRestart: () => {},
+    })
+    expect(typeof withRestart.markInboundActivity).toBe('function')
+    // mw-messages calls this unconditionally on every inbound message
+    // (before dedup/routing) — it must be safe to call from that hot path.
+    expect(() => withRestart.markInboundActivity!()).not.toThrow()
+  })
 })

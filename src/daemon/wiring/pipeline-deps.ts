@@ -382,6 +382,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     messages: {
       append: rec => messagesStore.append(rec),
       log,
+      // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
+      // undefined when boot.markInboundActivity is absent (deps.requestRestart
+      // wasn't wired into buildBootstrap, so the whole mechanism is inert).
+      // mw-messages treats this as optional and no-ops when it's missing.
+      markInboundActivity: boot.markInboundActivity,
     },
     activity: {
       // Piggyback the ingest nudge on the per-new-inbound recordInbound call:
