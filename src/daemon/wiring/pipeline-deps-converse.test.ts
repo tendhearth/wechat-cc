@@ -225,9 +225,19 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
   // Infinity forever for an owner who only ever uses the desktop app — the
   // idle-tick self-restart check would then be free to fire mid-conversation
   // (owner reading a reply, about to type the next message) with zero UI.
-  it('marks inbound activity on every app turn — including a turn that goes on to reject for an unrelated reason', async () => {
+  it('marks inbound activity on an app turn', async () => {
     const { companionConverse, markInboundActivity } = setup({ inFlight: false })
     await companionConverse('how are you')
+    expect(markInboundActivity).toHaveBeenCalledTimes(1)
+  })
+
+  // The mark must sit BEFORE every early return, not just on the happy path:
+  // a rejected turn is still the owner typing at the app. If it drifted below
+  // this reject, a burst of 409s during a busy WeChat turn would leave
+  // quietFor() reading Infinity and free the idle check to restart mid-use.
+  it('marks inbound activity even when the turn is rejected as busy', async () => {
+    const { companionConverse, markInboundActivity } = setup({ inFlight: true })
+    await expect(companionConverse('how are you')).rejects.toThrow()
     expect(markInboundActivity).toHaveBeenCalledTimes(1)
   })
 
