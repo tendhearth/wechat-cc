@@ -260,6 +260,34 @@ describe('startCompanionScheduler — busy hold + graceful stop', () => {
     await stopPromise
   })
 
+  it('clears the stop-wait cap timer when the in-flight tick wins the race — no leaked timer', async () => {
+    // Regression: Promise.race([pending, new Promise(r => setTimeout(r, CAP))])
+    // without capturing the setTimeout handle leaks a timer whenever `pending`
+    // settles first — the cap timer stays armed in the event loop for the
+    // full STOP_WAIT_CAP_MS after shutdown. Three schedulers (push/ingest/
+    // introspect) stopping together would leave up to 3 stray timers.
+    let resolveTick: (() => void) | undefined
+    const onTick = vi.fn(() => new Promise<void>((res) => { resolveTick = res }))
+    const stop = startCompanionScheduler({
+      intervalMs: 1000, jitterRatio: 0,
+      shouldRun: () => true,
+      onTick, log: () => {},
+    })
+
+    await vi.advanceTimersByTimeAsync(1100)
+    expect(onTick).toHaveBeenCalledTimes(1)
+
+    const stopPromise = stop()
+    resolveTick?.()   // pending wins the race, well before the 4s cap
+    await stopPromise
+
+    // Nothing should still be armed — no cap timer, no re-armed scheduler
+    // timer (stop() marks stopped before scheduleNext() re-checks it), no
+    // tickTimeoutMs guard (cleared by runBoundedTick's own finally once
+    // onTick settles).
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('stop() gives up after STOP_WAIT_CAP_MS if the tick never finishes', async () => {
     const onTick = vi.fn(() => new Promise<void>(() => {})) // never resolves
     const stop = startCompanionScheduler({

@@ -135,10 +135,18 @@ export function startCompanionScheduler(deps: CompanionSchedulerDeps): () => Pro
     // settle on its own past the cap, same as the tickTimeoutMs guard above.
     const pending = current
     if (pending) {
-      await Promise.race([
-        pending,
-        new Promise<void>((resolve) => setTimeout(resolve, STOP_WAIT_CAP_MS)),
-      ])
+      let capTimer: ReturnType<typeof setTimeout> | undefined
+      const cap = new Promise<void>((resolve) => {
+        capTimer = setTimeout(resolve, STOP_WAIT_CAP_MS)
+      })
+      try {
+        await Promise.race([pending, cap])
+      } finally {
+        // If `pending` wins the race, the cap timer is still armed — clear it
+        // so it doesn't linger in the event loop for the full 4s past
+        // shutdown (three schedulers stopping = up to 3 stray timers).
+        if (capTimer) clearTimeout(capTimer)
+      }
     }
   }
 }
