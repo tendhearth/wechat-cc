@@ -104,7 +104,11 @@ export function startCompanionScheduler(deps: CompanionSchedulerDeps): Companion
       timer = null
       if (stopped) return
       try {
-        if (deps.shouldRun()) {
+        // 单飞的对称面:runNow() 那边"在途就复用",这边"在途就跳过这一拍"。
+        // 没有这条,长 nudge tick(ingest 最长 11 分钟)跑着时 cadence 到点
+        // 会并发再起一个 onTick,并把 current 覆盖 —— stop() 只等得到较晚
+        // 那个,较早的游离在外。跳过一拍无损:活刚被 nudge 干过。
+        if (current === null && deps.shouldRun()) {
           const p = runHeldTick()
           current = p
           await p

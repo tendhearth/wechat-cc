@@ -375,6 +375,33 @@ describe('startCompanionScheduler — runNow()', () => {
     await scheduler.stop()
   })
 
+  it('单飞是对称的:runNow tick 在途时 cadence 定时器到点跳过这一拍,不并发第二个 onTick', async () => {
+    let resolveTick: (() => void) | undefined
+    const onTick = vi.fn(() => new Promise<void>((res) => { resolveTick = res }))
+    const scheduler = startCompanionScheduler({
+      intervalMs: 1_000, jitterRatio: 0,
+      shouldRun: () => true,
+      onTick, log: () => {},
+    })
+
+    const p1 = scheduler.runNow()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(onTick).toHaveBeenCalledTimes(1)
+
+    // cadence 到点,nudge tick 还没结束 —— 必须跳过,不得再起一个
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(onTick).toHaveBeenCalledTimes(1)
+
+    resolveTick?.()
+    await p1
+    // 在途的结束之后,后续 cadence 恢复正常
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(onTick).toHaveBeenCalledTimes(2)
+
+    resolveTick?.()
+    await scheduler.stop()
+  })
+
   it('is single-flight: a second runNow() while one is in progress returns the SAME promise, not a second onTick call', async () => {
     let resolveTick: (() => void) | undefined
     const onTick = vi.fn(() => new Promise<void>((res) => { resolveTick = res }))
