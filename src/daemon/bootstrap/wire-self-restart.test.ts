@@ -11,20 +11,28 @@ import { wireSelfRestart } from './wire-self-restart'
 // `busy`/`lastPollSuccessAgoMs` it's given through to the returned check,
 // rather than silently keeping the old TEMP behavior.
 //
-// No mocking of git (readGitHead/readGitLockfileBlob) — same posture as
-// bootstrap.test.ts's own self-restart test: real, read-only, offline,
-// ~10ms in a checkout. `now` IS injectable (unlike the git reads), which is
-// what lets these tests bypass the 5-minute BOOT_GRACE_MS window without
-// a real sleep.
+// `readHead`/`readLockBlob` are fake here (code review #3 on Task 6) — same
+// injection-seam shape/posture as `SelfRestartDeps.readHead`/`readLockBlob`
+// in `../self-restart/wire.ts` (default to the real git implementation;
+// production wiring in bootstrap/index.ts never overrides them). Faking
+// them makes every assertion below deterministic regardless of whether the
+// test environment has a working git checkout — the tests below want to
+// prove `busy()`/`lastPollSuccessAgoMs()` gate the outcome, not that git
+// happens to be present.
+const fakeHead = () => 'a'.repeat(40)
+
 describe('wireSelfRestart', () => {
-  it('returns null when requestRestart is absent — mechanism fully inert', async () => {
+  it('returns null when requestRestart is absent — mechanism fully inert (no git read either)', async () => {
+    const readHead = vi.fn()
     const wired = await wireSelfRestart({
       anyInFlight: () => false,
       busy: () => false,
       lastPollSuccessAgoMs: () => null,
       log: () => {},
+      readHead,
     })
     expect(wired).toBeNull()
+    expect(readHead).not.toHaveBeenCalled()
   })
 
   it('returns a callable check + a real activity marker when requestRestart is provided', async () => {
@@ -34,6 +42,8 @@ describe('wireSelfRestart', () => {
       busy: () => false,
       lastPollSuccessAgoMs: () => null,
       log: () => {},
+      readHead: async () => fakeHead(),
+      readLockBlob: async () => 'lockblob',
     })
     expect(wired).not.toBeNull()
     expect(typeof wired!.check).toBe('function')
@@ -59,6 +69,8 @@ describe('wireSelfRestart', () => {
       lastPollSuccessAgoMs,
       log: () => {},
       now,
+      readHead: async () => fakeHead(),
+      readLockBlob: async () => 'lockblob',
     })
     expect(wired).not.toBeNull()
 
@@ -83,6 +95,8 @@ describe('wireSelfRestart', () => {
       lastPollSuccessAgoMs,
       log: () => {},
       now,
+      readHead: async () => fakeHead(),
+      readLockBlob: async () => 'lockblob',
     })
     expect(wired).not.toBeNull()
 
@@ -106,6 +120,8 @@ describe('wireSelfRestart', () => {
       lastPollSuccessAgoMs,
       log: () => {},
       now,
+      readHead: async () => fakeHead(),
+      readLockBlob: async () => 'lockblob',
     })
     expect(wired).not.toBeNull()
 
@@ -126,9 +142,29 @@ describe('wireSelfRestart', () => {
       lastPollSuccessAgoMs: () => 0,
       log: () => {},
       now,
+      readHead: async () => fakeHead(),
+      readLockBlob: async () => 'lockblob',
     })
     expect(wired).not.toBeNull()
     clock += 300_001
     await expect(wired!.check()).resolves.toBeUndefined()
+  })
+
+  it('readLockBlob is skipped entirely when readHead resolves null (boot-time short-circuit, Task 3 review #2 posture preserved)', async () => {
+    const readLockBlob = vi.fn(async () => 'lockblob')
+    const wired = await wireSelfRestart({
+      requestRestart: () => {},
+      anyInFlight: () => false,
+      busy: () => false,
+      lastPollSuccessAgoMs: () => 0,
+      log: () => {},
+      readHead: async () => null,
+      readLockBlob,
+    })
+    expect(wired).not.toBeNull()
+    expect(readLockBlob).not.toHaveBeenCalled()
+    // loadedHead === null ⇒ check() must be a permanent no-op regardless of
+    // how idle/fresh everything else looks.
+    await wired!.check()
   })
 })

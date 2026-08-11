@@ -58,6 +58,16 @@ export interface WireSelfRestartDeps {
   lastPollSuccessAgoMs: (nowMs: number) => number | null
   log: (tag: string, line: string) => void
   now?: () => number
+  /**
+   * Injection seams for the two boot-time git reads — same shape/posture as
+   * `SelfRestartDeps.readHead`/`readLockBlob` in `../self-restart/wire.ts`
+   * (default to the real implementation; tests override to avoid depending
+   * on a git checkout being present/deterministic). Not used by production
+   * wiring (bootstrap/index.ts never overrides these — the real git reads
+   * are exactly what the mechanism needs there).
+   */
+  readHead?: typeof readGitHead
+  readLockBlob?: typeof readGitLockfileBlob
 }
 
 export interface WireSelfRestartResult {
@@ -68,20 +78,22 @@ export interface WireSelfRestartResult {
 export async function wireSelfRestart(deps: WireSelfRestartDeps): Promise<WireSelfRestartResult | null> {
   if (!deps.requestRestart) return null
   const now = deps.now ?? Date.now
+  const readHead = deps.readHead ?? readGitHead
+  const readLockBlob = deps.readLockBlob ?? readGitLockfileBlob
   const cwd = repoRootForGitHead()
   const bootAtMs = now()
   // readGitHead never throws and returns null on any failure (not a repo,
   // git missing, timeout) — a null loadedHead makes shouldSelfRestart
   // return false forever, which is the correct "don't move" outcome for
   // compiled binaries / non-git checkouts.
-  const loadedHead = await readGitHead({ cwd })
+  const loadedHead = await readHead({ cwd })
   // bun.lock's blob at boot (Task 3 review #2) — the check refuses to
   // restart if this drifts, so a manual `git pull` that changed the
   // dependency tree can't restart us into a node_modules that
   // `bun install` hasn't caught up with yet. Skipped entirely when
   // loadedHead is already null: the check returns before ever reading
   // it, so there's no reason to pay for a second git spawn at boot.
-  const bootLockBlob = loadedHead === null ? null : await readGitLockfileBlob({ cwd })
+  const bootLockBlob = loadedHead === null ? null : await readLockBlob({ cwd })
   const marker = makeActivityMarker({ now })
   const requestRestart = deps.requestRestart
   const check = makeSelfRestartCheck({
