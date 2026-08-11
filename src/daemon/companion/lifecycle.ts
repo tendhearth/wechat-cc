@@ -47,7 +47,7 @@ export interface IngestLifecycle extends Lifecycle {
 }
 
 export function registerCompanionPush(deps: CompanionPushDeps): Lifecycle {
-  const stop = startCompanionScheduler({
+  const scheduler = startCompanionScheduler({
     name: 'push',
     intervalMs: deps.intervalMs ?? PUSH_INTERVAL_MS,
     jitterRatio: JITTER,
@@ -59,7 +59,7 @@ export function registerCompanionPush(deps: CompanionPushDeps): Lifecycle {
   let stopped = false
   return {
     name: 'companion-push',
-    stop: async () => { if (!stopped) { stopped = true; await stop() } },
+    stop: async () => { if (!stopped) { stopped = true; await scheduler.stop() } },
   }
 }
 
@@ -76,7 +76,7 @@ export interface CompanionIngestDeps extends CompanionPushDeps {
  * re-checked at fire time so a disabled loop never fires.
  */
 export function registerIngest(deps: CompanionIngestDeps): IngestLifecycle {
-  const stop = startCompanionScheduler({
+  const scheduler = startCompanionScheduler({
     name: 'ingest',
     intervalMs: deps.intervalMs ?? INGEST_INTERVAL_MS,
     jitterRatio: JITTER,
@@ -94,8 +94,18 @@ export function registerIngest(deps: CompanionIngestDeps): IngestLifecycle {
     if (nudgeTimer) clearTimeout(nudgeTimer)   // trailing: each nudge resets the timer
     nudgeTimer = setTimeout(() => {
       nudgeTimer = null
-      if (stopped || !deps.shouldRun()) return
-      void Promise.resolve(deps.onTick()).catch(err => deps.log('INGEST', `nudge tick failed: ${err instanceof Error ? err.message : String(err)}`))
+      if (stopped) return
+      // Code review fix (C1, 2026-08-11): this used to call `deps.onTick()`
+      // directly — bypassing the scheduler entirely, so a nudge-triggered
+      // ingest run held NO busy token, had NO tickTimeoutMs guard, and was
+      // invisible to stop()'s wait-for-in-flight. The nudge fires
+      // NUDGE_DELAY_MS (3 min) into silence — i.e. right as `quietFor`
+      // crosses the self-restart idle threshold (120s) — so a HEAD change
+      // could kill a mid-flight ingest run every single time it fired.
+      // scheduler.runNow() routes through the SAME held+guarded+tracked
+      // path a cadence tick uses (it also re-checks shouldRun() itself, so
+      // the check that used to live here is redundant and removed).
+      void scheduler.runNow().catch(err => deps.log('INGEST', `nudge tick failed: ${err instanceof Error ? err.message : String(err)}`))
     }, delay)
     nudgeTimer.unref?.()   // don't keep the process alive for a pending nudge
   }
@@ -106,7 +116,10 @@ export function registerIngest(deps: CompanionIngestDeps): IngestLifecycle {
       if (stopped) return
       stopped = true
       if (nudgeTimer) { clearTimeout(nudgeTimer); nudgeTimer = null }
-      await stop()
+      // scheduler.stop() now also waits (bounded) for a nudge-triggered run
+      // in flight — it's tracked through the same `current` the scheduler
+      // uses for cadence ticks, since runNow() goes through runHeldTick().
+      await scheduler.stop()
     },
     nudge,
   }
@@ -115,7 +128,7 @@ export function registerIngest(deps: CompanionIngestDeps): IngestLifecycle {
 export interface CompanionIntrospectDeps extends CompanionPushDeps {}
 
 export function registerCompanionIntrospect(deps: CompanionIntrospectDeps): Lifecycle {
-  const stop = startCompanionScheduler({
+  const scheduler = startCompanionScheduler({
     name: 'introspect',
     intervalMs: deps.intervalMs ?? INTROSPECT_INTERVAL_MS,
     jitterRatio: JITTER,
@@ -127,6 +140,6 @@ export function registerCompanionIntrospect(deps: CompanionIntrospectDeps): Life
   let stopped = false
   return {
     name: 'companion-introspect',
-    stop: async () => { if (!stopped) { stopped = true; await stop() } },
+    stop: async () => { if (!stopped) { stopped = true; await scheduler.stop() } },
   }
 }

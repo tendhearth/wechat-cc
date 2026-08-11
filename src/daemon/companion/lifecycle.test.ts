@@ -196,4 +196,69 @@ describe('registerIngest — new-message nudge (debounced)', () => {
     await vi.advanceTimersByTimeAsync(2000)
     expect(onTick).not.toHaveBeenCalled()
   })
+
+  // C1 fix (code review, 2026-08-11): nudge() used to call `deps.onTick()`
+  // directly, bypassing the scheduler entirely — a nudge-triggered ingest
+  // run held no busy token and stop() never waited for it. The nudge fires
+  // NUDGE_DELAY_MS (3 min) into silence, i.e. right as `quietFor` crosses
+  // the self-restart idle threshold (120s) — so this was the single
+  // highest-probability way for the self-restart mechanism to kill a live
+  // ingest cycle. nudge() now routes through scheduler.runNow(), the SAME
+  // held+guarded+tracked path a cadence tick uses.
+  it('a nudge-triggered tick holds a busy-registry token while running, released once it settles', async () => {
+    let active = 0
+    const release = vi.fn(() => { active-- })
+    const holdBusy = vi.fn((label: string) => { expect(label).toBe('companion-ingest'); active++; return release })
+    let resolveTick: () => void = () => {}
+    const onTick = vi.fn(() => new Promise<void>(resolve => { resolveTick = resolve }))
+    const lc = registerIngest({
+      shouldRun: () => true,
+      log: () => {},
+      onTick,
+      intervalMs: 1e9,
+      nudgeDelayMs: 1000,
+      holdBusy,
+    })
+
+    lc.nudge()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(onTick).toHaveBeenCalledTimes(1)
+    expect(holdBusy).toHaveBeenCalledTimes(1)
+    expect(active).toBe(1)   // busy while the nudge-triggered tick runs
+
+    resolveTick()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(active).toBe(0)
+
+    await lc.stop()
+  })
+
+  it('stop() waits (bounded) for a nudge-triggered tick in flight before resolving', async () => {
+    let resolveTick: () => void = () => {}
+    const onTick = vi.fn(() => new Promise<void>(resolve => { resolveTick = resolve }))
+    const lc = registerIngest({
+      shouldRun: () => true,
+      log: () => {},
+      onTick,
+      intervalMs: 1e9,
+      nudgeDelayMs: 1000,
+    })
+
+    lc.nudge()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(onTick).toHaveBeenCalledTimes(1)
+
+    let stopSettled = false
+    const stopPromise = lc.stop().then(() => { stopSettled = true })
+    // stop() must not resolve while the nudge-triggered tick is still running.
+    await vi.advanceTimersByTimeAsync(0)
+    expect(stopSettled).toBe(false)
+
+    resolveTick()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(stopSettled).toBe(true)
+
+    await stopPromise
+  })
 })

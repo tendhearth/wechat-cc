@@ -58,7 +58,36 @@ const DEFAULT_TICK_TIMEOUT_MS = 11 * 60_000
  */
 export const STOP_WAIT_CAP_MS = 4_000
 
-export function startCompanionScheduler(deps: CompanionSchedulerDeps): () => Promise<void> {
+export interface CompanionSchedulerHandle {
+  /**
+   * Graceful stop (spec 2026-08-11 §6) — bounded wait for an in-flight
+   * tick (cadence-driven OR triggered via runNow()) before giving up and
+   * returning anyway.
+   */
+  stop(): Promise<void>
+  /**
+   * Run a tick right now, through the SAME path a cadence-driven tick
+   * uses: `shouldRun()` gate, busy-registry hold, `tickTimeoutMs` guard,
+   * and `stop()`'s bounded wait for an in-flight tick all apply
+   * identically. Added so callers with a second trigger (e.g.
+   * companion/lifecycle.ts's debounced ingest nudge) don't hand-roll a
+   * second, unheld/unguarded/unwaited call path to `onTick` — that gap
+   * (nudge calling `onTick` directly) meant a nudge-triggered ingest tick
+   * held no busy token, so the idle self-restart check could — and,
+   * because the nudge fires 3 minutes into silence, routinely would —
+   * treat a mid-flight ingest run as idle and kill it.
+   *
+   * Single-flight: if a tick is already in progress (cadence-driven or a
+   * prior `runNow()`), this returns that SAME promise rather than
+   * starting a second concurrent `onTick` — cadence ticks only ever
+   * re-arm after the previous one settles, so at most one tick has ever
+   * been in flight at a time; `runNow()` preserves that invariant now
+   * that a second trigger exists.
+   */
+  runNow(): Promise<void>
+}
+
+export function startCompanionScheduler(deps: CompanionSchedulerDeps): CompanionSchedulerHandle {
   let stopped = false
   let timer: ReturnType<typeof setTimeout> | null = null
   // The in-flight tick's promise, tracked so stop() can wait for it (bounded).
@@ -126,7 +155,7 @@ export function startCompanionScheduler(deps: CompanionSchedulerDeps): () => Pro
   scheduleNext()
   deps.log('SCHED', `${deps.name ?? 'companion'} scheduler started — interval ${deps.intervalMs}ms ± ${Math.round(deps.jitterRatio * 100)}%`)
 
-  return async () => {
+  async function stop(): Promise<void> {
     stopped = true
     if (timer) { clearTimeout(timer); timer = null }
     // Graceful shutdown for a tick means actually waiting for it, not just
@@ -149,4 +178,22 @@ export function startCompanionScheduler(deps: CompanionSchedulerDeps): () => Pro
       }
     }
   }
+
+  // See CompanionSchedulerHandle['runNow']'s doc comment for the full
+  // rationale. Mirrors scheduleNext's timer callback's own gate/hold/track
+  // sequence (`if (deps.shouldRun()) { const p = runHeldTick(); current = p;
+  // ... }`) — same shouldRun() re-check, same runHeldTick() (hold +
+  // tickTimeoutMs guard), same `current` tracking so stop() sees it.
+  function runNow(): Promise<void> {
+    if (stopped) return Promise.resolve()
+    // Single-flight: reuse the in-flight promise rather than starting a
+    // second concurrent onTick.
+    if (current) return current
+    if (!deps.shouldRun()) return Promise.resolve()
+    const p = runHeldTick()
+    current = p
+    return p
+  }
+
+  return { stop, runNow }
 }
