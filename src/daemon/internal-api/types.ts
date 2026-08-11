@@ -338,6 +338,20 @@ export interface InternalApiDeps {
    * recorded yet" is a normal state.
    */
   incidents?: import('../health/incident-store').IncidentStore
+  /**
+   * busy-registry hold (spec 2026-08-11 §2, Task 4 step 1) — index.ts's
+   * dispatcher holds a token for the duration of every AUTHENTICATED
+   * NON-GET request's handler await (label `api:${method} ${path}`),
+   * released in a finally right after the handler settles. This is the
+   * "still working" complement to `markInboundActivity` above: the mark
+   * only proves someone showed up a moment ago, this proves the request
+   * is still in flight RIGHT NOW, so the idle self-restart check (which
+   * reads busy()) doesn't kill a slow customer-review / plugin-install /
+   * memory-write mid-flight. ABSENT ⇒ no-op, exactly as before this
+   * feature existed. GET is deliberately excluded — same rationale as
+   * markInboundActivity (the dashboard polls GET every 5s forever).
+   */
+  holdBusy?: (label: string) => () => void
 }
 
 export interface InternalApi {

@@ -31,12 +31,21 @@ export function customerReviewRoutes(deps: InternalApiDeps): RouteTable {
   function launch(id: string): void {
     if (!deps.customerReview || inFlight.has(id)) return
     inFlight.add(id)
+    // busy-registry hold (spec 2026-08-11 §2, Task 4 step 2) — this is a
+    // fire-and-forget task outside SessionManager; hold a token for its
+    // whole run so the idle self-restart check doesn't kill a review
+    // mid-flight. Released at the same point inFlight is cleared.
+    let releaseBusy: (() => void) | undefined
+    try { releaseBusy = deps.holdBusy?.('customer-review') } catch { releaseBusy = undefined }
     void deps.customerReview.runReview(id)
       .catch(error => {
         const safe = handledError(error)
         deps.log?.('CUSTOMER_REVIEW', `task ${id} failed: ${(safe.body as { error?: string }).error ?? 'INTERNAL_ERROR'}`)
       })
-      .finally(() => inFlight.delete(id))
+      .finally(() => {
+        inFlight.delete(id)
+        try { releaseBusy?.() } catch { /* release 幂等且不抛,防御性 */ }
+      })
   }
 
   return {

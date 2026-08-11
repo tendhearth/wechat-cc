@@ -64,6 +64,45 @@ export interface SocialDeps {
    *  penpal-repointed wiring (reveal crosses pubkey handles, not URLs/names);
    *  kept on the interface for index.ts's existing wiring + any future use. */
   getServerBaseUrl: () => string | null
+  /**
+   * busy-registry hold (spec 2026-08-11 §2, Task 4 step 4) — the broker's
+   * forage() and the async responder's judge/echo/forward both run as
+   * background fire-and-forget coroutines outside SessionManager, via each
+   * core module's own `schedule` injection seam. Threaded into a custom
+   * `schedule` closure below (label 'social-forage' / 'social-responder')
+   * so the idle self-restart check can see them running. ABSENT ⇒ no-op,
+   * exactly as before this feature existed.
+   */
+  holdBusy?: (label: string) => () => void
+}
+
+/**
+ * Wraps a bare fire-and-forget coroutine so a busy-registry token is held
+ * for its whole run, released once it settles (success or throw) — same
+ * "still working" complement to markInboundActivity as the other three
+ * Task-4 hold points. Matches the `schedule?(fn): void` seam shape both
+ * social-broker.ts and social-async-responder.ts already expose (their own
+ * defaults are a bare `void fn()` / `void fn().catch(() => {})`); this is
+ * that same fire-and-forget shape with a hold/release wrapped around it.
+ * Exported for direct unit testing — production wiring uses it below.
+ */
+export function makeBusySchedule(
+  label: string,
+  holdBusy?: (label: string) => () => void,
+): (fn: () => Promise<void>) => void {
+  return (fn) => {
+    let release: (() => void) | undefined
+    try { release = holdBusy?.(label) } catch { release = undefined }
+    void Promise.resolve().then(fn)
+      .finally(() => {
+        try { release?.() } catch { /* release 幂等且不抛,防御性 */ }
+      })
+      // Both callers' own fn already swallow their internal errors (forage /
+      // the responder's judge+echo+forward loop), so this is belt-and-braces:
+      // a schedule wrapper must never turn a caller's fire-and-forget into an
+      // unhandled rejection just because it added a hold/release around it.
+      .catch(() => {})
+  }
 }
 
 export interface SocialWiring {
@@ -564,6 +603,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         hasSeen: (intentId) => { try { return seenIntentStore.hasSeen(intentId) } catch { return false } },
         withinBudget: withinForwardBudget,
         hopCap: 2,
+        schedule: makeBusySchedule('social-responder', deps.holdBusy),
         log: deps.log,
       })
 
@@ -600,6 +640,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           try { seekStore.update(intentId, { peersAsked }) }
           catch (err) { deps.log('SOCIAL_REC', `markForaged failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
         },
+        schedule: makeBusySchedule('social-forage', deps.holdBusy),
       })
       socialBroker = {
         propose: (topic, opts) => broker.propose(topic, opts),

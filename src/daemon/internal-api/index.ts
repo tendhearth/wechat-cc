@@ -227,6 +227,14 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       : undefined
     const callerInfo = { tier: caller.tier, origin: caller.origin, chatId: callerChatId }
 
+    // busy-registry hold (spec 2026-08-11 §2) — non-GET authenticated
+    // request awaits the handler with a token held, released right after.
+    // Same "worst case" motivation as markInboundActivity above: without
+    // this, a slow handler is invisible to the idle self-restart check
+    // between activity ticks. holdBusy itself must never break the request.
+    const releaseBusy = method !== 'GET'
+      ? (() => { try { return deps.holdBusy?.(`api:${routeKey}`) } catch { return undefined } })()
+      : undefined
     try {
       const out = await route(url.searchParams, body, callerInfo)
       send(res, out.status, out.body, origin)
@@ -238,6 +246,8 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
         error: errMsg(err),
       })
       send(res, 500, { error: 'internal', detail: errMsg(err) }, origin)
+    } finally {
+      try { releaseBusy?.() } catch { /* release 幂等且不抛,防御性 */ }
     }
   }
 

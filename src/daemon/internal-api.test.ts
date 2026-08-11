@@ -4141,4 +4141,85 @@ describe('internal-api request validation', () => {
       }
     })
   })
+
+  // ─── busy-registry hold (spec 2026-08-11 §2, Task 4 step 1) ──────────────
+  describe('busy-registry hold around non-GET handler execution', () => {
+    it('holds a token for the duration of an authenticated non-GET handler, released after it resolves', async () => {
+      const events: string[] = []
+      let releaseFn: (() => void) | undefined
+      const holdBusy = vi.fn((label: string) => {
+        events.push(`hold:${label}`)
+        const release = vi.fn(() => events.push(`release:${label}`))
+        releaseFn = release
+        return release
+      })
+      let resolveConverse: (v: { reply: string }) => void = () => {}
+      const companionConverse = vi.fn(() => new Promise<{ reply: string }>(resolve => { resolveConverse = resolve }))
+      api = createInternalApi({ stateDir, daemonPid: 1, holdBusy, companionConverse })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
+
+      const fetchPromise = fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+
+      // Wait for the handler to actually be in flight (companionConverse called)
+      // before asserting hold state — avoids a race against the event loop.
+      await vi.waitFor(() => expect(companionConverse).toHaveBeenCalled())
+      expect(holdBusy).toHaveBeenCalledTimes(1)
+      expect(holdBusy).toHaveBeenCalledWith('api:POST /v1/companion/converse')
+      expect(releaseFn).not.toHaveBeenCalled()
+
+      resolveConverse({ reply: 'hey' })
+      const resp = await fetchPromise
+      expect(resp.status).toBe(200)
+      expect(releaseFn).toHaveBeenCalledTimes(1)
+      expect(events).toEqual(['hold:api:POST /v1/companion/converse', 'release:api:POST /v1/companion/converse'])
+    })
+
+    it('never calls holdBusy for GET requests', async () => {
+      const holdBusy = vi.fn(() => vi.fn())
+      api = createInternalApi({ stateDir, daemonPid: 1, holdBusy })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/health`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(200)
+      expect(holdBusy).not.toHaveBeenCalled()
+    })
+
+    it('releases the token even when the handler throws (500 path)', async () => {
+      const release = vi.fn()
+      const holdBusy = vi.fn(() => release)
+      const companionConverse = vi.fn(async (): Promise<{ reply: string }> => { throw new Error('boom') })
+      api = createInternalApi({ stateDir, daemonPid: 1, holdBusy, companionConverse })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(500)
+      expect(holdBusy).toHaveBeenCalledTimes(1)
+      expect(release).toHaveBeenCalledTimes(1)
+    })
+
+    it('a holdBusy that throws never breaks the request (defensive catch)', async () => {
+      const holdBusy = vi.fn(() => { throw new Error('registry exploded') })
+      api = createInternalApi({ stateDir, daemonPid: 1, holdBusy, companionConverse: async () => ({ reply: 'hey' }) })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true, reply: 'hey' })
+    })
+  })
 })
