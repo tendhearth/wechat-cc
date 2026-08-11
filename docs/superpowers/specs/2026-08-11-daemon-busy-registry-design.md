@@ -59,6 +59,7 @@ export function makeBusyRegistry(): BusyRegistry
 - 自我重启的空闲判定增加第三个条件:`now - lastSuccessAt('wechat') <= POLL_FRESH_MS`(`POLL_FRESH_MS = 120_000`,与 IDLE_QUIET_MS 同量纲)。**取不到(null / health 未注入)⇒ 不空闲 ⇒ 不重启**,与整套机制的失败方向一致。
 - 语义:唤醒后 `lastSuccessAt` 是 8 小时前 ⇒ 挡住,直到 poll 真的成功一次;正常运行时 poll 每 ~2 秒成功一次 ⇒ 恒新鲜;长断网 ⇒ 挡住(断线时该做的是更少,不是更多 —— 与"断线不发消息"的既有共识同向)。
 - 数据源:`poll-loop.ts:399` 已在每次成功 poll 调 `health.recordSuccess('wechat')`,不需要新埋点。
+- **已知边界(终审 I3,裁定:方向安全,接受,不修)**:一台从未成功起过 poll 的机器(例如账号从未绑定、或自装机以来 wechat 连接就没通过一次)—— `lastSuccessAt('wechat')` 永远是 `null`,`fresh` 永远为 false,自我重启因此永久关闭。这与"取不到 ⇒ 不空闲 ⇒ 不重启"的失败方向完全一致,只是这台机器恰好**永远**取不到——代价是这类机器即使 `git pull` 了新代码也不会自我重启,需要人工重启一次才能加载。判定为可接受:这类机器本就没有在正常服务,人工介入是预期路径。
 
 ## §5 自我重启侧的改动
 
