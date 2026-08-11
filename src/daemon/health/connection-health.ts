@@ -20,6 +20,8 @@ export interface HealthState {
   firstFailureAt: number | null
   consecutiveFailures: number
   lastError: string | null
+  /** 上一次成功的时刻(ms);未成功过时为 null。自我重启的唤醒闸门数据源。 */
+  lastSuccessAt: number | null
 }
 
 /**
@@ -38,7 +40,7 @@ export interface ConnectionHealth {
 }
 
 function fresh(): HealthState {
-  return { status: 'healthy', firstFailureAt: null, consecutiveFailures: 0, lastError: null }
+  return { status: 'healthy', firstFailureAt: null, consecutiveFailures: 0, lastError: null, lastSuccessAt: null }
 }
 
 function messageOf(err: unknown): string {
@@ -62,7 +64,9 @@ export function makeConnectionHealth(deps: { now: () => number }): ConnectionHea
 
   return {
     recordSuccess(dep) {
-      states.set(dep, fresh())
+      const next = fresh()
+      next.lastSuccessAt = deps.now()
+      states.set(dep, next)
     },
     recordFailure(dep, err) {
       const s = stateOf(dep)
