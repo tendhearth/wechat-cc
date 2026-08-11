@@ -24,6 +24,8 @@ function setup(over: Partial<SelfRestartDeps> = {}) {
     bootLockBlob: 'lock000',
     readLockBlob: async () => 'lock000',
     readDirty: async () => 'clean' as const,
+    busy: () => false,
+    lastPollSuccessAgoMs: () => 0,
     ...over,
   })
   return { t, restarts, check }
@@ -179,5 +181,42 @@ describe('makeSelfRestartCheck', () => {
     await check()
     expect(restarts).toEqual([])
     expect(spawned).toBe(0)
+  })
+
+  // spec 2026-08-11 §5 —— busy 登记处
+  it('登记处有工作在跑 ⇒ 不重启,且不 spawn git', async () => {
+    let spawned = 0
+    const { restarts, check } = setup({ busy: () => true, readHead: async () => { spawned++; return 'bbb222' } })
+    await check()
+    expect(restarts).toEqual([])
+    expect(spawned).toBe(0)
+  })
+  it('busy() 抛异常 ⇒ 吞掉,不重启', async () => {
+    const { restarts, check } = setup({ busy: () => { throw new Error('boom') } })
+    await expect(check()).resolves.toBeUndefined()
+    expect(restarts).toEqual([])
+  })
+  it('git 调用期间登记处出现工作 ⇒ 临门复查拦下', async () => {
+    let b = false
+    const { restarts, check } = setup({ busy: () => b, readHead: async () => { b = true; return 'bbb222' } })
+    await check()
+    expect(restarts).toEqual([])
+  })
+
+  // spec 2026-08-11 §4 —— poll 新鲜度(唤醒闸门)
+  it('poll 从未成功(null)⇒ 不重启', async () => {
+    const { restarts, check } = setup({ lastPollSuccessAgoMs: () => null })
+    await check()
+    expect(restarts).toEqual([])
+  })
+  it('上次 poll 成功已超过 2 分钟(如睡眠唤醒)⇒ 不重启', async () => {
+    const { restarts, check } = setup({ lastPollSuccessAgoMs: () => 120_001 })
+    await check()
+    expect(restarts).toEqual([])
+  })
+  it('恰好 2 分钟整 ⇒ 仍算新鲜,重启', async () => {
+    const { restarts, check } = setup({ lastPollSuccessAgoMs: () => 120_000 })
+    await check()
+    expect(restarts).toHaveLength(1)
   })
 })

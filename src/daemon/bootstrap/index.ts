@@ -618,6 +618,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       quietFor: (nowMs) => marker.quietFor(nowMs),
       requestRestart,
       log: deps.log,
+      // TEMP: Task 6 搬家时接真信号;null ⇒ 永不重启,失败方向安全。
+      busy: () => false,
+      lastPollSuccessAgoMs: () => null,
     })
   }
 

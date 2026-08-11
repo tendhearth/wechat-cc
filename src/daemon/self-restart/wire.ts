@@ -19,6 +19,9 @@ import { readGitHead, readGitLockfileBlob, readGitWorktreeDirty } from './git-he
 /** 空闲要求:最近这么久没有任何入站消息。 */
 export const IDLE_QUIET_MS = 120_000
 
+/** poll 新鲜度要求:最近这么久内 wechat poll 成功过(spec 2026-08-11 §4)。 */
+export const POLL_FRESH_MS = 120_000
+
 export interface SelfRestartDeps {
   cwd: string
   loadedHead: string | null
@@ -44,6 +47,14 @@ export interface SelfRestartDeps {
   bootLockBlob: string | null
   readLockBlob?: typeof readGitLockfileBlob
   readDirty?: typeof readGitWorktreeDirty
+  /**
+   * 是否有工作在跑(busy 登记处,spec 2026-08-11 §5)——覆盖不经
+   * SessionManager 的长任务,是 anyInFlight() 之外的另一条在途信号。
+   * 抛异常时外层 catch 兜底 ⇒ 不重启(失败方向安全)。
+   */
+  busy: () => boolean
+  /** 最近一次 wechat poll 成功距今 ms;null = 从未成功/取不到 ⇒ 不重启。 */
+  lastPollSuccessAgoMs: (nowMs: number) => number | null
 }
 
 export function makeSelfRestartCheck(deps: SelfRestartDeps): () => Promise<void> {
@@ -66,7 +77,9 @@ export function makeSelfRestartCheck(deps: SelfRestartDeps): () => Promise<void>
       if (deps.loadedHead === null) return
       const nowMs = deps.now()
       if (nowMs - deps.bootAtMs < BOOT_GRACE_MS) return
-      const idle = !deps.anyInFlight() && deps.quietFor(nowMs) >= IDLE_QUIET_MS
+      const ago = deps.lastPollSuccessAgoMs(nowMs)
+      const fresh = ago !== null && ago <= POLL_FRESH_MS
+      const idle = !deps.anyInFlight() && !deps.busy() && deps.quietFor(nowMs) >= IDLE_QUIET_MS && fresh
       if (!idle) return
 
       const currentHead = await readHead({ cwd: deps.cwd })
@@ -93,8 +106,11 @@ export function makeSelfRestartCheck(deps: SelfRestartDeps): () => Promise<void>
 
       // 到这里为止已经花了最多 ~9 秒在三次 git 调用上,而空闲是在最开头
       // 采样的。退出是不可撤销的,所以临门再查一次 —— 这期间进来的入站/
-      // App 请求会被上面那些打点记下,这一查就能看见。
-      if (deps.anyInFlight() || deps.quietFor(deps.now()) < IDLE_QUIET_MS) return
+      // App 请求、busy 登记处的新工作、或 poll 新鲜度过期,都会被这一查
+      // 拦下。
+      const nowMs2 = deps.now()
+      const ago2 = deps.lastPollSuccessAgoMs(nowMs2)
+      if (deps.anyInFlight() || deps.busy() || deps.quietFor(nowMs2) < IDLE_QUIET_MS || ago2 === null || ago2 > POLL_FRESH_MS) return
 
       requested = true
       deps.log('SELF_RESTART', `code on disk moved ${deps.loadedHead?.slice(0, 7)} → ${currentHead?.slice(0, 7)}; idle, restarting to load it`)
