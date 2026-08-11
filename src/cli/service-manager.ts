@@ -3,6 +3,7 @@ import { homedir, platform, userInfo } from 'node:os'
 import { dirname, join, posix } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { findOnPath } from '../lib/util'
+import { SUPERVISED_ENV } from '../core/supervised-env'
 
 export type ServicePlatform = 'darwin' | 'win32' | 'linux'
 export type ServiceKind = 'launchagent' | 'scheduled-task' | 'systemd-user'
@@ -437,7 +438,7 @@ function launchAgentPlist(opts: { bunPath: string; binaryPath?: string; cwd: str
   // available: a daemon that exits cleanly with no supervisor stays dead, and
   // by design says nothing about it.
   const envEntries = [
-    `<key>WECHAT_CC_SUPERVISED</key><string>1</string>`,
+    `<key>${SUPERVISED_ENV}</key><string>1</string>`,
     ...(opts.bundledPluginsDir
       ? [`<key>WECHAT_CC_BUNDLED_PLUGINS_DIR</key><string>${escapeXml(opts.bundledPluginsDir)}</string>`]
       : []),
@@ -481,7 +482,7 @@ Type=simple
 WorkingDirectory=${opts.cwd}
 Environment="CODEX_MODEL="
 Environment="WECHAT_AGENT_PROVIDER="
-Environment="WECHAT_CC_SUPERVISED=1"
+Environment="${SUPERVISED_ENV}=1"
 ${opts.bundledPluginsDir ? `Environment="WECHAT_CC_BUNDLED_PLUGINS_DIR=${opts.bundledPluginsDir}"\n` : ''}ExecStart=${execStart}
 Restart=always
 RestartSec=5

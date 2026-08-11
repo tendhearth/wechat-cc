@@ -18,6 +18,17 @@ export interface CompanionPushDeps {
    * so the engine can drive ticks deterministically.
    */
   intervalMs?: number
+  /**
+   * busy-registry hold (spec 2026-08-11 §2, Task 5/6) — forwarded straight
+   * to startCompanionScheduler, which holds a token for the duration of
+   * every running tick. Absent ⇒ no-op, exactly as before this feature
+   * existed. Wired from bootstrap's `boot.holdBusy` in
+   * src/daemon/wiring/lifecycle-deps.ts — this is the seam Task 5 left
+   * unforwarded and Task 6 closes: ingest's silence threshold is stricter
+   * than the self-restart idle threshold, so a running ingest tick is
+   * exactly the work most likely to be misjudged as "idle" without it.
+   */
+  holdBusy?: (label: string) => () => void
 }
 
 const PUSH_INTERVAL_MS = 20 * 60 * 1000
@@ -43,6 +54,7 @@ export function registerCompanionPush(deps: CompanionPushDeps): Lifecycle {
     shouldRun: deps.shouldRun,
     log: deps.log,
     onTick: deps.onTick,
+    holdBusy: deps.holdBusy,
   })
   let stopped = false
   return {
@@ -71,6 +83,7 @@ export function registerIngest(deps: CompanionIngestDeps): IngestLifecycle {
     shouldRun: deps.shouldRun,
     log: deps.log,
     onTick: deps.onTick,
+    holdBusy: deps.holdBusy,
   })
   let stopped = false
   let nudgeTimer: ReturnType<typeof setTimeout> | null = null
@@ -109,6 +122,7 @@ export function registerCompanionIntrospect(deps: CompanionIntrospectDeps): Life
     shouldRun: deps.shouldRun,
     log: deps.log,
     onTick: deps.onTick,
+    holdBusy: deps.holdBusy,
   })
   let stopped = false
   return {

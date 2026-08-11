@@ -34,6 +34,78 @@ describe('registerCompanionIntrospect', () => {
   })
 })
 
+// busy-registry hold forwarding (spec 2026-08-11 §2, Task 5 gap closed by
+// Task 6) — Task 5 taught scheduler.ts to accept an optional holdBusy, but
+// left CompanionPushDeps/IngestDeps/IntrospectDeps not forwarding it, so
+// production wiring (registerCompanionPush/Ingest/Introspect called from
+// main.ts via src/daemon/wiring/lifecycle-deps.ts) never actually reached
+// the scheduler with a real token. These tests prove all three register*
+// functions now forward `deps.holdBusy` through to the running tick —
+// scheduler.test.ts already covers the hold/release mechanics themselves,
+// so this only needs to prove the field crosses the lifecycle.ts seam.
+describe('holdBusy forwarding', () => {
+  const SAFE_INFINITY_MS = 1_000_000_000
+
+  it('registerCompanionPush forwards holdBusy to the running tick', async () => {
+    const holdBusy = vi.fn(() => vi.fn())
+    let resolveTick: () => void = () => {}
+    const onTick = vi.fn(() => new Promise<void>(resolve => { resolveTick = resolve }))
+    const lc = registerCompanionPush({
+      shouldRun: () => true,
+      log: () => {},
+      onTick,
+      intervalMs: 50,
+      holdBusy,
+    })
+    await vi.waitFor(() => expect(holdBusy).toHaveBeenCalledWith('companion-push'))
+    resolveTick()
+    await lc.stop()
+  })
+
+  it('registerIngest forwards holdBusy to the running tick', async () => {
+    const holdBusy = vi.fn(() => vi.fn())
+    let resolveTick: () => void = () => {}
+    const onTick = vi.fn(() => new Promise<void>(resolve => { resolveTick = resolve }))
+    const lc = registerIngest({
+      shouldRun: () => true,
+      log: () => {},
+      onTick,
+      intervalMs: 50,
+      holdBusy,
+    })
+    await vi.waitFor(() => expect(holdBusy).toHaveBeenCalledWith('companion-ingest'))
+    resolveTick()
+    await lc.stop()
+  })
+
+  it('registerCompanionIntrospect forwards holdBusy to the running tick', async () => {
+    const holdBusy = vi.fn(() => vi.fn())
+    let resolveTick: () => void = () => {}
+    const onTick = vi.fn(() => new Promise<void>(resolve => { resolveTick = resolve }))
+    const lc = registerCompanionIntrospect({
+      shouldRun: () => true,
+      log: () => {},
+      onTick,
+      intervalMs: 50,
+      holdBusy,
+    })
+    await vi.waitFor(() => expect(holdBusy).toHaveBeenCalledWith('companion-introspect'))
+    resolveTick()
+    await lc.stop()
+  })
+
+  it('holdBusy absent stays a safe no-op — same posture as before this field existed', () => {
+    const lc = registerCompanionPush({
+      shouldRun: () => false,
+      log: () => {},
+      onTick: async () => {},
+      intervalMs: SAFE_INFINITY_MS,
+    })
+    expect(lc.name).toBe('companion-push')
+    return lc.stop()
+  })
+})
+
 describe('intervalMs override', () => {
   // 1B ms ≈ 11.5 days. Chosen so even after the scheduler's ±30% jitter the
   // resulting setTimeout delay (≤1.3B ms) stays under int32 max (~2.15B ms).

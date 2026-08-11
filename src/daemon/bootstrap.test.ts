@@ -2504,4 +2504,33 @@ describe('bootstrap pairing-code wiring', () => {
     // (before dedup/routing) — it must be safe to call from that hot path.
     expect(() => withRestart.markInboundActivity!()).not.toThrow()
   })
+
+  // busy-registry hold (spec 2026-08-11 §1/§2, Task 6) — wiring-level check
+  // that Bootstrap ALWAYS exposes holdBusy (unlike markInboundActivity, the
+  // busy registry is constructed unconditionally — see bootstrap/index.ts's
+  // `const busyRegistry = makeBusyRegistry()`, independent of whether
+  // deps.requestRestart was provided). Bootstrap doesn't expose a busy()
+  // read端 (the self-restart idle check is the only consumer wired to read
+  // it — see wire-self-restart.test.ts for real-signal coverage at that
+  // layer), so the observable surface here is: present regardless of
+  // requestRestart, and calling it returns a safe, idempotent release.
+  it('holdBusy is present on Bootstrap regardless of whether requestRestart is wired, and returns a safe idempotent release', async () => {
+    for (const requestRestart of [undefined, () => {}]) {
+      const boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir: '/tmp/state',
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+        ...(requestRestart ? { requestRestart } : {}),
+      })
+      expect(typeof boot.holdBusy).toBe('function')
+      const release = boot.holdBusy('test-probe')
+      expect(typeof release).toBe('function')
+      expect(() => release()).not.toThrow()
+      // Idempotent — a second release call must be a harmless no-op.
+      expect(() => release()).not.toThrow()
+    }
+  })
 })

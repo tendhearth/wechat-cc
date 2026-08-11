@@ -330,6 +330,22 @@ export interface Bootstrap {
    */
   health: HealthRuntime
   /**
+   * busy-registry hold (spec 2026-08-11 §1/§2) — "work is happening" signal
+   * for long tasks that don't go through SessionManager (A2A delegate,
+   * customer-review, social forage/respond, internal-api non-GET requests,
+   * companion push/ingest/introspect ticks). Each caller wraps its run with
+   * `const release = boot.holdBusy(label); try { ... } finally { release() }`
+   * (or the fire-and-forget `.finally(release)` shape used by the
+   * background coroutines). Always present — the underlying registry
+   * (src/core/busy-registry.ts) is constructed unconditionally in
+   * buildBootstrap, independent of whether self-restart itself is enabled
+   * via `deps.requestRestart`. The self-restart idle check reads
+   * `busyRegistry.busy()` directly (see ./wire-self-restart.ts), so a held
+   * token here is exactly what stops the idle self-restart from killing a
+   * long task mid-flight.
+   */
+  holdBusy: (label: string) => () => void
+  /**
    * self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) — mark
    * "inbound activity happened now". Wired by main.ts's wireMain (via
    * pipeline-deps' `messages` dep) into mw-messages' `markInboundActivity`,
