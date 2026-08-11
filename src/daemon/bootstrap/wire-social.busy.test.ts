@@ -62,4 +62,39 @@ describe('makeBusySchedule', () => {
     schedule(fn)
     await vi.waitFor(() => expect(fn).toHaveBeenCalledTimes(1))
   })
+
+  // M2 (code review, 2026-08-11) — this used to be `.catch(() => {})`: a
+  // coroutine that threw past its own internal swallow (a bug in forage /
+  // the responder's judge+echo+forward loop, or a future caller that
+  // doesn't swallow) vanished with zero trace. That silence was also the
+  // ONLY way "forage wedged/threw ⇒ busy() stuck true ⇒ self-restart
+  // permanently blocked" could ever surface — so it's now logged instead of
+  // swallowed.
+  it('logs (does not silently swallow) when the scheduled coroutine rejects', async () => {
+    const log = vi.fn()
+    const schedule = makeBusySchedule('social-forage', undefined, log)
+    const fn = vi.fn(async () => { throw new Error('forage wedged') })
+    schedule(fn)
+    await vi.waitFor(() => expect(log).toHaveBeenCalledWith('SOCIAL_REC', expect.stringContaining('forage wedged')))
+    expect(log.mock.calls[0]![1]).toContain('social-forage')
+  })
+
+  it('stays silent-safe (no throw) when log is absent — same posture as before this field existed', async () => {
+    const schedule = makeBusySchedule('social-forage', undefined, undefined)
+    const fn = vi.fn(async () => { throw new Error('boom') })
+    // Must not produce an unhandled rejection or throw synchronously.
+    expect(() => schedule(fn)).not.toThrow()
+    await new Promise(r => setTimeout(r, 0))
+  })
+
+  it('a log that itself throws never breaks the wrapper (defensive catch, same posture as holdBusy)', async () => {
+    const log = vi.fn(() => { throw new Error('log exploded') })
+    const release = vi.fn()
+    const holdBusy = vi.fn(() => release)
+    const schedule = makeBusySchedule('social-forage', holdBusy, log)
+    const fn = vi.fn(async () => { throw new Error('boom') })
+    schedule(fn)
+    await vi.waitFor(() => expect(release).toHaveBeenCalledTimes(1))
+    expect(log).toHaveBeenCalled()
+  })
 })

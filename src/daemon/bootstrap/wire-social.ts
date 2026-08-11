@@ -89,6 +89,18 @@ export interface SocialDeps {
 export function makeBusySchedule(
   label: string,
   holdBusy?: (label: string) => () => void,
+  // M2 (code review, 2026-08-11): this used to swallow the rejection
+  // silently (`.catch(() => {})`). Both callers' own `fn` already swallow
+  // THEIR internal errors (forage / the responder's judge+echo+forward
+  // loop), so in ordinary operation this catch never fires at all — which
+  // is exactly what made it dangerous: it's the ONLY place that would ever
+  // see a bug in one of those swallow-paths (or a future caller that
+  // doesn't swallow), and it's also the sole diagnostic signal for "forage
+  // wedged/threw ⇒ its busy token never got the chance to release ⇒ busy()
+  // stays permanently true ⇒ self-restart permanently blocked". Optional
+  // (not required) so `makeBusySchedule('x')` without a log stays a valid,
+  // silent-safe call — same posture as `holdBusy` itself.
+  log?: (tag: string, line: string) => void,
 ): (fn: () => Promise<void>) => void {
   return (fn) => {
     let release: (() => void) | undefined
@@ -97,11 +109,9 @@ export function makeBusySchedule(
       .finally(() => {
         try { release?.() } catch { /* release 幂等且不抛,防御性 */ }
       })
-      // Both callers' own fn already swallow their internal errors (forage /
-      // the responder's judge+echo+forward loop), so this is belt-and-braces:
-      // a schedule wrapper must never turn a caller's fire-and-forget into an
-      // unhandled rejection just because it added a hold/release around it.
-      .catch(() => {})
+      .catch(err => {
+        try { log?.('SOCIAL_REC', `schedule(${label}) coroutine threw: ${err instanceof Error ? err.message : String(err)}`) } catch { /* logging must never become a failure source */ }
+      })
   }
 }
 
@@ -603,7 +613,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         hasSeen: (intentId) => { try { return seenIntentStore.hasSeen(intentId) } catch { return false } },
         withinBudget: withinForwardBudget,
         hopCap: 2,
-        schedule: makeBusySchedule('social-responder', deps.holdBusy),
+        schedule: makeBusySchedule('social-responder', deps.holdBusy, deps.log),
         log: deps.log,
       })
 
@@ -640,7 +650,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           try { seekStore.update(intentId, { peersAsked }) }
           catch (err) { deps.log('SOCIAL_REC', `markForaged failed intent=${intentId}: ${err instanceof Error ? err.message : String(err)}`) }
         },
-        schedule: makeBusySchedule('social-forage', deps.holdBusy),
+        schedule: makeBusySchedule('social-forage', deps.holdBusy, deps.log),
       })
       socialBroker = {
         propose: (topic, opts) => broker.propose(topic, opts),

@@ -144,6 +144,32 @@ describe('customer review internal API routes', () => {
       await vi.waitFor(() => expect(release).toHaveBeenCalledTimes(1))
     })
 
+    // M1 (code review, 2026-08-11): launch() used to call
+    // `deps.customerReview.runReview(id)` directly and chain `.catch()`/
+    // `.finally()` off its return value — relying on runReview happening to
+    // be an async function. A SYNCHRONOUS throw (e.g. a bug that throws
+    // before the function's first `await`, despite being typed to return a
+    // Promise) would escape `launch()` before `.catch`/`.finally` ever
+    // attached, permanently leaking both the `inFlight` entry and the
+    // busy-registry token. Wrapping the call in `Promise.resolve().then(...)`
+    // routes a sync throw through the same rejection path as an async one.
+    it('releases the token (and does not throw out of launch()) even when runReview throws SYNCHRONOUSLY, not just rejects', async () => {
+      const release = vi.fn()
+      const holdBusy = vi.fn(() => release)
+      const runReview = (() => { throw new Error('sync boom') }) as unknown as CustomerReviewService['runReview']
+      const { routes, logs } = setup({ runReview }, { holdBusy })
+
+      const response = await routes['POST /v1/customer-review']!(new URLSearchParams(), {
+        contact_id: 'wxid_customer', contact_display_name: '测试客户',
+        range_from: '2026-04-15', range_to: '2026-07-15',
+      })
+      // The route itself must not throw or hang — launch() is fire-and-forget.
+      expect(response).toEqual({ status: 202, body: { id: 'crv_1', status: 'queued' } })
+
+      await vi.waitFor(() => expect(release).toHaveBeenCalledTimes(1))
+      expect(logs.some(l => l.includes('crv_1') && l.includes('failed'))).toBe(true)
+    })
+
     it('a holdBusy that throws never breaks launch() (defensive catch)', async () => {
       const holdBusy = vi.fn(() => { throw new Error('registry exploded') })
       const { routes, service } = setup({}, { holdBusy })
