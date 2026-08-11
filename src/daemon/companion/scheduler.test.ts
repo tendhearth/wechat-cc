@@ -1,5 +1,20 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { startCompanionScheduler } from './scheduler'
+import { startCompanionScheduler, STOP_WAIT_CAP_MS } from './scheduler'
+
+/** Fake busy-registry (spec 2026-08-11 §2) — tracks active holds by count. */
+function makeFakeRegistry() {
+  let active = 0
+  const holdBusy = vi.fn((_label: string) => {
+    active++
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      active--
+    }
+  })
+  return { holdBusy, busy: () => active > 0 }
+}
 
 describe('startCompanionScheduler', () => {
   beforeEach(() => { vi.useFakeTimers() })
@@ -134,5 +149,151 @@ describe('startCompanionScheduler', () => {
     })
     expect(logs.some(l => l.includes('companion scheduler started'))).toBe(true)
     await stop()
+  })
+})
+
+// ─── busy-registry hold + graceful stop (spec 2026-08-11 §2/§6, Task 5) ────
+//
+// ingest's silence threshold is stricter than the self-restart idle
+// threshold — a running tick is exactly the work most likely to be
+// misjudged as "idle" and killed by the self-restart check. The scheduler
+// must hold a busy token for the duration of a real onTick, and stop()
+// must wait for an in-flight tick to actually finish (bounded) instead of
+// yanking the timer and calling it graceful.
+describe('startCompanionScheduler — busy hold + graceful stop', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('holds a busy token for the duration of a running tick, released once it resolves', async () => {
+    const registry = makeFakeRegistry()
+    let resolveTick: (() => void) | undefined
+    const onTick = vi.fn(() => new Promise<void>((res) => { resolveTick = res }))
+    const stop = startCompanionScheduler({
+      intervalMs: 1000, jitterRatio: 0,
+      shouldRun: () => true,
+      onTick, log: () => {},
+      holdBusy: registry.holdBusy,
+    })
+
+    await vi.advanceTimersByTimeAsync(1100)
+    expect(onTick).toHaveBeenCalledTimes(1)
+    expect(registry.busy()).toBe(true)
+
+    resolveTick?.()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(registry.busy()).toBe(false)
+
+    await stop()
+  })
+
+  it('releases the busy token even when onTick rejects', async () => {
+    const registry = makeFakeRegistry()
+    const onTick = vi.fn().mockRejectedValue(new Error('boom'))
+    const stop = startCompanionScheduler({
+      intervalMs: 1000, jitterRatio: 0,
+      shouldRun: () => true,
+      onTick, log: () => {},
+      holdBusy: registry.holdBusy,
+    })
+
+    await vi.advanceTimersByTimeAsync(1100)
+    expect(onTick).toHaveBeenCalledTimes(1)
+    expect(registry.busy()).toBe(false)
+
+    await stop()
+  })
+
+  it('a holdBusy that throws never blocks the tick from running (defensive catch)', async () => {
+    const onTick = vi.fn().mockResolvedValue(undefined)
+    const holdBusy = vi.fn(() => { throw new Error('registry exploded') })
+    const stop = startCompanionScheduler({
+      intervalMs: 1000, jitterRatio: 0,
+      shouldRun: () => true,
+      onTick, log: () => {},
+      holdBusy,
+    })
+    await vi.advanceTimersByTimeAsync(1100)
+    expect(onTick).toHaveBeenCalledTimes(1)
+    await stop()
+  })
+
+  it('does not hold a token for a tick that shouldRun() skips', async () => {
+    const registry = makeFakeRegistry()
+    const onTick = vi.fn()
+    const stop = startCompanionScheduler({
+      intervalMs: 1000, jitterRatio: 0,
+      shouldRun: () => false,
+      onTick, log: () => {},
+      holdBusy: registry.holdBusy,
+    })
+    await vi.advanceTimersByTimeAsync(1100)
+    expect(onTick).not.toHaveBeenCalled()
+    expect(registry.holdBusy).not.toHaveBeenCalled()
+    await stop()
+  })
+
+  it('stop() waits for an in-flight tick to finish before resolving', async () => {
+    const registry = makeFakeRegistry()
+    let resolveTick: (() => void) | undefined
+    const onTick = vi.fn(() => new Promise<void>((res) => { resolveTick = res }))
+    const stop = startCompanionScheduler({
+      intervalMs: 1000, jitterRatio: 0,
+      shouldRun: () => true,
+      onTick, log: () => {},
+      holdBusy: registry.holdBusy,
+    })
+
+    await vi.advanceTimersByTimeAsync(1100)
+    expect(onTick).toHaveBeenCalledTimes(1)
+
+    let stopSettled = false
+    const stopPromise = stop().then(() => { stopSettled = true })
+    // stop() must not resolve while the tick is still running.
+    await vi.advanceTimersByTimeAsync(0)
+    expect(stopSettled).toBe(false)
+
+    resolveTick?.()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(stopSettled).toBe(true)
+    expect(registry.busy()).toBe(false)
+
+    await stopPromise
+  })
+
+  it('stop() gives up after STOP_WAIT_CAP_MS if the tick never finishes', async () => {
+    const onTick = vi.fn(() => new Promise<void>(() => {})) // never resolves
+    const stop = startCompanionScheduler({
+      intervalMs: 1000, jitterRatio: 0,
+      shouldRun: () => true,
+      onTick, log: () => {},
+    })
+
+    await vi.advanceTimersByTimeAsync(1100)
+    expect(onTick).toHaveBeenCalledTimes(1)
+
+    let stopSettled = false
+    const stopPromise = stop().then(() => { stopSettled = true })
+
+    await vi.advanceTimersByTimeAsync(STOP_WAIT_CAP_MS - 1)
+    expect(stopSettled).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(stopSettled).toBe(true)
+
+    await stopPromise
+  })
+
+  it('stop() resolves immediately when there is no in-flight tick', async () => {
+    const stop = startCompanionScheduler({
+      intervalMs: 1000, jitterRatio: 0,
+      shouldRun: () => true,
+      onTick: async () => {},
+      log: () => {},
+    })
+    let stopSettled = false
+    const stopPromise = stop().then(() => { stopSettled = true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(stopSettled).toBe(true)
+    await stopPromise
   })
 })

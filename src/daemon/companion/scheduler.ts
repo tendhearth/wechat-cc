@@ -37,13 +37,33 @@ export interface CompanionSchedulerDeps {
    * 10-min turn watchdog, so a legitimately slow dispatch isn't cut short).
    */
   tickTimeoutMs?: number
+  /**
+   * busy-registry hold (spec 2026-08-11 §2, Task 5) — held for the
+   * duration of a running tick. ingest's silence threshold is stricter
+   * than the self-restart idle threshold, so a running tick is exactly
+   * the work most likely to be misjudged as "idle" and killed. Optional,
+   * defaults to no-op (same shape as Task 4's holdBusy? seam); never lets
+   * a throwing registry block the tick itself.
+   */
+  holdBusy?: (label: string) => () => void
 }
 
 const DEFAULT_TICK_TIMEOUT_MS = 11 * 60_000
 
+/**
+ * Upper bound stop() waits for an in-flight tick to settle before giving up
+ * and returning anyway (spec 2026-08-11 §6). Kept below LifecycleSet's 5s
+ * per-handle stop budget (src/lib/lifecycle.ts) so a wedged tick can't by
+ * itself blow that budget.
+ */
+export const STOP_WAIT_CAP_MS = 4_000
+
 export function startCompanionScheduler(deps: CompanionSchedulerDeps): () => Promise<void> {
   let stopped = false
   let timer: ReturnType<typeof setTimeout> | null = null
+  // The in-flight tick's promise, tracked so stop() can wait for it (bounded).
+  // Cleared once the tick settles, regardless of outcome.
+  let current: Promise<void> | null = null
 
   function scheduleNext(): void {
     if (stopped) return
@@ -56,13 +76,32 @@ export function startCompanionScheduler(deps: CompanionSchedulerDeps): () => Pro
       if (stopped) return
       try {
         if (deps.shouldRun()) {
-          await runBoundedTick()
+          const p = runHeldTick()
+          current = p
+          await p
         }
       } catch (err) {
         deps.log('SCHED', `${deps.name ?? 'companion'} tick failed: ${err instanceof Error ? err.message : String(err)}`)
       }
       scheduleNext()
     }, wait)
+  }
+
+  // Wraps runBoundedTick with a busy-registry hold spanning the whole call
+  // (including the tickTimeoutMs guard window) and clears `current` once it
+  // settles. holdBusy itself must never throw into the tick's own outcome.
+  function runHeldTick(): Promise<void> {
+    let release: (() => void) | undefined
+    try {
+      release = deps.holdBusy?.(`companion-${deps.name ?? 'tick'}`)
+    } catch {
+      release = undefined
+    }
+    const p = runBoundedTick().finally(() => {
+      try { release?.() } catch { /* release 幂等且不抛,防御性 */ }
+      if (current === p) current = null
+    })
+    return p
   }
 
   // Await onTick but never longer than tickTimeoutMs — a wedged tick must not
@@ -90,5 +129,16 @@ export function startCompanionScheduler(deps: CompanionSchedulerDeps): () => Pro
   return async () => {
     stopped = true
     if (timer) { clearTimeout(timer); timer = null }
+    // Graceful shutdown for a tick means actually waiting for it, not just
+    // yanking the timer — but bounded, so a wedged tick can't hang shutdown
+    // forever (spec 2026-08-11 §6). The orphaned promise (if any) is left to
+    // settle on its own past the cap, same as the tickTimeoutMs guard above.
+    const pending = current
+    if (pending) {
+      await Promise.race([
+        pending,
+        new Promise<void>((resolve) => setTimeout(resolve, STOP_WAIT_CAP_MS)),
+      ])
+    }
   }
 }
