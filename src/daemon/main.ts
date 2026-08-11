@@ -162,6 +162,19 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     releaseInstanceLock(PID_PATH)
   }
 
+  // Restart: let the caller flush (HTTP response / a log line), then
+  // graceful shutdown + exit so launchd/systemd KeepAlive respawns a fresh
+  // daemon (ThrottleInterval caps the respawn rate). exit(0) is fine —
+  // KeepAlive respawns regardless. ONE closure, TWO triggers: the operator
+  // POST /v1/daemon/restart route (below) and, when wired, the self-restart
+  // idle-tick check (spec 2026-08-03-daemon-self-restart-on-stale-code) —
+  // both need the exact same graceful-shutdown path, so both get the same
+  // closure rather than two restart mechanisms.
+  const requestRestart = (reason: string) => {
+    log('DAEMON', `restart requested (${reason}) — shutting down for KeepAlive respawn`)
+    setTimeout(() => { void shutdown().finally(() => process.exit(0)) }, 500)
+  }
+
   try {
     // Single shared chat-prefs instance for this daemon — both the reply
     // route (split behavior) and the /set command read/write through it.
@@ -207,13 +220,13 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       heartbeatFresh: () => isHeartbeatFresh(HEARTBEAT_PATH),
       // Admin remediation hooks (POST /v1/sessions/release, /v1/daemon/restart).
       releaseSession: (k) => bootRef?.sessionManager?.release(k) ?? Promise.resolve(),
-      // Restart: let the HTTP response flush, then graceful shutdown + exit so
-      // launchd/systemd KeepAlive respawns a fresh daemon (ThrottleInterval
-      // caps the respawn rate). exit(0) is fine — KeepAlive respawns regardless.
-      requestRestart: () => {
-        log('DAEMON', 'restart requested via internal-api — shutting down for KeepAlive respawn')
-        setTimeout(() => { void shutdown().finally(() => process.exit(0)) }, 500)
-      },
+      requestRestart: () => requestRestart('internal-api'),
+      // self-restart idle signal — thunk over bootRef for the same reason
+      // listSessions above is one: internal-api is constructed BEFORE
+      // bootstrap builds the activity marker. Until then it's a no-op,
+      // which is correct — nothing can self-restart before bootstrap
+      // finishes anyway.
+      markInboundActivity: () => bootRef?.markInboundActivity?.(),
       log: (t, l) => log(t, l),
       // LLM memory routes' chat_id default (spec 2026-07-23-daemon-owns-llm-
       // memory-ops): access.json's single admin. Wired eagerly (not late-
@@ -289,6 +302,24 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         const k = fs.read('knowledge.md') ?? ''
         return k.length > KNOWLEDGE_MEMORY_MAX_CHARS ? k.slice(0, KNOWLEDGE_MEMORY_MAX_CHARS) : k
       },
+      // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
+      // same closure passed to internal-api's requestRestart above. Wiring
+      // it here is what turns the mechanism ON: buildBootstrap reads git
+      // HEAD once at boot and adds the idle-tick check ONLY when this is
+      // present (see bootstrap/index.ts's self-restart block).
+      //
+      // Gated on WECHAT_CC_SUPERVISED, which `service install` writes into
+      // the launchd plist / systemd unit — i.e. exactly where a supervisor
+      // exists to relaunch us. Without it the whole mechanism stays off,
+      // because "exit(0) and get restarted" degrades to plain "exit(0)"
+      // wherever nothing is watching: a foreground `bun cli.ts run` during
+      // debugging, or Windows, whose scheduled task triggers AtLogOn with
+      // no restart semantics at all. Since this feature is deliberately
+      // silent, that failure would read to the owner as "the bot died
+      // again" with nothing in the log to connect it to an update.
+      ...(process.env.WECHAT_CC_SUPERVISED === '1'
+        ? { requestRestart: () => requestRestart('self-restart-stale-code') }
+        : {}),
     })
     bootRef = boot
     internalApi.setDelegate({ dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() })

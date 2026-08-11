@@ -272,6 +272,15 @@ export interface InternalApiDeps {
    */
   log?: (tag: string, line: string, fields?: Record<string, unknown>) => void
   /**
+   * self-restart idle signal (spec 2026-08-03). Called on every
+   * AUTHENTICATED NON-GET request — those are the owner acting in the app,
+   * and most of them (customer-review, plugin install, memory write, …)
+   * touch neither mw-messages nor SessionManager, so without this the idle
+   * check would happily restart the daemon out from under a running one.
+   * ABSENT ⇒ no-op, exactly as before this feature existed.
+   */
+  markInboundActivity?: () => void
+  /**
    * Per-chat prefs read for reply splitting (活人感, spec 2026-07-09).
    * ABSENT ⇒ splitting disabled (tests/embedded keep single-send
    * behavior). Wired ⇒ split defaults ON unless the chat set split:false.
