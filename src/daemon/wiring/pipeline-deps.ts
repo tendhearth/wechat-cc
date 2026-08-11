@@ -224,6 +224,10 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     sessionStore: boot.sessionStore,
     log,
     startedAt: STARTED_AT_ISO,
+    // busy-registry hold (spec 2026-08-11 §2) — 整理记忆/派活 are dispatched
+    // fire-and-forget outside SessionManager; boot.holdBusy is the same
+    // registry the self-restart idle check reads.
+    holdBusy: boot.holdBusy,
     getBotName,
     setBotName,
     botNameFallback: (cid) => botNameFromModeFallback(boot.coordinator.getMode(cid)),

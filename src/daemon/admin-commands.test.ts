@@ -414,6 +414,42 @@ describe('admin-commands', () => {
       await flush()
     })
 
+    // busy-registry hold (spec 2026-08-11 §2, code review — "微信管理命令
+    // 两条 fire-and-forget 是清点漏掉的第七类"). runSynthesize is dispatched
+    // `void runSynthesize(...)` — outside SessionManager, invisible to the
+    // idle self-restart check unless it holds a token itself.
+    it('holds a busy-registry token for the whole run, released after it settles', async () => {
+      let release: (r: unknown) => void = () => {}
+      const gate = new Promise(r => { release = r })
+      const synthesizeMemory = vi.fn().mockImplementation(() => gate)
+      const releaseBusy = vi.fn()
+      const holdBusy = vi.fn((label: string) => { expect(label).toBe('admin-synthesize'); return releaseBusy })
+      const cmds = make({
+        synthesizeMemory: synthesizeMemory as unknown as AdminCommandsDeps['synthesizeMemory'],
+        holdBusy,
+      })
+      expect(await cmds.handle(msg('整理记忆'))).toBe(true)
+      await flush()
+      expect(holdBusy).toHaveBeenCalledWith('admin-synthesize')
+      expect(releaseBusy).not.toHaveBeenCalled()
+      release({ projectsFound: 0, projectNames: [], filesScanned: 0 })
+      await flush()
+      expect(releaseBusy).toHaveBeenCalledTimes(1)
+    })
+
+    it('releases the busy-registry token even when synthesizeMemory throws', async () => {
+      const synthesizeMemory = vi.fn().mockRejectedValue(new Error('boom'))
+      const releaseBusy = vi.fn()
+      const holdBusy = vi.fn(() => releaseBusy)
+      const cmds = make({
+        synthesizeMemory: synthesizeMemory as unknown as AdminCommandsDeps['synthesizeMemory'],
+        holdBusy,
+      })
+      await cmds.handle(msg('整理记忆'))
+      await flush()
+      expect(releaseBusy).toHaveBeenCalledTimes(1)
+    })
+
     it('non-admin is consumed but does NOT synthesize or reply', async () => {
       isAdmin.mockReturnValue(false)
       const synthesizeMemory = vi.fn()
@@ -538,6 +574,43 @@ describe('admin-commands', () => {
       expect(await cmds.handle(msg('让家里执行 X'))).toBe(true)
       await flush()
       expect(sentBody(0)).toContain('派活功能未启用')
+    })
+
+    // busy-registry hold (spec 2026-08-11 §2, code review — "微信管理命令
+    // 两条 fire-and-forget 是清点漏掉的第七类"). runDelegate is dispatched
+    // `void runDelegate(...)` — outside SessionManager, waits on a remote
+    // hand's A2A exec, invisible to the idle self-restart check unless it
+    // holds a token itself.
+    it('holds a busy-registry token for the whole run, released after it settles', async () => {
+      let release: (r: unknown) => void = () => {}
+      const gate = new Promise(r => { release = r })
+      const delegateToHand = vi.fn().mockImplementation(() => gate)
+      const releaseBusy = vi.fn()
+      const holdBusy = vi.fn((label: string) => { expect(label).toBe('admin-delegate'); return releaseBusy })
+      const cmds = make({
+        delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+        holdBusy,
+      })
+      expect(await cmds.handle(msg('让家里执行 看下README'))).toBe(true)
+      await flush()
+      expect(holdBusy).toHaveBeenCalledWith('admin-delegate')
+      expect(releaseBusy).not.toHaveBeenCalled()
+      release({ ok: true, response: 'done' })
+      await flush()
+      expect(releaseBusy).toHaveBeenCalledTimes(1)
+    })
+
+    it('releases the busy-registry token even when delegateToHand throws', async () => {
+      const delegateToHand = vi.fn().mockRejectedValue(new Error('boom'))
+      const releaseBusy = vi.fn()
+      const holdBusy = vi.fn(() => releaseBusy)
+      const cmds = make({
+        delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+        holdBusy,
+      })
+      await cmds.handle(msg('让家里执行 X'))
+      await flush()
+      expect(releaseBusy).toHaveBeenCalledTimes(1)
     })
 
     it('non-admin is consumed but does NOT delegate', async () => {
