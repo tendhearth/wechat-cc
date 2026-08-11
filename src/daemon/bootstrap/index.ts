@@ -61,9 +61,8 @@ import { wireSocial } from './wire-social'
 import { wireA2aServer } from './wire-a2a-server'
 import { wirePairing } from './wire-pairing'
 import { wireHealth, reportLlmTurnOutcome } from './wire-health'
-import { makeActivityMarker } from '../self-restart/activity-marker'
-import { makeSelfRestartCheck } from '../self-restart/wire'
-import { readGitHead, readGitLockfileBlob } from '../self-restart/git-head'
+import { wireSelfRestart } from './wire-self-restart'
+import { makeBusyRegistry } from '../../core/busy-registry'
 import { resolveSelfAgentId } from '../../core/self-agent-id'
 import { assertNotAuthFailed, type CheapEval } from '../../core/agent-provider'
 import { createA2ARegistry } from '../../core/a2a-registry'
@@ -96,20 +95,6 @@ function resolveClaudeBinary(): string | undefined {
   const bundled = join(here, '..', '..', '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk-linux-x64', 'claude')
   if (existsSync(bundled)) return bundled
   return undefined
-}
-
-/**
- * Repo root for self-restart's `git rev-parse HEAD` reads — resolved via
- * import.meta.url (same posture as resolveClaudeBinary above), NOT
- * process.cwd(), because a launchd-started daemon's cwd is unrelated to the
- * checkout it was launched from. In a compiled binary this path has no
- * `.git` — readGitHead already returns null on that failure, which is
- * exactly the intended "don't self-restart" outcome there.
- */
-function repoRootForGitHead(): string {
-  const here = dirname(fileURLToPath(import.meta.url))
-  // src/daemon/bootstrap/index.ts → repo root
-  return join(here, '..', '..', '..')
 }
 
 const CLAUDE_AUTH_ENV_KEYS = [
@@ -218,6 +203,18 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // ticks are wired the same way. Depends only on stateDir + log, both
   // present from the very first line of BootstrapDeps.
   const health = wireHealth({ stateDir: deps.stateDir, log: deps.log })
+
+  // busy-registry (spec 2026-08-11 §1) — the "work is happening" complement
+  // to SessionManager's anyInFlight(): long tasks that never go through
+  // SessionManager (A2A delegate, customer-review, social forage/respond,
+  // internal-api non-GET requests, companion ticks) each hold a token here
+  // for their duration. Constructed unconditionally (same posture as
+  // `health` above) so every hold point below has something real to call —
+  // `holdBusy` is exposed on Bootstrap regardless of whether self-restart
+  // itself is enabled (deps.requestRestart may be absent), since the other
+  // consumers (internal-api, customer-review, delegate, wireSocial,
+  // companion schedulers) don't depend on self-restart being wired.
+  const busyRegistry = makeBusyRegistry()
 
   const resolve = makeResolver({
     loadProjects: deps.loadProjects,
@@ -581,45 +578,34 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     })
   })
 
-  // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) — see
-  // src/daemon/self-restart/wire.ts's file-header comment for the full
-  // rationale AND the KeepAlive=true precondition this whole mechanism
-  // depends on (a dictionary-form KeepAlive would make this shut the bot
-  // down instead of restarting it). Entirely inert when deps.requestRestart
-  // is omitted: no HEAD read, no activity marker built, no check added to
-  // the idle-sweep tick below — tests and minimal embeddings that don't
-  // wire requestRestart stay byte-identical to before this feature existed.
-  let selfRestartCheck: (() => Promise<void>) | null = null
-  let selfRestartActivityMarker: ReturnType<typeof makeActivityMarker> | null = null
-  if (deps.requestRestart) {
-    const bootAtMs = Date.now()
-    // readGitHead never throws and returns null on any failure (not a repo,
-    // git missing, timeout) — a null loadedHead makes shouldSelfRestart
-    // return false forever, which is the correct "don't move" outcome for
-    // compiled binaries / non-git checkouts.
-    const loadedHead = await readGitHead({ cwd: repoRootForGitHead() })
-    // bun.lock's blob at boot (Task 3 review #2) — the check refuses to
-    // restart if this drifts, so a manual `git pull` that changed the
-    // dependency tree can't restart us into a node_modules that
-    // `bun install` hasn't caught up with yet. Skipped entirely when
-    // loadedHead is already null: the check returns before ever reading
-    // it, so there's no reason to pay for a second git spawn at boot.
-    const bootLockBlob = loadedHead === null ? null : await readGitLockfileBlob({ cwd: repoRootForGitHead() })
-    selfRestartActivityMarker = makeActivityMarker({ now: Date.now })
-    const marker = selfRestartActivityMarker
-    const requestRestart = deps.requestRestart
-    selfRestartCheck = makeSelfRestartCheck({
-      cwd: repoRootForGitHead(),
-      loadedHead,
-      bootLockBlob,
-      now: Date.now,
-      bootAtMs,
-      anyInFlight: () => sessionManager.anyInFlight(),
-      quietFor: (nowMs) => marker.quietFor(nowMs),
-      requestRestart,
-      log: deps.log,
-    })
-  }
+  // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
+  // assembly extracted to ./wire-self-restart.ts (Task 6). Entirely inert
+  // when deps.requestRestart is omitted: wireSelfRestart returns null, so
+  // no HEAD read, no activity marker built, no check added to the
+  // idle-sweep tick below — tests and minimal embeddings that don't wire
+  // requestRestart stay byte-identical to before this feature existed.
+  //
+  // lastPollSuccessAgoMs (spec 2026-08-11 §4) — real signal, sourced from
+  // the SAME health runtime constructed above (poll-loop.ts's
+  // health.onSuccess('wechat') call is what stamps lastSuccessAt). health
+  // can't get() fail in practice (makeConnectionHealth lazily seeds any
+  // never-seen dependency), but the try/catch + null-on-failure keeps this
+  // on the "can't prove it's fresh ⇒ don't restart" side the rest of the
+  // mechanism commits to everywhere else.
+  const wiredSelfRestart = await wireSelfRestart({
+    requestRestart: deps.requestRestart,
+    anyInFlight: () => sessionManager.anyInFlight(),
+    busy: () => busyRegistry.busy(),
+    lastPollSuccessAgoMs: (nowMs) => {
+      try {
+        const at = health?.health.get('wechat').lastSuccessAt ?? null
+        return at === null ? null : nowMs - at
+      } catch { return null }
+    },
+    log: deps.log,
+  })
+  const selfRestartCheck = wiredSelfRestart?.check ?? null
+  const selfRestartActivityMarker = wiredSelfRestart?.marker ?? null
 
   // Periodic idle sweep — without this, idleEvictMs is dead config (the
   // method exists but was never called from production paths). 30 min of
@@ -742,6 +728,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     stateDir: deps.stateDir,
     ...(claudeBin ? { claudeBin } : {}),
     ...(codexBinary && codexVersionCheck?.ok ? { codexPathOverride: codexBinary } : {}),
+    // busy-registry hold (spec 2026-08-11 §2, Task 4 step 3 + Task 6) —
+    // a delegate dispatch is a one-shot session outside SessionManager.
+    holdBusy: busyRegistry.hold,
   })
 
   // ── A2A wiring ────────────────────────────────────────────────────────
@@ -792,6 +781,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     a2aRegistry,
     a2aClient,
     getServerBaseUrl: () => a2aServer ? a2aServer.baseUrl() : null,
+    // busy-registry hold (spec 2026-08-11 §2, Task 4 step 4 + Task 6) —
+    // broker.forage() + the async responder run as fire-and-forget
+    // coroutines outside SessionManager.
+    holdBusy: busyRegistry.hold,
   })
 
   const { a2aServer: builtA2aServer, a2aDeps } = await wireA2aServer({
@@ -959,6 +952,13 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      * doc comment on Bootstrap['health'] in ./types.ts.
      */
     health,
+    /**
+     * busy-registry hold (spec 2026-08-11 §2) — see Bootstrap['holdBusy']'s
+     * doc comment in ./types.ts. Always present (busyRegistry is
+     * constructed unconditionally above, independent of whether
+     * self-restart itself is enabled).
+     */
+    holdBusy: busyRegistry.hold,
     /**
      * self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
      * undefined when deps.requestRestart wasn't provided (mechanism fully

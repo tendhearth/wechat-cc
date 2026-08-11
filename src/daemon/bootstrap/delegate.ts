@@ -35,6 +35,14 @@ export interface DelegateBuildDeps {
    * callers never pass this.
    */
   delegateProviders?: Partial<Record<ProviderId, AgentProvider>>
+  /**
+   * busy-registry hold (spec 2026-08-11 §2, Task 4 step 3) — a delegate
+   * dispatch is a one-shot session outside SessionManager, so without this
+   * the idle self-restart check can't see it running. Held for the whole
+   * dispatchDelegate call (spawn → dispatch → close), released even on
+   * throw. ABSENT ⇒ no-op, exactly as before this feature existed.
+   */
+  holdBusy?: (label: string) => () => void
 }
 
 export type DelegateDispatch = (
@@ -141,6 +149,11 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
   return async function dispatchDelegate(peer, prompt, cwd) {
     const provider = providers[peer] ?? null
     if (!provider) return { ok: false, reason: `unknown_peer: ${peer}` }
+    // busy-registry hold (spec 2026-08-11 §2, Task 4 step 3) — spans the
+    // whole one-shot session below (spawn → dispatch → close), released in
+    // the finally alongside session.close() regardless of outcome.
+    let releaseBusy: (() => void) | undefined
+    try { releaseBusy = deps.holdBusy?.('a2a-delegate') } catch { releaseBusy = undefined }
     const started = Date.now()
     let session: Awaited<ReturnType<typeof provider.spawn>> | null = null
     try {
@@ -183,6 +196,7 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
       if (session) {
         try { await session.close() } catch { /* swallow shutdown errors */ }
       }
+      try { releaseBusy?.() } catch { /* release 幂等且不抛,防御性 */ }
     }
   }
 }

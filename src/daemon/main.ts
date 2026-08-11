@@ -35,6 +35,7 @@ import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
 import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
 import { startCustomerReviewRuntime } from './customer-review/runtime'
+import { SUPERVISED_ENV } from '../core/supervised-env'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -227,6 +228,15 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // which is correct — nothing can self-restart before bootstrap
       // finishes anyway.
       markInboundActivity: () => bootRef?.markInboundActivity?.(),
+      // busy-registry hold (spec 2026-08-11 §2, Task 4 step 1 + Task 6) —
+      // same thunk-over-bootRef posture as markInboundActivity/listSessions
+      // above: internal-api is constructed BEFORE bootstrap builds the
+      // busy registry, so calls that land before buildBootstrap resolves
+      // get a no-op release (correct — nothing can be "busy" before
+      // bootstrap finishes anyway). Backs BOTH the dispatcher's own
+      // non-GET request hold (index.ts) and customer-review's task-launch
+      // hold (routes-customer-review.ts) — they share this one field.
+      holdBusy: (l) => bootRef?.holdBusy?.(l) ?? (() => {}),
       log: (t, l) => log(t, l),
       // LLM memory routes' chat_id default (spec 2026-07-23-daemon-owns-llm-
       // memory-ops): access.json's single admin. Wired eagerly (not late-
@@ -308,16 +318,17 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // HEAD once at boot and adds the idle-tick check ONLY when this is
       // present (see bootstrap/index.ts's self-restart block).
       //
-      // Gated on WECHAT_CC_SUPERVISED, which `service install` writes into
-      // the launchd plist / systemd unit — i.e. exactly where a supervisor
-      // exists to relaunch us. Without it the whole mechanism stays off,
-      // because "exit(0) and get restarted" degrades to plain "exit(0)"
-      // wherever nothing is watching: a foreground `bun cli.ts run` during
-      // debugging, or Windows, whose scheduled task triggers AtLogOn with
-      // no restart semantics at all. Since this feature is deliberately
-      // silent, that failure would read to the owner as "the bot died
-      // again" with nothing in the log to connect it to an update.
-      ...(process.env.WECHAT_CC_SUPERVISED === '1'
+      // Gated on SUPERVISED_ENV (WECHAT_CC_SUPERVISED), which `service
+      // install` writes into the launchd plist / systemd unit — i.e.
+      // exactly where a supervisor exists to relaunch us. Without it the
+      // whole mechanism stays off, because "exit(0) and get restarted"
+      // degrades to plain "exit(0)" wherever nothing is watching: a
+      // foreground `bun cli.ts run` during debugging, or Windows, whose
+      // scheduled task triggers AtLogOn with no restart semantics at all.
+      // Since this feature is deliberately silent, that failure would read
+      // to the owner as "the bot died again" with nothing in the log to
+      // connect it to an update.
+      ...(process.env[SUPERVISED_ENV] === '1'
         ? { requestRestart: () => requestRestart('self-restart-stale-code') }
         : {}),
     })

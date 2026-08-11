@@ -75,4 +75,29 @@ describe('makeConnectionHealth', () => {
     expect(() => h.recordFailure('wechat', evil)).not.toThrow()
     expect(typeof h.get('wechat').lastError).toBe('string')
   })
+
+  describe('lastSuccessAt(自我重启的唤醒闸门,spec 2026-08-11 §4)', () => {
+    it('初始为 null', () => {
+      const h = makeConnectionHealth({ now: () => 1000 })
+      expect(h.get('wechat').lastSuccessAt).toBeNull()
+    })
+    it('recordSuccess 置为当时时刻', () => {
+      let t = 1000
+      const h = makeConnectionHealth({ now: () => t })
+      h.recordSuccess('wechat')
+      expect(h.get('wechat').lastSuccessAt).toBe(1000)
+      t = 5000
+      h.recordSuccess('wechat')
+      expect(h.get('wechat').lastSuccessAt).toBe(5000)
+    })
+    it('失败不清掉上一次成功时刻 —— 跨失败保留', () => {
+      let t = 1000
+      const h = makeConnectionHealth({ now: () => t })
+      h.recordSuccess('wechat')
+      t = 2000
+      h.recordFailure('wechat', new Error('x'))
+      h.recordFailure('wechat', new Error('y'))
+      expect(h.get('wechat').lastSuccessAt).toBe(1000)
+    })
+  })
 })

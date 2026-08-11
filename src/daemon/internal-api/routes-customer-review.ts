@@ -31,12 +31,34 @@ export function customerReviewRoutes(deps: InternalApiDeps): RouteTable {
   function launch(id: string): void {
     if (!deps.customerReview || inFlight.has(id)) return
     inFlight.add(id)
-    void deps.customerReview.runReview(id)
+    // busy-registry hold (spec 2026-08-11 §2, Task 4 step 2) — this is a
+    // fire-and-forget task outside SessionManager; hold a token for its
+    // whole run so the idle self-restart check doesn't kill a review
+    // mid-flight. Released at the same point inFlight is cleared.
+    let releaseBusy: (() => void) | undefined
+    try { releaseBusy = deps.holdBusy?.('customer-review') } catch { releaseBusy = undefined }
+    // M1 (code review, 2026-08-11): this used to call
+    // `deps.customerReview.runReview(id)` directly and chain `.catch()` off
+    // its return value — relying on runReview happening to be an async
+    // function (so a throw becomes a rejection, not a synchronous throw).
+    // Of the four Task-4 hold points, this was the only one NOT defended
+    // against a synchronous throw: a sync throw here would escape `launch()`
+    // before `.catch()`/`.finally()` ever attach, leaking BOTH the
+    // `inFlight` entry and the busy-registry token forever. Wrapping the
+    // call itself in `Promise.resolve().then(...)` routes a synchronous
+    // throw through the same rejection path as an async one, so `.catch`/
+    // `.finally` below always run — same posture as delegate.ts/wire-social.ts's
+    // hold points, which don't call user code synchronously in the holder's
+    // own stack frame at all.
+    void Promise.resolve().then(() => deps.customerReview!.runReview(id))
       .catch(error => {
         const safe = handledError(error)
         deps.log?.('CUSTOMER_REVIEW', `task ${id} failed: ${(safe.body as { error?: string }).error ?? 'INTERNAL_ERROR'}`)
       })
-      .finally(() => inFlight.delete(id))
+      .finally(() => {
+        inFlight.delete(id)
+        try { releaseBusy?.() } catch { /* release 幂等且不抛,防御性 */ }
+      })
   }
 
   return {
