@@ -220,3 +220,89 @@ describe('makeSelfRestartCheck', () => {
     expect(restarts).toHaveLength(1)
   })
 })
+
+// I2②(code review,2026-08-11)—— "两个新闸门静默常闭,零可观测" 的另一半:
+// 当 HEAD 已确认陈旧(有新代码在等)但某个安全闸门把这次重启拦下时,每小时
+// 最多记一行 INFO,把"终身静默失效"变成一个可观测症状。只在确认陈旧时才
+// 记 —— 空闲机器 HEAD 不动,从不触发这条路径,不产生噪音。
+describe('makeSelfRestartCheck — stale-but-blocked diagnostic log (spec 2026-08-11 §I2②)', () => {
+  function selfRestartLogs(setupOver: Parameters<typeof setup>[0]) {
+    const logs: string[] = []
+    const { t, check } = setup({
+      ...setupOver,
+      log: (tag, line) => { if (tag === 'SELF_RESTART') logs.push(line) },
+    })
+    return { t, check, logs }
+  }
+
+  it('HEAD 陈旧 + 被 lockfile drift 拦下 ⇒ 记一行,标出拦的是哪道闸门', async () => {
+    const { check, logs } = selfRestartLogs({ readLockBlob: async () => 'lock999' })
+    await check()
+    expect(logs).toHaveLength(1)
+    expect(logs[0]).toContain('stale but blocked')
+    expect(logs[0]).toContain('lockfile_drift')
+  })
+
+  it('HEAD 陈旧 + 被 dirty worktree 拦下 ⇒ 记一行', async () => {
+    const { check, logs } = selfRestartLogs({ readDirty: async () => 'dirty' })
+    await check()
+    expect(logs).toHaveLength(1)
+    expect(logs[0]).toContain('stale but blocked')
+    expect(logs[0]).toContain('dirty_worktree')
+  })
+
+  it('HEAD 陈旧 + 被临门复查拦下(busy 登记处竞态)⇒ 记一行,内容含实时快照', async () => {
+    let b = false
+    const { check, logs } = selfRestartLogs({
+      busy: () => b,
+      // 模拟"读 HEAD 期间登记处冒出新工作" —— 临门复查会拦下。
+      readHead: async () => { b = true; return 'bbb222' },
+    })
+    await check()
+    expect(logs).toHaveLength(1)
+    expect(logs[0]).toContain('stale but blocked')
+    expect(logs[0]).toContain('recheck_raced')
+    expect(logs[0]).toContain('busy=true')
+    expect(logs[0]).toContain('inflight=false')
+  })
+
+  it('HEAD 没变(不是陈旧)⇒ 不记这条日志 —— 空闲机器不产生噪音', async () => {
+    const { check, logs } = selfRestartLogs({ readHead: async () => 'aaa111' }) // == loadedHead
+    await check()
+    expect(logs).toEqual([])
+  })
+
+  it('最开头的廉价闸门(不空闲/宽限期内)就早退 ⇒ 从不读 git,也不记这条日志', async () => {
+    const { check, logs } = selfRestartLogs({ anyInFlight: () => true })
+    await check()
+    expect(logs).toEqual([])
+  })
+
+  it('成功重启的那一条日志内容不同,不会被误当成"stale but blocked"', async () => {
+    const { check, logs } = selfRestartLogs({})
+    await check()
+    expect(logs.some(l => l.includes('stale but blocked'))).toBe(false)
+  })
+
+  it('节流:同一小时内重复的 stale-but-blocked 只记一行', async () => {
+    const { t, check, logs } = selfRestartLogs({ readLockBlob: async () => 'lock999' })
+    await check()
+    expect(logs).toHaveLength(1)
+    t.ms += 30 * 60_000   // 30 min later — still inside the 1h throttle window
+    await check()
+    expect(logs).toHaveLength(1)
+    t.ms += 29 * 60_000   // 59 min total — still inside
+    await check()
+    expect(logs).toHaveLength(1)
+  })
+
+  it('节流窗口(1 小时)过后 ⇒ 再记一行', async () => {
+    const { t, check, logs } = selfRestartLogs({ readLockBlob: async () => 'lock999' })
+    await check()
+    expect(logs).toHaveLength(1)
+    t.ms += 60 * 60_000 + 1   // just past the 1h window
+    await check()
+    expect(logs).toHaveLength(2)
+    expect(logs[1]).toContain('stale but blocked')
+  })
+})
