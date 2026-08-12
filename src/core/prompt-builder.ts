@@ -525,7 +525,9 @@ companion 现在的 persona（小助手 / 陪伴）影响你**怎么读 memory +
 /**
  * Knowledge-orchestration section (knowledge-orchestration design Task 1) —
  * appears when at least one KNOWN_KNOWLEDGE_PLUGINS entry is registered for
- * this session. Frames memory as the agent's own first-person "看法" and the
+ * this session, OR when `opts.knowledgeSearchAvailable` is true (the daemon's
+ * own `knowledge_search` tool, which needs no plugin). Frames memory as the
+ * agent's own first-person "看法" and the
  * knowledge-mcp plugins as structured sources computed from real data, so the
  * agent learns to compose them (memory + relationship + facts) instead of
  * leaning on memory alone. Placed right after memorySection() — identity/

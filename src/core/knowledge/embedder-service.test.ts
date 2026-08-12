@@ -82,6 +82,26 @@ describe('makeEmbedderService', () => {
     expect(freshState.embedCalls).toEqual([['bb']])
   })
 
+  it('NO-LEAK: a dropped (rejecting) runner is close()d so a still-live child cannot leak', async () => {
+    // Some rejections (a stray stdout line -> JSON.parse throw, a vector-count
+    // mismatch) do NOT kill the embed child. The service must close() the
+    // dropped runner, or that live model subprocess leaks (a fresh one spawns
+    // on the next call). close() is best-effort/fire-and-forget in the catch.
+    const { runner: bad, state: badState } = makeFakeRunner(async () => {
+      throw new Error('stray stdout: not JSON')
+    })
+    const { runner: fresh } = makeFakeRunner()
+    const { fn } = makeMakeRunnerSpy([bad, fresh])
+    const svc = makeEmbedderService({ ...baseOpts, makeRunner: fn })
+
+    await expect(svc.embed(['a'])).rejects.toThrow('stray stdout')
+    // let the fire-and-forget close() microtask settle
+    await Promise.resolve()
+    expect(badState.closeCalls).toBe(1)
+    // and the next call still respawns fresh
+    expect(await svc.embed(['bb'])).toEqual([[2, 1, 2]])
+  })
+
   it('CLOSE: close() calls the runner\'s close(); an embed() after close respawns', async () => {
     const { runner: r1, state: s1 } = makeFakeRunner()
     const { runner: r2 } = makeFakeRunner()

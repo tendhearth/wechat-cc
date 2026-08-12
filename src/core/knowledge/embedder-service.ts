@@ -54,13 +54,20 @@ export function makeEmbedderService(opts: MakeEmbedderServiceOpts): EmbedderServ
     if (!runner) {
       runner = spawnRunner()
     }
+    const current = runner
     try {
-      return await runner.embed(texts)
+      return await current.embed(texts)
     } catch (e) {
       // Drop the runner (however it died — rejection, timeout, "broken"
       // guard in embed-runner) so the NEXT embed() call respawns a fresh
       // subprocess instead of continuing to hit a dead/wedged one.
+      // Best-effort close the dropped runner FIRST: some rejections
+      // (JSON-parse of a stray stdout line, vector-count mismatch) do NOT
+      // kill the child — without this, that live model subprocess would leak
+      // (a fresh one spawns on the next call). Fire-and-forget; close() ends
+      // stdin so a live child exits cleanly, a dead one is a no-op.
       runner = null
+      void current.close().catch(() => {})
       throw e
     }
   }
