@@ -13,6 +13,9 @@ function msg(msg_key: string, overrides: Partial<SourceMsg> = {}): SourceMsg {
     type: 'text',
     text: `text for ${msg_key}`,
     server_id: 'srv-1',
+    local_type: 1,
+    is_group: false,
+    kind: 'text',
     ...overrides,
   }
 }
@@ -80,6 +83,71 @@ describe('knowledge store', () => {
       const page = store.listMessages(0, 10)
       expect(page.messages).toEqual([])
       expect(page.watermark).toBe(0)
+    })
+
+    it('round-trips local_type/is_group/kind', () => {
+      store.putSourceMessages([
+        msg('m1', { local_type: 1, is_group: false, kind: 'text' }),
+        msg('m2', { local_type: 34, is_group: true, kind: 'voice', text: '' }),
+        msg('m3', { local_type: 49, is_group: true, kind: 'transfer', text: '' }),
+      ])
+      const { messages } = store.listMessages(0, 10)
+      const byKey = new Map(messages.map(m => [m.msg_key, m]))
+      expect(byKey.get('m1')).toMatchObject({ local_type: 1, is_group: false, kind: 'text' })
+      expect(byKey.get('m2')).toMatchObject({ local_type: 34, is_group: true, kind: 'voice' })
+      expect(byKey.get('m3')).toMatchObject({ local_type: 49, is_group: true, kind: 'transfer' })
+      // is_group must round-trip as an actual boolean, not a raw 0/1 integer.
+      expect(byKey.get('m1')?.is_group).toBe(false)
+      expect(byKey.get('m2')?.is_group).toBe(true)
+    })
+
+    it('listMessages(kind: "text") returns only text-kind rows', () => {
+      store.putSourceMessages([
+        msg('m1', { kind: 'text', text: 'hello' }),
+        msg('m2', { kind: 'voice', text: '' }),
+        msg('m3', { kind: 'text', text: 'world' }),
+        msg('m4', { kind: 'transfer', text: '' }),
+      ])
+      const { messages, watermark } = store.listMessages(0, 10, 'text')
+      expect(messages.map(m => m.msg_key)).toEqual(['m1', 'm3'])
+      // watermark is the last matching row's cursor position — a valid
+      // resume point since the next call's WHERE ingested_watermark > ?
+      // re-filters (cheaply, via the kind index) rather than skipping rows.
+      expect(watermark).toBeGreaterThan(0)
+    })
+  })
+
+  describe('source mentions', () => {
+    it('putMentions/mentionsFor round-trips target usernames for a msg_key', () => {
+      store.putMentions([
+        { msg_key: 'g1:1', target_un: 'wxid_bob' },
+        { msg_key: 'g1:1', target_un: 'wxid_carol' },
+        { msg_key: 'g1:2', target_un: 'wxid_dave' },
+      ])
+      expect(store.mentionsFor('g1:1').sort()).toEqual(['wxid_bob', 'wxid_carol'])
+      expect(store.mentionsFor('g1:2')).toEqual(['wxid_dave'])
+      expect(store.mentionsFor('g1:nonexistent')).toEqual([])
+    })
+
+    it('allMentions reads every mention row for the graph builder', () => {
+      store.putMentions([
+        { msg_key: 'g1:1', target_un: 'wxid_bob' },
+        { msg_key: 'g1:2', target_un: 'wxid_dave' },
+      ])
+      const all = store.allMentions()
+      expect(all).toHaveLength(2)
+      expect(all).toEqual(
+        expect.arrayContaining([
+          { msg_key: 'g1:1', target_un: 'wxid_bob' },
+          { msg_key: 'g1:2', target_un: 'wxid_dave' },
+        ]),
+      )
+    })
+
+    it('re-putting mentions for the same msg_key replaces rather than duplicates (idempotent re-ingest)', () => {
+      store.putMentions([{ msg_key: 'g1:1', target_un: 'wxid_bob' }])
+      store.putMentions([{ msg_key: 'g1:1', target_un: 'wxid_carol' }])
+      expect(store.mentionsFor('g1:1')).toEqual(['wxid_carol'])
     })
   })
 

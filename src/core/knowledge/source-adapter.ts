@@ -11,9 +11,20 @@
  *
  * Ported from the reviewed Python
  * (wechat-cc-plugins/packages/wxsearch/wxsearch/text_source.py: `_to_text`,
- * ZMAGIC, the Name2Id rowid resolution, exact-prefix strip, table_conv). Only
- * TEXT_TYPE(1) rows are handled here — the non-text/wxmedia-derived join
- * `text_source.py` also did is out of scope for this slice.
+ * ZMAGIC, the Name2Id rowid resolution, exact-prefix strip, table_conv).
+ *
+ * Knowledge Graph inproc Task 1: EVERY row is now ingested, not just
+ * TEXT_TYPE(1) — the graph/facts/person understanding layers need the full
+ * message stream (voice/call/transfer/redpacket/system/…), not just text.
+ * Each row gets a normalized `kind` (ported from wxgraph/source.py's
+ * `classify_type`, see `classifyKind` below), `local_type` (raw), and
+ * `is_group` (conversation ends with `@chatroom`, mirroring wxgraph
+ * `source.iter_messages`). `text` stays populated only for kind === 'text'
+ * — every other kind's `text` is `''`, so wxsearch's indexer (which already
+ * filters out empty-text rows, and can additionally pass `kind: 'text'` to
+ * `listMessages`) is unaffected. @mention / refermsg targets found in group
+ * messages are written to `source_mentions` (see `extractMentionTargets`)
+ * for the graph builder (Task 3) to turn into mention edges.
  *
  * zstd: Bun 1.3+ ships a native `Bun.zstdDecompressSync` (libzstd under the
  * hood) — verified it decodes WCDB's dictionary-less zstd AND the
@@ -79,12 +90,97 @@ import { Database } from 'bun:sqlite'
 import { createHash } from 'node:crypto'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import type { KnowledgeStore, SourceMsg } from './store'
+import type { KnowledgeStore, SourceMention, SourceMsg } from './store'
 
 const TEXT_TYPE = 1
+const APP_TYPE = 49
 const ZMAGIC = new Uint8Array([0x28, 0xb5, 0x2f, 0xfd])
 const DEFAULT_BATCH = 500
 const MESSAGE_DB_RE = /^message_.*\.sqlite$/
+
+// local_type -> coarse kind. Ported from wxgraph/source.py's `_SIMPLE`
+// (itself mirroring wxvault_mcp._decode_body).
+const SIMPLE_KIND: Record<number, string> = {
+  1: 'text',
+  3: 'image',
+  34: 'voice',
+  43: 'video',
+  44: 'video',
+  47: 'sticker',
+  42: 'card',
+  67: 'card',
+  48: 'location',
+  50: 'call',
+  10000: 'system',
+  10002: 'system',
+}
+// type=49 <type> subtype -> kind. Ported from wxgraph/source.py's `_APPSUB`
+// (mirroring wxvault_mcp._decode_app).
+const APPSUB_KIND: Record<number, string> = {
+  2: 'miniprogram',
+  4: 'link',
+  5: 'link',
+  33: 'link',
+  36: 'link',
+  6: 'file',
+  8: 'sticker',
+  19: 'chatlog',
+  51: 'channel',
+  63: 'channel',
+  53: 'solitaire',
+  62: 'pat',
+  87: 'notice',
+  2000: 'transfer',
+  2001: 'redpacket',
+}
+
+function xmlInt(content: string, tag: string): number {
+  const m = new RegExp(`<${tag}>\\s*(-?\\d+)\\s*</${tag}>`).exec(content)
+  return m ? parseInt(m[1]!, 10) : 0
+}
+
+/** Normalized message classification. Ported from wxgraph/source.py's
+ *  `classify_type(ltype, content)` — same tags, same precedence (refermsg
+ *  presence beats the app subtype lookup). `content` is only consulted for
+ *  local_type 49 (app messages); pass null when it isn't needed/decoded. */
+export function classifyKind(localType: number, content: string | null): string {
+  if (localType in SIMPLE_KIND) return SIMPLE_KIND[localType]!
+  if (localType === APP_TYPE) {
+    if (content && content.includes('<refermsg>')) return 'quote'
+    const sub = xmlInt(content ?? '', 'type')
+    if (sub in APPSUB_KIND) return APPSUB_KIND[sub]!
+    return 'app'
+  }
+  return 'other'
+}
+
+const ATUSERLIST_RE = /<atuserlist>([\s\S]*?)<\/atuserlist>/
+const REFERMSG_RE = /<refermsg>([\s\S]*?)<\/refermsg>/
+const CHATUSR_RE = /<chatusr>([\s\S]*?)<\/chatusr>/
+
+/** Parse @mention / quote targets out of one group message's raw (decoded,
+ *  un-prefix-stripped) content. Ported from wxgraph/edges.py's `_targets`,
+ *  minus the displayname->username fallback: that needs a display_to_un map
+ *  built from contact.sqlite, which isn't available at the source layer —
+ *  deferred to the graph builder (Task 3), matching edges.py's "never
+ *  guess" policy for ambiguous signals. Exact signals (atuserlist wxids,
+ *  refermsg chatusr) are extracted directly here. */
+export function extractMentionTargets(content: string): string[] {
+  const out: string[] = []
+  const m = ATUSERLIST_RE.exec(content)
+  if (m) {
+    const raw = m[1]!.replace(/<!\[CDATA\[/g, '').replace(/\]\]>/g, '')
+    for (const u of raw.trim().split(/[,\s]+/)) {
+      if (u) out.push(u)
+    }
+  }
+  const rm = REFERMSG_RE.exec(content)
+  if (rm) {
+    const cu = CHATUSR_RE.exec(rm[1]!)
+    if (cu && cu[1]!.trim()) out.push(cu[1]!.trim())
+  }
+  return out
+}
 
 interface RawRow {
   local_id: number
@@ -105,28 +201,28 @@ function isZstd(bytes: Uint8Array): boolean {
   )
 }
 
-/** Decode message_content (str, or zstd-compressed bytes) and strip the exact
- *  resolved-sender prefix. Mirrors text_source.py's `_to_text`: the prefix is
- *  stripped only when it exactly matches the resolved sender username, never
- *  on a bare colon. */
-function toText(content: Uint8Array | string | null, senderUn: string | null): string {
+/** Decode message_content (str, or zstd-compressed bytes) to a raw string —
+ *  no prefix stripping. Mirrors wxgraph/source.py's `zstd_text`. */
+function decodeRaw(content: Uint8Array | string | null): string {
   if (content == null) return ''
-  let s: string
-  if (typeof content === 'string') {
-    s = content
-  } else {
-    let bytes = content
-    if (isZstd(bytes)) {
-      try {
-        bytes = new Uint8Array(Bun.zstdDecompressSync(bytes))
-      } catch {
-        // Malformed/truncated frame — fall through and decode the raw
-        // (still-compressed) bytes, mirroring text_source.py's final `pass`:
-        // garbage output, not a crash.
-      }
+  if (typeof content === 'string') return content
+  let bytes = content
+  if (isZstd(bytes)) {
+    try {
+      bytes = new Uint8Array(Bun.zstdDecompressSync(bytes))
+    } catch {
+      // Malformed/truncated frame — fall through and decode the raw
+      // (still-compressed) bytes, mirroring text_source.py's final `pass`:
+      // garbage output, not a crash.
     }
-    s = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
   }
+  return new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+}
+
+/** Strip the exact resolved-sender prefix off decoded text. Mirrors
+ *  text_source.py's `_to_text`: the prefix is stripped only when it exactly
+ *  matches the resolved sender username, never on a bare colon. */
+function stripSenderPrefix(s: string, senderUn: string | null): string {
   if (senderUn) {
     for (const pref of [senderUn + ':\n', senderUn + ':']) {
       if (s.startsWith(pref)) return s.slice(pref.length)
@@ -192,6 +288,8 @@ export function runSourceAdapter(opts: {
 
       for (const tbl of tableNames.filter(n => n.startsWith('Msg_'))) {
         const conv = tableConv.get(tbl) ?? tbl
+        // Mirrors wxgraph/source.py's iter_messages: `is_group = conv.endswith("@chatroom")`.
+        const isGroup = conv.endsWith('@chatroom')
         const cursorKey = `source_adapter_cursor:${dbFile}:${tbl}`
         const cursor = Number(store.getSourceMeta(cursorKey) ?? '0')
 
@@ -208,6 +306,7 @@ export function runSourceAdapter(opts: {
         if (rows.length === 0) continue
 
         let pending: SourceMsg[] = []
+        let pendingMentions: SourceMention[] = []
         let lastFlushedLocalId = cursor
 
         const flush = (uptoLocalId: number) => {
@@ -216,36 +315,68 @@ export function runSourceAdapter(opts: {
             ingested += pending.length
             pending = []
           }
+          if (pendingMentions.length > 0) {
+            store.putMentions(pendingMentions)
+            pendingMentions = []
+          }
           store.setSourceMeta(cursorKey, String(uptoLocalId))
           lastFlushedLocalId = uptoLocalId
         }
 
         for (const row of rows) {
           const ltype = (row.local_type ?? 0) >>> 0
-          if (ltype === TEXT_TYPE) {
-            const senderUn = row.real_sender_id != null ? n2i.get(row.real_sender_id) ?? null : null
-            const text = toText(row.message_content, senderUn).trim()
-            if (text) {
-              pending.push({
-                msg_key: `${tbl}:${row.local_id}`,
-                conversation: conv,
-                // Mirrors text_source.py: `sender_un or (str(sid) if sid else "")`
-                // — fall back to the numeric real_sender_id (e.g. self-sent
-                // messages, or a participant not yet resolved in Name2Id)
-                // rather than dropping the sender to empty.
-                sender: senderUn ?? (row.real_sender_id ? String(row.real_sender_id) : ''),
-                time: row.create_time ?? 0,
-                type: 'text',
-                text,
-                server_id: row.server_id != null ? String(row.server_id) : '',
-              })
+          const senderUn = row.real_sender_id != null ? n2i.get(row.real_sender_id) ?? null : null
+          // Mirrors text_source.py: `sender_un or (str(sid) if sid else "")`
+          // — fall back to the numeric real_sender_id (e.g. self-sent
+          // messages, or a participant not yet resolved in Name2Id) rather
+          // than dropping the sender to empty.
+          const sender = senderUn ?? (row.real_sender_id ? String(row.real_sender_id) : '')
+          const msgKey = `${tbl}:${row.local_id}`
+
+          // Decode content only when something downstream needs it: text
+          // rows need it for `text`; app-type (49) rows need it to classify
+          // the quote/subtype; group rows of ANY type need it to scan for
+          // @mention/refermsg targets. Mirrors source.py's iter_messages
+          // decode gate (`ltype == 49 or is_group`), extended to also cover
+          // TEXT_TYPE since (unlike the graph builder) this adapter's own
+          // `text` field needs the decoded body regardless of group-ness.
+          const raw =
+            ltype === TEXT_TYPE || ltype === APP_TYPE || isGroup
+              ? decodeRaw(row.message_content)
+              : null
+
+          const kind = classifyKind(ltype, ltype === APP_TYPE ? raw : null)
+          const text = kind === 'text' ? stripSenderPrefix(raw ?? '', senderUn).trim() : ''
+
+          pending.push({
+            msg_key: msgKey,
+            conversation: conv,
+            sender,
+            time: row.create_time ?? 0,
+            // Legacy field, kept for existing callers; now generalized to
+            // the normalized kind rather than a hardcoded 'text'.
+            type: kind,
+            text,
+            server_id: row.server_id != null ? String(row.server_id) : '',
+            local_type: ltype,
+            is_group: isGroup,
+            kind,
+          })
+
+          // Mention/quote targets are a group-only signal — mirrors
+          // wxgraph/edges.py's `build_mention_edges`, which skips any
+          // message where `is_group` is false.
+          if (isGroup && raw) {
+            for (const target of extractMentionTargets(raw)) {
+              pendingMentions.push({ msg_key: msgKey, target_un: target })
             }
           }
+
           if (pending.length >= batchSize) flush(row.local_id)
         }
 
         const lastRow = rows[rows.length - 1]!
-        if (pending.length > 0 || lastRow.local_id !== lastFlushedLocalId) {
+        if (pending.length > 0 || pendingMentions.length > 0 || lastRow.local_id !== lastFlushedLocalId) {
           flush(lastRow.local_id)
         }
       }

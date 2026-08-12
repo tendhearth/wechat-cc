@@ -44,7 +44,10 @@ export async function runIndexer(opts: RunIndexerOpts): Promise<RunIndexerResult
   let indexed = 0
 
   for (;;) {
-    const page = store.listMessages(cursor, batchSize)
+    // Knowledge Graph inproc Task 1: source now holds every message kind
+    // (voice/transfer/system/…), not just text — filter to 'text' so this
+    // indexer keeps embedding only text, same as before source enrichment.
+    const page = store.listMessages(cursor, batchSize, 'text')
     if (page.messages.length === 0) break
 
     const toEmbed = page.messages.filter((m: SourceMsg) => m.text.trim().length > 0)
@@ -55,7 +58,7 @@ export async function runIndexer(opts: RunIndexerOpts): Promise<RunIndexerResult
         conversation: m.conversation,
         sender: m.sender,
         time: m.time,
-        kind: m.type,
+        kind: m.kind ?? 'text',
         text: m.text,
         vector: vectors[i]!,
       }))

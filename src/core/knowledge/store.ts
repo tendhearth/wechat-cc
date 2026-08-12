@@ -29,6 +29,25 @@ export interface SourceMsg {
   type: string
   text: string
   server_id: string
+  /** Raw WCDB local_type (1=text, 34=voice, 49=app/quote/transfer/…, …).
+   *  Optional on write (defaults to 1/text) so pre-Task-1 callers that only
+   *  ever ingested text messages don't need updating; listMessages always
+   *  returns the actual stored value. */
+  local_type?: number
+  /** Whether `conversation` is a group chat (vs a 1:1 session). Optional on
+   *  write, defaults to false — see `local_type`. */
+  is_group?: boolean
+  /** Normalized message classification — ported from wxgraph's
+   *  classify_type (text/voice/call/image/transfer/redpacket/quote/app/…).
+   *  Optional on write, defaults to 'text' — see `local_type`. */
+  kind?: string
+}
+
+/** One @atuserlist / refermsg target parsed out of a group message's raw
+ *  content — an edge candidate for the graph layer's mention edges. */
+export interface SourceMention {
+  msg_key: string
+  target_un: string
 }
 
 export interface Chunk {
@@ -51,7 +70,21 @@ export interface DocSummary {
 
 export interface KnowledgeStore {
   putSourceMessages(msgs: SourceMsg[]): { watermark: number }
-  listMessages(sinceWatermark: number, limit: number): { messages: SourceMsg[]; watermark: number }
+  /** `kind` optionally filters to one normalized kind (e.g. 'text' — what
+   *  the search indexer wants); omitted returns every kind. */
+  listMessages(
+    sinceWatermark: number,
+    limit: number,
+    kind?: string,
+  ): { messages: SourceMsg[]; watermark: number }
+  /** Replaces all mention rows for each distinct msg_key in `rows` with the
+   *  given set (idempotent re-ingest: re-submitting the same msg_key's
+   *  mentions never duplicates them). */
+  putMentions(rows: SourceMention[]): void
+  mentionsFor(msg_key: string): string[]
+  /** Every mention row in source.db — the graph builder's (Task 3) read of
+   *  the whole @mention/refermsg edge set. */
+  allMentions(): SourceMention[]
   putSemantic(model_id: string, model_version: string, chunks: Chunk[]): void
   loadVectors(model_id: string): { rowids: number[]; dim: number; mat: Float32Array }
   keywordSearch(query: string, k: number): number[]
@@ -91,13 +124,17 @@ export function openKnowledge(root: string): KnowledgeStore {
       msg_key TEXT PRIMARY KEY,
       conversation TEXT, sender TEXT, time INTEGER,
       type TEXT, text TEXT, server_id TEXT,
+      local_type INTEGER, is_group INTEGER, kind TEXT,
       ingested_watermark INTEGER
     );
     CREATE INDEX IF NOT EXISTS messages_watermark ON messages(ingested_watermark);
+    CREATE INDEX IF NOT EXISTS messages_kind ON messages(kind);
     CREATE TABLE IF NOT EXISTS contacts (
       username TEXT PRIMARY KEY, display TEXT
     );
     CREATE TABLE IF NOT EXISTS source_meta (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE IF NOT EXISTS source_mentions (msg_key TEXT, target_un TEXT);
+    CREATE INDEX IF NOT EXISTS source_mentions_msg_key ON source_mentions(msg_key);
   `)
 
   const stmtMaxWatermark = sourceDb.query<{ w: number | null }, []>(
@@ -112,10 +149,10 @@ export function openKnowledge(root: string): KnowledgeStore {
   )
   const stmtUpsertMessage = sourceDb.query<
     unknown,
-    [string, string, string, number, string, string, string, number]
+    [string, string, string, number, string, string, string, number, number, string, number]
   >(
-    `INSERT INTO messages(msg_key, conversation, sender, time, type, text, server_id, ingested_watermark)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO messages(msg_key, conversation, sender, time, type, text, server_id, local_type, is_group, kind, ingested_watermark)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(msg_key) DO UPDATE SET
        conversation = excluded.conversation,
        sender = excluded.sender,
@@ -123,15 +160,23 @@ export function openKnowledge(root: string): KnowledgeStore {
        type = excluded.type,
        text = excluded.text,
        server_id = excluded.server_id,
+       local_type = excluded.local_type,
+       is_group = excluded.is_group,
+       kind = excluded.kind,
        ingested_watermark = excluded.ingested_watermark`,
   )
-  const stmtListMessages = sourceDb.query<
-    SourceMsg & { ingested_watermark: number },
-    [number, number]
-  >(
-    `SELECT msg_key, conversation, sender, time, type, text, server_id, ingested_watermark
+  type MsgRow = Omit<SourceMsg, 'is_group'> & { is_group: number; ingested_watermark: number }
+  const stmtListMessages = sourceDb.query<MsgRow, [number, number]>(
+    `SELECT msg_key, conversation, sender, time, type, text, server_id, local_type, is_group, kind, ingested_watermark
      FROM messages
      WHERE ingested_watermark > ?
+     ORDER BY ingested_watermark ASC
+     LIMIT ?`,
+  )
+  const stmtListMessagesByKind = sourceDb.query<MsgRow, [number, string, number]>(
+    `SELECT msg_key, conversation, sender, time, type, text, server_id, local_type, is_group, kind, ingested_watermark
+     FROM messages
+     WHERE ingested_watermark > ? AND kind = ?
      ORDER BY ingested_watermark ASC
      LIMIT ?`,
   )
@@ -140,9 +185,45 @@ export function openKnowledge(root: string): KnowledgeStore {
     let w = stmtMaxWatermark.get()?.w ?? 0
     for (const m of rows) {
       w += 1
-      stmtUpsertMessage.run(m.msg_key, m.conversation, m.sender, m.time, m.type, m.text, m.server_id, w)
+      stmtUpsertMessage.run(
+        m.msg_key,
+        m.conversation,
+        m.sender,
+        m.time,
+        m.type,
+        m.text,
+        m.server_id,
+        m.local_type ?? 1,
+        m.is_group ? 1 : 0,
+        m.kind ?? 'text',
+        w,
+      )
     }
     return w
+  })
+
+  const stmtDeleteMentions = sourceDb.query<unknown, [string]>(
+    'DELETE FROM source_mentions WHERE msg_key = ?',
+  )
+  const stmtInsertMention = sourceDb.query<unknown, [string, string]>(
+    'INSERT INTO source_mentions(msg_key, target_un) VALUES (?, ?)',
+  )
+  const stmtMentionsFor = sourceDb.query<{ target_un: string }, [string]>(
+    'SELECT target_un FROM source_mentions WHERE msg_key = ?',
+  )
+  const stmtAllMentions = sourceDb.query<SourceMention, []>(
+    'SELECT msg_key, target_un FROM source_mentions',
+  )
+
+  const runPutMentions = sourceDb.transaction((rows: SourceMention[]) => {
+    const cleared = new Set<string>()
+    for (const r of rows) {
+      if (!cleared.has(r.msg_key)) {
+        stmtDeleteMentions.run(r.msg_key)
+        cleared.add(r.msg_key)
+      }
+      stmtInsertMention.run(r.msg_key, r.target_un)
+    }
   })
 
   // ---- semantic.db --------------------------------------------------------
@@ -230,12 +311,30 @@ export function openKnowledge(root: string): KnowledgeStore {
       return { watermark }
     },
 
-    listMessages(sinceWatermark, limit) {
-      const rows = stmtListMessages.all(sinceWatermark, limit)
+    listMessages(sinceWatermark, limit, kind) {
+      const rows =
+        kind === undefined
+          ? stmtListMessages.all(sinceWatermark, limit)
+          : stmtListMessagesByKind.all(sinceWatermark, kind, limit)
       if (rows.length === 0) return { messages: [], watermark: sinceWatermark }
       const watermark = rows[rows.length - 1]!.ingested_watermark
-      const messages = rows.map(({ ingested_watermark, ...rest }) => rest)
+      const messages = rows.map(({ ingested_watermark, is_group, ...rest }) => ({
+        ...rest,
+        is_group: !!is_group,
+      }))
       return { messages, watermark }
+    },
+
+    putMentions(rows) {
+      runPutMentions(rows)
+    },
+
+    mentionsFor(msg_key) {
+      return stmtMentionsFor.all(msg_key).map(r => r.target_un)
+    },
+
+    allMentions() {
+      return stmtAllMentions.all()
     },
 
     putSemantic(model_id, model_version, chunks) {
