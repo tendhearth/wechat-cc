@@ -514,10 +514,13 @@ describe('knowledge-orchestration prompt section', () => {
     expect(s).toContain('同名可能对不准')
   })
 
-  it('renders only bullets for known plugins that are present: wxgraph+wxsearch includes those two, not facts/media', () => {
+  it('renders the wxgraph bullet but NOT a `search` bullet (wxsearch search tool retired to the daemon Knowledge Kernel; no agent search tool yet)', () => {
     const s = knowledgeOrchestrationSection(['wxgraph', 'wxsearch'])
     expect(s).toContain('关系画像')
-    expect(s).toContain('消息检索')
+    // wxsearch's `search` MCP tool was retired (Knowledge Kernel Phase 0/1) —
+    // do not advertise a search tool that isn't registered.
+    expect(s).not.toContain('消息检索')
+    expect(s).not.toContain('`search`')
     expect(s).not.toContain('结构化事实')
     expect(s).not.toContain('语音/图片转出的文字')
   })

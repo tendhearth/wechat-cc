@@ -522,12 +522,14 @@ export function knowledgeOrchestrationSection(pluginNames: string[]): string {
   if (present.has('wxfacts')) {
     bullets.push('- **结构化事实**（`contact_facts`/`find_facts`）：抽取出的事实、义务、关系（带出处）。问"关于 ta 的具体事实 / ta 欠我什么"用它。')
   }
-  if (present.has('wxsearch')) {
-    bullets.push('- **消息检索**（`search`）：语义找"那次聊到 X 的消息"。回溯具体对话用它。')
-  }
-  if (present.has('wxmedia')) {
-    bullets.push('- 语音/图片转出的文字也在检索范围内。')
-  }
+  // NOTE (Knowledge Kernel Phase 0/1): wxsearch's `search` MCP tool was retired —
+  // semantic search moved to the daemon's in-process Knowledge Kernel and is not
+  // yet exposed as an agent-facing tool (the /v1/knowledge/search Query face is
+  // admin-only + needs a pre-embedded queryVector). Do NOT advertise a `search`
+  // tool here until the daemon exposes one, or the agent will emit calls to a
+  // tool that isn't registered. Re-add a bullet pointing at the daemon search
+  // tool in the Phase 1 continuation. (The wxmedia "also searchable" line
+  // depended on this same search tool and is likewise withheld.)
 
   const parts: string[] = [
     '你对一个人的了解由几层组成——你自己的记忆是你的"看法"（第一人称、可能有偏见）；下面这些是从真实数据算出来的源。**要真正懂一个人，把你的看法 + 关系 + 事实拼起来，别只靠一层。用人名找人（按微信联系人名解析，同名可能对不准）。**',
