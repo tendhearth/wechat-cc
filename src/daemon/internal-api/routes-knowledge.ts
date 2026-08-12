@@ -12,12 +12,16 @@
  * (messages, search, semantic/status) is read by anything paging source or
  * running semantic search (e.g. an agent's search tool).
  *
- * POST /v1/knowledge/search embedding note: query-text embedding is a
- * daemon-side model call deferred out of this slice — the caller must
- * supply a pre-embedded `queryVector` in the body. Absent ⇒ 400
+ * POST /v1/knowledge/search embedding (Agent-facing Search T3): the caller
+ * may supply a pre-embedded `queryVector` (+ `model_id`) directly, or — when
+ * `deps.knowledge.embedder`/`embedQuery` is wired — omit it and let the
+ * route embed `body.query` itself via the shared embedder service. On the
+ * embedder path the resulting `model_id` is ALWAYS the embedder's own
+ * `model_id`, never the caller-supplied one (I2 closure: query + index must
+ * share one model space, and the embedder is the single source of truth for
+ * what that space is). Neither a vector nor an embedder available ⇒ 400
  * query_vector_required (NOT 503 — the store is wired, the caller just
- * skipped a required field). A later slice can add an optional
- * `deps.knowledge.embedQuery` fallback that embeds `body.query` itself.
+ * skipped a required field / the indexer isn't configured).
  */
 import type { InternalApiDeps, RouteTable } from './types'
 
@@ -71,15 +75,33 @@ export function knowledgeRoutes(deps: InternalApiDeps): RouteTable {
         queryVector?: unknown
       }
       if (typeof b.query !== 'string' || b.query.length === 0) return { status: 400, body: { error: 'invalid_query' } }
-      if (typeof b.model_id !== 'string' || b.model_id.length === 0) {
-        return { status: 400, body: { error: 'invalid_model_id' } }
-      }
       const limit = typeof b.limit === 'number' && Number.isFinite(b.limit) && b.limit > 0 ? b.limit : 20
-      if (!Array.isArray(b.queryVector)) return { status: 400, body: { error: 'query_vector_required' } }
+
+      let queryVector: number[]
+      let model_id: string
+      if (Array.isArray(b.queryVector) && b.queryVector.length > 0) {
+        // Explicit-vector path (unchanged): caller supplies both the vector
+        // and the model_id it was embedded under.
+        if (typeof b.model_id !== 'string' || b.model_id.length === 0) {
+          return { status: 400, body: { error: 'invalid_model_id' } }
+        }
+        queryVector = b.queryVector as number[]
+        model_id = b.model_id
+      } else if (deps.knowledge.embedder && deps.knowledge.embedQuery) {
+        // Embedder-fallback path (I2 closure): the embedder is the single
+        // source of truth for the model space, so any caller-supplied
+        // model_id is ignored here — using it would risk querying against a
+        // different space than the vector was just embedded into.
+        queryVector = await deps.knowledge.embedQuery(b.query)
+        model_id = deps.knowledge.embedder.model_id
+      } else {
+        return { status: 400, body: { error: 'query_vector_required' } }
+      }
+
       const result = deps.knowledge.search(deps.knowledge.store, {
-        queryVector: b.queryVector as number[],
+        queryVector,
         queryText: b.query,
-        model_id: b.model_id,
+        model_id,
         limit,
         conversation: typeof b.conversation === 'string' ? b.conversation : undefined,
       })
