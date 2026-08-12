@@ -31,6 +31,8 @@ import { registerFileTools } from './tools-files'
 import { registerSocialSeekTool } from './tools-social'
 import { registerKnowledgeSearchTool } from './tools-knowledge'
 import { registerGraphTools } from './tools-graph'
+import { registerFactsTools } from './tools-facts'
+import { registerPersonTools } from './tools-person'
 
 const baseUrl = process.env.WECHAT_INTERNAL_API
 const tokenFilePath = process.env.WECHAT_INTERNAL_TOKEN_FILE
@@ -121,6 +123,13 @@ if (SESSION_IS_ADMIN) {
   // contact/relationship graph — same private-data trust class as
   // knowledge_search above, so admin-only.
   registerGraphTools(server, client)
+  // Knowledge Facts/Person inproc (FP T5): extraction_batch/record_facts/
+  // contact_facts/find_facts/set_fact_status/extraction_status and
+  // person_brief read/write the owner's structured fact store and
+  // per-contact briefs — same private-data trust class as the graph tools
+  // above, so admin-only.
+  registerFactsTools(server, client)
+  registerPersonTools(server, client)
 }
 
 const transport = new StdioServerTransport()

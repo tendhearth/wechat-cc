@@ -358,6 +358,17 @@ export interface Bootstrap {
      * mirrors.
      */
     graph?: import('../../core/knowledge/graph-query').GraphQueryApi
+    /**
+     * Facts + Person (Knowledge Facts/Person inproc, Task 5) — mirrors
+     * `InternalApiDeps['knowledge'].facts`/`.person` (internal-api/types.ts):
+     * the candidate-feed/record/query API over facts.db built by
+     * `core/knowledge/facts.ts`'s `makeFactsApi`, and the unified
+     * per-contact brief composite built by `core/knowledge/person.ts`'s
+     * `makePersonApi`. Same posture as `graph` above: present whenever
+     * `knowledge_enabled` is configured.
+     */
+    facts?: import('../../core/knowledge/facts').FactsApi
+    person?: import('../../core/knowledge/person').PersonApi
   }
   /**
    * Connection-health runtime (connection-health design, Task 7) — wraps the

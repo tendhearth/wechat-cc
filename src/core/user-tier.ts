@@ -39,13 +39,15 @@ export type ToolKind =
   | 'social_seek'        // admin-only: initiate outbound social contact with external A2A agents (agent-social M1) — unlike a2a_send (reply to an established peer), this actively broadcasts an intent to strangers.
   | 'knowledge_search'   // admin-only: semantic search over the owner's WeChat message history (agent-facing search) — same private-data trust class as file_locate/social_seek.
   | 'graph_query'        // admin-only: read the owner's contact/relationship graph (contact_profile/top_contacts/relationship_subgraph/connectors/graph_status, Knowledge Graph inproc) — same private-data trust class as knowledge_search.
+  | 'facts_query'        // admin-only: read/write the owner's structured fact store (extraction_batch/record_facts/contact_facts/find_facts/set_fact_status/extraction_status, Knowledge Facts/Person inproc) — same private-data trust class as graph_query.
+  | 'person_query'       // admin-only: assemble a per-contact unified brief (person_brief, Knowledge Facts/Person inproc) — same private-data trust class as facts_query/graph_query.
 
 const ALL_KINDS: ReadonlySet<ToolKind> = new Set([
   'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
   'observations_read', 'observations_write',
   'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
   'a2a_send', 'daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool',
-  'social_seek', 'knowledge_search', 'graph_query',
+  'social_seek', 'knowledge_search', 'graph_query', 'facts_query', 'person_query',
 ])
 
 export interface TierProfile {
@@ -91,7 +93,7 @@ const GUEST_ALLOW = new Set<ToolKind>(['reply', 'share_page', 'memory_read', 'ob
 // they FAIL CLOSED — only the owner (admin) can call a plugin's tools by
 // default. A plugin that genuinely wants trusted/guest reach must opt in
 // explicitly (future: manifest `minTier`), not inherit it silently.
-const ADMIN_ONLY = new Set<ToolKind>(['daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool', 'social_seek', 'knowledge_search', 'graph_query'])
+const ADMIN_ONLY = new Set<ToolKind>(['daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool', 'social_seek', 'knowledge_search', 'graph_query', 'facts_query', 'person_query'])
 
 export const TIER_PROFILES: Record<UserTier, TierProfile> = {
   admin: {
@@ -245,6 +247,11 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     // contact/relationship graph.
     if (sub === 'contact_profile' || sub === 'top_contacts' || sub === 'relationship_subgraph'
       || sub === 'connectors' || sub === 'graph_status') return 'graph_query'
+    // Knowledge Facts/Person inproc (FP T5) — admin-only, reads/writes the
+    // owner's structured fact store and per-contact briefs.
+    if (sub === 'extraction_batch' || sub === 'record_facts' || sub === 'contact_facts'
+      || sub === 'find_facts' || sub === 'set_fact_status' || sub === 'extraction_status') return 'facts_query'
+    if (sub === 'person_brief') return 'person_query'
     // Explicit write mapping — must NOT fall through to the fs_read default
     // below: set_chat_pref mutates chat_prefs.json (care level / split).
     if (sub === 'set_chat_pref') return 'memory_write'

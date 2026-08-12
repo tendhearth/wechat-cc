@@ -59,7 +59,7 @@ describe('TIER_PROFILES', () => {
     'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
     'observations_read', 'observations_write',
     'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
-    'a2a_send', 'plugin_tool', 'knowledge_search', 'graph_query',
+    'a2a_send', 'plugin_tool', 'knowledge_search', 'graph_query', 'facts_query', 'person_query',
   ]
 
   for (const tier of ['admin', 'trusted', 'guest'] as UserTier[]) {
@@ -105,7 +105,7 @@ describe('TIER_PROFILES', () => {
     expect(TIER_PROFILES.trusted.relay.has('memory_delete')).toBe(true)
     // trusted denies all admin-exclusive tools (was 0 before
     // self-diagnosis / remediation / plugin tools existed).
-    expect(TIER_PROFILES.trusted.deny.size).toBe(7)
+    expect(TIER_PROFILES.trusted.deny.size).toBe(9)
     expect(TIER_PROFILES.trusted.deny.has('daemon_introspect')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('daemon_remediate')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('file_locate')).toBe(true)
@@ -113,6 +113,8 @@ describe('TIER_PROFILES', () => {
     expect(TIER_PROFILES.trusted.deny.has('social_seek')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('knowledge_search')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('graph_query')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('facts_query')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('person_query')).toBe(true)
   })
 
   it('guest allows only reply/share_page/memory_read/observations_read', () => {
@@ -390,6 +392,33 @@ describe('graph_query tier kind (Knowledge Graph inproc GR T5)', () => {
     expect(TIER_PROFILES.trusted.allow.has('graph_query')).toBe(false)
     expect(TIER_PROFILES.guest.deny.has('graph_query')).toBe(true)
     expect(TIER_PROFILES.guest.allow.has('graph_query')).toBe(false)
+  })
+})
+
+describe('facts_query / person_query tier kinds (Knowledge Facts/Person inproc FP T5)', () => {
+  it('classifies the 6 Facts MCP tools as ToolKind facts_query', () => {
+    expect(classifyToolUse('mcp__wechat__extraction_batch', {})).toBe('facts_query')
+    expect(classifyToolUse('mcp__wechat__record_facts', { batch_id: 'x' })).toBe('facts_query')
+    expect(classifyToolUse('mcp__wechat__contact_facts', { name: 'x' })).toBe('facts_query')
+    expect(classifyToolUse('mcp__wechat__find_facts', {})).toBe('facts_query')
+    expect(classifyToolUse('mcp__wechat__set_fact_status', { id: 1, status: 'resolved' })).toBe('facts_query')
+    expect(classifyToolUse('mcp__wechat__extraction_status', {})).toBe('facts_query')
+  })
+  it('classifies the person_brief MCP tool as ToolKind person_query', () => {
+    expect(classifyToolUse('mcp__wechat__person_brief', { name: 'x' })).toBe('person_query')
+  })
+  it('admin allows facts_query/person_query; trusted and guest deny both', () => {
+    // Same private-data trust class as graph_query/knowledge_search/
+    // file_locate/social_seek — admin-only, no relay path: trusted/guest
+    // are denied outright.
+    for (const kind of ['facts_query', 'person_query'] as const) {
+      expect(TIER_PROFILES.admin.allow.has(kind)).toBe(true)
+      expect(TIER_PROFILES.admin.relay.has(kind)).toBe(false)
+      expect(TIER_PROFILES.trusted.deny.has(kind)).toBe(true)
+      expect(TIER_PROFILES.trusted.allow.has(kind)).toBe(false)
+      expect(TIER_PROFILES.guest.deny.has(kind)).toBe(true)
+      expect(TIER_PROFILES.guest.allow.has(kind)).toBe(false)
+    }
   })
 })
 
