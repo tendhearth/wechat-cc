@@ -135,3 +135,20 @@ On the user's real `~/Documents/wxvault/out/decrypted`: enable `knowledge_enable
 - **Spec coverage:** source.db+semantic.db (T1), TS search (T2), Ingest/Query routes (T3), adapter normalize-once (T4), bootstrap+schedule (T5), wxsearch indexer re-plumb (T6), search-via-API + drop `..` (T7), real verify (T8). Provenance (model_id filter) in T1/T2/T3. Decode-once in T4.
 - **Type consistency:** `SourceMsg`/`Chunk` from T1 used in T3/T4/T6; `semanticSearch` sig from T2 used in T3/T5.
 - **Placeholders:** none — integration tasks name the mirror targets (`routes-social.ts`, `a2a-events-store.ts`, `route-tiers.ts` social rows, `tick-bodies.ts`).
+
+---
+
+## PIVOT (2026-07-12): Option C — daemon-driven in-process indexer + dumb embed subprocess
+
+The plugin-calls-Knowledge-API approach (T6/T7 as originally written) hit a real gap: the daemon injects internal-api creds only to CORE MCP servers, not to plugins, so a wxsearch worker has no admin token for the admin-only Knowledge API. Rather than add a first-party-plugin auth path, we invert control (the correct long-term shape):
+
+- **The daemon owns + drives indexing IN-PROCESS.** A new `src/core/knowledge/indexer.ts` reads `source` via the store directly (in-proc, no HTTP), batches, embeds, and writes `semantic` via the store directly (in-proc). No cross-process auth, no `..`.
+- **Embed stays Python but as a DUMB subprocess** (text in → vectors out), never a plugin that calls back. Protocol: the daemon spawns `embed_subprocess.py` ONCE per indexing run; sends batches as JSONL on stdin (`{"texts":[...]}`); reads JSONL vectors on stdout (`{"vectors":[[...]]}`); closes stdin when done (amortizes model load). The script reuses wxsearch's existing `embed.py` fastembed runner + model-manager policy. NO Knowledge API, NO token, NO `..`.
+- **The HTTP Query/Ingest routes (T3) stay** — `search` for the agent, Ingest for any external producer — but the indexer does not use them (it's in-proc).
+- **wxsearch's indexer role disappears.** T6's `kclient.py` + `index_update`-via-kclient are superseded (reverted). `text_source.py`/sidecar stay removed. `embed.py` is reused by `embed_subprocess.py`. The agent's `search` = the daemon Query face.
+
+### Revised remaining tasks
+- **T6' (host, TS):** `src/core/knowledge/indexer.ts` (`runIndexer({store, embed, model_id, model_version, batch})`, injectable embed) + `src/core/knowledge/embed-runner.ts` (spawns the persistent Python embed subprocess, JSONL protocol). TDD with a fake embed / fake subprocess.
+- **T6'' (plugins, Python):** `embed_subprocess.py` — read JSONL texts on stdin, embed via the existing `embed.py` fastembed runner, write JSONL vectors on stdout. Revert T6's kclient/index_update changes; keep text_source deletion.
+- **T7' (host):** bootstrap schedules `runIndexer` after the source adapter (in-proc, gated on knowledge_enabled). Retire wxsearch's indexing MCP; drop its `../wxvault` healthcheck.
+- **T8:** VERIFY-AGAINST-REAL (adapter → indexer → embed subprocess with real fastembed → `/knowledge/search`), on the user's machine.
