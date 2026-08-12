@@ -229,6 +229,19 @@ export interface InternalApiDeps {
       letterStore: import('../../core/penpal-letter-store').LetterStore
     }
   }
+  /**
+   * Knowledge Kernel (Phase 01, T3) — the daemon-owned KnowledgeStore +
+   * semanticSearch backing /v1/knowledge/*. Undefined until main.ts wires
+   * it (openKnowledge(root) + the imported semanticSearch function), in
+   * which case every /v1/knowledge/* route returns 503 knowledge_not_wired.
+   * `search` is passed as a plain function reference (not wrapped) so
+   * routes-knowledge.ts never has to import search.ts's internals — it just
+   * calls `deps.knowledge.search(deps.knowledge.store, opts)`.
+   */
+  knowledge?: {
+    store: import('../../core/knowledge/store').KnowledgeStore
+    search: typeof import('../../core/knowledge/search').semanticSearch
+  }
   /** 配对码 (spec §7) — late-bound by main.ts from bootstrap.pairing. Undefined
    *  (⇒ /v1/pair/* 503) until mailbox_relays is configured AND late-bind runs. */
   pairing?: {
@@ -397,6 +410,13 @@ export interface InternalApi {
    * social_disclosure_policy are both configured).
    */
   setSocial(social: NonNullable<InternalApiDeps['social']>): void
+  /**
+   * Late-bind the Knowledge Kernel store + semanticSearch (Phase 01 T5)
+   * after bootstrap has constructed `boot.knowledge` (only happens when
+   * `knowledge_enabled` is configured). /v1/knowledge/* routes return 503
+   * knowledge_not_wired until this is called (mirrors `setSocial` above).
+   */
+  setKnowledge(knowledge: NonNullable<InternalApiDeps['knowledge']>): void
   /**
    * Late-bind the 配对码 engine (spec §7) after bootstrap has constructed it
    * (only happens when mailbox_relays is configured). POST /v1/pair/start

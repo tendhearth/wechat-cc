@@ -53,7 +53,7 @@ import { loadAccess, setSessionInvalidator, type Access } from '../../lib/access
 import { loadCompanionConfig, type CompanionConfig } from '../companion/config'
 import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
 import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
-import { bundledPluginsDir } from '../plugins/paths'
+import { bundledPluginsDir, pluginDataDir } from '../plugins/paths'
 import { buildDelegateDispatch } from './delegate'
 import { makeSendAssistantText } from './fallback-reply'
 import { registerProviders } from './providers'
@@ -70,6 +70,12 @@ import { createA2AClient } from '../../core/a2a-client'
 import { makeA2AEventsStore } from '../../core/a2a-events-store'
 import { createYiHub, type YiHub } from '../../core/yi-hub'
 import { createYiWsServer } from '../yi-ws-server'
+import { openKnowledge } from '../../core/knowledge/store'
+import { semanticSearch } from '../../core/knowledge/search'
+import { runSourceAdapter } from '../../core/knowledge/source-adapter'
+import { runIndexer } from '../../core/knowledge/indexer'
+import { makeEmbedRunner } from '../../core/knowledge/embed-runner'
+import { runKnowledgeCycle } from '../../core/knowledge/cycle'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
 import selfPkg from '../../../package.json' with { type: 'json' }
@@ -96,6 +102,16 @@ function resolveClaudeBinary(): string | undefined {
   if (existsSync(bundled)) return bundled
   return undefined
 }
+
+// Knowledge Kernel T7' — provenance tag stamped alongside `knowledge_embed_model`
+// on every semantic.db row this daemon writes (store.putSemantic(model_id,
+// model_version, ...)). NOTE: the indexer's resume cursor is keyed on
+// model_id ALONE (see indexer.ts's header comment) — bumping this constant
+// does NOT by itself trigger a re-embed of already-indexed rows; it is
+// purely the provenance label recorded on rows embedded from here on. A
+// real re-embed after a pipeline change needs either a new model_id or a
+// manual cursor reset (`indexer_cursor:<model_id>` in semantic.db's meta).
+const KNOWLEDGE_EMBED_MODEL_VERSION = '1'
 
 const CLAUDE_AUTH_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
@@ -368,6 +384,104 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // re-enter that persistence for no benefit and risks two wiring seams
   // momentarily disagreeing on this daemon's own identity.
   const selfId = resolveSelfAgentId(configuredAgent, deps.stateDir)
+
+  // Knowledge Kernel Phase 01 (T5) — daemon-owned KnowledgeStore + the
+  // Query-face `semanticSearch`, gated behind `knowledge_enabled` (default
+  // off — opt-in during the walking-skeleton slice; T1-T4 built the store/
+  // search/source-adapter, this task only wires them into the daemon).
+  // When on: open the store, run one backfill pass over wxvault's decrypted
+  // output off the synchronous boot path (setTimeout(0) — buildBootstrap
+  // must not block startup on a directory scan), then keep it fresh via a
+  // periodic incremental pass. `runSourceAdapter` is cheap to re-run when
+  // there's nothing new (its cursor is per Msg_* table via source_meta —
+  // see source-adapter.ts's header comment), so a short daemon-lifetime
+  // interval is safe — mirrors idleSweepTimer's unref()'d setInterval a
+  // little further down in this function (a background job outside the
+  // companion tick graph in wiring/tick-bodies.ts, not competing with it).
+  let knowledge: Bootstrap['knowledge']
+  if (configuredAgent.knowledge_enabled) {
+    const knowledgeStore = openKnowledge(join(deps.stateDir, 'knowledge'))
+    const decryptedDir = configuredAgent.knowledge_source_dir
+      ?? join(deps.stateDir, 'plugin-data', 'wxvault', 'out', 'decrypted')
+
+    // T7' — the in-process indexer's embed subprocess. Rather than invent a
+    // new discovery path, this reuses `loadedPlugins` (built just above, at
+    // ~line 327, for the plugin-MCP lane) to find wxsearch's resolved plugin
+    // dir — bundled or user, whichever the registry's normal shadowing rule
+    // picked — and derives the script/interpreter paths the SAME way
+    // wxsearch's own manifest spawns itself (`${pluginDir}/wxsearch/
+    // embed_subprocess.py` via `${pluginDir}/.venv/bin/python`, see
+    // packages/wxsearch/wechat-cc.plugin.json's `spawn`). This works whether
+    // or not wxsearch is enabled/ready as an MCP server — the indexer runs
+    // the script directly, in-process orchestration only, never through MCP.
+    // `knowledge_embed_script` is an escape hatch for a non-standard install
+    // (e.g. wxsearch vendored somewhere else); when set without a resolvable
+    // wxsearch plugin dir, the interpreter falls back to `python3` on PATH
+    // (the override is for advanced/manual setups, not the common path).
+    const wxsearchPlugin = loadedPlugins.find(p => p.name === 'wxsearch')
+    const knowledgeEmbedModelId = configuredAgent.knowledge_embed_model ?? 'bge-small-zh-v1.5'
+    const embedScriptPath = configuredAgent.knowledge_embed_script
+      ?? (wxsearchPlugin ? join(wxsearchPlugin.dir, 'wxsearch', 'embed_subprocess.py') : undefined)
+    const embedPythonBin = wxsearchPlugin
+      ? join(wxsearchPlugin.dir, '.venv', 'bin', 'python')
+      : (findOnPath('python3') ?? 'python3')
+
+    // T7' review Finding 1 — the embed subprocess must see the SAME
+    // WXVAULT_STATE_DIR wxvault/wxsearch itself uses
+    // (`<stateDir>/plugin-data/wxvault`, exactly what the plugin registry's
+    // manifest templating resolves `${dataDir}/../wxvault` to for wxsearch's
+    // own spawn — see packages/wxsearch/wechat-cc.plugin.json). Without this,
+    // Bun.spawn's child inherits the daemon's bare process.env, and
+    // embed_subprocess.py's ModelManager falls back to a state dir relative
+    // to its own (read-only, in a packaged app) script path — re-downloading
+    // the model every run and writing config the indexer never reads.
+    const embedEnv = { ...process.env, WXVAULT_STATE_DIR: pluginDataDir(deps.stateDir, 'wxvault') }
+
+    // Extracted (T7' review Finding 2 + Finding 4) into
+    // core/knowledge/cycle.ts's runKnowledgeCycle — adapter-then-indexer
+    // ordering, error-swallowing, and the "still running" concurrency guard
+    // now live there with direct unit coverage (cycle.test.ts) instead of
+    // only being reachable through this closure.
+    const runKnowledgeAdapter = (onBoot: boolean) => runKnowledgeCycle(
+      {
+        runAdapter: () => Promise.resolve(runSourceAdapter({ decryptedDir, store: knowledgeStore })),
+        // A fresh embed subprocess is spawned per run (never held open
+        // across runs — amortizing model load WITHIN one run is the
+        // subprocess protocol's job, see embed-runner.ts) and always closed,
+        // even on failure, so a wedged/timed-out child (embed-runner.ts's
+        // per-request timeout) never survives past this pass.
+        runIndex: embedScriptPath
+          ? async () => {
+              const embedRunner = makeEmbedRunner({
+                pythonBin: embedPythonBin,
+                scriptPath: embedScriptPath,
+                model_id: knowledgeEmbedModelId,
+                env: embedEnv,
+              })
+              try {
+                return await runIndexer({
+                  store: knowledgeStore,
+                  embed: embedRunner.embed,
+                  model_id: knowledgeEmbedModelId,
+                  model_version: KNOWLEDGE_EMBED_MODEL_VERSION,
+                })
+              } finally {
+                await embedRunner.close()
+              }
+            }
+          : undefined,
+        log: deps.log,
+      },
+      { onBoot },
+    )
+    // Backfill — deferred one tick so it never delays buildBootstrap's return.
+    setTimeout(() => { void runKnowledgeAdapter(true) }, 0)
+    const knowledgeAdapterTimer = setInterval(() => { void runKnowledgeAdapter(false) }, 5 * 60_000)
+    knowledgeAdapterTimer.unref()
+    knowledge = { store: knowledgeStore, search: semanticSearch }
+  } else {
+    deps.log('BOOT', 'knowledge: disabled (knowledge_enabled not set)')
+  }
 
   // The model is re-read per spawn via an mtime-cached reader (one stat, parse
   // only on change) instead of being captured once. An operator's `/model`
@@ -947,6 +1061,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      * see Bootstrap['pairing']'s doc comment in ./types.ts.
      */
     ...(pairingEngine ? { pairing: pairingEngine } : {}),
+    /**
+     * Knowledge Kernel (Phase 01, T5) — undefined when `knowledge_enabled`
+     * is not configured; see Bootstrap['knowledge']'s doc comment in
+     * ./types.ts.
+     */
+    ...(knowledge ? { knowledge } : {}),
     /**
      * Connection-health runtime (Task 7) — see ./wire-health.ts and the
      * doc comment on Bootstrap['health'] in ./types.ts.

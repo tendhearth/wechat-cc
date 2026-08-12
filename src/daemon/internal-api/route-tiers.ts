@@ -157,6 +157,30 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // 桌面读故障记录以显示"上次故障"横幅。trusted:桌面/CLI 的唯一凭据是
   // 0600 文件 token;内容只有时间戳与分类,不含聊天数据。
   'GET /v1/health/incidents': 'trusted',
+  // Knowledge Kernel (Phase 01, T3, docs/superpowers/specs/
+  // 2026-07-12-knowledge-kernel-phase01-design.md "Knowledge API").
+  // Ingest = admin/internal only: source/put and semantic/put are written
+  // by daemon-internal jobs (the wxvault source adapter, wxsearch's
+  // indexer) — no ordinary chat session has business writing into the
+  // owner's message store, so these fail closed at admin (same trust
+  // class as customer-review below: raw wxvault-derived content).
+  'POST /v1/knowledge/source/put': 'admin',
+  'POST /v1/knowledge/semantic/put': 'admin',
+  // Query = admin-only (NOT trusted), same as ingest above. These read the
+  // owner's full indexed cross-conversation message archive back out (raw
+  // source pages + semantic search over message text) with an optional,
+  // caller-supplied `conversation` filter — a non-owner `trusted` WeChat
+  // contact (who legitimately holds a session internal-api token, e.g. via
+  // POST /v1/a2a/send-class routes) could otherwise page every conversation
+  // in the store, not just their own. Knowledge query is admin-only until
+  // per-caller conversation scoping (memoryScopeDenied-style, see
+  // routes.ts's memoryScopeDenied) exists — opening it to `trusted` without
+  // that would let a trusted contact read the owner's full cross-conversation
+  // archive. Revisit once that scoping lands or a real "agent" caller
+  // identity beyond trusted/admin exists.
+  'GET /v1/knowledge/messages': 'admin',
+  'POST /v1/knowledge/search': 'admin',
+  'GET /v1/knowledge/semantic/status': 'admin',
   // admin — reads the owner's private wxvault history and stores personal
   // customer judgments. Never expose to guest/trusted chat sessions.
   'GET /v1/customer-review/contacts': 'admin',

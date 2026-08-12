@@ -2612,3 +2612,99 @@ describe('bootstrap pairing-code wiring', () => {
     expect(passedDeps.busy()).toBe(false)
   })
 })
+
+// ── Knowledge Kernel bootstrap wiring (Phase 01, T5) ───────────────────────
+// boot.knowledge (the daemon-owned KnowledgeStore + semanticSearch) is
+// constructed only when `knowledge_enabled` is configured — mirrors the
+// social_enabled on/off pair above. See
+// docs/superpowers/plans/2026-07-12-knowledge-kernel-phase01.md Task 5.
+describe('bootstrap knowledge kernel wiring (KK T5)', () => {
+  it('wires boot.knowledge (store + search) and runs a boot backfill when knowledge_enabled is true', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-on-'))
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        knowledge_enabled: true,
+      }),
+    )
+    const logLines: Array<{ tag: string; line: string; fields?: Record<string, unknown> }> = []
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: (tag, line, fields) => { logLines.push({ tag, line, fields }) },
+      })
+      expect(boot.knowledge).toBeDefined()
+      expect(typeof boot.knowledge!.store.putSourceMessages).toBe('function')
+      expect(typeof boot.knowledge!.search).toBe('function')
+      // Store is actually usable — putSourceMessages/listMessages round-trip.
+      const { watermark } = boot.knowledge!.store.putSourceMessages([
+        { msg_key: 'm1', conversation: 'c1', sender: 's1', time: 1, type: 'text', text: 'hi', server_id: '' },
+      ])
+      expect(watermark).toBeGreaterThan(0)
+      // Boot backfill runs fire-and-forget (setTimeout(0)) with no configured
+      // knowledge_source_dir — the default decrypted dir doesn't exist, so the
+      // adapter finds nothing, but it must still run and log {ingested: 0}
+      // rather than silently never firing.
+      // Matched via a startsWith (not a bare `.includes('knowledge')`) —
+      // the tmp stateDir path itself gets logged by unrelated plugin-not-
+      // ready BOOT lines (plugin data dirs live under stateDir), and this
+      // test's own tmp prefix contains "knowledge", so a loose substring
+      // match on the whole array would false-positive on those instead of
+      // this adapter's own log line.
+      const bootLine = await pollFor(() => logLines.find(l => l.tag === 'BOOT' && l.line.startsWith('knowledge:')) ?? null)
+      expect(bootLine).toBeTruthy()
+      expect(bootLine!.fields).toEqual({ ingested: 0 })
+    } finally {
+      boot?.knowledge?.store.close()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('boot.knowledge is undefined when knowledge_enabled is absent, and no knowledge work is ever scheduled/logged', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-off-'))
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        // knowledge_enabled omitted entirely.
+      }),
+    )
+    const logLines: Array<{ tag: string; line: string; fields?: Record<string, unknown> }> = []
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: (tag, line, fields) => { logLines.push({ tag, line, fields }) },
+      })
+      expect(boot.knowledge).toBeUndefined()
+      // Gating (T7' review Finding 2c) — when disabled, the whole
+      // knowledge-cycle block (including its setTimeout(0) boot backfill)
+      // never runs, so the daemon never emits a single 'KNOWLEDGE'-tagged
+      // log line. Give the deferred setTimeout(0) a tick to prove this is a
+      // structural "never scheduled", not a race against an async backfill
+      // that just hasn't logged yet.
+      await new Promise(resolve => setTimeout(resolve, 20))
+      expect(logLines.find(l => l.tag === 'KNOWLEDGE')).toBeUndefined()
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+})
