@@ -379,3 +379,88 @@ describe('knowledge store', () => {
     })
   })
 })
+
+function freshStore() {
+  return openKnowledge(mkdtempSync(join(tmpdir(), 'kk-facts-')))
+}
+
+describe('facts store', () => {
+  it('upsertFact inserts then merges on (contact,predicate,value)', () => {
+    const s = freshStore()
+    const f = {
+      contact: 'wxid_a', kind: 'entity', predicate: 'works_at', value: 'Acme',
+      confidence: 'low', source_msg_keys: ['Msg_x:1'],
+    }
+    expect(s.upsertFact(f, 1000)).toBe('inserted')
+    // merge: higher confidence wins, msg_keys ordered-union, related/time_ref fill, status untouched
+    expect(s.upsertFact({ ...f, confidence: 'high', related_contact: 'wxid_b',
+                          time_ref: '2025', source_msg_keys: ['Msg_x:1', 'Msg_y:2'] }, 2000)).toBe('merged')
+    const rows = s.factsForContact('wxid_a', 'active')
+    expect(rows.length).toBe(1)
+    expect(rows[0]!.confidence).toBe('high')                       // max(low,high)
+    expect(rows[0]!.source_msg_keys).toEqual(['Msg_x:1', 'Msg_y:2']) // ordered union, no dupes
+    expect(rows[0]!.related_contact).toBe('wxid_b')
+    expect(rows[0]!.status).toBe('active')
+    s.close()
+  })
+
+  it('merge does not downgrade confidence and keeps existing related/time_ref', () => {
+    const s = freshStore()
+    s.upsertFact({ contact: 'c', predicate: 'p', value: 'v', confidence: 'high',
+                   related_contact: 'r1', time_ref: 't1', source_msg_keys: ['a:1'] }, 1)
+    s.upsertFact({ contact: 'c', predicate: 'p', value: 'v', confidence: 'low',
+                   source_msg_keys: ['b:2'] }, 2)                    // lower conf, no related/time_ref
+    const r = s.factsForContact('c', 'active')[0]!
+    expect(r.confidence).toBe('high')                               // not downgraded
+    expect(r.related_contact).toBe('r1')                            // kept
+    expect(r.time_ref).toBe('t1')
+    expect(r.source_msg_keys).toEqual(['a:1', 'b:2'])
+    s.close()
+  })
+
+  it('watermark is monotonic on the (ts, local_id) tuple', () => {
+    const s = freshStore()
+    expect(s.factWatermark('c')).toEqual([0, 0])
+    s.advanceFactWatermark('c', 100, 5, 1)
+    expect(s.factWatermark('c')).toEqual([100, 5])
+    s.advanceFactWatermark('c', 100, 3, 2)                          // earlier tuple → no regress
+    expect(s.factWatermark('c')).toEqual([100, 5])
+    s.advanceFactWatermark('c', 100, 9, 3)                          // same ts, later local_id → advance
+    expect(s.factWatermark('c')).toEqual([100, 9])
+    s.close()
+  })
+
+  it('findFactRows filters by kind/predicate/substring/status; setFactStatusById; countsByKind', () => {
+    const s = freshStore()
+    s.upsertFact({ contact: 'c', kind: 'obligation', predicate: 'owes', value: '200 to Bob',
+                   source_msg_keys: [] }, 1)
+    s.upsertFact({ contact: 'c', kind: 'entity', predicate: 'likes', value: 'tea', source_msg_keys: [] }, 1)
+    expect(s.findFactRows('obligation', null, null, 'active', 50).length).toBe(1)
+    expect(s.findFactRows(null, null, 'Bob', 'active', 50).length).toBe(1)   // substring on value
+    expect(s.factCountsByKind()).toEqual({ obligation: 1, entity: 1 })
+    const id = s.factsForContact('c', 'active').find((r) => r.kind === 'obligation')!.id
+    expect(s.setFactStatusById(id, 'resolved', 9)).toBe(true)
+    expect(s.findFactRows('obligation', null, null, 'active', 50).length).toBe(0)
+    expect(s.findFactRows('obligation', null, null, 'resolved', 50).length).toBe(1)
+    s.close()
+  })
+
+  it('oneToOneTextMessages excludes groups and non-text; recentMessages is newest-first', () => {
+    const s = freshStore()
+    s.putSourceMessages([
+      { msg_key: 'Msg_a:1', conversation: 'wxid_a', sender: 'wxid_a', time: 10, type: '1',
+        text: 'hi', server_id: '1', local_type: 1, is_group: false, kind: 'text' },
+      { msg_key: 'Msg_a:2', conversation: 'wxid_a', sender: 'me', time: 20, type: '1',
+        text: 'yo', server_id: '2', local_type: 1, is_group: false, kind: 'text' },
+      { msg_key: 'Grp_x:1', conversation: 'x@chatroom', sender: 'wxid_a', time: 15, type: '1',
+        text: 'grp', server_id: '3', local_type: 1, is_group: true, kind: 'text' },
+      { msg_key: 'Msg_a:3', conversation: 'wxid_a', sender: 'wxid_a', time: 30, type: '34',
+        text: '', server_id: '4', local_type: 34, is_group: false, kind: 'voice' },
+    ])
+    const oto = s.oneToOneTextMessages()
+    expect(oto.map((m) => m.msg_key).sort()).toEqual(['Msg_a:1', 'Msg_a:2'])  // no group, no voice
+    const recent = s.recentMessages('wxid_a', 5)
+    expect(recent.map((m) => m.text)).toEqual(['yo', 'hi'])                    // newest-first by time
+    s.close()
+  })
+})

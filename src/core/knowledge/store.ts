@@ -81,6 +81,36 @@ export interface DocSummary {
   text: string
 }
 
+/** Agent-supplied claim (record_facts) — the input shape to `upsertFact`. */
+export interface Fact {
+  contact?: string
+  kind?: string
+  predicate: string
+  value: string
+  related_contact?: string
+  time_ref?: string
+  /** 'low'|'med'|'high', default 'med'. */
+  confidence?: string
+  source_msg_keys?: string[]
+}
+
+/** Stored facts.db row — `upsertFact`'s merge target and every read method's
+ *  return shape. */
+export interface FactRow {
+  id: number
+  contact: string
+  kind: string | null
+  predicate: string
+  value: string
+  related_contact: string | null
+  time_ref: string | null
+  confidence: string
+  source_msg_keys: string[]
+  status: string
+  created_at: number
+  updated_at: number
+}
+
 export interface KnowledgeStore {
   putSourceMessages(msgs: SourceMsg[]): { watermark: number }
   /** `kind` optionally filters to one normalized kind (e.g. 'text' — what
@@ -159,6 +189,39 @@ export interface KnowledgeStore {
   getGraphMeta(key: string): string | null
   setGraphMeta(key: string, value: string): void
   countContacts(): number
+
+  // ---- facts.db (facts + person slice) ------------------------------------
+  /** Faithful port of wxfacts's `store.py` merge semantics: on conflict of
+   *  (contact,predicate,value), MERGE rather than replace — `source_msg_keys`
+   *  is an ordered union (no dupes), `confidence` takes the max by
+   *  `{low:0,med:1,high:2}`, `related_contact`/`time_ref` fill only when
+   *  currently absent, and `status` is left untouched (a resolved fact
+   *  merging new evidence stays resolved). Returns which branch fired. */
+  upsertFact(fact: Fact & { contact: string }, now: number): 'inserted' | 'merged'
+  /** `[last_ts, last_local_id]`, `[0, 0]` when the contact has no watermark
+   *  row yet. */
+  factWatermark(contact: string): [number, number]
+  /** Advances the watermark iff `(ts, localId)` is strictly greater than the
+   *  stored tuple (ts first, then localId) — never regresses. */
+  advanceFactWatermark(contact: string, ts: number, localId: number, now: number): void
+  allFactWatermarks(): Map<string, [number, number]>
+  factsForContact(contact: string, status: string): FactRow[]
+  /** `kind`/`predicate` are exact-match filters (null = no filter); `query`
+   *  is a substring match over predicate OR value (null = no filter). */
+  findFactRows(kind: string | null, predicate: string | null, query: string | null, status: string, limit: number): FactRow[]
+  /** Returns whether a row with that id existed (and was updated). */
+  setFactStatusById(id: number, status: string, now: number): boolean
+  factCountsByKind(): Record<string, number>
+
+  // ---- source reads (source.db, read by the facts extractor) --------------
+  /** Every 1:1 (non-group) text message in source.db — the extractor's full
+   *  candidate set before per-contact watermark filtering. */
+  oneToOneTextMessages(): Array<{ msg_key: string; conversation: string; sender: string; time: number; text: string }>
+  /** Newest-first, capped at `limit`, text messages only (same `kind='text'`
+   *  filter as `oneToOneTextMessages`) — recent-context window for a single
+   *  conversation. */
+  recentMessages(conversation: string, limit: number): Array<{ sender: string; time: number; text: string }>
+
   close(): void
 }
 
@@ -173,6 +236,15 @@ function openSqlite(path: string): Database {
 function vectorToBlob(vector: number[]): Uint8Array {
   const f32 = Float32Array.from(vector)
   return new Uint8Array(f32.buffer, f32.byteOffset, f32.byteLength)
+}
+
+/** Confidence ranking for `upsertFact`'s merge (higher wins, never downgrades). */
+const CONF_RANK: Record<string, number> = { low: 0, med: 1, high: 2 }
+
+/** facts.db stores `source_msg_keys` as a JSON-encoded TEXT column; every
+ *  read path goes through this to get back the `string[]` shape callers see. */
+function parseFactRow(r: any): FactRow {
+  return { ...r, source_msg_keys: r.source_msg_keys ? JSON.parse(r.source_msg_keys) : [] }
 }
 
 export function openKnowledge(root: string): KnowledgeStore {
@@ -531,6 +603,19 @@ export function openKnowledge(root: string): KnowledgeStore {
   )
   const stmtGraphCountContacts = graphDb.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM contacts')
 
+  // ---- facts.db (facts + person slice) -------------------------------------
+  // TS port of wxfacts's store.py (facts table + extraction_state watermark).
+  const factsDb = openSqlite(join(root, 'facts.db'))
+  factsDb.exec(`
+    CREATE TABLE IF NOT EXISTS facts (
+      id INTEGER PRIMARY KEY, contact TEXT, kind TEXT, predicate TEXT, value TEXT,
+      related_contact TEXT, time_ref TEXT, confidence TEXT, source_msg_keys TEXT,
+      status TEXT, created_at INTEGER, updated_at INTEGER,
+      UNIQUE(contact, predicate, value));
+    CREATE TABLE IF NOT EXISTS extraction_state (
+      contact TEXT PRIMARY KEY, last_ts INTEGER, last_local_id INTEGER DEFAULT 0,
+      updated_at INTEGER);`)
+
   return {
     putSourceMessages(msgs) {
       const watermark = runPutSourceMessages(msgs)
@@ -671,10 +756,98 @@ export function openKnowledge(root: string): KnowledgeStore {
       return stmtGraphCountContacts.get()?.n ?? 0
     },
 
+    // ---- facts.db ------------------------------------------------------------
+    upsertFact(fact, now) {
+      const keys = [...(fact.source_msg_keys ?? [])]
+      const conf = fact.confidence || 'med'
+      const cur = factsDb.query('SELECT * FROM facts WHERE contact=? AND predicate=? AND value=?')
+        .get(fact.contact, fact.predicate, fact.value) as any
+      if (!cur) {
+        factsDb.query(`INSERT INTO facts(contact,kind,predicate,value,related_contact,time_ref,
+          confidence,source_msg_keys,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
+          .run(fact.contact, fact.kind ?? null, fact.predicate, fact.value,
+               fact.related_contact ?? null, fact.time_ref ?? null, conf,
+               JSON.stringify(keys), 'active', now, now)
+        return 'inserted'
+      }
+      const prev = parseFactRow(cur)
+      const merged = [...new Set([...prev.source_msg_keys, ...keys])] // ordered union
+      const best = (CONF_RANK[conf] ?? 1) > (CONF_RANK[prev.confidence ?? 'med'] ?? 1) ? conf : prev.confidence
+      factsDb.query(`UPDATE facts SET kind=?, related_contact=?, time_ref=?, confidence=?,
+        source_msg_keys=?, updated_at=? WHERE id=?`) // status untouched
+        .run(fact.kind ?? prev.kind, fact.related_contact ?? prev.related_contact,
+             fact.time_ref ?? prev.time_ref, best, JSON.stringify(merged), now, prev.id)
+      return 'merged'
+    },
+
+    factWatermark(contact) {
+      const r = factsDb.query('SELECT last_ts,last_local_id FROM extraction_state WHERE contact=?')
+        .get(contact) as any
+      return r ? [r.last_ts, r.last_local_id] : [0, 0]
+    },
+
+    advanceFactWatermark(contact, ts, localId, now) {
+      const [pt, pl] = this.factWatermark(contact)
+      const nt = ts > pt || (ts === pt && localId > pl) ? [ts, localId] : [pt, pl] // monotonic tuple
+      factsDb.query(`INSERT INTO extraction_state(contact,last_ts,last_local_id,updated_at)
+        VALUES(?,?,?,?) ON CONFLICT(contact) DO UPDATE SET last_ts=excluded.last_ts,
+        last_local_id=excluded.last_local_id, updated_at=excluded.updated_at`)
+        .run(contact, nt[0]!, nt[1]!, now)
+    },
+
+    allFactWatermarks() {
+      const m = new Map<string, [number, number]>()
+      for (const r of factsDb.query('SELECT contact,last_ts,last_local_id FROM extraction_state').all() as any[])
+        m.set(r.contact, [r.last_ts, r.last_local_id])
+      return m
+    },
+
+    factsForContact(contact, status) {
+      return (factsDb.query('SELECT * FROM facts WHERE contact=? AND status=? ORDER BY updated_at DESC')
+        .all(contact, status) as any[]).map(parseFactRow)
+    },
+
+    findFactRows(kind, predicate, query, status, limit) {
+      let sql = 'SELECT * FROM facts WHERE status=?'
+      const args: any[] = [status]
+      if (kind) { sql += ' AND kind=?'; args.push(kind) }
+      if (predicate) { sql += ' AND predicate=?'; args.push(predicate) }
+      if (query) { sql += " AND (predicate LIKE '%'||?||'%' OR value LIKE '%'||?||'%')"; args.push(query, query) }
+      sql += ' ORDER BY updated_at DESC LIMIT ?'
+      args.push(limit)
+      return (factsDb.query(sql).all(...args) as any[]).map(parseFactRow)
+    },
+
+    setFactStatusById(id, status, now) {
+      const c = factsDb.query('UPDATE facts SET status=?, updated_at=? WHERE id=?').run(status, now, id)
+      return c.changes > 0
+    },
+
+    factCountsByKind() {
+      const out: Record<string, number> = {}
+      for (const r of factsDb.query('SELECT kind, COUNT(*) n FROM facts GROUP BY kind').all() as any[])
+        out[r.kind] = r.n
+      return out
+    },
+
+    oneToOneTextMessages() {
+      return sourceDb.query(`SELECT msg_key, conversation, sender, time, text FROM messages
+        WHERE is_group=0 AND kind='text'`).all() as any[]
+    },
+
+    recentMessages(conversation, limit) {
+      // kind='text' matches oneToOneTextMessages above — the recent-context
+      // window is a text-conversation transcript, not a raw event log, so
+      // non-text rows (voice/call/transfer/…) are excluded the same way.
+      return sourceDb.query(`SELECT sender, time, text FROM messages WHERE conversation=? AND kind='text'
+        ORDER BY time DESC LIMIT ?`).all(conversation, limit) as any[]
+    },
+
     close() {
       sourceDb.close()
       semanticDb.close()
       graphDb.close()
+      factsDb.close()
     },
   }
 }
