@@ -73,6 +73,16 @@ export interface AgentConfig {
   // Additive/optional, same posture as mailbox_relays?/forward_budget?. Resolved
   // (and persisted here on first need) by resolveSelfAgentId in core/self-agent-id.ts.
   self_agent_id?: string
+  // Knowledge Kernel Phase 01 (T5) — gates the daemon-owned KnowledgeStore +
+  // wxvault source-adapter ingestion off by default (opt-in during the
+  // walking-skeleton slice). Mirrors `social_enabled?`'s optional-boolean
+  // shape — absent/false → bootstrap skips wiring entirely and
+  // /v1/knowledge/* stays 503 (see routes-knowledge.ts).
+  knowledge_enabled?: boolean
+  // Override for the wxvault-decrypted output dir the source adapter reads
+  // from. Optional — defaults to `<stateDir>/plugin-data/wxvault/out/decrypted`
+  // when absent. Mirrors `openaiBaseUrl?`'s optional-string shape.
+  knowledge_source_dir?: string
 }
 
 // ── A2A sub-schemas ──────────────────────────────────────────────────────────
@@ -149,6 +159,8 @@ const AgentConfigSchema = z.object({
   mailbox_relays: z.array(z.string().url()).optional(),
   forward_budget: ForwardBudgetConfig.optional(),
   self_agent_id: z.string().optional(),
+  knowledge_enabled: z.boolean().optional(),
+  knowledge_source_dir: z.string().optional(),
 })
 
 /**
@@ -223,6 +235,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(Array.isArray(parsed.mailbox_relays) ? { mailbox_relays: parsed.mailbox_relays } : {}),
       ...(forwardBudget ? { forward_budget: forwardBudget } : {}),
       ...(typeof parsed.self_agent_id === 'string' ? { self_agent_id: parsed.self_agent_id } : {}),
+      ...(typeof parsed.knowledge_enabled === 'boolean' ? { knowledge_enabled: parsed.knowledge_enabled } : {}),
+      ...(typeof parsed.knowledge_source_dir === 'string' ? { knowledge_source_dir: parsed.knowledge_source_dir } : {}),
     }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }

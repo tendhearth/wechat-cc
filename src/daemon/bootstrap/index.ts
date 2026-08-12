@@ -70,6 +70,9 @@ import { createA2AClient } from '../../core/a2a-client'
 import { makeA2AEventsStore } from '../../core/a2a-events-store'
 import { createYiHub, type YiHub } from '../../core/yi-hub'
 import { createYiWsServer } from '../yi-ws-server'
+import { openKnowledge } from '../../core/knowledge/store'
+import { semanticSearch } from '../../core/knowledge/search'
+import { runSourceAdapter } from '../../core/knowledge/source-adapter'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
 import selfPkg from '../../../package.json' with { type: 'json' }
@@ -368,6 +371,43 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // re-enter that persistence for no benefit and risks two wiring seams
   // momentarily disagreeing on this daemon's own identity.
   const selfId = resolveSelfAgentId(configuredAgent, deps.stateDir)
+
+  // Knowledge Kernel Phase 01 (T5) — daemon-owned KnowledgeStore + the
+  // Query-face `semanticSearch`, gated behind `knowledge_enabled` (default
+  // off — opt-in during the walking-skeleton slice; T1-T4 built the store/
+  // search/source-adapter, this task only wires them into the daemon).
+  // When on: open the store, run one backfill pass over wxvault's decrypted
+  // output off the synchronous boot path (setTimeout(0) — buildBootstrap
+  // must not block startup on a directory scan), then keep it fresh via a
+  // periodic incremental pass. `runSourceAdapter` is cheap to re-run when
+  // there's nothing new (its cursor is per Msg_* table via source_meta —
+  // see source-adapter.ts's header comment), so a short daemon-lifetime
+  // interval is safe — mirrors idleSweepTimer's unref()'d setInterval a
+  // little further down in this function (a background job outside the
+  // companion tick graph in wiring/tick-bodies.ts, not competing with it).
+  let knowledge: Bootstrap['knowledge']
+  if (configuredAgent.knowledge_enabled) {
+    const knowledgeStore = openKnowledge(join(deps.stateDir, 'knowledge'))
+    const decryptedDir = configuredAgent.knowledge_source_dir
+      ?? join(deps.stateDir, 'plugin-data', 'wxvault', 'out', 'decrypted')
+    const runKnowledgeAdapter = (onBoot: boolean) => {
+      try {
+        const { ingested } = runSourceAdapter({ decryptedDir, store: knowledgeStore })
+        if (onBoot) deps.log('BOOT', 'knowledge: enabled — store + source adapter wired', { ingested })
+        return ingested
+      } catch (err) {
+        deps.log('KNOWLEDGE', `source adapter run failed: ${err instanceof Error ? err.message : String(err)}`)
+        return 0
+      }
+    }
+    // Backfill — deferred one tick so it never delays buildBootstrap's return.
+    setTimeout(() => runKnowledgeAdapter(true), 0)
+    const knowledgeAdapterTimer = setInterval(() => runKnowledgeAdapter(false), 5 * 60_000)
+    knowledgeAdapterTimer.unref()
+    knowledge = { store: knowledgeStore, search: semanticSearch }
+  } else {
+    deps.log('BOOT', 'knowledge: disabled (knowledge_enabled not set)')
+  }
 
   // The model is re-read per spawn via an mtime-cached reader (one stat, parse
   // only on change) instead of being captured once. An operator's `/model`
@@ -947,6 +987,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      * see Bootstrap['pairing']'s doc comment in ./types.ts.
      */
     ...(pairingEngine ? { pairing: pairingEngine } : {}),
+    /**
+     * Knowledge Kernel (Phase 01, T5) — undefined when `knowledge_enabled`
+     * is not configured; see Bootstrap['knowledge']'s doc comment in
+     * ./types.ts.
+     */
+    ...(knowledge ? { knowledge } : {}),
     /**
      * Connection-health runtime (Task 7) — see ./wire-health.ts and the
      * doc comment on Bootstrap['health'] in ./types.ts.

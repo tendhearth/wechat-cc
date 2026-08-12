@@ -320,6 +320,24 @@ export interface Bootstrap {
    */
   pairing?: import('../../core/pairing').PairingEngine
   /**
+   * Knowledge Kernel (Phase 01, T5) — the daemon-owned KnowledgeStore + the
+   * Query-face `semanticSearch` function, present only when
+   * `knowledge_enabled` is configured (default off — opt-in during the
+   * walking-skeleton slice; see docs/superpowers/plans/2026-07-12-knowledge-
+   * kernel-phase01.md Task 5). Unlike `social`/`a2aDeps`, this needs no
+   * main.ts late-bind: `openKnowledge` only needs `stateDir`, which is
+   * available before `buildBootstrap` runs, so main.ts can pass this same
+   * shape straight into `registerInternalApi`'s `knowledge` dep (T3).
+   * Exposed here so bootstrap tests can assert the config gate and so the
+   * store can be closed in test teardown (mirrors `boot.a2aServer`'s
+   * teardown posture — `store.close()` is the caller's job, same as
+   * `a2aServer?.stop()`).
+   */
+  knowledge?: {
+    store: import('../../core/knowledge/store').KnowledgeStore
+    search: typeof import('../../core/knowledge/search').semanticSearch
+  }
+  /**
    * Connection-health runtime (connection-health design, Task 7) — wraps the
    * two-state health machine + failure classifier + incident store + notify
    * policy behind two entry points, `onFailure`/`onSuccess`. Constructed

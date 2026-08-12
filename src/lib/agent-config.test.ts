@@ -455,6 +455,49 @@ describe('agent-config social (M1 intent brokering)', () => {
   })
 })
 
+describe('agent-config knowledge (Knowledge Kernel Phase 01, T5)', () => {
+  it('parseAgentConfig accepts knowledge_enabled + knowledge_source_dir', () => {
+    const cfg = parseAgentConfig({
+      provider: 'claude',
+      knowledge_enabled: true,
+      knowledge_source_dir: '/custom/decrypted',
+    })
+    expect(cfg.knowledge_enabled).toBe(true)
+    expect(cfg.knowledge_source_dir).toBe('/custom/decrypted')
+  })
+
+  it('round-trips knowledge_enabled + knowledge_source_dir through save → load', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-knowledge-'))
+    try {
+      saveAgentConfig(dir, {
+        provider: 'claude',
+        dangerouslySkipPermissions: true,
+        autoStart: true,
+        closeStopsDaemon: false,
+        knowledge_enabled: true,
+        knowledge_source_dir: '/custom/decrypted',
+      })
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.knowledge_enabled).toBe(true)
+      expect(loaded.knowledge_source_dir).toBe('/custom/decrypted')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('absent knowledge fields load as undefined (back-compat, opt-in default off)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-knowledge-'))
+    try {
+      saveAgentConfig(dir, { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.knowledge_enabled).toBeUndefined()
+      expect(loaded.knowledge_source_dir).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('loadAgentConfig preserves yi v2 fields', () => {
   it('round-trips yi_hub_listen and yi_brain through save+load', () => {
     const dir = mkdtempSync(join(tmpdir(), 'yi-cfg-'))
