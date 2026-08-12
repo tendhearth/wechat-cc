@@ -47,6 +47,7 @@ const TOOL_KIND_TO_CLAUDE_BUILTINS: Record<ToolKind, ReadonlyArray<string>> = {
   file_locate: [],         // MCP-only (mcp__wechat__locate_file), gated by canUseTool
   plugin_tool: [],         // MCP-only (mcp__<plugin>__*), admin-only, gated by canUseTool
   social_seek: [],         // MCP-only (mcp__wechat__social_seek), admin-only, gated by canUseTool
+  knowledge_search: [],    // MCP-only (mcp__wechat__knowledge_search), admin-only, gated by canUseTool
 }
 
 export interface ClaudeTierSdkOpts {

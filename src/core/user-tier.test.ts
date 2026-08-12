@@ -59,7 +59,7 @@ describe('TIER_PROFILES', () => {
     'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
     'observations_read', 'observations_write',
     'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
-    'a2a_send', 'plugin_tool',
+    'a2a_send', 'plugin_tool', 'knowledge_search',
   ]
 
   for (const tier of ['admin', 'trusted', 'guest'] as UserTier[]) {
@@ -105,12 +105,13 @@ describe('TIER_PROFILES', () => {
     expect(TIER_PROFILES.trusted.relay.has('memory_delete')).toBe(true)
     // trusted denies all admin-exclusive tools (was 0 before
     // self-diagnosis / remediation / plugin tools existed).
-    expect(TIER_PROFILES.trusted.deny.size).toBe(5)
+    expect(TIER_PROFILES.trusted.deny.size).toBe(6)
     expect(TIER_PROFILES.trusted.deny.has('daemon_introspect')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('daemon_remediate')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('file_locate')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('plugin_tool')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('social_seek')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('knowledge_search')).toBe(true)
   })
 
   it('guest allows only reply/share_page/memory_read/observations_read', () => {
@@ -353,6 +354,23 @@ describe('social_seek tier kind (M1 T6)', () => {
   })
 })
 
+describe('knowledge_search tier kind (agent-facing search AS T4)', () => {
+  it('classifies mcp__wechat__knowledge_search as ToolKind knowledge_search', () => {
+    expect(classifyToolUse('mcp__wechat__knowledge_search', { query: 'x' })).toBe('knowledge_search')
+  })
+  it('admin allows knowledge_search; trusted and guest deny it', () => {
+    // knowledge_search runs a semantic query over the owner's WeChat message
+    // history — same private-data trust class as file_locate/social_seek —
+    // admin-only, no relay path: trusted/guest are denied outright.
+    expect(TIER_PROFILES.admin.allow.has('knowledge_search')).toBe(true)
+    expect(TIER_PROFILES.admin.relay.has('knowledge_search')).toBe(false)
+    expect(TIER_PROFILES.trusted.deny.has('knowledge_search')).toBe(true)
+    expect(TIER_PROFILES.trusted.allow.has('knowledge_search')).toBe(false)
+    expect(TIER_PROFILES.guest.deny.has('knowledge_search')).toBe(true)
+    expect(TIER_PROFILES.guest.allow.has('knowledge_search')).toBe(false)
+  })
+})
+
 describe('SOCIAL_JUDGE_PROFILE (T7b-core review fix)', () => {
   it('allows a plugin tool (the wx* fact tools the judge must call)', () => {
     // Pre-fix, the judge spawned with TIER_PROFILES.guest — guest denies
@@ -396,7 +414,7 @@ describe('SOCIAL_JUDGE_PROFILE (T7b-core review fix)', () => {
       'observations_read', 'observations_write',
       'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
       'a2a_send', 'daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool',
-      'social_seek',
+      'social_seek', 'knowledge_search',
     ]
     for (const k of allKinds) expect(seen.has(k)).toBe(true)
   })
