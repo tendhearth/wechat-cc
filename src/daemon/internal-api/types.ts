@@ -237,10 +237,22 @@ export interface InternalApiDeps {
    * `search` is passed as a plain function reference (not wrapped) so
    * routes-knowledge.ts never has to import search.ts's internals — it just
    * calls `deps.knowledge.search(deps.knowledge.store, opts)`.
+   *
+   * Agent-facing Search (Task 2) — `embedder` is the ONE shared,
+   * long-lived embed-subprocess service used by both the indexer and the
+   * query path, so both embed in the same model space (see
+   * ../../core/knowledge/embedder-service.ts). `embedQuery` is a thin
+   * convenience wrapper (`embedder.embed([t]).then(v => v[0])`) for routes
+   * that just need one query vector. Both are undefined when the indexer
+   * isn't configured (no resolvable embed script) even though `store`/
+   * `search` are present — `knowledge_enabled` alone doesn't guarantee an
+   * embed script resolved.
    */
   knowledge?: {
     store: import('../../core/knowledge/store').KnowledgeStore
     search: typeof import('../../core/knowledge/search').semanticSearch
+    embedder?: import('../../core/knowledge/embedder-service').EmbedderService
+    embedQuery?: (t: string) => Promise<number[]>
   }
   /** 配对码 (spec §7) — late-bound by main.ts from bootstrap.pairing. Undefined
    *  (⇒ /v1/pair/* 503) until mailbox_relays is configured AND late-bind runs. */
