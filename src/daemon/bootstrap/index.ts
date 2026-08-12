@@ -77,6 +77,8 @@ import { runIndexer } from '../../core/knowledge/indexer'
 import { makeEmbedderService } from '../../core/knowledge/embedder-service'
 import { rebuildGraphFromSource } from '../../core/knowledge/graph-build'
 import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
+import { makeFactsApi } from '../../core/knowledge/facts'
+import { makePersonApi } from '../../core/knowledge/person'
 import { runKnowledgeCycle } from '../../core/knowledge/cycle'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
@@ -511,6 +513,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // every cycle above) needs no embed script, so the query accessor is
       // wired whenever knowledge_enabled is on at all.
       graph: makeGraphQueryApi(knowledgeStore),
+      // Facts + Person (Knowledge Facts/Person inproc, Task 5) —
+      // unconditional (like graph above): facts.db extraction/query needs
+      // no embed script, so both accessors are wired whenever
+      // knowledge_enabled is on at all.
+      facts: makeFactsApi(knowledgeStore),
+      person: makePersonApi(knowledgeStore),
     }
   } else {
     deps.log('BOOT', 'knowledge: disabled (knowledge_enabled not set)')
@@ -719,6 +727,14 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // `graph_query` tier kind, which exactly matches the SESSION_IS_ADMIN
       // gate wechat-mcp/main.ts registers `registerGraphTools` under.
       graphAvailable: !!knowledge?.graph && tierProfile.allow.has('graph_query'),
+      // Knowledge Facts/Person inproc (Task 5) — same shape as
+      // graphAvailable above, keyed on `knowledge?.facts`/`.person`
+      // (unconditional whenever knowledge_enabled is on, no embed script
+      // required) and the `facts_query`/`person_query` tier kinds, which
+      // exactly match the SESSION_IS_ADMIN gate wechat-mcp/main.ts registers
+      // `registerFactsTools`/`registerPersonTools` under.
+      factsAvailable: !!knowledge?.facts && tierProfile.allow.has('facts_query'),
+      personAvailable: !!knowledge?.person && tierProfile.allow.has('person_query'),
     })
   }
 

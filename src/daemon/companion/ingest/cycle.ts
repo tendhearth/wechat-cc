@@ -8,6 +8,8 @@
 import { readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { runExtraction } from './extract'
+import { makeInProcFactsCall } from './facts-inproc'
+import type { FactsApi } from '../../../core/knowledge/facts'
 
 export interface IngestBridge {
   call: (tool: string, input?: unknown) => Promise<string>
@@ -25,6 +27,13 @@ export interface CycleDeps {
   /** Per-cycle extraction batch cap. */
   cap: number
   log?: (tag: string, msg: string) => void
+  /**
+   * When present, extraction is driven off the in-process FactsApi instead of
+   * the MCP bridge (the wxfacts plugin is retired) — runs unconditionally,
+   * bypassing `hasTool('extraction_batch')`, since facts always "has" the
+   * tool. When absent, falls back to the pre-existing `bridge`/`hasTool` path.
+   */
+  factsApi?: FactsApi
 }
 
 export interface CycleReport {
@@ -103,8 +112,16 @@ export async function runIngestCycle(d: CycleDeps): Promise<CycleReport> {
     report.transcribed = await tryBuild(d, 'voice_backfill') // wxmedia
   }
 
-  // 3. wxfacts extraction — self-gates via {done:true} when caught up.
-  if (d.hasTool('extraction_batch')) {
+  // 3. facts extraction — self-gates via {done:true} when caught up. Prefer
+  // the in-process FactsApi (post wxfacts-plugin-retirement); fall back to
+  // the MCP bridge, gated on hasTool, when no in-process facts store exists.
+  if (d.factsApi) {
+    const { batches, recorded } = await runExtraction({
+      call: makeInProcFactsCall(d.factsApi), cheapEval: d.cheapEval, cap: d.cap, log: d.log,
+    })
+    report.batches = batches
+    report.recorded = recorded
+  } else if (d.hasTool('extraction_batch')) {
     const { batches, recorded } = await runExtraction({
       call: d.bridge.call, cheapEval: d.cheapEval, cap: d.cap, log: d.log,
     })
