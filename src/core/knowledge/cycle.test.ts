@@ -121,6 +121,82 @@ describe('runKnowledgeCycle', () => {
     expect(log.find(l => l.line.includes('indexer run failed'))).toBeTruthy()
   })
 
+  // ── Knowledge Graph inproc Task 4 — graph rebuild runs after the indexer ──
+  it('runs the graph rebuild AFTER the indexer (and after the adapter)', async () => {
+    const order: string[] = []
+    const { fn } = makeLogger()
+    const result = await runKnowledgeCycle(
+      {
+        runAdapter: async () => { order.push('adapter'); return { ingested: 1 } },
+        runIndex: async () => { order.push('indexer'); return { indexed: 1 } },
+        runGraphRebuild: async () => {
+          order.push('graph')
+          return { owner: 'me', contacts: 2, edges: 3, skipped: false }
+        },
+        log: fn,
+      },
+      { onBoot: false },
+    )
+    expect(order).toEqual(['adapter', 'indexer', 'graph'])
+    expect(result).toEqual({ ingested: 1, skipped: false })
+  })
+
+  it('skips the graph rebuild (but still runs adapter + indexer) when runGraphRebuild is not provided', async () => {
+    const order: string[] = []
+    const { fn } = makeLogger()
+    const result = await runKnowledgeCycle(
+      {
+        runAdapter: async () => { order.push('adapter'); return { ingested: 0 } },
+        runIndex: async () => { order.push('indexer'); return { indexed: 0 } },
+        // runGraphRebuild omitted — mirrors knowledge_enabled off / graph layer not wired
+        log: fn,
+      },
+      { onBoot: false },
+    )
+    expect(order).toEqual(['adapter', 'indexer'])
+    expect(result).toEqual({ ingested: 0, skipped: false })
+  })
+
+  it('swallows a graph rebuild throw — does not reject, and the cycle still reports adapter progress', async () => {
+    const { log, fn } = makeLogger()
+    const result = await runKnowledgeCycle(
+      {
+        runAdapter: async () => ({ ingested: 4 }),
+        runGraphRebuild: async () => {
+          throw new Error('graph boom')
+        },
+        log: fn,
+      },
+      { onBoot: false },
+    )
+    expect(result).toEqual({ ingested: 4, skipped: false })
+    expect(log.find(l => l.line.includes('graph rebuild failed'))).toBeTruthy()
+  })
+
+  it('logs "skipped" only on boot ticks; a non-boot skipped rebuild logs nothing', async () => {
+    const { log, fn } = makeLogger()
+    await runKnowledgeCycle(
+      {
+        runAdapter: async () => ({ ingested: 0 }),
+        runGraphRebuild: async () => ({ owner: 'me', contacts: 0, edges: 0, skipped: true }),
+        log: fn,
+      },
+      { onBoot: false },
+    )
+    expect(log.find(l => l.line.includes('graph rebuild'))).toBeUndefined()
+
+    const { log: bootLog, fn: bootFn } = makeLogger()
+    await runKnowledgeCycle(
+      {
+        runAdapter: async () => ({ ingested: 0 }),
+        runGraphRebuild: async () => ({ owner: 'me', contacts: 0, edges: 0, skipped: true }),
+        log: bootFn,
+      },
+      { onBoot: true },
+    )
+    expect(bootLog.find(l => l.line.includes('graph rebuild: skipped'))).toBeTruthy()
+  })
+
   it('a second call while the first is in-flight is a no-op (concurrency guard)', async () => {
     const { log, fn } = makeLogger()
     let adapterCalls = 0

@@ -2691,6 +2691,66 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
     }
   })
 
+  // Knowledge Graph inproc Task 4 — the graph rebuild runs as part of the
+  // SAME boot backfill as the source adapter/indexer (runKnowledgeCycle,
+  // see cycle.ts), writing into the SAME KnowledgeStore's graph.db.
+  // `knowledge_owner` here forces a deterministic owner even though the
+  // fixture's source is empty (no decrypted dir on disk) — detectOwner's
+  // vote heuristic has nothing to vote on, but an explicit override still
+  // wins outright, so this is a clean assertion that the config value
+  // actually reaches rebuildGraphFromSource end to end.
+  it('runs a graph rebuild as part of the boot backfill (KK T4), honoring knowledge_owner', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-graph-'))
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        knowledge_enabled: true,
+        knowledge_owner: 'forced_wxid_owner',
+      }),
+    )
+    const logLines: Array<{ tag: string; line: string; fields?: Record<string, unknown> }> = []
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    const emptyBundledDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-graph-nobundled-'))
+    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = emptyBundledDir
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: (tag, line, fields) => { logLines.push({ tag, line, fields }) },
+      })
+      expect(boot.knowledge).toBeDefined()
+
+      const graphLine = await pollFor(
+        () => logLines.find(l => l.tag === 'KNOWLEDGE' && l.line.startsWith('graph rebuild:')) ?? null,
+      )
+      expect(graphLine).toBeTruthy()
+
+      // Source is empty (no decrypted dir on disk in this fixture), so the
+      // rebuild produced an empty-but-present graph — but `knowledge_owner`
+      // still reached it: the graph's owner meta is the forced value, not
+      // null/undetected.
+      expect(boot.knowledge!.store.getGraphMeta('owner')).toBe('forced_wxid_owner')
+      expect(boot.knowledge!.store.countContacts()).toBe(0)
+      expect(boot.knowledge!.store.getGraphMeta('source_watermark')).toBe('0')
+    } finally {
+      boot?.knowledge?.store.close()
+      await boot?.knowledge?.embedder?.close?.()
+      await boot?.a2aServer?.stop()
+      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
+      rmSync(emptyBundledDir, { recursive: true, force: true })
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
   // Agent-facing Search Task 2 — the ONE shared embedder service is built
   // only when `knowledge_enabled` AND an embed script actually resolves
   // (`knowledge_embed_script` here, mirroring the wxsearch-plugin-dir path

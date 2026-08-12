@@ -1,9 +1,16 @@
 /**
  * Knowledge store — daemon-owned persistence for the Knowledge Kernel.
  *
- * Two separate SQLite files live under one root directory:
+ * Three separate SQLite files live under one root directory:
  *   - source.db:   normalized wxvault-decoded messages (Ingest side).
  *   - semantic.db: chunks + embeddings + own-content FTS5 (Query side).
+ *   - graph.db:    contacts + edges + meta (Graph side, GR Task 4) — a TS
+ *                  port of wxgraph's `store.py` (GraphStore). `rebuildGraph`
+ *                  always replaces the WHOLE snapshot (delete + reinsert,
+ *                  same as `GraphStore.rebuild`) rather than patching it
+ *                  incrementally — this in-proc kernel treats the graph as a
+ *                  derived, fully-recomputable projection of `source`, not
+ *                  independently-mutable state.
  *
  * Mirrors the bun:sqlite usage pattern in ../a2a-events-store.ts (prepared
  * statements built once, plain functions closing over them) and the
@@ -20,6 +27,8 @@
 import { Database } from 'bun:sqlite'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import type { Contact, Edge } from './graph'
+import type { Profile } from './graph-profiles'
 
 export interface SourceMsg {
   msg_key: string
@@ -102,6 +111,49 @@ export interface KnowledgeStore {
   getSourceMeta(key: string): string | null
   setSourceMeta(key: string, value: string): void
   countSemantic(model_id?: string): number
+  /** Cheap peek at source.db's current high-water mark
+   *  (`MAX(ingested_watermark)` over `messages`, 0 on an empty store) —
+   *  lets a caller (graph-build.ts's `rebuildGraphFromSource`) decide
+   *  whether a full rebuild is worth doing WITHOUT paging through
+   *  `listMessages` first. */
+  sourceWatermark(): number
+  /** Source-side display names (source.db's `contacts` table). Currently
+   *  always empty — no producer writes this table yet (see
+   *  source-adapter.ts's "Scope" doc comment: contact ingestion is
+   *  deferred) — so callers should treat an empty result as "no display
+   *  data available" and fall back to username, exactly like
+   *  `rebuildGraph`'s `displayMap` parameter does. */
+  allSourceContacts(): Array<{ username: string; display: string }>
+
+  // ---- graph.db (GR Task 4) -----------------------------------------------
+  /** Atomically replaces the whole contacts/edges/meta snapshot — port of
+   *  `GraphStore.rebuild`. `profiles` (GR Task 2's `buildProfiles` output)
+   *  are joined against `displayMap` (falling back to username when a
+   *  contact has no display entry) and written with `is_group=false` (v1
+   *  profiles are person-only); one synthesized `{owner, username, 'me',
+   *  closeness}` edge is written per profile alongside `mentionEdges` (GR
+   *  Task 3's `buildMentionEdges` output). `sourceWatermark` is persisted
+   *  into graph meta as `source_watermark` — the value `rebuildGraphFromSource`
+   *  compares against `sourceWatermark()` on the next call to decide whether
+   *  a rebuild is worth doing at all. */
+  rebuildGraph(
+    profiles: Profile[],
+    mentionEdges: Edge[],
+    displayMap: Record<string, string>,
+    owner: string | null,
+    now: number,
+    sourceWatermark: number,
+  ): void
+  getContact(username: string): Contact | null
+  allContacts(): Contact[]
+  /** Both directions (`a=? OR b=?`), highest weight first — matches
+   *  `store.py`'s `edges_for` and is exactly the `EdgesFor` shape
+   *  `graph.ts`'s query functions (`contactProfile`, `relationshipSubgraph`,
+   *  `connectors`) take as a callback parameter. */
+  edgesFor(username: string, kind: string): Edge[]
+  getGraphMeta(key: string): string | null
+  setGraphMeta(key: string, value: string): void
+  countContacts(): number
   close(): void
 }
 
@@ -239,6 +291,9 @@ export function openKnowledge(root: string): KnowledgeStore {
   const stmtAllMentions = sourceDb.query<SourceMention, []>(
     'SELECT msg_key, target_un FROM source_mentions',
   )
+  const stmtAllSourceContacts = sourceDb.query<{ username: string; display: string }, []>(
+    'SELECT username, display FROM contacts',
+  )
 
   const runPutMentions = sourceDb.transaction((rows: SourceMention[]) => {
     const cleared = new Set<string>()
@@ -329,6 +384,140 @@ export function openKnowledge(root: string): KnowledgeStore {
   const stmtCountByModel = semanticDb.query<{ n: number }, [string]>(
     'SELECT COUNT(*) AS n FROM chunks WHERE model_id = ?',
   )
+
+  // ---- graph.db (GR Task 4) ------------------------------------------------
+  // TS port of wxgraph's store.py (GraphStore): contacts + edges + meta, one
+  // whole-snapshot rebuild per pass (see rebuildGraph below), no incremental
+  // patching.
+  const graphDb = openSqlite(join(root, 'graph.db'))
+  graphDb.exec(`
+    CREATE TABLE IF NOT EXISTS contacts (
+      username TEXT PRIMARY KEY, display TEXT, is_group INTEGER, total INTEGER, sent INTEGER,
+      recv INTEGER, first_ts INTEGER, last_ts INTEGER, known_days INTEGER, active_days INTEGER,
+      initiations INTEGER, transfer_in INTEGER, transfer_out INTEGER, shared_groups INTEGER,
+      types TEXT, s_volume REAL, s_recency REAL, s_reciprocity REAL, s_intimacy REAL, closeness REAL
+    );
+    CREATE TABLE IF NOT EXISTS edges (a TEXT, b TEXT, kind TEXT, weight REAL, PRIMARY KEY(a, b, kind));
+    CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+  `)
+
+  // Migration guard (mirrors the source.db `messages` ADD-COLUMN pattern
+  // above, GR T1) — forward-compat for a `contacts` table that already
+  // exists (so CREATE TABLE IF NOT EXISTS above is a no-op against it) but
+  // predates one or more of the columns this task's schema needs. No-op on
+  // a fresh DB (already has every column via the CREATE TABLE above) and on
+  // an already-migrated DB.
+  const GRAPH_CONTACT_COL_TYPES: Record<string, string> = {
+    display: 'TEXT', is_group: 'INTEGER', total: 'INTEGER', sent: 'INTEGER', recv: 'INTEGER',
+    first_ts: 'INTEGER', last_ts: 'INTEGER', known_days: 'INTEGER', active_days: 'INTEGER',
+    initiations: 'INTEGER', transfer_in: 'INTEGER', transfer_out: 'INTEGER', shared_groups: 'INTEGER',
+    types: 'TEXT', s_volume: 'REAL', s_recency: 'REAL', s_reciprocity: 'REAL', s_intimacy: 'REAL', closeness: 'REAL',
+  }
+  const existingContactCols = new Set(
+    graphDb.query<{ name: string }, []>('PRAGMA table_info(contacts)').all().map(r => r.name),
+  )
+  for (const [col, ddlType] of Object.entries(GRAPH_CONTACT_COL_TYPES)) {
+    if (!existingContactCols.has(col)) {
+      graphDb.exec(`ALTER TABLE contacts ADD COLUMN ${col} ${ddlType}`)
+    }
+  }
+
+  // Insert column order mirrors store.py's `_CONTACT_COLS` (username first).
+  const GRAPH_CONTACT_COLS = [
+    'username', 'display', 'is_group', 'total', 'sent', 'recv', 'first_ts', 'last_ts',
+    'known_days', 'active_days', 'initiations', 'transfer_in', 'transfer_out',
+    'shared_groups', 'types', 's_volume', 's_recency', 's_reciprocity', 's_intimacy', 'closeness',
+  ] as const
+
+  const stmtGraphDeleteContacts = graphDb.query<unknown, []>('DELETE FROM contacts')
+  const stmtGraphDeleteEdges = graphDb.query<unknown, []>('DELETE FROM edges')
+  const stmtGraphDeleteMeta = graphDb.query<unknown, []>('DELETE FROM meta')
+  const stmtGraphInsertContact = graphDb.query<
+    unknown,
+    [string, string, number, number, number, number, number, number, number, number, number, number, number, number, string, number, number, number, number, number]
+  >(
+    `INSERT INTO contacts(${GRAPH_CONTACT_COLS.join(',')}) VALUES (${GRAPH_CONTACT_COLS.map(() => '?').join(',')})`,
+  )
+  const stmtGraphInsertEdge = graphDb.query<unknown, [string, string, string, number]>(
+    'INSERT OR REPLACE INTO edges(a, b, kind, weight) VALUES (?, ?, ?, ?)',
+  )
+  const stmtGraphInsertMeta = graphDb.query<unknown, [string, string]>(
+    'INSERT INTO meta(key, value) VALUES (?, ?)',
+  )
+  const runRebuildGraph = graphDb.transaction(
+    (
+      profiles: Profile[],
+      mentionEdges: Edge[],
+      displayMap: Record<string, string>,
+      owner: string | null,
+      now: number,
+      sourceWatermark: number,
+    ) => {
+      stmtGraphDeleteContacts.run()
+      stmtGraphDeleteEdges.run()
+      stmtGraphDeleteMeta.run()
+      for (const p of profiles) {
+        const display = displayMap[p.username] ?? p.username
+        stmtGraphInsertContact.run(
+          p.username,
+          display,
+          0, // is_group — v1 profiles are person-only (graph-profiles.ts's buildProfiles never emits group contacts)
+          p.total,
+          p.sent,
+          p.recv,
+          p.first_ts,
+          p.last_ts,
+          p.known_days,
+          p.active_days,
+          p.initiations,
+          p.transfer_in,
+          p.transfer_out,
+          p.shared_groups,
+          JSON.stringify(p.types),
+          p.s_volume,
+          p.s_recency,
+          p.s_reciprocity,
+          p.s_intimacy,
+          p.closeness,
+        )
+        // One synthesized owner->contact "me" edge per profile, exactly like
+        // store.py's rebuild — written even when `owner` is null/undetected
+        // (falls back to '', same posture as graph.ts's relationshipSubgraph
+        // using `owner ?? ''`) rather than skipping the edge outright.
+        stmtGraphInsertEdge.run(owner ?? '', p.username, 'me', p.closeness)
+      }
+      for (const e of mentionEdges) {
+        stmtGraphInsertEdge.run(e.a, e.b, e.kind, e.weight)
+      }
+      stmtGraphInsertMeta.run('owner', owner ?? '')
+      stmtGraphInsertMeta.run('built_at', String(now))
+      stmtGraphInsertMeta.run('source_watermark', String(sourceWatermark))
+    },
+  )
+
+  type GraphContactRow = {
+    username: string; display: string; is_group: number; total: number; sent: number; recv: number
+    first_ts: number; last_ts: number; known_days: number; active_days: number; initiations: number
+    transfer_in: number; transfer_out: number; shared_groups: number; types: string
+    s_volume: number; s_recency: number; s_reciprocity: number; s_intimacy: number; closeness: number
+  }
+  function toContact(r: GraphContactRow): Contact {
+    const { is_group, types, ...rest } = r
+    return { ...rest, is_group: !!is_group, types: types ? JSON.parse(types) : {} }
+  }
+  const stmtGraphGetContact = graphDb.query<GraphContactRow, [string]>(
+    'SELECT * FROM contacts WHERE username = ?',
+  )
+  const stmtGraphAllContacts = graphDb.query<GraphContactRow, []>('SELECT * FROM contacts')
+  const stmtGraphEdgesFor = graphDb.query<Edge, [string, string, string]>(
+    'SELECT a, b, kind, weight FROM edges WHERE kind = ? AND (a = ? OR b = ?) ORDER BY weight DESC',
+  )
+  const stmtGraphGetMeta = graphDb.query<{ value: string }, [string]>('SELECT value FROM meta WHERE key = ?')
+  const stmtGraphSetMeta = graphDb.query<unknown, [string, string]>(
+    `INSERT INTO meta(key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  )
+  const stmtGraphCountContacts = graphDb.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM contacts')
 
   return {
     putSourceMessages(msgs) {
@@ -428,9 +617,48 @@ export function openKnowledge(root: string): KnowledgeStore {
       return stmtCountByModel.get(model_id)?.n ?? 0
     },
 
+    sourceWatermark() {
+      return stmtMaxWatermark.get()?.w ?? 0
+    },
+
+    allSourceContacts() {
+      return stmtAllSourceContacts.all()
+    },
+
+    // ---- graph.db ----------------------------------------------------------
+    rebuildGraph(profiles, mentionEdges, displayMap, owner, now, sourceWatermark) {
+      runRebuildGraph(profiles, mentionEdges, displayMap, owner, now, sourceWatermark)
+    },
+
+    getContact(username) {
+      const row = stmtGraphGetContact.get(username)
+      return row ? toContact(row) : null
+    },
+
+    allContacts() {
+      return stmtGraphAllContacts.all().map(toContact)
+    },
+
+    edgesFor(username, kind) {
+      return stmtGraphEdgesFor.all(kind, username, username)
+    },
+
+    getGraphMeta(key) {
+      return stmtGraphGetMeta.get(key)?.value ?? null
+    },
+
+    setGraphMeta(key, value) {
+      stmtGraphSetMeta.run(key, value)
+    },
+
+    countContacts() {
+      return stmtGraphCountContacts.get()?.n ?? 0
+    },
+
     close() {
       sourceDb.close()
       semanticDb.close()
+      graphDb.close()
     },
   }
 }

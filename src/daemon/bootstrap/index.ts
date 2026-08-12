@@ -75,6 +75,7 @@ import { semanticSearch } from '../../core/knowledge/search'
 import { runSourceAdapter } from '../../core/knowledge/source-adapter'
 import { runIndexer } from '../../core/knowledge/indexer'
 import { makeEmbedderService } from '../../core/knowledge/embedder-service'
+import { rebuildGraphFromSource } from '../../core/knowledge/graph-build'
 import { runKnowledgeCycle } from '../../core/knowledge/cycle'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
@@ -478,6 +479,20 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
               model_version: KNOWLEDGE_EMBED_MODEL_VERSION,
             })
           : undefined,
+        // Knowledge Graph inproc Task 4 — rebuilds graph.db (contacts/edges)
+        // from whatever's in source.db right now. `now` is read fresh on
+        // EVERY cycle (not captured once at boot) — graph-profiles.ts's
+        // recency scoring needs the actual wall-clock time of each rebuild,
+        // same posture as the rest of this file never caching `Date.now()`.
+        // Owner resolution: `knowledge_owner` config wins outright; falls
+        // back to `WXGRAPH_OWNER` (mirrors wxgraph's own env-var escape
+        // hatch for accounts detectOwner's 1:1-vote heuristic can't infer);
+        // absent both, rebuildGraphFromSource's detectOwner call decides.
+        runGraphRebuild: () => Promise.resolve(rebuildGraphFromSource({
+          store: knowledgeStore,
+          now: Math.floor(Date.now() / 1000),
+          ownerOverride: configuredAgent.knowledge_owner ?? process.env.WXGRAPH_OWNER,
+        })),
         log: deps.log,
       },
       { onBoot },
