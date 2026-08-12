@@ -28,7 +28,33 @@ export interface RunKnowledgeCycleDeps {
    * still runs in that case; indexing is just skipped.
    */
   runIndex?: () => Promise<{ indexed: number }>
+  /**
+   * Knowledge Graph inproc Task 4 — rebuilds the in-proc contact/edge graph
+   * (graph.db, via `graph-build.ts`'s `rebuildGraphFromSource`) from
+   * whatever source is now in the store. Runs AFTER the indexer, same pass,
+   * same error-swallowing posture as `runAdapter`/`runIndex` below — a
+   * broken or slow rebuild must never crash the cycle or block the next
+   * tick. `undefined` when the graph layer isn't wired (mirrors `runIndex`'s
+   * own optionality) — the adapter/indexer still run in that case; the
+   * rebuild is just skipped. The rebuild itself owns its own incremental
+   * gate (skips when source hasn't advanced since the last build) — this
+   * dep is called every cycle regardless; whether that call does real work
+   * is `rebuildGraphFromSource`'s decision, not this module's.
+   */
+  runGraphRebuild?: () => RunGraphRebuildResult | Promise<RunGraphRebuildResult>
   log: (tag: string, line: string, fields?: Record<string, unknown>) => void
+}
+
+/** Structural subset of graph-build.ts's `RebuildGraphFromSourceResult` that
+ *  this module actually reads (just for logging) — kept local rather than
+ *  importing that type so cycle.ts's dependency surface stays the same
+ *  shape as `runAdapter`/`runIndex` (a plain result shape, not a coupling to
+ *  graph-build.ts's own type). */
+export interface RunGraphRebuildResult {
+  owner: string | null
+  contacts: number
+  edges: number
+  skipped: boolean
 }
 
 export interface RunKnowledgeCycleOpts {
@@ -85,6 +111,27 @@ export async function runKnowledgeCycle(
       }
     } else if (opts.onBoot) {
       deps.log('KNOWLEDGE', 'indexer disabled — wxsearch plugin not found; set knowledge_embed_script to point at embed_subprocess.py')
+    }
+
+    // Graph rebuild runs AFTER the indexer, same pass — same throw-safety
+    // and boot/non-boot logging-verbosity posture as the two steps above.
+    // `runGraphRebuild` omitted (graph layer not wired) is silently fine,
+    // same as `runIndex` omitted above.
+    if (deps.runGraphRebuild) {
+      try {
+        const result = await deps.runGraphRebuild()
+        if (opts.onBoot || !result.skipped) {
+          deps.log(
+            'KNOWLEDGE',
+            result.skipped
+              ? 'graph rebuild: skipped (no new source since last build)'
+              : `graph rebuild: ${result.contacts} contact(s), ${result.edges} edge(s)`,
+            { owner: result.owner, contacts: result.contacts, edges: result.edges, skipped: result.skipped },
+          )
+        }
+      } catch (err) {
+        deps.log('KNOWLEDGE', `graph rebuild failed (will retry next tick): ${err instanceof Error ? err.message : String(err)}`)
+      }
     }
 
     return { ingested, skipped: false }

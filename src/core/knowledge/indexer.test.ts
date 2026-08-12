@@ -22,6 +22,9 @@ function msg(msg_key: string, overrides: Partial<SourceMsg> = {}): SourceMsg {
     type: 'text',
     text: `text for ${msg_key}`,
     server_id: 'srv-1',
+    local_type: 1,
+    is_group: false,
+    kind: 'text',
     ...overrides,
   }
 }
@@ -69,6 +72,31 @@ describe('runIndexer', () => {
     const docs = store.getDocs(rowids)
     const texts = Array.from(docs.values()).map(d => d.text).sort()
     expect(texts).toEqual(['text for m1', 'text for m3'])
+  })
+
+  it('does not embed non-text kinds (Knowledge Graph inproc Task 1: source now holds every message kind)', async () => {
+    store.putSourceMessages([
+      msg('m1'),
+      msg('m2', { kind: 'voice', local_type: 34, text: '', type: 'voice' }),
+      msg('m3', { kind: 'transfer', local_type: 49, text: '', type: 'transfer' }),
+      msg('m4', { kind: 'text', is_group: true, text: 'group text' }),
+    ])
+
+    const result = await runIndexer({
+      store,
+      embed: fakeEmbed,
+      model_id: 'test-model',
+      model_version: 'v1',
+    })
+
+    // Only the two text-kind rows are embedded — voice/transfer are ingested
+    // into source but never reach the embedder.
+    expect(result.indexed).toBe(2)
+    expect(store.countSemantic('test-model')).toBe(2)
+    const { rowids } = store.loadVectors('test-model')
+    const docs = store.getDocs(rowids)
+    const texts = Array.from(docs.values()).map(d => d.text).sort()
+    expect(texts).toEqual(['group text', 'text for m1'])
   })
 
   it('resumes from the persisted cursor — a second run indexes nothing new', async () => {

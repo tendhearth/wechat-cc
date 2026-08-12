@@ -37,7 +37,7 @@ import type { ProviderId } from './conversation'
  * plugin (or a future one this file hasn't been updated for yet) never
  * triggers the section or produces a blank/garbled bullet.
  */
-export const KNOWN_KNOWLEDGE_PLUGINS = ['wxperson', 'wxgraph', 'wxfacts', 'wxsearch', 'wxmedia'] as const
+export const KNOWN_KNOWLEDGE_PLUGINS = ['wxperson', 'wxfacts', 'wxsearch', 'wxmedia'] as const
 
 export interface BuildSystemPromptArgs {
   /** Which provider this session is for. Used to compute peer + delegate tool name. */
@@ -146,7 +146,7 @@ export interface BuildSystemPromptArgs {
   bubbleReplies?: boolean
   /**
    * Names of knowledge-mcp plugins registered for this session (RFC
-   * knowledge-orchestration Task 1) — e.g. `wxgraph`/`wxfacts`/`wxsearch`/
+   * knowledge-orchestration Task 1) — e.g. `wxfacts`/`wxsearch`/
    * `wxmedia`. When at least one of these is a KNOWN_KNOWLEDGE_PLUGINS
    * entry, adds the knowledge-orchestration section right after
    * `memorySection()` so the agent knows memory (its own "看法") composes
@@ -168,6 +168,19 @@ export interface BuildSystemPromptArgs {
    * (mirrors `careEnabled`'s contract).
    */
   knowledgeSearchAvailable?: boolean
+  /**
+   * When true, this session is admin-tier AND the daemon's Graph Query
+   * tools (`contact_profile`/`top_contacts`/…, Knowledge Graph inproc
+   * design Task 5) are actually registered/functional for it — adds the
+   * `- **关系画像**（\`contact_profile\`/\`top_contacts\`）…` bullet to the
+   * knowledge-orchestration section. Deliberately NOT derived from
+   * `knowledgePlugins`/the retired `wxgraph` plugin name (same posture as
+   * `knowledgeSearchAvailable` above vs `wxsearch`) — `graph_query` is a
+   * daemon-owned capability, independent of whether any wxgraph-shaped
+   * plugin is loaded. Absent or false ⇒ output is byte-identical to before
+   * this field existed (mirrors `careEnabled`'s contract).
+   */
+  graphAvailable?: boolean
 }
 
 /**
@@ -187,8 +200,15 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
   // only source would never see this section, and the agent would never
   // learn the tool exists.
   const knowledgeSearchAvailable = args.knowledgeSearchAvailable === true
+  // Same posture as knowledgeSearchAvailable above vs wxsearch: graph_query
+  // is a daemon-owned capability (Knowledge Graph inproc), not gated on the
+  // retired wxgraph plugin being loaded, so it must also widen the section
+  // gate below — otherwise an admin session where the graph tools are the
+  // ONLY available knowledge source would never see the section at all.
+  const graphAvailable = args.graphAvailable === true
   const hasKnownKnowledge = (args.knowledgePlugins ?? []).some(n => (KNOWN_KNOWLEDGE_PLUGINS as readonly string[]).includes(n))
     || knowledgeSearchAvailable
+    || graphAvailable
 
   const sections: string[] = [
     baseChannelSection(providerId),
@@ -206,7 +226,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     args.personaCultivate === true ? personaCultivationSection({ personaEmpty: args.personaEmpty === true }) : '',
     args.stickerTags && args.stickerTags.length > 0 ? stickerSection(args.stickerTags) : '',
     memorySection(),
-    hasKnownKnowledge ? knowledgeOrchestrationSection(args.knowledgePlugins ?? [], { knowledgeSearchAvailable }) : '',
+    hasKnownKnowledge ? knowledgeOrchestrationSection(args.knowledgePlugins ?? [], { knowledgeSearchAvailable, graphAvailable }) : '',
     multiModeAwarenessSection(),
     companionEnabled ? companionSection() : '',
   ].filter(s => s.length > 0)
@@ -536,10 +556,18 @@ companion 现在的 persona（小助手 / 陪伴）影响你**怎么读 memory +
  * in KNOWN_KNOWLEDGE_PLUGINS order, so bootstrap can pass whatever plugin set
  * this session ended up with and only the matching copy shows up.
  */
-export function knowledgeOrchestrationSection(pluginNames: string[], opts?: { knowledgeSearchAvailable?: boolean }): string {
+export function knowledgeOrchestrationSection(pluginNames: string[], opts?: { knowledgeSearchAvailable?: boolean; graphAvailable?: boolean }): string {
   const present = new Set(pluginNames)
   const bullets: string[] = []
-  if (present.has('wxgraph')) {
+  // Knowledge Graph inproc (GR T5): the retired wxgraph plugin's `contact_profile`/
+  // `top_contacts` tools moved in-proc, exposed as the daemon-owned Graph
+  // Query tools (admin-only, gated on `knowledge_enabled` + tier — see
+  // bootstrap/index.ts's `graphAvailable` derivation). Deliberately NOT
+  // keyed off the `wxgraph` plugin name being present in `pluginNames` —
+  // that plugin is retired, and the caller must pass this opt-in flag
+  // exactly when the Graph Query tools are actually registered for this
+  // session, or the agent will emit calls to tools that don't exist.
+  if (opts?.graphAvailable) {
     bullets.push('- **关系画像**（`contact_profile`/`top_contacts`）：你俩的量化关系——亲密度/最近联系/往来是否平衡。问"我们关系怎么样"用它。')
   }
   if (present.has('wxfacts')) {

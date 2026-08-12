@@ -95,6 +95,14 @@ export interface AgentConfig {
   // bootstrap/index.ts's knowledge_enabled block). Optional escape hatch for
   // a non-standard wxsearch install location.
   knowledge_embed_script?: string
+  // Knowledge Graph inproc Task 4 — explicit override for "my own username"
+  // fed into rebuildGraphFromSource's `detectOwner` call (graph-build.ts).
+  // Optional — absent means "let detectOwner vote from 1:1 message senders"
+  // (see graph.ts's `detectOwner` doc comment); bootstrap/index.ts falls
+  // back further to the `WXGRAPH_OWNER` env var when this is also unset,
+  // mirroring wxgraph's own env-var escape hatch for undetectable-owner
+  // accounts.
+  knowledge_owner?: string
 }
 
 // ── A2A sub-schemas ──────────────────────────────────────────────────────────
@@ -175,6 +183,7 @@ const AgentConfigSchema = z.object({
   knowledge_source_dir: z.string().optional(),
   knowledge_embed_model: z.string().optional(),
   knowledge_embed_script: z.string().optional(),
+  knowledge_owner: z.string().optional(),
 })
 
 /**
@@ -253,6 +262,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.knowledge_source_dir === 'string' ? { knowledge_source_dir: parsed.knowledge_source_dir } : {}),
       ...(typeof parsed.knowledge_embed_model === 'string' ? { knowledge_embed_model: parsed.knowledge_embed_model } : {}),
       ...(typeof parsed.knowledge_embed_script === 'string' ? { knowledge_embed_script: parsed.knowledge_embed_script } : {}),
+      ...(typeof parsed.knowledge_owner === 'string' ? { knowledge_owner: parsed.knowledge_owner } : {}),
     }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }

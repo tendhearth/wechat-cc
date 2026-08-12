@@ -75,6 +75,8 @@ import { semanticSearch } from '../../core/knowledge/search'
 import { runSourceAdapter } from '../../core/knowledge/source-adapter'
 import { runIndexer } from '../../core/knowledge/indexer'
 import { makeEmbedderService } from '../../core/knowledge/embedder-service'
+import { rebuildGraphFromSource } from '../../core/knowledge/graph-build'
+import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
 import { runKnowledgeCycle } from '../../core/knowledge/cycle'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
@@ -478,6 +480,20 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
               model_version: KNOWLEDGE_EMBED_MODEL_VERSION,
             })
           : undefined,
+        // Knowledge Graph inproc Task 4 — rebuilds graph.db (contacts/edges)
+        // from whatever's in source.db right now. `now` is read fresh on
+        // EVERY cycle (not captured once at boot) — graph-profiles.ts's
+        // recency scoring needs the actual wall-clock time of each rebuild,
+        // same posture as the rest of this file never caching `Date.now()`.
+        // Owner resolution: `knowledge_owner` config wins outright; falls
+        // back to `WXGRAPH_OWNER` (mirrors wxgraph's own env-var escape
+        // hatch for accounts detectOwner's 1:1-vote heuristic can't infer);
+        // absent both, rebuildGraphFromSource's detectOwner call decides.
+        runGraphRebuild: () => Promise.resolve(rebuildGraphFromSource({
+          store: knowledgeStore,
+          now: Math.floor(Date.now() / 1000),
+          ownerOverride: configuredAgent.knowledge_owner ?? process.env.WXGRAPH_OWNER,
+        })),
         log: deps.log,
       },
       { onBoot },
@@ -490,6 +506,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       store: knowledgeStore,
       search: semanticSearch,
       ...(embedder ? { embedder, embedQuery: (t: string) => embedder.embed([t]).then(v => v[0]!) } : {}),
+      // Knowledge Graph inproc (Task 5) — unconditional (unlike embedder
+      // above): graph rebuild (graph-build.ts's rebuildGraphFromSource, run
+      // every cycle above) needs no embed script, so the query accessor is
+      // wired whenever knowledge_enabled is on at all.
+      graph: makeGraphQueryApi(knowledgeStore),
     }
   } else {
     deps.log('BOOT', 'knowledge: disabled (knowledge_enabled not set)')
@@ -692,6 +713,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       //     precisely, non-admin/knowledge-off sessions unaffected (both
       //     default away from true).
       knowledgeSearchAvailable: !!knowledge?.embedQuery && tierProfile.allow.has('knowledge_search'),
+      // Knowledge Graph inproc (Task 5) — same shape as knowledgeSearchAvailable
+      // above, but keyed on `knowledge?.graph` (unconditional whenever
+      // knowledge_enabled is on, no embed script required) and the
+      // `graph_query` tier kind, which exactly matches the SESSION_IS_ADMIN
+      // gate wechat-mcp/main.ts registers `registerGraphTools` under.
+      graphAvailable: !!knowledge?.graph && tierProfile.allow.has('graph_query'),
     })
   }
 

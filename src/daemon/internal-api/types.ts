@@ -253,6 +253,17 @@ export interface InternalApiDeps {
     search: typeof import('../../core/knowledge/search').semanticSearch
     embedder?: import('../../core/knowledge/embedder-service').EmbedderService
     embedQuery?: (t: string) => Promise<number[]>
+    /**
+     * Graph Query (Knowledge Graph inproc, Task 5) — the store-backed
+     * accessor over graph.db (contacts/edges, Task 4's `rebuildGraph`),
+     * built by `core/knowledge/graph-query.ts`'s `makeGraphQueryApi`. Unlike
+     * `embedder`/`embedQuery`, this needs no embed script — it's present
+     * whenever `knowledge_enabled` is configured (graph rebuild runs
+     * independently of the semantic indexer). Undefined ⇒ every
+     * `/v1/knowledge/graph/*` route 503s knowledge_not_wired, same posture
+     * as `knowledge` itself being undefined.
+     */
+    graph?: import('../../core/knowledge/graph-query').GraphQueryApi
   }
   /** 配对码 (spec §7) — late-bound by main.ts from bootstrap.pairing. Undefined
    *  (⇒ /v1/pair/* 503) until mailbox_relays is configured AND late-bind runs. */
