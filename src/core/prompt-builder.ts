@@ -37,7 +37,7 @@ import type { ProviderId } from './conversation'
  * plugin (or a future one this file hasn't been updated for yet) never
  * triggers the section or produces a blank/garbled bullet.
  */
-export const KNOWN_KNOWLEDGE_PLUGINS = ['wxperson', 'wxgraph', 'wxfacts', 'wxsearch', 'wxmedia'] as const
+export const KNOWN_KNOWLEDGE_PLUGINS = ['wxperson', 'wxfacts', 'wxsearch', 'wxmedia'] as const
 
 export interface BuildSystemPromptArgs {
   /** Which provider this session is for. Used to compute peer + delegate tool name. */
@@ -146,7 +146,7 @@ export interface BuildSystemPromptArgs {
   bubbleReplies?: boolean
   /**
    * Names of knowledge-mcp plugins registered for this session (RFC
-   * knowledge-orchestration Task 1) — e.g. `wxgraph`/`wxfacts`/`wxsearch`/
+   * knowledge-orchestration Task 1) — e.g. `wxfacts`/`wxsearch`/
    * `wxmedia`. When at least one of these is a KNOWN_KNOWLEDGE_PLUGINS
    * entry, adds the knowledge-orchestration section right after
    * `memorySection()` so the agent knows memory (its own "看法") composes

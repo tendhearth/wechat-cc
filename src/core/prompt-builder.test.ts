@@ -656,7 +656,7 @@ describe('knowledge-orchestration prompt section', () => {
 
   it('places the knowledge section immediately after the memory section, no other section shifted', () => {
     const withoutKnowledge = buildSystemPrompt({ ...base })
-    const withKnowledge = buildSystemPrompt({ ...base, knowledgePlugins: ['wxgraph'] })
+    const withKnowledge = buildSystemPrompt({ ...base, knowledgePlugins: ['wxfacts'] })
 
     const memoryIdx = withKnowledge.indexOf('长期记忆')
     const knowledgeIdx = withKnowledge.indexOf('知识编排')
