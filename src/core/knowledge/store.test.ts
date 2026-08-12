@@ -293,6 +293,73 @@ describe('knowledge store', () => {
         rmSync(migDir, { recursive: true, force: true })
       }
     })
+
+    it('openKnowledge does not crash against a pre-existing source.db with no contacts table at all, and putContacts works afterward', () => {
+      const migDir = mkdtempSync(join(tmpdir(), 'kk-store-migrate-contacts-'))
+      try {
+        // Simulate a source.db that predates the `contacts` table entirely
+        // (e.g. an even older Phase 0/1 snapshot) — CREATE TABLE IF NOT
+        // EXISTS in openKnowledge must add it without touching pre-existing
+        // tables/rows.
+        const oldDb = new Database(join(migDir, 'source.db'), { create: true })
+        oldDb.exec(`
+          CREATE TABLE messages (
+            msg_key TEXT PRIMARY KEY,
+            conversation TEXT, sender TEXT, time INTEGER,
+            type TEXT, text TEXT, server_id TEXT,
+            ingested_watermark INTEGER
+          );
+        `)
+        oldDb.close()
+
+        let migrated: KnowledgeStore | undefined
+        expect(() => {
+          migrated = openKnowledge(migDir)
+        }).not.toThrow()
+
+        expect(migrated!.allSourceContacts()).toEqual([])
+        migrated!.putContacts([{ username: 'wxid_alice', display: 'Alice' }])
+        expect(migrated!.allSourceContacts()).toEqual([{ username: 'wxid_alice', display: 'Alice' }])
+
+        migrated!.close()
+      } finally {
+        rmSync(migDir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  describe('source contacts (source.db-side, GR T4.5 display-name map)', () => {
+    it('allSourceContacts is empty on a fresh store', () => {
+      expect(store.allSourceContacts()).toEqual([])
+    })
+
+    it('putContacts round-trips through allSourceContacts', () => {
+      store.putContacts([
+        { username: 'wxid_alice', display: 'Alice' },
+        { username: 'wxid_bob', display: 'Bob' },
+      ])
+      const all = store.allSourceContacts()
+      expect(all).toHaveLength(2)
+      expect(all).toEqual(
+        expect.arrayContaining([
+          { username: 'wxid_alice', display: 'Alice' },
+          { username: 'wxid_bob', display: 'Bob' },
+        ]),
+      )
+    })
+
+    it('putContacts upserts idempotently on username (re-put replaces display, no duplicate rows)', () => {
+      store.putContacts([{ username: 'wxid_alice', display: 'Alice' }])
+      store.putContacts([{ username: 'wxid_alice', display: 'Alice Updated' }])
+      const all = store.allSourceContacts()
+      expect(all).toHaveLength(1)
+      expect(all[0]).toEqual({ username: 'wxid_alice', display: 'Alice Updated' })
+    })
+
+    it('putContacts with an empty array is a no-op, does not throw', () => {
+      expect(() => store.putContacts([])).not.toThrow()
+      expect(store.allSourceContacts()).toEqual([])
+    })
   })
 
   describe('source meta (source.db-side, for the source-adapter own-DB cursor)', () => {

@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openKnowledge, type KnowledgeStore, type SourceMsg } from './store'
 import { rebuildGraphFromSource } from './graph-build'
+import { resolveName } from './graph'
 
 function msg(msg_key: string, overrides: Partial<SourceMsg> = {}): SourceMsg {
   return {
@@ -133,5 +134,29 @@ describe('rebuildGraphFromSource', () => {
     expect(second.skipped).toBe(false)
     expect(store.countContacts()).toBe(2)
     expect(store.getGraphMeta('built_at')).toBe('2000')
+  })
+
+  it('end-to-end: seeded source contacts populate the graph displayMap, and resolveName resolves by display name (GR T4.5)', () => {
+    store.putContacts([
+      { username: 'wxid_alice', display: 'Alice Remark' },
+      { username: 'wxid_bob', display: 'wxid_bob' }, // no remark/nick/alias -> falls back to username
+    ])
+    store.putSourceMessages([
+      msg('m1', { conversation: 'wxid_alice', sender: 'me', time: 100 }),
+      msg('m2', { conversation: 'wxid_alice', sender: 'wxid_alice', time: 200 }),
+    ])
+
+    const result = rebuildGraphFromSource({ store, now: 1000 })
+    expect(result.skipped).toBe(false)
+
+    const alice = store.getContact('wxid_alice')
+    expect(alice).toBeTruthy()
+    // The regression this task fixes: display must come from the ingested
+    // contact.sqlite-derived source contact, NOT fall back to the raw
+    // username, once a contacts row exists for it.
+    expect(alice?.display).toBe('Alice Remark')
+
+    const resolved = resolveName(store.allContacts(), 'Alice Remark')
+    expect(resolved).toEqual({ username: 'wxid_alice', candidates: [] })
   })
 })

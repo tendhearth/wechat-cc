@@ -117,13 +117,18 @@ export interface KnowledgeStore {
    *  whether a full rebuild is worth doing WITHOUT paging through
    *  `listMessages` first. */
   sourceWatermark(): number
-  /** Source-side display names (source.db's `contacts` table). Currently
-   *  always empty — no producer writes this table yet (see
-   *  source-adapter.ts's "Scope" doc comment: contact ingestion is
-   *  deferred) — so callers should treat an empty result as "no display
-   *  data available" and fall back to username, exactly like
-   *  `rebuildGraph`'s `displayMap` parameter does. */
+  /** Source-side display names (source.db's `contacts` table), populated by
+   *  source-adapter.ts's contact.sqlite ingestion (GR T4.5). A username with
+   *  no row here (contact.sqlite unreadable, or the contact simply isn't in
+   *  it) has "no display data available" — callers fall back to username,
+   *  exactly like `rebuildGraph`'s `displayMap` parameter does. */
   allSourceContacts(): Array<{ username: string; display: string }>
+  /** Idempotent upsert of source-side display names, keyed on `username`
+   *  (re-putting the same username replaces its `display`, never
+   *  duplicates the row). Contacts change rarely, so the adapter re-puts
+   *  the WHOLE contact.sqlite snapshot on every run rather than tracking a
+   *  cursor — this must stay cheap to call with the full set every time. */
+  putContacts(rows: Array<{ username: string; display: string }>): void
 
   // ---- graph.db (GR Task 4) -----------------------------------------------
   /** Atomically replaces the whole contacts/edges/meta snapshot — port of
@@ -294,6 +299,13 @@ export function openKnowledge(root: string): KnowledgeStore {
   const stmtAllSourceContacts = sourceDb.query<{ username: string; display: string }, []>(
     'SELECT username, display FROM contacts',
   )
+  const stmtUpsertContact = sourceDb.query<unknown, [string, string]>(
+    `INSERT INTO contacts(username, display) VALUES (?, ?)
+     ON CONFLICT(username) DO UPDATE SET display = excluded.display`,
+  )
+  const runPutContacts = sourceDb.transaction((rows: Array<{ username: string; display: string }>) => {
+    for (const r of rows) stmtUpsertContact.run(r.username, r.display)
+  })
 
   const runPutMentions = sourceDb.transaction((rows: SourceMention[]) => {
     const cleared = new Set<string>()
@@ -623,6 +635,10 @@ export function openKnowledge(root: string): KnowledgeStore {
 
     allSourceContacts() {
       return stmtAllSourceContacts.all()
+    },
+
+    putContacts(rows) {
+      runPutContacts(rows)
     },
 
     // ---- graph.db ----------------------------------------------------------

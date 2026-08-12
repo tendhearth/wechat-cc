@@ -183,6 +183,26 @@ function buildMinimalDb(
   return { table }
 }
 
+/** Builds contact.sqlite in decryptedDir: a `contact` table with rows
+ *  exercising the display priority (remark > nick_name > alias > username). */
+function buildContactFixtureDb(decryptedDir: string): void {
+  const dbPath = join(decryptedDir, 'contact.sqlite')
+  const db = new Database(dbPath, { create: true })
+  db.exec(`
+    CREATE TABLE contact (
+      username TEXT PRIMARY KEY, remark TEXT, nick_name TEXT, alias TEXT
+    )
+  `)
+  const insert = db.query<unknown, [string, string | null, string | null, string | null]>(
+    'INSERT INTO contact (username, remark, nick_name, alias) VALUES (?, ?, ?, ?)',
+  )
+  insert.run('wxid_alice', 'Alice Remark', 'Alice Nick', 'alice_alias')
+  insert.run('wxid_bob', '', 'Bob Nick', 'bob_alias')
+  insert.run('wxid_carol', null, null, 'carol_alias')
+  insert.run('wxid_dave', null, null, null)
+  db.close()
+}
+
 describe('runSourceAdapter', () => {
   let dir: string
   let decryptedDir: string
@@ -368,5 +388,52 @@ describe('runSourceAdapter', () => {
 
     const { messages } = store.listMessages(0, 100)
     expect(messages[0]?.sender).toBe('999')
+  })
+
+  describe('contact.sqlite ingestion (GR T4.5 — display-name map)', () => {
+    it('ingests contact.sqlite into source.contacts with remark > nick_name > alias > username priority', () => {
+      buildContactFixtureDb(decryptedDir)
+
+      expect(() => runSourceAdapter({ decryptedDir, store })).not.toThrow()
+
+      const byUsername = new Map(store.allSourceContacts().map(c => [c.username, c.display]))
+      expect(byUsername.get('wxid_alice')).toBe('Alice Remark') // remark wins over nick_name/alias
+      expect(byUsername.get('wxid_bob')).toBe('Bob Nick') // empty remark -> nick_name
+      expect(byUsername.get('wxid_carol')).toBe('carol_alias') // no remark/nick_name -> alias
+      expect(byUsername.get('wxid_dave')).toBe('wxid_dave') // nothing else -> username itself
+    })
+
+    it('a missing contact.sqlite does not crash the adapter and still ingests messages', () => {
+      buildFixtureDb(decryptedDir) // message_0.sqlite, no contact.sqlite anywhere in decryptedDir
+
+      let result: { ingested: number } | undefined
+      expect(() => {
+        result = runSourceAdapter({ decryptedDir, store })
+      }).not.toThrow()
+
+      expect(result?.ingested).toBe(3)
+      expect(store.allSourceContacts()).toEqual([])
+    })
+
+    it('a corrupt/garbage contact.sqlite does not crash the adapter', () => {
+      writeFileSync(join(decryptedDir, 'contact.sqlite'), 'this is not a sqlite database file')
+
+      expect(() => runSourceAdapter({ decryptedDir, store })).not.toThrow()
+      expect(store.allSourceContacts()).toEqual([])
+    })
+
+    it('a contact.sqlite whose `contact` table is missing expected columns does not crash the adapter', () => {
+      const dbPath = join(decryptedDir, 'contact.sqlite')
+      const db = new Database(dbPath, { create: true })
+      db.exec('CREATE TABLE contact (username TEXT PRIMARY KEY, some_other_col TEXT)')
+      db.query<unknown, [string, string]>('INSERT INTO contact (username, some_other_col) VALUES (?, ?)').run(
+        'wxid_eve',
+        'whatever',
+      )
+      db.close()
+
+      expect(() => runSourceAdapter({ decryptedDir, store })).not.toThrow()
+      expect(store.allSourceContacts()).toEqual([])
+    })
   })
 })

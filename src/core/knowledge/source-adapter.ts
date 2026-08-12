@@ -82,9 +82,16 @@
  * is skipped (accumulating whatever other dbs in the dir succeeded) instead
  * of aborting the entire run.
  *
- * Scope: contacts (`contact.sqlite`) are deferred — no consumer in the
- * Phase 0/1 slice (wxsearch indexer needs messages only); add
- * `putContacts` + contact ingestion here when a consumer needs it.
+ * Contacts (`contact.sqlite`, GR Task 4.5): ingested into source.db's
+ * `contacts` table so the graph builder (graph-build.ts) has a display-name
+ * map (`display = remark || nick_name || alias || username`, ported from
+ * wxgraph's `load_display_map`). Unlike messages, contacts change rarely and
+ * carry no per-row cursor of their own in WCDB, so every adapter run simply
+ * re-reads the WHOLE `contact` table and re-puts it — `putContacts` upserts
+ * on username, so this is idempotent and cheap enough to redo every time.
+ * Missing/unreadable/schema-mismatched `contact.sqlite` is non-fatal: caught
+ * and skipped (leaves source.db's contacts exactly as they were), never
+ * aborts the message ingestion this function otherwise does.
  */
 import { Database } from 'bun:sqlite'
 import { createHash } from 'node:crypto'
@@ -241,6 +248,54 @@ function listMessageDbs(decryptedDir: string): string[] {
   return names.filter(n => MESSAGE_DB_RE.test(n)).sort().map(n => join(decryptedDir, n))
 }
 
+interface RawContactRow {
+  username: string
+  remark: string | null
+  nick_name: string | null
+  alias: string | null
+}
+
+/** Ingests `<decryptedDir>/contact.sqlite` into `store.contacts` — the
+ *  display-name map the graph builder reads (GR T4.5). Never throws: a
+ *  missing file, a corrupt file, or a `contact` table that doesn't have the
+ *  expected columns (some contact.sqlite variants differ) is caught here and
+ *  logged, leaving source.db's existing contacts untouched. */
+function ingestContacts(decryptedDir: string, store: KnowledgeStore): void {
+  const contactPath = join(decryptedDir, 'contact.sqlite')
+
+  let db: Database
+  try {
+    // Same immutable WAL-safe read as message_*.sqlite (see header comment)
+    // — read-only, tolerant of a WAL-mode file shipped without its
+    // -wal/-shm sidecars, and never writes to wxvault's output. Also throws
+    // (caught below) when contact.sqlite simply doesn't exist.
+    db = new Database(`file:${contactPath}?mode=ro&immutable=1`, { readonly: true })
+  } catch (err) {
+    console.error(`[source-adapter] skipping missing/unreadable contact.sqlite:`, err)
+    return
+  }
+
+  try {
+    const rows = db
+      .query<RawContactRow, []>('SELECT username, remark, nick_name, alias FROM contact')
+      .all()
+    const contacts = rows.map(r => ({
+      username: r.username,
+      // Display priority ported from wxgraph's load_display_map: first
+      // non-empty of remark / nick_name / alias / username.
+      display: r.remark || r.nick_name || r.alias || r.username,
+    }))
+    if (contacts.length > 0) store.putContacts(contacts)
+  } catch (err) {
+    // `contact` table missing, or missing one of the expected columns
+    // (schema mismatch across contact.sqlite variants) — skip, don't crash
+    // the whole adapter run over it.
+    console.error(`[source-adapter] skipping contact.sqlite after schema mismatch/error:`, err)
+  } finally {
+    db.close()
+  }
+}
+
 export function runSourceAdapter(opts: {
   decryptedDir: string
   store: KnowledgeStore
@@ -249,6 +304,8 @@ export function runSourceAdapter(opts: {
   const { decryptedDir, store } = opts
   const batchSize = opts.batch && opts.batch > 0 ? opts.batch : DEFAULT_BATCH
   let ingested = 0
+
+  ingestContacts(decryptedDir, store)
 
   for (const dbPath of listMessageDbs(decryptedDir)) {
     const dbFile = dbPath.split('/').pop() ?? dbPath
