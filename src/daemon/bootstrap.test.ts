@@ -2633,6 +2633,17 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
     )
     const logLines: Array<{ tag: string; line: string; fields?: Record<string, unknown> }> = []
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    // Agent-facing Search Task 2 — this fixture wants NO embed script to
+    // resolve (asserted below), which requires no wxsearch plugin dir being
+    // found. `bundledPluginsDir()` falls back to `<repo>/plugins` when this
+    // env var is unset, and a dev checkout with the wechat-cc-plugins
+    // monorepo symlinked in there would otherwise make wxsearch discoverable
+    // for real — pointing this at an empty tmp dir isolates the assertion
+    // from that ambient machine state (mirrors the pattern the
+    // knowledge-orchestration tests already use for the same reason).
+    const emptyBundledDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-nobundled-'))
+    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = emptyBundledDir
     try {
       boot = await buildBootstrap({
         db: openTestDb(),
@@ -2645,6 +2656,12 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
       expect(boot.knowledge).toBeDefined()
       expect(typeof boot.knowledge!.store.putSourceMessages).toBe('function')
       expect(typeof boot.knowledge!.search).toBe('function')
+      // No wxsearch plugin dir is discoverable (isolated above) and
+      // knowledge_embed_script is unset, so no embed script resolves; the
+      // embedder (and its query convenience wrapper) must stay undefined
+      // even though the store/search half of boot.knowledge is present.
+      expect(boot.knowledge!.embedder).toBeUndefined()
+      expect(boot.knowledge!.embedQuery).toBeUndefined()
       // Store is actually usable — putSourceMessages/listMessages round-trip.
       const { watermark } = boot.knowledge!.store.putSourceMessages([
         { msg_key: 'm1', conversation: 'c1', sender: 's1', time: 1, type: 'text', text: 'hi', server_id: '' },
@@ -2665,6 +2682,57 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
       expect(bootLine!.fields).toEqual({ ingested: 0 })
     } finally {
       boot?.knowledge?.store.close()
+      await boot?.knowledge?.embedder?.close?.()
+      await boot?.a2aServer?.stop()
+      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
+      rmSync(emptyBundledDir, { recursive: true, force: true })
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  // Agent-facing Search Task 2 — the ONE shared embedder service is built
+  // only when `knowledge_enabled` AND an embed script actually resolves
+  // (`knowledge_embed_script` here, mirroring the wxsearch-plugin-dir path
+  // exercised by the knowledge-orchestration test at line ~831). The
+  // embedder is lazy (embedder-service.ts's docstring — no subprocess until
+  // the first embed() call), and this fixture's decrypted-messages dir
+  // doesn't exist, so the boot backfill's indexer pass has nothing to embed
+  // — safe to assert on the wiring without ever spawning the (nonexistent)
+  // script.
+  it('wires boot.knowledge.embedder + embedQuery when knowledge_enabled is true and knowledge_embed_script resolves', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-embedder-'))
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        knowledge_enabled: true,
+        knowledge_embed_model: 'bge-small-zh-v1.5',
+        knowledge_embed_script: join(stateDir, 'fake_embed_subprocess.py'),
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(boot.knowledge).toBeDefined()
+      expect(boot.knowledge!.embedder).toBeDefined()
+      expect(boot.knowledge!.embedder!.model_id).toBe('bge-small-zh-v1.5')
+      expect(typeof boot.knowledge!.embedder!.embed).toBe('function')
+      expect(typeof boot.knowledge!.embedder!.close).toBe('function')
+      expect(typeof boot.knowledge!.embedQuery).toBe('function')
+    } finally {
+      boot?.knowledge?.store.close()
+      await boot?.knowledge?.embedder?.close?.()
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })
     }

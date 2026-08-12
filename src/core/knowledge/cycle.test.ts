@@ -9,8 +9,15 @@
 //   (c) gating — no `runIndex` means indexing is skipped, adapter still runs
 //   (d) the concurrency guard — a cycle already in flight makes an
 //       overlapping call a no-op instead of running two passes at once
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { runKnowledgeCycle, __resetKnowledgeCycleRunningForTests } from './cycle'
+import { runIndexer } from './indexer'
+import { openKnowledge, type KnowledgeStore } from './store'
+import { makeEmbedderService } from './embedder-service'
+import type { EmbedRunner, MakeEmbedRunnerOpts } from './embed-runner'
 
 type LogLine = { tag: string; line: string; fields?: Record<string, unknown> }
 
@@ -165,5 +172,118 @@ describe('runKnowledgeCycle', () => {
     )
     expect(third).toEqual({ ingested: 7, skipped: false })
     expect(adapterCalls).toBe(2)
+  })
+})
+
+// ── Agent-facing Search Task 2 — ONE shared embedder across cycles ────────
+// bootstrap/index.ts now constructs `embedder` (makeEmbedderService) ONCE,
+// builds ONE `runIndex` closure over it, and hands that SAME closure to
+// every call of runKnowledgeCycle (boot backfill + every periodic tick) —
+// never a fresh embedder/subprocess per cycle, and never closed until
+// daemon shutdown. These tests reproduce that exact wiring shape (a real
+// KnowledgeStore + a real runIndexer, but a fake embed subprocess) to prove
+// the closure-reuse contract directly, rather than only reachable through
+// full daemon bootstrap.
+
+/** A fake runner: `embed` records the texts it was called with; `close`
+ *  counts its calls. Mirrors embedder-service.test.ts's fixture. */
+function makeFakeRunner() {
+  const state = { embedCalls: [] as string[][], closeCalls: 0 }
+  const runner: EmbedRunner = {
+    async embed(texts: string[]) {
+      state.embedCalls.push(texts)
+      return texts.map(t => [t.length, 1, 2])
+    },
+    async close() {
+      state.closeCalls++
+    },
+  }
+  return { runner, state }
+}
+
+/** A spy `makeRunner`: hands out `runners` in order; throws if called more
+ *  times than configured (proves "no respawn" when only one is supplied). */
+function makeMakeRunnerSpy(runners: EmbedRunner[]) {
+  const calls: MakeEmbedRunnerOpts[] = []
+  const fn = (opts: MakeEmbedRunnerOpts): EmbedRunner => {
+    calls.push(opts)
+    const r = runners[calls.length - 1]
+    if (!r) throw new Error(`makeRunner called more times (${calls.length}) than fake runners configured (${runners.length})`)
+    return r
+  }
+  return { fn, calls }
+}
+
+describe('runKnowledgeCycle + a shared embedder (Agent-facing Search Task 2)', () => {
+  let dir: string
+  let store: KnowledgeStore
+
+  beforeEach(() => {
+    __resetKnowledgeCycleRunningForTests()
+    dir = mkdtempSync(join(tmpdir(), 'kk-cycle-embedder-'))
+    store = openKnowledge(dir)
+  })
+
+  afterEach(() => {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('a runIndex closure built over ONE shared embedder, reused across two cycles, embeds with that embedder\'s model_id and is never closed between cycles', async () => {
+    const { runner, state } = makeFakeRunner()
+    const { fn: makeRunner, calls } = makeMakeRunnerSpy([runner])
+
+    // Mirrors bootstrap/index.ts's wiring exactly: ONE embedder built
+    // outside the cycle closure, and ONE runIndex closure built over it
+    // (never rebuilt per cycle) — the same closure is what both the boot
+    // backfill and every periodic tick call pass as deps.runIndex.
+    const embedder = makeEmbedderService({
+      pythonBin: 'python3',
+      scriptPath: '/fake/embed.py',
+      model_id: 'bge-small-zh-v1.5',
+      makeRunner,
+    })
+    const runIndex = () => runIndexer({
+      store,
+      embed: embedder.embed,
+      model_id: embedder.model_id,
+      model_version: 'v1',
+    })
+    const { fn: log } = makeLogger()
+
+    store.putSourceMessages([
+      { msg_key: 'm1', conversation: 'c1', sender: 's1', time: 1, type: 'text', text: 'hello', server_id: '' },
+    ])
+    const first = await runKnowledgeCycle(
+      { runAdapter: async () => ({ ingested: 0 }), runIndex, log },
+      { onBoot: true },
+    )
+    expect(first.skipped).toBe(false)
+    // Both the embed call and the semantic-store provenance tag used the
+    // SHARED embedder's model_id, not some separately-threaded config value.
+    expect(state.embedCalls).toEqual([['hello']])
+    expect(store.countSemantic('bge-small-zh-v1.5')).toBe(1)
+    expect(calls.length).toBe(1) // one subprocess spawned so far
+    // NOT closed between cycles — Task 2's whole point (the pre-Task-2
+    // behavior closed a fresh embed runner in a `finally` after every cycle).
+    expect(state.closeCalls).toBe(0)
+
+    // Second cycle — a new source message, the SAME runIndex closure (same
+    // captured `embedder`), standing in for the next periodic tick.
+    store.putSourceMessages([
+      { msg_key: 'm2', conversation: 'c1', sender: 's1', time: 2, type: 'text', text: 'world', server_id: '' },
+    ])
+    const second = await runKnowledgeCycle(
+      { runAdapter: async () => ({ ingested: 0 }), runIndex, log },
+      { onBoot: false },
+    )
+    expect(second.skipped).toBe(false)
+    expect(state.embedCalls).toEqual([['hello'], ['world']])
+    expect(store.countSemantic('bge-small-zh-v1.5')).toBe(2)
+    // Still ONE spawned subprocess — makeRunner was never called again, so
+    // the second cycle reused the shared embedder instance instead of
+    // spawning a fresh one (makeMakeRunnerSpy would throw otherwise).
+    expect(calls.length).toBe(1)
+    expect(state.closeCalls).toBe(0)
   })
 })

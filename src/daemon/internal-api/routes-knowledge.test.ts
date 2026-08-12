@@ -156,6 +156,40 @@ describe('knowledgeRoutes', () => {
         expect(r.body).toEqual({ error: 'query_vector_required' })
       })
 
+      it('embeds body.query via deps.knowledge.embedQuery when queryVector is absent (AS T3)', async () => {
+        const putR = await routes['POST /v1/knowledge/semantic/put']!(new URLSearchParams(), {
+          model_id: 'm',
+          model_version: 'v1',
+          chunks: [chunk('m1')],
+        })
+        expect(putR.status).toBe(200)
+
+        const embedder = {
+          model_id: 'm',
+          embed: async (texts: string[]) => texts.map(() => [1, 0, 0]),
+          close: async () => {},
+        }
+        const routesWithEmbedder = knowledgeRoutes(
+          deps({
+            store,
+            search: semanticSearch,
+            embedder,
+            embedQuery: (t: string) => embedder.embed([t]).then(v => v[0]!),
+          }),
+        )
+
+        const searchR = await routesWithEmbedder['POST /v1/knowledge/search']!(new URLSearchParams(), {
+          query: 'hello',
+          model_id: 'some-other-model-that-must-be-ignored',
+          limit: 5,
+        })
+        expect(searchR.status).toBe(200)
+        const body = searchR.body as any
+        expect(body.vectors_stale).toBe(false)
+        expect(body.results.length).toBeGreaterThan(0)
+        expect(body.results[0].text).toContain('m1')
+      })
+
       it('400 on bad body for semantic/put (missing model_id)', async () => {
         const r = await routes['POST /v1/knowledge/semantic/put']!(new URLSearchParams(), {
           model_version: 'v1',

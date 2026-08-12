@@ -332,10 +332,22 @@ export interface Bootstrap {
    * store can be closed in test teardown (mirrors `boot.a2aServer`'s
    * teardown posture — `store.close()` is the caller's job, same as
    * `a2aServer?.stop()`).
+   *
+   * Agent-facing Search (Task 2) — `embedder` is the ONE shared, long-lived
+   * embed-subprocess service (../../core/knowledge/embedder-service.ts)
+   * used by both the indexer (this file's knowledge cycle) and the query
+   * path (internal-api's `embedQuery`); it is NOT closed between cycles,
+   * only on daemon shutdown (main.ts). Exposed here (mirrors `store` above)
+   * so main.ts can close it. `embedQuery` mirrors
+   * InternalApiDeps['knowledge']['embedQuery'] — see that doc comment.
+   * Both undefined when `knowledge_enabled` is on but no embed script
+   * resolved (store/search are still present in that case).
    */
   knowledge?: {
     store: import('../../core/knowledge/store').KnowledgeStore
     search: typeof import('../../core/knowledge/search').semanticSearch
+    embedder?: import('../../core/knowledge/embedder-service').EmbedderService
+    embedQuery?: (t: string) => Promise<number[]>
   }
   /**
    * Connection-health runtime (connection-health design, Task 7) — wraps the

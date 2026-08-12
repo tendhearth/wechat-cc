@@ -20,8 +20,9 @@ export interface RunKnowledgeCycleDeps {
    *  returns how many source rows it ingested this pass. */
   runAdapter: () => { ingested: number } | Promise<{ ingested: number }>
   /**
-   * Runs the indexer — spawns its own embed subprocess and closes it when
-   * done (success or failure), same as the pre-extraction inline code.
+   * Runs the indexer over the daemon's shared, long-lived embedder service
+   * (constructed once at boot, used by BOTH the indexer and the query path,
+   * closed only on daemon shutdown) — NOT a per-cycle spawn/close.
    * `undefined` when indexing isn't configured (e.g. no resolvable wxsearch
    * plugin dir and no `knowledge_embed_script` override) — the adapter
    * still runs in that case; indexing is just skipped.

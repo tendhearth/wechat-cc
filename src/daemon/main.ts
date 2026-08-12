@@ -163,6 +163,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // (knowledge_enabled configured) — mirrors the a2aServer/pairing
     // teardown above; a dangling sqlite handle otherwise leaks past shutdown.
     try { bootRef?.knowledge?.store.close() } catch (err) { log('KNOWLEDGE', `store close error: ${err instanceof Error ? err.message : String(err)}`) }
+    // Close the shared embedder service (Agent-facing Search Task 2) if one
+    // was constructed (knowledge_enabled + a resolvable embed script) — it's
+    // long-lived across cycles/queries by design (never closed per-cycle,
+    // see bootstrap/index.ts), so shutdown is the only place it tears down
+    // its embed subprocess.
+    try { await bootRef?.knowledge?.embedder?.close?.() } catch (err) { log('KNOWLEDGE', `embedder close error: ${err instanceof Error ? err.message : String(err)}`) }
     try { db.close() } catch (err) { console.error('db close failed:', err) }
     releaseInstanceLock(PID_PATH)
   }

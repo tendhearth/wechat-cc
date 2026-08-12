@@ -29,6 +29,7 @@ import { registerA2ASendTool } from './tools-a2a'
 import { registerDaemonTools } from './tools-daemon'
 import { registerFileTools } from './tools-files'
 import { registerSocialSeekTool } from './tools-social'
+import { registerKnowledgeSearchTool } from './tools-knowledge'
 
 const baseUrl = process.env.WECHAT_INTERNAL_API
 const tokenFilePath = process.env.WECHAT_INTERNAL_TOKEN_FILE
@@ -110,6 +111,10 @@ if (SESSION_IS_ADMIN) {
   // actually confirms/cancels the broadcast, so it's admin-only — mirrors
   // user-tier.ts's ADMIN_ONLY gate.
   registerSocialSeekTool(server, client)
+  // agent-facing search (AS T4): knowledge_search runs a semantic query
+  // over the owner's WeChat message history — same private-data trust
+  // class as file_locate/social_seek, so admin-only.
+  registerKnowledgeSearchTool(server, client)
 }
 
 const transport = new StdioServerTransport()

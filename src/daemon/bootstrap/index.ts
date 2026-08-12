@@ -74,7 +74,7 @@ import { openKnowledge } from '../../core/knowledge/store'
 import { semanticSearch } from '../../core/knowledge/search'
 import { runSourceAdapter } from '../../core/knowledge/source-adapter'
 import { runIndexer } from '../../core/knowledge/indexer'
-import { makeEmbedRunner } from '../../core/knowledge/embed-runner'
+import { makeEmbedderService } from '../../core/knowledge/embedder-service'
 import { runKnowledgeCycle } from '../../core/knowledge/cycle'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
@@ -437,6 +437,25 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // the model every run and writing config the indexer never reads.
     const embedEnv = { ...process.env, WXVAULT_STATE_DIR: pluginDataDir(deps.stateDir, 'wxvault') }
 
+    // Agent-facing Search (Task 2) — ONE shared, long-lived embedder
+    // service instead of a fresh embed subprocess per cycle. Built once
+    // here (not per cycle) and reused by both the indexer (below) and the
+    // query path (deps.knowledge.embedQuery, wired further down) so index
+    // and query embed in the SAME model space via the SAME model_id.
+    // Undefined when no embed script resolved (no wxsearch plugin dir and
+    // no `knowledge_embed_script` override) — the indexer stays disabled
+    // in that case, same gating as before this task. NOT closed between
+    // cycles — only on daemon shutdown (main.ts reaches it via
+    // boot.knowledge.embedder).
+    const embedder = embedScriptPath
+      ? makeEmbedderService({
+          pythonBin: embedPythonBin,
+          scriptPath: embedScriptPath,
+          model_id: knowledgeEmbedModelId,
+          env: embedEnv,
+        })
+      : undefined
+
     // Extracted (T7' review Finding 2 + Finding 4) into
     // core/knowledge/cycle.ts's runKnowledgeCycle — adapter-then-indexer
     // ordering, error-swallowing, and the "still running" concurrency guard
@@ -445,30 +464,19 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     const runKnowledgeAdapter = (onBoot: boolean) => runKnowledgeCycle(
       {
         runAdapter: () => Promise.resolve(runSourceAdapter({ decryptedDir, store: knowledgeStore })),
-        // A fresh embed subprocess is spawned per run (never held open
-        // across runs — amortizing model load WITHIN one run is the
-        // subprocess protocol's job, see embed-runner.ts) and always closed,
-        // even on failure, so a wedged/timed-out child (embed-runner.ts's
-        // per-request timeout) never survives past this pass.
-        runIndex: embedScriptPath
-          ? async () => {
-              const embedRunner = makeEmbedRunner({
-                pythonBin: embedPythonBin,
-                scriptPath: embedScriptPath,
-                model_id: knowledgeEmbedModelId,
-                env: embedEnv,
-              })
-              try {
-                return await runIndexer({
-                  store: knowledgeStore,
-                  embed: embedRunner.embed,
-                  model_id: knowledgeEmbedModelId,
-                  model_version: KNOWLEDGE_EMBED_MODEL_VERSION,
-                })
-              } finally {
-                await embedRunner.close()
-              }
-            }
+        // Uses the shared `embedder` above (no per-cycle spawn/close —
+        // Task 2). `embedder.model_id` (not the outer
+        // `knowledgeEmbedModelId`) flows into both the embed call AND
+        // putSemantic's provenance tag, so index and query are always
+        // stamped with whatever model the shared service is actually
+        // running.
+        runIndex: embedder
+          ? async () => runIndexer({
+              store: knowledgeStore,
+              embed: embedder.embed,
+              model_id: embedder.model_id,
+              model_version: KNOWLEDGE_EMBED_MODEL_VERSION,
+            })
           : undefined,
         log: deps.log,
       },
@@ -478,7 +486,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     setTimeout(() => { void runKnowledgeAdapter(true) }, 0)
     const knowledgeAdapterTimer = setInterval(() => { void runKnowledgeAdapter(false) }, 5 * 60_000)
     knowledgeAdapterTimer.unref()
-    knowledge = { store: knowledgeStore, search: semanticSearch }
+    knowledge = {
+      store: knowledgeStore,
+      search: semanticSearch,
+      ...(embedder ? { embedder, embedQuery: (t: string) => embedder.embed([t]).then(v => v[0]!) } : {}),
+    }
   } else {
     deps.log('BOOT', 'knowledge: disabled (knowledge_enabled not set)')
   }
@@ -662,6 +674,24 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // name is a KNOWN_KNOWLEDGE_PLUGINS entry, so this is inert when no
       // knowledge plugin is loaded/enabled.
       knowledgePlugins: knowledgePluginNames,
+      // Agent-facing Search (Task 5) — advertise `knowledge_search` in the
+      // prompt ONLY when it will actually work for THIS session:
+      //   - `knowledge?.embedQuery` is present iff `knowledge_enabled` AND
+      //     an embed script resolved (see the `embedder` construction
+      //     above + internal-api/types.ts's doc comment: "`knowledge_enabled`
+      //     alone doesn't guarantee an embed script resolved"). Without a
+      //     resolved embedder the /v1/knowledge/search route 400s on every
+      //     call from the tool (it never receives a pre-embedded
+      //     queryVector), so gating on `knowledge_enabled` alone would tell
+      //     the agent about a tool that's registered but non-functional.
+      //   - `tierProfile.allow.has('knowledge_search')` mirrors
+      //     daemonOpsAvailable/fileLocateAvailable above: true only for
+      //     admin (user-tier.ts's ADMIN_ONLY), matching exactly the
+      //     predicate wechat-mcp/main.ts gates `registerKnowledgeSearchTool`
+      //     on (SESSION_IS_ADMIN) — so this flag tracks tool registration
+      //     precisely, non-admin/knowledge-off sessions unaffected (both
+      //     default away from true).
+      knowledgeSearchAvailable: !!knowledge?.embedQuery && tierProfile.allow.has('knowledge_search'),
     })
   }
 
