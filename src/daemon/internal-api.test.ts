@@ -16,6 +16,8 @@ import type { A2AEventsStore, EventRow, AppendInput } from '../core/a2a-events-s
 import type { SeekRow } from '../core/social-seek-store'
 import type { EchoRow } from '../core/social-echo-store'
 import type { PledgeRow } from '../core/social-pledge-store'
+import { openKnowledge } from '../core/knowledge/store'
+import { semanticSearch } from '../core/knowledge/search'
 
 describe('internal-api', () => {
   let stateDir: string
@@ -2724,6 +2726,52 @@ describe('internal-api', () => {
         expect(line).toContain('split partial failure')
         expect(line).toContain('sent=1')
       })
+    })
+  })
+
+  // ─── Knowledge Kernel late-bind (Phase 01 T5 review — setKnowledge) ────
+  // Proves the actual wire, not just routes-knowledge.ts's own deps-mutation
+  // mechanic: boot.knowledge must reach internal-api via a real setKnowledge
+  // call (mirrors the setDelegate 503-then-200 pair above) or /v1/knowledge/*
+  // stays 503 forever even when knowledge_enabled is configured.
+
+  describe('/v1/knowledge/semantic/status route (setKnowledge late-bind)', () => {
+    // /v1/knowledge/* is admin-tier only (T3 review — query routes
+    // admin-only for privacy). The regular tokenFilePath is trusted-tier
+    // (403 forbidden) and operatorTokenFilePath is admin-tier but
+    // route-scoped to the companion/customer-review allowlist only (403
+    // route_not_allowed) — neither reaches this route, so use an
+    // unrestricted admin session token (same pattern as the other
+    // admin-only route tests in this file, e.g. line ~430).
+    it('returns 503 before setKnowledge has been called', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'claude/a/knowledge-test')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/knowledge/semantic/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'knowledge_not_wired' })
+    })
+
+    it('returns 200 after setKnowledge (mirrors setSocial/setDelegate late-bind)', async () => {
+      const knowledgeDir = mkdtempSync(join(tmpdir(), 'internal-api-knowledge-'))
+      const store = openKnowledge(knowledgeDir)
+      try {
+        api = createInternalApi({ stateDir, daemonPid: 1 })
+        const { port } = await api.start()
+        api.setKnowledge({ store, search: semanticSearch })
+        const token = api.mintSessionToken('admin', 'claude/a/knowledge-test')
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/knowledge/semantic/status`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        expect(resp.status).toBe(200)
+        const body = await resp.json() as { indexed: number; model_id: string | null; model_version: string | null }
+        expect(body).toEqual({ indexed: 0, model_id: null, model_version: null })
+      } finally {
+        store.close()
+        rmSync(knowledgeDir, { recursive: true, force: true })
+      }
     })
   })
 

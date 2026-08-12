@@ -159,6 +159,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // Undefined/no active code ⇒ a clean no-op (PairingEngine.stop() is
     // itself a no-op when nothing is active).
     try { bootRef?.pairing?.stop() } catch (err) { log('PAIR', `stop error: ${err instanceof Error ? err.message : String(err)}`) }
+    // Close the Knowledge Kernel store if boot.knowledge was wired
+    // (knowledge_enabled configured) — mirrors the a2aServer/pairing
+    // teardown above; a dangling sqlite handle otherwise leaks past shutdown.
+    try { bootRef?.knowledge?.store.close() } catch (err) { log('KNOWLEDGE', `store close error: ${err instanceof Error ? err.message : String(err)}`) }
     try { db.close() } catch (err) { console.error('db close failed:', err) }
     releaseInstanceLock(PID_PATH)
   }
@@ -343,6 +347,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // social_enabled + social_disclosure_policy are both configured. So
     // POST /v1/social/seek/{propose,confirm,cancel} work when the feature is on.
     if (boot.social) internalApi.setSocial(boot.social)
+    // Wire the Knowledge Kernel store + semanticSearch (Phase 01 T5) — only
+    // present when knowledge_enabled is configured. Without this, every
+    // /v1/knowledge/* route 503s knowledge_not_wired even though boot
+    // already constructed the store (review finding: this call was missing
+    // entirely — no setKnowledge existed on internalApi at all).
+    if (boot.knowledge) internalApi.setKnowledge(boot.knowledge)
     // Customer Review is optional: a missing/unready wxvault or eval provider
     // leaves the daemon healthy and its owner-only routes return 503.
     const customerReview = await startCustomerReviewRuntime({

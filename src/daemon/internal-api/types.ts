@@ -411,6 +411,13 @@ export interface InternalApi {
    */
   setSocial(social: NonNullable<InternalApiDeps['social']>): void
   /**
+   * Late-bind the Knowledge Kernel store + semanticSearch (Phase 01 T5)
+   * after bootstrap has constructed `boot.knowledge` (only happens when
+   * `knowledge_enabled` is configured). /v1/knowledge/* routes return 503
+   * knowledge_not_wired until this is called (mirrors `setSocial` above).
+   */
+  setKnowledge(knowledge: NonNullable<InternalApiDeps['knowledge']>): void
+  /**
    * Late-bind the 配对码 engine (spec §7) after bootstrap has constructed it
    * (only happens when mailbox_relays is configured). POST /v1/pair/start
    * and POST /v1/pair/accept return 503 until this is called.

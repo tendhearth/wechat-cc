@@ -348,6 +348,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setSocial(social) {
       deps.social = social
     },
+    setKnowledge(knowledge) {
+      deps.knowledge = knowledge
+    },
     setPairing(pairing) {
       deps.pairing = pairing
     },
