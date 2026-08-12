@@ -88,9 +88,14 @@ export function knowledgeRoutes(deps: InternalApiDeps): RouteTable {
 
     'GET /v1/knowledge/semantic/status': () => {
       if (!deps.knowledge) return { status: 503, body: { error: 'knowledge_not_wired' } }
+      const model_id = deps.knowledge.store.getMeta('embed_model')
       return {
         status: 200,
-        body: { indexed: deps.knowledge.store.countSemantic(), model: deps.knowledge.store.getMeta('embed_model') },
+        body: {
+          indexed: deps.knowledge.store.countSemantic(model_id ?? undefined),
+          model_id,
+          model_version: deps.knowledge.store.getMeta('embed_model_version'),
+        },
       }
     },
   }

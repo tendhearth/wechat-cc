@@ -166,19 +166,21 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // class as customer-review below: raw wxvault-derived content).
   'POST /v1/knowledge/source/put': 'admin',
   'POST /v1/knowledge/semantic/put': 'admin',
-  // Query = agent-callable (trusted, not guest): these read the owner's
-  // full indexed chat history back out (raw source pages + semantic
-  // search over message text), which is strictly more exposure than the
-  // 觅食台 seeks/echoes/pledges reads above (own stored social state, not
-  // the owner's private conversations) — so it's capped at trusted, the
-  // same tier those already-flagged reads landed on, not guest. A guest
-  // session (reply-only credential) must not be able to search the
-  // owner's entire message history. ⚠️ RELEASE-REVIEW FLAG (next
-  // dev→master): revisit once a real "agent" caller identity beyond
-  // trusted/admin exists.
-  'GET /v1/knowledge/messages': 'trusted',
-  'POST /v1/knowledge/search': 'trusted',
-  'GET /v1/knowledge/semantic/status': 'trusted',
+  // Query = admin-only (NOT trusted), same as ingest above. These read the
+  // owner's full indexed cross-conversation message archive back out (raw
+  // source pages + semantic search over message text) with an optional,
+  // caller-supplied `conversation` filter — a non-owner `trusted` WeChat
+  // contact (who legitimately holds a session internal-api token, e.g. via
+  // POST /v1/a2a/send-class routes) could otherwise page every conversation
+  // in the store, not just their own. Knowledge query is admin-only until
+  // per-caller conversation scoping (memoryScopeDenied-style, see
+  // routes.ts's memoryScopeDenied) exists — opening it to `trusted` without
+  // that would let a trusted contact read the owner's full cross-conversation
+  // archive. Revisit once that scoping lands or a real "agent" caller
+  // identity beyond trusted/admin exists.
+  'GET /v1/knowledge/messages': 'admin',
+  'POST /v1/knowledge/search': 'admin',
+  'GET /v1/knowledge/semantic/status': 'admin',
   // admin — reads the owner's private wxvault history and stores personal
   // customer judgments. Never expose to guest/trusted chat sessions.
   'GET /v1/customer-review/contacts': 'admin',

@@ -226,6 +226,11 @@ export function openKnowledge(root: string): KnowledgeStore {
 
     putSemantic(model_id, model_version, chunks) {
       runPutSemantic(model_id, model_version, chunks)
+      // Record the active model in meta on every call (last-indexed wins) —
+      // feeds both semanticSearch's stale-check (reads meta 'embed_model')
+      // and GET /v1/knowledge/semantic/status.
+      stmtSetMeta.run('embed_model', model_id)
+      stmtSetMeta.run('embed_model_version', model_version)
     },
 
     loadVectors(model_id) {

@@ -166,8 +166,7 @@ describe('knowledgeRoutes', () => {
     })
 
     describe('GET /v1/knowledge/semantic/status', () => {
-      it('reports indexed count and model meta', async () => {
-        store.setMeta('embed_model', 'model-a')
+      it('reports { indexed, model_id, model_version } for the active (last-indexed) model', async () => {
         await routes['POST /v1/knowledge/semantic/put']!(new URLSearchParams(), {
           model_id: 'model-a',
           model_version: 'v1',
@@ -175,7 +174,25 @@ describe('knowledgeRoutes', () => {
         })
         const r = await routes['GET /v1/knowledge/semantic/status']!(new URLSearchParams(), null)
         expect(r.status).toBe(200)
-        expect(r.body).toEqual({ indexed: 2, model: 'model-a' })
+        expect(r.body).toEqual({ indexed: 2, model_id: 'model-a', model_version: 'v1' })
+      })
+
+      it('indexed count is scoped to the active model, not the whole store', async () => {
+        await routes['POST /v1/knowledge/semantic/put']!(new URLSearchParams(), {
+          model_id: 'model-a',
+          model_version: 'v1',
+          chunks: [chunk('m1')],
+        })
+        // A later put under a different model becomes the new active model —
+        // indexed must reflect model-b's count, not model-a's leftover rows.
+        await routes['POST /v1/knowledge/semantic/put']!(new URLSearchParams(), {
+          model_id: 'model-b',
+          model_version: 'v2',
+          chunks: [chunk('m2'), chunk('m3')],
+        })
+        const r = await routes['GET /v1/knowledge/semantic/status']!(new URLSearchParams(), null)
+        expect(r.status).toBe(200)
+        expect(r.body).toEqual({ indexed: 2, model_id: 'model-b', model_version: 'v2' })
       })
     })
   })

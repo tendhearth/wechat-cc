@@ -94,6 +94,16 @@ describe('knowledge store', () => {
       expect(docs.get(rowids[0]!)?.text).toBe('revised')
     })
 
+    it('records the active model in meta on every call, last-indexed wins', () => {
+      store.putSemantic('model-a', 'v1', [chunk('m1')])
+      expect(store.getMeta('embed_model')).toBe('model-a')
+      expect(store.getMeta('embed_model_version')).toBe('v1')
+
+      store.putSemantic('model-b', 'v2', [chunk('m2')])
+      expect(store.getMeta('embed_model')).toBe('model-b')
+      expect(store.getMeta('embed_model_version')).toBe('v2')
+    })
+
     it('loadVectors(model_id) returns only that model\'s vectors, at the right dim', () => {
       store.putSemantic('m', '1', [
         chunk('m1', { vector: [1, 2, 3, 4] }),
