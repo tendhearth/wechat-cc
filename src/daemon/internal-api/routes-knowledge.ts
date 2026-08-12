@@ -120,5 +120,58 @@ export function knowledgeRoutes(deps: InternalApiDeps): RouteTable {
         },
       }
     },
+
+    // ---- Graph Query (Knowledge Graph inproc, Task 5) ----------------------
+    // Admin-only (see route-tiers.ts + user-tier.ts's ADMIN_ONLY) — reads the
+    // owner's full contact/relationship graph, same private-data trust class
+    // as /v1/knowledge/search above. 503 knowledge_not_wired when the
+    // knowledge store isn't configured at all; `!deps.knowledge.graph`
+    // specifically means `knowledge_enabled` is on but graph-query wasn't
+    // wired (shouldn't happen once bootstrap wires it unconditionally
+    // alongside `store`, but mirrors the other routes' defensive posture).
+    'POST /v1/knowledge/graph/contact_profile': (_q, body) => {
+      if (!deps.knowledge?.graph) return { status: 503, body: { error: 'knowledge_not_wired' } }
+      const b = (body ?? {}) as { name?: unknown }
+      if (typeof b.name !== 'string' || b.name.length === 0) return { status: 400, body: { error: 'invalid_name' } }
+      return { status: 200, body: deps.knowledge.graph.contactProfile(b.name) }
+    },
+
+    'POST /v1/knowledge/graph/top_contacts': (_q, body) => {
+      if (!deps.knowledge?.graph) return { status: 503, body: { error: 'knowledge_not_wired' } }
+      const b = (body ?? {}) as { by?: unknown; limit?: unknown; kind?: unknown }
+      const by = typeof b.by === 'string' && b.by.length > 0 ? b.by : 'closeness'
+      const limit = typeof b.limit === 'number' && Number.isFinite(b.limit) && b.limit > 0 ? b.limit : 20
+      const kind = b.kind === 'group' ? 'group' : 'person'
+      return { status: 200, body: { contacts: deps.knowledge.graph.topContacts(by, limit, kind) } }
+    },
+
+    'POST /v1/knowledge/graph/rank_contacts': (_q, body) => {
+      if (!deps.knowledge?.graph) return { status: 503, body: { error: 'knowledge_not_wired' } }
+      const b = (body ?? {}) as { topic?: unknown; limit?: unknown }
+      const topic = typeof b.topic === 'string' ? b.topic : undefined
+      const limit = typeof b.limit === 'number' && Number.isFinite(b.limit) && b.limit > 0 ? b.limit : 20
+      return { status: 200, body: { contacts: deps.knowledge.graph.rankContacts(topic, limit) } }
+    },
+
+    'POST /v1/knowledge/graph/relationship_subgraph': (_q, body) => {
+      if (!deps.knowledge?.graph) return { status: 503, body: { error: 'knowledge_not_wired' } }
+      const b = (body ?? {}) as { center?: unknown; limit?: unknown }
+      const center = typeof b.center === 'string' ? b.center : undefined
+      const limit = typeof b.limit === 'number' && Number.isFinite(b.limit) && b.limit > 0 ? b.limit : 30
+      return { status: 200, body: deps.knowledge.graph.relationshipSubgraph(center, limit) }
+    },
+
+    'POST /v1/knowledge/graph/connectors': (_q, body) => {
+      if (!deps.knowledge?.graph) return { status: 503, body: { error: 'knowledge_not_wired' } }
+      const b = (body ?? {}) as { a?: unknown; b?: unknown }
+      if (typeof b.a !== 'string' || b.a.length === 0) return { status: 400, body: { error: 'invalid_a' } }
+      if (typeof b.b !== 'string' || b.b.length === 0) return { status: 400, body: { error: 'invalid_b' } }
+      return { status: 200, body: deps.knowledge.graph.connectors(b.a, b.b) }
+    },
+
+    'GET /v1/knowledge/graph/status': () => {
+      if (!deps.knowledge?.graph) return { status: 503, body: { error: 'knowledge_not_wired' } }
+      return { status: 200, body: deps.knowledge.graph.status() }
+    },
   }
 }

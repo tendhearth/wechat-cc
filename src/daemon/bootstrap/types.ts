@@ -348,6 +348,16 @@ export interface Bootstrap {
     search: typeof import('../../core/knowledge/search').semanticSearch
     embedder?: import('../../core/knowledge/embedder-service').EmbedderService
     embedQuery?: (t: string) => Promise<number[]>
+    /**
+     * Graph Query (Knowledge Graph inproc, Task 5) — the store-backed
+     * accessor over graph.db, built by `core/knowledge/graph-query.ts`'s
+     * `makeGraphQueryApi`. Unlike `embedder`/`embedQuery`, present
+     * unconditionally whenever `knowledge_enabled` is on (graph rebuild
+     * needs no embed script) — see the field's doc comment on
+     * `InternalApiDeps['knowledge']` for the full rationale, which this
+     * mirrors.
+     */
+    graph?: import('../../core/knowledge/graph-query').GraphQueryApi
   }
   /**
    * Connection-health runtime (connection-health design, Task 7) — wraps the

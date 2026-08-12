@@ -76,6 +76,7 @@ import { runSourceAdapter } from '../../core/knowledge/source-adapter'
 import { runIndexer } from '../../core/knowledge/indexer'
 import { makeEmbedderService } from '../../core/knowledge/embedder-service'
 import { rebuildGraphFromSource } from '../../core/knowledge/graph-build'
+import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
 import { runKnowledgeCycle } from '../../core/knowledge/cycle'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
@@ -505,6 +506,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       store: knowledgeStore,
       search: semanticSearch,
       ...(embedder ? { embedder, embedQuery: (t: string) => embedder.embed([t]).then(v => v[0]!) } : {}),
+      // Knowledge Graph inproc (Task 5) — unconditional (unlike embedder
+      // above): graph rebuild (graph-build.ts's rebuildGraphFromSource, run
+      // every cycle above) needs no embed script, so the query accessor is
+      // wired whenever knowledge_enabled is on at all.
+      graph: makeGraphQueryApi(knowledgeStore),
     }
   } else {
     deps.log('BOOT', 'knowledge: disabled (knowledge_enabled not set)')
@@ -707,6 +713,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       //     precisely, non-admin/knowledge-off sessions unaffected (both
       //     default away from true).
       knowledgeSearchAvailable: !!knowledge?.embedQuery && tierProfile.allow.has('knowledge_search'),
+      // Knowledge Graph inproc (Task 5) — same shape as knowledgeSearchAvailable
+      // above, but keyed on `knowledge?.graph` (unconditional whenever
+      // knowledge_enabled is on, no embed script required) and the
+      // `graph_query` tier kind, which exactly matches the SESSION_IS_ADMIN
+      // gate wechat-mcp/main.ts registers `registerGraphTools` under.
+      graphAvailable: !!knowledge?.graph && tierProfile.allow.has('graph_query'),
     })
   }
 

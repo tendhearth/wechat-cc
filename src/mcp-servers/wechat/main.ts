@@ -30,6 +30,7 @@ import { registerDaemonTools } from './tools-daemon'
 import { registerFileTools } from './tools-files'
 import { registerSocialSeekTool } from './tools-social'
 import { registerKnowledgeSearchTool } from './tools-knowledge'
+import { registerGraphTools } from './tools-graph'
 
 const baseUrl = process.env.WECHAT_INTERNAL_API
 const tokenFilePath = process.env.WECHAT_INTERNAL_TOKEN_FILE
@@ -115,6 +116,11 @@ if (SESSION_IS_ADMIN) {
   // over the owner's WeChat message history — same private-data trust
   // class as file_locate/social_seek, so admin-only.
   registerKnowledgeSearchTool(server, client)
+  // Knowledge Graph inproc (GR T5): contact_profile/top_contacts/
+  // relationship_subgraph/connectors/graph_status read the owner's full
+  // contact/relationship graph — same private-data trust class as
+  // knowledge_search above, so admin-only.
+  registerGraphTools(server, client)
 }
 
 const transport = new StdioServerTransport()

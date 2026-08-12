@@ -38,13 +38,14 @@ export type ToolKind =
   | 'plugin_tool'        // admin-only by default: ANY third-party plugin MCP tool (mcp__<plugin>__*). A plugin spawns arbitrary code and can expose owner-private data (e.g. wxvault = the owner's WeChat history), so fail closed — trusted/guest can't reach it.
   | 'social_seek'        // admin-only: initiate outbound social contact with external A2A agents (agent-social M1) — unlike a2a_send (reply to an established peer), this actively broadcasts an intent to strangers.
   | 'knowledge_search'   // admin-only: semantic search over the owner's WeChat message history (agent-facing search) — same private-data trust class as file_locate/social_seek.
+  | 'graph_query'        // admin-only: read the owner's contact/relationship graph (contact_profile/top_contacts/relationship_subgraph/connectors/graph_status, Knowledge Graph inproc) — same private-data trust class as knowledge_search.
 
 const ALL_KINDS: ReadonlySet<ToolKind> = new Set([
   'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
   'observations_read', 'observations_write',
   'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
   'a2a_send', 'daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool',
-  'social_seek', 'knowledge_search',
+  'social_seek', 'knowledge_search', 'graph_query',
 ])
 
 export interface TierProfile {
@@ -90,7 +91,7 @@ const GUEST_ALLOW = new Set<ToolKind>(['reply', 'share_page', 'memory_read', 'ob
 // they FAIL CLOSED — only the owner (admin) can call a plugin's tools by
 // default. A plugin that genuinely wants trusted/guest reach must opt in
 // explicitly (future: manifest `minTier`), not inherit it silently.
-const ADMIN_ONLY = new Set<ToolKind>(['daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool', 'social_seek', 'knowledge_search'])
+const ADMIN_ONLY = new Set<ToolKind>(['daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool', 'social_seek', 'knowledge_search', 'graph_query'])
 
 export const TIER_PROFILES: Record<UserTier, TierProfile> = {
   admin: {
@@ -240,6 +241,10 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     if (sub === 'a2a_send') return 'a2a_send'
     if (sub === 'social_seek') return 'social_seek'
     if (sub === 'knowledge_search') return 'knowledge_search'
+    // Knowledge Graph inproc (GR T5) — admin-only, reads the owner's full
+    // contact/relationship graph.
+    if (sub === 'contact_profile' || sub === 'top_contacts' || sub === 'relationship_subgraph'
+      || sub === 'connectors' || sub === 'graph_status') return 'graph_query'
     // Explicit write mapping — must NOT fall through to the fs_read default
     // below: set_chat_pref mutates chat_prefs.json (care level / split).
     if (sub === 'set_chat_pref') return 'memory_write'

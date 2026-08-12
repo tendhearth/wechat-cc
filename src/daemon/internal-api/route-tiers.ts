@@ -181,6 +181,15 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'GET /v1/knowledge/messages': 'admin',
   'POST /v1/knowledge/search': 'admin',
   'GET /v1/knowledge/semantic/status': 'admin',
+  // Graph Query (Knowledge Graph inproc, Task 5) — same admin-only trust
+  // class as the search/messages routes above: reads the owner's full
+  // contact/relationship graph, not just the current caller's own scope.
+  'POST /v1/knowledge/graph/contact_profile': 'admin',
+  'POST /v1/knowledge/graph/top_contacts': 'admin',
+  'POST /v1/knowledge/graph/rank_contacts': 'admin',
+  'POST /v1/knowledge/graph/relationship_subgraph': 'admin',
+  'POST /v1/knowledge/graph/connectors': 'admin',
+  'GET /v1/knowledge/graph/status': 'admin',
   // admin — reads the owner's private wxvault history and stores personal
   // customer judgments. Never expose to guest/trusted chat sessions.
   'GET /v1/customer-review/contacts': 'admin',

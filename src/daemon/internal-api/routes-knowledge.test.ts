@@ -14,6 +14,8 @@ import { join } from 'node:path'
 import { knowledgeRoutes } from './routes-knowledge'
 import { openKnowledge, type KnowledgeStore, type SourceMsg, type Chunk } from '../../core/knowledge/store'
 import { semanticSearch } from '../../core/knowledge/search'
+import { rebuildGraphFromSource } from '../../core/knowledge/graph-build'
+import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
 import type { InternalApiDeps } from './types'
 
 function msg(msg_key: string, overrides: Partial<SourceMsg> = {}): SourceMsg {
@@ -58,11 +60,55 @@ describe('knowledgeRoutes', () => {
         ['POST /v1/knowledge/semantic/put', { model_id: 'm', model_version: 'v', chunks: [] }],
         ['POST /v1/knowledge/search', { query: 'x', model_id: 'm', limit: 5, queryVector: [1] }],
         ['GET /v1/knowledge/semantic/status', null],
+        ['POST /v1/knowledge/graph/contact_profile', { name: 'alice' }],
+        ['POST /v1/knowledge/graph/top_contacts', {}],
+        ['POST /v1/knowledge/graph/rank_contacts', {}],
+        ['POST /v1/knowledge/graph/relationship_subgraph', {}],
+        ['POST /v1/knowledge/graph/connectors', { a: 'alice', b: 'bob' }],
+        ['GET /v1/knowledge/graph/status', null],
       ]
       for (const [key, body] of cases) {
         const handler = routes[key]
         expect(handler, key).toBeDefined()
         const r = await handler!(q, body)
+        expect(r.status, key).toBe(503)
+        expect(r.body).toEqual({ error: 'knowledge_not_wired' })
+      }
+    })
+  })
+
+  describe('when deps.knowledge is wired but deps.knowledge.graph is undefined', () => {
+    // Distinct from the "deps.knowledge is undefined" case above — this is
+    // knowledge_enabled with the graph accessor specifically absent, which
+    // production wiring never does (bootstrap wires `graph` unconditionally
+    // alongside `store`), but the routes defend against it anyway.
+    let dir: string
+    let store: KnowledgeStore
+    let routes: ReturnType<typeof knowledgeRoutes>
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'kk-routes-graph-unwired-'))
+      store = openKnowledge(dir)
+      routes = knowledgeRoutes(deps({ store, search: semanticSearch }))
+    })
+
+    afterEach(() => {
+      store.close()
+      rmSync(dir, { recursive: true, force: true })
+    })
+
+    it('503s every graph route', async () => {
+      const q = new URLSearchParams()
+      const cases: Array<[string, unknown]> = [
+        ['POST /v1/knowledge/graph/contact_profile', { name: 'alice' }],
+        ['POST /v1/knowledge/graph/top_contacts', {}],
+        ['POST /v1/knowledge/graph/rank_contacts', {}],
+        ['POST /v1/knowledge/graph/relationship_subgraph', {}],
+        ['POST /v1/knowledge/graph/connectors', { a: 'alice', b: 'bob' }],
+        ['GET /v1/knowledge/graph/status', null],
+      ]
+      for (const [key, body] of cases) {
+        const r = await routes[key]!(q, body)
         expect(r.status, key).toBe(503)
         expect(r.body).toEqual({ error: 'knowledge_not_wired' })
       }
@@ -227,6 +273,127 @@ describe('knowledgeRoutes', () => {
         const r = await routes['GET /v1/knowledge/semantic/status']!(new URLSearchParams(), null)
         expect(r.status).toBe(200)
         expect(r.body).toEqual({ indexed: 2, model_id: 'model-b', model_version: 'v2' })
+      })
+    })
+
+    describe('POST /v1/knowledge/graph/* (Knowledge Graph inproc GR T5)', () => {
+      // Seeds REAL source (via the same putSourceMessages/putMentions the
+      // adapter uses) then runs the real rebuildGraphFromSource (GR T4) to
+      // build graph.db, then wires deps.knowledge.graph via the real
+      // makeGraphQueryApi (GR T5) — end-to-end through the actual store
+      // wiring, same posture as the search describe blocks above.
+      let graphRoutes: ReturnType<typeof knowledgeRoutes>
+
+      beforeEach(() => {
+        store.putSourceMessages([
+          // 1:1 with alice — "me" sends more, so detectOwner votes "me" owner.
+          msg('a1', { conversation: 'wxid_alice', sender: 'me', time: 100 }),
+          msg('a2', { conversation: 'wxid_alice', sender: 'wxid_alice', time: 200 }),
+          msg('a3', { conversation: 'wxid_alice', sender: 'me', time: 300 }),
+          // 1:1 with bob.
+          msg('b1', { conversation: 'wxid_bob', sender: 'me', time: 400 }),
+          msg('b2', { conversation: 'wxid_bob', sender: 'wxid_bob', time: 500 }),
+          // A group both alice and bob speak in (for connectors' shared_groups),
+          // where alice @-mentions bob (for the mention edge).
+          msg('g1', {
+            conversation: 'g1@chatroom', sender: 'wxid_alice', time: 600,
+            local_type: 1, is_group: true, kind: 'text', text: '@bob hi',
+          }),
+          msg('g2', {
+            conversation: 'g1@chatroom', sender: 'wxid_bob', time: 700,
+            local_type: 1, is_group: true, kind: 'text', text: 'hi back',
+          }),
+        ])
+        store.putMentions([{ msg_key: 'g1', target_un: 'wxid_bob' }])
+        store.putContacts([
+          { username: 'wxid_alice', display: 'Alice' },
+          { username: 'wxid_bob', display: 'Bob' },
+        ])
+        const result = rebuildGraphFromSource({ store, now: 100000 })
+        expect(result.skipped).toBe(false)
+        expect(result.owner).toBe('me')
+
+        graphRoutes = knowledgeRoutes(deps({ store, search: semanticSearch, graph: makeGraphQueryApi(store) }))
+      })
+
+      it('contact_profile resolves by display name and returns mention_partners', async () => {
+        const r = await graphRoutes['POST /v1/knowledge/graph/contact_profile']!(new URLSearchParams(), { name: 'Alice' })
+        expect(r.status).toBe(200)
+        const body = r.body as any
+        expect(body.resolved).toBe(true)
+        expect(body.username).toBe('wxid_alice')
+        expect(body.display).toBe('Alice')
+      })
+
+      it('contact_profile returns candidates when the name does not resolve', async () => {
+        const r = await graphRoutes['POST /v1/knowledge/graph/contact_profile']!(new URLSearchParams(), { name: 'nobody' })
+        expect(r.status).toBe(200)
+        expect((r.body as any).resolved).toBe(false)
+      })
+
+      it('400 invalid_name when name is missing', async () => {
+        const r = await graphRoutes['POST /v1/knowledge/graph/contact_profile']!(new URLSearchParams(), {})
+        expect(r.status).toBe(400)
+        expect(r.body).toEqual({ error: 'invalid_name' })
+      })
+
+      it('top_contacts returns both seeded contacts, defaulting by=closeness limit=20 kind=person', async () => {
+        const r = await graphRoutes['POST /v1/knowledge/graph/top_contacts']!(new URLSearchParams(), {})
+        expect(r.status).toBe(200)
+        const usernames = (r.body as any).contacts.map((c: any) => c.username).sort()
+        expect(usernames).toEqual(['wxid_alice', 'wxid_bob'])
+      })
+
+      it('rank_contacts returns the seeded contacts closeness-sorted', async () => {
+        const r = await graphRoutes['POST /v1/knowledge/graph/rank_contacts']!(new URLSearchParams(), {})
+        expect(r.status).toBe(200)
+        const usernames = (r.body as any).contacts.map((c: any) => c.username).sort()
+        expect(usernames).toEqual(['wxid_alice', 'wxid_bob'])
+      })
+
+      it('relationship_subgraph returns the owner + both contacts as nodes', async () => {
+        const r = await graphRoutes['POST /v1/knowledge/graph/relationship_subgraph']!(new URLSearchParams(), {})
+        expect(r.status).toBe(200)
+        const body = r.body as any
+        expect(body.owner).toBe('me')
+        const usernames = body.nodes.map((n: any) => n.username).sort()
+        expect(usernames).toEqual(['wxid_alice', 'wxid_bob'])
+      })
+
+      it('connectors resolves both names and reports the shared group + mention edge', async () => {
+        const r = await graphRoutes['POST /v1/knowledge/graph/connectors']!(new URLSearchParams(), { a: 'Alice', b: 'Bob' })
+        expect(r.status).toBe(200)
+        const body = r.body as any
+        expect(body.resolved).toBe(true)
+        expect(body.a).toBe('wxid_alice')
+        expect(body.b).toBe('wxid_bob')
+        // alice and bob both spoke in g1@chatroom — the sharedGroupsOf
+        // closure built over the real source messages must find it.
+        expect(body.shared_groups).toBe(1)
+        expect(body.mention_edges.length).toBe(1)
+        expect(body.mention_edges[0]).toMatchObject({ a: 'wxid_alice', b: 'wxid_bob', kind: 'mention' })
+      })
+
+      it('400 invalid_a / invalid_b when connectors names are missing', async () => {
+        const r1 = await graphRoutes['POST /v1/knowledge/graph/connectors']!(new URLSearchParams(), { b: 'Bob' })
+        expect(r1.status).toBe(400)
+        expect(r1.body).toEqual({ error: 'invalid_a' })
+        const r2 = await graphRoutes['POST /v1/knowledge/graph/connectors']!(new URLSearchParams(), { a: 'Alice' })
+        expect(r2.status).toBe(400)
+        expect(r2.body).toEqual({ error: 'invalid_b' })
+      })
+
+      it('GET /v1/knowledge/graph/status reports contacts/owner/built_at and not stale right after a build', async () => {
+        const r = await graphRoutes['GET /v1/knowledge/graph/status']!(new URLSearchParams(), null)
+        expect(r.status).toBe(200)
+        expect(r.body).toEqual({ contacts: 2, owner: 'me', built_at: 100000, stale: false })
+      })
+
+      it('status reports stale=true once new source lands without a rebuild', async () => {
+        store.putSourceMessages([msg('a4', { conversation: 'wxid_alice', sender: 'me', time: 800 })])
+        const r = await graphRoutes['GET /v1/knowledge/graph/status']!(new URLSearchParams(), null)
+        expect(r.status).toBe(200)
+        expect((r.body as any).stale).toBe(true)
       })
     })
   })
