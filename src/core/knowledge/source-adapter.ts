@@ -31,17 +31,49 @@
  * its watermark again — churn that would make the semantic indexer (T6)
  * think the row is new and re-embed it. To avoid ever re-submitting a row
  * this adapter has already seen, we persist our OWN cursor via the store's
- * meta table (`getMeta`/`setMeta`), one key per (source db file, Msg_*
- * table): `source_adapter_cursor:<dbfile>:<table>` -> the highest `local_id`
- * read from that table so far. `local_id` is that table's autoincrement
+ * SOURCE-SIDE meta table (`getSourceMeta`/`setSourceMeta`, backed by
+ * `source_meta` in source.db — the SAME file `messages` lives in, not
+ * semantic.db), one key per (source db file, Msg_* table):
+ * `source_adapter_cursor:<dbfile>:<table>` -> the highest `local_id` read
+ * from that table so far. `local_id` is that table's autoincrement
  * rowid-equivalent (monotonically increasing per WCDB table), so "highest
  * local_id seen" is a correct, cheap watermark — cheaper than tracking every
  * processed msg_key. Every row in `(cursor, +inf]` is examined exactly once,
  * even rows that don't end up emitted (non-text type, or empty text after
  * stripping) — the cursor advances past those too so they aren't rescanned
- * forever. The cursor is persisted after each batch flush (crash-safety)
- * and once more at the end of a table's scan (covers any skipped rows past
- * the last flush).
+ * forever.
+ *
+ * Crash-safety (honest version): the cursor is written after each batch
+ * flush and once more at the end of a table's scan, in a SEPARATE statement
+ * from `putSourceMessages`'s insert — the two are not one transaction, so a
+ * crash between them is possible. That is NOT the "re-embed forever" failure
+ * the incremental design exists to prevent: because the cursor write always
+ * happens no earlier than the matching message insert, the only failure
+ * mode is the message insert having committed while the cursor write did
+ * not, so on restart the adapter re-scans and re-upserts at most the last
+ * in-flight batch (<= `batch`, default 500 rows) once. Those rows upsert
+ * idempotently on `msg_key` and the resulting one-time watermark bump for
+ * that batch is a bounded, single-occurrence blip for the semantic indexer
+ * — not unbounded churn.
+ *
+ * WAL-mode source dbs: wxvault's decrypted `message_*.sqlite` output is
+ * written in WAL mode (header write_ver/read_ver = 2) and the accompanying
+ * `-wal`/`-shm` sidecars are frequently NOT shipped alongside the main file
+ * (the normal shape for Windows-decrypted output in particular). A plain
+ * `new Database(path, { readonly: true })` open of such a file throws
+ * `SQLITE_CANTOPEN` in that case — verified against a real WAL-header file
+ * with its sidecars removed. Opening via the URI immutable form instead
+ * (`file:<path>?mode=ro&immutable=1`) tells SQLite the file won't change
+ * and it may read the WAL-mode header directly without needing to recover
+ * a WAL — verified this succeeds on the same fixture. `mode=ro` still means
+ * wxvault's files are never written to. Each db's open + processing is
+ * additionally wrapped in try/catch so one corrupt/unreadable db logs and
+ * is skipped (accumulating whatever other dbs in the dir succeeded) instead
+ * of aborting the entire run.
+ *
+ * Scope: contacts (`contact.sqlite`) are deferred — no consumer in the
+ * Phase 0/1 slice (wxsearch indexer needs messages only); add
+ * `putContacts` + contact ingestion here when a consumer needs it.
  */
 import { Database } from 'bun:sqlite'
 import { createHash } from 'node:crypto'
@@ -124,7 +156,18 @@ export function runSourceAdapter(opts: {
 
   for (const dbPath of listMessageDbs(decryptedDir)) {
     const dbFile = dbPath.split('/').pop() ?? dbPath
-    const db = new Database(dbPath, { readonly: true })
+
+    let db: Database
+    try {
+      // Immutable URI open: works on wxvault's WAL-mode output even when
+      // the -wal/-shm sidecars aren't present (see header comment). Still
+      // strictly read-only — wxvault's files are never written to.
+      db = new Database(`file:${dbPath}?mode=ro&immutable=1`, { readonly: true })
+    } catch (err) {
+      console.error(`[source-adapter] skipping unreadable db ${dbFile}:`, err)
+      continue
+    }
+
     try {
       const tableNames = db
         .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'")
@@ -150,7 +193,7 @@ export function runSourceAdapter(opts: {
       for (const tbl of tableNames.filter(n => n.startsWith('Msg_'))) {
         const conv = tableConv.get(tbl) ?? tbl
         const cursorKey = `source_adapter_cursor:${dbFile}:${tbl}`
-        const cursor = Number(store.getMeta(cursorKey) ?? '0')
+        const cursor = Number(store.getSourceMeta(cursorKey) ?? '0')
 
         const rows = db
           .query<
@@ -173,7 +216,7 @@ export function runSourceAdapter(opts: {
             ingested += pending.length
             pending = []
           }
-          store.setMeta(cursorKey, String(uptoLocalId))
+          store.setSourceMeta(cursorKey, String(uptoLocalId))
           lastFlushedLocalId = uptoLocalId
         }
 
@@ -186,7 +229,11 @@ export function runSourceAdapter(opts: {
               pending.push({
                 msg_key: `${tbl}:${row.local_id}`,
                 conversation: conv,
-                sender: senderUn ?? '',
+                // Mirrors text_source.py: `sender_un or (str(sid) if sid else "")`
+                // — fall back to the numeric real_sender_id (e.g. self-sent
+                // messages, or a participant not yet resolved in Name2Id)
+                // rather than dropping the sender to empty.
+                sender: senderUn ?? (row.real_sender_id ? String(row.real_sender_id) : ''),
                 time: row.create_time ?? 0,
                 type: 'text',
                 text,
@@ -202,6 +249,12 @@ export function runSourceAdapter(opts: {
           flush(lastRow.local_id)
         }
       }
+    } catch (err) {
+      // Corrupt/garbage db content discovered mid-read (e.g. sqlite_master
+      // is readable but a table scan then fails). Whatever batches already
+      // flushed for this db stay ingested (accumulated in `ingested`); skip
+      // the rest of this db and move on rather than aborting the whole run.
+      console.error(`[source-adapter] skipping db ${dbFile} after error mid-processing:`, err)
     } finally {
       db.close()
     }

@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { Database } from 'bun:sqlite'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runSourceAdapter } from './source-adapter'
@@ -74,6 +74,50 @@ function buildFixtureDb(decryptedDir: string): { table: string } {
   insertMsg.run(3, 1, 2, 1002, 's3', 'bob:\nprefixed text body')
 
   db.close()
+  return { table }
+}
+
+/** Minimal single-conversation, single-row message db, used by the WAL and
+ *  sender-fallback tests below. If `walMode` is true, sets journal_mode=WAL
+ *  before writing (giving the file a WAL-format header) and, after closing,
+ *  deletes any `-wal`/`-shm` sidecars it left behind — matching real
+ *  wxvault-decrypted output, which ships only the main `.sqlite` file. */
+function buildMinimalDb(
+  path: string,
+  opts: { walMode?: boolean; realSenderId: number | null; conversation?: string },
+): { table: string } {
+  const db = new Database(path, { create: true })
+  if (opts.walMode) db.exec('PRAGMA journal_mode=WAL;')
+  db.exec('CREATE TABLE Name2Id (user_name TEXT, is_session INTEGER)')
+  const insertName = db.query<unknown, [string, number]>(
+    'INSERT INTO Name2Id (user_name, is_session) VALUES (?, ?)',
+  )
+  const conv = opts.conversation ?? 'group1'
+  insertName.run(conv, 1) // rowid 1 — the session/conversation
+
+  const table = 'Msg_' + md5(conv)
+  db.exec(`
+    CREATE TABLE "${table}" (
+      local_id INTEGER PRIMARY KEY,
+      local_type INTEGER,
+      real_sender_id INTEGER,
+      create_time INTEGER,
+      server_id TEXT,
+      message_content BLOB
+    )
+  `)
+  db.query<unknown, [number, number, number | null, number, string, string]>(
+    `INSERT INTO "${table}" (local_id, local_type, real_sender_id, create_time, server_id, message_content)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(1, 1, opts.realSenderId, 5000, 'srv-min', 'minimal db text')
+  db.close()
+
+  if (opts.walMode) {
+    for (const suf of ['-wal', '-shm']) {
+      const sidecar = path + suf
+      if (existsSync(sidecar)) unlinkSync(sidecar)
+    }
+  }
   return { table }
 }
 
@@ -152,5 +196,52 @@ describe('runSourceAdapter', () => {
     const result = runSourceAdapter({ decryptedDir, store })
     expect(result.ingested).toBe(0)
     expect(store.listMessages(0, 100).messages).toHaveLength(0)
+  })
+
+  it('opens a WAL-mode source db with no -wal/-shm sidecars (real wxvault output shape) via immutable open', () => {
+    const dbPath = join(decryptedDir, 'message_0.sqlite')
+    const { table } = buildMinimalDb(dbPath, { walMode: true, realSenderId: 1, conversation: 'group1' })
+    expect(existsSync(dbPath + '-wal')).toBe(false)
+    expect(existsSync(dbPath + '-shm')).toBe(false)
+
+    const result = runSourceAdapter({ decryptedDir, store })
+    expect(result.ingested).toBe(1)
+
+    const { messages } = store.listMessages(0, 100)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      msg_key: `${table}:1`,
+      conversation: 'group1',
+      text: 'minimal db text',
+      server_id: 'srv-min',
+    })
+  })
+
+  it('skips an unreadable/garbage message_*.sqlite and still ingests the other dbs in the dir, without throwing', () => {
+    buildMinimalDb(join(decryptedDir, 'message_0.sqlite'), { walMode: false, realSenderId: 1 })
+    writeFileSync(join(decryptedDir, 'message_bad.sqlite'), 'this is not a sqlite database file')
+
+    let result: { ingested: number } | undefined
+    expect(() => {
+      result = runSourceAdapter({ decryptedDir, store })
+    }).not.toThrow()
+
+    expect(result?.ingested).toBe(1)
+    const { messages } = store.listMessages(0, 100)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.text).toBe('minimal db text')
+  })
+
+  it('falls back to the numeric real_sender_id when the sender cannot be resolved via Name2Id', () => {
+    const dbPath = join(decryptedDir, 'message_0.sqlite')
+    // real_sender_id 999 has no matching Name2Id rowid, so senderUn resolves
+    // to null and the adapter must fall back to String(real_sender_id).
+    buildMinimalDb(dbPath, { walMode: false, realSenderId: 999, conversation: 'group1' })
+
+    const result = runSourceAdapter({ decryptedDir, store })
+    expect(result.ingested).toBe(1)
+
+    const { messages } = store.listMessages(0, 100)
+    expect(messages[0]?.sender).toBe('999')
   })
 })

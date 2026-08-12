@@ -58,6 +58,12 @@ export interface KnowledgeStore {
   getDocs(rowids: number[]): Map<number, DocSummary>
   getMeta(key: string): string | null
   setMeta(key: string, value: string): void
+  /** Same shape as getMeta/setMeta but backed by source.db (not semantic.db).
+   *  Exists so callers that must stay in the same file as their data (e.g.
+   *  the source-adapter's ingest cursor, which is written alongside
+   *  `messages`) don't split state across two separate SQLite files. */
+  getSourceMeta(key: string): string | null
+  setSourceMeta(key: string, value: string): void
   countSemantic(model_id?: string): number
   close(): void
 }
@@ -91,10 +97,18 @@ export function openKnowledge(root: string): KnowledgeStore {
     CREATE TABLE IF NOT EXISTS contacts (
       username TEXT PRIMARY KEY, display TEXT
     );
+    CREATE TABLE IF NOT EXISTS source_meta (key TEXT PRIMARY KEY, value TEXT);
   `)
 
   const stmtMaxWatermark = sourceDb.query<{ w: number | null }, []>(
     'SELECT MAX(ingested_watermark) AS w FROM messages',
+  )
+  const stmtGetSourceMeta = sourceDb.query<{ value: string }, [string]>(
+    'SELECT value FROM source_meta WHERE key = ?',
+  )
+  const stmtSetSourceMeta = sourceDb.query<unknown, [string, string]>(
+    `INSERT INTO source_meta(key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
   )
   const stmtUpsertMessage = sourceDb.query<
     unknown,
@@ -275,6 +289,14 @@ export function openKnowledge(root: string): KnowledgeStore {
 
     setMeta(key, value) {
       stmtSetMeta.run(key, value)
+    },
+
+    getSourceMeta(key) {
+      return stmtGetSourceMeta.get(key)?.value ?? null
+    },
+
+    setSourceMeta(key, value) {
+      stmtSetSourceMeta.run(key, value)
     },
 
     countSemantic(model_id) {

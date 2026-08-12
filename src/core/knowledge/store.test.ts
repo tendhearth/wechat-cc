@@ -166,4 +166,21 @@ describe('knowledge store', () => {
       expect(store.getMeta('embed_model')).toBe('bge-large')
     })
   })
+
+  describe('source meta (source.db-side, for the source-adapter own-DB cursor)', () => {
+    it('getSourceMeta returns null when unset, then round-trips setSourceMeta', () => {
+      expect(store.getSourceMeta('cursor:foo')).toBeNull()
+      store.setSourceMeta('cursor:foo', '10')
+      expect(store.getSourceMeta('cursor:foo')).toBe('10')
+      store.setSourceMeta('cursor:foo', '20')
+      expect(store.getSourceMeta('cursor:foo')).toBe('20')
+    })
+
+    it('is a distinct keyspace from getMeta/setMeta (semantic.db meta is a different file)', () => {
+      store.setMeta('cursor:foo', 'from-semantic-db')
+      store.setSourceMeta('cursor:foo', 'from-source-db')
+      expect(store.getMeta('cursor:foo')).toBe('from-semantic-db')
+      expect(store.getSourceMeta('cursor:foo')).toBe('from-source-db')
+    })
+  })
 })
