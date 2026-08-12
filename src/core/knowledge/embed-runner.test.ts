@@ -15,7 +15,7 @@ import { makeEmbedRunner, type EmbedRunnerChild } from './embed-runner'
  *  request/response framing survives overlapping embed() calls (no
  *  cross-talk on the pipe). `delays[i]` is the delay (ms) for the i-th
  *  request line this child receives; missing entries default to 0. */
-function makeFakeChild(opts: { delays?: number[] } = {}): EmbedRunnerChild & { requestsSeen: string[][] } {
+function makeFakeChild(opts: { delays?: number[]; mismatch?: boolean } = {}): EmbedRunnerChild & { requestsSeen: string[][] } {
   const delays = opts.delays ?? []
   const enc = new TextEncoder()
   const dec = new TextDecoder()
@@ -40,8 +40,11 @@ function makeFakeChild(opts: { delays?: number[] } = {}): EmbedRunnerChild & { r
     const reqIndex = requestsSeen.length
     requestsSeen.push(req.texts)
     const respond = () => {
-      // one fixed vector per input text, deterministic on text length
-      const vectors = req.texts.map(t => [t.length, 1, 2])
+      // one fixed vector per input text, deterministic on text length —
+      // `mismatch` drops the last one to simulate a subprocess bug that
+      // returns fewer vectors than requested texts.
+      let vectors = req.texts.map(t => [t.length, 1, 2])
+      if (opts.mismatch && vectors.length > 0) vectors = vectors.slice(0, -1)
       controller.enqueue(enc.encode(JSON.stringify({ vectors }) + '\n'))
     }
     const delayMs = delays[reqIndex] ?? 0
@@ -81,6 +84,48 @@ function makeFakeChild(opts: { delays?: number[] } = {}): EmbedRunnerChild & { r
       return ended
     },
   } as EmbedRunnerChild & { requestsSeen: string[][]; _ended: boolean }
+}
+
+/** A fake child that records requests but NEVER writes a response line —
+ *  models a wedged/dead subprocess for the timeout test. `kill()` resolves
+ *  `exited` (mirrors a real child actually dying once signaled) so
+ *  `runner.close()` in `afterEach` doesn't hang the test suite itself. */
+function makeHangingChild(): EmbedRunnerChild & { requestsSeen: string[][] } {
+  const dec = new TextDecoder()
+  let buf = ''
+  const requestsSeen: string[][] = []
+  const stdout = new ReadableStream<Uint8Array>({
+    start() {
+      // never enqueue anything — the "subprocess" never responds
+    },
+  })
+  let exitedResolve!: (code: number) => void
+  const exited = new Promise<number>(resolve => {
+    exitedResolve = resolve
+  })
+
+  return {
+    stdin: {
+      write(chunk: string | Uint8Array) {
+        buf += typeof chunk === 'string' ? chunk : dec.decode(chunk as Uint8Array)
+        let idx: number
+        while ((idx = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, idx)
+          buf = buf.slice(idx + 1)
+          if (line.trim()) requestsSeen.push((JSON.parse(line) as { texts: string[] }).texts)
+        }
+      },
+      end() {
+        // no-op — a genuinely wedged child doesn't react to stdin closing either
+      },
+    },
+    stdout,
+    exited,
+    kill() {
+      exitedResolve(1)
+    },
+    requestsSeen,
+  }
 }
 
 describe('makeEmbedRunner', () => {
@@ -165,5 +210,51 @@ describe('makeEmbedRunner', () => {
     await r.close()
     expect((child as unknown as { _ended: boolean })._ended).toBe(true)
     runner = undefined
+  })
+
+  // T7' robustness folded in from the T6' review — see embed-runner.ts's
+  // module docstring "Robustness" section.
+  it('rejects embed() and kills the child when it does not respond within the timeout', async () => {
+    const child = makeHangingChild()
+    runner = makeEmbedRunner({
+      pythonBin: 'python3',
+      scriptPath: '/fake/embed_subprocess.py',
+      model_id: 'test-model',
+      spawnFn: () => child,
+      requestTimeoutMs: 20,
+    })
+
+    await expect(runner.embed(['x'])).rejects.toThrow(/did not respond/i)
+    // The child was killed as part of the timeout, not left running.
+    expect(await child.exited).toBe(1)
+  }, 5000)
+
+  it('marks the runner broken after a timeout — subsequent embed() calls reject immediately', async () => {
+    const child = makeHangingChild()
+    runner = makeEmbedRunner({
+      pythonBin: 'python3',
+      scriptPath: '/fake/embed_subprocess.py',
+      model_id: 'test-model',
+      spawnFn: () => child,
+      requestTimeoutMs: 20,
+    })
+
+    await expect(runner.embed(['x'])).rejects.toThrow(/did not respond/i)
+    // A second call must NOT attempt to write to the (now desynchronized)
+    // pipe again — it rejects synchronously with the "broken" reason.
+    await expect(runner.embed(['y'])).rejects.toThrow(/broken/i)
+    expect(child.requestsSeen).toEqual([['x']])
+  }, 5000)
+
+  it('rejects embed() when the subprocess returns fewer vectors than requested texts', async () => {
+    const child = makeFakeChild({ mismatch: true })
+    runner = makeEmbedRunner({
+      pythonBin: 'python3',
+      scriptPath: '/fake/embed_subprocess.py',
+      model_id: 'test-model',
+      spawnFn: () => child,
+    })
+
+    await expect(runner.embed(['a', 'b', 'c'])).rejects.toThrow(/vector/i)
   })
 })

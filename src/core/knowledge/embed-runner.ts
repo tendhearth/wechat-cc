@@ -21,6 +21,25 @@
  * time — a one-time handshake via the command line rather than a stdin
  * line, so the JSONL request/response framing stays uniform (every line on
  * the wire after spawn is exactly one embed request or response).
+ *
+ * Robustness (folded from T6' review):
+ *   - Per-request TIMEOUT (`requestTimeoutMs`, default 120s). If the child
+ *     doesn't finish a response line within the window, that embed() call
+ *     rejects AND the runner is marked `broken`: the child is force-killed
+ *     and every subsequent embed() call rejects immediately without
+ *     touching stdin/stdout again. This is deliberate, not merely
+ *     conservative — a timed-out request's `readLine()` may still be
+ *     pending against the (now desynchronized) stream when the next
+ *     request would otherwise fire, so reusing the pipe past a timeout
+ *     risks handing one call's response to a different call. The indexer
+ *     (indexer.ts) already treats a rejected embed() as "abort this run,
+ *     retry next tick, cursor not advanced" — killing the child here is
+ *     what makes that retry actually get a fresh subprocess instead of
+ *     hanging forever on the same wedged one.
+ *   - Response length guard: `vectors.length` must equal the request's
+ *     `texts.length`. A mismatch rejects rather than silently indexing the
+ *     wrong text/vector pairing (provenance would otherwise be wrong for
+ *     every row after the first short response in a batch).
  */
 
 /** Minimal shape the runner needs from a spawned child — matches enough of
@@ -34,11 +53,19 @@ export interface EmbedRunnerChild {
   kill(): void
 }
 
+/** Default per-request timeout (ms). fastembed ONNX inference on a
+ *  personal-scale batch should never legitimately take this long — a delay
+ *  past this signals a wedged/dead child, not a slow model. */
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
+
 export interface MakeEmbedRunnerOpts {
   pythonBin: string
   scriptPath: string
   model_id: string
   spawnFn?: (cmd: string[]) => EmbedRunnerChild
+  /** Per-request timeout (ms) — see the module docstring's "Robustness"
+   *  section. Default 120_000. */
+  requestTimeoutMs?: number
 }
 
 export interface EmbedRunner {
@@ -63,11 +90,19 @@ function defaultSpawn(cmd: string[]): EmbedRunnerChild {
 export function makeEmbedRunner(opts: MakeEmbedRunnerOpts): EmbedRunner {
   const spawnFn = opts.spawnFn ?? defaultSpawn
   const child = spawnFn([opts.pythonBin, opts.scriptPath, '--model-id', opts.model_id])
+  const requestTimeoutMs = opts.requestTimeoutMs && opts.requestTimeoutMs > 0
+    ? opts.requestTimeoutMs
+    : DEFAULT_REQUEST_TIMEOUT_MS
 
   const decoder = new TextDecoder()
   const reader = child.stdout.getReader()
   let buf = ''
   let closed = false
+  // Set once a request times out (or the child otherwise proves unusable
+  // mid-request) — see the module docstring's "Robustness" section for why
+  // the runner never attempts to reuse the pipe past this point instead of
+  // just failing the one call.
+  let broken = false
 
   /** Reads (and buffers) from stdout until a full newline-terminated line
    *  is available, then returns it (without the trailing newline). */
@@ -97,9 +132,43 @@ export function makeEmbedRunner(opts: MakeEmbedRunnerOpts): EmbedRunner {
   function embed(texts: string[]): Promise<number[][]> {
     const run = queue.then(async () => {
       if (closed) throw new Error('embed runner is closed')
+      if (broken) throw new Error('embed runner is broken (a prior request timed out or the child died) — retry with a fresh runner')
       child.stdin.write(JSON.stringify({ texts }) + '\n')
-      const line = await readLine()
+
+      // Race the response against a per-request timeout. The `readPromise`
+      // gets a no-op `.catch` so that if it LOSES the race (timeout fires
+      // first) and later rejects on its own — e.g. "closed stdout" once the
+      // killed child actually exits — that rejection doesn't surface as an
+      // unhandled promise rejection; nothing else is listening to it once
+      // the race has already settled via the timeout branch.
+      const readPromise = readLine()
+      readPromise.catch(() => {})
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          broken = true
+          try {
+            child.kill()
+          } catch {
+            // best effort — the child may already be gone
+          }
+          reject(new Error(`embed subprocess did not respond within ${requestTimeoutMs}ms — killed, runner marked broken`))
+        }, requestTimeoutMs)
+      })
+
+      let line: string
+      try {
+        line = await Promise.race([readPromise, timeout])
+      } finally {
+        clearTimeout(timer)
+      }
+
       const parsed = JSON.parse(line) as { vectors: number[][] }
+      if (parsed.vectors.length !== texts.length) {
+        throw new Error(
+          `embed subprocess returned ${parsed.vectors.length} vector(s) for ${texts.length} text(s) — refusing to index a mismatched batch`,
+        )
+      }
       return parsed.vectors
     })
     queue = run.then(

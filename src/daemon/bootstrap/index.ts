@@ -73,6 +73,8 @@ import { createYiWsServer } from '../yi-ws-server'
 import { openKnowledge } from '../../core/knowledge/store'
 import { semanticSearch } from '../../core/knowledge/search'
 import { runSourceAdapter } from '../../core/knowledge/source-adapter'
+import { runIndexer } from '../../core/knowledge/indexer'
+import { makeEmbedRunner } from '../../core/knowledge/embed-runner'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
 import selfPkg from '../../../package.json' with { type: 'json' }
@@ -99,6 +101,16 @@ function resolveClaudeBinary(): string | undefined {
   if (existsSync(bundled)) return bundled
   return undefined
 }
+
+// Knowledge Kernel T7' — provenance tag stamped alongside `knowledge_embed_model`
+// on every semantic.db row this daemon writes (store.putSemantic(model_id,
+// model_version, ...)). NOTE: the indexer's resume cursor is keyed on
+// model_id ALONE (see indexer.ts's header comment) — bumping this constant
+// does NOT by itself trigger a re-embed of already-indexed rows; it is
+// purely the provenance label recorded on rows embedded from here on. A
+// real re-embed after a pipeline change needs either a new model_id or a
+// manual cursor reset (`indexer_cursor:<model_id>` in semantic.db's meta).
+const KNOWLEDGE_EMBED_MODEL_VERSION = '1'
 
 const CLAUDE_AUTH_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
@@ -390,19 +402,79 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     const knowledgeStore = openKnowledge(join(deps.stateDir, 'knowledge'))
     const decryptedDir = configuredAgent.knowledge_source_dir
       ?? join(deps.stateDir, 'plugin-data', 'wxvault', 'out', 'decrypted')
-    const runKnowledgeAdapter = (onBoot: boolean) => {
+
+    // T7' — the in-process indexer's embed subprocess. Rather than invent a
+    // new discovery path, this reuses `loadedPlugins` (built just above, at
+    // ~line 327, for the plugin-MCP lane) to find wxsearch's resolved plugin
+    // dir — bundled or user, whichever the registry's normal shadowing rule
+    // picked — and derives the script/interpreter paths the SAME way
+    // wxsearch's own manifest spawns itself (`${pluginDir}/wxsearch/
+    // embed_subprocess.py` via `${pluginDir}/.venv/bin/python`, see
+    // packages/wxsearch/wechat-cc.plugin.json's `spawn`). This works whether
+    // or not wxsearch is enabled/ready as an MCP server — the indexer runs
+    // the script directly, in-process orchestration only, never through MCP.
+    // `knowledge_embed_script` is an escape hatch for a non-standard install
+    // (e.g. wxsearch vendored somewhere else); when set without a resolvable
+    // wxsearch plugin dir, the interpreter falls back to `python3` on PATH
+    // (the override is for advanced/manual setups, not the common path).
+    const wxsearchPlugin = loadedPlugins.find(p => p.name === 'wxsearch')
+    const knowledgeEmbedModelId = configuredAgent.knowledge_embed_model ?? 'bge-small-zh-v1.5'
+    const embedScriptPath = configuredAgent.knowledge_embed_script
+      ?? (wxsearchPlugin ? join(wxsearchPlugin.dir, 'wxsearch', 'embed_subprocess.py') : undefined)
+    const embedPythonBin = wxsearchPlugin
+      ? join(wxsearchPlugin.dir, '.venv', 'bin', 'python')
+      : (findOnPath('python3') ?? 'python3')
+
+    const runKnowledgeAdapter = async (onBoot: boolean) => {
+      let ingested = 0
       try {
-        const { ingested } = runSourceAdapter({ decryptedDir, store: knowledgeStore })
+        ingested = runSourceAdapter({ decryptedDir, store: knowledgeStore }).ingested
         if (onBoot) deps.log('BOOT', 'knowledge: enabled — store + source adapter wired', { ingested })
-        return ingested
       } catch (err) {
         deps.log('KNOWLEDGE', `source adapter run failed: ${err instanceof Error ? err.message : String(err)}`)
-        return 0
       }
+
+      // Indexer — runs AFTER the adapter, same schedule (boot backfill +
+      // periodic tick), so each pass indexes whatever `source` the adapter
+      // just normalized. A fresh embed subprocess is spawned per run (never
+      // held open across runs — amortizing model load WITHIN one run is the
+      // subprocess protocol's job, see embed-runner.ts) and always closed,
+      // even on failure, so a wedged/timed-out child (embed-runner.ts's
+      // per-request timeout) never survives past this pass. `runIndexer`
+      // rejecting (e.g. from a killed/broken embed runner) means it aborts
+      // mid-run WITHOUT advancing its store-meta cursor — the next tick
+      // retries from the same point, exactly like the source adapter's own
+      // crash-safety story above.
+      if (embedScriptPath) {
+        try {
+          const embedRunner = makeEmbedRunner({
+            pythonBin: embedPythonBin,
+            scriptPath: embedScriptPath,
+            model_id: knowledgeEmbedModelId,
+          })
+          try {
+            const { indexed } = await runIndexer({
+              store: knowledgeStore,
+              embed: embedRunner.embed,
+              model_id: knowledgeEmbedModelId,
+              model_version: KNOWLEDGE_EMBED_MODEL_VERSION,
+            })
+            if (onBoot || indexed > 0) deps.log('KNOWLEDGE', `indexer run: ${indexed} chunk(s) embedded`, { indexed, model_id: knowledgeEmbedModelId })
+          } finally {
+            await embedRunner.close()
+          }
+        } catch (err) {
+          deps.log('KNOWLEDGE', `indexer run failed (will retry next tick): ${err instanceof Error ? err.message : String(err)}`)
+        }
+      } else if (onBoot) {
+        deps.log('KNOWLEDGE', 'indexer disabled — wxsearch plugin not found; set knowledge_embed_script to point at embed_subprocess.py')
+      }
+
+      return ingested
     }
     // Backfill — deferred one tick so it never delays buildBootstrap's return.
-    setTimeout(() => runKnowledgeAdapter(true), 0)
-    const knowledgeAdapterTimer = setInterval(() => runKnowledgeAdapter(false), 5 * 60_000)
+    setTimeout(() => { void runKnowledgeAdapter(true) }, 0)
+    const knowledgeAdapterTimer = setInterval(() => { void runKnowledgeAdapter(false) }, 5 * 60_000)
     knowledgeAdapterTimer.unref()
     knowledge = { store: knowledgeStore, search: semanticSearch }
   } else {
