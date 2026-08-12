@@ -264,6 +264,18 @@ export interface InternalApiDeps {
      * as `knowledge` itself being undefined.
      */
     graph?: import('../../core/knowledge/graph-query').GraphQueryApi
+    /**
+     * Facts + Person (Knowledge Facts/Person inproc, Task 4) — the
+     * candidate-feed/record/query API over facts.db (Task 1) built by
+     * `core/knowledge/facts.ts`'s `makeFactsApi`, and the unified
+     * per-contact brief composite built by `core/knowledge/person.ts`'s
+     * `makePersonApi`. Same posture as `graph` above: present whenever
+     * `knowledge_enabled` is configured; undefined ⇒ the corresponding
+     * `/v1/knowledge/facts/*` or `/v1/knowledge/person/*` route 503s
+     * knowledge_not_wired.
+     */
+    facts?: import('../../core/knowledge/facts').FactsApi
+    person?: import('../../core/knowledge/person').PersonApi
   }
   /** 配对码 (spec §7) — late-bound by main.ts from bootstrap.pairing. Undefined
    *  (⇒ /v1/pair/* 503) until mailbox_relays is configured AND late-bind runs. */

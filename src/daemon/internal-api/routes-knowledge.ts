@@ -173,5 +173,58 @@ export function knowledgeRoutes(deps: InternalApiDeps): RouteTable {
       if (!deps.knowledge?.graph) return { status: 503, body: { error: 'knowledge_not_wired' } }
       return { status: 200, body: deps.knowledge.graph.status() }
     },
+
+    // ---- Facts + Person (Knowledge Facts/Person inproc, Task 4) ------------
+    // Admin-only (see route-tiers.ts) — same private-data trust class as the
+    // graph routes above: reads/writes the owner's private fact store and
+    // per-contact briefs. 503 knowledge_not_wired when the knowledge store
+    // isn't configured at all; `!deps.knowledge.facts`/`.person` specifically
+    // means `knowledge_enabled` is on but facts/person weren't wired
+    // (shouldn't happen once bootstrap wires them unconditionally alongside
+    // `store`, but mirrors the other routes' defensive posture).
+    'POST /v1/knowledge/facts/extraction_batch': (_q, body) => {
+      if (!deps.knowledge?.facts) return { status: 503, body: { error: 'knowledge_not_wired' } }
+      const b = (body ?? {}) as { contact?: string; limit?: number }
+      return { status: 200, body: deps.knowledge.facts.nextBatch(b.contact ?? null, b.limit ?? 40) }
+    },
+    'POST /v1/knowledge/facts/record_facts': (_q, body) => {
+      if (!deps.knowledge?.facts) return { status: 503, body: { error: 'knowledge_not_wired' } }
+      const b = (body ?? {}) as { batch_id?: unknown; facts?: unknown; now?: number }
+      if (typeof b.batch_id !== 'string' || !b.batch_id) return { status: 400, body: { error: 'invalid_batch_id' } }
+      return {
+        status: 200,
+        body: deps.knowledge.facts.record(b.batch_id, (b.facts as any[]) ?? [], b.now ?? Math.floor(Date.now() / 1000)),
+      }
+    },
+    'POST /v1/knowledge/facts/contact_facts': (_q, body) => {
+      if (!deps.knowledge?.facts) return { status: 503, body: { error: 'knowledge_not_wired' } }
+      const b = (body ?? {}) as { name?: unknown }
+      if (typeof b.name !== 'string' || !b.name) return { status: 400, body: { error: 'invalid_name' } }
+      return { status: 200, body: deps.knowledge.facts.contactFacts(b.name) }
+    },
+    'POST /v1/knowledge/facts/find_facts': (_q, body) => {
+      if (!deps.knowledge?.facts) return { status: 503, body: { error: 'knowledge_not_wired' } }
+      const b = (body ?? {}) as any
+      return {
+        status: 200,
+        body: deps.knowledge.facts.findFacts(b.kind ?? null, b.predicate ?? null, b.query ?? null, b.status ?? 'active', b.limit ?? 50),
+      }
+    },
+    'POST /v1/knowledge/facts/set_fact_status': (_q, body) => {
+      if (!deps.knowledge?.facts) return { status: 503, body: { error: 'knowledge_not_wired' } }
+      const b = (body ?? {}) as { id?: unknown; status?: unknown; now?: number }
+      if (typeof b.id !== 'number' || typeof b.status !== 'string' || !b.status) return { status: 400, body: { error: 'invalid_args' } }
+      return { status: 200, body: deps.knowledge.facts.setFactStatus(b.id, b.status, b.now ?? Math.floor(Date.now() / 1000)) }
+    },
+    'GET /v1/knowledge/facts/extraction_status': () => {
+      if (!deps.knowledge?.facts) return { status: 503, body: { error: 'knowledge_not_wired' } }
+      return { status: 200, body: deps.knowledge.facts.extractionStatus() }
+    },
+    'POST /v1/knowledge/person/brief': (_q, body) => {
+      if (!deps.knowledge?.person) return { status: 503, body: { error: 'knowledge_not_wired' } }
+      const b = (body ?? {}) as { name?: unknown; recent_n?: number }
+      if (typeof b.name !== 'string' || !b.name) return { status: 400, body: { error: 'invalid_name' } }
+      return { status: 200, body: deps.knowledge.person.personBrief(b.name, b.recent_n ?? 12) }
+    },
   }
 }

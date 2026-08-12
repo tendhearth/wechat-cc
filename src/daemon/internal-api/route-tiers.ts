@@ -190,6 +190,17 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/knowledge/graph/relationship_subgraph': 'admin',
   'POST /v1/knowledge/graph/connectors': 'admin',
   'GET /v1/knowledge/graph/status': 'admin',
+  // Facts + Person (Knowledge Facts/Person inproc, Task 4) — same
+  // admin-only trust class as the graph routes above: reads/writes the
+  // owner's private fact store and per-contact briefs, not just the
+  // current caller's own scope.
+  'POST /v1/knowledge/facts/extraction_batch': 'admin',
+  'POST /v1/knowledge/facts/record_facts': 'admin',
+  'POST /v1/knowledge/facts/contact_facts': 'admin',
+  'POST /v1/knowledge/facts/find_facts': 'admin',
+  'POST /v1/knowledge/facts/set_fact_status': 'admin',
+  'GET /v1/knowledge/facts/extraction_status': 'admin',
+  'POST /v1/knowledge/person/brief': 'admin',
   // admin — reads the owner's private wxvault history and stores personal
   // customer judgments. Never expose to guest/trusted chat sessions.
   'GET /v1/customer-review/contacts': 'admin',

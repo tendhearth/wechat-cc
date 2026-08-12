@@ -16,6 +16,8 @@ import { openKnowledge, type KnowledgeStore, type SourceMsg, type Chunk } from '
 import { semanticSearch } from '../../core/knowledge/search'
 import { rebuildGraphFromSource } from '../../core/knowledge/graph-build'
 import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
+import { makeFactsApi } from '../../core/knowledge/facts'
+import { makePersonApi } from '../../core/knowledge/person'
 import type { InternalApiDeps } from './types'
 
 function msg(msg_key: string, overrides: Partial<SourceMsg> = {}): SourceMsg {
@@ -66,6 +68,13 @@ describe('knowledgeRoutes', () => {
         ['POST /v1/knowledge/graph/relationship_subgraph', {}],
         ['POST /v1/knowledge/graph/connectors', { a: 'alice', b: 'bob' }],
         ['GET /v1/knowledge/graph/status', null],
+        ['POST /v1/knowledge/facts/extraction_batch', {}],
+        ['POST /v1/knowledge/facts/record_facts', { batch_id: 'x', facts: [] }],
+        ['POST /v1/knowledge/facts/contact_facts', { name: 'alice' }],
+        ['POST /v1/knowledge/facts/find_facts', {}],
+        ['POST /v1/knowledge/facts/set_fact_status', { id: 1, status: 'active' }],
+        ['GET /v1/knowledge/facts/extraction_status', null],
+        ['POST /v1/knowledge/person/brief', { name: 'alice' }],
       ]
       for (const [key, body] of cases) {
         const handler = routes[key]
@@ -106,6 +115,46 @@ describe('knowledgeRoutes', () => {
         ['POST /v1/knowledge/graph/relationship_subgraph', {}],
         ['POST /v1/knowledge/graph/connectors', { a: 'alice', b: 'bob' }],
         ['GET /v1/knowledge/graph/status', null],
+      ]
+      for (const [key, body] of cases) {
+        const r = await routes[key]!(q, body)
+        expect(r.status, key).toBe(503)
+        expect(r.body).toEqual({ error: 'knowledge_not_wired' })
+      }
+    })
+  })
+
+  describe('when deps.knowledge is wired but deps.knowledge.facts/person are undefined', () => {
+    // Distinct from the "deps.knowledge is undefined" case above — this is
+    // knowledge_enabled with the facts/person accessors specifically absent,
+    // which production wiring never does (bootstrap wires them
+    // unconditionally alongside `store`), but the routes defend against it
+    // anyway. Mirrors the graph-unwired block above.
+    let dir: string
+    let store: KnowledgeStore
+    let routes: ReturnType<typeof knowledgeRoutes>
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'kk-routes-facts-unwired-'))
+      store = openKnowledge(dir)
+      routes = knowledgeRoutes(deps({ store, search: semanticSearch }))
+    })
+
+    afterEach(() => {
+      store.close()
+      rmSync(dir, { recursive: true, force: true })
+    })
+
+    it('503s every facts + person route', async () => {
+      const q = new URLSearchParams()
+      const cases: Array<[string, unknown]> = [
+        ['POST /v1/knowledge/facts/extraction_batch', {}],
+        ['POST /v1/knowledge/facts/record_facts', { batch_id: 'x', facts: [] }],
+        ['POST /v1/knowledge/facts/contact_facts', { name: 'alice' }],
+        ['POST /v1/knowledge/facts/find_facts', {}],
+        ['POST /v1/knowledge/facts/set_fact_status', { id: 1, status: 'active' }],
+        ['GET /v1/knowledge/facts/extraction_status', null],
+        ['POST /v1/knowledge/person/brief', { name: 'alice' }],
       ]
       for (const [key, body] of cases) {
         const r = await routes[key]!(q, body)
@@ -394,6 +443,131 @@ describe('knowledgeRoutes', () => {
         const r = await graphRoutes['GET /v1/knowledge/graph/status']!(new URLSearchParams(), null)
         expect(r.status).toBe(200)
         expect((r.body as any).stale).toBe(true)
+      })
+    })
+
+    describe('POST /v1/knowledge/facts/* + POST /v1/knowledge/person/brief (Facts + Person inproc T4)', () => {
+      // Seeds real one-to-one source + contacts, then wires deps.knowledge.facts
+      // / .person via the real makeFactsApi/makePersonApi (T2/T3) — end-to-end
+      // through the actual store wiring, same posture as the graph describe
+      // block above.
+      let factsRoutes: ReturnType<typeof knowledgeRoutes>
+
+      beforeEach(() => {
+        store.putSourceMessages([
+          // "me" sends more, so detectOwner votes "me" owner (mirrors the
+          // graph describe block's seeding above).
+          msg('f0', { conversation: 'wxid_alice', sender: 'me', time: 50, text: 'hey' }),
+          msg('f1', { conversation: 'wxid_alice', sender: 'wxid_alice', time: 100, text: 'I live in Beijing' }),
+        ])
+        store.putContacts([{ username: 'wxid_alice', display: 'Alice' }])
+        const result = rebuildGraphFromSource({ store, now: 100000 })
+        expect(result.skipped).toBe(false)
+        factsRoutes = knowledgeRoutes(
+          deps({ store, search: semanticSearch, facts: makeFactsApi(store), person: makePersonApi(store) }),
+        )
+      })
+
+      it('extraction_batch returns the pending backlog for the contact with the most unrecorded messages', async () => {
+        const r = await factsRoutes['POST /v1/knowledge/facts/extraction_batch']!(new URLSearchParams(), {})
+        expect(r.status).toBe(200)
+        const body = r.body as any
+        expect(body.contact).toBe('wxid_alice')
+        expect(body.messages).toHaveLength(2)
+        expect(body.batch_id).toBeTypeOf('string')
+      })
+
+      it('record_facts records facts and advances the watermark', async () => {
+        const batchR = await factsRoutes['POST /v1/knowledge/facts/extraction_batch']!(new URLSearchParams(), {})
+        const batch_id = (batchR.body as any).batch_id
+        const r = await factsRoutes['POST /v1/knowledge/facts/record_facts']!(new URLSearchParams(), {
+          batch_id,
+          facts: [{ kind: 'location', predicate: 'lives_in', value: 'Beijing', source_msg_keys: ['f1'] }],
+        })
+        expect(r.status).toBe(200)
+        expect(r.body).toMatchObject({ recorded: 1, merged: 0 })
+
+        const statusR = await factsRoutes['GET /v1/knowledge/facts/extraction_status']!(new URLSearchParams(), null)
+        expect((statusR.body as any).caught_up).toBe(1)
+      })
+
+      it('400 invalid_batch_id when record_facts is missing batch_id', async () => {
+        const r = await factsRoutes['POST /v1/knowledge/facts/record_facts']!(new URLSearchParams(), { facts: [] })
+        expect(r.status).toBe(400)
+        expect(r.body).toEqual({ error: 'invalid_batch_id' })
+      })
+
+      it('contact_facts resolves by display name and groups recorded facts by kind', async () => {
+        const batchR = await factsRoutes['POST /v1/knowledge/facts/extraction_batch']!(new URLSearchParams(), {})
+        await factsRoutes['POST /v1/knowledge/facts/record_facts']!(new URLSearchParams(), {
+          batch_id: (batchR.body as any).batch_id,
+          facts: [{ kind: 'location', predicate: 'lives_in', value: 'Beijing', source_msg_keys: ['f1'] }],
+        })
+        const r = await factsRoutes['POST /v1/knowledge/facts/contact_facts']!(new URLSearchParams(), { name: 'Alice' })
+        expect(r.status).toBe(200)
+        const body = r.body as any
+        expect(body.resolved).toBe(true)
+        expect(body.contact).toBe('wxid_alice')
+        expect(body.by_kind.location).toHaveLength(1)
+      })
+
+      it('400 invalid_name when contact_facts is missing name', async () => {
+        const r = await factsRoutes['POST /v1/knowledge/facts/contact_facts']!(new URLSearchParams(), {})
+        expect(r.status).toBe(400)
+        expect(r.body).toEqual({ error: 'invalid_name' })
+      })
+
+      it('find_facts returns recorded facts, defaulting status=active limit=50', async () => {
+        const batchR = await factsRoutes['POST /v1/knowledge/facts/extraction_batch']!(new URLSearchParams(), {})
+        await factsRoutes['POST /v1/knowledge/facts/record_facts']!(new URLSearchParams(), {
+          batch_id: (batchR.body as any).batch_id,
+          facts: [{ kind: 'location', predicate: 'lives_in', value: 'Beijing', source_msg_keys: ['f1'] }],
+        })
+        const r = await factsRoutes['POST /v1/knowledge/facts/find_facts']!(new URLSearchParams(), { kind: 'location' })
+        expect(r.status).toBe(200)
+        expect((r.body as any).results).toHaveLength(1)
+      })
+
+      it('set_fact_status updates a fact and 400 invalid_args when id/status are missing', async () => {
+        const batchR = await factsRoutes['POST /v1/knowledge/facts/extraction_batch']!(new URLSearchParams(), {})
+        await factsRoutes['POST /v1/knowledge/facts/record_facts']!(new URLSearchParams(), {
+          batch_id: (batchR.body as any).batch_id,
+          facts: [{ kind: 'location', predicate: 'lives_in', value: 'Beijing', source_msg_keys: ['f1'] }],
+        })
+        const findR = await factsRoutes['POST /v1/knowledge/facts/find_facts']!(new URLSearchParams(), {})
+        const id = (findR.body as any).results[0].id
+
+        const r = await factsRoutes['POST /v1/knowledge/facts/set_fact_status']!(new URLSearchParams(), { id, status: 'archived' })
+        expect(r.status).toBe(200)
+        expect(r.body).toEqual({ ok: true })
+
+        const badR = await factsRoutes['POST /v1/knowledge/facts/set_fact_status']!(new URLSearchParams(), { status: 'archived' })
+        expect(badR.status).toBe(400)
+        expect(badR.body).toEqual({ error: 'invalid_args' })
+      })
+
+      it('GET /v1/knowledge/facts/extraction_status reports contacts/caught_up/facts_by_kind/backlog', async () => {
+        const r = await factsRoutes['GET /v1/knowledge/facts/extraction_status']!(new URLSearchParams(), null)
+        expect(r.status).toBe(200)
+        const body = r.body as any
+        expect(body.contacts).toBe(1)
+        expect(body.caught_up).toBe(0)
+        expect(body.backlog).toHaveLength(1)
+      })
+
+      it('person/brief resolves the contact and composes relationship + facts + recent_messages', async () => {
+        const r = await factsRoutes['POST /v1/knowledge/person/brief']!(new URLSearchParams(), { name: 'Alice' })
+        expect(r.status).toBe(200)
+        const body = r.body as any
+        expect(body.resolved).toBe(true)
+        expect(body.wxid).toBe('wxid_alice')
+        expect(body.recent_messages.length).toBeGreaterThan(0)
+      })
+
+      it('400 invalid_name when person/brief is missing name', async () => {
+        const r = await factsRoutes['POST /v1/knowledge/person/brief']!(new URLSearchParams(), {})
+        expect(r.status).toBe(400)
+        expect(r.body).toEqual({ error: 'invalid_name' })
       })
     })
   })
