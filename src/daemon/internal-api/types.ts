@@ -229,6 +229,19 @@ export interface InternalApiDeps {
       letterStore: import('../../core/penpal-letter-store').LetterStore
     }
   }
+  /**
+   * Knowledge Kernel (Phase 01, T3) — the daemon-owned KnowledgeStore +
+   * semanticSearch backing /v1/knowledge/*. Undefined until main.ts wires
+   * it (openKnowledge(root) + the imported semanticSearch function), in
+   * which case every /v1/knowledge/* route returns 503 knowledge_not_wired.
+   * `search` is passed as a plain function reference (not wrapped) so
+   * routes-knowledge.ts never has to import search.ts's internals — it just
+   * calls `deps.knowledge.search(deps.knowledge.store, opts)`.
+   */
+  knowledge?: {
+    store: import('../../core/knowledge/store').KnowledgeStore
+    search: typeof import('../../core/knowledge/search').semanticSearch
+  }
   /** 配对码 (spec §7) — late-bound by main.ts from bootstrap.pairing. Undefined
    *  (⇒ /v1/pair/* 503) until mailbox_relays is configured AND late-bind runs. */
   pairing?: {

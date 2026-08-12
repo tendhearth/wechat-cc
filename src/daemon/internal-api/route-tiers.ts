@@ -157,6 +157,28 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // 桌面读故障记录以显示"上次故障"横幅。trusted:桌面/CLI 的唯一凭据是
   // 0600 文件 token;内容只有时间戳与分类,不含聊天数据。
   'GET /v1/health/incidents': 'trusted',
+  // Knowledge Kernel (Phase 01, T3, docs/superpowers/specs/
+  // 2026-07-12-knowledge-kernel-phase01-design.md "Knowledge API").
+  // Ingest = admin/internal only: source/put and semantic/put are written
+  // by daemon-internal jobs (the wxvault source adapter, wxsearch's
+  // indexer) — no ordinary chat session has business writing into the
+  // owner's message store, so these fail closed at admin (same trust
+  // class as customer-review below: raw wxvault-derived content).
+  'POST /v1/knowledge/source/put': 'admin',
+  'POST /v1/knowledge/semantic/put': 'admin',
+  // Query = agent-callable (trusted, not guest): these read the owner's
+  // full indexed chat history back out (raw source pages + semantic
+  // search over message text), which is strictly more exposure than the
+  // 觅食台 seeks/echoes/pledges reads above (own stored social state, not
+  // the owner's private conversations) — so it's capped at trusted, the
+  // same tier those already-flagged reads landed on, not guest. A guest
+  // session (reply-only credential) must not be able to search the
+  // owner's entire message history. ⚠️ RELEASE-REVIEW FLAG (next
+  // dev→master): revisit once a real "agent" caller identity beyond
+  // trusted/admin exists.
+  'GET /v1/knowledge/messages': 'trusted',
+  'POST /v1/knowledge/search': 'trusted',
+  'GET /v1/knowledge/semantic/status': 'trusted',
   // admin — reads the owner's private wxvault history and stores personal
   // customer judgments. Never expose to guest/trusted chat sessions.
   'GET /v1/customer-review/contacts': 'admin',
