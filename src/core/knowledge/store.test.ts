@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { Database } from 'bun:sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -232,6 +233,65 @@ describe('knowledge store', () => {
       expect(store.getMeta('embed_model')).toBe('bge-small')
       store.setMeta('embed_model', 'bge-large')
       expect(store.getMeta('embed_model')).toBe('bge-large')
+    })
+  })
+
+  describe('schema migration (pre-existing source.db from Phase 0/1)', () => {
+    it('openKnowledge migrates an old 8-column messages table in place (ADD COLUMN), does not throw, and preserves the pre-existing row', () => {
+      const migDir = mkdtempSync(join(tmpdir(), 'kk-store-migrate-'))
+      try {
+        // Simulate a Phase-0/1 source.db: the old 8-column `messages` table,
+        // no local_type/is_group/kind. CREATE TABLE IF NOT EXISTS in
+        // openKnowledge is a no-op against this — the migration must ALTER
+        // it in place instead.
+        const oldDb = new Database(join(migDir, 'source.db'), { create: true })
+        oldDb.exec(`
+          CREATE TABLE messages (
+            msg_key TEXT PRIMARY KEY,
+            conversation TEXT, sender TEXT, time INTEGER,
+            type TEXT, text TEXT, server_id TEXT,
+            ingested_watermark INTEGER
+          );
+        `)
+        oldDb
+          .query(
+            `INSERT INTO messages(msg_key, conversation, sender, time, type, text, server_id, ingested_watermark)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run('old1', 'wxid_alice', 'alice', 1000, 'text', 'pre-migration row', 'srv-0', 1)
+        oldDb.close()
+
+        let migrated: KnowledgeStore | undefined
+        expect(() => {
+          migrated = openKnowledge(migDir)
+        }).not.toThrow()
+
+        // New columns are usable: a fresh write with the new fields round-trips.
+        migrated!.putSourceMessages([msg('new1', { kind: 'voice', local_type: 34, is_group: true })])
+        const { messages } = migrated!.listMessages(0, 10)
+        const byKey = new Map(messages.map(m => [m.msg_key, m]))
+
+        // Pre-existing row survives; its new columns are NULL/undefined (tolerated).
+        const old = byKey.get('old1')
+        expect(old).toBeDefined()
+        expect(old?.text).toBe('pre-migration row')
+        expect(old?.kind == null).toBe(true)
+        expect(old?.is_group).toBe(false)
+
+        expect(byKey.get('new1')).toMatchObject({ kind: 'voice', local_type: 34, is_group: true })
+
+        migrated!.close()
+
+        // PRAGMA table_info confirms the 3 columns now physically exist.
+        const check = new Database(join(migDir, 'source.db'))
+        const cols = check.query<{ name: string }, []>('PRAGMA table_info(messages)').all().map(r => r.name)
+        check.close()
+        expect(cols).toEqual(
+          expect.arrayContaining(['local_type', 'is_group', 'kind']),
+        )
+      } finally {
+        rmSync(migDir, { recursive: true, force: true })
+      }
     })
   })
 

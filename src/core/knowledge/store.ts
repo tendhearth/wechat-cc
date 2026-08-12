@@ -35,7 +35,11 @@ export interface SourceMsg {
    *  returns the actual stored value. */
   local_type?: number
   /** Whether `conversation` is a group chat (vs a 1:1 session). Optional on
-   *  write, defaults to false — see `local_type`. */
+   *  write, defaults to false — see `local_type`.
+   *  Known follow-up (GR T1 review): source-adapter.ts's Msg_* → conversation
+   *  mapping falls back to the raw (hashed) table name when a table isn't
+   *  found in the Name2Id session set, rather than skipping it — an orphaned
+   *  table's rows land here with `is_group=false` instead of being excluded. */
   is_group?: boolean
   /** Normalized message classification — ported from wxgraph's
    *  classify_type (text/voice/call/image/transfer/redpacket/quote/app/…).
@@ -127,14 +131,35 @@ export function openKnowledge(root: string): KnowledgeStore {
       local_type INTEGER, is_group INTEGER, kind TEXT,
       ingested_watermark INTEGER
     );
-    CREATE INDEX IF NOT EXISTS messages_watermark ON messages(ingested_watermark);
-    CREATE INDEX IF NOT EXISTS messages_kind ON messages(kind);
     CREATE TABLE IF NOT EXISTS contacts (
       username TEXT PRIMARY KEY, display TEXT
     );
     CREATE TABLE IF NOT EXISTS source_meta (key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE IF NOT EXISTS source_mentions (msg_key TEXT, target_un TEXT);
     CREATE INDEX IF NOT EXISTS source_mentions_msg_key ON source_mentions(msg_key);
+  `)
+
+  // Migration: a pre-existing (Phase 0/1) source.db has the OLD 8-column
+  // `messages` table (no local_type/is_group/kind) — CREATE TABLE IF NOT
+  // EXISTS above is a no-op against it, so the columns must be added
+  // in-place here. Idempotent: only ALTERs columns that are actually
+  // missing, so this is a no-op on a fresh DB (already has all 3 from the
+  // CREATE TABLE above) and on a DB that's already been migrated once.
+  const existingMessageCols = new Set(
+    sourceDb.query<{ name: string }, []>('PRAGMA table_info(messages)').all().map(r => r.name),
+  )
+  for (const [col, ddlType] of [
+    ['local_type', 'INTEGER'],
+    ['is_group', 'INTEGER'],
+    ['kind', 'TEXT'],
+  ] as const) {
+    if (!existingMessageCols.has(col)) {
+      sourceDb.exec(`ALTER TABLE messages ADD COLUMN ${col} ${ddlType}`)
+    }
+  }
+  sourceDb.exec(`
+    CREATE INDEX IF NOT EXISTS messages_watermark ON messages(ingested_watermark);
+    CREATE INDEX IF NOT EXISTS messages_kind ON messages(kind);
   `)
 
   const stmtMaxWatermark = sourceDb.query<{ w: number | null }, []>(
