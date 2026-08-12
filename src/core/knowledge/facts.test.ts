@@ -58,5 +58,10 @@ test('find_facts obligation query; set_fact_status; extraction_status counts', (
   expect(found.results.length).toBe(1)
   const st = api.extractionStatus() as any
   expect(st.facts_by_kind.obligation).toBe(1)
+  const id = found.results[0].id
+  const setRes = api.setFactStatus(id, 'resolved', 2) as any
+  expect(setRes).toEqual({ ok: true })
+  expect((api.findFacts('obligation', null, null, 'active', 50) as any).results.length).toBe(0)
+  expect((api.findFacts('obligation', null, null, 'resolved', 50) as any).results.length).toBe(1)
   s.close()
 })
