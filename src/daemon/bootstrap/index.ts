@@ -674,6 +674,24 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // name is a KNOWN_KNOWLEDGE_PLUGINS entry, so this is inert when no
       // knowledge plugin is loaded/enabled.
       knowledgePlugins: knowledgePluginNames,
+      // Agent-facing Search (Task 5) — advertise `knowledge_search` in the
+      // prompt ONLY when it will actually work for THIS session:
+      //   - `knowledge?.embedQuery` is present iff `knowledge_enabled` AND
+      //     an embed script resolved (see the `embedder` construction
+      //     above + internal-api/types.ts's doc comment: "`knowledge_enabled`
+      //     alone doesn't guarantee an embed script resolved"). Without a
+      //     resolved embedder the /v1/knowledge/search route 400s on every
+      //     call from the tool (it never receives a pre-embedded
+      //     queryVector), so gating on `knowledge_enabled` alone would tell
+      //     the agent about a tool that's registered but non-functional.
+      //   - `tierProfile.allow.has('knowledge_search')` mirrors
+      //     daemonOpsAvailable/fileLocateAvailable above: true only for
+      //     admin (user-tier.ts's ADMIN_ONLY), matching exactly the
+      //     predicate wechat-mcp/main.ts gates `registerKnowledgeSearchTool`
+      //     on (SESSION_IS_ADMIN) — so this flag tracks tool registration
+      //     precisely, non-admin/knowledge-off sessions unaffected (both
+      //     default away from true).
+      knowledgeSearchAvailable: !!knowledge?.embedQuery && tierProfile.allow.has('knowledge_search'),
     })
   }
 

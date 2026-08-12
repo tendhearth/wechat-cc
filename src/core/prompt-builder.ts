@@ -157,6 +157,17 @@ export interface BuildSystemPromptArgs {
    * contract).
    */
   knowledgePlugins?: string[]
+  /**
+   * When true, this session is admin-tier AND the daemon's `knowledge_search`
+   * MCP tool is actually registered/functional for it (agent-facing search
+   * design Task 5) — adds the `- **消息检索**（\`knowledge_search\`）…` bullet
+   * to the knowledge-orchestration section. Deliberately NOT derived from
+   * `knowledgePlugins`/the `wxsearch` plugin name — `knowledge_search` is a
+   * daemon-owned tool, independent of whether the wxsearch plugin is loaded.
+   * Absent or false ⇒ output is byte-identical to before this field existed
+   * (mirrors `careEnabled`'s contract).
+   */
+  knowledgeSearchAvailable?: boolean
 }
 
 /**
@@ -167,7 +178,17 @@ export interface BuildSystemPromptArgs {
 export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
   const { providerId, peerProviderId, companionEnabled, delegateAvailable } = args
 
+  // `knowledge_search` is a daemon-owned tool (agent-facing search design
+  // Task 5), independent of whether any KNOWN_KNOWLEDGE_PLUGINS entry is
+  // loaded (e.g. a custom `knowledge_embed_script` override can make it
+  // available with no wxsearch plugin present at all). So the section must
+  // render whenever EITHER a known plugin is present OR knowledge_search is
+  // available — otherwise an admin session where knowledge_search is the
+  // only source would never see this section, and the agent would never
+  // learn the tool exists.
+  const knowledgeSearchAvailable = args.knowledgeSearchAvailable === true
   const hasKnownKnowledge = (args.knowledgePlugins ?? []).some(n => (KNOWN_KNOWLEDGE_PLUGINS as readonly string[]).includes(n))
+    || knowledgeSearchAvailable
 
   const sections: string[] = [
     baseChannelSection(providerId),
@@ -185,7 +206,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     args.personaCultivate === true ? personaCultivationSection({ personaEmpty: args.personaEmpty === true }) : '',
     args.stickerTags && args.stickerTags.length > 0 ? stickerSection(args.stickerTags) : '',
     memorySection(),
-    hasKnownKnowledge ? knowledgeOrchestrationSection(args.knowledgePlugins!) : '',
+    hasKnownKnowledge ? knowledgeOrchestrationSection(args.knowledgePlugins ?? [], { knowledgeSearchAvailable }) : '',
     multiModeAwarenessSection(),
     companionEnabled ? companionSection() : '',
   ].filter(s => s.length > 0)
@@ -513,7 +534,7 @@ companion 现在的 persona（小助手 / 陪伴）影响你**怎么读 memory +
  * in KNOWN_KNOWLEDGE_PLUGINS order, so bootstrap can pass whatever plugin set
  * this session ended up with and only the matching copy shows up.
  */
-export function knowledgeOrchestrationSection(pluginNames: string[]): string {
+export function knowledgeOrchestrationSection(pluginNames: string[], opts?: { knowledgeSearchAvailable?: boolean }): string {
   const present = new Set(pluginNames)
   const bullets: string[] = []
   if (present.has('wxgraph')) {
@@ -522,14 +543,20 @@ export function knowledgeOrchestrationSection(pluginNames: string[]): string {
   if (present.has('wxfacts')) {
     bullets.push('- **结构化事实**（`contact_facts`/`find_facts`）：抽取出的事实、义务、关系（带出处）。问"关于 ta 的具体事实 / ta 欠我什么"用它。')
   }
-  // NOTE (Knowledge Kernel Phase 0/1): wxsearch's `search` MCP tool was retired —
-  // semantic search moved to the daemon's in-process Knowledge Kernel and is not
-  // yet exposed as an agent-facing tool (the /v1/knowledge/search Query face is
-  // admin-only + needs a pre-embedded queryVector). Do NOT advertise a `search`
-  // tool here until the daemon exposes one, or the agent will emit calls to a
-  // tool that isn't registered. Re-add a bullet pointing at the daemon search
-  // tool in the Phase 1 continuation. (The wxmedia "also searchable" line
-  // depended on this same search tool and is likewise withheld.)
+  // Agent-facing Search (Task 5): wxsearch's OLD `search` MCP tool was
+  // retired (Knowledge Kernel Phase 0/1) — semantic search moved to the
+  // daemon's in-process Knowledge Kernel, exposed to the agent as the
+  // daemon-owned `knowledge_search` MCP tool (admin-only, gated on
+  // `knowledge_enabled` + the embedder actually resolving — see
+  // bootstrap/index.ts's `knowledgeSearchAvailable` derivation). Deliberately
+  // NOT keyed off the `wxsearch` plugin name being present in `pluginNames` —
+  // wxsearch no longer provides a search tool at all, and the caller must
+  // pass this opt-in flag exactly when `knowledge_search` is actually
+  // registered for this session, or the agent will emit calls to a tool
+  // that doesn't exist.
+  if (opts?.knowledgeSearchAvailable) {
+    bullets.push('- **消息检索**（`knowledge_search`）：语义找"那次聊到 X 的消息"。回溯具体对话用它。')
+  }
 
   const parts: string[] = [
     '你对一个人的了解由几层组成——你自己的记忆是你的"看法"（第一人称、可能有偏见）；下面这些是从真实数据算出来的源。**要真正懂一个人，把你的看法 + 关系 + 事实拼起来，别只靠一层。用人名找人（按微信联系人名解析，同名可能对不准）。**',

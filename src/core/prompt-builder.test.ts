@@ -514,15 +514,28 @@ describe('knowledge-orchestration prompt section', () => {
     expect(s).toContain('同名可能对不准')
   })
 
-  it('renders the wxgraph bullet but NOT a `search` bullet (wxsearch search tool retired to the daemon Knowledge Kernel; no agent search tool yet)', () => {
+  it('renders the wxgraph bullet but NOT a `search` bullet when knowledge_search is not available (default/no opts) (wxsearch search tool retired to the daemon Knowledge Kernel; the daemon-owned knowledge_search tool is gated separately)', () => {
     const s = knowledgeOrchestrationSection(['wxgraph', 'wxsearch'])
     expect(s).toContain('关系画像')
     // wxsearch's `search` MCP tool was retired (Knowledge Kernel Phase 0/1) —
-    // do not advertise a search tool that isn't registered.
+    // do not key the bullet off the wxsearch plugin name; it no longer
+    // provides search. Gating is purely via opts.knowledgeSearchAvailable.
     expect(s).not.toContain('消息检索')
-    expect(s).not.toContain('`search`')
+    expect(s).not.toContain('knowledge_search')
     expect(s).not.toContain('结构化事实')
     expect(s).not.toContain('语音/图片转出的文字')
+  })
+
+  it('renders the same wxgraph+wxsearch case with knowledgeSearchAvailable explicitly false — still NOT contain the search bullet', () => {
+    const s = knowledgeOrchestrationSection(['wxgraph', 'wxsearch'], { knowledgeSearchAvailable: false })
+    expect(s).not.toContain('消息检索')
+    expect(s).not.toContain('knowledge_search')
+  })
+
+  it('renders the 消息检索/knowledge_search bullet when knowledgeSearchAvailable is true (agent-facing search AS T5)', () => {
+    const s = knowledgeOrchestrationSection(['wxgraph'], { knowledgeSearchAvailable: true })
+    expect(s).toContain('knowledge_search')
+    expect(s).toContain('消息检索')
   })
 
   it('renders only the facts bullet when only wxfacts is present', () => {
@@ -573,6 +586,30 @@ describe('knowledge-orchestration prompt section', () => {
     expect(withEmpty).toBe(withoutKey)
     expect(withUnknown).toBe(withoutKey)
     expect(withoutKey).not.toContain('知识编排')
+  })
+
+  it('buildSystemPrompt is byte-identical whether knowledgeSearchAvailable is absent or explicitly false (no knowledgePlugins either way)', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withFalse = buildSystemPrompt({ ...base, knowledgeSearchAvailable: false })
+    expect(withFalse).toBe(withoutKey)
+    expect(withoutKey).not.toContain('知识编排')
+  })
+
+  it('buildSystemPrompt renders the knowledge-orchestration section + knowledge_search bullet from knowledgeSearchAvailable ALONE, with no knowledgePlugins at all (knowledge_search is a daemon-owned tool, not gated on plugin presence)', () => {
+    const p = buildSystemPrompt({ ...base, knowledgeSearchAvailable: true })
+    expect(p).toContain('知识编排')
+    expect(p).toContain('knowledge_search')
+    expect(p).toContain('消息检索')
+    // no plugin bullets — knowledgePlugins was never passed
+    expect(p).not.toContain('关系画像')
+    expect(p).not.toContain('结构化事实')
+  })
+
+  it('buildSystemPrompt combines a known plugin with knowledgeSearchAvailable — both bullets present', () => {
+    const p = buildSystemPrompt({ ...base, knowledgePlugins: ['wxgraph'], knowledgeSearchAvailable: true })
+    expect(p).toContain('关系画像')
+    expect(p).toContain('消息检索')
+    expect(p).toContain('knowledge_search')
   })
 
   it('places the knowledge section immediately after the memory section, no other section shifted', () => {
