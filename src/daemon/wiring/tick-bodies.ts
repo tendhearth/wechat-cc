@@ -173,7 +173,10 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       bundledDir: bundledPluginsDir(),
       hostVersion: selfPkg.version,
     }))
-    if (Object.keys(specs).length === 0) return   // no knowledge plugins → nothing to ingest
+    // facts extraction now runs in-process (wxfacts plugin retired) — keep
+    // ticking even with zero MCP knowledge plugins loaded when facts.db exists.
+    const factsApi = deps.boot.knowledge?.facts
+    if (Object.keys(specs).length === 0 && !factsApi) return   // nothing to ingest
 
     // Don't compete with an active conversation. Two checks per known chat:
     // (1) authoritative — a turn is actually in-flight on its session (catches
@@ -217,7 +220,9 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       try {
         // Gate extraction off when there's no cheap-eval provider — otherwise the
         // loop would drain real message windows into empty records + advance the
-        // watermark past them (silent loss). See ingestHasTool.
+        // watermark past them (silent loss). See ingestHasTool. The in-proc
+        // facts path bypasses hasTool (cycle.ts runs it unconditionally when
+        // factsApi is set), so it needs the same cheapEval gate applied here.
         const hasTool = ingestHasTool(bridge.tools.map(t => t.name), !!cheapEval)
         const report = await runIngestCycle({
           bridge,
@@ -227,6 +232,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
           lastSourceMtime: lastIngestSourceMtime,
           cap: INGEST_BATCH_CAP,
           log: (tag, msg) => deps.log(tag, msg),
+          factsApi: cheapEval ? factsApi : undefined,
         })
         lastIngestSourceMtime = report.newSourceMtime
         if (report.batches || report.rebuilt || report.indexed || report.transcribed) {

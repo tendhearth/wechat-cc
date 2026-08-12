@@ -90,6 +90,65 @@ describe('runIngestCycle', () => {
   })
 })
 
+describe('runIngestCycle — factsApi (in-proc extraction)', () => {
+  it('with factsApi present, extraction runs through it — bridge.call NOT called for extraction_batch, even when hasTool is false', async () => {
+    const factsApi = {
+      nextBatch: vi.fn(() => ({ done: true })),
+      record: vi.fn(),
+      contactFacts: vi.fn(),
+      findFacts: vi.fn(),
+      setFactStatus: vi.fn(),
+      extractionStatus: vi.fn(),
+    }
+    const bridge = { call: vi.fn(async (_t: string, _i?: unknown) => '{}') }
+    const d = deps({ tools: [], bridge })   // no tools at all — extraction_batch absent
+    const r = await runIngestCycle({ ...d, factsApi })
+    expect(factsApi.nextBatch).toHaveBeenCalledWith(null, 40)
+    expect(bridge.call.mock.calls.some((c) => c[0] === 'extraction_batch')).toBe(false)
+    expect(r.batches).toBe(0)   // immediately done
+  })
+
+  it('with factsApi present and a real batch, record_facts goes through factsApi.record, not the bridge', async () => {
+    let calls = 0
+    const factsApi = {
+      nextBatch: vi.fn(() => {
+        calls++
+        return calls === 1
+          ? { batch_id: 'b1', contact: 'c', display: 'd', messages: [{ msg_key: 'k', sender: 'd', time: 1, text: 'hi' }] }
+          : { done: true }
+      }),
+      record: vi.fn(() => ({ recorded: 1, merged: 0, advanced_to: 1 })),
+      contactFacts: vi.fn(),
+      findFacts: vi.fn(),
+      setFactStatus: vi.fn(),
+      extractionStatus: vi.fn(),
+    }
+    const bridge = { call: vi.fn(async (_t: string, _i?: unknown) => '{}') }
+    const d = deps({ tools: [], bridge, cheapEval: async () => '[{"kind":"entity","predicate":"是","value":"x"}]' })
+    const r = await runIngestCycle({ ...d, factsApi })
+    expect(factsApi.record).toHaveBeenCalledWith('b1', [{ kind: 'entity', predicate: '是', value: 'x' }], expect.any(Number))
+    expect(bridge.call.mock.calls.some((c) => c[0] === 'record_facts')).toBe(false)
+    expect(r.batches).toBe(1)
+    expect(r.recorded).toBe(1)
+  })
+
+  it('without factsApi, the old bridge path is used and still gates on hasTool', async () => {
+    const seen: string[] = []
+    const bridge = { call: vi.fn(async (t: string) => { seen.push(t); return t === 'extraction_batch' ? DONE : '{}' }) }
+    const r = await runIngestCycle(deps({ tools: ['extraction_batch'], bridge }))
+    expect(seen).toContain('extraction_batch')
+    expect(r.batches).toBe(0)
+  })
+
+  it('without factsApi and extraction_batch absent from hasTool, extraction is skipped entirely', async () => {
+    const seen: string[] = []
+    const bridge = { call: vi.fn(async (t: string) => { seen.push(t); return '{}' }) }
+    const r = await runIngestCycle(deps({ tools: [], bridge }))
+    expect(seen).not.toContain('extraction_batch')
+    expect(r.batches).toBe(0)
+  })
+})
+
 describe('ingestHasTool', () => {
   it('hides extraction_batch when canExtract is false, but not other tools', () => {
     const h = ingestHasTool(['overview', 'rebuild', 'extraction_batch'], false)
