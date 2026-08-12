@@ -62,10 +62,23 @@ export interface MakeEmbedRunnerOpts {
   pythonBin: string
   scriptPath: string
   model_id: string
-  spawnFn?: (cmd: string[]) => EmbedRunnerChild
+  spawnFn?: (cmd: string[], opts: { env: Record<string, string | undefined> }) => EmbedRunnerChild
   /** Per-request timeout (ms) — see the module docstring's "Robustness"
    *  section. Default 120_000. */
   requestTimeoutMs?: number
+  /**
+   * Environment for the spawned child (T7' review Finding 1). Defaults to
+   * `process.env` when omitted. The daemon's caller (bootstrap/index.ts)
+   * MUST override `WXVAULT_STATE_DIR` here — without it, the child (a
+   * fastembed model-manager under the hood, same code wxsearch/wxmedia use)
+   * falls back to resolving its state dir relative to its OWN script path,
+   * which is read-only inside a packaged app and re-downloads the model on
+   * every single run instead of reusing the cache wxvault/wxsearch already
+   * populated at `<stateDir>/plugin-data/wxvault`. This mirrors the exact
+   * env the plugin registry sets for wxsearch/wxmedia's own manifests
+   * (`${dataDir}/../wxvault`, see packages/wxsearch/wechat-cc.plugin.json).
+   */
+  env?: Record<string, string | undefined>
 }
 
 export interface EmbedRunner {
@@ -73,8 +86,8 @@ export interface EmbedRunner {
   close(): Promise<void>
 }
 
-function defaultSpawn(cmd: string[]): EmbedRunnerChild {
-  const proc = Bun.spawn(cmd, { stdin: 'pipe', stdout: 'pipe', stderr: 'inherit' })
+function defaultSpawn(cmd: string[], opts: { env: Record<string, string | undefined> }): EmbedRunnerChild {
+  const proc = Bun.spawn(cmd, { stdin: 'pipe', stdout: 'pipe', stderr: 'inherit', env: opts.env })
   return {
     // Bun's FileSink (stdin: 'pipe') exposes write()/end() — structurally
     // compatible with EmbedRunnerChild['stdin'] without a class dependency.
@@ -89,7 +102,8 @@ function defaultSpawn(cmd: string[]): EmbedRunnerChild {
 
 export function makeEmbedRunner(opts: MakeEmbedRunnerOpts): EmbedRunner {
   const spawnFn = opts.spawnFn ?? defaultSpawn
-  const child = spawnFn([opts.pythonBin, opts.scriptPath, '--model-id', opts.model_id])
+  const env = opts.env ?? process.env
+  const child = spawnFn([opts.pythonBin, opts.scriptPath, '--model-id', opts.model_id], { env })
   const requestTimeoutMs = opts.requestTimeoutMs && opts.requestTimeoutMs > 0
     ? opts.requestTimeoutMs
     : DEFAULT_REQUEST_TIMEOUT_MS

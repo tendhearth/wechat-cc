@@ -257,4 +257,47 @@ describe('makeEmbedRunner', () => {
 
     await expect(runner.embed(['a', 'b', 'c'])).rejects.toThrow(/vector/i)
   })
+
+  // T7' review Finding 1 — the daemon's real spawnFn (defaultSpawn) must
+  // forward the `env` opt into Bun.spawn so the child inherits
+  // WXVAULT_STATE_DIR (or whatever env the caller threads through); without
+  // it the embed subprocess falls back to a read-only, per-run-redownload
+  // state dir. This test proves makeEmbedRunner threads `opts.env` through
+  // to spawnFn's second argument — spawnFn itself is a fake here (no real
+  // Bun.spawn), so it doesn't exercise defaultSpawn's own `Bun.spawn(cmd, {
+  // ..., env })` line, but it does prove the wiring from
+  // MakeEmbedRunnerOpts.env down to the spawn call site is correct, which is
+  // the part a caller (bootstrap/index.ts) actually depends on.
+  it('threads the env option through to spawnFn', async () => {
+    const child = makeFakeChild()
+    let seenEnv: Record<string, string | undefined> | undefined
+    runner = makeEmbedRunner({
+      pythonBin: 'python3',
+      scriptPath: '/fake/embed_subprocess.py',
+      model_id: 'test-model',
+      env: { ...process.env, WXVAULT_STATE_DIR: '/fake/state/plugin-data/wxvault' },
+      spawnFn: (_cmd, opts) => {
+        seenEnv = opts.env
+        return child
+      },
+    })
+
+    expect(seenEnv?.WXVAULT_STATE_DIR).toBe('/fake/state/plugin-data/wxvault')
+  })
+
+  it('defaults env to process.env when not provided', async () => {
+    const child = makeFakeChild()
+    let seenEnv: Record<string, string | undefined> | undefined
+    runner = makeEmbedRunner({
+      pythonBin: 'python3',
+      scriptPath: '/fake/embed_subprocess.py',
+      model_id: 'test-model',
+      spawnFn: (_cmd, opts) => {
+        seenEnv = opts.env
+        return child
+      },
+    })
+
+    expect(seenEnv).toBe(process.env as unknown as Record<string, string | undefined>)
+  })
 })

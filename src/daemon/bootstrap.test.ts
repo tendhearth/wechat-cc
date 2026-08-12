@@ -2670,7 +2670,7 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
     }
   })
 
-  it('boot.knowledge is undefined when knowledge_enabled is absent', async () => {
+  it('boot.knowledge is undefined when knowledge_enabled is absent, and no knowledge work is ever scheduled/logged', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-off-'))
     writeFileSync(
       join(stateDir, 'agent-config.json'),
@@ -2682,6 +2682,7 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
         // knowledge_enabled omitted entirely.
       }),
     )
+    const logLines: Array<{ tag: string; line: string; fields?: Record<string, unknown> }> = []
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
@@ -2690,9 +2691,17 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
         ilink: makeIlinkStub() as any,
         loadProjects: () => ({ projects: {}, current: null }),
         lastActiveChatId: () => null,
-        log: () => {},
+        log: (tag, line, fields) => { logLines.push({ tag, line, fields }) },
       })
       expect(boot.knowledge).toBeUndefined()
+      // Gating (T7' review Finding 2c) — when disabled, the whole
+      // knowledge-cycle block (including its setTimeout(0) boot backfill)
+      // never runs, so the daemon never emits a single 'KNOWLEDGE'-tagged
+      // log line. Give the deferred setTimeout(0) a tick to prove this is a
+      // structural "never scheduled", not a race against an async backfill
+      // that just hasn't logged yet.
+      await new Promise(resolve => setTimeout(resolve, 20))
+      expect(logLines.find(l => l.tag === 'KNOWLEDGE')).toBeUndefined()
     } finally {
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })

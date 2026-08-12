@@ -53,7 +53,7 @@ import { loadAccess, setSessionInvalidator, type Access } from '../../lib/access
 import { loadCompanionConfig, type CompanionConfig } from '../companion/config'
 import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
 import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
-import { bundledPluginsDir } from '../plugins/paths'
+import { bundledPluginsDir, pluginDataDir } from '../plugins/paths'
 import { buildDelegateDispatch } from './delegate'
 import { makeSendAssistantText } from './fallback-reply'
 import { registerProviders } from './providers'
@@ -75,6 +75,7 @@ import { semanticSearch } from '../../core/knowledge/search'
 import { runSourceAdapter } from '../../core/knowledge/source-adapter'
 import { runIndexer } from '../../core/knowledge/indexer'
 import { makeEmbedRunner } from '../../core/knowledge/embed-runner'
+import { runKnowledgeCycle } from '../../core/knowledge/cycle'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
 import selfPkg from '../../../package.json' with { type: 'json' }
@@ -425,53 +426,54 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       ? join(wxsearchPlugin.dir, '.venv', 'bin', 'python')
       : (findOnPath('python3') ?? 'python3')
 
-    const runKnowledgeAdapter = async (onBoot: boolean) => {
-      let ingested = 0
-      try {
-        ingested = runSourceAdapter({ decryptedDir, store: knowledgeStore }).ingested
-        if (onBoot) deps.log('BOOT', 'knowledge: enabled — store + source adapter wired', { ingested })
-      } catch (err) {
-        deps.log('KNOWLEDGE', `source adapter run failed: ${err instanceof Error ? err.message : String(err)}`)
-      }
+    // T7' review Finding 1 — the embed subprocess must see the SAME
+    // WXVAULT_STATE_DIR wxvault/wxsearch itself uses
+    // (`<stateDir>/plugin-data/wxvault`, exactly what the plugin registry's
+    // manifest templating resolves `${dataDir}/../wxvault` to for wxsearch's
+    // own spawn — see packages/wxsearch/wechat-cc.plugin.json). Without this,
+    // Bun.spawn's child inherits the daemon's bare process.env, and
+    // embed_subprocess.py's ModelManager falls back to a state dir relative
+    // to its own (read-only, in a packaged app) script path — re-downloading
+    // the model every run and writing config the indexer never reads.
+    const embedEnv = { ...process.env, WXVAULT_STATE_DIR: pluginDataDir(deps.stateDir, 'wxvault') }
 
-      // Indexer — runs AFTER the adapter, same schedule (boot backfill +
-      // periodic tick), so each pass indexes whatever `source` the adapter
-      // just normalized. A fresh embed subprocess is spawned per run (never
-      // held open across runs — amortizing model load WITHIN one run is the
-      // subprocess protocol's job, see embed-runner.ts) and always closed,
-      // even on failure, so a wedged/timed-out child (embed-runner.ts's
-      // per-request timeout) never survives past this pass. `runIndexer`
-      // rejecting (e.g. from a killed/broken embed runner) means it aborts
-      // mid-run WITHOUT advancing its store-meta cursor — the next tick
-      // retries from the same point, exactly like the source adapter's own
-      // crash-safety story above.
-      if (embedScriptPath) {
-        try {
-          const embedRunner = makeEmbedRunner({
-            pythonBin: embedPythonBin,
-            scriptPath: embedScriptPath,
-            model_id: knowledgeEmbedModelId,
-          })
-          try {
-            const { indexed } = await runIndexer({
-              store: knowledgeStore,
-              embed: embedRunner.embed,
-              model_id: knowledgeEmbedModelId,
-              model_version: KNOWLEDGE_EMBED_MODEL_VERSION,
-            })
-            if (onBoot || indexed > 0) deps.log('KNOWLEDGE', `indexer run: ${indexed} chunk(s) embedded`, { indexed, model_id: knowledgeEmbedModelId })
-          } finally {
-            await embedRunner.close()
-          }
-        } catch (err) {
-          deps.log('KNOWLEDGE', `indexer run failed (will retry next tick): ${err instanceof Error ? err.message : String(err)}`)
-        }
-      } else if (onBoot) {
-        deps.log('KNOWLEDGE', 'indexer disabled — wxsearch plugin not found; set knowledge_embed_script to point at embed_subprocess.py')
-      }
-
-      return ingested
-    }
+    // Extracted (T7' review Finding 2 + Finding 4) into
+    // core/knowledge/cycle.ts's runKnowledgeCycle — adapter-then-indexer
+    // ordering, error-swallowing, and the "still running" concurrency guard
+    // now live there with direct unit coverage (cycle.test.ts) instead of
+    // only being reachable through this closure.
+    const runKnowledgeAdapter = (onBoot: boolean) => runKnowledgeCycle(
+      {
+        runAdapter: () => Promise.resolve(runSourceAdapter({ decryptedDir, store: knowledgeStore })),
+        // A fresh embed subprocess is spawned per run (never held open
+        // across runs — amortizing model load WITHIN one run is the
+        // subprocess protocol's job, see embed-runner.ts) and always closed,
+        // even on failure, so a wedged/timed-out child (embed-runner.ts's
+        // per-request timeout) never survives past this pass.
+        runIndex: embedScriptPath
+          ? async () => {
+              const embedRunner = makeEmbedRunner({
+                pythonBin: embedPythonBin,
+                scriptPath: embedScriptPath,
+                model_id: knowledgeEmbedModelId,
+                env: embedEnv,
+              })
+              try {
+                return await runIndexer({
+                  store: knowledgeStore,
+                  embed: embedRunner.embed,
+                  model_id: knowledgeEmbedModelId,
+                  model_version: KNOWLEDGE_EMBED_MODEL_VERSION,
+                })
+              } finally {
+                await embedRunner.close()
+              }
+            }
+          : undefined,
+        log: deps.log,
+      },
+      { onBoot },
+    )
     // Backfill — deferred one tick so it never delays buildBootstrap's return.
     setTimeout(() => { void runKnowledgeAdapter(true) }, 0)
     const knowledgeAdapterTimer = setInterval(() => { void runKnowledgeAdapter(false) }, 5 * 60_000)
