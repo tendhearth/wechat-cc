@@ -2672,7 +2672,12 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
       // test's own tmp prefix contains "knowledge", so a loose substring
       // match on the whole array would false-positive on those instead of
       // this adapter's own log line.
-      const bootLine = await pollFor(() => logLines.find(l => l.tag === 'BOOT' && l.line.startsWith('knowledge:')) ?? null)
+      // Generous poll budget (10s, not pollFor's default 500ms): this is the
+      // first knowledge-kernel test in the file, so it pays the cold-start
+      // cost, and on the Windows runner the boot backfill now does real work —
+      // before the SQLITE_OPEN_URI fix every open failed instantly there, so
+      // the whole cycle was a no-op and always logged within a few ms.
+      const bootLine = await pollFor(() => logLines.find(l => l.tag === 'BOOT' && l.line.startsWith('knowledge:')) ?? null, 1000, 10)
       expect(bootLine).toBeTruthy()
       expect(bootLine!.fields).toEqual({ ingested: 0 })
     } finally {
@@ -2684,7 +2689,10 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
       rmSync(emptyBundledDir, { recursive: true, force: true })
       rmSync(stateDir, { recursive: true, force: true })
     }
-  })
+    // 30s, not vitest's default 5s — see the poll-budget comment above. This
+    // timed out on windows-latest at 5s once the URI fix made the Windows
+    // backfill actually execute instead of failing every open instantly.
+  }, 30000)
 
   // Knowledge Graph inproc Task 4 — the graph rebuild runs as part of the
   // SAME boot backfill as the source adapter/indexer (runKnowledgeCycle,
