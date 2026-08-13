@@ -29,6 +29,15 @@ export interface JudgeDeps {
    *  judge composes an already policy-aware blurb (defence-in-depth #1 —
    *  #2 is the mandatory `gateOutbound` pass in social-answer.ts). */
   policy: string
+  /**
+   * Optional in-process grounding fetch: pre-fetched owner facts relevant to
+   * this card, appended to the user prompt so the judge reasons over
+   * already-retrieved text instead of calling tools itself. Absent =
+   * ungrounded (empty text), preserving existing callers/tests. Failures are
+   * swallowed to an empty string — grounding is best-effort, never a reason
+   * to crash or block the (fail-closed) judge.
+   */
+  ground?: (card: IntentCard) => Promise<string>
 }
 
 export interface JudgeVerdict {
@@ -37,7 +46,7 @@ export interface JudgeVerdict {
 }
 
 function systemPrompt(policy: string): string {
-  return `你替主人判断是否匹配好友的 seek 意图；用 wx* 工具读主人资料；只输出 {"match":"yes|no","blurb":"..."}；遵守披露策略：${policy}；绝不含门牌/第三方`
+  return `你替主人判断是否匹配好友的 seek 意图；根据以下提供的主人资料判断是否匹配；只输出 {"match":"yes|no","blurb":"..."}；遵守披露策略：${policy}；绝不含门牌/第三方`
 }
 
 function userPrompt(card: IntentCard): string {
@@ -70,9 +79,10 @@ function parseVerdict(raw: string): JudgeVerdict {
 export function makeJudge(deps: JudgeDeps): (card: IntentCard) => Promise<JudgeVerdict> {
   const sys = systemPrompt(deps.policy)
   return async (card: IntentCard): Promise<JudgeVerdict> => {
+    const grounding = deps.ground ? await deps.ground(card).catch(() => '') : ''
     let raw: string
     try {
-      raw = await deps.runTurn(sys, userPrompt(card))
+      raw = await deps.runTurn(sys, userPrompt(card) + (grounding ? '\n\n' + grounding : ''))
     } catch {
       // runTurn threw (model down, spawn failed, …) — fail to a silent no,
       // never surface the error as a match.

@@ -1829,20 +1829,12 @@ describe('bootstrap agent-social M1 wiring', () => {
     }
   })
 
-  it('claude-default daemon with a plugin selects the grounded judge path (not cheapEval) (grounded-judge Task 2)', async () => {
-    const base = mkdtempSync(join(tmpdir(), 'bootstrap-grounded-judge-'))
-    const bundledDir = join(base, 'bundled')
-    const pluginDir = join(bundledDir, 'wxsearch')
-    mkdirSync(pluginDir, { recursive: true })
-    // Mirrors the knowledge-orchestration fixture (line ~766): process.execPath
-    // is absolute + always present, so the plugin resolves ready — bundled
-    // defaults enabled — and ends up in bootstrap's `pluginMcp`, which is what
-    // the grounded judge needs threaded through as `deps.pluginMcp`.
-    writeFileSync(join(pluginDir, MANIFEST_FILE), JSON.stringify({
-      name: 'wxsearch',
-      kind: 'mcp',
-      spawn: { command: process.execPath, args: [] },
-    }))
+  it('claude-default daemon with knowledge_enabled wires the in-process grounded judge (SJ Task 3 — replaces the retired plugin-spawn grounded-judge.ts path)', async () => {
+    // The judge no longer spawns a plugin-carrying session (grounded-judge.ts,
+    // deleted) — it grounds in-process via owner-grounding.ts's makeOwnerGrounding,
+    // fed from `deps.knowledge` (the same Knowledge Kernel object wired
+    // whenever `knowledge_enabled` is on). No bundled plugin dir needed at all.
+    const base = mkdtempSync(join(tmpdir(), 'bootstrap-inproc-judge-'))
     writeFileSync(
       join(base, 'agent-config.json'),
       JSON.stringify({
@@ -1852,10 +1844,9 @@ describe('bootstrap agent-social M1 wiring', () => {
         closeStopsDaemon: false,
         social_enabled: true,
         social_disclosure_policy: '兴趣可说；住址不可',
+        knowledge_enabled: true,
       }),
     )
-    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = bundledDir
     const logs: string[] = []
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
@@ -1867,22 +1858,21 @@ describe('bootstrap agent-social M1 wiring', () => {
         lastActiveChatId: () => null,
         log: (_tag, m) => logs.push(m),
       })
-      expect(logs.some(m => m.includes('plugin-grounded judge via claude'))).toBe(true)
-      expect(logs.some(m => m.includes('falls back to cheapEval'))).toBe(false)
+      expect(logs.some(m => m.includes('social: in-process grounded judge (kernel facts + search, no spawn, provider-agnostic)'))).toBe(true)
+      expect(logs.some(m => m.includes('knowledge not wired'))).toBe(false)
     } finally {
+      boot?.knowledge?.store.close()
+      await boot?.knowledge?.embedder?.close?.()
       await boot?.a2aServer?.stop()
-      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
       rmSync(base, { recursive: true, force: true })
     }
   })
 
-  it('claude-default daemon with NO ready plugins logs the honest BLIND-cheapEval fallback (not a false "plugin-grounded" claim) — ws-bench stall root cause', async () => {
-    // No bundled plugin dir → pluginMcp empty → grounded judge cannot ground.
-    // The boot log must say so (BLIND / cheapEval), NOT claim "plugin-grounded".
-    const base = mkdtempSync(join(tmpdir(), 'bootstrap-blind-judge-'))
-    const bundledDir = join(base, 'bundled')
-    mkdirSync(bundledDir, { recursive: true })   // exists but empty — zero plugins
+  it('claude-default daemon with knowledge_enabled OFF logs the honest "not plugin-grounded" fallback (SJ Task 3)', async () => {
+    // No knowledge kernel wired ⇒ deps.knowledge is undefined ⇒ makeOwnerGrounding
+    // always resolves '' ⇒ the judge reasons from topic text alone. The boot
+    // log must say so honestly rather than silently claiming grounding.
+    const base = mkdtempSync(join(tmpdir(), 'bootstrap-noknowledge-judge-'))
     writeFileSync(
       join(base, 'agent-config.json'),
       JSON.stringify({
@@ -1890,8 +1880,6 @@ describe('bootstrap agent-social M1 wiring', () => {
         social_enabled: true, social_disclosure_policy: '兴趣可说；住址不可',
       }),
     )
-    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = bundledDir
     const logs: string[] = []
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
@@ -1900,13 +1888,10 @@ describe('bootstrap agent-social M1 wiring', () => {
         loadProjects: () => ({ projects: {}, current: null }),
         lastActiveChatId: () => null, log: (_tag, m) => logs.push(m),
       })
-      expect(logs.some(m => m.includes('BLIND'))).toBe(true)
-      expect(logs.some(m => m.includes('0 plugin tools mounted'))).toBe(true)
-      expect(logs.some(m => m.includes('plugin-grounded judge via'))).toBe(false)
+      expect(logs.some(m => m.includes('social: judge reasons from topic only — knowledge not wired (kernel off?). Not plugin-grounded.'))).toBe(true)
+      expect(logs.some(m => m.includes('in-process grounded judge'))).toBe(false)
     } finally {
       await boot?.a2aServer?.stop()
-      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
       rmSync(base, { recursive: true, force: true })
     }
   })
