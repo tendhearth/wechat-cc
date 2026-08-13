@@ -29,8 +29,20 @@ import { migrations } from './db'
 // today), while any change to what a migration builds is exactly what we want
 // to catch.
 
-/** Schema produced by applying migrations 1..n, as a stable hash. */
-function fingerprint(n: number): string {
+/**
+ * Canonical text of the schema produced by applying migrations 1..n.
+ *
+ * Normalisation earns its keep here. Identifier quoting is NOT stable across
+ * SQLite builds: `ALTER TABLE ... RENAME TO` (v27 rebuilds the customer-review
+ * tables that way) rewrites the stored CREATE statement, and different
+ * versions quote the rewritten identifiers differently. bun links the system
+ * libsqlite3 on macOS and its own build on Linux/Windows, so an un-normalised
+ * hash agrees locally and disagrees in CI — which is exactly what happened on
+ * the first attempt at this test. Stripping quotes and collapsing whitespace
+ * leaves the parts we actually care about (columns, types, CHECK constraints,
+ * indexes) fully covered.
+ */
+function canonicalSchema(n: number): string {
   const db = new Database(':memory:')
   try {
     for (let i = 0; i < n; i++) migrations[i]!(db)
@@ -39,27 +51,28 @@ function fingerprint(n: number): string {
         "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
       )
       .all()
-    // Collapse whitespace so re-indenting a CREATE TABLE isn't a false alarm;
-    // column, type, constraint and index changes still move the hash.
-    const canonical = rows
-      .map(r => `${r.type} ${r.name} ${(r.sql ?? '').replace(/\s+/g, ' ').trim()}`)
+    return rows
+      .map(r => `${r.type} ${r.name} ${(r.sql ?? '').replace(/["`\[\]]/g, '').replace(/\s+/g, ' ').trim()}`)
       .join('\n')
-    return createHash('sha256').update(canonical).digest('hex').slice(0, 16)
   } finally {
     db.close()
   }
+}
+
+function fingerprint(n: number): string {
+  return createHash('sha256').update(canonicalSchema(n)).digest('hex').slice(0, 16)
 }
 
 // Locked at v1.3.8 (2026-08-13). To add a migration: append it to the array,
 // append its fingerprint here, and change nothing above. If an existing line
 // has to change, you are editing published history — stop, and append instead.
 const RELEASED: Record<number, string> = {
-  18: 'b0ba854241520ffa',
-  19: 'f777402a069abcf6',
-  20: '589ec925ba5b4736',
-  21: 'a5f71e83432d4a26',
-  25: '34e02b7f103386da',
-  28: '67ec437645038eae',
+  18: '6a64b74e2bfb1af9',
+  19: 'a315df0189d11928',
+  20: '5c628ee5656bad9a',
+  21: '77a63fa40373b821',
+  25: '9a92ded4cc2a112e',
+  28: '2be8a269c7c5d8e9',
 }
 
 it('every released migration still produces the schema it was published with', () => {
@@ -68,7 +81,11 @@ it('every released migration still produces the schema it was published with', (
     const n = Number(version)
     if (n > migrations.length) continue
     const actual = fingerprint(n)
-    if (actual !== expected) drifted.push(`v${n}: locked ${expected}, now ${actual}`)
+    // Dump the canonical text alongside the hash: a hash-only failure on a
+    // platform you can't reproduce locally tells you nothing about WHAT moved.
+    if (actual !== expected) {
+      drifted.push(`v${n}: locked ${expected}, now ${actual}\n    canonical:\n      ${canonicalSchema(n).split('\n').join('\n      ')}`)
+    }
   }
   expect(
     drifted,
