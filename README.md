@@ -109,7 +109,7 @@ Download the bundle for your platform from the [latest release](https://github.c
 
 | Platform | File | First-launch quirk |
 |:---|:---|:---|
-| **macOS (Apple Silicon)** | `*.dmg` | Right-click → **Open** (Gatekeeper warning, once). |
+| **macOS (Apple Silicon)** | `*.dmg` | Drag to Applications; when the first launch is blocked: **System Settings → Privacy & Security → Open Anyway** (once). |
 | **Windows (x64)** | `.exe` (NSIS) or `.msi` | SmartScreen → **More info** → **Run anyway**. |
 | **Linux (x64)** | `.deb` / `.rpm` | No warning. |
 

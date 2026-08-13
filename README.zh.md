@@ -88,7 +88,7 @@ wechat-cc setup ; wechat-cc run
 
 | 平台 | 文件 | 第一次开 |
 |:---|:---|:---|
-| **macOS (Apple Silicon)** | `*.dmg` | 右键 → **打开**（Gatekeeper 提示一次）|
+| **macOS (Apple Silicon)** | `*.dmg` | 拖进 Applications，双击被拦后：**系统设置 → 隐私与安全性 → 仍要打开**（一次）|
 | **Windows (x64)** | `.exe` (NSIS) 或 `.msi` | SmartScreen → **更多信息** → **仍要运行** |
 | **Linux (x64)** | `.deb` / `.rpm` | 没警告 |
 

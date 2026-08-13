@@ -258,6 +258,20 @@ jobs:
           # fall through to default signing which fails when no identity is
           # provisioned.
           APPLE_SIGNING_IDENTITY: '-'
+          # tauri-bundler passes `--skip-jenkins` to bundle_dmg.sh whenever
+          # CI=true (its guard for tauri-apps/tauri#592, where osascript hangs
+          # on headless builders). That flag skips the entire Finder/AppleScript
+          # block — which is what actually applies the background image, window
+          # size and icon positions from tauri.conf's bundle.macOS.dmg. The
+          # result was a bare dmg: app + Applications symlink, no layout at all
+          # (verified by mounting the shipped v1.3.7 dmg — no .DS_Store, no
+          # .background/). Opting out restores the styled install window.
+          # Caveat: bundle_dmg.sh exits 64 when osascript fails, which fails the
+          # whole macOS build rather than degrading. Validate dmg changes with a
+          # workflow_dispatch run, never straight on a release tag — and if a
+          # runner image ever stops giving Finder a usable session, delete this
+          # line to fall back to the plain (but always-building) dmg.
+          TAURI_BUNDLER_DMG_IGNORE_CI: 'true'
 
       - name: Upload bundle artefacts
         uses: actions/upload-artifact@v4
