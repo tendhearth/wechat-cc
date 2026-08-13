@@ -40,26 +40,41 @@ describe('reshapeToFederatedHits', () => {
     expect(reshapeToFederatedHits([])).toEqual([])
   })
 
-  it('buckets confidence by score thresholds (0.66 / 0.33)', () => {
-    expect(reshapeToFederatedHits([item({ score: 0.9 })])[0]!.confidence).toBe('high')
-    expect(reshapeToFederatedHits([item({ score: 0.67 })])[0]!.confidence).toBe('high')
-    expect(reshapeToFederatedHits([item({ score: 0.66 })])[0]!.confidence).toBe('medium')
-    expect(reshapeToFederatedHits([item({ score: 0.5 })])[0]!.confidence).toBe('medium')
-    expect(reshapeToFederatedHits([item({ score: 0.33 })])[0]!.confidence).toBe('low')
-    expect(reshapeToFederatedHits([item({ score: 0.1 })])[0]!.confidence).toBe('low')
-  })
-
-  it('clamps match_score into [0,1] even for raw RRF scores outside that range', () => {
-    // semanticSearch's score is an RRF rank score (fused.length - rank), NOT
-    // pre-normalized — it can be > 1 for a strong hit. match_score must
-    // still land in [0,1] per the hearth contract.
-    expect(reshapeToFederatedHits([item({ score: 12 })])[0]!.match_score).toBe(1)
-    expect(reshapeToFederatedHits([item({ score: -3 })])[0]!.match_score).toBe(0)
-    expect(reshapeToFederatedHits([item({ score: 0.5 })])[0]!.match_score).toBe(0.5)
-    for (const hit of reshapeToFederatedHits([item({ score: 12 }), item({ score: -3 }), item({ score: 0.42 })])) {
-      expect(hit.match_score).toBeGreaterThanOrEqual(0)
+  it('derives match_score from RANK (1/(1+index)), not the raw RRF score', () => {
+    // semanticSearch's score is an RRF rank score (fused.length - rank),
+    // which is >= 1 for EVERY real hit — clamping it into [0,1] would
+    // saturate every hit to exactly 1.0, burying local vault hits under
+    // every wechat hit in hearth's match_score-desc merge regardless of
+    // relevance. So match_score/confidence are rank-derived from each
+    // item's position in the (already relevance-ordered) results array,
+    // independent of the raw score value — same raw score, different rank,
+    // different match_score.
+    const hits = reshapeToFederatedHits([
+      item({ score: 12 }),
+      item({ score: 12 }),
+      item({ score: 12 }),
+      item({ score: 12 }),
+    ])
+    expect(hits.map(h => h.match_score)).toEqual([1, 0.5, 1 / 3, 0.25])
+    // Strictly descending, all in (0,1].
+    for (let i = 1; i < hits.length; i++) {
+      expect(hits[i]!.match_score).toBeLessThan(hits[i - 1]!.match_score)
+    }
+    for (const hit of hits) {
+      expect(hit.match_score).toBeGreaterThan(0)
       expect(hit.match_score).toBeLessThanOrEqual(1)
     }
+  })
+
+  it('buckets confidence by rank band: index 0 high, 1-2 medium, 3+ low', () => {
+    const hits = reshapeToFederatedHits([
+      item({ score: 1 }),
+      item({ score: 1 }),
+      item({ score: 1 }),
+      item({ score: 1 }),
+      item({ score: 1 }),
+    ])
+    expect(hits.map(h => h.confidence)).toEqual(['high', 'medium', 'medium', 'low', 'low'])
   })
 
   it('reshapes multiple results preserving order', () => {
