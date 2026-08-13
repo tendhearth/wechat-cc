@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { wireSocial } from './wire-social'
 import { openTestDb } from '../../lib/db'
+import { makeA2AEventsStore } from '../../core/a2a-events-store'
 import type { A2ARegistry } from '../../core/a2a-registry'
 import type { A2AClient } from '../../core/a2a-client'
 import type { ProviderRegistry } from '../../core/provider-registry'
@@ -67,6 +68,7 @@ describe('wireSocial — busy-registry hold around forage()', () => {
         sendAssistantText: undefined,
         a2aRegistry,
         a2aClient,
+        eventsStore: makeA2AEventsStore(openTestDb()),
         getServerBaseUrl: () => null,
         holdBusy,
       })
