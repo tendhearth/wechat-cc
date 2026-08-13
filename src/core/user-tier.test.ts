@@ -59,7 +59,7 @@ describe('TIER_PROFILES', () => {
     'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
     'observations_read', 'observations_write',
     'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
-    'a2a_send', 'plugin_tool', 'knowledge_search', 'graph_query', 'facts_query', 'person_query',
+    'a2a_send', 'plugin_tool', 'knowledge_search', 'federated_query', 'graph_query', 'facts_query', 'person_query',
   ]
 
   for (const tier of ['admin', 'trusted', 'guest'] as UserTier[]) {
@@ -105,13 +105,14 @@ describe('TIER_PROFILES', () => {
     expect(TIER_PROFILES.trusted.relay.has('memory_delete')).toBe(true)
     // trusted denies all admin-exclusive tools (was 0 before
     // self-diagnosis / remediation / plugin tools existed).
-    expect(TIER_PROFILES.trusted.deny.size).toBe(9)
+    expect(TIER_PROFILES.trusted.deny.size).toBe(10)
     expect(TIER_PROFILES.trusted.deny.has('daemon_introspect')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('daemon_remediate')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('file_locate')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('plugin_tool')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('social_seek')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('knowledge_search')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('federated_query')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('graph_query')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('facts_query')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('person_query')).toBe(true)
@@ -371,6 +372,24 @@ describe('knowledge_search tier kind (agent-facing search AS T4)', () => {
     expect(TIER_PROFILES.trusted.allow.has('knowledge_search')).toBe(false)
     expect(TIER_PROFILES.guest.deny.has('knowledge_search')).toBe(true)
     expect(TIER_PROFILES.guest.allow.has('knowledge_search')).toBe(false)
+  })
+})
+
+describe('federated_query tier kind (memory-infra Phase 2a HF W1)', () => {
+  it('classifies mcp__wechat__federated_query as ToolKind federated_query', () => {
+    expect(classifyToolUse('mcp__wechat__federated_query', { question: 'x' })).toBe('federated_query')
+  })
+  it('admin allows federated_query; trusted and guest deny it', () => {
+    // federated_query reshapes the same knowledge_search retrieval into
+    // hearth-compatible cited hits for a federated memory layer — same
+    // private-data trust class as knowledge_search — admin-only, no relay
+    // path: trusted/guest are denied outright.
+    expect(TIER_PROFILES.admin.allow.has('federated_query')).toBe(true)
+    expect(TIER_PROFILES.admin.relay.has('federated_query')).toBe(false)
+    expect(TIER_PROFILES.trusted.deny.has('federated_query')).toBe(true)
+    expect(TIER_PROFILES.trusted.allow.has('federated_query')).toBe(false)
+    expect(TIER_PROFILES.guest.deny.has('federated_query')).toBe(true)
+    expect(TIER_PROFILES.guest.allow.has('federated_query')).toBe(false)
   })
 })
 
