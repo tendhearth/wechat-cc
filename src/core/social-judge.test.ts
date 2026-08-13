@@ -102,4 +102,16 @@ describe('makeJudge', () => {
     const v = await judge({ intent_id: 'i', kind: 'seek', topic: 't', expires_at: 'x', hop: 1 } as any)
     expect(v.match).toBe('no')
   })
+
+  it('ground throwing SYNCHRONOUSLY (non-async fn) degrades to empty grounding, judge still runs blind (does not short-circuit)', async () => {
+    let runTurnCalled = false
+    const judge = makeJudge({
+      runTurn: async () => { runTurnCalled = true; return '{"match":"no"}' },
+      ground: (() => { throw new Error('sync') }) as any,
+      policy: 'p',
+    })
+    const v = await judge({ intent_id: 'i', kind: 'seek', topic: 't', expires_at: 'x', hop: 1 } as any)
+    expect(v).toEqual({ match: 'no' })
+    expect(runTurnCalled).toBe(true)
+  })
 })
