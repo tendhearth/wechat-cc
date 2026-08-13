@@ -32,19 +32,25 @@ import { migrations } from './db'
 /**
  * Canonical text of the schema produced by applying migrations 1..n.
  *
- * Normalisation earns its keep here. Identifier quoting is NOT stable across
- * SQLite builds: `ALTER TABLE ... RENAME TO` (v27 rebuilds the customer-review
- * tables that way) rewrites the stored CREATE statement, and different
- * versions quote the rewritten identifiers differently. bun links the system
- * libsqlite3 on macOS and its own build on Linux/Windows, so an un-normalised
- * hash agrees locally and disagrees in CI — which is exactly what happened on
- * the first attempt at this test. Stripping quotes and collapsing whitespace
- * leaves the parts we actually care about (columns, types, CHECK constraints,
- * indexes) fully covered.
+ * `PRAGMA foreign_keys = ON` is load-bearing, not decoration: it is what
+ * `openDb` sets before running migrations, and SQLite only rewrites foreign
+ * keys in OTHER tables during `ALTER TABLE ... RENAME TO` when it is on. v27
+ * rebuilds the customer-review tables through exactly such a rename, so a bare
+ * in-memory database ends up with customer_review_evidence still pointing at
+ * customer_review_items_v27 — a table that no longer exists — which is not the
+ * schema production builds. Getting this wrong is what made the first version
+ * of this test disagree between macOS and CI, and it looked like a
+ * platform-specific SQLite difference right up until the pragma was tested
+ * directly.
+ *
+ * Quote stripping and whitespace collapsing then cover the rest: re-indenting
+ * a CREATE TABLE must not be a false alarm, while columns, types, CHECK
+ * constraints and indexes stay fully compared.
  */
 function canonicalSchema(n: number): string {
   const db = new Database(':memory:')
   try {
+    db.exec('PRAGMA foreign_keys = ON;')
     for (let i = 0; i < n; i++) migrations[i]!(db)
     const rows = db
       .query<{ type: string; name: string; sql: string | null }, []>(
@@ -72,7 +78,7 @@ const RELEASED: Record<number, string> = {
   20: '5c628ee5656bad9a',
   21: '77a63fa40373b821',
   25: '9a92ded4cc2a112e',
-  28: '2be8a269c7c5d8e9',
+  28: '686280c60efec07d',
 }
 
 it('every released migration still produces the schema it was published with', () => {
