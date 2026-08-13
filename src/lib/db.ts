@@ -754,6 +754,30 @@ const migrations: Migration[] = [
       ) STRICT;
     `)
   },
+  // v29 — reminders: per-chat, precise-time one-shot reminders delivered by
+  // the daemon's reminder sweeper (src/daemon/reminders). Unlike the
+  // companion agenda (day-granular, operator-only, fire-once), this is
+  // multi-user (any chat_id), minute-precise (due_at is a full ISO 8601
+  // timestamp, not a date), and restart-safe (pending rows survive a daemon
+  // restart and get swept on the next tick). attempts/last_error track
+  // delivery retries — e.g. a missing ilink context_token at fire time.
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS reminders (
+        id          TEXT PRIMARY KEY NOT NULL,
+        chat_id     TEXT NOT NULL,
+        due_at      TEXT NOT NULL,            -- ISO 8601, full timestamp
+        text        TEXT NOT NULL,
+        created_at  TEXT NOT NULL,            -- ISO 8601
+        status      TEXT NOT NULL DEFAULT 'pending'
+                      CHECK (status IN ('pending','sent','cancelled','failed')),
+        attempts    INTEGER NOT NULL DEFAULT 0,
+        last_error  TEXT
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS reminders_status_due ON reminders(status, due_at);
+      CREATE INDEX IF NOT EXISTS reminders_chat ON reminders(chat_id, due_at);
+    `)
+  },
 ]
 
 export interface OpenDbOpts {
