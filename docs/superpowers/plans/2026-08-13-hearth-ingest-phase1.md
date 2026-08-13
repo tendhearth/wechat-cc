@@ -20,7 +20,7 @@ Spec: `docs/superpowers/specs/2026-08-13-hearth-ingest-phase1-design.md`. hearth
 
 ---
 
-## Task H1 (hearth repo): `vault_plan_submit` + `vault_apply_for_owner` MCP tools
+## Task 1: [hearth repo · H1] `vault_plan_submit` + `vault_apply_for_owner` MCP tools
 
 **Repo/dir:** `scratchpad/hearth` (its own git; branch e.g. `feat/channel-submit-apply`). **Files:** `src/mcp-server.ts` (+ tool tests wherever hearth tests live — check `src/*.test.ts` / `test/`).
 
@@ -36,7 +36,7 @@ Spec: `docs/superpowers/specs/2026-08-13-hearth-ingest-phase1-design.md`. hearth
 
 ---
 
-## Task W1 (wechat-cc): optional hearth MCP client + config
+## Task 2: [wechat-cc · W1] optional hearth MCP client + config
 
 **Files:** Modify `src/daemon/companion/config.ts` (add `hearth_enabled: boolean` + `hearth_vault: string | null` + optional `hearth_cmd`); Create `src/daemon/companion/hearth-client.ts` (+ test).
 
@@ -48,7 +48,7 @@ Spec: `docs/superpowers/specs/2026-08-13-hearth-ingest-phase1-design.md`. hearth
 
 ---
 
-## Task W2 (wechat-cc): distill → hearth ChangePlan builder
+## Task 3: [wechat-cc · W2] distill → hearth ChangePlan builder
 
 **Files:** Create `src/daemon/companion/hearth-plan.ts` (+ test).
 
@@ -64,7 +64,7 @@ Spec: `docs/superpowers/specs/2026-08-13-hearth-ingest-phase1-design.md`. hearth
 
 ---
 
-## Task W3 (wechat-cc): wire the hearth push into the ingest tick
+## Task 4: [wechat-cc · W3] wire the hearth push into the ingest tick
 
 **Files:** Modify `src/daemon/wiring/tick-bodies.ts` (the distill block ~`:241-253`). Test: extend the ingest-tick / a focused hearth-push test.
 
@@ -74,7 +74,7 @@ Spec: `docs/superpowers/specs/2026-08-13-hearth-ingest-phase1-design.md`. hearth
 
 ---
 
-## Task W4: VERIFY-AGAINST-REAL (owner machine, both repos)
+## Task 5: [both repos · W4] VERIFY-AGAINST-REAL (owner machine, both repos)
 
 **File:** `scratchpad/hearth-ingest-verify.ts`.
 
