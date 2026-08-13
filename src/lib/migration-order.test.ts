@@ -1,0 +1,89 @@
+import { expect, it } from 'vitest'
+import { Database } from 'bun:sqlite'
+import { createHash } from 'node:crypto'
+import { migrations } from './db'
+
+// Why this test exists — issue #79.
+//
+// PRAGMA user_version is just a count. It records how many migrations ran,
+// never which ones, so position IS the contract: v21 means whatever the array's
+// 21st entry was when that database last upgraded. db.ts says so at the top
+// ("NEVER reorder; NEVER edit a published migration in place"), but nothing
+// enforced it.
+//
+// The customer-review branch (45a52114) was cut from a tree ending at v18 and
+// numbered its three migrations v19/v20/v21, unaware mainline had already
+// published v19-v25. Merging renumbered them to v26-v28 — a reorder from the
+// perspective of any database that had run the branch build, which then read
+// its own "21" against the new meaning and crashed on boot with
+// `no such table: social_relay`. Nobody noticed until a user upgraded.
+//
+// This guard pins the schema each released version produces. A branch cut from
+// a stale base, an insertion, a swap, or an in-place edit of a published
+// migration all change one of these fingerprints and fail here — in CI, on the
+// branch, instead of on a user's machine after release.
+//
+// It fingerprints the RESULTING SCHEMA rather than the function source on
+// purpose: rewording a comment inside a migration is harmless and must not
+// trip the guard (v1-v21 genuinely differ that way between desktop-v1.3.2 and
+// today), while any change to what a migration builds is exactly what we want
+// to catch.
+
+/** Schema produced by applying migrations 1..n, as a stable hash. */
+function fingerprint(n: number): string {
+  const db = new Database(':memory:')
+  try {
+    for (let i = 0; i < n; i++) migrations[i]!(db)
+    const rows = db
+      .query<{ type: string; name: string; sql: string | null }, []>(
+        "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+      )
+      .all()
+    // Collapse whitespace so re-indenting a CREATE TABLE isn't a false alarm;
+    // column, type, constraint and index changes still move the hash.
+    const canonical = rows
+      .map(r => `${r.type} ${r.name} ${(r.sql ?? '').replace(/\s+/g, ' ').trim()}`)
+      .join('\n')
+    return createHash('sha256').update(canonical).digest('hex').slice(0, 16)
+  } finally {
+    db.close()
+  }
+}
+
+// Locked at v1.3.8 (2026-08-13). To add a migration: append it to the array,
+// append its fingerprint here, and change nothing above. If an existing line
+// has to change, you are editing published history — stop, and append instead.
+const RELEASED: Record<number, string> = {
+  18: 'b0ba854241520ffa',
+  19: 'f777402a069abcf6',
+  20: '589ec925ba5b4736',
+  21: 'a5f71e83432d4a26',
+  25: '34e02b7f103386da',
+  28: '67ec437645038eae',
+}
+
+it('every released migration still produces the schema it was published with', () => {
+  const drifted: string[] = []
+  for (const [version, expected] of Object.entries(RELEASED)) {
+    const n = Number(version)
+    if (n > migrations.length) continue
+    const actual = fingerprint(n)
+    if (actual !== expected) drifted.push(`v${n}: locked ${expected}, now ${actual}`)
+  }
+  expect(
+    drifted,
+    drifted.length === 0
+      ? ''
+      : `The schema at these already-released versions changed:\n  ${drifted.join('\n  ')}\n`
+        + `user_version only records a COUNT, so existing databases resolve each version by `
+        + `position — changing what a published version builds silently repoints it for every `
+        + `user already past it (issue #79). Append a new migration instead. If you are merging `
+        + `a branch that numbered its migrations from a stale base, renumber the branch's `
+        + `migrations to the end of the array.`,
+  ).toEqual([])
+})
+
+it('no released version is missing from the lock (a new migration must extend it)', () => {
+  const locked = Object.keys(RELEASED).map(Number)
+  expect(Math.max(...locked)).toBe(migrations.length)
+})

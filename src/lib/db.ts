@@ -33,7 +33,12 @@ export type Db = Database
  */
 type Migration = (db: Database) => void
 
-const migrations: Migration[] = [
+/**
+ * Exported for the position guard in migration-order.test.ts, which pins the
+ * schema each released version produces. Do not run these directly — use
+ * `runMigrations`, which owns the user_version bookkeeping.
+ */
+export const migrations: Migration[] = [
   // v1 — session_state. PR7 commit 1.
   (db) => {
     db.exec(`
