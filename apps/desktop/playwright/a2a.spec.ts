@@ -39,6 +39,14 @@ async function gotoA2APane(page: import('@playwright/test').Page, shimUrl: strin
     },
     { timeout: 8_000 }
   )
+  // 觅食台改版后,连着的 bot 列表被收进了一个默认折叠的 <details>
+  // (summary 「你的觅食网连着 N 位朋友的 bot」)。折叠状态下 Playwright 视其为
+  // 不可见,本文件所有断言都会超时 —— 这正是 desktop-e2e 从 ~2026-07-08 起
+  // 持续 7 红的原因,不是产品回归。展开它,让断言看到的是真实渲染结果。
+  await page.evaluate(() => {
+    const det = document.getElementById('a2a-agents-list')?.closest('details')
+    if (det) det.open = true
+  })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

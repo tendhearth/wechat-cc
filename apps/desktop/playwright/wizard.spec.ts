@@ -151,28 +151,15 @@ test('single-page wizard DOM is gone (regression guard)', async ({ page, shimUrl
   await expect(page.locator('.setup-page')).toHaveCount(0)
 })
 
-test('add-account-btn routes to wizard wechat step', async ({ page, shimUrl }) => {
-  await page.goto(shimUrl)
-  await waitForBoot(page)
-  // Dashboard rail has #add-account-btn for binding new accounts. With
-  // moxiuwen's wizard, this routes back into the wizard at step "wechat"
-  // (the QR step) — different from master's behavior which opened a modal
-  // without changing mode.
-  const btn = page.locator('#add-account-btn')
-  await expect(btn).toBeAttached()
-  // If boot put us in dashboard mode (CI shim default with no accounts),
-  // exercise the route. Otherwise just verify the button exists.
-  const mode = await page.evaluate(() => document.documentElement.dataset.mode)
-  if (mode === 'dashboard') {
-    await btn.click()
-    await page.waitForFunction(
-      () => document.documentElement.dataset.mode === 'wizard',
-      { timeout: 5_000 }
-    )
-    // screen-wechat should be the active screen after the route.
-    await expect(page.locator('#screen-wechat.active')).toBeAttached()
-  }
-})
+// 已删除一条用例(2026-08-03):「add-account-btn routes to wizard wechat step」。
+//
+// 它断言仪表盘侧栏存在 #add-account-btn 且点击后路由回向导的 wechat 步骤。
+// 该元素在源码里已完全不存在(全仓 grep 无匹配),添加账号的入口移进了设置
+// —— 仪表盘现在的文案是「打开设置添加微信账号」。用例断言的是 toBeAttached,
+// 元素不存在时必然红,且无法通过改选择器抢救。
+//
+// 这是 desktop-e2e 从 ~2026-07-08 起持续红的一部分。若要恢复这块覆盖,应针对
+// 设置里现行的添加账号流程重新写,而不是复活这条。
 
 test('setup-poll returns confirmed after the DRY_RUN auto-pass', async ({ shim }) => {
   // Direct shim API test — verifies the DRY_RUN QR auto-pass mock (P-T12).

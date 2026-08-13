@@ -11,6 +11,7 @@
 
 import type { InboundMsg } from '../core/prompt-format'
 import type { Account } from './ilink-glue'
+import { nextBackoffMs } from './health/backoff'
 
 // ── RawUpdate: subset of ilink WeixinMessage that we care about ─────────────
 // Mirrors the real ilink WeixinMessage shape (item_list-based, ms timestamps).
@@ -241,11 +242,21 @@ export interface PollLoopOptions {
    * fires when the poll genuinely succeeds.
    */
   clearExpired?: (accountId: string) => void
+  /**
+   * Report each getUpdates round-trip's outcome. Drives the degraded
+   * determination and the outbound gate — the real call is the most
+   * accurate probe, no separate health-check needed. Optional: omit to
+   * skip health tracking.
+   */
+  health?: {
+    recordSuccess(dep: 'wechat'): void
+    recordFailure(dep: 'wechat', err: unknown): void
+  }
+  /** Test injection point; defaults to this file's sleep(). */
+  sleepFn?: (ms: number, signal: AbortSignal) => Promise<void>
 }
 
-const RETRY_DELAY_MS = 2_000
-
-export function sleep(ms: number, signal: AbortSignal): Promise<void> {
+function sleepImpl(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise(resolve => {
     let t: ReturnType<typeof setTimeout>
     const onAbort = () => { clearTimeout(t); resolve() }
@@ -256,6 +267,8 @@ export function sleep(ms: number, signal: AbortSignal): Promise<void> {
     signal.addEventListener('abort', onAbort, { once: true })
   })
 }
+
+export { sleepImpl as sleep }
 
 /**
  * Handle returned by startLongPollLoops. Exposes `addAccount` for on-the-fly
@@ -304,13 +317,16 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
     log = () => {},
     recordHeartbeat,
     clearExpired,
+    health,
   } = opts
   const resolveUserName = opts.resolveUserName ?? (() => undefined)
+  const sleep = opts.sleepFn ?? sleepImpl
 
   const loops = new Map<string, LoopRecord>()
 
   async function runLoop(account: Account, sig: AbortSignal): Promise<void> {
     let syncBuf = account.syncBuf
+    let failStreak = 0
 
     log('POLL', `loop started for ${account.id}`)
 
@@ -375,10 +391,23 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
         // any stale expired marker left by a prior -14 (idempotent no-op when
         // there's nothing to clear).
         clearExpired?.(account.id)
+        // 成功即清零 —— 时长与退避都从下一轮的第一次失败重新起算。
+        if (failStreak > 0) {
+          log('POLL', `recovered for ${account.id} after ${failStreak} consecutive failures`)
+          failStreak = 0
+        }
+        health?.recordSuccess('wechat')
       } catch (err) {
         if (sig.aborted) break
-        log('ERROR', `getUpdates failed: ${err}`)
-        await sleep(RETRY_DELAY_MS, sig)
+        health?.recordFailure('wechat', err)
+        // 日志折叠:前 3 次逐条,之后每 20 次一条汇总。2026-08-02 那次
+        // 4211 行 ERROR 把 10MB 日志刷爆触发轮转,故障起点的上下文因此永久丢失。
+        if (failStreak < 3 || failStreak % 20 === 0) {
+          log('ERROR', `getUpdates failed (${failStreak + 1}x): ${err}`)
+        }
+        const delay = nextBackoffMs(failStreak)
+        failStreak += 1
+        await sleep(delay, sig)
       }
     }
 

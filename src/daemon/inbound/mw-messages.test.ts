@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { makeMwMessages } from './mw-messages'
 import type { InboundCtx } from './types'
 import { createHash } from 'node:crypto'
@@ -99,5 +99,18 @@ describe('mw-messages', () => {
     const mw = makeMwMessages({ append: async rec => { appended.push(rec as never); return 1 }, log: () => {} })
     await mw(ctx('/health'), async () => {})
     expect(appended[0]!['id']).toBe('u1:1780000000000')
+  })
+
+  it('每条入站都记一笔活动,且回调抛错不打断管线', async () => {
+    let marks = 0
+    const mw = makeMwMessages({
+      append: async rec => { void rec; return 1 },
+      log: () => {},
+      markInboundActivity: () => { marks += 1; throw new Error('boom') },
+    })
+    const next = vi.fn(async () => {})
+    await expect(mw(ctx('hi'), next)).resolves.toBeUndefined()
+    expect(marks).toBe(1)
+    expect(next).toHaveBeenCalledTimes(1) // 抛错没有阻断后续中间件
   })
 })

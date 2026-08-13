@@ -74,6 +74,18 @@ export interface AdminCommandsDeps {
    * currently handling the WeChat message.
    */
   updateSelf?: () => Promise<{ ok: true; pid?: number } | { ok: false; reason: string }>
+  /**
+   * busy-registry hold (spec 2026-08-11 §2, code review — "微信管理命令两条
+   * fire-and-forget 是清点漏掉的第七类"). `handle()` dispatches
+   * runSynthesize (整理记忆 — minutes-long cheapEval over local memory) and
+   * runDelegate (派活 — waits on a remote hand's A2A exec) via `void
+   * run*(...)`: the handler returns immediately, so neither goes through
+   * SessionManager or is otherwise visible to the idle self-restart check.
+   * Held for the duration of the actual work (label 'admin-synthesize' /
+   * 'admin-delegate'), released in a `finally` even on throw. Absent ⇒
+   * no-op, same posture as every other Task-4/5/6 hold point.
+   */
+  holdBusy?: (label: string) => () => void
 }
 
 export interface AdminCommands {
@@ -493,6 +505,13 @@ async function runSynthesize(deps: AdminCommandsDeps, adminChatId: string): Prom
     return
   }
   synthesizeInFlight.add(adminChatId)
+  // busy-registry hold (spec 2026-08-11 §2) — runSynthesize is dispatched
+  // fire-and-forget (`void runSynthesize(...)` in handle()), outside
+  // SessionManager, and can run for minutes (cheapEval over local memory
+  // files). Held for the whole call, released in the finally below even on
+  // throw.
+  let releaseBusy: (() => void) | undefined
+  try { releaseBusy = deps.holdBusy?.('admin-synthesize') } catch { releaseBusy = undefined }
   try {
     await deps.sendMessage(adminChatId, '🧠 正在重新整理我对你的理解…')
     const r = await deps.synthesizeMemory(adminChatId)
@@ -521,6 +540,7 @@ async function runSynthesize(deps: AdminCommandsDeps, adminChatId: string): Prom
     deps.log('ADMIN_CMD', `synthesize failed chat=${adminChatId}: ${detail}`)
   } finally {
     synthesizeInFlight.delete(adminChatId)
+    try { releaseBusy?.() } catch { /* release 幂等且不抛,防御性 */ }
   }
 }
 
@@ -544,6 +564,13 @@ async function runDelegate(deps: AdminCommandsDeps, adminChatId: string, handNam
     await deps.sendMessage(adminChatId, '派活功能未启用(没配置 A2A / 没有可派的"手")。').catch(() => {})
     return
   }
+  // busy-registry hold (spec 2026-08-11 §2) — runDelegate is dispatched
+  // fire-and-forget (`void runDelegate(...)` in handle()), outside
+  // SessionManager, and waits on a remote hand's A2A exec (can take a
+  // while). Held for the whole call, released in the finally below even
+  // on throw.
+  let releaseBusy: (() => void) | undefined
+  try { releaseBusy = deps.holdBusy?.('admin-delegate') } catch { releaseBusy = undefined }
   try {
     await deps.sendMessage(adminChatId, `🤝 派给「${handName}」执行中…`)
     const r = await deps.delegateToHand(handName, task)
@@ -563,6 +590,8 @@ async function runDelegate(deps: AdminCommandsDeps, adminChatId: string, handNam
     const detail = err instanceof Error ? err.message : String(err)
     await deps.sendMessage(adminChatId, `派活失败:${detail.slice(0, 160)}`).catch(() => {})
     deps.log('ADMIN_CMD', `delegate failed chat=${adminChatId} hand=${handName}: ${detail}`)
+  } finally {
+    try { releaseBusy?.() } catch { /* release 幂等且不抛,防御性 */ }
   }
 }
 

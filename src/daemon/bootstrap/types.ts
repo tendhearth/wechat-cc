@@ -14,6 +14,7 @@ import type { YiHub } from '../../core/yi-hub'
 import type { DelegateDispatch } from './delegate'
 import type { SendAssistantText } from './fallback-reply'
 import type { Revealer } from '../../core/social-reveal'
+import type { HealthRuntime } from '../health'
 
 export interface BootstrapDeps {
   stateDir: string
@@ -172,6 +173,17 @@ export interface BootstrapDeps {
    * byte-identical to before this feature existed).
    */
   replySinks?: { capture: (chatId: string, text: string) => boolean }
+  /**
+   * self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
+   * graceful-shutdown-then-exit(0) so launchd's KeepAlive respawns a fresh
+   * process with fresh code. main.ts wires this to the SAME closure it
+   * passes to internal-api's requestRestart (POST /v1/daemon/restart).
+   * Optional and deliberately so: when omitted, buildBootstrap skips the
+   * self-restart mechanism entirely — no HEAD read, no activity marker, no
+   * check added to the idle-sweep tick. Tests / minimal embeddings that
+   * don't wire this stay byte-identical to before this feature existed.
+   */
+  requestRestart?: () => void
 }
 
 export interface Bootstrap {
@@ -307,4 +319,92 @@ export interface Bootstrap {
    * 503), same posture as `boot.social`/`boot.penpal`.
    */
   pairing?: import('../../core/pairing').PairingEngine
+  /**
+   * Knowledge Kernel (Phase 01, T5) — the daemon-owned KnowledgeStore + the
+   * Query-face `semanticSearch` function, present only when
+   * `knowledge_enabled` is configured (default off — opt-in during the
+   * walking-skeleton slice; see docs/superpowers/plans/2026-07-12-knowledge-
+   * kernel-phase01.md Task 5). Unlike `social`/`a2aDeps`, this needs no
+   * main.ts late-bind: `openKnowledge` only needs `stateDir`, which is
+   * available before `buildBootstrap` runs, so main.ts can pass this same
+   * shape straight into `registerInternalApi`'s `knowledge` dep (T3).
+   * Exposed here so bootstrap tests can assert the config gate and so the
+   * store can be closed in test teardown (mirrors `boot.a2aServer`'s
+   * teardown posture — `store.close()` is the caller's job, same as
+   * `a2aServer?.stop()`).
+   *
+   * Agent-facing Search (Task 2) — `embedder` is the ONE shared, long-lived
+   * embed-subprocess service (../../core/knowledge/embedder-service.ts)
+   * used by both the indexer (this file's knowledge cycle) and the query
+   * path (internal-api's `embedQuery`); it is NOT closed between cycles,
+   * only on daemon shutdown (main.ts). Exposed here (mirrors `store` above)
+   * so main.ts can close it. `embedQuery` mirrors
+   * InternalApiDeps['knowledge']['embedQuery'] — see that doc comment.
+   * Both undefined when `knowledge_enabled` is on but no embed script
+   * resolved (store/search are still present in that case).
+   */
+  knowledge?: {
+    store: import('../../core/knowledge/store').KnowledgeStore
+    search: typeof import('../../core/knowledge/search').semanticSearch
+    embedder?: import('../../core/knowledge/embedder-service').EmbedderService
+    embedQuery?: (t: string) => Promise<number[]>
+    /**
+     * Graph Query (Knowledge Graph inproc, Task 5) — the store-backed
+     * accessor over graph.db, built by `core/knowledge/graph-query.ts`'s
+     * `makeGraphQueryApi`. Unlike `embedder`/`embedQuery`, present
+     * unconditionally whenever `knowledge_enabled` is on (graph rebuild
+     * needs no embed script) — see the field's doc comment on
+     * `InternalApiDeps['knowledge']` for the full rationale, which this
+     * mirrors.
+     */
+    graph?: import('../../core/knowledge/graph-query').GraphQueryApi
+    /**
+     * Facts + Person (Knowledge Facts/Person inproc, Task 5) — mirrors
+     * `InternalApiDeps['knowledge'].facts`/`.person` (internal-api/types.ts):
+     * the candidate-feed/record/query API over facts.db built by
+     * `core/knowledge/facts.ts`'s `makeFactsApi`, and the unified
+     * per-contact brief composite built by `core/knowledge/person.ts`'s
+     * `makePersonApi`. Same posture as `graph` above: present whenever
+     * `knowledge_enabled` is configured.
+     */
+    facts?: import('../../core/knowledge/facts').FactsApi
+    person?: import('../../core/knowledge/person').PersonApi
+  }
+  /**
+   * Connection-health runtime (connection-health design, Task 7) — wraps the
+   * two-state health machine + failure classifier + incident store + notify
+   * policy behind two entry points, `onFailure`/`onSuccess`. Constructed
+   * unconditionally via `./wire-health.ts` so it exists BEFORE
+   * `registerPolling` starts the long-poll loops (main.ts wires
+   * `health.onSuccess`/`onFailure` into `startLongPollLoops`'s `health` dep,
+   * and `health.health.shouldSuspend` into `buildTickBodies`'s `health` dep).
+   */
+  health: HealthRuntime
+  /**
+   * busy-registry hold (spec 2026-08-11 §1/§2) — "work is happening" signal
+   * for long tasks that don't go through SessionManager (A2A delegate,
+   * customer-review, social forage/respond, internal-api non-GET requests,
+   * companion push/ingest/introspect ticks). Each caller wraps its run with
+   * `const release = boot.holdBusy(label); try { ... } finally { release() }`
+   * (or the fire-and-forget `.finally(release)` shape used by the
+   * background coroutines). Always present — the underlying registry
+   * (src/core/busy-registry.ts) is constructed unconditionally in
+   * buildBootstrap, independent of whether self-restart itself is enabled
+   * via `deps.requestRestart`. The self-restart idle check reads
+   * `busyRegistry.busy()` directly (see ./wire-self-restart.ts), so a held
+   * token here is exactly what stops the idle self-restart from killing a
+   * long task mid-flight.
+   */
+  holdBusy: (label: string) => () => void
+  /**
+   * self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) — mark
+   * "inbound activity happened now". Wired by main.ts's wireMain (via
+   * pipeline-deps' `messages` dep) into mw-messages' `markInboundActivity`,
+   * so the self-restart check's `quietFor()` signal reflects real traffic
+   * instead of staying at Infinity forever. Present only when
+   * `deps.requestRestart` was provided to buildBootstrap (self-restart
+   * enabled); undefined otherwise — mw-messages already treats
+   * `markInboundActivity` as optional, so this stays a clean no-op.
+   */
+  markInboundActivity?: () => void
 }

@@ -229,6 +229,54 @@ export interface InternalApiDeps {
       letterStore: import('../../core/penpal-letter-store').LetterStore
     }
   }
+  /**
+   * Knowledge Kernel (Phase 01, T3) — the daemon-owned KnowledgeStore +
+   * semanticSearch backing /v1/knowledge/*. Undefined until main.ts wires
+   * it (openKnowledge(root) + the imported semanticSearch function), in
+   * which case every /v1/knowledge/* route returns 503 knowledge_not_wired.
+   * `search` is passed as a plain function reference (not wrapped) so
+   * routes-knowledge.ts never has to import search.ts's internals — it just
+   * calls `deps.knowledge.search(deps.knowledge.store, opts)`.
+   *
+   * Agent-facing Search (Task 2) — `embedder` is the ONE shared,
+   * long-lived embed-subprocess service used by both the indexer and the
+   * query path, so both embed in the same model space (see
+   * ../../core/knowledge/embedder-service.ts). `embedQuery` is a thin
+   * convenience wrapper (`embedder.embed([t]).then(v => v[0])`) for routes
+   * that just need one query vector. Both are undefined when the indexer
+   * isn't configured (no resolvable embed script) even though `store`/
+   * `search` are present — `knowledge_enabled` alone doesn't guarantee an
+   * embed script resolved.
+   */
+  knowledge?: {
+    store: import('../../core/knowledge/store').KnowledgeStore
+    search: typeof import('../../core/knowledge/search').semanticSearch
+    embedder?: import('../../core/knowledge/embedder-service').EmbedderService
+    embedQuery?: (t: string) => Promise<number[]>
+    /**
+     * Graph Query (Knowledge Graph inproc, Task 5) — the store-backed
+     * accessor over graph.db (contacts/edges, Task 4's `rebuildGraph`),
+     * built by `core/knowledge/graph-query.ts`'s `makeGraphQueryApi`. Unlike
+     * `embedder`/`embedQuery`, this needs no embed script — it's present
+     * whenever `knowledge_enabled` is configured (graph rebuild runs
+     * independently of the semantic indexer). Undefined ⇒ every
+     * `/v1/knowledge/graph/*` route 503s knowledge_not_wired, same posture
+     * as `knowledge` itself being undefined.
+     */
+    graph?: import('../../core/knowledge/graph-query').GraphQueryApi
+    /**
+     * Facts + Person (Knowledge Facts/Person inproc, Task 4) — the
+     * candidate-feed/record/query API over facts.db (Task 1) built by
+     * `core/knowledge/facts.ts`'s `makeFactsApi`, and the unified
+     * per-contact brief composite built by `core/knowledge/person.ts`'s
+     * `makePersonApi`. Same posture as `graph` above: present whenever
+     * `knowledge_enabled` is configured; undefined ⇒ the corresponding
+     * `/v1/knowledge/facts/*` or `/v1/knowledge/person/*` route 503s
+     * knowledge_not_wired.
+     */
+    facts?: import('../../core/knowledge/facts').FactsApi
+    person?: import('../../core/knowledge/person').PersonApi
+  }
   /** 配对码 (spec §7) — late-bound by main.ts from bootstrap.pairing. Undefined
    *  (⇒ /v1/pair/* 503) until mailbox_relays is configured AND late-bind runs. */
   pairing?: {
@@ -271,6 +319,15 @@ export interface InternalApiDeps {
    * daemon's real `log` impl supports it; test stubs may ignore).
    */
   log?: (tag: string, line: string, fields?: Record<string, unknown>) => void
+  /**
+   * self-restart idle signal (spec 2026-08-03). Called on every
+   * AUTHENTICATED NON-GET request — those are the owner acting in the app,
+   * and most of them (customer-review, plugin install, memory write, …)
+   * touch neither mw-messages nor SessionManager, so without this the idle
+   * check would happily restart the daemon out from under a running one.
+   * ABSENT ⇒ no-op, exactly as before this feature existed.
+   */
+  markInboundActivity?: () => void
   /**
    * Per-chat prefs read for reply splitting (活人感, spec 2026-07-09).
    * ABSENT ⇒ splitting disabled (tests/embedded keep single-send
@@ -317,6 +374,32 @@ export interface InternalApiDeps {
    * available before bootstrap runs).
    */
   resolveAdminChatId?: () => string | null
+  /**
+   * 故障记录存取(Task 8, spec 2026-08-03-connection-health §8)— backs
+   * GET /v1/health/incidents. Late-bound by main.ts's `setIncidents()` after
+   * bootstrap constructs the health runtime (`wireHealth`'s makeHealthRuntime
+   * owns the one IncidentStore instance backed by health-incidents.json;
+   * internal-api must share that SAME instance, not a second one pointed at
+   * the same file — state-store loads its data once at construction and
+   * doesn't re-read on every `get()`, so a second instance would go stale).
+   * undefined ⇒ the route returns an empty list, not 503 — "no incidents
+   * recorded yet" is a normal state.
+   */
+  incidents?: import('../health/incident-store').IncidentStore
+  /**
+   * busy-registry hold (spec 2026-08-11 §2, Task 4 step 1) — index.ts's
+   * dispatcher holds a token for the duration of every AUTHENTICATED
+   * NON-GET request's handler await (label `api:${method} ${path}`),
+   * released in a finally right after the handler settles. This is the
+   * "still working" complement to `markInboundActivity` above: the mark
+   * only proves someone showed up a moment ago, this proves the request
+   * is still in flight RIGHT NOW, so the idle self-restart check (which
+   * reads busy()) doesn't kill a slow customer-review / plugin-install /
+   * memory-write mid-flight. ABSENT ⇒ no-op, exactly as before this
+   * feature existed. GET is deliberately excluded — same rationale as
+   * markInboundActivity (the dashboard polls GET every 5s forever).
+   */
+  holdBusy?: (label: string) => () => void
 }
 
 export interface InternalApi {
@@ -363,6 +446,13 @@ export interface InternalApi {
    */
   setSocial(social: NonNullable<InternalApiDeps['social']>): void
   /**
+   * Late-bind the Knowledge Kernel store + semanticSearch (Phase 01 T5)
+   * after bootstrap has constructed `boot.knowledge` (only happens when
+   * `knowledge_enabled` is configured). /v1/knowledge/* routes return 503
+   * knowledge_not_wired until this is called (mirrors `setSocial` above).
+   */
+  setKnowledge(knowledge: NonNullable<InternalApiDeps['knowledge']>): void
+  /**
    * Late-bind the 配对码 engine (spec §7) after bootstrap has constructed it
    * (only happens when mailbox_relays is configured). POST /v1/pair/start
    * and POST /v1/pair/accept return 503 until this is called.
@@ -375,6 +465,12 @@ export interface InternalApi {
    * called.
    */
   setMemory(memory: NonNullable<InternalApiDeps['memoryLlm']>): void
+  /**
+   * Late-bind the incident store (Task 8) after bootstrap's `wireHealth`
+   * constructs the health runtime. GET /v1/health/incidents returns an
+   * empty list (not 503) until this is called.
+   */
+  setIncidents(incidents: NonNullable<InternalApiDeps['incidents']>): void
   /** Mint an env-only per-session token granting `tier`, keyed by `sessionKey`
    *  (`provider/alias/chatId`). The daemon injects it into that session's MCP
    *  children; the route layer resolves the tier from it. */

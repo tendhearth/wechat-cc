@@ -3,6 +3,7 @@ import { homedir, platform, userInfo } from 'node:os'
 import { dirname, join, posix } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { findOnPath } from '../lib/util'
+import { SUPERVISED_ENV } from '../core/supervised-env'
 
 export type ServicePlatform = 'darwin' | 'win32' | 'linux'
 export type ServiceKind = 'launchagent' | 'scheduled-task' | 'systemd-user'
@@ -430,9 +431,19 @@ function launchAgentPlist(opts: { bunPath: string; binaryPath?: string; cwd: str
   // Persist the bundled-plugins dir into the plist: launchd starts the daemon
   // directly (not via Tauri), so unless it's baked in here the daemon can't
   // find first-party bundled plugins (e.g. wxvault) — see bundledPluginsDir().
-  const envDict = opts.bundledPluginsDir
-    ? `  <key>EnvironmentVariables</key><dict><key>WECHAT_CC_BUNDLED_PLUGINS_DIR</key><string>${escapeXml(opts.bundledPluginsDir)}</string></dict>\n`
-    : ''
+  // WECHAT_CC_SUPERVISED marks "something will restart me if I exit" — the
+  // daemon's idle self-restart (spec 2026-08-03) refuses to run without it.
+  // launchd's KeepAlive above IS that something. Set here rather than sniffed
+  // at runtime because the failure mode of guessing wrong is the worst one
+  // available: a daemon that exits cleanly with no supervisor stays dead, and
+  // by design says nothing about it.
+  const envEntries = [
+    `<key>${SUPERVISED_ENV}</key><string>1</string>`,
+    ...(opts.bundledPluginsDir
+      ? [`<key>WECHAT_CC_BUNDLED_PLUGINS_DIR</key><string>${escapeXml(opts.bundledPluginsDir)}</string>`]
+      : []),
+  ]
+  const envDict = `  <key>EnvironmentVariables</key><dict>${envEntries.join('')}</dict>\n`
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -471,6 +482,7 @@ Type=simple
 WorkingDirectory=${opts.cwd}
 Environment="CODEX_MODEL="
 Environment="WECHAT_AGENT_PROVIDER="
+Environment="${SUPERVISED_ENV}=1"
 ${opts.bundledPluginsDir ? `Environment="WECHAT_CC_BUNDLED_PLUGINS_DIR=${opts.bundledPluginsDir}"\n` : ''}ExecStart=${execStart}
 Restart=always
 RestartSec=5

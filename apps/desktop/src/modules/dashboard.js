@@ -502,6 +502,10 @@ let _providerSwitchInflight = false
 let _providerMenuOutsideHandler = null
 let _providerMenuKeyHandler = null
 
+// Throttle state for checkIncidentsOnPoll (Task 8 follow-up) — see that
+// function's doc comment.
+let _lastIncidentsCheckAt = 0
+
 /**
  * TEST-ONLY: Reset all module-level dashboard state.
  */
@@ -515,6 +519,7 @@ export function __resetDashboardState() {
   _providerSwitchInflight = false
   _providerMenuOutsideHandler = null
   _providerMenuKeyHandler = null
+  _lastIncidentsCheckAt = 0
 }
 
 // Smart reconnect: diagnose internally, then execute the matching recovery
@@ -847,4 +852,146 @@ export async function handleAccountRowClick(deps, ev) {
     return true
   }
   return false
+}
+
+// localStorage key for "which state of the latest incident has the desktop
+// already popped a notification for". Popping requires BOTH:
+//   1. `latest.notifiedAt !== null` — the daemon's staged policy
+//      (notify-policy.ts's shouldNotifyDown/shouldNotifyRecovery) already
+//      decided this incident crossed its threshold (3min actionable / 15min
+//      non-actionable) and is worth interrupting the owner for. `notifiedAt`
+//      is set ONLY when that policy returns true (see health/index.ts's
+//      onFailure), so it's the correct policy *gate* — but it is NOT by
+//      itself an "unread" marker (it stays set forever once notified, so it
+//      can't distinguish "shown" from "not yet shown").
+//   2. the owner hasn't already seen this exact state — tracked here.
+//
+// "This exact state" is a composite of the incident id AND its endedAt
+// (`${id}|${endedAt ?? "open"}`), not just the id. A bare id can't tell a
+// still-down incident apart from its own recovery (same id, `endedAt` flips
+// from null to a timestamp) — without the endedAt component, the recovery
+// notification required by spec §5 would never fire, since recovery never
+// produces a new incident id.
+//
+// Migration note: builds before 2026-08-03 stored a bare incident id here
+// (no "|" — ids themselves can contain colons from ISO timestamps, so
+// "does it look like an id" isn't a reliable test; the "|" delimiter is,
+// since incident ids never contain it). Any stored value without a "|" is
+// treated as pre-migration and handled by the same first-run branch below:
+// record the new composite key, don't notify — rather than risk misreading
+// old state as a brand-new fault.
+const LAST_SEEN_INCIDENT_KEY = "wechat-cc:health:lastSeenIncidentId"
+
+function incidentSeenKey(incident) {
+  return `${incident.id}|${incident.endedAt ?? "open"}`
+}
+
+/**
+ * 上次故障横幅。桌面没开着时通知无处可去,所以下次打开必须补上 ——
+ * 否则主人永远不知道 bot 曾经断过(2026-08-02 那次断了 10.5 小时,
+ * 他只有翻日志才发现)。
+ *
+ * Banner: shows whenever there's at least one recorded incident (latest
+ * first), regardless of unread/notified state.
+ *
+ * Notification: fires at most once per (incident id, endedAt) state, AND
+ * only once the daemon's own staged policy (notify-policy.ts) has already
+ * decided this deserves an interruption — see LAST_SEEN_INCIDENT_KEY's doc
+ * comment for why both conditions are required. Because the tracked state
+ * includes endedAt, a recovery (same id, endedAt flips from null to a
+ * timestamp) pops its own notification instead of being silently absorbed
+ * by the original "down" notification's already-seen record — spec §5
+ * requires recovery to be announced too, or the owner learns to ignore every
+ * alert. First-ever run (and pre-migration bare-id values) just record the
+ * current composite key without notifying, so installing the app doesn't
+ * immediately pop a notification for a week-old incident.
+ */
+export async function loadLastIncident(deps) {
+  const res = await deps.invokeApi("GET", "/v1/health/incidents").catch(err => {
+    console.warn("[health] incidents load failed:", err)
+    return null
+  })
+  const list = res && Array.isArray(res.incidents) ? res.incidents : []
+  const banner = document.getElementById("dash-health-banner")
+  if (!banner) return
+  const latest = list[0]
+  if (!latest) { banner.hidden = true; return }
+
+  const started = new Date(latest.startedAt)
+  const ended = latest.endedAt ? new Date(latest.endedAt) : null
+  const mins = ended ? Math.round((ended.getTime() - started.getTime()) / 60000) : null
+  const span = mins === null ? "仍在进行" : mins >= 60 ? `约 ${Math.round(mins / 60)} 小时` : `约 ${mins} 分钟`
+  banner.textContent = ended
+    ? `你的 bot 在 ${started.toLocaleString()} 前后断开过 ${span}，现已恢复。`
+    : `你的 bot 从 ${started.toLocaleString()} 起处于断开状态（${span}）。`
+  banner.hidden = false
+
+  let lastSeen = null
+  try { lastSeen = globalThis.localStorage?.getItem(LAST_SEEN_INCIDENT_KEY) ?? null } catch { /* no localStorage (non-browser test host) — treat as first run */ }
+
+  const seenKey = incidentSeenKey(latest)
+
+  if (lastSeen === null || !lastSeen.includes("|")) {
+    // First run ever (key never set), OR a pre-migration bare-id value —
+    // don't guess whether the underlying state changed since some earlier
+    // build; just start tracking the composite key from here without
+    // popping a notification.
+    try { globalThis.localStorage?.setItem(LAST_SEEN_INCIDENT_KEY, seenKey) } catch { /* best-effort */ }
+    return
+  }
+  if (lastSeen === seenKey) return
+
+  // Policy gate (see the key's doc comment above): the daemon hasn't decided
+  // this deserves an interruption yet. Deliberately do NOT update lastSeen
+  // here — leave it stale so a later poll, once notifiedAt actually flips
+  // (same id, same endedAt, so seenKey is unchanged), still finds
+  // `lastSeen !== seenKey` and re-evaluates instead of having already
+  // "consumed" this state without ever notifying.
+  if (latest.notifiedAt === null) return
+
+  try {
+    await deps.invoke("notify_user", {
+      title: ended ? "wechat-cc: bot 已恢复" : "wechat-cc: bot 当前处于断开状态",
+      body: banner.textContent,
+    })
+  } catch (err) {
+    // 通知投递失败不重试、不阻塞 —— 桌面没开、系统通知权限被拒都是正常情况;
+    // 故障记录已经落盘,横幅仍然会显示。
+    console.warn("[health] notify_user failed:", err)
+  }
+  try { globalThis.localStorage?.setItem(LAST_SEEN_INCIDENT_KEY, seenKey) } catch { /* best-effort */ }
+}
+
+// How often loadLastIncident actually hits /v1/health/incidents when driven
+// by checkIncidentsOnPoll below. 60s: the HTTP call is local and cheap, but
+// there's no reason to burn one on every 5s doctor tick — a minute of
+// discovery latency for "your bot disconnected" is plenty.
+const INCIDENTS_POLL_INTERVAL_MS = 60_000
+
+/**
+ * Fixes a gap in loadLastIncident's original wiring: it only ran once, on
+ * dashboard entry — so a NEW incident that starts while the app is already
+ * open (owner sitting on the memory/logs/agents pane, not overview) went
+ * unnoticed until the owner happened to leave and re-enter the dashboard.
+ * The daemon's own notify hook is log-only (wire-health.ts), so the desktop
+ * poll is the only real-time path; it has to keep checking while the app
+ * runs, not just once.
+ *
+ * Subscribed to the doctor poller's tick stream (main.js) instead of
+ * getting its own setInterval — the doctor poller already ticks every 5s
+ * for as long as the dashboard is open and is already started/stopped
+ * correctly across mode switches, so piggybacking here can't leak a timer.
+ * Throttled to INCIDENTS_POLL_INTERVAL_MS so it doesn't hit the endpoint on
+ * every 5s tick; the very first call after a reset (_lastIncidentsCheckAt
+ * === 0) always fires immediately.
+ *
+ * Returns the underlying loadLastIncident promise (already caught, never
+ * rejects) so tests can await it; main.js's doctorPoller subscriber fires
+ * it without awaiting, same fire-and-forget posture as checkExpiredDiff.
+ */
+export function checkIncidentsOnPoll(deps) {
+  const now = Date.now()
+  if (_lastIncidentsCheckAt !== 0 && now - _lastIncidentsCheckAt < INCIDENTS_POLL_INTERVAL_MS) return Promise.resolve()
+  _lastIncidentsCheckAt = now
+  return loadLastIncident(deps).catch(err => console.warn("[health] periodic incidents check failed:", err))
 }

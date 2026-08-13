@@ -455,6 +455,53 @@ describe('startLongPollLoops', () => {
     await handle.stop()
   })
 
+  it('失败时按退避重试,并把成败上报给健康机', async () => {
+    const delays: number[] = []
+    const events: string[] = []
+    let calls = 0
+
+    const handle = startLongPollLoops({
+      accounts: [baseAcct],
+      onInbound: async () => {},
+      parse: () => [],
+      // 前 4 次失败,第 5 次成功;第 6 次起阻塞一个有界的真实宏任务,
+      // 避免成功分支零延迟地无限重入(同样会把 event loop 饿死 —— 见下面
+      // sleepFn 处的注释),同时又不像 `new Promise(() => {})` 那样永久
+      // 挂起,否则下面的 handle.stop() 会永远等不到这一轮 runLoop 落地。
+      ilink: {
+        getUpdates: async () => {
+          calls += 1
+          if (calls <= 4) throw new Error('unknown certificate verification error')
+          if (calls === 5) return { sync_buf: 'x', updates: [] }
+          await new Promise(r => setTimeout(r, 200))
+          return { sync_buf: 'x', updates: [] }
+        },
+      },
+      // sleepFn 必须让出一个真实宏任务 —— 否则 getUpdates 立即 reject +
+      // sleepFn 立即 resolve 会让循环同步空转,handle.stop() 和外层的
+      // setTimeout 永远排不上队,测试挂死(下面 313-321 行那条注释同款坑)。
+      sleepFn: async (ms: number) => {
+        delays.push(ms)
+        await new Promise(r => setTimeout(r, 0))
+      },
+      health: {
+        recordFailure: () => { events.push('fail') },
+        recordSuccess: () => { events.push('ok') },
+      },
+    } as never)
+
+    // 外部创建的 AbortController 对 startLongPollLoops 的内部循环不起作用
+    // (addAccount 内部自己 new 了一个),所以用既有用例的收尾写法:等一个
+    // 真实定时器让 5 轮全部跑完,再 stop()。
+    await new Promise(r => setTimeout(r, 50))
+    await handle.stop()
+
+    // 2,4,8,16(抖动关掉时) —— 关键是递增且不再是固定 2 秒
+    expect(delays).toHaveLength(4)
+    expect(delays[0]).toBeLessThan(delays[3]!)
+    expect(events).toEqual(['fail', 'fail', 'fail', 'fail', 'ok'])
+  })
+
   it('stops cleanly when stop() is called mid-loop', async () => {
     const getUpdates = vi.fn().mockImplementation(async () =>
       new Promise(r => setTimeout(() => r({ updates: [], sync_buf: '' }), 20)),

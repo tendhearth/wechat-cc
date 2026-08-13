@@ -53,6 +53,13 @@ import type { CareLedger } from '../companion/care-ledger'
 import type { InboundMsg } from '../../core/prompt-format'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 
+// Connection-health (Task 9) — buildPipelineDeps dereferences boot.health.health
+// unconditionally (llmHealth mw dep), so the `boot` fixture needs a minimal
+// stand-in even though this file never exercises the health machine itself.
+const fakeHealth = {
+  health: { shouldSuspend: () => false, get: () => ({ consecutiveFailures: 0 }) },
+} as unknown as Bootstrap['health']
+
 const ACCESS_FILE = join(ACCESS_STATE_DIR, 'access.json')
 function writeAccess(admins: string[]): void {
   writeFileSync(ACCESS_FILE, JSON.stringify({ dmPolicy: 'allowlist', allowFrom: [], admins }, null, 2))
@@ -114,6 +121,7 @@ describe('pipeline-deps delegateToHand selfId (T2/T6 identity-split fix)', () =>
       // (resolveSelfAgentId) and it's what delegateToHand must now read,
       // instead of process.env.WECHAT_A2A_SELF_ID.
       selfId,
+      health: fakeHealth,
     } as unknown as Bootstrap
 
     const ilink = { sendMessage } as unknown as IlinkAdapter

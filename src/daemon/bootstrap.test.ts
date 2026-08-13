@@ -16,6 +16,22 @@ import { MANIFEST_FILE } from './plugins/paths'
 import type { Access } from '../lib/access'
 import type { CompanionConfig } from './companion/config'
 import { createInternalApi } from './internal-api'
+import { wireSelfRestart } from './bootstrap/wire-self-restart'
+
+// Code review pinning (I2①, 2026-08-11): wrap the REAL wireSelfRestart with
+// a spy so a couple of tests can inspect the `busy`/`lastPollSuccessAgoMs`
+// closures buildBootstrap actually hands it — proving they read the SAME
+// `busyRegistry`/`health` instances the rest of Bootstrap exposes, not a
+// second disconnected instance (the "改错 dep 名 / 换实例" class of silent
+// regression the reviewer flagged). `importOriginal` means the wrapped
+// function's BEHAVIOR is unchanged (every existing self-restart test in
+// this file — real git reads included — still exercises the real
+// implementation); this only adds observability, and it's scoped to this
+// one test file via vi.mock, not a change to any production API/type.
+vi.mock('./bootstrap/wire-self-restart', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./bootstrap/wire-self-restart')>()
+  return { ...actual, wireSelfRestart: vi.fn(actual.wireSelfRestart) }
+})
 
 async function pollFor<T>(fn: () => T | null, tries = 50, gapMs = 10): Promise<T | null> {
   for (let i = 0; i < tries; i++) { const v = fn(); if (v) return v; await new Promise(r => setTimeout(r, gapMs)) }
@@ -838,7 +854,17 @@ describe('bootstrap', () => {
       })
       const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
       expect(prompt).toContain('知识编排')
-      expect(prompt).toContain('消息检索')
+      // The 消息检索 bullet is deliberately NOT asserted here any more. Since
+      // the Knowledge Kernel landed, wxsearch's own `search` tool is retired
+      // and the bullet is gated on `knowledgeSearchAvailable` (the daemon's
+      // embedder actually resolving), not on the wxsearch plugin being
+      // present — see knowledgeOrchestrationSection in prompt-builder.ts.
+      // Plugin presence still drives section INCLUSION, which is what this
+      // test covers; the bullet's own gating is owned by
+      // prompt-builder.test.ts ("renders the 关系画像 bullet but NOT a
+      // `search` bullet when knowledge_search is not available" and its
+      // knowledgeSearchAvailable:true counterpart).
+      expect(prompt).not.toContain('消息检索')
     } finally {
       if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
       else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
@@ -1813,20 +1839,12 @@ describe('bootstrap agent-social M1 wiring', () => {
     }
   })
 
-  it('claude-default daemon with a plugin selects the grounded judge path (not cheapEval) (grounded-judge Task 2)', async () => {
-    const base = mkdtempSync(join(tmpdir(), 'bootstrap-grounded-judge-'))
-    const bundledDir = join(base, 'bundled')
-    const pluginDir = join(bundledDir, 'wxsearch')
-    mkdirSync(pluginDir, { recursive: true })
-    // Mirrors the knowledge-orchestration fixture (line ~766): process.execPath
-    // is absolute + always present, so the plugin resolves ready — bundled
-    // defaults enabled — and ends up in bootstrap's `pluginMcp`, which is what
-    // the grounded judge needs threaded through as `deps.pluginMcp`.
-    writeFileSync(join(pluginDir, MANIFEST_FILE), JSON.stringify({
-      name: 'wxsearch',
-      kind: 'mcp',
-      spawn: { command: process.execPath, args: [] },
-    }))
+  it('claude-default daemon with knowledge_enabled wires the in-process grounded judge (SJ Task 3 — replaces the retired plugin-spawn grounded-judge.ts path)', async () => {
+    // The judge no longer spawns a plugin-carrying session (grounded-judge.ts,
+    // deleted) — it grounds in-process via owner-grounding.ts's makeOwnerGrounding,
+    // fed from `deps.knowledge` (the same Knowledge Kernel object wired
+    // whenever `knowledge_enabled` is on). No bundled plugin dir needed at all.
+    const base = mkdtempSync(join(tmpdir(), 'bootstrap-inproc-judge-'))
     writeFileSync(
       join(base, 'agent-config.json'),
       JSON.stringify({
@@ -1836,10 +1854,9 @@ describe('bootstrap agent-social M1 wiring', () => {
         closeStopsDaemon: false,
         social_enabled: true,
         social_disclosure_policy: '兴趣可说；住址不可',
+        knowledge_enabled: true,
       }),
     )
-    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = bundledDir
     const logs: string[] = []
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
@@ -1851,22 +1868,21 @@ describe('bootstrap agent-social M1 wiring', () => {
         lastActiveChatId: () => null,
         log: (_tag, m) => logs.push(m),
       })
-      expect(logs.some(m => m.includes('plugin-grounded judge via claude'))).toBe(true)
-      expect(logs.some(m => m.includes('falls back to cheapEval'))).toBe(false)
+      expect(logs.some(m => m.includes('social: in-process grounded judge (kernel facts + search, no spawn, provider-agnostic)'))).toBe(true)
+      expect(logs.some(m => m.includes('knowledge not wired'))).toBe(false)
     } finally {
+      boot?.knowledge?.store.close()
+      await boot?.knowledge?.embedder?.close?.()
       await boot?.a2aServer?.stop()
-      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
       rmSync(base, { recursive: true, force: true })
     }
   })
 
-  it('claude-default daemon with NO ready plugins logs the honest BLIND-cheapEval fallback (not a false "plugin-grounded" claim) — ws-bench stall root cause', async () => {
-    // No bundled plugin dir → pluginMcp empty → grounded judge cannot ground.
-    // The boot log must say so (BLIND / cheapEval), NOT claim "plugin-grounded".
-    const base = mkdtempSync(join(tmpdir(), 'bootstrap-blind-judge-'))
-    const bundledDir = join(base, 'bundled')
-    mkdirSync(bundledDir, { recursive: true })   // exists but empty — zero plugins
+  it('claude-default daemon with knowledge_enabled OFF logs the honest "not plugin-grounded" fallback (SJ Task 3)', async () => {
+    // No knowledge kernel wired ⇒ deps.knowledge is undefined ⇒ makeOwnerGrounding
+    // always resolves '' ⇒ the judge reasons from topic text alone. The boot
+    // log must say so honestly rather than silently claiming grounding.
+    const base = mkdtempSync(join(tmpdir(), 'bootstrap-noknowledge-judge-'))
     writeFileSync(
       join(base, 'agent-config.json'),
       JSON.stringify({
@@ -1874,8 +1890,6 @@ describe('bootstrap agent-social M1 wiring', () => {
         social_enabled: true, social_disclosure_policy: '兴趣可说；住址不可',
       }),
     )
-    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = bundledDir
     const logs: string[] = []
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
@@ -1884,13 +1898,10 @@ describe('bootstrap agent-social M1 wiring', () => {
         loadProjects: () => ({ projects: {}, current: null }),
         lastActiveChatId: () => null, log: (_tag, m) => logs.push(m),
       })
-      expect(logs.some(m => m.includes('BLIND'))).toBe(true)
-      expect(logs.some(m => m.includes('0 plugin tools mounted'))).toBe(true)
-      expect(logs.some(m => m.includes('plugin-grounded judge via'))).toBe(false)
+      expect(logs.some(m => m.includes('social: judge reasons from topic only — knowledge not wired (kernel off?). Not plugin-grounded.'))).toBe(true)
+      expect(logs.some(m => m.includes('in-process grounded judge'))).toBe(false)
     } finally {
       await boot?.a2aServer?.stop()
-      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
       rmSync(base, { recursive: true, force: true })
     }
   })
@@ -2454,6 +2465,374 @@ describe('bootstrap pairing-code wiring', () => {
       if (res.ok) throw new Error('unreachable')
       expect(res.reason).toBe('relay_drop_failed')
       expect(sent.length).toBe(0)
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
+  // wiring-level check: markInboundActivity must be present on Bootstrap
+  // IFF deps.requestRestart was provided, and calling it must never throw.
+  // Pure-function coverage for the decision (shouldSelfRestart) and the
+  // idle-tick check itself (makeSelfRestartCheck) lives in
+  // src/daemon/self-restart/*.test.ts; this proves buildBootstrap actually
+  // honors the "requestRestart absent ⇒ mechanism fully inert" contract and
+  // exposes a callable marker when it's wired (see bootstrap/index.ts's
+  // self-restart block, which feeds the SAME activity-marker instance into
+  // both this returned markInboundActivity and the check's `quietFor`).
+  it('markInboundActivity is present only when requestRestart is wired (self-restart gate)', async () => {
+    const withoutRestart = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+    })
+    expect(withoutRestart.markInboundActivity).toBeUndefined()
+
+    // Passing requestRestart makes buildBootstrap really shell out to
+    // `git rev-parse` twice (HEAD + HEAD:bun.lock). Reviewed and kept
+    // deliberately: both are read-only, offline, and ~10ms in a checkout,
+    // and NOTHING here asserts on their output — a null result (no git, no
+    // repo) leaves every assertion below unchanged. The alternatives were
+    // worse: adding an injection seam to BootstrapDeps widens production
+    // API for test convenience only, and vi.mock has previously caused
+    // real-state-dir pollution in this repo. The 3s timeout inside
+    // readGitHead bounds the worst case.
+    const withRestart = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      requestRestart: () => {},
+    })
+    expect(typeof withRestart.markInboundActivity).toBe('function')
+    // mw-messages calls this unconditionally on every inbound message
+    // (before dedup/routing) — it must be safe to call from that hot path.
+    expect(() => withRestart.markInboundActivity!()).not.toThrow()
+  })
+
+  // busy-registry hold (spec 2026-08-11 §1/§2, Task 6) — wiring-level check
+  // that Bootstrap ALWAYS exposes holdBusy (unlike markInboundActivity, the
+  // busy registry is constructed unconditionally — see bootstrap/index.ts's
+  // `const busyRegistry = makeBusyRegistry()`, independent of whether
+  // deps.requestRestart was provided). Bootstrap doesn't expose a busy()
+  // read端 (the self-restart idle check is the only consumer wired to read
+  // it — see wire-self-restart.test.ts for real-signal coverage at that
+  // layer), so the observable surface here is: present regardless of
+  // requestRestart, and calling it returns a safe, idempotent release.
+  it('holdBusy is present on Bootstrap regardless of whether requestRestart is wired, and returns a safe idempotent release', async () => {
+    for (const requestRestart of [undefined, () => {}]) {
+      const boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir: '/tmp/state',
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+        ...(requestRestart ? { requestRestart } : {}),
+      })
+      expect(typeof boot.holdBusy).toBe('function')
+      const release = boot.holdBusy('test-probe')
+      expect(typeof release).toBe('function')
+      expect(() => release()).not.toThrow()
+      // Idempotent — a second release call must be a harmless no-op.
+      expect(() => release()).not.toThrow()
+    }
+  })
+
+  // I2① (code review, 2026-08-11) — "两个新闸门静默常闭,零生产钉子". Task 6
+  // wired `lastPollSuccessAgoMs`/`busy` to read `health`/`busyRegistry`, but
+  // nothing pinned that they read the SAME instances the rest of Bootstrap
+  // exposes — a future edit could rename a dep or swap in a disconnected
+  // second instance, tsc and every other test would stay green, and the
+  // self-restart gate would silently go back to permanently-blocked. These
+  // two tests drive Bootstrap's OWN public surface (`boot.health.onSuccess`,
+  // `boot.holdBusy`) and observe the closures the REAL buildBootstrap call
+  // handed to wireSelfRestart (captured via the module-level `vi.mock` spy
+  // above — `importOriginal`, so behavior is unchanged) — no new production
+  // API, no widened Bootstrap/BootstrapDeps type. wireSelfRestart is called
+  // UNCONDITIONALLY by buildBootstrap (it internally no-ops on missing
+  // requestRestart), so neither test needs `requestRestart` — no real git
+  // spawn required.
+  it('the lastPollSuccessAgoMs closure handed to wireSelfRestart reads the SAME health instance boot.health writes through', async () => {
+    vi.mocked(wireSelfRestart).mockClear()
+    const boot = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+    })
+    expect(wireSelfRestart).toHaveBeenCalledTimes(1)
+    const passedDeps = vi.mocked(wireSelfRestart).mock.calls[0]![0]
+
+    // Before any wechat poll has ever succeeded: null (can't prove fresh).
+    expect(passedDeps.lastPollSuccessAgoMs(Date.now())).toBeNull()
+
+    // The SAME health instance boot.health IS — writing through it must be
+    // visible to the closure buildBootstrap handed to wireSelfRestart.
+    boot.health.onSuccess('wechat')
+    const ago = passedDeps.lastPollSuccessAgoMs(Date.now())
+    expect(ago).not.toBeNull()
+    expect(typeof ago).toBe('number')
+    expect(ago as number).toBeGreaterThanOrEqual(0)
+    expect(ago as number).toBeLessThan(1000)
+  })
+
+  it("the busy closure handed to wireSelfRestart reads the SAME busy registry boot.holdBusy writes through", async () => {
+    vi.mocked(wireSelfRestart).mockClear()
+    const boot = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+    })
+    expect(wireSelfRestart).toHaveBeenCalledTimes(1)
+    const passedDeps = vi.mocked(wireSelfRestart).mock.calls[0]![0]
+
+    expect(passedDeps.busy()).toBe(false)
+    const release = boot.holdBusy('pinning-probe')
+    // Same account: a hold made through boot.holdBusy must be visible to
+    // the closure buildBootstrap handed to wireSelfRestart.
+    expect(passedDeps.busy()).toBe(true)
+    release()
+    expect(passedDeps.busy()).toBe(false)
+  })
+})
+
+// ── Knowledge Kernel bootstrap wiring (Phase 01, T5) ───────────────────────
+// boot.knowledge (the daemon-owned KnowledgeStore + semanticSearch) is
+// constructed only when `knowledge_enabled` is configured — mirrors the
+// social_enabled on/off pair above. See
+// docs/superpowers/plans/2026-07-12-knowledge-kernel-phase01.md Task 5.
+describe('bootstrap knowledge kernel wiring (KK T5)', () => {
+  it('wires boot.knowledge (store + search) and runs a boot backfill when knowledge_enabled is true', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-on-'))
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        knowledge_enabled: true,
+      }),
+    )
+    const logLines: Array<{ tag: string; line: string; fields?: Record<string, unknown> }> = []
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    // Agent-facing Search Task 2 — this fixture wants NO embed script to
+    // resolve (asserted below), which requires no wxsearch plugin dir being
+    // found. `bundledPluginsDir()` falls back to `<repo>/plugins` when this
+    // env var is unset, and a dev checkout with the wechat-cc-plugins
+    // monorepo symlinked in there would otherwise make wxsearch discoverable
+    // for real — pointing this at an empty tmp dir isolates the assertion
+    // from that ambient machine state (mirrors the pattern the
+    // knowledge-orchestration tests already use for the same reason).
+    const emptyBundledDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-nobundled-'))
+    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = emptyBundledDir
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: (tag, line, fields) => { logLines.push({ tag, line, fields }) },
+      })
+      expect(boot.knowledge).toBeDefined()
+      expect(typeof boot.knowledge!.store.putSourceMessages).toBe('function')
+      expect(typeof boot.knowledge!.search).toBe('function')
+      // No wxsearch plugin dir is discoverable (isolated above) and
+      // knowledge_embed_script is unset, so no embed script resolves; the
+      // embedder (and its query convenience wrapper) must stay undefined
+      // even though the store/search half of boot.knowledge is present.
+      expect(boot.knowledge!.embedder).toBeUndefined()
+      expect(boot.knowledge!.embedQuery).toBeUndefined()
+      // Store is actually usable — putSourceMessages/listMessages round-trip.
+      const { watermark } = boot.knowledge!.store.putSourceMessages([
+        { msg_key: 'm1', conversation: 'c1', sender: 's1', time: 1, type: 'text', text: 'hi', server_id: '' },
+      ])
+      expect(watermark).toBeGreaterThan(0)
+      // Boot backfill runs fire-and-forget (setTimeout(0)) with no configured
+      // knowledge_source_dir — the default decrypted dir doesn't exist, so the
+      // adapter finds nothing, but it must still run and log {ingested: 0}
+      // rather than silently never firing.
+      // Matched via a startsWith (not a bare `.includes('knowledge')`) —
+      // the tmp stateDir path itself gets logged by unrelated plugin-not-
+      // ready BOOT lines (plugin data dirs live under stateDir), and this
+      // test's own tmp prefix contains "knowledge", so a loose substring
+      // match on the whole array would false-positive on those instead of
+      // this adapter's own log line.
+      // Generous poll budget (10s, not pollFor's default 500ms): this is the
+      // first knowledge-kernel test in the file, so it pays the cold-start
+      // cost, and on the Windows runner the boot backfill now does real work —
+      // before the SQLITE_OPEN_URI fix every open failed instantly there, so
+      // the whole cycle was a no-op and always logged within a few ms.
+      const bootLine = await pollFor(() => logLines.find(l => l.tag === 'BOOT' && l.line.startsWith('knowledge:')) ?? null, 1000, 10)
+      expect(bootLine).toBeTruthy()
+      expect(bootLine!.fields).toEqual({ ingested: 0 })
+    } finally {
+      boot?.knowledge?.store.close()
+      await boot?.knowledge?.embedder?.close?.()
+      await boot?.a2aServer?.stop()
+      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
+      rmSync(emptyBundledDir, { recursive: true, force: true })
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+    // 30s, not vitest's default 5s — see the poll-budget comment above. This
+    // timed out on windows-latest at 5s once the URI fix made the Windows
+    // backfill actually execute instead of failing every open instantly.
+  }, 30000)
+
+  // Knowledge Graph inproc Task 4 — the graph rebuild runs as part of the
+  // SAME boot backfill as the source adapter/indexer (runKnowledgeCycle,
+  // see cycle.ts), writing into the SAME KnowledgeStore's graph.db.
+  // `knowledge_owner` here forces a deterministic owner even though the
+  // fixture's source is empty (no decrypted dir on disk) — detectOwner's
+  // vote heuristic has nothing to vote on, but an explicit override still
+  // wins outright, so this is a clean assertion that the config value
+  // actually reaches rebuildGraphFromSource end to end.
+  it('runs a graph rebuild as part of the boot backfill (KK T4), honoring knowledge_owner', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-graph-'))
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        knowledge_enabled: true,
+        knowledge_owner: 'forced_wxid_owner',
+      }),
+    )
+    const logLines: Array<{ tag: string; line: string; fields?: Record<string, unknown> }> = []
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    const emptyBundledDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-graph-nobundled-'))
+    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = emptyBundledDir
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: (tag, line, fields) => { logLines.push({ tag, line, fields }) },
+      })
+      expect(boot.knowledge).toBeDefined()
+
+      const graphLine = await pollFor(
+        () => logLines.find(l => l.tag === 'KNOWLEDGE' && l.line.startsWith('graph rebuild:')) ?? null,
+      )
+      expect(graphLine).toBeTruthy()
+
+      // Source is empty (no decrypted dir on disk in this fixture), so the
+      // rebuild produced an empty-but-present graph — but `knowledge_owner`
+      // still reached it: the graph's owner meta is the forced value, not
+      // null/undetected.
+      expect(boot.knowledge!.store.getGraphMeta('owner')).toBe('forced_wxid_owner')
+      expect(boot.knowledge!.store.countContacts()).toBe(0)
+      expect(boot.knowledge!.store.getGraphMeta('source_watermark')).toBe('0')
+    } finally {
+      boot?.knowledge?.store.close()
+      await boot?.knowledge?.embedder?.close?.()
+      await boot?.a2aServer?.stop()
+      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
+      rmSync(emptyBundledDir, { recursive: true, force: true })
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  // Agent-facing Search Task 2 — the ONE shared embedder service is built
+  // only when `knowledge_enabled` AND an embed script actually resolves
+  // (`knowledge_embed_script` here, mirroring the wxsearch-plugin-dir path
+  // exercised by the knowledge-orchestration test at line ~831). The
+  // embedder is lazy (embedder-service.ts's docstring — no subprocess until
+  // the first embed() call), and this fixture's decrypted-messages dir
+  // doesn't exist, so the boot backfill's indexer pass has nothing to embed
+  // — safe to assert on the wiring without ever spawning the (nonexistent)
+  // script.
+  it('wires boot.knowledge.embedder + embedQuery when knowledge_enabled is true and knowledge_embed_script resolves', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-embedder-'))
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        knowledge_enabled: true,
+        knowledge_embed_model: 'bge-small-zh-v1.5',
+        knowledge_embed_script: join(stateDir, 'fake_embed_subprocess.py'),
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(boot.knowledge).toBeDefined()
+      expect(boot.knowledge!.embedder).toBeDefined()
+      expect(boot.knowledge!.embedder!.model_id).toBe('bge-small-zh-v1.5')
+      expect(typeof boot.knowledge!.embedder!.embed).toBe('function')
+      expect(typeof boot.knowledge!.embedder!.close).toBe('function')
+      expect(typeof boot.knowledge!.embedQuery).toBe('function')
+    } finally {
+      boot?.knowledge?.store.close()
+      await boot?.knowledge?.embedder?.close?.()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('boot.knowledge is undefined when knowledge_enabled is absent, and no knowledge work is ever scheduled/logged', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-off-'))
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        // knowledge_enabled omitted entirely.
+      }),
+    )
+    const logLines: Array<{ tag: string; line: string; fields?: Record<string, unknown> }> = []
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: (tag, line, fields) => { logLines.push({ tag, line, fields }) },
+      })
+      expect(boot.knowledge).toBeUndefined()
+      // Gating (T7' review Finding 2c) — when disabled, the whole
+      // knowledge-cycle block (including its setTimeout(0) boot backfill)
+      // never runs, so the daemon never emits a single 'KNOWLEDGE'-tagged
+      // log line. Give the deferred setTimeout(0) a tick to prove this is a
+      // structural "never scheduled", not a race against an async backfill
+      // that just hasn't logged yet.
+      await new Promise(resolve => setTimeout(resolve, 20))
+      expect(logLines.find(l => l.tag === 'KNOWLEDGE')).toBeUndefined()
     } finally {
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })

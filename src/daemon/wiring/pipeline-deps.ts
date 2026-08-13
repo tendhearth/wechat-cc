@@ -224,6 +224,10 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     sessionStore: boot.sessionStore,
     log,
     startedAt: STARTED_AT_ISO,
+    // busy-registry hold (spec 2026-08-11 §2) — 整理记忆/派活 are dispatched
+    // fire-and-forget outside SessionManager; boot.holdBusy is the same
+    // registry the self-restart idle check reads.
+    holdBusy: boot.holdBusy,
     getBotName,
     setBotName,
     botNameFallback: (cid) => botNameFromModeFallback(boot.coordinator.getMode(cid)),
@@ -382,6 +386,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     messages: {
       append: rec => messagesStore.append(rec),
       log,
+      // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
+      // undefined when boot.markInboundActivity is absent (deps.requestRestart
+      // wasn't wired into buildBootstrap, so the whole mechanism is inert).
+      // mw-messages treats this as optional and no-ops when it's missing.
+      markInboundActivity: boot.markInboundActivity,
     },
     activity: {
       // Piggyback the ingest nudge on the per-new-inbound recordInbound call:
@@ -393,6 +402,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     },
     milestone: { fireMilestonesFor, log },
     welcome: { maybeWriteWelcomeObservation, log },
+    llmHealth: {
+      health: boot.health.health,
+      sendMessage: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string }),
+      now: () => Date.now(),
+      log,
+    },
     dispatch: {
       coordinator: {
         // Async foraging spine — an operator "揭晓 <id>" reply triggers the
@@ -520,6 +535,16 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // inbound. The agent's `reply` tool still posts to POST /v1/wechat/reply
   // as normal; the open sink captures it instead of ilink-sending.
   const companionConverse = async (text: string): Promise<{ reply: string }> => {
+    // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code,
+    // Task 3 review finding #1) — an App /converse turn is real owner
+    // activity, but it dispatches straight through the coordinator and
+    // NEVER passes through mw-messages (see this function's own doc
+    // comment above), so without this call quietFor() would read Infinity
+    // forever while the owner is mid-conversation in the desktop app,
+    // making the idle-tick self-restart check free to fire between turns.
+    // Same posture as mw-messages: optional, wrapped so a throw here can
+    // never break the app turn it's marking.
+    try { boot.markInboundActivity?.() } catch { /* 绝不能因为记一笔就打断 app 轮次 */ }
     const ownerChatId = loadCompanionConfig(stateDir).default_chat_id
     if (!ownerChatId) throw new Error('companion_owner_chat_not_configured')
     // D3 review follow-up: app-converse captures the reply through a sink, but a

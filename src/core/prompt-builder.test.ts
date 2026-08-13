@@ -514,53 +514,126 @@ describe('knowledge-orchestration prompt section', () => {
     expect(s).toContain('同名可能对不准')
   })
 
-  it('renders only bullets for known plugins that are present: wxgraph+wxsearch includes those two, not facts/media', () => {
-    const s = knowledgeOrchestrationSection(['wxgraph', 'wxsearch'])
+  it('renders the 关系画像 bullet but NOT a `search` bullet when knowledge_search is not available (graphAvailable true, knowledgeSearchAvailable absent) (wxsearch search tool retired to the daemon Knowledge Kernel; the daemon-owned knowledge_search tool is gated separately)', () => {
+    const s = knowledgeOrchestrationSection(['wxgraph', 'wxsearch'], { graphAvailable: true })
     expect(s).toContain('关系画像')
-    expect(s).toContain('消息检索')
+    // wxsearch's `search` MCP tool was retired (Knowledge Kernel Phase 0/1) —
+    // do not key the bullet off the wxsearch plugin name; it no longer
+    // provides search. Gating is purely via opts.knowledgeSearchAvailable.
+    expect(s).not.toContain('消息检索')
+    expect(s).not.toContain('knowledge_search')
     expect(s).not.toContain('结构化事实')
     expect(s).not.toContain('语音/图片转出的文字')
   })
 
-  it('renders only the facts bullet when only wxfacts is present', () => {
+  it('renders the same wxgraph+wxsearch case with knowledgeSearchAvailable explicitly false — still NOT contain the search bullet', () => {
+    const s = knowledgeOrchestrationSection(['wxgraph', 'wxsearch'], { knowledgeSearchAvailable: false })
+    expect(s).not.toContain('消息检索')
+    expect(s).not.toContain('knowledge_search')
+  })
+
+  it('renders the 消息检索/knowledge_search bullet when knowledgeSearchAvailable is true (agent-facing search AS T5)', () => {
+    const s = knowledgeOrchestrationSection(['wxgraph'], { knowledgeSearchAvailable: true })
+    expect(s).toContain('knowledge_search')
+    expect(s).toContain('消息检索')
+  })
+
+  it('does NOT render the 关系画像 bullet from the wxgraph plugin name alone — that plugin is retired, gating is purely via opts.graphAvailable (Knowledge Graph inproc GR T5)', () => {
+    const s = knowledgeOrchestrationSection(['wxgraph'])
+    expect(s).not.toContain('关系画像')
+    expect(s).not.toContain('contact_profile')
+  })
+
+  it('renders the same wxgraph case with graphAvailable explicitly false — still NOT contain the 关系画像 bullet', () => {
+    const s = knowledgeOrchestrationSection(['wxgraph'], { graphAvailable: false })
+    expect(s).not.toContain('关系画像')
+  })
+
+  it('renders the 关系画像/contact_profile bullet when graphAvailable is true (Knowledge Graph inproc GR T5)', () => {
+    const s = knowledgeOrchestrationSection([], { graphAvailable: true })
+    expect(s).toContain('关系画像')
+    expect(s).toContain('contact_profile')
+    expect(s).toContain('top_contacts')
+  })
+
+  it('does NOT render the facts bullet from the wxfacts plugin name alone — that plugin is retired, gating is purely via opts.factsAvailable (Knowledge Facts/Person inproc FP T5)', () => {
     const s = knowledgeOrchestrationSection(['wxfacts'])
+    expect(s).not.toContain('结构化事实')
+    expect(s).not.toContain('contact_facts')
+  })
+
+  it('renders the same wxfacts case with factsAvailable explicitly false — still NOT contain the facts bullet', () => {
+    const s = knowledgeOrchestrationSection(['wxfacts'], { factsAvailable: false })
+    expect(s).not.toContain('结构化事实')
+  })
+
+  it('renders only the facts bullet when factsAvailable is true', () => {
+    const s = knowledgeOrchestrationSection([], { factsAvailable: true })
     expect(s).toContain('结构化事实')
+    expect(s).toContain('contact_facts')
     expect(s).not.toContain('关系画像')
     expect(s).not.toContain('消息检索')
     expect(s).not.toContain('语音/图片转出的文字')
   })
 
-  it('adds the person_brief "一步到位" lead only when wxperson is present', () => {
-    const withPerson = knowledgeOrchestrationSection(['wxperson', 'wxgraph'])
-    expect(withPerson).toContain('person_brief(名字)')
-    expect(withPerson).toContain('一步到位')
-    // wxperson alone still renders the section (lead, no source bullets)
-    const personOnly = knowledgeOrchestrationSection(['wxperson'])
-    expect(personOnly).toContain('person_brief(名字)')
-    expect(personOnly).not.toContain('contact_profile')   // no wxgraph source bullet
-    // no wxperson ⇒ no person_brief pointer
-    expect(knowledgeOrchestrationSection(['wxgraph'])).not.toContain('person_brief')
+  it('does NOT add the person_brief "一步到位" lead from the wxperson plugin name alone — gating is purely via opts.personAvailable (Knowledge Facts/Person inproc FP T5)', () => {
+    const s = knowledgeOrchestrationSection(['wxperson', 'wxgraph'])
+    expect(s).not.toContain('person_brief')
+    expect(s).not.toContain('一步到位')
   })
 
-  it('adds the obligation→agenda flow-back only when wxfacts is present', () => {
-    const withFacts = knowledgeOrchestrationSection(['wxfacts'])
+  it('adds the person_brief "一步到位" lead only when personAvailable is true', () => {
+    const withPerson = knowledgeOrchestrationSection([], { personAvailable: true, graphAvailable: true })
+    expect(withPerson).toContain('person_brief(名字)')
+    expect(withPerson).toContain('一步到位')
+    // personAvailable alone still renders the section (lead, no source bullets)
+    const personOnly = knowledgeOrchestrationSection([], { personAvailable: true })
+    expect(personOnly).toContain('person_brief(名字)')
+    expect(personOnly).not.toContain('contact_profile')   // no graphAvailable source bullet
+    // no personAvailable ⇒ no person_brief pointer
+    expect(knowledgeOrchestrationSection([], { graphAvailable: true })).not.toContain('person_brief')
+  })
+
+  it('adds the obligation→agenda flow-back only when factsAvailable is true', () => {
+    const withFacts = knowledgeOrchestrationSection([], { factsAvailable: true })
     expect(withFacts).toContain('未了义务 → 主动')
     expect(withFacts).toContain('find_facts(kind=obligation)')
     expect(withFacts).toContain('agenda.md')
-    // no wxfacts ⇒ no flow-back line
-    expect(knowledgeOrchestrationSection(['wxgraph'])).not.toContain('未了义务 → 主动')
+    // no factsAvailable ⇒ no flow-back line
+    expect(knowledgeOrchestrationSection([], { graphAvailable: true })).not.toContain('未了义务 → 主动')
   })
 
-  it('wxperson counts as a known plugin: buildSystemPrompt renders the section for wxperson alone', () => {
+  it('wxperson/wxfacts plugin names alone do NOT count as a known plugin any more — buildSystemPrompt omits the section (retired from KNOWN_KNOWLEDGE_PLUGINS, FP T5)', () => {
     const p = buildSystemPrompt({ ...base, knowledgePlugins: ['wxperson'] })
+    expect(p).not.toContain('知识编排')
+    expect(p).not.toContain('person_brief')
+  })
+
+  it('buildSystemPrompt renders the knowledge-orchestration section + person_brief lead from personAvailable ALONE, with no knowledgePlugins at all (person_query is a daemon-owned tool, not gated on plugin presence — FP T5)', () => {
+    const p = buildSystemPrompt({ ...base, personAvailable: true })
     expect(p).toContain('知识编排')
     expect(p).toContain('person_brief(名字)')
   })
 
-  it('buildSystemPrompt includes the section when a known knowledge plugin is present', () => {
-    const p = buildSystemPrompt({ ...base, knowledgePlugins: ['wxgraph'] })
+  it('buildSystemPrompt renders the knowledge-orchestration section + 结构化事实 bullet from factsAvailable ALONE, with no knowledgePlugins at all (facts_query is a daemon-owned tool, not gated on plugin presence — FP T5)', () => {
+    const p = buildSystemPrompt({ ...base, factsAvailable: true })
     expect(p).toContain('知识编排')
+    expect(p).toContain('结构化事实')
+    expect(p).not.toContain('关系画像')
+  })
+
+  it('buildSystemPrompt is byte-identical whether factsAvailable/personAvailable are absent or explicitly false (no knowledgePlugins either way)', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withFalse = buildSystemPrompt({ ...base, factsAvailable: false, personAvailable: false })
+    expect(withFalse).toBe(withoutKey)
+    expect(withoutKey).not.toContain('知识编排')
+  })
+
+  it('buildSystemPrompt combines factsAvailable with graphAvailable — both bullets present', () => {
+    const p = buildSystemPrompt({ ...base, factsAvailable: true, graphAvailable: true })
+    expect(p).toContain('结构化事实')
     expect(p).toContain('关系画像')
+    expect(p).toContain('contact_profile')
   })
 
   it('buildSystemPrompt is byte-identical whether knowledgePlugins is absent, empty, or all-unknown (section omitted)', () => {
@@ -572,9 +645,56 @@ describe('knowledge-orchestration prompt section', () => {
     expect(withoutKey).not.toContain('知识编排')
   })
 
+  it('buildSystemPrompt is byte-identical whether knowledgeSearchAvailable is absent or explicitly false (no knowledgePlugins either way)', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withFalse = buildSystemPrompt({ ...base, knowledgeSearchAvailable: false })
+    expect(withFalse).toBe(withoutKey)
+    expect(withoutKey).not.toContain('知识编排')
+  })
+
+  it('buildSystemPrompt renders the knowledge-orchestration section + knowledge_search bullet from knowledgeSearchAvailable ALONE, with no knowledgePlugins at all (knowledge_search is a daemon-owned tool, not gated on plugin presence)', () => {
+    const p = buildSystemPrompt({ ...base, knowledgeSearchAvailable: true })
+    expect(p).toContain('知识编排')
+    expect(p).toContain('knowledge_search')
+    expect(p).toContain('消息检索')
+    // no plugin bullets — knowledgePlugins was never passed
+    expect(p).not.toContain('关系画像')
+    expect(p).not.toContain('结构化事实')
+  })
+
+  it('buildSystemPrompt combines factsAvailable with knowledgeSearchAvailable — both bullets present', () => {
+    const p = buildSystemPrompt({ ...base, factsAvailable: true, knowledgeSearchAvailable: true })
+    expect(p).toContain('结构化事实')
+    expect(p).toContain('消息检索')
+    expect(p).toContain('knowledge_search')
+  })
+
+  it('buildSystemPrompt renders the knowledge-orchestration section + 关系画像 bullet from graphAvailable ALONE, with no knowledgePlugins at all (graph_query is a daemon-owned tool, not gated on plugin presence — Knowledge Graph inproc GR T5)', () => {
+    const p = buildSystemPrompt({ ...base, graphAvailable: true })
+    expect(p).toContain('知识编排')
+    expect(p).toContain('关系画像')
+    expect(p).toContain('contact_profile')
+    // no plugin bullets — knowledgePlugins was never passed
+    expect(p).not.toContain('结构化事实')
+  })
+
+  it('buildSystemPrompt is byte-identical whether graphAvailable is absent or explicitly false (no knowledgePlugins either way)', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withFalse = buildSystemPrompt({ ...base, graphAvailable: false })
+    expect(withFalse).toBe(withoutKey)
+    expect(withoutKey).not.toContain('知识编排')
+  })
+
+  it('buildSystemPrompt combines a known plugin (wxsearch) with graphAvailable — the section renders and the graph bullet is present', () => {
+    const p = buildSystemPrompt({ ...base, knowledgePlugins: ['wxsearch'], graphAvailable: true })
+    expect(p).toContain('知识编排')
+    expect(p).toContain('关系画像')
+    expect(p).toContain('contact_profile')
+  })
+
   it('places the knowledge section immediately after the memory section, no other section shifted', () => {
     const withoutKnowledge = buildSystemPrompt({ ...base })
-    const withKnowledge = buildSystemPrompt({ ...base, knowledgePlugins: ['wxgraph'] })
+    const withKnowledge = buildSystemPrompt({ ...base, factsAvailable: true })
 
     const memoryIdx = withKnowledge.indexOf('长期记忆')
     const knowledgeIdx = withKnowledge.indexOf('知识编排')

@@ -42,13 +42,13 @@ export function registerMailboxPoller(deps: MailboxPollerDeps): Lifecycle {
     dispatch: makeEnvelopeDispatch({ registry: deps.a2aRegistry, onReveal: deps.onReveal, onLetter: deps.onMailboxLetter, onIntent: deps.onIntent, onEcho: deps.onEcho, log: deps.log }),
     cursors: makeCursorStore(deps.stateDir), log: deps.log,
   })
-  const stop = startCompanionScheduler({
+  const scheduler = startCompanionScheduler({
     name: 'mailbox', intervalMs: 120_000, jitterRatio: 0.3,
     shouldRun: deps.shouldRun, onTick: () => poller.onTick(), log: deps.log,
   })
   let stopped = false
   return {
     name: 'mailbox-poller',
-    stop: async () => { if (!stopped) { stopped = true; await stop() } },
+    stop: async () => { if (!stopped) { stopped = true; await scheduler.stop() } },
   }
 }

@@ -80,4 +80,38 @@ describe('makeJudge', () => {
     await judge(card)
     expect(capturedSystemPrompt).toContain('住址绝不可说')
   })
+
+  it('injects grounding text into the judge turn', async () => {
+    let seenUser = ''
+    const judge = makeJudge({
+      runTurn: async (_s, u) => { seenUser = u; return '{"match":"yes","blurb":"我也爱摄影"}' },
+      ground: async () => '主人相关事实：\n- 爱好: 摄影',
+      policy: 'p',
+    })
+    const v = await judge({ intent_id: 'i', kind: 'seek', topic: '摄影', expires_at: 'x', hop: 1 } as any)
+    expect(seenUser).toContain('摄影')
+    expect(v.match).toBe('yes')
+  })
+
+  it('ground throwing degrades to empty grounding, still a verdict', async () => {
+    const judge = makeJudge({
+      runTurn: async () => '{"match":"no"}',
+      ground: async () => { throw new Error('x') },
+      policy: 'p',
+    })
+    const v = await judge({ intent_id: 'i', kind: 'seek', topic: 't', expires_at: 'x', hop: 1 } as any)
+    expect(v.match).toBe('no')
+  })
+
+  it('ground throwing SYNCHRONOUSLY (non-async fn) degrades to empty grounding, judge still runs blind (does not short-circuit)', async () => {
+    let runTurnCalled = false
+    const judge = makeJudge({
+      runTurn: async () => { runTurnCalled = true; return '{"match":"no"}' },
+      ground: (() => { throw new Error('sync') }) as any,
+      policy: 'p',
+    })
+    const v = await judge({ intent_id: 'i', kind: 'seek', topic: 't', expires_at: 'x', hop: 1 } as any)
+    expect(v).toEqual({ match: 'no' })
+    expect(runTurnCalled).toBe(true)
+  })
 })

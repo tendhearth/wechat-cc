@@ -8,8 +8,9 @@
  *   - ConversationCoordinator (mode-aware dispatch entry)
  *   - Bare delegate providers (RFC 03 P4 peer-as-tool)
  *
- * Boot order inside buildBootstrap(): stores (conversationStore, plugin MCP
- * specs) → sessions (sessionStore + registerProviders) →
+ * Boot order inside buildBootstrap(): wireHealth (connection-health runtime,
+ * first + unconditional) → stores (conversationStore, plugin MCP specs) →
+ * sessions (sessionStore + registerProviders) →
  * sendAssistantText / recordTurn / coordinator → dispatchDelegate → A2A
  * infra (registry/client/eventsStore + resolveOperatorChatId) → wireSocial
  * → wireA2aServer → resumeForaging() → 乙 v2 (yiHub/yiClient) → return.
@@ -22,6 +23,7 @@
  *   - ./providers.ts   — provider registrations (claude/codex/cursor/openai/gemini)
  *   - ./wire-social.ts — agent-social wiring (seeks/echoes) + boot-resume
  *   - ./wire-a2a-server.ts — A2A HTTP server + routeA2ANotify + a2a-info.json
+ *   - ./wire-health.ts — connection-health runtime (onFailure/onSuccess)
  *
  * Imported only by:
  *   - src/daemon/main.ts (production entry)
@@ -51,13 +53,16 @@ import { loadAccess, setSessionInvalidator, type Access } from '../../lib/access
 import { loadCompanionConfig, type CompanionConfig } from '../companion/config'
 import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
 import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
-import { bundledPluginsDir } from '../plugins/paths'
+import { bundledPluginsDir, pluginDataDir } from '../plugins/paths'
 import { buildDelegateDispatch } from './delegate'
 import { makeSendAssistantText } from './fallback-reply'
 import { registerProviders } from './providers'
 import { wireSocial } from './wire-social'
 import { wireA2aServer } from './wire-a2a-server'
 import { wirePairing } from './wire-pairing'
+import { wireHealth, reportLlmTurnOutcome } from './wire-health'
+import { wireSelfRestart } from './wire-self-restart'
+import { makeBusyRegistry } from '../../core/busy-registry'
 import { resolveSelfAgentId } from '../../core/self-agent-id'
 import { assertNotAuthFailed, type CheapEval } from '../../core/agent-provider'
 import { createA2ARegistry } from '../../core/a2a-registry'
@@ -65,6 +70,16 @@ import { createA2AClient } from '../../core/a2a-client'
 import { makeA2AEventsStore } from '../../core/a2a-events-store'
 import { createYiHub, type YiHub } from '../../core/yi-hub'
 import { createYiWsServer } from '../yi-ws-server'
+import { openKnowledge } from '../../core/knowledge/store'
+import { semanticSearch } from '../../core/knowledge/search'
+import { runSourceAdapter } from '../../core/knowledge/source-adapter'
+import { runIndexer } from '../../core/knowledge/indexer'
+import { makeEmbedderService } from '../../core/knowledge/embedder-service'
+import { rebuildGraphFromSource } from '../../core/knowledge/graph-build'
+import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
+import { makeFactsApi } from '../../core/knowledge/facts'
+import { makePersonApi } from '../../core/knowledge/person'
+import { runKnowledgeCycle } from '../../core/knowledge/cycle'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
 import selfPkg from '../../../package.json' with { type: 'json' }
@@ -91,6 +106,16 @@ function resolveClaudeBinary(): string | undefined {
   if (existsSync(bundled)) return bundled
   return undefined
 }
+
+// Knowledge Kernel T7' — provenance tag stamped alongside `knowledge_embed_model`
+// on every semantic.db row this daemon writes (store.putSemantic(model_id,
+// model_version, ...)). NOTE: the indexer's resume cursor is keyed on
+// model_id ALONE (see indexer.ts's header comment) — bumping this constant
+// does NOT by itself trigger a re-embed of already-indexed rows; it is
+// purely the provenance label recorded on rows embedded from here on. A
+// real re-embed after a pipeline change needs either a new model_id or a
+// manual cursor reset (`indexer_cursor:<model_id>` in semantic.db's meta).
+const KNOWLEDGE_EMBED_MODEL_VERSION = '1'
 
 const CLAUDE_AUTH_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
@@ -190,6 +215,26 @@ export function resolveAdminChatId(
 
 export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   hydrateClaudeAuthEnvFromUserSettings(deps.log)
+
+  // Connection-health runtime (Task 7) — constructed FIRST and unconditionally,
+  // no config gate, so it exists before anything that could report a failure:
+  // main.ts's registerPolling(wired.pollingDeps) starts the long-poll loops
+  // strictly after buildBootstrap() resolves, and buildTickBodies' companion
+  // ticks are wired the same way. Depends only on stateDir + log, both
+  // present from the very first line of BootstrapDeps.
+  const health = wireHealth({ stateDir: deps.stateDir, log: deps.log })
+
+  // busy-registry (spec 2026-08-11 §1) — the "work is happening" complement
+  // to SessionManager's anyInFlight(): long tasks that never go through
+  // SessionManager (A2A delegate, customer-review, social forage/respond,
+  // internal-api non-GET requests, companion ticks) each hold a token here
+  // for their duration. Constructed unconditionally (same posture as
+  // `health` above) so every hold point below has something real to call —
+  // `holdBusy` is exposed on Bootstrap regardless of whether self-restart
+  // itself is enabled (deps.requestRestart may be absent), since the other
+  // consumers (internal-api, customer-review, delegate, wireSocial,
+  // companion schedulers) don't depend on self-restart being wired.
+  const busyRegistry = makeBusyRegistry()
 
   const resolve = makeResolver({
     loadProjects: deps.loadProjects,
@@ -343,6 +388,141 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // re-enter that persistence for no benefit and risks two wiring seams
   // momentarily disagreeing on this daemon's own identity.
   const selfId = resolveSelfAgentId(configuredAgent, deps.stateDir)
+
+  // Knowledge Kernel Phase 01 (T5) — daemon-owned KnowledgeStore + the
+  // Query-face `semanticSearch`, gated behind `knowledge_enabled` (default
+  // off — opt-in during the walking-skeleton slice; T1-T4 built the store/
+  // search/source-adapter, this task only wires them into the daemon).
+  // When on: open the store, run one backfill pass over wxvault's decrypted
+  // output off the synchronous boot path (setTimeout(0) — buildBootstrap
+  // must not block startup on a directory scan), then keep it fresh via a
+  // periodic incremental pass. `runSourceAdapter` is cheap to re-run when
+  // there's nothing new (its cursor is per Msg_* table via source_meta —
+  // see source-adapter.ts's header comment), so a short daemon-lifetime
+  // interval is safe — mirrors idleSweepTimer's unref()'d setInterval a
+  // little further down in this function (a background job outside the
+  // companion tick graph in wiring/tick-bodies.ts, not competing with it).
+  let knowledge: Bootstrap['knowledge']
+  if (configuredAgent.knowledge_enabled) {
+    const knowledgeStore = openKnowledge(join(deps.stateDir, 'knowledge'))
+    const decryptedDir = configuredAgent.knowledge_source_dir
+      ?? join(deps.stateDir, 'plugin-data', 'wxvault', 'out', 'decrypted')
+
+    // T7' — the in-process indexer's embed subprocess. Rather than invent a
+    // new discovery path, this reuses `loadedPlugins` (built just above, at
+    // ~line 327, for the plugin-MCP lane) to find wxsearch's resolved plugin
+    // dir — bundled or user, whichever the registry's normal shadowing rule
+    // picked — and derives the script/interpreter paths the SAME way
+    // wxsearch's own manifest spawns itself (`${pluginDir}/wxsearch/
+    // embed_subprocess.py` via `${pluginDir}/.venv/bin/python`, see
+    // packages/wxsearch/wechat-cc.plugin.json's `spawn`). This works whether
+    // or not wxsearch is enabled/ready as an MCP server — the indexer runs
+    // the script directly, in-process orchestration only, never through MCP.
+    // `knowledge_embed_script` is an escape hatch for a non-standard install
+    // (e.g. wxsearch vendored somewhere else); when set without a resolvable
+    // wxsearch plugin dir, the interpreter falls back to `python3` on PATH
+    // (the override is for advanced/manual setups, not the common path).
+    const wxsearchPlugin = loadedPlugins.find(p => p.name === 'wxsearch')
+    const knowledgeEmbedModelId = configuredAgent.knowledge_embed_model ?? 'bge-small-zh-v1.5'
+    const embedScriptPath = configuredAgent.knowledge_embed_script
+      ?? (wxsearchPlugin ? join(wxsearchPlugin.dir, 'wxsearch', 'embed_subprocess.py') : undefined)
+    const embedPythonBin = wxsearchPlugin
+      ? join(wxsearchPlugin.dir, '.venv', 'bin', 'python')
+      : (findOnPath('python3') ?? 'python3')
+
+    // T7' review Finding 1 — the embed subprocess must see the SAME
+    // WXVAULT_STATE_DIR wxvault/wxsearch itself uses
+    // (`<stateDir>/plugin-data/wxvault`, exactly what the plugin registry's
+    // manifest templating resolves `${dataDir}/../wxvault` to for wxsearch's
+    // own spawn — see packages/wxsearch/wechat-cc.plugin.json). Without this,
+    // Bun.spawn's child inherits the daemon's bare process.env, and
+    // embed_subprocess.py's ModelManager falls back to a state dir relative
+    // to its own (read-only, in a packaged app) script path — re-downloading
+    // the model every run and writing config the indexer never reads.
+    const embedEnv = { ...process.env, WXVAULT_STATE_DIR: pluginDataDir(deps.stateDir, 'wxvault') }
+
+    // Agent-facing Search (Task 2) — ONE shared, long-lived embedder
+    // service instead of a fresh embed subprocess per cycle. Built once
+    // here (not per cycle) and reused by both the indexer (below) and the
+    // query path (deps.knowledge.embedQuery, wired further down) so index
+    // and query embed in the SAME model space via the SAME model_id.
+    // Undefined when no embed script resolved (no wxsearch plugin dir and
+    // no `knowledge_embed_script` override) — the indexer stays disabled
+    // in that case, same gating as before this task. NOT closed between
+    // cycles — only on daemon shutdown (main.ts reaches it via
+    // boot.knowledge.embedder).
+    const embedder = embedScriptPath
+      ? makeEmbedderService({
+          pythonBin: embedPythonBin,
+          scriptPath: embedScriptPath,
+          model_id: knowledgeEmbedModelId,
+          env: embedEnv,
+        })
+      : undefined
+
+    // Extracted (T7' review Finding 2 + Finding 4) into
+    // core/knowledge/cycle.ts's runKnowledgeCycle — adapter-then-indexer
+    // ordering, error-swallowing, and the "still running" concurrency guard
+    // now live there with direct unit coverage (cycle.test.ts) instead of
+    // only being reachable through this closure.
+    const runKnowledgeAdapter = (onBoot: boolean) => runKnowledgeCycle(
+      {
+        runAdapter: () => Promise.resolve(runSourceAdapter({ decryptedDir, store: knowledgeStore })),
+        // Uses the shared `embedder` above (no per-cycle spawn/close —
+        // Task 2). `embedder.model_id` (not the outer
+        // `knowledgeEmbedModelId`) flows into both the embed call AND
+        // putSemantic's provenance tag, so index and query are always
+        // stamped with whatever model the shared service is actually
+        // running.
+        runIndex: embedder
+          ? async () => runIndexer({
+              store: knowledgeStore,
+              embed: embedder.embed,
+              model_id: embedder.model_id,
+              model_version: KNOWLEDGE_EMBED_MODEL_VERSION,
+            })
+          : undefined,
+        // Knowledge Graph inproc Task 4 — rebuilds graph.db (contacts/edges)
+        // from whatever's in source.db right now. `now` is read fresh on
+        // EVERY cycle (not captured once at boot) — graph-profiles.ts's
+        // recency scoring needs the actual wall-clock time of each rebuild,
+        // same posture as the rest of this file never caching `Date.now()`.
+        // Owner resolution: `knowledge_owner` config wins outright; falls
+        // back to `WXGRAPH_OWNER` (mirrors wxgraph's own env-var escape
+        // hatch for accounts detectOwner's 1:1-vote heuristic can't infer);
+        // absent both, rebuildGraphFromSource's detectOwner call decides.
+        runGraphRebuild: () => Promise.resolve(rebuildGraphFromSource({
+          store: knowledgeStore,
+          now: Math.floor(Date.now() / 1000),
+          ownerOverride: configuredAgent.knowledge_owner ?? process.env.WXGRAPH_OWNER,
+        })),
+        log: deps.log,
+      },
+      { onBoot },
+    )
+    // Backfill — deferred one tick so it never delays buildBootstrap's return.
+    setTimeout(() => { void runKnowledgeAdapter(true) }, 0)
+    const knowledgeAdapterTimer = setInterval(() => { void runKnowledgeAdapter(false) }, 5 * 60_000)
+    knowledgeAdapterTimer.unref()
+    knowledge = {
+      store: knowledgeStore,
+      search: semanticSearch,
+      ...(embedder ? { embedder, embedQuery: (t: string) => embedder.embed([t]).then(v => v[0]!) } : {}),
+      // Knowledge Graph inproc (Task 5) — unconditional (unlike embedder
+      // above): graph rebuild (graph-build.ts's rebuildGraphFromSource, run
+      // every cycle above) needs no embed script, so the query accessor is
+      // wired whenever knowledge_enabled is on at all.
+      graph: makeGraphQueryApi(knowledgeStore),
+      // Facts + Person (Knowledge Facts/Person inproc, Task 5) —
+      // unconditional (like graph above): facts.db extraction/query needs
+      // no embed script, so both accessors are wired whenever
+      // knowledge_enabled is on at all.
+      facts: makeFactsApi(knowledgeStore),
+      person: makePersonApi(knowledgeStore),
+    }
+  } else {
+    deps.log('BOOT', 'knowledge: disabled (knowledge_enabled not set)')
+  }
 
   // The model is re-read per spawn via an mtime-cached reader (one stat, parse
   // only on change) instead of being captured once. An operator's `/model`
@@ -523,6 +703,38 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // name is a KNOWN_KNOWLEDGE_PLUGINS entry, so this is inert when no
       // knowledge plugin is loaded/enabled.
       knowledgePlugins: knowledgePluginNames,
+      // Agent-facing Search (Task 5) — advertise `knowledge_search` in the
+      // prompt ONLY when it will actually work for THIS session:
+      //   - `knowledge?.embedQuery` is present iff `knowledge_enabled` AND
+      //     an embed script resolved (see the `embedder` construction
+      //     above + internal-api/types.ts's doc comment: "`knowledge_enabled`
+      //     alone doesn't guarantee an embed script resolved"). Without a
+      //     resolved embedder the /v1/knowledge/search route 400s on every
+      //     call from the tool (it never receives a pre-embedded
+      //     queryVector), so gating on `knowledge_enabled` alone would tell
+      //     the agent about a tool that's registered but non-functional.
+      //   - `tierProfile.allow.has('knowledge_search')` mirrors
+      //     daemonOpsAvailable/fileLocateAvailable above: true only for
+      //     admin (user-tier.ts's ADMIN_ONLY), matching exactly the
+      //     predicate wechat-mcp/main.ts gates `registerKnowledgeSearchTool`
+      //     on (SESSION_IS_ADMIN) — so this flag tracks tool registration
+      //     precisely, non-admin/knowledge-off sessions unaffected (both
+      //     default away from true).
+      knowledgeSearchAvailable: !!knowledge?.embedQuery && tierProfile.allow.has('knowledge_search'),
+      // Knowledge Graph inproc (Task 5) — same shape as knowledgeSearchAvailable
+      // above, but keyed on `knowledge?.graph` (unconditional whenever
+      // knowledge_enabled is on, no embed script required) and the
+      // `graph_query` tier kind, which exactly matches the SESSION_IS_ADMIN
+      // gate wechat-mcp/main.ts registers `registerGraphTools` under.
+      graphAvailable: !!knowledge?.graph && tierProfile.allow.has('graph_query'),
+      // Knowledge Facts/Person inproc (Task 5) — same shape as
+      // graphAvailable above, keyed on `knowledge?.facts`/`.person`
+      // (unconditional whenever knowledge_enabled is on, no embed script
+      // required) and the `facts_query`/`person_query` tier kinds, which
+      // exactly match the SESSION_IS_ADMIN gate wechat-mcp/main.ts registers
+      // `registerFactsTools`/`registerPersonTools` under.
+      factsAvailable: !!knowledge?.facts && tierProfile.allow.has('facts_query'),
+      personAvailable: !!knowledge?.person && tierProfile.allow.has('person_query'),
     })
   }
 
@@ -553,6 +765,35 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     })
   })
 
+  // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
+  // assembly extracted to ./wire-self-restart.ts (Task 6). Entirely inert
+  // when deps.requestRestart is omitted: wireSelfRestart returns null, so
+  // no HEAD read, no activity marker built, no check added to the
+  // idle-sweep tick below — tests and minimal embeddings that don't wire
+  // requestRestart stay byte-identical to before this feature existed.
+  //
+  // lastPollSuccessAgoMs (spec 2026-08-11 §4) — real signal, sourced from
+  // the SAME health runtime constructed above (poll-loop.ts's
+  // health.onSuccess('wechat') call is what stamps lastSuccessAt). health
+  // can't get() fail in practice (makeConnectionHealth lazily seeds any
+  // never-seen dependency), but the try/catch + null-on-failure keeps this
+  // on the "can't prove it's fresh ⇒ don't restart" side the rest of the
+  // mechanism commits to everywhere else.
+  const wiredSelfRestart = await wireSelfRestart({
+    requestRestart: deps.requestRestart,
+    anyInFlight: () => sessionManager.anyInFlight(),
+    busy: () => busyRegistry.busy(),
+    lastPollSuccessAgoMs: (nowMs) => {
+      try {
+        const at = health?.health.get('wechat').lastSuccessAt ?? null
+        return at === null ? null : nowMs - at
+      } catch { return null }
+    },
+    log: deps.log,
+  })
+  const selfRestartCheck = wiredSelfRestart?.check ?? null
+  const selfRestartActivityMarker = wiredSelfRestart?.marker ?? null
+
   // Periodic idle sweep — without this, idleEvictMs is dead config (the
   // method exists but was never called from production paths). 30 min of
   // inactivity is the limit before a session is dropped; the next dispatch
@@ -561,10 +802,14 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // the claude binary streaming "Not logged in · Please run /login" as
   // assistant text. unref() so the timer never keeps the event loop alive
   // (matters for tests that build a real bootstrap and then exit).
+  //
+  // selfRestartCheck rides this SAME 60s tick (no new timer) — see the
+  // self-restart block above. It swallows its own errors, so no .catch here.
   const idleSweepTimer = setInterval(() => {
     sessionManager.sweepIdle().catch(err => {
       deps.log('IDLE_SWEEP', `error: ${err instanceof Error ? err.message : String(err)}`)
     })
+    void selfRestartCheck?.()
   }, 60_000)
   idleSweepTimer.unref()
 
@@ -611,6 +856,16 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     try { deps.onTurnRecord?.(record) } catch (err) {
       deps.log('TURN', `onTurnRecord sink threw: ${err instanceof Error ? err.message : String(err)}`)
     }
+    // Connection-health (Task 9) — this is the narrowest point that sees
+    // BOTH a completed and a failed LLM round: it fires once per solo
+    // dispatch and once per participant in parallel/chatroom (see
+    // TurnRecord's doc comment), covering every provider call the
+    // coordinator makes. The outcome→failure-kind mapping (why 'unknown'
+    // business failures like step-budget/max_turns must NOT count as an
+    // 'llm' connectivity failure) lives in reportLlmTurnOutcome
+    // (./wire-health.ts) — extracted so it's unit-testable against a real
+    // health runtime without constructing a full Bootstrap.
+    reportLlmTurnOutcome(health, record.outcome, record.error)
   }
 
   const coordinator = createConversationCoordinator({
@@ -660,6 +915,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     stateDir: deps.stateDir,
     ...(claudeBin ? { claudeBin } : {}),
     ...(codexBinary && codexVersionCheck?.ok ? { codexPathOverride: codexBinary } : {}),
+    // busy-registry hold (spec 2026-08-11 §2, Task 4 step 3 + Task 6) —
+    // a delegate dispatch is a one-shot session outside SessionManager.
+    holdBusy: busyRegistry.hold,
   })
 
   // ── A2A wiring ────────────────────────────────────────────────────────
@@ -709,7 +967,13 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     sendAssistantText,
     a2aRegistry,
     a2aClient,
+    eventsStore: a2aEventsStore,
+    knowledge,
     getServerBaseUrl: () => a2aServer ? a2aServer.baseUrl() : null,
+    // busy-registry hold (spec 2026-08-11 §2, Task 4 step 4 + Task 6) —
+    // broker.forage() + the async responder run as fire-and-forget
+    // coroutines outside SessionManager.
+    holdBusy: busyRegistry.hold,
   })
 
   const { a2aServer: builtA2aServer, a2aDeps } = await wireA2aServer({
@@ -872,5 +1136,31 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      * see Bootstrap['pairing']'s doc comment in ./types.ts.
      */
     ...(pairingEngine ? { pairing: pairingEngine } : {}),
+    /**
+     * Knowledge Kernel (Phase 01, T5) — undefined when `knowledge_enabled`
+     * is not configured; see Bootstrap['knowledge']'s doc comment in
+     * ./types.ts.
+     */
+    ...(knowledge ? { knowledge } : {}),
+    /**
+     * Connection-health runtime (Task 7) — see ./wire-health.ts and the
+     * doc comment on Bootstrap['health'] in ./types.ts.
+     */
+    health,
+    /**
+     * busy-registry hold (spec 2026-08-11 §2) — see Bootstrap['holdBusy']'s
+     * doc comment in ./types.ts. Always present (busyRegistry is
+     * constructed unconditionally above, independent of whether
+     * self-restart itself is enabled).
+     */
+    holdBusy: busyRegistry.hold,
+    /**
+     * self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
+     * undefined when deps.requestRestart wasn't provided (mechanism fully
+     * inert); see Bootstrap['markInboundActivity']'s doc comment in
+     * ./types.ts. main.ts's wireMain wires `.mark` into mw-messages'
+     * markInboundActivity via pipeline-deps' `messages` dep.
+     */
+    ...(selfRestartActivityMarker ? { markInboundActivity: selfRestartActivityMarker.mark } : {}),
   }
 }

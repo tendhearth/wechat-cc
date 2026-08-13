@@ -32,6 +32,13 @@ import type { CareLedger } from '../companion/care-ledger'
 import type { InboundMsg } from '../../core/prompt-format'
 import type { Mode } from '../../core/conversation'
 
+// Connection-health (Task 9) — buildPipelineDeps dereferences boot.health.health
+// unconditionally (llmHealth mw dep), so every `boot` fixture needs a minimal
+// stand-in even though these tests never exercise the health machine itself.
+const fakeHealth = {
+  health: { shouldSuspend: () => false, get: () => ({ consecutiveFailures: 0 }) },
+} as unknown as Bootstrap['health']
+
 const ACCESS_FILE = join(ACCESS_STATE_DIR, 'access.json')
 function writeAccess(admins: string[]): void {
   writeFileSync(ACCESS_FILE, JSON.stringify({ dmPolicy: 'allowlist', allowFrom: [], admins }, null, 2))
@@ -86,6 +93,7 @@ describe('pipeline-deps social dispatch seam (揭晓 reveal)', () => {
       sendAssistantText,
       social,
       penpal,
+      health: fakeHealth,
     } as unknown as Bootstrap
 
     const ilink = {} as unknown as IlinkAdapter
@@ -202,6 +210,7 @@ describe('pipeline-deps social dispatch seam (回信 letter reply)', () => {
       sendAssistantText,
       social: undefined,
       penpal,
+      health: fakeHealth,
     } as unknown as Bootstrap
 
     const ilink = {} as unknown as IlinkAdapter
@@ -318,6 +327,7 @@ describe('pipeline-deps social dispatch seam (派/取消 confirm/cancel wish)', 
       sendAssistantText,
       social,
       penpal: undefined,
+      health: fakeHealth,
     } as unknown as Bootstrap
 
     const ilink = {} as unknown as IlinkAdapter
