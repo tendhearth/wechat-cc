@@ -60,7 +60,7 @@ describe('wireSocial — busy-registry hold around forage()', () => {
         selfId: 'test-self',
         registry,
         defaultProviderId: 'claude',
-        pluginMcp: {},   // empty → makeGroundedJudgeRunTurn short-circuits to null
+        pluginMcp: {},   // judge no longer depends on pluginMcp (in-proc grounding via `knowledge`, SJ Task 3) — kept empty, just satisfying the required field
         currentClaudeModel: () => 'claude-opus-4-8',
         claudeBin: undefined,
         resolveOperatorChatId: () => null,

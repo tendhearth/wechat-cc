@@ -55,6 +55,15 @@ export interface SocialDeps {
   pluginMcp: Record<string, McpStdioSpec>
   currentClaudeModel: () => string
   claudeBin: string | undefined
+  /**
+   * In-process Knowledge Kernel accessors (facts/search/store/embedQuery/
+   * embedder), assembled once in bootstrap/index.ts and threaded straight
+   * into `makeOwnerGrounding` (daemon/social/owner-grounding.ts) below —
+   * replaces the retired grounded-judge.ts plugin-spawn path (SJ Task 3).
+   * Undefined whenever `knowledge_enabled` is off; the judge then grounds
+   * on topic text alone (see the BOOT log this produces).
+   */
+  knowledge?: import('../social/owner-grounding').GroundingKnowledge
   resolveOperatorChatId: () => string | null
   sendAssistantText: SendAssistantText | undefined
   a2aRegistry: A2ARegistry
@@ -153,9 +162,8 @@ export interface SocialWiring {
 
 export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   const {
-    registry, defaultProviderId, pluginMcp, currentClaudeModel, claudeBin,
-    configuredAgent, resolveOperatorChatId, sendAssistantText, a2aRegistry,
-    a2aClient, selfId,
+    registry, configuredAgent, resolveOperatorChatId, sendAssistantText,
+    a2aRegistry, a2aClient, selfId,
   } = deps
 
   // ── Agent-social M1 wiring (async foraging spine) ───────────────────────
@@ -207,7 +215,6 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // SocialDeps.selfId's doc comment). Legacy 'wechat-cc' preserved when
       // no mailbox_relays is configured.
       const SOCIAL_SELF_ID = selfId
-      const socialOpenaiKey = process.env.WECHAT_OPENAI_API_KEY
       // Mailbox transport (sub-project B): the third dispatch arm alongside
       // push (a2aClient). Constructed once and reused by postReveal (and, per
       // Task 11, postLetter's peer-mailbox branch).
@@ -253,40 +260,20 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         return postToHand(hand, path, body)
       }
 
-      // The judge's runTurn seam (daemon/social/grounded-judge.ts). Provider-
-      // specific adapters spawn a one-shot session carrying ONLY the plugin
-      // MCP tools — the answerer must never get wechat tools (could
-      // send-as-owner) or delegate-mcp (could recurse). Falls back to the
-      // registry's cheapEval (no tools at all) when the default provider has
-      // no grounded adapter yet — judging still works, just without
-      // plugin-grounded facts.
-      const { makeGroundedJudgeRunTurn } = await import('../social/grounded-judge')
-      const groundedRunTurn = makeGroundedJudgeRunTurn({
-        providerId: defaultProviderId,
-        pluginMcp,
-        stateDir: deps.stateDir,
-        log: deps.log,
-        openai: (socialOpenaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel)
-          ? { apiKey: socialOpenaiKey, baseUrl: configuredAgent.openaiBaseUrl, model: configuredAgent.openaiModel }
-          : undefined,
-        claude: { model: () => currentClaudeModel(), ...(claudeBin ? { claudeBin } : {}) },
-      })
-      const socialRunTurn: (systemPrompt: string, userPrompt: string) => Promise<string> =
-        groundedRunTurn ?? (async (systemPrompt, userPrompt) => socialCheapEval(`${systemPrompt}\n\n${userPrompt}`))
-      const pluginToolCount = Object.keys(pluginMcp).length
-      deps.log('BOOT', groundedRunTurn
-        ? `social: plugin-grounded judge via ${defaultProviderId} (${pluginToolCount} plugin server(s), no wechat/delegate)`
-        : pluginToolCount === 0
-          // Honest signal for the fresh/dev/bench case: the adapter fits but
-          // 0 plugin tools are mounted (plugins not ready — need wxvault-
-          // decrypted facts), so grounding is impossible and the judge is
-          // BLIND (cheapEval sees only the topic text → conservatively no).
-          // This is the diagnostic that was missing when the ws bench looked
-          // "stuck" (2026-07-22).
-          ? `social: judge falls back to cheapEval — 0 plugin tools mounted (plugins not ready? needs wxvault-decrypted facts). Judging is BLIND — will conservatively return no.`
-          : `social: grounded judging unavailable for provider=${defaultProviderId} — judge falls back to cheapEval (no tools)`)
-
-      const socialJudge = makeJudge({ runTurn: socialRunTurn, policy: socialPolicy })
+      // The judge's grounding seam (daemon/social/owner-grounding.ts, SJ
+      // Tasks 1-3) — replaces the retired grounded-judge.ts plugin-spawn
+      // path. `ground` reads the owner's derived Knowledge Kernel facts
+      // in-process (no child session, no provider-specific adapter, no
+      // plugin MCP tools) and hands the judge already-fetched text to
+      // reason over; `runTurn` stays the registry's own cheapEval — the
+      // judge never spawns anything of its own any more.
+      const { makeOwnerGrounding } = await import('../social/owner-grounding')
+      const ground = makeOwnerGrounding(deps.knowledge)
+      const socialRunTurn = async (systemPrompt: string, userPrompt: string) => socialCheapEval(`${systemPrompt}\n\n${userPrompt}`)
+      const socialJudge = makeJudge({ runTurn: socialRunTurn, ground, policy: socialPolicy })
+      deps.log('BOOT', deps.knowledge?.facts
+        ? 'social: in-process grounded judge (kernel facts + search, no spawn, provider-agnostic)'
+        : 'social: judge reasons from topic only — knowledge not wired (kernel off?). Not plugin-grounded.')
       const answerIntent = makeAnswerIntent({ judge: socialJudge, policy: socialPolicy, cheapEval: socialCheapEval })
 
       // Stores.

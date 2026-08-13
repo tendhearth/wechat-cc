@@ -967,6 +967,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     sendAssistantText,
     a2aRegistry,
     a2aClient,
+    knowledge,
     getServerBaseUrl: () => a2aServer ? a2aServer.baseUrl() : null,
     // busy-registry hold (spec 2026-08-11 §2, Task 4 step 4 + Task 6) —
     // broker.forage() + the async responder run as fire-and-forget
