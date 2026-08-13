@@ -418,6 +418,20 @@ describe('facts store', () => {
     s.close()
   })
 
+  it('merge treats empty-string related_contact/time_ref/kind as absent (matches Python `or` fill semantics)', () => {
+    const s = freshStore()
+    s.upsertFact({ contact: 'c', predicate: 'p', value: 'v', kind: 'entity', confidence: 'low',
+                   related_contact: 'r1', time_ref: 't1', source_msg_keys: ['a:1'] }, 1)
+    s.upsertFact({ contact: 'c', predicate: 'p', value: 'v', kind: '', confidence: 'high',
+                   related_contact: '', time_ref: '', source_msg_keys: ['b:2'] }, 2)  // empty strings must NOT clobber
+    const r = s.factsForContact('c', 'active')[0]!
+    expect(r.related_contact).toBe('r1')
+    expect(r.time_ref).toBe('t1')
+    expect(r.kind).toBe('entity')
+    expect(r.confidence).toBe('high')  // confidence upgrade still applies normally
+    s.close()
+  })
+
   it('watermark is monotonic on the (ts, local_id) tuple', () => {
     const s = freshStore()
     expect(s.factWatermark('c')).toEqual([0, 0])

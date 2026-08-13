@@ -79,7 +79,9 @@ function parseVerdict(raw: string): JudgeVerdict {
 export function makeJudge(deps: JudgeDeps): (card: IntentCard) => Promise<JudgeVerdict> {
   const sys = systemPrompt(deps.policy)
   return async (card: IntentCard): Promise<JudgeVerdict> => {
-    const grounding = deps.ground ? await deps.ground(card).catch(() => '') : ''
+    const grounding = deps.ground
+      ? await Promise.resolve().then(() => deps.ground!(card)).catch(() => '')
+      : ''
     let raw: string
     try {
       raw = await deps.runTurn(sys, userPrompt(card) + (grounding ? '\n\n' + grounding : ''))

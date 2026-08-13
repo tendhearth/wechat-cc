@@ -775,8 +775,8 @@ export function openKnowledge(root: string): KnowledgeStore {
       const best = (CONF_RANK[conf] ?? 1) > (CONF_RANK[prev.confidence ?? 'med'] ?? 1) ? conf : prev.confidence
       factsDb.query(`UPDATE facts SET kind=?, related_contact=?, time_ref=?, confidence=?,
         source_msg_keys=?, updated_at=? WHERE id=?`) // status untouched
-        .run(fact.kind ?? prev.kind, fact.related_contact ?? prev.related_contact,
-             fact.time_ref ?? prev.time_ref, best, JSON.stringify(merged), now, prev.id)
+        .run(fact.kind || prev.kind, fact.related_contact || prev.related_contact,
+             fact.time_ref || prev.time_ref, best, JSON.stringify(merged), now, prev.id)
       return 'merged'
     },
 
