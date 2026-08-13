@@ -854,7 +854,17 @@ describe('bootstrap', () => {
       })
       const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
       expect(prompt).toContain('知识编排')
-      expect(prompt).toContain('消息检索')
+      // The 消息检索 bullet is deliberately NOT asserted here any more. Since
+      // the Knowledge Kernel landed, wxsearch's own `search` tool is retired
+      // and the bullet is gated on `knowledgeSearchAvailable` (the daemon's
+      // embedder actually resolving), not on the wxsearch plugin being
+      // present — see knowledgeOrchestrationSection in prompt-builder.ts.
+      // Plugin presence still drives section INCLUSION, which is what this
+      // test covers; the bullet's own gating is owned by
+      // prompt-builder.test.ts ("renders the 关系画像 bullet but NOT a
+      // `search` bullet when knowledge_search is not available" and its
+      // knowledgeSearchAvailable:true counterpart).
+      expect(prompt).not.toContain('消息检索')
     } finally {
       if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
       else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir

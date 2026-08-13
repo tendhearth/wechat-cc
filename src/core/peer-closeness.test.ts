@@ -1,4 +1,4 @@
-import { test, expect } from 'bun:test'
+import { test, expect } from 'vitest'
 import { rankPeersByCloseness, type PeerEventsView } from './peer-closeness'
 
 const NOW = Date.parse('2026-08-13T00:00:00Z')

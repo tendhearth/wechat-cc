@@ -1,4 +1,4 @@
-import { test, expect } from 'bun:test'
+import { test, expect } from 'vitest'
 import { makeOwnerGrounding } from './owner-grounding'
 
 const factsFixture = { results: [

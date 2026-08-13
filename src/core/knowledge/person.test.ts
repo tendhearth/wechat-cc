@@ -1,4 +1,4 @@
-import { test, expect } from 'bun:test'
+import { test, expect } from 'vitest'
 import { openKnowledge } from './store'; import { makePersonApi } from './person'
 import { makeFactsApi } from './facts'; import { rebuildGraphFromSource } from './graph-build'
 import { mkdtempSync } from 'node:fs'; import { tmpdir } from 'node:os'; import { join } from 'node:path'

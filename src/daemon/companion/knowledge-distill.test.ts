@@ -1,4 +1,4 @@
-import { test, expect } from 'bun:test'
+import { test, expect } from 'vitest'
 import { distillOwnerKnowledge } from './knowledge-distill'
 
 const facts = { findFacts: () => ({ results: [
