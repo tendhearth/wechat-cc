@@ -244,7 +244,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         const ownerChat = loadCompanionConfig(deps.stateDir).default_chat_id
         if (ownerChat && !ownerChat.includes('..') && !ownerChat.includes('/') && !ownerChat.includes('\\')) {
           try {
-            const digest = await distillOwnerKnowledge({ call: bridge.call, hasTool: (t) => bridge.tools.some(x => x.name === t) })
+            const digest = await distillOwnerKnowledge(deps.boot.knowledge)
             const fs = makeMemoryFS({ rootDir: join(deps.stateDir, 'memory', ownerChat) })
             if (digest) { fs.write('knowledge.md', digest); deps.log('INGEST', `distilled knowledge.md for ${ownerChat} (${digest.length} chars)`) }
             else if (fs.read('knowledge.md')) fs.delete('knowledge.md')
