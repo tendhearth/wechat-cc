@@ -93,7 +93,25 @@
  * and skipped (leaves source.db's contacts exactly as they were), never
  * aborts the message ingestion this function otherwise does.
  */
-import { Database } from 'bun:sqlite'
+import { Database, constants } from 'bun:sqlite'
+
+/**
+ * Open flags for every read of wxvault's output.
+ *
+ * The `file:...?immutable=1` URI form below is load-bearing (see the header
+ * comment) — but passing `{ readonly: true }` is NOT enough to get it parsed
+ * as a URI. bun:sqlite links the *system* libsqlite3 on macOS, which is built
+ * with URI filenames enabled by default; on Linux and Windows it uses bun's
+ * own SQLite build, where they are off. There the whole `file:...?...` string
+ * is taken as a literal path and the open fails with "unable to open database
+ * file" — which both call sites catch and log, so the adapter silently
+ * ingested NOTHING on those platforms while passing every test on macOS.
+ *
+ * `SQLITE_OPEN_URI` goes straight to `sqlite3_open_v2` and forces URI parsing
+ * regardless of the compile-time default, so the same code path works on all
+ * three platforms.
+ */
+const IMMUTABLE_RO = constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI
 import { createHash } from 'node:crypto'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -269,7 +287,7 @@ function ingestContacts(decryptedDir: string, store: KnowledgeStore): void {
     // — read-only, tolerant of a WAL-mode file shipped without its
     // -wal/-shm sidecars, and never writes to wxvault's output. Also throws
     // (caught below) when contact.sqlite simply doesn't exist.
-    db = new Database(`file:${contactPath}?mode=ro&immutable=1`, { readonly: true })
+    db = new Database(`file:${contactPath}?mode=ro&immutable=1`, IMMUTABLE_RO)
   } catch (err) {
     console.error(`[source-adapter] skipping missing/unreadable contact.sqlite:`, err)
     return
@@ -315,7 +333,7 @@ export function runSourceAdapter(opts: {
       // Immutable URI open: works on wxvault's WAL-mode output even when
       // the -wal/-shm sidecars aren't present (see header comment). Still
       // strictly read-only — wxvault's files are never written to.
-      db = new Database(`file:${dbPath}?mode=ro&immutable=1`, { readonly: true })
+      db = new Database(`file:${dbPath}?mode=ro&immutable=1`, IMMUTABLE_RO)
     } catch (err) {
       console.error(`[source-adapter] skipping unreadable db ${dbFile}:`, err)
       continue
