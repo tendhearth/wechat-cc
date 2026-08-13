@@ -19,6 +19,7 @@ import { makeLetterRelay } from '../../core/penpal-relay-letter'
 import { generateKeypair, type PenpalHandle } from '../../core/penpal-crypto'
 import { intentUrl, revealUrl, letterUrl, echoUrl } from '../../core/a2a-delegate'
 import { gateOutbound } from '../../core/a2a-disclosure'
+import { rankPeersByCloseness } from '../../core/peer-closeness'
 import { makeMailboxSender } from '../../core/mailbox-sender'
 import { makeMailboxClient } from '../../core/mailbox-client'
 import { loadMailboxIdentity } from '../../core/mailbox-crypto'
@@ -68,6 +69,13 @@ export interface SocialDeps {
   sendAssistantText: SendAssistantText | undefined
   a2aRegistry: A2ARegistry
   a2aClient: A2AClient
+  /** Peer-closeness ranking's read side (a2a_events, migration v12) — feeds
+   *  `rankPeersByCloseness` (core/peer-closeness.ts) at both discover
+   *  fan-out sites below (degree-1 `broker.discover` + the hop+1
+   *  forward-to-own-peers path). Structurally satisfies `PeerEventsView`
+   *  (its `counts`/`recentForAgent`), so it's passed straight through —
+   *  no adapter needed. */
+  eventsStore: import('../../core/a2a-events-store').A2AEventsStore
   /** Lazy read of the a2a server's base url — the server is constructed AFTER
    *  wireSocial runs (it consumes onIntent/onReveal). Currently unused by the
    *  penpal-repointed wiring (reveal crosses pubkey handles, not URLs/names);
@@ -575,7 +583,12 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           // needs a url); 2-hop forward transport is STILL push-only (spec
           // §4) even though degree-1 discover now opens to mailbox peers
           // (see broker.discover below) — skip them here.
-          try { return a2aRegistry.list().filter(a => !a.paused && a.id !== excludeAgentId && !(a.transport === 'mailbox' && !a.url)).slice(0, 5) }
+          try {
+            return rankPeersByCloseness(
+              a2aRegistry.list().filter(a => !a.paused && a.id !== excludeAgentId && !(a.transport === 'mailbox' && !a.url)),
+              deps.eventsStore, Date.now(), 5,
+            )
+          }
           catch (err) {
             deps.log('SOCIAL_REC', `forwardTargets lookup failed exclude=${excludeAgentId}: ${err instanceof Error ? err.message : String(err)}`)
             return []
@@ -607,12 +620,13 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       const broker = makeBroker({
         policy: socialPolicy,
         cheapEval: socialCheapEval,
-        // TODO(v1+): rank candidates via wxgraph closeness/topical relevance
-        // instead of "every paired peer, capped".
-        // v2: mailbox peers now first-class for degree-1 intents — postToHand
-        // (via `send` below) picks the mailbox coord when the peer has one,
-        // else falls back to push. Only `paused` still filters.
-        discover: async (_topic) => a2aRegistry.list().filter(a => !a.paused).slice(0, 5),
+        // PC T2: ranked by a2a-interaction closeness (core/peer-closeness.ts)
+        // — recency + volume + reciprocity over deps.eventsStore, descending,
+        // capped at 5. v2: mailbox peers now first-class for degree-1 intents
+        // — postToHand (via `send` below) picks the mailbox coord when the
+        // peer has one, else falls back to push. Only `paused` still filters
+        // eligibility; the ranker changes ordering + cap only.
+        discover: async (_topic) => rankPeersByCloseness(a2aRegistry.list().filter(a => !a.paused), deps.eventsStore, Date.now(), 5),
         send: (hand, card) => postToHand(hand, '/a2a/intent', { card }),
         // P4 propose leg: persist a `proposed` row carrying the owner-approved
         // redacted wording (+ optional redacted city) so confirmSeek can forage
