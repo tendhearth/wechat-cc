@@ -62,8 +62,15 @@ const SOURCE_PATH = 'raw/wechat/social-state.md'
 /** Where the claim-bearing summary lands (hearth "concept" page). */
 const CONCEPT_PATH = 'wechat/social-state.md'
 
+/**
+ * Matches hearth's `src/core/hash.ts` convention exactly: the digest is
+ * prefixed with `sha256:` (not bare hex). hearth's `verifyClaim` recomputes
+ * with that same prefixed helper and does a strict `===` on
+ * `anchor.quote_hash` (no prefix-stripping) — a bare-hex hash here would
+ * make every claim fail verification with `hash_mismatch`.
+ */
 function sha256(s: string): string {
-  return createHash('sha256').update(s).digest('hex')
+  return 'sha256:' + createHash('sha256').update(s).digest('hex')
 }
 
 /**

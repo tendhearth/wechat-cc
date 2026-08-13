@@ -3,8 +3,12 @@ import { createHash } from 'node:crypto'
 import { parse as parseYaml } from 'yaml'
 import { buildHearthPlan, type Claim } from './hearth-plan'
 
+// Pins hearth's REAL hash format (src/core/hash.ts): 'sha256:' + hex digest,
+// not bare hex. hearth's verifyClaim recomputes with this exact helper and
+// does a strict === (no prefix-stripping) — a bare-hex hash here would make
+// every claim fail verification with hash_mismatch.
 function sha256(s: string): string {
-  return createHash('sha256').update(s).digest('hex')
+  return 'sha256:' + createHash('sha256').update(s).digest('hex')
 }
 
 // Fixed 3-section digest shaped exactly like distillOwnerKnowledge's output
@@ -67,8 +71,10 @@ describe('buildHearthPlan', () => {
     expect(sourceValue.endsWith(DIGEST)).toBe(true)
   })
 
-  it('source_id is sha256 of the raw digest (not the wrapped source page)', () => {
+  it('source_id is hearth-format sha256 ("sha256:"+hex) of the raw digest (not the wrapped source page)', () => {
     const plan = buildHearthPlan(DIGEST, NOW)
+    expect(plan.source_id.startsWith('sha256:')).toBe(true)
+    expect(plan.source_id).toBe('sha256:' + createHash('sha256').update(DIGEST).digest('hex'))
     expect(plan.source_id).toBe(sha256(DIGEST))
     expect(plan.source_id).not.toBe(sha256(plan.ops[0]!.patch!.value))
   })
@@ -106,7 +112,11 @@ describe('buildHearthPlan', () => {
       // (a) verbatim substring of the source page
       expect(sourceValue.includes(quote)).toBe(true)
 
-      // (b) hash matches recomputation
+      // (b) hash matches recomputation, in hearth's REAL 'sha256:'-prefixed
+      // format (bare hex was Round 1's bug — hearth's verifyClaim does a
+      // strict === with no prefix-stripping, so the prefix is load-bearing).
+      expect(quote_hash.startsWith('sha256:')).toBe(true)
+      expect(quote_hash).toBe('sha256:' + createHash('sha256').update(quote).digest('hex'))
       expect(quote_hash).toBe(sha256(quote))
 
       // (c) the source page's [line_start..line_end] (1-based) equals the quote
