@@ -401,3 +401,110 @@ describe('migration v24 — social_seek redacted columns', () => {
     expect(v).toBeGreaterThanOrEqual(24)
   })
 })
+
+// Regression for issue #79 — "desktop-v1.3.7 升级即崩: no such table: social_relay".
+//
+// The customer-review branch (45a52114, 2026-07-25) was cut from a tree whose
+// migrations ended at v18 and numbered its own three as v19/v20/v21. Mainline
+// meanwhile had v19–v25 (social/penpal), so the merge renumbered customer
+// review to v26–v28. A database that ran the branch build therefore records
+// user_version=21 meaning "customer-review analysis metadata done", while the
+// released runner reads 21 as "social forwarding hop done" and resumes at v22
+// — which ALTERs social_relay, a table that database never created.
+//
+// Officially-released installs are NOT affected: v1–v21 are byte-identical
+// between desktop-v1.3.2 and today apart from one comment. Only databases that
+// passed through that pre-merge branch build carry the mismatch.
+describe('issue #79 — database left mid-schema by the customer-review branch build', () => {
+  const SOCIAL_TABLES = [
+    'social_seek', 'social_echo', 'social_pledge', 'social_relay',
+    'social_seen_intent', 'penpal_channel', 'penpal_letter',
+  ]
+
+  // A database in exactly the shape the branch build left behind: every
+  // customer_review_* table present and populated, every social_* and
+  // penpal_* table absent, user_version parked at 21.
+  function branchBuildDb() {
+    const db = openTestDb()
+    db.exec(`
+      INSERT INTO customer_reviews
+        (id, contact_id, contact_display_name, range_from, range_to, status,
+         provider, model, source_message_count, source_first_at, source_last_at,
+         error_code, created_at, updated_at, completed_at)
+      VALUES ('r1', 'c1', 'Alice', '2026-01-01', '2026-02-01', 'ready',
+              'claude', 'opus', 12, NULL, NULL, NULL, '2026-01-01', '2026-01-01', NULL);
+    `)
+    for (const t of SOCIAL_TABLES) db.exec(`DROP TABLE IF EXISTS ${t};`)
+    db.exec('PRAGMA user_version = 21;')
+    return db
+  }
+
+  it('runMigrations no longer dies on `no such table: social_relay`', () => {
+    const db = branchBuildDb()
+    expect(() => runMigrations(db)).not.toThrow()
+  })
+
+  it('restores every missing social/penpal table', () => {
+    const db = branchBuildDb()
+    runMigrations(db)
+    const present = db
+      .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'")
+      .all()
+      .map(r => r.name)
+    for (const t of SOCIAL_TABLES) expect(present).toContain(t)
+  })
+
+  it('keeps the customer-review rows the branch build had already written', () => {
+    const db = branchBuildDb()
+    runMigrations(db)
+    const row = db
+      .query<{ id: string; contact_display_name: string }, []>('SELECT id, contact_display_name FROM customer_reviews')
+      .get()
+    expect(row).toEqual({ id: 'r1', contact_display_name: 'Alice' })
+  })
+
+  it('leaves the database fully migrated afterwards', () => {
+    const db = branchBuildDb()
+    runMigrations(db)
+    const fresh = (openTestDb().query('PRAGMA user_version').get() as { user_version: number }).user_version
+    const healed = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
+    expect(healed).toBe(fresh)
+  })
+
+  it('upgrades a genuine desktop-v1.3.2 database normally — the repair must not fire', () => {
+    // The release line's own user_version=21: social tables present at their
+    // v21 shape (no v22+ columns), no customer_review_* at all. Reconstructed
+    // by undoing v22–v25 so the fixture is what 1.3.2 actually shipped, not a
+    // fully-migrated db with the version number rewound.
+    const db = openTestDb()
+    for (const t of ['customer_reviews', 'customer_review_items', 'customer_review_evidence',
+                     'customer_review_feedback', 'customer_review_analysis_issues',
+                     'penpal_letter', 'penpal_channel']) {
+      db.exec(`DROP TABLE IF EXISTS ${t};`)
+    }
+    db.exec(`
+      ALTER TABLE social_relay DROP COLUMN upstream_handle;
+      ALTER TABLE social_relay DROP COLUMN downstream_handle;
+      ALTER TABLE social_seek DROP COLUMN redacted_topic;
+      ALTER TABLE social_seek DROP COLUMN redacted_city;
+      ALTER TABLE social_seen_intent DROP COLUMN origin_agent_id;
+    `)
+    db.exec('PRAGMA user_version = 21;')
+
+    expect(() => runMigrations(db)).not.toThrow()
+
+    const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
+    expect(v).toBeGreaterThanOrEqual(28)
+    // v22 ran for real rather than being skipped by a spurious repair.
+    const cols = db.query<{ name: string }, []>("PRAGMA table_info('social_relay')").all().map(c => c.name)
+    expect(cols).toContain('upstream_handle')
+  })
+
+  it('leaves an already-healthy fully-migrated database alone', () => {
+    const db = openTestDb()
+    const before = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
+    expect(() => runMigrations(db)).not.toThrow()
+    const after = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
+    expect(after).toBe(before)
+  })
+})

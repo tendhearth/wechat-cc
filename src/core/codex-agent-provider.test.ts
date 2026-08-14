@@ -475,7 +475,7 @@ describe('Codex agent provider', () => {
       const fakeCodex = makeFakeCodex()
       fakeCodex.fake.thread.pushTurn([
         { type: 'thread.started', thread_id: 'tid-log-test' },
-        { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } },
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } },
       ])
       const { provider: p } = provider({}, fakeCodex)
       const session = await p.spawn({ alias: 'logtest', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
