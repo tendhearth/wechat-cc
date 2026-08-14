@@ -20,7 +20,9 @@ type Print = (line: string) => void
  */
 export function federatedSourceAuthorize(infoPath: string, ts: number, print: Print): void {
   const stateDir = dirname(infoPath)
-  mkdirSync(stateDir, { recursive: true })
+  // 0700 to match the daemon's own state-dir perms (index.ts) — this dir holds
+  // the 0600 grant + trusted/operator token files; don't leave it world-listable.
+  mkdirSync(stateDir, { recursive: true, mode: 0o700 })
   const grant = writeGrant(stateDir, ts)
   print(`federated-source: authorized (granted ${new Date(grant.ts).toISOString()})`)
   print('Revoke anytime with: wechat-cc federated-source --deauthorize')

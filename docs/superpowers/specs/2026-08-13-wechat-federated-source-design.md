@@ -23,6 +23,8 @@ Minting an admin data-token must NOT be an ambient capability of the operator to
 
 **Threat model (honest):** the grant file is owner-writable (0600), so an attacker who already has BOTH the operator token AND owner filesystem-write could create the grant and mint. That is a fully-compromised machine — outside this boundary. What option B buys over option (a): a leaked operator token **alone** (e.g. via a control-path bug, without owner fs-write) cannot reach data; and granting hearth access is a deliberate, auditable, revocable owner action rather than a silent operator power.
 
+*One clarification on the launcher's blast radius (from the whole-branch review):* the run-mode launcher reads the **operator token** into memory to perform the mint. So a launcher compromised mid-run could exfiltrate the operator token — whose routeAllow is broader than the scoped 5-min search token it produces (it also reaches `companion/converse` etc.). This does **not** cross the trust boundary: reading `operatorTokenFilePath` (0600) already requires owner-level filesystem access, which a same-OS-user compromised launcher inherently has. So the "maximum damage = the scoped 5-min token" claim is the *credential the launcher hands to hearth*, not a hard bound on a launcher that is itself compromised at the OS-user level. On a single-owner machine (the target), this is the accepted option-B posture.
+
 ## Scope
 
 ### A. wechat-cc internal-api — the gated mint route (`src/daemon/internal-api/`)
