@@ -2447,6 +2447,39 @@ const mcpServerCmd = defineCommand({
   },
 })
 
+// ── hearth federated source — wechat-cc federated-source [--authorize|--deauthorize|--status] ──
+//
+// Authorized launcher hearth spawns (per-query, stdio) to query wechat as a
+// federated source. `--authorize`/`--deauthorize`/`--status` manage the owner
+// consent grant (design option B: grant + operator token + admin-tier mint);
+// bare `federated-source` is the run mode hearth actually invokes — it mints
+// a short-lived admin token and serves the slim federated_query-only MCP.
+// Verb logic lives in ./cli-federated-source.ts (dynamic-imported below to
+// keep this command's cold-start cost off every other subcommand).
+const federatedSourceCmd = defineCommand({
+  meta: { name: 'federated-source', description: 'Expose wechat as a hearth federated source (run mode: stdio MCP spawned by hearth)' },
+  args: {
+    authorize: { type: 'boolean', description: 'Grant hearth consent to mint admin-tier tokens (writes federated-grant.json, 0600)' },
+    deauthorize: { type: 'boolean', description: 'Revoke the federation grant' },
+    status: { type: 'boolean', description: 'Show grant state + daemon baseUrl' },
+    'info-path': { type: 'string', description: 'Override internal-api-info.json path (default: ~/.claude/channels/wechat/internal-api-info.json)', valueHint: 'path' },
+  },
+  async run({ args }) {
+    let infoPath = args['info-path']
+    if (!infoPath) {
+      const { homedir } = await import('node:os')
+      infoPath = join(homedir(), '.claude', 'channels', 'wechat', 'internal-api-info.json')
+    }
+    const { federatedSourceAuthorize, federatedSourceDeauthorize, federatedSourceStatus } = await import('./cli-federated-source')
+    if (args.authorize) { federatedSourceAuthorize(infoPath, Date.now(), console.log); return }
+    if (args.deauthorize) { federatedSourceDeauthorize(infoPath, console.log); return }
+    if (args.status) { federatedSourceStatus(infoPath, console.log); return }
+    // Run mode — what hearth actually spawns per query.
+    const { runFederatedSource } = await import('./src/mcp-servers/wechat/federated-source')
+    await runFederatedSource(infoPath)
+  },
+})
+
 // ── A2A agent management — wechat-cc agent {inspect,add,list,pause,resume,remove,activity} ──
 //
 // Pure wrappers over createA2ARegistry / createA2AClient / makeA2AEventsStore.
@@ -3489,6 +3522,8 @@ const SUBCOMMANDS = {
   pair: pairCmd,
   // Dialogue backfill (Task 5). Query subcommands arrive in Task 9.
   dialogue: dialogueCmd,
+  // hearth federated source — authorize/deauthorize/status + run mode.
+  'federated-source': federatedSourceCmd,
 } as const
 
 export const cittyRoot = defineCommand({
