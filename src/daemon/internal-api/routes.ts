@@ -27,7 +27,7 @@ import { licenseRoutes } from './routes-license'
 import { daemonControlRoutes } from './routes-daemon-control'
 import { fileRoutes } from './routes-files'
 import { customerReviewRoutes } from './routes-customer-review'
-import { makeRemindersStore } from '../reminders/store'
+import { federationRoutes } from './routes-federation'
 import type {
   MemoryReadRequestT, MemoryWriteRequestT, MemoryDeleteRequestT,
   ProjectsSwitchRequestT, ProjectsAddRequestT, ProjectsRemoveRequestT,
@@ -40,8 +40,6 @@ import type {
   WechatEditMessageRequestT, WechatBroadcastRequestT,
   DelegateRequestT,
   ConversationSetModeRequestT,
-  ReminderScheduleRequestT,
-  ReminderCancelRequestT,
 } from './schema'
 
 export interface MakeRoutesContext {
@@ -295,54 +293,6 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       try {
         const r = await deps.companion.setImportLocal(enabled)
         return { status: 200, body: r }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-    },
-
-    // ── reminders (multi-user, precise-time) ────────────────────────────
-    // Scheduled by the agent on behalf of ANY chat (chat_id is explicit, like
-    // memory_delete). Delivered by the reminder sweeper (src/daemon/reminders),
-    // not the operator-only companion tick. Persisted in the daemon db so
-    // pending reminders survive a restart.
-    'POST /v1/reminders/schedule': async (_q, body) => {
-      if (!deps.db) return { status: 503, body: { error: 'db_not_wired' } }
-      // Body is pre-validated by index.ts via ReminderScheduleRequest (which
-      // enforces exactly-one-of due_at/delay_seconds).
-      const { chat_id, text, due_at, delay_seconds } = body as ReminderScheduleRequestT
-      try {
-        const dueIso = due_at !== undefined
-          ? new Date(due_at).toISOString()
-          : new Date(Date.now() + delay_seconds! * 1000).toISOString()
-        const store = makeRemindersStore(deps.db)
-        const id = await store.schedule({ chat_id, due_at: dueIso, text })
-        deps.log?.('REMINDERS', `scheduled ${id} → ${chat_id} at ${dueIso}`)
-        return { status: 200, body: { ok: true, reminder_id: id, due_at: dueIso } }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-    },
-    'POST /v1/reminders/cancel': async (_q, body) => {
-      if (!deps.db) return { status: 503, body: { error: 'db_not_wired' } }
-      const { chat_id, reminder_id } = body as ReminderCancelRequestT
-      try {
-        const store = makeRemindersStore(deps.db)
-        const cancelled = await store.cancel(reminder_id, chat_id)
-        return { status: 200, body: { ok: true, cancelled } }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-    },
-    'GET /v1/reminders/list': async (q) => {
-      if (!deps.db) return { status: 503, body: { error: 'db_not_wired' } }
-      const chatId = q.get('chat_id')
-      if (!chatId) return { status: 400, body: { ok: false, error: 'chat_id required' } }
-      try {
-        const store = makeRemindersStore(deps.db)
-        const reminders = (await store.list(chatId)).map(r => ({
-          id: r.id, due_at: r.due_at, text: r.text, status: r.status,
-        }))
-        return { status: 200, body: { ok: true, reminders } }
       } catch (err) {
         return { status: 200, body: { ok: false, error: errMsg(err) } }
       }
@@ -755,6 +705,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     ...licenseRoutes(deps),
     ...daemonControlRoutes(deps),
     ...customerReviewRoutes(deps),
+    ...federationRoutes(deps),
     ...fileRoutes(),
   }
 }

@@ -469,51 +469,6 @@ export const ConversationSetModeResponse = z.union([
   z.object({ error: z.string() }),
 ])
 
-// ── reminders (multi-user precise-time) ──────────────────────────────────────
-// Caller supplies EITHER an absolute due_at (ISO 8601) OR a relative
-// delay_seconds (the daemon computes due_at = now + delay using its own clock,
-// avoiding timezone ambiguity). Exactly one must be present.
-
-export const ReminderScheduleRequest = z.object({
-  chat_id: z.string().min(1),
-  text: z.string().min(1).max(4000),
-  due_at: z.string().datetime({ offset: true }).optional(),
-  delay_seconds: z.number().int().min(1).max(60 * 60 * 24 * 365).optional(),
-}).refine(
-  b => (b.due_at === undefined) !== (b.delay_seconds === undefined),
-  { message: 'provide exactly one of due_at or delay_seconds' },
-)
-export const ReminderScheduleResponse = z.union([
-  z.object({ ok: z.literal(true), reminder_id: z.string(), due_at: z.string() }),
-  z.object({ ok: z.literal(false), error: z.string() }),
-])
-
-export const ReminderCancelRequest = z.object({
-  chat_id: z.string().min(1),
-  reminder_id: z.string().min(1),
-})
-export const ReminderCancelResponse = z.union([
-  z.object({ ok: z.literal(true), cancelled: z.boolean() }),
-  z.object({ ok: z.literal(false), error: z.string() }),
-])
-
-export const ReminderListQuery = z.object({
-  chat_id: z.string().min(1),
-})
-export const ReminderListResponse = z.union([
-  z.object({ ok: z.literal(true), reminders: z.array(z.object({
-    id: z.string(),
-    due_at: z.string(),
-    text: z.string(),
-    status: z.string(),
-  })) }),
-  z.object({ ok: z.literal(false), error: z.string() }),
-])
-
-export type ReminderScheduleRequestT = z.infer<typeof ReminderScheduleRequest>
-export type ReminderCancelRequestT = z.infer<typeof ReminderCancelRequest>
-export type ReminderListQueryT = z.infer<typeof ReminderListQuery>
-
 // ── Inferred TS type aliases ────────────────────────────────────────────
 // Convention: <Schema>T is z.infer<typeof <Schema>>. JSDoc consumers and
 // handler signatures import these aliases.
@@ -625,11 +580,6 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/customer-review/history': CustomerReviewHistoryQuery,
   'POST /v1/customer-review/item': CustomerReviewItemRequest,
 
-  // reminders
-  'POST /v1/reminders/schedule': ReminderScheduleRequest,
-  'POST /v1/reminders/cancel': ReminderCancelRequest,
-  'GET /v1/reminders/list': ReminderListQuery,
-
   // wechat
   'POST /v1/wechat/reply': WechatReplyRequest,
   'POST /v1/wechat/reply_voice': WechatReplyVoiceRequest,
@@ -676,9 +626,6 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/companion/disable': CompanionDisableResponse,
   'POST /v1/companion/snooze': CompanionSnoozeResponse,
   'POST /v1/companion/import-local': CompanionImportLocalResponse,
-  'POST /v1/reminders/schedule': ReminderScheduleResponse,
-  'POST /v1/reminders/cancel': ReminderCancelResponse,
-  'GET /v1/reminders/list': ReminderListResponse,
   'POST /v1/wechat/reply': WechatReplyResponse,
   'POST /v1/wechat/reply_voice': WechatReplyVoiceResponse,
   'POST /v1/wechat/send_file': WechatSendFileResponse,

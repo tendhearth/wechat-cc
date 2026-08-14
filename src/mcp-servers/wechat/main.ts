@@ -25,12 +25,12 @@ import { registerProjectTools } from './tools-projects'
 import { registerVoiceShareTools } from './tools-voice-share'
 import { registerMessagingTools } from './tools-messaging'
 import { registerCompanionTools } from './tools-companion'
-import { registerReminderTools } from './tools-reminders'
 import { registerA2ASendTool } from './tools-a2a'
 import { registerDaemonTools } from './tools-daemon'
 import { registerFileTools } from './tools-files'
 import { registerSocialSeekTool } from './tools-social'
 import { registerKnowledgeSearchTool } from './tools-knowledge'
+import { registerFederatedQueryTool } from './tools-federated'
 import { registerGraphTools } from './tools-graph'
 import { registerFactsTools } from './tools-facts'
 import { registerPersonTools } from './tools-person'
@@ -102,7 +102,6 @@ registerProjectTools(server, client)
 registerVoiceShareTools(server, client)
 registerMessagingTools(server, client)
 registerCompanionTools(server, client)
-registerReminderTools(server, client)
 registerA2ASendTool(server, client)
 
 // Daemon self-diagnosis + remediation — admin-tier sessions only (the
@@ -120,6 +119,11 @@ if (SESSION_IS_ADMIN) {
   // over the owner's WeChat message history — same private-data trust
   // class as file_locate/social_seek, so admin-only.
   registerKnowledgeSearchTool(server, client)
+  // memory-infra Phase 2a (HF W1): federated_query reshapes the same
+  // knowledge-search retrieval into hearth-compatible cited hits, letting
+  // hearth (a separate memory app) query wechat-cc as a federated source.
+  // Same private-data trust class as knowledge_search above, so admin-only.
+  registerFederatedQueryTool(server, client)
   // Knowledge Graph inproc (GR T5): contact_profile/top_contacts/
   // relationship_subgraph/connectors/graph_status read the owner's full
   // contact/relationship graph — same private-data trust class as

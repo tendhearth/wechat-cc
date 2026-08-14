@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { attemptCodexAutofix, type CodexAutofixDeps } from './codex-autofix'
+import { attemptCodexAutofix, defaultSpawnBun, type CodexAutofixDeps } from './codex-autofix'
 
 function baseDeps(overrides: Partial<CodexAutofixDeps> = {}): CodexAutofixDeps {
   return {
@@ -156,5 +156,37 @@ describe('attemptCodexAutofix', () => {
       timeoutMs: 5_000,
     }))
     expect(out.status).toBe('fixed')
+  })
+})
+
+// The default spawn path is what production uses (tests inject spawnBun and
+// so never exercised it). It spawned a bare `bun`, which a launchd/systemd
+// daemon's minimal PATH cannot resolve — see find-bun-binary.ts.
+describe('defaultSpawnBun bun resolution', () => {
+  it('spawns the resolved absolute bun path, not a bare "bun"', async () => {
+    let spawnedCmd: string | null = null
+    const fakeProc = {
+      stderr: { on: () => {} }, stdout: { on: () => {} },
+      on: (ev: string, cb: (arg: unknown) => void) => { if (ev === 'exit') setTimeout(() => cb(0), 0) },
+      kill: () => {},
+    }
+    const res = await defaultSpawnBun(['add', 'x'], '/tmp', {
+      findBun: () => '/home/u/.bun/bin/bun',
+      spawnFn: ((cmd: string) => { spawnedCmd = cmd; return fakeProc }) as never,
+    })
+    expect(spawnedCmd).toBe('/home/u/.bun/bin/bun')
+    expect(res.ok).toBe(true)
+  })
+
+  it('fails with an actionable message and spawns nothing when bun is nowhere', async () => {
+    let spawned = false
+    const res = await defaultSpawnBun(['add', 'x'], '/tmp', {
+      findBun: () => null,
+      spawnFn: (() => { spawned = true; return {} }) as never,
+    })
+    expect(spawned).toBe(false)
+    expect(res.ok).toBe(false)
+    expect(res.stderr).toMatch(/bun not found/)
+    expect(res.stderr).toMatch(/\.bun\/bin/)
   })
 })

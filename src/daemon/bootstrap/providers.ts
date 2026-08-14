@@ -248,7 +248,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       `Your codex CLI at ${codexBinary} is ` +
       `v${codexVersionCheck.actualSemver ?? codexVersionCheck.rawVersion ?? '(unreadable)'}, ` +
       `but wechat-cc's bundled SDK expects v${codexVersionCheck.expectedVersion}. ` +
-      `The codex SDK ↔ CLI protocol is version-locked (silent fail otherwise). ` +
+      `Patch-level differences are tolerated; this gap is not, and a mismatched ` +
+      `protocol fails silently (empty replies, no error). ` +
       `Resolution: (a) wait for the background auto-fix to realign SDK to your CLI version, then restart daemon; ` +
       `or (b) downgrade global codex: \`npm i -g @openai/codex@${codexVersionCheck.expectedVersion}\`.`,
     )

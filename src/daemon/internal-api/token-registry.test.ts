@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { makeTokenRegistry } from './token-registry'
 
 describe('token-registry', () => {
@@ -41,6 +41,7 @@ describe('token-registry', () => {
       'GET /v1/customer-review/recent',
       'GET /v1/customer-review/history',
       'POST /v1/customer-review/item',
+      'POST /v1/federation/mint',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
@@ -63,5 +64,49 @@ describe('token-registry', () => {
     expect(r.resolve(t)).toBeNull()
     expect(r.resolve(other)?.tier).toBe('trusted')
     expect(r.resolve('bb'.repeat(32))?.origin).toBe('file')
+  })
+
+  // ─── mint(opts) — security review fix round 1 (federation mint's
+  //     credential must be scoped + short-lived, not just gated) ─────────
+  describe('mint(tier, sessionKey, opts) — routeAllow + ttlMs scoping', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('mint without opts is unchanged: no routeAllow, no expiry (back-compat for every existing caller)', () => {
+      const r = makeTokenRegistry()
+      const t = r.mint('admin', 'claude/a/chat-1')
+      expect(r.resolve(t)).toEqual({ tier: 'admin', origin: 'session', sessionKey: 'claude/a/chat-1' })
+    })
+
+    it('mint with opts.routeAllow scopes the resolved TokenInfo to that route set', () => {
+      const r = makeTokenRegistry()
+      const t = r.mint('admin', 'hearth-federated', { routeAllow: new Set(['POST /v1/knowledge/search']) })
+      const info = r.resolve(t)
+      expect(info?.routeAllow).toEqual(new Set(['POST /v1/knowledge/search']))
+      expect(info?.routeAllow?.has('POST /v1/companion/converse')).toBe(false)
+    })
+
+    it('mint with opts.ttlMs: resolves normally before expiry, then null (and evicted) after', () => {
+      vi.useFakeTimers()
+      const r = makeTokenRegistry()
+      const t = r.mint('admin', 'hearth-federated', { ttlMs: 1000 })
+      expect(r.resolve(t)?.tier).toBe('admin')
+      vi.advanceTimersByTime(999)
+      expect(r.resolve(t)?.tier).toBe('admin')
+      vi.advanceTimersByTime(1)
+      expect(r.resolve(t)).toBeNull()
+      // Eviction, not just an expiry check that re-passes on re-resolve —
+      // a second resolve must still be null (the map entry is gone).
+      expect(r.resolve(t)).toBeNull()
+    })
+
+    it('a token minted without ttlMs never expires, even much later (existing behavior preserved)', () => {
+      vi.useFakeTimers()
+      const r = makeTokenRegistry()
+      const t = r.mint('admin', 'claude/a/chat-1')
+      vi.advanceTimersByTime(365 * 24 * 60 * 60 * 1000) // a year
+      expect(r.resolve(t)?.tier).toBe('admin')
+    })
   })
 })

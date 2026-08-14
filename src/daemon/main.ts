@@ -18,8 +18,6 @@ import { providerDisplayName } from './provider-display-names'
 import { loadAllAccounts, makeIlinkAdapter } from './ilink-glue'
 import { registerInternalApi } from './internal-api/lifecycle'
 import { registerCompanionPush, registerCompanionIntrospect, registerIngest } from './companion/lifecycle'
-import { registerReminders } from './reminders/sweeper'
-import { makeRemindersStore } from './reminders/store'
 import { registerGuard } from './guard/lifecycle'
 import { registerPolling } from './polling-lifecycle'
 import { registerSessions } from './sessions-lifecycle'
@@ -414,17 +412,6 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const ingestLc = registerIngest(wired.companionIngestDeps)
     lc.register(ingestLc)
     wireRef(wired.refs.ingestNudge, ingestLc.nudge)   // inbound path nudges ingestion on fresh activity
-    // Reminder sweeper — multi-user precise-time delivery. Uses the live ilink
-    // adapter so it reuses the daemon's in-memory account/token state; the
-    // store is db-backed so pending reminders survive restarts.
-    lc.register(registerReminders({
-      store: makeRemindersStore(db),
-      send: async (chatId, text) => {
-        const r = await ilink.sendMessage(chatId, text) as { msgId?: string; error?: string }
-        return r.error ? { ok: false, error: r.error } : { ok: true }
-      },
-      log: (t, l) => log(t, l),
-    }))
     const guardLc = registerGuard(wired.guardDeps); wireRef(wired.refs.guard, guardLc); lc.register(guardLc)
     lc.register(registerSessions(wired.sessionsDeps))
     lc.register(registerIlink(wired.ilinkDeps))

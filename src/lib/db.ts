@@ -33,7 +33,12 @@ export type Db = Database
  */
 type Migration = (db: Database) => void
 
-const migrations: Migration[] = [
+/**
+ * Exported for the position guard in migration-order.test.ts, which pins the
+ * schema each released version produces. Do not run these directly — use
+ * `runMigrations`, which owns the user_version bookkeeping.
+ */
+export const migrations: Migration[] = [
   // v1 — session_state. PR7 commit 1.
   (db) => {
     db.exec(`
@@ -754,30 +759,6 @@ const migrations: Migration[] = [
       ) STRICT;
     `)
   },
-  // v29 — reminders: per-chat, precise-time one-shot reminders delivered by
-  // the daemon's reminder sweeper (src/daemon/reminders). Unlike the
-  // companion agenda (day-granular, operator-only, fire-once), this is
-  // multi-user (any chat_id), minute-precise (due_at is a full ISO 8601
-  // timestamp, not a date), and restart-safe (pending rows survive a daemon
-  // restart and get swept on the next tick). attempts/last_error track
-  // delivery retries — e.g. a missing ilink context_token at fire time.
-  (db) => {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS reminders (
-        id          TEXT PRIMARY KEY NOT NULL,
-        chat_id     TEXT NOT NULL,
-        due_at      TEXT NOT NULL,            -- ISO 8601, full timestamp
-        text        TEXT NOT NULL,
-        created_at  TEXT NOT NULL,            -- ISO 8601
-        status      TEXT NOT NULL DEFAULT 'pending'
-                      CHECK (status IN ('pending','sent','cancelled','failed')),
-        attempts    INTEGER NOT NULL DEFAULT 0,
-        last_error  TEXT
-      ) STRICT;
-      CREATE INDEX IF NOT EXISTS reminders_status_due ON reminders(status, due_at);
-      CREATE INDEX IF NOT EXISTS reminders_chat ON reminders(chat_id, due_at);
-    `)
-  },
 ]
 
 export interface OpenDbOpts {
@@ -856,6 +837,56 @@ export function openDb(opts: OpenDbOpts): Database {
   return db
 }
 
+function hasTable(db: Database, name: string): boolean {
+  return db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(name) != null
+}
+
+/**
+ * Heal a database whose user_version was written by the customer-review
+ * branch build (issue #79).
+ *
+ * That branch (45a52114, 2026-07-25) was cut from a tree whose migrations
+ * ended at v18 and numbered its own three v19/v20/v21. Mainline already had
+ * v19–v25 (social/penpal), so merging renumbered customer review to v26–v28.
+ * A database that ran the branch build therefore stores user_version=21
+ * meaning "customer-review analysis metadata applied", while this runner
+ * reads 21 as "social forwarding hop applied" and resumes at v22 — whose
+ * first statement ALTERs social_relay, a table that database never created.
+ * Hence the crash-on-boot loop: `no such table: social_relay`.
+ *
+ * The fork point is exactly v18, and mainline v19–v28 are replay-safe against
+ * such a database: v19 creates the social tables fresh, v20–v25 add their
+ * columns to those fresh tables, v26/v28 are CREATE TABLE IF NOT EXISTS
+ * no-ops, and v27 rebuilds the customer-review tables by copying from
+ * themselves, which preserves the rows. So the whole repair is to put
+ * user_version back to the fork point and let the normal loop run.
+ *
+ * The signature is deliberately narrow — user_version past the fork, customer
+ * review present, social absent — because officially-released databases must
+ * not be touched. v1–v21 are byte-identical between desktop-v1.3.2 and today
+ * apart from one comment, so a real 1.3.2 install at user_version=21 has the
+ * social tables and fails this check, as does any fully-migrated database.
+ */
+function repairBranchRenumberedSchema(db: Database, current: number): number {
+  const FORK_POINT = 18
+  // The branch's migration list ended at its own v21, so a database it touched
+  // can only be at 19, 20 or 21. Bounding the top end matters: without it the
+  // signature also matches synthetic test harnesses that build a customer-review
+  // schema at a later user_version without any social tables, and rewinding
+  // those would replay migrations they never meant to run.
+  const BRANCH_TERMINAL = 21
+  if (current <= FORK_POINT || current > BRANCH_TERMINAL) return current
+  if (!hasTable(db, 'customer_reviews')) return current
+  if (hasTable(db, 'social_echo')) return current
+  console.error(
+    `[db] user_version=${current} but the social schema is missing and customer-review tables are present — `
+    + `this database came from the pre-merge customer-review build (issue #79). `
+    + `Rewinding to v${FORK_POINT} and re-applying v${FORK_POINT + 1}+ to restore the missing tables.`,
+  )
+  db.exec(`PRAGMA user_version = ${FORK_POINT};`)
+  return FORK_POINT
+}
+
 /**
  * Apply any migrations whose index is greater than the database's current
  * PRAGMA user_version. Exported so tests can drive the runner against a
@@ -863,7 +894,7 @@ export function openDb(opts: OpenDbOpts): Database {
  */
 export function runMigrations(db: Database): void {
   const row = db.query('PRAGMA user_version').get() as { user_version: number } | null
-  const current = row?.user_version ?? 0
+  const current = repairBranchRenumberedSchema(db, row?.user_version ?? 0)
   for (let i = current; i < migrations.length; i++) {
     const next = migrations[i]!
     db.transaction(() => {

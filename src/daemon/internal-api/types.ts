@@ -400,6 +400,24 @@ export interface InternalApiDeps {
    * markInboundActivity (the dashboard polls GET every 5s forever).
    */
   holdBusy?: (label: string) => () => void
+  /**
+   * Mint an env-only per-session token — mirrors `InternalApi.mintSessionToken`
+   * below (see there for the full contract). Set INTERNALLY by
+   * createInternalApi (index.ts) right after it constructs its token
+   * registry, BEFORE the HTTP listener starts accepting requests — so every
+   * route handler that runs sees this populated even though wiring callers
+   * (main.ts's `registerInternalApi({...})` literal) never pass it in.
+   * Optional purely because of that construction order, not because a route
+   * should treat it as routinely absent; routes-federation.ts still guards
+   * with `if (!deps.mintSessionToken)` and 503s (defense in depth — a route
+   * handler must never assume infra plumbing outside its own file stayed
+   * correct, same posture as the other `_not_wired` guards in this file).
+   */
+  mintSessionToken?: (
+    tier: UserTier,
+    sessionKey: string,
+    opts?: import('./token-registry').MintTokenOpts,
+  ) => string
 }
 
 export interface InternalApi {
@@ -471,10 +489,24 @@ export interface InternalApi {
    * empty list (not 503) until this is called.
    */
   setIncidents(incidents: NonNullable<InternalApiDeps['incidents']>): void
-  /** Mint an env-only per-session token granting `tier`, keyed by `sessionKey`
-   *  (`provider/alias/chatId`). The daemon injects it into that session's MCP
-   *  children; the route layer resolves the tier from it. */
-  mintSessionToken(tier: import('../../core/user-tier').UserTier, sessionKey: string): string
+  /**
+   * Mint an env-only per-session token granting `tier`, keyed by `sessionKey`
+   * (`provider/alias/chatId`). The daemon injects it into that session's MCP
+   * children; the route layer resolves the tier from it.
+   *
+   * `opts` (security review fix round 1, federation mint) narrows the
+   * minted token below its raw `tier` — a `routeAllow` set restricts it to
+   * specific routes (same mechanism `registerOperatorToken` uses) and/or a
+   * `ttlMs` gives it a bounded lifetime instead of living until daemon
+   * restart. Omitting `opts` reproduces the pre-existing unrestricted,
+   * unlimited-lifetime session token exactly — every caller before this fix
+   * keeps its current behavior unchanged.
+   */
+  mintSessionToken(
+    tier: import('../../core/user-tier').UserTier,
+    sessionKey: string,
+    opts?: import('./token-registry').MintTokenOpts,
+  ): string
   /** Revoke every token minted for a session (called on release/evict/close). */
   invalidateSession(sessionKey: string): void
 }
