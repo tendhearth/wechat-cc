@@ -85,4 +85,64 @@ describe('checkCodexVersion', () => {
     expect(result.ok).toBe(false)
     expect(result.reason).toBe('version_probe_failed')
   })
+
+  // Patch-level tolerance (2026-08-14). Measured, not assumed: four real
+  // codex dispatches on the maintainer's machine, every combination of
+  // SDK/CLI 0.144.4 and 0.144.5, all returned a proper agent_message. The
+  // exact-equality rule was refusing to register codex for a user whose
+  // globally-installed CLI self-updated 0.144.5 -> 0.144.7 — a patch bump
+  // the protocol handles fine. Minor gaps stay refused: the failure this
+  // guard was built for (0.125 CLI vs 0.128 SDK) is a minor gap, and that
+  // was never re-tested, so it keeps the benefit of the doubt.
+  it('passes when only the patch differs and the CLI is newer (the self-update case)', () => {
+    const result = checkCodexVersion({
+      binary: '/usr/local/bin/codex',
+      probe: () => 'codex-cli 0.144.7',
+      expectedVersion: '0.144.5',
+    })
+    expect(result.ok).toBe(true)
+    expect(result.actualSemver).toBe('0.144.7')
+  })
+
+  it('passes when only the patch differs and the CLI is older', () => {
+    const result = checkCodexVersion({
+      binary: '/usr/local/bin/codex',
+      probe: () => 'codex-cli 0.144.4',
+      expectedVersion: '0.144.5',
+    })
+    expect(result.ok).toBe(true)
+  })
+
+  it('still refuses a minor gap', () => {
+    const result = checkCodexVersion({
+      binary: '/usr/local/bin/codex',
+      probe: () => 'codex-cli 0.145.0',
+      expectedVersion: '0.144.5',
+    })
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('version_mismatch')
+  })
+
+  it('still refuses a major gap', () => {
+    const result = checkCodexVersion({
+      binary: '/usr/local/bin/codex',
+      probe: () => 'codex-cli 1.144.5',
+      expectedVersion: '0.144.5',
+    })
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('version_mismatch')
+  })
+
+  it('does not extend patch tolerance to prereleases — same major.minor, differing patch, one prerelease', () => {
+    // A prerelease can carry protocol changes a stable patch bump would not.
+    // Keep those on strict equality, consistent with the existing
+    // prerelease-vs-stable case above.
+    const result = checkCodexVersion({
+      binary: '/usr/local/bin/codex',
+      probe: () => 'codex-cli 0.144.7-rc.1',
+      expectedVersion: '0.144.5',
+    })
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('version_mismatch')
+  })
 })

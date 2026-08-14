@@ -44,6 +44,33 @@ export interface CheckCodexVersionResult {
 // still differ between e.g. 0.128.0 and 0.128.0-rc.1.
 const SEMVER_RE = /(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)/
 
+/**
+ * Are these two versions close enough to share a wire protocol?
+ *
+ * Same major.minor, both stable — patch bumps are compatible. That is
+ * measured, not assumed: on 2026-08-14 every combination of SDK/CLI 0.144.4
+ * and 0.144.5 (four real codex dispatches, both mismatch directions) returned
+ * a proper agent_message. The old exact-equality rule was refusing to register
+ * codex for users whose globally-installed CLI self-updated a patch ahead of
+ * our bundled SDK — the standalone installer updates itself on startup, so
+ * this happens without the user doing anything.
+ *
+ * Everything else stays refused:
+ *  - a minor or major gap. The failure this guard exists for (CLI 0.125 vs
+ *    SDK 0.128, silent empty replies) is a minor gap and was never re-tested,
+ *    so it keeps the benefit of the doubt.
+ *  - anything with a prerelease tag on either side, which falls back to exact
+ *    string equality. A prerelease can carry protocol changes a stable patch
+ *    bump would not.
+ */
+function versionsCompatible(actual: string, expected: string): boolean {
+  if (actual === expected) return true
+  if (actual.includes('-') || expected.includes('-')) return false
+  const a = actual.split('.')
+  const e = expected.split('.')
+  return a[0] === e[0] && a[1] === e[1]
+}
+
 export function checkCodexVersion(input: CheckCodexVersionInput): CheckCodexVersionResult {
   const raw = input.probe(input.binary)
   if (!raw) {
@@ -68,7 +95,7 @@ export function checkCodexVersion(input: CheckCodexVersionInput): CheckCodexVers
       reason: 'version_probe_failed',
     }
   }
-  if (actualSemver !== input.expectedVersion) {
+  if (!versionsCompatible(actualSemver, input.expectedVersion)) {
     return {
       ok: false,
       binary: input.binary,
