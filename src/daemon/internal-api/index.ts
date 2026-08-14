@@ -68,6 +68,21 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
   // (deps is passed by reference to makeRoutes which closes over it, so mutations
   // are visible at request time without any additional indirection.)
 
+  // Bug fix (fix round 1, alongside the routeAllow/TTL security fixes):
+  // routes-federation.ts calls `deps.mintSessionToken(...)` directly, but
+  // nothing ever assigned that field on the deps object — only test doubles
+  // stubbed it, so the real wired route would have thrown `deps.
+  // mintSessionToken is not a function` on first use. registry only exists
+  // inside this closure, so createInternalApi is the one place that CAN
+  // wire it: mutate deps right here (same pattern as the setKnowledge/
+  // setPairing/... late-binders below, which also mutate this same `deps`
+  // object that `makeRoutes` closed over), before ROUTES is built and long
+  // before the HTTP listener can accept a first request.
+  function mintSessionToken(tier: UserTier, sessionKey: string, opts?: import('./token-registry').MintTokenOpts): string {
+    return registry.mint(tier, sessionKey, opts)
+  }
+  deps.mintSessionToken = mintSessionToken
+
   // Resolve the presented bearer to its { tier, origin } via the registry, or
   // null when unknown. Replaces the old single-token authOk so the route layer
   // can enforce the caller's tier (see token-registry.ts / route-tiers.ts).
@@ -360,9 +375,7 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setIncidents(incidents) {
       deps.incidents = incidents
     },
-    mintSessionToken(tier: UserTier, sessionKey: string) {
-      return registry.mint(tier, sessionKey)
-    },
+    mintSessionToken,
     invalidateSession(sessionKey: string) {
       registry.invalidateSession(sessionKey)
     },

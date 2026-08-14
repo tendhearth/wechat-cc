@@ -51,12 +51,39 @@ export type TokenInfo = {
   /** When set, this token may ONLY call routes in this set — see the
    *  ROUTE-SCOPING note above. Absent ⇒ no route restriction (tier gate only). */
   routeAllow?: ReadonlySet<string>
+  /**
+   * Epoch ms after which this token is treated as invalid. Set only via
+   * `mint`'s `opts.ttlMs` (security review fix round 1, federation mint) —
+   * every other mint path (session tokens minted without opts, file token,
+   * operator token) leaves this unset, so they keep their existing
+   * unlimited lifetime unchanged. `resolve()` checks this and evicts the
+   * entry from the map once it's past — expiry is enforced at the one
+   * chokepoint every caller already goes through, not scattered per-route.
+   */
+  expiresAt?: number
+}
+
+/**
+ * Optional narrowing for a minted session token (security review fix round
+ * 1, federation mint) — lets a caller mint a token that grants LESS than
+ * its raw tier would otherwise reach on its own. Both fields are opt-in;
+ * omitting `opts` entirely (the pre-existing 2-arg `mint` call shape)
+ * reproduces the old unrestricted, unlimited-lifetime session token exactly.
+ */
+export interface MintTokenOpts {
+  /** Same ROUTE-SCOPING mechanism `registerOperatorToken` uses — restricts
+   *  the minted token to ONLY these `"METHOD /path"` route keys regardless
+   *  of its tier. Absent ⇒ unrestricted by route (tier gate only). */
+  routeAllow?: ReadonlySet<string>
+  /** Time-to-live in ms from the moment of minting. Absent ⇒ unlimited
+   *  lifetime (today's behavior, unchanged for callers that don't pass it). */
+  ttlMs?: number
 }
 
 export interface TokenRegistry {
   registerFileToken(tokenHex: string): void
   registerOperatorToken(tokenHex: string): void
-  mint(tier: UserTier, sessionKey: string): string
+  mint(tier: UserTier, sessionKey: string, opts?: MintTokenOpts): string
   resolve(tokenHex: string): TokenInfo | null
   invalidateSession(sessionKey: string): void
 }
@@ -104,13 +131,29 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
         ]),
       })
     },
-    mint(tier, sessionKey) {
+    mint(tier, sessionKey, opts) {
       const tok = randomHex()
-      map.set(tok, { tier, origin: 'session', sessionKey })
+      const info: TokenInfo = { tier, origin: 'session', sessionKey }
+      if (opts?.routeAllow) info.routeAllow = opts.routeAllow
+      if (opts?.ttlMs !== undefined) info.expiresAt = Date.now() + opts.ttlMs
+      map.set(tok, info)
       return tok
     },
     resolve(tokenHex) {
-      return map.get(tokenHex) ?? null
+      const info = map.get(tokenHex)
+      if (!info) return null
+      // Expired ⇒ invalid AND evicted right here, so a revoked/expired
+      // federation token doesn't linger in the map forever (fix round 1,
+      // MEDIUM: "revoke doesn't cut existing tokens" — eviction bounds the
+      // staleness window to ttlMs after --deauthorize, instead of "until
+      // daemon restart"). Every resolve() call already goes through this
+      // one function, so this is the single chokepoint for expiry — no
+      // separate sweep/timer needed.
+      if (info.expiresAt !== undefined && Date.now() >= info.expiresAt) {
+        map.delete(tokenHex)
+        return null
+      }
+      return info
     },
     invalidateSession(sessionKey) {
       for (const [tok, info] of map) {
