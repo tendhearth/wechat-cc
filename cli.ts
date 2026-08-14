@@ -2465,15 +2465,20 @@ const federatedSourceCmd = defineCommand({
     'info-path': { type: 'string', description: 'Override internal-api-info.json path (default: ~/.claude/channels/wechat/internal-api-info.json)', valueHint: 'path' },
   },
   async run({ args }) {
+    const { federatedSourceAuthorize, federatedSourceDeauthorize, federatedSourceStatus, resolveFederatedSourceVerb } = await import('./cli-federated-source')
+    const verb = resolveFederatedSourceVerb({ authorize: args.authorize, deauthorize: args.deauthorize, status: args.status })
+    if (typeof verb !== 'string') {
+      console.error(verb.error)
+      process.exit(2)
+    }
     let infoPath = args['info-path']
     if (!infoPath) {
       const { homedir } = await import('node:os')
       infoPath = join(homedir(), '.claude', 'channels', 'wechat', 'internal-api-info.json')
     }
-    const { federatedSourceAuthorize, federatedSourceDeauthorize, federatedSourceStatus } = await import('./cli-federated-source')
-    if (args.authorize) { federatedSourceAuthorize(infoPath, Date.now(), console.log); return }
-    if (args.deauthorize) { federatedSourceDeauthorize(infoPath, console.log); return }
-    if (args.status) { federatedSourceStatus(infoPath, console.log); return }
+    if (verb === 'authorize') { federatedSourceAuthorize(infoPath, Date.now(), console.log); return }
+    if (verb === 'deauthorize') { federatedSourceDeauthorize(infoPath, console.log); return }
+    if (verb === 'status') { federatedSourceStatus(infoPath, console.log); return }
     // Run mode — what hearth actually spawns per query.
     const { runFederatedSource } = await import('./src/mcp-servers/wechat/federated-source')
     await runFederatedSource(infoPath)

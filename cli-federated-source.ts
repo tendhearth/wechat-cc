@@ -5,14 +5,22 @@
 // files under src/cli/, and cli.ts itself already sits at the root for the
 // same reason.
 import { dirname } from 'node:path'
+import { mkdirSync } from 'node:fs'
 import { writeGrant, readGrant, revokeGrant } from './src/daemon/internal-api/federation-grant'
 import { readApiInfo } from './src/mcp-servers/wechat/federated-source'
 
 type Print = (line: string) => void
 
-/** Grant hearth consent to mint admin-tier tokens (writes federated-grant.json, 0600). */
+/**
+ * Grant hearth consent to mint admin-tier tokens (writes federated-grant.json,
+ * 0600). Ensures the state dir exists first — the owner may authorize before
+ * the daemon has ever run (e.g. ~/.claude/channels/wechat/ not created yet),
+ * so the grant sits ready for when it does; without this, writeGrant's
+ * writeFileSync throws a raw ENOENT.
+ */
 export function federatedSourceAuthorize(infoPath: string, ts: number, print: Print): void {
   const stateDir = dirname(infoPath)
+  mkdirSync(stateDir, { recursive: true })
   const grant = writeGrant(stateDir, ts)
   print(`federated-source: authorized (granted ${new Date(grant.ts).toISOString()})`)
   print('Revoke anytime with: wechat-cc federated-source --deauthorize')
@@ -44,4 +52,27 @@ export function federatedSourceStatus(infoPath: string, print: Print): boolean {
     print(`daemon info: unavailable (${msg})`)
   }
   return grant !== null
+}
+
+export type FederatedSourceVerb = 'authorize' | 'deauthorize' | 'status' | 'run'
+
+/**
+ * Pure decision logic for which verb `wechat-cc federated-source` should run,
+ * given the parsed boolean flags. At most one of authorize/deauthorize/status
+ * may be set — passing two silently dropped the second one before this guard
+ * (e.g. `--authorize --deauthorize` just authorized; `--status --deauthorize`
+ * skipped the status print). No flags set → 'run' (the stdio run mode hearth
+ * spawns).
+ */
+export function resolveFederatedSourceVerb(
+  flags: { authorize?: boolean; deauthorize?: boolean; status?: boolean },
+): FederatedSourceVerb | { error: string } {
+  const set = [flags.authorize, flags.deauthorize, flags.status].filter(Boolean).length
+  if (set > 1) {
+    return { error: 'federated-source: use at most one of --authorize / --deauthorize / --status' }
+  }
+  if (flags.authorize) return 'authorize'
+  if (flags.deauthorize) return 'deauthorize'
+  if (flags.status) return 'status'
+  return 'run'
 }
