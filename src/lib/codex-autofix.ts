@@ -29,6 +29,7 @@
 
 import { spawn } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
+import { findBunBinary } from './find-bun-binary'
 
 export interface CodexAutofixDeps {
   /** Directory whose `node_modules` is modified — typically wechat-cc's
@@ -153,12 +154,34 @@ function defaultIsWritable(path: string): boolean {
 // over the 90s default outer cap.
 const SPAWN_HARD_KILL_MS = 100_000
 
-function defaultSpawnBun(
+/** Injection seam for the two host lookups this function does, so the
+ *  resolution behaviour is testable without spawning anything real. */
+export interface SpawnBunIo {
+  findBun?: () => string | null
+  spawnFn?: typeof spawn
+}
+
+export function defaultSpawnBun(
   args: ReadonlyArray<string>,
   cwd: string,
+  io: SpawnBunIo = {},
 ): Promise<{ ok: boolean; stderr: string }> {
+  const spawnFn = io.spawnFn ?? spawn
+  // Resolve bun to an absolute path first. Spawning a bare `bun` only works
+  // when the daemon inherited an interactive shell's PATH; under launchd or
+  // systemd it is a minimal PATH without ~/.bun/bin, and every attempt died
+  // with ENOENT -> "bun not found on PATH" (see find-bun-binary.ts).
+  const bunPath = (io.findBun ?? findBunBinary)()
+  if (!bunPath) {
+    return Promise.resolve({
+      ok: false,
+      stderr: 'bun not found on PATH or in the usual install locations '
+        + '(~/.bun/bin, nvm node versions, Homebrew). Install bun, or set the '
+        + 'daemon PATH so it can be found, for the codex SDK to auto-realign.',
+    })
+  }
   return new Promise((resolve) => {
-    const proc = spawn('bun', [...args], {
+    const proc = spawnFn(bunPath, [...args], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       // Inherit PATH so spawning `bun` resolves the user's bun install.
@@ -187,7 +210,10 @@ function defaultSpawnBun(
     proc.stdout?.on('data', () => { /* drain to prevent backpressure */ })
     proc.on('error', (err: NodeJS.ErrnoException) => {
       const detail = err.code === 'ENOENT'
-        ? 'bun not found on PATH'
+        // We spawn an absolute path that existed a moment ago, so ENOENT here
+        // means it vanished mid-boot (an upgrade replacing ~/.bun/bin) rather
+        // than the old "not on PATH" case, which is now handled before spawn.
+        ? `bun disappeared between resolution and spawn: ${bunPath}`
         : `spawn error: ${err.message}`
       finalize({ ok: false, stderr: detail })
     })
