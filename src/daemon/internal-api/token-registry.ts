@@ -97,6 +97,10 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           'GET /v1/customer-review/recent',
           'GET /v1/customer-review/history',
           'POST /v1/customer-review/item',
+          // hearth federation mint (grant-gated, see routes-federation.ts) —
+          // the operator token alone is not enough; readGrant(stateDir) must
+          // also be non-null (explicit owner authorization, design option B).
+          'POST /v1/federation/mint',
         ]),
       })
     },

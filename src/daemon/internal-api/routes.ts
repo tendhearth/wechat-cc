@@ -27,6 +27,7 @@ import { licenseRoutes } from './routes-license'
 import { daemonControlRoutes } from './routes-daemon-control'
 import { fileRoutes } from './routes-files'
 import { customerReviewRoutes } from './routes-customer-review'
+import { federationRoutes } from './routes-federation'
 import type {
   MemoryReadRequestT, MemoryWriteRequestT, MemoryDeleteRequestT,
   ProjectsSwitchRequestT, ProjectsAddRequestT, ProjectsRemoveRequestT,
@@ -704,6 +705,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     ...licenseRoutes(deps),
     ...daemonControlRoutes(deps),
     ...customerReviewRoutes(deps),
+    ...federationRoutes(deps),
     ...fileRoutes(),
   }
 }

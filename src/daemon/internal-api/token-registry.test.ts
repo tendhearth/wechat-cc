@@ -41,6 +41,7 @@ describe('token-registry', () => {
       'GET /v1/customer-review/recent',
       'GET /v1/customer-review/history',
       'POST /v1/customer-review/item',
+      'POST /v1/federation/mint',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })

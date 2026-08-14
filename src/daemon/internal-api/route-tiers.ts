@@ -211,6 +211,10 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'GET /v1/customer-review/recent': 'admin',
   'GET /v1/customer-review/history': 'admin',
   'POST /v1/customer-review/item': 'admin',
+  // admin — hearth federation mint (grant-gated, see routes-federation.ts).
+  // Mints a short-lived admin-tier token; a trusted-tier caller must not
+  // reach this even before the operator-routeAllow gate is considered.
+  'POST /v1/federation/mint': 'admin',
 }
 
 export function minTierFor(routeKey: string): UserTier {
