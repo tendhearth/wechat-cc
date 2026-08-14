@@ -33,7 +33,7 @@
  * descending 0-1 scale (1.0, 0.5, 0.333, ...) that differentiates hits by
  * their own relative order instead of collapsing them all to the ceiling.
  */
-import { z } from 'zod'
+import z from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'
