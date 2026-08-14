@@ -200,7 +200,7 @@ describe('Codex agent provider', () => {
     fakeCodex.fake.thread.pushTurn([
       { type: 'thread.started', thread_id: 't1' },
       { type: 'item.completed', item: { id: 'i1', type: 'agent_message', text: 'hello from codex' } },
-      { type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 5, reasoning_output_tokens: 0, cache_write_input_tokens: 0 } },
+      { type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 5, reasoning_output_tokens: 0 } },
     ])
     const { provider: p } = provider({}, fakeCodex)
     const session = await p.spawn({ alias: 'a', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
@@ -229,7 +229,7 @@ describe('Codex agent provider', () => {
         },
       },
       { type: 'item.completed', item: { id: 'i1', type: 'agent_message', text: 'done' } },
-      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, cache_write_input_tokens: 0 } },
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } },
     ])
     const { provider: p } = provider({}, fakeCodex)
     const session = await p.spawn({ alias: 'a', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
@@ -288,10 +288,10 @@ describe('Codex agent provider', () => {
     // Push two turns: one for the first dispatch, one for the second
     fakeCodex.fake.thread.pushTurn([
       { type: 'thread.started', thread_id: 't1' },
-      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, cache_write_input_tokens: 0 } },
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } },
     ])
     fakeCodex.fake.thread.pushTurn([
-      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, cache_write_input_tokens: 0 } },
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } },
     ])
 
     // Instructions now arrive per-spawn via SpawnContext (the daemon assembles
@@ -318,7 +318,7 @@ describe('Codex agent provider', () => {
     const fakeCodex = makeFakeCodex()
     fakeCodex.fake.thread.pushTurn([
       { type: 'thread.started', thread_id: 't1' },
-      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, cache_write_input_tokens: 0 } },
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } },
     ])
     const { provider: p } = provider({}, fakeCodex)
     const session = await p.spawn({ alias: 'a', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
@@ -331,11 +331,11 @@ describe('Codex agent provider', () => {
     fakeCodex.fake.thread.pushTurn([
       { type: 'thread.started', thread_id: 'sid-codex-abc' },
       { type: 'item.completed', item: { id: 'i1', type: 'agent_message', text: 'hi' } },
-      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, cache_write_input_tokens: 0 } },
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } },
     ])
     fakeCodex.fake.thread.pushTurn([
       { type: 'item.completed', item: { id: 'i2', type: 'agent_message', text: 'hi again' } },
-      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, cache_write_input_tokens: 0 } },
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } },
     ])
     const { provider: p } = provider({}, fakeCodex)
     const session = await p.spawn({ alias: 'a', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
@@ -475,7 +475,7 @@ describe('Codex agent provider', () => {
       const fakeCodex = makeFakeCodex()
       fakeCodex.fake.thread.pushTurn([
         { type: 'thread.started', thread_id: 'tid-log-test' },
-      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, cache_write_input_tokens: 0 } },
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } },
       ])
       const { provider: p } = provider({}, fakeCodex)
       const session = await p.spawn({ alias: 'logtest', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
