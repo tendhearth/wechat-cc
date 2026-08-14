@@ -42,12 +42,33 @@ export async function runFederatedSource(infoPath: string, opts?: { fetchImpl?: 
   const info = readApiInfo(infoPath)
   const operatorToken = readFileSync(info.operatorTokenFilePath, 'utf8').trim()
   const adminToken = await mintAdminToken(info.baseUrl, operatorToken, opts?.fetchImpl)
+  // This process is intentionally short-lived: hearth's federated client spawns
+  // it PER QUERY (connect → one federated_query → close in a finally), so the
+  // minted admin token is used within seconds. The mint's 5-minute TTL
+  // (routes-federation.ts) is a LEAK-BOUND safety, not a live-refresh trigger —
+  // we deliberately do not refresh it. If this is ever adapted into a long-lived /
+  // persistent source (a spawn serving queries for minutes), it MUST add token
+  // refresh (re-mint before the TTL expires and update WECHAT_SESSION_TOKEN),
+  // or federated_query will 401 once the token expires.
+  //
   // The internal-api client's bearer prefers WECHAT_SESSION_TOKEN (carries the
-  // admin tier); WECHAT_SESSION_TIER is the non-secret companion. Set both
-  // before building the client so federated_query's calls authenticate as admin.
+  // admin tier); WECHAT_SESSION_TIER is the non-secret companion. Setting these
+  // mutates process-global env, which is safe here only because this process is
+  // a dedicated single-purpose CLI (spawned fresh per query, nothing else in it
+  // reads/writes these vars) — set both before building the client so
+  // federated_query's calls authenticate as admin.
   process.env.WECHAT_SESSION_TOKEN = adminToken
   process.env.WECHAT_SESSION_TIER = 'admin'
-  const client = createInternalApiClient({ baseUrl: info.baseUrl, tokenFilePath: info.tokenFilePath })
+  // fetchImpl is threaded through to the internal-api client too (not just the
+  // mint call) so a future test can mock both HTTP paths with one injection.
+  // createInternalApiClient does support this (see client.ts's
+  // InternalApiClientOptions.fetchImpl); the production path (opts omitted)
+  // is unaffected — createInternalApiClient falls back to global fetch itself.
+  const client = createInternalApiClient({
+    baseUrl: info.baseUrl,
+    tokenFilePath: info.tokenFilePath,
+    ...(opts?.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  })
   const server = buildFederatedServer(client)
   process.stderr.write(`[wechat-federated] ready (base=${info.baseUrl})\n`)
   await server.connect(new StdioServerTransport())
