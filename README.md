@@ -109,7 +109,7 @@ Download the bundle for your platform from the [latest release](https://github.c
 
 | Platform | File | First-launch quirk |
 |:---|:---|:---|
-| **macOS (Apple Silicon)** | `*.dmg` | Right-click → **Open** (Gatekeeper warning, once). |
+| **macOS (Apple Silicon)** | `*.dmg` | Drag to Applications; when the first launch is blocked: **System Settings → Privacy & Security → Open Anyway** (once). |
 | **Windows (x64)** | `.exe` (NSIS) or `.msi` | SmartScreen → **More info** → **Run anyway**. |
 | **Linux (x64)** | `.deb` / `.rpm` | No warning. |
 
@@ -955,10 +955,19 @@ bun x vitest run        # full test suite (currently 684 tests)
 bun x tsc --noEmit      # type check
 ```
 
-The `apps/desktop/` directory has a Tauri 2 GUI; for fast iteration use
-`bun run shim` (browser-side mock) or `bun run dev` (real Tauri shell). See
-[`apps/desktop/test-shim.ts`](./apps/desktop/test-shim.ts) for the dev
-harness.
+The `apps/desktop/` directory has a Tauri 2 GUI. One dev server backs every
+mode ([`apps/desktop/test-shim.ts`](./apps/desktop/test-shim.ts)), all with
+live reload:
+
+- `bun run dev` — the real Tauri shell (starts the dev server for you)
+- `bun run dev:web` — plain browser against the real CLI + real daemon
+- `bun run dev:mock` — mock state, what Playwright drives
+- `bun run dev:unsafe` — same as `dev:web` with the safety valve off
+
+In the three browser modes the dev server only forwards CLI commands it knows
+to be read-only; anything that would mutate real state is refused with a hint
+(`dev:unsafe` turns that off and the banner goes red). `bun run dev` is the
+real app: invoke goes through Rust IPC, so the valve does not apply there.
 
 ---
 

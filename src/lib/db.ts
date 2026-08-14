@@ -33,7 +33,12 @@ export type Db = Database
  */
 type Migration = (db: Database) => void
 
-const migrations: Migration[] = [
+/**
+ * Exported for the position guard in migration-order.test.ts, which pins the
+ * schema each released version produces. Do not run these directly — use
+ * `runMigrations`, which owns the user_version bookkeeping.
+ */
+export const migrations: Migration[] = [
   // v1 — session_state. PR7 commit 1.
   (db) => {
     db.exec(`
@@ -479,7 +484,7 @@ const migrations: Migration[] = [
   },
   // v20 — async foraging spine. Adds the reveal columns to social_echo (the
   // seeker's side) + the social_pledge table (the answerer's mirror side) so
-  // dual-confirm can move OUT of broker.seek() into a durable, row-driven,
+  // dual-confirm can move OUT of the seek broker call into a durable, row-driven,
   // restart-survivable mutual reveal. Nullable-TEXT ADD COLUMN is safe on a
   // STRICT table; social_echo is created unconditionally by v19 above, so no
   // table-exists guard is needed even for the user_version=9 test harnesses.
@@ -526,6 +531,231 @@ const migrations: Migration[] = [
         intent_id     TEXT PRIMARY KEY,
         first_seen_at TEXT NOT NULL,
         expires_at    TEXT NOT NULL
+      ) STRICT;
+    `)
+  },
+  // v22 — 匿名笔友通道 (sub-project A). The E2E pen-pal channel: penpal_channel
+  // holds the per-connection X25519 keypair (my_privkey LOCAL-only) + the peer's
+  // crossed handle (pubkey + channel id), nullable until mutual reveal opens the
+  // channel. penpal_letter is the local correspondence thread — sealed ct+nonce+tag
+  // on the wire, decrypted plaintext kept locally for the owner. social_relay gains
+  // two nullable handle columns so the intermediary (W) can persist each endpoint's
+  // presented pubkey handle to hand to the OTHER leg — W crosses pubkeys the
+  // endpoints supplied, never a real identity. Nullable-TEXT ADD COLUMN is safe on
+  // STRICT; social_relay is created unconditionally by v21, so the ALTER is safe
+  // even in the user_version=9 test harnesses.
+  // See docs/superpowers/specs/2026-07-18-anonymous-penpal-social-layer-design.md.
+  (db) => {
+    db.exec(`
+      ALTER TABLE social_relay ADD COLUMN upstream_handle TEXT;
+      ALTER TABLE social_relay ADD COLUMN downstream_handle TEXT;
+      CREATE TABLE IF NOT EXISTS penpal_channel (
+        id                TEXT PRIMARY KEY,        -- = the echo/pledge/relay-leg id it opened from
+        seek_id           TEXT NOT NULL,           -- the local seek (or intent) this channel belongs to
+        my_privkey        TEXT NOT NULL,           -- LOCAL-only X25519 private (pkcs8 DER base64url)
+        my_pubkey         TEXT NOT NULL,           -- crossed to the peer (spki DER base64url)
+        my_channel_id     TEXT NOT NULL,           -- my inbound address; peer addresses letters TO me by it
+        peer_pubkey       TEXT,                    -- crossed FROM the peer (nullable until reveal)
+        peer_channel_id   TEXT,                    -- peer's inbound address (nullable until reveal)
+        degree            INTEGER NOT NULL DEFAULT 1,
+        relay_via         TEXT,                    -- the intermediary agent id for a 2-hop channel (nullable)
+        peer_agent_id     TEXT,                    -- direct peer's agent id (nullable for relay channels)
+        status            TEXT NOT NULL,           -- 'pending' | 'open'
+        created_at        TEXT NOT NULL
+      ) STRICT;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_penpal_channel_mychan ON penpal_channel(my_channel_id);
+      CREATE TABLE IF NOT EXISTS penpal_letter (
+        id                TEXT PRIMARY KEY,
+        channel_id        TEXT NOT NULL,
+        direction         TEXT NOT NULL,           -- 'in' | 'out'
+        sealed_ciphertext TEXT NOT NULL,           -- base64url AES-GCM ct (the ONLY thing on the wire)
+        nonce             TEXT NOT NULL,           -- base64url 12-byte GCM nonce
+        tag               TEXT NOT NULL,           -- base64url GCM auth tag
+        plaintext         TEXT NOT NULL,           -- decrypted, kept LOCAL for the owner's thread
+        created_at        TEXT NOT NULL,
+        read_at           TEXT                     -- nullable; set when the owner has seen it
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS idx_penpal_letter_channel ON penpal_letter(channel_id);
+    `)
+  },
+  // v23 — mailbox plumbing (sub-project B, additive/GREEN checkpoint). Adds a
+  // nullable peer_mailbox column to penpal_channel so the peer's relay-direct
+  // mailbox coordinates (PeerMailbox: addr/enc_pub/relays, JSON) can ride the
+  // pen-pal reveal alongside pubkey/channel_id. Nothing populates it yet —
+  // setPeerHandle just carries handle.mailbox through when present; the C1
+  // fix that actually crosses a mailbox at reveal is a separate task.
+  // Nullable-TEXT ADD COLUMN is safe on STRICT; penpal_channel is created
+  // unconditionally by v22, so the ALTER is safe even in older test harnesses.
+  // See docs/superpowers/plans/2026-07-19-penpal-mailbox-B.md.
+  (db) => {
+    db.exec(`
+      ALTER TABLE penpal_channel ADD COLUMN peer_mailbox TEXT;
+    `)
+  },
+  // v24 — 派心愿 propose→confirm (P4). Two nullable columns on social_seek hold
+  // the redacted wording the owner approved at PROPOSE time; confirmSeek forages
+  // this stored string verbatim (WYSIWYG — no second gate). The status union
+  // also gains 'proposed'/'cancelled' but the column has no CHECK constraint, so
+  // that is a TypeScript-only change (no SQL here). Nullable-TEXT ADD COLUMN is
+  // safe on the STRICT table; social_seek is created unconditionally by v19.
+  // See docs/superpowers/specs/2026-07-20-p4-seek-confirm-design.md.
+  (db) => {
+    db.exec(`
+      ALTER TABLE social_seek ADD COLUMN redacted_topic TEXT;
+      ALTER TABLE social_seek ADD COLUMN redacted_city TEXT;
+    `)
+  },
+  // v25 — async discovery (spec 2026-07-22-async-discovery-over-mailbox).
+  // origin_agent_id on social_seen_intent: who SENT us this intent. A relay
+  // (W) needs it to route a downstream echo onward after a restart — a
+  // null-origin row (pre-v25) fails closed: the late echo is dropped.
+  // Nullable-TEXT ADD COLUMN is safe on STRICT; social_seen_intent is
+  // created unconditionally by v21.
+  (db) => {
+    db.exec(`ALTER TABLE social_seen_intent ADD COLUMN origin_agent_id TEXT;`)
+  },
+  // v26 — customer review tasks, grounded commitment candidates, evidence
+  // references, and durable user feedback overlays. Raw WeChat message text is
+  // deliberately NOT stored here; evidence rows only keep the app-generated
+  // key, timestamp, sender side, and role so the UI can re-read source content
+  // from wxvault on demand.
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS customer_reviews (
+        id                   TEXT PRIMARY KEY NOT NULL,
+        contact_id           TEXT NOT NULL,
+        contact_display_name TEXT NOT NULL,
+        range_from           TEXT NOT NULL,
+        range_to             TEXT NOT NULL,
+        status               TEXT NOT NULL CHECK (status IN ('queued','analyzing','ready','failed')),
+        provider             TEXT NOT NULL,
+        model                TEXT,
+        source_message_count INTEGER NOT NULL DEFAULT 0,
+        source_first_at      TEXT,
+        source_last_at       TEXT,
+        error_code           TEXT,
+        created_at           TEXT NOT NULL,
+        updated_at           TEXT NOT NULL,
+        completed_at         TEXT
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS customer_reviews_contact_created
+        ON customer_reviews(contact_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS customer_review_items (
+        review_id        TEXT NOT NULL REFERENCES customer_reviews(id) ON DELETE CASCADE,
+        source_key       TEXT NOT NULL,
+        commitment       TEXT NOT NULL,
+        ai_status        TEXT NOT NULL CHECK (ai_status IN ('open','completed')),
+        due_date         TEXT,
+        confidence       TEXT NOT NULL CHECK (confidence IN ('medium','high')),
+        review_status    TEXT NOT NULL DEFAULT 'unreviewed'
+          CHECK (review_status IN ('unreviewed','confirmed','corrected','rejected','ignored')),
+        corrected_text   TEXT,
+        created_at       TEXT NOT NULL,
+        updated_at       TEXT NOT NULL,
+        PRIMARY KEY (review_id, source_key)
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS customer_review_items_review_status
+        ON customer_review_items(review_id, review_status);
+
+      CREATE TABLE IF NOT EXISTS customer_review_evidence (
+        review_id    TEXT NOT NULL,
+        source_key   TEXT NOT NULL,
+        evidence_key TEXT NOT NULL,
+        role         TEXT NOT NULL CHECK (role IN ('commitment','completion','due_date')),
+        message_time TEXT NOT NULL,
+        sender_side  TEXT NOT NULL CHECK (sender_side IN ('me','contact')),
+        PRIMARY KEY (review_id, source_key, evidence_key, role),
+        FOREIGN KEY (review_id, source_key)
+          REFERENCES customer_review_items(review_id, source_key) ON DELETE CASCADE
+      ) STRICT;
+
+      CREATE TABLE IF NOT EXISTS customer_review_feedback (
+        contact_id     TEXT NOT NULL,
+        source_key     TEXT NOT NULL,
+        review_status  TEXT NOT NULL
+          CHECK (review_status IN ('confirmed','corrected','rejected','ignored')),
+        corrected_text TEXT,
+        updated_at     TEXT NOT NULL,
+        PRIMARY KEY (contact_id, source_key)
+      ) STRICT;
+    `)
+  },
+  // v27 — a user can complete an otherwise-valid commitment through email,
+  // phone, a client system, or offline. Keep that human fact separate from an
+  // AI completion inference that has WeChat evidence.
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS customer_review_items_v27 (
+        review_id        TEXT NOT NULL REFERENCES customer_reviews(id) ON DELETE CASCADE,
+        source_key       TEXT NOT NULL,
+        commitment       TEXT NOT NULL,
+        ai_status        TEXT NOT NULL CHECK (ai_status IN ('open','completed')),
+        due_date         TEXT,
+        confidence       TEXT NOT NULL CHECK (confidence IN ('medium','high')),
+        review_status    TEXT NOT NULL DEFAULT 'unreviewed'
+          CHECK (review_status IN ('unreviewed','confirmed','corrected','completed_elsewhere','rejected','ignored')),
+        corrected_text   TEXT,
+        created_at       TEXT NOT NULL,
+        updated_at       TEXT NOT NULL,
+        PRIMARY KEY (review_id, source_key)
+      ) STRICT;
+      INSERT INTO customer_review_items_v27
+        SELECT review_id, source_key, commitment, ai_status, due_date, confidence,
+               review_status, corrected_text, created_at, updated_at
+        FROM customer_review_items;
+
+      CREATE TABLE IF NOT EXISTS customer_review_evidence_v27 (
+        review_id    TEXT NOT NULL,
+        source_key   TEXT NOT NULL,
+        evidence_key TEXT NOT NULL,
+        role         TEXT NOT NULL CHECK (role IN ('commitment','completion','due_date')),
+        message_time TEXT NOT NULL,
+        sender_side  TEXT NOT NULL CHECK (sender_side IN ('me','contact')),
+        PRIMARY KEY (review_id, source_key, evidence_key, role),
+        FOREIGN KEY (review_id, source_key)
+          REFERENCES customer_review_items_v27(review_id, source_key) ON DELETE CASCADE
+      ) STRICT;
+      INSERT INTO customer_review_evidence_v27
+        SELECT review_id, source_key, evidence_key, role, message_time, sender_side
+        FROM customer_review_evidence;
+
+      CREATE TABLE IF NOT EXISTS customer_review_feedback_v27 (
+        contact_id     TEXT NOT NULL,
+        source_key     TEXT NOT NULL,
+        review_status  TEXT NOT NULL
+          CHECK (review_status IN ('confirmed','corrected','completed_elsewhere','rejected','ignored')),
+        corrected_text TEXT,
+        updated_at     TEXT NOT NULL,
+        PRIMARY KEY (contact_id, source_key)
+      ) STRICT;
+      INSERT INTO customer_review_feedback_v27
+        SELECT contact_id, source_key, review_status, corrected_text, updated_at
+        FROM customer_review_feedback;
+
+      DROP TABLE customer_review_evidence;
+      DROP TABLE customer_review_items;
+      DROP TABLE customer_review_feedback;
+      ALTER TABLE customer_review_items_v27 RENAME TO customer_review_items;
+      ALTER TABLE customer_review_evidence_v27 RENAME TO customer_review_evidence;
+      ALTER TABLE customer_review_feedback_v27 RENAME TO customer_review_feedback;
+      CREATE INDEX IF NOT EXISTS customer_review_items_review_status
+        ON customer_review_items(review_id, review_status);
+    `)
+  },
+  // v28 — analysis coverage metadata. Long histories can yield a grounded
+  // partial result while one model window remains untrusted; persist only the
+  // uncovered time span and safe error code, never raw chat text.
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS customer_review_analysis_issues (
+        review_id    TEXT NOT NULL REFERENCES customer_reviews(id) ON DELETE CASCADE,
+        window_index INTEGER NOT NULL,
+        range_from   TEXT NOT NULL,
+        range_to     TEXT NOT NULL,
+        error_code   TEXT NOT NULL,
+        attempts     INTEGER NOT NULL CHECK (attempts >= 1 AND attempts <= 3),
+        PRIMARY KEY (review_id, window_index)
       ) STRICT;
     `)
   },
@@ -607,6 +837,56 @@ export function openDb(opts: OpenDbOpts): Database {
   return db
 }
 
+function hasTable(db: Database, name: string): boolean {
+  return db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(name) != null
+}
+
+/**
+ * Heal a database whose user_version was written by the customer-review
+ * branch build (issue #79).
+ *
+ * That branch (45a52114, 2026-07-25) was cut from a tree whose migrations
+ * ended at v18 and numbered its own three v19/v20/v21. Mainline already had
+ * v19–v25 (social/penpal), so merging renumbered customer review to v26–v28.
+ * A database that ran the branch build therefore stores user_version=21
+ * meaning "customer-review analysis metadata applied", while this runner
+ * reads 21 as "social forwarding hop applied" and resumes at v22 — whose
+ * first statement ALTERs social_relay, a table that database never created.
+ * Hence the crash-on-boot loop: `no such table: social_relay`.
+ *
+ * The fork point is exactly v18, and mainline v19–v28 are replay-safe against
+ * such a database: v19 creates the social tables fresh, v20–v25 add their
+ * columns to those fresh tables, v26/v28 are CREATE TABLE IF NOT EXISTS
+ * no-ops, and v27 rebuilds the customer-review tables by copying from
+ * themselves, which preserves the rows. So the whole repair is to put
+ * user_version back to the fork point and let the normal loop run.
+ *
+ * The signature is deliberately narrow — user_version past the fork, customer
+ * review present, social absent — because officially-released databases must
+ * not be touched. v1–v21 are byte-identical between desktop-v1.3.2 and today
+ * apart from one comment, so a real 1.3.2 install at user_version=21 has the
+ * social tables and fails this check, as does any fully-migrated database.
+ */
+function repairBranchRenumberedSchema(db: Database, current: number): number {
+  const FORK_POINT = 18
+  // The branch's migration list ended at its own v21, so a database it touched
+  // can only be at 19, 20 or 21. Bounding the top end matters: without it the
+  // signature also matches synthetic test harnesses that build a customer-review
+  // schema at a later user_version without any social tables, and rewinding
+  // those would replay migrations they never meant to run.
+  const BRANCH_TERMINAL = 21
+  if (current <= FORK_POINT || current > BRANCH_TERMINAL) return current
+  if (!hasTable(db, 'customer_reviews')) return current
+  if (hasTable(db, 'social_echo')) return current
+  console.error(
+    `[db] user_version=${current} but the social schema is missing and customer-review tables are present — `
+    + `this database came from the pre-merge customer-review build (issue #79). `
+    + `Rewinding to v${FORK_POINT} and re-applying v${FORK_POINT + 1}+ to restore the missing tables.`,
+  )
+  db.exec(`PRAGMA user_version = ${FORK_POINT};`)
+  return FORK_POINT
+}
+
 /**
  * Apply any migrations whose index is greater than the database's current
  * PRAGMA user_version. Exported so tests can drive the runner against a
@@ -614,7 +894,7 @@ export function openDb(opts: OpenDbOpts): Database {
  */
 export function runMigrations(db: Database): void {
   const row = db.query('PRAGMA user_version').get() as { user_version: number } | null
-  const current = row?.user_version ?? 0
+  const current = repairBranchRenumberedSchema(db, row?.user_version ?? 0)
   for (let i = current; i < migrations.length; i++) {
     const next = migrations[i]!
     db.transaction(() => {

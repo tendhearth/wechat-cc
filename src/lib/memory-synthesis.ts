@@ -37,7 +37,7 @@ export interface LifeStoresReader {
   listMilestones(adminChatId: string): Promise<string[]>
 }
 import { readMemoryProfileFile, writeMemoryFile, writeMemoryProfileFile } from './memory'
-import { surveyFiles, formatFileSurvey, defaultLifeDirs, type SurveyResult } from './file-survey'
+import { surveyFiles, formatFileSurvey, type SurveyResult } from './file-survey'
 
 /** Default root for Claude Code's per-project memory dirs. */
 export function defaultClaudeProjectsRoot(): string {
@@ -190,13 +190,13 @@ function parseLocationRoots(stateDir: string, adminChatId: string): string[] {
 }
 
 /**
- * Gather the file-side survey for the overview. Roots default to the life dirs
- * plus locations.md dirs; callers (tests) may override via `roots`. Best-effort:
+ * Gather the file-side survey for the overview. Roots default only to paths
+ * explicitly recorded in locations.md; callers (tests) may override via `roots`. Best-effort:
  * any failure → empty survey (mirrors gatherLifeContext).
  */
 export function gatherFileSurvey(opts: { stateDir: string; adminChatId: string; roots?: string[] }): SurveyResult {
   try {
-    const roots = opts.roots ?? [...parseLocationRoots(opts.stateDir, opts.adminChatId), ...defaultLifeDirs()]
+    const roots = opts.roots ?? parseLocationRoots(opts.stateDir, opts.adminChatId)
     return surveyFiles({ roots })
   } catch { return { folders: [], truncated: false } }
 }
@@ -379,7 +379,7 @@ export interface SynthesizeDeps {
   lifeStores?: LifeStoresReader
   /** When true, gather + fold the file-side survey into the overview. */
   includeFileSurvey?: boolean
-  /** Override survey roots (tests). Defaults to life dirs + locations.md dirs. */
+  /** Override survey roots (tests). Defaults only to locations.md dirs. */
   surveyRoots?: string[]
 }
 

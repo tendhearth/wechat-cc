@@ -179,6 +179,57 @@ describe('migration v12 — a2a_events table', () => {
   })
 })
 
+describe('migration v27/v28 — customer review completed elsewhere and analysis coverage', () => {
+  it('upgrades v26 review feedback without losing items or evidence', () => {
+    const db = new Database(':memory:')
+    db.exec(`
+      PRAGMA foreign_keys = ON;
+      PRAGMA user_version = 26;
+      CREATE TABLE customer_reviews (id TEXT PRIMARY KEY NOT NULL) STRICT;
+      CREATE TABLE customer_review_items (
+        review_id TEXT NOT NULL REFERENCES customer_reviews(id) ON DELETE CASCADE,
+        source_key TEXT NOT NULL, commitment TEXT NOT NULL,
+        ai_status TEXT NOT NULL CHECK (ai_status IN ('open','completed')),
+        due_date TEXT, confidence TEXT NOT NULL CHECK (confidence IN ('medium','high')),
+        review_status TEXT NOT NULL DEFAULT 'unreviewed'
+          CHECK (review_status IN ('unreviewed','confirmed','corrected','rejected','ignored')),
+        corrected_text TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        PRIMARY KEY (review_id, source_key)
+      ) STRICT;
+      CREATE TABLE customer_review_evidence (
+        review_id TEXT NOT NULL, source_key TEXT NOT NULL, evidence_key TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('commitment','completion','due_date')),
+        message_time TEXT NOT NULL, sender_side TEXT NOT NULL CHECK (sender_side IN ('me','contact')),
+        PRIMARY KEY (review_id, source_key, evidence_key, role),
+        FOREIGN KEY (review_id, source_key)
+          REFERENCES customer_review_items(review_id, source_key) ON DELETE CASCADE
+      ) STRICT;
+      CREATE TABLE customer_review_feedback (
+        contact_id TEXT NOT NULL, source_key TEXT NOT NULL,
+        review_status TEXT NOT NULL CHECK (review_status IN ('confirmed','corrected','rejected','ignored')),
+        corrected_text TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (contact_id, source_key)
+      ) STRICT;
+      INSERT INTO customer_reviews VALUES ('r1');
+      INSERT INTO customer_review_items VALUES ('r1','k1','发送报价','open',NULL,'high','confirmed',NULL,'2026-01-01','2026-01-01');
+      INSERT INTO customer_review_evidence VALUES ('r1','k1','e1','commitment','2026-01-01','me');
+      INSERT INTO customer_review_feedback VALUES ('c1','k1','confirmed',NULL,'2026-01-01');
+    `)
+
+    runMigrations(db)
+
+    const version = db.query('PRAGMA user_version').get() as { user_version: number }
+    expect(version.user_version).toBe(28)
+    expect(db.query('SELECT commitment FROM customer_review_items').get()).toMatchObject({ commitment: '发送报价' })
+    expect(db.query('SELECT evidence_key FROM customer_review_evidence').get()).toMatchObject({ evidence_key: 'e1' })
+    expect(db.query("SELECT name FROM sqlite_master WHERE name = 'customer_review_analysis_issues'").get()).toMatchObject({ name: 'customer_review_analysis_issues' })
+    expect(() => db.prepare(`
+      INSERT INTO customer_review_feedback(contact_id, source_key, review_status, corrected_text, updated_at)
+      VALUES ('c1', 'k2', 'completed_elsewhere', NULL, '2026-01-02')
+    `).run()).not.toThrow()
+    db.close()
+  })
+})
+
 describe('migration v13 — events.kind adds memory_deleted + memory_path column', () => {
   it('extends events.kind CHECK to include memory_deleted', () => {
     const db = openDb({ path: ':memory:' })
@@ -332,5 +383,128 @@ describe('migration v11 — participants column', () => {
     ).get()
     expect(row).toBeDefined()
     expect(row!.participants).toBeNull()
+  })
+})
+
+describe('migration v24 — social_seek redacted columns', () => {
+  it('adds nullable redacted_topic / redacted_city columns to social_seek', () => {
+    const db = openTestDb()
+    const cols = db.query<{ name: string }, []>("PRAGMA table_info('social_seek')").all()
+    const names = cols.map(c => c.name)
+    expect(names).toContain('redacted_topic')
+    expect(names).toContain('redacted_city')
+  })
+
+  it('PRAGMA user_version is at least 24', () => {
+    const db = openTestDb()
+    const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
+    expect(v).toBeGreaterThanOrEqual(24)
+  })
+})
+
+// Regression for issue #79 — "desktop-v1.3.7 升级即崩: no such table: social_relay".
+//
+// The customer-review branch (45a52114, 2026-07-25) was cut from a tree whose
+// migrations ended at v18 and numbered its own three as v19/v20/v21. Mainline
+// meanwhile had v19–v25 (social/penpal), so the merge renumbered customer
+// review to v26–v28. A database that ran the branch build therefore records
+// user_version=21 meaning "customer-review analysis metadata done", while the
+// released runner reads 21 as "social forwarding hop done" and resumes at v22
+// — which ALTERs social_relay, a table that database never created.
+//
+// Officially-released installs are NOT affected: v1–v21 are byte-identical
+// between desktop-v1.3.2 and today apart from one comment. Only databases that
+// passed through that pre-merge branch build carry the mismatch.
+describe('issue #79 — database left mid-schema by the customer-review branch build', () => {
+  const SOCIAL_TABLES = [
+    'social_seek', 'social_echo', 'social_pledge', 'social_relay',
+    'social_seen_intent', 'penpal_channel', 'penpal_letter',
+  ]
+
+  // A database in exactly the shape the branch build left behind: every
+  // customer_review_* table present and populated, every social_* and
+  // penpal_* table absent, user_version parked at 21.
+  function branchBuildDb() {
+    const db = openTestDb()
+    db.exec(`
+      INSERT INTO customer_reviews
+        (id, contact_id, contact_display_name, range_from, range_to, status,
+         provider, model, source_message_count, source_first_at, source_last_at,
+         error_code, created_at, updated_at, completed_at)
+      VALUES ('r1', 'c1', 'Alice', '2026-01-01', '2026-02-01', 'ready',
+              'claude', 'opus', 12, NULL, NULL, NULL, '2026-01-01', '2026-01-01', NULL);
+    `)
+    for (const t of SOCIAL_TABLES) db.exec(`DROP TABLE IF EXISTS ${t};`)
+    db.exec('PRAGMA user_version = 21;')
+    return db
+  }
+
+  it('runMigrations no longer dies on `no such table: social_relay`', () => {
+    const db = branchBuildDb()
+    expect(() => runMigrations(db)).not.toThrow()
+  })
+
+  it('restores every missing social/penpal table', () => {
+    const db = branchBuildDb()
+    runMigrations(db)
+    const present = db
+      .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'")
+      .all()
+      .map(r => r.name)
+    for (const t of SOCIAL_TABLES) expect(present).toContain(t)
+  })
+
+  it('keeps the customer-review rows the branch build had already written', () => {
+    const db = branchBuildDb()
+    runMigrations(db)
+    const row = db
+      .query<{ id: string; contact_display_name: string }, []>('SELECT id, contact_display_name FROM customer_reviews')
+      .get()
+    expect(row).toEqual({ id: 'r1', contact_display_name: 'Alice' })
+  })
+
+  it('leaves the database fully migrated afterwards', () => {
+    const db = branchBuildDb()
+    runMigrations(db)
+    const fresh = (openTestDb().query('PRAGMA user_version').get() as { user_version: number }).user_version
+    const healed = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
+    expect(healed).toBe(fresh)
+  })
+
+  it('upgrades a genuine desktop-v1.3.2 database normally — the repair must not fire', () => {
+    // The release line's own user_version=21: social tables present at their
+    // v21 shape (no v22+ columns), no customer_review_* at all. Reconstructed
+    // by undoing v22–v25 so the fixture is what 1.3.2 actually shipped, not a
+    // fully-migrated db with the version number rewound.
+    const db = openTestDb()
+    for (const t of ['customer_reviews', 'customer_review_items', 'customer_review_evidence',
+                     'customer_review_feedback', 'customer_review_analysis_issues',
+                     'penpal_letter', 'penpal_channel']) {
+      db.exec(`DROP TABLE IF EXISTS ${t};`)
+    }
+    db.exec(`
+      ALTER TABLE social_relay DROP COLUMN upstream_handle;
+      ALTER TABLE social_relay DROP COLUMN downstream_handle;
+      ALTER TABLE social_seek DROP COLUMN redacted_topic;
+      ALTER TABLE social_seek DROP COLUMN redacted_city;
+      ALTER TABLE social_seen_intent DROP COLUMN origin_agent_id;
+    `)
+    db.exec('PRAGMA user_version = 21;')
+
+    expect(() => runMigrations(db)).not.toThrow()
+
+    const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
+    expect(v).toBeGreaterThanOrEqual(28)
+    // v22 ran for real rather than being skipped by a spurious repair.
+    const cols = db.query<{ name: string }, []>("PRAGMA table_info('social_relay')").all().map(c => c.name)
+    expect(cols).toContain('upstream_handle')
+  })
+
+  it('leaves an already-healthy fully-migrated database alone', () => {
+    const db = openTestDb()
+    const before = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
+    expect(() => runMigrations(db)).not.toThrow()
+    const after = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
+    expect(after).toBe(before)
   })
 })

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildTickBodies, buildPushTickText, buildGapCheckinText, buildHuntText, type TickDeps } from './tick-bodies'
+import { buildTickBodies, buildPushTickText, buildGapCheckinText, buildHuntText, distillAndPushOwnerKnowledge, type TickDeps } from './tick-bodies'
 import { TIER_PROFILES } from '../../core/user-tier'
 import type { Access } from '../../lib/access'
 import { openTestDb, type Db } from '../../lib/db'
@@ -778,6 +778,186 @@ describe('buildTickBodies / pushTick — daily hunt branch (Task 3)', () => {
     expect(s.logs.some(l => l.includes('kind=hunt'))).toBe(false)
     expect(s.logs.some(l => l.includes('kind=gap'))).toBe(false)
     expect(s.careLedgerEntries['chat-1']?.lastHuntAtIso).toBeUndefined()
+  })
+})
+
+describe('buildTickBodies / pushTick — connection health gate (Task 4)', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => {
+    for (const d of cleanup) {
+      try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ }
+    }
+  })
+
+  // The LLM-turn spy is `s.dispatch` — the session handle's dispatch()
+  // returned by `acquire()`, which dispatchToChat drives via
+  // `for await (const _ev of handle.dispatch(tickText))`. That call IS the
+  // agent turn (it's what actually invokes the LLM); asserting it was never
+  // called proves no LLM round-trip happened, not merely that no message
+  // reached WeChat. `coordinator` in this file has no `dispatch` field
+  // (only `getMode`/`runExclusive`), so the brief's draft spy name doesn't
+  // apply here — this is the real one.
+
+  it('wechat degraded 时不发主动消息,而且不调 LLM', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project' })
+    cleanup.push(s.stateDir)
+    const shouldSuspend = vi.fn(() => true)
+    const { pushTick } = buildTickBodies({ ...s.deps, health: { shouldSuspend } })
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    // "省 token" 断言:LLM 轮次(session handle 的 dispatch)根本没被发起。
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.acquire).not.toHaveBeenCalled()
+    expect(shouldSuspend).toHaveBeenCalledWith('wechat')
+    expect(s.logs.some(l => l.includes('COMPANION') && l.includes('degraded'))).toBe(true)
+  })
+
+  it('healthy 时照常发', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project' })
+    cleanup.push(s.stateDir)
+    const shouldSuspend = vi.fn(() => false)
+    const { pushTick } = buildTickBodies({ ...s.deps, health: { shouldSuspend } })
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).toHaveBeenCalledOnce()
+  })
+
+  it('health 未提供(省略)时永不暂停 —— 既有测试与 e2e harness 的默认行为', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project' })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps) // no `health` field at all
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).toHaveBeenCalledOnce()
+  })
+})
+
+// distillAndPushOwnerKnowledge is D1's knowledge-distill block PLUS the
+// optional hearth push (HI W3), extracted from ingestTick's inline D1 site
+// so it can be exercised directly. ingestTick's own pipeline runs real
+// plugin discovery (loadPlugins/createResilientBridge over bundledPluginsDir()),
+// which in this repo's dev checkout resolves real bundled plugin symlinks —
+// exercising it end-to-end here would mean spawning real MCP child
+// processes, so these tests drive distillAndPushOwnerKnowledge directly
+// (the exact function ingestTick calls at the D1 site) instead.
+describe('distillAndPushOwnerKnowledge — hearth push (HI W3)', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => {
+    for (const d of cleanup) {
+      try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ }
+    }
+  })
+
+  // Non-empty digest source: one obligation fact, no graph — mirrors
+  // knowledge-distill.test.ts's "only facts present" fixture.
+  const factsKnowledge = {
+    facts: { findFacts: () => ({ results: [{ predicate: '欠', value: '老王 200 元', kind: 'obligation' }] }) },
+  } as unknown as TickDeps['boot']['knowledge']
+
+  const knowledgeMdPath = (stateDir: string, chatId: string) => join(stateDir, 'memory', chatId, 'knowledge.md')
+
+  it('hearth off (real connectHearth, default config) — knowledge.md written exactly as before D1, zero hearth calls', async () => {
+    // No hearthConnect seam override here — this exercises the REAL
+    // connectHearth from hearth-client.ts. loadCompanionConfig(stateDir)
+    // has no hearth_* keys in the config written by setupDeps, so
+    // defaultCompanionConfig()'s hearth_enabled:false applies and
+    // connectHearth returns null WITHOUT spawning anything — proving
+    // feature-off is a true no-op, not just a stubbed test.
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    s.deps.boot = { ...s.deps.boot, knowledge: factsKnowledge } as never
+    await distillAndPushOwnerKnowledge(s.deps, 'chat-1')
+    expect(readFileSync(knowledgeMdPath(s.stateDir, 'chat-1'), 'utf8')).toContain('老王 200 元')
+    expect(s.logs.some(l => l.includes('distilled knowledge.md for chat-1'))).toBe(true)
+    expect(s.logs.some(l => l.toLowerCase().includes('hearth'))).toBe(false)
+  })
+
+  it('fake hearth (enabled) + low-risk plan ⇒ submit then applyForOwner(_, ownerChat, "wechat")', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    s.deps.boot = { ...s.deps.boot, knowledge: factsKnowledge } as never
+    const close = vi.fn(async () => {})
+    const submit = vi.fn(async (_plan: unknown) => ({ change_id: 'plan-1', requires_review: false }))
+    const applyForOwner = vi.fn(async () => ({ ok: true }))
+    const hearthConnect = vi.fn(async () => ({ submit, applyForOwner, close }))
+    s.deps.hearthConnect = hearthConnect as never
+
+    await distillAndPushOwnerKnowledge(s.deps, 'chat-1')
+
+    expect(hearthConnect).toHaveBeenCalledOnce()
+    expect(submit).toHaveBeenCalledOnce()
+    const plan = submit.mock.calls[0]![0] as { risk: string; requires_review: boolean }
+    expect(plan.risk).toBe('low')
+    expect(applyForOwner).toHaveBeenCalledWith('plan-1', 'chat-1', 'wechat')
+    expect(close).toHaveBeenCalledOnce()
+    expect(s.logs.some(l => l.includes('hearth: applied plan-1 (ok=true)'))).toBe(true)
+  })
+
+  it('requires_review plan is submitted but NOT applied', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    s.deps.boot = { ...s.deps.boot, knowledge: factsKnowledge } as never
+    const close = vi.fn(async () => {})
+    const submit = vi.fn(async () => ({ change_id: 'plan-2', requires_review: true }))
+    const applyForOwner = vi.fn(async () => ({ ok: true }))
+    s.deps.hearthConnect = vi.fn(async () => ({ submit, applyForOwner, close })) as never
+
+    await distillAndPushOwnerKnowledge(s.deps, 'chat-1')
+
+    expect(submit).toHaveBeenCalledOnce()
+    expect(applyForOwner).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce() // still closed even though nothing was applied
+    expect(s.logs.some(l => l.includes('plan plan-2 requires review'))).toBe(true)
+  })
+
+  it('a throwing hearth client (submit rejects) does not break the tick — knowledge.md still written, close still runs', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    s.deps.boot = { ...s.deps.boot, knowledge: factsKnowledge } as never
+    const close = vi.fn(async () => {})
+    const submit = vi.fn(async () => { throw new Error('boom: malformed hearth mcp result') })
+    const applyForOwner = vi.fn(async () => ({ ok: true }))
+    s.deps.hearthConnect = vi.fn(async () => ({ submit, applyForOwner, close })) as never
+
+    await expect(distillAndPushOwnerKnowledge(s.deps, 'chat-1')).resolves.toBeUndefined()
+
+    expect(readFileSync(knowledgeMdPath(s.stateDir, 'chat-1'), 'utf8')).toContain('老王 200 元')
+    expect(applyForOwner).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce() // finally still ran despite the throw
+    expect(s.logs.some(l => l.includes('hearth push failed'))).toBe(true)
+  })
+
+  it('a throwing connectHearth itself does not break the tick — knowledge.md still written', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    s.deps.boot = { ...s.deps.boot, knowledge: factsKnowledge } as never
+    s.deps.hearthConnect = vi.fn(async () => { throw new Error('spawn ENOENT') }) as never
+
+    await expect(distillAndPushOwnerKnowledge(s.deps, 'chat-1')).resolves.toBeUndefined()
+
+    expect(readFileSync(knowledgeMdPath(s.stateDir, 'chat-1'), 'utf8')).toContain('老王 200 元')
+    expect(s.logs.some(l => l.includes('hearth push failed'))).toBe(true)
+  })
+
+  it('empty digest — hearth still connects (per the digest-independent connect) but never submits; close still runs (no leaked client)', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    // Pre-seed a stale knowledge.md from an earlier cycle — empty digest
+    // this time must remove it (unchanged D1 behavior).
+    const memDir = join(s.stateDir, 'memory', 'chat-1')
+    mkdirSync(memDir, { recursive: true })
+    writeFileSync(join(memDir, 'knowledge.md'), 'stale')
+    const close = vi.fn(async () => {})
+    const submit = vi.fn(async () => ({ change_id: 'x', requires_review: false }))
+    const hearthConnect = vi.fn(async () => ({ submit, applyForOwner: vi.fn(), close }))
+    s.deps.hearthConnect = hearthConnect as never
+    // deps.boot.knowledge left undefined ⇒ distillOwnerKnowledge(undefined) === ''.
+
+    await distillAndPushOwnerKnowledge(s.deps, 'chat-1')
+
+    expect(existsSync(join(memDir, 'knowledge.md'))).toBe(false)
+    expect(hearthConnect).toHaveBeenCalledOnce()
+    expect(submit).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
   })
 })
 

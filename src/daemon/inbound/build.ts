@@ -12,10 +12,12 @@ import { makeMwOnboarding, type OnboardingMwDeps } from './mw-onboarding'
 import { makeMwPermissionReply, type PermissionReplyMwDeps } from './mw-permission-reply'
 import { makeMwGuard, type GuardMwDeps } from './mw-guard'
 import { makeMwAttachments, type AttachmentsMwDeps } from './mw-attachments'
+import { makeMwTranscribeVoice, type TranscribeVoiceMwDeps } from './mw-transcribe-voice'
 import { makeMwMessages, type MessagesMwDeps } from './mw-messages'
 import { makeMwActivity, type ActivityMwDeps } from './mw-activity'
 import { makeMwMilestone, type MilestoneMwDeps } from './mw-milestone'
 import { makeMwWelcome, type WelcomeMwDeps } from './mw-welcome'
+import { makeMwLlmHealth, type MwLlmHealthDeps } from './mw-llm-health'
 import { makeMwDispatch, type DispatchMwDeps } from './mw-dispatch'
 
 export interface InboundPipelineDeps {
@@ -31,10 +33,12 @@ export interface InboundPipelineDeps {
   permissionReply: PermissionReplyMwDeps
   guard: GuardMwDeps
   attachments: AttachmentsMwDeps
+  transcribeVoice: TranscribeVoiceMwDeps
   messages: MessagesMwDeps
   activity: ActivityMwDeps
   milestone: MilestoneMwDeps
   welcome: WelcomeMwDeps
+  llmHealth: MwLlmHealthDeps
   dispatch: DispatchMwDeps
 }
 
@@ -67,9 +71,16 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     makeMwGuard(d.guard),
     makeMwPermissionReply(d.permissionReply),
     makeMwAttachments(d.attachments),
+    makeMwTranscribeVoice(d.transcribeVoice),
     makeMwActivity(d.activity),
     makeMwMilestone(d.milestone),
     makeMwWelcome(d.welcome),
+    // LLM health gate runs immediately BEFORE dispatch (the terminal
+    // middleware where the LLM turn actually happens) — degraded LLM means
+    // every inbound would otherwise drive one doomed API call per message
+    // (unlike the wechat side: inbound still arrives fine when the LLM is
+    // down, so this is where "hammering a failing API" actually happens).
+    makeMwLlmHealth(d.llmHealth),
     makeMwDispatch(d.dispatch),
   ])
 }

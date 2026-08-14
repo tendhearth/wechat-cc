@@ -88,7 +88,7 @@ wechat-cc setup ; wechat-cc run
 
 | 平台 | 文件 | 第一次开 |
 |:---|:---|:---|
-| **macOS (Apple Silicon)** | `*.dmg` | 右键 → **打开**（Gatekeeper 提示一次）|
+| **macOS (Apple Silicon)** | `*.dmg` | 拖进 Applications，双击被拦后：**系统设置 → 隐私与安全性 → 仍要打开**（一次）|
 | **Windows (x64)** | `.exe` (NSIS) 或 `.msi` | SmartScreen → **更多信息** → **仍要运行** |
 | **Linux (x64)** | `.deb` / `.rpm` | 没警告 |
 
@@ -438,7 +438,14 @@ bun x vitest run        # 完整测试套件 (当前 684 测试)
 bun x tsc --noEmit      # 类型检查
 ```
 
-`apps/desktop/` 是 Tauri 2 GUI；快速迭代用 `bun run shim`（浏览器侧 mock）或 `bun run dev`（真 Tauri 壳）。dev harness 见 [`apps/desktop/test-shim.ts`](./apps/desktop/test-shim.ts)。
+`apps/desktop/` 是 Tauri 2 GUI。四个模式共用同一个 dev server（[`apps/desktop/test-shim.ts`](./apps/desktop/test-shim.ts)），都带热重载：
+
+- `bun run dev` —— 真 Tauri 壳（会自动起 dev server）
+- `bun run dev:web` —— 普通浏览器直连真 CLI + 真 daemon
+- `bun run dev:mock` —— mock 状态，Playwright 用的就是这个
+- `bun run dev:unsafe` —— 同 `dev:web`，但关掉安全阀
+
+三个浏览器模式下，dev server 只转发已知只读的 CLI 命令；会改真实状态的一律拒绝并给出提示（`dev:unsafe` 关掉这层，横幅变红）。`bun run dev` 是真应用，invoke 走 Rust IPC，**不受安全阀保护**。
 
 ---
 

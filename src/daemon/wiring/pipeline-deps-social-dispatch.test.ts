@@ -32,6 +32,13 @@ import type { CareLedger } from '../companion/care-ledger'
 import type { InboundMsg } from '../../core/prompt-format'
 import type { Mode } from '../../core/conversation'
 
+// Connection-health (Task 9) — buildPipelineDeps dereferences boot.health.health
+// unconditionally (llmHealth mw dep), so every `boot` fixture needs a minimal
+// stand-in even though these tests never exercise the health machine itself.
+const fakeHealth = {
+  health: { shouldSuspend: () => false, get: () => ({ consecutiveFailures: 0 }) },
+} as unknown as Bootstrap['health']
+
 const ACCESS_FILE = join(ACCESS_STATE_DIR, 'access.json')
 function writeAccess(admins: string[]): void {
   writeFileSync(ACCESS_FILE, JSON.stringify({ dmPolicy: 'allowlist', allowFrom: [], admins }, null, 2))
@@ -54,12 +61,16 @@ function makeRevealerStub(echoReturns: 'ok' | 'null', pledgeReturns: 'ok' | 'nul
   }
 }
 
+// Shared cleanup for ACCESS_STATE_DIR — a single top-level afterAll (not
+// nested in either describe below) so it fires once, after every test in
+// this file has run, regardless of which describe block runs last.
+afterAll(() => { rmSync(ACCESS_STATE_DIR, { recursive: true, force: true }) })
+
 describe('pipeline-deps social dispatch seam (揭晓 reveal)', () => {
   let stateDir: string
   beforeEach(() => { stateDir = mkdtempSync(join(tmpdir(), 'pipeline-deps-social-test-')); writeAccess(['op_chat']) })
-  afterAll(() => { rmSync(ACCESS_STATE_DIR, { recursive: true, force: true }) })
 
-  function setup(social: Bootstrap['social']) {
+  function setup(social: Bootstrap['social'], penpal?: Bootstrap['penpal']) {
     const db = openTestDb()
     const coordinatorDispatch = vi.fn(async (_msg: InboundMsg) => {})
     const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
@@ -81,6 +92,8 @@ describe('pipeline-deps social dispatch seam (揭晓 reveal)', () => {
       agentConfig: { bot_name: null } as unknown as Bootstrap['agentConfig'],
       sendAssistantText,
       social,
+      penpal,
+      health: fakeHealth,
     } as unknown as Bootstrap
 
     const ilink = {} as unknown as IlinkAdapter
@@ -163,5 +176,245 @@ describe('pipeline-deps social dispatch seam (揭晓 reveal)', () => {
     await pipelineDeps.dispatch.coordinator.dispatch({ ...baseMsg, chatId: 'someone_else', userId: 'someone_else' })
     expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
     expect(revealer.revealEcho).not.toHaveBeenCalled()
+  })
+})
+
+// Task 10 — the owner's WeChat "回信 <channel> <text>" reply sends an
+// outbound letter on that pen-pal channel instead of dispatching a normal
+// agent turn. Mirrors the 揭晓 harness above; boot.penpal is optional and the
+// seam guards on it (Task 11 supplies the REAL correspondent-backed penpal).
+describe('pipeline-deps social dispatch seam (回信 letter reply)', () => {
+  let stateDir: string
+  beforeEach(() => { stateDir = mkdtempSync(join(tmpdir(), 'pipeline-deps-social-test-')); writeAccess(['op_chat']) })
+
+  function setup(penpal: Bootstrap['penpal']) {
+    const db = openTestDb()
+    const coordinatorDispatch = vi.fn(async (_msg: InboundMsg) => {})
+    const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+    const boot = {
+      sessionManager: { isInFlight: vi.fn(() => false) } as unknown as Bootstrap['sessionManager'],
+      sessionStore: {} as Bootstrap['sessionStore'],
+      conversationStore: { upsertIdentity: vi.fn() } as unknown as Bootstrap['conversationStore'],
+      registry: { get: vi.fn(), list: vi.fn(() => []), getCheapEval: vi.fn(() => null), has: vi.fn(() => false) } as unknown as Bootstrap['registry'],
+      coordinator: { dispatch: coordinatorDispatch, getMode: vi.fn((): Mode => ({ kind: 'solo', provider: 'claude' })), cancel: vi.fn(() => false) } as unknown as Bootstrap['coordinator'],
+      resolve: vi.fn(() => null),
+      formatInbound: vi.fn() as unknown as Bootstrap['formatInbound'],
+      sdkOptionsForProject: vi.fn() as unknown as Bootstrap['sdkOptionsForProject'],
+      buildInstructions: vi.fn(() => ''),
+      defaultProviderId: 'claude',
+      agentProviderKind: 'claude',
+      dispatchDelegate: vi.fn() as unknown as Bootstrap['dispatchDelegate'],
+      a2aDeps: undefined,
+      a2aServer: null,
+      agentConfig: { bot_name: null } as unknown as Bootstrap['agentConfig'],
+      sendAssistantText,
+      social: undefined,
+      penpal,
+      health: fakeHealth,
+    } as unknown as Bootstrap
+
+    const ilink = {} as unknown as IlinkAdapter
+    const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
+    const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), resetNoReply: vi.fn() }
+    const replySinks = makeReplySinks()
+    const { pipelineDeps } = buildPipelineDeps(
+      { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
+      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
+    )
+    return { pipelineDeps, coordinatorDispatch, sendAssistantText }
+  }
+
+  function fakePenpal(ok: boolean): Bootstrap['penpal'] {
+    return { sendLetter: vi.fn(async (_channel: string, _text: string) => ({ ok, ...(ok ? {} : { error: 'channel_not_open' }) })) }
+  }
+
+  const letterMsg: InboundMsg = { chatId: 'op_chat', userId: 'op_chat', text: '回信 c1 你好啊', msgType: 'text', createTimeMs: Date.now(), accountId: 'acct1' }
+
+  it('a "回信 <channel> <text>" from the admin chat calls sendLetter and is NOT dispatched as a normal turn', async () => {
+    const penpal = fakePenpal(true)
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(penpal)
+    await pipelineDeps.dispatch.coordinator.dispatch(letterMsg)
+    expect(penpal!.sendLetter).toHaveBeenCalledWith('c1', '你好啊')
+    expect(coordinatorDispatch).not.toHaveBeenCalled()
+    expect(sendAssistantText).not.toHaveBeenCalled()
+  })
+
+  it('a "回信" from a NON-admin chat is never consumed', async () => {
+    const penpal = fakePenpal(true)
+    const { pipelineDeps, coordinatorDispatch } = setup(penpal)
+    await pipelineDeps.dispatch.coordinator.dispatch({ ...letterMsg, chatId: 'someone_else', userId: 'someone_else' })
+    expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
+    expect(penpal!.sendLetter).not.toHaveBeenCalled()
+  })
+
+  it('replies with a gentle failure message when sendLetter returns { ok: false }', async () => {
+    const penpal = fakePenpal(false)
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(penpal)
+    await pipelineDeps.dispatch.coordinator.dispatch(letterMsg)
+    expect(coordinatorDispatch).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    const [chatId, text] = sendAssistantText.mock.calls[0]!
+    expect(chatId).toBe('op_chat')
+    expect(text).toMatch(/没找到这条笔友通道|发送失败/)
+  })
+
+  it('no boot.penpal → always a normal turn, even for a well-formed 回信', async () => {
+    const { pipelineDeps, coordinatorDispatch } = setup(undefined)
+    await pipelineDeps.dispatch.coordinator.dispatch(letterMsg)
+    expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('a non-command message falls through to a normal turn', async () => {
+    const penpal = fakePenpal(true)
+    const { pipelineDeps, coordinatorDispatch } = setup(penpal)
+    await pipelineDeps.dispatch.coordinator.dispatch({ ...letterMsg, text: '今天几点见面?' })
+    expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
+    expect(penpal!.sendLetter).not.toHaveBeenCalled()
+  })
+})
+
+// P4 派心愿 (Task 4) — the owner's WeChat "派 <id>" / "取消 <id>" reply
+// confirms/cancels a `proposed` social_seek row instead of dispatching a
+// normal agent turn. Mirrors the 揭晓/回信 harnesses above; every outcome
+// (including all the "no" outcomes) is rendered by THIS seam, no engine
+// notify. `派` is ALREADY the delegate imperative (admin-commands.ts's
+// DELEGATE_RE: 让/派 <hand> 执行/跑 <task>) — the mandatory regression case
+// below proves the id-charset guard in parseSeekCommand keeps a delegate
+// command from ever reaching confirmSeek/cancelSeek.
+describe('pipeline-deps social dispatch seam (派/取消 confirm/cancel wish)', () => {
+  let stateDir: string
+  beforeEach(() => { stateDir = mkdtempSync(join(tmpdir(), 'pipeline-deps-social-test-')); writeAccess(['op_chat']) })
+
+  function socialWithSeek(rows: import('../../core/social-seek-store').SeekRow[]) {
+    const confirmSeek = vi.fn((_id: string) => ({ ok: true, intent_id: _id }))
+    const cancelSeek = vi.fn((_id: string) => ({ ok: true }))
+    const social = {
+      broker: {
+        seek: vi.fn(async () => ({ intent_id: 'x' })),
+        propose: vi.fn(async () => ({ ok: true, intent_id: 'x', redacted: 'x' })),
+        confirmSeek,
+        cancelSeek,
+      },
+      seekStore: { create() {}, propose() {}, update() {}, list: () => rows, get: () => null },
+      echoStore: { create() {}, setStatus() {}, setSelfRevealed() {}, setPeerRevealed() {}, setRevealedIdentity() {}, listForSeek: () => [], listAll: () => [], get: () => null },
+      pledgeStore: { create() {}, get: () => null, list: () => [], setSelfRevealed() {}, setPeerRevealed() {} },
+      revealer: { revealEcho: vi.fn(async () => null), revealPledge: vi.fn(async () => null), onInboundReveal: vi.fn(() => ({ mutual: false })) },
+      penpal: { sendLetter: vi.fn(async () => ({ ok: true })) },
+    } as unknown as Bootstrap['social']
+    return { social, confirmSeek, cancelSeek }
+  }
+
+  function setup(social: Bootstrap['social']) {
+    const db = openTestDb()
+    const coordinatorDispatch = vi.fn(async (_msg: InboundMsg) => {})
+    const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+    const boot = {
+      sessionManager: { isInFlight: vi.fn(() => false) } as unknown as Bootstrap['sessionManager'],
+      sessionStore: {} as Bootstrap['sessionStore'],
+      conversationStore: { upsertIdentity: vi.fn() } as unknown as Bootstrap['conversationStore'],
+      registry: { get: vi.fn(), list: vi.fn(() => []), getCheapEval: vi.fn(() => null), has: vi.fn(() => false) } as unknown as Bootstrap['registry'],
+      coordinator: { dispatch: coordinatorDispatch, getMode: vi.fn((): Mode => ({ kind: 'solo', provider: 'claude' })), cancel: vi.fn(() => false) } as unknown as Bootstrap['coordinator'],
+      resolve: vi.fn(() => null),
+      formatInbound: vi.fn() as unknown as Bootstrap['formatInbound'],
+      sdkOptionsForProject: vi.fn() as unknown as Bootstrap['sdkOptionsForProject'],
+      buildInstructions: vi.fn(() => ''),
+      defaultProviderId: 'claude',
+      agentProviderKind: 'claude',
+      dispatchDelegate: vi.fn() as unknown as Bootstrap['dispatchDelegate'],
+      a2aDeps: undefined,
+      a2aServer: null,
+      agentConfig: { bot_name: null } as unknown as Bootstrap['agentConfig'],
+      sendAssistantText,
+      social,
+      penpal: undefined,
+      health: fakeHealth,
+    } as unknown as Bootstrap
+
+    const ilink = {} as unknown as IlinkAdapter
+    const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
+    const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), resetNoReply: vi.fn() }
+    const replySinks = makeReplySinks()
+    const { pipelineDeps } = buildPipelineDeps(
+      { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
+      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
+    )
+    return { pipelineDeps, coordinatorDispatch, sendAssistantText }
+  }
+
+  function proposedRow(id: string): import('../../core/social-seek-store').SeekRow {
+    return { id, kind: 'seek', topic: 't', status: 'proposed', redacted_topic: 't', redacted_city: null, hop: 1, peers_asked: 0, created_at: '', updated_at: '' }
+  }
+
+  const msg = (text: string, chatId = 'op_chat'): InboundMsg => ({ chatId, userId: chatId, text, msgType: 'text', createTimeMs: Date.now(), accountId: 'acct1' })
+
+  it('admin 派 <6+ char prefix> → confirmSeek(fullId), reply 已发出,觅食中, no coordinator dispatch', async () => {
+    const { social, confirmSeek } = socialWithSeek([proposedRow('3f9a2bcccc')])
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(social)
+    await pipelineDeps.dispatch.coordinator.dispatch(msg('派 3f9a2b'))
+    expect(confirmSeek).toHaveBeenCalledWith('3f9a2bcccc')
+    expect(coordinatorDispatch).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    const [chatId, text] = sendAssistantText.mock.calls[0]!
+    expect(chatId).toBe('op_chat')
+    expect(text).toContain('已发出,觅食中')
+  })
+
+  it('取消 <id> → cancelSeek called, reply 已作废', async () => {
+    const { social, cancelSeek } = socialWithSeek([proposedRow('3f9a2bcccc')])
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(social)
+    await pipelineDeps.dispatch.coordinator.dispatch(msg('取消 3f9a2bcccc'))
+    expect(cancelSeek).toHaveBeenCalledWith('3f9a2bcccc')
+    expect(coordinatorDispatch).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    const [chatId, text] = sendAssistantText.mock.calls[0]!
+    expect(chatId).toBe('op_chat')
+    expect(text).toContain('已作废')
+  })
+
+  it('派 <unknown> → no confirmSeek, reply 这条心愿不存在或已处理', async () => {
+    const { social, confirmSeek } = socialWithSeek([proposedRow('3f9a2bcccc')])
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(social)
+    await pipelineDeps.dispatch.coordinator.dispatch(msg('派 deadbeef'))
+    expect(confirmSeek).not.toHaveBeenCalled()
+    expect(coordinatorDispatch).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    const [chatId, text] = sendAssistantText.mock.calls[0]!
+    expect(chatId).toBe('op_chat')
+    expect(text).toContain('这条心愿不存在或已处理')
+  })
+
+  it('ambiguous prefix → reply asking for a longer prefix, no confirmSeek', async () => {
+    const { social, confirmSeek } = socialWithSeek([proposedRow('3f9a2b1111'), proposedRow('3f9a2b2222')])
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(social)
+    await pipelineDeps.dispatch.coordinator.dispatch(msg('派 3f9a2b'))
+    expect(confirmSeek).not.toHaveBeenCalled()
+    expect(coordinatorDispatch).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    const [chatId, text] = sendAssistantText.mock.calls[0]!
+    expect(chatId).toBe('op_chat')
+    expect(text).toMatch(/更长|长一点|再长/)
+  })
+
+  it('non-admin 派 … falls through to boot.coordinator.dispatch (no social action)', async () => {
+    const { social, confirmSeek } = socialWithSeek([proposedRow('3f9a2bcccc')])
+    const { pipelineDeps, coordinatorDispatch } = setup(social)
+    await pipelineDeps.dispatch.coordinator.dispatch(msg('派 3f9a2b', 'someone_else'))
+    expect(confirmSeek).not.toHaveBeenCalled()
+    expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
+  })
+
+  // Mandatory regression (I2 delegate-collision guard) — an admin delegate
+  // command ("派 <hand> 跑 <task>") must NOT hit confirmSeek/cancelSeek. The
+  // id-charset parser returns null on the non-id token, so this falls
+  // through the seam toward normal dispatch (which real wiring precedes
+  // with makeMwAdmin's DELEGATE_RE — this test drives the seam directly, so
+  // it asserts the belt, not the suspenders).
+  it('delegate coexistence: admin 派 家里 跑 拉日志 does NOT hit confirmSeek/cancelSeek; falls through to dispatch', async () => {
+    const { social, confirmSeek, cancelSeek } = socialWithSeek([proposedRow('3f9a2bcccc')])
+    const { pipelineDeps, coordinatorDispatch } = setup(social)
+    await pipelineDeps.dispatch.coordinator.dispatch(msg('派 家里 跑 拉日志'))
+    expect(confirmSeek).not.toHaveBeenCalled()
+    expect(cancelSeek).not.toHaveBeenCalled()
+    expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
   })
 })

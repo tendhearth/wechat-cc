@@ -1,0 +1,29 @@
+/**
+ * busy-registry — "有工作在跑"的统一登记处(spec 2026-08-11 §1)。
+ *
+ * 自我重启的空闲判定原本只看 SessionManager 的会话 —— 它建模的是"用户
+ * 在不在",而该建模的是"工作在不在"。所有不经 SessionManager 的长任务
+ * (A2A 委派、ingest/introspect tick、客户回顾、觅食扇出)干活时在这里
+ * 各持一个 token,空闲判定读 busy() 即可,一个概念覆盖整类。
+ *
+ * 永不抛;release 幂等。label 只存不读 —— 将来做诊断接口时再暴露。
+ */
+export interface BusyRegistry {
+  /** 拿一个 token;返回 release。release 幂等,多次调用无害。 */
+  hold(label: string): () => void
+  busy(): boolean
+}
+
+export function makeBusyRegistry(): BusyRegistry {
+  const holders = new Map<symbol, string>()
+  return {
+    hold(label) {
+      const key = Symbol(label)
+      holders.set(key, label)
+      return () => { holders.delete(key) }
+    },
+    busy() {
+      return holders.size > 0
+    },
+  }
+}

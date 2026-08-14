@@ -1,8 +1,10 @@
-// Dev-server smoke + hardening checks.
+// Dev server smoke + hardening checks.
 //
 // Distinct from the rest of the Playwright suite (which targets test-shim.ts
-// on 4174). This spec spawns `bun dev-server.ts` on its own port and exercises
-// the bits that changed in the path-guard + body-injection + SSE fix.
+// on 4174 in its default DRY_RUN mode). This spec spawns its own DRY_RUN
+// test-shim on a separate port and exercises the bits that changed in the
+// path-guard + body-injection + SSE fix (now part of the merged dev server:
+// test-shim.ts + dev-reload.ts).
 
 import { test as base, expect, type Page } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -26,7 +28,7 @@ async function waitForUrl(url: string, timeoutMs: number) {
     } catch { /* not ready */ }
     await new Promise(r => setTimeout(r, 100))
   }
-  throw new Error(`dev-server did not start at ${url} within ${timeoutMs}ms`)
+  throw new Error(`dev server did not start at ${url} within ${timeoutMs}ms`)
 }
 
 const test = base.extend<{}, DevServerWorkerFixtures>({
@@ -45,14 +47,14 @@ const test = base.extend<{}, DevServerWorkerFixtures>({
 
     let proc: ChildProcess | null = null
     try {
-      proc = spawn('bun', ['dev-server.ts'], {
+      proc = spawn('bun', ['test-shim.ts'], {
         cwd: process.cwd(),
-        env: { ...process.env, PORT: String(PORT) },
+        env: { ...process.env, WECHAT_CC_SHIM_PORT: String(PORT), WECHAT_CC_DRY_RUN: '1' },
         stdio: 'pipe',
         shell: process.platform === 'win32',
       })
-      proc.stderr?.on('data', d => process.stderr.write(`[dev-server] ${d}`))
-      proc.stdout?.on('data', d => process.stderr.write(`[dev-server] ${d}`))
+      proc.stderr?.on('data', d => process.stderr.write(`[dev] ${d}`))
+      proc.stdout?.on('data', d => process.stderr.write(`[dev] ${d}`))
       await waitForUrl(BASE, 10_000)
       await use(BASE)
     } finally {
@@ -65,7 +67,7 @@ const test = base.extend<{}, DevServerWorkerFixtures>({
   }, { scope: 'worker' }],
 })
 
-test.describe('dev-server', () => {
+test.describe('dev server (merged test-shim + dev-reload)', () => {
   test('serves index.html and injects the reload script before </body>', async ({ page, devUrl }) => {
     const r = await page.request.get(devUrl + '/')
     expect(r.status()).toBe(200)

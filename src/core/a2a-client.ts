@@ -18,6 +18,8 @@ export interface AgentCard {
   name: string
   description?: string
   version?: string
+  /** A2A wire-protocol version; ABSENT on pre-versioning peers ⇒ treat as 1. */
+  proto_version?: number
   auth?: { type: string; required: boolean }
   capabilities?: Array<{
     name: string

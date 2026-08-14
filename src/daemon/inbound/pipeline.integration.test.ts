@@ -39,10 +39,17 @@ function fakeDeps(over: Partial<{
       log,
     },
     attachments: { materializeAttachments: async () => {}, inboxDir: '/tmp', log },
+    transcribeVoice: { log },
     messages: { append: async () => 1, log },
     activity: { recordInbound: activity, log },
     milestone: { fireMilestonesFor: milestone, log },
     welcome: { maybeWriteWelcomeObservation: welcome, log },
+    llmHealth: {
+      health: { shouldSuspend: () => false, get: () => ({ consecutiveFailures: 0 }) },
+      sendMessage: async () => ({ msgId: 'm1' }),
+      now: () => 0,
+      log,
+    },
     dispatch: { coordinator: { dispatch } },
   }
   return { deps, spy: { dispatch, activity, milestone, welcome } }

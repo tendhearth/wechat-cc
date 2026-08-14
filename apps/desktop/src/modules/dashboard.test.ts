@@ -17,7 +17,19 @@ beforeEach(() => {
 })
 
 // Import AFTER document stub so setPending's getElementById doesn't crash
-const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, __resetDashboardState, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy } = await import('./dashboard.js')
+const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, __resetDashboardState, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, loadLastIncident, checkIncidentsOnPoll } = await import('./dashboard.js')
+
+// In-memory localStorage stub — real round-trip semantics (get after set),
+// unlike memory.test.ts's bare no-op stub, because loadLastIncident's
+// unread-detection logic depends on persistence across calls.
+function fakeLocalStorage(initial: Record<string, string> = {}) {
+  const data: Record<string, string> = { ...initial }
+  return {
+    getItem: (k: string) => (k in data ? data[k] : null),
+    setItem: (k: string, v: string) => { data[k] = v },
+    _data: data,
+  }
+}
 
 function textNode(text = '') {
   return { nodeType: 3, textContent: text }
@@ -63,6 +75,7 @@ function installDashboardDom() {
     accountsBody: fakeEl(),
     accountsCurrent: fakeEl(),
     accountsMeta: fakeEl(),
+    dashHealthBanner: { ...fakeEl(), hidden: true },
   }
   const byId: Record<string, any> = {
     'hero-card': els.heroCard,
@@ -75,6 +88,7 @@ function installDashboardDom() {
     'accounts-body': els.accountsBody,
     'accounts-current': els.accountsCurrent,
     'accounts-meta': els.accountsMeta,
+    'dash-health-banner': els.dashHealthBanner,
   }
   const fakeDocument = {
     getElementById: (id: string) => byId[id] ?? null,
@@ -1268,5 +1282,257 @@ describe('provider menu', () => {
     expect(args[2]).toBe('chat-1')
     expect(JSON.parse(args[3])).toEqual({ kind: 'solo', provider: 'gemini' })
     expect(args[4]).toBe('--json')
+  })
+})
+
+describe('loadLastIncident', () => {
+  const CLOSED = {
+    id: 'wechat-2026-08-02T14:33:00.000Z',
+    dependency: 'wechat', kind: 'network', actionable: false,
+    startedAt: '2026-08-02T14:33:00.000Z', endedAt: '2026-08-03T01:08:00.000Z',
+    notifiedAt: '2026-08-02T14:48:00.000Z', lastError: null,
+  }
+  const ONGOING = {
+    id: 'llm-2026-08-03T02:00:00.000Z',
+    dependency: 'llm', kind: 'network', actionable: false,
+    startedAt: '2026-08-03T02:00:00.000Z', endedAt: null,
+    notifiedAt: '2026-08-03T02:15:00.000Z', lastError: 'ECONNRESET',
+  }
+
+  it('没有故障记录 → 横幅保持隐藏', async () => {
+    const els = installDashboardDom()
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => ({ incidents: [] }))
+    globalThis.localStorage = fakeLocalStorage() as any
+    await loadLastIncident({ invoke, invokeApi })
+    expect(els.dashHealthBanner.hidden).toBe(true)
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('已恢复的故障 → 横幅显示时长与"现已恢复"文案', async () => {
+    const els = installDashboardDom()
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => ({ incidents: [CLOSED] }))
+    globalThis.localStorage = fakeLocalStorage() as any
+    await loadLastIncident({ invoke, invokeApi })
+    expect(els.dashHealthBanner.hidden).toBe(false)
+    expect(els.dashHealthBanner.textContent).toContain('现已恢复')
+    expect(els.dashHealthBanner.textContent).toContain('小时')
+  })
+
+  it('仍在进行的故障 → 横幅文案标"仍在进行"/断开状态,不写"现已恢复"', async () => {
+    const els = installDashboardDom()
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => ({ incidents: [ONGOING] }))
+    globalThis.localStorage = fakeLocalStorage() as any
+    await loadLastIncident({ invoke, invokeApi })
+    expect(els.dashHealthBanner.hidden).toBe(false)
+    expect(els.dashHealthBanner.textContent).toContain('断开状态')
+    expect(els.dashHealthBanner.textContent).not.toContain('现已恢复')
+  })
+
+  it('首次运行(localStorage 里没有存过)→ 不弹通知,只记录当前最新的复合 key', async () => {
+    const els = installDashboardDom()
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => ({ incidents: [CLOSED] }))
+    const ls = fakeLocalStorage()
+    globalThis.localStorage = ls as any
+    await loadLastIncident({ invoke, invokeApi })
+    expect(invoke).not.toHaveBeenCalledWith('notify_user', expect.anything())
+    expect(ls._data['wechat-cc:health:lastSeenIncidentId']).toBe(`${CLOSED.id}|${CLOSED.endedAt}`)
+  })
+
+  it('迁移:localStorage 里是升级前的纯 id 格式(不含 "|")→ 当首次运行处理,不误判成新故障、不弹窗,只记下新的复合 key', async () => {
+    installDashboardDom()
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => ({ incidents: [CLOSED] }))
+    // Pre-migration format: a bare incident id, no "|" delimiter.
+    const ls = fakeLocalStorage({ 'wechat-cc:health:lastSeenIncidentId': CLOSED.id })
+    globalThis.localStorage = ls as any
+    await loadLastIncident({ invoke, invokeApi })
+    expect(invoke).not.toHaveBeenCalledWith('notify_user', expect.anything())
+    expect(ls._data['wechat-cc:health:lastSeenIncidentId']).toBe(`${CLOSED.id}|${CLOSED.endedAt}`)
+  })
+
+  it('新故障状态(复合 key)与已记录的不同,且 daemon 已经决定该通知(notifiedAt 非空)→ 弹一次系统通知,并把新复合 key 写回 localStorage', async () => {
+    installDashboardDom()
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => ({ incidents: [CLOSED] }))
+    const ls = fakeLocalStorage({ 'wechat-cc:health:lastSeenIncidentId': 'some-older-id|open' })
+    globalThis.localStorage = ls as any
+    await loadLastIncident({ invoke, invokeApi })
+    expect(invoke).toHaveBeenCalledWith('notify_user', expect.objectContaining({
+      title: expect.any(String),
+      body: expect.any(String),
+    }))
+    expect(ls._data['wechat-cc:health:lastSeenIncidentId']).toBe(`${CLOSED.id}|${CLOSED.endedAt}`)
+  })
+
+  it('已见过的故障状态(复合 key 与记录相同)→ 不再弹通知', async () => {
+    installDashboardDom()
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => ({ incidents: [CLOSED] }))
+    const ls = fakeLocalStorage({ 'wechat-cc:health:lastSeenIncidentId': `${CLOSED.id}|${CLOSED.endedAt}` })
+    globalThis.localStorage = ls as any
+    await loadLastIncident({ invoke, invokeApi })
+    expect(invoke).not.toHaveBeenCalledWith('notify_user', expect.anything())
+  })
+
+  // finding 1 (评审): 分级阈值必须真正约束桌面弹窗,不能只在 daemon 日志里
+  // 生效。notifiedAt === null 意味着 daemon 的 notify-policy(3min 可操作 /
+  // 15min 不可操作)还没判定"该通知了" —— 桌面必须尊重这道闸门,哪怕状态
+  // (复合 key)已经和记录的不一样。
+  it('故障已开但 notifiedAt 仍为 null(未过 daemon 的分级阈值)→ 不弹窗,也不提前把这个状态记成"已见过"', async () => {
+    installDashboardDom()
+    const NOT_YET_NOTIFIED = {
+      id: 'wechat-2026-08-03T10:00:00.000Z',
+      dependency: 'wechat', kind: 'network', actionable: false,
+      startedAt: '2026-08-03T10:00:00.000Z', endedAt: null,
+      notifiedAt: null, lastError: null,
+    }
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => ({ incidents: [NOT_YET_NOTIFIED] }))
+    // A previously-seen, unrelated state — so the composite key genuinely
+    // differs; the only thing withholding the popup should be notifiedAt.
+    const ls = fakeLocalStorage({ 'wechat-cc:health:lastSeenIncidentId': 'some-older-id|open' })
+    globalThis.localStorage = ls as any
+    await loadLastIncident({ invoke, invokeApi })
+    expect(invoke).not.toHaveBeenCalledWith('notify_user', expect.anything())
+    // Must stay stale (unchanged) — not the new incident's key — so that once
+    // notifiedAt actually flips to non-null on a later poll, the composite
+    // key comparison still sees a difference and re-evaluates instead of
+    // having already "consumed" this exact (id, endedAt) pair.
+    expect(ls._data['wechat-cc:health:lastSeenIncidentId']).toBe('some-older-id|open')
+  })
+
+  // finding 2 (评审): 恢复也必须弹通知,且是与"坏了"配对的第二次独立弹窗
+  // (同一条记录的 endedAt 从 null 变成时间戳,不产生新 incident id)。
+  it('同一条记录从 open 变成 ended → 弹第二次通知,且文案是恢复态而不是断开态', async () => {
+    installDashboardDom()
+    const DOWN_NOTIFIED = {
+      id: 'llm-2026-08-03T10:00:00.000Z',
+      dependency: 'llm', kind: 'network', actionable: false,
+      startedAt: '2026-08-03T10:00:00.000Z', endedAt: null,
+      notifiedAt: '2026-08-03T10:15:00.000Z', lastError: 'ECONNRESET',
+    }
+    const invoke = vi.fn(async () => ({}))
+    let incidents: unknown[] = [DOWN_NOTIFIED]
+    const invokeApi = vi.fn(async () => ({ incidents }))
+    const ls = fakeLocalStorage({ 'wechat-cc:health:lastSeenIncidentId': 'some-older-id|open' })
+    globalThis.localStorage = ls as any
+
+    // First popup: down.
+    await loadLastIncident({ invoke, invokeApi })
+    expect(invoke).toHaveBeenCalledTimes(1)
+    const [, firstArgs] = invoke.mock.calls[0] as any[]
+    expect(firstArgs.body).not.toContain('现已恢复')
+    expect(ls._data['wechat-cc:health:lastSeenIncidentId']).toBe(`${DOWN_NOTIFIED.id}|open`)
+
+    // Same incident recovers — endedAt now set, notifiedAt untouched by the
+    // daemon (it only ever writes notifiedAt on the down side).
+    const RECOVERED = { ...DOWN_NOTIFIED, endedAt: '2026-08-03T10:20:00.000Z' }
+    incidents = [RECOVERED]
+    invoke.mockClear()
+    await loadLastIncident({ invoke, invokeApi })
+    expect(invoke).toHaveBeenCalledTimes(1)
+    const [, secondArgs] = invoke.mock.calls[0] as any[]
+    expect(secondArgs.body).toContain('现已恢复')
+    expect(ls._data['wechat-cc:health:lastSeenIncidentId']).toBe(`${RECOVERED.id}|${RECOVERED.endedAt}`)
+
+    // Polling again for the same now-settled recovered state must not fire a third popup.
+    invoke.mockClear()
+    await loadLastIncident({ invoke, invokeApi })
+    expect(invoke).not.toHaveBeenCalledWith('notify_user', expect.anything())
+  })
+
+  it('拉取失败(daemon 未启动等)→ 吞掉错误,不抛出', async () => {
+    installDashboardDom()
+    const invoke = vi.fn(async () => ({}))
+    const invokeApi = vi.fn(async () => { throw new Error('network error') })
+    globalThis.localStorage = fakeLocalStorage() as any
+    await expect(loadLastIncident({ invoke, invokeApi })).resolves.not.toThrow()
+  })
+})
+
+// Task 8 follow-up (spec review finding): loadLastIncident alone only ran
+// once on dashboard entry, so a NEW incident starting while the app was
+// already open (owner parked on a different pane) went undiscovered until
+// the owner happened to revisit the overview pane — the daemon's own
+// notify hook is log-only, so this poll is the only real-time path.
+// checkIncidentsOnPoll is what main.js subscribes to the doctor poller's
+// existing 5s tick to close that gap, throttled to a 60s effective cadence.
+describe('checkIncidentsOnPoll', () => {
+  const OPEN_A = {
+    id: 'wechat-2026-08-02T14:33:00.000Z',
+    dependency: 'wechat', kind: 'network', actionable: false,
+    startedAt: '2026-08-02T14:33:00.000Z', endedAt: null,
+    notifiedAt: '2026-08-02T14:48:00.000Z', lastError: null,
+  }
+  const OPEN_B = {
+    id: 'wechat-2026-08-03T09:00:00.000Z',
+    dependency: 'wechat', kind: 'network', actionable: false,
+    startedAt: '2026-08-03T09:00:00.000Z', endedAt: null,
+    notifiedAt: '2026-08-03T09:15:00.000Z', lastError: null,
+  }
+
+  it('同一会话内新出现的故障也能被发现并弹一次通知;再拉同一条时不再弹', async () => {
+    vi.useFakeTimers()
+    try {
+      installDashboardDom()
+      // Already seen OPEN_A on a previous check this session (composite key format).
+      const ls = fakeLocalStorage({ 'wechat-cc:health:lastSeenIncidentId': `${OPEN_A.id}|open` })
+      globalThis.localStorage = ls as any
+      const invoke = vi.fn(async () => ({}))
+      let incidents = [OPEN_A]
+      const invokeApi = vi.fn(async () => ({ incidents }))
+      const deps = { invoke, invokeApi }
+
+      // First tick (poller's immediate call): still OPEN_A, already seen — no notify.
+      await checkIncidentsOnPoll(deps)
+      expect(invoke).not.toHaveBeenCalledWith('notify_user', expect.anything())
+
+      // A NEW incident appears — simulate the bot disconnecting again — and
+      // enough time passes for the 60s throttle window to open again.
+      incidents = [OPEN_B]
+      vi.advanceTimersByTime(60_000)
+      await checkIncidentsOnPoll(deps)
+      expect(invoke).toHaveBeenCalledTimes(1)
+      expect(invoke).toHaveBeenCalledWith('notify_user', expect.objectContaining({
+        title: expect.any(String), body: expect.any(String),
+      }))
+      expect(ls._data['wechat-cc:health:lastSeenIncidentId']).toBe(`${OPEN_B.id}|open`)
+
+      // Polling again for the SAME still-open incident must not re-notify.
+      invoke.mockClear()
+      vi.advanceTimersByTime(60_000)
+      await checkIncidentsOnPoll(deps)
+      expect(invoke).not.toHaveBeenCalledWith('notify_user', expect.anything())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('60 秒节流:密集 tick(doctor poller 的 5s 节奏)期间不会反复打 /v1/health/incidents', async () => {
+    vi.useFakeTimers()
+    try {
+      installDashboardDom()
+      globalThis.localStorage = fakeLocalStorage() as any
+      const invoke = vi.fn(async () => ({}))
+      const invokeApi = vi.fn(async () => ({ incidents: [] }))
+      const deps = { invoke, invokeApi }
+
+      await checkIncidentsOnPoll(deps)   // immediate first call
+      vi.advanceTimersByTime(5_000)
+      await checkIncidentsOnPoll(deps)   // throttled — within 60s window
+      vi.advanceTimersByTime(5_000)
+      await checkIncidentsOnPoll(deps)   // still throttled
+      expect(invokeApi).toHaveBeenCalledTimes(1)
+
+      vi.advanceTimersByTime(55_000)     // now past 60s since the first call
+      await checkIncidentsOnPoll(deps)
+      expect(invokeApi).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

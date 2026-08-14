@@ -64,7 +64,11 @@ export interface Pairings {
 export function listPairings(stateDir: string): Pairings {
   const result: Pairings = { hands: [], brains: [], others: [] }
   for (const a of createA2ARegistry({ stateDir }).list()) {
-    if (a.capabilities?.includes('exec')) result.hands.push({ id: a.id, name: a.name, url: a.url, paused: a.paused })
+    // 乙 (yi) hand delegation is push-only (the brain POSTs the hand's
+    // /a2a/exec) — a url-less mailbox peer (pairing-code feature) can't
+    // serve as a hand even if it happens to carry the 'exec' capability.
+    // Falls through to `others` instead of being miscategorized.
+    if (a.capabilities?.includes('exec') && a.url) result.hands.push({ id: a.id, name: a.name, url: a.url, paused: a.paused })
     else if (a.outbound_api_key === 'unused') result.brains.push({ id: a.id, name: a.name })
     else result.others.push({ id: a.id, name: a.name, capabilities: a.capabilities ?? [] })
   }

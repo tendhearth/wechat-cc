@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>陪伴小世界 · wechat-cc</title>
+    <link rel="stylesheet" href="./companion-window.css" />
+  </head>
+  <body>
+    <main class="companion-window-shell">
+      <section class="companion-window-stage" aria-label="可交互的陪伴鱼缸">
+        <canvas id="companion-stage"></canvas>
+        <div class="stage-hint" id="stage-hint">把鼠标轻轻移进鱼缸水面下方</div>
+        <div class="bear-message" id="bear-message" aria-live="polite">你好呀，今天也在陪你。</div>
+        <header class="companion-window-bar" data-tauri-drag-region aria-label="拖动陪伴窗口"></header>
+        <div class="companion-window-drag-zone is-left" data-tauri-drag-region aria-hidden="true"></div>
+        <div class="companion-window-drag-zone is-right" data-tauri-drag-region aria-hidden="true"></div>
+        <div class="companion-window-drag-zone is-bottom" data-tauri-drag-region aria-hidden="true"></div>
+        <button id="companion-window-close" type="button" aria-label="关闭桌面陪伴">×</button>
+        <div class="companion-window-zoom" aria-label="调整桌面陪伴大小">
+          <button id="companion-window-zoom-out" type="button" aria-label="缩小桌面陪伴" title="缩小">−</button>
+          <button id="companion-window-zoom-in" type="button" aria-label="放大桌面陪伴" title="放大">＋</button>
+        </div>
+      </section>
+    </main>
+    <img class="crab-escape" id="crab-escape" src="./assets/animation/crab-watercolor-v1.png" alt="" aria-hidden="true">
+    <script src="./animation-lab.js"></script>
+    <script src="./companion-window.js"></script>
+  </body>
+</html>

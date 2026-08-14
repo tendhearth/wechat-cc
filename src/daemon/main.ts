@@ -8,8 +8,9 @@ import { LifecycleSet, wireRef } from '../lib/lifecycle'
 import { log } from '../lib/log'
 import { dedupeAccountsByUserId } from '../lib/dedupe-accounts'
 import { loadAccess, AccessConfigCorruptError } from '../lib/access'
-import { buildBootstrap } from './bootstrap'
+import { buildBootstrap, resolveAdminChatId } from './bootstrap'
 import { makeMemoryFS } from './memory/fs-api'
+import { makeMemoryLlmOps } from './memory-llm-ops'
 import { CORE_MEMORY_MAX_CHARS, KNOWLEDGE_MEMORY_MAX_CHARS } from '../core/prompt-builder'
 import { makeConversationStore } from '../core/conversation-store'
 import { makeTurnRecordStore } from '../core/turn-record-store'
@@ -21,6 +22,7 @@ import { registerGuard } from './guard/lifecycle'
 import { registerPolling } from './polling-lifecycle'
 import { registerSessions } from './sessions-lifecycle'
 import { registerIlink } from './ilink-lifecycle'
+import { registerMailboxPoller } from './bootstrap/wire-mailbox'
 import { buildInboundPipeline } from './inbound/build'
 import { runStartupSweeps } from './startup-sweeps'
 import { wireMain } from './wiring'
@@ -32,6 +34,8 @@ import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
 import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
+import { startCustomerReviewRuntime } from './customer-review/runtime'
+import { SUPERVISED_ENV } from '../core/supervised-env'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -150,8 +154,36 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     if (didStartup) { try { await lc.stopAll() } catch { /* logged by lc */ } }
     // Stop A2A server if it was started (a2a_listen was configured).
     try { await bootRef?.a2aServer?.stop() } catch (err) { log('A2A', `server stop error: ${err instanceof Error ? err.message : String(err)}`) }
+    // Cancel any in-flight pairing-code poller (spec §7) if boot.pairing was
+    // wired (mailbox_relays configured) — mirrors the a2aServer stop above.
+    // Undefined/no active code ⇒ a clean no-op (PairingEngine.stop() is
+    // itself a no-op when nothing is active).
+    try { bootRef?.pairing?.stop() } catch (err) { log('PAIR', `stop error: ${err instanceof Error ? err.message : String(err)}`) }
+    // Close the Knowledge Kernel store if boot.knowledge was wired
+    // (knowledge_enabled configured) — mirrors the a2aServer/pairing
+    // teardown above; a dangling sqlite handle otherwise leaks past shutdown.
+    try { bootRef?.knowledge?.store.close() } catch (err) { log('KNOWLEDGE', `store close error: ${err instanceof Error ? err.message : String(err)}`) }
+    // Close the shared embedder service (Agent-facing Search Task 2) if one
+    // was constructed (knowledge_enabled + a resolvable embed script) — it's
+    // long-lived across cycles/queries by design (never closed per-cycle,
+    // see bootstrap/index.ts), so shutdown is the only place it tears down
+    // its embed subprocess.
+    try { await bootRef?.knowledge?.embedder?.close?.() } catch (err) { log('KNOWLEDGE', `embedder close error: ${err instanceof Error ? err.message : String(err)}`) }
     try { db.close() } catch (err) { console.error('db close failed:', err) }
     releaseInstanceLock(PID_PATH)
+  }
+
+  // Restart: let the caller flush (HTTP response / a log line), then
+  // graceful shutdown + exit so launchd/systemd KeepAlive respawns a fresh
+  // daemon (ThrottleInterval caps the respawn rate). exit(0) is fine —
+  // KeepAlive respawns regardless. ONE closure, TWO triggers: the operator
+  // POST /v1/daemon/restart route (below) and, when wired, the self-restart
+  // idle-tick check (spec 2026-08-03-daemon-self-restart-on-stale-code) —
+  // both need the exact same graceful-shutdown path, so both get the same
+  // closure rather than two restart mechanisms.
+  const requestRestart = (reason: string) => {
+    log('DAEMON', `restart requested (${reason}) — shutting down for KeepAlive respawn`)
+    setTimeout(() => { void shutdown().finally(() => process.exit(0)) }, 500)
   }
 
   try {
@@ -199,14 +231,30 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       heartbeatFresh: () => isHeartbeatFresh(HEARTBEAT_PATH),
       // Admin remediation hooks (POST /v1/sessions/release, /v1/daemon/restart).
       releaseSession: (k) => bootRef?.sessionManager?.release(k) ?? Promise.resolve(),
-      // Restart: let the HTTP response flush, then graceful shutdown + exit so
-      // launchd/systemd KeepAlive respawns a fresh daemon (ThrottleInterval
-      // caps the respawn rate). exit(0) is fine — KeepAlive respawns regardless.
-      requestRestart: () => {
-        log('DAEMON', 'restart requested via internal-api — shutting down for KeepAlive respawn')
-        setTimeout(() => { void shutdown().finally(() => process.exit(0)) }, 500)
-      },
+      requestRestart: () => requestRestart('internal-api'),
+      // self-restart idle signal — thunk over bootRef for the same reason
+      // listSessions above is one: internal-api is constructed BEFORE
+      // bootstrap builds the activity marker. Until then it's a no-op,
+      // which is correct — nothing can self-restart before bootstrap
+      // finishes anyway.
+      markInboundActivity: () => bootRef?.markInboundActivity?.(),
+      // busy-registry hold (spec 2026-08-11 §2, Task 4 step 1 + Task 6) —
+      // same thunk-over-bootRef posture as markInboundActivity/listSessions
+      // above: internal-api is constructed BEFORE bootstrap builds the
+      // busy registry, so calls that land before buildBootstrap resolves
+      // get a no-op release (correct — nothing can be "busy" before
+      // bootstrap finishes anyway). Backs BOTH the dispatcher's own
+      // non-GET request hold (index.ts) and customer-review's task-launch
+      // hold (routes-customer-review.ts) — they share this one field.
+      holdBusy: (l) => bootRef?.holdBusy?.(l) ?? (() => {}),
       log: (t, l) => log(t, l),
+      // LLM memory routes' chat_id default (spec 2026-07-23-daemon-owns-llm-
+      // memory-ops): access.json's single admin. Wired eagerly (not late-
+      // bound) — it only needs loadAccess + loadCompanionConfig, both
+      // available before bootstrap runs. No initiatingChatId (null) since
+      // this isn't scoped to any one session — mirrors the CLI's own
+      // admin-resolution posture.
+      resolveAdminChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null),
     })
     lc.register(internalApi)
     // 2. bootstrap composes provider registry / session manager / coordinator
@@ -274,6 +322,25 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         const k = fs.read('knowledge.md') ?? ''
         return k.length > KNOWLEDGE_MEMORY_MAX_CHARS ? k.slice(0, KNOWLEDGE_MEMORY_MAX_CHARS) : k
       },
+      // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
+      // same closure passed to internal-api's requestRestart above. Wiring
+      // it here is what turns the mechanism ON: buildBootstrap reads git
+      // HEAD once at boot and adds the idle-tick check ONLY when this is
+      // present (see bootstrap/index.ts's self-restart block).
+      //
+      // Gated on SUPERVISED_ENV (WECHAT_CC_SUPERVISED), which `service
+      // install` writes into the launchd plist / systemd unit — i.e.
+      // exactly where a supervisor exists to relaunch us. Without it the
+      // whole mechanism stays off, because "exit(0) and get restarted"
+      // degrades to plain "exit(0)" wherever nothing is watching: a
+      // foreground `bun cli.ts run` during debugging, or Windows, whose
+      // scheduled task triggers AtLogOn with no restart semantics at all.
+      // Since this feature is deliberately silent, that failure would read
+      // to the owner as "the bot died again" with nothing in the log to
+      // connect it to an update.
+      ...(process.env[SUPERVISED_ENV] === '1'
+        ? { requestRestart: () => requestRestart('self-restart-stale-code') }
+        : {}),
     })
     bootRef = boot
     internalApi.setDelegate({ dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() })
@@ -284,8 +351,43 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setA2A(boot.a2aDeps)
     // Wire the agent-social M1 broker (T7b-core) — only present when
     // social_enabled + social_disclosure_policy are both configured. So
-    // POST /v1/social/seek works when the feature is on.
+    // POST /v1/social/seek/{propose,confirm,cancel} work when the feature is on.
     if (boot.social) internalApi.setSocial(boot.social)
+    // Wire the Knowledge Kernel store + semanticSearch (Phase 01 T5) — only
+    // present when knowledge_enabled is configured. Without this, every
+    // /v1/knowledge/* route 503s knowledge_not_wired even though boot
+    // already constructed the store (review finding: this call was missing
+    // entirely — no setKnowledge existed on internalApi at all).
+    if (boot.knowledge) internalApi.setKnowledge(boot.knowledge)
+    // Customer Review is optional: a missing/unready wxvault or eval provider
+    // leaves the daemon healthy and its owner-only routes return 503.
+    const customerReview = await startCustomerReviewRuntime({
+      stateDir,
+      db,
+      registry: boot.registry,
+      defaultProviderId: boot.defaultProviderId,
+      log: (tag, line) => log(tag, line),
+    })
+    if (customerReview) {
+      internalApi.setCustomerReview(customerReview.service)
+      lc.register(customerReview)
+    }
+    // Wire the 配对码 engine (spec §7) — only present when mailbox_relays is
+    // configured. So POST /v1/pair/start + /v1/pair/accept work when wired.
+    if (boot.pairing) internalApi.setPairing(boot.pairing)
+    // Wire the daemon-owned LLM memory ops (spec 2026-07-23-daemon-owns-llm-
+    // memory-ops, Task 1's makeMemoryLlmOps) now that the coordinator +
+    // provider registry are available. So POST /v1/memory/{synthesize,
+    // profile/generate} work — this is now the ONLY place LLM memory ops
+    // run (never the compiled CLI sidecar).
+    internalApi.setMemory(makeMemoryLlmOps({
+      stateDir, db, getMode: (c) => boot.coordinator.getMode(c), registry: boot.registry,
+    }))
+    // Wire the incident store (Task 8) — same live instance `wireHealth`
+    // constructed inside buildBootstrap, so GET /v1/health/incidents (the
+    // desktop's "last incident" banner + notification) reads what the
+    // health runtime actually wrote, not a second stale copy.
+    internalApi.setIncidents(boot.health.incidents)
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({
       stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,
@@ -315,6 +417,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     lc.register(registerIlink(wired.ilinkDeps))
     const pollingLc = registerPolling({ ...wired.pollingDeps, runPipeline: pipeline })
     wireRef(wired.refs.polling, pollingLc); lc.register(pollingLc); pollingLcRef = pollingLc
+    // Content-blind mailbox transport (Task 8) — mounted only when bootstrap
+    // produced mailboxPollerDeps (social_enabled + at least one configured
+    // mailbox_relays entry + a live onMailboxLetter). Absent ⇒ no poll timer,
+    // no relay traffic — same "undefined ⇒ fully inert" posture as every
+    // other optional companion/social wiring above.
+    if (boot.mailboxPollerDeps) lc.register(registerMailboxPoller(boot.mailboxPollerDeps))
     // 5. one-shot startup sweeps — fire-and-forget
     runStartupSweeps(wired.startupDeps)
     const modeStr = dangerously ? 'mode=dangerouslySkipPermissions=true (no WeChat permission prompts will fire)' : 'mode=strict (Phase 1 permission relay active)'

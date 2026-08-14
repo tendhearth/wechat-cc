@@ -52,6 +52,39 @@ export function revealUrl(agentUrl: string): string {
   return `${u}/a2a/reveal`
 }
 
+/**
+ * Derive a peer's /a2a/letter URL from its registered url, tolerating the same
+ * shapes as {@link revealUrl}: a bare base, `/a2a`, `/a2a/notify`, `/a2a/exec`,
+ * `/a2a/intent`, `/a2a/reveal`, or already `/a2a/letter`.
+ */
+export function letterUrl(agentUrl: string): string {
+  const u = agentUrl.replace(/\/+$/, '')
+  if (u.endsWith('/a2a/letter')) return u
+  if (u.endsWith('/a2a/notify')) return u.replace(/\/a2a\/notify$/, '/a2a/letter')
+  if (u.endsWith('/a2a/exec')) return u.replace(/\/a2a\/exec$/, '/a2a/letter')
+  if (u.endsWith('/a2a/intent')) return u.replace(/\/a2a\/intent$/, '/a2a/letter')
+  if (u.endsWith('/a2a/reveal')) return u.replace(/\/a2a\/reveal$/, '/a2a/letter')
+  if (u.endsWith('/a2a')) return `${u}/letter`
+  return `${u}/a2a/letter`
+}
+
+/**
+ * Derive a peer's /a2a/echo URL from its registered url, tolerating the same
+ * shapes as {@link letterUrl}: a bare base, `/a2a`, `/a2a/notify`, `/a2a/exec`,
+ * `/a2a/intent`, `/a2a/reveal`, `/a2a/letter`, or already `/a2a/echo`.
+ */
+export function echoUrl(agentUrl: string): string {
+  const u = agentUrl.replace(/\/+$/, '')
+  if (u.endsWith('/a2a/echo')) return u
+  if (u.endsWith('/a2a/notify')) return u.replace(/\/a2a\/notify$/, '/a2a/echo')
+  if (u.endsWith('/a2a/exec')) return u.replace(/\/a2a\/exec$/, '/a2a/echo')
+  if (u.endsWith('/a2a/intent')) return u.replace(/\/a2a\/intent$/, '/a2a/echo')
+  if (u.endsWith('/a2a/reveal')) return u.replace(/\/a2a\/reveal$/, '/a2a/echo')
+  if (u.endsWith('/a2a/letter')) return u.replace(/\/a2a\/letter$/, '/a2a/echo')
+  if (u.endsWith('/a2a')) return `${u}/echo`
+  return `${u}/a2a/echo`
+}
+
 export interface DelegateToHandReq {
   hand: A2AAgentRecord
   /** The brain's agent id as the HAND knows it (the hand's Bearer check keys on this). */
@@ -69,6 +102,10 @@ export interface DelegateToHandReq {
  * responses come back as `{ ok: false, reason }` — never throws.
  */
 export async function delegateToHand(client: A2AClient, req: DelegateToHandReq): Promise<ExecResult> {
+  // A url-less mailbox peer (pairing-code feature) can't take a push
+  // /a2a/exec — 乙 (yi) hand delegation is push-only. Fail the same way as
+  // any other unreachable hand, never throw.
+  if (!req.hand.url) return { ok: false, reason: 'hand has no url (mailbox-only peer; exec delegation is push-only)' }
   const r = await client.send({
     url: handExecUrl(req.hand.url),
     bearer: req.hand.outbound_api_key,

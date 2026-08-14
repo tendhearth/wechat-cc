@@ -79,9 +79,13 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
   }
 
   return {
-    companionPushDeps: { shouldRun, log, onTick: ticks.pushTick, intervalMs: opts.schedulerIntervalMs },
-    companionIntrospectDeps: { shouldRun, log, onTick: ticks.introspectTick, intervalMs: opts.schedulerIntervalMs },
-    companionIngestDeps: { shouldRun: shouldRunIngest, log, onTick: ticks.ingestTick, intervalMs: opts.schedulerIntervalMs },
+    // holdBusy (spec 2026-08-11 §2, Task 6) — same busy-registry instance
+    // the self-restart idle check reads (boot.holdBusy / busyRegistry.hold
+    // in bootstrap/index.ts), forwarded to all three companion schedulers
+    // so a running tick can't be misjudged as idle.
+    companionPushDeps: { shouldRun, log, onTick: ticks.pushTick, intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
+    companionIntrospectDeps: { shouldRun, log, onTick: ticks.introspectTick, intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
+    companionIngestDeps: { shouldRun: shouldRunIngest, log, onTick: ticks.ingestTick, intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
     guardDeps: {
       pollMs: 30_000,
       isEnabled: () => loadGuardConfig(stateDir).enabled,
@@ -125,6 +129,13 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
       onPollCycle: () => writeHeartbeat(join(stateDir, HEARTBEAT_FILE)),
       recordHeartbeat: heartbeatStore.recordOk.bind(heartbeatStore),
       clearExpired: (id: string) => sessionStateStore.clear(id),
+      // Connection-health (Task 7) — routes each poll round-trip's outcome
+      // through boot.health's onSuccess/onFailure, which drives the two-state
+      // machine, the incident store, and (log-only for now) notifications.
+      health: {
+        recordSuccess: (dep) => boot.health.onSuccess(dep),
+        recordFailure: (dep, err) => boot.health.onFailure(dep, err),
+      },
     },
     startupDeps: {
       stateDir, db, ilink, log,

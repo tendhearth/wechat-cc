@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { buildBootstrap, resolveAdminChatId } from './bootstrap'
@@ -7,11 +7,31 @@ import { saveAgentConfig } from '../lib/agent-config'
 import { openTestDb } from '../lib/db'
 import { makeSeekStore } from '../core/social-seek-store'
 import { makeEchoStore } from '../core/social-echo-store'
+import { makeChannelStore } from '../core/penpal-channel-store'
+import { makeRelayStore } from '../core/social-relay-store'
+import { generateKeypair, deriveSharedKey, sealLetter } from '../core/penpal-crypto'
+import { generateMailboxIdentity } from '../core/mailbox-crypto'
 import { TIER_PROFILES } from '../core/user-tier'
 import { MANIFEST_FILE } from './plugins/paths'
 import type { Access } from '../lib/access'
 import type { CompanionConfig } from './companion/config'
 import { createInternalApi } from './internal-api'
+import { wireSelfRestart } from './bootstrap/wire-self-restart'
+
+// Code review pinning (I2①, 2026-08-11): wrap the REAL wireSelfRestart with
+// a spy so a couple of tests can inspect the `busy`/`lastPollSuccessAgoMs`
+// closures buildBootstrap actually hands it — proving they read the SAME
+// `busyRegistry`/`health` instances the rest of Bootstrap exposes, not a
+// second disconnected instance (the "改错 dep 名 / 换实例" class of silent
+// regression the reviewer flagged). `importOriginal` means the wrapped
+// function's BEHAVIOR is unchanged (every existing self-restart test in
+// this file — real git reads included — still exercises the real
+// implementation); this only adds observability, and it's scoped to this
+// one test file via vi.mock, not a change to any production API/type.
+vi.mock('./bootstrap/wire-self-restart', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./bootstrap/wire-self-restart')>()
+  return { ...actual, wireSelfRestart: vi.fn(actual.wireSelfRestart) }
+})
 
 async function pollFor<T>(fn: () => T | null, tries = 50, gapMs = 10): Promise<T | null> {
   for (let i = 0; i < tries; i++) { const v = fn(); if (v) return v; await new Promise(r => setTimeout(r, gapMs)) }
@@ -31,6 +51,29 @@ function serveMockOpenai(content: string): ReturnType<typeof Bun.serve> {
     port: 0,
     fetch: () => new Response(body, { headers: { 'content-type': 'text/event-stream' } }),
   })
+}
+
+// Routing variant of the cheapEval mock: the verdict `content` is computed
+// per-request from the gate prompt text (which embeds the topic being gated),
+// so ONE server can pass some topics and block others. `hits` counts requests
+// so a test can wait for a re-gate to actually have run before asserting a
+// negative (no send). Used by the C1 resume discriminator tests below.
+function serveMockOpenaiRouting(route: (promptText: string) => string) {
+  let hits = 0
+  const chunk = (delta: object, finish: string | null) =>
+    `data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 0, model: 'test-model', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`
+  const server = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    fetch: async (req) => {
+      hits++
+      const reqText = await req.text()
+      const content = route(reqText)
+      const body = chunk({ role: 'assistant', content }, null) + chunk({}, 'stop') + 'data: [DONE]\n\n'
+      return new Response(body, { headers: { 'content-type': 'text/event-stream' } })
+    },
+  })
+  return Object.assign(server, { hits: () => hits })
 }
 
 function makeIlinkStub() {
@@ -811,7 +854,17 @@ describe('bootstrap', () => {
       })
       const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
       expect(prompt).toContain('知识编排')
-      expect(prompt).toContain('消息检索')
+      // The 消息检索 bullet is deliberately NOT asserted here any more. Since
+      // the Knowledge Kernel landed, wxsearch's own `search` tool is retired
+      // and the bullet is gated on `knowledgeSearchAvailable` (the daemon's
+      // embedder actually resolving), not on the wxsearch plugin being
+      // present — see knowledgeOrchestrationSection in prompt-builder.ts.
+      // Plugin presence still drives section INCLUSION, which is what this
+      // test covers; the bullet's own gating is owned by
+      // prompt-builder.test.ts ("renders the 关系画像 bullet but NOT a
+      // `search` bullet when knowledge_search is not available" and its
+      // knowledgeSearchAvailable:true counterpart).
+      expect(prompt).not.toContain('消息检索')
     } finally {
       if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
       else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
@@ -1079,13 +1132,24 @@ describe('bootstrap agent-social M1 wiring', () => {
         capabilities: Array<{ name: string }>
       }
       expect(card.capabilities.some(c => c.name === 'intent')).toBe(true)
+      // v2 async echo return — wired + advertised alongside intent whenever
+      // social is fully configured (Task 8: onEcho threaded through
+      // wireSocial → wireA2aServer, same gate as onIntent).
+      expect(card.capabilities.some(c => c.name === 'echo')).toBe(true)
       // The broker + revealer + pledgeStore are exposed on the bootstrap
       // return so main.ts can late-bind them into internal-api (setSocial).
       expect(boot.social).toBeDefined()
-      expect(typeof boot.social!.broker.seek).toBe('function')
+      expect(typeof boot.social!.broker.propose).toBe('function')
+      expect(typeof boot.social!.broker.confirmSeek).toBe('function')
       expect(typeof boot.social!.revealer.revealEcho).toBe('function')
       expect(typeof boot.social!.pledgeStore.list).toBe('function')
       expect(card.capabilities.some(c => c.name === 'reveal')).toBe(true)
+      // Task 11: correspondent + letter relay wired — boot.social.penpal AND
+      // the top-level boot.penpal (what the "回信" dispatch seam in
+      // pipeline-deps.ts actually reads) both expose sendLetter.
+      expect(typeof boot.social!.penpal.sendLetter).toBe('function')
+      expect(typeof boot.penpal?.sendLetter).toBe('function')
+      expect(card.capabilities.some(c => c.name === 'letter')).toBe(true)
     } finally {
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })
@@ -1217,11 +1281,13 @@ describe('bootstrap agent-social M1 wiring', () => {
 
   // I1 regression — when the SEEKER reveals FIRST, mutual completes via the
   // inbound /a2a/reveal (onInboundReveal's echo branch), which only holds the
-  // peer's agent_id. The wired socialOnReveal must swap the echo's masked
-  // placeholder for the peer's real name from the registry — otherwise
-  // peer_masked stays "第 N 度的某人" forever. Driven full-stack through the
-  // real a2a-server /a2a/reveal endpoint.
-  it('first-revealer echo gets peer_masked swapped to the real name on inbound-completed mutual', async () => {
+  // peer's agent_id. Reveal crosses a PenpalHandle (pubkey + channel id), NEVER
+  // real identity — the masked placeholder is permanent; only the penpal_channel
+  // row learns the crossed handle. Driven full-stack through the real
+  // a2a-server /a2a/reveal endpoint (the peer has no real handle to present
+  // here, so this exercises the "peer presented nothing" path — the channel
+  // still opens via the mutual-instant openLocal, non-null on OUR side).
+  it('first-revealer echo stays masked and opens a penpal_channel on inbound-completed mutual', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-i1-'))
     const port = 19907
     writeFileSync(
@@ -1237,15 +1303,21 @@ describe('bootstrap agent-social M1 wiring', () => {
       }),
     )
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    const db = openTestDb()
+    const ilink = makeIlinkStub()
+    ;(ilink.sendMessage as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ msgId: 'm1' })
     try {
       boot = await buildBootstrap({
-        db: openTestDb(),
+        db,
         stateDir,
-        ilink: makeIlinkStub() as any,
+        ilink: ilink as any,
         loadProjects: () => ({ projects: {}, current: null }),
         lastActiveChatId: () => null,
         log: () => {},
       })
+      // Bind an operator chat so the 'connected' notify beat actually fires,
+      // so we can assert its text is content-free (no peer name).
+      boot.conversationStore.upsertIdentity('op_chat', { userId: 'op_chat' })
       const peerKey = 'peer-inbound-key-abc123'   // ≥16 chars (registry rule)
       boot.a2aDeps.registry.add({
         id: 'ccb', name: '小B', url: 'http://127.0.0.1:1/a2a',
@@ -1262,20 +1334,43 @@ describe('bootstrap agent-social M1 wiring', () => {
       })
       boot.social!.echoStore.setSelfRevealed(`${intentId}:ccb`, new Date().toISOString())
 
-      // The peer now reveals back over the wire → mutual completes here.
+      // The peer now reveals back over the wire, presenting ITS PenpalHandle
+      // (pubkey + channel id) — the reveal transport's ONLY crossing material.
+      // No name, ever.
+      const peerHandle = { pubkey: generateKeypair().publicKey, channel_id: 'peer-chan-1' }
       const resp = await fetch(`http://127.0.0.1:${port}/a2a/reveal`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${peerKey}` },
-        body: JSON.stringify({ agent_id: 'ccb', intent_id: intentId }),
+        body: JSON.stringify({ agent_id: 'ccb', intent_id: intentId, peer_handle: peerHandle }),
       })
       expect(resp.status).toBe(200)
-      expect(await resp.json()).toMatchObject({ mutual: true })
+      const respBody = await resp.json() as { mutual: boolean; handle?: { pubkey: string; channel_id: string } }
+      expect(respBody.mutual).toBe(true)
+      // Content-free: no name, ever — only a pubkey handle may ride along.
+      expect(respBody).not.toHaveProperty('peer_name')
+      expect(respBody).not.toHaveProperty('identity')
 
-      // I1: the masked placeholder is now the peer's real registry name.
+      // The masked placeholder NEVER lifts — reveal crosses pubkeys, not names.
       const echo = boot.social!.echoStore.get(`${intentId}:ccb`)!
-      expect(echo.peer_masked).toBe('小B')
+      expect(echo.peer_masked).toBe('第 1 度的某人')
       expect(echo.peer_revealed_at).not.toBeNull()
       expect(boot.social!.seekStore.get(intentId)!.status).toBe('connected')
+
+      // A penpal_channel row opened for this echo: OUR minted handle plus the
+      // peer's presented handle, crossed and open.
+      const channelStore = makeChannelStore(db)
+      const channel = channelStore.get(`${intentId}:ccb`)
+      expect(channel).not.toBeNull()
+      expect(channel!.status).toBe('open')
+      expect(channel!.peer_pubkey).toBe(peerHandle.pubkey)
+      expect(channel!.peer_channel_id).toBe(peerHandle.channel_id)
+
+      // The 'connected' beat fired to the operator, and it is content-free —
+      // no peer name anywhere in the text (小B never appears).
+      const sendMessage = ilink.sendMessage as unknown as ReturnType<typeof vi.fn>
+      const connectedSends = sendMessage.mock.calls.filter((c: unknown[]) => String(c[1]).includes('接上头'))
+      expect(connectedSends).toHaveLength(1)
+      expect(String(connectedSends[0]?.[1])).not.toContain('小B')
     } finally {
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })
@@ -1289,11 +1384,11 @@ describe('bootstrap agent-social M1 wiring', () => {
     // provider-registry.ts CHEAP_EVAL_PREFERENCE) once an openai-compatible
     // provider is registered — so we point it at a local SSE mock instead of
     // shelling out to a real `claude` subprocess (slow/flaky/CI-unavailable).
-    // The broker now GATES the outbound topic via cheapEval *before* sowing
-    // the seek row, so the mock must return a non-violation verdict for the
-    // `foraging` row to appear (a refused port would fail the gate closed →
-    // no sow). discover() returns no peers here, so the background forage
-    // settles the row to `closed`.
+    // The broker GATES the outbound topic via cheapEval at propose time, so the
+    // mock must return a non-violation verdict for the `proposed` row to appear
+    // (a refused port would fail the gate closed → propose returns ok:false, no
+    // row). discover() returns no peers here, so the confirm-scheduled background
+    // forage settles the row to `closed`.
     const openaiMock = serveMockOpenai('{"violation": false, "redacted": "找个会修老相机的"}')
     const prevKey = process.env.WECHAT_OPENAI_API_KEY
     process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
@@ -1323,14 +1418,17 @@ describe('bootstrap agent-social M1 wiring', () => {
         log: () => {},
       })
       // discover() returns no peers in this fixture (no paired a2a agents),
-      // so the outcome is empty — sow must STILL persist the seek row
-      // (foraging → closed) even when nothing matched.
-      await boot.social!.broker.seek('找个会修老相机的')
-      // Non-blocking: the sync leg sows `foraging`; the background forage
-      // (0 peers here) settles it to `closed`. Poll briefly for the terminal row.
+      // so the outcome is empty — propose persists a `proposed` row and
+      // confirm (派) forages it (0 peers → `closed`) even when nothing matched.
+      const proposed = await boot.social!.broker.propose('找个会修老相机的')
+      expect(proposed.ok).toBe(true)
+      boot.social!.broker.confirmSeek((proposed as { ok: true; intent_id: string }).intent_id)
+      // Non-blocking: propose stores `proposed`; confirm flips it to `foraging`
+      // and the background forage (0 peers here) settles it to `closed`. Poll
+      // briefly for any point in that proposed→foraging→closed progression.
       const seen = await pollFor(() => {
         const rows = db.query('SELECT topic, status FROM social_seek').all() as Array<{ topic: string; status: string }>
-        return rows.find(r => r.topic.includes('相机') && (r.status === 'closed' || r.status === 'foraging')) ?? null
+        return rows.find(r => r.topic.includes('相机') && (r.status === 'proposed' || r.status === 'foraging' || r.status === 'closed')) ?? null
       })
       expect(seen).not.toBeNull()
     } finally {
@@ -1346,8 +1444,9 @@ describe('bootstrap agent-social M1 wiring', () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-record-throw-'))
     const port = 19905
     // Gate must PASS (mock returns a non-violation verdict) so the broker
-    // reaches its sow leg — the point of this test is that a persistence
-    // failure inside sow/finishSeek is swallowed, not that the gate blocks.
+    // reaches its propose write leg — the point of this test is that a
+    // persistence failure inside proposeRow/finishSeek is swallowed, not that
+    // the gate blocks.
     const openaiMock = serveMockOpenai('{"violation": false, "redacted": "找个会修老相机的"}')
     const prevKey = process.env.WECHAT_OPENAI_API_KEY
     process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
@@ -1376,16 +1475,18 @@ describe('bootstrap agent-social M1 wiring', () => {
         lastActiveChatId: () => null,
         log: () => {},
       })
-      // Drop the table the sow leg writes to AFTER bootstrap has already
-      // prepared its statements, so the INSERT inside the broker's sow()
+      // Drop the table the propose leg writes to AFTER bootstrap has already
+      // prepared its statements, so the INSERT inside the broker's proposeRow()
       // throws ("no such table: social_seek") — this simulates a persistence
       // error (locked db / disk full / duplicate PK) without faking those
-      // conditions directly. sow/recordEcho/finishSeek each guard their own
-      // writes, so a store failure must never turn seek() into a rejection.
+      // conditions directly. proposeRow/recordEcho/finishSeek each guard their
+      // own writes, so a store failure must never turn propose() into a rejection.
       db.exec('DROP TABLE social_seek')
-      const out = await boot.social!.broker.seek('找个会修老相机的')
-      expect(typeof out.intent_id).toBe('string')   // never rejects; background write failures are swallowed
-      expect(out.intent_id.length).toBeGreaterThan(0)
+      const out = await boot.social!.broker.propose('找个会修老相机的')
+      expect(out.ok).toBe(true)   // never rejects; the persistence write failure is swallowed
+      const okOut = out as { ok: true; intent_id: string }
+      expect(typeof okOut.intent_id).toBe('string')
+      expect(okOut.intent_id.length).toBeGreaterThan(0)
     } finally {
       openaiMock.stop()
       await boot?.a2aServer?.stop()
@@ -1412,14 +1513,24 @@ describe('bootstrap agent-social M1 wiring', () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-resume-'))
     const port = 19909
     const openaiMock = serveMockOpenai('{"violation": false, "redacted": "找搭子"}')
-    // Stand-in peer — always answers "yes" to whatever intent it's asked
-    // about, echoing the caller's intent_id back so the MatchReceipt parses.
+    // Stand-in v2 peer — fast-acks every /a2a/intent it's asked about, then
+    // asynchronously posts a matching echo back to THIS daemon's own
+    // /a2a/echo (mirroring what a real v2 responder does in the background:
+    // judge → postEcho). The old sync-receipt shape ({match:'yes', blurb})
+    // is no longer consumed by the seeker's `send` (v2's `send` only cares
+    // whether delivery was accepted) — the echo must actually round-trip
+    // through /a2a/echo for echoStore to see it.
     const peerMock = Bun.serve({
       hostname: '127.0.0.1',
       port: 0,
       fetch: async (req) => {
         const body = await req.json() as { card: { intent_id: string } }
-        return Response.json({ intent_id: body.card.intent_id, match: 'yes', blurb: '摄影爱好者' })
+        void fetch(`http://127.0.0.1:${port}/a2a/echo`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer peer-inbound-key-abc123' },
+          body: JSON.stringify({ agent_id: 'ccb', intent_id: body.card.intent_id, echo: { blurb: '摄影爱好者', degree: 1 } }),
+        })
+        return Response.json({ intent_id: body.card.intent_id, match: 'no', async: true })
       },
     })
     const prevKey = process.env.WECHAT_OPENAI_API_KEY
@@ -1446,9 +1557,9 @@ describe('bootstrap agent-social M1 wiring', () => {
       }),
     )
     const db = openTestDb()
-    // Seed the "crash mid-forage" state directly (bypassing broker.seek's
-    // real gate/discover round trip, since we only need the terminal DB
-    // state a crashed prior run would have left behind).
+    // Seed the "crash mid-forage" state directly (bypassing the broker's
+    // real propose/confirm gate/discover round trip, since we only need the
+    // terminal DB state a crashed prior run would have left behind).
     const seekStore = makeSeekStore(db)
     const echoStore = makeEchoStore(db)
     seekStore.create({ id: seekResume, kind: 'seek', topic: '找摄影搭子（续）' })
@@ -1498,6 +1609,166 @@ describe('bootstrap agent-social M1 wiring', () => {
     }
   })
 
+  // C1 (P4) — the resume DISCRIMINATOR. forage() is now DE-GATED, so what
+  // actually goes out on a boot-scan resume is decided entirely by
+  // resumeForaging/socialResumeRow. This peer CAPTURES the outbound card.topic
+  // (the wording that leaves this daemon) and asserts on it directly — the
+  // assertion the old crash-mid-forage test lacked (it seeded redacted_topic=
+  // null and never checked card.topic).
+  it('resume forages the STORED redacted wording verbatim for a redacted row, and RE-GATES a null-redacted (legacy) row — never the raw topic', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-resume-wysiwyg-'))
+    const port = 19911
+    // Routing gate: only the null-redacted row (rawB) is re-gated at resume;
+    // when its raw text arrives, return a DISTINCT redacted string so the test
+    // can tell a re-gate ('REGATED清理版') from a verbatim forage of the stored
+    // string. The redacted row never reaches the gate at all.
+    const openaiMock = serveMockOpenaiRouting((reqText) =>
+      reqText.includes('原始寻友')
+        ? JSON.stringify({ violation: false, redacted: 'REGATED清理版' })
+        : JSON.stringify({ violation: false, redacted: '默认清理' }))
+    // Capturing peer — records every card.topic it is asked about.
+    const captured: string[] = []
+    const peerMock = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: async (req) => {
+        const body = await req.json() as { card: { intent_id: string; topic: string } }
+        captured.push(body.card.topic)
+        return Response.json({ intent_id: body.card.intent_id, match: 'yes', blurb: 'ok' })
+      },
+    })
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    const rowRedacted = 'seek-redacted'   // propose→confirm row: carries redacted_topic, raw differs
+    const rowLegacy = 'seek-legacy-null'  // legacy/bridge row: redacted_topic=null → re-gate at resume
+    const rawRedacted = '找搭子 联系我 138xxxx'
+    const rawLegacy = '原始寻友话题-待清理'
+    const storedRedacted = '寻找搭子【已清理】'
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: `http://127.0.0.1:${openaiMock.port}/v1`,
+        openaiModel: 'test-model',
+        a2a_agents: [{
+          id: 'ccb', name: '小B', url: `http://127.0.0.1:${peerMock.port}/a2a`,
+          inbound_api_key: 'peer-inbound-key-abc123', outbound_api_key: 'peer-outbound-key-xyz',
+          capabilities: [], paused: false, transport: 'push',
+        }],
+      }),
+    )
+    const db = openTestDb()
+    // Seed the crash-mid-forage state: a redacted-carrying foraging row (propose
+    // then flip to foraging) and a null-redacted legacy foraging row.
+    const seekStore = makeSeekStore(db)
+    seekStore.propose({ id: rowRedacted, kind: 'seek', topic: rawRedacted, redactedTopic: storedRedacted })
+    seekStore.update(rowRedacted, { status: 'foraging' })
+    seekStore.create({ id: rowLegacy, kind: 'seek', topic: rawLegacy })
+
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      // Both resume forages were scheduled fire-and-forget inside buildBootstrap.
+      await pollFor(() => (captured.length >= 2 ? true : null))
+
+      // Redacted row: forwarded VERBATIM — the stored redacted string, NOT the
+      // raw topic, NOT a re-gate output.
+      expect(captured).toContain(storedRedacted)
+      // Legacy null-redacted row: RE-GATED — the gate's output, never the raw.
+      expect(captured).toContain('REGATED清理版')
+      expect(openaiMock.hits()).toBeGreaterThan(0)   // re-gate actually ran
+      // The raw topics MUST NEVER leave this daemon.
+      expect(captured).not.toContain(rawRedacted)
+      expect(captured).not.toContain(rawLegacy)
+    } finally {
+      openaiMock.stop()
+      peerMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
+  it('resume of a null-redacted row whose re-gate is BLOCKED sends nothing (safe-closed)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-resume-blocked-'))
+    const port = 19912
+    // Gate BLOCKS every topic — the legacy row's re-gate at resume fails closed.
+    const openaiMock = serveMockOpenaiRouting(() => JSON.stringify({ violation: true, redacted: '', reasons: ['leak'] }))
+    const captured: string[] = []
+    const peerMock = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: async (req) => {
+        const body = await req.json() as { card: { intent_id: string; topic: string } }
+        captured.push(body.card.topic)
+        return Response.json({ intent_id: body.card.intent_id, match: 'yes', blurb: 'ok' })
+      },
+    })
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: `http://127.0.0.1:${openaiMock.port}/v1`,
+        openaiModel: 'test-model',
+        a2a_agents: [{
+          id: 'ccb', name: '小B', url: `http://127.0.0.1:${peerMock.port}/a2a`,
+          inbound_api_key: 'peer-inbound-key-abc123', outbound_api_key: 'peer-outbound-key-xyz',
+          capabilities: [], paused: false, transport: 'push',
+        }],
+      }),
+    )
+    const db = openTestDb()
+    const seekStore = makeSeekStore(db)
+    seekStore.create({ id: 'seek-blocked', kind: 'seek', topic: '要被拦截的原始话题-含联系方式' })
+
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      // Wait until the re-gate has actually run (mock was hit), so the negative
+      // assertion below is not merely racing an unstarted resume.
+      await pollFor(() => (openaiMock.hits() > 0 ? true : null))
+      // Give any (erroneous) send a chance to land, then assert none did.
+      await new Promise(r => setTimeout(r, 50))
+      expect(captured).toEqual([])   // gate blocked → nothing was exposed
+    } finally {
+      openaiMock.stop()
+      peerMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
   it('does NOT wire onIntent/onReveal and boot.social is undefined when social_enabled is absent', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-off-'))
     const port = 19902
@@ -1527,6 +1798,7 @@ describe('bootstrap agent-social M1 wiring', () => {
         capabilities: Array<{ name: string }>
       }
       expect(card.capabilities.some(c => c.name === 'intent')).toBe(false)
+      expect(card.capabilities.some(c => c.name === 'echo')).toBe(false)
       expect(card.capabilities.some(c => c.name === 'reveal')).toBe(false)
       expect(boot.social).toBeUndefined()
     } finally {
@@ -1567,20 +1839,12 @@ describe('bootstrap agent-social M1 wiring', () => {
     }
   })
 
-  it('claude-default daemon with a plugin selects the grounded judge path (not cheapEval) (grounded-judge Task 2)', async () => {
-    const base = mkdtempSync(join(tmpdir(), 'bootstrap-grounded-judge-'))
-    const bundledDir = join(base, 'bundled')
-    const pluginDir = join(bundledDir, 'wxsearch')
-    mkdirSync(pluginDir, { recursive: true })
-    // Mirrors the knowledge-orchestration fixture (line ~766): process.execPath
-    // is absolute + always present, so the plugin resolves ready — bundled
-    // defaults enabled — and ends up in bootstrap's `pluginMcp`, which is what
-    // the grounded judge needs threaded through as `deps.pluginMcp`.
-    writeFileSync(join(pluginDir, MANIFEST_FILE), JSON.stringify({
-      name: 'wxsearch',
-      kind: 'mcp',
-      spawn: { command: process.execPath, args: [] },
-    }))
+  it('claude-default daemon with knowledge_enabled wires the in-process grounded judge (SJ Task 3 — replaces the retired plugin-spawn grounded-judge.ts path)', async () => {
+    // The judge no longer spawns a plugin-carrying session (grounded-judge.ts,
+    // deleted) — it grounds in-process via owner-grounding.ts's makeOwnerGrounding,
+    // fed from `deps.knowledge` (the same Knowledge Kernel object wired
+    // whenever `knowledge_enabled` is on). No bundled plugin dir needed at all.
+    const base = mkdtempSync(join(tmpdir(), 'bootstrap-inproc-judge-'))
     writeFileSync(
       join(base, 'agent-config.json'),
       JSON.stringify({
@@ -1590,10 +1854,9 @@ describe('bootstrap agent-social M1 wiring', () => {
         closeStopsDaemon: false,
         social_enabled: true,
         social_disclosure_policy: '兴趣可说；住址不可',
+        knowledge_enabled: true,
       }),
     )
-    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = bundledDir
     const logs: string[] = []
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
@@ -1605,26 +1868,55 @@ describe('bootstrap agent-social M1 wiring', () => {
         lastActiveChatId: () => null,
         log: (_tag, m) => logs.push(m),
       })
-      expect(logs.some(m => m.includes('plugin-grounded judge via claude'))).toBe(true)
-      expect(logs.some(m => m.includes('falls back to cheapEval'))).toBe(false)
+      expect(logs.some(m => m.includes('social: in-process grounded judge (kernel facts + search, no spawn, provider-agnostic)'))).toBe(true)
+      expect(logs.some(m => m.includes('knowledge not wired'))).toBe(false)
     } finally {
+      boot?.knowledge?.store.close()
+      await boot?.knowledge?.embedder?.close?.()
       await boot?.a2aServer?.stop()
-      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
       rmSync(base, { recursive: true, force: true })
     }
   })
 
-  it('POST /v1/social/seek returns 503 when the social broker is not wired (deps.social absent)', async () => {
+  it('claude-default daemon with knowledge_enabled OFF logs the honest "not plugin-grounded" fallback (SJ Task 3)', async () => {
+    // No knowledge kernel wired ⇒ deps.knowledge is undefined ⇒ makeOwnerGrounding
+    // always resolves '' ⇒ the judge reasons from topic text alone. The boot
+    // log must say so honestly rather than silently claiming grounding.
+    const base = mkdtempSync(join(tmpdir(), 'bootstrap-noknowledge-judge-'))
+    writeFileSync(
+      join(base, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude', dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false,
+        social_enabled: true, social_disclosure_policy: '兴趣可说；住址不可',
+      }),
+    )
+    const logs: string[] = []
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(), stateDir: base, ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null, log: (_tag, m) => logs.push(m),
+      })
+      expect(logs.some(m => m.includes('social: judge reasons from topic only — knowledge not wired (kernel off?). Not plugin-grounded.'))).toBe(true)
+      expect(logs.some(m => m.includes('in-process grounded judge'))).toBe(false)
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('POST /v1/social/seek/propose returns 503 when the social broker is not wired (deps.social absent)', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'internal-api-social-503-'))
     const api = createInternalApi({ stateDir, daemonPid: 1 } as any)
     try {
       const { port } = await api.start()
-      // social_seek is admin-tier (route-tiers.ts) — the daemon-wide file
-      // token is only 'trusted', so mint an admin-tier session token
-      // (mirrors how a real admin-tier MCP child would authenticate).
+      // POST /v1/social/seek/propose is trusted-tier (route-tiers.ts, P4) —
+      // the daemon-wide file token is already 'trusted', but an admin-tier
+      // session token meets a trusted bar too (admin > trusted), so minting
+      // admin here still exercises the same 503-before-authz-matters path.
       const token = api.mintSessionToken('admin', 'test-session')
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/seek`, {
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/seek/propose`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: JSON.stringify({ topic: '找摄影搭子' }),
@@ -1633,6 +1925,916 @@ describe('bootstrap agent-social M1 wiring', () => {
       expect(await resp.json()).toMatchObject({ error: 'social_not_wired' })
     } finally {
       await api.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  // Task 11 — cross-task dispatch order (flagged in Task 9 review): the
+  // inbound /a2a/letter handler MUST try THIS daemon's own channel first
+  // (correspondent.receiveLetter, via channelStore.getByMyChannelId) and
+  // only fall through to the content-blind relay when that channel_id is
+  // NOT one of our own. Each test below drives ONE branch through the real
+  // /a2a/letter endpoint and asserts the OTHER branch's effects did not fire.
+  it('an inbound letter to OUR OWN open channel decrypts + notifies the owner (not routed)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-letter-own-'))
+    const port = 19910
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+      }),
+    )
+    const db = openTestDb()
+    const ilink = makeIlinkStub()
+    ;(ilink.sendMessage as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ msgId: 'm1' })
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: ilink as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      boot.conversationStore.upsertIdentity('op_chat', { userId: 'op_chat' })
+      const peerKey = 'peer-letter-own-key-abc123'
+      boot.a2aDeps.registry.add({
+        id: 'ccb', name: '小B', url: 'http://127.0.0.1:1/a2a',
+        inbound_api_key: peerKey, outbound_api_key: 'unused',
+        capabilities: [], paused: false, transport: 'push',
+      })
+      // Open a real penpal_channel the same way the I1 reveal test does: seed
+      // a self-revealed echo, then have the peer reveal back over the wire
+      // with a REAL keypair (its private key lets us encrypt a valid letter
+      // FROM the peer TO us below, mirroring what the peer's own
+      // penpal-correspondent.ts would produce).
+      const intentId = 'seek-letter-own'
+      boot.social!.seekStore.create({ id: intentId, kind: 'seek', topic: '找摄影搭子' })
+      boot.social!.echoStore.create({
+        id: `${intentId}:ccb`, seekId: intentId, peerMasked: '第 1 度的某人',
+        degree: 1, content: '南京摄影爱好者', peerAgentId: 'ccb',
+      })
+      boot.social!.echoStore.setSelfRevealed(`${intentId}:ccb`, new Date().toISOString())
+      const peerKp = generateKeypair()
+      const peerHandle = { pubkey: peerKp.publicKey, channel_id: 'peer-chan-own-1' }
+      const revealResp = await fetch(`http://127.0.0.1:${port}/a2a/reveal`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${peerKey}` },
+        body: JSON.stringify({ agent_id: 'ccb', intent_id: intentId, peer_handle: peerHandle }),
+      })
+      expect(revealResp.status).toBe(200)
+      expect((await revealResp.json() as { mutual: boolean }).mutual).toBe(true)
+
+      const channelStore = makeChannelStore(db)
+      const channel = channelStore.get(`${intentId}:ccb`)!
+      expect(channel.status).toBe('open')
+
+      // Encrypt a letter AS THE PEER (its private key + our channel's public
+      // key — deriveSharedKey is symmetric), addressed to OUR OWN inbound
+      // channel_id, exactly as penpal-correspondent.ts's sendLetter would
+      // from the peer's side.
+      const key = deriveSharedKey(peerKp.privateKey, channel.my_pubkey)
+      const sealed = sealLetter(key, '下次约拍风景怎么样?')
+      const letterResp = await fetch(`http://127.0.0.1:${port}/a2a/letter`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${peerKey}` },
+        body: JSON.stringify({ agent_id: 'ccb', channel_id: channel.my_channel_id, ...sealed }),
+      })
+      expect(letterResp.status).toBe(200)
+      expect(await letterResp.json()).toEqual({ ok: true })
+
+      // Decrypted + persisted locally — the OWN-endpoint path, not relayed.
+      const letterRow = db.query('SELECT direction, plaintext FROM penpal_letter WHERE channel_id = ?')
+        .get(channel.id) as { direction: string; plaintext: string } | null
+      expect(letterRow).not.toBeNull()
+      expect(letterRow!.direction).toBe('in')
+      expect(letterRow!.plaintext).toBe('下次约拍风景怎么样?')
+
+      // The owner was notified with a decrypted preview; content-free of the
+      // peer's real identity — only the masked degree placeholder rides along.
+      const sendMessage = ilink.sendMessage as unknown as ReturnType<typeof vi.fn>
+      const letterSends = sendMessage.mock.calls.filter((c: unknown[]) => String(c[1]).includes('给你写信了'))
+      expect(letterSends).toHaveLength(1)
+      expect(String(letterSends[0]?.[1])).toContain('下次约拍风景怎么样')
+      expect(String(letterSends[0]?.[1])).toContain(channel.id)
+      expect(String(letterSends[0]?.[1])).not.toContain('小B')
+
+      // boot.penpal.sendLetter is present and callable end to end (Task 10's
+      // dispatch seam calls exactly this). Exercise it against a channel id
+      // that isn't open to prove it's the real correspondent wired in, not a
+      // stub — the real correspondent's own not-open guard fires.
+      const badReply = await boot.penpal!.sendLetter('no-such-channel', 'hi')
+      expect(badReply).toEqual({ ok: false, error: 'channel_not_open' })
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('an inbound letter to a NON-own (relay leg) channel forwards unopened via the content-blind relay (not decrypted, not stored, no owner notify)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-letter-relay-'))
+    const port = 19911
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+      }),
+    )
+    const db = openTestDb()
+    const ilink = makeIlinkStub()
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    // Stand-in far endpoint (Q) — captures whatever we (W, the introducer)
+    // forward, unopened.
+    let forwardedBody: unknown = null
+    const peerMock = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: async (req) => {
+        forwardedBody = await req.json()
+        return Response.json({ ok: true })
+      },
+    })
+    try {
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: ilink as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      const senderKey = 'sender-letter-relay-key-abc1'
+      // S — the sender, authenticates the inbound POST. Its own url is never
+      // contacted in this flow (W only forwards TOWARD the far endpoint).
+      boot.a2aDeps.registry.add({
+        id: 'ccs', name: '小S', url: 'http://127.0.0.1:1/a2a',
+        inbound_api_key: senderKey, outbound_api_key: 'unused-s',
+        capabilities: [], paused: false, transport: 'push',
+      })
+      // Q — the far endpoint W forwards to, registered with the stub's real url.
+      boot.a2aDeps.registry.add({
+        id: 'ccq', name: '小Q', url: `http://127.0.0.1:${peerMock.port}/a2a`,
+        inbound_api_key: 'unused-q-inbound-key123', outbound_api_key: 'w-to-q-outbound-key',
+        capabilities: [], paused: false, transport: 'push',
+      })
+      // A relay leg W (this daemon) brokered earlier (Task 9): S's own inbox
+      // is chan-s-relay, Q's own inbox is chan-q-relay. A letter is always
+      // addressed by the RECIPIENT's own channel_id (see
+      // penpal-correspondent.ts sendLetter), so S writing to Q addresses it
+      // to chan-q-relay.
+      const relayStore = makeRelayStore(db)
+      relayStore.create({ id: 'i1:tok1', intentId: 'i1', relayToken: 'tok1', upstreamAgentId: 'ccs', downstreamAgentId: 'ccq' })
+      relayStore.setUpstreamHandle('i1:tok1', { pubkey: 'Spub', channel_id: 'chan-s-relay' })
+      relayStore.setDownstreamHandle('i1:tok1', { pubkey: 'Qpub', channel_id: 'chan-q-relay' })
+
+      // Deliberately opaque/garbage ciphertext — W must NEVER attempt to
+      // open it (it holds no key for this channel; this proves the relay
+      // path, not the correspondent path, handled it).
+      const sealed = { nonce: 'NONCE1', ct: 'OPAQUE_CIPHERTEXT_NEVER_DECRYPTED', tag: 'TAG1' }
+      const resp = await fetch(`http://127.0.0.1:${port}/a2a/letter`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${senderKey}` },
+        body: JSON.stringify({ agent_id: 'ccs', channel_id: 'chan-q-relay', ...sealed }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true })
+
+      // Forwarded byte-identical + unopened to Q's real endpoint.
+      expect(forwardedBody).toMatchObject({ channel_id: 'chan-q-relay', ...sealed })
+
+      // Never touched the correspondent's own-channel path: no penpal_letter
+      // row was ever created for this channel_id (content-blind — W never
+      // decrypts, and this channel_id isn't one of W's own channels).
+      const letterRow = db.query('SELECT id FROM penpal_letter WHERE channel_id = ?').get('chan-q-relay')
+      expect(letterRow).toBeNull()
+
+      // No owner notify fired either — notifyInbound (the own-endpoint path)
+      // was never entered.
+      const sendMessage = ilink.sendMessage as unknown as ReturnType<typeof vi.fn>
+      expect(sendMessage.mock.calls.some((c: unknown[]) => String(c[1]).includes('给你写信了'))).toBe(false)
+    } finally {
+      peerMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── url-less mailbox peer guard (pairing-code Task 3, review IMPORTANT-2) ──
+// Making A2AAgentRecord.url optional for transport:'mailbox' lets a url-less
+// mailbox peer sit in the registry — that's the whole point of the pairing
+// feature (a pure-NAT peer has no public url). But intentUrl/revealUrl both
+// open with `agentUrl.replace(...)`, which throws on undefined, and three
+// wire-social.ts sites read hand.url unconditionally: broker.discover,
+// forwardTargets, and postPeerReveal. Each test below drives ONE of those
+// three sites with only a url-less mailbox peer registered and proves the
+// peer is cleanly skipped (seek/reveal-over-mailbox deferred, spec §10) —
+// not merely that some outer try/catch happened to swallow a throw.
+describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPORTANT-2)', () => {
+  const mailboxPeer = {
+    id: 'cc-aaaa1111', name: 'Alice', inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o',
+    capabilities: [], paused: false, transport: 'mailbox' as const,
+    // A REAL X25519 enc_pub (sealEnvelope's deriveSharedKey rejects a bogus
+    // short string like 'E' before any network call is even attempted) —
+    // only the addr/relay strings are arbitrary/unreachable placeholders.
+    mailbox_addr: 'A', mailbox_enc_pub: generateMailboxIdentity().enc_pub, relays: ['https://brain.example/mailbox'],
+  }
+
+  // v2 (Task 8): discover no longer filters mailbox peers out at all — a
+  // COMPLETE mailbox peer (mailbox_addr + mailbox_enc_pub + relays all
+  // present, as `mailboxPeer` is here) is now a first-class degree-1
+  // candidate; postToHand picks the mailbox coord over push and NEVER
+  // touches intentUrl(hand.url) for it (still true — the guard this
+  // describe block is named for still holds, just via a different route
+  // than "filtered out of discover"). The v2 transport is fire-and-forget —
+  // postToHand reports `asked` the moment the seal+drop is attempted,
+  // regardless of whether the (fake, unreachable) relay actually received
+  // it — so peers_asked becomes 1. And since v2 seeks have no auto-close
+  // (markForaged only bumps peers_asked — see wire-social.ts's broker
+  // deps), the row stays `foraging` forever absent a real echo or the resume
+  // sweep's 7-day cutoff, neither of which fires here.
+  it('discover: broker propose→confirm now includes a url-less mailbox peer (v2 fire-and-forget) — never reaches intentUrl(undefined), peers_asked becomes 1, seek stays foraging (no auto-close)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-guard-discover-'))
+    const port = 19912
+    const openaiMock = serveMockOpenai(JSON.stringify({ violation: false, redacted: '找摄影搭子' }))
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'openai',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: `http://127.0.0.1:${openaiMock.port}/v1`,
+        openaiModel: 'test-model',
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      boot.a2aDeps.registry.add(mailboxPeer)
+
+      const proposed = await boot.social!.broker.propose('找摄影搭子')
+      const intent_id = (proposed as { ok: true; intent_id: string }).intent_id
+      boot.social!.broker.confirmSeek(intent_id)
+      // Generous budget (default pollFor is 500ms): postToHand's mailbox leg
+      // is a REAL DNS lookup against an unreachable relay host before it
+      // fails and falls back — under load that can occasionally take longer
+      // than the default window, so this poll gets extra headroom (still
+      // well under mailbox-client's own 10s per-request timeout).
+      const row = await pollFor(() => {
+        const r = boot!.social!.seekStore.get(intent_id)
+        return r && r.peers_asked > 0 ? r : null
+      }, 300, 20)
+      expect(row).not.toBeNull()
+      // peers_asked=1 — the mailbox peer WAS asked (v2 opened discover to
+      // it); no throw ever reached intentUrl(undefined) (a TypeError there
+      // would have surfaced as an unhandled rejection / hung poll, not this
+      // clean peers_asked bump). Status stays `foraging` — v2 has no
+      // auto-close, unlike the old sync forage this test used to exercise.
+      expect(row!.peers_asked).toBe(1)
+      expect(row!.status).toBe('foraging')
+    } finally {
+      openaiMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
+  it('forwardTargets: an inbound /a2a/intent with ONLY a url-less mailbox peer as a forward target never reaches intentUrl(undefined) — 200, no forward', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-guard-forward-'))
+    const port = 19913
+    const openaiMock = serveMockOpenai('{"match":"no"}')
+    const prevKey = process.env.WECHAT_OPENAI_API_KEY
+    process.env.WECHAT_OPENAI_API_KEY = 'test-openai-key'
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'openai',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+        openaiBaseUrl: `http://127.0.0.1:${openaiMock.port}/v1`,
+        openaiModel: 'test-model',
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      const senderKey = 'sender-inbound-key-guard1'
+      boot.a2aDeps.registry.add({
+        id: 'ccs', name: '小S', url: 'http://127.0.0.1:1/a2a',
+        inbound_api_key: senderKey, outbound_api_key: 'unused',
+        capabilities: [], paused: false, transport: 'push',
+      })
+      // The ONLY possible forward target is the url-less mailbox peer.
+      boot.a2aDeps.registry.add(mailboxPeer)
+
+      const resp = await fetch(`http://127.0.0.1:${port}/a2a/intent`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${senderKey}` },
+        body: JSON.stringify({
+          agent_id: 'ccs',
+          card: {
+            intent_id: 'guard-fwd-1', kind: 'seek', topic: '找摄影搭子', hop: 1,
+            expires_at: new Date(Date.now() + 600_000).toISOString(),
+          },
+        }),
+      })
+      // No throw (a TypeError deep in forwardTargets/forwardSend would have
+      // surfaced as a 500 here).
+      expect(resp.status).toBe(200)
+      const receipt = await resp.json() as { match: string; forwarded?: unknown }
+      // No forward happened — the mailbox peer was filtered out of forwardTargets.
+      expect(receipt.forwarded).toBeUndefined()
+    } finally {
+      openaiMock.stop()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+      if (prevKey === undefined) delete process.env.WECHAT_OPENAI_API_KEY
+      else process.env.WECHAT_OPENAI_API_KEY = prevKey
+    }
+  })
+
+  it('postPeerReveal: revealEcho against a url-less mailbox peer never reaches revealUrl(undefined) — short-circuits to peer_unreachable, no throw', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-guard-reveal-'))
+    const port = 19914
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      boot.a2aDeps.registry.add(mailboxPeer)
+
+      // Seed an echo whose peer is the url-less mailbox peer — revealEcho's
+      // postPeerReveal call is the site under test.
+      const intentId = 'guard-reveal-1'
+      const echoId = `${intentId}:${mailboxPeer.id}`
+      boot.social!.seekStore.create({ id: intentId, kind: 'seek', topic: '找摄影搭子' })
+      boot.social!.echoStore.create({
+        id: echoId, seekId: intentId, peerMasked: '第 1 度的某人',
+        degree: 1, content: '南京摄影爱好者', peerAgentId: mailboxPeer.id,
+      })
+
+      const outcome = await boot.social!.revealer.revealEcho(echoId)
+      expect(outcome).toEqual({ state: 'peer_unreachable' })
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── Pairing-code (spec §7) — boot.pairing wiring ──────────────────────────
+// Gated ONLY on mailbox_relays?.length (the rendezvous relay), independent
+// of social_enabled — a daemon that hasn't turned social on can still pair.
+// See src/daemon/bootstrap/wire-pairing.ts + docs/superpowers/specs/
+// 2026-07-20-pairing-code-design.md §7.
+describe('bootstrap pairing-code wiring', () => {
+  it('wires boot.pairing when mailbox_relays is configured', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-pairing-on-'))
+    writeFileSync(join(stateDir, 'agent-config.json'),
+      JSON.stringify({ provider: 'claude', mailbox_relays: ['https://brain.example/mailbox'] }))
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(boot.pairing).toBeDefined()
+      expect(typeof boot.pairing!.start).toBe('function')
+      expect(typeof boot.pairing!.accept).toBe('function')
+      expect(typeof boot.pairing!.stop).toBe('function')
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves boot.pairing undefined with no mailbox_relays', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-pairing-off-'))
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(boot.pairing).toBeUndefined()
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  // T2/T6 identity split (carried review item 1) — boot.selfId is what every
+  // outbound wiring seam (wireSocial, wirePairing, pipeline-deps' delegate
+  // path) shares. Asserted directly here so a future regression that
+  // reintroduces a second, independently-resolved selfId somewhere is caught
+  // at the bootstrap layer, not just by re-deriving the expected value.
+  it('exposes boot.selfId — the single resolveSelfAgentId result shared by every wiring seam', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-selfid-'))
+    writeFileSync(join(stateDir, 'agent-config.json'),
+      JSON.stringify({ provider: 'claude', mailbox_relays: ['https://brain.example/mailbox'] }))
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(typeof boot.selfId).toBe('string')
+      expect(boot.selfId.length).toBeGreaterThan(0)
+      // Persisted to disk by resolveSelfAgentId's fresh-daemon mint branch —
+      // proves this is the SAME resolution wire-pairing/wire-social read,
+      // not a second independent one.
+      const disk = JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))
+      expect(disk.self_agent_id).toBe(boot.selfId)
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  // Double-notify fix (T7 review) — start()/accept() are SYNC calls the
+  // caller (WeChat 配对 dispatch seam / internal-api / CLI) is waiting on
+  // and renders every outcome for; boot.pairing's wired `notify` (→
+  // resolveOperatorChatId + sendMessage) is reserved for the initiator's
+  // ASYNC poller only (see pairing.ts's notify doc comment). Previously
+  // start()'s relay_drop_failed branch ALSO fired notify synchronously,
+  // which — since resolveOperatorChatId resolves to the same chat as the
+  // one that typed "配对" in a solo-owner install — meant the owner got the
+  // honest failure copy twice (once from here, once from the pipeline
+  // dispatch seam). Locking in: the real wired engine must NOT send
+  // anything on a sync relay-drop failure; the caller alone renders it
+  // (covered end-to-end for the WeChat seam in
+  // pipeline-deps-pairing-dispatch.test.ts).
+  it('a failed relay drop on start() does NOT notify via the wired notify path (sync outcome — caller renders it)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-pairing-notify-'))
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({
+      provider: 'claude',
+      // Port 1 is never a live relay in this test env — drop() will fail
+      // (fetch throws / non-2xx), driving the honest relay_drop_failed path.
+      mailbox_relays: ['http://127.0.0.1:1/mailbox'],
+    }))
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      const sent: Array<{ chatId: string; text: string }> = []
+      const db = openTestDb()
+      const ilink = makeIlinkStub()
+      ilink.sendMessage = (async (chatId: string, text: string) => { sent.push({ chatId, text }); return { msgId: 'm1' } }) as any
+      boot = await buildBootstrap({
+        db,
+        stateDir,
+        ilink: ilink as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      // Seed a conversation row so resolveOperatorChatId() (earliest-updated
+      // conversation) resolves to a real chat instead of null — proves the
+      // silence below isn't just "no operator chat to notify".
+      boot.conversationStore.set('op_chat', { kind: 'solo', provider: 'claude' })
+      expect(boot.pairing).toBeDefined()
+      const res = await boot.pairing!.start()
+      expect(res.ok).toBe(false)
+      if (res.ok) throw new Error('unreachable')
+      expect(res.reason).toBe('relay_drop_failed')
+      expect(sent.length).toBe(0)
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
+  // wiring-level check: markInboundActivity must be present on Bootstrap
+  // IFF deps.requestRestart was provided, and calling it must never throw.
+  // Pure-function coverage for the decision (shouldSelfRestart) and the
+  // idle-tick check itself (makeSelfRestartCheck) lives in
+  // src/daemon/self-restart/*.test.ts; this proves buildBootstrap actually
+  // honors the "requestRestart absent ⇒ mechanism fully inert" contract and
+  // exposes a callable marker when it's wired (see bootstrap/index.ts's
+  // self-restart block, which feeds the SAME activity-marker instance into
+  // both this returned markInboundActivity and the check's `quietFor`).
+  it('markInboundActivity is present only when requestRestart is wired (self-restart gate)', async () => {
+    const withoutRestart = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+    })
+    expect(withoutRestart.markInboundActivity).toBeUndefined()
+
+    // Passing requestRestart makes buildBootstrap really shell out to
+    // `git rev-parse` twice (HEAD + HEAD:bun.lock). Reviewed and kept
+    // deliberately: both are read-only, offline, and ~10ms in a checkout,
+    // and NOTHING here asserts on their output — a null result (no git, no
+    // repo) leaves every assertion below unchanged. The alternatives were
+    // worse: adding an injection seam to BootstrapDeps widens production
+    // API for test convenience only, and vi.mock has previously caused
+    // real-state-dir pollution in this repo. The 3s timeout inside
+    // readGitHead bounds the worst case.
+    const withRestart = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      requestRestart: () => {},
+    })
+    expect(typeof withRestart.markInboundActivity).toBe('function')
+    // mw-messages calls this unconditionally on every inbound message
+    // (before dedup/routing) — it must be safe to call from that hot path.
+    expect(() => withRestart.markInboundActivity!()).not.toThrow()
+  })
+
+  // busy-registry hold (spec 2026-08-11 §1/§2, Task 6) — wiring-level check
+  // that Bootstrap ALWAYS exposes holdBusy (unlike markInboundActivity, the
+  // busy registry is constructed unconditionally — see bootstrap/index.ts's
+  // `const busyRegistry = makeBusyRegistry()`, independent of whether
+  // deps.requestRestart was provided). Bootstrap doesn't expose a busy()
+  // read端 (the self-restart idle check is the only consumer wired to read
+  // it — see wire-self-restart.test.ts for real-signal coverage at that
+  // layer), so the observable surface here is: present regardless of
+  // requestRestart, and calling it returns a safe, idempotent release.
+  it('holdBusy is present on Bootstrap regardless of whether requestRestart is wired, and returns a safe idempotent release', async () => {
+    for (const requestRestart of [undefined, () => {}]) {
+      const boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir: '/tmp/state',
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+        ...(requestRestart ? { requestRestart } : {}),
+      })
+      expect(typeof boot.holdBusy).toBe('function')
+      const release = boot.holdBusy('test-probe')
+      expect(typeof release).toBe('function')
+      expect(() => release()).not.toThrow()
+      // Idempotent — a second release call must be a harmless no-op.
+      expect(() => release()).not.toThrow()
+    }
+  })
+
+  // I2① (code review, 2026-08-11) — "两个新闸门静默常闭,零生产钉子". Task 6
+  // wired `lastPollSuccessAgoMs`/`busy` to read `health`/`busyRegistry`, but
+  // nothing pinned that they read the SAME instances the rest of Bootstrap
+  // exposes — a future edit could rename a dep or swap in a disconnected
+  // second instance, tsc and every other test would stay green, and the
+  // self-restart gate would silently go back to permanently-blocked. These
+  // two tests drive Bootstrap's OWN public surface (`boot.health.onSuccess`,
+  // `boot.holdBusy`) and observe the closures the REAL buildBootstrap call
+  // handed to wireSelfRestart (captured via the module-level `vi.mock` spy
+  // above — `importOriginal`, so behavior is unchanged) — no new production
+  // API, no widened Bootstrap/BootstrapDeps type. wireSelfRestart is called
+  // UNCONDITIONALLY by buildBootstrap (it internally no-ops on missing
+  // requestRestart), so neither test needs `requestRestart` — no real git
+  // spawn required.
+  it('the lastPollSuccessAgoMs closure handed to wireSelfRestart reads the SAME health instance boot.health writes through', async () => {
+    vi.mocked(wireSelfRestart).mockClear()
+    const boot = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+    })
+    expect(wireSelfRestart).toHaveBeenCalledTimes(1)
+    const passedDeps = vi.mocked(wireSelfRestart).mock.calls[0]![0]
+
+    // Before any wechat poll has ever succeeded: null (can't prove fresh).
+    expect(passedDeps.lastPollSuccessAgoMs(Date.now())).toBeNull()
+
+    // The SAME health instance boot.health IS — writing through it must be
+    // visible to the closure buildBootstrap handed to wireSelfRestart.
+    boot.health.onSuccess('wechat')
+    const ago = passedDeps.lastPollSuccessAgoMs(Date.now())
+    expect(ago).not.toBeNull()
+    expect(typeof ago).toBe('number')
+    expect(ago as number).toBeGreaterThanOrEqual(0)
+    expect(ago as number).toBeLessThan(1000)
+  })
+
+  it("the busy closure handed to wireSelfRestart reads the SAME busy registry boot.holdBusy writes through", async () => {
+    vi.mocked(wireSelfRestart).mockClear()
+    const boot = await buildBootstrap({
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+    })
+    expect(wireSelfRestart).toHaveBeenCalledTimes(1)
+    const passedDeps = vi.mocked(wireSelfRestart).mock.calls[0]![0]
+
+    expect(passedDeps.busy()).toBe(false)
+    const release = boot.holdBusy('pinning-probe')
+    // Same account: a hold made through boot.holdBusy must be visible to
+    // the closure buildBootstrap handed to wireSelfRestart.
+    expect(passedDeps.busy()).toBe(true)
+    release()
+    expect(passedDeps.busy()).toBe(false)
+  })
+})
+
+// ── Knowledge Kernel bootstrap wiring (Phase 01, T5) ───────────────────────
+// boot.knowledge (the daemon-owned KnowledgeStore + semanticSearch) is
+// constructed only when `knowledge_enabled` is configured — mirrors the
+// social_enabled on/off pair above. See
+// docs/superpowers/plans/2026-07-12-knowledge-kernel-phase01.md Task 5.
+describe('bootstrap knowledge kernel wiring (KK T5)', () => {
+  it('wires boot.knowledge (store + search) and runs a boot backfill when knowledge_enabled is true', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-on-'))
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        knowledge_enabled: true,
+      }),
+    )
+    const logLines: Array<{ tag: string; line: string; fields?: Record<string, unknown> }> = []
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    // Agent-facing Search Task 2 — this fixture wants NO embed script to
+    // resolve (asserted below), which requires no wxsearch plugin dir being
+    // found. `bundledPluginsDir()` falls back to `<repo>/plugins` when this
+    // env var is unset, and a dev checkout with the wechat-cc-plugins
+    // monorepo symlinked in there would otherwise make wxsearch discoverable
+    // for real — pointing this at an empty tmp dir isolates the assertion
+    // from that ambient machine state (mirrors the pattern the
+    // knowledge-orchestration tests already use for the same reason).
+    const emptyBundledDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-nobundled-'))
+    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = emptyBundledDir
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: (tag, line, fields) => { logLines.push({ tag, line, fields }) },
+      })
+      expect(boot.knowledge).toBeDefined()
+      expect(typeof boot.knowledge!.store.putSourceMessages).toBe('function')
+      expect(typeof boot.knowledge!.search).toBe('function')
+      // No wxsearch plugin dir is discoverable (isolated above) and
+      // knowledge_embed_script is unset, so no embed script resolves; the
+      // embedder (and its query convenience wrapper) must stay undefined
+      // even though the store/search half of boot.knowledge is present.
+      expect(boot.knowledge!.embedder).toBeUndefined()
+      expect(boot.knowledge!.embedQuery).toBeUndefined()
+      // Store is actually usable — putSourceMessages/listMessages round-trip.
+      const { watermark } = boot.knowledge!.store.putSourceMessages([
+        { msg_key: 'm1', conversation: 'c1', sender: 's1', time: 1, type: 'text', text: 'hi', server_id: '' },
+      ])
+      expect(watermark).toBeGreaterThan(0)
+      // Boot backfill runs fire-and-forget (setTimeout(0)) with no configured
+      // knowledge_source_dir — the default decrypted dir doesn't exist, so the
+      // adapter finds nothing, but it must still run and log {ingested: 0}
+      // rather than silently never firing.
+      // Matched via a startsWith (not a bare `.includes('knowledge')`) —
+      // the tmp stateDir path itself gets logged by unrelated plugin-not-
+      // ready BOOT lines (plugin data dirs live under stateDir), and this
+      // test's own tmp prefix contains "knowledge", so a loose substring
+      // match on the whole array would false-positive on those instead of
+      // this adapter's own log line.
+      // Generous poll budget (10s, not pollFor's default 500ms): this is the
+      // first knowledge-kernel test in the file, so it pays the cold-start
+      // cost, and on the Windows runner the boot backfill now does real work —
+      // before the SQLITE_OPEN_URI fix every open failed instantly there, so
+      // the whole cycle was a no-op and always logged within a few ms.
+      const bootLine = await pollFor(() => logLines.find(l => l.tag === 'BOOT' && l.line.startsWith('knowledge:')) ?? null, 1000, 10)
+      expect(bootLine).toBeTruthy()
+      expect(bootLine!.fields).toEqual({ ingested: 0 })
+    } finally {
+      boot?.knowledge?.store.close()
+      await boot?.knowledge?.embedder?.close?.()
+      await boot?.a2aServer?.stop()
+      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
+      rmSync(emptyBundledDir, { recursive: true, force: true })
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+    // 30s, not vitest's default 5s — see the poll-budget comment above. This
+    // timed out on windows-latest at 5s once the URI fix made the Windows
+    // backfill actually execute instead of failing every open instantly.
+  }, 30000)
+
+  // Knowledge Graph inproc Task 4 — the graph rebuild runs as part of the
+  // SAME boot backfill as the source adapter/indexer (runKnowledgeCycle,
+  // see cycle.ts), writing into the SAME KnowledgeStore's graph.db.
+  // `knowledge_owner` here forces a deterministic owner even though the
+  // fixture's source is empty (no decrypted dir on disk) — detectOwner's
+  // vote heuristic has nothing to vote on, but an explicit override still
+  // wins outright, so this is a clean assertion that the config value
+  // actually reaches rebuildGraphFromSource end to end.
+  it('runs a graph rebuild as part of the boot backfill (KK T4), honoring knowledge_owner', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-graph-'))
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        knowledge_enabled: true,
+        knowledge_owner: 'forced_wxid_owner',
+      }),
+    )
+    const logLines: Array<{ tag: string; line: string; fields?: Record<string, unknown> }> = []
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    const emptyBundledDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-graph-nobundled-'))
+    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = emptyBundledDir
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: (tag, line, fields) => { logLines.push({ tag, line, fields }) },
+      })
+      expect(boot.knowledge).toBeDefined()
+
+      const graphLine = await pollFor(
+        () => logLines.find(l => l.tag === 'KNOWLEDGE' && l.line.startsWith('graph rebuild:')) ?? null,
+      )
+      expect(graphLine).toBeTruthy()
+
+      // Source is empty (no decrypted dir on disk in this fixture), so the
+      // rebuild produced an empty-but-present graph — but `knowledge_owner`
+      // still reached it: the graph's owner meta is the forced value, not
+      // null/undetected.
+      expect(boot.knowledge!.store.getGraphMeta('owner')).toBe('forced_wxid_owner')
+      expect(boot.knowledge!.store.countContacts()).toBe(0)
+      expect(boot.knowledge!.store.getGraphMeta('source_watermark')).toBe('0')
+    } finally {
+      boot?.knowledge?.store.close()
+      await boot?.knowledge?.embedder?.close?.()
+      await boot?.a2aServer?.stop()
+      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
+      rmSync(emptyBundledDir, { recursive: true, force: true })
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  // Agent-facing Search Task 2 — the ONE shared embedder service is built
+  // only when `knowledge_enabled` AND an embed script actually resolves
+  // (`knowledge_embed_script` here, mirroring the wxsearch-plugin-dir path
+  // exercised by the knowledge-orchestration test at line ~831). The
+  // embedder is lazy (embedder-service.ts's docstring — no subprocess until
+  // the first embed() call), and this fixture's decrypted-messages dir
+  // doesn't exist, so the boot backfill's indexer pass has nothing to embed
+  // — safe to assert on the wiring without ever spawning the (nonexistent)
+  // script.
+  it('wires boot.knowledge.embedder + embedQuery when knowledge_enabled is true and knowledge_embed_script resolves', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-embedder-'))
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        knowledge_enabled: true,
+        knowledge_embed_model: 'bge-small-zh-v1.5',
+        knowledge_embed_script: join(stateDir, 'fake_embed_subprocess.py'),
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(boot.knowledge).toBeDefined()
+      expect(boot.knowledge!.embedder).toBeDefined()
+      expect(boot.knowledge!.embedder!.model_id).toBe('bge-small-zh-v1.5')
+      expect(typeof boot.knowledge!.embedder!.embed).toBe('function')
+      expect(typeof boot.knowledge!.embedder!.close).toBe('function')
+      expect(typeof boot.knowledge!.embedQuery).toBe('function')
+    } finally {
+      boot?.knowledge?.store.close()
+      await boot?.knowledge?.embedder?.close?.()
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('boot.knowledge is undefined when knowledge_enabled is absent, and no knowledge work is ever scheduled/logged', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-off-'))
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        // knowledge_enabled omitted entirely.
+      }),
+    )
+    const logLines: Array<{ tag: string; line: string; fields?: Record<string, unknown> }> = []
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: (tag, line, fields) => { logLines.push({ tag, line, fields }) },
+      })
+      expect(boot.knowledge).toBeUndefined()
+      // Gating (T7' review Finding 2c) — when disabled, the whole
+      // knowledge-cycle block (including its setTimeout(0) boot backfill)
+      // never runs, so the daemon never emits a single 'KNOWLEDGE'-tagged
+      // log line. Give the deferred setTimeout(0) a tick to prove this is a
+      // structural "never scheduled", not a race against an async backfill
+      // that just hasn't logged yet.
+      await new Promise(resolve => setTimeout(resolve, 20))
+      expect(logLines.find(l => l.tag === 'KNOWLEDGE')).toBeUndefined()
+    } finally {
+      await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })
     }
   })

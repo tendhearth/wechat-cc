@@ -36,8 +36,13 @@ import type { ProviderId } from './conversation'
  * ever documents sources it has hand-written copy for, so an unrelated
  * plugin (or a future one this file hasn't been updated for yet) never
  * triggers the section or produces a blank/garbled bullet.
+ *
+ * `wxperson`/`wxfacts` were dropped (Knowledge Facts/Person inproc FP T5):
+ * both moved in-proc, exposed as the daemon-owned `person_brief`/facts
+ * tools gated on `factsAvailable`/`personAvailable` below — same posture as
+ * `wxgraph`'s earlier removal for `graphAvailable`.
  */
-export const KNOWN_KNOWLEDGE_PLUGINS = ['wxperson', 'wxgraph', 'wxfacts', 'wxsearch', 'wxmedia'] as const
+export const KNOWN_KNOWLEDGE_PLUGINS = ['wxsearch', 'wxmedia'] as const
 
 export interface BuildSystemPromptArgs {
   /** Which provider this session is for. Used to compute peer + delegate tool name. */
@@ -146,7 +151,7 @@ export interface BuildSystemPromptArgs {
   bubbleReplies?: boolean
   /**
    * Names of knowledge-mcp plugins registered for this session (RFC
-   * knowledge-orchestration Task 1) — e.g. `wxgraph`/`wxfacts`/`wxsearch`/
+   * knowledge-orchestration Task 1) — e.g. `wxfacts`/`wxsearch`/
    * `wxmedia`. When at least one of these is a KNOWN_KNOWLEDGE_PLUGINS
    * entry, adds the knowledge-orchestration section right after
    * `memorySection()` so the agent knows memory (its own "看法") composes
@@ -157,6 +162,56 @@ export interface BuildSystemPromptArgs {
    * contract).
    */
   knowledgePlugins?: string[]
+  /**
+   * When true, this session is admin-tier AND the daemon's `knowledge_search`
+   * MCP tool is actually registered/functional for it (agent-facing search
+   * design Task 5) — adds the `- **消息检索**（\`knowledge_search\`）…` bullet
+   * to the knowledge-orchestration section. Deliberately NOT derived from
+   * `knowledgePlugins`/the `wxsearch` plugin name — `knowledge_search` is a
+   * daemon-owned tool, independent of whether the wxsearch plugin is loaded.
+   * Absent or false ⇒ output is byte-identical to before this field existed
+   * (mirrors `careEnabled`'s contract).
+   */
+  knowledgeSearchAvailable?: boolean
+  /**
+   * When true, this session is admin-tier AND the daemon's Graph Query
+   * tools (`contact_profile`/`top_contacts`/…, Knowledge Graph inproc
+   * design Task 5) are actually registered/functional for it — adds the
+   * `- **关系画像**（\`contact_profile\`/\`top_contacts\`）…` bullet to the
+   * knowledge-orchestration section. Deliberately NOT derived from
+   * `knowledgePlugins`/the retired `wxgraph` plugin name (same posture as
+   * `knowledgeSearchAvailable` above vs `wxsearch`) — `graph_query` is a
+   * daemon-owned capability, independent of whether any wxgraph-shaped
+   * plugin is loaded. Absent or false ⇒ output is byte-identical to before
+   * this field existed (mirrors `careEnabled`'s contract).
+   */
+  graphAvailable?: boolean
+  /**
+   * When true, this session is admin-tier AND the daemon's Facts tools
+   * (`extraction_batch`/`record_facts`/`contact_facts`/`find_facts`/
+   * `set_fact_status`/`extraction_status`, Knowledge Facts/Person inproc
+   * design Task 5) are actually registered/functional for it — adds the
+   * `- **结构化事实**（\`contact_facts\`/\`find_facts\`）…` bullet and the
+   * obligation→agenda flow-back line to the knowledge-orchestration
+   * section. Deliberately NOT derived from `knowledgePlugins`/the retired
+   * `wxfacts` plugin name (same posture as `graphAvailable` above vs
+   * `wxgraph`) — `facts_query` is a daemon-owned capability, independent of
+   * whether any wxfacts-shaped plugin is loaded. Absent or false ⇒ output
+   * is byte-identical to before this field existed (mirrors
+   * `careEnabled`'s contract).
+   */
+  factsAvailable?: boolean
+  /**
+   * When true, this session is admin-tier AND the daemon's `person_brief`
+   * MCP tool (Knowledge Facts/Person inproc design Task 5) is actually
+   * registered/functional for it — adds the "一步到位" `person_brief(名字)`
+   * lead to the knowledge-orchestration section. Deliberately NOT derived
+   * from `knowledgePlugins`/the retired `wxperson` plugin name (same
+   * posture as `factsAvailable`/`graphAvailable` above). Absent or false ⇒
+   * output is byte-identical to before this field existed (mirrors
+   * `careEnabled`'s contract).
+   */
+  personAvailable?: boolean
 }
 
 /**
@@ -167,7 +222,34 @@ export interface BuildSystemPromptArgs {
 export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
   const { providerId, peerProviderId, companionEnabled, delegateAvailable } = args
 
+  // `knowledge_search` is a daemon-owned tool (agent-facing search design
+  // Task 5), independent of whether any KNOWN_KNOWLEDGE_PLUGINS entry is
+  // loaded (e.g. a custom `knowledge_embed_script` override can make it
+  // available with no wxsearch plugin present at all). So the section must
+  // render whenever EITHER a known plugin is present OR knowledge_search is
+  // available — otherwise an admin session where knowledge_search is the
+  // only source would never see this section, and the agent would never
+  // learn the tool exists.
+  const knowledgeSearchAvailable = args.knowledgeSearchAvailable === true
+  // Same posture as knowledgeSearchAvailable above vs wxsearch: graph_query
+  // is a daemon-owned capability (Knowledge Graph inproc), not gated on the
+  // retired wxgraph plugin being loaded, so it must also widen the section
+  // gate below — otherwise an admin session where the graph tools are the
+  // ONLY available knowledge source would never see the section at all.
+  const graphAvailable = args.graphAvailable === true
+  // Same posture as knowledgeSearchAvailable/graphAvailable above vs their
+  // retired plugins: facts_query/person_query are daemon-owned capabilities
+  // (Knowledge Facts/Person inproc), not gated on the retired wxfacts/
+  // wxperson plugin names being loaded, so they must also widen the section
+  // gate below — otherwise an admin session where the facts/person tools are
+  // the ONLY available knowledge source would never see the section at all.
+  const factsAvailable = args.factsAvailable === true
+  const personAvailable = args.personAvailable === true
   const hasKnownKnowledge = (args.knowledgePlugins ?? []).some(n => (KNOWN_KNOWLEDGE_PLUGINS as readonly string[]).includes(n))
+    || knowledgeSearchAvailable
+    || graphAvailable
+    || factsAvailable
+    || personAvailable
 
   const sections: string[] = [
     baseChannelSection(providerId),
@@ -185,7 +267,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     args.personaCultivate === true ? personaCultivationSection({ personaEmpty: args.personaEmpty === true }) : '',
     args.stickerTags && args.stickerTags.length > 0 ? stickerSection(args.stickerTags) : '',
     memorySection(),
-    hasKnownKnowledge ? knowledgeOrchestrationSection(args.knowledgePlugins!) : '',
+    hasKnownKnowledge ? knowledgeOrchestrationSection(args.knowledgePlugins ?? [], { knowledgeSearchAvailable, graphAvailable, factsAvailable, personAvailable }) : '',
     multiModeAwarenessSection(),
     companionEnabled ? companionSection() : '',
   ].filter(s => s.length > 0)
@@ -233,7 +315,8 @@ function toolsSection(): string {
 - \`resurface_page({slug?, title_fragment?})\` — 根据 slug 或标题片段重新生成 URL。
 
 Companion / 主动推送（详见末尾段）：
-- \`companion_status()\` / \`companion_enable()\` / \`companion_disable()\` / \`companion_snooze({minutes})\` / \`companion_import_local({enabled})\`（开关本机历史自动导入）`
+- \`companion_status()\` / \`companion_enable()\` / \`companion_disable()\` / \`companion_snooze({minutes})\` / \`companion_import_local({enabled})\`（仅开关本机 Claude/Codex 历史自动导入；不是微信聊天记录）
+- 用户说“同步微信记忆 / 刷新聊天记录 / 同步聊天记录 / 查询微信最新消息”时，必须调用 wxvault 的 \`sync_wechat_data\` 或 \`get_messages\`，绝不可调用 \`companion_import_local\`。wxvault 仅能读取本机 Mac 微信已落库的数据，不能读取尚未同步到 Mac 的手机消息。`
 }
 
 /**
@@ -503,7 +586,9 @@ companion 现在的 persona（小助手 / 陪伴）影响你**怎么读 memory +
 /**
  * Knowledge-orchestration section (knowledge-orchestration design Task 1) —
  * appears when at least one KNOWN_KNOWLEDGE_PLUGINS entry is registered for
- * this session. Frames memory as the agent's own first-person "看法" and the
+ * this session, OR when `opts.knowledgeSearchAvailable` is true (the daemon's
+ * own `knowledge_search` tool, which needs no plugin). Frames memory as the
+ * agent's own first-person "看法" and the
  * knowledge-mcp plugins as structured sources computed from real data, so the
  * agent learns to compose them (memory + relationship + facts) instead of
  * leaning on memory alone. Placed right after memorySection() — identity/
@@ -512,32 +597,66 @@ companion 现在的 persona（小助手 / 陪伴）影响你**怎么读 memory +
  * in KNOWN_KNOWLEDGE_PLUGINS order, so bootstrap can pass whatever plugin set
  * this session ended up with and only the matching copy shows up.
  */
-export function knowledgeOrchestrationSection(pluginNames: string[]): string {
-  const present = new Set(pluginNames)
+export function knowledgeOrchestrationSection(_pluginNames: string[], opts?: { knowledgeSearchAvailable?: boolean; graphAvailable?: boolean; factsAvailable?: boolean; personAvailable?: boolean }): string {
+  // `_pluginNames` is now unused inside this function: every bullet here is
+  // gated on an opts availability flag (graphAvailable/factsAvailable/
+  // personAvailable/knowledgeSearchAvailable), not plugin presence — the
+  // last two plugin-name-keyed bullets (wxfacts/wxperson) were converted to
+  // opts flags in FP T5, mirroring wxgraph's earlier conversion. The param
+  // is kept (not removed) because callers across the codebase pass it
+  // positionally and `buildSystemPrompt` still gates section INCLUSION on
+  // `knowledgePlugins` containing a KNOWN_KNOWLEDGE_PLUGINS entry (wxsearch/
+  // wxmedia) OR any opts flag — see hasKnownKnowledge above.
   const bullets: string[] = []
-  if (present.has('wxgraph')) {
+  // Knowledge Graph inproc (GR T5): the retired wxgraph plugin's `contact_profile`/
+  // `top_contacts` tools moved in-proc, exposed as the daemon-owned Graph
+  // Query tools (admin-only, gated on `knowledge_enabled` + tier — see
+  // bootstrap/index.ts's `graphAvailable` derivation). Deliberately NOT
+  // keyed off the `wxgraph` plugin name being present in `pluginNames` —
+  // that plugin is retired, and the caller must pass this opt-in flag
+  // exactly when the Graph Query tools are actually registered for this
+  // session, or the agent will emit calls to tools that don't exist.
+  if (opts?.graphAvailable) {
     bullets.push('- **关系画像**（`contact_profile`/`top_contacts`）：你俩的量化关系——亲密度/最近联系/往来是否平衡。问"我们关系怎么样"用它。')
   }
-  if (present.has('wxfacts')) {
+  // Knowledge Facts/Person inproc (FP T5): the retired wxfacts plugin's
+  // `contact_facts`/`find_facts` tools moved in-proc, exposed as the
+  // daemon-owned Facts tools (admin-only, gated on `knowledge_enabled` +
+  // tier — see bootstrap/index.ts's `factsAvailable` derivation).
+  // Deliberately NOT keyed off the `wxfacts` plugin name being present in
+  // `pluginNames` — that plugin is retired, same posture as `graphAvailable`
+  // above vs `wxgraph`.
+  if (opts?.factsAvailable) {
     bullets.push('- **结构化事实**（`contact_facts`/`find_facts`）：抽取出的事实、义务、关系（带出处）。问"关于 ta 的具体事实 / ta 欠我什么"用它。')
   }
-  if (present.has('wxsearch')) {
-    bullets.push('- **消息检索**（`search`）：语义找"那次聊到 X 的消息"。回溯具体对话用它。')
-  }
-  if (present.has('wxmedia')) {
-    bullets.push('- 语音/图片转出的文字也在检索范围内。')
+  // Agent-facing Search (Task 5): wxsearch's OLD `search` MCP tool was
+  // retired (Knowledge Kernel Phase 0/1) — semantic search moved to the
+  // daemon's in-process Knowledge Kernel, exposed to the agent as the
+  // daemon-owned `knowledge_search` MCP tool (admin-only, gated on
+  // `knowledge_enabled` + the embedder actually resolving — see
+  // bootstrap/index.ts's `knowledgeSearchAvailable` derivation). Deliberately
+  // NOT keyed off the `wxsearch` plugin name being present in `pluginNames` —
+  // wxsearch no longer provides a search tool at all, and the caller must
+  // pass this opt-in flag exactly when `knowledge_search` is actually
+  // registered for this session, or the agent will emit calls to a tool
+  // that doesn't exist.
+  if (opts?.knowledgeSearchAvailable) {
+    bullets.push('- **消息检索**（`knowledge_search`）：语义找"那次聊到 X 的消息"。回溯具体对话用它。')
   }
 
   const parts: string[] = [
     '你对一个人的了解由几层组成——你自己的记忆是你的"看法"（第一人称、可能有偏见）；下面这些是从真实数据算出来的源。**要真正懂一个人，把你的看法 + 关系 + 事实拼起来，别只靠一层。用人名找人（按微信联系人名解析，同名可能对不准）。**',
   ]
-  if (present.has('wxperson')) {
+  // Deliberately NOT keyed off the `wxperson` plugin name being present in
+  // `pluginNames` — that plugin is retired, same posture as `factsAvailable`
+  // above vs `wxfacts`.
+  if (opts?.personAvailable) {
     parts.push('**一步到位**：想整体了解某人，先调 `person_brief(名字)`——一次拿全 ta 的关系画像 + 结构化事实 + 未了义务 + 近期消息（这是数据层）；再叠上你自己的看法。要单独深挖某一面，用下面的源。')
   }
   if (bullets.length > 0) {
     parts.push(bullets.join('\n'))
   }
-  if (present.has('wxfacts')) {
+  if (opts?.factsAvailable) {
     parts.push('**未了义务 → 主动**：做关怀 / 议程时，用 `find_facts(kind=obligation)` 看有没有该兑现的承诺（你欠 ta 的、ta 欠你的），值得跟进的记进 `agenda.md`（`- [ ] due:YYYY-MM-DD …`）——让结构化事实回流成主动关心。')
   }
 

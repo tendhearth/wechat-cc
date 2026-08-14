@@ -20,24 +20,29 @@ const SEEN_RETENTION_MS = 60 * 60 * 1000
 
 export interface SeenIntentRow { intent_id: string; first_seen_at: string; expires_at: string }
 export interface SeenIntentStore {
-  markSeen(s: { intentId: string; expiresAt: string }): void
+  markSeen(s: { intentId: string; expiresAt: string; originAgentId?: string }): void
   hasSeen(intentId: string): boolean
+  originOf(intentId: string): string | null
 }
 
 export function makeSeenIntentStore(db: Db): SeenIntentStore {
-  const ins = db.query<unknown, [string, string, string]>(
-    `INSERT OR IGNORE INTO social_seen_intent(intent_id, first_seen_at, expires_at) VALUES (?, ?, ?)`,
+  const ins = db.query<unknown, [string, string, string, string | null]>(
+    `INSERT OR IGNORE INTO social_seen_intent(intent_id, first_seen_at, expires_at, origin_agent_id) VALUES (?, ?, ?, ?)`,
   )
   const sel = db.query<{ one: number }, [string]>(
     'SELECT 1 as one FROM social_seen_intent WHERE intent_id = ?',
+  )
+  const selOrigin = db.query<{ origin_agent_id: string | null }, [string]>(
+    'SELECT origin_agent_id FROM social_seen_intent WHERE intent_id = ?',
   )
   const prune = db.query<unknown, [string]>('DELETE FROM social_seen_intent WHERE first_seen_at < ?')
   return {
     markSeen(s) {
       const now = new Date().toISOString()
-      ins.run(s.intentId, now, s.expiresAt)
+      ins.run(s.intentId, now, s.expiresAt, s.originAgentId ?? null)
       prune.run(new Date(Date.now() - SEEN_RETENTION_MS).toISOString())
     },
     hasSeen(intentId) { return sel.get(intentId) != null },
+    originOf(intentId) { return selOrigin.get(intentId)?.origin_agent_id ?? null },
   }
 }

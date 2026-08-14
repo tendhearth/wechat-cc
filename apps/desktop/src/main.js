@@ -15,6 +15,7 @@
 // subscribers + invokes refresh from action handlers.
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
+import { invokeApi } from "./api.js"
 import { initialMode, restartButtonState, afterScanTarget } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
 import { createConversationsPoller } from "./conversations-poller.js"
@@ -26,11 +27,12 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
+import { initCustomerReviewPage, stopCustomerReviewPolling } from "./modules/customer-review.js"
 import { initConversePage } from "./modules/converse.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
 import { initPluginsTab, refresh as refreshPlugins } from "./modules/plugins.js"
@@ -39,6 +41,7 @@ import { loadUpdateProbe, applyUpdate } from "./modules/update.js"
 import { wireSettingsDrawer, openSettingsDrawer } from "./modules/settings-drawer.js"
 import { mountHugeicons } from "./modules/icons.js"
 import { pingHealth } from "./health-probe.js"
+import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
 
 const state = {
   setup: /** @type {SetupQrJson | null} */ (null),
@@ -123,6 +126,7 @@ const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 1000
 // in a JSDOM/happy-dom harness).
 const deps = {
   invoke,
+  invokeApi,
   formatInvokeError,
   doctorPoller,
   mock,
@@ -248,6 +252,11 @@ function setMode(mode) {
       state.updateProbed = true
       loadUpdateProbe(deps).catch(err => console.error("update probe failed", err))
     }
+    // Incidents are checked on every doctor-poller tick (see
+    // checkIncidentsOnPoll, subscribed in wireDoctorSubscribers below) —
+    // not gated here — so a new outage is discovered within ~60s even
+    // while the owner is parked on a non-overview pane, not just on
+    // dashboard entry.
   } else {
     doctorPoller.stop()
     conversationsPoller.stop()
@@ -281,6 +290,13 @@ function wireDoctorSubscribers() {
   doctorPoller.subscribe(renderDashboardIfActive)
   doctorPoller.subscribe(renderRestartButtonIfActive)
   doctorPoller.subscribe(checkExpiredDiff)
+  // Task 8 follow-up (connection-health): piggyback on the doctor poller's
+  // existing 5s tick instead of a new isolated timer — checkIncidentsOnPoll
+  // throttles itself to a 60s effective cadence internally. Runs regardless
+  // of which pane is active (mirrors checkExpiredDiff above), so a new
+  // outage that starts while the app is open surfaces without the owner
+  // needing to revisit the overview pane.
+  doctorPoller.subscribe(() => checkIncidentsOnPoll(deps))
   conversationsPoller.subscribe(report => {
     if (state.mode === "dashboard") renderConversations(report, { invoke })
   })
@@ -438,11 +454,12 @@ function switchPane(name) {
     loadMemoryTopZone(deps).catch(err => console.error("memory top zone failed", err))
   }
   if (name === "sessions") {
-    initDialoguePage(deps)
+    activateDialogueWorkspace()
   } else {
     // Stop the dialogue pane's 30s auto-refresh tick when leaving it
     // (mirrors the logs/sessions auto-refresh lifecycle).
     stopDialogueAutoRefresh()
+    stopCustomerReviewPolling()
   }
   if (name === "converse") {
     initConversePage(deps)
@@ -455,9 +472,37 @@ function switchPane(name) {
   }
 }
 
+function activateDialogueWorkspace() {
+  const active = document.querySelector(".dialogue-workspace-tab.is-active")
+  const mode = active instanceof HTMLElement ? active.dataset.dialogueMode : "cc"
+  const dialogueRoot = document.getElementById("dialogue-root")
+  const reviewRoot = document.getElementById("customer-review-root")
+  if (mode === "customer-review") {
+    if (dialogueRoot) dialogueRoot.hidden = true
+    if (reviewRoot) reviewRoot.hidden = false
+    stopDialogueAutoRefresh()
+    initCustomerReviewPage()
+  } else {
+    if (dialogueRoot) dialogueRoot.hidden = false
+    if (reviewRoot) reviewRoot.hidden = true
+    stopCustomerReviewPolling()
+    initDialoguePage(deps)
+  }
+}
+
 // ─── DOM event wiring ────────────────────────────────────────────────
 
 function wireEvents() {
+  document.querySelectorAll(".dialogue-workspace-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".dialogue-workspace-tab").forEach(other => {
+        const selected = other === tab
+        other.classList.toggle("is-active", selected)
+        other.setAttribute("aria-selected", selected ? "true" : "false")
+      })
+      activateDialogueWorkspace()
+    })
+  })
   // `data-tauri-drag-region` alone is not reliable with the macOS overlay
   // titlebar in every Tauri/WebKit combination. Explicitly start a native
   // window drag when the user presses the transparent frame handles.
@@ -892,6 +937,7 @@ function wireEvents() {
 
   const companionBody = document.querySelector(".moment-body")
   const companionImmersiveStart = document.getElementById("companion-immersive-start")
+  const companionDesktopStart = /** @type {HTMLButtonElement | null} */ (document.getElementById("companion-desktop-start"))
   const companionImmersiveExit = document.getElementById("companion-immersive-exit")
   const companionUsersToggle = document.getElementById("companion-users-toggle")
   const companionUsersScrim = document.getElementById("companion-users-scrim")
@@ -909,6 +955,23 @@ function wireEvents() {
     companionImmersiveStart?.setAttribute("aria-pressed", String(active))
   }
   companionImmersiveStart?.addEventListener("click", () => setCompanionImmersive(true))
+  companionDesktopStart?.addEventListener("click", async () => {
+    // The browser/dev shim cannot spawn a native Tauri window. Open the same
+    // isolated scene in a popup there so visual work remains previewable.
+    if (mock || /** @type {any} */ (window).__WECHAT_CC_SHIM__) {
+      window.open("./companion-window.html", "wechat-cc-companion", "popup,width=600,height=430")
+      return
+    }
+    companionDesktopStart.disabled = true
+    try {
+      await invoke("open_companion_window", {})
+    } catch (err) {
+      console.error("open companion window failed:", err)
+      alert(`无法打开桌面陪伴：${formatInvokeError(err)}`)
+    } finally {
+      companionDesktopStart.disabled = false
+    }
+  })
   companionImmersiveExit?.addEventListener("click", () => setCompanionImmersive(false))
   companionUsersToggle?.addEventListener("click", () => {
     if (!companionBody?.classList.contains("is-companion-immersive")) return
@@ -1198,9 +1261,14 @@ function showDevBannerIfShim() {
   if (!w.__WECHAT_CC_SHIM__) return
   const banner = document.getElementById("dev-banner")
   if (!banner) return
+  const allowMut = w.__WECHAT_CC_ALLOW_MUTATIONS__
   banner.innerHTML = w.__WECHAT_CC_DRY_RUN__
-    ? `<b>演示模式 (DRY_RUN)</b> · service install / stop / start 不会真实生效，但能演练交互流程`
-    : `<b>开发 shim 模式</b> · 操作走真实 CLI（未启用 DRY_RUN）`
+    ? `<b>演示模式 (DRY_RUN)</b> · 界面状态是假的，但未被拦下的命令仍会走真实 CLI`
+    : allowMut
+      ? `<b>开发模式 · 安全阀已关闭</b> · 删账号 / service / setup / update 会真实生效`
+      : `<b>开发模式</b> · 操作走真实 CLI 与真实 daemon；只放行已知只读的命令`
+  // 关阀是唯一能毁掉真实状态的模式，颜色上必须一眼可辨（spec §3）。
+  banner.classList.toggle("is-unsafe", Boolean(allowMut) && !w.__WECHAT_CC_DRY_RUN__)
   banner.hidden = false
 }
 
@@ -1209,6 +1277,18 @@ async function boot() {
   mountHugeicons()
   wireDoctorSubscribers()
   wireEvents()
+  // Refresh an already-configured local WeChat archive on every desktop
+  // launch. Keep it off the critical render path: decrypting larger archives
+  // can take seconds, while the dashboard should remain immediately usable.
+  void refreshWxvaultOnAppStart({ invoke })
+    .then(result => {
+      // Log the skip reason too. A silent no-op here means customer review
+      // reads a stale archive, and "not-ready"/"disabled" is indistinguishable
+      // from success unless we say so.
+      if (result.refreshed) console.info('[wxvault] startup refresh complete')
+      else console.info(`[wxvault] startup refresh skipped: ${result.reason}`)
+    })
+    .catch(err => console.warn('[wxvault] startup refresh failed:', err))
   await loadAgentConfig().catch(err => console.error("agent config load failed", err))
   // Wire the A2A agents tab (event listeners attached once; first list load
   // is deferred until the user actually switches to that pane).

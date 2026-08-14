@@ -41,6 +41,20 @@ export interface CompanionConfig {
    * so it gets its own off-switch.
    */
   ingest_enabled?: boolean
+  /**
+   * Optional MCP client to a local `hearth` server, for pushing distilled
+   * knowledge into hearth's vault. Default OFF: this is a dormant capability
+   * added by memory-infra Phase 1 — with hearth_enabled false (the default),
+   * wechat-cc's behavior is unchanged. See src/daemon/companion/hearth-client.ts.
+   */
+  hearth_enabled: boolean
+  /** Path to the hearth vault to write into. Required (non-null) for hearth_enabled to take effect. */
+  hearth_vault: string | null
+  /**
+   * Command line to spawn the hearth MCP server, e.g. "hearth mcp serve".
+   * Null → defaults to "hearth mcp serve" on PATH.
+   */
+  hearth_cmd: string | null
 }
 
 export function defaultCompanionConfig(): CompanionConfig {
@@ -51,6 +65,9 @@ export function defaultCompanionConfig(): CompanionConfig {
     snooze_until: null,
     last_introspect_at: null,
     import_local_history: false,
+    hearth_enabled: false,
+    hearth_vault: null,
+    hearth_cmd: null,
   }
 }
 
@@ -73,6 +90,9 @@ export function loadCompanionConfig(stateDir: string): CompanionConfig {
       last_introspect_at: typeof parsed.last_introspect_at === 'string' ? parsed.last_introspect_at : null,
       import_local_history: typeof parsed.import_local_history === 'boolean' ? parsed.import_local_history : d.import_local_history,
       ingest_enabled: typeof parsed.ingest_enabled === 'boolean' ? parsed.ingest_enabled : undefined,
+      hearth_enabled: typeof parsed.hearth_enabled === 'boolean' ? parsed.hearth_enabled : d.hearth_enabled,
+      hearth_vault: typeof parsed.hearth_vault === 'string' ? parsed.hearth_vault : null,
+      hearth_cmd: typeof parsed.hearth_cmd === 'string' ? parsed.hearth_cmd : null,
     }
     // Legacy triggers/per_project_persona/triggers fields (if any) are
     // silently dropped on next save — migration path for v1.1 installs.

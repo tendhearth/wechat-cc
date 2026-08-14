@@ -1,14 +1,13 @@
 /**
  * internal-api file-locate route — admin-only on-demand file search over the
  * owner's computer. Stateless: wraps the pure lib/locate-files core. Searches
- * caller-supplied roots (the agent passes dirs it learned in locations.md)
- * followed by the default life dirs. Returns metadata only — never file bodies.
+ * caller-supplied roots only (the agent passes dirs explicitly supplied by the
+ * owner or learned in locations.md). Returns metadata only — never file bodies.
  * Admin-tier per route-tiers.ts.
  */
 import { isAbsolute } from 'node:path'
 import { type RouteTable } from './types'
 import { locateFiles } from '../../lib/locate-files'
-import { defaultLifeDirs } from '../../lib/file-survey'
 
 export function fileRoutes(): RouteTable {
   return {
@@ -21,8 +20,7 @@ export function fileRoutes(): RouteTable {
       // Windows ('C:\...', '\\server\...') forms; a bare '/' check dropped
       // every Windows root, so caller-supplied dirs never made it into the
       // search on Windows.
-      const extraRoots = q.getAll('root').filter(r => isAbsolute(r))
-      const roots = [...extraRoots, ...defaultLifeDirs()]
+      const roots = q.getAll('root').filter(r => isAbsolute(r))
       const { candidates, truncated } = locateFiles({ roots, query, mode })
       return { status: 200, body: { candidates, truncated } }
     },

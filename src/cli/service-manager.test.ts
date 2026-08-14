@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildServicePlan, installService } from './service-manager'
 import { validatePowerShellScript } from './powershell-validator'
+import { SUPERVISED_ENV } from '../core/supervised-env'
 
 describe('service-manager', () => {
   it('builds a macOS LaunchAgent plan', () => {
@@ -151,6 +152,39 @@ describe('service-manager', () => {
       platform: 'darwin', homeDir: '/Users/alice', cwd: '/Users/alice/.wechat-cc', bunPath: '/opt/homebrew/bin/bun',
     })
     expect(plan.fileContent).toContain('<key>ThrottleInterval</key><integer>10</integer>')
+  })
+
+  // SUPERVISED_ENV's literal value must not change (code review #2 on
+  // Task 6 of the 2026-08-11-daemon-busy-registry plan). `service install`
+  // bakes this exact string into the plist/systemd unit at install time —
+  // an ALREADY-INSTALLED machine's plist is not rewritten on daemon
+  // upgrade. If a future edit changes SUPERVISED_ENV's value, both
+  // `service-manager.ts` (writer) and `main.ts` (reader) would still agree
+  // with each other and every test — including the `.toContain(SUPERVISED_ENV)`
+  // assertions below — would still pass, because they'd both reference the
+  // updated constant. The one thing that WOULDN'T update is the key already
+  // written into an existing owner's plist/unit on disk: old key on disk +
+  // new key in the reader's `process.env[SUPERVISED_ENV]` check = the
+  // self-restart gate silently reads `undefined`, self-restart silently
+  // stays permanently disabled, with nothing in any log to say why. Pinning
+  // the literal value (not just "the constant is used consistently") is
+  // what catches that class of change.
+  it('SUPERVISED_ENV is pinned to "WECHAT_CC_SUPERVISED" — changing it silently breaks self-restart on already-installed machines', () => {
+    expect(SUPERVISED_ENV).toBe('WECHAT_CC_SUPERVISED')
+  })
+
+  it('macOS plist writes the exact SUPERVISED_ENV key', () => {
+    const plan = buildServicePlan({
+      platform: 'darwin', homeDir: '/Users/alice', cwd: '/Users/alice/.wechat-cc', bunPath: '/opt/homebrew/bin/bun',
+    })
+    expect(plan.fileContent).toContain(`<key>${SUPERVISED_ENV}</key><string>1</string>`)
+  })
+
+  it('Linux systemd unit writes the exact SUPERVISED_ENV key', () => {
+    const plan = buildServicePlan({
+      platform: 'linux', homeDir: '/home/alice', cwd: '/home/alice/.wechat-cc', bunPath: '/home/alice/.bun/bin/bun',
+    })
+    expect(plan.fileContent).toContain(`Environment="${SUPERVISED_ENV}=1"`)
   })
 
   it('Linux unit always includes Restart=always (crash respawn is unconditional)', () => {

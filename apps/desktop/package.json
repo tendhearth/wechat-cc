@@ -6,12 +6,11 @@
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",
-    "dev-server": "bun dev-server.ts",
+    "dev:web": "bun test-shim.ts",
+    "dev:mock": "WECHAT_CC_DRY_RUN=1 bun test-shim.ts",
+    "dev:unsafe": "WECHAT_CC_DEV_ALLOW_MUTATIONS=1 bun test-shim.ts",
     "build-sidecar": "bun scripts/build-sidecar.ts",
     "build": "tauri build",
-    "preview": "bun dev-server.ts",
-    "shim": "WECHAT_CC_DRY_RUN=1 bun test-shim.ts",
-    "shim:live": "bun test-shim.ts",
     "test:e2e:browser": "playwright test"
   },
   "devDependencies": {

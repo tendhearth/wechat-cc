@@ -1,0 +1,33 @@
+@font-face { font-family: Geist; src: url("./fonts/geist-variable-latin.woff2") format("woff2"); font-weight: 100 900; }
+:root { color-scheme: light; --ink: #5a422f; }
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; background: transparent; overflow: hidden; }
+body { color: var(--ink); font-family: Geist, "PingFang SC", sans-serif; }
+button { font: inherit; }
+.companion-window-shell { position: relative; display: grid; width: 100%; height: 100%; padding: 12px; place-items: center; }
+.companion-window-bar { position: absolute; z-index: 4; top: 23%; left: 29%; right: 5%; height: 6%; cursor: grab; }
+.companion-window-bar:active { cursor: grabbing; }
+.companion-window-drag-zone { position: absolute; z-index: 4; cursor: grab; }
+.companion-window-drag-zone:active { cursor: grabbing; }
+.companion-window-drag-zone.is-left { top: 29%; bottom: 17%; left: 27%; width: 5%; }
+.companion-window-drag-zone.is-right { top: 29%; right: 3.5%; bottom: 17%; width: 5%; }
+.companion-window-drag-zone.is-bottom { right: 5%; bottom: 14%; left: 29%; height: 5%; }
+.companion-window-stage { position: relative; width: 100%; max-height: 100%; aspect-ratio: 3 / 2; overflow: hidden; background: transparent; }
+#companion-stage { width: 100%; height: 100%; display: block; cursor: crosshair; }
+#companion-window-close { position: absolute; z-index: 5; top: 27%; right: 5%; width: 23px; height: 23px; padding: 0; border: 0; background: transparent; color: rgba(111, 78, 49, .72); cursor: pointer; font-size: 19px; line-height: 22px; text-shadow: 0 1px rgba(255, 255, 255, .76); transform: translateY(-20px); }
+#companion-window-close:hover { color: #795034; }
+.companion-window-zoom { position: absolute; z-index: 5; top: 27%; left: 29%; display: flex; align-items: center; gap: 4px; transform: translateY(-20px); }
+.companion-window-zoom button { width: 22px; height: 22px; padding: 0; border: 0; background: transparent; color: rgba(111, 78, 49, .72); cursor: pointer; font-size: 16px; line-height: 19px; text-align: center; text-shadow: 0 1px rgba(255, 255, 255, .76); }
+.companion-window-zoom button:hover { color: #795034; }
+.stage-hint, .bear-message { position: absolute; opacity: 0; pointer-events: none; transition: opacity .35s ease, transform .35s ease; }
+.stage-hint { top: 8%; left: 50%; display: inline-flex; align-items: center; gap: 5px; max-width: calc(100% - 28px); padding: 5px 8px; border-radius: 999px; background: rgba(255, 253, 247, .82); backdrop-filter: blur(6px); color: #7b6b5c; font-size: 10px; line-height: 1.25; white-space: nowrap; transform: translate(-50%, 8px); }
+.stage-hint::before { content: ""; width: 7px; height: 7px; flex: 0 0 auto; }
+.stage-hint.is-water-hint { background: rgba(221, 241, 242, .90); border: 1px solid rgba(100, 158, 162, .42); color: #47747a; }
+.stage-hint.is-water-hint::before { border: 1.5px solid #6d9fa2; border-radius: 50%; box-shadow: 0 0 0 2px rgba(109, 159, 162, .20); }
+.stage-hint.is-grass-hint { background: rgba(245, 235, 207, .92); border: 1px dashed rgba(128, 111, 64, .54); border-radius: 9px 15px 15px 15px; color: #725f37; }
+.stage-hint.is-grass-hint::before { background: #91a873; border-radius: 9px 1px 9px 1px; transform: rotate(-35deg); }
+.stage-hint.is-visible { opacity: 1; transform: translate(-50%, 0); }
+.bear-message { left: var(--bear-message-x, 26.2%); top: var(--bear-message-y, 43.1%); width: max-content; max-width: 175px; padding: 7px 9px; border-radius: 12px 12px 12px 3px; background: #fffdf8; box-shadow: 0 6px 20px rgba(72, 51, 32, .14); font-size: 10px; font-weight: 600; line-height: 1.35; transform: translate(-50%, 8px) scale(var(--bear-message-scale, .9)); transform-origin: center top; }
+.bear-message.is-visible { opacity: 1; transform: translate(-50%, 0) scale(var(--bear-message-scale, .9)); }
+.crab-escape { position: fixed; z-index: 10; top: 0; left: 0; width: 86px; opacity: 0; pointer-events: none; transform-origin: center; will-change: transform, opacity; }
+@media (prefers-reduced-motion: reduce) { .stage-hint, .bear-message { transition: none; } }

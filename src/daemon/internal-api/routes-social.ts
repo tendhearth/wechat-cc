@@ -2,10 +2,17 @@
  * internal-api social route — agent-social M1 (T7b-core). Mirrors
  * routes-a2a.ts's `/v1/a2a/send` shape: 503 when the broker isn't wired
  * (social_enabled + social_disclosure_policy not both configured), else
- * delegate straight to `broker.seek()`. Split into its own file (rather
- * than appended to routes-a2a.ts) since agent-social is a distinct
+ * delegate straight to the broker. Split into its own file (rather than
+ * appended to routes-a2a.ts) since agent-social is a distinct
  * capability/trust surface from the bare a2a exec/notify/pair routes — see
  * docs/superpowers/specs/2026-07-12-agent-social-m1-intent-brokering-design.md.
+ *
+ * P4 派心愿 (docs/superpowers/specs/2026-07-20-p4-seek-confirm-design.md)
+ * replaced the one-shot POST /v1/social/seek with propose→confirm/cancel:
+ * propose gates + persists a redacted preview WITHOUT broadcasting; confirm
+ * flips it to foraging (broadcasts the stored redacted wording verbatim,
+ * WYSIWYG); cancel voids a still-`proposed` row. The deprecated `seek()`
+ * bridge lives on in the broker for other pre-split callers until Task 7.
  */
 import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
 import { toPublicEcho } from '../../core/social-echo-store'
@@ -13,11 +20,29 @@ import type { InternalApiDeps, RouteTable } from './types'
 
 export function socialRoutes(deps: InternalApiDeps): RouteTable {
   return {
-    'POST /v1/social/seek': async (_q, body) => {
+    // P4 派心愿 — propose→confirm split (replaces the deleted one-shot
+    // POST /v1/social/seek). All three are inline-validated (no
+    // REQUEST_SCHEMAS entry), mirroring the pair/inbound routes' precedent;
+    // results are passed through verbatim — no notify here (that lives in
+    // the broker/wire-social layer).
+    'POST /v1/social/seek/propose': async (_q, body) => {
       if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
-      const { topic, city } = body as { topic: string; city?: string }
-      const outcome = await deps.social.broker.seek(topic, city ? { city } : undefined)
-      return { status: 200, body: outcome }
+      const { topic, city } = (body ?? {}) as { topic?: string; city?: string }
+      if (typeof topic !== 'string' || topic.length === 0) return { status: 400, body: { error: 'missing_topic' } }
+      const r = await deps.social.broker.propose(topic, city ? { city } : undefined)
+      return { status: 200, body: r }
+    },
+    'POST /v1/social/seek/confirm': async (_q, body) => {
+      if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
+      const id = ((body ?? {}) as { id?: unknown }).id
+      if (typeof id !== 'string' || id.length === 0) return { status: 400, body: { error: 'missing_id' } }
+      return { status: 200, body: await deps.social.broker.confirmSeek(id) }
+    },
+    'POST /v1/social/seek/cancel': async (_q, body) => {
+      if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
+      const id = ((body ?? {}) as { id?: unknown }).id
+      if (typeof id !== 'string' || id.length === 0) return { status: 400, body: { error: 'missing_id' } }
+      return { status: 200, body: await deps.social.broker.cancelSeek(id) }
     },
     // 觅食台 P2 — read routes over P1's stored rows (dashboard/CLI listing).
     'GET /v1/social/seeks': async () => {

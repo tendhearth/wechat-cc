@@ -9,8 +9,13 @@ export interface InternalApiLifecycle extends Lifecycle {
   setDelegate(d: InternalApiDelegateDep): void
   setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
   setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
+  setCustomerReview(service: NonNullable<InternalApiDeps['customerReview']>): void
   setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
   setSocial(social: NonNullable<InternalApiDeps['social']>): void
+  setKnowledge(knowledge: NonNullable<InternalApiDeps['knowledge']>): void
+  setPairing(pairing: NonNullable<InternalApiDeps['pairing']>): void
+  setMemory(memory: NonNullable<InternalApiDeps['memoryLlm']>): void
+  setIncidents(incidents: NonNullable<InternalApiDeps['incidents']>): void
   mintSessionToken(tier: import('../../core/user-tier').UserTier, sessionKey: string): string
   invalidateSession(sessionKey: string): void
 }
@@ -44,8 +49,13 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     setDelegate: (d) => api.setDelegate(d),
     setConversation: (c) => api.setConversation(c),
     setCompanionConverse: (fn) => api.setCompanionConverse(fn),
+    setCustomerReview: (service) => api.setCustomerReview(service),
     setA2A: (a2a) => api.setA2A(a2a),
     setSocial: (social) => api.setSocial(social),
+    setKnowledge: (knowledge) => api.setKnowledge(knowledge),
+    setPairing: (pairing) => api.setPairing(pairing),
+    setMemory: (memory) => api.setMemory(memory),
+    setIncidents: (incidents) => api.setIncidents(incidents),
     mintSessionToken: (tier, sessionKey) => api.mintSessionToken(tier, sessionKey),
     invalidateSession: (sessionKey) => api.invalidateSession(sessionKey),
     stop: async () => {

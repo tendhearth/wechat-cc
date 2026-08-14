@@ -250,6 +250,34 @@ export const CompanionImportLocalResponse = z.union([
   z.object({ ok: z.literal(false), error: z.string() }),
 ])
 
+// ── Customer Review (owner-only app module) ────────────────────────────────
+
+const CustomerReviewId = z.string().trim().min(1).max(100)
+const CustomerReviewDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+const CustomerReviewSourceKey = z.string().regex(/^[a-f0-9]{24}$/)
+
+export const CustomerReviewContactSearchQuery = z.object({
+  query: z.string().trim().min(1).max(100),
+})
+export const CustomerReviewCreateRequest = z.object({
+  contact_id: z.string().trim().min(1).max(300),
+  contact_display_name: z.string().trim().min(1).max(200),
+  range_from: CustomerReviewDate,
+  range_to: CustomerReviewDate,
+})
+export const CustomerReviewIdRequest = z.object({ id: CustomerReviewId })
+export const CustomerReviewEvidenceQuery = z.object({ id: CustomerReviewId, source_key: CustomerReviewSourceKey })
+export const CustomerReviewRecentQuery = z.object({})
+export const CustomerReviewHistoryQuery = z.object({
+  contact_id: z.string().trim().min(1).max(300),
+})
+export const CustomerReviewItemRequest = z.object({
+  id: CustomerReviewId,
+  source_key: CustomerReviewSourceKey,
+  status: z.enum(['confirmed', 'corrected', 'completed_elsewhere', 'rejected', 'ignored']),
+  corrected_text: z.string().trim().min(1).max(500).optional(),
+})
+
 // ── POST /v1/wechat/reply ────────────────────────────────────────────────────
 
 export const WechatReplyRequest = z.object({
@@ -340,6 +368,8 @@ export const A2APreviewResponse = z.union([
     name: z.string(),
     description: z.string().optional(),
     version: z.string().optional(),
+    proto_version: z.number(),
+    proto_mismatch: z.boolean(),
     auth: z.object({ type: z.string(), required: z.boolean() }).optional(),
     capabilities: z.array(z.object({
       name: z.string(),
@@ -391,17 +421,10 @@ export const A2ASendResponse = z.union([
 ])
 export type A2ASendRequestT = z.infer<typeof A2ASendRequest>
 
-// ── POST /v1/social/seek (agent-social M1, T7b-core) ──────────────────────────
-
-export const SocialSeekRequest = z.object({
-  // Bounds mirror IntentCardSchema (src/core/a2a-intent.ts) — the seek
-  // request feeds directly into the intent card sent to peers, so an
-  // overlong topic/city should be rejected locally (400) rather than
-  // passed through and only ever failing downstream, once per peer.
-  topic: z.string().min(1).max(280),
-  city: z.string().max(64).optional(),
-})
-export type SocialSeekRequestT = z.infer<typeof SocialSeekRequest>
+// P4 派心愿: the old POST /v1/social/seek one-shot (SocialSeekRequest) was
+// deleted here — propose/confirm/cancel (routes-social.ts) are
+// inline-validated per the pair/inbound routes' precedent, so they get no
+// REQUEST_SCHEMAS entry.
 
 // ── POST /v1/a2a/test ────────────────────────────────────────────────────────
 // Server-side smoke test for the dashboard's Test button. With outbound=false
@@ -489,6 +512,10 @@ export type CompanionSnoozeResponseT = z.infer<typeof CompanionSnoozeResponse>
 export type CompanionImportLocalRequestT = z.infer<typeof CompanionImportLocalRequest>
 export type CompanionImportLocalResponseT = z.infer<typeof CompanionImportLocalResponse>
 
+export type CustomerReviewCreateRequestT = z.infer<typeof CustomerReviewCreateRequest>
+export type CustomerReviewIdRequestT = z.infer<typeof CustomerReviewIdRequest>
+export type CustomerReviewItemRequestT = z.infer<typeof CustomerReviewItemRequest>
+
 export type WechatReplyRequestT = z.infer<typeof WechatReplyRequest>
 export type WechatReplyResponseT = z.infer<typeof WechatReplyResponse>
 export type WechatReplyVoiceRequestT = z.infer<typeof WechatReplyVoiceRequest>
@@ -543,6 +570,16 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/companion/snooze': CompanionSnoozeRequest,
   'POST /v1/companion/import-local': CompanionImportLocalRequest,
 
+  // customer review
+  'GET /v1/customer-review/contacts': CustomerReviewContactSearchQuery,
+  'POST /v1/customer-review': CustomerReviewCreateRequest,
+  'POST /v1/customer-review/run': CustomerReviewIdRequest,
+  'GET /v1/customer-review': CustomerReviewIdRequest,
+  'GET /v1/customer-review/evidence': CustomerReviewEvidenceQuery,
+  'GET /v1/customer-review/recent': CustomerReviewRecentQuery,
+  'GET /v1/customer-review/history': CustomerReviewHistoryQuery,
+  'POST /v1/customer-review/item': CustomerReviewItemRequest,
+
   // wechat
   'POST /v1/wechat/reply': WechatReplyRequest,
   'POST /v1/wechat/reply_voice': WechatReplyVoiceRequest,
@@ -555,9 +592,6 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 
   // conversation
   'POST /v1/conversation/set-mode': ConversationSetModeRequest,
-
-  // agent-social M1
-  'POST /v1/social/seek': SocialSeekRequest,
 
   // a2a
   'POST /v1/a2a/send': A2ASendRequest,

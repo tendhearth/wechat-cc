@@ -16,6 +16,8 @@ import type { A2AEventsStore, EventRow, AppendInput } from '../core/a2a-events-s
 import type { SeekRow } from '../core/social-seek-store'
 import type { EchoRow } from '../core/social-echo-store'
 import type { PledgeRow } from '../core/social-pledge-store'
+import { openKnowledge } from '../core/knowledge/store'
+import { semanticSearch } from '../core/knowledge/search'
 
 describe('internal-api', () => {
   let stateDir: string
@@ -2727,12 +2729,59 @@ describe('internal-api', () => {
     })
   })
 
+  // ─── Knowledge Kernel late-bind (Phase 01 T5 review — setKnowledge) ────
+  // Proves the actual wire, not just routes-knowledge.ts's own deps-mutation
+  // mechanic: boot.knowledge must reach internal-api via a real setKnowledge
+  // call (mirrors the setDelegate 503-then-200 pair above) or /v1/knowledge/*
+  // stays 503 forever even when knowledge_enabled is configured.
+
+  describe('/v1/knowledge/semantic/status route (setKnowledge late-bind)', () => {
+    // /v1/knowledge/* is admin-tier only (T3 review — query routes
+    // admin-only for privacy). The regular tokenFilePath is trusted-tier
+    // (403 forbidden) and operatorTokenFilePath is admin-tier but
+    // route-scoped to the companion/customer-review allowlist only (403
+    // route_not_allowed) — neither reaches this route, so use an
+    // unrestricted admin session token (same pattern as the other
+    // admin-only route tests in this file, e.g. line ~430).
+    it('returns 503 before setKnowledge has been called', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'claude/a/knowledge-test')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/knowledge/semantic/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(503)
+      expect(await resp.json()).toEqual({ error: 'knowledge_not_wired' })
+    })
+
+    it('returns 200 after setKnowledge (mirrors setSocial/setDelegate late-bind)', async () => {
+      const knowledgeDir = mkdtempSync(join(tmpdir(), 'internal-api-knowledge-'))
+      const store = openKnowledge(knowledgeDir)
+      try {
+        api = createInternalApi({ stateDir, daemonPid: 1 })
+        const { port } = await api.start()
+        api.setKnowledge({ store, search: semanticSearch })
+        const token = api.mintSessionToken('admin', 'claude/a/knowledge-test')
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/knowledge/semantic/status`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        expect(resp.status).toBe(200)
+        const body = await resp.json() as { indexed: number; model_id: string | null; model_version: string | null }
+        expect(body).toEqual({ indexed: 0, model_id: null, model_version: null })
+      } finally {
+        store.close()
+        rmSync(knowledgeDir, { recursive: true, force: true })
+      }
+    })
+  })
+
   // ─── GET /v1/social/seeks + GET /v1/social/echoes (觅食台 P2) ─────────
 
   describe('social read routes (GET /v1/social/seeks, GET /v1/social/echoes)', () => {
     const seekRow: SeekRow = {
       id: 'k1', kind: 'seek', topic: '找个会修老相机的',
-      status: 'foraging', hop: 1, peers_asked: 0, created_at: 't', updated_at: 't',
+      status: 'foraging', redacted_topic: null, redacted_city: null,
+      hop: 1, peers_asked: 0, created_at: 't', updated_at: 't',
     }
     const echoRow: EchoRow = {
       id: 'e1', seek_id: 'k1', peer_masked: 'p***', degree: 1,
@@ -2751,9 +2800,13 @@ describe('internal-api', () => {
         stateDir, daemonPid: 1,
         ...(opts ? {
           social: {
-            broker: { seek: async () => ({ intent_id: 'x', matched: [], lit: [] }) },
+            broker: {
+              propose: async () => ({ ok: true as const, intent_id: 'x', redacted: 'x' }),
+              confirmSeek: () => ({ ok: true as const, intent_id: 'x' }),
+              cancelSeek: () => ({ ok: true as const }),
+            },
             seekStore: {
-              create: () => {}, update: () => {},
+              create: () => {}, propose: () => {}, update: () => {},
               list: () => opts.seeks ?? [], get: () => null,
             },
             echoStore: {
@@ -2826,24 +2879,36 @@ describe('internal-api', () => {
       expect(await resp.json()).toEqual({ error: 'social_not_wired' })
     })
 
-    it('tier gate: a trusted session token gets 403 on GET /v1/social/seeks (admin-only route)', async () => {
+    // 2026-07-22 demotion (route-tiers.ts): the desktop/CLI file token is
+    // trusted, so the 觅食台 read surface is trusted-gated now — trusted
+    // passes, guest still 403s.
+    it('tier gate: a trusted session token passes GET /v1/social/seeks; guest still 403', async () => {
       const { port } = await startWithSocial({ seeks: [seekRow] })
       const tok = api!.mintSessionToken('trusted', 'test')
       const resp = await fetch(`http://127.0.0.1:${port}/v1/social/seeks`, {
         headers: { Authorization: `Bearer ${tok}` },
       })
-      expect(resp.status).toBe(403)
-      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+      expect(resp.status).toBe(200)
+      const guest = api!.mintSessionToken('guest', 'test')
+      const g = await fetch(`http://127.0.0.1:${port}/v1/social/seeks`, {
+        headers: { Authorization: `Bearer ${guest}` },
+      })
+      expect(g.status).toBe(403)
+      expect(await g.json()).toMatchObject({ error: 'forbidden', required: 'trusted' })
     })
 
-    it('tier gate: a trusted session token gets 403 on GET /v1/social/echoes (admin-only route)', async () => {
+    it('tier gate: a trusted session token passes GET /v1/social/echoes; guest still 403', async () => {
       const { port } = await startWithSocial({ echoes: [echoRow] })
       const tok = api!.mintSessionToken('trusted', 'test')
       const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes`, {
         headers: { Authorization: `Bearer ${tok}` },
       })
-      expect(resp.status).toBe(403)
-      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+      expect(resp.status).toBe(200)
+      const guest = api!.mintSessionToken('guest', 'test')
+      const g = await fetch(`http://127.0.0.1:${port}/v1/social/echoes`, {
+        headers: { Authorization: `Bearer ${guest}` },
+      })
+      expect(g.status).toBe(403)
     })
 
     // ─── reveal + pledge routes (async foraging spine) — nested here to
@@ -2918,10 +2983,30 @@ describe('internal-api', () => {
         expect(await resp.json()).toEqual({ outcome: { state: 'awaiting_peer' } })
       })
 
-      it('tier gate: a trusted token gets 403 on POST /v1/social/echoes/reveal', async () => {
+      it('tier gate: a trusted token reaches POST /v1/social/echoes/reveal (not 403) — the CLI file token is trusted, not admin', async () => {
         const { port } = await startWithSocial({ revealEcho: () => ({ state: 'connected' }) })
         const tok = api!.mintSessionToken('trusted', 'test')
         const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes/reveal`, {
+          method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ id: 'x' }),
+        })
+        expect(resp.status).toBe(200)
+      })
+
+      it('tier gate: a guest token gets 403 on POST /v1/social/echoes/reveal', async () => {
+        const { port } = await startWithSocial({ revealEcho: () => ({ state: 'connected' }) })
+        const tok = api!.mintSessionToken('guest', 'test')
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes/reveal`, {
+          method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ id: 'x' }),
+        })
+        expect(resp.status).toBe(403)
+      })
+
+      it('tier gate: a guest token gets 403 on POST /v1/social/pledges/reveal', async () => {
+        const { port } = await startWithSocial({ revealPledge: () => ({ state: 'awaiting_peer' }) })
+        const tok = api!.mintSessionToken('guest', 'test')
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/pledges/reveal`, {
           method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
           body: JSON.stringify({ id: 'x' }),
         })
@@ -3003,7 +3088,9 @@ describe('internal-api', () => {
       expect(await post.json()).toEqual({ enabled: false, restart_required: true })
     })
 
-    it('tier gate: a trusted session token gets 403 on POST /v1/social/inbound (admin-only route)', async () => {
+    // 2026-07-22 demotion (route-tiers.ts): inbound toggle is trusted now
+    // (the desktop's file token is trusted) — trusted passes, guest 403s.
+    it('tier gate: a trusted session token passes POST /v1/social/inbound; guest still 403', async () => {
       saveAgentConfig(stateDir, { provider: 'claude', model: 'claude-opus-4-8', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
       api = createInternalApi({ stateDir, daemonPid: 1 })
       const { port } = await api.start()
@@ -3013,11 +3100,17 @@ describe('internal-api', () => {
         method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
         body: JSON.stringify({ enabled: true }),
       })
-      expect(resp.status).toBe(403)
-      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+      expect(resp.status).toBe(200)
+      const guest = api.mintSessionToken('guest', 'test')
+      const g = await fetch(`http://127.0.0.1:${port}/v1/social/inbound`, {
+        method: 'POST', headers: { Authorization: `Bearer ${guest}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true }),
+      })
+      expect(g.status).toBe(403)
+      expect(await g.json()).toMatchObject({ error: 'forbidden', required: 'trusted' })
     })
 
-    it('tier gate: a trusted session token gets 403 on GET /v1/social/inbound (admin-only route)', async () => {
+    it('tier gate: a trusted session token passes GET /v1/social/inbound; guest still 403', async () => {
       saveAgentConfig(stateDir, { provider: 'claude', model: 'claude-opus-4-8', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
       api = createInternalApi({ stateDir, daemonPid: 1 })
       const { port } = await api.start()
@@ -3026,8 +3119,12 @@ describe('internal-api', () => {
       const resp = await fetch(`http://127.0.0.1:${port}/v1/social/inbound`, {
         headers: { Authorization: `Bearer ${tok}` },
       })
-      expect(resp.status).toBe(403)
-      expect(await resp.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+      expect(resp.status).toBe(200)
+      const guest = api.mintSessionToken('guest', 'test')
+      const g = await fetch(`http://127.0.0.1:${port}/v1/social/inbound`, {
+        headers: { Authorization: `Bearer ${guest}` },
+      })
+      expect(g.status).toBe(403)
     })
   })
 })
@@ -3359,7 +3456,7 @@ describe('internal-api request validation', () => {
       serverEnabled?: boolean
       baseUrl?: string | null
     } = {}) {
-      type AgentEntry = { id: string; name: string; url: string; outbound_api_key: string; inbound_api_key: string; capabilities: string[]; paused: boolean; transport: 'push' | 'ws' }
+      type AgentEntry = { id: string; name: string; url?: string; outbound_api_key: string; inbound_api_key: string; capabilities: string[]; paused: boolean; transport: 'push' | 'ws' | 'mailbox' }
       const agentsList: AgentEntry[] = (opts.agents ?? []).map(a => ({
         id: a.id, name: a.name ?? a.id, url: a.url,
         outbound_api_key: a.outbound_api_key, inbound_api_key: 'unused-inbound',
@@ -3553,6 +3650,37 @@ describe('internal-api request validation', () => {
       expect(typeof body.error).toBe('string')
     })
 
+    it('preview surfaces proto_version + proto_mismatch (missing field defaults to 1)', async () => {
+      // Stub fetchAgentCard to return a card WITHOUT proto_version.
+      // A missing field means a pre-versioning peer ⇒ defaults to 1, which
+      // no longer matches ours (A2A_PROTO_VERSION === 2) ⇒ mismatch.
+      const a2aDeps = buildA2ADeps({ cardResult: { name: 'x' } })
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/preview`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ url: 'http://127.0.0.1:19999' }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { proto_version: number; proto_mismatch: boolean }
+      expect(body.proto_version).toBe(1)
+      expect(body.proto_mismatch).toBe(true)
+    })
+
+    it('preview flags a mismatching proto_version', async () => {
+      const a2aDeps = buildA2ADeps({ cardResult: { name: 'x', proto_version: 99 } })
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/preview`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ url: 'http://127.0.0.1:19999' }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { proto_version: number; proto_mismatch: boolean }
+      expect(body.proto_version).toBe(99)
+      expect(body.proto_mismatch).toBe(true)
+    })
+
     it('POST /v1/a2a/install generates inbound_api_key and persists', async () => {
       const a2aDeps = buildA2ADeps()
       const { port, token } = await startWithA2A(a2aDeps)
@@ -3569,6 +3697,39 @@ describe('internal-api request validation', () => {
       expect(a2aDeps.registry.get('new-agent')).not.toBeNull()
       expect(a2aDeps.registry.get('new-agent')!.name).toBe('New Agent')
       expect(a2aDeps.registry.get('new-agent')!.inbound_api_key).toBe(body.inbound_api_key)
+    })
+
+    it('install records the peer proto_version via best-effort card fetch', async () => {
+      const a2aDeps = buildA2ADeps({ cardResult: { name: 'x', proto_version: 1 } })
+      const addSpy = vi.fn(a2aDeps.registry.add)
+      a2aDeps.registry.add = addSpy
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/install`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'new-agent', name: 'New Agent', url: 'http://new.test', outbound_api_key: 'outkey' }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { ok: boolean }
+      expect(body.ok).toBe(true)
+      expect(addSpy).toHaveBeenCalledWith(expect.objectContaining({ proto_version: 1 }))
+    })
+
+    it('install still succeeds (proto_version unset) when the card fetch fails', async () => {
+      const a2aDeps = buildA2ADeps({ cardResult: new Error('ECONNREFUSED') })
+      const addSpy = vi.fn(a2aDeps.registry.add)
+      a2aDeps.registry.add = addSpy
+      const { port, token } = await startWithA2A(a2aDeps)
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/install`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'new-agent', name: 'New Agent', url: 'http://new.test', outbound_api_key: 'outkey' }),
+      })
+      expect(resp.status).toBe(200)
+      const body = await resp.json() as { ok: boolean }
+      expect(body.ok).toBe(true)
+      expect(addSpy).toHaveBeenCalledTimes(1)
+      expect(addSpy.mock.calls[0]?.[0]).not.toHaveProperty('proto_version')
     })
 
     it('POST /v1/a2a/install fails on duplicate id', async () => {
@@ -4026,6 +4187,87 @@ describe('internal-api request validation', () => {
         const body = await resp.json() as { error: string }
         expect(body.error).toBe('a2a_not_wired')
       }
+    })
+  })
+
+  // ─── busy-registry hold (spec 2026-08-11 §2, Task 4 step 1) ──────────────
+  describe('busy-registry hold around non-GET handler execution', () => {
+    it('holds a token for the duration of an authenticated non-GET handler, released after it resolves', async () => {
+      const events: string[] = []
+      let releaseFn: (() => void) | undefined
+      const holdBusy = vi.fn((label: string) => {
+        events.push(`hold:${label}`)
+        const release = vi.fn(() => events.push(`release:${label}`))
+        releaseFn = release
+        return release
+      })
+      let resolveConverse: (v: { reply: string }) => void = () => {}
+      const companionConverse = vi.fn(() => new Promise<{ reply: string }>(resolve => { resolveConverse = resolve }))
+      api = createInternalApi({ stateDir, daemonPid: 1, holdBusy, companionConverse })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
+
+      const fetchPromise = fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+
+      // Wait for the handler to actually be in flight (companionConverse called)
+      // before asserting hold state — avoids a race against the event loop.
+      await vi.waitFor(() => expect(companionConverse).toHaveBeenCalled())
+      expect(holdBusy).toHaveBeenCalledTimes(1)
+      expect(holdBusy).toHaveBeenCalledWith('api:POST /v1/companion/converse')
+      expect(releaseFn).not.toHaveBeenCalled()
+
+      resolveConverse({ reply: 'hey' })
+      const resp = await fetchPromise
+      expect(resp.status).toBe(200)
+      expect(releaseFn).toHaveBeenCalledTimes(1)
+      expect(events).toEqual(['hold:api:POST /v1/companion/converse', 'release:api:POST /v1/companion/converse'])
+    })
+
+    it('never calls holdBusy for GET requests', async () => {
+      const holdBusy = vi.fn(() => vi.fn())
+      api = createInternalApi({ stateDir, daemonPid: 1, holdBusy })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/health`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(resp.status).toBe(200)
+      expect(holdBusy).not.toHaveBeenCalled()
+    })
+
+    it('releases the token even when the handler throws (500 path)', async () => {
+      const release = vi.fn()
+      const holdBusy = vi.fn(() => release)
+      const companionConverse = vi.fn(async (): Promise<{ reply: string }> => { throw new Error('boom') })
+      api = createInternalApi({ stateDir, daemonPid: 1, holdBusy, companionConverse })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(500)
+      expect(holdBusy).toHaveBeenCalledTimes(1)
+      expect(release).toHaveBeenCalledTimes(1)
+    })
+
+    it('a holdBusy that throws never breaks the request (defensive catch)', async () => {
+      const holdBusy = vi.fn(() => { throw new Error('registry exploded') })
+      api = createInternalApi({ stateDir, daemonPid: 1, holdBusy, companionConverse: async () => ({ reply: 'hey' }) })
+      const { port } = await api.start()
+      const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true, reply: 'hey' })
     })
   })
 })

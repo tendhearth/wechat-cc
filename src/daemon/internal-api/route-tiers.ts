@@ -73,6 +73,14 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // POST /v1/stickers writes an arbitrary sourcePath into the lib — same
   // trust class as send_file, so it's trusted not guest.
   'POST /v1/stickers': 'trusted',
+  // trusted (RESOLVED, P4 spec §3.3) — the CLI (social propose/confirm/cancel)
+  // holds only the daemon-wide FILE token (→ trusted); an admin-tiered route
+  // would 403 every CLI call. internal-api is 127.0.0.1 + 0600 file token = the
+  // owner. confirm IS the real "broadcast to strangers" step, so FLAG all three
+  // for the release security review. See docs/superpowers/specs/2026-07-20-p4-seek-confirm-design.md.
+  'POST /v1/social/seek/propose': 'trusted',
+  'POST /v1/social/seek/confirm': 'trusted',
+  'POST /v1/social/seek/cancel': 'trusted',
   // admin — owner-only same-session power: drives a real turn on the
   // owner's own chat session and returns the reply to the caller (app
   // conversation channel, voice arc Stage 0). Same trust class as the
@@ -92,23 +100,117 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/daemon/restart': 'admin',
   // admin — on-demand file locate over the owner's computer (file_locate)
   'GET /v1/locate': 'admin',
-  // admin — agent-social M1 (social_seek is ADMIN_ONLY in user-tier.ts;
-  // actively broadcasts an intent to external A2A agents, unlike a2a_send's
-  // reply-to-an-established-peer). Would default to admin anyway (unlisted
-  // routes fail-closed) — listed explicitly for documentation.
-  'POST /v1/social/seek': 'admin',
-  // admin — same trust class as social_seek above (觅食台 P2): read-only,
-  // but exposes the owner's stored seeks/echoes (topics + peer exchanges).
-  'GET /v1/social/seeks': 'admin',
-  'GET /v1/social/echoes': 'admin',
-  // admin — inbound on/off toggle (觅食台 P2 Task 3): writes a2a_listen in
-  // agent-config.json, the same trust surface as hand-editing the config.
-  'GET /v1/social/inbound': 'admin',
-  'POST /v1/social/inbound': 'admin',
-  // admin — async foraging spine: read the answerer's pledges + trigger reveals.
-  'GET /v1/social/pledges': 'admin',
-  'POST /v1/social/echoes/reveal': 'admin',
-  'POST /v1/social/pledges/reveal': 'admin',
+  // trusted — 觅食台 read surface + inbound toggle. DEMOTED admin→trusted
+  // 2026-07-22: the desktop's ONLY credential is the daemon-wide FILE token
+  // (= trusted; `daemon api-info` hands out the file token, and the admin
+  // operator token is route-scoped to converse/speak) — admin here 403'd
+  // every real-daemon 觅食台 read, silently rendering "社交觅食未启用"
+  // even when wired. Found by live visual acceptance; same root cause as
+  // the earlier reveal-route demotion below. Trust analysis: these expose
+  // the owner's own stored seeks/echoes/pledges to a local caller who
+  // already holds the credential that can pair, propose+confirm seeks and
+  // send letters — the read is the weaker capability. localhost-only,
+  // 0600 file token. ⚠️ RELEASE-REVIEW FLAG (surface at next dev→master).
+  'GET /v1/social/seeks': 'trusted',
+  'GET /v1/social/echoes': 'trusted',
+  'GET /v1/social/inbound': 'trusted',
+  'POST /v1/social/inbound': 'trusted',
+  'GET /v1/social/pledges': 'trusted',
+  // trusted, not admin — despite living in the same "async foraging spine"
+  // batch as the admin-tiered routes above. Reveal acts on an ALREADY
+  // established seek/pledge (double opt-in on a match), not a new broadcast —
+  // same trust class as POST /v1/a2a/send ("reply to an established peer",
+  // trusted, in the operator/agent-ops block above), not the admin-tiered
+  // read routes above (GET seeks/echoes/pledges/inbound, which expose the
+  // owner's full stored history rather than acting on one row). This also
+  // has to be trusted because it's the write half of `wechat-cc social reveal`
+  // (docs/superpowers/specs/2026-07-17-cli-social-surface-design.md), and the
+  // CLI only ever holds the daemon-wide FILE token (registerFileToken →
+  // trusted, see token-registry.ts) — an admin-tiered route here would
+  // silently 403 every CLI reveal (caught by cli-routes.test.ts).
+  'POST /v1/social/echoes/reveal': 'trusted',
+  'POST /v1/social/pledges/reveal': 'trusted',
+  // trusted — 配对码 (spec §7). Same trust class as a2a/send + social reveal:
+  // internal-api is 127.0.0.1 + 0600 file token; the CLI holds the FILE token
+  // (trusted). Acts on an operator-driven pairing, not a world-open broadcast.
+  'POST /v1/pair/start': 'trusted',
+  'POST /v1/pair/accept': 'trusted',
+  // 笔友信箱(spec 2026-07-22-penpal-mailbox-desktop)。读=admin(P2
+  // seeks/echoes 读路由先例:桌面 token 是 admin)。发信=trusted —
+  // ⚠️ RELEASE-REVIEW FLAG(下次 dev→master 发布时在 PR body surface):
+  // 作用于已互揭的既有信道(同 reveal / a2a/send 类),不产生新广播或
+  // 新关系;localhost-only internal-api + 0600 文件 token。顺带解锁
+  // 未来的 CLI 回信入口。
+  // (2026-07-22 same-day demotion: reads were born admin copying the P2
+  // precedent — which the live acceptance above proved wrong for the
+  // desktop's trusted file token. All four are trusted now.)
+  'GET /v1/penpal/channels': 'trusted',
+  'GET /v1/penpal/letters': 'trusted',
+  'POST /v1/penpal/letters': 'trusted',
+  'POST /v1/penpal/letters/read': 'trusted',
+  'POST /v1/penpal/letters/resend': 'trusted',
+  // LLM 记忆操作(spec 2026-07-23-daemon-owns-llm-memory-ops)。trusted:桌面/CLI
+  // 唯一凭据是 0600 文件 token;localhost、动主人自己的记忆、烧一次 LLM。
+  // ⚠️ RELEASE-REVIEW FLAG(下次 dev→master surface)。
+  'POST /v1/memory/synthesize': 'trusted',
+  'POST /v1/memory/profile/generate': 'trusted',
+  // 桌面读故障记录以显示"上次故障"横幅。trusted:桌面/CLI 的唯一凭据是
+  // 0600 文件 token;内容只有时间戳与分类,不含聊天数据。
+  'GET /v1/health/incidents': 'trusted',
+  // Knowledge Kernel (Phase 01, T3, docs/superpowers/specs/
+  // 2026-07-12-knowledge-kernel-phase01-design.md "Knowledge API").
+  // Ingest = admin/internal only: source/put and semantic/put are written
+  // by daemon-internal jobs (the wxvault source adapter, wxsearch's
+  // indexer) — no ordinary chat session has business writing into the
+  // owner's message store, so these fail closed at admin (same trust
+  // class as customer-review below: raw wxvault-derived content).
+  'POST /v1/knowledge/source/put': 'admin',
+  'POST /v1/knowledge/semantic/put': 'admin',
+  // Query = admin-only (NOT trusted), same as ingest above. These read the
+  // owner's full indexed cross-conversation message archive back out (raw
+  // source pages + semantic search over message text) with an optional,
+  // caller-supplied `conversation` filter — a non-owner `trusted` WeChat
+  // contact (who legitimately holds a session internal-api token, e.g. via
+  // POST /v1/a2a/send-class routes) could otherwise page every conversation
+  // in the store, not just their own. Knowledge query is admin-only until
+  // per-caller conversation scoping (memoryScopeDenied-style, see
+  // routes.ts's memoryScopeDenied) exists — opening it to `trusted` without
+  // that would let a trusted contact read the owner's full cross-conversation
+  // archive. Revisit once that scoping lands or a real "agent" caller
+  // identity beyond trusted/admin exists.
+  'GET /v1/knowledge/messages': 'admin',
+  'POST /v1/knowledge/search': 'admin',
+  'GET /v1/knowledge/semantic/status': 'admin',
+  // Graph Query (Knowledge Graph inproc, Task 5) — same admin-only trust
+  // class as the search/messages routes above: reads the owner's full
+  // contact/relationship graph, not just the current caller's own scope.
+  'POST /v1/knowledge/graph/contact_profile': 'admin',
+  'POST /v1/knowledge/graph/top_contacts': 'admin',
+  'POST /v1/knowledge/graph/rank_contacts': 'admin',
+  'POST /v1/knowledge/graph/relationship_subgraph': 'admin',
+  'POST /v1/knowledge/graph/connectors': 'admin',
+  'GET /v1/knowledge/graph/status': 'admin',
+  // Facts + Person (Knowledge Facts/Person inproc, Task 4) — same
+  // admin-only trust class as the graph routes above: reads/writes the
+  // owner's private fact store and per-contact briefs, not just the
+  // current caller's own scope.
+  'POST /v1/knowledge/facts/extraction_batch': 'admin',
+  'POST /v1/knowledge/facts/record_facts': 'admin',
+  'POST /v1/knowledge/facts/contact_facts': 'admin',
+  'POST /v1/knowledge/facts/find_facts': 'admin',
+  'POST /v1/knowledge/facts/set_fact_status': 'admin',
+  'GET /v1/knowledge/facts/extraction_status': 'admin',
+  'POST /v1/knowledge/person/brief': 'admin',
+  // admin — reads the owner's private wxvault history and stores personal
+  // customer judgments. Never expose to guest/trusted chat sessions.
+  'GET /v1/customer-review/contacts': 'admin',
+  'POST /v1/customer-review': 'admin',
+  'POST /v1/customer-review/run': 'admin',
+  'GET /v1/customer-review': 'admin',
+  'GET /v1/customer-review/evidence': 'admin',
+  'GET /v1/customer-review/recent': 'admin',
+  'GET /v1/customer-review/history': 'admin',
+  'POST /v1/customer-review/item': 'admin',
 }
 
 export function minTierFor(routeKey: string): UserTier {

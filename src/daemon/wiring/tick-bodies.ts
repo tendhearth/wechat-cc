@@ -32,6 +32,8 @@ import { bundledPluginsDir } from '../plugins/paths'
 import { createResilientBridge } from '../companion/ingest/bridge'
 import { runIngestCycle, maxDecryptedMtime, ingestHasTool } from '../companion/ingest/cycle'
 import { distillOwnerKnowledge } from '../companion/knowledge-distill'
+import { connectHearth } from '../companion/hearth-client'
+import { buildHearthPlan } from '../companion/hearth-plan'
 import selfPkg from '../../../package.json' with { type: 'json' }
 
 /** Per-cycle wxfacts extraction batch cap (rate bound). */
@@ -77,6 +79,91 @@ export interface TickDeps {
    * claims it BEFORE dispatch, mirroring the agenda at-most-once contract.
    */
   careLedger: CareLedger
+  /**
+   * 连接健康。degraded 时主动外发全部停手 —— 这是保护账号的措施:
+   * 往断掉的链路上反复重试是触发风控的形状(memory: no-retry-storm-when-disconnected)。
+   * 可选:省略即永不暂停(测试与 e2e 用)。
+   */
+  health?: { shouldSuspend(dep: 'wechat'): boolean }
+  /**
+   * Testing seams for the optional hearth push (memory-infra Phase 1, HI W3).
+   * Production omits these — distillAndPushOwnerKnowledge falls back to the
+   * real `connectHearth`/`buildHearthPlan`. Tests inject fakes so the push
+   * path (submit → apply-for-owner) can be exercised without a real hearth
+   * MCP server. See distillAndPushOwnerKnowledge below.
+   */
+  hearthConnect?: typeof connectHearth
+  hearthBuildPlan?: typeof buildHearthPlan
+}
+
+/**
+ * D1 (knowledge distillation) + HI W3 (hearth push) — distill the owner's
+ * kernel knowledge (facts + graph, in-process) into `knowledge.md`
+ * (always-on memory; empty digest ⇒ remove a stale file), then optionally
+ * push the SAME digest to an operator-configured `hearth` vault over MCP.
+ *
+ * Extracted from ingestTick's inline D1 block so it's directly unit-testable
+ * — ingestTick's own pipeline goes through real plugin discovery
+ * (`loadPlugins`/`createResilientBridge`), which in this repo's dev
+ * checkout can find real bundled plugins on disk; exercising it end-to-end
+ * in a test would mean spawning real MCP child processes. This function
+ * needs only `deps.stateDir` + `deps.boot.knowledge` + `deps.log` (plus the
+ * optional hearth seams), so tests can drive it directly.
+ *
+ * The hearth push is feature-gated + throw-safe by construction:
+ *   - `connectHearth` (real impl, or `deps.hearthConnect` in tests) returns
+ *     `null` — never throws — when `hearth_enabled` is off (the default) or
+ *     hearth is unreachable. `null` ⇒ this whole block is a no-op, so
+ *     feature-off is exactly today's behavior: only knowledge.md is
+ *     written/removed.
+ *   - Everything from `connectHearth` through `applyForOwner` runs inside
+ *     its own try/catch: a malformed hearth MCP result (submit/
+ *     applyForOwner's `JSON.parse` isn't internally guarded — see W1
+ *     review) or any other hearth-side error is caught and logged here,
+ *     never rethrown, so a hearth failure can never break the ingest tick.
+ *   - `hearth.close()` always runs (finally), even when submit/apply threw.
+ *   - A `requires_review` plan is submitted but left pending (not applied);
+ *     otherwise it's auto-applied for the owner (channel `'wechat'`).
+ */
+export async function distillAndPushOwnerKnowledge(deps: TickDeps, ownerChat: string): Promise<void> {
+  try {
+    const digest = await distillOwnerKnowledge(deps.boot.knowledge)
+    const fs = makeMemoryFS({ rootDir: join(deps.stateDir, 'memory', ownerChat) })
+    if (digest) { fs.write('knowledge.md', digest); deps.log('INGEST', `distilled knowledge.md for ${ownerChat} (${digest.length} chars)`) }
+    else if (fs.read('knowledge.md')) fs.delete('knowledge.md')
+
+    try {
+      const connect = deps.hearthConnect ?? connectHearth
+      const cfg = loadCompanionConfig(deps.stateDir)
+      const hearth = await connect(cfg, { log: (t, m) => deps.log(t, m) })
+      if (hearth) {
+        // `close()` sits in this `finally` (wrapping the whole `if (hearth)`
+        // body, not just the submit/apply branch) so a connected client is
+        // ALWAYS closed — including the empty-digest case below, where the
+        // brief's own sketch would otherwise leak the connection by nesting
+        // close() inside `if (hearth && digest)`.
+        try {
+          if (digest) {
+            const buildPlan = deps.hearthBuildPlan ?? buildHearthPlan
+            const plan = buildPlan(digest, Date.now())
+            const { change_id, requires_review } = await hearth.submit(plan)
+            if (requires_review) {
+              deps.log('INGEST', `hearth: plan ${change_id} requires review — left pending`)
+            } else {
+              const r = await hearth.applyForOwner(change_id, ownerChat, 'wechat')
+              deps.log('INGEST', `hearth: applied ${change_id} (ok=${r.ok})`)
+            }
+          }
+        } finally {
+          await hearth.close().catch(() => {})
+        }
+      }
+    } catch (err) {
+      deps.log('INGEST', `hearth push failed: ${errMsg(err)}`)
+    }
+  } catch (err) {
+    deps.log('INGEST', `knowledge distill failed: ${errMsg(err)}`)
+  }
 }
 
 export interface TickBodies {
@@ -167,7 +254,10 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       bundledDir: bundledPluginsDir(),
       hostVersion: selfPkg.version,
     }))
-    if (Object.keys(specs).length === 0) return   // no knowledge plugins → nothing to ingest
+    // facts extraction now runs in-process (wxfacts plugin retired) — keep
+    // ticking even with zero MCP knowledge plugins loaded when facts.db exists.
+    const factsApi = deps.boot.knowledge?.facts
+    if (Object.keys(specs).length === 0 && !factsApi) return   // nothing to ingest
 
     // Don't compete with an active conversation. Two checks per known chat:
     // (1) authoritative — a turn is actually in-flight on its session (catches
@@ -211,7 +301,9 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       try {
         // Gate extraction off when there's no cheap-eval provider — otherwise the
         // loop would drain real message windows into empty records + advance the
-        // watermark past them (silent loss). See ingestHasTool.
+        // watermark past them (silent loss). See ingestHasTool. The in-proc
+        // facts path bypasses hasTool (cycle.ts runs it unconditionally when
+        // factsApi is set), so it needs the same cheapEval gate applied here.
         const hasTool = ingestHasTool(bridge.tools.map(t => t.name), !!cheapEval)
         const report = await runIngestCycle({
           bridge,
@@ -221,24 +313,18 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
           lastSourceMtime: lastIngestSourceMtime,
           cap: INGEST_BATCH_CAP,
           log: (tag, msg) => deps.log(tag, msg),
+          factsApi: cheapEval ? factsApi : undefined,
         })
         lastIngestSourceMtime = report.newSourceMtime
         if (report.batches || report.rebuilt || report.indexed || report.transcribed) {
           deps.log('INGEST', `cycle: decrypted=${report.decrypted} rebuilt=${report.rebuilt} indexed=${report.indexed} transcribed=${report.transcribed} batches=${report.batches} facts=${report.recorded}`)
         }
-        // D1 — distill the owner's plugin knowledge into knowledge.md (always-on
-        // memory). Owner chat only (no chatId→name join needed); reuses the open
-        // bridge. Empty digest ⇒ remove the file so a stale one doesn't linger.
+        // D1 — distill the owner's kernel knowledge (facts + graph, in-process)
+        // into knowledge.md (always-on memory). Owner chat only (no chatId→name
+        // join needed). Empty digest ⇒ remove the file so a stale one doesn't linger.
         const ownerChat = loadCompanionConfig(deps.stateDir).default_chat_id
         if (ownerChat && !ownerChat.includes('..') && !ownerChat.includes('/') && !ownerChat.includes('\\')) {
-          try {
-            const digest = await distillOwnerKnowledge({ call: bridge.call, hasTool: (t) => bridge.tools.some(x => x.name === t) })
-            const fs = makeMemoryFS({ rootDir: join(deps.stateDir, 'memory', ownerChat) })
-            if (digest) { fs.write('knowledge.md', digest); deps.log('INGEST', `distilled knowledge.md for ${ownerChat} (${digest.length} chars)`) }
-            else if (fs.read('knowledge.md')) fs.delete('knowledge.md')
-          } catch (err) {
-            deps.log('INGEST', `knowledge distill failed: ${errMsg(err)}`)
-          }
+          await distillAndPushOwnerKnowledge(deps, ownerChat)
         }
       } catch (err) {
         deps.log('INGEST', `cycle failed: ${errMsg(err)}`)
@@ -259,6 +345,12 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     chatId: string,
     args: { claim: () => void; buildText: () => string },
   ): Promise<void> {
+    // 在 LLM 生成之前就拦下:degraded 时这条消息既发不出去,生成它也是白烧
+    // token,而且等链路恢复后内容早已过时 —— 所以直接丢弃,不排队。
+    if (deps.health?.shouldSuspend('wechat')) {
+      deps.log('COMPANION', `chat=${chatId} skipped: wechat connection degraded`)
+      return
+    }
     const snapshot = deps.ilink.loadProjects()
     const currentAlias = snapshot.current && snapshot.projects[snapshot.current] ? snapshot.current : null
     const proj = currentAlias

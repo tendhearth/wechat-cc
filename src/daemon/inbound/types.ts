@@ -1,7 +1,7 @@
 // src/daemon/inbound/types.ts
 import type { InboundMsg } from '../../core/prompt-format'
 
-export type ConsumedBy = 'admin' | 'mode' | 'onboarding' | 'permission-reply' | 'guard' | 'access'
+export type ConsumedBy = 'admin' | 'mode' | 'onboarding' | 'permission-reply' | 'guard' | 'access' | 'health'
 
 export interface InboundCtx {
   readonly msg: InboundMsg

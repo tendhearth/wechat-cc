@@ -13,10 +13,17 @@ import { isoFromMs } from '../../lib/iso-time'
 export interface MessagesMwDeps {
   append(rec: MessageRecord): Promise<number>
   log: (tag: string, line: string) => void
+  /**
+   * 记一笔"有入站活动"。此处是语义正确的位置:access + dedup 之后(陌生人
+   * 与重复消息不算),且在所有消费型中间件之前(管理员命令也算用户在活动)。
+   * 可选:省略即不记录,既有测试与 e2e 不受影响。
+   */
+  markInboundActivity?: () => void
 }
 
 export function makeMwMessages(deps: MessagesMwDeps): Middleware {
   return async (ctx, next) => {
+    try { deps.markInboundActivity?.() } catch { /* 绝不能因为记一笔就打断入站管线 */ }
     const messageId = ctx.msg.createTimeMs
       ? inboundMessageId(ctx.msg.userId, ctx.msg.createTimeMs)
       : inboundFallbackMessageId(ctx.msg.userId, ctx.msg.text)

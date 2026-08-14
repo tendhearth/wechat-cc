@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadAgentConfig, saveAgentConfig, parseAgentConfig, A2AAgentRecord, makeMtimeCachedConfigReader, activeModel, withActiveModel, modelForProvider, withModelForProvider, type AgentConfig } from './agent-config'
+import { loadAgentConfig, saveAgentConfig, parseAgentConfig, A2AAgentRecord, makeMtimeCachedConfigReader, activeModel, withActiveModel, modelForProvider, withModelForProvider, resolveForwardBudget, type AgentConfig } from './agent-config'
 
 describe('agent-config', () => {
   it('defaults to claude with unattended=true when no config exists', () => {
@@ -225,6 +225,65 @@ describe('agent-config — A2A fields', () => {
         inbound_api_key: 'wc_1234567890123456', outbound_api_key: 'k', capabilities: ['notify'], paused: false }],
     })).toThrow(/agent id must match/)
   })
+
+  it('round-trips an a2a agent record with proto_version', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-a2a-proto-'))
+    try {
+      saveAgentConfig(dir, {
+        provider: 'claude',
+        dangerouslySkipPermissions: true,
+        autoStart: true,
+        closeStopsDaemon: false,
+        a2a_agents: [
+          {
+            id: 'deploy-bot',
+            name: 'Deploy Bot',
+            url: 'https://deploy.example.com/a2a',
+            inbound_api_key: 'wc_abc1234567890123',
+            outbound_api_key: 'dpb_xyz',
+            capabilities: ['notify'],
+            paused: false,
+            transport: 'push',
+            proto_version: 1,
+          },
+        ],
+      })
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.a2a_agents).toHaveLength(1)
+      expect(loaded.a2a_agents?.[0]?.proto_version).toBe(1)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('loads a2a agent record with absent proto_version as undefined', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-a2a-no-proto-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: true,
+        autoStart: true,
+        closeStopsDaemon: false,
+        a2a_agents: [
+          {
+            id: 'deploy-bot',
+            name: 'Deploy Bot',
+            url: 'https://deploy.example.com/a2a',
+            inbound_api_key: 'wc_abc1234567890123',
+            outbound_api_key: 'dpb_xyz',
+            capabilities: ['notify'],
+            paused: false,
+            transport: 'push',
+          },
+        ],
+      }))
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.a2a_agents).toHaveLength(1)
+      expect(loaded.a2a_agents?.[0]?.proto_version).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('loadAgentConfig — gemini provider', () => {
@@ -396,6 +455,49 @@ describe('agent-config social (M1 intent brokering)', () => {
   })
 })
 
+describe('agent-config knowledge (Knowledge Kernel Phase 01, T5)', () => {
+  it('parseAgentConfig accepts knowledge_enabled + knowledge_source_dir', () => {
+    const cfg = parseAgentConfig({
+      provider: 'claude',
+      knowledge_enabled: true,
+      knowledge_source_dir: '/custom/decrypted',
+    })
+    expect(cfg.knowledge_enabled).toBe(true)
+    expect(cfg.knowledge_source_dir).toBe('/custom/decrypted')
+  })
+
+  it('round-trips knowledge_enabled + knowledge_source_dir through save → load', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-knowledge-'))
+    try {
+      saveAgentConfig(dir, {
+        provider: 'claude',
+        dangerouslySkipPermissions: true,
+        autoStart: true,
+        closeStopsDaemon: false,
+        knowledge_enabled: true,
+        knowledge_source_dir: '/custom/decrypted',
+      })
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.knowledge_enabled).toBe(true)
+      expect(loaded.knowledge_source_dir).toBe('/custom/decrypted')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('absent knowledge fields load as undefined (back-compat, opt-in default off)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-knowledge-'))
+    try {
+      saveAgentConfig(dir, { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.knowledge_enabled).toBeUndefined()
+      expect(loaded.knowledge_source_dir).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('loadAgentConfig preserves yi v2 fields', () => {
   it('round-trips yi_hub_listen and yi_brain through save+load', () => {
     const dir = mkdtempSync(join(tmpdir(), 'yi-cfg-'))
@@ -556,5 +658,104 @@ describe('A2AAgentRecord.transport', () => {
       inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o', capabilities: ['exec'], transport: 'ws',
     })
     expect(rec.transport).toBe('ws')
+  })
+})
+
+describe('agent-config — forward budget (sub-project C)', () => {
+  it('parseAgentConfig accepts an explicit forward_budget', () => {
+    const cfg = parseAgentConfig({ provider: 'claude', forward_budget: { per_sender: 10, window_ms: 60_000 } })
+    expect(cfg.forward_budget).toEqual({ per_sender: 10, window_ms: 60_000 })
+  })
+
+  it('accepts config without forward_budget (backward compat) — field loads as undefined', () => {
+    const cfg = parseAgentConfig({ provider: 'claude' })
+    expect(cfg.forward_budget).toBeUndefined()
+  })
+
+  it('round-trips forward_budget through save → load', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-budget-'))
+    try {
+      saveAgentConfig(dir, {
+        provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false,
+        forward_budget: { per_sender: 5, window_ms: 120_000 },
+      })
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.forward_budget).toEqual({ per_sender: 5, window_ms: 120_000 })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('an old config on disk with no forward_budget field still parses, field undefined', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-budget-old-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+        provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false,
+      }))
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.forward_budget).toBeUndefined()
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('a malformed forward_budget on disk safe-drops (field loads as undefined, matching the a2a_listen? safeParse-drop convention) — resolveForwardBudget then falls back to the default', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-budget-malformed-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+        provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false,
+        forward_budget: { per_sender: 0, window_ms: 'not-a-number' },   // per_sender must be positive; window_ms must be a number
+      }))
+      const loaded = loadAgentConfig(dir)
+      expect(loaded.forward_budget).toBeUndefined()   // safeParse.data is undefined on failure -> dropped, not thrown, no crash
+      expect(resolveForwardBudget(loaded)).toEqual({ per_sender: 30, window_ms: 3_600_000 })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('round-trips self_agent_id through loadAgentConfig', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cfg-selfid-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'),
+        JSON.stringify({ provider: 'claude', self_agent_id: 'cc-a3f92b1c' }))
+      expect(loadAgentConfig(dir).self_agent_id).toBe('cc-a3f92b1c')
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('parseAgentConfig accepts an optional self_agent_id', () => {
+    expect(parseAgentConfig({ self_agent_id: 'cc-deadbeef' }).self_agent_id).toBe('cc-deadbeef')
+    expect(parseAgentConfig({}).self_agent_id).toBeUndefined()
+  })
+})
+
+describe('A2AAgentRecord url-optional-for-mailbox', () => {
+  const key = 'k'.repeat(16)
+  const mailboxRec = { id: 'cc-a3f92b1c', name: 'peer', inbound_api_key: key, outbound_api_key: 'ob',
+    capabilities: [], transport: 'mailbox' as const, mailbox_addr: 'A', mailbox_enc_pub: 'E', relays: ['https://r.example/mailbox'] }
+
+  it('accepts a mailbox record with NO url', () => {
+    expect(A2AAgentRecord.safeParse(mailboxRec).success).toBe(true)
+  })
+  it('rejects a push record with NO url', () => {
+    const { transport, ...rest } = mailboxRec
+    expect(A2AAgentRecord.safeParse({ ...rest, transport: 'push' }).success).toBe(false)
+  })
+  it('rejects a ws record with NO url', () => {
+    const { transport, ...rest } = mailboxRec
+    expect(A2AAgentRecord.safeParse({ ...rest, transport: 'ws' }).success).toBe(false)
+  })
+  it('still accepts a push record WITH a valid url (back-compat)', () => {
+    expect(A2AAgentRecord.safeParse({ ...mailboxRec, transport: 'push', url: 'https://peer.example' }).success).toBe(true)
+  })
+  it('an old mailbox config with url set still parses', () => {
+    expect(A2AAgentRecord.safeParse({ ...mailboxRec, url: 'https://peer.example' }).success).toBe(true)
+  })
+})
+
+describe('resolveForwardBudget', () => {
+  it('returns the explicit config when set', () => {
+    expect(resolveForwardBudget({
+      provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false,
+      forward_budget: { per_sender: 7, window_ms: 1000 },
+    })).toEqual({ per_sender: 7, window_ms: 1000 })
+  })
+  it('falls back to the 30/hour default when absent', () => {
+    expect(resolveForwardBudget({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }))
+      .toEqual({ per_sender: 30, window_ms: 3_600_000 })
   })
 })

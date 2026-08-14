@@ -110,6 +110,11 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
   const ticks = buildTickBodies({
     ...opts,
     permissionMode: opts.dangerously ? 'dangerously' : 'strict',
+    // Connection-health gate (Task 7) — companion ticks read
+    // boot.health.health.shouldSuspend('wechat') to stop proactive outbound
+    // while the connection is confirmed down (see TickDeps.health's doc
+    // comment in ./tick-bodies.ts).
+    health: opts.boot.health.health,
   })
   const { pipelineDeps, companionConverse } = buildPipelineDeps(opts, refs)
   const lifecycleDeps = buildLifecycleDeps(opts, ticks)

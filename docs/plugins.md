@@ -50,6 +50,26 @@ example-plugin/
 }
 ```
 
+### Repeatable local sync
+
+Plugins backed by a local snapshot may declare a repeatable `sync` spawn next
+to the one-time `setup` spawn:
+
+```jsonc
+"sync": {
+  "command": "python3",
+  "args": ["${pluginDir}/sync.py"],
+  "env": { "PLUGIN_STATE_DIR": "${dataDir}" }
+}
+```
+
+This powers `wechat-cc plugin sync <name>` and the desktop「同步最新数据」
+button. The action must be safe to repeat and must not redo credential capture.
+For status display it may atomically write `${dataDir}/sync-status.json` with
+`state`, `running`, `last_success_at`, and `error`. A conversational plugin
+should expose the same operation as an MCP tool so a user can request sync by
+natural language without opening the desktop app.
+
 `${pluginDir}` expands to the manifest's own directory (absolute). Reserved
 names `wechat` and `delegate` are rejected. Your `command` must speak MCP
 (JSON-RPC 2.0) over stdio — `initialize`, `tools/list`, `tools/call`.

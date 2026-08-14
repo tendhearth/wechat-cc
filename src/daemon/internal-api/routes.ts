@@ -17,10 +17,16 @@ import type { UserTier } from '../../core/user-tier'
 import { makeEventsStore } from '../events/store'
 import { a2aRoutes } from './routes-a2a'
 import { socialRoutes } from './routes-social'
+import { knowledgeRoutes } from './routes-knowledge'
+import { pairRoutes } from './routes-pair'
+import { memoryRoutes } from './routes-memory'
+import { penpalRoutes } from './routes-penpal'
+import { healthRoutes } from './routes-health'
 import { pluginRoutes } from './routes-plugins'
 import { licenseRoutes } from './routes-license'
 import { daemonControlRoutes } from './routes-daemon-control'
 import { fileRoutes } from './routes-files'
+import { customerReviewRoutes } from './routes-customer-review'
 import type {
   MemoryReadRequestT, MemoryWriteRequestT, MemoryDeleteRequestT,
   ProjectsSwitchRequestT, ProjectsAddRequestT, ProjectsRemoveRequestT,
@@ -689,9 +695,15 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     //    / restart / turns) live in sibling files — spread in here. ──────────
     ...a2aRoutes(deps),
     ...socialRoutes(deps),
+    ...knowledgeRoutes(deps),
+    ...pairRoutes(deps),
+    ...memoryRoutes(deps),
+    ...penpalRoutes(deps),
+    ...healthRoutes(deps),
     ...pluginRoutes(deps),
     ...licenseRoutes(deps),
     ...daemonControlRoutes(deps),
+    ...customerReviewRoutes(deps),
     ...fileRoutes(),
   }
 }

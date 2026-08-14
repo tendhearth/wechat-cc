@@ -81,7 +81,7 @@ export function registerCompanionTools(server: McpServer, client: InternalApiCli
     'companion_import_local',
     {
       title: 'Toggle local history auto-import',
-      description: '开启/关闭"自动导入本机 claude/codex 的对话与记忆"。开启后：每次启动 + 每 24h 增量扫描本机历史入库（零 LLM 成本），并每 24h 重整一次"懂你"overview（约 1 次廉价调用/天）。用户说"导入我的本地记录/开启自动导入"→ enabled=true；"别再导入了"→ false。默认关。',
+      description: '仅开启/关闭“自动导入本机 Claude/Codex 对话与记忆”，与微信聊天记录完全无关。开启后：每次启动 + 每 24h 增量扫描本机历史入库（零 LLM 成本），并每 24h 重整一次“懂你”overview（约 1 次廉价调用/天）。仅当用户明确说“导入我的本地记录 / 开启自动导入”时才调用。绝不可用于“同步微信记忆 / 刷新聊天记录 / 同步聊天记录”；这些请求必须使用 wxvault 的 sync_wechat_data。默认关。',
       inputSchema: { enabled: z.boolean() },
     },
     async ({ enabled }) => {

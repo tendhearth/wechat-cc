@@ -42,6 +42,10 @@ export interface AgentConfig {
   // A2A: optional listener and registered peer agent records.
   a2a_listen?: A2AListen
   a2a_agents?: A2AAgentRecord[]
+  // Mailbox transport (sub-project B): this daemon's OWN relay list — where
+  // it advertises its mailbox reachability to peers and polls for inbound
+  // envelopes. Mirrors `a2a_agents?`'s optional-array shape.
+  mailbox_relays?: string[]
   // Dialogue private-thread lock. Stores a scrypt-derived passphrase hash
   // as `salt:hexhash` (both hex). Absent → no lock configured (the desktop
   // dialogue page hides its unlock affordance). Set/verified via the
@@ -59,6 +63,46 @@ export interface AgentConfig {
   // consulted by gateOutbound when brokering/answering intents. Required
   // alongside social_enabled for bootstrap to wire the real judge/broker seams.
   social_disclosure_policy?: string
+  // Sub-project C (中间人转发预算): per-upstream-sender token-bucket budget on
+  // how many DISTINCT intents this daemon will forward as intermediary W.
+  // Optional/additive, same posture as mailbox_relays?/a2a_listen? — absent
+  // means "use resolveForwardBudget's default", not "budget disabled".
+  forward_budget?: { per_sender: number; window_ms: number }
+  // Stable-unique self slug (spec §2): this daemon's own a2a id, crossed on the
+  // pairing card and used as the registry id peers file this daemon under.
+  // Additive/optional, same posture as mailbox_relays?/forward_budget?. Resolved
+  // (and persisted here on first need) by resolveSelfAgentId in core/self-agent-id.ts.
+  self_agent_id?: string
+  // Knowledge Kernel Phase 01 (T5) — gates the daemon-owned KnowledgeStore +
+  // wxvault source-adapter ingestion off by default (opt-in during the
+  // walking-skeleton slice). Mirrors `social_enabled?`'s optional-boolean
+  // shape — absent/false → bootstrap skips wiring entirely and
+  // /v1/knowledge/* stays 503 (see routes-knowledge.ts).
+  knowledge_enabled?: boolean
+  // Override for the wxvault-decrypted output dir the source adapter reads
+  // from. Optional — defaults to `<stateDir>/plugin-data/wxvault/out/decrypted`
+  // when absent. Mirrors `openaiBaseUrl?`'s optional-string shape.
+  knowledge_source_dir?: string
+  // Knowledge Kernel T7' — embedding model id passed to the in-process
+  // indexer (src/core/knowledge/indexer.ts) and, via embed-runner.ts, to the
+  // Python embed subprocess (`--model-id`) as the provenance tag every
+  // semantic.db row is stamped with. Optional — defaults to
+  // 'bge-small-zh-v1.5' (wxsearch's existing default embedding model, see
+  // wechat-cc-plugins packages/wxsearch/wxsearch/embed.py's `_FE` map).
+  knowledge_embed_model?: string
+  // Override for the embed subprocess script path the indexer spawns
+  // (normally resolved from the loaded wxsearch plugin's dir — see
+  // bootstrap/index.ts's knowledge_enabled block). Optional escape hatch for
+  // a non-standard wxsearch install location.
+  knowledge_embed_script?: string
+  // Knowledge Graph inproc Task 4 — explicit override for "my own username"
+  // fed into rebuildGraphFromSource's `detectOwner` call (graph-build.ts).
+  // Optional — absent means "let detectOwner vote from 1:1 message senders"
+  // (see graph.ts's `detectOwner` doc comment); bootstrap/index.ts falls
+  // back further to the `WXGRAPH_OWNER` env var when this is also unset,
+  // mirroring wxgraph's own env-var escape hatch for undetectable-owner
+  // accounts.
+  knowledge_owner?: string
 }
 
 // ── A2A sub-schemas ──────────────────────────────────────────────────────────
@@ -66,12 +110,26 @@ export interface AgentConfig {
 export const A2AAgentRecord = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, 'agent id must match ^[a-z0-9][a-z0-9-]{0,63}$ (lowercase slug)'),
   name: z.string().min(1).max(128),
-  url: z.string().url(),
+  url: z.string().url().optional(),
   inbound_api_key: z.string().min(16),
   outbound_api_key: z.string().min(1),
   capabilities: z.array(z.string()),
   paused: z.boolean().default(false),
-  transport: z.enum(['push', 'ws']).default('push'),
+  transport: z.enum(['push', 'ws', 'mailbox']).default('push'),
+  /** Mailbox transport (sub-project B): the peer's Ed25519 mailbox address (drop `to` + sig key). */
+  mailbox_addr: z.string().optional(),
+  /** The peer's X25519 encryption pubkey — the sealed-box target for envelopes. */
+  mailbox_enc_pub: z.string().optional(),
+  /** Relay URLs the peer's mailbox is reachable through. */
+  relays: z.array(z.string().url()).optional(),
+  /** Peer's A2A proto_version captured at install time; unset = unknown (treat as 1). */
+  proto_version: z.number().int().optional(),
+}).superRefine((rec, ctx) => {
+  // url is optional ONLY for mailbox transport (pure-NAT peers have no public
+  // url). push/ws still require a reachable url. spec §6.
+  if (rec.transport !== 'mailbox' && !rec.url) {
+    ctx.addIssue({ code: 'custom', path: ['url'], message: `url is required for transport '${rec.transport}'` })
+  }
 })
 
 export const A2AListen = z.object({
@@ -82,10 +140,16 @@ export const A2AListen = z.object({
 export const YiHubListen = z.object({ host: z.string(), port: z.number() })
 export const YiBrain = z.object({ url: z.string(), handId: z.string(), authToken: z.string().min(16) })
 
+export const ForwardBudgetConfig = z.object({
+  per_sender: z.number().int().positive(),
+  window_ms: z.number().int().positive(),
+})
+
 export type A2AAgentRecord = z.infer<typeof A2AAgentRecord>
 export type A2AListen = z.infer<typeof A2AListen>
 export type YiHubListen = z.infer<typeof YiHubListen>
 export type YiBrain = z.infer<typeof YiBrain>
+export type ForwardBudgetConfig = z.infer<typeof ForwardBudgetConfig>
 
 const AgentConfigSchema = z.object({
   provider: z.enum(['claude', 'codex', 'cursor', 'openai', 'gemini']).default('claude'),
@@ -112,6 +176,14 @@ const AgentConfigSchema = z.object({
   dialogue_lock_hash: z.string().optional(),
   social_enabled: z.boolean().optional(),
   social_disclosure_policy: z.string().optional(),
+  mailbox_relays: z.array(z.string().url()).optional(),
+  forward_budget: ForwardBudgetConfig.optional(),
+  self_agent_id: z.string().optional(),
+  knowledge_enabled: z.boolean().optional(),
+  knowledge_source_dir: z.string().optional(),
+  knowledge_embed_model: z.string().optional(),
+  knowledge_embed_script: z.string().optional(),
+  knowledge_owner: z.string().optional(),
 })
 
 /**
@@ -160,6 +232,9 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
           return result.success ? [result.data] : []
         })
       : undefined
+    const forwardBudget = parsed.forward_budget != null
+      ? ForwardBudgetConfig.safeParse(parsed.forward_budget).data
+      : undefined
 
     return {
       provider,
@@ -180,6 +255,14 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.dialogue_lock_hash === 'string' ? { dialogue_lock_hash: parsed.dialogue_lock_hash } : {}),
       ...(typeof parsed.social_enabled === 'boolean' ? { social_enabled: parsed.social_enabled } : {}),
       ...(typeof parsed.social_disclosure_policy === 'string' ? { social_disclosure_policy: parsed.social_disclosure_policy } : {}),
+      ...(Array.isArray(parsed.mailbox_relays) ? { mailbox_relays: parsed.mailbox_relays } : {}),
+      ...(forwardBudget ? { forward_budget: forwardBudget } : {}),
+      ...(typeof parsed.self_agent_id === 'string' ? { self_agent_id: parsed.self_agent_id } : {}),
+      ...(typeof parsed.knowledge_enabled === 'boolean' ? { knowledge_enabled: parsed.knowledge_enabled } : {}),
+      ...(typeof parsed.knowledge_source_dir === 'string' ? { knowledge_source_dir: parsed.knowledge_source_dir } : {}),
+      ...(typeof parsed.knowledge_embed_model === 'string' ? { knowledge_embed_model: parsed.knowledge_embed_model } : {}),
+      ...(typeof parsed.knowledge_embed_script === 'string' ? { knowledge_embed_script: parsed.knowledge_embed_script } : {}),
+      ...(typeof parsed.knowledge_owner === 'string' ? { knowledge_owner: parsed.knowledge_owner } : {}),
     }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }
@@ -287,4 +370,15 @@ export function withModelForProvider(config: AgentConfig, providerId: string, mo
   if (providerId === 'cursor') return { ...config, cursorModel: model }
   if (providerId === 'gemini') return { ...config, geminiModel: model }
   return { ...config, model }
+}
+
+/** Sub-project C default: 30 forwards/hour per upstream sender. Applied by
+ *  resolveForwardBudget when the operator hasn't set config.forward_budget —
+ *  the config field itself stays undefined (additive/optional), this is the
+ *  one canonical place the default value lives. */
+export const DEFAULT_FORWARD_BUDGET: { per_sender: number; window_ms: number } = { per_sender: 30, window_ms: 3_600_000 }
+
+/** `config.forward_budget` if the operator set one, else {@link DEFAULT_FORWARD_BUDGET}. */
+export function resolveForwardBudget(config: AgentConfig): { per_sender: number; window_ms: number } {
+  return config.forward_budget ?? DEFAULT_FORWARD_BUDGET
 }

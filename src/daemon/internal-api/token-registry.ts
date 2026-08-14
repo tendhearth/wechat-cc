@@ -35,11 +35,10 @@ import type { UserTier } from '../../core/user-tier'
  *     token to ONLY the listed `"METHOD /path"` route keys regardless of
  *     its tier; the dispatcher enforces this as a second gate after the
  *     tier check (see index.ts). registerOperatorToken sets
- *     `routeAllow: {'POST /v1/companion/converse', 'POST /v1/companion/speak'}`
- *     so a leaked operator token can only impersonate the owner in converse
- *     (text turns) and speak (synthesized reply audio) — it cannot restart
- *     the daemon, list sessions, or locate files. That residual
- *     (converse/speak-impersonation) is accepted and documented: closing it
+ *     to the desktop application's owner-only surfaces: companion converse /
+ *     voice plus Customer Review. It still cannot restart the daemon, list
+ *     sessions, or locate arbitrary files. That residual owner-surface access
+ *     is accepted and documented: closing it
  *     fully needs real local-auth (peer-cred / agent-sandboxing) before
  *     this daemon supports trusted non-owner users alongside the desktop
  *     app. Session and file tokens leave routeAllow unset (unrestricted by
@@ -77,12 +76,28 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
       // doc comment above — this is the one place a file-origin token is
       // allowed to grant `admin`, because it's a distinct credential from
       // the shared trusted file token and only the local machine owner can
-      // read it. routeAllow narrows it to converse-only so that admin
-      // grant doesn't reach every other admin route too.
+      // read it. routeAllow narrows it to explicit desktop owner surfaces so
+      // that admin grant doesn't reach every other admin route too.
       map.set(tokenHex, {
         tier: 'admin',
         origin: 'operator',
-        routeAllow: new Set(['POST /v1/companion/converse', 'POST /v1/companion/speak', 'POST /v1/companion/transcribe']),
+        routeAllow: new Set([
+          'POST /v1/companion/converse',
+          'POST /v1/companion/speak',
+          'POST /v1/companion/transcribe',
+          // Owner-only workspace (admin-tier reads of the owner's wxvault
+          // history + stored customer judgments). Reached ONLY through the
+          // Tauri host's customer_review_api command / the dev server's mirror
+          // of it — never from webview JS, which must not hold this token.
+          'GET /v1/customer-review/contacts',
+          'POST /v1/customer-review',
+          'POST /v1/customer-review/run',
+          'GET /v1/customer-review',
+          'GET /v1/customer-review/evidence',
+          'GET /v1/customer-review/recent',
+          'GET /v1/customer-review/history',
+          'POST /v1/customer-review/item',
+        ]),
       })
     },
     mint(tier, sessionKey) {

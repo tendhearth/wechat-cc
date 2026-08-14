@@ -56,4 +56,17 @@ describe('makeSeenIntentStore', () => {
     expect(rows.map((r) => r.intent_id)).toEqual(['new'])
     expect(s.hasSeen('stale')).toBe(false)
   })
+
+  it('markSeen 记 origin;originOf 取回;无 origin 的行(老数据/缺省)→ null', () => {
+    const db = openDb({ path: ':memory:' })
+    const s = makeSeenIntentStore(db)
+    s.markSeen({ intentId: 'i1', expiresAt: new Date(Date.now() + 60000).toISOString(), originAgentId: 'cc-s' })
+    s.markSeen({ intentId: 'i2', expiresAt: new Date(Date.now() + 60000).toISOString() })
+    expect(s.originOf('i1')).toBe('cc-s')
+    expect(s.originOf('i2')).toBeNull()
+    expect(s.originOf('nope')).toBeNull()
+    // 幂等重 mark 不覆盖 origin(INSERT OR IGNORE 语义)
+    s.markSeen({ intentId: 'i1', expiresAt: new Date().toISOString(), originAgentId: 'other' })
+    expect(s.originOf('i1')).toBe('cc-s')
+  })
 })

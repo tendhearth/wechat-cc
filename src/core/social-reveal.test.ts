@@ -3,10 +3,11 @@ import { openDb } from '../lib/db'
 import { makeEchoStore } from './social-echo-store'
 import { makePledgeStore } from './social-pledge-store'
 import { makeSeekStore } from './social-seek-store'
-import { makeRevealer, type PeerIdentity } from './social-reveal'
+import { makeRevealer } from './social-reveal'
+import type { PenpalHandle, ChannelPort } from './social-reveal'   // ChannelPort re-exported from here
 
-const SELF: PeerIdentity = { name: '我方', url: 'http://self/a2a' }
-const PEER: PeerIdentity = { name: '小B', url: 'http://peerb/a2a' }
+const SELF_HANDLE: PenpalHandle = { pubkey: 'SELF_PUB', channel_id: 'self-chan' }
+const PEER_HANDLE: PenpalHandle = { pubkey: 'PEER_PUB', channel_id: 'peer-chan' }
 
 function fixture(postPeerReveal: any) {
   const db = openDb({ path: ':memory:' })
@@ -14,14 +15,19 @@ function fixture(postPeerReveal: any) {
   const pledgeStore = makePledgeStore(db)
   const seekStore = makeSeekStore(db)
   const notify = vi.fn()
-  const revealer = makeRevealer({ echoStore, pledgeStore, seekStore, postPeerReveal, selfIdentity: () => SELF, notify })
-  return { db, echoStore, pledgeStore, seekStore, notify, revealer }
+  const opened: string[] = []; const finalized: Array<[string, PenpalHandle]> = []
+  const channel: ChannelPort = {
+    openLocal: (rowId) => { opened.push(rowId); return SELF_HANDLE },
+    finalize: (rowId, h) => { finalized.push([rowId, h]) },
+  }
+  const revealer = makeRevealer({ echoStore, pledgeStore, seekStore, postPeerReveal, channel, notify })
+  return { db, echoStore, pledgeStore, seekStore, notify, revealer, opened, finalized }
 }
 
 describe('makeRevealer — echo side (I reveal first)', () => {
-  it('I reveal, peer already consented → mutual: echo revealed, seek connected, identity swapped, beat #3', async () => {
-    const post = vi.fn(async () => ({ mutual: true, identity: PEER }))
-    const { echoStore, seekStore, notify, revealer } = fixture(post)
+  it('I reveal, peer already consented → mutual: echo revealed, seek connected, handle crossed, beat #3', async () => {
+    const post = vi.fn(async () => ({ mutual: true, handle: PEER_HANDLE }))
+    const { echoStore, seekStore, notify, revealer, opened, finalized } = fixture(post)
     seekStore.create({ id: 'i1', kind: 'seek', topic: 't' })
     echoStore.create({ id: 'i1:ccb', seekId: 'i1', peerMasked: '第 1 度的某人', degree: 1, content: 'x', peerAgentId: 'ccb' })
 
@@ -33,9 +39,12 @@ describe('makeRevealer — echo side (I reveal first)', () => {
     expect(echo.status).toBe('revealed')
     expect(echo.self_revealed_at).not.toBeNull()
     expect(echo.peer_revealed_at).not.toBeNull()
-    expect(echo.peer_masked).toBe('小B')                    // identity swapped in
+    expect(echo.peer_masked).toBe('第 1 度的某人')            // masked stays masked — real identity never crosses
+    expect(opened).toContain('i1:ccb')
+    expect(finalized).toContainEqual(['i1:ccb', PEER_HANDLE])
     expect(seekStore.get('i1')!.status).toBe('connected')
-    expect(notify).toHaveBeenCalledWith('connected', expect.objectContaining({ intentId: 'i1', peerName: '小B' }))
+    expect(notify).toHaveBeenCalledWith('connected', expect.objectContaining({ intentId: 'i1' }))
+    expect(notify.mock.calls.find((c) => c[0] === 'connected')![1]).not.toHaveProperty('peerName')
   })
 
   it('I reveal, peer has NOT → awaiting_peer, my consent persisted, no connected beat', async () => {
@@ -65,7 +74,7 @@ describe('makeRevealer — echo side (I reveal first)', () => {
   })
 
   it('double reveal after connected is a no-op (idempotent)', async () => {
-    const post = vi.fn(async () => ({ mutual: true, identity: PEER }))
+    const post = vi.fn(async () => ({ mutual: true, handle: PEER_HANDLE }))
     const { echoStore, revealer } = fixture(post)
     echoStore.create({ id: 'i1:ccb', seekId: 'i1', peerMasked: '第 1 度的某人', degree: 1, content: 'x', peerAgentId: 'ccb' })
     await revealer.revealEcho('i1:ccb')
@@ -82,28 +91,31 @@ describe('makeRevealer — echo side (I reveal first)', () => {
 })
 
 describe('makeRevealer — inbound (peer reveals first)', () => {
-  it('peer reveals before me → mutual:false, beat #2 (await_reveal) fires', () => {
-    const { echoStore, notify, revealer } = fixture(vi.fn())
+  it('peer reveals before me → mutual:false, beat #2 (await_reveal) fires; peerHandle NOT persisted (no channel row yet)', () => {
+    const { echoStore, notify, revealer, finalized } = fixture(vi.fn())
     echoStore.create({ id: 'i1:ccb', seekId: 'i1', peerMasked: '第 1 度的某人', degree: 1, content: 'x', peerAgentId: 'ccb' })
 
-    const resp = revealer.onInboundReveal({ agentId: 'ccb', intentId: 'i1' })
+    const resp = revealer.onInboundReveal({ agentId: 'ccb', intentId: 'i1', peerHandle: PEER_HANDLE })
 
     expect(resp).toEqual({ mutual: false })
     expect(echoStore.get('i1:ccb')!.peer_revealed_at).not.toBeNull()
     expect(notify).toHaveBeenCalledWith('await_reveal', expect.objectContaining({ intentId: 'i1', peerAgentId: 'ccb' }))
+    expect(finalized).toEqual([])                            // M2: no channel row yet, can't persist
   })
 
-  it('second revealer gets mutual synchronously with our identity (I revealed first, peer calls in)', () => {
-    const { echoStore, seekStore, notify, revealer } = fixture(vi.fn())
+  it('second revealer gets mutual synchronously with our handle (I revealed first, peer calls in)', () => {
+    const { echoStore, seekStore, notify, revealer, finalized } = fixture(vi.fn())
     seekStore.create({ id: 'i1', kind: 'seek', topic: 't' })
     echoStore.create({ id: 'i1:ccb', seekId: 'i1', peerMasked: '第 1 度的某人', degree: 1, content: 'x', peerAgentId: 'ccb' })
     echoStore.setSelfRevealed('i1:ccb', '2026-07-15T00:00:00.000Z')  // I already revealed
 
-    const resp = revealer.onInboundReveal({ agentId: 'ccb', intentId: 'i1' })
+    const resp = revealer.onInboundReveal({ agentId: 'ccb', intentId: 'i1', peerHandle: PEER_HANDLE })
 
-    expect(resp).toEqual({ mutual: true, identity: SELF })
+    expect(resp).toEqual({ mutual: true, handle: SELF_HANDLE })
     expect(echoStore.get('i1:ccb')!.status).toBe('revealed')
+    expect(echoStore.get('i1:ccb')!.peer_masked).toBe('第 1 度的某人')   // masked stays masked
     expect(seekStore.get('i1')!.status).toBe('connected')
+    expect(finalized).toContainEqual(['i1:ccb', PEER_HANDLE])
     expect(notify).toHaveBeenCalledWith('connected', expect.objectContaining({ intentId: 'i1', peerAgentId: 'ccb' }))
   })
 
@@ -111,7 +123,7 @@ describe('makeRevealer — inbound (peer reveals first)', () => {
     const { pledgeStore, notify, revealer } = fixture(vi.fn())
     pledgeStore.create({ id: 'i2:cca', intentId: 'i2', seekerAgentId: 'cca', topic: 't' })
 
-    const resp = revealer.onInboundReveal({ agentId: 'cca', intentId: 'i2' })
+    const resp = revealer.onInboundReveal({ agentId: 'cca', intentId: 'i2', peerHandle: PEER_HANDLE })
 
     expect(resp).toEqual({ mutual: false })
     expect(pledgeStore.get('i2:cca')!.peer_revealed_at).not.toBeNull()
@@ -144,16 +156,16 @@ describe('makeRevealer — inbound (peer reveals first)', () => {
     const first = revealer.onInboundReveal({ agentId: 'ccb', intentId: 'i1' })
     const second = revealer.onInboundReveal({ agentId: 'ccb', intentId: 'i1' })
 
-    expect(first).toEqual({ mutual: true, identity: SELF })
-    expect(second).toEqual({ mutual: true, identity: SELF })
+    expect(first).toEqual({ mutual: true, handle: SELF_HANDLE })
+    expect(second).toEqual({ mutual: true, handle: SELF_HANDLE })
     expect(notify.mock.calls.filter((c) => c[0] === 'connected').length).toBe(1)
   })
 })
 
 describe('makeRevealer — pledge side (I reveal my answer)', () => {
-  it('revealPledge mutual → connected beat, timestamps set', async () => {
-    const post = vi.fn(async () => ({ mutual: true, identity: PEER }))
-    const { pledgeStore, notify, revealer } = fixture(post)
+  it('revealPledge mutual → connected beat, timestamps set, handle crossed via channel', async () => {
+    const post = vi.fn(async () => ({ mutual: true, handle: PEER_HANDLE }))
+    const { pledgeStore, notify, revealer, finalized } = fixture(post)
     pledgeStore.create({ id: 'i2:cca', intentId: 'i2', seekerAgentId: 'cca', topic: 't' })
 
     const out = await revealer.revealPledge('i2:cca')
@@ -162,15 +174,17 @@ describe('makeRevealer — pledge side (I reveal my answer)', () => {
     expect(post).toHaveBeenCalledWith('cca', 'i2')
     expect(pledgeStore.get('i2:cca')!.self_revealed_at).not.toBeNull()
     expect(pledgeStore.get('i2:cca')!.peer_revealed_at).not.toBeNull()
-    expect(notify).toHaveBeenCalledWith('connected', expect.objectContaining({ intentId: 'i2', peerName: '小B' }))
+    expect(finalized).toContainEqual(['i2:cca', PEER_HANDLE])
+    expect(notify).toHaveBeenCalledWith('connected', expect.objectContaining({ intentId: 'i2' }))
+    expect(notify.mock.calls.find((c) => c[0] === 'connected')![1]).not.toHaveProperty('peerName')
   })
 
-  it('identity never leaks before reveal', () => {
+  it('identity never leaks before reveal — masked placeholder intact, inbound returns no handle', () => {
     const { echoStore, revealer } = fixture(vi.fn())
     echoStore.create({ id: 'i1:ccb', seekId: 'i1', peerMasked: '第 1 度的某人', degree: 1, content: 'x', peerAgentId: 'ccb' })
     // Before any reveal, the masked placeholder is intact and no identity is exposed.
     expect(echoStore.get('i1:ccb')!.peer_masked).toBe('第 1 度的某人')
-    // An inbound reveal we have NOT matched with our own consent returns no identity.
+    // An inbound reveal we have NOT matched with our own consent returns no handle.
     expect(revealer.onInboundReveal({ agentId: 'ccb', intentId: 'i1' })).toEqual({ mutual: false })
   })
 })
@@ -178,45 +192,50 @@ describe('makeRevealer — pledge side (I reveal my answer)', () => {
 describe('makeRevealer — relay branch (2-hop, spec #2)', () => {
   it('revealEcho on a relay echo posts to relay_via carrying the relay_token', async () => {
     const post = vi.fn(async () => ({ mutual: false }))
-    const { echoStore, revealer } = fixture(post)
+    const { echoStore, revealer, opened } = fixture(post)
     // Relay echo: peer_agent_id null, relay_via = W, relay_token = T, id = intent:W:T.
     echoStore.create({ id: 'i1:ccw:T', seekId: 'i1', peerMasked: '第 2 度的某人', degree: 2, content: 'x', peerAgentId: null, relayVia: 'ccw', relayToken: 'T' })
     const out = await revealer.revealEcho('i1:ccw:T')
     expect(out).toEqual({ state: 'awaiting_peer' })
     expect(post).toHaveBeenCalledWith('ccw', 'i1', 'T')   // addressed to W, carries the token
     expect(echoStore.get('i1:ccw:T')!.self_revealed_at).not.toBeNull()
+    expect(opened).toContain('i1:ccw:T')
   })
 
-  it('relay revealEcho mutual → connected, identity swapped from the response', async () => {
-    const post = vi.fn(async () => ({ mutual: true, identity: PEER }))   // W returns Q's identity
-    const { echoStore, seekStore, revealer } = fixture(post)
+  it('relay revealEcho mutual → connected, handle crossed via channel finalize (masked stays masked)', async () => {
+    const post = vi.fn(async () => ({ mutual: true, handle: PEER_HANDLE }))   // W returns Q's handle
+    const { echoStore, seekStore, revealer, finalized } = fixture(post)
     seekStore.create({ id: 'i1', kind: 'seek', topic: 't' })
     echoStore.create({ id: 'i1:ccw:T', seekId: 'i1', peerMasked: '第 2 度的某人', degree: 2, content: 'x', peerAgentId: null, relayVia: 'ccw', relayToken: 'T' })
     const out = await revealer.revealEcho('i1:ccw:T')
     expect(out).toEqual({ state: 'connected' })
-    expect(echoStore.get('i1:ccw:T')!.peer_masked).toBe('小B')
+    expect(echoStore.get('i1:ccw:T')!.peer_masked).toBe('第 2 度的某人')
+    expect(finalized).toContainEqual(['i1:ccw:T', PEER_HANDLE])
     expect(seekStore.get('i1')!.status).toBe('connected')
   })
 
   it('inbound relay reveal (carries relay_token) resolves the relay echo, not the direct key', () => {
-    const { echoStore, notify, revealer } = fixture(vi.fn())
+    const { echoStore, notify, revealer, finalized } = fixture(vi.fn())
     echoStore.create({ id: 'i1:ccw:T', seekId: 'i1', peerMasked: '第 2 度的某人', degree: 2, content: 'x', peerAgentId: null, relayVia: 'ccw', relayToken: 'T' })
-    const resp = revealer.onInboundReveal({ agentId: 'ccw', intentId: 'i1', relayToken: 'T' })
+    const resp = revealer.onInboundReveal({ agentId: 'ccw', intentId: 'i1', relayToken: 'T', peerHandle: PEER_HANDLE })
     expect(resp).toEqual({ mutual: false })
     expect(echoStore.get('i1:ccw:T')!.peer_revealed_at).not.toBeNull()
     expect(notify).toHaveBeenCalledWith('await_reveal', expect.objectContaining({ intentId: 'i1' }))
+    expect(finalized).toEqual([])
   })
 
-  it('inbound relay reveal completing me → mutual, swaps in peerName + notifies with it', () => {
-    const { echoStore, seekStore, notify, revealer } = fixture(vi.fn())
+  it('inbound relay reveal completing me → mutual, crosses handle via channel, content-free notify', () => {
+    const { echoStore, seekStore, notify, revealer, finalized } = fixture(vi.fn())
     seekStore.create({ id: 'i1', kind: 'seek', topic: 't' })
     echoStore.create({ id: 'i1:ccw:T', seekId: 'i1', peerMasked: '第 2 度的某人', degree: 2, content: 'x', peerAgentId: null, relayVia: 'ccw', relayToken: 'T' })
     echoStore.setSelfRevealed('i1:ccw:T', '2026-07-15T00:00:00.000Z')   // I revealed first
-    const resp = revealer.onInboundReveal({ agentId: 'ccw', intentId: 'i1', relayToken: 'T', peerName: '小Q' })
-    expect(resp).toEqual({ mutual: true, identity: SELF })
-    expect(echoStore.get('i1:ccw:T')!.peer_masked).toBe('小Q')          // W handed me Q's name
+    const resp = revealer.onInboundReveal({ agentId: 'ccw', intentId: 'i1', relayToken: 'T', peerHandle: PEER_HANDLE })
+    expect(resp).toEqual({ mutual: true, handle: SELF_HANDLE })
+    expect(echoStore.get('i1:ccw:T')!.peer_masked).toBe('第 2 度的某人')          // masked stays masked
+    expect(finalized).toContainEqual(['i1:ccw:T', PEER_HANDLE])
     expect(seekStore.get('i1')!.status).toBe('connected')
-    expect(notify).toHaveBeenCalledWith('connected', expect.objectContaining({ intentId: 'i1', peerName: '小Q' }))
+    expect(notify).toHaveBeenCalledWith('connected', expect.objectContaining({ intentId: 'i1' }))
+    expect(notify.mock.calls.find((c) => c[0] === 'connected')![1]).not.toHaveProperty('peerName')
   })
 
   it('retried relay inbound after mutual is idempotent (no duplicate connected beat)', () => {
@@ -224,10 +243,10 @@ describe('makeRevealer — relay branch (2-hop, spec #2)', () => {
     seekStore.create({ id: 'i1', kind: 'seek', topic: 't' })
     echoStore.create({ id: 'i1:ccw:T', seekId: 'i1', peerMasked: '第 2 度的某人', degree: 2, content: 'x', peerAgentId: null, relayVia: 'ccw', relayToken: 'T' })
     echoStore.setSelfRevealed('i1:ccw:T', '2026-07-15T00:00:00.000Z')
-    const first = revealer.onInboundReveal({ agentId: 'ccw', intentId: 'i1', relayToken: 'T', peerName: '小Q' })
-    const second = revealer.onInboundReveal({ agentId: 'ccw', intentId: 'i1', relayToken: 'T', peerName: '小Q' })
-    expect(first).toEqual({ mutual: true, identity: SELF })
-    expect(second).toEqual({ mutual: true, identity: SELF })
+    const first = revealer.onInboundReveal({ agentId: 'ccw', intentId: 'i1', relayToken: 'T', peerHandle: PEER_HANDLE })
+    const second = revealer.onInboundReveal({ agentId: 'ccw', intentId: 'i1', relayToken: 'T', peerHandle: PEER_HANDLE })
+    expect(first).toEqual({ mutual: true, handle: SELF_HANDLE })
+    expect(second).toEqual({ mutual: true, handle: SELF_HANDLE })
     expect(notify.mock.calls.filter((c: any[]) => c[0] === 'connected').length).toBe(1)
   })
 })

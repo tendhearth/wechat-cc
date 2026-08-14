@@ -18,18 +18,27 @@ test('inline companion animation replaces the overview illustration', async ({ p
   await page.mouse.move(box.x + box.width * .72, box.y + box.height * .52)
   await expect(page.locator('#stage-hint')).toContainText('它们发现你了')
 
-  await page.mouse.move(box.x + box.width * .84, box.y + box.height * .64)
-  await expect(page.locator('#stage-hint')).toContainText('点一点水草')
-  await page.mouse.click(box.x + box.width * .84, box.y + box.height * .64)
-  await expect(page.locator('#stage-hint')).toContainText('小螃蟹溜出去')
-  await page.waitForTimeout(1750)
-  await expect(page.locator('#crab-escape')).not.toHaveCSS('opacity', '0')
+  await page.mouse.move(box.x + box.width * .846, box.y + box.height * .754)
+  await expect(page.locator('#stage-hint')).toContainText('点点小螃蟹')
+  await page.mouse.click(box.x + box.width * .846, box.y + box.height * .754)
+  await expect(page.locator('#stage-hint')).toContainText('它要换个地方藏起来')
+  await page.waitForTimeout(1250)
+  await expect(page.locator('#crab-escape')).toHaveCSS('opacity', '0')
 
+  // 这里原本断言的是问候语数组里具体的第 1 句和第 2 句。真正要验的行为是
+  // 「重新悬停会轮到下一句」,而不是「那两句必须是这两个字符串」—— 后者把测试
+  // 和文案锁死,改一个字或调一次顺序就红,而且起始索引本就依赖此前的交互。
+  const bearMsg = page.locator('#bear-message')
   await page.mouse.move(box.x + box.width * .25, box.y + box.height * .55)
-  await expect(page.locator('#bear-message')).toHaveText('我在这儿陪你看鱼。')
+  await expect(bearMsg).toHaveClass(/is-visible/)
+  await expect(bearMsg).not.toBeEmpty()
+  const firstGreeting = (await bearMsg.textContent())?.trim() ?? ''
+
+  // 移开再回来:应当换一句,而不是重复同一句
   await page.mouse.move(box.x + box.width * .62, box.y + box.height * .52)
   await page.mouse.move(box.x + box.width * .25, box.y + box.height * .55)
-  await expect(page.locator('#bear-message')).toHaveText('今天的水光很好看呀。')
+  await expect(bearMsg).toHaveClass(/is-visible/)
+  await expect(bearMsg).not.toHaveText(firstGreeting)
 
   await page.locator('#companion-immersive-start').click()
   await expect(page.locator('.moment-body')).toHaveClass(/is-companion-immersive/)
@@ -43,4 +52,12 @@ test('inline companion animation replaces the overview illustration', async ({ p
   await expect(page.locator('.moment-body')).not.toHaveClass(/is-companion-users-open/)
   await page.locator('#companion-immersive-exit').click()
   await expect(page.locator('.moment-body')).not.toHaveClass(/is-companion-immersive/)
+
+  const desktopPagePromise = page.context().waitForEvent('page')
+  await page.locator('#companion-desktop-start').click()
+  const desktopPage = await desktopPagePromise
+  await desktopPage.waitForLoadState()
+  await expect(desktopPage.locator('#companion-stage')).toBeVisible()
+  await expect(desktopPage.locator('#companion-window-close')).toBeVisible()
+  await desktopPage.close()
 })

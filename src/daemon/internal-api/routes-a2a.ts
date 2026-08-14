@@ -6,6 +6,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { errMsg, type InternalApiDeps, type RouteTable } from './types'
+import { A2A_PROTO_VERSION } from '../../core/a2a-intent'
 import type {
   A2ASendRequestT,
   A2APreviewRequestT,
@@ -31,6 +32,14 @@ export function a2aRoutes(deps: InternalApiDeps): RouteTable {
       if (agent.paused) {
         deps.a2a.recordEvent({ direction: 'out', agent_id, text, status: 'agent_paused' })
         return { status: 200, body: { ok: false, error: 'agent_paused' } }
+      }
+      // A url-less mailbox peer (pairing-code feature) can't take this
+      // push-notify test — mailbox delivery isn't wired into this legacy
+      // dashboard/CLI helper. Fail closed instead of calling client.send
+      // with an undefined url.
+      if (!agent.url) {
+        deps.a2a.recordEvent({ direction: 'out', agent_id, text, status: 'http_error' })
+        return { status: 200, body: { ok: false, error: 'agent_has_no_url' } }
       }
       const r = await deps.a2a.client.send({
         url: agent.url,
@@ -71,6 +80,12 @@ export function a2aRoutes(deps: InternalApiDeps): RouteTable {
         if (agent.paused) {
           deps.a2a.recordEvent({ direction: 'out', agent_id, text, status: 'agent_paused' })
           return { status: 200, body: { ok: false, direction: 'out', error: 'agent_paused' } }
+        }
+        // A url-less mailbox peer (pairing-code feature) can't take this
+        // push-notify test — same fail-closed guard as /v1/a2a/send.
+        if (!agent.url) {
+          deps.a2a.recordEvent({ direction: 'out', agent_id, text, status: 'http_error' })
+          return { status: 200, body: { ok: false, direction: 'out', error: 'agent_has_no_url' } }
         }
         const r = await deps.a2a.client.send({
           url: agent.url, bearer: agent.outbound_api_key,
@@ -138,13 +153,15 @@ export function a2aRoutes(deps: InternalApiDeps): RouteTable {
       const { url } = body as A2APreviewRequestT
       try {
         const card = await deps.a2a.client.fetchAgentCard(url)
-        return { status: 200, body: card }
+        // Missing proto_version on the card means a pre-versioning peer ⇒ 1.
+        const proto_version = card.proto_version ?? 1
+        return { status: 200, body: { ...card, proto_version, proto_mismatch: proto_version !== A2A_PROTO_VERSION } }
       } catch (err) {
         return { status: 200, body: { error: errMsg(err) } }
       }
     },
 
-    'POST /v1/a2a/install': (_q, body) => {
+    'POST /v1/a2a/install': async (_q, body) => {
       if (!deps.a2a) return { status: 503, body: { error: 'a2a_not_wired' } }
       // Body is pre-validated via A2AInstallRequest schema.
       const { id, name, url, outbound_api_key } = body as A2AInstallRequestT
@@ -157,6 +174,18 @@ export function a2aRoutes(deps: InternalApiDeps): RouteTable {
         return { status: 200, body: { ok: false, error: 'outbound_api_key is required' } }
       }
       try {
+        // Best-effort proto_version capture: fetch the peer's card; on ANY
+        // failure leave the field unset (offline installs keep working —
+        // unset = unknown = treated as 1). Mismatch warns, never refuses.
+        let proto_version: number | undefined
+        try {
+          const card = await deps.a2a.client.fetchAgentCard(url)
+          proto_version = card.proto_version ?? 1
+          if (proto_version !== A2A_PROTO_VERSION) {
+            deps.log?.('A2A', `peer "${id}" advertises proto_version=${proto_version}, ours=${A2A_PROTO_VERSION} — best-effort interop`)
+          }
+        } catch { /* unreachable/offline peer: install proceeds, version unknown */ }
+
         const inboundKey = `wc_${randomBytes(16).toString('hex')}`
         deps.a2a.registry.add({
           id, name, url,
@@ -165,6 +194,7 @@ export function a2aRoutes(deps: InternalApiDeps): RouteTable {
           capabilities: [],
           paused: false,
           transport: 'push',
+          ...(proto_version !== undefined ? { proto_version } : {}),
         })
         return { status: 200, body: { ok: true, inbound_api_key: inboundKey } }
       } catch (err) {
