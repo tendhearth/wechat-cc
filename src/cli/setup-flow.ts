@@ -193,7 +193,10 @@ function extractAvatarCandidate(obj: unknown, depth = 0): string | null {
   return null
 }
 
-async function defaultFetchBinary(url: string, timeoutMs = 10_000): Promise<Buffer> {
+/** Exported for the default-path smoke test in setup-flow.test.ts — every
+ *  other test injects `fetchBinary`, which left this, the only path production
+ *  runs, unexercised. See src/lib/injectable-default-seams.test.ts. */
+export async function defaultFetchBinary(url: string, timeoutMs = 10_000): Promise<Buffer> {
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), timeoutMs)
   try {

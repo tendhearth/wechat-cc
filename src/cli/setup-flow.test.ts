@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { determineScenario, pollSetupQrStatus, requestSetupQrCode } from './setup-flow'
+import { determineScenario, pollSetupQrStatus, requestSetupQrCode, defaultFetchBinary } from './setup-flow'
 import { avatarInfo } from '../core/avatar/store'
 
 describe('setup-flow', () => {
@@ -235,5 +235,46 @@ describe('determineScenario', () => {
     } finally {
       rmSync(accountsDir, { recursive: true, force: true })
     }
+  })
+})
+
+// Smoke test for the DEFAULT binary fetcher — the path production takes.
+//
+// Every other test here injects `fetchBinary`, so `defaultFetchBinary` was
+// never executed by the suite (see src/lib/injectable-default-seams.test.ts:
+// two shipped bugs on 2026-08-14 lived in exactly that gap). It is hermetic
+// despite doing a real fetch: the request goes to a Bun.serve on 127.0.0.1,
+// so this is real HTTP with no external network and nothing to be flaky about.
+describe('defaultFetchBinary (real fetch, local server)', () => {
+  it('fetches bytes over real HTTP', async () => {
+    const server = Bun.serve({
+      hostname: '127.0.0.1', port: 0,
+      fetch: () => new Response(new Uint8Array([1, 2, 3, 4])),
+    })
+    try {
+      const buf = await defaultFetchBinary(`http://127.0.0.1:${server.port}/x.png`)
+      expect([...buf]).toEqual([1, 2, 3, 4])
+    } finally { server.stop(true) }
+  })
+
+  it('throws with the status and body when the server refuses', async () => {
+    const server = Bun.serve({
+      hostname: '127.0.0.1', port: 0,
+      fetch: () => new Response('nope', { status: 404 }),
+    })
+    try {
+      await expect(defaultFetchBinary(`http://127.0.0.1:${server.port}/x.png`))
+        .rejects.toThrow(/404.*nope/)
+    } finally { server.stop(true) }
+  })
+
+  it('aborts rather than hanging when the server never responds', async () => {
+    const server = Bun.serve({
+      hostname: '127.0.0.1', port: 0,
+      fetch: () => new Promise<Response>(() => {}),   // never resolves
+    })
+    try {
+      await expect(defaultFetchBinary(`http://127.0.0.1:${server.port}/x.png`, 50)).rejects.toThrow()
+    } finally { server.stop(true) }
   })
 })
