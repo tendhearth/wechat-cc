@@ -758,4 +758,26 @@ describe('resolveForwardBudget', () => {
     expect(resolveForwardBudget({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }))
       .toEqual({ per_sender: 30, window_ms: 3_600_000 })
   })
+
+  it('carries knowledge_embed_runtime through — a field declared only in the type is silently dropped', () => {
+    // loadAgentConfig is an allow-list: a zod schema plus a per-field
+    // pass-through. Adding the property to the AgentConfig interface alone
+    // typechecks and does nothing at runtime, which is exactly what happened
+    // — the daemon kept spawning the Python embed subprocess with
+    // `knowledge_embed_runtime: "js"` sitting in agent-config.json, and the
+    // only symptom was a process that should not have been there.
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-runtime-'))
+    writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+      provider: 'claude', knowledge_enabled: true, knowledge_embed_runtime: 'js',
+    }))
+    expect(loadAgentConfig(dir).knowledge_embed_runtime).toBe('js')
+  })
+
+  it('rejects a knowledge_embed_runtime that is not one of the two runtimes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-runtime-bad-'))
+    writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+      provider: 'claude', knowledge_embed_runtime: 'rust',
+    }))
+    expect(loadAgentConfig(dir).knowledge_embed_runtime).toBeUndefined()
+  })
 })

@@ -196,6 +196,7 @@ const AgentConfigSchema = z.object({
   knowledge_source_dir: z.string().optional(),
   knowledge_embed_model: z.string().optional(),
   knowledge_embed_script: z.string().optional(),
+  knowledge_embed_runtime: z.enum(['python', 'js']).optional(),
   knowledge_owner: z.string().optional(),
 })
 
@@ -275,6 +276,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.knowledge_source_dir === 'string' ? { knowledge_source_dir: parsed.knowledge_source_dir } : {}),
       ...(typeof parsed.knowledge_embed_model === 'string' ? { knowledge_embed_model: parsed.knowledge_embed_model } : {}),
       ...(typeof parsed.knowledge_embed_script === 'string' ? { knowledge_embed_script: parsed.knowledge_embed_script } : {}),
+      ...(parsed.knowledge_embed_runtime === 'python' || parsed.knowledge_embed_runtime === 'js' ? { knowledge_embed_runtime: parsed.knowledge_embed_runtime } : {}),
       ...(typeof parsed.knowledge_owner === 'string' ? { knowledge_owner: parsed.knowledge_owner } : {}),
     }
   } catch {
