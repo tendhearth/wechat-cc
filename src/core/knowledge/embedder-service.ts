@@ -32,6 +32,22 @@ export interface MakeEmbedderServiceOpts {
 export interface EmbedderService {
   model_id: string
   embed(texts: string[]): Promise<number[][]>
+  /**
+   * Load the model now, so the first real caller does not pay for it.
+   *
+   * The model loads on the first `embed()`. At boot the indexer frequently
+   * has nothing new — it logs `0 chunk(s) embedded` without calling embed at
+   * all — so nothing loaded the model until a user query arrived. hearth's
+   * federated client allows a source 5s, and loading a 90MB ONNX model does
+   * not fit in 5s, so the first federated query after every daemon restart
+   * timed out and reported "no results", which is indistinguishable from a
+   * genuine miss. Measured on the live daemon: first query 5801ms → timeout →
+   * 0 hits; second query 396ms → 20 hits.
+   *
+   * Never rejects: bootstrap calls this fire-and-forget, and an optional
+   * optimisation must not be able to fail a boot.
+   */
+  warm(): Promise<void>
   close(): Promise<void>
 }
 
@@ -80,9 +96,27 @@ export function makeEmbedderService(opts: MakeEmbedderServiceOpts): EmbedderServ
     }
   }
 
+  let warmed = false
+  async function warm(): Promise<void> {
+    if (warmed) return
+    warmed = true
+    try {
+      // One tiny embed is enough — the cost being paid here is the model
+      // load inside the subprocess, not the tokens.
+      await embed(['warm'])
+    } catch {
+      // Swallowed on purpose. A failure here (no model yet, no network,
+      // broken script) must not surface as a boot error; the next real
+      // embed() will hit the same failure and report it where it matters.
+      // Left `warmed = true` so a permanently broken embedder is not
+      // retried on every subsequent warm() call.
+    }
+  }
+
   return {
     model_id: opts.model_id,
     embed,
+    warm,
     close,
   }
 }

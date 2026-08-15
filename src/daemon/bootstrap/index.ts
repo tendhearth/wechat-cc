@@ -502,6 +502,16 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     )
     // Backfill — deferred one tick so it never delays buildBootstrap's return.
     setTimeout(() => { void runKnowledgeAdapter(true) }, 0)
+    // Warm the model on the same deferred tick, AFTER the backfill is
+    // scheduled. The backfill often finds nothing new (`0 chunk(s) embedded`)
+    // and then never calls embed, so without this the model stays unloaded
+    // until a user query arrives — and hearth's federated client gives a
+    // source 5s, which a 90MB ONNX load does not fit into. Measured on the
+    // live daemon: first federated query after a restart took 5801ms, timed
+    // out, and reported 0 hits; the second took 396ms and returned 20.
+    // Fire-and-forget and non-rejecting by contract (see warm()'s doc), so it
+    // can only cost time, never a boot.
+    if (embedder) setTimeout(() => { void embedder.warm() }, 0)
     const knowledgeAdapterTimer = setInterval(() => { void runKnowledgeAdapter(false) }, 5 * 60_000)
     knowledgeAdapterTimer.unref()
     knowledge = {
