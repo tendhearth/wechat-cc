@@ -177,7 +177,21 @@ export function makeEmbedRunner(opts: MakeEmbedRunnerOpts): EmbedRunner {
         clearTimeout(timer)
       }
 
-      const parsed = JSON.parse(line) as { vectors: number[][] }
+      const parsed = JSON.parse(line) as { vectors?: number[][]; error?: string }
+      // The subprocess reports failures as {"error": "..."} with no `vectors`
+      // key. Reading `parsed.vectors.length` unconditionally turned every such
+      // failure into "undefined is not an object (evaluating
+      // 'parsed.vectors.length')" and discarded the only text that said what
+      // was wrong — which is half the reason the bare-script relative-import
+      // bug survived into a release with its real message unread in the pipe.
+      if (typeof parsed.error === 'string') {
+        throw new Error(`embed subprocess error: ${parsed.error}`)
+      }
+      if (!Array.isArray(parsed.vectors)) {
+        throw new Error(
+          `embed subprocess returned neither vectors nor an error — got ${line.slice(0, 200)}`,
+        )
+      }
       if (parsed.vectors.length !== texts.length) {
         throw new Error(
           `embed subprocess returned ${parsed.vectors.length} vector(s) for ${texts.length} text(s) — refusing to index a mismatched batch`,
