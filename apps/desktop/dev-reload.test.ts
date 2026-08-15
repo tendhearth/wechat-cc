@@ -66,9 +66,23 @@ describe('makeLiveReload', () => {
     const reader = res.body!.getReader()
     await reader.read()
     lr.watch()
-    writeFileSync(join(root, 'touched.js'), '// x')
-    const chunk = await reader.read()
-    expect(new TextDecoder().decode(chunk.value!)).toContain('event: reload')
-    lr.close()
+    // Touch repeatedly instead of once. `watch()` registers an fs watcher
+    // asynchronously, so a single write issued immediately after it can land
+    // before the watcher is listening — the event is never delivered, the
+    // read below never resolves, and the test dies on vitest's 5s timeout.
+    // That is what made this the flakiest test in the suite (three failures
+    // across one day's CI, always on the slower runners). Re-touching until
+    // the event arrives removes the race without betting on a fixed delay.
+    const chunkPromise = reader.read()
+    const ticker = setInterval(() => {
+      writeFileSync(join(root, 'touched.js'), `// ${Date.now()}`)
+    }, 25)
+    try {
+      const chunk = await chunkPromise
+      expect(new TextDecoder().decode(chunk.value!)).toContain('event: reload')
+    } finally {
+      clearInterval(ticker)
+      lr.close()
+    }
   })
 })

@@ -321,7 +321,7 @@ describe('startLongPollLoops', () => {
       parse: (us, deps) => parseUpdates(us, deps),
       resolveUserName: () => undefined,
     })
-    await new Promise(r => setTimeout(r, 30))
+    await waitFor(() => seen.length >= 2)
     expect(seen).toEqual(['a', 'b'])
     expect(getUpdates).toHaveBeenCalledWith('A1', 'https://x', 'T', '')
     // second call uses updated syncBuf from first response (4th positional arg)
@@ -352,7 +352,7 @@ describe('startLongPollLoops', () => {
       resolveUserName: () => undefined,
       onPollCycle,
     })
-    await new Promise(r => setTimeout(r, 30))
+    await waitFor(() => onPollCycle.mock.calls.length > 0)
     await handle.stop()
     expect(onPollCycle).toHaveBeenCalled()
   })
@@ -378,7 +378,7 @@ describe('startLongPollLoops', () => {
       resolveUserName: () => undefined,
       onPollCycle,
     })
-    await new Promise(r => setTimeout(r, 40))
+    await waitFor(() => inbound >= 2)
     await handle.stop()
     expect(inbound).toBe(2)
     // ≥1 per-message stamp + the per-round-trip stamp → strictly more than the
@@ -400,7 +400,7 @@ describe('startLongPollLoops', () => {
       resolveUserName: () => undefined,
       log: () => {},
     })
-    await new Promise(r => setTimeout(r, 50))
+    await waitFor(() => getUpdates.mock.calls.length > 0)
     expect(getUpdates).toHaveBeenCalled()
     expect(onInbound).not.toHaveBeenCalled()  // no updates
     await handle.stop()
@@ -426,7 +426,7 @@ describe('startLongPollLoops', () => {
       resolveUserName: () => undefined,
       onSyncBuf: (id, buf) => { persisted.push([id, buf]) },
     })
-    await new Promise(r => setTimeout(r, 30))
+    await waitFor(() => persisted.some(p => p[0] === 'A1' && p[1] === 'buf2'))
     expect(persisted).toContainEqual(['A1', 'buf2'])
     await handle.stop()
   })
@@ -451,7 +451,7 @@ describe('startLongPollLoops', () => {
       resolveUserName: () => undefined,
       onSyncBuf: () => { order.push('persist') },
     })
-    await new Promise(r => setTimeout(r, 30))
+    await waitFor(() => order.length > 0)
     expect(order[0]).toBe('inbound')
     expect(order.indexOf('persist')).toBeGreaterThan(order.indexOf('inbound'))
     await handle.stop()
@@ -471,7 +471,7 @@ describe('startLongPollLoops', () => {
       resolveUserName: () => undefined,
       onSyncBuf: (_id, buf) => { persisted.push(buf) },
     })
-    await new Promise(r => setTimeout(r, 60))
+    await waitFor(() => persisted.length > 0)
     expect(persisted).toEqual(['buf2'])  // only the first change, not every idle poll
     await handle.stop()
   })
@@ -562,7 +562,7 @@ describe('startLongPollLoops — recordHeartbeat', () => {
       recordHeartbeat,
     })
     // Wait for first poll to complete
-    await new Promise(r => setTimeout(r, 30))
+    await waitFor(() => recordHeartbeat.mock.calls.length > 0)
     await handle.stop()
 
     expect(recordHeartbeat).toHaveBeenCalledWith('A1', expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/))
@@ -576,7 +576,7 @@ describe('startLongPollLoops — recordHeartbeat', () => {
     const h1 = startLongPollLoops({
       accounts: [baseAcct], onInbound: async () => {}, ilink: { getUpdates: okUpdates }, parse: () => [], clearExpired: clearedOk,
     })
-    await new Promise(r => setTimeout(r, 30))
+    await waitFor(() => clearedOk.mock.calls.length > 0)
     await h1.stop()
     expect(clearedOk).toHaveBeenCalledWith('A1')
 
@@ -586,6 +586,9 @@ describe('startLongPollLoops — recordHeartbeat', () => {
       accounts: [baseAcct], onInbound: async () => {}, ilink: { getUpdates: expiredUpdates }, parse: () => [], clearExpired: clearedExpired,
     })
     await h2.stop()
+    // Fixed wait on purpose: this asserts something did NOT happen, and
+    // there is no condition to poll for an absence — you give it a window
+    // and check the window stayed empty.
     await new Promise(r => setTimeout(r, 20))
     expect(clearedExpired).not.toHaveBeenCalled()
   })
@@ -603,6 +606,9 @@ describe('startLongPollLoops — recordHeartbeat', () => {
     // Let the loop run until it self-terminates on expired
     await handle.stop()
     // Give extra tick for the loop's finally to flush
+    // Fixed wait on purpose: this asserts something did NOT happen, and
+    // there is no condition to poll for an absence — you give it a window
+    // and check the window stayed empty.
     await new Promise(r => setTimeout(r, 20))
 
     expect(recordHeartbeat).not.toHaveBeenCalled()
@@ -625,6 +631,9 @@ describe('startLongPollLoops — recordHeartbeat', () => {
       recordHeartbeat,
     })
     // Give enough time for the error path to run but not the 2s retry delay.
+    // Fixed wait on purpose: this asserts something did NOT happen, and
+    // there is no condition to poll for an absence — you give it a window
+    // and check the window stayed empty.
     await new Promise(r => setTimeout(r, 30))
     await handle.stop()
 
