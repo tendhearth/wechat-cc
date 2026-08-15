@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { existsSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { makeJsEmbedder, defaultPipelineFactory } from './js-embedder'
+import { makeJsEmbedder, defaultPipelineFactory, modelCacheDir } from './js-embedder'
 
 // The property this whole migration rests on: transformers.js and the Python
 // embed subprocess produce the SAME vectors for the same model, so switching
@@ -26,8 +25,12 @@ import { makeJsEmbedder, defaultPipelineFactory } from './js-embedder'
 // switching the default while this silently skips would be exactly the
 // mistake this file exists to prevent.
 
-const HF_CACHE = join(homedir(), '.cache', 'huggingface')
-const MODEL_PRESENT = existsSync(HF_CACHE)
+// Gate on the directory transformers.js is actually told to use — see
+// modelCacheDir(). An earlier version of this file checked
+// ~/.cache/huggingface, which is the PYTHON side's cache and not a path
+// transformers.js ever reads; it happened to exist on the machine this was
+// written on, so the gate passed for the wrong reason.
+const MODEL_PRESENT = existsSync(join(modelCacheDir(), 'Xenova', 'bge-small-zh-v1.5'))
 
 // [text, first 8 dims from the Python runner]. Comparing a prefix keeps the
 // fixture readable; cosine below is computed over all 512 dims of the JS

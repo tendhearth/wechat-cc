@@ -27,6 +27,8 @@
  *    rejected promise and are expected to fall back, not crash.
  */
 
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { EmbedderService } from './embedder-service.ts'
 
 /** The slice of transformers.js this module uses, so tests can supply it. */
@@ -55,10 +57,26 @@ export function defaultModelRepo(model_id: string): string {
   return DEFAULT_REPOS[model_id] ?? `Xenova/${model_id}`
 }
 
+/**
+ * Where downloaded model weights live.
+ *
+ * transformers.js defaults to a `.cache/` INSIDE its own node_modules
+ * directory. That is wrong for us three ways: `bun install` wipes it, so
+ * every dependency install re-downloads ~90MB; a packaged app has no
+ * node_modules to write into; and CI cannot cache a path that changes with
+ * the resolved package version. An explicit, stable directory fixes all
+ * three and is what CI keys its model cache on.
+ */
+export function modelCacheDir(): string {
+  return process.env.WECHAT_CC_MODEL_CACHE
+    ?? join(homedir(), '.cache', 'wechat-cc', 'transformers')
+}
+
 export const defaultPipelineFactory: PipelineFactory = async (model) => {
   // Dynamic so the import cost (and its native binding) is only paid when
   // this runtime is actually selected.
-  const { pipeline } = await import('@huggingface/transformers')
+  const { pipeline, env } = await import('@huggingface/transformers')
+  env.cacheDir = modelCacheDir()
   const extractor = await pipeline('feature-extraction', model, { dtype: 'fp32' })
   return extractor as unknown as FeatureExtractor
 }

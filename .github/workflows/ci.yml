@@ -33,6 +33,25 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # The embedding-equivalence test (js-embedder.e2e.test.ts) needs the real
+      # ~90MB ONNX model. Without a cache it would either re-download on every
+      # run or — worse — silently skip, and a silently skipping equivalence
+      # check is exactly how you switch embedding runtimes on a false green.
+      # Keyed on the model id so a model change is a cache miss, not a stale hit.
+      - name: Cache embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/wechat-cc/transformers
+          key: transformers-Xenova-bge-small-zh-v1.5-v1
+
+      # Populate the cache on a miss. Without this the first run has no model,
+      # the equivalence test skips, nothing downloads it, and an empty cache is
+      # saved — so it would skip on every subsequent run too. No-op on a hit.
+      - name: Prefetch embedding model
+        run: >
+          bun -e "import { makeJsEmbedder } from './src/core/knowledge/js-embedder.ts';
+          await makeJsEmbedder({ model_id: 'bge-small-zh-v1.5' }).embed(['warm'])"
+
       - name: Typecheck
         run: bun run typecheck
 
