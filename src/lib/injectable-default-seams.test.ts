@@ -42,6 +42,7 @@ const BOUNDARY: Record<string, string> = {
   defaultSpawn: 'spawns the embed subprocess (src/core/knowledge/embed-runner.ts)',
   defaultSpawnBun: 'spawns `bun add` to realign the codex SDK (src/lib/codex-autofix.ts)',
   defaultImporter: 'dynamic import of the hearth MCP client (src/daemon/hearth-adapter.ts)',
+  defaultPipelineFactory: 'dynamic import of transformers.js + ONNX model load (src/core/knowledge/js-embedder.ts)',
   defaultFetchBinary: 'downloads a release binary over the network (src/cli/setup-flow.ts)',
   defaultProbeCursor: 'spawns the cursor CLI to read its version (src/cli/doctor.ts)',
   defaultProbeGemini: 'spawns the gemini CLI to read its version (src/cli/doctor.ts)',
@@ -59,6 +60,7 @@ const PURE: Record<string, string> = {
   defaultProviderId: 'a provider-name string',
   defaultClaudeProjectsRoot: 'joins a path; no IO at the seam itself',
   defaultSleep: 'setTimeout wrapper',
+  defaultModelRepo: 'maps a model id to a HF repo string; no IO',
   defaultIsWritable: 'a single accessSync, already covered by codex-autofix tests',
 }
 

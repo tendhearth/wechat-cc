@@ -95,6 +95,19 @@ export interface AgentConfig {
   // bootstrap/index.ts's knowledge_enabled block). Optional escape hatch for
   // a non-standard wxsearch install location.
   knowledge_embed_script?: string
+  // Which runtime computes embeddings. 'python' (default) spawns wxsearch's
+  // embed_subprocess.py; 'js' runs transformers.js in-process, with no venv,
+  // no subprocess, and a model that can be warmed directly (see
+  // core/knowledge/js-embedder.ts).
+  //
+  // Still defaulting to 'python' on purpose: the two runtimes produce
+  // equivalent vectors (cosine > 0.9999, so an existing semantic.db stays
+  // valid either way), but 'js' cannot run inside the packaged desktop
+  // sidecar — a `bun build --compile` binary cannot dlopen onnxruntime's
+  // native binding. Selecting 'js' there falls back to 'python' rather than
+  // failing. Flip the default only once that is solved and the equivalence
+  // check runs in CI with a model cache.
+  knowledge_embed_runtime?: 'python' | 'js'
   // Knowledge Graph inproc Task 4 — explicit override for "my own username"
   // fed into rebuildGraphFromSource's `detectOwner` call (graph-build.ts).
   // Optional — absent means "let detectOwner vote from 1:1 message senders"

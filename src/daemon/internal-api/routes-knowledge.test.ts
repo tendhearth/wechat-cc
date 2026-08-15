@@ -262,6 +262,7 @@ describe('knowledgeRoutes', () => {
         const embedder = {
           model_id: 'm',
           embed: async (texts: string[]) => texts.map(() => [1, 0, 0]),
+          warm: async () => {},
           close: async () => {},
         }
         const routesWithEmbedder = knowledgeRoutes(

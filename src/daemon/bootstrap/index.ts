@@ -75,6 +75,7 @@ import { semanticSearch } from '../../core/knowledge/search'
 import { runSourceAdapter } from '../../core/knowledge/source-adapter'
 import { runIndexer } from '../../core/knowledge/indexer'
 import { makeEmbedderService } from '../../core/knowledge/embedder-service'
+import { makeJsEmbedder, withEmbedderFallback } from '../../core/knowledge/js-embedder'
 import { rebuildGraphFromSource } from '../../core/knowledge/graph-build'
 import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
 import { makeFactsApi } from '../../core/knowledge/facts'
@@ -451,7 +452,16 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // in that case, same gating as before this task. NOT closed between
     // cycles — only on daemon shutdown (main.ts reaches it via
     // boot.knowledge.embedder).
-    const embedder = embedScriptPath
+    // Runtime selection. 'js' runs transformers.js in-process — no venv, no
+    // subprocess, and a model that warm() can load directly. It is not the
+    // default: the packaged desktop sidecar is a compiled single file and
+    // cannot dlopen onnxruntime's native binding, so a selection that cannot
+    // load must degrade to the Python path rather than take the daemon's
+    // whole knowledge face down with it. Vectors are equivalent either way
+    // (cosine > 0.9999 — see js-embedder.e2e.test.ts), so switching runtimes
+    // never invalidates an existing semantic.db.
+    const embedRuntime = configuredAgent.knowledge_embed_runtime ?? 'python'
+    const pythonEmbedder = embedScriptPath
       ? makeEmbedderService({
           pythonBin: embedPythonBin,
           scriptPath: embedScriptPath,
@@ -459,6 +469,15 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
           env: embedEnv,
         })
       : undefined
+    const embedder = embedRuntime === 'js'
+      ? withEmbedderFallback(
+          makeJsEmbedder({ model_id: knowledgeEmbedModelId }),
+          pythonEmbedder,
+          err => deps.log('KNOWLEDGE',
+            `embed runtime 'js' unavailable (${err instanceof Error ? err.message : String(err)}) — `
+            + `falling back to the python subprocess for the rest of this run`),
+        )
+      : pythonEmbedder
 
     // Extracted (T7' review Finding 2 + Finding 4) into
     // core/knowledge/cycle.ts's runKnowledgeCycle — adapter-then-indexer
