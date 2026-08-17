@@ -655,6 +655,119 @@ describe('ConversationCoordinator', () => {
     spy.mockRestore()
   })
 
+  // ─── solo/parallel cancel — post-cancel-review CRITICAL 1 ──────────────
+  // Chatroom already had its own AbortController-based preempt loop
+  // (inFlightAborters, tested above under "cancel / preemption"). Solo/
+  // parallel/primary_tool dispatches have no such loop — they're single-
+  // shot — but the acquired SessionHandle DOES support cancel() (forwards
+  // to the provider's AgentSession.cancel). These tests pin that
+  // coordinator.cancel(chatId) actually reaches that handle.
+
+  describe('solo/parallel cancel reaches the in-flight SessionHandle', () => {
+    /** A session whose dispatch() hangs until cancel() is called, at which
+     *  point it yields one result event and completes — models a real
+     *  provider whose cancel() unblocks its dispatch generator at the next
+     *  boundary. cancelSpy lets the test assert cancel() actually fired. */
+    function cancellableHangingSession(): { session: AgentSession; cancelSpy: ReturnType<typeof vi.fn> } {
+      let unblock: (() => void) | undefined
+      const cancelSpy = vi.fn(async () => { unblock?.() })
+      const session: AgentSession = {
+        dispatch() {
+          let finished = false
+          const it: AsyncIterator<AgentEvent> = {
+            next() {
+              if (finished) return Promise.resolve({ value: undefined, done: true })
+              return new Promise<IteratorResult<AgentEvent>>((resolve) => {
+                unblock = () => {
+                  finished = true
+                  resolve({ value: { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }, done: false })
+                }
+              })
+            },
+          }
+          return { [Symbol.asyncIterator]: () => it }
+        },
+        cancel: cancelSpy,
+        async close() {},
+      }
+      return { session, cancelSpy }
+    }
+
+    it('coordinator.cancel(chatId) reaches a hanging solo dispatch: session.cancel fires and the turn ends', async () => {
+      const { session, cancelSpy } = cancellableHangingSession()
+      const acquire = vi.fn(async (req: AcquireRequest) => makeHandle(req.providerId, session as any))
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: makeMockStore(),
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+
+      // No turn in flight yet.
+      expect(c.cancel('chat-1')).toBe(false)
+
+      const dispatchPromise = c.dispatch(inbound('chat-1', 'hi'))
+      // Let acquire()/dispatch() run far enough to register the handle.
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(c.cancel('chat-1')).toBe(true)
+      expect(cancelSpy).toHaveBeenCalledTimes(1)
+
+      // The turn actually ends (collectTurn's `for await` sees the
+      // cancel-triggered result event, then done:true) — dispatch()
+      // resolves instead of hanging forever.
+      await dispatchPromise
+
+      // Cleared after the turn settles.
+      expect(c.cancel('chat-1')).toBe(false)
+    })
+
+    it('coordinator.cancel(chatId) reaches every in-flight participant of a parallel dispatch', async () => {
+      const a = cancellableHangingSession()
+      const b = cancellableHangingSession()
+      const sessionsByProvider: Record<string, ReturnType<typeof cancellableHangingSession>> = { claude: a, codex: b }
+      const acquire = vi.fn(async (req: AcquireRequest) =>
+        makeHandle(req.providerId, sessionsByProvider[req.providerId]!.session as any),
+      )
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'parallel', participants: ['claude', 'codex'] })
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+
+      const dispatchPromise = c.dispatch(inbound('chat-1', 'hi'))
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(c.cancel('chat-1')).toBe(true)
+      expect(a.cancelSpy).toHaveBeenCalledTimes(1)
+      expect(b.cancelSpy).toHaveBeenCalledTimes(1)
+
+      await dispatchPromise
+      expect(c.cancel('chat-1')).toBe(false)
+    })
+  })
+
   // ─── primary_tool mode (RFC 03 P4) ──────────────────────────────────
 
   describe('primary_tool mode (P4)', () => {

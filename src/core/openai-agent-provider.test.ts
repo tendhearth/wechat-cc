@@ -171,6 +171,54 @@ describe('openai provider loop', () => {
     await session.close()
   })
 
+  it('cancel() called between dispatch() returning and the first .next() still reaches the turn (Important 3 regression)', async () => {
+    // Regression: the AbortController used to be constructed INSIDE the
+    // generator body, which doesn't run until the caller's first .next() —
+    // a cancel() landing before that point would be silently lost. Never
+    // calling iterator.next() before cancel() proves the controller is now
+    // live the instant dispatch() returns.
+    let streamTurnCalls = 0
+    const alwaysToolCall: ChatModelClient = {
+      streamTurn(_messages, _tools) {
+        streamTurnCalls++
+        const id = `c${streamTurnCalls}`
+        async function* deltas() {
+          yield { kind: 'tool_call' as const, id, name: 'reply', input: { text: 'hi' } }
+        }
+        return {
+          deltas: deltas(),
+          finished: Promise.resolve({
+            messages: [{ role: 'assistant', content: '' } as any],
+            toolCalls: [{ id, name: 'reply', input: { text: 'hi' } }],
+          }),
+        }
+      },
+      async generate() { return 'ok' },
+      userMessage: (t) => ({ role: 'user', content: t } as any),
+      systemMessage: (t) => ({ role: 'system', content: t } as any),
+      toolResultMessage: (id, name, r) => ({ role: 'tool', content: `${name}:${JSON.stringify(r)}` } as any),
+    }
+    const provider = createOpenAiAgentProvider({
+      makeChatModel: () => alwaysToolCall,
+      makeMcpBridge: async () => fakeBridge([]),
+    })
+    const session = await provider.spawn({ alias: 'a', path: '/tmp' }, guestSpawn as any)
+
+    const iterable = session.dispatch('go')
+    // No iteration at all yet — cancel() immediately.
+    await session.cancel!()
+
+    const events: AgentEvent[] = []
+    for await (const ev of iterable) events.push(ev)
+
+    // The very first boundary check (top of round 1, before any streamTurn
+    // call) must already see the abort.
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'error', code: 'cancelled' }))
+    expect(events.some((e) => e.kind === 'result')).toBe(true)
+    expect(streamTurnCalls).toBe(0)
+    await session.close()
+  })
+
   it('cancel() with no dispatch in flight is a safe no-op', async () => {
     const provider = createOpenAiAgentProvider({
       makeChatModel: () => scriptedModel(),

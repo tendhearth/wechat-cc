@@ -450,6 +450,75 @@ describe('createCursorAgentProvider', () => {
     await consumePromise
   })
 
+  it('turn 1s delayed finally does not clear turn 2s activeRun (identity guard regression)', async () => {
+    // Without the identity guard, turn 1's `finally { activeRun = null }`
+    // unconditionally nulls activeRun — even if turn 2 has since started
+    // and reassigned it to its own run. This proves the finally is
+    // scoped: only the turn that actually owns the current activeRun may
+    // clear it.
+    const gates: Array<() => void> = []
+    const cancelSpies: ReturnType<typeof vi.fn>[] = []
+    let call = 0
+    const agent = {
+      agentId: 'agent-test-1',
+      async send() {
+        call++
+        const cancelSpy = vi.fn(async () => {})
+        cancelSpies.push(cancelSpy)
+        let resolveGate!: () => void
+        const gate = new Promise<void>((resolve) => { resolveGate = resolve })
+        gates.push(resolveGate)
+        return {
+          id: `run-${call}`,
+          agentId: 'agent-test-1',
+          async *stream() {
+            await gate
+            yield { type: 'status', status: 'FINISHED' }
+          },
+          cancel: cancelSpy,
+        }
+      },
+      close() {},
+    }
+    const sdk = makeFakeSdk(agent as never)
+    const provider = createCursorAgentProvider({ sdk, apiKey: 'test-key' })
+    const session = await provider.spawn(
+      { alias: 'P', path: '/tmp/proj' },
+      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' },
+    )
+
+    // Turn 1: drive it up to the point where activeRun = run1 (blocked
+    // inside run1.stream(), awaiting gates[0]).
+    const it1 = session.dispatch('one')[Symbol.asyncIterator]()
+    const p1 = it1.next()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // Turn 2: same — activeRun becomes run2, overwriting run1.
+    const it2 = session.dispatch('two')[Symbol.asyncIterator]()
+    const p2 = it2.next()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // Let turn 1 finish. Its finally must NOT clear activeRun, because
+    // activeRun now points at run2, not run1.
+    gates[0]!()
+    await p1
+    let r1 = await it1.next()
+    while (!r1.done) r1 = await it1.next()
+
+    // cancel() must still reach run 2 — proves activeRun survived turn 1's finally.
+    await session.cancel!()
+    expect(cancelSpies[1]).toHaveBeenCalledTimes(1)
+    expect(cancelSpies[0]).not.toHaveBeenCalled()
+
+    // Cleanup: finish turn 2 too so nothing is left hanging.
+    gates[1]!()
+    await p2
+    let r2 = await it2.next()
+    while (!r2.done) r2 = await it2.next()
+  })
+
   it('cancel() is a safe no-op when the run has no .cancel method', async () => {
     const agent = {
       agentId: 'agent-test-1',

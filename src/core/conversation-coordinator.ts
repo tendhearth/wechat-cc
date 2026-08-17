@@ -380,6 +380,27 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
   // loops. dispatchChatroom registers; coordinator.cancel() signals; /stop
   // in mode-commands triggers cancel before flipping mode.
   const inFlightAborters = new Map<string, AbortController>()
+  // Post-cancel-review CRITICAL 1 — chatroom's own preempt-loop AbortController
+  // above has no analogue for solo/parallel/primary_tool: those are single-shot
+  // dispatches with no round-boundary loop to abort, but the SessionHandle they
+  // acquire from SessionManager DOES support cancel() (forwards to the
+  // provider's AgentSession.cancel — see session-manager.ts). Without this,
+  // coordinator.cancel() (and therefore /stop) was a no-op for every mode
+  // except chatroom, even though every provider now implements cancel().
+  // chatId → the set of in-flight handles' cancel closures (a Set, not a
+  // single slot, because dispatchParallel acquires N handles concurrently
+  // for one chatId). Registered right after acquire, unregistered when the
+  // turn settles — same lifecycle shape as inFlightAborters.
+  const inFlightHandleCancels = new Map<string, Set<() => void>>()
+  function registerHandleCancel(chatId: string, fn: () => void): () => void {
+    let set = inFlightHandleCancels.get(chatId)
+    if (!set) { set = new Set(); inFlightHandleCancels.set(chatId, set) }
+    set.add(fn)
+    return () => {
+      set!.delete(fn)
+      if (set!.size === 0) inFlightHandleCancels.delete(chatId)
+    }
+  }
   // PR C2 — per-chat promise that resolves when the active dispatchChatroom
   // call has finished its finally block (aborter slot cleared). A NEW
   // chatroom dispatch in the same chat awaits this so the "latest user msg
@@ -494,6 +515,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     const startedAt = nowMs()
     let outcome: TurnRecord['outcome'] = 'error'
     let summary: TurnSummary | undefined
+    let unregisterCancel: (() => void) | undefined
     try {
       const handle = await deps.manager.acquire({
         alias: proj.alias,
@@ -503,6 +525,10 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         tierProfile,
         permissionMode: deps.permissionMode,
       })
+      // Registered before collectTurn starts draining so /stop can reach
+      // this turn for its entire lifetime — cleared in the finally below,
+      // same lifecycle as chatroom's inFlightAborters.
+      unregisterCancel = registerHandleCancel(msg.chatId, () => { void handle.cancel?.() })
       const text = deps.format(msg)
       summary = await collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs })
       const assistantTexts = summary.assistantText
@@ -540,6 +566,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         await deps.sendAssistantText?.(msg.chatId, t)
       }
     } finally {
+      unregisterCancel?.()
       const endedAt = nowMs()
       deps.recordTurn?.({
         chatId: msg.chatId,
@@ -720,11 +747,24 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     )
     const text = deps.format(msg)
     const startedAt = nowMs()
-    const settled = await Promise.allSettled(acquired.map(a =>
-      a.status === 'fulfilled'
-        ? collectTurn(a.value.dispatch(text), { timeoutMs: deps.turnTimeoutMs })
-        : Promise.reject(a.reason),
-    ))
+    // Register every acquired handle's cancel BEFORE dispatching — /stop must
+    // reach whichever participants are in flight, not just the first. Each
+    // handle gets its own slot in the shared per-chat set (dispatchSolo's
+    // single-slot registration doesn't fit here: N participants share one
+    // chatId).
+    const unregisterCancels = acquired.map(a =>
+      a.status === 'fulfilled' ? registerHandleCancel(msg.chatId, () => { void a.value.cancel?.() }) : undefined,
+    )
+    let settled: PromiseSettledResult<TurnSummary>[]
+    try {
+      settled = await Promise.allSettled(acquired.map(a =>
+        a.status === 'fulfilled'
+          ? collectTurn(a.value.dispatch(text), { timeoutMs: deps.turnTimeoutMs })
+          : Promise.reject(a.reason),
+      ))
+    } finally {
+      for (const u of unregisterCancels) u?.()
+    }
     // Batch end — all participants dispatched together and allSettled awaits
     // them all, so a single endedAt is the honest wall-clock for the round.
     const endedAt = nowMs()
@@ -976,11 +1016,22 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       deps.conversationStore.set(chatId, mode)
     },
     cancel(chatId) {
+      let cancelledAny = false
       const ac = inFlightAborters.get(chatId)
-      if (!ac) return false
-      ac.abort()
-      // delete is done in dispatchChatroom's finally; double-delete is harmless.
-      return true
+      if (ac) {
+        ac.abort()
+        // delete is done in dispatchChatroom's finally; double-delete is harmless.
+        cancelledAny = true
+      }
+      // Post-cancel-review CRITICAL 1 — solo/parallel/primary_tool turns
+      // have no aborter loop, but their acquired SessionHandle(s) do
+      // support cancel(); invoke every in-flight one for this chat.
+      const handleCancels = inFlightHandleCancels.get(chatId)
+      if (handleCancels && handleCancels.size > 0) {
+        for (const fn of handleCancels) fn()
+        cancelledAny = true
+      }
+      return cancelledAny
     },
     runExclusive: mutex.runExclusive,
     dispatch,

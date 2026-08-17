@@ -352,7 +352,16 @@ function makeCursorSession(
         } catch (err) {
           yield em.error(err)
         } finally {
-          activeRun = null
+          // Identity guard — a stale finally from an EARLIER turn must not
+          // clear a NEWER turn's activeRun out from under it. Concretely:
+          // turn 1's generator body can still be unwinding (e.g. a slow
+          // `for await` cleanup) after turn 2 has already called
+          // agent.send() and reassigned activeRun — without this check,
+          // turn 1's finally landing after that reassignment would null
+          // out turn 2's still-in-flight run, making turn 2 uncancellable.
+          // See agy-agent-provider.ts's `currentAbort === abort` guard for
+          // the same class of bug (task review round 2, CRITICAL there).
+          if (activeRun === run) activeRun = null
         }
       })()
     },

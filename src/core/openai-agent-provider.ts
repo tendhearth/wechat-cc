@@ -91,11 +91,19 @@ function makeOpenAiSession(args: {
   return {
     dispatch(text: string): AsyncIterable<AgentEvent> {
       messages.push(chatModel.userMessage(text))
+      // Hoisted out of the generator body: an async generator FUNCTION's
+      // code doesn't run until the caller's first `.next()` — constructing
+      // the controller inside `run()` would leave `activeAbort` null/stale
+      // until then, so a cancel() called between dispatch() returning and
+      // the first iteration would be silently lost. Creating it here, in
+      // dispatch()'s own synchronous body, guarantees activeAbort is set
+      // the instant dispatch() is called. Mirrors gemini-agent-provider.ts's
+      // createGeminiAgentProvider dispatch(), which has the same comment.
+      const abort = new AbortController()
+      activeAbort = abort
       return (async function* run(): AsyncIterable<AgentEvent> {
         if (firstRef.first) { firstRef.first = false; yield { kind: 'init', sessionId } }
         const em = makeTurnEmitter()
-        const abort = new AbortController()
-        activeAbort = abort
         try {
           let steps = 0
           for (;;) {
