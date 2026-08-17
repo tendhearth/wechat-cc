@@ -21,11 +21,14 @@ describe('AsyncQueue — contract snapshot (collectTurn watchdog depends on it)'
     expect((await it.next()).done).toBe(true)
   })
 
-  it('return() resolves synchronously-shaped (same-tick) and closes the queue', async () => {
+  it('return() resolves same-tick (the collectTurn watchdog contract) and closes the queue', async () => {
     const q = new AsyncQueue<number>()
     const it = q.iterable()[Symbol.asyncIterator]()
-    const r = await it.return!()
-    expect(r.done).toBe(true)
+    let settled = false
+    const p = it.return!().then(r => { settled = true; return r })
+    await Promise.resolve()          // one microtask — a sync-resolved promise has settled by now
+    expect(settled).toBe(true)
+    expect((await p).done).toBe(true)
     expect((await it.next()).done).toBe(true)
   })
 })

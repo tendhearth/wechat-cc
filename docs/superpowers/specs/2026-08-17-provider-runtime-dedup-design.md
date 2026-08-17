@@ -79,6 +79,12 @@ export function childEnvFor(spec: McpStdioSpec, mcpEnv?: Record<string, string>)
 (codex:206-217、cursor:255-258、mcp-specs:118)与 openai-mcp-bridge:38 的
 `...process.env` 展开统一改走 `childEnvFor`。
 
+[实现落地时收窄:codex/cursor/mcp-specs 这 3 处是 CORE 网关的
+`mergeEnvIntoMcpServers` 调用——把会话级 env 并入 spec、再序列化进 SDK
+config,那里继承完整宿主 env 是错的,因此维持原样未改走
+`childEnvFor`;`childEnvFor` 真正落地在两处"真子进程 spawn"点:
+openai-mcp-bridge 的 `connectStdio` 与 gemini 的 `connectWechatMcp`。]
+
 ### 1b. `auth-fail.ts`
 
 ```ts
@@ -196,6 +202,11 @@ gemini-agent-provider 内部传导;`runDispatchLoop` 导出签名不变)。
 - 风险点:claude 循环任何行为漂移都会被 fake-sdk 契约测试与 e2e 抓住;
   emitter 的 result 合成若克扣 SDK 权威值会破坏 session resume——finish
   overrides 的"整体覆盖"语义是硬约束,单测锁死。
+- 已知债:`validateMode` 只挡"经 setMode 重新进入"这条路——一条已持久化的
+  `gemini+primary_tool` 旧行不经过 setMode 就直接被派发,delegate-less 照常
+  运行(capability matrix 如实报 delegate: 'unloaded',并不会挡下已存在的
+  行)。是走迁移脚本还是在 dispatch 时补一条提示,刻意推迟到后续 follow-up
+  决定;受影响面仅自己的开发机(目前无其他已知持久化实例)。
 
 ## 6. Non-goals(显式)
 

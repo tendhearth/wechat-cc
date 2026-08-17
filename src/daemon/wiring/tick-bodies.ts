@@ -410,7 +410,9 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       args.claim()
       const tickText = args.buildText()
       try {
-        for await (const _ev of handle.dispatch(tickText)) { /* drain */ }
+        for await (const ev of handle.dispatch(tickText)) {
+          if (ev.kind === 'error') deps.log('SCHED', `companion tick dispatch error event: ${ev.code ? `${ev.code}: ` : ''}${ev.message}`)
+        }
       } catch (err) {
         deps.log('SCHED', `companion tick dispatch failed: ${errMsg(err)}`)
       }
