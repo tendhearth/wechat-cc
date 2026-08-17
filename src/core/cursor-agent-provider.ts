@@ -16,6 +16,8 @@
  */
 import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type ProviderCapabilities } from './agent-provider'
 import type { TierProfile } from './user-tier'
+import type { McpStdioSpec } from './mcp-stdio-spec'
+import { makeTurnEmitter } from './turn-emitter'
 import { log } from '../lib/log'
 
 /**
@@ -207,17 +209,6 @@ export interface CursorSdkNamespace {
   }
 }
 
-/**
- * Spec for an MCP server passed to Cursor. Mirrors the stdio variant
- * of Cursor's McpServerConfig (command + args + env), which matches
- * our existing McpStdioSpec from src/daemon/bootstrap/mcp-specs.ts.
- */
-export interface CursorMcpStdioSpec {
-  command: string
-  args?: string[]
-  env?: Record<string, string>
-}
-
 export interface CursorAgentProviderOptions {
   /** The dynamically-imported `@cursor/sdk` namespace (bootstrap loads it via `await import('@cursor/sdk')`). */
   sdk: CursorSdkNamespace
@@ -226,7 +217,7 @@ export interface CursorAgentProviderOptions {
   /** Optional Cursor model id (e.g. `'composer-2'`). When omitted, SDK picks its default. */
   model?: string
   /** MCP servers passed into Agent.create — `wechat` + `delegate` come from the bootstrap. */
-  mcpServers?: Record<string, CursorMcpStdioSpec>
+  mcpServers?: Record<string, McpStdioSpec>
 }
 
 interface CursorAgentLike {
@@ -310,7 +301,7 @@ function makeCursorSession(
   let turnCounter = 0
   return {
     dispatch(text: string) {
-      const startMs = Date.now()
+      const em = makeTurnEmitter()
       turnCounter++
       const myTurns = turnCounter
       return (async function* dispatchGenerator() {
@@ -318,7 +309,7 @@ function makeCursorSession(
         try {
           run = await agent.send(text)
         } catch (err) {
-          yield { kind: 'error', message: err instanceof Error ? err.message : String(err) } as const
+          yield em.error(err)
           return
         }
         let sawFinish = false
@@ -336,31 +327,24 @@ function makeCursorSession(
             // Special-case status: FINISHED — emit our own result with real timings.
             if (raw?.type === 'status' && (raw as { status?: string }).status === 'FINISHED') {
               sawFinish = true
-              yield {
-                kind: 'result',
-                sessionId: agent.agentId,
-                numTurns: myTurns,
-                durationMs: Date.now() - startMs,
-              } as const
+              yield em.finish({ sessionId: agent.agentId, numTurns: myTurns })
               continue
             }
             // All other variants → mapper handles them
             for (const ev of mapCursorMessage(raw, mcpServerNames, agent.agentId)) {
-              yield ev
+              // B3: mapper stays a pure function, auth classification happens
+              // on the consumer side — status:ERROR messages that hit the
+              // sdk-error wide set get upgraded to structured auth_failed.
+              yield ev.kind === 'error' && ev.code === undefined ? em.errorText(ev.message) : ev
             }
           }
           // Stream ended without explicit FINISHED status — emit a result event anyway
           // so callers can see the dispatch concluded.
           if (!sawFinish) {
-            yield {
-              kind: 'result',
-              sessionId: agent.agentId,
-              numTurns: myTurns,
-              durationMs: Date.now() - startMs,
-            } as const
+            yield em.finish({ sessionId: agent.agentId, numTurns: myTurns })
           }
         } catch (err) {
-          yield { kind: 'error', message: err instanceof Error ? err.message : String(err) } as const
+          yield em.error(err)
         }
       })()
     },

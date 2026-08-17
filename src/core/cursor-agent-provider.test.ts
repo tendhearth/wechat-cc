@@ -365,6 +365,24 @@ describe('createCursorAgentProvider', () => {
     expect(events).toContainEqual({ kind: 'error', message: 'auth_failed' })
   })
 
+  it('status:ERROR hitting the sdk-error auth wide-set gets classified as auth_failed (B3)', async () => {
+    // Mapper stays a pure function (mapCursorMessage yields a code-less
+    // error event); the dispatch loop re-wraps it through em.errorText,
+    // which runs isAuthFail('sdk-error', ...) and stamps the code.
+    const agent = makeFakeAgent([
+      { type: 'status', status: 'ERROR', error: { message: '401 unauthorized' } },
+    ])
+    const sdk = makeFakeSdk(agent)
+    const provider = createCursorAgentProvider({ sdk, apiKey: 'test-key' })
+    const session = await provider.spawn(
+      { alias: 'P', path: '/tmp/proj' },
+      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' },
+    )
+    const events: any[] = []
+    for await (const ev of session.dispatch('hi')) events.push(ev)
+    expect(events).toContainEqual({ kind: 'error', message: '401 unauthorized', code: 'auth_failed' })
+  })
+
   it('spawn with resumeSessionId calls Agent.resume instead of Agent.create', async () => {
     // Regression: pre-fix the provider always called Agent.create even
     // when spawnOpts.resumeSessionId was set, so Cursor sessions cold-
