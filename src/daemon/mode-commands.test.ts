@@ -569,6 +569,14 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toContain('agy')
   })
 
+  it('/agy + codex is rejected — agy cannot delegate (B2, supportsDelegation=false)', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'admin' })
+    const consumed = await cmds.handle(inbound('/agy + codex'))
+    expect(consumed).toBe(true)
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
+  })
+
   it('returns false for unrecognised slash words like /health (lets admin-commands handle)', async () => {
     const { cmds, sendMessage } = setup()
     const consumed = await cmds.handle(inbound('/health'))
@@ -776,6 +784,28 @@ describe('makeModeCommands', () => {
       expect(set).toHaveBeenCalledWith('chat-1', {
         kind: 'chatroom', participants: ['claude', 'codex'],
       })
+    })
+
+    // ── agy final-review CRITICAL 1 — agy excluded from parallel/chatroom
+    // (shared tier-C 'trusted' MCP token, spec §7 non-goal). Must be
+    // rejected with user-facing copy BEFORE setMode is ever called, from
+    // ANY chat (mode commands are deliberately ungated — this is not the
+    // /agy admin/trusted gate, it's a structural exclusion).
+
+    it('/both claude agy is rejected — agy cannot join parallel (shared-token channel)', async () => {
+      const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'admin' })
+      const consumed = await cmds.handle(inbound('/both claude agy'))
+      expect(consumed).toBe(true)
+      expect(set).not.toHaveBeenCalled()
+      expect(sentMessages[0]?.[1]).toBe('❌ agy 不能加入 both/chat 模式（共享工具通道），可用 /agy 单独使用（仅管理员/信任聊天）。')
+    })
+
+    it('/chat codex agy is rejected — agy cannot join chatroom (shared-token channel)', async () => {
+      const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'admin' })
+      const consumed = await cmds.handle(inbound('/chat codex agy'))
+      expect(consumed).toBe(true)
+      expect(set).not.toHaveBeenCalled()
+      expect(sentMessages[0]?.[1]).toBe('❌ agy 不能加入 both/chat 模式（共享工具通道），可用 /agy 单独使用（仅管理员/信任聊天）。')
     })
   })
 

@@ -23,7 +23,7 @@ import type { InboundMsg } from './prompt-format'
 import { buildOpeningPrompt, buildRebuttalPrompt, buildVerdictPrompt, buildConvergencePrompt, parseConvergence, type Opening } from './chatroom-conductor'
 import { assertSupported, capabilitiesFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
 import { collectTurn, TURN_TIMEOUT_CODE, type TurnSummary } from './agent-provider'
-import { resolveEffectiveTier, TIER_PROFILES, type TierProfile } from './user-tier'
+import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile } from './user-tier'
 import type { Access } from '../lib/access'
 import { makeChatMutex } from './async-mutex'
 
@@ -272,12 +272,19 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     mode: (Mode & { kind: 'parallel' | 'chatroom' }),
     chatId: string,
   ): ProviderId[] {
+    // agy final-review CRITICAL 1: never let a registry-derived fallback
+    // auto-include agy — `deps.registry.list()` is the live provider set
+    // and agy is a normal registered provider there (it just can't ride
+    // parallel/chatroom, spec §7). Excluded up front so both the legacy
+    // backfill (first-two) and the fresh-chat fallback (full registry)
+    // never pick it, regardless of registration order.
+    const registryList = deps.registry.list().filter(p => p !== 'agy')
     let list: ProviderId[]
     if (mode.participants !== undefined) {
       list = mode.participants
     } else if (deps.conversationStore.get(chatId)?.mode) {
       // Row exists with no participants — legacy. Backfill to first-two.
-      list = deps.registry.list().slice(0, 2)
+      list = registryList.slice(0, 2)
       // Persist so this is a one-shot. setParticipants is a no-op if the
       // row doesn't have parallel/chatroom kind, but we just read it as
       // parallel/chatroom so the call is safe.
@@ -289,9 +296,16 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       }
     } else {
       // No row yet — first-ever dispatch in this chat under parallel/chatroom.
-      list = deps.registry.list()
+      list = registryList
     }
-    const filtered = list.filter(p => deps.registry.has(p))
+    // Belt-and-suspenders: also strip 'agy' out of an EXPLICIT participants
+    // list here, not just validateMode. validateMode is the primary,
+    // user-facing rejection (setMode throws before the row is ever
+    // persisted), but this filter is the dispatch-time backstop for any
+    // row that predates that guard (or was written directly to the store,
+    // bypassing setMode — see the N-way participants tests) — the shared-
+    // token hazard this is defending is worth a second, cheap check.
+    const filtered = list.filter(p => deps.registry.has(p) && p !== 'agy')
     if (filtered.length < list.length) {
       deps.log('COORDINATOR', `chat=${chatId} participants filtered ${list.join(',')} → ${filtered.join(',')} (registry: ${deps.registry.list().join(',')})`)
     }
@@ -408,6 +422,18 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // Explicit participants must all be registered. Undefined defers
       // to dispatch-time resolution (resolveParticipants).
       if (mode.participants !== undefined) {
+        // agy final-review CRITICAL 1: agy rides a tier-C shared 'trusted'
+        // MCP token (spec §3) — spec §7 declares parallel/chatroom an
+        // explicit non-goal. `/both claude agy` / `/chat codex agy` (or a
+        // programmatic POST /v1/conversation/set-mode with the same shape)
+        // would otherwise put a guest chat's turn on the same channel a
+        // trusted chat's agy session uses. Reject structurally here — this
+        // is the ONE validateMode chokepoint every caller (mode-commands
+        // AND the HTTP route) goes through, so there's no second path that
+        // can smuggle agy into a participants list.
+        if (mode.participants.includes('agy')) {
+          throw new Error(`provider 'agy' cannot join parallel/chatroom modes (shared-token channel; spec §7 non-goal)`)
+        }
         const unknown = mode.participants.filter(p => !deps.registry.has(p))
         if (unknown.length > 0) {
           throw new Error(`mode '${mode.kind}' has unknown providers: ${unknown.join(', ')} (registered: ${deps.registry.list().join(', ')})`)
@@ -431,6 +457,27 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     // 'solo' would mislabel those in GET /v1/turns and misdirect diagnosis.
     recordMode: TurnRecord['mode'] = 'solo',
   ): Promise<void> {
+    // agy final-review Important 2 — dispatch-time fail-closed gate.
+    // mode-commands.ts's `/agy` guest gate only guards the SLASH-COMMAND
+    // flip: POST /v1/conversation/set-mode (trusted-tier bearer token, no
+    // agy-aware check of its own) can set solo+agy directly, and a
+    // solo+agy row set validly while the chat WAS trusted survives a later
+    // demotion to guest in access.json with no re-validation. Both land
+    // here with providerId==='agy' for a chat that resolves to guest
+    // RIGHT NOW — refuse to spawn rather than trust the mode row's
+    // vintage. Raw resolveTier (NOT resolveEffectiveTier) on purpose:
+    // mirrors pipeline-deps.ts's /agy closure, which deliberately omits
+    // the --dangerously⇒admin shortcut for this exact shared-token hazard
+    // (agy's tier-C MCP config is one long-lived 'trusted' token shared by
+    // every conversation agy runs — see agy-mcp-config.ts).
+    if (providerId === 'agy' && resolveTier(msg.chatId, deps.loadAccess()) === 'guest') {
+      deps.log('COORDINATOR', `chat=${msg.chatId} refuse solo+agy dispatch: guest tier (dispatch-time gate)`, {
+        event: 'agy_guest_refused',
+        chat_id: msg.chatId,
+      })
+      await deps.sendAssistantText?.(msg.chatId, '❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+      return
+    }
     const tier = resolveEffectiveTier(msg.chatId, deps.loadAccess(), deps.permissionMode)
     const tierProfile = TIER_PROFILES[tier]
     deps.log('COORDINATOR', `solo chat=${msg.chatId} → project=${proj.alias} provider=${providerId} tier=${tier}`, {

@@ -128,6 +128,16 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     if (unknown.length > 0) {
       return { ok: false, error: `❌ 未知的 provider: ${unknown.join(', ')}. 已注册: ${deps.registry.list().join(', ')}` }
     }
+    // agy final-review CRITICAL 1: agy is registered (passes the unknown
+    // check above) but rides a tier-C SHARED 'trusted' MCP token (spec §3)
+    // — putting it in parallel/chatroom would let a guest chat's turn
+    // reach that trusted-token tool channel, and spec §7 declares
+    // parallel/chatroom participation an explicit non-goal. Reject here,
+    // before setMode is ever called, so the user gets copy instead of the
+    // coordinator's thrown-error fallback.
+    if (tokens.some(t => t.toLowerCase() === 'agy')) {
+      return { ok: false, error: '❌ agy 不能加入 both/chat 模式（共享工具通道），可用 /agy 单独使用（仅管理员/信任聊天）。' }
+    }
     // Deduplicate while preserving order (operator typed the same provider twice → silent dedupe).
     const seen = new Set<string>()
     const dedup = tokens.filter(t => seen.has(t) ? false : (seen.add(t), true))
@@ -421,7 +431,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           `已注册 provider: ${deps.registry.list().join(', ')}`,
           `默认: ${deps.defaultProviderId}`,
           '',
-          '可用命令: /cc /codex /cursor /api /gemini /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',
+          '可用命令: /cc /codex /cursor /api /gemini /agy /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',
         ]
         await reply(msg.chatId, lines.join('\n'))
         return true
