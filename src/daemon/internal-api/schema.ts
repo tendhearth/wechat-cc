@@ -15,6 +15,13 @@ import z from 'zod'
 
 // ── GET /v1/health ───────────────────────────────────────────────────────────
 
+export const SubsystemStatusSchema = z.object({
+  name: z.string(),
+  state: z.enum(['ok', 'degraded', 'off']),
+  error: z.string().optional(),
+  sinceIso: z.string(),
+})
+
 export const HealthResponse = z.object({
   ok: z.boolean(),
   daemon_pid: z.number(),
@@ -23,6 +30,8 @@ export const HealthResponse = z.object({
   turns_store_wired: z.boolean().optional(),
   sessions_live: z.number().optional(),
   heartbeat_fresh: z.boolean().nullable().optional(),
+  // Subsystem degraded-boot (spec 2026-08-17) — 启动降级状态表。
+  subsystems: z.array(SubsystemStatusSchema).optional(),
 })
 
 // ── POST /v1/memory/read ─────────────────────────────────────────────────────

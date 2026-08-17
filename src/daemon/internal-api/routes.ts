@@ -83,6 +83,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
         turns_store_wired: !!deps.turns,
         sessions_live: deps.listSessions?.()?.length ?? 0,
         heartbeat_fresh: deps.heartbeatFresh?.() ?? null,
+        subsystems: deps.subsystems?.() ?? [],
       },
     }),
 

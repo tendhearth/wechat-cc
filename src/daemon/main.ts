@@ -232,6 +232,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // (after this registration) — returns null until then, so the route 503s.
       listSessions: () => bootRef?.sessionManager?.list() ?? null,
       heartbeatFresh: () => isHeartbeatFresh(HEARTBEAT_PATH),
+      // Subsystem degraded-boot (spec 2026-08-17) — sup 在本调用之前创建,
+      // 直接传引用,无需 thunk-over-bootRef 姿势。
+      subsystems: () => sup.statuses(),
       // Admin remediation hooks (POST /v1/sessions/release, /v1/daemon/restart).
       releaseSession: (k) => bootRef?.sessionManager?.release(k) ?? Promise.resolve(),
       requestRestart: () => requestRestart('internal-api'),

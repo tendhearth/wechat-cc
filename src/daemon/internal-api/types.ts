@@ -387,6 +387,12 @@ export interface InternalApiDeps {
    */
   incidents?: import('../health/incident-store').IncidentStore
   /**
+   * Subsystem degraded-boot (spec 2026-08-17) — supervisor 状态表快照,
+   * GET /v1/health 的 `subsystems` 字段。undefined ⇒ 字段输出空数组
+   * (minimal-deps 测试路径)。
+   */
+  subsystems?: () => import('../subsystems').SubsystemStatus[]
+  /**
    * busy-registry hold (spec 2026-08-11 §2, Task 4 step 1) — index.ts's
    * dispatcher holds a token for the duration of every AUTHENTICATED
    * NON-GET request's handler await (label `api:${method} ${path}`),
