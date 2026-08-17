@@ -450,6 +450,20 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const modeStr = dangerously ? 'mode=dangerouslySkipPermissions=true (no WeChat permission prompts will fire)' : 'mode=strict (Phase 1 permission relay active)'
     log('DAEMON', `started pid=${process.pid} accounts=${accounts.length} ${modeStr}`)
     if (dangerously) log('DAEMON', 'warning: Claude will still confirm destructive ops via natural-language reply, but no permission prompts will appear.')
+    // Subsystem degraded-boot (spec 2026-08-17 §3) — 启动完成后的一次性
+    // 管理员汇总。只报 degraded(off 是常态,不扰人);发送失败只落日志,
+    // 绝不影响启动结果。
+    const degradedSubsystems = sup.degraded()
+    if (degradedSubsystems.length > 0) {
+      log('SUBSYS', `boot completed degraded: ${degradedSubsystems.map(d => `${d.name}(${d.error ?? '?'})`).join(', ')}`)
+      const adminChatId = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+      if (adminChatId) {
+        const lines = degradedSubsystems.map(d => `- ${d.name}:${d.error ?? 'unknown'}`).join('\n')
+        void ilink.sendMessage(adminChatId,
+          `⚠️ 本次启动有 ${degradedSubsystems.length} 个子系统未能启动:\n${lines}\n核心收发不受影响;重启守护进程可重试。`,
+        ).catch(err => log('SUBSYS', `admin degraded summary send failed: ${err instanceof Error ? err.message : String(err)}`))
+      }
+    }
     didStartup = true
   } catch (err) {
     log('DAEMON', `startup failed mid-init: ${err instanceof Error ? err.message : String(err)}`)
