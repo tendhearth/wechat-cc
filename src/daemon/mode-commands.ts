@@ -513,7 +513,11 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         const wasInFlight = deps.coordinator.cancel(msg.chatId)
         deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: deps.defaultProviderId })
         const dn = deps.registry.get(deps.defaultProviderId)?.opts.displayName ?? deps.defaultProviderId
-        const suffix = wasInFlight ? '；已中止 in-flight chatroom（最多多收到 1 个 turn 的输出后停止）' : ''
+        // Generic copy: coordinator.cancel() now also fires for solo/parallel
+        // handle-cancels (post-cancel-review CRITICAL 1), not just chatroom's
+        // preempt loop — a chatroom-specific message here would mislead solo
+        // users into thinking they were in chatroom mode.
+        const suffix = wasInFlight ? '；已请求中止 in-flight 回合（最多多收到 1 个 turn 的输出后停止）' : ''
         await reply(msg.chatId, `✅ 已退出当前模式，恢复默认 (solo · ${dn})${suffix}。`)
         deps.log('MODE_CMD', `chat=${msg.chatId} → /stop reset to default${wasInFlight ? ' + cancel in-flight' : ''}`)
         return true

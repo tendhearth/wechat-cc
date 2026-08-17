@@ -304,7 +304,7 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toContain('Codex')
   })
 
-  it('/stop also calls coordinator.cancel and notifies on in-flight chatroom (RFC 03 review #11)', async () => {
+  it('/stop also calls coordinator.cancel and notifies on an in-flight turn (RFC 03 review #11; generic copy — not chatroom-specific, since cancel() also fires for solo/parallel)', async () => {
     const sentMessages: Array<[string, string]> = []
     const sendMessage = vi.fn(async (chatId: string, text: string) => {
       sentMessages.push([chatId, text]); return { msgId: 'm' }
@@ -333,7 +333,8 @@ describe('makeModeCommands', () => {
     })
     await cmds.handle(inbound('/stop'))
     expect(cancel).toHaveBeenCalledWith('chat-1')
-    expect(sentMessages[0]?.[1]).toContain('已中止 in-flight chatroom')
+    expect(sentMessages[0]?.[1]).toContain('已请求中止 in-flight 回合')
+    expect(sentMessages[0]?.[1]).not.toContain('chatroom')
   })
 
   it('/stop without in-flight loop does NOT mention cancel suffix', async () => {
