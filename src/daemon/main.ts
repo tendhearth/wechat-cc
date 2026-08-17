@@ -36,6 +36,7 @@ import { loadCompanionConfig } from './companion/config'
 import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
 import { startCustomerReviewRuntime } from './customer-review/runtime'
 import { SUPERVISED_ENV } from '../core/supervised-env'
+import { SubsystemSupervisor } from './subsystems'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -142,6 +143,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   const ilink = makeIlinkAdapter({ stateDir, accounts, db, conversationStore })
   const memoryFS = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
   const lc = new LifecycleSet((tag, line) => log(tag, line))
+  // Subsystem degraded-boot (spec 2026-08-17) — 只包可选子系统;核心链不经它。
+  const sup = new SubsystemSupervisor((t, l) => log(t, l))
   let shuttingDown = false; let didStartup = false
   let pollingLcRef: { reconcile(): Promise<void> } | null = null
   let ticksRef: TickBodies | null = null
@@ -361,13 +364,13 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     if (boot.knowledge) internalApi.setKnowledge(boot.knowledge)
     // Customer Review is optional: a missing/unready wxvault or eval provider
     // leaves the daemon healthy and its owner-only routes return 503.
-    const customerReview = await startCustomerReviewRuntime({
+    const customerReview = await sup.start('customer-review', () => startCustomerReviewRuntime({
       stateDir,
       db,
       registry: boot.registry,
       defaultProviderId: boot.defaultProviderId,
       log: (tag, line) => log(tag, line),
-    })
+    }))
     if (customerReview) {
       internalApi.setCustomerReview(customerReview.service)
       lc.register(customerReview)
@@ -407,12 +410,17 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
     wireRef(wired.refs.pipeline, pipeline)
     // 4. register lifecycles (LIFO stop = startup order reversed)
-    lc.register(registerCompanionPush(wired.companionPushDeps))
-    lc.register(registerCompanionIntrospect(wired.companionIntrospectDeps))
-    const ingestLc = registerIngest(wired.companionIngestDeps)
-    lc.register(ingestLc)
-    wireRef(wired.refs.ingestNudge, ingestLc.nudge)   // inbound path nudges ingestion on fresh activity
-    const guardLc = registerGuard(wired.guardDeps); wireRef(wired.refs.guard, guardLc); lc.register(guardLc)
+    const pushLc = await sup.start('companion.push', () => registerCompanionPush(wired.companionPushDeps))
+    if (pushLc) lc.register(pushLc)
+    const introspectLc = await sup.start('companion.introspect', () => registerCompanionIntrospect(wired.companionIntrospectDeps))
+    if (introspectLc) lc.register(introspectLc)
+    const ingestLc = await sup.start('companion.ingest', () => registerIngest(wired.companionIngestDeps))
+    if (ingestLc) {
+      lc.register(ingestLc)
+      wireRef(wired.refs.ingestNudge, ingestLc.nudge)   // inbound path nudges ingestion on fresh activity
+    }
+    const guardLc = await sup.start('guard', () => registerGuard(wired.guardDeps))
+    if (guardLc) { wireRef(wired.refs.guard, guardLc); lc.register(guardLc) }
     lc.register(registerSessions(wired.sessionsDeps))
     lc.register(registerIlink(wired.ilinkDeps))
     const pollingLc = registerPolling({ ...wired.pollingDeps, runPipeline: pipeline })
@@ -422,7 +430,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // mailbox_relays entry + a live onMailboxLetter). Absent ⇒ no poll timer,
     // no relay traffic — same "undefined ⇒ fully inert" posture as every
     // other optional companion/social wiring above.
-    if (boot.mailboxPollerDeps) lc.register(registerMailboxPoller(boot.mailboxPollerDeps))
+    const mailboxLc = await sup.start('mailbox-poller',
+      () => boot.mailboxPollerDeps ? registerMailboxPoller(boot.mailboxPollerDeps) : undefined)
+    if (mailboxLc) lc.register(mailboxLc)
     // 5. one-shot startup sweeps — fire-and-forget
     runStartupSweeps(wired.startupDeps)
     const modeStr = dangerously ? 'mode=dangerouslySkipPermissions=true (no WeChat permission prompts will fire)' : 'mode=strict (Phase 1 permission relay active)'
