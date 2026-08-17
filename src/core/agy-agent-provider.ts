@@ -194,6 +194,43 @@ async function* readLines(stream: AsyncIterable<Uint8Array | string>, signal: Ab
   if (buf.length > 0) yield buf
 }
 
+/** Sentinel returned by raceAbort when `signal` fires before `promise` settles. */
+const ABORTED: unique symbol = Symbol('agy-abort-race')
+
+/**
+ * Race `promise` against `signal` firing — resolves with `promise`'s value
+ * (or rejects with its rejection) if it settles first, or resolves with the
+ * `ABORTED` sentinel if `signal` fires first.
+ *
+ * Used for the dispatch generator's TAIL awaits (`proc.exited`,
+ * `proc.stderr()`) — both run AFTER the stdout loop has already ended
+ * (normally or via abort), and neither was previously raced against the
+ * abort signal. A slow-dying child can hang either one forever: a
+ * SIGTERM-ignoring child never resolves `exited`; a grandchild process
+ * (plausible with agy's MCP children) holding the stderr fd open can keep
+ * `stderr()`'s drain from ever completing. Without this race, `kill()`
+ * firing doesn't help — the awaited promise itself never settles — so
+ * `cancel()`/`close()`/`it.return()` would hang right along with it (task
+ * review round 3, empirically probed against both cases).
+ */
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | typeof ABORTED> {
+  if (signal.aborted) return Promise.resolve(ABORTED)
+  return new Promise<T | typeof ABORTED>((resolve, reject) => {
+    const onAbort = (): void => resolve(ABORTED)
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (err: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(err)
+      },
+    )
+  })
+}
+
 /** Base args shared by every invocation (turn dispatch AND one-shot evals). */
 function baseArgs(prompt: string, model: string, turnTimeoutMs: number): string[] {
   return ['-p', prompt, '--output-format', 'stream-json', '--model', model, '--print-timeout', msToPrintTimeout(turnTimeoutMs)]
@@ -389,10 +426,22 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
                 for (const ev of parser.flush()) {
                   if (ev.kind === 'text') yield em.text(ev.text)
                 }
-                const code = await proc.exited
+                // Both tail awaits below are raced against abort.signal
+                // (task review round 3) — a slow-dying child can otherwise
+                // hang either one forever even after kill() fires, which
+                // hangs cancel()/close()/it.return() right along with it.
+                // On an abort win, treat this exactly like the cancellation
+                // check above: already killed, emit nothing further.
+                const codeResult = await raceAbort(proc.exited, abort.signal)
+                if (codeResult === ABORTED) return
+                const code = codeResult
                 if (code !== 0 && !sawResult) {
-                  const stderrText = await proc.stderr()
-                  yield em.error(new Error(`agy exited ${code}: ${stderrText.slice(0, 300)}`))
+                  // .catch(() => '') so a REJECTING stderr drain degrades to
+                  // an empty excerpt in the error message instead of
+                  // throwing out of dispatch.
+                  const stderrResult = await raceAbort(proc.stderr().catch(() => ''), abort.signal)
+                  if (stderrResult === ABORTED) return
+                  yield em.error(new Error(`agy exited ${code}: ${stderrResult.slice(0, 300)}`))
                 }
               } finally {
                 currentProc = null

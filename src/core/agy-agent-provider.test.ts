@@ -1,6 +1,6 @@
 // src/core/agy-agent-provider.test.ts — 全部经注入 spawnFn 的假 agy
 import { describe, it, expect } from 'vitest'
-import { createAgyAgentProvider, drainCappedStderr } from './agy-agent-provider'
+import { AGY_CAPABILITIES, createAgyAgentProvider, drainCappedStderr } from './agy-agent-provider'
 import { TIER_PROFILES } from './user-tier'
 
 function fakeAgy(lines: string[], opts?: { exitCode?: number; stderr?: string; hang?: boolean }) {
@@ -337,6 +337,97 @@ describe('createAgyAgentProvider', () => {
     const { spawnFn } = fakeAgy([INIT, AUTH_TEXT_DONE, AUTH_RESULT])
     const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
     await expect(provider.cheapEval!('prompt')).rejects.toThrow()
+  })
+
+  // Round-1 finding 6 (closed in round 3, per controller ruling): dispatch()
+  // after close() yields no events and never even spawns.
+  it('dispatch() after close() yields no events', async () => {
+    const { spawnFn, calls } = fakeAgy([INIT, TEXT_DONE, RESULT])
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
+    const s = await provider.spawn(project, ctx)
+    await s.close!()
+    const evs = await drain(s.dispatch('x'))
+    expect(evs).toEqual([])
+    expect(calls.length).toBe(0)
+  })
+
+  // Round-1 finding 6 (closed in round 3, per controller ruling): capability
+  // declaration field values, so a future edit to AGY_CAPABILITIES is caught.
+  it('AGY_CAPABILITIES has the expected field values', () => {
+    expect(AGY_CAPABILITIES.supportsResume).toBe(true)
+    expect(AGY_CAPABILITIES.supportsDelegation).toBe(false)
+    expect(AGY_CAPABILITIES.perToolCallback).toBe(false)
+    expect(AGY_CAPABILITIES.defaultPeer).toBe('claude')
+    expect(AGY_CAPABILITIES.authFailHint).toBeTruthy()
+  })
+
+  // CRITICAL (task review round 3, pre-existing, empirically probed): the
+  // generator's TAIL awaits (proc.exited, and on the error branch
+  // proc.stderr()) were unraced against abort — a slow-dying child
+  // (SIGTERM-ignoring, or a grandchild MCP process holding a fd open) could
+  // hang either one forever even after kill() fires, which hung
+  // cancel()/close()/it.return() right along with it.
+  it('CRITICAL (round 3, a): return() settles promptly even if proc.exited never resolves', async () => {
+    let killed = false
+    const spawnFn = () => ({
+      // stdout ends normally (no result line) — the generator falls through
+      // into the tail awaits, where proc.exited never resolves (simulates a
+      // SIGTERM-ignoring child: kill() fires but the process doesn't die).
+      stdout: (async function* () { yield INIT + '\n'; yield TEXT_DONE + '\n' })(),
+      exited: new Promise<number>(() => {}),
+      stderr: async () => '',
+      kill: () => { killed = true },
+    })
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
+    const s = await provider.spawn(project, ctx)
+    const it = s.dispatch('x')[Symbol.asyncIterator]()
+    await it.next() // init
+    await it.next() // text
+    // One more next() drives the generator past the (now-exhausted) stdout
+    // loop and into `await raceAbort(proc.exited, ...)` — deliberately NOT
+    // awaited here, since without the round-3 fix this would hang forever.
+    const pending = it.next()
+    await it.return?.()
+    expect(killed).toBe(true)
+    expect(() => s.dispatch('again')).not.toThrow()
+    await pending // now resolves too, transitively unblocked by return()
+  })
+
+  it('CRITICAL (round 3, b): return() settles promptly even if stderr() never resolves', async () => {
+    let killed = false
+    const spawnFn = () => ({
+      stdout: (async function* () { yield INIT + '\n' })(), // ends immediately, no result line
+      exited: Promise.resolve(1), // exits nonzero promptly
+      // Never resolves — simulates a grandchild process (plausible with
+      // agy's MCP children) still holding the stderr fd open.
+      stderr: () => new Promise<string>(() => {}),
+      kill: () => { killed = true },
+    })
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
+    const s = await provider.spawn(project, ctx)
+    const it = s.dispatch('x')[Symbol.asyncIterator]()
+    await it.next() // init
+    // Drives the generator into the code!==0 branch → `await raceAbort(proc.stderr()...)`.
+    const pending = it.next()
+    await it.return?.()
+    expect(killed).toBe(true)
+    expect(() => s.dispatch('again')).not.toThrow()
+    await pending
+  })
+
+  it('(round 3, c): a rejecting stderr() degrades to an empty excerpt, does not throw', async () => {
+    const spawnFn = () => ({
+      stdout: (async function* () { yield INIT + '\n' })(),
+      exited: Promise.resolve(1),
+      stderr: () => Promise.reject(new Error('fd already closed')),
+      kill: () => {},
+    })
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
+    const s = await provider.spawn(project, ctx)
+    const evs = await drain(s.dispatch('x')) // must not throw
+    const err = evs.find(e => e.kind === 'error') as { message?: string } | undefined
+    expect(err).toBeTruthy()
+    expect(err?.message).toBe('agy exited 1: ')
   })
 })
 
