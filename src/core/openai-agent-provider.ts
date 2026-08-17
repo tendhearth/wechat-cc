@@ -8,6 +8,7 @@ import {
   type ProviderCapabilities,
   assertNotAuthFailed,
 } from './agent-provider'
+import { isAuthFailError } from './auth-fail'
 import type { ChatModelClient, ChatMessage, ToolSpec, TurnDelta } from './openai-chat-model'
 import type { McpToolBridge } from './openai-mcp-bridge'
 import { builtinTools, type BuiltinTool } from './openai-tools'
@@ -141,6 +142,34 @@ function makeOpenAiSession(args: {
   }
 }
 
+/**
+ * Shared cheapEval/strongEval body: run `chatModel.generate` and normalize
+ * BOTH ways an eval call can signal auth failure into the same
+ * `Error('auth_failed: …')` contract that downstream consumers (chatroom
+ * moderator's wrapCheapEvalWithAuthFailCheck, gardener.ts) already grep for:
+ *  - error-shaped TEXT (Claude/Codex sentinel strings) → assertNotAuthFailed
+ *    below throws on the returned text, as before.
+ *  - a THROWN transport error (e.g. a real gateway 401 APICallError, now
+ *    surfaced instead of masked — see openai-chat-model.ts generate()) →
+ *    classified via isAuthFailError and rethrown with the same prefix.
+ * Non-auth throws (network blips, etc.) pass through unchanged.
+ */
+async function runEval(chatModel: ChatModelClient, prompt: string, log: (tag: string, line: string) => void, source: string): Promise<string> {
+  let text: string
+  try {
+    text = await chatModel.generate([chatModel.userMessage(prompt)])
+  } catch (err) {
+    if (isAuthFailError(err)) {
+      const msg = err instanceof Error ? err.message.slice(0, 160) : String(err)
+      log('AUTH_FAILED', `${source} credentials stale: ${msg}`)
+      throw new Error(`auth_failed: ${err instanceof Error ? err.message.slice(0, 120) : String(err)}`)
+    }
+    throw err
+  }
+  assertNotAuthFailed(text, log, source)
+  return text
+}
+
 export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): AgentProvider {
   const log = opts.log ?? (() => {})
   const maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS
@@ -182,17 +211,13 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
     async cheapEval(prompt: string): Promise<string> {
       // Background eval, no per-chat pin — always the configured default model.
       const chatModel = opts.makeChatModel(undefined)
-      const text = await chatModel.generate([chatModel.userMessage(prompt)])
-      assertNotAuthFailed(text, log, 'openai')
-      return text
+      return runEval(chatModel, prompt, log, 'openai cheapEval')
     },
 
     async strongEval(prompt: string): Promise<string> {
       // v1: same model as cheapEval (DeepSeek is already the strong+cheap model).
       const chatModel = opts.makeChatModel(undefined)
-      const text = await chatModel.generate([chatModel.userMessage(prompt)])
-      assertNotAuthFailed(text, log, 'openai')
-      return text
+      return runEval(chatModel, prompt, log, 'openai strongEval')
     },
   }
 }

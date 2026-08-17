@@ -85,4 +85,21 @@ describe('ChatModelClient adapter', () => {
     for await (const _d of turn.deltas) { /* no-op: error part yields nothing */ }
     await expect(turn.finished).rejects.toBe(cause)
   })
+
+  it('generate() rejects with the original cause when doStream() rejects (same NoOutputGeneratedError-masking bug as streamTurn, on the one-shot path)', async () => {
+    // Mirrors the streamTurn test above: doStream() itself rejects (no
+    // chunks ever streamed) — AI SDK synthesizes a fullStream error part
+    // and `result.text` then rejects with a generic NoOutputGeneratedError
+    // that has lost the real cause (statusCode, message). generate() must
+    // capture and rethrow the original cause, identity-asserted via
+    // `.toBe(cause)` (not just a matching message).
+    const cause = Object.assign(new Error('Authentication Error, Invalid proxy server token passed'), { statusCode: 401 })
+    const model = new MockLanguageModelV2({
+      doStream: async () => {
+        throw cause
+      },
+    })
+    const client = createChatModelFromLanguageModel(model)
+    await expect(client.generate([client.userMessage('hi')])).rejects.toBe(cause)
+  })
 })

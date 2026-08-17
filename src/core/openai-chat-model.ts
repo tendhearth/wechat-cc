@@ -117,7 +117,21 @@ export function createChatModelFromLanguageModel(model: LanguageModel): ChatMode
       // fullStream internally and resolves once, so one code path serves
       // both one-shot and streamed calls.
       const result = streamText({ model, messages })
-      return await result.text
+      // Same error-part capture as streamTurn (a54ff96f): transport failures
+      // (e.g. 401 APICallError) surface as fullStream error parts and then
+      // reject `result.text` with a generic NoOutputGeneratedError — capture
+      // the real cause and rethrow it instead.
+      let streamError: unknown
+      for await (const part of result.fullStream) {
+        if (part.type === 'error') {
+          streamError = (part as { error?: unknown }).error ?? new Error('stream error part without cause')
+        }
+      }
+      try {
+        return await result.text
+      } catch (err) {
+        throw streamError ?? err
+      }
     },
 
     userMessage(text) {

@@ -163,6 +163,49 @@ describe('openai provider loop', () => {
     await expect(provider.strongEval!('ping')).rejects.toThrow(/auth_failed/)
   })
 
+  it('cheapEval classifies a thrown 401 (real gateway auth error, no longer masked by NoOutputGeneratedError) as auth_failed', async () => {
+    // Post-fix, openai-chat-model's generate() surfaces the real transport
+    // error instead of swallowing it — this proves the eval-path caller
+    // catches that thrown error and re-wraps it into the same
+    // `auth_failed: …` contract assertNotAuthFailed uses for error-shaped
+    // TEXT, so downstream consumers (wrapCheapEvalWithAuthFailCheck,
+    // gardener.ts) don't need to know which shape the failure took.
+    const authThrowModel: ChatModelClient = {
+      streamTurn() { throw new Error('not used in this test') },
+      async generate() { throw Object.assign(new Error('Authentication Error'), { statusCode: 401 }) },
+      userMessage: (t) => ({ role: 'user', content: t } as any),
+      systemMessage: (t) => ({ role: 'system', content: t } as any),
+      toolResultMessage: (id, name, r) => ({ role: 'tool', content: `${name}:${JSON.stringify(r)}` } as any),
+    }
+    const provider = createOpenAiAgentProvider({ makeChatModel: () => authThrowModel, makeMcpBridge: async () => fakeBridge([]) })
+    await expect(provider.cheapEval!('ping')).rejects.toThrow(/^auth_failed:/)
+  })
+
+  it('strongEval classifies a thrown 401 as auth_failed', async () => {
+    const authThrowModel: ChatModelClient = {
+      streamTurn() { throw new Error('not used in this test') },
+      async generate() { throw Object.assign(new Error('Authentication Error'), { statusCode: 401 }) },
+      userMessage: (t) => ({ role: 'user', content: t } as any),
+      systemMessage: (t) => ({ role: 'system', content: t } as any),
+      toolResultMessage: (id, name, r) => ({ role: 'tool', content: `${name}:${JSON.stringify(r)}` } as any),
+    }
+    const provider = createOpenAiAgentProvider({ makeChatModel: () => authThrowModel, makeMcpBridge: async () => fakeBridge([]) })
+    await expect(provider.strongEval!('ping')).rejects.toThrow(/^auth_failed:/)
+  })
+
+  it('cheapEval passes through a non-auth thrown error unchanged (no false auth_failed classification)', async () => {
+    const networkFailModel: ChatModelClient = {
+      streamTurn() { throw new Error('not used in this test') },
+      async generate() { throw new Error('ECONNRESET: socket hang up') },
+      userMessage: (t) => ({ role: 'user', content: t } as any),
+      systemMessage: (t) => ({ role: 'system', content: t } as any),
+      toolResultMessage: (id, name, r) => ({ role: 'tool', content: `${name}:${JSON.stringify(r)}` } as any),
+    }
+    const provider = createOpenAiAgentProvider({ makeChatModel: () => networkFailModel, makeMcpBridge: async () => fakeBridge([]) })
+    await expect(provider.cheapEval!('ping')).rejects.toThrow('ECONNRESET: socket hang up')
+    await expect(provider.cheapEval!('ping')).rejects.not.toThrow(/auth_failed/)
+  })
+
   it('spawn builds its chatModel from ctx.model (per-chat pinned model); cheapEval always uses the default (undefined)', async () => {
     // Proves the provider no longer bakes ONE model in at construction —
     // `spawn` must honor `ctx.model` (the operator's per-chat pin, forwarded
