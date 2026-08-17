@@ -25,9 +25,29 @@ v1。
 - 配置家:`~/.gemini/`(oauth_creds.json、settings.json);MCP 全局配置
   `~/.gemini/config/mcp_config.json`;二进制字符串确认
   `allow_mcp_servers`/`allowed_mcp_servers` 设置面存在。
-- 未拍到的形状(plan 首任务补):工具调用步的 stream-json 事件、登出/凭证
-  失效时的输出与退出码、print 模式下权限请求的实际行为、MCP 配置的
-  工作区/env 级覆盖。
+- 未拍到的形状(plan 首任务补,2026-08-17 spike 结论,详见 scratchpad
+  `agy-spike-findings.md`):
+  - **工具调用步**:普通 `step_update`(`step_type:"tool"`),同一
+    `step_index` 两行(ACTIVE→DONE/ERROR);`tool_name`/`tool_info.parameters`/
+    `tool_info.output`(或 `.error`)。MCP 调用固定 `tool_name:"call_mcp_tool"`,
+    `parameters:{Arguments,ServerName,ToolName}`——`ServerName` 即 server 归属
+    字段,§1 的需求成立。
+  - **strict(无 dangerously)权限行为**:自动拒绝、非阻塞,turn 正常
+    `SUCCESS` 收尾(exit 0);工具步 `state:"ERROR"` +
+    `tool_info.error:{type,message}`;stderr 有一行 `jetski:` 提示文案。
+    不需要 `--mode plan` 兜底——strict 天然满足"工具被拒但 turn 能完成"。
+  - **MCP 配置档位**:env-var 与 cwd 级均**探测不到**(`GEMINI_CONFIG_DIR`
+    试验为负,cwd `.gemini/config/mcp_config.json` 试验为负);仅**全局**
+    `~/.gemini/config/mcp_config.json` 生效(bundled 文档 `docs/mcp_servers.md`
+    确认只有 Global/Plugin 两个位置)。⇒ **走档位 C**(决策见 §3)。
+  - **登出/凭证失效**:未探测(HARD SAFETY 规则禁止主动登出;真实遇到再补
+    auth 文案,遵循 auth-fail.ts 既有规矩)。
+  - **额外发现(非原六项,但影响 §1)**:`agy` 的工具执行(`run_command`/
+    `write_to_file`/…)**不**跟随进程 OS 级 cwd,而是跟随内部"project"绑定
+    (`~/.gemini/projects.json` 路径→项目名映射);仅传 spawn `{cwd}` 不够,
+    必须加 `--new-project`(首轮)或稳定 `--project <id>`(续聊/后续轮),
+    否则会静默在 agy 自己的状态目录(而非 `project.path`)下执行工具——
+    §1 的 dispatch 参数组装需补这一条,否则是隐蔽的目录错位 bug。
 
 **已定决策:**
 1. **新 provider id `agy`**,现有 gemini(genai+key)provider 原样保留——
@@ -119,6 +139,19 @@ agy 的 MCP 配置在全局 `~/.gemini/config/mcp_config.json`——静态文件
    固定的 wechat 条目(env 带 boot 期铸的长期 token,tier=trusted)。
    宁可缩小可用面,也不给 guest 发一个共享 trusted token 的假隔离——
    surface, don't paper over。
+
+**[决策(2026-08-17 spike,证据见 §0 与 scratchpad `agy-spike-findings.md`)：
+选定档位 C(全局 only)。** 依据:strings 未发现任何 config-dir 重定向 env
+var(`GEMINI_CONFIG_DIR` 等候选试验为负);cwd 级 `.gemini/config/mcp_config.json`
+同样试验为负;仅全局 `~/.gemini/config/mcp_config.json` 生效(agy 自带文档
+`docs/mcp_servers.md` 明确只有 Global/Plugin 两个配置位置,无 workspace/env
+覆盖机制)。验证法:注册一个最小 stdio echo server(`spike_ping`),读后写
+备份全局 `mcp_config.json`、加一条测试 server、跑 `call_mcp_tool` 步确认
+真实调用(`output` 精确等于 server 返回值,非模型读源码猜测),再 diff
+恢复原文件字节一致。`mcp_config.json` schema:
+`{"mcpServers":{"<id>":{"command","args","env"}}}`(stdio)或
+`{"serverUrl"}`(SSE)——字段名 `command`/`args`/`env`/`serverUrl` 均已核实。
+后续任务据此实现:`/agy` 限 admin/trusted、全局条目固定长期 token。]**
 
 无论哪档:只把 **wechat** MCP 喂给 agy(v1 不喂 delegate、不喂插件 MCP);
 写入任何配置文件前先读后写、只增改自己命名空间的条目(如 `wechat-cc`
