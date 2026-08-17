@@ -391,6 +391,11 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       if (!deps.registry.has(mode.primary)) {
         throw new Error(`unknown primary provider: ${mode.primary}`)
       }
+      // B2(spec §4):持久化状态里翻出的旧非法组合也要拦 —— 与 registry
+      // 未注册同姿势,抛错由 setMode 调用方转成用户可见的失败。
+      if (!capabilitiesFor(mode.primary).supportsDelegation) {
+        throw new Error(`provider '${mode.primary}' cannot delegate (supportsDelegation=false) — primary_tool mode unavailable`)
+      }
       // The peer (other registered provider) must also be available so
       // delegate-mcp can actually do something. parallelProviders is
       // also the "all participating providers" set for primary_tool.

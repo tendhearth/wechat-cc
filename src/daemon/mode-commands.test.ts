@@ -465,19 +465,20 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toContain('claude')
   })
 
-  it('/cursor + cc succeeds — cursor session is wired to delegate_claude', async () => {
-    const { cmds, set } = setup({ registered: ['claude', 'codex', 'cursor'] })
+  it('/cursor + cc is rejected — cursor cannot delegate (B2, supportsDelegation=false)', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'cursor'] })
     const consumed = await cmds.handle(inbound('/cursor + cc'))
     expect(consumed).toBe(true)
-    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'primary_tool', primary: 'cursor' })
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
   })
 
-  it('/cursor + codex is rejected — cursor session has delegate_claude (not delegate_codex)', async () => {
+  it('/cursor + codex is rejected — cursor cannot delegate (B2, supportsDelegation=false)', async () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'cursor'] })
     const consumed = await cmds.handle(inbound('/cursor + codex'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('claude')
+    expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
   })
 
   it('/gemini switches mode to solo+gemini', async () => {
@@ -498,19 +499,20 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toContain('gemini')
   })
 
-  it('/gemini + cc succeeds — gemini session is wired to delegate_claude', async () => {
-    const { cmds, set } = setup({ registered: ['claude', 'codex', 'gemini'] })
+  it('/gemini + cc is rejected — gemini cannot delegate (B2, supportsDelegation=false)', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'gemini'] })
     const consumed = await cmds.handle(inbound('/gemini + cc'))
     expect(consumed).toBe(true)
-    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'primary_tool', primary: 'gemini' })
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
   })
 
-  it('/gemini + codex is rejected — gemini session has delegate_claude (not delegate_codex)', async () => {
+  it('/gemini + codex is rejected — gemini cannot delegate (B2, supportsDelegation=false)', async () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'gemini'] })
     const consumed = await cmds.handle(inbound('/gemini + codex'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('claude')
+    expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
   })
 
   it('returns false for unrecognised slash words like /health (lets admin-commands handle)', async () => {

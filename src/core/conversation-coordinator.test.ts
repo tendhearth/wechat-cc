@@ -755,6 +755,26 @@ describe('ConversationCoordinator', () => {
       expect(() => c.setMode('chat-1', { kind: 'primary_tool', primary: 'claude' }))
         .toThrow(/missing: codex/)
     })
+
+    it('setMode rejects primary_tool when primary cannot delegate (B2, gemini supportsDelegation=false)', () => {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      registry.register('gemini', dummyProvider, { displayName: 'Gemini', canResume: () => true })
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      const c = createConversationCoordinator({
+        resolveProject: () => null,
+        manager: { acquire: vi.fn() },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+      expect(() => c.setMode('chat-1', { kind: 'primary_tool', primary: 'gemini' }))
+        .toThrow(/cannot delegate/)
+    })
   })
 
   // ─── parallel mode (RFC 03 P3) ───────────────────────────────────────

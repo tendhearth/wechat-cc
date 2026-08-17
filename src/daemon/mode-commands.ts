@@ -226,6 +226,14 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
             await reply(msg.chatId, `❓ 主从模式两侧不能是同一个 provider (你写的是 ${peerSlash} + ${peerSlash})。`)
             return true
           }
+          // B2(spec §4):主提供方必须能委派出去,否则确认消息许诺的
+          // delegate 工具在其会话里根本不存在(gemini 硬编码
+          // delegateAvailable:false,cursor 无 delegate stdio 通道)。
+          // Surface, don't paper over(RFC-05 §5)。
+          if (!capabilitiesFor(providerId).supportsDelegation) {
+            await reply(msg.chatId, `❌ ${slashWord} 不支持主从模式(该 provider 的会话无法调用 delegate 工具),对话保持原模式。`)
+            return true
+          }
           const wiredPeer = defaultDelegatePeer(providerId)
           if (wiredPeer && peerProviderId !== wiredPeer) {
             const wiredSlash = wiredPeer === 'claude' ? 'cc' : wiredPeer

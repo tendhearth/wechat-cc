@@ -159,12 +159,11 @@ export function deriveCapability(
   const approvalPolicy = !cap.perToolCallback && cap.sandboxLevels.has('read-only')
     ? trait.coarseApproval
     : null
-  // delegate-mcp is loaded for every primary_tool session regardless of
-  // whether the host provider itself can be a delegate target — the host
-  // delegates OUT to others. supportsDelegation controls whether THIS
-  // provider can be registered as a peer (consumed by ProviderRegistry,
-  // not by the matrix).
-  const delegate = mode === 'primary_tool' ? 'loaded' : 'unloaded'
+  // RFC-05 §2.4 的合取(spec 2026-08-17-provider-runtime-dedup §4):主提供方
+  // 自己必须 supportsDelegation 才装载 delegate-mcp —— gemini/cursor 的注册
+  // 根本没有 delegate stdio 通道,'loaded' 是谎报。mode-commands 与
+  // validateMode 是另外两道防线(拒绝进入该组合)。
+  const delegate = mode === 'primary_tool' && cap.supportsDelegation ? 'loaded' : 'unloaded'
   return {
     askUser,
     replyPrefix: trait.replyPrefix,
