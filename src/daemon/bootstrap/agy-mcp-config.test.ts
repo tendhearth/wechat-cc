@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mkdtempSync, readFileSync, writeFileSync, statSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { setupAgyGlobalMcp, AGY_WECHAT_MCP_NAMESPACE_ID } from './agy-mcp-config'
+import { setupAgyGlobalMcp, removeAgyGlobalMcp, AGY_WECHAT_MCP_NAMESPACE_ID } from './agy-mcp-config'
 import type { McpStdioSpec } from '../../core/mcp-stdio-spec'
 
 function tmpConfigDir(): string {
@@ -166,6 +166,114 @@ describe('setupAgyGlobalMcp — tier C (global-only)', () => {
     const changed = setupAgyGlobalMcp({ wechatSpec, mintToken, log })
     expect(changed).toBe(false)
     expect(mintToken).not.toHaveBeenCalled()
+    expect(calls.some(([, line]) => line.includes('skipped under test runner'))).toBe(true)
+  })
+})
+
+describe('removeAgyGlobalMcp — mirror of setup, cleans up on graceful shutdown', () => {
+  let dir: string
+
+  beforeEach(() => {
+    dir = tmpConfigDir()
+  })
+
+  it('file with our entry + user entries ⇒ ours removed, theirs intact key/byte-level, returns true', () => {
+    mkdirSync(dir, { recursive: true })
+    const path = join(dir, 'mcp_config.json')
+    const userEntry = { command: 'node', args: ['user-server.js'], env: { FOO: 'bar' } }
+    const setupChanged = setupAgyGlobalMcp({
+      wechatSpec,
+      mintToken: () => 'tok-1',
+      geminiConfigDir: dir,
+      log: fakeLog().log,
+    })
+    expect(setupChanged).toBe(true)
+    const afterSetup = JSON.parse(readFileSync(path, 'utf8'))
+    afterSetup.mcpServers['some-other:server'] = userEntry
+    afterSetup.topLevelUserKey = 'preserved'
+    writeFileSync(path, JSON.stringify(afterSetup, null, 2) + '\n')
+
+    const { log } = fakeLog()
+    const removed = removeAgyGlobalMcp({ geminiConfigDir: dir, log })
+    expect(removed).toBe(true)
+
+    const parsed = JSON.parse(readFileSync(path, 'utf8'))
+    expect(parsed.mcpServers[AGY_WECHAT_MCP_NAMESPACE_ID]).toBeUndefined()
+    expect(parsed.mcpServers['some-other:server']).toEqual(userEntry)
+    expect(parsed.topLevelUserKey).toBe('preserved')
+  })
+
+  it('removing our entry leaves an empty mcpServers object rather than deleting the file', () => {
+    mkdirSync(dir, { recursive: true })
+    const path = join(dir, 'mcp_config.json')
+    setupAgyGlobalMcp({ wechatSpec, mintToken: () => 'tok-only', geminiConfigDir: dir, log: fakeLog().log })
+
+    const removed = removeAgyGlobalMcp({ geminiConfigDir: dir, log: fakeLog().log })
+    expect(removed).toBe(true)
+
+    const parsed = JSON.parse(readFileSync(path, 'utf8'))
+    expect(parsed.mcpServers).toEqual({})
+  })
+
+  it('entry absent ⇒ returns false, does not write', () => {
+    mkdirSync(dir, { recursive: true })
+    const path = join(dir, 'mcp_config.json')
+    const initial = { mcpServers: { 'some-other:server': { command: 'node', args: [], env: {} } } }
+    const initialText = JSON.stringify(initial, null, 2) + '\n'
+    writeFileSync(path, initialText)
+    const mtimeBefore = statSync(path).mtimeMs
+
+    const { log, calls } = fakeLog()
+    const removed = removeAgyGlobalMcp({ geminiConfigDir: dir, log })
+
+    expect(removed).toBe(false)
+    expect(readFileSync(path, 'utf8')).toBe(initialText)
+    expect(statSync(path).mtimeMs).toBe(mtimeBefore)
+    void calls
+  })
+
+  it('missing file ⇒ returns false, no-op (no error, no write)', () => {
+    const { log, calls } = fakeLog()
+    const removed = removeAgyGlobalMcp({ geminiConfigDir: dir, log })
+    expect(removed).toBe(false)
+    expect(calls.length).toBe(0)
+  })
+
+  it('corrupted existing JSON ⇒ does NOT clobber, logs, and returns false', () => {
+    mkdirSync(dir, { recursive: true })
+    const path = join(dir, 'mcp_config.json')
+    const corrupted = '{ this is not valid json ,,, '
+    writeFileSync(path, corrupted)
+
+    const { log, calls } = fakeLog()
+    const removed = removeAgyGlobalMcp({ geminiConfigDir: dir, log })
+
+    expect(removed).toBe(false)
+    expect(readFileSync(path, 'utf8')).toBe(corrupted)
+    expect(calls.length).toBeGreaterThan(0)
+  })
+
+  it('unexpected root shape (not an object) ⇒ does NOT clobber, logs, and returns false', () => {
+    mkdirSync(dir, { recursive: true })
+    const path = join(dir, 'mcp_config.json')
+    const weird = JSON.stringify(['not', 'an', 'object'])
+    writeFileSync(path, weird)
+
+    const { log, calls } = fakeLog()
+    const removed = removeAgyGlobalMcp({ geminiConfigDir: dir, log })
+
+    expect(removed).toBe(false)
+    expect(readFileSync(path, 'utf8')).toBe(weird)
+    expect(calls.length).toBeGreaterThan(0)
+  })
+
+  // TEST-RUNNER GUARD mirror (see setupAgyGlobalMcp's equivalent above) —
+  // omitting geminiConfigDir under vitest must never default to the real
+  // ~/.gemini/config, on the removal path any more than on the write path.
+  it('omitting geminiConfigDir under a test runner skips entirely — never reads/writes, never touches the real ~/.gemini/config', () => {
+    const { log, calls } = fakeLog()
+    const removed = removeAgyGlobalMcp({ log })
+    expect(removed).toBe(false)
     expect(calls.some(([, line]) => line.includes('skipped under test runner'))).toBe(true)
   })
 })

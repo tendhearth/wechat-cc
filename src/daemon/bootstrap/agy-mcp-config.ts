@@ -145,3 +145,73 @@ export function setupAgyGlobalMcp(opts: PrepareAgyMcpOpts): boolean {
   opts.log(LOG_TAG, `${existingRaw === null ? 'created' : 'updated'} ${path} (namespace "${AGY_WECHAT_MCP_NAMESPACE_ID}")`)
   return true
 }
+
+export interface RemoveAgyMcpOpts {
+  /** Same test seam as `PrepareAgyMcpOpts.geminiConfigDir` — tests MUST pass
+   *  a mkdtemp dir; production never sets this from main.ts. */
+  geminiConfigDir?: string
+  log: (tag: string, line: string) => void
+}
+
+/**
+ * Mirror image of `setupAgyGlobalMcp`, wired to the daemon's graceful-
+ * shutdown path (spec §3's registered residual): deletes ONLY our
+ * namespaced entry (`AGY_WECHAT_MCP_NAMESPACE_ID`) from the global
+ * `mcp_config.json`, so a dead boot-minted trusted token doesn't sit in the
+ * operator's interactive agy config between daemon runs. Same safety
+ * posture as setup — test-runner guard, read-modify-write, corrupted/
+ * unexpected-shape bail-outs, atomic tmp+rename — except there is no
+ * "create if absent" case: a missing file or an absent entry is simply a
+ * no-op (false), never an error. If removing our entry leaves `mcpServers`
+ * empty, the empty object is kept (the file itself is never deleted — it
+ * may be user-created and carry other top-level keys we don't know about).
+ * Returns true iff the file was written (our entry existed and got
+ * removed).
+ */
+export function removeAgyGlobalMcp(opts: RemoveAgyMcpOpts): boolean {
+  // Same TEST-RUNNER GUARD rationale as setupAgyGlobalMcp — an omitted
+  // geminiConfigDir under a test runner must never fall back to the
+  // operator's real ~/.gemini/config, on shutdown any more than on boot.
+  if (!opts.geminiConfigDir && UNDER_TEST_RUNNER) {
+    opts.log(LOG_TAG, 'skipped under test runner — no explicit geminiConfigDir (refusing to default to the real ~/.gemini/config)')
+    return false
+  }
+  const dir = opts.geminiConfigDir ?? join(homedir(), '.gemini', 'config')
+  const path = join(dir, CONFIG_FILE_NAME)
+
+  let existingRaw: string
+  try {
+    existingRaw = readFileSync(path, 'utf8')
+  } catch {
+    return false // absent — nothing to remove, not an error
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(existingRaw)
+  } catch (err) {
+    opts.log(LOG_TAG, `refusing to touch corrupted ${path}: ${(err as Error).message}`)
+    return false
+  }
+  if (!isPlainObject(parsed) || ('mcpServers' in parsed && !isPlainObject(parsed.mcpServers))) {
+    opts.log(LOG_TAG, `refusing to touch ${path}: unexpected shape (not the expected {"mcpServers":{...}} object)`)
+    return false
+  }
+  const existingRoot: McpConfigRoot = parsed
+  const existingServers = isPlainObject(existingRoot.mcpServers) ? existingRoot.mcpServers : undefined
+
+  if (!existingServers || !(AGY_WECHAT_MCP_NAMESPACE_ID in existingServers)) {
+    return false // our entry isn't there — idempotent no-op
+  }
+
+  const remainingServers = { ...existingServers }
+  delete remainingServers[AGY_WECHAT_MCP_NAMESPACE_ID]
+  const newRoot: McpConfigRoot = { ...existingRoot, mcpServers: remainingServers }
+  const newText = JSON.stringify(newRoot, null, 2) + '\n'
+
+  const tmp = `${path}.tmp`
+  writeFileSync(tmp, newText, { mode: 0o600 })
+  renameSync(tmp, path)
+  opts.log(LOG_TAG, `removed namespace "${AGY_WECHAT_MCP_NAMESPACE_ID}" from ${path}`)
+  return true
+}

@@ -37,6 +37,7 @@ import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/mes
 import { startCustomerReviewRuntime } from './customer-review/runtime'
 import { SUPERVISED_ENV } from '../core/supervised-env'
 import { SubsystemSupervisor } from './subsystems'
+import { removeAgyGlobalMcp } from './bootstrap/agy-mcp-config'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -172,6 +173,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // see bootstrap/index.ts), so shutdown is the only place it tears down
     // its embed subprocess.
     try { await bootRef?.knowledge?.embedder?.close?.() } catch (err) { log('KNOWLEDGE', `embedder close error: ${err instanceof Error ? err.message : String(err)}`) }
+    // Clean up the tier-C global MCP entry (spec §3 residual, 2026-08-17
+    // follow-up) if agy was ever registered this boot — mirrors the other
+    // bootRef?.…-guarded optional teardowns above. Best-effort only: a
+    // crash-exit skips this and leaves the dead-token entry on disk, but
+    // that's fine — boot rewrites/upserts it fresh next start regardless.
+    try { if (bootRef?.registry?.has?.('agy')) removeAgyGlobalMcp({ log }) } catch (err) { log('AGY', `mcp config cleanup error: ${err instanceof Error ? err.message : String(err)}`) }
     try { db.close() } catch (err) { console.error('db close failed:', err) }
     releaseInstanceLock(PID_PATH)
   }

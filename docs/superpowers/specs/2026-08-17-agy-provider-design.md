@@ -175,9 +175,16 @@ agy 塞进参与者列表、trusted-token 的 `POST /v1/conversation/set-mode`
 的 `validateMode`/`resolveParticipants` 双保险 + mode-commands 的用户
 可见拒绝文案),并在 `dispatchSolo` 加了一道 dispatch-time 闸门:不管
 mode 是怎么落到 provider='agy' 的,当场重查该 chat 的 tier,guest 一律
-拒绝、不 spawn。仍然遗留、本轮不处理的口子：①卸载/降级 agy 后
-`wechat-cc:wechat` 这条命名空间条目会留在全局 `mcp_config.json` 里当
-死条目(没有卸载回调清理它)——后续任务;②`mintSessionToken` 目前不接
+拒绝、不 spawn。仍然遗留、本轮不处理的口子：①**[2026-08-17 后续任务已完成]**
+`agy-mcp-config.ts` 新增 `removeAgyGlobalMcp`(setupAgyGlobalMcp 的镜像:
+同一套安全姿势——test-runner guard、读改写、损坏/异常形状拦截、
+tmp+rename 原子写、只删 `wechat-cc:wechat` 这一个 key、`mcpServers`
+删空后保留空对象而非删文件),main.ts 的 `shutdown` 闭包在
+`bootRef?.registry?.has?.('agy')` 时 best-effort 调用它,与其余
+`bootRef?.…` 可选 teardown 同一姿势、失败不阻塞关闭——**优雅关闭现在会
+清理这条命名空间条目**,死条目残留只发生在**崩溃退出**(未走 shutdown
+闭包)时,下次 boot 的 `setupAgyGlobalMcp` 会覆盖重写,不是永久残留;
+②`mintSessionToken` 目前不接
 受按路由收窄的 `routeAllow`(token-registry.ts 的 `MintTokenOpts.routeAllow`
 机制存在,但 `BootstrapDeps['mintSessionToken']` 的签名只有
 `(tier, sessionKey)`,agy-static 拿到的是全 wechat MCP server 的完整
