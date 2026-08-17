@@ -416,149 +416,149 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     }
     const knowledgeStore = openKnowledge(join(deps.stateDir, 'knowledge'))
     try {
-    const decryptedDir = configuredAgent.knowledge_source_dir
-      ?? join(deps.stateDir, 'plugin-data', 'wxvault', 'out', 'decrypted')
+      const decryptedDir = configuredAgent.knowledge_source_dir
+        ?? join(deps.stateDir, 'plugin-data', 'wxvault', 'out', 'decrypted')
 
-    // T7' — the in-process indexer's embed subprocess. Rather than invent a
-    // new discovery path, this reuses `loadedPlugins` (built just above, at
-    // ~line 327, for the plugin-MCP lane) to find wxsearch's resolved plugin
-    // dir — bundled or user, whichever the registry's normal shadowing rule
-    // picked — and derives the script/interpreter paths the SAME way
-    // wxsearch's own manifest spawns itself (`${pluginDir}/wxsearch/
-    // embed_subprocess.py` via `${pluginDir}/.venv/bin/python`, see
-    // packages/wxsearch/wechat-cc.plugin.json's `spawn`). This works whether
-    // or not wxsearch is enabled/ready as an MCP server — the indexer runs
-    // the script directly, in-process orchestration only, never through MCP.
-    // `knowledge_embed_script` is an escape hatch for a non-standard install
-    // (e.g. wxsearch vendored somewhere else); when set without a resolvable
-    // wxsearch plugin dir, the interpreter falls back to `python3` on PATH
-    // (the override is for advanced/manual setups, not the common path).
-    const wxsearchPlugin = loadedPlugins.find(p => p.name === 'wxsearch')
-    const knowledgeEmbedModelId = configuredAgent.knowledge_embed_model ?? 'bge-small-zh-v1.5'
-    const embedScriptPath = configuredAgent.knowledge_embed_script
-      ?? (wxsearchPlugin ? join(wxsearchPlugin.dir, 'wxsearch', 'embed_subprocess.py') : undefined)
-    const embedPythonBin = wxsearchPlugin
-      ? join(wxsearchPlugin.dir, '.venv', 'bin', 'python')
-      : (findOnPath('python3') ?? 'python3')
+      // T7' — the in-process indexer's embed subprocess. Rather than invent a
+      // new discovery path, this reuses `loadedPlugins` (built just above, at
+      // ~line 327, for the plugin-MCP lane) to find wxsearch's resolved plugin
+      // dir — bundled or user, whichever the registry's normal shadowing rule
+      // picked — and derives the script/interpreter paths the SAME way
+      // wxsearch's own manifest spawns itself (`${pluginDir}/wxsearch/
+      // embed_subprocess.py` via `${pluginDir}/.venv/bin/python`, see
+      // packages/wxsearch/wechat-cc.plugin.json's `spawn`). This works whether
+      // or not wxsearch is enabled/ready as an MCP server — the indexer runs
+      // the script directly, in-process orchestration only, never through MCP.
+      // `knowledge_embed_script` is an escape hatch for a non-standard install
+      // (e.g. wxsearch vendored somewhere else); when set without a resolvable
+      // wxsearch plugin dir, the interpreter falls back to `python3` on PATH
+      // (the override is for advanced/manual setups, not the common path).
+      const wxsearchPlugin = loadedPlugins.find(p => p.name === 'wxsearch')
+      const knowledgeEmbedModelId = configuredAgent.knowledge_embed_model ?? 'bge-small-zh-v1.5'
+      const embedScriptPath = configuredAgent.knowledge_embed_script
+        ?? (wxsearchPlugin ? join(wxsearchPlugin.dir, 'wxsearch', 'embed_subprocess.py') : undefined)
+      const embedPythonBin = wxsearchPlugin
+        ? join(wxsearchPlugin.dir, '.venv', 'bin', 'python')
+        : (findOnPath('python3') ?? 'python3')
 
-    // T7' review Finding 1 — the embed subprocess must see the SAME
-    // WXVAULT_STATE_DIR wxvault/wxsearch itself uses
-    // (`<stateDir>/plugin-data/wxvault`, exactly what the plugin registry's
-    // manifest templating resolves `${dataDir}/../wxvault` to for wxsearch's
-    // own spawn — see packages/wxsearch/wechat-cc.plugin.json). Without this,
-    // Bun.spawn's child inherits the daemon's bare process.env, and
-    // embed_subprocess.py's ModelManager falls back to a state dir relative
-    // to its own (read-only, in a packaged app) script path — re-downloading
-    // the model every run and writing config the indexer never reads.
-    const embedEnv = { ...process.env, WXVAULT_STATE_DIR: pluginDataDir(deps.stateDir, 'wxvault') }
+      // T7' review Finding 1 — the embed subprocess must see the SAME
+      // WXVAULT_STATE_DIR wxvault/wxsearch itself uses
+      // (`<stateDir>/plugin-data/wxvault`, exactly what the plugin registry's
+      // manifest templating resolves `${dataDir}/../wxvault` to for wxsearch's
+      // own spawn — see packages/wxsearch/wechat-cc.plugin.json). Without this,
+      // Bun.spawn's child inherits the daemon's bare process.env, and
+      // embed_subprocess.py's ModelManager falls back to a state dir relative
+      // to its own (read-only, in a packaged app) script path — re-downloading
+      // the model every run and writing config the indexer never reads.
+      const embedEnv = { ...process.env, WXVAULT_STATE_DIR: pluginDataDir(deps.stateDir, 'wxvault') }
 
-    // Agent-facing Search (Task 2) — ONE shared, long-lived embedder
-    // service instead of a fresh embed subprocess per cycle. Built once
-    // here (not per cycle) and reused by both the indexer (below) and the
-    // query path (deps.knowledge.embedQuery, wired further down) so index
-    // and query embed in the SAME model space via the SAME model_id.
-    // Undefined when no embed script resolved (no wxsearch plugin dir and
-    // no `knowledge_embed_script` override) — the indexer stays disabled
-    // in that case, same gating as before this task. NOT closed between
-    // cycles — only on daemon shutdown (main.ts reaches it via
-    // boot.knowledge.embedder).
-    // Runtime selection. 'js' runs transformers.js in-process — no venv, no
-    // subprocess, and a model that warm() can load directly. It is not the
-    // default: the packaged desktop sidecar is a compiled single file and
-    // cannot dlopen onnxruntime's native binding, so a selection that cannot
-    // load must degrade to the Python path rather than take the daemon's
-    // whole knowledge face down with it. Vectors are equivalent either way
-    // (cosine > 0.9999 — see js-embedder.e2e.test.ts), so switching runtimes
-    // never invalidates an existing semantic.db.
-    const embedRuntime = configuredAgent.knowledge_embed_runtime ?? 'python'
-    const pythonEmbedder = embedScriptPath
-      ? makeEmbedderService({
-          pythonBin: embedPythonBin,
-          scriptPath: embedScriptPath,
-          model_id: knowledgeEmbedModelId,
-          env: embedEnv,
-        })
-      : undefined
-    const embedder = embedRuntime === 'js'
-      ? withEmbedderFallback(
-          makeJsEmbedder({ model_id: knowledgeEmbedModelId }),
-          pythonEmbedder,
-          err => deps.log('KNOWLEDGE',
-            `embed runtime 'js' unavailable (${err instanceof Error ? err.message : String(err)}) — `
-            + `falling back to the python subprocess for the rest of this run`),
-        )
-      : pythonEmbedder
+      // Agent-facing Search (Task 2) — ONE shared, long-lived embedder
+      // service instead of a fresh embed subprocess per cycle. Built once
+      // here (not per cycle) and reused by both the indexer (below) and the
+      // query path (deps.knowledge.embedQuery, wired further down) so index
+      // and query embed in the SAME model space via the SAME model_id.
+      // Undefined when no embed script resolved (no wxsearch plugin dir and
+      // no `knowledge_embed_script` override) — the indexer stays disabled
+      // in that case, same gating as before this task. NOT closed between
+      // cycles — only on daemon shutdown (main.ts reaches it via
+      // boot.knowledge.embedder).
+      // Runtime selection. 'js' runs transformers.js in-process — no venv, no
+      // subprocess, and a model that warm() can load directly. It is not the
+      // default: the packaged desktop sidecar is a compiled single file and
+      // cannot dlopen onnxruntime's native binding, so a selection that cannot
+      // load must degrade to the Python path rather than take the daemon's
+      // whole knowledge face down with it. Vectors are equivalent either way
+      // (cosine > 0.9999 — see js-embedder.e2e.test.ts), so switching runtimes
+      // never invalidates an existing semantic.db.
+      const embedRuntime = configuredAgent.knowledge_embed_runtime ?? 'python'
+      const pythonEmbedder = embedScriptPath
+        ? makeEmbedderService({
+            pythonBin: embedPythonBin,
+            scriptPath: embedScriptPath,
+            model_id: knowledgeEmbedModelId,
+            env: embedEnv,
+          })
+        : undefined
+      const embedder = embedRuntime === 'js'
+        ? withEmbedderFallback(
+            makeJsEmbedder({ model_id: knowledgeEmbedModelId }),
+            pythonEmbedder,
+            err => deps.log('KNOWLEDGE',
+              `embed runtime 'js' unavailable (${err instanceof Error ? err.message : String(err)}) — `
+              + `falling back to the python subprocess for the rest of this run`),
+          )
+        : pythonEmbedder
 
-    // Extracted (T7' review Finding 2 + Finding 4) into
-    // core/knowledge/cycle.ts's runKnowledgeCycle — adapter-then-indexer
-    // ordering, error-swallowing, and the "still running" concurrency guard
-    // now live there with direct unit coverage (cycle.test.ts) instead of
-    // only being reachable through this closure.
-    const runKnowledgeAdapter = (onBoot: boolean) => runKnowledgeCycle(
-      {
-        runAdapter: () => Promise.resolve(runSourceAdapter({ decryptedDir, store: knowledgeStore })),
-        // Uses the shared `embedder` above (no per-cycle spawn/close —
-        // Task 2). `embedder.model_id` (not the outer
-        // `knowledgeEmbedModelId`) flows into both the embed call AND
-        // putSemantic's provenance tag, so index and query are always
-        // stamped with whatever model the shared service is actually
-        // running.
-        runIndex: embedder
-          ? async () => runIndexer({
-              store: knowledgeStore,
-              embed: embedder.embed,
-              model_id: embedder.model_id,
-              model_version: KNOWLEDGE_EMBED_MODEL_VERSION,
-            })
-          : undefined,
-        // Knowledge Graph inproc Task 4 — rebuilds graph.db (contacts/edges)
-        // from whatever's in source.db right now. `now` is read fresh on
-        // EVERY cycle (not captured once at boot) — graph-profiles.ts's
-        // recency scoring needs the actual wall-clock time of each rebuild,
-        // same posture as the rest of this file never caching `Date.now()`.
-        // Owner resolution: `knowledge_owner` config wins outright; falls
-        // back to `WXGRAPH_OWNER` (mirrors wxgraph's own env-var escape
-        // hatch for accounts detectOwner's 1:1-vote heuristic can't infer);
-        // absent both, rebuildGraphFromSource's detectOwner call decides.
-        runGraphRebuild: () => Promise.resolve(rebuildGraphFromSource({
-          store: knowledgeStore,
-          now: Math.floor(Date.now() / 1000),
-          ownerOverride: configuredAgent.knowledge_owner ?? process.env.WXGRAPH_OWNER,
-        })),
-        log: deps.log,
-      },
-      { onBoot },
-    )
-    // Backfill — deferred one tick so it never delays buildBootstrap's return.
-    setTimeout(() => { void runKnowledgeAdapter(true) }, 0)
-    // Warm the model on the same deferred tick, AFTER the backfill is
-    // scheduled. The backfill often finds nothing new (`0 chunk(s) embedded`)
-    // and then never calls embed, so without this the model stays unloaded
-    // until a user query arrives — and hearth's federated client gives a
-    // source 5s, which a 90MB ONNX load does not fit into. Measured on the
-    // live daemon: first federated query after a restart took 5801ms, timed
-    // out, and reported 0 hits; the second took 396ms and returned 20.
-    // Fire-and-forget and non-rejecting by contract (see warm()'s doc), so it
-    // can only cost time, never a boot.
-    if (embedder) setTimeout(() => { void embedder.warm() }, 0)
-    const knowledgeAdapterTimer = setInterval(() => { void runKnowledgeAdapter(false) }, 5 * 60_000)
-    knowledgeAdapterTimer.unref()
-    return {
-      store: knowledgeStore,
-      search: semanticSearch,
-      ...(embedder ? { embedder, embedQuery: (t: string) => embedder.embed([t]).then(v => v[0]!) } : {}),
-      // Knowledge Graph inproc (Task 5) — unconditional (unlike embedder
-      // above): graph rebuild (graph-build.ts's rebuildGraphFromSource, run
-      // every cycle above) needs no embed script, so the query accessor is
-      // wired whenever knowledge_enabled is on at all.
-      graph: makeGraphQueryApi(knowledgeStore),
-      // Facts + Person (Knowledge Facts/Person inproc, Task 5) —
-      // unconditional (like graph above): facts.db extraction/query needs
-      // no embed script, so both accessors are wired whenever
-      // knowledge_enabled is on at all.
-      facts: makeFactsApi(knowledgeStore),
-      person: makePersonApi(knowledgeStore),
-    }
+      // Extracted (T7' review Finding 2 + Finding 4) into
+      // core/knowledge/cycle.ts's runKnowledgeCycle — adapter-then-indexer
+      // ordering, error-swallowing, and the "still running" concurrency guard
+      // now live there with direct unit coverage (cycle.test.ts) instead of
+      // only being reachable through this closure.
+      const runKnowledgeAdapter = (onBoot: boolean) => runKnowledgeCycle(
+        {
+          runAdapter: () => Promise.resolve(runSourceAdapter({ decryptedDir, store: knowledgeStore })),
+          // Uses the shared `embedder` above (no per-cycle spawn/close —
+          // Task 2). `embedder.model_id` (not the outer
+          // `knowledgeEmbedModelId`) flows into both the embed call AND
+          // putSemantic's provenance tag, so index and query are always
+          // stamped with whatever model the shared service is actually
+          // running.
+          runIndex: embedder
+            ? async () => runIndexer({
+                store: knowledgeStore,
+                embed: embedder.embed,
+                model_id: embedder.model_id,
+                model_version: KNOWLEDGE_EMBED_MODEL_VERSION,
+              })
+            : undefined,
+          // Knowledge Graph inproc Task 4 — rebuilds graph.db (contacts/edges)
+          // from whatever's in source.db right now. `now` is read fresh on
+          // EVERY cycle (not captured once at boot) — graph-profiles.ts's
+          // recency scoring needs the actual wall-clock time of each rebuild,
+          // same posture as the rest of this file never caching `Date.now()`.
+          // Owner resolution: `knowledge_owner` config wins outright; falls
+          // back to `WXGRAPH_OWNER` (mirrors wxgraph's own env-var escape
+          // hatch for accounts detectOwner's 1:1-vote heuristic can't infer);
+          // absent both, rebuildGraphFromSource's detectOwner call decides.
+          runGraphRebuild: () => Promise.resolve(rebuildGraphFromSource({
+            store: knowledgeStore,
+            now: Math.floor(Date.now() / 1000),
+            ownerOverride: configuredAgent.knowledge_owner ?? process.env.WXGRAPH_OWNER,
+          })),
+          log: deps.log,
+        },
+        { onBoot },
+      )
+      // Backfill — deferred one tick so it never delays buildBootstrap's return.
+      setTimeout(() => { void runKnowledgeAdapter(true) }, 0)
+      // Warm the model on the same deferred tick, AFTER the backfill is
+      // scheduled. The backfill often finds nothing new (`0 chunk(s) embedded`)
+      // and then never calls embed, so without this the model stays unloaded
+      // until a user query arrives — and hearth's federated client gives a
+      // source 5s, which a 90MB ONNX load does not fit into. Measured on the
+      // live daemon: first federated query after a restart took 5801ms, timed
+      // out, and reported 0 hits; the second took 396ms and returned 20.
+      // Fire-and-forget and non-rejecting by contract (see warm()'s doc), so it
+      // can only cost time, never a boot.
+      if (embedder) setTimeout(() => { void embedder.warm() }, 0)
+      const knowledgeAdapterTimer = setInterval(() => { void runKnowledgeAdapter(false) }, 5 * 60_000)
+      knowledgeAdapterTimer.unref()
+      return {
+        store: knowledgeStore,
+        search: semanticSearch,
+        ...(embedder ? { embedder, embedQuery: (t: string) => embedder.embed([t]).then(v => v[0]!) } : {}),
+        // Knowledge Graph inproc (Task 5) — unconditional (unlike embedder
+        // above): graph rebuild (graph-build.ts's rebuildGraphFromSource, run
+        // every cycle above) needs no embed script, so the query accessor is
+        // wired whenever knowledge_enabled is on at all.
+        graph: makeGraphQueryApi(knowledgeStore),
+        // Facts + Person (Knowledge Facts/Person inproc, Task 5) —
+        // unconditional (like graph above): facts.db extraction/query needs
+        // no embed script, so both accessors are wired whenever
+        // knowledge_enabled is on at all.
+        facts: makeFactsApi(knowledgeStore),
+        person: makePersonApi(knowledgeStore),
+      }
     } catch (err) {
       // Partial-construction cleanup: the store is already open, so a
       // failure past this point must close it before rethrowing, or the
