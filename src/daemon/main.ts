@@ -459,9 +459,14 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       const adminChatId = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
       if (adminChatId) {
         const lines = degradedSubsystems.map(d => `- ${d.name}:${d.error ?? 'unknown'}`).join('\n')
+        // ilink.sendMessage resolves { error } instead of rejecting (ilink-glue
+        // swallows assertChatRoutable etc.), so the failure signal is the
+        // resolved error field; keep .catch as belt-and-suspenders only.
         void ilink.sendMessage(adminChatId,
           `⚠️ 本次启动有 ${degradedSubsystems.length} 个子系统未能启动:\n${lines}\n核心收发不受影响;重启守护进程可重试。`,
-        ).catch(err => log('SUBSYS', `admin degraded summary send failed: ${err instanceof Error ? err.message : String(err)}`))
+        ).then(r => {
+          if (r.error) log('SUBSYS', `admin degraded summary send failed: ${r.error}`)
+        }).catch(err => log('SUBSYS', `admin degraded summary send failed: ${err instanceof Error ? err.message : String(err)}`))
       }
     }
     didStartup = true
