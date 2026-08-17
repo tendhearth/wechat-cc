@@ -2,6 +2,8 @@ import { query, type Options, type SDKMessage, type SDKUserMessage } from '@anth
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
 import type { TierProfile, ToolKind } from './user-tier'
 import { log } from '../lib/log'
+import { AsyncQueue } from './async-queue'
+import { isAuthFail } from './auth-fail'
 
 /**
  * RFC 05 Phase 2 — static capabilities. Claude is the only provider with
@@ -158,8 +160,9 @@ function extractText(content: AssistantContent | undefined): string {
 // Without interception the phrase leaks to the user as if it were the AI's
 // reply. We tag it with a structured error code so the coordinator can
 // suppress the fallback path and respond with a controlled notification
-// instead.
-const AUTH_FAIL_RE = /(Please run \/login|Not logged in)/i
+// instead. Detection now goes through auth-fail.ts's narrow assistant-text
+// profile (spec §1b) — the full set, not just this file's original two
+// sentinel phrases.
 
 /**
  * Fire-and-forget invoker that survives both sync throws and async
@@ -306,7 +309,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               // the fallback-reply and emits a controlled user-facing notice.
               const text = extractText(content)
               if (text) {
-                if (AUTH_FAIL_RE.test(text)) {
+                if (isAuthFail('assistant-text', text)) {
                   aq.push({
                     kind: 'error',
                     code: 'auth_failed',
@@ -411,39 +414,5 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         },
       }
     },
-  }
-}
-
-class AsyncQueue<T> {
-  private buf: T[] = []
-  private resolvers: ((v: IteratorResult<T>) => void)[] = []
-  private closed = false
-  push(v: T) {
-    if (this.closed) return
-    const r = this.resolvers.shift()
-    if (r) r({ value: v, done: false })
-    else this.buf.push(v)
-  }
-  end() {
-    this.closed = true
-    while (this.resolvers.length > 0) {
-      const r = this.resolvers.shift()!
-      r({ value: undefined as unknown as T, done: true })
-    }
-  }
-  iterable(): AsyncIterable<T> {
-    const self = this
-    return {
-      [Symbol.asyncIterator](): AsyncIterator<T> {
-        return {
-          next() {
-            if (self.buf.length > 0) return Promise.resolve({ value: self.buf.shift() as T, done: false })
-            if (self.closed) return Promise.resolve({ value: undefined as unknown as T, done: true })
-            return new Promise<IteratorResult<T>>(res => self.resolvers.push(res))
-          },
-          async return() { self.end(); return { value: undefined as unknown as T, done: true } },
-        }
-      },
-    }
   }
 }
