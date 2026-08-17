@@ -78,15 +78,34 @@ function makeOpenAiSession(args: {
 }): AgentSession {
   const { sessionId, chatModel, bridge, builtinByName, toolSpecs, ctx, maxSteps, messages, firstRef } = args
 
+  // Per-dispatch AbortController holder. We own the loop, so cancel() is
+  // boundary-checked rather than a true mid-stream abort: `streamTurn`'s
+  // signature is unchanged (no `signal` param — see class doc), so /stop
+  // takes effect at the next loop boundary (top of the round, or right
+  // after the tool-execution block), not instantly. Session-scoped rather
+  // than dispatch()-scoped so cancel()/close() can reach whichever
+  // dispatch is currently in flight without the caller holding a
+  // reference to it.
+  let activeAbort: AbortController | null = null
+
   return {
     dispatch(text: string): AsyncIterable<AgentEvent> {
       messages.push(chatModel.userMessage(text))
       return (async function* run(): AsyncIterable<AgentEvent> {
         if (firstRef.first) { firstRef.first = false; yield { kind: 'init', sessionId } }
         const em = makeTurnEmitter()
+        const abort = new AbortController()
+        activeAbort = abort
         try {
           let steps = 0
           for (;;) {
+            // Boundary check #1 — top of the round, before the next model
+            // call. Mirrors the step_budget shape below: error then break,
+            // falling through to the single terminal `finish` event.
+            if (abort.signal.aborted) {
+              yield em.errorText('cancelled', { code: 'cancelled' })
+              break
+            }
             steps++
             const turn = chatModel.streamTurn(messages, toolSpecs)
             // MUST fully drain `deltas` before awaiting `finished` — see
@@ -125,6 +144,13 @@ function makeOpenAiSession(args: {
               }
               messages.push(chatModel.toolResultMessage(tc.id, tc.name, result))
             }
+            // Boundary check #2 — right after tool execution, before the
+            // step-budget check. Same shape as step_budget: error then
+            // break, finish still fires.
+            if (abort.signal.aborted) {
+              yield em.errorText('cancelled', { code: 'cancelled' })
+              break
+            }
             if (steps >= maxSteps) {
               yield em.errorText(`step budget ${maxSteps} exhausted`, { code: 'step_budget' })
               break
@@ -133,10 +159,16 @@ function makeOpenAiSession(args: {
           yield em.finish({ sessionId, numTurns: steps })
         } catch (err) {
           yield em.error(err)
+        } finally {
+          if (activeAbort === abort) activeAbort = null
         }
       })()
     },
+    async cancel() {
+      activeAbort?.abort()
+    },
     async close() {
+      activeAbort?.abort()
       await bridge.close().catch(() => {})
     },
   }

@@ -105,6 +105,82 @@ describe('openai provider loop', () => {
     await session.close()
   })
 
+  it('cancel() at a step boundary stops the loop with a cancelled error + result, no further streamTurn calls', async () => {
+    // Two-round-capable model (always asks to call `reply`, same shape as
+    // the step_budget fake above) — proves cancel() cuts the loop short at
+    // the boundary check after round 1's tool execution, rather than
+    // letting it run to maxSteps.
+    let streamTurnCalls = 0
+    const alwaysToolCall: ChatModelClient = {
+      streamTurn(_messages, _tools) {
+        streamTurnCalls++
+        const id = `c${streamTurnCalls}`
+        async function* deltas() {
+          yield { kind: 'tool_call' as const, id, name: 'reply', input: { text: 'hi' } }
+        }
+        return {
+          deltas: deltas(),
+          finished: Promise.resolve({
+            messages: [{ role: 'assistant', content: '' } as any],
+            toolCalls: [{ id, name: 'reply', input: { text: 'hi' } }],
+          }),
+        }
+      },
+      async generate() { return 'ok' },
+      userMessage: (t) => ({ role: 'user', content: t } as any),
+      systemMessage: (t) => ({ role: 'system', content: t } as any),
+      toolResultMessage: (id, name, r) => ({ role: 'tool', content: `${name}:${JSON.stringify(r)}` } as any),
+    }
+    const calls: string[] = []
+    const provider = createOpenAiAgentProvider({
+      makeChatModel: () => alwaysToolCall,
+      makeMcpBridge: async () => fakeBridge(calls),
+    })
+    const session = await provider.spawn({ alias: 'a', path: '/tmp' }, guestSpawn as any)
+    const iterator = session.dispatch('go')[Symbol.asyncIterator]()
+
+    // Consume round 1's events: init (first dispatch on a fresh session),
+    // then the tool_call delta event.
+    let step = await iterator.next()
+    expect(step.value).toMatchObject({ kind: 'init' })
+    step = await iterator.next()
+    expect(step.value).toMatchObject({ kind: 'tool_call', tool: 'reply' })
+
+    // Cancel here — the generator is paused right after yielding round 1's
+    // tool_call delta, before round 1's tool has even executed. Draining
+    // continues from here.
+    await session.cancel!()
+
+    const events: AgentEvent[] = []
+    step = await iterator.next()
+    while (!step.done) {
+      events.push(step.value)
+      step = await iterator.next()
+    }
+
+    const errorEvents = events.filter((e) => e.kind === 'error')
+    const resultEvents = events.filter((e) => e.kind === 'result')
+    expect(errorEvents).toHaveLength(1)
+    expect(errorEvents[0]).toMatchObject({ kind: 'error', code: 'cancelled' })
+    expect(resultEvents).toHaveLength(1)
+    expect(events.indexOf(errorEvents[0]!)).toBeLessThan(events.indexOf(resultEvents[0]!))
+    // Round 1's tool DID execute (the abort check comes after tool exec, not before).
+    expect(calls).toEqual(['reply'])
+    // No round 2 — the boundary check after round 1's tool exec caught the cancel.
+    expect(streamTurnCalls).toBe(1)
+    await session.close()
+  })
+
+  it('cancel() with no dispatch in flight is a safe no-op', async () => {
+    const provider = createOpenAiAgentProvider({
+      makeChatModel: () => scriptedModel(),
+      makeMcpBridge: async () => fakeBridge([]),
+    })
+    const session = await provider.spawn({ alias: 'a', path: '/tmp' }, guestSpawn as any)
+    await expect(session.cancel!()).resolves.toBeUndefined()
+    await session.close()
+  })
+
   it('classifies a thrown streamTurn auth error as an error event instead of propagating (D4/B3)', async () => {
     // A ChatModelClient whose streamTurn throws synchronously — previously
     // this would propagate out of the dispatch() async generator uncaught;
