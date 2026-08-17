@@ -118,6 +118,14 @@ must be one instance for write-through cache coherence) → **(1)** internal-api
 **(3)** wireMain → **(4)** register lifecycles (LIFO teardown) → **(5)** startup sweeps. Atomic:
 any failure calls `shutdown()`.
 
+**RESOLVED 2026-08-17** (all-or-nothing boot, was reliability-backlog item #1; spec
+`docs/superpowers/specs/2026-08-17-subsystem-degraded-boot-design.md`): the "atomic" description
+above now applies only to the core chain (internal-api/bootstrap core/pipeline/ilink/polling), which
+stays fail-fast. Optional subsystems (companion×3/guard/mailbox/customer-review/knowledge/social/
+a2a-server/pairing/self-restart) now boot through `SubsystemSupervisor` — a failure there degrades
+that block to "not configured" instead of aborting the whole daemon. Status surfaces at
+`GET /v1/health.subsystems`.
+
 **Circular construction** is broken three ways: raw `let bootRef/ticksRef=null` thunks, typed
 `Ref<T>`/`wireRef` (fail-fast), and ad-hoc `setX` setters on internal-api. `wireMain`
 (`wiring/index.ts`) splits into `tick-bodies` / `pipeline-deps` / `lifecycle-deps` / `side-effects`
