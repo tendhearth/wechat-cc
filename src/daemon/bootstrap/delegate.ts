@@ -188,6 +188,9 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
         },
       )
       const result = await collectTurn(session.dispatch(prompt))
+      if (result.error) {
+        return { ok: false, reason: result.errorCode ? `${result.errorCode}: ${result.error}` : result.error }
+      }
       const response = result.assistantText.join('\n').trim()
       return { ok: true, response, duration_ms: Date.now() - started }
     } catch (err) {
