@@ -120,6 +120,11 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
   hatch)。缺省模型 `gemini-3.7-flash-medium`。
 - `mode-commands.ts`:`/agy` 进 slash 词表;`/agy <model>` 类比 `/api <model>`
   (切 solo+agy 并 pin agyModel,宽松模型名校验同 /api)。
+- **已拍板**:`agy` 故意不进 `agent-config.ts` 的全局默认 provider 枚举
+  (`AgentProviderKind`/`config.provider` 的 `z.enum([...])`,当前仍是
+  `claude|codex|cursor|openai|gemini`)——只能走每聊天 `/agy` 单独切,
+  v1 不支持把它设成整个 daemon 的默认 provider,strongEval 在 v1 也够
+  不着它(§0 决策 2 的 solo-only 范围一致)。
 - cheapEval:`-p --model gemini-3.7-flash-low` 单发,文本走既有
   `assertNotAuthFailed`;`CHEAP_EVAL_PREFERENCE` 里排在 openai 之后、claude
   之前(订阅额度、无按 token 计费)。
@@ -156,6 +161,30 @@ var(`GEMINI_CONFIG_DIR` 等候选试验为负);cwd 级 `.gemini/config/mcp_confi
 无论哪档:只把 **wechat** MCP 喂给 agy(v1 不喂 delegate、不喂插件 MCP);
 写入任何配置文件前先读后写、只增改自己命名空间的条目(如 `wechat-cc`
 前缀),绝不覆盖用户手写内容。
+
+**残留风险(2026-08-17 final-review fix wave,登记而非消除)：**档位 C 的
+代价是 `agy-static` 这一枚 `trusted` token 常驻磁盘(`~/.gemini/config/
+mcp_config.json`),不是 token-registry.ts 文档的"session token 只活在
+env、per-spawn 铸造"的常态——它是该规则一个显式记录的例外(token-
+registry.ts 模块头注释已同步)。两道闸门把这个例外的暴露面压到最小但
+不是零：flip-time(mode-commands.ts 的 `/agy` 拒 guest)只挡得住通过
+slash 命令切换的路径；final-review 发现它可绕过（`/both`/`/chat` 把
+agy 塞进参与者列表、trusted-token 的 `POST /v1/conversation/set-mode`
+不查 tier、以及一个曾经合法的 solo+agy 记录在 chat 被降级为 guest 后
+仍然存活）——修复把 agy 结构性地排除出 parallel/chatroom(coordinator
+的 `validateMode`/`resolveParticipants` 双保险 + mode-commands 的用户
+可见拒绝文案),并在 `dispatchSolo` 加了一道 dispatch-time 闸门:不管
+mode 是怎么落到 provider='agy' 的,当场重查该 chat 的 tier,guest 一律
+拒绝、不 spawn。仍然遗留、本轮不处理的口子：①卸载/降级 agy 后
+`wechat-cc:wechat` 这条命名空间条目会留在全局 `mcp_config.json` 里当
+死条目(没有卸载回调清理它)——后续任务;②`mintSessionToken` 目前不接
+受按路由收窄的 `routeAllow`(token-registry.ts 的 `MintTokenOpts.routeAllow`
+机制存在,但 `BootstrapDeps['mintSessionToken']` 的签名只有
+`(tier, sessionKey)`,agy-static 拿到的是全 wechat MCP server 的完整
+路由集,不是"只给它需要的那几个工具")——若想收窄,需要给
+`BootstrapDeps.mintSessionToken` 加一个可选 `options` 参数并穿透
+providers.ts→agy-mcp-config.ts,这是签名改动,本轮不做,登记为后续
+任务。
 
 ## 4. 权限映射
 
