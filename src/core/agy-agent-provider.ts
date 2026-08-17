@@ -50,8 +50,8 @@ export interface AgyAgentProviderOptions {
    * supplies the real implementation). v1 stays on tier C (global-only MCP
    * config, no per-session parameters) so this is always `{}` in production
    * today. NOTE: `env` has no wire-through yet — `AgySpawnFn` (this task's
-   * frozen contract) only carries `{ cwd }`, so a future non-empty `env`
-   * needs the spawn seam extended alongside whatever task actually needs it.
+   * frozen contract) only carries `{ cwd }`, so a non-empty `env` is
+   * detected and logged loudly rather than silently dropped (see dispatch()).
    */
   sessionArgsFor?: (ctx: SpawnContext) => { args: string[]; env?: Record<string, string> }
   /** Injection seam for tests (fake agy). Default: Bun.spawn wrapper. */
@@ -64,18 +64,65 @@ export interface AgyAgentProviderOptions {
 const DEFAULT_TURN_TIMEOUT_MS = 600_000
 /** spec §2 — cheapEval always uses the cheapest subscription model, regardless of the provider's configured default. */
 const CHEAP_EVAL_MODEL = 'gemini-3.7-flash-low'
+/** Cap on captured stderr text (see drainCappedStderr's doc comment). */
+const STDERR_CAP_BYTES = 64 * 1024
 
 function msToPrintTimeout(ms: number): string {
   return `${Math.max(1, Math.round(ms / 1000))}s`
 }
 
+/**
+ * Read `stream` to completion CONCURRENTLY (the read loop starts the moment
+ * this is called, not lazily when the returned promise is awaited) and cap
+ * the captured text at `capBytes`, discarding anything past the cap while
+ * STILL draining every subsequent chunk.
+ *
+ * Load-bearing: agy's stderr is piped (`stderr: 'pipe'`), and a pipe has a
+ * finite OS buffer (~64KB on macOS/Linux). If nobody reads it, a child that
+ * writes past that buffer blocks on its own `write()` call forever — and
+ * since dispatch() only calls `handle.stderr()` AFTER `proc.exited`
+ * resolves, a child wedged on a full stderr pipe would never exit, so
+ * `exited` never resolves either: total deadlock. (This is the exact hazard
+ * `knowledge/embed-runner.ts` sidesteps by using `stderr: 'inherit'` instead
+ * of `'pipe'` — we can't do that here because `stderr()` needs to return
+ * captured text for the exit-error message, so instead we drain the pipe
+ * concurrently ourselves, same effect via a different mechanism.)
+ */
+export function drainCappedStderr(stream: ReadableStream<Uint8Array>, capBytes: number): Promise<string> {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  return (async () => {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      if (value.length > 0) {
+        if (total < capBytes) {
+          const remaining = capBytes - total
+          chunks.push(value.length > remaining ? value.slice(0, remaining) : value)
+        }
+        total += value.length
+      }
+    }
+    let out = ''
+    for (const chunk of chunks) out += decoder.decode(chunk, { stream: true })
+    out += decoder.decode() // flush any trailing partial multi-byte sequence
+    return out
+  })()
+}
+
 function defaultSpawnFn(bin: string): AgySpawnFn {
   return (args, opts) => {
     const proc = Bun.spawn([bin, ...args], { cwd: opts.cwd, stdout: 'pipe', stderr: 'pipe' })
+    // Start draining stderr NOW (concurrently with whatever the caller does
+    // with stdout/exited) — see drainCappedStderr's doc comment for why a
+    // lazy read-on-demand deadlocks against a chatty child.
+    const stderrPromise = drainCappedStderr(proc.stderr as ReadableStream<Uint8Array>, STDERR_CAP_BYTES)
     return {
       stdout: proc.stdout as unknown as AsyncIterable<Uint8Array>,
       exited: proc.exited,
-      stderr: async () => new Response(proc.stderr).text(),
+      stderr: () => stderrPromise,
       kill: () => {
         try {
           proc.kill()
@@ -93,16 +140,24 @@ type LineRaceResult =
 
 /**
  * Line-buffer an agy child's stdout into complete NDJSON lines, racing every
- * pending read against `signal`. This is load-bearing for cancel(): a plain
- * `for await` directly over the raw handle would, on external `.return()`,
- * cascade an `IteratorClose` down onto the raw stream's iterator while it's
- * suspended mid-`await` on a chunk that may never arrive (a genuinely wedged
- * or killed child) — per spec, `.return()` on a generator parked mid-await
- * (not mid-yield) only settles once THAT SAME promise settles, so a
- * never-resolving read would hang the caller's `cancel()`/`close()` forever.
- * Racing against an abort signal instead gives every await here a promise
- * that's guaranteed to settle once `cancel()` fires, independent of whether
- * the child ever produces another byte.
+ * pending read against `signal`. This is load-bearing for cancellation: a
+ * plain `for await` directly over the raw handle would, on external
+ * `.return()`, cascade an `IteratorClose` down onto the raw stream's
+ * iterator while it's suspended mid-`await` on a chunk that may never
+ * arrive (a genuinely wedged or killed child) — per spec, `.return()` on a
+ * generator parked mid-await (not mid-yield) only settles once THAT SAME
+ * promise settles, so a never-resolving read would hang the caller's
+ * `cancel()`/`close()`/`it.return()` forever. Racing against an abort
+ * signal instead gives every await here a promise that's guaranteed to
+ * settle once the signal fires, independent of whether the child ever
+ * produces another byte.
+ *
+ * The abort-tagged promise (`abortedTagged`) is built ONCE, outside the
+ * loop, and reused on every iteration — building a fresh `aborted.then(...)`
+ * derivative per line would permanently register a new reaction on the
+ * (long-lived, often never-settling-until-cancel) `aborted` promise on
+ * every single line of a turn, accumulating unboundedly on a long-running
+ * turn with many events.
  */
 async function* readLines(stream: AsyncIterable<Uint8Array | string>, signal: AbortSignal): AsyncGenerator<string> {
   const it = stream[Symbol.asyncIterator]()
@@ -111,6 +166,7 @@ async function* readLines(stream: AsyncIterable<Uint8Array | string>, signal: Ab
   const aborted: Promise<void> = signal.aborted
     ? Promise.resolve()
     : new Promise(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+  const abortedTagged: Promise<LineRaceResult> = aborted.then((): LineRaceResult => ({ tag: 'aborted' }))
 
   for (;;) {
     const idx = buf.indexOf('\n')
@@ -121,8 +177,8 @@ async function* readLines(stream: AsyncIterable<Uint8Array | string>, signal: Ab
     }
     if (signal.aborted) return
     const race = await Promise.race<LineRaceResult>([
-      it.next().then(r => ({ tag: 'chunk', r })),
-      aborted.then((): LineRaceResult => ({ tag: 'aborted' })),
+      it.next().then((r): LineRaceResult => ({ tag: 'chunk', r })),
+      abortedTagged,
     ])
     if (race.tag === 'aborted') return
     if (race.r.done) break
@@ -188,6 +244,14 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
       let closed = false
       let currentProc: AgySpawnHandle | null = null
       let currentAbort: AbortController | null = null
+      // CONTROLLER RULING 3: appendInstructions rides the -p text of the
+      // FIRST dispatch of this SESSION OBJECT — codex's `instructionsInjected`
+      // pattern (codex-agent-provider.ts), deliberately independent of
+      // `isFirst`/conversationId: a resumeSessionId-seeded spawn has no
+      // "first fresh turn" (it always sends --conversation) but still needs
+      // the instructions exactly once.
+      const appendInstructions = ctx.appendInstructions
+      let instructionsInjected = !appendInstructions
 
       if (ctx.resumeSessionId) {
         log('SESSION_RESUME', `alias=${project.alias} conversation_id=${ctx.resumeSessionId} provider=agy`)
@@ -205,8 +269,28 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
           const isFirst = firstDispatch
           firstDispatch = false
 
+          // Hoisted into dispatch()'s own SYNCHRONOUS scope (not inside the
+          // generator body below). Two things this buys:
+          //  1. cancel()/close() called before the very first next() (the
+          //     generator body hasn't executed yet at that point) still see
+          //     a live controller instead of racing currentAbort===null and
+          //     silently doing nothing.
+          //  2. The returned iterator's own return()/throw() path — a bare
+          //     `for await` `break`, or `it.return()` called directly,
+          //     WITHOUT ever going through s.cancel() — can abort + kill
+          //     BEFORE delegating to the generator's own unwind (see the
+          //     wrapper below), so a hung child is actually killed instead
+          //     of leaking as an orphaned process.
+          const abort = new AbortController()
+          currentAbort = abort
+
           const model = ctx.model ?? opts.model
-          const args = baseArgs(text, model, turnTimeoutMs)
+          let dispatchedText = text
+          if (!instructionsInjected && appendInstructions) {
+            dispatchedText = `${appendInstructions}\n\n---\n\n${text}`
+            instructionsInjected = true
+          }
+          const args = baseArgs(dispatchedText, model, turnTimeoutMs)
           // CONTROLLER RULING 1: agy's tool execution follows its internal
           // project binding, not process cwd — the FIRST dispatch of a
           // brand-new conversation must claim one via --new-project, or
@@ -222,10 +306,15 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
           if (ctx.permissionMode === 'dangerously') args.push('--dangerously-skip-permissions')
           const extra = opts.sessionArgsFor?.(ctx)
           if (extra?.args && extra.args.length > 0) args.push(...extra.args)
+          if (extra?.env && Object.keys(extra.env).length > 0) {
+            // Loud, not silent — AgySpawnFn (this task's frozen spawn-seam
+            // contract) has no env slot, so a future sessionArgsFor that
+            // starts returning a non-empty env (tier A/B in spec §3) would
+            // otherwise be silently dropped with no signal anything's wrong.
+            log('AGY', 'sessionArgsFor.env ignored — spawn seam carries cwd only')
+          }
 
-          return (async function* dispatchGenerator(): AsyncGenerator<AgentEvent> {
-            const abort = new AbortController()
-            currentAbort = abort
+          const inner = (async function* dispatchGenerator(): AsyncGenerator<AgentEvent> {
             const em = makeTurnEmitter()
             const parser = makeAgyStreamParser()
             let sawResult = false
@@ -280,6 +369,37 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
               currentAbort = null
             }
           })()
+
+          // Wrap `inner` so the ITERATOR PROTOCOL's own return()/throw() —
+          // reached via a bare `for await` `break`, or a direct
+          // `it.return()` call, entirely bypassing s.cancel() — also
+          // aborts + kills BEFORE delegating to the generator's natural
+          // unwind. Relying solely on the generator's own finally blocks
+          // (as a prior version of this file did) never touches abort/kill
+          // on that path: the child was left running as an orphan even
+          // though the JS-level iteration itself terminated cleanly.
+          return {
+            [Symbol.asyncIterator](): AsyncIterator<AgentEvent> {
+              return {
+                next: (): Promise<IteratorResult<AgentEvent>> => inner.next(),
+                return: async (value?: AgentEvent): Promise<IteratorResult<AgentEvent>> => {
+                  abort.abort()
+                  currentProc?.kill()
+                  const result = await inner.return(value)
+                  // Defensive: if the generator body never actually started
+                  // (return() called before the very first next()), its own
+                  // finally blocks never ran — reset session state directly
+                  // so a never-iterated dispatch still frees the session
+                  // instead of wedging inFlight=true forever.
+                  inFlight = false
+                  currentAbort = null
+                  currentProc = null
+                  return result
+                },
+                throw: (e?: unknown): Promise<IteratorResult<AgentEvent>> => inner.throw(e),
+              }
+            },
+          }
         },
         async cancel(): Promise<void> {
           currentAbort?.abort()

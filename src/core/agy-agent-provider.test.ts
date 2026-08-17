@@ -1,6 +1,6 @@
 // src/core/agy-agent-provider.test.ts — 全部经注入 spawnFn 的假 agy
 import { describe, it, expect } from 'vitest'
-import { createAgyAgentProvider } from './agy-agent-provider'
+import { createAgyAgentProvider, drainCappedStderr } from './agy-agent-provider'
 import { TIER_PROFILES } from './user-tier'
 
 function fakeAgy(lines: string[], opts?: { exitCode?: number; stderr?: string; hang?: boolean }) {
@@ -60,6 +60,16 @@ describe('createAgyAgentProvider', () => {
     expect(calls[1]!.args).not.toContain('--new-project')
   })
 
+  // MINOR 5: exact args array (not just "doesn't contain the flag") so a
+  // future strict-mode flag addition (e.g. --mode plan) fails this test.
+  it('strict mode, fresh session: exact args array', async () => {
+    const { spawnFn, calls } = fakeAgy([INIT, TEXT_DONE, RESULT])
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {}, turnTimeoutMs: 600_000 })
+    const s = await provider.spawn(project, ctx)
+    await drain(s.dispatch('x'))
+    expect(calls[0]!.args).toEqual(['-p', 'x', '--output-format', 'stream-json', '--model', 'm', '--print-timeout', '600s', '--new-project'])
+  })
+
   it('resumeSessionId seeds --conversation on the FIRST dispatch', async () => {
     const { spawnFn, calls } = fakeAgy([INIT, TEXT_DONE, RESULT])
     const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
@@ -104,6 +114,33 @@ describe('createAgyAgentProvider', () => {
     await it.return?.()
   })
 
+  // CRITICAL 1 (task review): it.return() called DIRECTLY on the raw
+  // iterator — bypassing s.cancel() entirely — must still abort + kill the
+  // child promptly, and must leave the session free for the next dispatch().
+  it('CRITICAL: it.return() with no explicit cancel() aborts+kills a hung child and frees inFlight', async () => {
+    const { spawnFn, wasKilled } = fakeAgy([INIT], { hang: true })
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
+    const s = await provider.spawn(project, ctx)
+    const it = s.dispatch('long')[Symbol.asyncIterator]()
+    await it.next()
+    await it.return?.()
+    expect(wasKilled()).toBe(true)
+    expect(() => s.dispatch('again')).not.toThrow()
+  })
+
+  // CRITICAL 1 (task review): a plain `break` out of a for-await loop is the
+  // MOST COMMON way a caller abandons a dispatch — must kill the child too.
+  it('CRITICAL: breaking out of a for-await loop kills a hung child', async () => {
+    const { spawnFn, wasKilled } = fakeAgy([INIT], { hang: true })
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
+    const s = await provider.spawn(project, ctx)
+    for await (const ev of s.dispatch('long')) {
+      expect(ev.kind).toBe('init')
+      break
+    }
+    expect(wasKilled()).toBe(true)
+  })
+
   it('ctx.model overrides construction model in --model arg', async () => {
     const { spawnFn, calls } = fakeAgy([INIT, TEXT_DONE, RESULT])
     const provider = createAgyAgentProvider({ bin: 'agy', model: 'default-m', spawnFn, log: () => {} })
@@ -111,6 +148,80 @@ describe('createAgyAgentProvider', () => {
     await drain(s.dispatch('x'))
     const i = calls[0]!.args.indexOf('--model')
     expect(calls[0]!.args[i + 1]).toBe('pinned-m')
+  })
+
+  // IMPORTANT 3 (controller ruling): appendInstructions prefixes the -p text
+  // of the session's first dispatch only, codex-style.
+  it('RULING 3: appendInstructions prefixes only the first dispatch of a session', async () => {
+    const { spawnFn, calls } = fakeAgy([INIT, TEXT_DONE, RESULT])
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
+    const s = await provider.spawn(project, { ...ctx, appendInstructions: 'SYSTEM RULES' })
+    await drain(s.dispatch('hello'))
+    const i0 = calls[0]!.args.indexOf('-p')
+    expect(calls[0]!.args[i0 + 1]).toBe('SYSTEM RULES\n\n---\n\nhello')
+    await drain(s.dispatch('again'))
+    const i1 = calls[1]!.args.indexOf('-p')
+    expect(calls[1]!.args[i1 + 1]).toBe('again')
+  })
+
+  // IMPORTANT 3, careful case flagged by the controller: resumeSessionId
+  // sessions have no "first fresh turn" (they always send --conversation),
+  // but still need the instructions injected exactly once.
+  it('RULING 3: resumeSessionId-seeded session still gets appendInstructions once on its first dispatch', async () => {
+    const { spawnFn, calls } = fakeAgy([INIT, TEXT_DONE, RESULT])
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
+    const s = await provider.spawn(project, { ...ctx, resumeSessionId: 'old-c', appendInstructions: 'SYS' })
+    await drain(s.dispatch('hi'))
+    const i0 = calls[0]!.args.indexOf('-p')
+    expect(calls[0]!.args[i0 + 1]).toBe('SYS\n\n---\n\nhi')
+    expect(calls[0]!.args).not.toContain('--new-project')
+    await drain(s.dispatch('again'))
+    const i1 = calls[1]!.args.indexOf('-p')
+    expect(calls[1]!.args[i1 + 1]).toBe('again')
+  })
+
+  // MINOR 7: sessionArgsFor's env has no wire-through in v1 (AgySpawnFn has
+  // no env slot) — a non-empty env must be logged loudly, not dropped silently.
+  it('sessionArgsFor env is ignored but logged loudly', async () => {
+    const { spawnFn } = fakeAgy([INIT, TEXT_DONE, RESULT])
+    const logs: Array<{ tag: string; line: string }> = []
+    const provider = createAgyAgentProvider({
+      bin: 'agy',
+      model: 'm',
+      spawnFn,
+      log: (tag, line) => logs.push({ tag, line }),
+      sessionArgsFor: () => ({ args: [], env: { FOO: 'bar' } }),
+    })
+    const s = await provider.spawn(project, ctx)
+    await drain(s.dispatch('x'))
+    expect(logs.some(l => l.tag === 'AGY' && l.line.includes('sessionArgsFor.env ignored'))).toBe(true)
+  })
+
+  // MINOR 4: a real child's stdout arrives as raw Uint8Array chunks that can
+  // split anywhere — including mid multi-byte UTF-8 character and mid NDJSON
+  // line — and the final chunk may have no trailing newline at all.
+  it('reassembles a line split across Uint8Array chunks mid multi-byte UTF-8 char, no trailing newline', async () => {
+    const utf8TextDone = JSON.stringify({ event: 'step_update', step_update: { conversation_id: 'c1', step_index: 2, state: 'DONE', step_type: 'agent_response', text_delta: '你好😀' } })
+    const full = [INIT, utf8TextDone, RESULT].join('\n') // deliberately no trailing newline
+    const bytes = new TextEncoder().encode(full)
+    const chunkSize = 7 // small enough to guarantee splits inside lines AND multi-byte chars
+    async function* chunkedStdout(): AsyncGenerator<Uint8Array> {
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        yield bytes.slice(i, i + chunkSize)
+      }
+    }
+    const spawnFn = () => ({
+      stdout: chunkedStdout(),
+      exited: Promise.resolve(0),
+      stderr: async () => '',
+      kill: () => {},
+    })
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
+    const s = await provider.spawn(project, ctx)
+    const evs = await drain(s.dispatch('x'))
+    expect(evs.map(e => e.kind)).toEqual(['init', 'text', 'result'])
+    const textEv = evs.find(e => e.kind === 'text') as { text?: string } | undefined
+    expect(textEv?.text).toBe('你好😀')
   })
 
   it('cheapEval: one-shot with flash-low model, returns response text', async () => {
@@ -129,5 +240,43 @@ describe('createAgyAgentProvider', () => {
     const { spawnFn } = fakeAgy([INIT, AUTH_TEXT_DONE, AUTH_RESULT])
     const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
     await expect(provider.cheapEval!('prompt')).rejects.toThrow()
+  })
+})
+
+// IMPORTANT 2 (task review): stderr must be drained concurrently, not lazily
+// on-demand, or a chatty child deadlocks on a full OS pipe buffer.
+describe('drainCappedStderr', () => {
+  it('reads concurrently (starts at call time) and caps captured output', async () => {
+    let controllerRef!: ReadableStreamDefaultController<Uint8Array>
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { controllerRef = controller },
+    })
+    const resultPromise = drainCappedStderr(stream, 8) // tiny cap for the test
+    controllerRef.enqueue(new TextEncoder().encode('0123456789ABCDEF')) // 16 bytes > cap
+    controllerRef.close()
+    const text = await resultPromise
+    expect(text).toBe('01234567')
+  })
+
+  it("exit-error message surfaces stderr captured by drainCappedStderr's concurrent reader", async () => {
+    let controllerRef!: ReadableStreamDefaultController<Uint8Array>
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { controllerRef = controller },
+    })
+    const stderrPromise = drainCappedStderr(stream, 65536)
+    controllerRef.enqueue(new TextEncoder().encode('boom: something broke'))
+    controllerRef.close()
+
+    const spawnFn = () => ({
+      stdout: (async function* () { yield INIT + '\n' })(),
+      exited: Promise.resolve(1),
+      stderr: () => stderrPromise,
+      kill: () => {},
+    })
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
+    const s = await provider.spawn(project, ctx)
+    const evs = await drain(s.dispatch('x'))
+    const err = evs.find(e => e.kind === 'error') as { message?: string } | undefined
+    expect(err?.message).toContain('boom: something broke')
   })
 })
