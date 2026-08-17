@@ -20,12 +20,9 @@ import { fileURLToPath } from 'node:url'
 import type { ProviderId } from '../../core/conversation'
 import { isCompiledBundle } from '../../lib/runtime-info'
 import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES } from '../../core/agent-provider'
+import type { McpStdioSpec } from '../../core/mcp-stdio-spec'
 
-export interface McpStdioSpec {
-  command: string
-  args: string[]
-  env: Record<string, string>
-}
+export type { McpStdioSpec } from '../../core/mcp-stdio-spec'
 
 export interface McpSpecDeps {
   baseUrl: string
