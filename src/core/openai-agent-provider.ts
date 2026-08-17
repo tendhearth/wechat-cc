@@ -144,14 +144,23 @@ function makeOpenAiSession(args: {
 
 /**
  * Shared cheapEval/strongEval body: run `chatModel.generate` and normalize
- * BOTH ways an eval call can signal auth failure into the same
- * `Error('auth_failed: …')` contract that downstream consumers (chatroom
- * moderator's wrapCheapEvalWithAuthFailCheck, gardener.ts) already grep for:
+ * BOTH ways an eval call can signal auth failure into the same shape:
  *  - error-shaped TEXT (Claude/Codex sentinel strings) → assertNotAuthFailed
  *    below throws on the returned text, as before.
  *  - a THROWN transport error (e.g. a real gateway 401 APICallError, now
  *    surfaced instead of masked — see openai-chat-model.ts generate()) →
- *    classified via isAuthFailError and rethrown with the same prefix.
+ *    classified via isAuthFailError and rethrown as `Error('auth_failed: …')`,
+ *    mirroring the shape assertNotAuthFailed already produces, for log-tag
+ *    consistency — no consumer currently branches on this message text
+ *    (wrapCheapEvalWithAuthFailCheck in bootstrap/index.ts never catches the
+ *    rejection, only screens resolved text; gardener.ts's catch just logs
+ *    and counts). The structured, actually-branched-on auth classification
+ *    for the live session path is the separate AgentEvent errorCode channel
+ *    (turn-emitter's `em.error`/`code: 'auth_failed'`, see D4/B3). This
+ *    fix's real value here is accurate error propagation (the 401's real
+ *    cause is no longer lost behind a generic NoOutputGeneratedError) plus
+ *    a new AUTH_FAILED log line for what was previously an invisible
+ *    thrown-401 case.
  * Non-auth throws (network blips, etc.) pass through unchanged.
  */
 async function runEval(chatModel: ChatModelClient, prompt: string, log: (tag: string, line: string) => void, source: string): Promise<string> {
