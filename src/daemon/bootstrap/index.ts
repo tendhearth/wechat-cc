@@ -564,6 +564,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // failure past this point must close it before rethrowing, or the
       // sqlite handle leaks past the daemon's lifecycle (main.ts's shutdown
       // only closes boot.knowledge, which is undefined on a degraded boot).
+      // The embedder needs NO equivalent cleanup here: makeEmbedderService
+      // (embedder-service.ts) is a lazy, respawn-on-death singleton — it
+      // spawns no subprocess until the first embed() call, so at
+      // construction time (this try block) it holds no process handle to
+      // leak; only knowledgeStore's already-open sqlite handle needs closing.
       try { knowledgeStore.close() } catch { /* best-effort */ }
       throw err
     }
