@@ -13,10 +13,26 @@ export const AUTH_FAIL_ASSISTANT_TEXT =
 export const AUTH_FAIL_SDK_ERROR =
   /(Please run \/login|Not logged in|OPENAI_API_KEY|not authenticated|401 unauthorized|codex login|auth.*expired)/i
 
-export type AuthFailChannel = 'assistant-text' | 'sdk-error'
+/**
+ * claude 专属窄集(仅两个 sentinel 词)。claude 二进制凭证失败只输出这两句
+ * (源自其 string table 的既有验证);流内混有模型正文,曾经把它加宽到
+ * assistant-text 全集(spec §1b 的"刻意的行为变化"),但真机探测证明这是
+ * 误判:'你这个 curl 返回 401 unauthorized,说明 token 过期了…' 这类合法地
+ * 引用/复述认证错误的正文,会被 assistant-text 集里的 '401 unauthorized'、
+ * 'auth...expired' 等短语命中,导致会话被误释放、向用户发出虚假的"登录过期"
+ * 通知——而且零真阳性收益(claude 二进制从不会真的输出这些短语)。因此收窄
+ * 回专属的两句 sentinel,不复用 assistant-text 宽集。
+ */
+export const AUTH_FAIL_CLAUDE_SENTINEL = /(Please run \/login|Not logged in)/i
+
+export type AuthFailChannel = 'assistant-text' | 'sdk-error' | 'claude-sentinel'
 
 export function isAuthFail(channel: AuthFailChannel, text: string): boolean {
-  return (channel === 'assistant-text' ? AUTH_FAIL_ASSISTANT_TEXT : AUTH_FAIL_SDK_ERROR).test(text)
+  const pattern =
+    channel === 'assistant-text' ? AUTH_FAIL_ASSISTANT_TEXT :
+    channel === 'claude-sentinel' ? AUTH_FAIL_CLAUDE_SENTINEL :
+    AUTH_FAIL_SDK_ERROR
+  return pattern.test(text)
 }
 
 /**

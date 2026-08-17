@@ -160,9 +160,15 @@ function extractText(content: AssistantContent | undefined): string {
 // Without interception the phrase leaks to the user as if it were the AI's
 // reply. We tag it with a structured error code so the coordinator can
 // suppress the fallback path and respond with a controlled notification
-// instead. Detection now goes through auth-fail.ts's narrow assistant-text
-// profile (spec §1b) — the full set, not just this file's original two
-// sentinel phrases.
+// instead. Detection goes through auth-fail.ts's dedicated claude-sentinel
+// profile (spec §1b) — NOT the broader assistant-text set. That widening
+// was tried and reverted post-dogfood: assistant-text's wider phrases
+// (e.g. "401 unauthorized", "auth...expired") deterministically
+// false-positive on legitimate assistant text that merely quotes or
+// discusses an auth error (e.g. relaying a curl 401 to the user), which
+// falsely releases the session and sends a "login expired" notice — for
+// zero true-positive gain, since the claude binary itself only ever
+// emits these two sentinel phrases.
 
 /**
  * Fire-and-forget invoker that survives both sync throws and async
@@ -309,7 +315,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               // the fallback-reply and emits a controlled user-facing notice.
               const text = extractText(content)
               if (text) {
-                if (isAuthFail('assistant-text', text)) {
+                if (isAuthFail('claude-sentinel', text)) {
                   aq.push({
                     kind: 'error',
                     code: 'auth_failed',

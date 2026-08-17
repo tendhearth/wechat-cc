@@ -104,6 +104,16 @@ export function isAuthFail(channel: AuthFailChannel, text: string): boolean
 两个 profile 的集合关系写进注释:窄集 ⊂ 宽集不强制,但每个候选词必须注明
 归属哪个通道及原因。
 
+[2026-08-17 dogfood 后撤销:上述"claude 加宽到 assistant-text 集"的声明行为
+变化被真机探针证伪并回退。`isAuthFail('assistant-text', '你这个 curl 返回
+401 unauthorized,说明 token 过期了…')` 确定性返回 true —— 加宽后的集合在
+合法引用/复述认证错误的正文上必然误判,导致会话被误释放、向用户发出虚假
+的"登录过期"通知;而且零真阳性收益,因为 claude 二进制自身从不输出这些
+更宽的短语,只会输出原本的两个 sentinel(`Please run /login` /
+`Not logged in`,源自其 string table)。claude 现在改用专属的
+`AUTH_FAIL_CLAUDE_SENTINEL` / `'claude-sentinel'` 通道,不再复用
+assistant-text 宽集。]
+
 ### 1c. `async-queue.ts`
 
 claude-agent-provider.ts:417-449 的 `AsyncQueue` **一字不动**搬出并导出。

@@ -20,6 +20,16 @@ describe('isAuthFail — two channel profiles', () => {
     expect(isAuthFail('sdk-error', 'connection reset by peer')).toBe(false)
     expect(isAuthFail('sdk-error', 'expired certificate')).toBe(false)   // 无 auth 前缀不命中
   })
+
+  it('claude-sentinel (dedicated, narrowest): only the two literal binary phrases hit', () => {
+    expect(isAuthFail('claude-sentinel', 'Please run /login')).toBe(true)
+    expect(isAuthFail('claude-sentinel', 'Not logged in')).toBe(true)
+    // 真机探针实测的确定性误判用例:合法正文引用/复述 401 错误 —— 不该命中
+    // (assistant-text 宽集会误伤,claude-sentinel 专属窄集必须放行)
+    expect(isAuthFail('claude-sentinel', '你这个 curl 返回 401 unauthorized,说明 token 过期了,建议检查一下认证配置。')).toBe(false)
+    expect(isAuthFail('claude-sentinel', '401 unauthorized')).toBe(false)
+    expect(isAuthFail('claude-sentinel', 'not authenticated')).toBe(false)
+  })
 })
 
 describe('isAuthFailError — structured (HTTP status) classification', () => {
