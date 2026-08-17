@@ -1,6 +1,7 @@
 import type { TierProfile } from './user-tier'
 import type { PermissionMode } from './permission-mode'
 import type { ProviderId } from './conversation'
+import { isAuthFail } from './auth-fail'
 
 // Re-export so existing imports `import type { PermissionMode } from
 // './agent-provider'` keep working.
@@ -257,18 +258,11 @@ export interface AgentProvider {
  * cheapEval call. Lifted out of bootstrap/haiku-eval so all callers
  * (chatroom moderator + companion introspect) handle auth_failed
  * consistently — throw, let the caller decide on fallback.
- *
- * Regex is INTENTIONALLY narrow — only the exact phrases the binaries
- * emit on credential failure. Earlier draft included bare
- * `OPENAI_API_KEY` but that fires on legitimate LLM responses that
- * happen to quote the env-var name ("what does OPENAI_API_KEY do?" in
- * the moderator's view, "remember: put OPENAI_API_KEY in .env" in an
- * introspect memory snapshot). Stick to error-shape phrases only.
+ * See auth-fail.ts for the regex definitions and rationale.
  */
-const AUTH_FAIL_RE = /(Please run \/login|Not logged in|not authenticated|401 unauthorized|please run `?codex login|OPENAI_API_KEY (?:not|is not|missing|required)|auth(?:entication)?\s+(?:expired|failed))/i
 
 export function assertNotAuthFailed(text: string, log: (tag: string, line: string) => void, source: string): void {
-  if (AUTH_FAIL_RE.test(text)) {
+  if (isAuthFail('assistant-text', text)) {
     log('AUTH_FAILED', `${source} credentials stale: ${text.slice(0, 160)}`)
     throw new Error(`auth_failed: ${text.slice(0, 120)}`)
   }
