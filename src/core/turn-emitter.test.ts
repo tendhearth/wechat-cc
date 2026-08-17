@@ -22,6 +22,13 @@ describe('makeTurnEmitter', () => {
       { kind: 'error', code: 'step_budget', message: 'x' })
   })
 
+  it('error(): HTTP 401 on the error object stamps auth_failed even with a generic message', () => {
+    const em = makeTurnEmitter()
+    const err = Object.assign(new Error('No output generated. Check the stream for errors.'), { statusCode: 401 })
+    expect(em.error(err)).toEqual(
+      { kind: 'error', code: 'auth_failed', message: 'No output generated. Check the stream for errors.' })
+  })
+
   it('finish(): overrides win wholesale; defaults fill only the omitted', () => {
     const em = makeTurnEmitter()
     em.toolCall('a'); em.toolCall('b')

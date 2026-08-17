@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isAuthFail } from './auth-fail'
+import { isAuthFail, isAuthFailError } from './auth-fail'
 
 describe('isAuthFail — two channel profiles', () => {
   it('assistant-text (narrow): error-shape phrases hit, bare env-var name does NOT', () => {
@@ -19,5 +19,24 @@ describe('isAuthFail — two channel profiles', () => {
     expect(isAuthFail('sdk-error', 'Not logged in')).toBe(true)
     expect(isAuthFail('sdk-error', 'connection reset by peer')).toBe(false)
     expect(isAuthFail('sdk-error', 'expired certificate')).toBe(false)   // 无 auth 前缀不命中
+  })
+})
+
+describe('isAuthFailError — structured (HTTP status) classification', () => {
+  it('statusCode: 401 → true regardless of message', () => {
+    expect(isAuthFailError({ statusCode: 401, message: 'whatever' })).toBe(true)
+  })
+
+  it('status: 401 (alternate field name) → true', () => {
+    expect(isAuthFailError({ status: 401 })).toBe(true)
+  })
+
+  it('statusCode: 500 → false (not an auth failure)', () => {
+    expect(isAuthFailError({ statusCode: 500 })).toBe(false)
+  })
+
+  it('falls back to sdk-error message regex when no status field', () => {
+    expect(isAuthFailError(new Error('401 unauthorized'))).toBe(true)
+    expect(isAuthFailError(new Error('boom'))).toBe(false)
   })
 })

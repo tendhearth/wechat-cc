@@ -1,5 +1,5 @@
 import type { AgentEvent } from './agent-provider'
-import { isAuthFail } from './auth-fail'
+import { isAuthFail, isAuthFailError } from './auth-fail'
 
 /**
  * 每 turn 的事件制造 + 记账(spec §1d)。只制造事件对象,不接管循环、不接管
@@ -12,9 +12,10 @@ export interface TurnEmitter {
   text(t: string): AgentEvent
   toolCall(tool: string, server?: string): AgentEvent          // 内部 toolCall 计数++
   /** catch 到的异常 → error 事件;message 走 err instanceof Error 语气词;
-   *  自动 isAuthFail('sdk-error') ⇒ code:'auth_failed'(opts.code 显式给定则优先)。 */
+   *  自动 isAuthFailError(err) ⇒ code:'auth_failed'(HTTP 401 优先,message 正则兜底;
+   *  opts.code 显式给定则优先于两者)。 */
   error(err: unknown, opts?: { code?: string }): AgentEvent
-  /** SDK 事件里已是字符串的错误消息 → 同上判别。 */
+  /** SDK 事件里已是字符串的错误消息 → message 正则判别(isAuthFail('sdk-error'))。 */
   errorText(message: string, opts?: { code?: string }): AgentEvent
   /** result 合成:durationMs 缺省 = now - 构造时刻;numTurns 缺省 = toolCall 计数
    *  (实践中五家都带自己的 numTurns —— overrides 整体覆盖,合成绝不克扣)。 */
@@ -51,7 +52,14 @@ export function makeTurnEmitter(): TurnEmitter {
       toolCalls++
       return { kind: 'tool_call', tool, ...(server !== undefined ? { server } : {}) }
     },
-    error: (err, opts) => mkError(err instanceof Error ? err.message : String(err), opts?.code),
+    error: (err, opts) => {
+      const message = err instanceof Error ? err.message : String(err)
+      if (opts?.code) return { kind: 'error', message, code: opts.code }
+      // Structured classification (HTTP status) first — more reliable than
+      // message regex against real gateways whose error text varies.
+      if (isAuthFailError(err)) return { kind: 'error', message, code: 'auth_failed' }
+      return { kind: 'error', message }
+    },
     errorText: (message, opts) => mkError(message, opts?.code),
     finish: (o) => ({
       kind: 'result',

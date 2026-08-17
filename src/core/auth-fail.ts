@@ -18,3 +18,16 @@ export type AuthFailChannel = 'assistant-text' | 'sdk-error'
 export function isAuthFail(channel: AuthFailChannel, text: string): boolean {
   return (channel === 'assistant-text' ? AUTH_FAIL_ASSISTANT_TEXT : AUTH_FAIL_SDK_ERROR).test(text)
 }
+
+/**
+ * 结构化判别:HTTP 401 是认证失败的权威信号,比正则可靠(真实网关的
+ * 错误文案五花八门 —— Kimi 网关实测 401 文本不含任何宽集短语)。
+ * 消息正则(sdk-error 宽集)保留为兜底。
+ */
+export function isAuthFailError(err: unknown): boolean {
+  if (typeof err === 'object' && err !== null) {
+    const status = (err as { statusCode?: unknown }).statusCode ?? (err as { status?: unknown }).status
+    if (status === 401) return true
+  }
+  return err instanceof Error && isAuthFail('sdk-error', err.message)
+}
