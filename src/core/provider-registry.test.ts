@@ -95,6 +95,24 @@ describe('ProviderRegistry', () => {
       const ce = r.getCheapEval()
       expect(await ce!('prompt')).toBe('gemini-text')
     })
+
+    // spec §2: agy rides Google AI Pro subscription quota, no per-token
+    // cost — preference slots it right after openai, ahead of claude.
+    it('prefers agy over claude when both registered', async () => {
+      const r = createProviderRegistry()
+      r.register('claude', stubWithCheap('claude-text'), { displayName: 'Claude', canResume: () => true })
+      r.register('agy', stubWithCheap('agy-text'), { displayName: 'Agy', canResume: () => true })
+      const ce = r.getCheapEval()
+      expect(await ce!('prompt')).toBe('agy-text')
+    })
+
+    it('prefers openai over agy when both registered', async () => {
+      const r = createProviderRegistry()
+      r.register('agy', stubWithCheap('agy-text'), { displayName: 'Agy', canResume: () => true })
+      r.register('openai', stubWithCheap('openai-text'), { displayName: 'OpenAI', canResume: () => true })
+      const ce = r.getCheapEval()
+      expect(await ce!('prompt')).toBe('openai-text')
+    })
   })
 
   describe('getStrongEval — the DEFAULT provider specifically (verdict)', () => {

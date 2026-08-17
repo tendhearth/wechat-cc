@@ -318,6 +318,57 @@ describe('loadAgentConfig — gemini provider', () => {
   })
 })
 
+describe('loadAgentConfig — agy provider', () => {
+  it('resolves agyModel + agyBin', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agentcfg-agy-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+        provider: 'claude',
+        agyModel: 'gemini-3.7-pro',
+        agyBin: '/usr/local/bin/agy',
+      }))
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.agyModel).toBe('gemini-3.7-pro')
+      expect(cfg.agyBin).toBe('/usr/local/bin/agy')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // Mirrors the gemini regression test (Fix 1): round-trip via
+  // saveAgentConfig → loadAgentConfig, and confirm it doesn't bleed into
+  // the generic `model` field.
+  it('round-trips agyModel via saveAgentConfig → loadAgentConfig', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agentcfg-agy-set-'))
+    try {
+      saveAgentConfig(dir, {
+        provider: 'claude',
+        agyModel: 'gemini-3.7-pro',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+      })
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.agyModel).toBe('gemini-3.7-pro')
+      expect(cfg.model).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('agyModel/agyBin optional — default to undefined', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agentcfg-agy-absent-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.agyModel).toBeUndefined()
+      expect(cfg.agyBin).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('loadAgentConfig — cursor provider', () => {
   it('accepts provider="cursor" with cursorModel', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-'))
@@ -641,6 +692,20 @@ describe('modelForProvider / withModelForProvider — per-provider (non-default)
     expect(modelForProvider(next, 'openai')).toBe('deepseek-chat')
     // claude's own field untouched, so a claude spawn still uses its own model.
     expect(modelForProvider({ ...next, model: 'claude-opus-4-8' }, 'claude')).toBe('claude-opus-4-8')
+  })
+
+  // agy is an own-field provider (like openai/cursor): resolves
+  // unconditionally by providerId, regardless of the global default.
+  it('agy resolves its OWN field even when the global default is a different provider', () => {
+    const cfg = { ...base('claude'), model: 'claude-opus-4-8', agyModel: 'gemini-3.7-pro' }
+    expect(modelForProvider(cfg, 'agy')).toBe('gemini-3.7-pro')
+  })
+
+  it('withModelForProvider writes agyModel, not the generic model field', () => {
+    const next = withModelForProvider(base('claude'), 'agy', 'gemini-3.7-pro')
+    expect(next.agyModel).toBe('gemini-3.7-pro')
+    expect(next.model).toBeUndefined()
+    expect(modelForProvider(next, 'agy')).toBe('gemini-3.7-pro')
   })
 })
 

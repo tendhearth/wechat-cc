@@ -23,8 +23,8 @@ describe('ProviderCapabilities.defaultPeer', () => {
 })
 
 describe('CAPABILITY_MATRIX', () => {
-  it('contains exactly 40 rows (4 modes × 5 providers × 2 perms)', () => {
-    expect(CAPABILITY_MATRIX).toHaveLength(40)
+  it('contains exactly 48 rows (4 modes × 6 providers × 2 perms)', () => {
+    expect(CAPABILITY_MATRIX).toHaveLength(48)
   })
 
   it.each(CAPABILITY_MATRIX)(
@@ -49,8 +49,8 @@ describe('CAPABILITY_MATRIX', () => {
       if (row.provider === 'codex')  expect(row.approvalPolicy).not.toBeNull()
       if (row.permissionMode === 'dangerously') expect(row.askUser).toBe('never')
       // B2(spec §4): delegate is loaded only when BOTH mode=primary_tool
-      // AND the provider itself supportsDelegation — cursor/gemini can't
-      // be a delegating host (no delegate stdio channel).
+      // AND the provider itself supportsDelegation — cursor/gemini/agy
+      // can't be a delegating host (no delegate stdio channel).
       const canDelegate = row.provider === 'claude' || row.provider === 'codex' || row.provider === 'openai'
       if (row.mode === 'primary_tool' && canDelegate) expect(row.delegate).toBe('loaded')
       else                                             expect(row.delegate).toBe('unloaded')
@@ -185,11 +185,45 @@ describe('capability-matrix — cursor rows', () => {
   })
 })
 
+describe('capability-matrix — agy rows', () => {
+  it('agy solo strict/dangerously: per-tool callback absent → askUser=never, no sandbox → approvalPolicy null', () => {
+    for (const pm of ['strict', 'dangerously'] as const) {
+      const cap = lookup('solo', 'agy', pm)
+      expect(cap.askUser).toBe('never') // perToolCallback:false flattens 'per-tool' to 'never'
+      expect(cap.replyPrefix).toBe('never')
+      expect(cap.approvalPolicy).toBeNull() // no read-only sandbox level to land 'untrusted' on
+      expect(cap.delegate).toBe('unloaded')
+      expect(cap.forbidden).toBe(false)
+    }
+  })
+
+  it('agy primary_tool: delegate unloaded (supportsDelegation:false — B2 conjunct)', () => {
+    for (const pm of ['strict', 'dangerously'] as const) {
+      expect(lookup('primary_tool', 'agy', pm).delegate).toBe('unloaded')
+    }
+  })
+
+  it('AGY_CAPABILITIES field values (Task 3 declaration, asserted here too)', async () => {
+    const { AGY_CAPABILITIES } = await import('./agy-agent-provider')
+    expect(AGY_CAPABILITIES.perToolCallback).toBe(false)
+    expect(AGY_CAPABILITIES.sandboxLevels.size).toBe(0)
+    expect(AGY_CAPABILITIES.supportsDelegation).toBe(false)
+    expect(AGY_CAPABILITIES.supportsResume).toBe(true)
+    expect(AGY_CAPABILITIES.defaultPeer).toBe('claude')
+  })
+
+  it('assertMatrixComplete accepts agy', () => {
+    expect(capabilityProviderIds()).toContain('agy')
+    expect(() => assertMatrixComplete(['claude', 'codex', 'cursor', 'openai', 'gemini', 'agy'])).not.toThrow()
+  })
+})
+
 describe('capability-matrix — supportsDelegation conjunct (B2, spec §4)', () => {
-  it('cursor and gemini primary_tool rows report delegate=unloaded (no delegate stdio channel)', () => {
+  it('cursor, gemini, agy primary_tool rows report delegate=unloaded (no delegate stdio channel)', () => {
     for (const pm of ['strict', 'dangerously'] as const) {
       expect(lookup('primary_tool', 'cursor', pm).delegate).toBe('unloaded')
       expect(lookup('primary_tool', 'gemini', pm).delegate).toBe('unloaded')
+      expect(lookup('primary_tool', 'agy', pm).delegate).toBe('unloaded')
     }
   })
 

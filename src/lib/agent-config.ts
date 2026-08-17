@@ -21,6 +21,14 @@ export interface AgentConfig {
   openaiBaseUrl?: string
   openaiModel?: string
   geminiModel?: string
+  // agy provider fields (Antigravity CLI — subscription Gemini via Google AI
+  // Pro OAuth). Mirrors `geminiModel?`'s optional-string shape: kept
+  // separate so switching providers doesn't clobber another provider's
+  // pinned model. `agyBin?` is the resolved `agy` binary path (bootstrap
+  // probes `--version` before registering) — not a model field, so it has
+  // no modelForProvider/withModelForProvider counterpart.
+  agyModel?: string
+  agyBin?: string
   // When true, the daemon spawned by `service install` runs with
   // `cli.ts run --dangerously` (Claude SDK permissionMode=bypassPermissions).
   // Wizard-installed daemons need this on by default — there is no human
@@ -171,6 +179,8 @@ const AgentConfigSchema = z.object({
   openaiBaseUrl: z.string().optional(),
   openaiModel: z.string().optional(),
   geminiModel: z.string().optional(),
+  agyModel: z.string().optional(),
+  agyBin: z.string().optional(),
   dangerouslySkipPermissions: z.boolean().default(true),
   autoStart: z.boolean().default(true),
   closeStopsDaemon: z.boolean().default(false),
@@ -257,6 +267,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.openaiBaseUrl === 'string' ? { openaiBaseUrl: parsed.openaiBaseUrl } : {}),
       ...(typeof parsed.openaiModel === 'string' ? { openaiModel: parsed.openaiModel } : {}),
       ...(typeof parsed.geminiModel === 'string' ? { geminiModel: parsed.geminiModel } : {}),
+      ...(typeof parsed.agyModel === 'string' ? { agyModel: parsed.agyModel } : {}),
+      ...(typeof parsed.agyBin === 'string' ? { agyBin: parsed.agyBin } : {}),
       dangerouslySkipPermissions,
       autoStart,
       closeStopsDaemon,
@@ -376,6 +388,7 @@ export function modelForProvider(config: AgentConfig, providerId: string): strin
   if (providerId === 'openai') return config.openaiModel
   if (providerId === 'cursor') return config.cursorModel
   if (providerId === 'gemini') return config.geminiModel
+  if (providerId === 'agy') return config.agyModel
   return config.provider === providerId ? config.model : undefined
 }
 
@@ -384,6 +397,7 @@ export function withModelForProvider(config: AgentConfig, providerId: string, mo
   if (providerId === 'openai') return { ...config, openaiModel: model }
   if (providerId === 'cursor') return { ...config, cursorModel: model }
   if (providerId === 'gemini') return { ...config, geminiModel: model }
+  if (providerId === 'agy') return { ...config, agyModel: model }
   return { ...config, model }
 }
 
