@@ -18,6 +18,7 @@ import type { PollingLifecycle } from '../polling-lifecycle'
 import type { InboundPipelineDeps } from '../inbound/build'
 import type { PipelineRun } from '../inbound/types'
 import { isAdmin, loadAccess } from '../../lib/access'
+import { resolveTier } from '../../core/user-tier'
 import { makeAdminCommands } from '../admin-commands'
 import { makeModeCommands } from '../mode-commands'
 import type { ChatPrefsStore } from '../chat-prefs'
@@ -318,6 +319,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     chatPrefs,
     log,
     isAdmin,
+    // /agy's tier-C guest gate (mode-commands.ts) — same loadAccess() +
+    // resolveTier() pairing the coordinator's own resolveTier closure uses
+    // (bootstrap/index.ts). loadAccess() has a 5s in-process TTL cache, so
+    // this is cheap to call per inbound.
+    resolveTier: (chatId) => resolveTier(chatId, loadAccess()),
   })
 
   const onboardingHandler = makeOnboardingHandler({

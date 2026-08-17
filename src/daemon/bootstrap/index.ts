@@ -338,6 +338,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const delegateStdioForOpenai: McpStdioSpec | null = delegateStdioByProvider.openai ?? null
   const wechatStdioForOpenai: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'openai') : null
   const wechatStdioForGemini: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'gemini') : null
+  const wechatStdioForAgy: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'agy') : null
 
   // Decoupled plugin lane — third-party MCP tool providers
   // spawned as stdio children exactly like wechat/delegate, but discovered
@@ -663,6 +664,23 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // probe the right one before trying to resume (avoids hard error if the
   // SDK rotated or user cleared history). See ./session-paths.ts.
   const sessionStore = makeSessionStore(deps.db, { migrateFromFile: join(deps.stateDir, 'sessions.json') })
+
+  // Per-turn watchdog: the daemon-level bound that guarantees a silently-
+  // stalled SDK subprocess (idle timeout, wedge, hung MCP tool) can never
+  // wedge the pipeline forever. Defaults to 10 min — generous enough for a
+  // legit long turn (memory reads, MCP tools, deep thinking) yet finite, so
+  // the coordinator always reclaims the session and the next message is
+  // served. Override via WECHAT_TURN_TIMEOUT_MS (0 disables — not advised).
+  // Resolved here (moved ahead of registerProviders in the agy-provider
+  // task) so the agy provider's `--print-timeout` can share this exact
+  // value at registration time, same as the coordinator does below.
+  const turnTimeoutMs = (() => {
+    const raw = process.env['WECHAT_TURN_TIMEOUT_MS']
+    if (raw == null || raw === '') return 10 * 60_000
+    const n = Number(raw)
+    return Number.isFinite(n) && n >= 0 ? n : 10 * 60_000
+  })()
+
   const { registry, defaultProviderId, codexBinary, codexVersionCheck } = await registerProviders({
     log: deps.log,
     stateDir: deps.stateDir,
@@ -683,6 +701,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     wechatStdioForOpenai,
     delegateStdioForOpenai,
     wechatStdioForGemini,
+    wechatStdioForAgy,
+    turnTimeoutMs,
+    mintSessionToken: deps.mintSessionToken,
   })
 
   // The single, provider-agnostic source of every session's system prompt.
@@ -877,18 +898,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // [FALLBACK_REPLY_FAIL] / success path logs [FALLBACK_REPLY_SENT].
   const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture })
 
-  // Per-turn watchdog: the daemon-level bound that guarantees a silently-
-  // stalled SDK subprocess (idle timeout, wedge, hung MCP tool) can never
-  // wedge the pipeline forever. Defaults to 10 min — generous enough for a
-  // legit long turn (memory reads, MCP tools, deep thinking) yet finite, so
-  // the coordinator always reclaims the session and the next message is
-  // served. Override via WECHAT_TURN_TIMEOUT_MS (0 disables — not advised).
-  const turnTimeoutMs = (() => {
-    const raw = process.env['WECHAT_TURN_TIMEOUT_MS']
-    if (raw == null || raw === '') return 10 * 60_000
-    const n = Number(raw)
-    return Number.isFinite(n) && n >= 0 ? n : 10 * 60_000
-  })()
+  // (turnTimeoutMs is resolved earlier now — see the block just above
+  // registerProviders() — so the agy provider's `--print-timeout` can be
+  // constructed with the same value the coordinator uses below.)
 
   // recordTurn — emit the structured TurnRecord as a fields-bearing log line
   // AND persist it via the optional onTurnRecord sink. deps.log routes the

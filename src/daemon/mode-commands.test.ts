@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { makeModeCommands } from './mode-commands'
 import type { Mode, ProviderId } from '../core/conversation'
 import type { InboundMsg } from '../core/prompt-format'
+import type { UserTier } from '../core/user-tier'
 
 function inbound(text: string, chatId = 'chat-1'): InboundMsg {
   return { chatId, userId: chatId, text, msgType: 'text', createTimeMs: 0, accountId: 'a' }
@@ -13,6 +14,7 @@ function setup(opts: {
   initialMode?: Mode
   initialUserName?: string
   isAdmin?: (userId: string) => boolean
+  tier?: UserTier
 } = {}) {
   const registered = opts.registered ?? ['claude', 'codex']
   const set = vi.fn<(chatId: string, mode: Mode) => void>()
@@ -51,6 +53,7 @@ function setup(opts: {
     chatPrefs,
     log: () => {},
     isAdmin: opts.isAdmin,
+    resolveTier: () => opts.tier ?? 'admin',
   })
   return { cmds, set, sendMessage, sentMessages, pinModel, chatPrefs, prefsData, getStored: () => stored, getStoredName: () => storedName }
 }
@@ -235,6 +238,7 @@ describe('makeModeCommands', () => {
       pinModel: async () => {},
       chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
+      resolveTier: () => 'admin' as const,
     })
     await cmds.handle(inbound('/both'))
     expect(sentMessages[0]?.[1]).toContain('启用失败')
@@ -279,6 +283,7 @@ describe('makeModeCommands', () => {
       pinModel: async () => {},
       chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
+      resolveTier: () => 'admin' as const,
     })
     await cmds.handle(inbound('/chat'))
     expect(sentMessages[0]?.[1]).toContain('启用失败')
@@ -324,6 +329,7 @@ describe('makeModeCommands', () => {
       pinModel: async () => {},
       chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
+      resolveTier: () => 'admin' as const,
     })
     await cmds.handle(inbound('/stop'))
     expect(cancel).toHaveBeenCalledWith('chat-1')
@@ -354,6 +360,7 @@ describe('makeModeCommands', () => {
       pinModel: async () => {},
       chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
+      resolveTier: () => 'admin' as const,
     })
     await cmds.handle(inbound('/stop'))
     expect(sentMessages[0]?.[1]).not.toContain('已中止')
@@ -440,6 +447,7 @@ describe('makeModeCommands', () => {
       pinModel: async () => {},
       chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
+      resolveTier: () => 'admin' as const,
     })
     await cmds.handle(inbound('/cc + codex'))
     expect(sentMessages[0]?.[1]).toContain('启用失败')
@@ -513,6 +521,52 @@ describe('makeModeCommands', () => {
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
     expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
+  })
+
+  // ── /agy — tier-C guest gate (spec 2026-08-17-agy-provider-design.md §3) ──
+
+  it('/agy switches mode to solo+agy for an admin/trusted chat', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'admin' })
+    const consumed = await cmds.handle(inbound('/agy'))
+    expect(consumed).toBe(true)
+    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'agy' })
+    expect(sentMessages[0]?.[1]).toContain('Agy')
+    expect(sentMessages[0]?.[1]).toContain('solo')
+  })
+
+  it('/agy <model> pins the model AND switches to solo+agy for a trusted chat', async () => {
+    const { cmds, set, sentMessages, pinModel } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'trusted' })
+    const consumed = await cmds.handle(inbound('/agy gemini-3.7-flash-high'))
+    expect(consumed).toBe(true)
+    expect(pinModel).toHaveBeenCalledWith('agy', 'gemini-3.7-flash-high')
+    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'agy' })
+    expect(sentMessages[0]?.[1]).toContain('gemini-3.7-flash-high')
+  })
+
+  it('/agy is rejected for a guest chat (bare form) — MCP token has no per-session isolation', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'guest' })
+    const consumed = await cmds.handle(inbound('/agy'))
+    expect(consumed).toBe(true)
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toBe('❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+  })
+
+  it('/agy <model> is rejected for a guest chat (model-pin form) — no pin, no switch', async () => {
+    const { cmds, set, sentMessages, pinModel } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'guest' })
+    const consumed = await cmds.handle(inbound('/agy gemini-3.7-flash-high'))
+    expect(consumed).toBe(true)
+    expect(pinModel).not.toHaveBeenCalled()
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toBe('❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+  })
+
+  it('/agy replies 未注册 when the agy provider is not configured (non-guest chat)', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex'], tier: 'admin' })
+    const consumed = await cmds.handle(inbound('/agy'))
+    expect(consumed).toBe(true)
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('未注册')
+    expect(sentMessages[0]?.[1]).toContain('agy')
   })
 
   it('returns false for unrecognised slash words like /health (lets admin-commands handle)', async () => {

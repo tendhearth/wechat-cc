@@ -29,6 +29,7 @@ import { botName } from './bot-name'
 import { validateNickname, NICKNAME_MAX_LEN } from './nickname'
 import { capabilitiesFor } from '../core/capability-matrix'
 import type { AgentConfig } from '../lib/agent-config'
+import type { UserTier } from '../core/user-tier'
 
 export interface ModeCommandsDeps {
   coordinator: Pick<ConversationCoordinator, 'getMode' | 'setMode' | 'cancel'>
@@ -58,6 +59,16 @@ export interface ModeCommandsDeps {
   log: (tag: string, line: string) => void
   /** Returns true when userId belongs to an admin. Used by /help to gate the admin section. */
   isAdmin?: (userId: string) => boolean
+  /**
+   * Resolve a chat's access tier. Used ONLY to gate `/agy`: agy's MCP tool
+   * access is tier-C (spec 2026-08-17-agy-provider-design.md §3) — its
+   * global `~/.gemini/config/mcp_config.json` carries a single long-lived
+   * 'trusted' token shared by every conversation agy runs, with no
+   * per-session isolation. A guest chat switching a session to agy would
+   * therefore get trusted-tier tool access it isn't entitled to, so guest
+   * chats are refused outright rather than silently over-privileged.
+   */
+  resolveTier(chatId: string): UserTier
 }
 
 export interface ModeCommands {
@@ -83,6 +94,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     // registry.has() guard below replies "未注册".
     if (lower === 'api') return 'openai'
     if (lower === 'gemini') return 'gemini'
+    if (lower === 'agy') return 'agy'
     return null
   }
 
@@ -202,6 +214,14 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       // /cc, /codex
       const providerId = isProviderCommand(slashWord)
       if (providerId) {
+        // agy tier-C guest gate — checked before ANY setMode (bare, `+peer`,
+        // or the model-pin tail below) since its whole failure mode is
+        // over-privileged tool access, not a specific sub-command. See
+        // ModeCommandsDeps.resolveTier's doc comment.
+        if (providerId === 'agy' && deps.resolveTier(msg.chatId) === 'guest') {
+          await reply(msg.chatId, '❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+          return true
+        }
         if (tail === '') {
           if (!deps.registry.has(providerId)) {
             await reply(msg.chatId, `❌ provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
@@ -258,13 +278,13 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           deps.log('MODE_CMD', `chat=${msg.chatId} → primary_tool primary=${providerId} peer=${peerProviderId}`)
           return true
         }
-        // /api <model> — for the openai-compatible provider ONLY, a
+        // /api <model> / /agy <model> — for openai and agy ONLY, a
         // non-"+peer" tail is interpreted as a model id: switch this chat to
-        // solo+openai AND pin the model in one command (e.g. `/api DeepSeek`,
-        // `/api kimi-k2.7-code`). Deliberately NOT extended to
-        // claude/codex/cursor — their tail keeps meaning "unsupported
-        // argument" below, unchanged.
-        if (providerId === 'openai') {
+        // solo+<provider> AND pin the model in one command (e.g. `/api
+        // DeepSeek`, `/agy gemini-3.7-flash-high`). Deliberately NOT
+        // extended to claude/codex/cursor/gemini — their tail keeps meaning
+        // "unsupported argument" below, unchanged.
+        if (providerId === 'openai' || providerId === 'agy') {
           // Liberal on charset (letters/digits/./_/-//), just no whitespace —
           // real model ids vary wildly across OpenAI-compatible backends
           // (DeepSeek/Kimi/Qwen/OpenRouter/…) and some are bare names with no
