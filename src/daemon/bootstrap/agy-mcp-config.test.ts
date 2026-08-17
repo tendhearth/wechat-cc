@@ -153,4 +153,19 @@ describe('setupAgyGlobalMcp — tier C (global-only)', () => {
     expect(readFileSync(path, 'utf8')).toBe(weird)
     expect(calls.length).toBeGreaterThan(0)
   })
+
+  // TEST-RUNNER GUARD (2026-08-17, fix round 1) — the real bug this guards
+  // against: every e2e/bootstrap test that boots a real daemon (real
+  // internalApi + a real `agy` on PATH) with NO explicit geminiConfigDir
+  // would otherwise default to the operator's REAL ~/.gemini/config, and
+  // this test file itself runs under vitest, so `UNDER_TEST_RUNNER` is
+  // genuinely true here — no env-var stubbing needed to exercise it.
+  it('omitting geminiConfigDir under a test runner skips entirely — never reads/writes/mints, never touches the real ~/.gemini/config', () => {
+    const { log, calls } = fakeLog()
+    const mintToken = vi.fn(() => 'tok-should-never-be-minted')
+    const changed = setupAgyGlobalMcp({ wechatSpec, mintToken, log })
+    expect(changed).toBe(false)
+    expect(mintToken).not.toHaveBeenCalled()
+    expect(calls.some(([, line]) => line.includes('skipped under test runner'))).toBe(true)
+  })
 })

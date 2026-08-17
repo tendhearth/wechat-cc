@@ -323,6 +323,16 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // resolveTier() pairing the coordinator's own resolveTier closure uses
     // (bootstrap/index.ts). loadAccess() has a 5s in-process TTL cache, so
     // this is cheap to call per inbound.
+    //
+    // DELIBERATELY does NOT mirror bootstrap/index.ts's resolveTier closure
+    // in full: that one short-circuits to 'admin' when
+    // `deps.dangerouslySkipPermissions` is set (the global --dangerously
+    // override). This gate omits that branch on purpose — agy's tier-C MCP
+    // config carries ONE long-lived 'trusted' token shared by every
+    // conversation agy runs, with no per-session isolation (agy-mcp-
+    // config.ts), so a guest chat must stay refused even on a
+    // --dangerously-run daemon. Fail closed on that shared-token hazard;
+    // do NOT "fix" this into parity with the coordinator's closure.
     resolveTier: (chatId) => resolveTier(chatId, loadAccess()),
   })
 

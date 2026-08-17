@@ -32,6 +32,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { McpStdioSpec } from '../../core/mcp-stdio-spec'
+import { UNDER_TEST_RUNNER } from '../../lib/config'
 
 /** Our namespaced entry key inside `mcpServers` — never touch any other key. */
 export const AGY_WECHAT_MCP_NAMESPACE_ID = 'wechat-cc:wechat'
@@ -71,6 +72,22 @@ const LOG_TAG = 'agy-mcp'
  * or a defensive bail-out on unreadable/unexpected existing content).
  */
 export function setupAgyGlobalMcp(opts: PrepareAgyMcpOpts): boolean {
+  // TEST-RUNNER GUARD (incident 2026-08-17, fix round 1 — same rationale as
+  // config.ts's STATE_DIR guard): every e2e run that boots a real daemon
+  // (real internalApi + a real `agy` binary on PATH) reached this function
+  // with NO explicit geminiConfigDir, and the default silently resolved to
+  // the OPERATOR'S REAL ~/.gemini/config/mcp_config.json — a write to live
+  // user state from a test run. Masked in dev only because that file
+  // happened to be 0 bytes there (JSON.parse('') throws → the corrupted-
+  // file bail-out below happened to save us by accident, not by design).
+  // So: under a test runner, an omitted geminiConfigDir is a hard skip, not
+  // a homedir default — a test that WANTS this to actually write must pass
+  // an explicit (mkdtemp'd) geminiConfigDir, exactly like WECHAT_STATE_DIR
+  // must be explicit for STATE_DIR under test.
+  if (!opts.geminiConfigDir && UNDER_TEST_RUNNER) {
+    opts.log(LOG_TAG, 'skipped under test runner — no explicit geminiConfigDir (refusing to default to the real ~/.gemini/config)')
+    return false
+  }
   const dir = opts.geminiConfigDir ?? join(homedir(), '.gemini', 'config')
   const path = join(dir, CONFIG_FILE_NAME)
 

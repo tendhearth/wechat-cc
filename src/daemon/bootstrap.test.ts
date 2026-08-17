@@ -307,14 +307,13 @@ describe('bootstrap', () => {
     // so /codex slash command works without daemon restart.
     // Cursor only registers when CURSOR_API_KEY is set + @cursor/sdk
     // imports; in this test env CURSOR_API_KEY is unset so it never
-    // appears. agy is gated on a REAL `agy` binary being resolvable on
-    // PATH (agy-provider design §3 — no env-var/config gate, unlike
-    // cursor/openai/gemini) + a real `--version` probe, so unlike the
-    // other optional providers its presence here is genuinely
-    // machine-dependent (present on a dev box with Antigravity CLI
-    // installed, absent in a bare CI runner) — filtered out rather than
-    // asserted either way.
-    expect(b.registry.list().filter(id => id !== 'agy').sort()).toEqual(['claude', 'codex'])
+    // appears. agy is gated on `agyBin` in seeded agent-config OR a real
+    // PATH lookup — but under a test runner the PATH fallback is disabled
+    // outright (providers.ts's UNDER_TEST_RUNNER guard, fix round 1) and
+    // no agent-config.json exists at this stateDir, so agy never appears
+    // here regardless of whether the host machine happens to have a real
+    // `agy` binary installed. Back to a strict exact-list assertion.
+    expect(b.registry.list().sort()).toEqual(['claude', 'codex'])
     expect(b.registry.has('claude')).toBe(true)
     expect(b.registry.has('codex')).toBe(true)
   })

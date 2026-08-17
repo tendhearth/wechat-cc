@@ -704,6 +704,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     wechatStdioForAgy,
     turnTimeoutMs,
     mintSessionToken: deps.mintSessionToken,
+    agyGeminiConfigDir: deps.agyGeminiConfigDir,
   })
 
   // The single, provider-agnostic source of every session's system prompt.

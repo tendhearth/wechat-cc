@@ -50,6 +50,16 @@ export interface BootstrapDeps {
   mintSessionToken?: (tier: import('../../core/user-tier').UserTier, sessionKey: string) => string
   invalidateSession?: (sessionKey: string) => void
   /**
+   * Test/harness override for agy's tier-C global MCP config target dir
+   * (ProviderDeps['agyGeminiConfigDir'], threaded straight through to
+   * `setupAgyGlobalMcp`). Always undefined in production — never wire this
+   * from main.ts. Exists so a test that wants to exercise the real
+   * ~/.gemini/config write path can point it at a mkdtemp'd dir instead;
+   * omitted under a test runner, that write is skipped entirely rather
+   * than defaulting to the operator's real home dir.
+   */
+  agyGeminiConfigDir?: string
+  /**
    * Used when projects.current is unset. Prevents silent message drops on
    * fresh installs — matches v0.x UX where messages routed to the daemon's
    * launch cwd by default.

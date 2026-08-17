@@ -12,8 +12,14 @@ import { join } from 'path'
 /**
  * True while a test runner is driving this process. vitest sets VITEST (and
  * NODE_ENV=test); bun's native runner sets NODE_ENV=test (verified 2026-07-26).
+ *
+ * Exported (2026-08-17, agy-provider fix round 1) so other real-home-dir-
+ * touching defaults can reuse this exact detection instead of re-deriving
+ * their own copy — see agy-mcp-config.ts's `geminiConfigDir` default and
+ * providers.ts's agy PATH-lookup gate, both guarded by this same flag for
+ * the same reason STATE_DIR is below.
  */
-const UNDER_TEST_RUNNER = process.env.VITEST != null || process.env.NODE_ENV === 'test'
+export const UNDER_TEST_RUNNER = process.env.VITEST != null || process.env.NODE_ENV === 'test'
 
 /**
  * Root state directory — all persistent wechat-cc data lives under here.
