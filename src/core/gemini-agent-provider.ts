@@ -107,6 +107,12 @@ export interface DispatchLoopArgs {
   userText: string
   /** Safety cap on tool rounds per dispatch (default 12). */
   maxRounds?: number
+  /** Cancellation signal (session.cancel() / close()). Checked at round
+   *  boundaries only — this provider owns the loop but generateContent
+   *  itself isn't abortable mid-call, so /stop takes effect at the next
+   *  boundary, not instantly. Additive/optional so direct callers of
+   *  runDispatchLoop that don't pass one are unaffected. */
+  signal?: AbortSignal
 }
 
 /** The tool-use loop. Yields AgentEvents; mutates `history`. */
@@ -121,6 +127,16 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
   let rounds = 0
   try {
     while (true) {
+      if (args.signal?.aborted) {
+        // Mirror the cap-hit branch's history hygiene: at loop entry,
+        // history ends on a user turn (the initial push above, or the
+        // previous round's functionResponse push) — append a synthetic
+        // model turn so the NEXT dispatch on this session doesn't start
+        // with two consecutive user turns.
+        args.history.push({ role: 'model', parts: [{ text: '[cancelled]' }] })
+        yield em.finish({ sessionId: args.sessionId, numTurns: rounds })
+        return
+      }
       rounds++
       const resp = await args.genai.generateContent({ model: args.model, contents: args.history, config })
       const text = resp.text ?? ''
@@ -172,6 +188,15 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
         }
       }
       args.history.push({ role: 'user', parts: responseParts })
+
+      if (args.signal?.aborted) {
+        // Same shape as the cap-hit branch just below: history currently
+        // ends on the user(functionResponse) turn just pushed — append a
+        // synthetic model turn so alternation holds for the next dispatch.
+        args.history.push({ role: 'model', parts: [{ text: '[cancelled]' }] })
+        yield em.finish({ sessionId: args.sessionId, numTurns: rounds })
+        return
+      }
 
       if (rounds >= cap) {
         // Cap hit mid-tool-loop: history currently ends on a user(functionResponse)
@@ -344,9 +369,17 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
       // label since GEMINI_CAPABILITIES.supportsResume = false (no history
       // serialisation yet).
       const history: unknown[] = []
+      // Per-dispatch AbortController — cancel()/close() reach whichever
+      // dispatch is currently in flight. Set synchronously in dispatch()
+      // itself (not inside the generator body), so a cancel() called
+      // right after dispatch() returns — before the caller has iterated
+      // at all — still reaches the right controller.
+      let activeAbort: AbortController | null = null
 
       return {
         dispatch(text: string) {
+          const abort = new AbortController()
+          activeAbort = abort
           return runDispatchLoop({
             genai: opts.genai.models,
             mcp: { callTool: (n, a) => conn.callTool(n, a) },
@@ -357,9 +390,14 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
             history,
             sessionId,
             userText: text,
+            signal: abort.signal,
           })
         },
+        async cancel() {
+          activeAbort?.abort()
+        },
         async close() {
+          activeAbort?.abort()
           try { await conn.close() } catch { /* swallow */ }
         },
       }

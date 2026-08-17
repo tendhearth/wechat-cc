@@ -213,6 +213,56 @@ describe('runDispatchLoop', () => {
     expect(fr.response.content).toBeUndefined()
   })
 
+  it('signal aborted during round 1 tool exec → loop stops at the boundary, alternation preserved, finish emitted', async () => {
+    const history: any[] = []
+    const controller = new AbortController()
+    let generateContentCalls = 0
+    const genai: GenaiPort = {
+      async generateContent() {
+        generateContentCalls++
+        // Round 1: one functionCall. If the loop wrongly proceeds to round 2
+        // (post-cancel), it would see this same functionCalls payload again.
+        return { functionCalls: [{ name: 'reply', args: { x: 1 } }] }
+      },
+    }
+    const events = runDispatchLoop({
+      genai,
+      // Abort lands mid-tool-execution — the boundary check right after
+      // the tool-execution for-loop is the one that must catch it.
+      mcp: { async callTool(name, args) { controller.abort(); return { content: [{ type: 'text', text: 'ok' }] } } },
+      gate: async () => ({ allow: true }),
+      model: 'm', systemInstruction: 's', functionDeclarations: [{ name: 'reply' }],
+      history, sessionId: 's5', userText: 'x',
+      signal: controller.signal,
+    })
+    const evs: any[] = []
+    for await (const e of events) evs.push(e)
+    expect(evs.at(-1).kind).toBe('result')
+    expect(evs.some(e => e.kind === 'error')).toBe(false)
+    // History alternation preserved: last entry is a synthetic model turn.
+    expect((history.at(-1) as any).role).toBe('model')
+    // Loop stopped after round 1 — generateContent was never called for round 2.
+    expect(generateContentCalls).toBe(1)
+  })
+
+  it('signal aborted before the loop starts → no generateContent call at all, alternation preserved', async () => {
+    const history: any[] = []
+    const controller = new AbortController()
+    controller.abort()
+    let generateContentCalls = 0
+    const genai: GenaiPort = { async generateContent() { generateContentCalls++; return { text: 'unreached' } } }
+    const events = runDispatchLoop({
+      genai, mcp: fakeMcp({}), gate: async () => ({ allow: true }),
+      model: 'm', systemInstruction: 's', functionDeclarations: [],
+      history, sessionId: 's6', userText: 'x', signal: controller.signal,
+    })
+    const evs: any[] = []
+    for await (const e of events) evs.push(e)
+    expect(evs.at(-1).kind).toBe('result')
+    expect(generateContentCalls).toBe(0)
+    expect((history.at(-1) as any).role).toBe('model')
+  })
+
   it('keeps assistant text in the model turn when text accompanies a functionCall', async () => {
     const history: any[] = []
     const events = runDispatchLoop({
@@ -291,6 +341,48 @@ describe('createGeminiAgentProvider', () => {
     )
     await session.close()
     expect(receivedMcpEnv).toEqual(ctxMcpEnv)
+  })
+
+  it('session.cancel() aborts the in-flight dispatch — generateContent is never called again', async () => {
+    let generateContentCalls = 0
+    const provider = createGeminiAgentProvider({
+      genai: {
+        models: {
+          async generateContent() {
+            generateContentCalls++
+            return { functionCalls: [{ name: 'reply', args: {} }] }
+          },
+        },
+      } as any,
+      model: 'gemini-flash-latest',
+      systemInstruction: 'sys',
+      async mcpConnect() {
+        return {
+          listTools: async () => ([{ name: 'reply', description: 'r', inputSchema: { type: 'object', properties: {} } }]),
+          callTool: async () => ({ content: [{ type: 'text', text: '{}' }] }),
+          close: async () => {},
+        }
+      },
+      buildGate: () => (async () => ({ allow: true })) as any,
+    })
+    const session = await provider.spawn({ alias: 'P', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' })
+    const iterator = session.dispatch('hi')[Symbol.asyncIterator]()
+
+    // Consume round 1's tool_call event, then cancel while the generator is
+    // paused right after it (before round 1's tool has even executed).
+    const step1 = await iterator.next()
+    expect(step1.value).toMatchObject({ kind: 'tool_call', tool: 'reply' })
+    await session.cancel!()
+
+    const evs: any[] = []
+    let step = await iterator.next()
+    while (!step.done) { evs.push(step.value); step = await iterator.next() }
+
+    expect(evs.at(-1).kind).toBe('result')
+    // Only round 1's generateContent call happened — cancel caught the
+    // boundary right after round 1's tool execution, before round 2.
+    expect(generateContentCalls).toBe(1)
+    await session.close()
   })
 
   // Bug 9b: buildGate is required and ALWAYS consulted — a deny-all gate must block execution.
