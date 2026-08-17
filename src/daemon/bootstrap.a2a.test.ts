@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { buildBootstrap } from './bootstrap'
 import { openTestDb } from '../lib/db'
+import { SubsystemSupervisor } from './subsystems'
 
 function makeIlinkStub() {
   return {
@@ -53,6 +54,7 @@ describe('bootstrap A2A wiring', () => {
     // fixed path like /tmp/state is racy: a parallel test writing an
     // a2a_listen config there makes this read it and flake.
     const boot = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: mkdtempSync(join(tmpdir(), 'bootstrap-a2a-null-')),
       ilink: makeIlinkStub() as any,
@@ -65,6 +67,7 @@ describe('bootstrap A2A wiring', () => {
 
   it('a2aDeps is always present (registry, client, recordEvent)', async () => {
     const boot = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: mkdtempSync(join(tmpdir(), 'bootstrap-a2a-deps-')),
       ilink: makeIlinkStub() as any,
@@ -73,9 +76,9 @@ describe('bootstrap A2A wiring', () => {
       log: () => {},
     })
     expect(boot.a2aDeps).toBeDefined()
-    expect(boot.a2aDeps.registry).toBeDefined()
-    expect(boot.a2aDeps.client).toBeDefined()
-    expect(typeof boot.a2aDeps.recordEvent).toBe('function')
+    expect(boot.a2aDeps!.registry).toBeDefined()
+    expect(boot.a2aDeps!.client).toBeDefined()
+    expect(typeof boot.a2aDeps!.recordEvent).toBe('function')
   })
 
   it('a2aServer starts and /.well-known/agent.json is reachable when a2a_listen is configured', async () => {
@@ -97,6 +100,7 @@ describe('bootstrap A2A wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -133,6 +137,7 @@ describe('bootstrap A2A wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -167,6 +172,7 @@ describe('bootstrap A2A wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -213,6 +219,7 @@ describe('bootstrap A2A wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),  // fresh test db → no conversation rows → no operator chat
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -229,7 +236,7 @@ describe('bootstrap A2A wiring', () => {
       })
       expect(res.status).toBe(200)
       // Inspect the events store for the dropped event.
-      const events = boot.a2aDeps.eventsStore.recentForAgent('tester', 10)
+      const events = boot.a2aDeps!.eventsStore.recentForAgent('tester', 10)
       expect(events).toHaveLength(1)
       expect(events[0]?.status).toBe('dropped_no_operator_chat')
       expect(events[0]?.direction).toBe('in')

@@ -347,6 +347,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       ...(process.env[SUPERVISED_ENV] === '1'
         ? { requestRestart: () => requestRestart('self-restart-stale-code') }
         : {}),
+      // Subsystem degraded-boot (spec 2026-08-17) — same supervisor instance
+      // that already guards the post-bootstrap subsystems below (customer-
+      // review/companion push/introspect/ingest/guard/mailbox-poller) now
+      // also guards buildBootstrap's optional wire blocks (knowledge/social/
+      // a2a-server/pairing/self-restart).
+      supervisor: sup,
     })
     bootRef = boot
     internalApi.setDelegate({ dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() })
@@ -354,7 +360,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // deps.conversation at request time, so this late assignment is safe.
     internalApi.setConversation({ setMode: (chatId, mode) => boot.coordinator.setMode(chatId, mode) })
     // Wire A2A deps — registry, client, recordEvent — so POST /v1/a2a/send works.
-    internalApi.setA2A(boot.a2aDeps)
+    // Undefined ⇔ a2a-server subsystem degraded (wireA2aServer threw) — setA2A
+    // stays unwired and POST /v1/a2a/send keeps 503ing, same posture as any
+    // other never-configured subsystem.
+    if (boot.a2aDeps) internalApi.setA2A(boot.a2aDeps)
     // Wire the agent-social M1 broker (T7b-core) — only present when
     // social_enabled + social_disclosure_policy are both configured. So
     // POST /v1/social/seek/{propose,confirm,cancel} work when the feature is on.

@@ -26,6 +26,7 @@ import { join } from 'node:path'
 import { vi } from 'vitest'
 import { buildBootstrap } from '../src/daemon/bootstrap'
 import { openTestDb } from '../src/lib/db'
+import { SubsystemSupervisor } from '../src/daemon/subsystems'
 import { makeAdminCommands } from '../src/daemon/admin-commands'
 import { isAdmin } from '../src/lib/access'
 import type { AcquireRequest } from '../src/core/session-manager'
@@ -80,6 +81,7 @@ process.on('exit', () => { for (const c of cleanup) try { Promise.resolve(c()).c
   const db = openTestDb()
   cleanup.push(() => db.close())
   const boot = await buildBootstrap({
+    supervisor: new SubsystemSupervisor((t, l) => log(t, l)),
     db,
     stateDir,
     // ilink stub is structurally close enough for the bootstrap surfaces

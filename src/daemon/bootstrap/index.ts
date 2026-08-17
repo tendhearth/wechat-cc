@@ -217,6 +217,12 @@ export function resolveAdminChatId(
 export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   hydrateClaudeAuthEnvFromUserSettings(deps.log)
 
+  // Subsystem degraded-boot (spec 2026-08-17) — the five optional wire
+  // blocks below (knowledge/social/a2a-server/pairing/self-restart) start
+  // through this supervisor so a startup failure degrades that block to
+  // "not configured" instead of aborting the whole daemon boot.
+  const sup = deps.supervisor
+
   // Connection-health runtime (Task 7) — constructed FIRST and unconditionally,
   // no config gate, so it exists before anything that could report a failure:
   // main.ts's registerPolling(wired.pollingDeps) starts the long-poll loops
@@ -403,9 +409,13 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // interval is safe — mirrors idleSweepTimer's unref()'d setInterval a
   // little further down in this function (a background job outside the
   // companion tick graph in wiring/tick-bodies.ts, not competing with it).
-  let knowledge: Bootstrap['knowledge']
-  if (configuredAgent.knowledge_enabled) {
+  const knowledge: Bootstrap['knowledge'] = await sup.start('knowledge', async () => {
+    if (!configuredAgent.knowledge_enabled) {
+      deps.log('BOOT', 'knowledge: disabled (knowledge_enabled not set)')
+      return undefined
+    }
     const knowledgeStore = openKnowledge(join(deps.stateDir, 'knowledge'))
+    try {
     const decryptedDir = configuredAgent.knowledge_source_dir
       ?? join(deps.stateDir, 'plugin-data', 'wxvault', 'out', 'decrypted')
 
@@ -533,7 +543,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     if (embedder) setTimeout(() => { void embedder.warm() }, 0)
     const knowledgeAdapterTimer = setInterval(() => { void runKnowledgeAdapter(false) }, 5 * 60_000)
     knowledgeAdapterTimer.unref()
-    knowledge = {
+    return {
       store: knowledgeStore,
       search: semanticSearch,
       ...(embedder ? { embedder, embedQuery: (t: string) => embedder.embed([t]).then(v => v[0]!) } : {}),
@@ -549,9 +559,15 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       facts: makeFactsApi(knowledgeStore),
       person: makePersonApi(knowledgeStore),
     }
-  } else {
-    deps.log('BOOT', 'knowledge: disabled (knowledge_enabled not set)')
-  }
+    } catch (err) {
+      // Partial-construction cleanup: the store is already open, so a
+      // failure past this point must close it before rethrowing, or the
+      // sqlite handle leaks past the daemon's lifecycle (main.ts's shutdown
+      // only closes boot.knowledge, which is undefined on a degraded boot).
+      try { knowledgeStore.close() } catch { /* best-effort */ }
+      throw err
+    }
+  })
 
   // The model is re-read per spawn via an mtime-cached reader (one stat, parse
   // only on change) instead of being captured once. An operator's `/model`
@@ -808,7 +824,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // never-seen dependency), but the try/catch + null-on-failure keeps this
   // on the "can't prove it's fresh ⇒ don't restart" side the rest of the
   // mechanism commits to everywhere else.
-  const wiredSelfRestart = await wireSelfRestart({
+  const wiredSelfRestart = (await sup.start('self-restart', () => wireSelfRestart({
     requestRestart: deps.requestRestart,
     anyInFlight: () => sessionManager.anyInFlight(),
     busy: () => busyRegistry.busy(),
@@ -819,7 +835,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       } catch { return null }
     },
     log: deps.log,
-  })
+  }))) ?? null
   const selfRestartCheck = wiredSelfRestart?.check ?? null
   const selfRestartActivityMarker = wiredSelfRestart?.marker ?? null
 
@@ -981,31 +997,42 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // (it consumes onIntent/onReveal, which the a2a server construction needs).
   let a2aServer: import('../../core/a2a-server').A2AServer | null = null
 
-  const socialWiring = await wireSocial({
-    log: deps.log,
-    stateDir: deps.stateDir,
-    db: deps.db,
-    configuredAgent,
-    selfId,
-    registry,
-    defaultProviderId,
-    pluginMcp,
-    currentClaudeModel,
-    claudeBin,
-    resolveOperatorChatId,
-    sendAssistantText,
-    a2aRegistry,
-    a2aClient,
-    eventsStore: a2aEventsStore,
-    knowledge,
-    getServerBaseUrl: () => a2aServer ? a2aServer.baseUrl() : null,
-    // busy-registry hold (spec 2026-08-11 §2, Task 4 step 4 + Task 6) —
-    // broker.forage() + the async responder run as fire-and-forget
-    // coroutines outside SessionManager.
-    holdBusy: busyRegistry.hold,
-  })
+  // 降级兜底:social 抛错时的 inert wiring — 与 wireSocial 未配置时的内部
+  // 状态同形(全 handler undefined),下游 a2a/mailbox/return 的门原样生效。
+  const inertSocialWiring: import('./wire-social').SocialWiring = {
+    onIntent: undefined, onEcho: undefined, onReveal: undefined, onLetter: undefined,
+    resumeForaging: () => {},
+  }
+  const socialWiring = (await sup.start('social', async () => {
+    const w = await wireSocial({
+      log: deps.log,
+      stateDir: deps.stateDir,
+      db: deps.db,
+      configuredAgent,
+      selfId,
+      registry,
+      defaultProviderId,
+      pluginMcp,
+      currentClaudeModel,
+      claudeBin,
+      resolveOperatorChatId,
+      sendAssistantText,
+      a2aRegistry,
+      a2aClient,
+      eventsStore: a2aEventsStore,
+      knowledge,
+      getServerBaseUrl: () => a2aServer ? a2aServer.baseUrl() : null,
+      // busy-registry hold (spec 2026-08-11 §2, Task 4 step 4 + Task 6) —
+      // broker.forage() + the async responder run as fire-and-forget
+      // coroutines outside SessionManager.
+      holdBusy: busyRegistry.hold,
+    })
+    // 未配置 / 无 cheapEval ⇒ wireSocial 返回 inert 对象(social 字段缺席)
+    // ⇒ 映射为 null ⇒ supervisor 记 off。
+    return w.social ? w : null
+  })) ?? inertSocialWiring
 
-  const { a2aServer: builtA2aServer, a2aDeps } = await wireA2aServer({
+  const a2aWiring = await sup.start('a2a-server', () => wireA2aServer({
     log: deps.log,
     stateDir: deps.stateDir,
     configuredAgent,
@@ -1019,8 +1046,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     onEcho: socialWiring.onEcho,
     onReveal: socialWiring.onReveal,
     onLetter: socialWiring.onLetter,
-  })
-  a2aServer = builtA2aServer
+  }))
+  const a2aDeps = a2aWiring?.a2aDeps
+  a2aServer = a2aWiring?.a2aServer ?? null
 
   // 配对码 (pairing-code design §7) — the daemon-side pairing engine. Gated
   // ONLY on mailbox_relays (rendezvous needs a relay); independent of
@@ -1030,7 +1058,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // Undefined when mailbox_relays is unconfigured — the WeChat「配对」dispatch
   // seam and internal-api /v1/pair/* routes then stay inert, same posture
   // as boot.social/boot.penpal.
-  const pairingEngine = wirePairing({
+  const pairingEngine = await sup.start('pairing', () => wirePairing({
     stateDir: deps.stateDir,
     configuredAgent,
     a2aRegistry,
@@ -1038,7 +1066,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     url: a2aServer ? a2aServer.baseUrl() : undefined,
     notify: (msg) => { const op = resolveOperatorChatId(); if (op && sendAssistantText) void sendAssistantText(op, msg) },
     log: deps.log,
-  })
+  }))
 
   // Restart-resume: a seek still in `foraging` means its background leg never
   // finished (a completed leg moves the row to echoed/closed). Re-forage them.
@@ -1128,7 +1156,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      * buildBootstrap returns. The route is 503 until that wiring lands.
      */
     dispatchDelegate,
-    a2aDeps,
+    ...(a2aDeps ? { a2aDeps } : {}),
     a2aServer,
     yiHub,
     agentConfig: configuredAgent,

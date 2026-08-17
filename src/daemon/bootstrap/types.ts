@@ -184,6 +184,12 @@ export interface BootstrapDeps {
    * don't wire this stay byte-identical to before this feature existed.
    */
   requestRestart?: () => void
+  /**
+   * Subsystem degraded-boot (spec 2026-08-17) — 可选 wire 块(knowledge/
+   * social/a2a-server/pairing/self-restart)经它拉起;失败 ⇒ 对应产物
+   * undefined,类型上等同"未配置"。核心块不经它。
+   */
+  supervisor: import('../subsystems').SubsystemSupervisor
 }
 
 export interface Bootstrap {
@@ -216,9 +222,10 @@ export interface Bootstrap {
   /**
    * A2A deps — instantiated by bootstrap so main.ts can late-bind them
    * into internal-api via setA2A(). Undefined when a2a_listen is not
-   * configured (a2aServer is null in that case too).
+   * configured (a2aServer is null in that case too). Also undefined ⇔
+   * a2a-server 子系统降级(wireA2aServer 抛错,spec 2026-08-17).
    */
-  a2aDeps: {
+  a2aDeps?: {
     registry: import('../../core/a2a-registry').A2ARegistry
     client: import('../../core/a2a-client').A2AClient
     eventsStore: import('../../core/a2a-events-store').A2AEventsStore
