@@ -427,9 +427,11 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
             companionEnabled: deps.ilink.companion.status().enabled,
             delegateAvailable: false,
           }),
-          mcpConnect: () => {
+          mcpConnect: (mcpEnv) => {
             if (!wechatStdioForGemini) throw new Error('gemini: internalApi unavailable — cannot connect wechat MCP')
-            return connectWechatMcp(wechatStdioForGemini)
+            // B1(spec §3): childEnvFor inherits host env + merges session mcpEnv,
+            // gemini's wechat MCP child process now carries WECHAT_SESSION_TOKEN/_TIER.
+            return connectWechatMcp(wechatStdioForGemini, mcpEnv)
           },
           buildGate,
           cheapModel: process.env.WECHAT_GEMINI_CHEAP_MODEL ?? 'gemini-flash-latest',

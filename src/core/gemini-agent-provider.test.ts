@@ -144,6 +144,15 @@ describe('runDispatchLoop', () => {
     expect((history.at(-1) as any).role).toBe('model')
   })
 
+  it('on generateContent auth error: yields an auth_failed error event (D4/B3)', async () => {
+    const history: any[] = []
+    const genai: GenaiPort = { async generateContent() { throw new Error('401 unauthorized') } }
+    const events = runDispatchLoop({ genai, mcp: fakeMcp({}), gate: async () => ({ allow: true }), model: 'm', systemInstruction: 's', functionDeclarations: [], history, sessionId: 's', userText: 'hi' })
+    const evs: any[] = []
+    for await (const e of events) evs.push(e)
+    expect(evs.some(e => e.kind === 'error' && e.code === 'auth_failed')).toBe(true)
+  })
+
   it('empty-text terminal response still pushes a model turn (alternation preserved)', async () => {
     const history: any[] = []
     const events = runDispatchLoop({ genai: fakeGenai([{ text: '' }]), mcp: fakeMcp({}), gate: async () => ({ allow: true }), model: 'm', systemInstruction: 's', functionDeclarations: [], history, sessionId: 's', userText: 'hi' })
@@ -253,6 +262,35 @@ describe('createGeminiAgentProvider', () => {
     expect(provider.cheapEval).toBeDefined()
     const ans = await provider.cheapEval!('rate 1-10')
     expect(ans).toBe('cheap answer')
+  })
+
+  // B1: gemini's wechat MCP child was previously missing session mcpEnv
+  // (WECHAT_SESSION_TOKEN/_TIER) — spawn() must forward ctx.mcpEnv to mcpConnect
+  // so the tier-authz gap closes. mcpConnect is opts-injected (constructor
+  // injection, no vi.mock), matching this suite's existing pattern.
+  it('spawn forwards ctx.mcpEnv to the injected mcpConnect (B1)', async () => {
+    let receivedMcpEnv: Record<string, string> | undefined
+    const provider = createGeminiAgentProvider({
+      genai: { models: { async generateContent() { return { text: 'hi' } } } } as any,
+      model: 'gemini-flash-latest',
+      systemInstruction: 'you are gemini',
+      async mcpConnect(mcpEnv) {
+        receivedMcpEnv = mcpEnv
+        return {
+          listTools: async () => ([]),
+          callTool: async () => ({ content: [] }),
+          close: async () => {},
+        }
+      },
+      buildGate: () => (async () => ({ allow: true })) as any,
+    })
+    const ctxMcpEnv = { WECHAT_SESSION_TOKEN: 't', WECHAT_SESSION_TIER: 'guest' }
+    const session = await provider.spawn(
+      { alias: 'P', path: '/p' },
+      { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict', chatId: 'c1', mcpEnv: ctxMcpEnv } as any,
+    )
+    await session.close()
+    expect(receivedMcpEnv).toEqual(ctxMcpEnv)
   })
 
   // Bug 9b: buildGate is required and ALWAYS consulted — a deny-all gate must block execution.
