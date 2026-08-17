@@ -141,6 +141,103 @@ describe('createAgyAgentProvider', () => {
     expect(wasKilled()).toBe(true)
   })
 
+  // CRITICAL (task review round 2): a STALE iterator's return() — called
+  // AFTER a later turn has already started — must not touch that later
+  // turn's child or session state. Reproduction: turn1 fully drains and
+  // completes; turn2 starts and is in flight; it1.return() (a straggler
+  // reference from turn1) must be a no-op with respect to turn2.
+  it('CRITICAL (round 2): a stale iterator return() does not kill a LATER turn or wipe its state', async () => {
+    const calls: Array<{ args: string[]; cwd: string }> = []
+    let call = 0
+    let killed2 = false
+    const spawnFn = (args: string[], o: { cwd: string }) => {
+      calls.push({ args, cwd: o.cwd })
+      call++
+      if (call === 1) {
+        // turn1: completes normally.
+        return {
+          stdout: (async function* () { yield INIT + '\n'; yield TEXT_DONE + '\n'; yield RESULT + '\n' })(),
+          exited: Promise.resolve(0),
+          stderr: async () => '',
+          kill: () => {},
+        }
+      }
+      // turn2: this session's SECOND dispatch — no 'init' AgentEvent gets
+      // yielded for it (only the session's first dispatch ever emits init),
+      // so give it a text_delta line to take before it hangs, so next()
+      // has something to resolve with while still leaving it "in flight".
+      return {
+        stdout: (async function* () { yield INIT + '\n'; yield TEXT_DONE + '\n'; await new Promise(() => {}) })(),
+        exited: Promise.resolve(0),
+        stderr: async () => '',
+        kill: () => { killed2 = true },
+      }
+    }
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
+    const s = await provider.spawn(project, ctx)
+
+    // turn1: drain manually via next() (not the `drain()` helper) so we
+    // retain its own iterator handle for the stale return() call below.
+    const evsTurn1: string[] = []
+    const iterTurn1 = s.dispatch('one')[Symbol.asyncIterator]()
+    for (;;) {
+      const step = await iterTurn1.next()
+      if (step.done) break
+      evsTurn1.push((step.value as { kind: string }).kind)
+    }
+    expect(evsTurn1).toEqual(['init', 'text', 'result'])
+
+    // turn2: starts on the SAME session, takes one event (text), stays in flight.
+    const iterTurn2 = s.dispatch('two')[Symbol.asyncIterator]()
+    const step2 = await iterTurn2.next()
+    expect((step2.value as { kind: string } | undefined)?.kind).toBe('text')
+
+    // Stale turn1 iterator's return(), called AFTER turn2 has started, must
+    // be a complete no-op with respect to turn2.
+    await iterTurn1.return?.()
+    expect(killed2).toBe(false)
+    expect(() => s.dispatch('three')).toThrow() // overlap guard still armed — turn2 still in flight
+    await s.cancel!()
+    expect(killed2).toBe(true) // cancel() still works on the REAL in-flight turn
+    await iterTurn2.return?.()
+  })
+
+  // MINOR (task review round 2): throw() on the raw iterator must mirror
+  // return()'s abort+kill behavior — otherwise it reintroduces the same
+  // orphaned-child leak return() was fixed for, just via a different path.
+  it('MINOR (round 2): throw() on the iterator aborts+kills a hung child', async () => {
+    const { spawnFn, wasKilled } = fakeAgy([INIT], { hang: true })
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
+    const s = await provider.spawn(project, ctx)
+    const it = s.dispatch('long')[Symbol.asyncIterator]()
+    await it.next()
+    await it.throw?.(new Error('injected')).catch(() => {
+      // The generator has no catch around the yield point, so the injected
+      // error propagates out of throw() as a rejection — expected; we only
+      // care about the side effect (abort+kill) here.
+    })
+    expect(wasKilled()).toBe(true)
+  })
+
+  // MINOR (task review round 2): a dispatch() that's created and then
+  // return()ed WITHOUT ever being iterated must have zero side effects on
+  // session state — the real next dispatch should still see isFirst/
+  // appendInstructions exactly as if the abandoned one never happened.
+  it('MINOR (round 2): an abandoned (never-iterated) dispatch has zero side effects', async () => {
+    const { spawnFn, calls } = fakeAgy([INIT, TEXT_DONE, RESULT])
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
+    const s = await provider.spawn(project, { ...ctx, appendInstructions: 'SYS' })
+    const abandoned = s.dispatch('never used')
+    await abandoned[Symbol.asyncIterator]().return?.()
+    // The abandoned dispatch never actually spawned (generator body never
+    // ran) — confirm the FIRST REAL dispatch still carries the prefix + --new-project.
+    await drain(s.dispatch('real'))
+    expect(calls.length).toBe(1)
+    const i0 = calls[0]!.args.indexOf('-p')
+    expect(calls[0]!.args[i0 + 1]).toBe('SYS\n\n---\n\nreal')
+    expect(calls[0]!.args).toContain('--new-project')
+  })
+
   it('ctx.model overrides construction model in --model arg', async () => {
     const { spawnFn, calls } = fakeAgy([INIT, TEXT_DONE, RESULT])
     const provider = createAgyAgentProvider({ bin: 'agy', model: 'default-m', spawnFn, log: () => {} })

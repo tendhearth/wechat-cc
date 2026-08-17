@@ -119,6 +119,12 @@ function defaultSpawnFn(bin: string): AgySpawnFn {
     // with stdout/exited) — see drainCappedStderr's doc comment for why a
     // lazy read-on-demand deadlocks against a chatty child.
     const stderrPromise = drainCappedStderr(proc.stderr as ReadableStream<Uint8Array>, STDERR_CAP_BYTES)
+    // This promise is consumed later (only in the exit-error path, via the
+    // `stderr` getter below) — attach a no-op catch NOW so a rejection
+    // arriving before anyone calls `stderr()` can never surface as an
+    // unhandled promise rejection. Doesn't change what `stderr()` itself
+    // observes; only marks the promise as "handled" for the runtime.
+    stderrPromise.catch(() => {})
     return {
       stdout: proc.stdout as unknown as AsyncIterable<Uint8Array>,
       exited: proc.exited,
@@ -266,8 +272,6 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
             throw new Error(`agy provider: previous dispatch still in flight (alias=${project.alias})`)
           }
           inFlight = true
-          const isFirst = firstDispatch
-          firstDispatch = false
 
           // Hoisted into dispatch()'s own SYNCHRONOUS scope (not inside the
           // generator body below). Two things this buys:
@@ -281,38 +285,20 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
           //     BEFORE delegating to the generator's own unwind (see the
           //     wrapper below), so a hung child is actually killed instead
           //     of leaking as an orphaned process.
+          //
+          // `myProc` is THIS TURN's own spawn handle (set below, once the
+          // generator body actually spawns it) — deliberately separate from
+          // the shared `currentProc`. A stale iterator's return()/throw(),
+          // called after a NEWER turn has already started, must kill only
+          // ITS OWN (long-finished or still-running) child, never reach for
+          // whatever `currentProc` happens to point at by then (task review
+          // round 2, CRITICAL: an unguarded `currentProc?.kill()` in the
+          // wrapper let a stale it1.return() kill turn 2's child and wipe
+          // turn 2's inFlight/currentAbort/currentProc, breaking the
+          // overlap guard and disarming cancel()).
           const abort = new AbortController()
           currentAbort = abort
-
-          const model = ctx.model ?? opts.model
-          let dispatchedText = text
-          if (!instructionsInjected && appendInstructions) {
-            dispatchedText = `${appendInstructions}\n\n---\n\n${text}`
-            instructionsInjected = true
-          }
-          const args = baseArgs(dispatchedText, model, turnTimeoutMs)
-          // CONTROLLER RULING 1: agy's tool execution follows its internal
-          // project binding, not process cwd — the FIRST dispatch of a
-          // brand-new conversation must claim one via --new-project, or
-          // tools silently execute in agy's own state dir instead of
-          // project.path. Any dispatch that already has a conversationId
-          // (continued turns, or a resumeSessionId-seeded first dispatch)
-          // relies on that conversation's own binding instead.
-          if (conversationId) {
-            args.push('--conversation', conversationId)
-          } else if (isFirst) {
-            args.push('--new-project')
-          }
-          if (ctx.permissionMode === 'dangerously') args.push('--dangerously-skip-permissions')
-          const extra = opts.sessionArgsFor?.(ctx)
-          if (extra?.args && extra.args.length > 0) args.push(...extra.args)
-          if (extra?.env && Object.keys(extra.env).length > 0) {
-            // Loud, not silent — AgySpawnFn (this task's frozen spawn-seam
-            // contract) has no env slot, so a future sessionArgsFor that
-            // starts returning a non-empty env (tier A/B in spec §3) would
-            // otherwise be silently dropped with no signal anything's wrong.
-            log('AGY', 'sessionArgsFor.env ignored — spawn seam carries cwd only')
-          }
+          let myProc: AgySpawnHandle | null = null
 
           const inner = (async function* dispatchGenerator(): AsyncGenerator<AgentEvent> {
             const em = makeTurnEmitter()
@@ -320,7 +306,54 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
             let sawResult = false
             let initYielded = false
             try {
+              // isFirst / appendInstructions-prefix consumption / arg
+              // assembly deliberately live HERE, inside the generator body,
+              // not in dispatch()'s synchronous scope above (task review
+              // round 2, MINOR: a dispatch() that's created and then
+              // return()ed/thrown WITHOUT ever being iterated must have ZERO
+              // side effects on session state — codex consumes its
+              // equivalent prefix inside the generator for the same reason,
+              // see codex-agent-provider.ts). Only once the generator body
+              // actually starts running (the caller pulled at least one
+              // event) do isFirst and instructionsInjected actually flip,
+              // so an abandoned dispatch leaves the NEXT real dispatch's
+              // --new-project / prefix-once behavior untouched.
+              const isFirst = firstDispatch
+              firstDispatch = false
+              const model = ctx.model ?? opts.model
+              let dispatchedText = text
+              if (!instructionsInjected && appendInstructions) {
+                dispatchedText = `${appendInstructions}\n\n---\n\n${text}`
+                instructionsInjected = true
+              }
+              const args = baseArgs(dispatchedText, model, turnTimeoutMs)
+              // CONTROLLER RULING 1: agy's tool execution follows its
+              // internal project binding, not process cwd — the FIRST
+              // dispatch of a brand-new conversation must claim one via
+              // --new-project, or tools silently execute in agy's own state
+              // dir instead of project.path. Any dispatch that already has
+              // a conversationId (continued turns, or a resumeSessionId-
+              // seeded first dispatch) relies on that conversation's own
+              // binding instead.
+              if (conversationId) {
+                args.push('--conversation', conversationId)
+              } else if (isFirst) {
+                args.push('--new-project')
+              }
+              if (ctx.permissionMode === 'dangerously') args.push('--dangerously-skip-permissions')
+              const extra = opts.sessionArgsFor?.(ctx)
+              if (extra?.args && extra.args.length > 0) args.push(...extra.args)
+              if (extra?.env && Object.keys(extra.env).length > 0) {
+                // Loud, not silent — AgySpawnFn (this task's frozen spawn-
+                // seam contract) has no env slot, so a future
+                // sessionArgsFor that starts returning a non-empty env
+                // (tier A/B in spec §3) would otherwise be silently
+                // dropped with no signal anything's wrong.
+                log('AGY', 'sessionArgsFor.env ignored — spawn seam carries cwd only')
+              }
+
               const proc = spawnFn(args, { cwd: project.path })
+              myProc = proc
               currentProc = proc
               try {
                 for await (const line of readLines(proc.stdout, abort.signal)) {
@@ -372,31 +405,58 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
 
           // Wrap `inner` so the ITERATOR PROTOCOL's own return()/throw() —
           // reached via a bare `for await` `break`, or a direct
-          // `it.return()` call, entirely bypassing s.cancel() — also
-          // aborts + kills BEFORE delegating to the generator's natural
-          // unwind. Relying solely on the generator's own finally blocks
-          // (as a prior version of this file did) never touches abort/kill
-          // on that path: the child was left running as an orphan even
-          // though the JS-level iteration itself terminated cleanly.
+          // `it.return()`/`it.throw()` call, entirely bypassing s.cancel()
+          // — also aborts + kills BEFORE delegating to the generator's
+          // natural unwind. Relying solely on the generator's own finally
+          // blocks (as a prior version of this file did) never touches
+          // abort/kill on that path: the child was left running as an
+          // orphan even though the JS-level iteration itself terminated
+          // cleanly.
+          //
+          // Both handlers kill `myProc` (THIS turn's own handle), never the
+          // shared `currentProc`, and only reset the SHARED session state
+          // (`currentAbort`/`currentProc`/`inFlight`) when `currentAbort`
+          // still === `abort` — i.e. this iterator is still the CURRENT
+          // in-flight turn, not a stale reference to one that already
+          // finished (naturally or otherwise) and whose slot a newer turn
+          // has since taken over. Without that identity check, a stale
+          // `it1.return()` arriving after turn 2 has already started would
+          // kill turn 2's child and wipe turn 2's session state out from
+          // under it (task review round 2, CRITICAL regression).
           return {
             [Symbol.asyncIterator](): AsyncIterator<AgentEvent> {
               return {
                 next: (): Promise<IteratorResult<AgentEvent>> => inner.next(),
                 return: async (value?: AgentEvent): Promise<IteratorResult<AgentEvent>> => {
                   abort.abort()
-                  currentProc?.kill()
-                  const result = await inner.return(value)
-                  // Defensive: if the generator body never actually started
-                  // (return() called before the very first next()), its own
-                  // finally blocks never ran — reset session state directly
-                  // so a never-iterated dispatch still frees the session
-                  // instead of wedging inFlight=true forever.
-                  inFlight = false
-                  currentAbort = null
-                  currentProc = null
-                  return result
+                  myProc?.kill()
+                  try {
+                    return await inner.return(value)
+                  } finally {
+                    if (currentAbort === abort) {
+                      // Defensive: covers the case where the generator body
+                      // never actually started (return() called before the
+                      // very first next()) — its own finally blocks never
+                      // ran, so nothing else would free the session.
+                      currentAbort = null
+                      currentProc = null
+                      inFlight = false
+                    }
+                  }
                 },
-                throw: (e?: unknown): Promise<IteratorResult<AgentEvent>> => inner.throw(e),
+                throw: async (e?: unknown): Promise<IteratorResult<AgentEvent>> => {
+                  abort.abort()
+                  myProc?.kill()
+                  try {
+                    return await inner.throw(e)
+                  } finally {
+                    if (currentAbort === abort) {
+                      currentAbort = null
+                      currentProc = null
+                      inFlight = false
+                    }
+                  }
+                },
               }
             },
           }
