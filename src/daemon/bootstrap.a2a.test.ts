@@ -53,8 +53,12 @@ describe('bootstrap A2A wiring', () => {
     // Isolated empty stateDir (no agent-config.json ⇒ no a2a_listen). A shared
     // fixed path like /tmp/state is racy: a parallel test writing an
     // a2a_listen config there makes this read it and flake.
+    // Degraded-boot guard: an off-asserting test must fail if a2a-server
+    // actually THREW (supervisor swallows throws into 'degraded' — see
+    // subsystems.ts) instead of legitimately being unconfigured/off.
+    const sup = new SubsystemSupervisor(() => {})
     const boot = await buildBootstrap({
-      supervisor: new SubsystemSupervisor(() => {}),
+      supervisor: sup,
       db: openTestDb(),
       stateDir: mkdtempSync(join(tmpdir(), 'bootstrap-a2a-null-')),
       ilink: makeIlinkStub() as any,
@@ -63,6 +67,7 @@ describe('bootstrap A2A wiring', () => {
       log: () => {},
     })
     expect(boot.a2aServer).toBeNull()
+    expect(sup.degraded()).toEqual([])
   })
 
   it('a2aDeps is always present (registry, client, recordEvent)', async () => {

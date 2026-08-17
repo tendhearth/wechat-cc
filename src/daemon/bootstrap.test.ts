@@ -1842,10 +1842,13 @@ describe('bootstrap agent-social M1 wiring', () => {
         social_disclosure_policy: '兴趣可说；住址不可',
       }),
     )
+    // Degraded-boot guard: absence of boot.social must reflect "not
+    // configured", not "social threw and was swallowed into degraded".
+    const sup = new SubsystemSupervisor(() => {})
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
-        supervisor: new SubsystemSupervisor(() => {}),
+        supervisor: sup,
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -1860,6 +1863,7 @@ describe('bootstrap agent-social M1 wiring', () => {
       expect(card.capabilities.some(c => c.name === 'echo')).toBe(false)
       expect(card.capabilities.some(c => c.name === 'reveal')).toBe(false)
       expect(boot.social).toBeUndefined()
+      expect(sup.degraded()).toEqual([])
     } finally {
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })
@@ -1881,10 +1885,12 @@ describe('bootstrap agent-social M1 wiring', () => {
         // social_disclosure_policy omitted.
       }),
     )
+    // Degraded-boot guard (see previous test's comment).
+    const sup = new SubsystemSupervisor(() => {})
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
-        supervisor: new SubsystemSupervisor(() => {}),
+        supervisor: sup,
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -1893,6 +1899,7 @@ describe('bootstrap agent-social M1 wiring', () => {
         log: () => {},
       })
       expect(boot.social).toBeUndefined()
+      expect(sup.degraded()).toEqual([])
     } finally {
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })
@@ -2439,10 +2446,13 @@ describe('bootstrap pairing-code wiring', () => {
   it('leaves boot.pairing undefined with no mailbox_relays', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-pairing-off-'))
     writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
+    // Degraded-boot guard: boot.pairing undefined must mean "not
+    // configured", not "pairing threw and was swallowed into degraded".
+    const sup = new SubsystemSupervisor(() => {})
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
-        supervisor: new SubsystemSupervisor(() => {}),
+        supervisor: sup,
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -2451,6 +2461,7 @@ describe('bootstrap pairing-code wiring', () => {
         log: () => {},
       })
       expect(boot.pairing).toBeUndefined()
+      expect(sup.degraded()).toEqual([])
     } finally {
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })
@@ -2553,8 +2564,11 @@ describe('bootstrap pairing-code wiring', () => {
   // self-restart block, which feeds the SAME activity-marker instance into
   // both this returned markInboundActivity and the check's `quietFor`).
   it('markInboundActivity is present only when requestRestart is wired (self-restart gate)', async () => {
+    // Degraded-boot guard: absence must mean "requestRestart not passed",
+    // not "self-restart threw and was swallowed into degraded".
+    const supWithoutRestart = new SubsystemSupervisor(() => {})
     const withoutRestart = await buildBootstrap({
-      supervisor: new SubsystemSupervisor(() => {}),
+      supervisor: supWithoutRestart,
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -2563,6 +2577,7 @@ describe('bootstrap pairing-code wiring', () => {
       log: () => {},
     })
     expect(withoutRestart.markInboundActivity).toBeUndefined()
+    expect(supWithoutRestart.degraded()).toEqual([])
 
     // Passing requestRestart makes buildBootstrap really shell out to
     // `git rev-parse` twice (HEAD + HEAD:bun.lock). Reviewed and kept
@@ -2893,10 +2908,13 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
       }),
     )
     const logLines: Array<{ tag: string; line: string; fields?: Record<string, unknown> }> = []
+    // Degraded-boot guard: boot.knowledge undefined must mean "not
+    // configured", not "knowledge threw and was swallowed into degraded".
+    const sup = new SubsystemSupervisor(() => {})
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
-        supervisor: new SubsystemSupervisor(() => {}),
+        supervisor: sup,
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -2905,6 +2923,7 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
         log: (tag, line, fields) => { logLines.push({ tag, line, fields }) },
       })
       expect(boot.knowledge).toBeUndefined()
+      expect(sup.degraded()).toEqual([])
       // Gating (T7' review Finding 2c) — when disabled, the whole
       // knowledge-cycle block (including its setTimeout(0) boot backfill)
       // never runs, so the daemon never emits a single 'KNOWLEDGE'-tagged
