@@ -46,6 +46,7 @@ const BOUNDARY: Record<string, string> = {
   defaultFetchBinary: 'downloads a release binary over the network (src/cli/setup-flow.ts)',
   defaultProbeCursor: 'spawns the cursor CLI to read its version (src/cli/doctor.ts)',
   defaultProbeGemini: 'spawns the gemini CLI to read its version (src/cli/doctor.ts)',
+  defaultSpawnFn: 'spawns the agy (Antigravity) CLI child process per turn (src/core/agy-agent-provider.ts)',
 }
 
 /** Seams whose default is a plain value or a pure computation — injecting one

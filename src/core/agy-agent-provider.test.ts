@@ -429,6 +429,21 @@ describe('createAgyAgentProvider', () => {
     expect(err).toBeTruthy()
     expect(err?.message).toBe('agy exited 1: ')
   })
+
+  // injectable-default-seams.test.ts requires every `?? defaultX` boundary
+  // seam to be driven by a real test, not just injected past. No `spawnFn`
+  // here on purpose — this exercises the module's actual `defaultSpawnFn`,
+  // i.e. a real `Bun.spawn`. `/usr/bin/true` stands in for `agy`: it exits 0
+  // immediately with no stdout, so the parser sees no NDJSON lines (no
+  // init/result) — the point isn't a realistic transcript, it's proving the
+  // real spawn→read→exit wiring runs without throwing.
+  it('defaultSpawnFn (no injected spawnFn): real Bun.spawn boundary runs cleanly', async () => {
+    const provider = createAgyAgentProvider({ bin: 'true', model: 'm', log: () => {} })
+    const s = await provider.spawn(project, ctx)
+    const evs = await drain(s.dispatch('x'))
+    expect(evs).toEqual([]) // no NDJSON emitted by `true` → no events, no throw
+    await s.close()
+  })
 })
 
 // IMPORTANT 2 (task review): stderr must be drained concurrently, not lazily
