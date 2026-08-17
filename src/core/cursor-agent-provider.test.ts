@@ -400,6 +400,85 @@ describe('createCursorAgentProvider', () => {
     expect(sdk.Agent.resume.mock.calls[0]![0]).toBe('agent-prior')
   })
 
+  it('cancel() invokes the in-flight run\'s cancel while dispatch is active', async () => {
+    // A run that never reaches FINISHED on its own — stream() hangs until
+    // the test drives it — so we can assert cancel() reaches the run
+    // while dispatch is still in flight.
+    let resolveStream!: () => void
+    const streamGate = new Promise<void>((resolve) => { resolveStream = resolve })
+    const cancelSpy = vi.fn(async () => {})
+    const agent = {
+      agentId: 'agent-test-1',
+      async send() {
+        return {
+          id: 'run-1',
+          agentId: 'agent-test-1',
+          async *stream() {
+            await streamGate
+            yield { type: 'status', status: 'FINISHED' }
+          },
+          cancel: cancelSpy,
+        }
+      },
+      close() {},
+    }
+    const sdk = makeFakeSdk(agent as never)
+    const provider = createCursorAgentProvider({ sdk, apiKey: 'test-key' })
+    const session = await provider.spawn(
+      { alias: 'P', path: '/tmp/proj' },
+      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' },
+    )
+    const iterator = session.dispatch('hi')[Symbol.asyncIterator]()
+    // Kick off consumption without awaiting completion — dispatch is now
+    // blocked inside agent.send()/stream() setup.
+    const consumePromise = (async () => {
+      const events: unknown[] = []
+      let result = await iterator.next()
+      while (!result.done) {
+        events.push(result.value)
+        result = await iterator.next()
+      }
+      return events
+    })()
+    // Give agent.send() a tick to resolve so activeRun is set.
+    await Promise.resolve()
+    await Promise.resolve()
+    await session.cancel!()
+    expect(cancelSpy).toHaveBeenCalledTimes(1)
+    // Unblock the stream so the dispatch generator can finish and the test can exit cleanly.
+    resolveStream()
+    await consumePromise
+  })
+
+  it('cancel() is a safe no-op when the run has no .cancel method', async () => {
+    const agent = {
+      agentId: 'agent-test-1',
+      async send() {
+        return {
+          id: 'run-1',
+          agentId: 'agent-test-1',
+          async *stream() {
+            yield { type: 'status', status: 'FINISHED' }
+          },
+          // no cancel() on this run
+        }
+      },
+      close() {},
+    }
+    const sdk = makeFakeSdk(agent as never)
+    const provider = createCursorAgentProvider({ sdk, apiKey: 'test-key' })
+    const session = await provider.spawn(
+      { alias: 'P', path: '/tmp/proj' },
+      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' },
+    )
+    // cancel() before any dispatch — activeRun is null — must not throw.
+    await expect(session.cancel!()).resolves.toBeUndefined()
+    const events: any[] = []
+    for await (const ev of session.dispatch('hi')) events.push(ev)
+    // cancel() after dispatch completed and a run without .cancel — must not throw.
+    await expect(session.cancel!()).resolves.toBeUndefined()
+  })
+
   it('spawn falls back to Agent.create when Agent.resume throws', async () => {
     // Resume can fail legitimately (agent expired, sdk-side delete) — we
     // must fall through to a fresh agent so the user still gets a reply.

@@ -299,6 +299,11 @@ function makeCursorSession(
   onFirstToolName: (rawName: string) => void,
 ): AgentSession {
   let turnCounter = 0
+  // Tracks the in-flight run so cancel()/close() can reach it. Set once
+  // agent.send() resolves (before that there's nothing to cancel — the
+  // send call itself isn't interruptible), cleared in the generator's
+  // finally so a stale reference can't be cancelled after its turn ended.
+  let activeRun: CursorRunLike | null = null
   return {
     dispatch(text: string) {
       const em = makeTurnEmitter()
@@ -308,6 +313,7 @@ function makeCursorSession(
         let run: CursorRunLike
         try {
           run = await agent.send(text)
+          activeRun = run
         } catch (err) {
           yield em.error(err)
           return
@@ -345,10 +351,19 @@ function makeCursorSession(
           }
         } catch (err) {
           yield em.error(err)
+        } finally {
+          activeRun = null
         }
       })()
     },
+    async cancel() {
+      // Best-effort: the SDK's run.cancel is declared optional (older
+      // SDK builds / no in-flight run) — a no-op run or missing method
+      // must never throw into the /stop path.
+      await activeRun?.cancel?.().catch(() => {})
+    },
     async close() {
+      await activeRun?.cancel?.().catch(() => {})
       try { agent.close() } catch { /* swallow */ }
     },
   }
