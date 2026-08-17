@@ -12,6 +12,7 @@ import type { ChatModelClient, ChatMessage, ToolSpec, TurnDelta } from './openai
 import type { McpToolBridge } from './openai-mcp-bridge'
 import { builtinTools, type BuiltinTool } from './openai-tools'
 import { gateTool } from './openai-gate'
+import { makeTurnEmitter } from './turn-emitter'
 
 export const OPENAI_CAPABILITIES: ProviderCapabilities = {
   // We own the loop, so per-tool gating IS realisable.
@@ -79,55 +80,59 @@ function makeOpenAiSession(args: {
   return {
     dispatch(text: string): AsyncIterable<AgentEvent> {
       messages.push(chatModel.userMessage(text))
-      const startedAt = Date.now()
       return (async function* run(): AsyncIterable<AgentEvent> {
         if (firstRef.first) { firstRef.first = false; yield { kind: 'init', sessionId } }
-        let steps = 0
-        for (;;) {
-          steps++
-          const turn = chatModel.streamTurn(messages, toolSpecs)
-          // MUST fully drain `deltas` before awaiting `finished` — see
-          // function doc + Task 6 contract #1.
-          for await (const d of turn.deltas) {
-            if (d.kind === 'text') { yield mapDeltaToEvent(d); continue }
-            // Stamp `server` from the REAL owning MCP server (never assume
-            // `wechat` for every MCP tool) — see McpToolBridge.serverOf doc
-            // and isReplyToolCall, which keys reply-detection on this field.
-            const mcpServer = bridge.serverOf(d.name)
-            yield { kind: 'tool_call', tool: d.name, ...(mcpServer !== undefined ? { server: mcpServer } : {}) }
-          }
-          const { messages: assistantMsgs, toolCalls } = await turn.finished
-          messages.push(...assistantMsgs)
-          if (toolCalls.length === 0) break
-          for (const tc of toolCalls) {
-            const mcpServer = bridge.serverOf(tc.name)
-            const decision = gateTool({
-              toolName: tc.name,
-              mcpServer,
-              input: (tc.input ?? {}) as Record<string, unknown>,
-              tierProfile: ctx.tierProfile,
-              permissionMode: ctx.permissionMode,
-            })
-            let result: string
-            if (decision === 'deny') {
-              result = `Permission denied: tool "${tc.name}" is not allowed for this chat.`
-            } else {
-              try {
-                result = mcpServer !== undefined
-                  ? await bridge.call(tc.name, tc.input)
-                  : await builtinByName.get(tc.name)!.execute((tc.input ?? {}) as Record<string, unknown>)
-              } catch (err) {
-                result = `Tool error: ${err instanceof Error ? err.message : String(err)}`
-              }
+        const em = makeTurnEmitter()
+        try {
+          let steps = 0
+          for (;;) {
+            steps++
+            const turn = chatModel.streamTurn(messages, toolSpecs)
+            // MUST fully drain `deltas` before awaiting `finished` — see
+            // function doc + Task 6 contract #1.
+            for await (const d of turn.deltas) {
+              if (d.kind === 'text') { yield mapDeltaToEvent(d); continue }
+              // Stamp `server` from the REAL owning MCP server (never assume
+              // `wechat` for every MCP tool) — see McpToolBridge.serverOf doc
+              // and isReplyToolCall, which keys reply-detection on this field.
+              const mcpServer = bridge.serverOf(d.name)
+              yield { kind: 'tool_call', tool: d.name, ...(mcpServer !== undefined ? { server: mcpServer } : {}) }
             }
-            messages.push(chatModel.toolResultMessage(tc.id, tc.name, result))
+            const { messages: assistantMsgs, toolCalls } = await turn.finished
+            messages.push(...assistantMsgs)
+            if (toolCalls.length === 0) break
+            for (const tc of toolCalls) {
+              const mcpServer = bridge.serverOf(tc.name)
+              const decision = gateTool({
+                toolName: tc.name,
+                mcpServer,
+                input: (tc.input ?? {}) as Record<string, unknown>,
+                tierProfile: ctx.tierProfile,
+                permissionMode: ctx.permissionMode,
+              })
+              let result: string
+              if (decision === 'deny') {
+                result = `Permission denied: tool "${tc.name}" is not allowed for this chat.`
+              } else {
+                try {
+                  result = mcpServer !== undefined
+                    ? await bridge.call(tc.name, tc.input)
+                    : await builtinByName.get(tc.name)!.execute((tc.input ?? {}) as Record<string, unknown>)
+                } catch (err) {
+                  result = `Tool error: ${err instanceof Error ? err.message : String(err)}`
+                }
+              }
+              messages.push(chatModel.toolResultMessage(tc.id, tc.name, result))
+            }
+            if (steps >= maxSteps) {
+              yield em.errorText(`step budget ${maxSteps} exhausted`, { code: 'step_budget' })
+              break
+            }
           }
-          if (steps >= maxSteps) {
-            yield { kind: 'error', message: `step budget ${maxSteps} exhausted`, code: 'step_budget' }
-            break
-          }
+          yield em.finish({ sessionId, numTurns: steps })
+        } catch (err) {
+          yield em.error(err)
         }
-        yield { kind: 'result', sessionId, numTurns: steps, durationMs: Date.now() - startedAt }
       })()
     },
     async close() {

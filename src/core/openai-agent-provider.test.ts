@@ -105,6 +105,32 @@ describe('openai provider loop', () => {
     await session.close()
   })
 
+  it('classifies a thrown streamTurn auth error as an error event instead of propagating (D4/B3)', async () => {
+    // A ChatModelClient whose streamTurn throws synchronously — previously
+    // this would propagate out of the dispatch() async generator uncaught;
+    // now the loop's try/catch + TurnEmitter.error() classify it via
+    // isAuthFail('sdk-error', …) into a terminal error event.
+    const authThrowModel: ChatModelClient = {
+      streamTurn() { throw new Error('401 unauthorized') },
+      async generate() { return 'ok' },
+      userMessage: (t) => ({ role: 'user', content: t } as any),
+      systemMessage: (t) => ({ role: 'system', content: t } as any),
+      toolResultMessage: (id, name, r) => ({ role: 'tool', content: `${name}:${JSON.stringify(r)}` } as any),
+    }
+    const provider = createOpenAiAgentProvider({
+      makeChatModel: () => authThrowModel,
+      makeMcpBridge: async () => fakeBridge([]),
+    })
+    const session = await provider.spawn({ alias: 'a', path: '/tmp' }, guestSpawn as any)
+    const events: AgentEvent[] = []
+    for await (const ev of session.dispatch('hi')) events.push(ev)
+
+    expect(events[events.length - 1]).toMatchObject({ kind: 'error', code: 'auth_failed' })
+    // no result event follows an unrecovered throw
+    expect(events.some((e) => e.kind === 'result')).toBe(false)
+    await session.close()
+  })
+
   it('cheapEval returns text on success (happy path)', async () => {
     const provider = createOpenAiAgentProvider({ makeChatModel: () => scriptedModel(), makeMcpBridge: async () => fakeBridge([]) })
     expect(await provider.cheapEval!('ping')).toBe('ok')
