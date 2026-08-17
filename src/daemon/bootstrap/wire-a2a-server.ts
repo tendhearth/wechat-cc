@@ -64,12 +64,34 @@ export async function wireA2aServer(deps: A2aServerDeps): Promise<A2aServerWirin
     })
   }
 
+  // Discovery file — non-sensitive (no token), tells CLI + dashboard the
+  // daemon's A2A server status. Operator runs `wechat-cc agent info`,
+  // which reads this file directly (no internal-api round-trip needed).
+  // Mode 0644 because there's no secret here, just an HTTP base URL.
+  const a2aInfoPath = join(deps.stateDir, 'a2a-info.json')
+  const writeA2aInfo = (server: ReturnType<typeof createA2AServer> | null) => {
+    try {
+      writeFileSync(
+        a2aInfoPath,
+        JSON.stringify({
+          enabled: !!server,
+          base_url: server ? server.baseUrl() : null,
+          host: server ? configuredAgent.a2a_listen!.host : null,
+          port: server ? server.port() : null,
+          pid: process.pid,
+          ts: Date.now(),
+        }, null, 2),
+        { mode: 0o644 },
+      )
+    } catch { /* non-fatal: CLI falls back to internal-api lookup */ }
+  }
+
   // Server only starts if a2a_listen is configured. When absent, the
   // a2aServer handle is null and POST /v1/a2a/send still works (outbound
   // only — the daemon won't receive inbound pushes without a listener).
   let a2aServer: ReturnType<typeof createA2AServer> | null = null
   if (configuredAgent.a2a_listen) {
-    a2aServer = createA2AServer({
+    const server = createA2AServer({
       host: configuredAgent.a2a_listen.host,
       port: configuredAgent.a2a_listen.port,
       registry: a2aRegistry,
@@ -135,29 +157,33 @@ export async function wireA2aServer(deps: A2aServerDeps): Promise<A2aServerWirin
       ...(socialOnLetter ? { onLetter: socialOnLetter } : {}),
       daemonInfo: { name: 'wechat-cc', version: selfPkg.version },
     })
-    await a2aServer.start()
-    deps.log('A2A', `server listening on http://${configuredAgent.a2a_listen.host}:${a2aServer.port()}`)
+    try {
+      await server.start()
+      deps.log('A2A', `server listening on http://${configuredAgent.a2a_listen.host}:${server.port()}`)
+      a2aServer = server
+      writeA2aInfo(a2aServer)
+    } catch (err) {
+      // Degraded-boot safety net (spec's supervisor turns this throw into
+      // 'a2a-server' degraded — see bootstrap/index.ts's sup.start call).
+      // Two failure shapes land here: (1) start() itself throws — most
+      // commonly EADDRINUSE, a previous instance or another process still
+      // holding the port; (2) anything AFTER start() throws (none of the
+      // two lines above currently can, but this is the net for future
+      // additions). Either way: best-effort stop the half-started listener
+      // (stop() itself may throw "not started" — swallow), then best-effort
+      // rewrite a2a-info.json so a *previous* run's file — which may still
+      // advertise a live port/pid — doesn't survive on disk telling
+      // `wechat-cc agent info` a listener is up when it isn't. Then rethrow
+      // so the supervisor records the degradation; we never swallow it here.
+      try { await server.stop() } catch { /* not started, or already stopped */ }
+      writeA2aInfo(null)
+      throw err
+    }
+  } else {
+    // Not configured — advertise the disabled state so a stale prior-run
+    // file (from a config that used to set a2a_listen) doesn't linger.
+    writeA2aInfo(null)
   }
-
-  // Discovery file — non-sensitive (no token), tells CLI + dashboard the
-  // daemon's A2A server status. Operator runs `wechat-cc agent info`,
-  // which reads this file directly (no internal-api round-trip needed).
-  // Mode 0644 because there's no secret here, just an HTTP base URL.
-  const a2aInfoPath = join(deps.stateDir, 'a2a-info.json')
-  try {
-    writeFileSync(
-      a2aInfoPath,
-      JSON.stringify({
-        enabled: !!a2aServer,
-        base_url: a2aServer ? a2aServer.baseUrl() : null,
-        host: a2aServer ? configuredAgent.a2a_listen!.host : null,
-        port: a2aServer ? a2aServer.port() : null,
-        pid: process.pid,
-        ts: Date.now(),
-      }, null, 2),
-      { mode: 0o644 },
-    )
-  } catch { /* non-fatal: CLI falls back to internal-api lookup */ }
 
   const a2aDeps = {
     registry: a2aRegistry,

@@ -8,7 +8,7 @@
  *   - a2aDeps are always present (for outbound /v1/a2a/send even without listener)
  */
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { buildBootstrap } from './bootstrap'
@@ -243,6 +243,68 @@ describe('bootstrap A2A wiring', () => {
       expect(events[0]?.text).toBe('lost in the void')
     } finally {
       await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  // Degraded-boot hardening (defer-list item A) — wireA2aServer wraps its
+  // start-and-advertise sequence: on start() throwing (EADDRINUSE — a real
+  // fault, not a mock), it must (1) best-effort stop the half-started
+  // server, (2) rewrite a2a-info.json so a stale prior run's file (still
+  // advertising a live port/pid) doesn't survive on disk telling
+  // `wechat-cc agent info` a listener is up when it's actually down, and
+  // (3) rethrow so SubsystemSupervisor records 'a2a-server' degraded instead
+  // of the whole daemon going down (spec 2026-08-17-subsystem-degraded-boot).
+  it('start() EADDRINUSE ⇒ a2aServer null, stale a2a-info.json corrected to enabled=false, sup records a2a-server degraded', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-a2a-degraded-'))
+    // Occupy a real port so a2aServer.start() throws for real (EADDRINUSE),
+    // matching how the feature is actually triggered in production.
+    const blocker = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('occupied') })
+    const blockerPort: number = blocker.port!
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port: blockerPort },
+      }),
+    )
+    // Pre-write a stale a2a-info.json from a "previous run" that DID have a
+    // live listener — this is exactly the file Problem 1 leaves behind.
+    const a2aInfoPath = join(stateDir, 'a2a-info.json')
+    writeFileSync(a2aInfoPath, JSON.stringify({
+      enabled: true,
+      base_url: `http://127.0.0.1:${blockerPort + 1}`,
+      host: '127.0.0.1',
+      port: blockerPort + 1,
+      pid: 99999,
+      ts: Date.now() - 60_000,
+    }, null, 2))
+    const sup = new SubsystemSupervisor(() => {})
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        supervisor: sup,
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      // buildBootstrap resolves (the supervisor swallowed the throw) —
+      // a2a-server is degraded, not a dead daemon.
+      expect(boot.a2aServer).toBeNull()
+      expect(sup.degraded().map(d => d.name)).toContain('a2a-server')
+      const info = JSON.parse(readFileSync(a2aInfoPath, 'utf8'))
+      expect(info.enabled).toBe(false)
+      expect(info.base_url).toBeNull()
+      expect(info.port).toBeNull()
+    } finally {
+      await boot?.a2aServer?.stop()
+      blocker.stop(true)
       rmSync(stateDir, { recursive: true, force: true })
     }
   })
