@@ -83,6 +83,19 @@ describe('makeCompanion().enable() — default_chat_id acctStore fallback is all
     }
   })
 
+  it('wildcard allowFrom (["*"]) does not filter out the acctStore fallback (carryover fix, T4/T5 re-review)', async () => {
+    writeAccess(['*'])
+    const stateDir = mkdtempSync(join(tmpdir(), 'ilink-companion-test-'))
+    try {
+      const ctx = makeStubCtx(stateDir, ['owner_chat'])
+      const companion = makeCompanion(ctx)
+      await companion.enable()
+      expect(companion.status().default_chat_id).toBe('owner_chat')
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
   it('lastActiveRef.current still wins over the acctStore fallback when set (unchanged precedence)', async () => {
     writeAccess(['owner_chat'])
     const stateDir = mkdtempSync(join(tmpdir(), 'ilink-companion-test-'))

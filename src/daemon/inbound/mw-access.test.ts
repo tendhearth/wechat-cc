@@ -177,20 +177,19 @@ describe('mwAccess — guest branch (spec §2 as amended, fix round 1 ruling #8 
     expect(d.hydrateChatRoute).not.toHaveBeenCalled()
   })
 
-  it('step 1 belt fix: ctx.redispatch bypasses the seenMessage short-circuit (mirrors mw-dedup) — proceeds instead of silently dropping', async () => {
-    const request = makeRequest({ code: '654321' })
-    const guestRequests = makeFakeStore({
-      seenMessage: vi.fn(() => true),   // already seen...
-      upsertRequest: vi.fn(() => ({ request, fresh: true })),
-    })
+  it('redispatch guard (hardening, controller-mandated): a redispatched message landing in the guest branch (stale-cache corner after an out-of-band allow) is dropped unconditionally — no upsert, no notify, logged drop', async () => {
+    const guestRequests = makeFakeStore({ seenMessage: vi.fn(() => true) })   // already seen (first pass)
+    const log = vi.fn()
     const d = guestDeps({ guestRequests })
-    const mw = makeMwAccess(d)
-    const ctx = makeCtx(makeMsg(), true)   // ...but this IS a redispatch
+    const mw = makeMwAccess({ ...d, log })
+    const ctx = makeCtx(makeMsg(), true)   // this IS a redispatch, but `allowed` was stale-cache-false
     await mw(ctx, vi.fn(async () => {}))
-    // Proceeds past step 1 into the normal fresh-request flow instead of
-    // returning early — proof the short-circuit was skipped.
-    expect(d.sendMessage).toHaveBeenCalledWith('guest_chat', '我需要主人确认一下,稍等哦~')
-    expect(d.notifyOwner).toHaveBeenCalledTimes(1)
+    expect(ctx.consumedBy).toBe('access')
+    expect(guestRequests.upsertRequest).not.toHaveBeenCalled()
+    expect(guestRequests.seenMessage).not.toHaveBeenCalled()   // never even reaches the dedup check
+    expect(d.sendMessage).not.toHaveBeenCalled()
+    expect(d.notifyOwner).not.toHaveBeenCalled()
+    expect(log).toHaveBeenCalledWith('ACCESS', 'guest drop chat=guest_chat reason=redispatch_stale_cache')
   })
 
   it('step 2 (moved up, ruling #8): correct 6-digit invite code → appendAllowFrom + hydrate + welcome text, consumed — checked BEFORE wasDenied', async () => {

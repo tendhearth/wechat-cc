@@ -19,15 +19,27 @@
  * targeted ctxStore/account-routing hydrate (mw-capture-ctx hasn't run
  * either).
  *
- * Guest branch (spec §2 AS AMENDED — fix round 1 reordered steps 2/3;
- * see the spec's own bracketed annotation — five steps, deterministic,
- * no model participation anywhere in this file):
+ * A redispatch guard runs FIRST, ahead of every guest-branch step:
+ * `ctx.redispatch` messages are dropped here unconditionally (hardening
+ * round, controller-mandated). The 允许 command seam re-fires an
+ * already-approved guest's original message with `redispatch:true` set
+ * (pipeline-deps.ts's "guest approve redispatch") — the primary fix is
+ * access.ts's appendAllowFrom busting the loadAccess() cache so `allowed`
+ * above is already true by the time that redispatch reaches this
+ * middleware, so normally it never even gets here. But any residual
+ * stale-cache window that lands it here anyway must NOT fall through to
+ * the steps below: `guestRequests.resolve()` already DELETED the pending
+ * record for this guest (see guest-requests.ts's `resolve`), so
+ * `upsertRequest` would silently treat the redispatch as a brand-new
+ * request and re-notify the owner about a guest they already approved
+ * seconds ago. A redispatched message must never create a new
+ * request/notify.
+ *
+ * Guest branch proper (spec §2 AS AMENDED — fix round 1 reordered steps
+ * 2/3; see the spec's own bracketed annotation — five steps,
+ * deterministic, no model participation anywhere in this file):
  *   1. message-id dedup (at-least-once redelivery guard, since this runs
- *      before mw-dedup) — SKIPPED when `ctx.redispatch` is set (mirrors
- *      mw-dedup's own redispatch bypass, mw-dedup.ts:50): the 允许 command
- *      seam re-fires the guest's original message through this same
- *      middleware, and that message's id was already recorded seen the
- *      first time around.
+ *      before mw-dedup).
  *   2. bare 6-digit text that consumes a live invite code → allowlist +
  *      welcome (a WRONG 6-digit code falls through to step 5, deliberately
  *      indistinguishable from an ordinary first message — no code-probing
@@ -150,21 +162,27 @@ export function makeMwAccess(deps: AccessMwDeps): Middleware {
     const msg = ctx.msg
     ctx.consumedBy = 'access'   // every exit below this line is a guest-branch consume, never a normal turn
 
+    // Redispatch guard (hardening round, controller-mandated) — see this
+    // file's top doc comment. A stale-cache corner can land an
+    // already-approved redispatch back in this branch; it must never
+    // create a new request or re-notify the owner. Return here, BEFORE
+    // touching guestRequests at all (including the seenMessage dedup
+    // below — this message id was already recorded seen on its first,
+    // non-redispatch pass through this middleware).
+    if (ctx.redispatch) {
+      deps.log('ACCESS', `guest drop chat=${msg.chatId} reason=redispatch_stale_cache`)
+      return
+    }
+
     // Step 1 — at-least-once redelivery guard (mw-dedup hasn't run yet;
-    // this middleware sits upstream of it). `ctx.redispatch` bypasses the
-    // short-circuit for one pass (belt fix, CRITICAL finding round 1) —
-    // the 允许 command seam re-fires this exact message id through the
-    // pipeline on purpose; the primary fix is access.ts's appendAllowFrom
-    // busting the loadAccess() cache so `allowed` above is already true by
-    // the time that redispatch reaches this middleware, but this is a
-    // defense-in-depth net for any residual timing window where it isn't.
-    // seenMessage() still records the id either way (so a genuine
-    // at-least-once redelivery later is caught normally).
+    // this middleware sits upstream of it). seenMessage() still records
+    // the id either way (so a genuine at-least-once redelivery later is
+    // caught normally).
     const msgId = msg.createTimeMs
       ? inboundMessageId(msg.userId, msg.createTimeMs)
       : inboundFallbackMessageId(msg.userId, msg.text)
     const alreadySeen = guestRequests.seenMessage(msgId)
-    if (alreadySeen && !ctx.redispatch) {
+    if (alreadySeen) {
       deps.log('ACCESS', `guest drop chat=${msg.chatId} reason=redelivered_message id=${msgId}`)
       return
     }

@@ -28,7 +28,16 @@ export function makeCompanion(ctx: IlinkContext): WechatCompanionDep {
       // pick a stranger who merely messaged the bot once and got a neutral
       // reply. Filter to allowlisted chats — a stranger must never become
       // the proactive-care destination (fix round 1, Important #2).
-      const allowedAcctKeys = Object.keys(acctStore.all()).filter(c => loadAccess().allowFrom.includes(c))
+      // '*' is a match-all wildcard (mw-access.ts's own allowed-check, e2e
+      // harness default / an operator's explicitly open daemon) — under
+      // it EVERY acctStore key is "allowed", so `.includes(c)` would
+      // filter everything out and silently break this fallback for the
+      // exact deployments that rely on it most (carryover fix, T4/T5
+      // re-review).
+      const access = loadAccess()
+      const allowedAcctKeys = access.allowFrom.includes('*')
+        ? Object.keys(acctStore.all())
+        : Object.keys(acctStore.all()).filter(c => access.allowFrom.includes(c))
       const newCfg = {
         ...defaultCompanionConfig(),
         ...cfg,
