@@ -97,6 +97,11 @@ export function setupAgyGlobalMcp(opts: PrepareAgyMcpOpts): boolean {
   } catch {
     existingRaw = null // absent — first-time setup, not an error
   }
+  // agy itself ships a 0-byte placeholder mcp_config.json (real-deploy
+  // finding 2026-08-18): JSON.parse('') would trip the corrupted-file
+  // no-clobber guard below and permanently block setup. An empty or
+  // whitespace-only file carries no user data to lose — treat as absent.
+  if (existingRaw !== null && existingRaw.trim() === '') existingRaw = null
 
   let existingRoot: McpConfigRoot = {}
   if (existingRaw !== null) {
@@ -185,6 +190,10 @@ export function removeAgyGlobalMcp(opts: RemoveAgyMcpOpts): boolean {
   } catch {
     return false // absent — nothing to remove, not an error
   }
+  // Empty/whitespace-only ≡ absent (agy's own 0-byte placeholder — see the
+  // matching guard in setupAgyGlobalMcp): nothing to remove, and it must
+  // not be mislabeled "corrupted" by the parse below.
+  if (existingRaw.trim() === '') return false
 
   let parsed: unknown
   try {

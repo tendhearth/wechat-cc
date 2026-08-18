@@ -122,6 +122,23 @@ describe('setupAgyGlobalMcp — tier C (global-only)', () => {
     expect(parsed.mcpServers[AGY_WECHAT_MCP_NAMESPACE_ID].env.WECHAT_SESSION_TOKEN).toBe('tok-b')
   })
 
+  it('pre-existing EMPTY (0-byte) file ⇒ treated as absent, entry written (agy ships an empty placeholder — real-deploy finding 2026-08-18)', () => {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'mcp_config.json'), '')
+    const { log } = fakeLog()
+    const changed = setupAgyGlobalMcp({ wechatSpec, mintToken: () => 'tok-empty', geminiConfigDir: dir, log })
+    expect(changed).toBe(true)
+    const parsed = JSON.parse(readFileSync(join(dir, 'mcp_config.json'), 'utf8'))
+    expect(parsed.mcpServers[AGY_WECHAT_MCP_NAMESPACE_ID].env.WECHAT_SESSION_TOKEN).toBe('tok-empty')
+  })
+
+  it('whitespace-only file ⇒ same as empty (treated as absent)', () => {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'mcp_config.json'), '  \n')
+    const { log } = fakeLog()
+    expect(setupAgyGlobalMcp({ wechatSpec, mintToken: () => 't', geminiConfigDir: dir, log })).toBe(true)
+  })
+
   it('corrupted existing JSON ⇒ does NOT clobber, logs, and returns false', () => {
     mkdirSync(dir, { recursive: true })
     const path = join(dir, 'mcp_config.json')
@@ -237,6 +254,15 @@ describe('removeAgyGlobalMcp — mirror of setup, cleans up on graceful shutdown
     const removed = removeAgyGlobalMcp({ geminiConfigDir: dir, log })
     expect(removed).toBe(false)
     expect(calls.length).toBe(0)
+  })
+
+  it('empty (0-byte) file ⇒ nothing to remove, returns false, no write, no corrupted-warning', () => {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'mcp_config.json'), '')
+    const { log, calls } = fakeLog()
+    expect(removeAgyGlobalMcp({ geminiConfigDir: dir, log })).toBe(false)
+    expect(readFileSync(join(dir, 'mcp_config.json'), 'utf8')).toBe('')
+    expect(calls.map(c => c.join(' ')).join('\n')).not.toContain('corrupted')
   })
 
   it('corrupted existing JSON ⇒ does NOT clobber, logs, and returns false', () => {
