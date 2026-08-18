@@ -36,7 +36,9 @@
  * request/notify.
  *
  * Guest branch proper (spec §2 AS AMENDED — fix round 1 reordered steps
- * 2/3; see the spec's own bracketed annotation — five steps,
+ * 2/3; fix-wave ruling (Important 2) added a gate BEFORE step 1: a real,
+ * non-empty `access.admins` list — see the guard just above the redispatch
+ * check for why. See the spec's own bracketed annotation — five steps,
  * deterministic, no model participation anywhere in this file):
  *   1. message-id dedup (at-least-once redelivery guard, since this runs
  *      before mw-dedup).
@@ -77,9 +79,13 @@ const PREVIEW_MAX_LEN = 60
 
 /**
  * ≤60 CODEPOINTS (not UTF-16 units — Array.from splits on codepoints, so
- * an astral character/emoji never gets its surrogate pair cut in half),
- * `\n` → space, and `"` → `\"` (backslash-escaped — picked over a
- * corner-bracket substitution since the wrapping quotes in
+ * an astral character/emoji never gets its surrogate pair cut in half).
+ * Line-break-shaped codepoints → space: `\n`, `\r`, U+2028 (LINE
+ * SEPARATOR), U+2029 (PARAGRAPH SEPARATOR) — one character class (fold 3;
+ * the latter two are the other "renders as a line break" codepoints that
+ * `\n`-only handling misses, and this text is about to be wrapped in a
+ * single-line owner notification). `"` → `\"` (backslash-escaped — picked
+ * over a corner-bracket substitution since the wrapping quotes in
  * `ownerNotifyText`/the 待批准 listing are plain ASCII `"`; an unescaped
  * `"` in the guest's own text could otherwise visually close the quote
  * early and splice fake-looking content — e.g. a fabricated
@@ -90,7 +96,7 @@ const PREVIEW_MAX_LEN = 60
  * both call sites).
  */
 export function previewText(text: string): string {
-  const escaped = text.replace(/\n/g, ' ').replace(/"/g, '\\"')
+  const escaped = text.replace(/[\n\r\u2028\u2029]/g, ' ').replace(/"/g, '\\"')
   return Array.from(escaped).slice(0, PREVIEW_MAX_LEN).join('')
 }
 
@@ -155,6 +161,26 @@ export function makeMwAccess(deps: AccessMwDeps): Middleware {
         'ACCESS',
         `drop chat=${ctx.msg.chatId} reason=not_in_allowlist allowFrom_count=${access.allowFrom.length}`,
       )
+      ctx.consumedBy = 'access'
+      return
+    }
+
+    // [fix-wave ruling, CONTROLLER — Important 2] The entire guest machinery
+    // requires a REAL admins list. On a legacy install where access.json has
+    // never had `admins` set, `isAdmin()` (src/lib/access.ts) falls back to
+    // treating allowFrom membership as admin membership. Approving even one
+    // guest through this very branch appends them to allowFrom — which,
+    // on such an install, would ALSO make `isAdmin(guestChatId)` true,
+    // handing that guest the owner-command seam (pipeline-deps.ts: mint
+    // 邀请码, run 允许/拒绝, and every other admin-gated in-chat command).
+    // Gating on `admins?.length` here (mirrored in pipeline-deps.ts's guest
+    // command seam) closes that escalation chain at its root instead of
+    // trying to patch isAdmin() itself. This degrades to the SAME legacy
+    // silent drop as the deps-missing branch above — coherent, since
+    // `resolveAdminChatId` also returns null with no admins configured, so
+    // an owner notify could never have been delivered anyway.
+    if (!access.admins?.length) {
+      deps.log('ACCESS', `guest path inactive: admins empty — run doctor (chat=${ctx.msg.chatId})`)
       ctx.consumedBy = 'access'
       return
     }

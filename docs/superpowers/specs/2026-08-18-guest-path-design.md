@@ -77,7 +77,14 @@ export function makeGuestRequestStore(deps: { stateDir: string; now?: () => numb
 - TTL:请求与邀请码均 **48h**(`GUEST_REQUEST_TTL_MS`),读时过滤 + 写时
   懒清理(onboarding-pending 同款姿势)。过期语义 = 拒绝(静默)。
 - denied 记录保留(TTL 同 48h 后清):挡住重复通知;之后该 chat 回到
-  纯静默丢弃。
+  纯静默丢弃。[fix-wave ruling(2026-08-18,CONTROLLER Important 1)：此
+  条已作废——denied 记录改为**永久**,不再吃 48h TTL(pending/邀请码仍是
+  48h)。原设计里"过期后回到纯静默丢弃"意味着每 ~48h owner 会被重新
+  通知同一个已拒绝过的人,且跟拒绝时的回执文案「已拒绝,ta 不会再打扰
+  你。」(无条件承诺)自相矛盾。增长量有好友数上限兜底。撤销 denied 的
+  两条路都是 owner 主动、身份门过的动作:邀请码覆盖(mw-access 第 2 步
+  排在 denied 检查之前,已经是这样)、或终端 `/wechat:access` 直接改
+  access.json。]
 - 码空间:请求码与邀请码同为 6 位数字,但**存在不同命名空间**(请求码
   查 pending、邀请码查 invites),生成时各自查重防撞。
 
@@ -88,6 +95,17 @@ export function makeGuestRequestStore(deps: { stateDir: string; now?: () => numb
 的两个调用但**不**动 `lastActiveRef`,避免陌生人污染 last-active)、
 `sendMessage`、`notifyOwner(text)`(内部 = resolveAdminChatId + 直发)、
 `budget`(`makeForwardBudget({ perSender: 3, windowMs: 3600_000 })`)。
+
+[fix-wave ruling(2026-08-18,CONTROLLER Important 2)：整套 guest 机制——
+本节的 mw-access 分支和 §3 的 owner 命令 seam 两处——现在都额外要求
+`loadAccess().admins?.length > 0` 才会激活;`admins` 为空时两处都是
+legacy 静默丢弃(mw-access)/直接不解析(owner 命令 seam)。原因:legacy
+装机(从未配过 `admins`)上 `isAdmin()` 会退化成用 `allowFrom` 成员判断
+admin——批准过哪怕一个 guest(会被写进 allowFrom)之后,那个 guest 自己
+也会被 `isAdmin()` 判定为 admin,能在微信里发「邀请码」/「允许」/「拒绝」
+自我提权。加这道闸后,同一装机上 guest path 整体保持 legacy 静默丢弃,
+跟 `resolveAdminChatId` 在无 admins 时返回 null(通知本就发不出去)语义
+一致。]
 
 `not_in_allowlist` 命中后按序(全部确定性,无模型参与):
 

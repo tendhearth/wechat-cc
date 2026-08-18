@@ -199,14 +199,31 @@ describe('resolve', () => {
     expect(store.listPending()).toEqual([])
   })
 
-  it('a denied record expires (wasDenied) after 48h — expiry means back to plain silence', () => {
+  it('fix-wave ruling (Important 1): a denied record is PERMANENT — it does NOT expire after 48h (or any longer horizon)', () => {
     let now = 0
     const store = makeGuestRequestStore({ stateDir: '/unused', store: makeMemStore(), now: () => now })
     const msg = mkMsg()
     const { request } = store.upsertRequest({ chatId: msg.chatId, firstMsg: msg, contextToken: 't', accountId: 'acct-1' })
     store.resolve(request.code, 'denied')
     now = GUEST_REQUEST_TTL_MS + 1
-    expect(store.wasDenied(msg.chatId)).toBe(false)
+    expect(store.wasDenied(msg.chatId)).toBe(true)
+    // Well past any plausible TTL multiple — still denied, still permanent.
+    now = GUEST_REQUEST_TTL_MS * 100
+    expect(store.wasDenied(msg.chatId)).toBe(true)
+  })
+
+  it('fix-wave ruling (Important 1): a denied record survives the lazy TTL prune on disk — a fresh pending write past 48h does not evict it', () => {
+    let now = 0
+    const backing = makeMemStore()
+    const store = makeGuestRequestStore({ stateDir: '/unused', store: backing, now: () => now })
+    const denied = store.upsertRequest({ chatId: 'denied@im.wechat', firstMsg: mkMsg({ chatId: 'denied@im.wechat' }), contextToken: 't', accountId: 'acct-1' })
+    store.resolve(denied.request.code, 'denied')
+    now = GUEST_REQUEST_TTL_MS + 100
+    // A brand-new pending request triggers the write-time lazy prune.
+    store.upsertRequest({ chatId: 'new@im.wechat', firstMsg: mkMsg({ chatId: 'new@im.wechat' }), contextToken: 't', accountId: 'acct-1' })
+    const onDisk = JSON.parse(backing.get('requests')!) as Record<string, { status: string }>
+    expect(onDisk['denied@im.wechat']?.status).toBe('denied')
+    expect(onDisk['new@im.wechat']).toBeDefined()
   })
 
   it('resolve with an unknown or already-resolved code returns null', () => {

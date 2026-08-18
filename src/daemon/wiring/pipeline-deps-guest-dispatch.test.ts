@@ -129,6 +129,30 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
     } finally { teardown(stateDir) }
   })
 
+  it('fix-wave ruling (Important 2): admins empty ⇒ guest command seam is INERT even for a chat isAdmin() would treat as admin via the legacy allowFrom fallback', async () => {
+    // Simulates the escalation chain the ruling closes: on a legacy install
+    // where `admins` was never configured, isAdmin() (src/lib/access.ts)
+    // falls back to allowFrom membership — so a chat sitting in allowFrom
+    // (e.g. an already-approved guest, or the very first person who scanned
+    // the QR) reads as "admin" to isAdmin(). Without the admins?.length
+    // gate, that chat could mint invite codes / run 允许/拒绝 through this
+    // very seam. `setup(admins)` already writes admins:[] when called with
+    // an empty array; this test additionally puts the sender IN allowFrom
+    // so isAdmin(sender) really would return true if the gate were absent.
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText, stateDir } = setup([])
+    try {
+      writeFileSync(ACCESS_FILE, JSON.stringify({ dmPolicy: 'allowlist', allowFrom: ['legacy_chat'], admins: [] }, null, 2))
+      _clearCache(); _resetSnapshotForTest()
+
+      await pipelineDeps.dispatch.coordinator.dispatch({
+        chatId: 'legacy_chat', userId: 'legacy_chat', text: '邀请码', msgType: 'text', createTimeMs: 1, accountId: 'acct1',
+      })
+      // Falls through to a normal turn — the guest command parse never ran.
+      expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
+      expect(sendAssistantText).not.toHaveBeenCalled()
+    } finally { teardown(stateDir) }
+  })
+
   it('a non-command admin message falls through to a normal turn', async () => {
     const { pipelineDeps, coordinatorDispatch, stateDir } = setup()
     try {

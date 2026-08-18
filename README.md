@@ -553,7 +553,9 @@ New in-WeChat path for friends you share the bot with: a stranger's first
 message gets a neutral reply and you (the admin chat) get a notify with a
 6-digit code — reply 「允许 &lt;code&gt;」or 「拒绝 &lt;code&gt;」, or send
 「邀请码」to hand out a one-time invite code. Either way it only ever appends
-to `allowFrom` — `admins`/`trusted` are still terminal-only.
+to `allowFrom` — `admins`/`trusted` are still terminal-only. Want total
+silence instead (no neutral reply, no notify, nothing)? Set
+`access.json.dmPolicy` to `"disabled"`.
 
 ### Permission tiers (v0.6+)
 

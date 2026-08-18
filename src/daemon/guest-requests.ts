@@ -88,6 +88,11 @@ export interface GuestRequestStore {
   // 邀请码:可多枚并存;consume 为单次使用原子删除
   createInvite(): InviteCode
   consumeInvite(code: string): boolean
+  /** PERMANENT once true (fix-wave ruling — Important 1; see
+   *  GUEST_REQUEST_TTL_MS's doc comment) — a denial never expires on its
+   *  own. The only ways back are an owner-issued invite code (mw-access
+   *  step 2, ordered before this check) or the terminal `/wechat:access`
+   *  skill. */
   wasDenied(chatId: string): boolean
   /** Flips `notifiedAt` from `null` to `now()` on an existing PENDING
    *  record — call this AFTER the owner notification actually sends
@@ -113,8 +118,21 @@ export interface GuestRequestStoreDeps {
   store?: StateStore
 }
 
-/** 48h — spec §1: both pending requests and invite codes live this long;
- *  denied records also keep this TTL before falling back to plain silence. */
+/** 48h — spec §1: pending requests and invite codes live this long.
+ *
+ * [fix-wave ruling, CONTROLLER — Important 1] Denied records do NOT use
+ * this TTL — they are PERMANENT (see `pruneRequests`'s denied-status
+ * exemption below). The original design let a denial expire after 48h and
+ * fall back to plain silence, which silently contradicted the copy sent to
+ * the owner at deny-time (「已拒绝,ta 不会再打扰你。」— an unconditional
+ * promise, not a 48h one) and meant a persistent guest got re-notified to
+ * the owner forever, once every ~48h. Growth is bounded by the owner's
+ * WeChat friend count (this store is keyed by chatId = friend), so
+ * permanence doesn't unbound the file. The two ways OUT of a denial are
+ * both deliberate, admin-gated actions: an owner-issued invite code
+ * (mw-access step 2 runs BEFORE the denied check, by design — see
+ * mw-access.ts) or the terminal `/wechat:access` skill editing access.json
+ * directly. */
 export const GUEST_REQUEST_TTL_MS = 48 * 60 * 60_000
 
 const REQUESTS_KEY = 'requests'
@@ -210,11 +228,15 @@ export function makeGuestRequestStore(deps: GuestRequestStoreDeps): GuestRequest
 
   /** Read + drop expired entries. Every mutating method below writes this
    *  pruned set back regardless of whether it also changes anything else
-   *  — that's the "写时懒清理" (write-time lazy cleanup) spec §1 calls for. */
+   *  — that's the "写时懒清理" (write-time lazy cleanup) spec §1 calls for.
+   *
+   *  [fix-wave ruling — Important 1] `status === 'denied'` records are
+   *  EXEMPT from the TTL — they live forever (see GUEST_REQUEST_TTL_MS's
+   *  own doc comment for why). Only 'pending' records age out. */
   function pruneRequests(all: Record<string, GuestRequest>): Record<string, GuestRequest> {
     const out: Record<string, GuestRequest> = {}
     for (const [chatId, req] of Object.entries(all)) {
-      if (isLive(req.createdAt)) out[chatId] = req
+      if (req.status === 'denied' || isLive(req.createdAt)) out[chatId] = req
     }
     return out
   }

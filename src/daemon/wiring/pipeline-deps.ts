@@ -601,12 +601,22 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
           // deterministic parse, mirrors 揭晓/回信/配对 above. Unlike those,
           // this block is NOT gated behind an optional boot.X wire —
           // guestRequests/guestForwardBudget are unconditionally constructed
-          // above, so the guest path is always live; the only gate is
+          // above, so the guest path is always live; the gate is
           // isAdmin(msg.chatId) (same identity gate mw-access's guest
           // branch itself never bypasses — a non-admin sending "允许
           // 123456" falls straight through to a normal turn, matching
-          // parseGuestCommand's own deterministic-exact-match contract).
-          if (isAdmin(msg.chatId)) {
+          // parseGuestCommand's own deterministic-exact-match contract)
+          // PLUS [fix-wave ruling, CONTROLLER — Important 2] a real,
+          // non-empty `access.admins` list. On a legacy admins-empty
+          // install, `isAdmin()` falls back to allowFrom membership — so
+          // an already-approved guest (who IS in allowFrom) would also
+          // read as "admin" and could mint invite codes / run 允许/拒绝
+          // themselves. Requiring `admins?.length` here closes that
+          // escalation chain the same way mw-access's guest branch does
+          // (src/daemon/inbound/mw-access.ts) — on such an install this
+          // block simply never fires; the guest text falls through to
+          // `boot.coordinator.dispatch(msg)` below like any other message.
+          if (loadAccess().admins?.length && isAdmin(msg.chatId)) {
             const guestCmd = parseGuestCommand(msg.text)
             if (guestCmd) {
               if (guestCmd.kind === 'allow') {

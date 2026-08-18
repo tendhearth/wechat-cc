@@ -66,6 +66,16 @@ function guestDeps(over: {
   hydrateChatRoute?: (msg: InboundMsg) => void
   appendAllowFrom?: (chatId: string) => boolean
   allowFrom?: string[]
+  /**
+   * Defaults to a non-empty admins list — fix-wave ruling (Important 2)
+   * gates the ENTIRE guest branch on `admins?.length`, so every existing
+   * guest-branch test in this file needs a real admin present to keep
+   * exercising the branch it's actually testing. Pass `admins: []` (or
+   * omit `admins` while overriding `loadAccess` directly) to specifically
+   * test the admins-empty gate itself — see the dedicated describe block
+   * below.
+   */
+  admins?: string[]
 } = {}) {
   const guestRequests = over.guestRequests ?? makeFakeStore()
   const budget = over.budget ?? makeFakeBudget(true)
@@ -74,7 +84,11 @@ function guestDeps(over: {
   const hydrateChatRoute = vi.fn(over.hydrateChatRoute ?? (() => {}))
   const appendAllowFrom = vi.fn(over.appendAllowFrom ?? ((_chatId: string) => true))
   const log = vi.fn()
-  const loadAccess = (): Access => ({ dmPolicy: 'allowlist', allowFrom: over.allowFrom ?? [] })
+  const loadAccess = (): Access => ({
+    dmPolicy: 'allowlist',
+    allowFrom: over.allowFrom ?? [],
+    admins: over.admins ?? ['test_admin'],
+  })
   return { guestRequests, budget, sendMessage, notifyOwner, hydrateChatRoute, appendAllowFrom, log, loadAccess }
 }
 
@@ -160,6 +174,55 @@ describe('mwAccess — guest deps absent ⇒ byte-identical legacy silent drop',
     expect(ctx.consumedBy).toBe('access')
     expect(d.guestRequests.seenMessage).not.toHaveBeenCalled()
     expect(log).toHaveBeenCalledWith('ACCESS', expect.stringContaining('not_in_allowlist'))
+  })
+})
+
+describe('mwAccess — guest machinery requires real admins (fix-wave ruling, CONTROLLER — Important 2)', () => {
+  it('admins empty ⇒ byte-identical legacy silent drop, even with all six guest deps wired', async () => {
+    const guestRequests = makeFakeStore()
+    const log = vi.fn()
+    const d = guestDeps({ guestRequests, admins: [] })
+    const mw = makeMwAccess({ ...d, log })
+    const ctx = makeCtx(makeMsg())
+    await mw(ctx, vi.fn(async () => {}))
+    expect(ctx.consumedBy).toBe('access')
+    expect(log).toHaveBeenCalledWith('ACCESS', 'guest path inactive: admins empty — run doctor (chat=guest_chat)')
+    // No guest machinery touched at all — not even the message-id dedup.
+    expect(guestRequests.seenMessage).not.toHaveBeenCalled()
+    expect(guestRequests.upsertRequest).not.toHaveBeenCalled()
+    expect(d.sendMessage).not.toHaveBeenCalled()
+    expect(d.notifyOwner).not.toHaveBeenCalled()
+    expect(d.hydrateChatRoute).not.toHaveBeenCalled()
+    expect(d.appendAllowFrom).not.toHaveBeenCalled()
+  })
+
+  it('admins undefined (never configured — legacy install) ⇒ same silent drop', async () => {
+    const d = guestDeps()
+    const mw = makeMwAccess({ ...d, loadAccess: (): Access => ({ dmPolicy: 'allowlist', allowFrom: [] }) })   // no `admins` key at all
+    const ctx = makeCtx(makeMsg())
+    await mw(ctx, vi.fn(async () => {}))
+    expect(ctx.consumedBy).toBe('access')
+    expect(d.guestRequests.seenMessage).not.toHaveBeenCalled()
+  })
+
+  it('a bare 6-digit invite code does NOT get consumed on an admins-empty install — the whole branch is inert, not just the notify step', async () => {
+    const guestRequests = makeFakeStore({ consumeInvite: vi.fn(() => true) })
+    const d = guestDeps({ guestRequests, admins: [] })
+    const mw = makeMwAccess(d)
+    const ctx = makeCtx(makeMsg({ text: '483921' }))
+    await mw(ctx, vi.fn(async () => {}))
+    expect(guestRequests.consumeInvite).not.toHaveBeenCalled()
+    expect(d.appendAllowFrom).not.toHaveBeenCalled()
+  })
+
+  it('admins present ⇒ guest branch behaves exactly as before (sanity — the rest of this file already covers the details)', async () => {
+    const d = guestDeps({ admins: ['owner1'] })
+    const mw = makeMwAccess(d)
+    const ctx = makeCtx(makeMsg({ text: 'hello' }))
+    await mw(ctx, vi.fn(async () => {}))
+    expect(ctx.consumedBy).toBe('access')
+    expect(d.guestRequests.seenMessage).toHaveBeenCalled()
+    expect(d.sendMessage).toHaveBeenCalledWith('guest_chat', '我需要主人确认一下,稍等哦~')
   })
 })
 
@@ -368,6 +431,14 @@ describe('previewText (fold #5 — quote escaping + surrogate-safe truncation)',
 
   it('replaces newlines with spaces', () => {
     expect(previewText('line one\nline two')).toBe('line one line two')
+  })
+
+  it('fold 3: also folds \\r, U+2028 (LINE SEPARATOR), and U+2029 (PARAGRAPH SEPARATOR) to spaces — not just \\n', () => {
+    expect(previewText('a\rb')).toBe('a b')
+    expect(previewText(`a${String.fromCharCode(0x2028)}b`)).toBe('a b')
+    expect(previewText(`a${String.fromCharCode(0x2029)}b`)).toBe('a b')
+    // All four in one string, still a single-line preview.
+    expect(previewText(`a\nb\rc${String.fromCharCode(0x2028)}d${String.fromCharCode(0x2029)}e`)).toBe('a b c d e')
   })
 
   it('truncates to 60 CODEPOINTS, not 60 UTF-16 units — an astral emoji is never split mid-surrogate-pair', () => {
