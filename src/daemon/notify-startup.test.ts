@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { notifyStartup, renderStartupText, WARM_FIRST_STARTUP_TEXT } from './notify-startup'
@@ -75,6 +75,38 @@ describe('notify-startup', () => {
       expect(sent[0]!.text).toMatch(/已重启/)
       expect(sent[0]!.text).toMatch(/pid=2/)
       expect(sent[0]!.text).not.toBe(WARM_FIRST_STARTUP_TEXT)
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('an EXISTING install upgrading onto this feature (last-startup.json already present from a prior boot, but no startup-notified.json marker yet — this feature never having shipped before) sends the technical text, NOT the warm hello, and backfills the marker (fix round 2)', async () => {
+    const stateDir = makeStateDir()
+    try {
+      // Simulate a pre-upgrade install: last-startup.json exists (the daemon
+      // has demonstrably started before), but startup-notified.json does
+      // not (this marker feature didn't exist in the version that wrote it).
+      writeFileSync(join(stateDir, 'last-startup.json'), JSON.stringify({ ts: 0, pid: 1 }) + '\n')
+      expect(existsSync(join(stateDir, 'startup-notified.json'))).toBe(false)
+
+      const sent: Array<{ chatId: string; text: string }> = []
+      const HOUR = 60 * 60 * 1000
+      const result = await notifyStartup(
+        {
+          stateDir,
+          loadAccess: () => ({ allowFrom: ['owner-wxid'] }),
+          send: async (chatId, text) => { sent.push({ chatId, text }) },
+          log: () => {},
+          now: () => 3 * HOUR,
+        },
+        { pid: 2, accounts: 1, dangerously: true }
+      )
+      expect(result.notified).toBe(true)
+      expect(sent[0]!.text).not.toBe(WARM_FIRST_STARTUP_TEXT)
+      expect(sent[0]!.text).toMatch(/已重启/)
+      expect(sent[0]!.text).toMatch(/pid=2/)
+      // Backfilled so no LATER boot mistakes this install for fresh.
+      expect(existsSync(join(stateDir, 'startup-notified.json'))).toBe(true)
     } finally {
       rmSync(stateDir, { recursive: true, force: true })
     }

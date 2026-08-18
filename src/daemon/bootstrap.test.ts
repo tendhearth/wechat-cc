@@ -1005,6 +1005,44 @@ describe('bootstrap', () => {
     expect(nonEmptyPrompt).toContain('send_sticker')
   })
 
+  it('buildInstructions hides the sticker cold-start unlock variant for GUEST-tier chats even when stickerTagsFor returns [] (empty library), since guests cannot call save_sticker (memory_write denied) — mirrors the careEnabled tier gate (fix round 2)', async () => {
+    const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      stickerTagsFor: () => [],
+    })
+    const guestPrompt = b.buildInstructions('claude', TIER_PROFILES.guest, 'owner-chat')
+    expect(guestPrompt).not.toContain('你还没有表情包')
+    expect(guestPrompt).not.toContain('save_sticker')
+
+    const adminPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(adminPrompt).toContain('你还没有表情包')
+    expect(adminPrompt).toContain('save_sticker')
+  })
+
+  it('buildInstructions still hides the NORMAL (non-empty) sticker section for GUEST-tier chats\' behavior unchanged — no NEW tier gate on the non-empty path, pre-existing (fix round 2 only touches the empty-library variant)', async () => {
+    const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      stickerTagsFor: () => ['happy'],
+    })
+    const guestPrompt = b.buildInstructions('claude', TIER_PROFILES.guest, 'owner-chat')
+    expect(guestPrompt).toContain('send_sticker')
+    expect(guestPrompt).toContain('happy')
+  })
+
   it('buildInstructions defaults stickerTags to null (not []) when stickerTagsFor is unwired entirely — stays byte-identical to before the sticker feature existed', async () => {
     const withoutDep = await buildBootstrap({
       supervisor: new SubsystemSupervisor(() => {}),

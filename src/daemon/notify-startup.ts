@@ -72,7 +72,18 @@ export async function notifyStartup(
   }
 
   const notifiedMarkerPath = join(deps.stateDir, NOTIFIED_MARKER_FILE)
-  const isFirstEverNotify = !existsSync(notifiedMarkerPath)
+  const alreadyNotified = existsSync(notifiedMarkerPath)
+  // `prevTs !== null` means last-startup.json existed BEFORE this call (read
+  // above, prior to this boot's overwrite) — i.e. the daemon has
+  // demonstrably started before, even if the marker file itself is missing
+  // (an existing install upgrading onto this feature for the first time:
+  // notify-startup.ts didn't write startup-notified.json in any earlier
+  // version). Without this check, every existing install's first restart
+  // after upgrading would wrongly get the "初次见面" warm hello — AND that
+  // boot's technical pid/accounts/mode line (which has real ops value for a
+  // technical owner) would be swallowed. Only a truly fresh state dir (no
+  // prior last-startup.json AND no marker) is first-ever.
+  const isFirstEverNotify = !alreadyNotified && prevTs === null
 
   const text = isFirstEverNotify ? WARM_FIRST_STARTUP_TEXT : renderStartupText(ctx, sinceLast)
   let okCount = 0
@@ -87,7 +98,11 @@ export async function notifyStartup(
   if (okCount === 0) {
     return { notified: false, reason: 'send-failed-all', recipients, sinceLastMs: sinceLast }
   }
-  if (isFirstEverNotify) {
+  // Backfill the marker on the upgrade path too (alreadyNotified=false,
+  // isFirstEverNotify=false because prevTs!==null) — not just on the
+  // genuinely-first-ever path — so this boot's technical send is recorded
+  // and no LATER boot can mistake this install for fresh.
+  if (!alreadyNotified) {
     try {
       writeFileSync(notifiedMarkerPath, JSON.stringify({ ts: now }) + '\n', { mode: 0o600 })
     } catch (err) {

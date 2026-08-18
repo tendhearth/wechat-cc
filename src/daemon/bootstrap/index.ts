@@ -696,8 +696,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // guests can't author agenda.md entries or call set_chat_pref (both
   // memory_write), so showing the care section would just burn turns on
   // denied tool calls — gap check-ins (guest-allowed `reply`) work fine
-  // without it. stickerTags mirrors `deps.stickerTagsFor`
-  // the same way — absent thunk ⇒ [] ⇒ section never included. persona /
+  // without it. stickerTags mirrors `deps.stickerTagsFor` the same way for
+  // the ABSENT-thunk case (⇒ `null` ⇒ neither sticker section included);
+  // its EMPTY-library variant is additionally memory_write-gated (see the
+  // `stickerTags` local computed in `buildInstructions` below) since it
+  // nudges `save_sticker`, a memory_write-gated write — non-empty behavior
+  // is unaffected. persona /
   // personaCultivate mirror `deps.personaFor` the same way — absent thunk
   // ⇒ both persona sections never included (persona design §2).
   // newRelationship mirrors `deps.newRelationshipFor` the same way — absent
@@ -714,6 +718,18 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // profile.md excerpt.
   const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string): string => {
     const p = deps.personaFor?.(chatId)
+    // owner-onboarding design §C2, fix round 2: the empty-library variant
+    // nudges `save_sticker` — a memory_write-gated write, same posture as
+    // careEnabled/personaCultivate/newRelationship above (see their
+    // comments below) — so it must be suppressed for non-memory_write
+    // tiers too. NON-empty sticker behavior is deliberately unchanged
+    // (pre-existing, no tier gate there); this only downgrades an EMPTY
+    // array to `null` (pref-off shape) when the tier can't call
+    // save_sticker anyway.
+    const rawStickerTags = deps.stickerTagsFor?.(chatId) ?? null
+    const stickerTags = rawStickerTags !== null && rawStickerTags.length === 0 && !tierProfile.allow.has('memory_write')
+      ? null
+      : rawStickerTags
     return buildSystemPrompt({
       providerId,
       // Unused when delegateAvailable is false; fall back to the daemon default.
@@ -727,7 +743,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // `null` (pref-off shape), NOT `[]`, so an unwired bootstrap stays
       // byte-identical to before this feature existed (the old `[]` default
       // would now incorrectly render the cold-start unlock variant).
-      stickerTags: deps.stickerTagsFor?.(chatId) ?? null,
+      // memory_write-tier-downgrade computed above (`stickerTags` local).
+      stickerTags,
       persona: p?.content,
       // Like careEnabled: cultivation guidance tells the agent to WRITE
       // persona.md via memory_write, so it must also be tier-gated — a
