@@ -49,8 +49,9 @@ import { fileURLToPath } from 'node:url'
 import { makeSessionStore } from '../../core/session-store'
 import { homedir } from 'node:os'
 import { loadAgentConfig, makeMtimeCachedConfigReader, modelForProvider } from '../../lib/agent-config'
-import { loadAccess, setSessionInvalidator, type Access } from '../../lib/access'
-import { loadCompanionConfig, type CompanionConfig } from '../companion/config'
+import { loadAccess, setSessionInvalidator } from '../../lib/access'
+import { loadCompanionConfig } from '../companion/config'
+import { resolveAdminChatId } from '../companion/resolve-admin'
 import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
 import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
 import { bundledPluginsDir, pluginDataDir } from '../plugins/paths'
@@ -180,39 +181,13 @@ function wrapCheapEvalWithAuthFailCheck(
   }
 }
 
-/**
- * Resolve which chat receives permission-relay prompts. Pre-Task-13 the
- * relay routed to `lastActiveChatId` — a security hole, since a guest who
- * could trigger a tool call could then approve their own request. The
- * relay target is now an admin chat, but we still prefer the INITIATING
- * chat when that chat itself is in `access.admins`:
- *
- *   1. If `initiatingChatId` is itself an admin, prompt that admin.
- *      Closes the multi-admin gap where admin[1+] never sees prompts for
- *      their own tool calls. Admin self-approval is fine — the original
- *      security hole was specifically guest self-approval.
- *   2. Else if companion.default_chat_id is set AND admin, use it
- *      (operator can explicitly direct prompts to their preferred chat).
- *   3. Otherwise fall back to `access.admins[0]` — first admin in config.
- *   4. If no admins exist at all, return null (relay denies the request).
- *
- * Called per-tool-call inside the makeCanUseTool closure, so changes to
- * either access.json or companion config take effect within one read TTL
- * (5s for access; instant for companion).
- */
-export function resolveAdminChatId(
-  access: Access,
-  companion: CompanionConfig,
-  initiatingChatId?: string | null,
-): string | null {
-  if (initiatingChatId && access.admins?.includes(initiatingChatId)) {
-    return initiatingChatId
-  }
-  if (companion.default_chat_id && access.admins?.includes(companion.default_chat_id)) {
-    return companion.default_chat_id
-  }
-  return access.admins?.[0] ?? null
-}
+// resolveAdminChatId moved to ../companion/resolve-admin.ts (fix round 1,
+// owner-onboarding design §C1 review) so companion/offer-eligibility.ts can
+// reuse the SAME owner-resolution rule without importing this whole
+// composition-root file. Re-exported here so existing callers (main.ts,
+// bootstrap.test.ts) that do `import { resolveAdminChatId } from './bootstrap'`
+// keep working unchanged.
+export { resolveAdminChatId } from '../companion/resolve-admin'
 
 export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   hydrateClaudeAuthEnvFromUserSettings(deps.log)
@@ -767,9 +742,15 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // which nudge memory_write-gated writes): `companion_enable` is
       // registered for every session regardless of tier (see
       // wechat/main.ts's registerCompanionTools call — not behind the
-      // SESSION_IS_ADMIN block), so there's no denied-tool-call risk. In
-      // practice `companionOfferFor` only ever fires true for the owner's
-      // own chat anyway, which resolves admin tier.
+      // SESSION_IS_ADMIN block), so there's no denied-tool-call risk. The
+      // real thunk (main.ts) delegates to `companionOfferEligible`, which
+      // resolves "owner" via `resolveAdminChatId` — admins-membership-based
+      // — so a guest chat can NEVER match (even a guest that set
+      // `companion.default_chat_id` to itself via the ungated
+      // `companion_enable` tool and later disabled it: that stale value is
+      // only trusted when it's also in `access.admins` — see
+      // companion/resolve-admin.ts). That's what makes skipping a tier gate
+      // here structurally safe, not just true "in practice".
       companionOffer: deps.companionOfferFor?.(chatId) ?? false,
       personaEmpty: !(p?.content && p.content.trim().length > 0),
       // core-memory-injection design §2 — this chat's OWN profile.md

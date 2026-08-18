@@ -33,6 +33,7 @@ import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
+import { companionOfferEligible } from './companion/offer-eligibility'
 import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
 import { startCustomerReviewRuntime } from './customer-review/runtime'
 import { SUPERVISED_ENV } from '../core/supervised-env'
@@ -291,18 +292,25 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // onboarding-curiosity design §2 — sync because buildInstructions is
       // sync; cheap indexed COUNT per spawn (chat_id, direction indexed).
       newRelationshipFor: (c) => countInboundMessagesSync(db, c) < NEW_RELATIONSHIP_MSG_COUNT,
-      // owner-onboarding design §C1 — companion-offer nudge: owner's own
-      // chat (same default_chat_id check as personaFor's `cultivate` below),
-      // companion proactive-tick still off, and past the SAME
-      // NEW_RELATIONSHIP_MSG_COUNT threshold newRelationshipFor uses (on the
-      // opposite side — `>=` here vs `<` above), so the two prompt sections
-      // are naturally mutually exclusive for any given chat.
-      companionOfferFor: (c) => {
-        const companion = loadCompanionConfig(stateDir)
-        if (!companion.default_chat_id || c !== companion.default_chat_id) return false
-        if (companion.enabled) return false
-        return countInboundMessagesSync(db, c) >= NEW_RELATIONSHIP_MSG_COUNT
-      },
+      // owner-onboarding design §C1 — companion-offer nudge. Delegates to
+      // the pure companionOfferEligible predicate (fix round 1: the first
+      // version of this thunk compared `c` directly against
+      // `companion.default_chat_id`, which is ONLY ever set inside
+      // companion_enable — on a fresh install default_chat_id is null, so
+      // the offer could never fire until companion had already been
+      // enabled once and later disabled. companionOfferEligible resolves
+      // the owner chat via resolveAdminChatId (admins-membership-based)
+      // instead, which fresh installs already have thanks to Task 3's
+      // setup bootstrap, and is guest-safe by construction — see
+      // offer-eligibility.ts's docstring). Threshold matches
+      // newRelationshipFor's NEW_RELATIONSHIP_MSG_COUNT on the opposite
+      // side, so the two prompt sections stay naturally mutually exclusive.
+      companionOfferFor: (c) => companionOfferEligible({
+        chatId: c,
+        access: loadAccess(),
+        companion: loadCompanionConfig(stateDir),
+        inboundCount: countInboundMessagesSync(db, c),
+      }),
       // bubble-replies design (行为流式气泡回复) — same per-chat 拆分 pref
       // that gates route-level mechanical splitting (getChatPrefs above)
       // also gates the bubble-guidance prompt section: `/set split off`

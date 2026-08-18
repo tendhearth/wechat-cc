@@ -165,20 +165,25 @@ export interface BootstrapDeps {
   newRelationshipFor?: (chatId: string) => boolean
   /**
    * Resolve whether the companion-offer prompt section (owner-onboarding
-   * design §C1) should be added for this chat: owner chat (same
-   * `default_chat_id`-derived判定 as `personaFor`'s `cultivate`) AND
-   * companion proactive-tick is off AND this chat's inbound message count
-   * has crossed `NEW_RELATIONSHIP_MSG_COUNT` — i.e. exactly the chats where
+   * design §C1) should be added for this chat: owner chat AND companion
+   * proactive-tick is off AND this chat's inbound message count has
+   * crossed `NEW_RELATIONSHIP_MSG_COUNT` — i.e. exactly the chats where
    * `newRelationshipFor` has ALREADY flipped to false (same threshold,
    * opposite side), so the two sections are naturally mutually exclusive.
-   * Read per-spawn (like `careLevelFor`'s siblings) so an `/companion_enable`
-   * call or crossing the threshold mid-conversation applies without a
-   * daemon restart. Absent ⇒ the companion-offer prompt section is NEVER
-   * included for any chat — tests and minimal embeddings that don't wire
-   * this stay byte-identical to before this feature existed. Wiring the
-   * actual thunk (owner-chat check + `loadCompanionConfig().enabled` +
-   * `countInboundMessagesSync` vs `NEW_RELATIONSHIP_MSG_COUNT`) happens in
-   * main.ts.
+   * "Owner chat" here is `resolveAdminChatId`'s admins-membership-based
+   * resolution (NOT `default_chat_id` compared directly — that field is
+   * ONLY ever set inside `companion_enable`, so on a fresh install it's
+   * null, and a direct compare would deadlock: the offer could never fire
+   * until companion had already been enabled once and later disabled). See
+   * `companion/offer-eligibility.ts`'s `companionOfferEligible` (fix round
+   * 1) for the actual predicate main.ts's thunk delegates to — that's what
+   * makes this admins-membership-based, hence guest-safe by construction
+   * even though the section carries no separate tier gate. Read per-spawn
+   * (like `careLevelFor`'s siblings) so an `/companion_enable` call or
+   * crossing the threshold mid-conversation applies without a daemon
+   * restart. Absent ⇒ the companion-offer prompt section is NEVER included
+   * for any chat — tests and minimal embeddings that don't wire this stay
+   * byte-identical to before this feature existed.
    */
   companionOfferFor?: (chatId: string) => boolean
   /**
