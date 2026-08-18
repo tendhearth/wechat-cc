@@ -13,6 +13,13 @@
  *   3. Otherwise run the pipeline, and mark handled ONLY after it settles
  *      without throwing. A turn that crashes before replying is left unmarked
  *      so it is reprocessed on redelivery (crash recovery preserved).
+ *
+ * `ctx.redispatch` bypasses the isHandled short-circuit (step 2) for one
+ * pass — onboarding's echo re-dispatch intentionally re-enters the pipeline
+ * with the SAME message id (turn-1's trigger, fired again once the nickname
+ * exchange completes) and must not be swallowed as "already handled", since
+ * mw-dedup already marked it handled at the end of turn 1 in the SAME boot.
+ * The trailing markHandled still runs (INSERT OR IGNORE — idempotent).
  */
 import type { Middleware } from './types'
 import { inboundMessageId, inboundFallbackMessageId } from '../../lib/messages-store'
@@ -40,7 +47,7 @@ export function makeMwDedup(deps: DedupMwDeps): Middleware {
       ? inboundMessageId(ctx.msg.userId, ctx.msg.createTimeMs)
       : inboundFallbackMessageId(ctx.msg.userId, ctx.msg.text)
 
-    if (await deps.isHandled(id)) {
+    if (!ctx.redispatch && await deps.isHandled(id)) {
       deps.log('DEDUP', `skip redelivered message ${id} (${ctx.msg.chatId}) — already handled`)
       return
     }

@@ -346,10 +346,17 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // already cleared its awaiting state and persisted the nickname, so
       // mw-onboarding will short-circuit (isKnownUser=true) and the message
       // flows to the provider as if it were just received.
+      //
+      // redispatch:true is load-bearing, not cosmetic — mw-dedup already
+      // marked this exact message id "handled" at the end of turn 1 (SAME
+      // boot, no restart involved), so without the flag this re-fire is
+      // silently swallowed by mw-dedup's isHandled short-circuit and the
+      // user's original question never reaches the provider.
       await refs.pipeline.deref('onboarding echo dispatch')({
         msg,
         receivedAtMs: Date.now(),
         requestId: randomBytes(4).toString('hex'),
+        redispatch: true,
       })
     },
     log,

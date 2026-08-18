@@ -21,7 +21,11 @@
  * repo convention, see chat-prefs.ts / incident-store.ts) so a daemon
  * restart mid-flow doesn't force a re-greet: the in-progress nickname
  * exchange picks up where it left off on the next inbound. The 30-min
- * timeout travels with each entry (`since`) and is filtered on read.
+ * timeout travels with each entry (`since`); `getAwaiting()` itself is a
+ * plain lookup (no filtering), and `handle()` applies the timeout via its
+ * own `stillWaiting` check on the returned entry. Expired entries ARE
+ * pruned from disk, but lazily — on the next `setAwaiting()` call for ANY
+ * chat, not on every read.
  * The 1.5s dedup window (DEDUP_WINDOW_MS) stays process-local semantics —
  * it happens to piggyback on the persisted `since`/`triggerText` fields,
  * but there's no separate durable dedup ledger: an ilink re-delivery that
