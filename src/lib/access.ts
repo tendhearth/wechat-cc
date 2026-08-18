@@ -94,6 +94,36 @@ export function saveAccess(a: Access): void {
   renameSync(tmp, ACCESS_FILE)
 }
 
+/**
+ * Append `userId` to allowFrom and persist via saveAccess() — the first
+ * production caller of saveAccess, which until now had zero call sites.
+ *
+ * SECURITY RED LINE (spec docs/superpowers/specs/2026-08-18-guest-path-design.md
+ * §0 decision 3, §4): this function touches `allowFrom` ONLY. It must
+ * NEVER write `admins` or `trusted` — a guest request/invite code is a
+ * REFERENCE (routes a chat past the allowlist gate), not a GRANT of
+ * elevated tier. skills/access/SKILL.md:14's "access changes must never be
+ * downstream of untrusted input" bars the MODEL from deciding access
+ * changes from chat content; it does not bar this deterministic,
+ * pre-LLM, isAdmin-gated function itself (the guest's message text never
+ * reaches this code path — see mw-access's guest branch).
+ *
+ * Reads straight off disk (not the 5s-TTL loadAccess cache) so a
+ * concurrent out-of-band edit (e.g. the /wechat:access terminal skill
+ * editing admins/trusted) landing within the cache window isn't
+ * clobbered by a stale read-modify-write. The append itself takes effect
+ * within the existing 5s TTL/session-invalidator — no extra wiring
+ * (spec §4).
+ *
+ * Idempotent: returns false (no write) if `userId` is already present.
+ */
+export function appendAllowFrom(userId: string): boolean {
+  const access = readAccessFile()
+  if (access.allowFrom.includes(userId)) return false
+  saveAccess({ ...access, allowFrom: [...access.allowFrom, userId] })
+  return true
+}
+
 // Cache access in memory — re-read from disk every 5s max
 let _accessCache: Access | null = null
 let _accessCacheTime = 0
