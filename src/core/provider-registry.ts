@@ -52,8 +52,10 @@ export interface ProviderRegistry {
 
 // Cheapest known to most expensive. Claude haiku ≈ $0.001/1K input tokens
 // and ~1s latency via in-process SDK; Codex mini ≈ $0.002/1K and ~3-5s
-// per call (CLI subprocess overhead). Future providers append here.
-const CHEAP_EVAL_PREFERENCE: ProviderId[] = ['openai', 'claude', 'codex', 'gemini']
+// per call (CLI subprocess overhead). agy rides Google AI Pro subscription
+// quota (no per-token API cost) — spec §2 slots it after openai, before
+// claude. Future providers append here.
+const CHEAP_EVAL_PREFERENCE: ProviderId[] = ['openai', 'agy', 'claude', 'codex', 'gemini']
 
 export function createProviderRegistry(): ProviderRegistry {
   const entries = new Map<ProviderId, { provider: AgentProvider; opts: ProviderRegistration }>()

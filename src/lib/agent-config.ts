@@ -21,6 +21,14 @@ export interface AgentConfig {
   openaiBaseUrl?: string
   openaiModel?: string
   geminiModel?: string
+  // agy provider fields (Antigravity CLI — subscription Gemini via Google AI
+  // Pro OAuth). Mirrors `geminiModel?`'s optional-string shape: kept
+  // separate so switching providers doesn't clobber another provider's
+  // pinned model. `agyBin?` is the resolved `agy` binary path (bootstrap
+  // probes `--version` before registering) — not a model field, so it has
+  // no modelForProvider/withModelForProvider counterpart.
+  agyModel?: string
+  agyBin?: string
   // When true, the daemon spawned by `service install` runs with
   // `cli.ts run --dangerously` (Claude SDK permissionMode=bypassPermissions).
   // Wizard-installed daemons need this on by default — there is no human
@@ -95,6 +103,19 @@ export interface AgentConfig {
   // bootstrap/index.ts's knowledge_enabled block). Optional escape hatch for
   // a non-standard wxsearch install location.
   knowledge_embed_script?: string
+  // Which runtime computes embeddings. 'python' (default) spawns wxsearch's
+  // embed_subprocess.py; 'js' runs transformers.js in-process, with no venv,
+  // no subprocess, and a model that can be warmed directly (see
+  // core/knowledge/js-embedder.ts).
+  //
+  // Still defaulting to 'python' on purpose: the two runtimes produce
+  // equivalent vectors (cosine > 0.9999, so an existing semantic.db stays
+  // valid either way), but 'js' cannot run inside the packaged desktop
+  // sidecar — a `bun build --compile` binary cannot dlopen onnxruntime's
+  // native binding. Selecting 'js' there falls back to 'python' rather than
+  // failing. Flip the default only once that is solved and the equivalence
+  // check runs in CI with a model cache.
+  knowledge_embed_runtime?: 'python' | 'js'
   // Knowledge Graph inproc Task 4 — explicit override for "my own username"
   // fed into rebuildGraphFromSource's `detectOwner` call (graph-build.ts).
   // Optional — absent means "let detectOwner vote from 1:1 message senders"
@@ -158,6 +179,8 @@ const AgentConfigSchema = z.object({
   openaiBaseUrl: z.string().optional(),
   openaiModel: z.string().optional(),
   geminiModel: z.string().optional(),
+  agyModel: z.string().optional(),
+  agyBin: z.string().optional(),
   dangerouslySkipPermissions: z.boolean().default(true),
   autoStart: z.boolean().default(true),
   closeStopsDaemon: z.boolean().default(false),
@@ -183,6 +206,7 @@ const AgentConfigSchema = z.object({
   knowledge_source_dir: z.string().optional(),
   knowledge_embed_model: z.string().optional(),
   knowledge_embed_script: z.string().optional(),
+  knowledge_embed_runtime: z.enum(['python', 'js']).optional(),
   knowledge_owner: z.string().optional(),
 })
 
@@ -243,6 +267,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.openaiBaseUrl === 'string' ? { openaiBaseUrl: parsed.openaiBaseUrl } : {}),
       ...(typeof parsed.openaiModel === 'string' ? { openaiModel: parsed.openaiModel } : {}),
       ...(typeof parsed.geminiModel === 'string' ? { geminiModel: parsed.geminiModel } : {}),
+      ...(typeof parsed.agyModel === 'string' ? { agyModel: parsed.agyModel } : {}),
+      ...(typeof parsed.agyBin === 'string' ? { agyBin: parsed.agyBin } : {}),
       dangerouslySkipPermissions,
       autoStart,
       closeStopsDaemon,
@@ -262,6 +288,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.knowledge_source_dir === 'string' ? { knowledge_source_dir: parsed.knowledge_source_dir } : {}),
       ...(typeof parsed.knowledge_embed_model === 'string' ? { knowledge_embed_model: parsed.knowledge_embed_model } : {}),
       ...(typeof parsed.knowledge_embed_script === 'string' ? { knowledge_embed_script: parsed.knowledge_embed_script } : {}),
+      ...(parsed.knowledge_embed_runtime === 'python' || parsed.knowledge_embed_runtime === 'js' ? { knowledge_embed_runtime: parsed.knowledge_embed_runtime } : {}),
       ...(typeof parsed.knowledge_owner === 'string' ? { knowledge_owner: parsed.knowledge_owner } : {}),
     }
   } catch {
@@ -361,6 +388,7 @@ export function modelForProvider(config: AgentConfig, providerId: string): strin
   if (providerId === 'openai') return config.openaiModel
   if (providerId === 'cursor') return config.cursorModel
   if (providerId === 'gemini') return config.geminiModel
+  if (providerId === 'agy') return config.agyModel
   return config.provider === providerId ? config.model : undefined
 }
 
@@ -369,6 +397,7 @@ export function withModelForProvider(config: AgentConfig, providerId: string, mo
   if (providerId === 'openai') return { ...config, openaiModel: model }
   if (providerId === 'cursor') return { ...config, cursorModel: model }
   if (providerId === 'gemini') return { ...config, geminiModel: model }
+  if (providerId === 'agy') return { ...config, agyModel: model }
   return { ...config, model }
 }
 

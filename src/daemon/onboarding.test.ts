@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { makeOnboardingHandler, type OnboardingDeps } from './onboarding'
+import { makeStateStore, type StateStore } from './state-store'
 import type { InboundMsg } from '../core/prompt-format'
 
 function mkMsg(opts: { chatId?: string; userId?: string; text: string }): InboundMsg {
@@ -11,6 +15,20 @@ function mkMsg(opts: { chatId?: string; userId?: string; text: string }): Inboun
     text: opts.text,
     msgType: 'text',
     createTimeMs: 0,
+  }
+}
+
+// In-memory StateStore fake for unit tests that don't care about on-disk
+// persistence (fast, no fs I/O). Restart-simulation tests below use the
+// real makeStateStore against a shared tmp file instead.
+function makeMemStore(): StateStore {
+  const data: Record<string, string> = {}
+  return {
+    get: (k) => data[k],
+    set: (k, v) => { data[k] = v },
+    delete: (k) => { delete data[k] },
+    all: () => ({ ...data }),
+    flush: async () => {},
   }
 }
 
@@ -47,6 +65,8 @@ function makeDeps(opts: {
     isAdmin: (uid) => admins.has(uid),
     getBotName: () => currentBotName,
     setBotName: async (name) => { botNameSet.push(name); currentBotName = name },
+    stateDir: '/unused-store-injected',
+    store: makeMemStore(),
   }
   return {
     deps, sent, saved, dispatched, botNameSet,
@@ -148,6 +168,8 @@ describe('makeOnboardingHandler', () => {
       isAdmin: () => false,
       getBotName: () => null,
       setBotName: async () => {},
+      stateDir: '/unused-store-injected',
+      store: makeMemStore(),
     })
 
     const r1 = await handler.handle(mkMsg({ userId: 'u1', chatId: 'c1', text: '你好' }))
@@ -178,6 +200,8 @@ describe('makeOnboardingHandler', () => {
       isAdmin: () => false,
       getBotName: () => null,
       setBotName: async () => {},
+      stateDir: '/unused-store-injected',
+      store: makeMemStore(),
     })
 
     await handler.handle(mkMsg({ userId: 'u1', chatId: 'c1', text: '你好' }))
@@ -200,6 +224,8 @@ describe('makeOnboardingHandler', () => {
       isAdmin: () => false,
       getBotName: () => null,
       setBotName: async () => {},
+      stateDir: '/unused-store-injected',
+      store: makeMemStore(),
     })
 
     await handler.handle({
@@ -371,6 +397,149 @@ describe('makeOnboardingHandler', () => {
       expect(dispatched).toHaveLength(1)
       expect(dispatched[0]!.text).toBe('你好')
       expect(sent.at(-1)).toMatch(/刚才你说「你好」/)
+    })
+  })
+
+  describe('state durability (state-store backed, restart simulation)', () => {
+    function buildDeps(opts: {
+      store: StateStore
+      stateDir: string
+      getClock: () => number
+      known: Set<string>
+      saved: Array<{ chatId: string; name: string }>
+      sent: string[]
+      dispatched: InboundMsg[]
+    }): OnboardingDeps {
+      return {
+        isKnownUser: (uid) => opts.known.has(uid),
+        setUserName: async (chatId, name) => { opts.saved.push({ chatId, name }); opts.known.add(chatId) },
+        sendMessage: async (_c, t) => { opts.sent.push(t) },
+        botName: () => 'cc',
+        dispatchInbound: async (msg) => { opts.dispatched.push(msg) },
+        log: () => {},
+        now: opts.getClock,
+        isAdmin: () => false,
+        getBotName: () => null,
+        setBotName: async () => {},
+        stateDir: opts.stateDir,
+        store: opts.store,
+      }
+    }
+
+    it('instance B (fresh store from the same file) continues the flow instance A started — no re-greet', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'onboarding-restart-'))
+      const filePath = join(dir, 'onboarding-pending.json')
+      try {
+        let clock = 1_000_000
+        const known = new Set<string>()
+        const saved: Array<{ chatId: string; name: string }> = []
+        const sent: string[] = []
+        const dispatched: InboundMsg[] = []
+
+        // Instance A — first contact, greets, persists awaiting state to disk.
+        const storeA = makeStateStore(filePath, { debounceMs: 0 })
+        const handlerA = makeOnboardingHandler(buildDeps({
+          store: storeA, stateDir: dir, getClock: () => clock, known, saved, sent, dispatched,
+        }))
+        await handlerA.handle(mkMsg({ userId: 'u1', chatId: 'c1', text: '帮我查个东西' }))
+        expect(sent).toHaveLength(1)
+        expect(sent[0]).toMatch(/称呼你/)
+
+        // Simulate daemon restart: brand-new StateStore reading the SAME
+        // on-disk file, brand-new handler — no in-memory Map carried over.
+        // Advance clock past the 1.5s in-process dedup window but well
+        // inside the 30-min timeout.
+        clock += 5_000
+        const storeB = makeStateStore(filePath, { debounceMs: 0 })
+        const handlerB = makeOnboardingHandler(buildDeps({
+          store: storeB, stateDir: dir, getClock: () => clock, known, saved, sent, dispatched,
+        }))
+        const consumed = await handlerB.handle(mkMsg({ userId: 'u1', chatId: 'c1', text: '丸子' }))
+
+        expect(consumed).toBe(true)
+        expect(saved).toEqual([{ chatId: 'c1', name: '丸子' }])
+        // sent[1] must be the nickname-accepted ack, NOT a fresh greeting.
+        expect(sent[1]).toMatch(/好的 丸子/)
+        expect(sent[1]).not.toMatch(/称呼你/)
+
+        await new Promise(r => setTimeout(r, 10))
+        expect(dispatched).toHaveLength(1)
+        expect(dispatched[0]?.text).toBe('帮我查个东西')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('awaiting state past the 30-min timeout on the shared store → instance B re-greets (first contact again)', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'onboarding-restart-expiry-'))
+      const filePath = join(dir, 'onboarding-pending.json')
+      try {
+        let clock = 1_000_000
+        const known = new Set<string>()
+        const saved: Array<{ chatId: string; name: string }> = []
+        const sent: string[] = []
+        const dispatched: InboundMsg[] = []
+
+        const storeA = makeStateStore(filePath, { debounceMs: 0 })
+        const handlerA = makeOnboardingHandler(buildDeps({
+          store: storeA, stateDir: dir, getClock: () => clock, known, saved, sent, dispatched,
+        }))
+        await handlerA.handle(mkMsg({ userId: 'u1', chatId: 'c1', text: 'hi' }))
+        expect(sent).toHaveLength(1)
+
+        // "Restart" past the 30-min window.
+        clock += 31 * 60_000
+        const storeB = makeStateStore(filePath, { debounceMs: 0 })
+        const handlerB = makeOnboardingHandler(buildDeps({
+          store: storeB, stateDir: dir, getClock: () => clock, known, saved, sent, dispatched,
+        }))
+        const consumed = await handlerB.handle(mkMsg({ userId: 'u1', chatId: 'c1', text: '丸子' }))
+
+        expect(consumed).toBe(true)
+        // Treated as first contact again — a fresh greeting, not a name accept.
+        expect(sent[1]).toMatch(/你好/)
+        expect(sent[1]).toMatch(/称呼你/)
+        expect(saved).toHaveLength(0)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('persists to <stateDir>/onboarding-pending.json under a single state-store key holding Record<chatId, entry>', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'onboarding-shape-'))
+      const filePath = join(dir, 'onboarding-pending.json')
+      try {
+        const known = new Set<string>()
+        const saved: Array<{ chatId: string; name: string }> = []
+        const sent: string[] = []
+        const dispatched: InboundMsg[] = []
+        const store = makeStateStore(filePath, { debounceMs: 0 })
+        const handler = makeOnboardingHandler(buildDeps({
+          store, stateDir: dir, getClock: () => 1_000_000, known, saved, sent, dispatched,
+        }))
+
+        await handler.handle(mkMsg({ userId: 'u1', chatId: 'c1', text: 'hi there' }))
+
+        const raw = readFileSync(filePath, 'utf8')
+        const outer = JSON.parse(raw) as Record<string, string>
+        // The underlying state-store file is itself a flat Record<string,string>
+        // (repo convention) — onboarding uses exactly ONE key inside it to
+        // hold the whole awaiting map (repo convention, see incident-store /
+        // chat-prefs: one KEY holding a JSON-stringified payload).
+        expect(Object.keys(outer)).toHaveLength(1)
+        const inner = JSON.parse(Object.values(outer)[0]!) as Record<string, unknown>
+        expect(Object.keys(inner)).toEqual(['c1'])
+        const entry = inner.c1 as {
+          since: number; triggerText: string; phase: string
+          fromMessage: { chatId: string; userId: string; text: string }
+        }
+        expect(entry.triggerText).toBe('hi there')
+        expect(entry.phase).toBe('awaiting_user_name')
+        expect(typeof entry.since).toBe('number')
+        expect(entry.fromMessage).toMatchObject({ chatId: 'c1', userId: 'u1', text: 'hi there' })
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
     })
   })
 })

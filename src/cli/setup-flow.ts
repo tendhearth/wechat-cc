@@ -193,7 +193,10 @@ function extractAvatarCandidate(obj: unknown, depth = 0): string | null {
   return null
 }
 
-async function defaultFetchBinary(url: string, timeoutMs = 10_000): Promise<Buffer> {
+/** Exported for the default-path smoke test in setup-flow.test.ts — every
+ *  other test injects `fetchBinary`, which left this, the only path production
+ *  runs, unexercised. See src/lib/injectable-default-seams.test.ts. */
+export async function defaultFetchBinary(url: string, timeoutMs = 10_000): Promise<Buffer> {
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
@@ -263,11 +266,28 @@ export function persistConfirmedAccount(opts: {
   renameSync(tmpAccount, join(accountDir, 'account.json'))
 
   if (status.ilink_user_id) {
-    let access: { dmPolicy: 'allowlist' | 'disabled'; allowFrom: string[] } = { dmPolicy: 'allowlist', allowFrom: [] }
+    let access: { dmPolicy: 'allowlist' | 'disabled'; allowFrom: string[]; admins?: string[] } = { dmPolicy: 'allowlist', allowFrom: [] }
     try { access = JSON.parse(readFileSync(accessFile, 'utf8')) } catch {}
     if (!access.allowFrom) access.allowFrom = []
+    let dirty = false
     if (!access.allowFrom.includes(status.ilink_user_id)) {
       access.allowFrom.push(status.ilink_user_id)
+      dirty = true
+    }
+    // A1 (spec §A1 / docs/superpowers/specs/2026-08-18-owner-onboarding-design.md):
+    // first bind must also write `admins`, not just `allowFrom` — resolveTier
+    // (user-tier.ts) has no allowFrom fallback (unlike isAdmin in access.ts,
+    // which does), so without this the owner silently lands in the guest
+    // tier and every Bash/Edit/companion_enable call gets denied. Guarded to
+    // ONLY fire when admins is empty/missing: an existing installation's
+    // admins list, or a second account binding onto an already-admin'd
+    // install, must not be touched here — that would be a silent privilege
+    // change on someone else's decision.
+    if (!access.admins || access.admins.length === 0) {
+      access.admins = [status.ilink_user_id]
+      dirty = true
+    }
+    if (dirty) {
       const tmpAccess = `${accessFile}.tmp`
       writeFileSync(tmpAccess, JSON.stringify(access, null, 2) + '\n', { mode: 0o600 })
       renameSync(tmpAccess, accessFile)

@@ -142,6 +142,16 @@ export interface DoctorReport {
     gemini: DoctorCheckBase & { apiKeySet: boolean; sdkInstalled: boolean }
     accounts: DoctorCheckBase & { count: number; items: BoundAccount[] }
     access: DoctorCheckBase & { dmPolicy: string; allowFromCount: number; admins?: string[] }
+    // A1 (spec §A1): allowFrom non-empty + admins empty/missing means the
+    // owner will resolve to the guest tier (resolveTier has no allowFrom
+    // fallback — see user-tier.ts) and every Bash/Edit/companion_enable
+    // call gets denied. setup-flow.ts now writes admins on first bind, but
+    // pre-existing installs from before that fix won't have it; doctor
+    // surfaces it here rather than auto-migrating (editing access.json is a
+    // permission change, it needs a human to confirm). Deliberately NOT
+    // folded into `ready`/`checks.access.ok` — see doctor.test.ts for the
+    // existing installs whose `ready=true` this must not disturb.
+    adminsBootstrap: DoctorCheckBase
     provider: DoctorCheckBase & { provider: AgentConfig['provider']; model?: string; binaryPath: string | null }
     daemon: DaemonSnapshot
     service: ServiceSnapshot
@@ -306,6 +316,17 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
         fix: { action: '扫码绑定后会自动加入' },
       }),
     },
+    adminsBootstrap: (() => {
+      const adminsMissing = access.allowFrom.length > 0 && (!access.admins || access.admins.length === 0)
+      if (!adminsMissing) return { ok: true }
+      return {
+        ok: false,
+        severity: 'soft' as const,
+        fix: {
+          action: `⚠️ access.json 有 allowFrom 但 admins 为空——owner 会落到 guest 档(工具全被拒)。把你的 user_id 加进 admins: ["${access.allowFrom[0]}"]`,
+        },
+      }
+    })(),
     provider: {
       // Cursor and Gemini's "backend ready" check is SDK+key, not a PATH
       // binary — fall through to their respective Ok when the active provider
@@ -643,6 +664,9 @@ export function printDoctor(report: DoctorReport): void {
   console.log(`provider: ${report.checks.provider.provider}${report.checks.provider.model ? ` (${report.checks.provider.model})` : ''}`)
   console.log(`accounts: ${report.checks.accounts.count}`)
   console.log(`access: ${report.checks.access.dmPolicy}, allowed=${report.checks.access.allowFromCount}`)
+  if (!report.checks.adminsBootstrap.ok && report.checks.adminsBootstrap.fix?.action) {
+    console.log(report.checks.adminsBootstrap.fix.action)
+  }
   console.log(`service: ${report.checks.service.installed ? `installed (${report.checks.service.kind})` : 'missing'}`)
   console.log(`daemon: ${report.checks.daemon.alive ? `running pid=${report.checks.daemon.pid}` : report.checks.daemon.pid ? `stale pid=${report.checks.daemon.pid}` : 'stopped'}`)
   if (report.wslDetected) console.log('wsl: detected (Windows-native Claude only — WSL integration on roadmap)')

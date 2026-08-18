@@ -28,6 +28,12 @@ gracefully (log + skip). Keep fatal only: db open, provider registration, ilink
 poll loop, internal-api. "Bot still receives & replies" must survive a broken
 heartbeat/guard/a2a.
 
+> **RESOLVED 2026-08-17** — SubsystemSupervisor(spec
+> 2026-08-17-subsystem-degraded-boot-design.md):可选子系统
+> (companion×3/guard/mailbox/customer-review/knowledge/social/a2a-server/
+> pairing/self-restart)启动失败降级不拒启;核心链(internal-api/bootstrap
+> 核心/pipeline/ilink/polling)仍 fail-fast。状态见 GET /v1/health.subsystems。
+
 ### 2. Network guard is a single point of failure
 **Evidence:**
 - `src/daemon/guard/scheduler.ts:72-73` — fires `onStateChange` when the reachable

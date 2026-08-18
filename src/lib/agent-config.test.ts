@@ -318,6 +318,57 @@ describe('loadAgentConfig — gemini provider', () => {
   })
 })
 
+describe('loadAgentConfig — agy provider', () => {
+  it('resolves agyModel + agyBin', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agentcfg-agy-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+        provider: 'claude',
+        agyModel: 'gemini-3.7-pro',
+        agyBin: '/usr/local/bin/agy',
+      }))
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.agyModel).toBe('gemini-3.7-pro')
+      expect(cfg.agyBin).toBe('/usr/local/bin/agy')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // Mirrors the gemini regression test (Fix 1): round-trip via
+  // saveAgentConfig → loadAgentConfig, and confirm it doesn't bleed into
+  // the generic `model` field.
+  it('round-trips agyModel via saveAgentConfig → loadAgentConfig', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agentcfg-agy-set-'))
+    try {
+      saveAgentConfig(dir, {
+        provider: 'claude',
+        agyModel: 'gemini-3.7-pro',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+      })
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.agyModel).toBe('gemini-3.7-pro')
+      expect(cfg.model).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('agyModel/agyBin optional — default to undefined', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agentcfg-agy-absent-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.agyModel).toBeUndefined()
+      expect(cfg.agyBin).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('loadAgentConfig — cursor provider', () => {
   it('accepts provider="cursor" with cursorModel', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agent-cfg-'))
@@ -642,6 +693,20 @@ describe('modelForProvider / withModelForProvider — per-provider (non-default)
     // claude's own field untouched, so a claude spawn still uses its own model.
     expect(modelForProvider({ ...next, model: 'claude-opus-4-8' }, 'claude')).toBe('claude-opus-4-8')
   })
+
+  // agy is an own-field provider (like openai/cursor): resolves
+  // unconditionally by providerId, regardless of the global default.
+  it('agy resolves its OWN field even when the global default is a different provider', () => {
+    const cfg = { ...base('claude'), model: 'claude-opus-4-8', agyModel: 'gemini-3.7-pro' }
+    expect(modelForProvider(cfg, 'agy')).toBe('gemini-3.7-pro')
+  })
+
+  it('withModelForProvider writes agyModel, not the generic model field', () => {
+    const next = withModelForProvider(base('claude'), 'agy', 'gemini-3.7-pro')
+    expect(next.agyModel).toBe('gemini-3.7-pro')
+    expect(next.model).toBeUndefined()
+    expect(modelForProvider(next, 'agy')).toBe('gemini-3.7-pro')
+  })
 })
 
 describe('A2AAgentRecord.transport', () => {
@@ -757,5 +822,27 @@ describe('resolveForwardBudget', () => {
   it('falls back to the 30/hour default when absent', () => {
     expect(resolveForwardBudget({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }))
       .toEqual({ per_sender: 30, window_ms: 3_600_000 })
+  })
+
+  it('carries knowledge_embed_runtime through — a field declared only in the type is silently dropped', () => {
+    // loadAgentConfig is an allow-list: a zod schema plus a per-field
+    // pass-through. Adding the property to the AgentConfig interface alone
+    // typechecks and does nothing at runtime, which is exactly what happened
+    // — the daemon kept spawning the Python embed subprocess with
+    // `knowledge_embed_runtime: "js"` sitting in agent-config.json, and the
+    // only symptom was a process that should not have been there.
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-runtime-'))
+    writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+      provider: 'claude', knowledge_enabled: true, knowledge_embed_runtime: 'js',
+    }))
+    expect(loadAgentConfig(dir).knowledge_embed_runtime).toBe('js')
+  })
+
+  it('rejects a knowledge_embed_runtime that is not one of the two runtimes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-runtime-bad-'))
+    writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+      provider: 'claude', knowledge_embed_runtime: 'rust',
+    }))
+    expect(loadAgentConfig(dir).knowledge_embed_runtime).toBeUndefined()
   })
 })

@@ -3,6 +3,27 @@ import { getEventListeners } from 'node:events'
 import { parseUpdates, startLongPollLoops, sleep, type RawUpdate } from './poll-loop'
 import type { Account } from './ilink-glue'
 
+/**
+ * Wait until `pred()` holds, yielding a real macrotask between checks.
+ *
+ * Use this instead of `await new Promise(r => setTimeout(r, 50))` before an
+ * assertion. A fixed sleep encodes a guess about how fast the machine is, and
+ * a loaded CI runner falsifies the guess: the backoff-retry test below asserted
+ * five health events after 50ms and got four on windows-latest, which reads as
+ * a product failure but is only a slow box. Waiting on the condition costs
+ * nothing on a fast machine and cannot come up short on a slow one; the
+ * timeout still fails a genuine hang, just with a ceiling rather than a race.
+ */
+async function waitFor(pred: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!pred()) {
+    if (Date.now() > deadline) {
+      throw new Error(`waitFor: condition still false after ${timeoutMs}ms`)
+    }
+    await new Promise(r => setTimeout(r, 1))
+  }
+}
+
 describe('sleep', () => {
   it('removes its abort listener when the timer fires (no leak on a long-lived signal)', async () => {
     // Regression: the retry-backoff sleep added a `{once:true}` abort listener
@@ -300,7 +321,7 @@ describe('startLongPollLoops', () => {
       parse: (us, deps) => parseUpdates(us, deps),
       resolveUserName: () => undefined,
     })
-    await new Promise(r => setTimeout(r, 30))
+    await waitFor(() => seen.length >= 2)
     expect(seen).toEqual(['a', 'b'])
     expect(getUpdates).toHaveBeenCalledWith('A1', 'https://x', 'T', '')
     // second call uses updated syncBuf from first response (4th positional arg)
@@ -331,7 +352,7 @@ describe('startLongPollLoops', () => {
       resolveUserName: () => undefined,
       onPollCycle,
     })
-    await new Promise(r => setTimeout(r, 30))
+    await waitFor(() => onPollCycle.mock.calls.length > 0)
     await handle.stop()
     expect(onPollCycle).toHaveBeenCalled()
   })
@@ -357,7 +378,7 @@ describe('startLongPollLoops', () => {
       resolveUserName: () => undefined,
       onPollCycle,
     })
-    await new Promise(r => setTimeout(r, 40))
+    await waitFor(() => inbound >= 2)
     await handle.stop()
     expect(inbound).toBe(2)
     // ≥1 per-message stamp + the per-round-trip stamp → strictly more than the
@@ -379,7 +400,7 @@ describe('startLongPollLoops', () => {
       resolveUserName: () => undefined,
       log: () => {},
     })
-    await new Promise(r => setTimeout(r, 50))
+    await waitFor(() => getUpdates.mock.calls.length > 0)
     expect(getUpdates).toHaveBeenCalled()
     expect(onInbound).not.toHaveBeenCalled()  // no updates
     await handle.stop()
@@ -405,7 +426,7 @@ describe('startLongPollLoops', () => {
       resolveUserName: () => undefined,
       onSyncBuf: (id, buf) => { persisted.push([id, buf]) },
     })
-    await new Promise(r => setTimeout(r, 30))
+    await waitFor(() => persisted.some(p => p[0] === 'A1' && p[1] === 'buf2'))
     expect(persisted).toContainEqual(['A1', 'buf2'])
     await handle.stop()
   })
@@ -430,7 +451,7 @@ describe('startLongPollLoops', () => {
       resolveUserName: () => undefined,
       onSyncBuf: () => { order.push('persist') },
     })
-    await new Promise(r => setTimeout(r, 30))
+    await waitFor(() => order.length > 0)
     expect(order[0]).toBe('inbound')
     expect(order.indexOf('persist')).toBeGreaterThan(order.indexOf('inbound'))
     await handle.stop()
@@ -450,7 +471,7 @@ describe('startLongPollLoops', () => {
       resolveUserName: () => undefined,
       onSyncBuf: (_id, buf) => { persisted.push(buf) },
     })
-    await new Promise(r => setTimeout(r, 60))
+    await waitFor(() => persisted.length > 0)
     expect(persisted).toEqual(['buf2'])  // only the first change, not every idle poll
     await handle.stop()
   })
@@ -491,9 +512,10 @@ describe('startLongPollLoops', () => {
     } as never)
 
     // 外部创建的 AbortController 对 startLongPollLoops 的内部循环不起作用
-    // (addAccount 内部自己 new 了一个),所以用既有用例的收尾写法:等一个
-    // 真实定时器让 5 轮全部跑完,再 stop()。
-    await new Promise(r => setTimeout(r, 50))
+    // (addAccount 内部自己 new 了一个),所以只能等这 5 轮自己跑完再 stop()。
+    // 等的是「第 5 个事件到了」这个条件,不是一个写死的时长 —— 后者在慢的
+    // CI runner 上只跑完 4 轮就断言,红得像产品问题(见 waitFor 的注释)。
+    await waitFor(() => events.length >= 5)
     await handle.stop()
 
     // 2,4,8,16(抖动关掉时) —— 关键是递增且不再是固定 2 秒
@@ -540,7 +562,7 @@ describe('startLongPollLoops — recordHeartbeat', () => {
       recordHeartbeat,
     })
     // Wait for first poll to complete
-    await new Promise(r => setTimeout(r, 30))
+    await waitFor(() => recordHeartbeat.mock.calls.length > 0)
     await handle.stop()
 
     expect(recordHeartbeat).toHaveBeenCalledWith('A1', expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/))
@@ -554,7 +576,7 @@ describe('startLongPollLoops — recordHeartbeat', () => {
     const h1 = startLongPollLoops({
       accounts: [baseAcct], onInbound: async () => {}, ilink: { getUpdates: okUpdates }, parse: () => [], clearExpired: clearedOk,
     })
-    await new Promise(r => setTimeout(r, 30))
+    await waitFor(() => clearedOk.mock.calls.length > 0)
     await h1.stop()
     expect(clearedOk).toHaveBeenCalledWith('A1')
 
@@ -564,6 +586,9 @@ describe('startLongPollLoops — recordHeartbeat', () => {
       accounts: [baseAcct], onInbound: async () => {}, ilink: { getUpdates: expiredUpdates }, parse: () => [], clearExpired: clearedExpired,
     })
     await h2.stop()
+    // Fixed wait on purpose: this asserts something did NOT happen, and
+    // there is no condition to poll for an absence — you give it a window
+    // and check the window stayed empty.
     await new Promise(r => setTimeout(r, 20))
     expect(clearedExpired).not.toHaveBeenCalled()
   })
@@ -581,6 +606,9 @@ describe('startLongPollLoops — recordHeartbeat', () => {
     // Let the loop run until it self-terminates on expired
     await handle.stop()
     // Give extra tick for the loop's finally to flush
+    // Fixed wait on purpose: this asserts something did NOT happen, and
+    // there is no condition to poll for an absence — you give it a window
+    // and check the window stayed empty.
     await new Promise(r => setTimeout(r, 20))
 
     expect(recordHeartbeat).not.toHaveBeenCalled()
@@ -603,6 +631,9 @@ describe('startLongPollLoops — recordHeartbeat', () => {
       recordHeartbeat,
     })
     // Give enough time for the error path to run but not the 2s retry delay.
+    // Fixed wait on purpose: this asserts something did NOT happen, and
+    // there is no condition to poll for an absence — you give it a window
+    // and check the window stayed empty.
     await new Promise(r => setTimeout(r, 30))
     await handle.stop()
 

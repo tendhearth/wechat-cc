@@ -655,6 +655,119 @@ describe('ConversationCoordinator', () => {
     spy.mockRestore()
   })
 
+  // ─── solo/parallel cancel — post-cancel-review CRITICAL 1 ──────────────
+  // Chatroom already had its own AbortController-based preempt loop
+  // (inFlightAborters, tested above under "cancel / preemption"). Solo/
+  // parallel/primary_tool dispatches have no such loop — they're single-
+  // shot — but the acquired SessionHandle DOES support cancel() (forwards
+  // to the provider's AgentSession.cancel). These tests pin that
+  // coordinator.cancel(chatId) actually reaches that handle.
+
+  describe('solo/parallel cancel reaches the in-flight SessionHandle', () => {
+    /** A session whose dispatch() hangs until cancel() is called, at which
+     *  point it yields one result event and completes — models a real
+     *  provider whose cancel() unblocks its dispatch generator at the next
+     *  boundary. cancelSpy lets the test assert cancel() actually fired. */
+    function cancellableHangingSession(): { session: AgentSession; cancelSpy: ReturnType<typeof vi.fn> } {
+      let unblock: (() => void) | undefined
+      const cancelSpy = vi.fn(async () => { unblock?.() })
+      const session: AgentSession = {
+        dispatch() {
+          let finished = false
+          const it: AsyncIterator<AgentEvent> = {
+            next() {
+              if (finished) return Promise.resolve({ value: undefined, done: true })
+              return new Promise<IteratorResult<AgentEvent>>((resolve) => {
+                unblock = () => {
+                  finished = true
+                  resolve({ value: { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }, done: false })
+                }
+              })
+            },
+          }
+          return { [Symbol.asyncIterator]: () => it }
+        },
+        cancel: cancelSpy,
+        async close() {},
+      }
+      return { session, cancelSpy }
+    }
+
+    it('coordinator.cancel(chatId) reaches a hanging solo dispatch: session.cancel fires and the turn ends', async () => {
+      const { session, cancelSpy } = cancellableHangingSession()
+      const acquire = vi.fn(async (req: AcquireRequest) => makeHandle(req.providerId, session as any))
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: makeMockStore(),
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+
+      // No turn in flight yet.
+      expect(c.cancel('chat-1')).toBe(false)
+
+      const dispatchPromise = c.dispatch(inbound('chat-1', 'hi'))
+      // Let acquire()/dispatch() run far enough to register the handle.
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(c.cancel('chat-1')).toBe(true)
+      expect(cancelSpy).toHaveBeenCalledTimes(1)
+
+      // The turn actually ends (collectTurn's `for await` sees the
+      // cancel-triggered result event, then done:true) — dispatch()
+      // resolves instead of hanging forever.
+      await dispatchPromise
+
+      // Cleared after the turn settles.
+      expect(c.cancel('chat-1')).toBe(false)
+    })
+
+    it('coordinator.cancel(chatId) reaches every in-flight participant of a parallel dispatch', async () => {
+      const a = cancellableHangingSession()
+      const b = cancellableHangingSession()
+      const sessionsByProvider: Record<string, ReturnType<typeof cancellableHangingSession>> = { claude: a, codex: b }
+      const acquire = vi.fn(async (req: AcquireRequest) =>
+        makeHandle(req.providerId, sessionsByProvider[req.providerId]!.session as any),
+      )
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'parallel', participants: ['claude', 'codex'] })
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+
+      const dispatchPromise = c.dispatch(inbound('chat-1', 'hi'))
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(c.cancel('chat-1')).toBe(true)
+      expect(a.cancelSpy).toHaveBeenCalledTimes(1)
+      expect(b.cancelSpy).toHaveBeenCalledTimes(1)
+
+      await dispatchPromise
+      expect(c.cancel('chat-1')).toBe(false)
+    })
+  })
+
   // ─── primary_tool mode (RFC 03 P4) ──────────────────────────────────
 
   describe('primary_tool mode (P4)', () => {
@@ -754,6 +867,26 @@ describe('ConversationCoordinator', () => {
       })
       expect(() => c.setMode('chat-1', { kind: 'primary_tool', primary: 'claude' }))
         .toThrow(/missing: codex/)
+    })
+
+    it('setMode rejects primary_tool when primary cannot delegate (B2, gemini supportsDelegation=false)', () => {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      registry.register('gemini', dummyProvider, { displayName: 'Gemini', canResume: () => true })
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      const c = createConversationCoordinator({
+        resolveProject: () => null,
+        manager: { acquire: vi.fn() },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+      expect(() => c.setMode('chat-1', { kind: 'primary_tool', primary: 'gemini' }))
+        .toThrow(/cannot delegate/)
     })
   })
 
@@ -1885,6 +2018,19 @@ describe('ConversationCoordinator', () => {
       expect((store.setParticipants as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterFirst)
     })
 
+    // agy final-review CRITICAL 1 — the registry-derived fallback (legacy
+    // backfill AND fresh-chat) must never auto-include agy. A registry of
+    // EXACTLY ['claude', 'agy'] is the sharpest case: naive first-two
+    // backfill would pick both, silently putting a guest chat's turn on
+    // agy's shared trusted-token channel. It must instead degrade to
+    // solo+claude (the only non-agy provider left).
+    it('legacy parallel row on a registry of exactly [claude, agy] never backfills agy — degrades to solo+claude', async () => {
+      const { c, store, acquiredProviders } = setupNway(['claude', 'agy'])
+      store.set('chat-1', { kind: 'parallel' })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(acquiredProviders).toEqual(['claude'])
+    })
+
     it('>3 participants is capped at 3 with a log line', async () => {
       const { c, store, acquiredProviders, log } = setupNway(['claude', 'codex', 'cursor', 'extra'])
       store.set('chat-1', { kind: 'parallel', participants: ['claude', 'codex', 'cursor', 'extra'] })
@@ -2035,6 +2181,91 @@ describe('ConversationCoordinator', () => {
       const c = setupValidate(['claude', 'codex', 'cursor'])
       expect(() => c.setMode('chat-1', { kind: 'chatroom', participants: ['claude'] }))
         .toThrow(/≥2|at least 2/)
+    })
+
+    // ── agy final-review CRITICAL 1 — structural exclusion from
+    // parallel/chatroom (shared tier-C 'trusted' MCP token, spec §7
+    // non-goal). This is the ONE chokepoint every caller goes through —
+    // mode-commands.ts's /both and /chat handlers AND
+    // POST /v1/conversation/set-mode (which calls coordinator.setMode
+    // directly, no mode-commands involvement) both land here.
+
+    it('setMode(parallel) with participants [claude, agy] throws', () => {
+      const c = setupValidate(['claude', 'agy'])
+      expect(() => c.setMode('chat-1', { kind: 'parallel', participants: ['claude', 'agy'] }))
+        .toThrow(/agy.*cannot join parallel\/chatroom/)
+    })
+
+    it('setMode(chatroom) with participants [codex, agy] throws', () => {
+      const c = setupValidate(['claude', 'codex', 'agy'])
+      expect(() => c.setMode('chat-1', { kind: 'chatroom', participants: ['codex', 'agy'] }))
+        .toThrow(/agy.*cannot join parallel\/chatroom/)
+    })
+  })
+
+  describe('agy dispatch-time gate (final review Important 1 & 2)', () => {
+    /** access.json fixture where chat-1 is guest (not in admins/trusted). */
+    function guestAccess(): Access {
+      return { dmPolicy: 'allowlist', allowFrom: [], admins: [], trusted: [] }
+    }
+    /** access.json fixture where chat-1 is trusted (not admin). */
+    function trustedAccess(): Access {
+      return { dmPolicy: 'allowlist', allowFrom: [], admins: [], trusted: ['chat-1'] }
+    }
+
+    function setupAgyDispatch(loadAccess: () => Access) {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('agy', dummyProvider, { displayName: 'Agy', canResume: () => true })
+      const acquire = vi.fn(async (req: AcquireRequest) =>
+        makeHandle(req.providerId, makeFakeSession({
+          events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
+        })))
+      const sendAssistantText = vi.fn(async () => {})
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess,
+        log: () => {},
+      })
+      return { c, store, acquire, sendAssistantText }
+    }
+
+    // Important 2 — a persisted solo+agy mode reaches dispatchSolo through
+    // BOTH bypass paths named in the finding: a trusted-token
+    // POST /v1/conversation/set-mode call (which skips mode-commands'
+    // /agy tier gate entirely, since it calls coordinator.setMode
+    // directly) and a chat that was trusted when solo+agy was set but
+    // has since been demoted to guest in access.json (no re-validation
+    // on demotion). Both collapse to the same shape here: a persisted
+    // solo+agy row + a chat that resolves to guest RIGHT NOW.
+    it('persisted solo+agy mode + guest-tier chat: dispatch refuses, never spawns', async () => {
+      const { c, store, acquire, sendAssistantText } = setupAgyDispatch(guestAccess)
+      store.set('chat-1', { kind: 'solo', provider: 'agy' })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(acquire).not.toHaveBeenCalled()
+      expect(sendAssistantText).toHaveBeenCalledWith(
+        'chat-1',
+        '❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。',
+      )
+    })
+
+    it('persisted solo+agy mode + trusted-tier chat: dispatch proceeds and spawns agy', async () => {
+      const { c, store, acquire, sendAssistantText } = setupAgyDispatch(trustedAccess)
+      store.set('chat-1', { kind: 'solo', provider: 'agy' })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(acquire).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'agy', chatId: 'chat-1' }))
+      expect(sendAssistantText).not.toHaveBeenCalledWith(
+        'chat-1',
+        expect.stringContaining('目前仅管理员/信任聊天可用'),
+      )
     })
   })
 

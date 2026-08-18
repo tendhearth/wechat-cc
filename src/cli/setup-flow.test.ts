@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { determineScenario, pollSetupQrStatus, requestSetupQrCode } from './setup-flow'
+import { determineScenario, pollSetupQrStatus, requestSetupQrCode, defaultFetchBinary, persistConfirmedAccount } from './setup-flow'
 import { avatarInfo } from '../core/avatar/store'
 
 describe('setup-flow', () => {
@@ -137,6 +137,74 @@ describe('setup-flow', () => {
   })
 })
 
+// ── persistConfirmedAccount — admins bootstrap (spec §A1) ───────────────────
+// Terminal-installed owner used to land in the guest tier: bind wrote
+// allowFrom but never admins, and resolveTier (unlike isAdmin) has no
+// allowFrom fallback. First bind now writes admins too, but ONLY when admins
+// is empty/missing — an existing installation's admins list, or a second
+// account bound onto an already-admin'd install, must not be touched.
+describe('persistConfirmedAccount admins bootstrap (A1)', () => {
+  it('first bind with no access.json → admins gets [ilink_user_id]', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'setup-admins-first-'))
+    try {
+      persistConfirmedAccount({
+        stateDir,
+        currentBaseUrl: 'https://ilinkai.weixin.qq.com',
+        status: { status: 'confirmed', bot_token: 'tok', ilink_bot_id: 'bot:1/im-bot', ilink_user_id: 'user-1' },
+      })
+      const access = JSON.parse(readFileSync(join(stateDir, 'access.json'), 'utf8')) as { allowFrom: string[]; admins?: string[] }
+      expect(access.allowFrom).toContain('user-1')
+      expect(access.admins).toEqual(['user-1'])
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('admins already populated → left untouched (does not overwrite an existing installation)', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'setup-admins-existing-'))
+    try {
+      mkdirSync(stateDir, { recursive: true })
+      writeFileSync(join(stateDir, 'access.json'), JSON.stringify({
+        dmPolicy: 'allowlist',
+        allowFrom: ['user-1'],
+        admins: ['user-1'],
+      }))
+      persistConfirmedAccount({
+        stateDir,
+        currentBaseUrl: 'https://ilinkai.weixin.qq.com',
+        status: { status: 'confirmed', bot_token: 'tok', ilink_bot_id: 'bot:1/im-bot', ilink_user_id: 'user-1' },
+      })
+      const access = JSON.parse(readFileSync(join(stateDir, 'access.json'), 'utf8')) as { allowFrom: string[]; admins?: string[] }
+      expect(access.admins).toEqual(['user-1'])
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('second account bound onto the same install → admins stays [owner], new user only joins allowFrom', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'setup-admins-second-account-'))
+    try {
+      // First bind establishes admins=[owner].
+      persistConfirmedAccount({
+        stateDir,
+        currentBaseUrl: 'https://ilinkai.weixin.qq.com',
+        status: { status: 'confirmed', bot_token: 'tok-1', ilink_bot_id: 'bot:1/im-bot', ilink_user_id: 'owner' },
+      })
+      // Second bind, different WeChat account/user, same installation.
+      persistConfirmedAccount({
+        stateDir,
+        currentBaseUrl: 'https://ilinkai.weixin.qq.com',
+        status: { status: 'confirmed', bot_token: 'tok-2', ilink_bot_id: 'bot:2/im-bot', ilink_user_id: 'second-user' },
+      })
+      const access = JSON.parse(readFileSync(join(stateDir, 'access.json'), 'utf8')) as { allowFrom: string[]; admins?: string[] }
+      expect(access.allowFrom).toEqual(expect.arrayContaining(['owner', 'second-user']))
+      expect(access.admins).toEqual(['owner'])
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+})
+
 // Filesystem helper: write a synthetic accounts/<botDir>/account.json so
 // determineScenario sees it as an existing active account.
 function seedAccount(accountsDir: string, botDirName: string, userId: string): void {
@@ -235,5 +303,46 @@ describe('determineScenario', () => {
     } finally {
       rmSync(accountsDir, { recursive: true, force: true })
     }
+  })
+})
+
+// Smoke test for the DEFAULT binary fetcher — the path production takes.
+//
+// Every other test here injects `fetchBinary`, so `defaultFetchBinary` was
+// never executed by the suite (see src/lib/injectable-default-seams.test.ts:
+// two shipped bugs on 2026-08-14 lived in exactly that gap). It is hermetic
+// despite doing a real fetch: the request goes to a Bun.serve on 127.0.0.1,
+// so this is real HTTP with no external network and nothing to be flaky about.
+describe('defaultFetchBinary (real fetch, local server)', () => {
+  it('fetches bytes over real HTTP', async () => {
+    const server = Bun.serve({
+      hostname: '127.0.0.1', port: 0,
+      fetch: () => new Response(new Uint8Array([1, 2, 3, 4])),
+    })
+    try {
+      const buf = await defaultFetchBinary(`http://127.0.0.1:${server.port}/x.png`)
+      expect([...buf]).toEqual([1, 2, 3, 4])
+    } finally { server.stop(true) }
+  })
+
+  it('throws with the status and body when the server refuses', async () => {
+    const server = Bun.serve({
+      hostname: '127.0.0.1', port: 0,
+      fetch: () => new Response('nope', { status: 404 }),
+    })
+    try {
+      await expect(defaultFetchBinary(`http://127.0.0.1:${server.port}/x.png`))
+        .rejects.toThrow(/404.*nope/)
+    } finally { server.stop(true) }
+  })
+
+  it('aborts rather than hanging when the server never responds', async () => {
+    const server = Bun.serve({
+      hostname: '127.0.0.1', port: 0,
+      fetch: () => new Promise<Response>(() => {}),   // never resolves
+    })
+    try {
+      await expect(defaultFetchBinary(`http://127.0.0.1:${server.port}/x.png`, 50)).rejects.toThrow()
+    } finally { server.stop(true) }
   })
 })

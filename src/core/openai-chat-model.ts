@@ -60,6 +60,15 @@ export function createChatModelFromLanguageModel(model: LanguageModel): ChatMode
       // underlying stream has fully drained. We do NOT re-consume `fullStream`
       // from `finished` — that would race a second reader against the caller's
       // `for await` loop and silently drop deltas.
+      // AI SDK v5 routes transport-layer failures (e.g. a real gateway's 401)
+      // through fullStream as a `{type:'error', error}` part rather than
+      // throwing — the delta loop below used to silently ignore that part,
+      // after which `result.response` rejects with a generic
+      // NoOutputGeneratedError ("No output generated. Check the stream for
+      // errors.") that has lost the original cause (status code, message).
+      // We capture the real error here so `finished` can rethrow it instead.
+      let streamError: unknown
+
       async function* deltas(): AsyncIterable<TurnDelta> {
         for await (const part of result.fullStream) {
           if (part.type === 'text-delta') {
@@ -70,6 +79,8 @@ export function createChatModelFromLanguageModel(model: LanguageModel): ChatMode
             // v5 tool-call parts carry toolCallId/toolName/input (TypedToolCall).
             toolCalls.push({ id: part.toolCallId, name: part.toolName, input: part.input })
             yield { kind: 'tool_call', id: part.toolCallId, name: part.toolName, input: part.input }
+          } else if (part.type === 'error') {
+            streamError = (part as { error?: unknown }).error ?? new Error('stream error part without cause')
           }
           // text-start/end, finish, step markers, etc. are ignored — callers
           // drive their loop off `toolCalls` / the finished text, not these.
@@ -78,14 +89,21 @@ export function createChatModelFromLanguageModel(model: LanguageModel): ChatMode
 
       const sharedDeltas = deltas()
       const finished = (async () => {
-        // `result.response` internally tees a second branch off the same
-        // underlying stream `sharedDeltas` is draining (AI SDK's fullStream
-        // getter calls .tee() on each access) and awaits its own full drain
-        // before resolving — so this never resolves before the caller has
-        // seen every delta, regardless of which side reads first (the tee
-        // buffers whichever branch lags).
-        const response = await result.response
-        return { messages: response.messages as ChatMessage[], toolCalls }
+        try {
+          // `result.response` internally tees a second branch off the same
+          // underlying stream `sharedDeltas` is draining (AI SDK's fullStream
+          // getter calls .tee() on each access) and awaits its own full drain
+          // before resolving — so this never resolves before the caller has
+          // seen every delta, regardless of which side reads first (the tee
+          // buffers whichever branch lags).
+          const response = await result.response
+          return { messages: response.messages as ChatMessage[], toolCalls }
+        } catch (err) {
+          // Prefer the real transport error captured off the error part
+          // above — it carries statusCode/message from the actual gateway
+          // response, unlike AI SDK's generic NoOutputGeneratedError.
+          throw streamError ?? err
+        }
       })()
 
       return { deltas: sharedDeltas, finished }
@@ -99,7 +117,21 @@ export function createChatModelFromLanguageModel(model: LanguageModel): ChatMode
       // fullStream internally and resolves once, so one code path serves
       // both one-shot and streamed calls.
       const result = streamText({ model, messages })
-      return await result.text
+      // Same error-part capture as streamTurn (a54ff96f): transport failures
+      // (e.g. 401 APICallError) surface as fullStream error parts and then
+      // reject `result.text` with a generic NoOutputGeneratedError — capture
+      // the real cause and rethrow it instead.
+      let streamError: unknown
+      for await (const part of result.fullStream) {
+        if (part.type === 'error') {
+          streamError = (part as { error?: unknown }).error ?? new Error('stream error part without cause')
+        }
+      }
+      try {
+        return await result.text
+      } catch (err) {
+        throw streamError ?? err
+      }
     },
 
     userMessage(text) {

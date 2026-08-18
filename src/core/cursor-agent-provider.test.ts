@@ -365,6 +365,24 @@ describe('createCursorAgentProvider', () => {
     expect(events).toContainEqual({ kind: 'error', message: 'auth_failed' })
   })
 
+  it('status:ERROR hitting the sdk-error auth wide-set gets classified as auth_failed (B3)', async () => {
+    // Mapper stays a pure function (mapCursorMessage yields a code-less
+    // error event); the dispatch loop re-wraps it through em.errorText,
+    // which runs isAuthFail('sdk-error', ...) and stamps the code.
+    const agent = makeFakeAgent([
+      { type: 'status', status: 'ERROR', error: { message: '401 unauthorized' } },
+    ])
+    const sdk = makeFakeSdk(agent)
+    const provider = createCursorAgentProvider({ sdk, apiKey: 'test-key' })
+    const session = await provider.spawn(
+      { alias: 'P', path: '/tmp/proj' },
+      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' },
+    )
+    const events: any[] = []
+    for await (const ev of session.dispatch('hi')) events.push(ev)
+    expect(events).toContainEqual({ kind: 'error', message: '401 unauthorized', code: 'auth_failed' })
+  })
+
   it('spawn with resumeSessionId calls Agent.resume instead of Agent.create', async () => {
     // Regression: pre-fix the provider always called Agent.create even
     // when spawnOpts.resumeSessionId was set, so Cursor sessions cold-
@@ -380,6 +398,154 @@ describe('createCursorAgentProvider', () => {
     expect(sdk.Agent.resume).toHaveBeenCalledTimes(1)
     expect(sdk.Agent.create).not.toHaveBeenCalled()
     expect(sdk.Agent.resume.mock.calls[0]![0]).toBe('agent-prior')
+  })
+
+  it('cancel() invokes the in-flight run\'s cancel while dispatch is active', async () => {
+    // A run that never reaches FINISHED on its own — stream() hangs until
+    // the test drives it — so we can assert cancel() reaches the run
+    // while dispatch is still in flight.
+    let resolveStream!: () => void
+    const streamGate = new Promise<void>((resolve) => { resolveStream = resolve })
+    const cancelSpy = vi.fn(async () => {})
+    const agent = {
+      agentId: 'agent-test-1',
+      async send() {
+        return {
+          id: 'run-1',
+          agentId: 'agent-test-1',
+          async *stream() {
+            await streamGate
+            yield { type: 'status', status: 'FINISHED' }
+          },
+          cancel: cancelSpy,
+        }
+      },
+      close() {},
+    }
+    const sdk = makeFakeSdk(agent as never)
+    const provider = createCursorAgentProvider({ sdk, apiKey: 'test-key' })
+    const session = await provider.spawn(
+      { alias: 'P', path: '/tmp/proj' },
+      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' },
+    )
+    const iterator = session.dispatch('hi')[Symbol.asyncIterator]()
+    // Kick off consumption without awaiting completion — dispatch is now
+    // blocked inside agent.send()/stream() setup.
+    const consumePromise = (async () => {
+      const events: unknown[] = []
+      let result = await iterator.next()
+      while (!result.done) {
+        events.push(result.value)
+        result = await iterator.next()
+      }
+      return events
+    })()
+    // Give agent.send() a tick to resolve so activeRun is set.
+    await Promise.resolve()
+    await Promise.resolve()
+    await session.cancel!()
+    expect(cancelSpy).toHaveBeenCalledTimes(1)
+    // Unblock the stream so the dispatch generator can finish and the test can exit cleanly.
+    resolveStream()
+    await consumePromise
+  })
+
+  it('turn 1s delayed finally does not clear turn 2s activeRun (identity guard regression)', async () => {
+    // Without the identity guard, turn 1's `finally { activeRun = null }`
+    // unconditionally nulls activeRun — even if turn 2 has since started
+    // and reassigned it to its own run. This proves the finally is
+    // scoped: only the turn that actually owns the current activeRun may
+    // clear it.
+    const gates: Array<() => void> = []
+    const cancelSpies: ReturnType<typeof vi.fn>[] = []
+    let call = 0
+    const agent = {
+      agentId: 'agent-test-1',
+      async send() {
+        call++
+        const cancelSpy = vi.fn(async () => {})
+        cancelSpies.push(cancelSpy)
+        let resolveGate!: () => void
+        const gate = new Promise<void>((resolve) => { resolveGate = resolve })
+        gates.push(resolveGate)
+        return {
+          id: `run-${call}`,
+          agentId: 'agent-test-1',
+          async *stream() {
+            await gate
+            yield { type: 'status', status: 'FINISHED' }
+          },
+          cancel: cancelSpy,
+        }
+      },
+      close() {},
+    }
+    const sdk = makeFakeSdk(agent as never)
+    const provider = createCursorAgentProvider({ sdk, apiKey: 'test-key' })
+    const session = await provider.spawn(
+      { alias: 'P', path: '/tmp/proj' },
+      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' },
+    )
+
+    // Turn 1: drive it up to the point where activeRun = run1 (blocked
+    // inside run1.stream(), awaiting gates[0]).
+    const it1 = session.dispatch('one')[Symbol.asyncIterator]()
+    const p1 = it1.next()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // Turn 2: same — activeRun becomes run2, overwriting run1.
+    const it2 = session.dispatch('two')[Symbol.asyncIterator]()
+    const p2 = it2.next()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // Let turn 1 finish. Its finally must NOT clear activeRun, because
+    // activeRun now points at run2, not run1.
+    gates[0]!()
+    await p1
+    let r1 = await it1.next()
+    while (!r1.done) r1 = await it1.next()
+
+    // cancel() must still reach run 2 — proves activeRun survived turn 1's finally.
+    await session.cancel!()
+    expect(cancelSpies[1]).toHaveBeenCalledTimes(1)
+    expect(cancelSpies[0]).not.toHaveBeenCalled()
+
+    // Cleanup: finish turn 2 too so nothing is left hanging.
+    gates[1]!()
+    await p2
+    let r2 = await it2.next()
+    while (!r2.done) r2 = await it2.next()
+  })
+
+  it('cancel() is a safe no-op when the run has no .cancel method', async () => {
+    const agent = {
+      agentId: 'agent-test-1',
+      async send() {
+        return {
+          id: 'run-1',
+          agentId: 'agent-test-1',
+          async *stream() {
+            yield { type: 'status', status: 'FINISHED' }
+          },
+          // no cancel() on this run
+        }
+      },
+      close() {},
+    }
+    const sdk = makeFakeSdk(agent as never)
+    const provider = createCursorAgentProvider({ sdk, apiKey: 'test-key' })
+    const session = await provider.spawn(
+      { alias: 'P', path: '/tmp/proj' },
+      { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' },
+    )
+    // cancel() before any dispatch — activeRun is null — must not throw.
+    await expect(session.cancel!()).resolves.toBeUndefined()
+    const events: any[] = []
+    for await (const ev of session.dispatch('hi')) events.push(ev)
+    // cancel() after dispatch completed and a run without .cancel — must not throw.
+    await expect(session.cancel!()).resolves.toBeUndefined()
   })
 
   it('spawn falls back to Agent.create when Agent.resume throws', async () => {

@@ -13,13 +13,17 @@ import { join } from 'node:path'
 // access.ts/config.ts, and pipeline-deps is loaded dynamically afterward so
 // it (transitively) picks up the mock.
 const ACCESS_STATE_DIR = mkdtempSync(join(tmpdir(), 'pipeline-deps-pairing-access-test-'))
-vi.mock('../../lib/config.ts', () => ({
-  STATE_DIR: ACCESS_STATE_DIR,
-  ILINK_BASE_URL: 'https://ilinkai.weixin.qq.com',
-  ILINK_APP_ID: 'bot',
-  ILINK_BOT_TYPE: '3',
-  LONG_POLL_TIMEOUT_MS: 35_000,
-}))
+// importOriginal + spread (fix round 2, hardening): a plain-object factory
+// here would silently drop every OTHER config.ts export in this module
+// graph — including UNDER_TEST_RUNNER, which agy-mcp-config.ts's and
+// providers.ts's test-runner guards (fix round 1) depend on to refuse
+// defaulting to the operator's real ~/.gemini/config. Spreading the real
+// module keeps every export (including future ones) real except the one
+// this test actually needs to redirect.
+vi.mock('../../lib/config.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/config')>()
+  return { ...actual, STATE_DIR: ACCESS_STATE_DIR }
+})
 
 const { buildPipelineDeps } = await import('./pipeline-deps')
 const { Ref } = await import('../../lib/lifecycle')

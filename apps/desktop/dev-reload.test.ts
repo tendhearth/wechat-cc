@@ -66,9 +66,28 @@ describe('makeLiveReload', () => {
     const reader = res.body!.getReader()
     await reader.read()
     lr.watch()
-    writeFileSync(join(root, 'touched.js'), '// x')
-    const chunk = await reader.read()
-    expect(new TextDecoder().decode(chunk.value!)).toContain('event: reload')
-    lr.close()
+    // Touch repeatedly instead of once: `watch()` registers its fs watcher
+    // asynchronously, so a single write issued right after it can land before
+    // the watcher is listening, and the read below then never resolves.
+    //
+    // The interval MUST stay above notify()'s 50ms debounce. A first attempt
+    // at this used 25ms and made things strictly worse — every touch reset the
+    // pending debounce timer, so the broadcast could never fire and the test
+    // failed deterministically on ubuntu (inotify delivers each write on time;
+    // macOS and Windows coalesce events enough to leave the occasional >50ms
+    // gap, which is why it still passed there and looked like flakiness).
+    // Proven by driving notify() directly, no filesystem involved: at 25ms the
+    // reload never arrives, at 200ms it does.
+    const chunkPromise = reader.read()
+    const ticker = setInterval(() => {
+      writeFileSync(join(root, 'touched.js'), `// ${Date.now()}`)
+    }, 200)
+    try {
+      const chunk = await chunkPromise
+      expect(new TextDecoder().decode(chunk.value!)).toContain('event: reload')
+    } finally {
+      clearInterval(ticker)
+      lr.close()
+    }
   })
 })

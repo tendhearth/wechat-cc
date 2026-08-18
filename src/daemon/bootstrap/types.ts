@@ -50,6 +50,16 @@ export interface BootstrapDeps {
   mintSessionToken?: (tier: import('../../core/user-tier').UserTier, sessionKey: string) => string
   invalidateSession?: (sessionKey: string) => void
   /**
+   * Test/harness override for agy's tier-C global MCP config target dir
+   * (ProviderDeps['agyGeminiConfigDir'], threaded straight through to
+   * `setupAgyGlobalMcp`). Always undefined in production — never wire this
+   * from main.ts. Exists so a test that wants to exercise the real
+   * ~/.gemini/config write path can point it at a mkdtemp'd dir instead;
+   * omitted under a test runner, that write is skipped entirely rather
+   * than defaulting to the operator's real home dir.
+   */
+  agyGeminiConfigDir?: string
+  /**
    * Used when projects.current is unset. Prevents silent message drops on
    * fresh installs — matches v0.x UX where messages routed to the daemon's
    * launch cwd by default.
@@ -96,15 +106,21 @@ export interface BootstrapDeps {
    */
   careLevelFor?: (chatId: string) => 'off' | 'low' | 'high'
   /**
-   * Resolve a chat's local sticker library tags (image-stickers design §5).
-   * Read per-spawn (like `careLevelFor`'s siblings) so a newly-saved sticker
-   * shows up in the prompt without a daemon restart. Absent ⇒ the sticker
-   * prompt section is NEVER included for any chat — tests and minimal
-   * embeddings that don't wire this stay byte-identical to before the
-   * sticker feature existed. Wiring the actual thunk (sticker store lookup)
-   * happens in main.ts (later task).
+   * Resolve a chat's local sticker library tags (image-stickers design §5),
+   * tri-state (owner-onboarding design §C2 — see
+   * `BuildSystemPromptArgs.stickerTags` for the full contract): `null` means
+   * sticker prefs are OFF for this chat (no section at all); `[]` means
+   * prefs are ON but the library is empty (cold-start unlock variant); a
+   * non-empty array means prefs are ON and the library has tags (normal
+   * section). Read per-spawn (like `careLevelFor`'s siblings) so a
+   * newly-saved sticker (or a `/set stickers` flip) shows up in the prompt
+   * without a daemon restart. Absent thunk ⇒ `index.ts` defaults to `null`
+   * ⇒ NEITHER sticker section is ever included for any chat — tests and
+   * minimal embeddings that don't wire this stay byte-identical to before
+   * the sticker feature existed. Wiring the actual thunk (sticker store
+   * lookup, disambiguating pref-off from empty-library) happens in main.ts.
    */
-  stickerTagsFor?: (chatId: string) => string[]
+  stickerTagsFor?: (chatId: string) => string[] | null
   /**
    * Resolve a chat's persona content + whether it may cultivate persona.md
    * (persona design §2). Read per-spawn (like `careLevelFor`'s siblings) so
@@ -148,6 +164,29 @@ export interface BootstrapDeps {
    */
   newRelationshipFor?: (chatId: string) => boolean
   /**
+   * Resolve whether the companion-offer prompt section (owner-onboarding
+   * design §C1) should be added for this chat: owner chat AND companion
+   * proactive-tick is off AND this chat's inbound message count has
+   * crossed `NEW_RELATIONSHIP_MSG_COUNT` — i.e. exactly the chats where
+   * `newRelationshipFor` has ALREADY flipped to false (same threshold,
+   * opposite side), so the two sections are naturally mutually exclusive.
+   * "Owner chat" here is `resolveAdminChatId`'s admins-membership-based
+   * resolution (NOT `default_chat_id` compared directly — that field is
+   * ONLY ever set inside `companion_enable`, so on a fresh install it's
+   * null, and a direct compare would deadlock: the offer could never fire
+   * until companion had already been enabled once and later disabled). See
+   * `companion/offer-eligibility.ts`'s `companionOfferEligible` (fix round
+   * 1) for the actual predicate main.ts's thunk delegates to — that's what
+   * makes this admins-membership-based, hence guest-safe by construction
+   * even though the section carries no separate tier gate. Read per-spawn
+   * (like `careLevelFor`'s siblings) so an `/companion_enable` call or
+   * crossing the threshold mid-conversation applies without a daemon
+   * restart. Absent ⇒ the companion-offer prompt section is NEVER included
+   * for any chat — tests and minimal embeddings that don't wire this stay
+   * byte-identical to before this feature existed.
+   */
+  companionOfferFor?: (chatId: string) => boolean
+  /**
    * Resolve whether the bubble-replies prompt section (行为流式气泡回复
    * design) should be added for this chat. Read per-spawn (like
    * `careLevelFor`'s siblings) so a `/set split off` flip applies without a
@@ -184,6 +223,12 @@ export interface BootstrapDeps {
    * don't wire this stay byte-identical to before this feature existed.
    */
   requestRestart?: () => void
+  /**
+   * Subsystem degraded-boot (spec 2026-08-17) — 可选 wire 块(knowledge/
+   * social/a2a-server/pairing/self-restart)经它拉起;失败 ⇒ 对应产物
+   * undefined,类型上等同"未配置"。核心块不经它。
+   */
+  supervisor: import('../subsystems').SubsystemSupervisor
 }
 
 export interface Bootstrap {
@@ -216,9 +261,10 @@ export interface Bootstrap {
   /**
    * A2A deps — instantiated by bootstrap so main.ts can late-bind them
    * into internal-api via setA2A(). Undefined when a2a_listen is not
-   * configured (a2aServer is null in that case too).
+   * configured (a2aServer is null in that case too). Also undefined ⇔
+   * a2a-server 子系统降级(wireA2aServer 抛错,spec 2026-08-17).
    */
-  a2aDeps: {
+  a2aDeps?: {
     registry: import('../../core/a2a-registry').A2ARegistry
     client: import('../../core/a2a-client').A2AClient
     eventsStore: import('../../core/a2a-events-store').A2AEventsStore

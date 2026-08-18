@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSystemPrompt, bubbleRepliesSection, careSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, KNOWLEDGE_MEMORY_MAX_CHARS, knowledgeMemorySection, daemonSelfHealSection, knowledgeOrchestrationSection, newRelationshipSection, personaCultivationSection, personaSection, stickerSection } from './prompt-builder'
+import { buildSystemPrompt, bubbleRepliesSection, careSection, companionOfferSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, KNOWLEDGE_MEMORY_MAX_CHARS, knowledgeMemorySection, daemonSelfHealSection, knowledgeOrchestrationSection, newRelationshipSection, personaCultivationSection, personaSection, stickerEmptyLibrarySection, stickerSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
   function defaults() {
@@ -322,12 +322,66 @@ describe('sticker prompt section', () => {
     expect(p).toContain('sad')
   })
 
-  it('buildSystemPrompt is byte-identical whether stickerTags is absent or an empty array, and omits the sticker section', () => {
+  it('buildSystemPrompt is byte-identical whether stickerTags is absent or explicitly null (pref off), and omits both sticker sections', () => {
     const withoutKey = buildSystemPrompt({ ...base })
-    const withEmpty = buildSystemPrompt({ ...base, stickerTags: [] })
-    expect(withEmpty).toBe(withoutKey)
+    const withNull = buildSystemPrompt({ ...base, stickerTags: null })
+    expect(withNull).toBe(withoutKey)
     expect(withoutKey).not.toContain('send_sticker')
+    expect(withoutKey).not.toContain('save_sticker')
   })
+
+  it('stickerEmptyLibrarySection() mentions save_sticker verbatim (image-stickers cold-start unlock, T6-C2)', () => {
+    const s = stickerEmptyLibrarySection()
+    expect(s).toBe('你还没有表情包。聊天里遇到值得存的表情/梗图,可以用 save_sticker 存进库,以后就能发给对方。')
+  })
+
+  it('buildSystemPrompt renders the empty-library variant when stickerTags is an empty array (pref on, library empty)', () => {
+    const p = buildSystemPrompt({ ...base, stickerTags: [] })
+    expect(p).toContain('你还没有表情包')
+    expect(p).toContain('save_sticker')
+    expect(p).not.toContain('send_sticker')
+  })
+
+  it('buildSystemPrompt renders the normal (non-empty) sticker section, not the empty-library variant, when stickerTags is non-empty', () => {
+    const p = buildSystemPrompt({ ...base, stickerTags: ['happy'] })
+    expect(p).not.toContain('你还没有表情包')
+  })
+})
+
+describe('companion-offer prompt section (T6-C1)', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+
+  it('companionOfferSection() mentions companion_enable verbatim', () => {
+    const s = companionOfferSection()
+    expect(s).toBe('你们已经聊熟了。若对话自然聊到未来的事(约定、截止日、日程),可以顺势提一句:你能主动关心这些(用 companion_enable 工具,对方明确同意才开启)。提过一次没被接受,就别再提。')
+  })
+
+  it('buildSystemPrompt includes the companion-offer section when companionOffer=true and companionEnabled=false', () => {
+    const p = buildSystemPrompt({ ...base, companionOffer: true, companionEnabled: false })
+    expect(p).toContain('聊熟了')
+    expect(p).toContain('companion_enable')
+  })
+
+  it('buildSystemPrompt omits the companion-offer section when companionOffer is false or absent', () => {
+    const withFalse = buildSystemPrompt({ ...base, companionOffer: false })
+    const withoutKey = buildSystemPrompt({ ...base })
+    expect(withFalse).toBe(withoutKey)
+    expect(withoutKey).not.toContain('聊熟了')
+  })
+
+  it('buildSystemPrompt omits the companion-offer section when companion is already enabled, even if companionOffer=true (belt-and-braces: an offer thunk bug should never contradict the live companionSection)', () => {
+    const p = buildSystemPrompt({ ...base, companionOffer: true, companionEnabled: true })
+    expect(p).not.toContain('聊熟了')
+    // The live companion section (already-on copy) should be the one that shows instead.
+    expect(p).toContain('Companion 主动推送')
+  })
+
+  // Mutual exclusion with newRelationshipSection at the real
+  // NEW_RELATIONSHIP_MSG_COUNT threshold boundary is a property of the
+  // THUNKS (both derive from the same inbound-message count in main.ts —
+  // one is count < threshold, the other count >= threshold AND owner-chat
+  // AND companion-disabled), not of buildSystemPrompt itself. That's
+  // asserted against the real threshold in bootstrap.test.ts.
 })
 
 describe('persona prompt section', () => {

@@ -16,6 +16,8 @@
  */
 import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type ProviderCapabilities } from './agent-provider'
 import type { TierProfile } from './user-tier'
+import type { McpStdioSpec } from './mcp-stdio-spec'
+import { makeTurnEmitter } from './turn-emitter'
 import { log } from '../lib/log'
 
 /**
@@ -207,17 +209,6 @@ export interface CursorSdkNamespace {
   }
 }
 
-/**
- * Spec for an MCP server passed to Cursor. Mirrors the stdio variant
- * of Cursor's McpServerConfig (command + args + env), which matches
- * our existing McpStdioSpec from src/daemon/bootstrap/mcp-specs.ts.
- */
-export interface CursorMcpStdioSpec {
-  command: string
-  args?: string[]
-  env?: Record<string, string>
-}
-
 export interface CursorAgentProviderOptions {
   /** The dynamically-imported `@cursor/sdk` namespace (bootstrap loads it via `await import('@cursor/sdk')`). */
   sdk: CursorSdkNamespace
@@ -226,7 +217,7 @@ export interface CursorAgentProviderOptions {
   /** Optional Cursor model id (e.g. `'composer-2'`). When omitted, SDK picks its default. */
   model?: string
   /** MCP servers passed into Agent.create — `wechat` + `delegate` come from the bootstrap. */
-  mcpServers?: Record<string, CursorMcpStdioSpec>
+  mcpServers?: Record<string, McpStdioSpec>
 }
 
 interface CursorAgentLike {
@@ -308,17 +299,23 @@ function makeCursorSession(
   onFirstToolName: (rawName: string) => void,
 ): AgentSession {
   let turnCounter = 0
+  // Tracks the in-flight run so cancel()/close() can reach it. Set once
+  // agent.send() resolves (before that there's nothing to cancel — the
+  // send call itself isn't interruptible), cleared in the generator's
+  // finally so a stale reference can't be cancelled after its turn ended.
+  let activeRun: CursorRunLike | null = null
   return {
     dispatch(text: string) {
-      const startMs = Date.now()
+      const em = makeTurnEmitter()
       turnCounter++
       const myTurns = turnCounter
       return (async function* dispatchGenerator() {
         let run: CursorRunLike
         try {
           run = await agent.send(text)
+          activeRun = run
         } catch (err) {
-          yield { kind: 'error', message: err instanceof Error ? err.message : String(err) } as const
+          yield em.error(err)
           return
         }
         let sawFinish = false
@@ -336,35 +333,46 @@ function makeCursorSession(
             // Special-case status: FINISHED — emit our own result with real timings.
             if (raw?.type === 'status' && (raw as { status?: string }).status === 'FINISHED') {
               sawFinish = true
-              yield {
-                kind: 'result',
-                sessionId: agent.agentId,
-                numTurns: myTurns,
-                durationMs: Date.now() - startMs,
-              } as const
+              yield em.finish({ sessionId: agent.agentId, numTurns: myTurns })
               continue
             }
             // All other variants → mapper handles them
             for (const ev of mapCursorMessage(raw, mcpServerNames, agent.agentId)) {
-              yield ev
+              // B3: mapper stays a pure function, auth classification happens
+              // on the consumer side — status:ERROR messages that hit the
+              // sdk-error wide set get upgraded to structured auth_failed.
+              yield ev.kind === 'error' && ev.code === undefined ? em.errorText(ev.message) : ev
             }
           }
           // Stream ended without explicit FINISHED status — emit a result event anyway
           // so callers can see the dispatch concluded.
           if (!sawFinish) {
-            yield {
-              kind: 'result',
-              sessionId: agent.agentId,
-              numTurns: myTurns,
-              durationMs: Date.now() - startMs,
-            } as const
+            yield em.finish({ sessionId: agent.agentId, numTurns: myTurns })
           }
         } catch (err) {
-          yield { kind: 'error', message: err instanceof Error ? err.message : String(err) } as const
+          yield em.error(err)
+        } finally {
+          // Identity guard — a stale finally from an EARLIER turn must not
+          // clear a NEWER turn's activeRun out from under it. Concretely:
+          // turn 1's generator body can still be unwinding (e.g. a slow
+          // `for await` cleanup) after turn 2 has already called
+          // agent.send() and reassigned activeRun — without this check,
+          // turn 1's finally landing after that reassignment would null
+          // out turn 2's still-in-flight run, making turn 2 uncancellable.
+          // See agy-agent-provider.ts's `currentAbort === abort` guard for
+          // the same class of bug (task review round 2, CRITICAL there).
+          if (activeRun === run) activeRun = null
         }
       })()
     },
+    async cancel() {
+      // Best-effort: the SDK's run.cancel is declared optional (older
+      // SDK builds / no in-flight run) — a no-op run or missing method
+      // must never throw into the /stop path.
+      await activeRun?.cancel?.().catch(() => {})
+    },
     async close() {
+      await activeRun?.cancel?.().catch(() => {})
       try { agent.close() } catch { /* swallow */ }
     },
   }

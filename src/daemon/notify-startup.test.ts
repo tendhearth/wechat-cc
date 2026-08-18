@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { notifyStartup, renderStartupText } from './notify-startup'
+import { notifyStartup, renderStartupText, WARM_FIRST_STARTUP_TEXT } from './notify-startup'
 
 function makeStateDir() {
   return mkdtempSync(join(tmpdir(), 'notify-startup-'))
 }
 
 describe('notify-startup', () => {
-  it('first-ever startup notifies with the "已启动" template', async () => {
+  it('first-ever startup sends the warm hello, not the technical template', async () => {
     const stateDir = makeStateDir()
     try {
       const sent: Array<{ chatId: string; text: string }> = []
@@ -26,9 +26,87 @@ describe('notify-startup', () => {
       expect(result).toEqual({ notified: true, recipients: ['owner-wxid'], sinceLastMs: null })
       expect(sent).toHaveLength(1)
       expect(sent[0]!.chatId).toBe('owner-wxid')
-      expect(sent[0]!.text).toMatch(/已启动/)
-      expect(sent[0]!.text).toMatch(/pid=42/)
-      expect(sent[0]!.text).toMatch(/✅ unattended/)
+      expect(sent[0]!.text).toBe(WARM_FIRST_STARTUP_TEXT)
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('first-ever startup writes the one-time notified marker', async () => {
+    const stateDir = makeStateDir()
+    try {
+      await notifyStartup(
+        {
+          stateDir,
+          loadAccess: () => ({ allowFrom: ['owner-wxid'] }),
+          send: async () => {},
+          log: () => {},
+          now: () => 1_700_000_000_000,
+        },
+        { pid: 42, accounts: 1, dangerously: true }
+      )
+      expect(existsSync(join(stateDir, 'startup-notified.json'))).toBe(true)
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('later restart (marker already present) keeps the technical "已启动/已重启" template', async () => {
+    const stateDir = makeStateDir()
+    try {
+      // First-ever startup: warm hello + marker written.
+      await notifyStartup(
+        { stateDir, loadAccess: () => ({ allowFrom: ['owner-wxid'] }), send: async () => {}, log: () => {}, now: () => 0 },
+        { pid: 1, accounts: 1, dangerously: true }
+      )
+      const sent: Array<{ chatId: string; text: string }> = []
+      const HOUR = 60 * 60 * 1000
+      const result = await notifyStartup(
+        {
+          stateDir,
+          loadAccess: () => ({ allowFrom: ['owner-wxid'] }),
+          send: async (chatId, text) => { sent.push({ chatId, text }) },
+          log: () => {},
+          now: () => 3 * HOUR,
+        },
+        { pid: 2, accounts: 1, dangerously: true }
+      )
+      expect(result.notified).toBe(true)
+      expect(sent[0]!.text).toMatch(/已重启/)
+      expect(sent[0]!.text).toMatch(/pid=2/)
+      expect(sent[0]!.text).not.toBe(WARM_FIRST_STARTUP_TEXT)
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('an EXISTING install upgrading onto this feature (last-startup.json already present from a prior boot, but no startup-notified.json marker yet — this feature never having shipped before) sends the technical text, NOT the warm hello, and backfills the marker (fix round 2)', async () => {
+    const stateDir = makeStateDir()
+    try {
+      // Simulate a pre-upgrade install: last-startup.json exists (the daemon
+      // has demonstrably started before), but startup-notified.json does
+      // not (this marker feature didn't exist in the version that wrote it).
+      writeFileSync(join(stateDir, 'last-startup.json'), JSON.stringify({ ts: 0, pid: 1 }) + '\n')
+      expect(existsSync(join(stateDir, 'startup-notified.json'))).toBe(false)
+
+      const sent: Array<{ chatId: string; text: string }> = []
+      const HOUR = 60 * 60 * 1000
+      const result = await notifyStartup(
+        {
+          stateDir,
+          loadAccess: () => ({ allowFrom: ['owner-wxid'] }),
+          send: async (chatId, text) => { sent.push({ chatId, text }) },
+          log: () => {},
+          now: () => 3 * HOUR,
+        },
+        { pid: 2, accounts: 1, dangerously: true }
+      )
+      expect(result.notified).toBe(true)
+      expect(sent[0]!.text).not.toBe(WARM_FIRST_STARTUP_TEXT)
+      expect(sent[0]!.text).toMatch(/已重启/)
+      expect(sent[0]!.text).toMatch(/pid=2/)
+      // Backfilled so no LATER boot mistakes this install for fresh.
+      expect(existsSync(join(stateDir, 'startup-notified.json'))).toBe(true)
     } finally {
       rmSync(stateDir, { recursive: true, force: true })
     }

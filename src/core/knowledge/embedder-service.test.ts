@@ -136,4 +136,59 @@ describe('makeEmbedderService', () => {
     })
     expect(svc.model_id).toBe('bge-m3-custom')
   })
+
+  // Cold-start warm-up. The model loads on the FIRST embed(), and at boot the
+  // indexer often has nothing new to index — it logged `0 chunk(s) embedded`
+  // and never called embed() — so nothing loaded the model until a user query
+  // arrived. hearth's federated client gives a source 5s; loading a 90MB ONNX
+  // model does not fit in 5s, so the first federated query after every daemon
+  // restart timed out and reported "no results", indistinguishable from a
+  // genuine miss. Verified on the live daemon: first query 5801ms/timeout/0
+  // hits, second 396ms/20 hits.
+  describe('warm()', () => {
+    it('forces the model to load by issuing one embed', async () => {
+      const { runner, state } = makeFakeRunner()
+      const { fn, calls } = makeMakeRunnerSpy([runner])
+      const svc = makeEmbedderService({ ...baseOpts, makeRunner: fn })
+
+      await svc.warm()
+
+      expect(calls.length).toBe(1)
+      expect(state.embedCalls.length).toBe(1)
+    })
+
+    it('a later embed() reuses the warmed runner rather than paying again', async () => {
+      const { runner, state } = makeFakeRunner()
+      const { fn, calls } = makeMakeRunnerSpy([runner])
+      const svc = makeEmbedderService({ ...baseOpts, makeRunner: fn })
+
+      await svc.warm()
+      await svc.embed(['real text'])
+
+      expect(calls.length).toBe(1)
+      expect(state.embedCalls.length).toBe(2)
+    })
+
+    it('is idempotent — warming twice does not spawn or embed twice', async () => {
+      const { runner, state } = makeFakeRunner()
+      const { fn } = makeMakeRunnerSpy([runner])
+      const svc = makeEmbedderService({ ...baseOpts, makeRunner: fn })
+
+      await svc.warm()
+      await svc.warm()
+
+      expect(state.embedCalls.length).toBe(1)
+    })
+
+    it('never rejects — a broken embedder must not take the daemon down at boot', async () => {
+      // warm() is called fire-and-forget from bootstrap; an unhandled
+      // rejection there would surface as a boot-time crash for a purely
+      // optional optimisation.
+      const runner = { embed: async () => { throw new Error('model download failed') }, close: async () => {} }
+      const { fn } = makeMakeRunnerSpy([runner as never])
+      const svc = makeEmbedderService({ ...baseOpts, makeRunner: fn })
+
+      await expect(svc.warm()).resolves.toBeUndefined()
+    })
+  })
 })

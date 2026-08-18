@@ -13,6 +13,27 @@ import type { UserTier } from '../../core/user-tier'
  *   - SESSION tokens are minted env-only per spawn and carry that session's
  *     actual tier; admin therefore only originates from a daemon-minted
  *     admin-session token, never a file.
+ *   - AGY-STATIC token (agy provider, spec
+ *     docs/superpowers/specs/2026-08-17-agy-provider-design.md §3): a
+ *     deliberate, narrow exception to "session tokens are env-only per
+ *     spawn". agy's only MCP config surface is the global, on-disk
+ *     `~/.gemini/config/mcp_config.json` (no per-session config dir, no
+ *     workspace override — spike-confirmed negative on both, see the
+ *     spec) — so bootstrap mints ONE long-lived 'trusted' session token
+ *     (`sessionKey='agy-static'`) via this same `mint()` and
+ *     agy-mcp-config.ts writes it into that file at boot, not into any
+ *     process env. It is a `trusted`-tier token exactly like any other
+ *     session mint (nothing here upgrades it to admin the way the
+ *     OPERATOR token below does) — the exception is the ON-DISK, SHARED-
+ *     ACROSS-CONVERSATIONS residency, not the tier. Compensating
+ *     controls live in mode-commands.ts (`/agy` refuses guest chats) and
+ *     conversation-coordinator.ts (dispatch-time refuses solo+agy for a
+ *     chat that resolves to guest, closing the flip-time-only gap a
+ *     trusted-tier POST /v1/conversation/set-mode or a later tier
+ *     demotion would otherwise leave open) — see the CRITICAL/Important
+ *     findings in the 2026-08-17 agy final-review fix wave. `invalidateSession('agy-static')`
+ *     still revokes it like any session token; it is simply never rotated
+ *     per-spawn the way a normal session token is.
  *   - OPERATOR token (option B, app-channel security fix): a SECOND,
  *     SEPARATE file, distinct from the daemon-wide trusted token, granting
  *     `admin`. This is a deliberate, narrow exception to "admin never from

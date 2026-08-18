@@ -52,6 +52,39 @@ function makeStubCtx(stateDir = '/tmp'): IlinkContext {
   }
 }
 
+describe('transport.routeChatToAccount — guest-path hydrate seam (spec §2)', () => {
+  it('routes the chat to the given account WITHOUT touching lastActiveRef', () => {
+    const acctSets: Array<[string, string]> = []
+    const ctx = makeStubCtx()
+    ;(ctx.acctStore as unknown as { set: (k: string, v: string) => void }).set = (k, v) => { acctSets.push([k, v]) }
+    const transport = makeTransport(ctx)
+
+    transport.routeChatToAccount('guest_chat', 'acct1')
+
+    expect(acctSets).toEqual([['guest_chat', 'acct1']])
+    expect(ctx.lastActiveRef.current).toBeNull()   // untouched — the whole point of this seam
+  })
+
+  it('is idempotent — same (chatId, accountId) does not re-write acctStore', () => {
+    const acctSets: Array<[string, string]> = []
+    const ctx = makeStubCtx()
+    ;(ctx.acctStore as unknown as { get: (k: string) => string | undefined; set: (k: string, v: string) => void }).get = () => 'acct1'
+    ;(ctx.acctStore as unknown as { set: (k: string, v: string) => void }).set = (k, v) => { acctSets.push([k, v]) }
+    const transport = makeTransport(ctx)
+
+    transport.routeChatToAccount('guest_chat', 'acct1')
+
+    expect(acctSets).toEqual([])
+  })
+
+  it('markChatActive (the ordinary path) DOES touch lastActiveRef — contrast case', () => {
+    const ctx = makeStubCtx()
+    const transport = makeTransport(ctx)
+    transport.markChatActive('some_chat', 'acct1')
+    expect(ctx.lastActiveRef.current).toBe('some_chat')
+  })
+})
+
 describe('transport getUpdatesForLoop — onAccountExpired', () => {
   beforeEach(() => {
     vi.mocked(ilinkGetUpdates).mockReset()

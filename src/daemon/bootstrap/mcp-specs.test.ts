@@ -14,7 +14,7 @@ describe('wechatStdioMcpSpec', () => {
     vi.spyOn(runtimeInfo, 'isCompiledBundle').mockReturnValue(false)
     const spec = wechatStdioMcpSpec(deps)
     expect(spec.args).toHaveLength(1)
-    expect(spec.args[0]).toMatch(/[/\\]src[/\\]mcp-servers[/\\]wechat[/\\]main\.ts$/)
+    expect(spec.args![0]).toMatch(/[/\\]src[/\\]mcp-servers[/\\]wechat[/\\]main\.ts$/)
     expect(spec.command).toBe(process.execPath)
   })
 
@@ -27,18 +27,18 @@ describe('wechatStdioMcpSpec', () => {
 
   it('passes participantTag through env when provided', () => {
     const spec = wechatStdioMcpSpec(deps, 'claude')
-    expect(spec.env.WECHAT_PARTICIPANT_TAG).toBe('claude')
+    expect(spec.env!.WECHAT_PARTICIPANT_TAG).toBe('claude')
   })
 
   it('omits participantTag from env when not provided', () => {
     const spec = wechatStdioMcpSpec(deps)
-    expect(spec.env.WECHAT_PARTICIPANT_TAG).toBeUndefined()
+    expect(spec.env!.WECHAT_PARTICIPANT_TAG).toBeUndefined()
   })
 
   it('always sets WECHAT_INTERNAL_API + WECHAT_INTERNAL_TOKEN_FILE', () => {
     const spec = wechatStdioMcpSpec(deps)
-    expect(spec.env.WECHAT_INTERNAL_API).toBe(deps.baseUrl)
-    expect(spec.env.WECHAT_INTERNAL_TOKEN_FILE).toBe(deps.tokenFilePath)
+    expect(spec.env!.WECHAT_INTERNAL_API).toBe(deps.baseUrl)
+    expect(spec.env!.WECHAT_INTERNAL_TOKEN_FILE).toBe(deps.tokenFilePath)
   })
 })
 
@@ -49,7 +49,7 @@ describe('delegateStdioMcpSpec', () => {
     vi.spyOn(runtimeInfo, 'isCompiledBundle').mockReturnValue(false)
     const spec = delegateStdioMcpSpec(deps, 'codex')
     expect(spec.args).toHaveLength(1)
-    expect(spec.args[0]).toMatch(/[/\\]src[/\\]mcp-servers[/\\]delegate[/\\]main\.ts$/)
+    expect(spec.args![0]).toMatch(/[/\\]src[/\\]mcp-servers[/\\]delegate[/\\]main\.ts$/)
   })
 
   it('compiled mode → args is ["mcp-server", "delegate"]', () => {
@@ -59,8 +59,8 @@ describe('delegateStdioMcpSpec', () => {
   })
 
   it('sets WECHAT_DELEGATE_PEER from the peer arg', () => {
-    expect(delegateStdioMcpSpec(deps, 'codex').env.WECHAT_DELEGATE_PEER).toBe('codex')
-    expect(delegateStdioMcpSpec(deps, 'claude').env.WECHAT_DELEGATE_PEER).toBe('claude')
+    expect(delegateStdioMcpSpec(deps, 'codex').env!.WECHAT_DELEGATE_PEER).toBe('codex')
+    expect(delegateStdioMcpSpec(deps, 'claude').env!.WECHAT_DELEGATE_PEER).toBe('claude')
   })
 })
 
@@ -87,8 +87,8 @@ describe('buildOpenaiMcpSpecs', () => {
       { wechat: wechatSpec, delegate: delegateSpec, pluginMcp: { myPlugin: pluginSpec } },
       sessionEnv,
     )
-    expect(specs.wechat!.env.WECHAT_SESSION_TOKEN).toBe('super-secret-token')
-    expect(specs.delegate!.env.WECHAT_SESSION_TOKEN).toBe('super-secret-token')
+    expect(specs.wechat!.env!.WECHAT_SESSION_TOKEN).toBe('super-secret-token')
+    expect(specs.delegate!.env!.WECHAT_SESSION_TOKEN).toBe('super-secret-token')
   })
 
   it('does NOT leak WECHAT_SESSION_TOKEN into plugin MCP specs', () => {
@@ -96,8 +96,8 @@ describe('buildOpenaiMcpSpecs', () => {
       { wechat: wechatSpec, delegate: delegateSpec, pluginMcp: { myPlugin: pluginSpec } },
       sessionEnv,
     )
-    expect(specs.myPlugin!.env.WECHAT_SESSION_TOKEN).toBeUndefined()
-    expect(specs.myPlugin!.env.WECHAT_SESSION_TIER).toBeUndefined()
+    expect(specs.myPlugin!.env!.WECHAT_SESSION_TOKEN).toBeUndefined()
+    expect(specs.myPlugin!.env!.WECHAT_SESSION_TIER).toBeUndefined()
     expect(specs.myPlugin!.env).toEqual({ SOME_PLUGIN_VAR: '1' })
   })
 
@@ -105,6 +105,6 @@ describe('buildOpenaiMcpSpecs', () => {
     const specs = buildOpenaiMcpSpecs({ wechat: null, delegate: null, pluginMcp: { myPlugin: pluginSpec } }, sessionEnv)
     expect(specs.wechat).toBeUndefined()
     expect(specs.delegate).toBeUndefined()
-    expect(specs.myPlugin!.env.WECHAT_SESSION_TOKEN).toBeUndefined()
+    expect(specs.myPlugin!.env!.WECHAT_SESSION_TOKEN).toBeUndefined()
   })
 })

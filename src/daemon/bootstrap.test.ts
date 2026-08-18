@@ -17,6 +17,8 @@ import type { Access } from '../lib/access'
 import type { CompanionConfig } from './companion/config'
 import { createInternalApi } from './internal-api'
 import { wireSelfRestart } from './bootstrap/wire-self-restart'
+import { SubsystemSupervisor } from './subsystems'
+import { NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
 
 // Code review pinning (I2①, 2026-08-11): wrap the REAL wireSelfRestart with
 // a spy so a couple of tests can inspect the `busy`/`lastPollSuccessAgoMs`
@@ -112,6 +114,7 @@ function makeIlinkStub() {
 describe('bootstrap', () => {
   it('sdkOptionsForProject returns cwd, wechat stdio mcpServer, canUseTool, systemPrompt', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -147,6 +150,7 @@ describe('bootstrap', () => {
 
   it('resolve uses projects.current', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -166,6 +170,7 @@ describe('bootstrap', () => {
   // never fires it.
   it('admin tier produces bypassPermissions (matches the legacy --dangerously path)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -183,6 +188,7 @@ describe('bootstrap', () => {
 
   it('trusted tier produces permissionMode=default + canUseTool (no disallowedTools — relays via canUseTool)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -201,6 +207,7 @@ describe('bootstrap', () => {
 
   it('guest tier produces permissionMode=default + disallowedTools + canUseTool', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -222,6 +229,7 @@ describe('bootstrap', () => {
 
   it('defaults dangerouslySkipPermissions to false when omitted (strict mode → default+canUseTool)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -239,6 +247,7 @@ describe('bootstrap', () => {
 
   it('defaults to the Claude agent provider', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -251,6 +260,7 @@ describe('bootstrap', () => {
 
   it('can select the Codex agent provider explicitly', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -267,6 +277,7 @@ describe('bootstrap', () => {
     try {
       saveAgentConfig(stateDir, { provider: 'codex', model: 'gpt-5.3-codex', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false })
       const b = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -284,6 +295,7 @@ describe('bootstrap', () => {
 
   it('registers BOTH claude and codex providers regardless of default (RFC 03 P2)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -295,8 +307,13 @@ describe('bootstrap', () => {
     // P2 design: even when default is claude, codex is also registered
     // so /codex slash command works without daemon restart.
     // Cursor only registers when CURSOR_API_KEY is set + @cursor/sdk
-    // imports; in this test env CURSOR_API_KEY is unset so the list
-    // remains ['claude', 'codex'].
+    // imports; in this test env CURSOR_API_KEY is unset so it never
+    // appears. agy is gated on `agyBin` in seeded agent-config OR a real
+    // PATH lookup — but under a test runner the PATH fallback is disabled
+    // outright (providers.ts's UNDER_TEST_RUNNER guard, fix round 1) and
+    // no agent-config.json exists at this stateDir, so agy never appears
+    // here regardless of whether the host machine happens to have a real
+    // `agy` binary installed. Back to a strict exact-list assertion.
     expect(b.registry.list().sort()).toEqual(['claude', 'codex'])
     expect(b.registry.has('claude')).toBe(true)
     expect(b.registry.has('codex')).toBe(true)
@@ -318,6 +335,7 @@ describe('bootstrap', () => {
     })
     try {
       const b = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -340,6 +358,7 @@ describe('bootstrap', () => {
     const logEntries: Array<{ tag: string; line: string }> = []
     try {
       const b = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir: '/tmp/state',  // no agent-config.json → cursorModel undefined
         ilink: makeIlinkStub() as any,
@@ -361,6 +380,7 @@ describe('bootstrap', () => {
     delete process.env.CURSOR_API_KEY
     try {
       const b = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir: '/tmp/state',
         ilink: makeIlinkStub() as any,
@@ -391,6 +411,7 @@ describe('bootstrap', () => {
     })
     try {
       const b = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -413,6 +434,7 @@ describe('bootstrap', () => {
     const logEntries: Array<{ tag: string; line: string }> = []
     try {
       const b = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir: '/tmp/state',  // no agent-config.json → openaiBaseUrl/openaiModel undefined
         ilink: makeIlinkStub() as any,
@@ -434,6 +456,7 @@ describe('bootstrap', () => {
     delete process.env.WECHAT_OPENAI_API_KEY
     try {
       const b = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir: '/tmp/state',
         ilink: makeIlinkStub() as any,
@@ -449,6 +472,7 @@ describe('bootstrap', () => {
 
   it('exposes the conversation coordinator and dispatchDelegate', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -468,6 +492,7 @@ describe('bootstrap', () => {
 
   it('default mode for any chat is solo + agentProviderKind', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -481,6 +506,7 @@ describe('bootstrap', () => {
 
   it('sdkOptionsForProject wires BOTH wechat AND delegate stdio servers (RFC 03 P4)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -501,6 +527,7 @@ describe('bootstrap', () => {
 
   it('omits stdio mcpServers entirely when internalApi is not wired (no leaks)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -589,6 +616,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions is the prompt-builder output (mentions delegate_codex for claude sessions)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -631,6 +659,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions includes the care section only for chats whose careLevelFor is not off (proactive-care design §7)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -649,6 +678,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions hides the care section for GUEST-tier chats even when careLevelFor is on, since guests cannot author agenda.md/set_chat_pref (memory_write denied) (proactive-care M1)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -669,6 +699,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions includes the sticker section only for chats whose stickerTagsFor returns tags (image-stickers design §5)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -687,6 +718,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions includes the persona section (but not cultivation) when personaFor returns content with cultivate:false (persona design §2)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -703,6 +735,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions includes BOTH the persona section and the persona-cultivation section when personaFor returns cultivate:true (persona design §2)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -719,6 +752,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions for a GUEST-tier chat still includes the persona section but never the cultivation section (persona is identity, not a capability; cultivation is memory_write-gated like careEnabled)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -738,6 +772,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions is byte-identical whether or not other bootstraps wire personaFor, when this bootstrap omits it (persona design §2 inert default)', async () => {
     const withoutPersonaDep = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -747,6 +782,7 @@ describe('bootstrap', () => {
       internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
     })
     const withUndefinedPersona = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -765,6 +801,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions includes the core-memory section when coreMemoryFor returns content (core-memory-injection design)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -781,6 +818,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions includes the knowledge-memory section when knowledgeMemoryFor returns content (knowledge-distillation design D1)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -795,6 +833,7 @@ describe('bootstrap', () => {
     expect(prompt).toContain('帮张三改简历')
     // absent thunk ⇒ section omitted
     const b2 = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(), stateDir: '/tmp/state', ilink: makeIlinkStub() as any,
       loadProjects: () => ({ projects: {}, current: null }), lastActiveChatId: () => null,
       log: () => {}, internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
@@ -804,6 +843,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions is byte-identical whether or not other bootstraps wire coreMemoryFor, when this bootstrap omits it (core-memory-injection design inert default)', async () => {
     const withoutCoreMemoryDep = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -813,6 +853,7 @@ describe('bootstrap', () => {
       internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
     })
     const withUndefinedCoreMemory = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -845,6 +886,7 @@ describe('bootstrap', () => {
     process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = bundledDir
     try {
       const b = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir: base,
         ilink: makeIlinkStub() as any,
@@ -874,6 +916,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions omits the knowledge-orchestration section when no knowledge plugin is loaded (stateDir has none)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -887,6 +930,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions includes the new-relationship section for a fresh chat at trusted+ tier when newRelationshipFor returns true (onboarding-curiosity design §2)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -904,6 +948,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions hides the new-relationship section for GUEST-tier chats even when newRelationshipFor is true, since guests cannot write memory (onboarding-curiosity design §2, mirrors proactive-care M1)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -919,6 +964,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions omits the new-relationship section when newRelationshipFor returns false (old chat past the message-count threshold)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -932,8 +978,181 @@ describe('bootstrap', () => {
     expect(prompt).not.toContain('刚认识')
   })
 
+  it('buildInstructions renders the sticker cold-start unlock variant when stickerTagsFor returns [] (pref on, empty library), and omits both sticker sections when it returns null (pref off) (owner-onboarding design §C2)', async () => {
+    const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      stickerTagsFor: (chatId: string) => (chatId === 'empty-lib-chat' ? [] : chatId === 'pref-off-chat' ? null : ['happy']),
+    })
+    const emptyLibPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'empty-lib-chat')
+    expect(emptyLibPrompt).toContain('你还没有表情包')
+    expect(emptyLibPrompt).toContain('save_sticker')
+    expect(emptyLibPrompt).not.toContain('send_sticker')
+
+    const prefOffPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'pref-off-chat')
+    expect(prefOffPrompt).not.toContain('你还没有表情包')
+    expect(prefOffPrompt).not.toContain('save_sticker')
+    expect(prefOffPrompt).not.toContain('send_sticker')
+
+    const nonEmptyPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'stocked-chat')
+    expect(nonEmptyPrompt).not.toContain('你还没有表情包')
+    expect(nonEmptyPrompt).toContain('send_sticker')
+  })
+
+  it('buildInstructions hides the sticker cold-start unlock variant for GUEST-tier chats even when stickerTagsFor returns [] (empty library), since guests cannot call save_sticker (memory_write denied) — mirrors the careEnabled tier gate (fix round 2)', async () => {
+    const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      stickerTagsFor: () => [],
+    })
+    const guestPrompt = b.buildInstructions('claude', TIER_PROFILES.guest, 'owner-chat')
+    expect(guestPrompt).not.toContain('你还没有表情包')
+    expect(guestPrompt).not.toContain('save_sticker')
+
+    const adminPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(adminPrompt).toContain('你还没有表情包')
+    expect(adminPrompt).toContain('save_sticker')
+  })
+
+  it('buildInstructions still hides the NORMAL (non-empty) sticker section for GUEST-tier chats\' behavior unchanged — no NEW tier gate on the non-empty path, pre-existing (fix round 2 only touches the empty-library variant)', async () => {
+    const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      stickerTagsFor: () => ['happy'],
+    })
+    const guestPrompt = b.buildInstructions('claude', TIER_PROFILES.guest, 'owner-chat')
+    expect(guestPrompt).toContain('send_sticker')
+    expect(guestPrompt).toContain('happy')
+  })
+
+  it('buildInstructions defaults stickerTags to null (not []) when stickerTagsFor is unwired entirely — stays byte-identical to before the sticker feature existed', async () => {
+    const withoutDep = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+    })
+    const prompt = withoutDep.buildInstructions('claude', TIER_PROFILES.admin, 'any-chat')
+    expect(prompt).not.toContain('你还没有表情包')
+    expect(prompt).not.toContain('save_sticker')
+    expect(prompt).not.toContain('send_sticker')
+  })
+
+  it('buildInstructions includes the companion-offer section when companionOfferFor returns true (owner-onboarding design §C1)', async () => {
+    const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      companionOfferFor: (chatId: string) => chatId === 'owner-chat',
+    })
+    const ownerPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(ownerPrompt).toContain('聊熟了')
+    expect(ownerPrompt).toContain('companion_enable')
+    const otherPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'other-chat')
+    expect(otherPrompt).not.toContain('聊熟了')
+  })
+
+  it('buildInstructions includes the companion-offer section for GUEST-tier chats too — deliberately NO tier gate, since companion_enable is registered regardless of tier (owner-onboarding design §C1)', async () => {
+    const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      companionOfferFor: () => true,
+    })
+    const guestPrompt = b.buildInstructions('claude', TIER_PROFILES.guest, 'owner-chat')
+    expect(guestPrompt).toContain('聊熟了')
+  })
+
+  it('buildInstructions omits the companion-offer section when companionOfferFor returns false, and is byte-identical to the thunk being absent entirely', async () => {
+    const bFalse = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      companionOfferFor: () => false,
+    })
+    const bAbsent = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+    })
+    const promptFalse = bFalse.buildInstructions('claude', TIER_PROFILES.admin, 'any-chat')
+    const promptAbsent = bAbsent.buildInstructions('claude', TIER_PROFILES.admin, 'any-chat')
+    expect(promptFalse).toBe(promptAbsent)
+    expect(promptAbsent).not.toContain('聊熟了')
+  })
+
+  it('buildInstructions is mutually exclusive between newRelationshipSection and companionOfferSection at the real NEW_RELATIONSHIP_MSG_COUNT threshold boundary (owner-onboarding design §C1) — mirrors main.ts wiring: both thunks derive from the SAME per-chat inbound count, one side `< N`, the other `>= N`', async () => {
+    let inboundCount = NEW_RELATIONSHIP_MSG_COUNT - 1
+    const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      // Mirrors main.ts's actual newRelationshipFor / companionOfferFor:
+      // both read the same `inboundCount` var, thresholded on opposite sides.
+      newRelationshipFor: () => inboundCount < NEW_RELATIONSHIP_MSG_COUNT,
+      companionOfferFor: () => inboundCount >= NEW_RELATIONSHIP_MSG_COUNT,
+    })
+
+    const justBelow = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(justBelow).toContain('刚认识')
+    expect(justBelow).not.toContain('聊熟了')
+
+    inboundCount = NEW_RELATIONSHIP_MSG_COUNT
+    const atThreshold = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(atThreshold).toContain('聊熟了')
+    expect(atThreshold).not.toContain('刚认识')
+  })
+
   it('buildInstructions includes the empty-persona nudge when personaFor returns empty content and cultivate:true (onboarding-curiosity design §2)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -950,6 +1169,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions omits the empty-persona nudge when personaFor returns non-empty content, even with cultivate:true', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -966,6 +1186,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions includes the bubble-replies section when bubbleRepliesFor returns true (bubble-replies design)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -991,8 +1212,11 @@ describe('bootstrap', () => {
       log: () => {},
       internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
     }
-    const bFalse = await buildBootstrap({ ...depsBase, bubbleRepliesFor: () => false })
-    const bAbsent = await buildBootstrap({ ...depsBase })
+    // Each buildBootstrap call needs its OWN supervisor instance — a shared
+    // one would throw "duplicate start('knowledge')" on the second call
+    // (SubsystemSupervisor rejects re-registering the same subsystem name).
+    const bFalse = await buildBootstrap({ ...depsBase, supervisor: new SubsystemSupervisor(() => {}), bubbleRepliesFor: () => false })
+    const bAbsent = await buildBootstrap({ ...depsBase, supervisor: new SubsystemSupervisor(() => {}) })
     const promptFalse = bFalse.buildInstructions('claude', TIER_PROFILES.admin, 'any-chat')
     const promptAbsent = bAbsent.buildInstructions('claude', TIER_PROFILES.admin, 'any-chat')
     expect(promptFalse).not.toContain('气泡式回复')
@@ -1001,6 +1225,7 @@ describe('bootstrap', () => {
 
   it('buildInstructions includes the bubble-replies section for GUEST-tier chats too — deliberately NO tier gate, since reply is guest-allowed (unlike careEnabled/newRelationship which require memory_write)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -1030,6 +1255,7 @@ describe('bootstrap', () => {
   // identity + invokes the canUseTool functions directly.
   it('per-session canUseTool: each chatId gets its own closure (no shared identity)', async () => {
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -1064,6 +1290,7 @@ describe('bootstrap', () => {
     // sees chatB and resolves guest tier (Bash → deny per TIER_PROFILES.guest.deny).
     let lastActive: string | null = 'chatB'
     const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -1119,6 +1346,7 @@ describe('bootstrap agent-social M1 wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -1174,6 +1402,7 @@ describe('bootstrap agent-social M1 wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -1220,6 +1449,7 @@ describe('bootstrap agent-social M1 wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -1229,7 +1459,7 @@ describe('bootstrap agent-social M1 wiring', () => {
       })
       const senderKey = 'sender-inbound-key-abc123'   // ≥16 chars (registry rule)
       // The sender S (as W sees it) — authenticates the inbound /a2a/intent.
-      boot.a2aDeps.registry.add({
+      boot.a2aDeps!.registry.add({
         id: 'ccs', name: '小S', url: 'http://127.0.0.1:1/a2a',
         inbound_api_key: senderKey, outbound_api_key: 'unused',
         capabilities: [], paused: false, transport: 'push',
@@ -1237,7 +1467,7 @@ describe('bootstrap agent-social M1 wiring', () => {
       // A downstream peer W COULD forward to — present so the terminal assertion
       // isolates the hop cap (not merely an empty target list). Unreachable url;
       // it must NOT be contacted at hop:2.
-      boot.a2aDeps.registry.add({
+      boot.a2aDeps!.registry.add({
         id: 'ccq', name: '小Q', url: 'http://127.0.0.1:1/a2a',
         inbound_api_key: 'downstream-inbound-key-xyz', outbound_api_key: 'unused-q',
         capabilities: [], paused: false, transport: 'push',
@@ -1308,6 +1538,7 @@ describe('bootstrap agent-social M1 wiring', () => {
     ;(ilink.sendMessage as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ msgId: 'm1' })
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db,
         stateDir,
         ilink: ilink as any,
@@ -1319,7 +1550,7 @@ describe('bootstrap agent-social M1 wiring', () => {
       // so we can assert its text is content-free (no peer name).
       boot.conversationStore.upsertIdentity('op_chat', { userId: 'op_chat' })
       const peerKey = 'peer-inbound-key-abc123'   // ≥16 chars (registry rule)
-      boot.a2aDeps.registry.add({
+      boot.a2aDeps!.registry.add({
         id: 'ccb', name: '小B', url: 'http://127.0.0.1:1/a2a',
         inbound_api_key: peerKey, outbound_api_key: 'unused',
         capabilities: [], paused: false, transport: 'push',
@@ -1410,6 +1641,7 @@ describe('bootstrap agent-social M1 wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db,
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -1468,6 +1700,7 @@ describe('bootstrap agent-social M1 wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db,
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -1571,6 +1804,7 @@ describe('bootstrap agent-social M1 wiring', () => {
     ;(ilink.sendMessage as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ msgId: 'm1' })
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db,
         stateDir,
         ilink: ilink as any,
@@ -1674,6 +1908,7 @@ describe('bootstrap agent-social M1 wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db,
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -1746,6 +1981,7 @@ describe('bootstrap agent-social M1 wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db,
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -1784,9 +2020,13 @@ describe('bootstrap agent-social M1 wiring', () => {
         social_disclosure_policy: '兴趣可说；住址不可',
       }),
     )
+    // Degraded-boot guard: absence of boot.social must reflect "not
+    // configured", not "social threw and was swallowed into degraded".
+    const sup = new SubsystemSupervisor(() => {})
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: sup,
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -1801,6 +2041,7 @@ describe('bootstrap agent-social M1 wiring', () => {
       expect(card.capabilities.some(c => c.name === 'echo')).toBe(false)
       expect(card.capabilities.some(c => c.name === 'reveal')).toBe(false)
       expect(boot.social).toBeUndefined()
+      expect(sup.degraded()).toEqual([])
     } finally {
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })
@@ -1822,9 +2063,12 @@ describe('bootstrap agent-social M1 wiring', () => {
         // social_disclosure_policy omitted.
       }),
     )
+    // Degraded-boot guard (see previous test's comment).
+    const sup = new SubsystemSupervisor(() => {})
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: sup,
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -1833,6 +2077,7 @@ describe('bootstrap agent-social M1 wiring', () => {
         log: () => {},
       })
       expect(boot.social).toBeUndefined()
+      expect(sup.degraded()).toEqual([])
     } finally {
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })
@@ -1861,6 +2106,7 @@ describe('bootstrap agent-social M1 wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir: base,
         ilink: makeIlinkStub() as any,
@@ -1894,6 +2140,7 @@ describe('bootstrap agent-social M1 wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(), stateDir: base, ilink: makeIlinkStub() as any,
         loadProjects: () => ({ projects: {}, current: null }),
         lastActiveChatId: () => null, log: (_tag, m) => logs.push(m),
@@ -1956,6 +2203,7 @@ describe('bootstrap agent-social M1 wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db,
         stateDir,
         ilink: ilink as any,
@@ -1965,7 +2213,7 @@ describe('bootstrap agent-social M1 wiring', () => {
       })
       boot.conversationStore.upsertIdentity('op_chat', { userId: 'op_chat' })
       const peerKey = 'peer-letter-own-key-abc123'
-      boot.a2aDeps.registry.add({
+      boot.a2aDeps!.registry.add({
         id: 'ccb', name: '小B', url: 'http://127.0.0.1:1/a2a',
         inbound_api_key: peerKey, outbound_api_key: 'unused',
         capabilities: [], paused: false, transport: 'push',
@@ -2069,6 +2317,7 @@ describe('bootstrap agent-social M1 wiring', () => {
     })
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db,
         stateDir,
         ilink: ilink as any,
@@ -2079,13 +2328,13 @@ describe('bootstrap agent-social M1 wiring', () => {
       const senderKey = 'sender-letter-relay-key-abc1'
       // S — the sender, authenticates the inbound POST. Its own url is never
       // contacted in this flow (W only forwards TOWARD the far endpoint).
-      boot.a2aDeps.registry.add({
+      boot.a2aDeps!.registry.add({
         id: 'ccs', name: '小S', url: 'http://127.0.0.1:1/a2a',
         inbound_api_key: senderKey, outbound_api_key: 'unused-s',
         capabilities: [], paused: false, transport: 'push',
       })
       // Q — the far endpoint W forwards to, registered with the stub's real url.
-      boot.a2aDeps.registry.add({
+      boot.a2aDeps!.registry.add({
         id: 'ccq', name: '小Q', url: `http://127.0.0.1:${peerMock.port}/a2a`,
         inbound_api_key: 'unused-q-inbound-key123', outbound_api_key: 'w-to-q-outbound-key',
         capabilities: [], paused: false, transport: 'push',
@@ -2189,6 +2438,7 @@ describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPO
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -2196,7 +2446,7 @@ describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPO
         lastActiveChatId: () => null,
         log: () => {},
       })
-      boot.a2aDeps.registry.add(mailboxPeer)
+      boot.a2aDeps!.registry.add(mailboxPeer)
 
       const proposed = await boot.social!.broker.propose('找摄影搭子')
       const intent_id = (proposed as { ok: true; intent_id: string }).intent_id
@@ -2250,6 +2500,7 @@ describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPO
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -2258,13 +2509,13 @@ describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPO
         log: () => {},
       })
       const senderKey = 'sender-inbound-key-guard1'
-      boot.a2aDeps.registry.add({
+      boot.a2aDeps!.registry.add({
         id: 'ccs', name: '小S', url: 'http://127.0.0.1:1/a2a',
         inbound_api_key: senderKey, outbound_api_key: 'unused',
         capabilities: [], paused: false, transport: 'push',
       })
       // The ONLY possible forward target is the url-less mailbox peer.
-      boot.a2aDeps.registry.add(mailboxPeer)
+      boot.a2aDeps!.registry.add(mailboxPeer)
 
       const resp = await fetch(`http://127.0.0.1:${port}/a2a/intent`, {
         method: 'POST',
@@ -2310,6 +2561,7 @@ describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPO
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -2317,7 +2569,7 @@ describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPO
         lastActiveChatId: () => null,
         log: () => {},
       })
-      boot.a2aDeps.registry.add(mailboxPeer)
+      boot.a2aDeps!.registry.add(mailboxPeer)
 
       // Seed an echo whose peer is the url-less mailbox peer — revealEcho's
       // postPeerReveal call is the site under test.
@@ -2351,6 +2603,7 @@ describe('bootstrap pairing-code wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -2371,9 +2624,13 @@ describe('bootstrap pairing-code wiring', () => {
   it('leaves boot.pairing undefined with no mailbox_relays', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-pairing-off-'))
     writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
+    // Degraded-boot guard: boot.pairing undefined must mean "not
+    // configured", not "pairing threw and was swallowed into degraded".
+    const sup = new SubsystemSupervisor(() => {})
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: sup,
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -2382,6 +2639,7 @@ describe('bootstrap pairing-code wiring', () => {
         log: () => {},
       })
       expect(boot.pairing).toBeUndefined()
+      expect(sup.degraded()).toEqual([])
     } finally {
       await boot?.a2aServer?.stop()
       rmSync(stateDir, { recursive: true, force: true })
@@ -2400,6 +2658,7 @@ describe('bootstrap pairing-code wiring', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -2448,6 +2707,7 @@ describe('bootstrap pairing-code wiring', () => {
       const ilink = makeIlinkStub()
       ilink.sendMessage = (async (chatId: string, text: string) => { sent.push({ chatId, text }); return { msgId: 'm1' } }) as any
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db,
         stateDir,
         ilink: ilink as any,
@@ -2482,7 +2742,11 @@ describe('bootstrap pairing-code wiring', () => {
   // self-restart block, which feeds the SAME activity-marker instance into
   // both this returned markInboundActivity and the check's `quietFor`).
   it('markInboundActivity is present only when requestRestart is wired (self-restart gate)', async () => {
+    // Degraded-boot guard: absence must mean "requestRestart not passed",
+    // not "self-restart threw and was swallowed into degraded".
+    const supWithoutRestart = new SubsystemSupervisor(() => {})
     const withoutRestart = await buildBootstrap({
+      supervisor: supWithoutRestart,
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -2491,6 +2755,7 @@ describe('bootstrap pairing-code wiring', () => {
       log: () => {},
     })
     expect(withoutRestart.markInboundActivity).toBeUndefined()
+    expect(supWithoutRestart.degraded()).toEqual([])
 
     // Passing requestRestart makes buildBootstrap really shell out to
     // `git rev-parse` twice (HEAD + HEAD:bun.lock). Reviewed and kept
@@ -2502,6 +2767,7 @@ describe('bootstrap pairing-code wiring', () => {
     // real-state-dir pollution in this repo. The 3s timeout inside
     // readGitHead bounds the worst case.
     const withRestart = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -2528,6 +2794,7 @@ describe('bootstrap pairing-code wiring', () => {
   it('holdBusy is present on Bootstrap regardless of whether requestRestart is wired, and returns a safe idempotent release', async () => {
     for (const requestRestart of [undefined, () => {}]) {
       const boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir: '/tmp/state',
         ilink: makeIlinkStub() as any,
@@ -2562,6 +2829,7 @@ describe('bootstrap pairing-code wiring', () => {
   it('the lastPollSuccessAgoMs closure handed to wireSelfRestart reads the SAME health instance boot.health writes through', async () => {
     vi.mocked(wireSelfRestart).mockClear()
     const boot = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -2588,6 +2856,7 @@ describe('bootstrap pairing-code wiring', () => {
   it("the busy closure handed to wireSelfRestart reads the SAME busy registry boot.holdBusy writes through", async () => {
     vi.mocked(wireSelfRestart).mockClear()
     const boot = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
       db: openTestDb(),
       stateDir: '/tmp/state',
       ilink: makeIlinkStub() as any,
@@ -2641,6 +2910,7 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
     process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = emptyBundledDir
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -2722,6 +2992,7 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
     process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = emptyBundledDir
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -2780,6 +3051,7 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -2814,9 +3086,13 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
       }),
     )
     const logLines: Array<{ tag: string; line: string; fields?: Record<string, unknown> }> = []
+    // Degraded-boot guard: boot.knowledge undefined must mean "not
+    // configured", not "knowledge threw and was swallowed into degraded".
+    const sup = new SubsystemSupervisor(() => {})
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     try {
       boot = await buildBootstrap({
+        supervisor: sup,
         db: openTestDb(),
         stateDir,
         ilink: makeIlinkStub() as any,
@@ -2825,6 +3101,7 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
         log: (tag, line, fields) => { logLines.push({ tag, line, fields }) },
       })
       expect(boot.knowledge).toBeUndefined()
+      expect(sup.degraded()).toEqual([])
       // Gating (T7' review Finding 2c) — when disabled, the whole
       // knowledge-cycle block (including its setTimeout(0) boot backfill)
       // never runs, so the daemon never emits a single 'KNOWLEDGE'-tagged

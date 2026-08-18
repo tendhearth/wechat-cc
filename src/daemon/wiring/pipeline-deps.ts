@@ -17,18 +17,24 @@ import type { GuardLifecycle } from '../guard/lifecycle'
 import type { PollingLifecycle } from '../polling-lifecycle'
 import type { InboundPipelineDeps } from '../inbound/build'
 import type { PipelineRun } from '../inbound/types'
-import { isAdmin, loadAccess } from '../../lib/access'
+import { isAdmin, loadAccess, appendAllowFrom } from '../../lib/access'
+import { resolveTier } from '../../core/user-tier'
 import { makeAdminCommands } from '../admin-commands'
 import { makeModeCommands } from '../mode-commands'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
 import type { ReplySinks } from '../reply-sinks'
 import { loadCompanionConfig } from '../companion/config'
+import { resolveAdminChatId } from '../companion/resolve-admin'
+import { makeGuestRequestStore, GUEST_REQUEST_TTL_MS } from '../guest-requests'
+import { makeForwardBudget } from '../../core/forward-budget'
 import type { InboundMsg } from '../../core/prompt-format'
 import { parseRevealCommand } from '../../core/reveal-command'
 import { parseLetterCommand } from '../../core/penpal-letter-command'
 import { parsePairCommand } from '../../core/pair-command'
 import { parseSeekCommand, resolveSeekRef } from '../../core/seek-command'
+import { parseGuestCommand } from '../../core/guest-command'
+import { previewText } from '../inbound/mw-access'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider } from '../../lib/agent-config'
@@ -187,6 +193,43 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const recordInbound = makeRecordInbound({ stateDir, db })
   const messagesStore = makeMessagesStore(db)
   const dedupStore = makeDedupStore(db)
+  // Guest path (spec docs/superpowers/specs/2026-08-18-guest-path-design.md
+  // §1/§2) — durable pending-request/invite-code store and the per-sender
+  // forward budget mw-access's guest branch gates on. Both built ONCE here
+  // and reused across every inbound (the budget in particular needs a
+  // process-lifetime Map to actually rate-limit anything).
+  const guestRequests = makeGuestRequestStore({ stateDir })
+  const guestForwardBudget = makeForwardBudget({ perSender: 3, windowMs: 3600_000 })
+  // Targeted hydrate for a NOT-(yet)-allowlisted guest chat — replicates
+  // mw-capture-ctx's two calls (account routing + context-token capture)
+  // WITHOUT mw-capture-ctx's markChatActive side effect on lastActiveRef
+  // (spec §2: a stranger's first message must never become the
+  // operator-relay target). routeChatToAccount is the narrower seam
+  // (ilink-glue.ts / ilink/transport.ts) that does ONLY the account-routing
+  // half of markChatActive. Split into a (chatId, accountId, contextToken)
+  // primitive so the T5 owner-command seam's 允许 handler can hydrate from
+  // a STORED GuestRequest's routing fields (fix round 1, Important #3) —
+  // not just from a live InboundMsg.
+  const hydrateRoute = (chatId: string, accountId: string, contextToken: string): void => {
+    ilink.routeChatToAccount(chatId, accountId)
+    if (contextToken) ilink.captureContextToken(chatId, contextToken)
+  }
+  const hydrateGuestChatRoute = (msg: InboundMsg): void => {
+    hydrateRoute(msg.chatId, msg.accountId, msg.contextToken ?? '')
+  }
+  // Owner notification for the guest branch — resolveAdminChatId
+  // (admins-membership-based), NEVER resolveOperatorChatId (mw-identity has
+  // already written a conversations row for this stranger by the time
+  // mw-access runs, which would make them a resolveOperatorChatId candidate
+  // — spec §0). Direct ilink.sendMessage, same pattern as main.ts's
+  // degraded-subsystem admin summary (~:487-501) — the guest's text is
+  // truncated/escaped by mw-access BEFORE it ever reaches this closure, and
+  // never passes through a prompt.
+  const notifyOwnerOfGuest = (text: string): Promise<{ error?: string }> => {
+    const adminChatId = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+    if (!adminChatId) return Promise.resolve({ error: 'no_admin_chat_configured' })
+    return ilink.sendMessage(adminChatId, text)
+  }
   // Shared LLM-backed memory ops (overview synthesis + profile generation),
   // wired with the daemon's OWN provider registry/coordinator so both the
   // WeChat admin-command path (below) and the internal-api routes the
@@ -318,6 +361,21 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     chatPrefs,
     log,
     isAdmin,
+    // /agy's tier-C guest gate (mode-commands.ts) — same loadAccess() +
+    // resolveTier() pairing the coordinator's own resolveTier closure uses
+    // (bootstrap/index.ts). loadAccess() has a 5s in-process TTL cache, so
+    // this is cheap to call per inbound.
+    //
+    // DELIBERATELY does NOT mirror bootstrap/index.ts's resolveTier closure
+    // in full: that one short-circuits to 'admin' when
+    // `deps.dangerouslySkipPermissions` is set (the global --dangerously
+    // override). This gate omits that branch on purpose — agy's tier-C MCP
+    // config carries ONE long-lived 'trusted' token shared by every
+    // conversation agy runs, with no per-session isolation (agy-mcp-
+    // config.ts), so a guest chat must stay refused even on a
+    // --dangerously-run daemon. Fail closed on that shared-token hazard;
+    // do NOT "fix" this into parity with the coordinator's closure.
+    resolveTier: (chatId) => resolveTier(chatId, loadAccess()),
   })
 
   const onboardingHandler = makeOnboardingHandler({
@@ -330,16 +388,24 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // already cleared its awaiting state and persisted the nickname, so
       // mw-onboarding will short-circuit (isKnownUser=true) and the message
       // flows to the provider as if it were just received.
+      //
+      // redispatch:true is load-bearing, not cosmetic — mw-dedup already
+      // marked this exact message id "handled" at the end of turn 1 (SAME
+      // boot, no restart involved), so without the flag this re-fire is
+      // silently swallowed by mw-dedup's isHandled short-circuit and the
+      // user's original question never reaches the provider.
       await refs.pipeline.deref('onboarding echo dispatch')({
         msg,
         receivedAtMs: Date.now(),
         requestId: randomBytes(4).toString('hex'),
+        redispatch: true,
       })
     },
     log,
     isAdmin,
     getBotName,
     setBotName,
+    stateDir,
   })
 
   const pipelineDeps: InboundPipelineDeps = {
@@ -351,6 +417,17 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // loadAccess() has a 5s in-process TTL cache — safe to call per inbound.
       loadAccess,
       log,
+      // Guest path (spec §2) — all six wired together; mw-access falls
+      // back to the legacy silent drop if any one of them were absent.
+      guestRequests,
+      hydrateChatRoute: hydrateGuestChatRoute,
+      sendMessage: (c, t) => ilink.sendMessage(c, t),
+      notifyOwner: notifyOwnerOfGuest,
+      budget: guestForwardBudget,
+      // Injected (fix round 1, DI-convention fold #10) — mw-access no
+      // longer imports appendAllowFrom directly, matching every other
+      // side effect on this interface.
+      appendAllowFrom,
     },
     capture: {
       markChatActive: (c, a) => ilink.markChatActive(c, a),
@@ -516,6 +593,105 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
               } else {
                 await boot.social.broker.cancelSeek(res.id)
                 if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, '已作废')
+              }
+              return
+            }
+          }
+          // 允许/拒绝/邀请码/待批准 (guest path spec §3) — admin-gated,
+          // deterministic parse, mirrors 揭晓/回信/配对 above. Unlike those,
+          // this block is NOT gated behind an optional boot.X wire —
+          // guestRequests/guestForwardBudget are unconditionally constructed
+          // above, so the guest path is always live; the gate is
+          // isAdmin(msg.chatId) (same identity gate mw-access's guest
+          // branch itself never bypasses — a non-admin sending "允许
+          // 123456" falls straight through to a normal turn, matching
+          // parseGuestCommand's own deterministic-exact-match contract)
+          // PLUS [fix-wave ruling, CONTROLLER — Important 2] a real,
+          // non-empty `access.admins` list. On a legacy admins-empty
+          // install, `isAdmin()` falls back to allowFrom membership — so
+          // an already-approved guest (who IS in allowFrom) would also
+          // read as "admin" and could mint invite codes / run 允许/拒绝
+          // themselves. Requiring `admins?.length` here closes that
+          // escalation chain the same way mw-access's guest branch does
+          // (src/daemon/inbound/mw-access.ts) — on such an install this
+          // block simply never fires; the guest text falls through to
+          // `boot.coordinator.dispatch(msg)` below like any other message.
+          if (loadAccess().admins?.length && isAdmin(msg.chatId)) {
+            const guestCmd = parseGuestCommand(msg.text)
+            if (guestCmd) {
+              if (guestCmd.kind === 'allow') {
+                const request = guestRequests.resolve(guestCmd.code, 'allowed')
+                if (!request) {
+                  if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, '❌ 码不对或已过期(发「待批准」看当前请求)')
+                  return
+                }
+                appendAllowFrom(request.chatId)
+                if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, `✅ 已允许 ${request.chatId}`)
+                // Hydrate BEFORE sending the guest welcome (fix round 1,
+                // Important #3 — spec §3 calls for hydrate here too, same
+                // as mw-access's own fresh/invite-accept paths): the
+                // guest's chat was never allowlisted while pending, so
+                // mw-capture-ctx never ran for it — without this,
+                // sendMessage below can hit assertChatRoutable's
+                // "unknown chat_id" failure on a first-ever contact whose
+                // routing state was only ever captured into the STORED
+                // GuestRequest, not into ctxStore/acctStore themselves.
+                hydrateRoute(request.chatId, request.accountId, request.contextToken)
+                const guestSend = await ilink.sendMessage(request.chatId, '主人同意啦!')
+                if (guestSend.error) {
+                  // The owner already got their ✅ above (can't un-send it) —
+                  // the least we owe is a log that tells the truth instead
+                  // of silently swallowing a failed guest-facing send.
+                  log('ACCESS', `guest approve: welcome send to ${request.chatId} failed: ${guestSend.error}`)
+                }
+                // Re-fire the guest's original message through the FULL
+                // pipeline (not just this inner dispatch closure) — same
+                // onboarding-echo posture as makeOnboardingHandler's
+                // dispatchInbound above: redispatch:true so mw-dedup
+                // doesn't swallow it, and running the whole pipeline (not
+                // just coordinator.dispatch) lets mw-onboarding pick it up
+                // and ask the guest's nickname before echoing their
+                // original question back through the provider.
+                await refs.pipeline.deref('guest approve redispatch')({
+                  msg: request.firstMsg,
+                  receivedAtMs: Date.now(),
+                  requestId: randomBytes(4).toString('hex'),
+                  redispatch: true,
+                })
+                return
+              }
+              if (guestCmd.kind === 'deny') {
+                const request = guestRequests.resolve(guestCmd.code, 'denied')
+                if (!request) {
+                  if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, '❌ 码不对或已过期(发「待批准」看当前请求)')
+                  return
+                }
+                // The guest gets NOTHING — spec §3: "不替 owner 说难听话;
+                // 此后纯静默" (guestRequests.wasDenied now gates mw-access's
+                // guest branch silent on every future message from them).
+                if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, '已拒绝,ta 不会再打扰你。')
+                return
+              }
+              if (guestCmd.kind === 'invite') {
+                const invite = guestRequests.createInvite()
+                if (boot.sendAssistantText) {
+                  void boot.sendAssistantText(
+                    msg.chatId,
+                    `邀请码:${invite.code}(48 小时内有效,一次一人)。把这串数字发给朋友,ta 加我微信好友后把码发给我就能聊了。`,
+                  )
+                }
+                return
+              }
+              // 'pending'
+              const pending = guestRequests.listPending()
+              if (boot.sendAssistantText) {
+                const text = pending.length === 0
+                  ? '目前没有待批准的请求。'
+                  : pending.map(r => {
+                      const hoursLeft = Math.max(0, Math.floor((r.createdAt + GUEST_REQUEST_TTL_MS - Date.now()) / 3_600_000))
+                      return `「${r.code}」 ${r.chatId}:"${previewText(r.firstMsg.text)}"(剩 ${hoursLeft} 小时)`
+                    }).join('\n')
+                void boot.sendAssistantText(msg.chatId, text)
               }
               return
             }

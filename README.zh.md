@@ -341,6 +341,12 @@ wechat-cc update --check     # 仅探测，无副作用
 
 `wechat-cc setup` 扫码人自动加入白名单。
 
+微信内「允许/拒绝 &lt;码&gt;」与「邀请码」为新增路径(仅 allowFrom;
+admins/trusted 仍仅终端管理)——陌生人首条消息会收到中性回复,你(admin
+chat)收到带 6 位码的通知,回码即批准/拒绝;或主动发「邀请码」给朋友一次性口令。
+想要完全隐身(不回复、不通知、什么都不做)?把 `access.json` 的
+`dmPolicy` 设为 `"disabled"`。
+
 ---
 
 ## Demo 数据（截图 / 第一印象用）

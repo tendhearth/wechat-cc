@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { makeModeCommands } from './mode-commands'
 import type { Mode, ProviderId } from '../core/conversation'
 import type { InboundMsg } from '../core/prompt-format'
+import type { UserTier } from '../core/user-tier'
 
 function inbound(text: string, chatId = 'chat-1'): InboundMsg {
   return { chatId, userId: chatId, text, msgType: 'text', createTimeMs: 0, accountId: 'a' }
@@ -13,6 +14,7 @@ function setup(opts: {
   initialMode?: Mode
   initialUserName?: string
   isAdmin?: (userId: string) => boolean
+  tier?: UserTier
 } = {}) {
   const registered = opts.registered ?? ['claude', 'codex']
   const set = vi.fn<(chatId: string, mode: Mode) => void>()
@@ -51,6 +53,7 @@ function setup(opts: {
     chatPrefs,
     log: () => {},
     isAdmin: opts.isAdmin,
+    resolveTier: () => opts.tier ?? 'admin',
   })
   return { cmds, set, sendMessage, sentMessages, pinModel, chatPrefs, prefsData, getStored: () => stored, getStoredName: () => storedName }
 }
@@ -235,6 +238,7 @@ describe('makeModeCommands', () => {
       pinModel: async () => {},
       chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
+      resolveTier: () => 'admin' as const,
     })
     await cmds.handle(inbound('/both'))
     expect(sentMessages[0]?.[1]).toContain('启用失败')
@@ -279,6 +283,7 @@ describe('makeModeCommands', () => {
       pinModel: async () => {},
       chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
+      resolveTier: () => 'admin' as const,
     })
     await cmds.handle(inbound('/chat'))
     expect(sentMessages[0]?.[1]).toContain('启用失败')
@@ -299,7 +304,7 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toContain('Codex')
   })
 
-  it('/stop also calls coordinator.cancel and notifies on in-flight chatroom (RFC 03 review #11)', async () => {
+  it('/stop also calls coordinator.cancel and notifies on an in-flight turn (RFC 03 review #11; generic copy — not chatroom-specific, since cancel() also fires for solo/parallel)', async () => {
     const sentMessages: Array<[string, string]> = []
     const sendMessage = vi.fn(async (chatId: string, text: string) => {
       sentMessages.push([chatId, text]); return { msgId: 'm' }
@@ -324,10 +329,12 @@ describe('makeModeCommands', () => {
       pinModel: async () => {},
       chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
+      resolveTier: () => 'admin' as const,
     })
     await cmds.handle(inbound('/stop'))
     expect(cancel).toHaveBeenCalledWith('chat-1')
-    expect(sentMessages[0]?.[1]).toContain('已中止 in-flight chatroom')
+    expect(sentMessages[0]?.[1]).toContain('已请求中止 in-flight 回合')
+    expect(sentMessages[0]?.[1]).not.toContain('chatroom')
   })
 
   it('/stop without in-flight loop does NOT mention cancel suffix', async () => {
@@ -354,6 +361,7 @@ describe('makeModeCommands', () => {
       pinModel: async () => {},
       chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
+      resolveTier: () => 'admin' as const,
     })
     await cmds.handle(inbound('/stop'))
     expect(sentMessages[0]?.[1]).not.toContain('已中止')
@@ -440,6 +448,7 @@ describe('makeModeCommands', () => {
       pinModel: async () => {},
       chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
+      resolveTier: () => 'admin' as const,
     })
     await cmds.handle(inbound('/cc + codex'))
     expect(sentMessages[0]?.[1]).toContain('启用失败')
@@ -465,19 +474,20 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toContain('claude')
   })
 
-  it('/cursor + cc succeeds — cursor session is wired to delegate_claude', async () => {
-    const { cmds, set } = setup({ registered: ['claude', 'codex', 'cursor'] })
+  it('/cursor + cc is rejected — cursor cannot delegate (B2, supportsDelegation=false)', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'cursor'] })
     const consumed = await cmds.handle(inbound('/cursor + cc'))
     expect(consumed).toBe(true)
-    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'primary_tool', primary: 'cursor' })
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
   })
 
-  it('/cursor + codex is rejected — cursor session has delegate_claude (not delegate_codex)', async () => {
+  it('/cursor + codex is rejected — cursor cannot delegate (B2, supportsDelegation=false)', async () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'cursor'] })
     const consumed = await cmds.handle(inbound('/cursor + codex'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('claude')
+    expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
   })
 
   it('/gemini switches mode to solo+gemini', async () => {
@@ -498,26 +508,123 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toContain('gemini')
   })
 
-  it('/gemini + cc succeeds — gemini session is wired to delegate_claude', async () => {
-    const { cmds, set } = setup({ registered: ['claude', 'codex', 'gemini'] })
+  it('/gemini + cc is rejected — gemini cannot delegate (B2, supportsDelegation=false)', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'gemini'] })
     const consumed = await cmds.handle(inbound('/gemini + cc'))
     expect(consumed).toBe(true)
-    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'primary_tool', primary: 'gemini' })
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
   })
 
-  it('/gemini + codex is rejected — gemini session has delegate_claude (not delegate_codex)', async () => {
+  it('/gemini + codex is rejected — gemini cannot delegate (B2, supportsDelegation=false)', async () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'gemini'] })
     const consumed = await cmds.handle(inbound('/gemini + codex'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toContain('claude')
+    expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
   })
 
-  it('returns false for unrecognised slash words like /health (lets admin-commands handle)', async () => {
-    const { cmds, sendMessage } = setup()
+  // ── /agy — tier-C guest gate (spec 2026-08-17-agy-provider-design.md §3) ──
+
+  it('/agy switches mode to solo+agy for an admin/trusted chat', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'admin' })
+    const consumed = await cmds.handle(inbound('/agy'))
+    expect(consumed).toBe(true)
+    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'agy' })
+    expect(sentMessages[0]?.[1]).toContain('Agy')
+    expect(sentMessages[0]?.[1]).toContain('solo')
+  })
+
+  it('/agy <model> pins the model AND switches to solo+agy for a trusted chat', async () => {
+    const { cmds, set, sentMessages, pinModel } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'trusted' })
+    const consumed = await cmds.handle(inbound('/agy gemini-3.7-flash-high'))
+    expect(consumed).toBe(true)
+    expect(pinModel).toHaveBeenCalledWith('agy', 'gemini-3.7-flash-high')
+    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'agy' })
+    expect(sentMessages[0]?.[1]).toContain('gemini-3.7-flash-high')
+  })
+
+  it('/agy is rejected for a guest chat (bare form) — MCP token has no per-session isolation', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'guest' })
+    const consumed = await cmds.handle(inbound('/agy'))
+    expect(consumed).toBe(true)
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toBe('❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+  })
+
+  it('/agy <model> is rejected for a guest chat (model-pin form) — no pin, no switch', async () => {
+    const { cmds, set, sentMessages, pinModel } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'guest' })
+    const consumed = await cmds.handle(inbound('/agy gemini-3.7-flash-high'))
+    expect(consumed).toBe(true)
+    expect(pinModel).not.toHaveBeenCalled()
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toBe('❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+  })
+
+  it('/agy replies 未注册 when the agy provider is not configured (non-guest chat)', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex'], tier: 'admin' })
+    const consumed = await cmds.handle(inbound('/agy'))
+    expect(consumed).toBe(true)
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('未注册')
+    expect(sentMessages[0]?.[1]).toContain('agy')
+  })
+
+  it('/agy + codex is rejected — agy cannot delegate (B2, supportsDelegation=false)', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'admin' })
+    const consumed = await cmds.handle(inbound('/agy + codex'))
+    expect(consumed).toBe(true)
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
+  })
+
+  // A3 (spec §A3): mw-admin runs BEFORE mw-mode in the real pipeline (see
+  // src/daemon/inbound/build.ts), so a real /health message never reaches
+  // mode-commands at all — admin-commands always claims it first, even for
+  // non-admins (it replies "not an admin", but still consumes). Called in
+  // isolation here (as every other test in this file does), mode-commands
+  // genuinely doesn't recognise `/health` — the unknown-command catch below
+  // now surfaces a hint instead of silently falling through to the LLM.
+  it('/health (unrecognised by mode-commands itself) is caught by the unknown-command hint', async () => {
+    const { cmds, sentMessages } = setup()
     const consumed = await cmds.handle(inbound('/health'))
+    expect(consumed).toBe(true)
+    expect(sentMessages[0]?.[1]).toBe('❓ 不认识 /health。看全部命令发 /help。')
+  })
+
+  // ── unknown pure-slash commands (A3 — spec §A3) ───────────────────────
+  // Deliberately narrow: only a bare ASCII word (no args, no Chinese, 2-16
+  // letters) that isn't one of this file's known commands gets the hint.
+  // Everything else — arguments, Chinese, length outside the range, known
+  // commands — falls through unchanged (the user might be talking, not
+  // commanding).
+
+  it('/foobar (unknown bare slash word) is consumed with the exact hint copy', async () => {
+    const { cmds, sentMessages } = setup()
+    const consumed = await cmds.handle(inbound('/foobar'))
+    expect(consumed).toBe(true)
+    expect(sentMessages[0]?.[1]).toBe('❓ 不认识 /foobar。看全部命令发 /help。')
+  })
+
+  it('/foobar with an argument falls through unchanged (not consumed)', async () => {
+    const { cmds, sendMessage } = setup()
+    const consumed = await cmds.handle(inbound('/foobar 参数'))
     expect(consumed).toBe(false)
     expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('/中文 (non-ASCII slash word) falls through unchanged', async () => {
+    const { cmds, sendMessage } = setup()
+    const consumed = await cmds.handle(inbound('/中文'))
+    expect(consumed).toBe(false)
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('/cc (a known command) is unaffected by the unknown-command catch', async () => {
+    const { cmds, sentMessages } = setup()
+    const consumed = await cmds.handle(inbound('/cc'))
+    expect(consumed).toBe(true)
+    expect(sentMessages[0]?.[1]).not.toContain('不认识')
   })
 
   // ── /name <nick> — user self-rename (PR2 #17) ────────────────────────
@@ -609,6 +716,17 @@ describe('makeModeCommands', () => {
     expect(text).not.toContain('管理员命令')
   })
 
+  // A3 (spec §A3): /help's mode-switch line had fallen behind /mode's list
+  // by two providers (/gemini /agy missing) — pin both providers present so
+  // that regression can't silently recur.
+  it('/help mode-switch line includes /gemini and /agy (aligned with /mode)', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/help'))
+    const text = sentMessages[0]?.[1] ?? ''
+    expect(text).toContain('/gemini')
+    expect(text).toContain('/agy')
+  })
+
   it('/help from admin contains both mode-switch and admin sections', async () => {
     const { cmds, sentMessages } = setup({ isAdmin: () => true })
     await cmds.handle(inbound('/help'))
@@ -630,6 +748,67 @@ describe('makeModeCommands', () => {
     expect(msgsAdmin[0]?.[1]).toContain('管理员命令')
     expect(msgsUser[0]?.[1]).not.toContain('管理员命令')
     expect(msgsUser[0]?.[1]).toContain('模式切换')
+  })
+
+  // ── /help tiering (spec §5): resolveTier === 'guest', NOT isAdmin ────
+
+  it('/help for a guest tier chat shows only the guest-usable blocks (whoami/name, /set split, files) — asserts the hidden blocks are absent', async () => {
+    const { cmds, sentMessages } = setup({ tier: 'guest' })
+    await cmds.handle(inbound('/help'))
+    const text = sentMessages[0]?.[1] ?? ''
+    // Present: opening blurb, identity, /set split, files.
+    expect(text).toContain('这里是微信通道')
+    expect(text).toContain('/whoami')
+    expect(text).toContain('/name <昵称>')
+    expect(text).toContain('/set split')
+    expect(text).toContain('拖图片/文件给我即可')
+    // Absent: provider switching, /set care (and the rest of /set), 陪伴/配对.
+    expect(text).not.toContain('模式切换')
+    expect(text).not.toContain('/cc ')
+    expect(text).not.toContain('/codex')
+    expect(text).not.toContain('/cursor')
+    expect(text).not.toContain('/both')
+    expect(text).not.toContain('/chat ')
+    expect(text).not.toContain('/mode')
+    expect(text).not.toContain('主动关心档位')
+    expect(text).not.toContain('care')
+    expect(text).not.toContain('关心')
+    expect(text).not.toContain('表情包')
+    expect(text).not.toContain('打猎')
+    expect(text).not.toContain('陪伴')
+    expect(text).not.toContain('配对')
+    expect(text).not.toContain('切到 <alias>')
+    // Guest is never admin — admin section stays hidden even if isAdmin
+    // somehow said true for this chat's userId (defense-in-depth).
+    expect(text).not.toContain('管理员命令')
+  })
+
+  it('/help for a guest tier chat is consumed even when isAdmin(userId) reports true (resolveTier wins, not isAdmin)', async () => {
+    const { cmds, sentMessages } = setup({ tier: 'guest', isAdmin: () => true })
+    await cmds.handle(inbound('/help'))
+    const text = sentMessages[0]?.[1] ?? ''
+    expect(text).not.toContain('管理员命令')
+    expect(text).not.toContain('模式切换')
+  })
+
+  it('/help for admin tier is byte-identical to the pre-tiering output (snapshot-style assertion)', async () => {
+    const { cmds, sentMessages } = setup({ tier: 'admin', isAdmin: () => true })
+    await cmds.handle(inbound('/help'))
+    expect(sentMessages[0]?.[1]).toMatchSnapshot()
+  })
+
+  it('/help for trusted tier (non-admin) is byte-identical to the pre-tiering output, and matches admin\'s output minus the admin section', async () => {
+    const { cmds: cmdsTrusted, sentMessages: msgsTrusted } = setup({ tier: 'trusted', isAdmin: () => false })
+    const { cmds: cmdsAdmin, sentMessages: msgsAdmin } = setup({ tier: 'admin', isAdmin: () => true })
+    await cmdsTrusted.handle(inbound('/help'))
+    await cmdsAdmin.handle(inbound('/help'))
+    const trustedText = msgsTrusted[0]?.[1] ?? ''
+    const adminText = msgsAdmin[0]?.[1] ?? ''
+    expect(trustedText).toMatchSnapshot()
+    // Same core content as admin's — admin's output is exactly the trusted
+    // output plus the appended admin section.
+    expect(adminText.startsWith(trustedText)).toBe(true)
+    expect(adminText.slice(trustedText.length)).toContain('管理员命令')
   })
 
   describe('N-way grammar', () => {
@@ -720,6 +899,28 @@ describe('makeModeCommands', () => {
       expect(set).toHaveBeenCalledWith('chat-1', {
         kind: 'chatroom', participants: ['claude', 'codex'],
       })
+    })
+
+    // ── agy final-review CRITICAL 1 — agy excluded from parallel/chatroom
+    // (shared tier-C 'trusted' MCP token, spec §7 non-goal). Must be
+    // rejected with user-facing copy BEFORE setMode is ever called, from
+    // ANY chat (mode commands are deliberately ungated — this is not the
+    // /agy admin/trusted gate, it's a structural exclusion).
+
+    it('/both claude agy is rejected — agy cannot join parallel (shared-token channel)', async () => {
+      const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'admin' })
+      const consumed = await cmds.handle(inbound('/both claude agy'))
+      expect(consumed).toBe(true)
+      expect(set).not.toHaveBeenCalled()
+      expect(sentMessages[0]?.[1]).toBe('❌ agy 不能加入 both/chat 模式（共享工具通道），可用 /agy 单独使用（仅管理员/信任聊天）。')
+    })
+
+    it('/chat codex agy is rejected — agy cannot join chatroom (shared-token channel)', async () => {
+      const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'admin' })
+      const consumed = await cmds.handle(inbound('/chat codex agy'))
+      expect(consumed).toBe(true)
+      expect(set).not.toHaveBeenCalled()
+      expect(sentMessages[0]?.[1]).toBe('❌ agy 不能加入 both/chat 模式（共享工具通道），可用 /agy 单独使用（仅管理员/信任聊天）。')
     })
   })
 

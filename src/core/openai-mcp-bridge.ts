@@ -1,12 +1,10 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import type { ToolSpec } from './openai-chat-model'
+import { childEnvFor } from './mcp-stdio-spec'
 
-export interface McpStdioSpec {
-  command: string
-  args: string[]
-  env?: Record<string, string>
-}
+export type { McpStdioSpec } from './mcp-stdio-spec'
+import type { McpStdioSpec } from './mcp-stdio-spec'
 
 /** Minimal surface of the MCP client we depend on — lets tests inject a fake. */
 export interface McpClientLike {
@@ -34,8 +32,8 @@ const EMPTY_SCHEMA = { type: 'object', properties: {} } as const
 async function connectStdio(spec: McpStdioSpec): Promise<McpClientLike> {
   const transport = new StdioClientTransport({
     command: spec.command,
-    args: spec.args,
-    env: { ...process.env, ...(spec.env ?? {}) } as Record<string, string>,
+    args: spec.args ?? [],
+    env: childEnvFor(spec),
   })
   const client = new Client({ name: 'wechat-openai-provider', version: '1.0.0' }, { capabilities: {} })
   await client.connect(transport)

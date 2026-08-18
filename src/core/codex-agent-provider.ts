@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type ProviderCapabilities, type SpawnContext } from './agent-provider'
 import { resolveCodexCheapModel } from './codex-cheap-model'
 import type { TierProfile } from './user-tier'
+import type { McpStdioSpec } from './mcp-stdio-spec'
+import { makeTurnEmitter } from './turn-emitter'
 import { log } from '../lib/log'
 
 /**
@@ -90,21 +92,11 @@ export function tierProfileToCodexSdkOpts(tp: TierProfile, permissionMode: Permi
  *   error                                       → { kind: 'error', message }
  */
 
-// Match common codex SDK auth-failure signatures. Conservative — we
-// only want to special-case the ones we're confident about, since
-// false positives mean the user gets "login expired" when their real
-// problem is something else.
-const AUTH_FAIL_RE = /(OPENAI_API_KEY|not authenticated|401 unauthorized|codex login|auth.*expired)/i
+// Auth-failure classification now lives in auth-fail.ts's sdk-error wide
+// set (AUTH_FAIL_SDK_ERROR) — see makeTurnEmitter()'s errorText/error.
 
 /** Test-time injection for the Codex constructor. */
 export type CodexFactory = (opts: ConstructorParameters<typeof Codex>[0]) => Codex
-
-/** stdio MCP server spec — same shape both Claude SDK + Codex CLI accept. */
-export interface CodexMcpStdioServer {
-  command: string
-  args?: string[]
-  env?: Record<string, string>
-}
 
 export interface CodexAgentProviderOptions {
   /** Optional override for the codex CLI binary path; SDK default is the @openai/codex npm dep. */
@@ -122,7 +114,7 @@ export interface CodexAgentProviderOptions {
    * apiKey via this channel either — env on the spawned MCP child
    * process is supplied by the caller via the `env` field.
    */
-  mcpServers?: Record<string, CodexMcpStdioServer>
+  mcpServers?: Record<string, McpStdioSpec>
   /**
    * v0.5.7 — when true, sets the codex CLI's
    * `dangerously_bypass_approvals_and_sandbox=true` config (equivalent to the
@@ -263,7 +255,7 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
               if (closed) return
               const turnAborter = new AbortController()
               activeAborter = turnAborter
-              const turnStarted = Date.now()
+              const em = makeTurnEmitter()
               let initEmitted = false
 
               // First-dispatch-only injection of channel instructions (RFC 03 P5
@@ -293,28 +285,15 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
                       yield { kind: 'tool_call', server: item.server, tool: item.tool }
                     }
                   } else if (ev.type === 'turn.completed') {
-                    yield {
-                      kind: 'result',
-                      sessionId: thread.id ?? '',
-                      numTurns: ++turnCount,
-                      durationMs: Date.now() - turnStarted,
-                    }
+                    yield em.finish({ sessionId: thread.id ?? '', numTurns: ++turnCount })
                   } else if (ev.type === 'turn.failed') {
                     const m = ev.error.message
                     console.error(`wechat channel: [SESSION_RESULT] alias=${project.alias} provider=codex turn.failed=${m.slice(0, 400)}`)
-                    if (AUTH_FAIL_RE.test(m)) {
-                      yield { kind: 'error', code: 'auth_failed', message: m }
-                    } else {
-                      yield { kind: 'error', message: m }
-                    }
+                    yield em.errorText(m)
                   } else if (ev.type === 'error') {
                     const m = (ev as { type: 'error'; message: string }).message
                     console.error(`wechat channel: [SESSION_ERROR] alias=${project.alias} provider=codex stream-error=${m.slice(0, 400)}`)
-                    if (AUTH_FAIL_RE.test(m)) {
-                      yield { kind: 'error', code: 'auth_failed', message: m }
-                    } else {
-                      yield { kind: 'error', message: m }
-                    }
+                    yield em.errorText(m)
                   }
                 }
               } catch (err) {

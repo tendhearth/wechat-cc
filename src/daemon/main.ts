@@ -33,9 +33,12 @@ import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
+import { companionOfferEligible } from './companion/offer-eligibility'
 import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
 import { startCustomerReviewRuntime } from './customer-review/runtime'
 import { SUPERVISED_ENV } from '../core/supervised-env'
+import { SubsystemSupervisor } from './subsystems'
+import { removeAgyGlobalMcp } from './bootstrap/agy-mcp-config'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -142,6 +145,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   const ilink = makeIlinkAdapter({ stateDir, accounts, db, conversationStore })
   const memoryFS = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
   const lc = new LifecycleSet((tag, line) => log(tag, line))
+  // Subsystem degraded-boot (spec 2026-08-17) — 只包可选子系统;核心链不经它。
+  const sup = new SubsystemSupervisor((t, l) => log(t, l))
   let shuttingDown = false; let didStartup = false
   let pollingLcRef: { reconcile(): Promise<void> } | null = null
   let ticksRef: TickBodies | null = null
@@ -169,6 +174,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // see bootstrap/index.ts), so shutdown is the only place it tears down
     // its embed subprocess.
     try { await bootRef?.knowledge?.embedder?.close?.() } catch (err) { log('KNOWLEDGE', `embedder close error: ${err instanceof Error ? err.message : String(err)}`) }
+    // Clean up the tier-C global MCP entry (spec §3 residual, 2026-08-17
+    // follow-up) if agy was ever registered this boot — mirrors the other
+    // bootRef?.…-guarded optional teardowns above. Best-effort only: a
+    // crash-exit skips this and leaves the dead-token entry on disk, but
+    // that's fine — boot rewrites/upserts it fresh next start regardless.
+    try { if (bootRef?.registry?.has?.('agy')) removeAgyGlobalMcp({ log }) } catch (err) { log('AGY', `mcp config cleanup error: ${err instanceof Error ? err.message : String(err)}`) }
     try { db.close() } catch (err) { console.error('db close failed:', err) }
     releaseInstanceLock(PID_PATH)
   }
@@ -229,6 +240,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // (after this registration) — returns null until then, so the route 503s.
       listSessions: () => bootRef?.sessionManager?.list() ?? null,
       heartbeatFresh: () => isHeartbeatFresh(HEARTBEAT_PATH),
+      // Subsystem degraded-boot (spec 2026-08-17) — sup 在本调用之前创建,
+      // 直接传引用,无需 thunk-over-bootRef 姿势。
+      subsystems: () => sup.statuses(),
       // Admin remediation hooks (POST /v1/sessions/release, /v1/daemon/restart).
       releaseSession: (k) => bootRef?.sessionManager?.release(k) ?? Promise.resolve(),
       requestRestart: () => requestRestart('internal-api'),
@@ -278,15 +292,38 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // onboarding-curiosity design §2 — sync because buildInstructions is
       // sync; cheap indexed COUNT per spawn (chat_id, direction indexed).
       newRelationshipFor: (c) => countInboundMessagesSync(db, c) < NEW_RELATIONSHIP_MSG_COUNT,
+      // owner-onboarding design §C1 — companion-offer nudge. Delegates to
+      // the pure companionOfferEligible predicate (fix round 1: the first
+      // version of this thunk compared `c` directly against
+      // `companion.default_chat_id`, which is ONLY ever set inside
+      // companion_enable — on a fresh install default_chat_id is null, so
+      // the offer could never fire until companion had already been
+      // enabled once and later disabled. companionOfferEligible resolves
+      // the owner chat via resolveAdminChatId (admins-membership-based)
+      // instead, which fresh installs already have thanks to Task 3's
+      // setup bootstrap, and is guest-safe by construction — see
+      // offer-eligibility.ts's docstring). Threshold matches
+      // newRelationshipFor's NEW_RELATIONSHIP_MSG_COUNT on the opposite
+      // side, so the two prompt sections stay naturally mutually exclusive.
+      companionOfferFor: (c) => companionOfferEligible({
+        chatId: c,
+        access: loadAccess(),
+        companion: loadCompanionConfig(stateDir),
+        inboundCount: countInboundMessagesSync(db, c),
+      }),
       // bubble-replies design (行为流式气泡回复) — same per-chat 拆分 pref
       // that gates route-level mechanical splitting (getChatPrefs above)
       // also gates the bubble-guidance prompt section: `/set split off`
       // silences BOTH, matching the user-facing meaning of 拆分.
       bubbleRepliesFor: (c) => chatPrefs.get(c).split !== false,
-      // image-stickers plan §5 — per-chat opt-out (chatPrefs.stickers === false)
-      // hides the sticker section from that chat's prompt; empty lib ⇒ [] ⇒
-      // stickerSection omitted entirely (see prompt-builder.ts).
-      stickerTagsFor: (c) => (chatPrefs.get(c).stickers !== false ? stickerLib.allTags() : []),
+      // image-stickers plan §5 / owner-onboarding design §C2 — per-chat
+      // opt-out (chatPrefs.stickers === false) hides BOTH sticker sections
+      // from that chat's prompt (null). Pref on ⇒ allTags(), which may
+      // itself be [] (empty library — renders the cold-start unlock variant)
+      // or non-empty (renders the normal tag-listing section). Returning
+      // null (not []) for pref-off is the disambiguation this thunk exists
+      // for — see prompt-builder.ts's BuildSystemPromptArgs.stickerTags doc.
+      stickerTagsFor: (c) => (chatPrefs.get(c).stickers !== false ? stickerLib.allTags() : null),
       // persona design §2 — owner chat's persona.md content, read fresh per
       // spawn (hand-edit shows up with no daemon restart, like careLevelFor).
       // makeMemoryFS's constructor is cheap (existsSync + maybe mkdirSync +
@@ -341,6 +378,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       ...(process.env[SUPERVISED_ENV] === '1'
         ? { requestRestart: () => requestRestart('self-restart-stale-code') }
         : {}),
+      // Subsystem degraded-boot (spec 2026-08-17) — same supervisor instance
+      // that already guards the post-bootstrap subsystems below (customer-
+      // review/companion push/introspect/ingest/guard/mailbox-poller) now
+      // also guards buildBootstrap's optional wire blocks (knowledge/social/
+      // a2a-server/pairing/self-restart).
+      supervisor: sup,
     })
     bootRef = boot
     internalApi.setDelegate({ dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() })
@@ -348,7 +391,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // deps.conversation at request time, so this late assignment is safe.
     internalApi.setConversation({ setMode: (chatId, mode) => boot.coordinator.setMode(chatId, mode) })
     // Wire A2A deps — registry, client, recordEvent — so POST /v1/a2a/send works.
-    internalApi.setA2A(boot.a2aDeps)
+    // Undefined ⇔ a2a-server subsystem degraded (wireA2aServer threw) — setA2A
+    // stays unwired and POST /v1/a2a/send keeps 503ing, same posture as any
+    // other never-configured subsystem.
+    if (boot.a2aDeps) internalApi.setA2A(boot.a2aDeps)
     // Wire the agent-social M1 broker (T7b-core) — only present when
     // social_enabled + social_disclosure_policy are both configured. So
     // POST /v1/social/seek/{propose,confirm,cancel} work when the feature is on.
@@ -361,13 +407,13 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     if (boot.knowledge) internalApi.setKnowledge(boot.knowledge)
     // Customer Review is optional: a missing/unready wxvault or eval provider
     // leaves the daemon healthy and its owner-only routes return 503.
-    const customerReview = await startCustomerReviewRuntime({
+    const customerReview = await sup.start('customer-review', () => startCustomerReviewRuntime({
       stateDir,
       db,
       registry: boot.registry,
       defaultProviderId: boot.defaultProviderId,
       log: (tag, line) => log(tag, line),
-    })
+    }))
     if (customerReview) {
       internalApi.setCustomerReview(customerReview.service)
       lc.register(customerReview)
@@ -407,12 +453,17 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
     wireRef(wired.refs.pipeline, pipeline)
     // 4. register lifecycles (LIFO stop = startup order reversed)
-    lc.register(registerCompanionPush(wired.companionPushDeps))
-    lc.register(registerCompanionIntrospect(wired.companionIntrospectDeps))
-    const ingestLc = registerIngest(wired.companionIngestDeps)
-    lc.register(ingestLc)
-    wireRef(wired.refs.ingestNudge, ingestLc.nudge)   // inbound path nudges ingestion on fresh activity
-    const guardLc = registerGuard(wired.guardDeps); wireRef(wired.refs.guard, guardLc); lc.register(guardLc)
+    const pushLc = await sup.start('companion.push', () => registerCompanionPush(wired.companionPushDeps))
+    if (pushLc) lc.register(pushLc)
+    const introspectLc = await sup.start('companion.introspect', () => registerCompanionIntrospect(wired.companionIntrospectDeps))
+    if (introspectLc) lc.register(introspectLc)
+    const ingestLc = await sup.start('companion.ingest', () => registerIngest(wired.companionIngestDeps))
+    if (ingestLc) {
+      lc.register(ingestLc)
+      wireRef(wired.refs.ingestNudge, ingestLc.nudge)   // inbound path nudges ingestion on fresh activity
+    }
+    const guardLc = await sup.start('guard', () => registerGuard(wired.guardDeps))
+    if (guardLc) { wireRef(wired.refs.guard, guardLc); lc.register(guardLc) }
     lc.register(registerSessions(wired.sessionsDeps))
     lc.register(registerIlink(wired.ilinkDeps))
     const pollingLc = registerPolling({ ...wired.pollingDeps, runPipeline: pipeline })
@@ -422,12 +473,33 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // mailbox_relays entry + a live onMailboxLetter). Absent ⇒ no poll timer,
     // no relay traffic — same "undefined ⇒ fully inert" posture as every
     // other optional companion/social wiring above.
-    if (boot.mailboxPollerDeps) lc.register(registerMailboxPoller(boot.mailboxPollerDeps))
+    const mailboxLc = await sup.start('mailbox-poller',
+      () => boot.mailboxPollerDeps ? registerMailboxPoller(boot.mailboxPollerDeps) : undefined)
+    if (mailboxLc) lc.register(mailboxLc)
     // 5. one-shot startup sweeps — fire-and-forget
     runStartupSweeps(wired.startupDeps)
     const modeStr = dangerously ? 'mode=dangerouslySkipPermissions=true (no WeChat permission prompts will fire)' : 'mode=strict (Phase 1 permission relay active)'
     log('DAEMON', `started pid=${process.pid} accounts=${accounts.length} ${modeStr}`)
     if (dangerously) log('DAEMON', 'warning: Claude will still confirm destructive ops via natural-language reply, but no permission prompts will appear.')
+    // Subsystem degraded-boot (spec 2026-08-17 §3) — 启动完成后的一次性
+    // 管理员汇总。只报 degraded(off 是常态,不扰人);发送失败只落日志,
+    // 绝不影响启动结果。
+    const degradedSubsystems = sup.degraded()
+    if (degradedSubsystems.length > 0) {
+      log('SUBSYS', `boot completed degraded: ${degradedSubsystems.map(d => `${d.name}(${d.error ?? '?'})`).join(', ')}`)
+      const adminChatId = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+      if (adminChatId) {
+        const lines = degradedSubsystems.map(d => `- ${d.name}:${d.error ?? 'unknown'}`).join('\n')
+        // ilink.sendMessage resolves { error } instead of rejecting (ilink-glue
+        // swallows assertChatRoutable etc.), so the failure signal is the
+        // resolved error field; keep .catch as belt-and-suspenders only.
+        void ilink.sendMessage(adminChatId,
+          `⚠️ 本次启动有 ${degradedSubsystems.length} 个子系统未能启动:\n${lines}\n核心收发不受影响;重启守护进程可重试。`,
+        ).then(r => {
+          if (r.error) log('SUBSYS', `admin degraded summary send failed: ${r.error}`)
+        }).catch(err => log('SUBSYS', `admin degraded summary send failed: ${err instanceof Error ? err.message : String(err)}`))
+      }
+    }
     didStartup = true
   } catch (err) {
     log('DAEMON', `startup failed mid-init: ${err instanceof Error ? err.message : String(err)}`)

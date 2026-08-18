@@ -15,7 +15,7 @@ import { makeEmbedRunner, type EmbedRunnerChild } from './embed-runner'
  *  request/response framing survives overlapping embed() calls (no
  *  cross-talk on the pipe). `delays[i]` is the delay (ms) for the i-th
  *  request line this child receives; missing entries default to 0. */
-function makeFakeChild(opts: { delays?: number[]; mismatch?: boolean } = {}): EmbedRunnerChild & { requestsSeen: string[][] } {
+function makeFakeChild(opts: { delays?: number[]; mismatch?: boolean; error?: string } = {}): EmbedRunnerChild & { requestsSeen: string[][] } {
   const delays = opts.delays ?? []
   const enc = new TextEncoder()
   const dec = new TextDecoder()
@@ -43,6 +43,12 @@ function makeFakeChild(opts: { delays?: number[]; mismatch?: boolean } = {}): Em
       // one fixed vector per input text, deterministic on text length —
       // `mismatch` drops the last one to simulate a subprocess bug that
       // returns fewer vectors than requested texts.
+      if (opts.error) {
+        // The real subprocess reports failures as {"error": "..."} with no
+        // `vectors` key at all — see embed_subprocess.py's request loop.
+        controller.enqueue(enc.encode(JSON.stringify({ error: opts.error }) + '\n'))
+        return
+      }
       let vectors = req.texts.map(t => [t.length, 1, 2])
       if (opts.mismatch && vectors.length > 0) vectors = vectors.slice(0, -1)
       controller.enqueue(enc.encode(JSON.stringify({ vectors }) + '\n'))
@@ -299,5 +305,41 @@ describe('makeEmbedRunner', () => {
     })
 
     expect(seenEnv).toBe(process.env as unknown as Record<string, string | undefined>)
+  })
+
+  it("surfaces the subprocess's own error message instead of a TypeError about vectors", async () => {
+    // Regression. The subprocess reports failures as {"error": "..."}; this
+    // code read `parsed.vectors.length` unconditionally, so the daemon logged
+    //   indexer run failed: undefined is not an object (evaluating 'parsed.vectors.length')
+    // and threw away the only thing that said what was actually wrong. That
+    // is half the reason the bare-script relative-import bug survived into a
+    // release: its real message, "attempted relative import with no known
+    // parent package", was sitting in the pipe the whole time, unread.
+    const child = makeFakeChild({ error: 'attempted relative import with no known parent package' })
+    runner = makeEmbedRunner({
+      pythonBin: 'python3',
+      scriptPath: '/fake/embed_subprocess.py',
+      model_id: 'test-model',
+      spawnFn: () => child,
+    })
+
+    await expect(runner.embed(['a'])).rejects.toThrow(/attempted relative import/)
+  })
+
+  it('rejects a response that carries neither vectors nor an error, naming what it got', async () => {
+    const child = makeFakeChild()
+    // Overwrite the queued good response with a shape the protocol does not
+    // define, so a future protocol drift fails loudly rather than as a
+    // TypeError deep inside the parse.
+    runner = makeEmbedRunner({
+      pythonBin: 'python3',
+      scriptPath: '/fake/embed_subprocess.py',
+      model_id: 'test-model',
+      spawnFn: () => ({ ...child, stdout: new ReadableStream<Uint8Array>({
+        start(c) { c.enqueue(new TextEncoder().encode('{"unexpected":true}\n')) },
+      }) }),
+    })
+
+    await expect(runner.embed(['a'])).rejects.toThrow(/unexpected/)
   })
 })

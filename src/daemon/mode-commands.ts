@@ -29,6 +29,7 @@ import { botName } from './bot-name'
 import { validateNickname, NICKNAME_MAX_LEN } from './nickname'
 import { capabilitiesFor } from '../core/capability-matrix'
 import type { AgentConfig } from '../lib/agent-config'
+import type { UserTier } from '../core/user-tier'
 
 export interface ModeCommandsDeps {
   coordinator: Pick<ConversationCoordinator, 'getMode' | 'setMode' | 'cancel'>
@@ -58,6 +59,16 @@ export interface ModeCommandsDeps {
   log: (tag: string, line: string) => void
   /** Returns true when userId belongs to an admin. Used by /help to gate the admin section. */
   isAdmin?: (userId: string) => boolean
+  /**
+   * Resolve a chat's access tier. Used ONLY to gate `/agy`: agy's MCP tool
+   * access is tier-C (spec 2026-08-17-agy-provider-design.md §3) — its
+   * global `~/.gemini/config/mcp_config.json` carries a single long-lived
+   * 'trusted' token shared by every conversation agy runs, with no
+   * per-session isolation. A guest chat switching a session to agy would
+   * therefore get trusted-tier tool access it isn't entitled to, so guest
+   * chats are refused outright rather than silently over-privileged.
+   */
+  resolveTier(chatId: string): UserTier
 }
 
 export interface ModeCommands {
@@ -69,6 +80,23 @@ export interface ModeCommands {
 // because the user might type `/CC` or `/Codex`. The provider mapping is
 // case-sensitive though (canonical lowercase ids).
 const COMMAND_REGEX = /^\s*\/([a-z][a-z_-]*)(?:\s+(.+))?\s*$/i
+
+// A3 (spec §A3): the slash-words this file recognises somewhere below (the
+// isProviderCommand table + every other bare/argument-taking branch in
+// `handle()`). Kept as an explicit list rather than derived at runtime so
+// reviewers see it grow in the same diff as a new branch — checklist item
+// for "adding a command", paired with the /help + /mode lists below.
+const KNOWN_SLASH_COMMANDS = new Set([
+  'cc', 'codex', 'cursor', 'api', 'gemini', 'agy', // isProviderCommand
+  'set', 'solo', 'mode', 'both', 'parallel', 'chat', 'stop', 'whoami', 'name', 'help',
+])
+
+// A3: a bare, ASCII-only, 2-16 letter slash command ⇒ almost certainly a
+// typo'd or half-remembered command, not the user talking to the bot (real
+// sentences carry spaces/punctuation/Chinese). Deliberately narrow: an
+// argument, Chinese characters, or a length outside this range fall through
+// unchanged below — the user might genuinely be mid-sentence.
+const UNKNOWN_SLASH_RE = /^\/[a-zA-Z]{2,16}$/
 
 export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
   function isProviderCommand(slashWord: string): ProviderId | null {
@@ -83,6 +111,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     // registry.has() guard below replies "未注册".
     if (lower === 'api') return 'openai'
     if (lower === 'gemini') return 'gemini'
+    if (lower === 'agy') return 'agy'
     return null
   }
 
@@ -116,6 +145,16 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     if (unknown.length > 0) {
       return { ok: false, error: `❌ 未知的 provider: ${unknown.join(', ')}. 已注册: ${deps.registry.list().join(', ')}` }
     }
+    // agy final-review CRITICAL 1: agy is registered (passes the unknown
+    // check above) but rides a tier-C SHARED 'trusted' MCP token (spec §3)
+    // — putting it in parallel/chatroom would let a guest chat's turn
+    // reach that trusted-token tool channel, and spec §7 declares
+    // parallel/chatroom participation an explicit non-goal. Reject here,
+    // before setMode is ever called, so the user gets copy instead of the
+    // coordinator's thrown-error fallback.
+    if (tokens.some(t => t.toLowerCase() === 'agy')) {
+      return { ok: false, error: '❌ agy 不能加入 both/chat 模式（共享工具通道），可用 /agy 单独使用（仅管理员/信任聊天）。' }
+    }
     // Deduplicate while preserving order (operator typed the same provider twice → silent dedupe).
     const seen = new Set<string>()
     const dedup = tokens.filter(t => seen.has(t) ? false : (seen.add(t), true))
@@ -145,30 +184,64 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
   }
 
   async function handleHelp(msg: InboundMsg, admin: boolean): Promise<boolean> {
-    const lines = [
-      '这里是微信通道，可以直接跟我对话。可用命令：',
-      '',
-      '**模式切换**',
-      '/cc /codex /cursor /api — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)',
-      '/cc + codex — Claude 主答，Codex 当工具 (primary_tool)',
-      '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
-      '/chat [p1 p2 …] — 圆桌讨论',
-      '/solo /stop /mode — 回到默认 / 退出 / 显示当前模式',
-      '/set — 本对话偏好(拆分回复、主动关心档位、表情包、每日打猎)',
-      '',
-      '**身份**',
-      '/whoami — 显示你的身份 + 当前模式',
-      '/name <昵称> — 设置或改昵称',
-      '',
-      '**项目切换 / 陪伴**',
-      '直接说"切到 <alias>"、"开启陪伴"、"别烦我" — 自然语言走得通，没做 slash 形式',
-      '',
-      '**文件**',
-      '拖图片/文件给我即可',
-      '',
-      '或者直接提问、丢代码、让我跑命令。',
-    ]
-    if (admin) {
+    // /help 分层 (spec §5): gated by resolveTier === 'guest', NOT isAdmin.
+    // isAdmin's allowFrom fallback can misjudge an old install's actual
+    // owner (falls back to allowFrom membership before admins[] has ever
+    // been backfilled), which would incorrectly hand THAT owner the guest
+    // help text; resolveTier's own fallback ladder (user-tier.ts) treats
+    // that same owner correctly, and the owner returns to full /help the
+    // moment `hearth doctor` backfills admins[]. Guests only see the slice
+    // of /help that's actually usable/meaningful at their tier: the
+    // opening blurb, identity (/whoami /name), /set split, and file
+    // send/receive — provider switching, /set care, and 陪伴/配对 are
+    // either refused outright at guest tier or meaningless to a chat that
+    // was never allowlisted for them.
+    const isGuest = deps.resolveTier(msg.chatId) === 'guest'
+    const lines = isGuest
+      ? [
+          '这里是微信通道，可以直接跟我对话。可用命令：',
+          '',
+          '**身份**',
+          '/whoami — 显示你的身份 + 当前模式',
+          '/name <昵称> — 设置或改昵称',
+          '',
+          '**设置**',
+          '/set split on|off — 回复像真人一样分几条发（别名: 拆分 开|关）',
+          '',
+          '**文件**',
+          '拖图片/文件给我即可',
+          '',
+          '或者直接提问、丢代码、让我跑命令。',
+        ]
+      : [
+          '这里是微信通道，可以直接跟我对话。可用命令：',
+          '',
+          '**模式切换**',
+          // Provider checklist: keep this list in sync with /mode's list below (~:434).
+          '/cc /codex /cursor /api /gemini /agy — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)',
+          '/cc + codex — Claude 主答，Codex 当工具 (primary_tool)',
+          '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
+          '/chat [p1 p2 …] — 圆桌讨论',
+          '/solo /stop /mode — 回到默认 / 退出 / 显示当前模式',
+          '/set — 本对话偏好(拆分回复、主动关心档位、表情包、每日打猎)',
+          '',
+          '**身份**',
+          '/whoami — 显示你的身份 + 当前模式',
+          '/name <昵称> — 设置或改昵称',
+          '',
+          '**项目切换 / 陪伴**',
+          '直接说"切到 <alias>"、"开启陪伴"、"别烦我" — 自然语言走得通，没做 slash 形式',
+          '',
+          '**文件**',
+          '拖图片/文件给我即可',
+          '',
+          '或者直接提问、丢代码、让我跑命令。',
+        ]
+    // Guests can never be admin (a guest chat isn't allowlisted, let alone
+    // in admins[]) — `!isGuest` here is defense-in-depth against an
+    // identity-resolution mismatch between isAdmin(userId) and
+    // resolveTier(chatId), not an expected real-world combination.
+    if (admin && !isGuest) {
       lines.push(
         '',
         '**管理员命令**',
@@ -182,7 +255,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       )
     }
     await reply(msg.chatId, lines.join('\n'))
-    deps.log('MODE_CMD', `chat=${msg.chatId} → /help (admin=${admin})`)
+    deps.log('MODE_CMD', `chat=${msg.chatId} → /help (admin=${admin}, tier=${isGuest ? 'guest' : 'non-guest'})`)
     return true
   }
 
@@ -202,6 +275,14 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       // /cc, /codex
       const providerId = isProviderCommand(slashWord)
       if (providerId) {
+        // agy tier-C guest gate — checked before ANY setMode (bare, `+peer`,
+        // or the model-pin tail below) since its whole failure mode is
+        // over-privileged tool access, not a specific sub-command. See
+        // ModeCommandsDeps.resolveTier's doc comment.
+        if (providerId === 'agy' && deps.resolveTier(msg.chatId) === 'guest') {
+          await reply(msg.chatId, '❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+          return true
+        }
         if (tail === '') {
           if (!deps.registry.has(providerId)) {
             await reply(msg.chatId, `❌ provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
@@ -224,6 +305,14 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           }
           if (peerProviderId === providerId) {
             await reply(msg.chatId, `❓ 主从模式两侧不能是同一个 provider (你写的是 ${peerSlash} + ${peerSlash})。`)
+            return true
+          }
+          // B2(spec §4):主提供方必须能委派出去,否则确认消息许诺的
+          // delegate 工具在其会话里根本不存在(gemini 硬编码
+          // delegateAvailable:false,cursor 无 delegate stdio 通道)。
+          // Surface, don't paper over(RFC-05 §5)。
+          if (!capabilitiesFor(providerId).supportsDelegation) {
+            await reply(msg.chatId, `❌ ${slashWord} 不支持主从模式(该 provider 的会话无法调用 delegate 工具),对话保持原模式。`)
             return true
           }
           const wiredPeer = defaultDelegatePeer(providerId)
@@ -250,13 +339,13 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           deps.log('MODE_CMD', `chat=${msg.chatId} → primary_tool primary=${providerId} peer=${peerProviderId}`)
           return true
         }
-        // /api <model> — for the openai-compatible provider ONLY, a
+        // /api <model> / /agy <model> — for openai and agy ONLY, a
         // non-"+peer" tail is interpreted as a model id: switch this chat to
-        // solo+openai AND pin the model in one command (e.g. `/api DeepSeek`,
-        // `/api kimi-k2.7-code`). Deliberately NOT extended to
-        // claude/codex/cursor — their tail keeps meaning "unsupported
-        // argument" below, unchanged.
-        if (providerId === 'openai') {
+        // solo+<provider> AND pin the model in one command (e.g. `/api
+        // DeepSeek`, `/agy gemini-3.7-flash-high`). Deliberately NOT
+        // extended to claude/codex/cursor/gemini — their tail keeps meaning
+        // "unsupported argument" below, unchanged.
+        if (providerId === 'openai' || providerId === 'agy') {
           // Liberal on charset (letters/digits/./_/-//), just no whitespace —
           // real model ids vary wildly across OpenAI-compatible backends
           // (DeepSeek/Kimi/Qwen/OpenRouter/…) and some are bare names with no
@@ -393,7 +482,8 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           `已注册 provider: ${deps.registry.list().join(', ')}`,
           `默认: ${deps.defaultProviderId}`,
           '',
-          '可用命令: /cc /codex /cursor /api /gemini /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',
+          // Provider checklist: keep this list in sync with /help's mode-switch line above (~:174).
+          '可用命令: /cc /codex /cursor /api /gemini /agy /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',
         ]
         await reply(msg.chatId, lines.join('\n'))
         return true
@@ -475,7 +565,11 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         const wasInFlight = deps.coordinator.cancel(msg.chatId)
         deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: deps.defaultProviderId })
         const dn = deps.registry.get(deps.defaultProviderId)?.opts.displayName ?? deps.defaultProviderId
-        const suffix = wasInFlight ? '；已中止 in-flight chatroom（最多多收到 1 个 turn 的输出后停止）' : ''
+        // Generic copy: coordinator.cancel() now also fires for solo/parallel
+        // handle-cancels (post-cancel-review CRITICAL 1), not just chatroom's
+        // preempt loop — a chatroom-specific message here would mislead solo
+        // users into thinking they were in chatroom mode.
+        const suffix = wasInFlight ? '；已请求中止 in-flight 回合（最多多收到 1 个 turn 的输出后停止）' : ''
         await reply(msg.chatId, `✅ 已退出当前模式，恢复默认 (solo · ${dn})${suffix}。`)
         deps.log('MODE_CMD', `chat=${msg.chatId} → /stop reset to default${wasInFlight ? ' + cancel in-flight' : ''}`)
         return true
@@ -532,6 +626,21 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       // /help — user-facing command reference (/帮助 alias handled above COMMAND_REGEX)
       if (slashWord.toLowerCase() === 'help' && tail === '') {
         return handleHelp(msg, deps.isAdmin?.(msg.userId) ?? false)
+      }
+
+      // A3 (spec §A3): unknown pure-slash command — a typo'd/half-remembered
+      // command word, not conversation. Reply with a pointer to /help and
+      // consume, instead of silently handing it to the LLM as prose (the F4
+      // bug: `/health` typo'd as `/helth` used to become an odd LLM reply).
+      // Runs LAST, after every known branch above (including admin-commands
+      // slash words like /health — those run in mw-admin, BEFORE mw-mode,
+      // in the real pipeline, so by the time an unrecognised word reaches
+      // here nothing upstream claimed it).
+      const trimmedText = msg.text.trim()
+      if (UNKNOWN_SLASH_RE.test(trimmedText) && !KNOWN_SLASH_COMMANDS.has(slashWord.toLowerCase())) {
+        await reply(msg.chatId, `❓ 不认识 ${trimmedText}。看全部命令发 /help。`)
+        deps.log('MODE_CMD', `chat=${msg.chatId} → unknown slash command ${trimmedText}`)
+        return true
       }
 
       // Not a mode command — let other handlers (admin-commands, onboarding,

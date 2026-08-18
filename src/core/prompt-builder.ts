@@ -90,14 +90,41 @@ export interface BuildSystemPromptArgs {
   newRelationship?: boolean
   /**
    * Local sticker library tags available to this session (image-stickers
-   * design §5). When present and non-empty, adds the sticker section so the
-   * agent knows it can `send_sticker(tag)` on strong-emotion/celebration/
-   * comfort moments and `save_sticker` on a good incoming image. Absent or
-   * empty ⇒ output is byte-identical to before this field existed (mirrors
-   * `careEnabled`'s contract; callers without a `stickerTagsFor` thunk never
-   * set it).
+   * design §5), tri-state (owner-onboarding design §C2):
+   *   - `undefined` (key absent) or `null` — sticker prefs are OFF for this
+   *     chat (or no `stickerTagsFor` thunk wired at all). No sticker section
+   *     at all. Output is byte-identical to before this field existed
+   *     (mirrors `careEnabled`'s contract).
+   *   - `[]` (empty array) — prefs ON but the local library has no stickers
+   *     yet. Renders the cold-start unlock variant (`stickerEmptyLibrarySection`)
+   *     nudging the agent to `save_sticker` on good incoming images.
+   *   - non-empty array — prefs ON and the library has tags. Renders the
+   *     normal `stickerSection` (unchanged from before this field existed).
+   * `main.ts`'s `stickerTagsFor` thunk is the one place that disambiguates
+   * "pref off" from "pref on, empty library" — both used to collapse to `[]`
+   * before this tri-state split (a caller bug this design fixes: an
+   * empty-library chat could never see ANY sticker guidance).
    */
-  stickerTags?: string[]
+  stickerTags?: string[] | null
+  /**
+   * When true, this chat is an owner chat, companion proactive-tick is NOT
+   * enabled, and the relationship is past the "刚认识" phase (chat's inbound
+   * message count ≥ `NEW_RELATIONSHIP_MSG_COUNT` — owner-onboarding design
+   * §C1) — adds `companionOfferSection()` nudging the agent to mention, at
+   * most once, that it can proactively care via `companion_enable` once the
+   * owner explicitly agrees. Owner-chat-ness and the message-count threshold
+   * are resolved by the caller's `companionOfferFor` thunk (mirrors
+   * `newRelationshipFor`'s family) — this function only gates on the
+   * resolved boolean, ANDed with `!companionEnabled` as a belt-and-braces
+   * check so a thunk bug can never render this section alongside the live
+   * `companionSection()` (which already tells the agent companion is on).
+   * Because `companionOfferFor` and `newRelationshipFor` are computed from
+   * the SAME threshold on opposite sides (`< N` vs `>= N`), the two sections
+   * are naturally mutually exclusive — see bootstrap.test.ts for the
+   * threshold-boundary proof. Absent or false ⇒ output is byte-identical to
+   * before this field existed (mirrors `newRelationship`'s contract).
+   */
+  companionOffer?: boolean
   /**
    * This chat's persona.md content (persona design — "白纸养成" character
    * sheet). When present and non-blank, adds the persona section right
@@ -251,6 +278,15 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     || factsAvailable
     || personAvailable
 
+  // Tri-state (owner-onboarding design §C2 — see BuildSystemPromptArgs.stickerTags
+  // doc for the full contract): undefined/null omits both sticker sections,
+  // [] renders the cold-start unlock variant, non-empty renders the normal one.
+  const stickerSectionRendered = args.stickerTags == null
+    ? ''
+    : args.stickerTags.length > 0
+      ? stickerSection(args.stickerTags)
+      : stickerEmptyLibrarySection()
+
   const sections: string[] = [
     baseChannelSection(providerId),
     args.persona && args.persona.trim().length > 0 ? personaSection(args.persona) : '',
@@ -264,8 +300,11 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     args.fileLocateAvailable ? fileLocateSection() : '',
     args.careEnabled ? careSection() : '',
     args.newRelationship === true ? newRelationshipSection() : '',
+    // Belt-and-braces `!companionEnabled` — see BuildSystemPromptArgs.companionOffer
+    // doc: a thunk bug must never render this alongside the live companionSection().
+    args.companionOffer === true && companionEnabled === false ? companionOfferSection() : '',
     args.personaCultivate === true ? personaCultivationSection({ personaEmpty: args.personaEmpty === true }) : '',
-    args.stickerTags && args.stickerTags.length > 0 ? stickerSection(args.stickerTags) : '',
+    stickerSectionRendered,
     memorySection(),
     hasKnownKnowledge ? knowledgeOrchestrationSection(args.knowledgePlugins ?? [], { knowledgeSearchAvailable, graphAvailable, factsAvailable, personAvailable }) : '',
     multiModeAwarenessSection(),
@@ -513,6 +552,20 @@ export function newRelationshipSection(): string {
 }
 
 /**
+ * Companion-offer capability (owner-onboarding design §C1) — appears once
+ * an owner chat has moved past the "刚认识" phase (same
+ * `NEW_RELATIONSHIP_MSG_COUNT` threshold as `newRelationshipSection`, on the
+ * opposite side — see `BuildSystemPromptArgs.companionOffer`) while
+ * companion proactive-tick is still off. Tells the agent WHEN it may bring
+ * up `companion_enable` (a natural moment where the conversation already
+ * touches something future-dated) and, crucially, to drop it after one
+ * unaccepted mention rather than repeat the pitch every session.
+ */
+export function companionOfferSection(): string {
+  return '你们已经聊熟了。若对话自然聊到未来的事(约定、截止日、日程),可以顺势提一句:你能主动关心这些(用 companion_enable 工具,对方明确同意才开启)。提过一次没被接受,就别再提。'
+}
+
+/**
  * Sticker-reply capability (image-stickers design §5) — appears when this
  * session has a non-empty local sticker library. Gives the agent a
  * when-to-use framing (strong emotion/celebration/comfort, at most one per
@@ -528,6 +581,18 @@ export function stickerSection(tags: string[]): string {
   return `## 表情包
 
 本地表情库可用 tags: ${safeTags.join(', ')}。情绪强/庆祝/安慰的时刻可以用 \`send_sticker(tag)\` 发一张表情包，一次最多一张，配合文字而不是替代文字；没有合适的 tag 就不用，别硬凑；用户发来好的表情图时可以用 \`save_sticker\` 收进库（先问一句）。`
+}
+
+/**
+ * Sticker cold-start unlock (owner-onboarding design §C2) — the empty-library
+ * companion to `stickerSection`. Renders when sticker prefs are ON but the
+ * local library has no tags yet (see `BuildSystemPromptArgs.stickerTags`
+ * tri-state doc for the full disambiguation from "pref off"). Without this,
+ * an empty-library chat got NO sticker guidance at all — the agent never
+ * learned `save_sticker` exists until the owner happened to ask.
+ */
+export function stickerEmptyLibrarySection(): string {
+  return '你还没有表情包。聊天里遇到值得存的表情/梗图,可以用 save_sticker 存进库,以后就能发给对方。'
 }
 
 function memorySection(): string {

@@ -17,14 +17,27 @@
  * if no bot_name is set yet, ask "你想怎么叫我?" and persist the reply.
  * This extends the state machine with an `awaiting_bot_name` phase.
  *
- * State is in-memory only — daemon restart resets the awaiting set, but the
- * user simply re-sends their nickname. No persistent corruption surface.
+ * The `awaiting` set is state-store backed (write-through, debounceMs:0 —
+ * repo convention, see chat-prefs.ts / incident-store.ts) so a daemon
+ * restart mid-flow doesn't force a re-greet: the in-progress nickname
+ * exchange picks up where it left off on the next inbound. The 30-min
+ * timeout travels with each entry (`since`); `getAwaiting()` itself is a
+ * plain lookup (no filtering), and `handle()` applies the timeout via its
+ * own `stillWaiting` check on the returned entry. Expired entries ARE
+ * pruned from disk, but lazily — on the next `setAwaiting()` call for ANY
+ * chat, not on every read.
+ * The 1.5s dedup window (DEDUP_WINDOW_MS) stays process-local semantics —
+ * it happens to piggyback on the persisted `since`/`triggerText` fields,
+ * but there's no separate durable dedup ledger: an ilink re-delivery that
+ * lands within 1.5s of a daemon restart is not a scenario worth guarding.
  */
 
+import { join } from 'node:path'
 import type { InboundMsg } from '../core/prompt-format'
 // Nickname constraint lives in one place (./nickname) — shared with /name and
 // /botname so the allowed set can't silently drift between them.
 import { NICKNAME_MAX_LEN, NICKNAME_MIN_LEN, NICKNAME_RE } from './nickname'
+import { makeStateStore, type StateStore } from './state-store'
 
 export interface OnboardingDeps {
   isKnownUser(userId: string): boolean
@@ -50,6 +63,15 @@ export interface OnboardingDeps {
   /** Persist the new self-name (null = clear). Disk-first, then in-memory
    *  mutate. Throws on I/O failure; caller catches + replies retry hint. */
   setBotName(name: string | null): Promise<void>
+  /** stateDir for constructing the persistent awaiting-state store
+   *  (production wiring: `<stateDir>/onboarding-pending.json`). Ignored
+   *  when `store` is injected directly. */
+  stateDir: string
+  /** Test seam — inject a pre-built StateStore instead of constructing one
+   *  from `stateDir`. Lets tests simulate a daemon restart by building a
+   *  fresh handler + fresh StateStore instance against the SAME on-disk
+   *  file. */
+  store?: StateStore
 }
 
 export interface OnboardingHandler {
@@ -68,14 +90,66 @@ const BOT_NAME_SKIP_WORDS = new Set(['跳过', '不用', '没有', 'skip', 'clea
 
 type AwaitPhase = 'awaiting_user_name' | 'awaiting_bot_name'
 
+interface AwaitEntry {
+  since: number
+  triggerText: string
+  fromMessage: InboundMsg
+  phase: AwaitPhase
+}
+
+// Single state-store key holding the WHOLE awaiting map (repo convention —
+// see incident-store.ts / chat-prefs.ts: one KEY, JSON-stringified payload —
+// rather than one state-store key per chatId).
+const AWAITING_KEY = 'awaiting'
+
 export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
-  const awaiting = new Map<string, {
-    since: number
-    triggerText: string
-    fromMessage: InboundMsg
-    phase: AwaitPhase
-  }>()
+  const store = deps.store ?? makeStateStore(join(deps.stateDir, 'onboarding-pending.json'), { debounceMs: 0 })
   const now = deps.now ?? (() => Date.now())
+
+  function readAll(): Record<string, AwaitEntry> {
+    const raw = store.get(AWAITING_KEY)
+    if (!raw) return {}
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, AwaitEntry>
+        : {}
+    } catch {
+      return {}   // corrupt JSON — start empty, same posture as state-store itself
+    }
+  }
+
+  function writeAll(all: Record<string, AwaitEntry>): void {
+    store.set(AWAITING_KEY, JSON.stringify(all))
+  }
+
+  /** Drop any chat's awaiting entry once it's past AWAIT_TIMEOUT_MS — keeps
+   *  the on-disk map from accumulating abandoned flows across many users. */
+  function pruneExpired(all: Record<string, AwaitEntry>): Record<string, AwaitEntry> {
+    const t = now()
+    const out: Record<string, AwaitEntry> = {}
+    for (const [chatId, entry] of Object.entries(all)) {
+      if (t - entry.since < AWAIT_TIMEOUT_MS) out[chatId] = entry
+    }
+    return out
+  }
+
+  function getAwaiting(chatId: string): AwaitEntry | undefined {
+    return readAll()[chatId]
+  }
+
+  function setAwaiting(chatId: string, entry: AwaitEntry): void {
+    const all = pruneExpired(readAll())
+    all[chatId] = entry
+    writeAll(all)
+  }
+
+  function deleteAwaiting(chatId: string): void {
+    const all = readAll()
+    if (!(chatId in all)) return
+    delete all[chatId]
+    writeAll(all)
+  }
 
   async function handleUserName(
     msg: InboundMsg,
@@ -99,7 +173,7 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
 
     const askBotName = deps.isAdmin(msg.userId) && !(deps.getBotName()?.trim())
     if (askBotName) {
-      awaiting.set(msg.chatId, { ...aw, phase: 'awaiting_bot_name', since: now(), triggerText: proposed })
+      setAwaiting(msg.chatId, { ...aw, phase: 'awaiting_bot_name', since: now(), triggerText: proposed })
       await deps.sendMessage(
         msg.chatId,
         `好的 ${proposed}。那你想怎么叫我?比如「小希」「助理」（中文 / 英文都行，回「跳过」用默认）。`,
@@ -107,10 +181,10 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
       return true
     }
 
-    awaiting.delete(msg.chatId)
+    deleteAwaiting(msg.chatId)
     await deps.sendMessage(
       msg.chatId,
-      `好的 ${proposed}, 刚才你说「${aw.triggerText}」, 回答下：`,
+      `好的 ${proposed}!想看我全部玩法,随时发 /help。刚才你说「${aw.triggerText}」,回答下:`,
     )
     void deps.dispatchInbound(aw.fromMessage).catch(err => {
       deps.log('ONBOARDING', `echo dispatch failed chat=${msg.chatId}: ${err}`)
@@ -128,7 +202,7 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
     // On false, exit awaiting cleanly + redispatch (same as the
     // already-set-elsewhere path below).
     if (!deps.isAdmin(msg.userId)) {
-      awaiting.delete(msg.chatId)
+      deleteAwaiting(msg.chatId)
       await deps.sendMessage(
         msg.chatId,
         `好的。刚才你说「${aw.fromMessage.text}」, 回答下：`,
@@ -142,7 +216,7 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
     // /botname (or any other code path) may have set bot_name out of band.
     // Exit awaiting cleanly + redispatch the original trigger.
     if (deps.getBotName()?.trim()) {
-      awaiting.delete(msg.chatId)
+      deleteAwaiting(msg.chatId)
       await deps.sendMessage(
         msg.chatId,
         `好的。刚才你说「${aw.fromMessage.text}」, 回答下：`,
@@ -162,7 +236,7 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
         await deps.sendMessage(msg.chatId, '我没记住，稍后再试 /botname')
         return true
       }
-      awaiting.delete(msg.chatId)
+      deleteAwaiting(msg.chatId)
       await deps.sendMessage(
         msg.chatId,
         `好的，继续用默认「${deps.botName(msg.chatId)}」。刚才你说「${aw.fromMessage.text}」, 回答下：`,
@@ -192,7 +266,7 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
       await deps.sendMessage(msg.chatId, '我没记住，稍后再试 /botname')
       return true
     }
-    awaiting.delete(msg.chatId)
+    deleteAwaiting(msg.chatId)
     deps.log('ONBOARDING', `bot_name set chat=${msg.chatId} → "${proposed}"`)
     await deps.sendMessage(
       msg.chatId,
@@ -206,7 +280,7 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
 
   return {
     async handle(msg) {
-      const aw = awaiting.get(msg.chatId)
+      const aw = getAwaiting(msg.chatId)
       const stillWaiting = aw !== undefined && (now() - aw.since) < AWAIT_TIMEOUT_MS
 
       // If we're in the bot_name phase, the user is already known (nickname
@@ -238,7 +312,7 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
       }
 
       // First contact (or stale awaiting state past timeout): greet + start the clock.
-      awaiting.set(msg.chatId, {
+      setAwaiting(msg.chatId, {
         since: now(),
         triggerText: msg.text,
         fromMessage: msg,
@@ -247,7 +321,7 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
       deps.log('ONBOARDING', `start chat=${msg.chatId} userId=${msg.userId}`)
       await deps.sendMessage(
         msg.chatId,
-        `你好呀！我是 ${deps.botName(msg.chatId)}，先问一下我应该怎么称呼你?比如「Nate」「丸子」（中文 / 英文都行）。`,
+        `你好呀!我是 ${deps.botName(msg.chatId)}——住在你微信里的 AI 伙伴,能聊天、帮你干活、记得你说过的事。先问一下,我应该怎么称呼你?比如「Nate」「丸子」(中文/英文都行)`,
       )
       return true
     },

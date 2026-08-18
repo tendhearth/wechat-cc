@@ -23,7 +23,7 @@ import type { InboundMsg } from './prompt-format'
 import { buildOpeningPrompt, buildRebuttalPrompt, buildVerdictPrompt, buildConvergencePrompt, parseConvergence, type Opening } from './chatroom-conductor'
 import { assertSupported, capabilitiesFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
 import { collectTurn, TURN_TIMEOUT_CODE, type TurnSummary } from './agent-provider'
-import { resolveEffectiveTier, TIER_PROFILES, type TierProfile } from './user-tier'
+import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile } from './user-tier'
 import type { Access } from '../lib/access'
 import { makeChatMutex } from './async-mutex'
 
@@ -272,12 +272,19 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     mode: (Mode & { kind: 'parallel' | 'chatroom' }),
     chatId: string,
   ): ProviderId[] {
+    // agy final-review CRITICAL 1: never let a registry-derived fallback
+    // auto-include agy — `deps.registry.list()` is the live provider set
+    // and agy is a normal registered provider there (it just can't ride
+    // parallel/chatroom, spec §7). Excluded up front so both the legacy
+    // backfill (first-two) and the fresh-chat fallback (full registry)
+    // never pick it, regardless of registration order.
+    const registryList = deps.registry.list().filter(p => p !== 'agy')
     let list: ProviderId[]
     if (mode.participants !== undefined) {
       list = mode.participants
     } else if (deps.conversationStore.get(chatId)?.mode) {
       // Row exists with no participants — legacy. Backfill to first-two.
-      list = deps.registry.list().slice(0, 2)
+      list = registryList.slice(0, 2)
       // Persist so this is a one-shot. setParticipants is a no-op if the
       // row doesn't have parallel/chatroom kind, but we just read it as
       // parallel/chatroom so the call is safe.
@@ -289,9 +296,16 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       }
     } else {
       // No row yet — first-ever dispatch in this chat under parallel/chatroom.
-      list = deps.registry.list()
+      list = registryList
     }
-    const filtered = list.filter(p => deps.registry.has(p))
+    // Belt-and-suspenders: also strip 'agy' out of an EXPLICIT participants
+    // list here, not just validateMode. validateMode is the primary,
+    // user-facing rejection (setMode throws before the row is ever
+    // persisted), but this filter is the dispatch-time backstop for any
+    // row that predates that guard (or was written directly to the store,
+    // bypassing setMode — see the N-way participants tests) — the shared-
+    // token hazard this is defending is worth a second, cheap check.
+    const filtered = list.filter(p => deps.registry.has(p) && p !== 'agy')
     if (filtered.length < list.length) {
       deps.log('COORDINATOR', `chat=${chatId} participants filtered ${list.join(',')} → ${filtered.join(',')} (registry: ${deps.registry.list().join(',')})`)
     }
@@ -366,6 +380,27 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
   // loops. dispatchChatroom registers; coordinator.cancel() signals; /stop
   // in mode-commands triggers cancel before flipping mode.
   const inFlightAborters = new Map<string, AbortController>()
+  // Post-cancel-review CRITICAL 1 — chatroom's own preempt-loop AbortController
+  // above has no analogue for solo/parallel/primary_tool: those are single-shot
+  // dispatches with no round-boundary loop to abort, but the SessionHandle they
+  // acquire from SessionManager DOES support cancel() (forwards to the
+  // provider's AgentSession.cancel — see session-manager.ts). Without this,
+  // coordinator.cancel() (and therefore /stop) was a no-op for every mode
+  // except chatroom, even though every provider now implements cancel().
+  // chatId → the set of in-flight handles' cancel closures (a Set, not a
+  // single slot, because dispatchParallel acquires N handles concurrently
+  // for one chatId). Registered right after acquire, unregistered when the
+  // turn settles — same lifecycle shape as inFlightAborters.
+  const inFlightHandleCancels = new Map<string, Set<() => void>>()
+  function registerHandleCancel(chatId: string, fn: () => void): () => void {
+    let set = inFlightHandleCancels.get(chatId)
+    if (!set) { set = new Set(); inFlightHandleCancels.set(chatId, set) }
+    set.add(fn)
+    return () => {
+      set!.delete(fn)
+      if (set!.size === 0) inFlightHandleCancels.delete(chatId)
+    }
+  }
   // PR C2 — per-chat promise that resolves when the active dispatchChatroom
   // call has finished its finally block (aborter slot cleared). A NEW
   // chatroom dispatch in the same chat awaits this so the "latest user msg
@@ -391,6 +426,11 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       if (!deps.registry.has(mode.primary)) {
         throw new Error(`unknown primary provider: ${mode.primary}`)
       }
+      // B2(spec §4):持久化状态里翻出的旧非法组合也要拦 —— 与 registry
+      // 未注册同姿势,抛错由 setMode 调用方转成用户可见的失败。
+      if (!capabilitiesFor(mode.primary).supportsDelegation) {
+        throw new Error(`provider '${mode.primary}' cannot delegate (supportsDelegation=false) — primary_tool mode unavailable`)
+      }
       // The peer (other registered provider) must also be available so
       // delegate-mcp can actually do something. parallelProviders is
       // also the "all participating providers" set for primary_tool.
@@ -403,6 +443,18 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // Explicit participants must all be registered. Undefined defers
       // to dispatch-time resolution (resolveParticipants).
       if (mode.participants !== undefined) {
+        // agy final-review CRITICAL 1: agy rides a tier-C shared 'trusted'
+        // MCP token (spec §3) — spec §7 declares parallel/chatroom an
+        // explicit non-goal. `/both claude agy` / `/chat codex agy` (or a
+        // programmatic POST /v1/conversation/set-mode with the same shape)
+        // would otherwise put a guest chat's turn on the same channel a
+        // trusted chat's agy session uses. Reject structurally here — this
+        // is the ONE validateMode chokepoint every caller (mode-commands
+        // AND the HTTP route) goes through, so there's no second path that
+        // can smuggle agy into a participants list.
+        if (mode.participants.includes('agy')) {
+          throw new Error(`provider 'agy' cannot join parallel/chatroom modes (shared-token channel; spec §7 non-goal)`)
+        }
         const unknown = mode.participants.filter(p => !deps.registry.has(p))
         if (unknown.length > 0) {
           throw new Error(`mode '${mode.kind}' has unknown providers: ${unknown.join(', ')} (registered: ${deps.registry.list().join(', ')})`)
@@ -426,6 +478,27 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     // 'solo' would mislabel those in GET /v1/turns and misdirect diagnosis.
     recordMode: TurnRecord['mode'] = 'solo',
   ): Promise<void> {
+    // agy final-review Important 2 — dispatch-time fail-closed gate.
+    // mode-commands.ts's `/agy` guest gate only guards the SLASH-COMMAND
+    // flip: POST /v1/conversation/set-mode (trusted-tier bearer token, no
+    // agy-aware check of its own) can set solo+agy directly, and a
+    // solo+agy row set validly while the chat WAS trusted survives a later
+    // demotion to guest in access.json with no re-validation. Both land
+    // here with providerId==='agy' for a chat that resolves to guest
+    // RIGHT NOW — refuse to spawn rather than trust the mode row's
+    // vintage. Raw resolveTier (NOT resolveEffectiveTier) on purpose:
+    // mirrors pipeline-deps.ts's /agy closure, which deliberately omits
+    // the --dangerously⇒admin shortcut for this exact shared-token hazard
+    // (agy's tier-C MCP config is one long-lived 'trusted' token shared by
+    // every conversation agy runs — see agy-mcp-config.ts).
+    if (providerId === 'agy' && resolveTier(msg.chatId, deps.loadAccess()) === 'guest') {
+      deps.log('COORDINATOR', `chat=${msg.chatId} refuse solo+agy dispatch: guest tier (dispatch-time gate)`, {
+        event: 'agy_guest_refused',
+        chat_id: msg.chatId,
+      })
+      await deps.sendAssistantText?.(msg.chatId, '❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+      return
+    }
     const tier = resolveEffectiveTier(msg.chatId, deps.loadAccess(), deps.permissionMode)
     const tierProfile = TIER_PROFILES[tier]
     deps.log('COORDINATOR', `solo chat=${msg.chatId} → project=${proj.alias} provider=${providerId} tier=${tier}`, {
@@ -442,6 +515,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     const startedAt = nowMs()
     let outcome: TurnRecord['outcome'] = 'error'
     let summary: TurnSummary | undefined
+    let unregisterCancel: (() => void) | undefined
     try {
       const handle = await deps.manager.acquire({
         alias: proj.alias,
@@ -451,6 +525,10 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         tierProfile,
         permissionMode: deps.permissionMode,
       })
+      // Registered before collectTurn starts draining so /stop can reach
+      // this turn for its entire lifetime — cleared in the finally below,
+      // same lifecycle as chatroom's inFlightAborters.
+      unregisterCancel = registerHandleCancel(msg.chatId, () => { void handle.cancel?.() })
       const text = deps.format(msg)
       summary = await collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs })
       const assistantTexts = summary.assistantText
@@ -488,6 +566,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         await deps.sendAssistantText?.(msg.chatId, t)
       }
     } finally {
+      unregisterCancel?.()
       const endedAt = nowMs()
       deps.recordTurn?.({
         chatId: msg.chatId,
@@ -668,11 +747,24 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     )
     const text = deps.format(msg)
     const startedAt = nowMs()
-    const settled = await Promise.allSettled(acquired.map(a =>
-      a.status === 'fulfilled'
-        ? collectTurn(a.value.dispatch(text), { timeoutMs: deps.turnTimeoutMs })
-        : Promise.reject(a.reason),
-    ))
+    // Register every acquired handle's cancel BEFORE dispatching — /stop must
+    // reach whichever participants are in flight, not just the first. Each
+    // handle gets its own slot in the shared per-chat set (dispatchSolo's
+    // single-slot registration doesn't fit here: N participants share one
+    // chatId).
+    const unregisterCancels = acquired.map(a =>
+      a.status === 'fulfilled' ? registerHandleCancel(msg.chatId, () => { void a.value.cancel?.() }) : undefined,
+    )
+    let settled: PromiseSettledResult<TurnSummary>[]
+    try {
+      settled = await Promise.allSettled(acquired.map(a =>
+        a.status === 'fulfilled'
+          ? collectTurn(a.value.dispatch(text), { timeoutMs: deps.turnTimeoutMs })
+          : Promise.reject(a.reason),
+      ))
+    } finally {
+      for (const u of unregisterCancels) u?.()
+    }
     // Batch end — all participants dispatched together and allSettled awaits
     // them all, so a single endedAt is the honest wall-clock for the round.
     const endedAt = nowMs()
@@ -924,11 +1016,22 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       deps.conversationStore.set(chatId, mode)
     },
     cancel(chatId) {
+      let cancelledAny = false
       const ac = inFlightAborters.get(chatId)
-      if (!ac) return false
-      ac.abort()
-      // delete is done in dispatchChatroom's finally; double-delete is harmless.
-      return true
+      if (ac) {
+        ac.abort()
+        // delete is done in dispatchChatroom's finally; double-delete is harmless.
+        cancelledAny = true
+      }
+      // Post-cancel-review CRITICAL 1 — solo/parallel/primary_tool turns
+      // have no aborter loop, but their acquired SessionHandle(s) do
+      // support cancel(); invoke every in-flight one for this chat.
+      const handleCancels = inFlightHandleCancels.get(chatId)
+      if (handleCancels && handleCancels.size > 0) {
+        for (const fn of handleCancels) fn()
+        cancelledAny = true
+      }
+      return cancelledAny
     },
     runExclusive: mutex.runExclusive,
     dispatch,

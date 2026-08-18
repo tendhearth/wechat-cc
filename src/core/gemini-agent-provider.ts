@@ -14,6 +14,9 @@
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
 import type { TierProfile } from './user-tier'
 import { classifyToolUse } from './user-tier'
+import type { McpStdioSpec } from './mcp-stdio-spec'
+import { childEnvFor } from './mcp-stdio-spec'
+import { makeTurnEmitter } from './turn-emitter'
 
 /** RFC 05 Phase 2 capability declaration. We OWN the loop → per-tool gating is
  *  realisable (perToolCallback). No SDK sandbox (enforcement is the tool gate,
@@ -104,11 +107,17 @@ export interface DispatchLoopArgs {
   userText: string
   /** Safety cap on tool rounds per dispatch (default 12). */
   maxRounds?: number
+  /** Cancellation signal (session.cancel() / close()). Checked at round
+   *  boundaries only — this provider owns the loop but generateContent
+   *  itself isn't abortable mid-call, so /stop takes effect at the next
+   *  boundary, not instantly. Additive/optional so direct callers of
+   *  runDispatchLoop that don't pass one are unaffected. */
+  signal?: AbortSignal
 }
 
 /** The tool-use loop. Yields AgentEvents; mutates `history`. */
 export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<AgentEvent> {
-  const startMs = Date.now()
+  const em = makeTurnEmitter()
   const cap = args.maxRounds ?? 12
   args.history.push({ role: 'user', parts: [{ text: args.userText }] })
   const config = {
@@ -118,6 +127,16 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
   let rounds = 0
   try {
     while (true) {
+      if (args.signal?.aborted) {
+        // Mirror the cap-hit branch's history hygiene: at loop entry,
+        // history ends on a user turn (the initial push above, or the
+        // previous round's functionResponse push) — append a synthetic
+        // model turn so the NEXT dispatch on this session doesn't start
+        // with two consecutive user turns.
+        args.history.push({ role: 'model', parts: [{ text: '[cancelled]' }] })
+        yield em.finish({ sessionId: args.sessionId, numTurns: rounds })
+        return
+      }
       rounds++
       const resp = await args.genai.generateContent({ model: args.model, contents: args.history, config })
       const text = resp.text ?? ''
@@ -136,7 +155,7 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
         // ALWAYS push a model turn (even on empty text) to preserve user/model
         // alternation — Flash routinely returns empty text after a tool chain.
         args.history.push({ role: 'model', parts: text ? [{ text }] : [{ text: '' }] })
-        yield { kind: 'result', sessionId: args.sessionId, numTurns: rounds, durationMs: Date.now() - startMs }
+        yield em.finish({ sessionId: args.sessionId, numTurns: rounds })
         return
       }
 
@@ -170,12 +189,21 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
       }
       args.history.push({ role: 'user', parts: responseParts })
 
+      if (args.signal?.aborted) {
+        // Same shape as the cap-hit branch just below: history currently
+        // ends on the user(functionResponse) turn just pushed — append a
+        // synthetic model turn so alternation holds for the next dispatch.
+        args.history.push({ role: 'model', parts: [{ text: '[cancelled]' }] })
+        yield em.finish({ sessionId: args.sessionId, numTurns: rounds })
+        return
+      }
+
       if (rounds >= cap) {
         // Cap hit mid-tool-loop: history currently ends on a user(functionResponse)
         // turn. Append a synthetic model turn so the NEXT dispatch (this session
         // reuses `history`) doesn't produce two consecutive user turns.
         args.history.push({ role: 'model', parts: [{ text: '[max tool rounds reached]' }] })
-        yield { kind: 'result', sessionId: args.sessionId, numTurns: rounds, durationMs: Date.now() - startMs }
+        yield em.finish({ sessionId: args.sessionId, numTurns: rounds })
         return
       }
     }
@@ -184,7 +212,7 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
     // trailing (e.g. generateContent threw), roll it back so the next dispatch
     // doesn't push a second consecutive user turn → API 400.
     if ((args.history.at(-1) as any)?.role === 'user') args.history.pop()
-    yield { kind: 'error', message: err instanceof Error ? err.message : String(err) }
+    yield em.error(err)
   }
 }
 
@@ -278,8 +306,11 @@ export interface GeminiAgentProviderOptions {
   genai: GenaiClient
   model: string
   systemInstruction: string
-  /** Connect an MCP client to the daemon's wechat server (per spawn). */
-  mcpConnect: () => Promise<McpConnection>
+  /** Connect an MCP client to the daemon's wechat server (per spawn). The
+   *  optional `mcpEnv` carries the session's tier-authz env (WECHAT_SESSION_TOKEN/
+   *  _TIER) into the child process — spawn forwards `ctx.mcpEnv` here so gemini's
+   *  wechat MCP child is no longer authz-blind (B1). */
+  mcpConnect: (mcpEnv?: Record<string, string>) => Promise<McpConnection>
   /** Build the per-spawn tool gate from the SpawnContext. REQUIRED — a missing
    *  gate would silently allow every tool (security footgun). Bootstrap supplies
    *  the real one (effectivePolicy + askUser); tests inject a fake. */
@@ -288,20 +319,15 @@ export interface GeminiAgentProviderOptions {
   cheapModel?: string
 }
 
-/** Stdio launch spec for an MCP server (matches bootstrap's McpStdioSpec). */
-export interface GeminiMcpStdioSpec {
-  command: string
-  args: string[]
-  env: Record<string, string>
-}
-
 /** Connect an MCP client over stdio to a server (the daemon's wechat server) and
  *  adapt it to the McpConnection the provider consumes. Dynamic-imports the MCP
- *  SDK so this module stays import-light. */
-export async function connectWechatMcp(spec: GeminiMcpStdioSpec): Promise<McpConnection> {
+ *  SDK so this module stays import-light. `mcpEnv` (WECHAT_SESSION_TOKEN/_TIER)
+ *  is merged in via childEnvFor, on top of the inherited host env + spec.env
+ *  (B1: gemini's wechat MCP child was previously missing both). */
+export async function connectWechatMcp(spec: McpStdioSpec, mcpEnv?: Record<string, string>): Promise<McpConnection> {
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
-  const transport = new StdioClientTransport({ command: spec.command, args: spec.args, env: spec.env })
+  const transport = new StdioClientTransport({ command: spec.command, args: spec.args ?? [], env: childEnvFor(spec, mcpEnv) })
   const client = new Client({ name: 'wechat-cc-gemini', version: '0.0.0' }, { capabilities: {} })
   await client.connect(transport)
   return {
@@ -325,7 +351,7 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
 
   return {
     async spawn(_project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
-      const conn = await opts.mcpConnect()
+      const conn = await opts.mcpConnect(ctx.mcpEnv)
       let functionDeclarations: GeminiFunctionDeclaration[]
       let gate: ToolGate
       try {
@@ -343,9 +369,17 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
       // label since GEMINI_CAPABILITIES.supportsResume = false (no history
       // serialisation yet).
       const history: unknown[] = []
+      // Per-dispatch AbortController — cancel()/close() reach whichever
+      // dispatch is currently in flight. Set synchronously in dispatch()
+      // itself (not inside the generator body), so a cancel() called
+      // right after dispatch() returns — before the caller has iterated
+      // at all — still reaches the right controller.
+      let activeAbort: AbortController | null = null
 
       return {
         dispatch(text: string) {
+          const abort = new AbortController()
+          activeAbort = abort
           return runDispatchLoop({
             genai: opts.genai.models,
             mcp: { callTool: (n, a) => conn.callTool(n, a) },
@@ -356,9 +390,14 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
             history,
             sessionId,
             userText: text,
+            signal: abort.signal,
           })
         },
+        async cancel() {
+          activeAbort?.abort()
+        },
         async close() {
+          activeAbort?.abort()
           try { await conn.close() } catch { /* swallow */ }
         },
       }

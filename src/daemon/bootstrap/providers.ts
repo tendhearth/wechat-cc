@@ -22,6 +22,9 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { buildOpenaiMcpSpecs, type McpStdioSpec } from './mcp-specs'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
+import { setupAgyGlobalMcp } from './agy-mcp-config'
+import { agyVersionOk } from './agy-version-check'
+import { UNDER_TEST_RUNNER } from '../../lib/config'
 import type { BootstrapDeps } from './types'
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
 
@@ -73,6 +76,28 @@ export interface ProviderDeps {
   wechatStdioForOpenai: McpStdioSpec | null
   delegateStdioForOpenai: McpStdioSpec | null
   wechatStdioForGemini: McpStdioSpec | null
+  wechatStdioForAgy: McpStdioSpec | null
+  /** Per-turn watchdog bound (WECHAT_TURN_TIMEOUT_MS), resolved once at boot
+   *  by bootstrap/index.ts — same value the coordinator uses, threaded here
+   *  so the agy provider's `--print-timeout` stays consistent with it. */
+  turnTimeoutMs: number
+  /** Mint/invalidate per-session internal-api tokens (main.ts-wired; absent
+   *  in tests / minimal embeddings) — same seam SessionManager uses
+   *  (BootstrapDeps['mintSessionToken']). The agy provider's tier-C MCP
+   *  setup (agy-mcp-config.ts) uses this to mint ONE long-lived 'trusted'
+   *  token for its global config upsert; never a per-session token. */
+  mintSessionToken?: (tier: import('../../core/user-tier').UserTier, sessionKey: string) => string
+  /**
+   * Test/harness seam for agy's tier-C global MCP config target dir (fix
+   * round 1, 2026-08-17) — threaded straight through to
+   * `setupAgyGlobalMcp`'s `geminiConfigDir`. Production never sets this
+   * (setupAgyGlobalMcp's own default, `~/.gemini/config`, applies). A test
+   * that wants to exercise the real write path passes an explicit mkdtemp'd
+   * dir here; omitted under a test runner, setup is skipped entirely
+   * (UNDER_TEST_RUNNER guard in agy-mcp-config.ts) rather than silently
+   * defaulting to the operator's real home dir.
+   */
+  agyGeminiConfigDir?: string
 }
 
 export interface ProviderWiring {
@@ -90,7 +115,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     claudeBin, currentClaudeModel, resolveAdminChatId, pluginMcp,
     wechatStdioForCodex, delegateStdioForCodex, wechatStdioForCursor,
     delegateStdioForCursor, wechatStdioForOpenai, delegateStdioForOpenai,
-    wechatStdioForGemini,
+    wechatStdioForGemini, wechatStdioForAgy, turnTimeoutMs, mintSessionToken,
+    agyGeminiConfigDir,
   } = deps
   const HOME = homedir()
 
@@ -427,9 +453,11 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
             companionEnabled: deps.ilink.companion.status().enabled,
             delegateAvailable: false,
           }),
-          mcpConnect: () => {
+          mcpConnect: (mcpEnv) => {
             if (!wechatStdioForGemini) throw new Error('gemini: internalApi unavailable — cannot connect wechat MCP')
-            return connectWechatMcp(wechatStdioForGemini)
+            // B1(spec §3): childEnvFor inherits host env + merges session mcpEnv,
+            // gemini's wechat MCP child process now carries WECHAT_SESSION_TOKEN/_TIER.
+            return connectWechatMcp(wechatStdioForGemini, mcpEnv)
           },
           buildGate,
           cheapModel: process.env.WECHAT_GEMINI_CHEAP_MODEL ?? 'gemini-flash-latest',
@@ -443,6 +471,71 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     }
   } else {
     deps.log('BOOT', 'gemini: GEMINI_API_KEY not set — provider not registered')
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // agy provider — sixth registered provider. Subscription Gemini via the
+  // Antigravity CLI (`agy`) — auth lives in agy's own OAuth state, no
+  // GEMINI_API_KEY needed. Gate: the binary must be locatable (agyBin
+  // config override, else PATH) AND answer `--version` with exit 0 inside
+  // a short probe window — a present-but-wedged binary must never stall
+  // boot. See docs/superpowers/specs/2026-08-17-agy-provider-design.md.
+  //
+  // TEST-RUNNER GUARD (2026-08-17, fix round 1): unlike cursor/openai/
+  // gemini (gated on an env var that's simply unset under a test runner),
+  // agy's gate is a real PATH lookup + a real subprocess spawn — so on any
+  // dev/CI box that happens to have `agy` installed, EVERY buildBootstrap()
+  // in the whole test suite would register a real provider and probe a
+  // real binary (85+ spawns per run observed; a wedged binary would add up
+  // to ~7 minutes of pure `agyVersionOk` timeouts). Under a test runner the
+  // PATH fallback is disabled outright — a test that wants agy registered
+  // must opt in explicitly via `agyBin` in its seeded agent-config, exactly
+  // like agyGeminiConfigDir below must be explicit to exercise the MCP
+  // write path. Production (not under a test runner) is unchanged.
+  const agyBin = configuredAgent.agyBin ?? (UNDER_TEST_RUNNER ? null : findOnPath('agy'))
+  if (agyBin && await agyVersionOk(agyBin)) {
+    try {
+      const { createAgyAgentProvider } = await import('../../core/agy-agent-provider')
+      // Tier C (spec §3): agy has no per-session MCP config surface — the
+      // ONLY way to hand it the wechat tool is a boot-time upsert into its
+      // global ~/.gemini/config/mcp_config.json, carrying ONE long-lived
+      // 'trusted' token (never per-session — see agy-mcp-config.ts's doc
+      // comment on why). Both the wechat MCP spec (needs deps.internalApi,
+      // via wechatStdioForAgy) and mintSessionToken (main.ts-only; absent
+      // in tests / minimal embeddings) must be present to do this;
+      // otherwise the provider still registers (it can dispatch turns),
+      // just without the wechat MCP tool wired — logged loudly rather than
+      // silently degraded. `agyGeminiConfigDir` is the test/harness seam
+      // (undefined in production — setupAgyGlobalMcp's own default,
+      // `~/.gemini/config`, applies there); under a test runner, omitting
+      // it makes setupAgyGlobalMcp skip entirely rather than default to the
+      // operator's real home dir (its own UNDER_TEST_RUNNER guard).
+      if (wechatStdioForAgy && mintSessionToken) {
+        setupAgyGlobalMcp({
+          wechatSpec: wechatStdioForAgy,
+          mintToken: () => mintSessionToken('trusted', 'agy-static'),
+          geminiConfigDir: agyGeminiConfigDir,
+          log: deps.log,
+        })
+      } else {
+        deps.log('BOOT', 'agy: internalApi/mintSessionToken unavailable — wechat MCP not wired (agy will have no tools)')
+      }
+      registry.register(
+        'agy',
+        createAgyAgentProvider({
+          bin: agyBin,
+          model: configuredAgent.agyModel ?? 'gemini-3.7-flash-medium',
+          turnTimeoutMs,
+          log: deps.log,
+        }),
+        { displayName: 'Gemini (agy)', canResume: () => true },
+      )
+      deps.log('BOOT', 'agy: binary present — provider registered')
+    } catch (err) {
+      deps.log('BOOT', `agy: registration failed — ${err instanceof Error ? err.message : String(err)}`)
+    }
+  } else {
+    deps.log('BOOT', 'agy: binary not found (PATH or agyBin) or --version probe failed — provider not registered')
   }
 
   // Fail-fast at boot if any registered provider is missing matrix rows.

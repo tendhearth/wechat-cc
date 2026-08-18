@@ -41,6 +41,26 @@ describe('buildDelegateDispatch — openai/Kimi peer wiring', () => {
     if (r.ok) expect(r.response).toBe('kimi-here')
   })
 
+  it('surfaces a turn error event as ok:false instead of an empty success (collectTurn.error inspected)', async () => {
+    // Providers surface failures as error EVENTS (openai auth failures, etc.)
+    // rather than throwing — dispatch() must inspect result.error and NOT
+    // just drain collectTurn into an always-ok:true empty response.
+    const fakeOpenai: AgentProvider = {
+      spawn: async () => makeFakeSession({
+        events: [
+          { kind: 'error', code: 'auth_failed', message: '401 unauthorized' },
+        ],
+      }),
+    }
+    const dispatch = buildDelegateDispatch({
+      stateDir: tmpState(),
+      delegateProviders: { openai: fakeOpenai },
+    })
+    const r = await dispatch('openai', 'ping')
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toContain('auth_failed')
+  })
+
   it('still reports unknown_peer for a genuinely unknown provider', async () => {
     const dispatch = buildDelegateDispatch({ stateDir: tmpState() })
     const r = await dispatch('bogus-provider', 'hi')

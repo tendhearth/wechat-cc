@@ -8,6 +8,7 @@ import { mkdirSync } from 'node:fs'
 import type { WechatCompanionDep } from '../wechat-tool-deps'
 import { companionDir } from '../companion/paths'
 import { loadCompanionConfig, saveCompanionConfig, defaultCompanionConfig } from '../companion/config'
+import { loadAccess } from '../../lib/access'
 import type { IlinkContext } from './context'
 
 export function makeCompanion(ctx: IlinkContext): WechatCompanionDep {
@@ -21,6 +22,22 @@ export function makeCompanion(ctx: IlinkContext): WechatCompanionDep {
       }
 
       mkdirSync(companionDir(stateDir), { recursive: true })
+      // acctStore now also holds hydrated GUEST chats (guest-path spec §2 —
+      // mw-access's hydrateChatRoute → transport.ts's routeChatToAccount),
+      // so the raw "most recently set key" fallback below could otherwise
+      // pick a stranger who merely messaged the bot once and got a neutral
+      // reply. Filter to allowlisted chats — a stranger must never become
+      // the proactive-care destination (fix round 1, Important #2).
+      // '*' is a match-all wildcard (mw-access.ts's own allowed-check, e2e
+      // harness default / an operator's explicitly open daemon) — under
+      // it EVERY acctStore key is "allowed", so `.includes(c)` would
+      // filter everything out and silently break this fallback for the
+      // exact deployments that rely on it most (carryover fix, T4/T5
+      // re-review).
+      const access = loadAccess()
+      const allowedAcctKeys = access.allowFrom.includes('*')
+        ? Object.keys(acctStore.all())
+        : Object.keys(acctStore.all()).filter(c => access.allowFrom.includes(c))
       const newCfg = {
         ...defaultCompanionConfig(),
         ...cfg,
@@ -28,7 +45,7 @@ export function makeCompanion(ctx: IlinkContext): WechatCompanionDep {
         default_chat_id:
           cfg.default_chat_id
           ?? lastActiveRef.current
-          ?? (Object.keys(acctStore.all()).slice(-1)[0] ?? null),
+          ?? (allowedAcctKeys.slice(-1)[0] ?? null),
       }
       await saveCompanionConfig(stateDir, newCfg)
 

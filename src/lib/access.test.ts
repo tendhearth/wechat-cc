@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync } from 'fs'
+import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -21,7 +21,11 @@ function writeAccess(obj: object): void {
   writeFileSync(ACCESS_FILE, JSON.stringify(obj, null, 2))
 }
 
-const { gate, isAdmin, loadAccess, saveAccess, _clearCache, setSessionInvalidator, _resetSnapshotForTest } = await import('./access')
+function readRawAccess(): string {
+  return readFileSync(ACCESS_FILE, 'utf8')
+}
+
+const { gate, isAdmin, loadAccess, saveAccess, appendAllowFrom, _clearCache, setSessionInvalidator, _resetSnapshotForTest } = await import('./access')
 
 beforeEach(() => {
   try { rmSync(ACCESS_FILE) } catch {}
@@ -236,5 +240,73 @@ describe('session invalidator', () => {
     _clearCache()
     writeAccess({ dmPolicy: 'allowlist', allowFrom: ['x', 'y'], admins: ['x', 'y'] })
     expect(() => loadAccess()).not.toThrow()
+  })
+})
+
+// appendAllowFrom — spec §4: the only in-daemon access mutation, and
+// allowFrom-only by design (a guest code is a reference, never a grant of
+// admin/trusted tier). First production caller of saveAccess().
+describe('appendAllowFrom', () => {
+  it('appends a new userId and returns true', () => {
+    writeAccess({ dmPolicy: 'allowlist', allowFrom: ['alice@im.wechat'] })
+    expect(appendAllowFrom('guest@im.wechat')).toBe(true)
+    _clearCache()
+    expect(loadAccess().allowFrom).toEqual(['alice@im.wechat', 'guest@im.wechat'])
+  })
+
+  it('the append is actually persisted via saveAccess (survives a fresh disk read)', () => {
+    writeAccess({ dmPolicy: 'allowlist', allowFrom: [] })
+    appendAllowFrom('guest@im.wechat')
+    const onDisk = JSON.parse(readRawAccess()) as { allowFrom: string[] }
+    expect(onDisk.allowFrom).toEqual(['guest@im.wechat'])
+  })
+
+  it('returns false and does not write when the userId is already present', () => {
+    writeAccess({ dmPolicy: 'allowlist', allowFrom: ['guest@im.wechat'] })
+    const before = readRawAccess()
+    expect(appendAllowFrom('guest@im.wechat')).toBe(false)
+    expect(readRawAccess()).toBe(before)   // untouched — no write happened
+  })
+
+  it('never mutates admins or trusted — field-level equality after append (same elements, same order)', () => {
+    writeAccess({
+      dmPolicy: 'allowlist',
+      allowFrom: ['alice@im.wechat'],
+      admins: ['alice@im.wechat'],
+      trusted: ['bob@im.wechat'],
+    })
+    expect(appendAllowFrom('guest@im.wechat')).toBe(true)
+    _clearCache()
+    const loaded = loadAccess()
+    expect(loaded.admins).toEqual(['alice@im.wechat'])
+    expect(loaded.trusted).toEqual(['bob@im.wechat'])
+    const onDisk = JSON.parse(readRawAccess()) as { admins: string[]; trusted: string[] }
+    expect(onDisk.admins).toEqual(['alice@im.wechat'])
+    expect(onDisk.trusted).toEqual(['bob@im.wechat'])
+  })
+
+  it('preserves dmPolicy unchanged', () => {
+    writeAccess({ dmPolicy: 'disabled', allowFrom: [] })
+    appendAllowFrom('guest@im.wechat')
+    _clearCache()
+    expect(loadAccess().dmPolicy).toBe('disabled')
+  })
+
+  it('reads fresh from disk rather than a stale in-memory cache — a concurrent admins edit made just before append is not clobbered', () => {
+    writeAccess({ dmPolicy: 'allowlist', allowFrom: ['alice@im.wechat'], admins: ['alice@im.wechat'] })
+    loadAccess()   // populate the 5s cache with the OLD admins
+    // Simulate an out-of-band edit (e.g. /wechat:access) landing within the cache TTL.
+    writeAccess({ dmPolicy: 'allowlist', allowFrom: ['alice@im.wechat'], admins: ['alice@im.wechat', 'carol@im.wechat'] })
+    appendAllowFrom('guest@im.wechat')
+    const onDisk = JSON.parse(readRawAccess()) as { admins: string[]; allowFrom: string[] }
+    expect(onDisk.admins).toEqual(['alice@im.wechat', 'carol@im.wechat'])
+    expect(onDisk.allowFrom).toEqual(['alice@im.wechat', 'guest@im.wechat'])
+  })
+
+  it('starts from defaults (allowlist, empty allowFrom) when access.json is missing', () => {
+    expect(appendAllowFrom('guest@im.wechat')).toBe(true)
+    const onDisk = JSON.parse(readRawAccess()) as { dmPolicy: string; allowFrom: string[] }
+    expect(onDisk.dmPolicy).toBe('allowlist')
+    expect(onDisk.allowFrom).toEqual(['guest@im.wechat'])
   })
 })

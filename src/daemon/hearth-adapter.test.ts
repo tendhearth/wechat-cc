@@ -87,3 +87,43 @@ describe('hearth-adapter', () => {
     }
   })
 })
+
+// Smoke test for the DEFAULT importer — the one path production ever takes.
+//
+// Every other test here passes `importer:`, so `defaultImporter`
+// (`specifier => import(specifier)`) was never executed by the suite. That is
+// the same gap that hid two shipped bugs on 2026-08-14: defaults that every
+// test injected past. See src/lib/injectable-default-seams.test.ts.
+//
+// This drives a real dynamic import of a real file on disk, via HEARTH_MODULE.
+describe('loadHearthApi with the default importer', () => {
+  it('really imports a module from disk and accepts it when the exports are there', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hearth-default-importer-'))
+    const mod = join(dir, 'index.mjs')
+    writeFileSync(mod, [
+      'export const ingestFromChannel = () => {}',
+      'export const listPending = () => {}',
+      'export const showPending = () => {}',
+      'export const applyForOwner = () => {}',
+      'export const renderPlanMarkdown = () => {}',
+    ].join('\n') + '\n')
+
+    // No `importer:` — this is the point of the test.
+    const res = await loadHearthApi({ env: { HEARTH_MODULE: mod } as NodeJS.ProcessEnv })
+
+    expect(res.ok).toBe(true)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('reports invalid_export for a real module missing a required export', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hearth-default-importer-bad-'))
+    const mod = join(dir, 'index.mjs')
+    writeFileSync(mod, 'export const ingestFromChannel = () => {}\n')
+
+    const res = await loadHearthApi({ env: { HEARTH_MODULE: mod } as NodeJS.ProcessEnv })
+
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.reason).toBe('invalid_export')
+    rmSync(dir, { recursive: true, force: true })
+  })
+})

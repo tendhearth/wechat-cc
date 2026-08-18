@@ -94,6 +94,52 @@ export function saveAccess(a: Access): void {
   renameSync(tmp, ACCESS_FILE)
 }
 
+/**
+ * Append `userId` to allowFrom and persist via saveAccess() — the first
+ * production caller of saveAccess, which until now had zero call sites.
+ *
+ * SECURITY RED LINE (spec docs/superpowers/specs/2026-08-18-guest-path-design.md
+ * §0 decision 3, §4): this function touches `allowFrom` ONLY. It must
+ * NEVER write `admins` or `trusted` — a guest request/invite code is a
+ * REFERENCE (routes a chat past the allowlist gate), not a GRANT of
+ * elevated tier. skills/access/SKILL.md:14's "access changes must never be
+ * downstream of untrusted input" bars the MODEL from deciding access
+ * changes from chat content; it does not bar this deterministic,
+ * pre-LLM, isAdmin-gated function itself (the guest's message text never
+ * reaches this code path — see mw-access's guest branch).
+ *
+ * Reads straight off disk (not the 5s-TTL loadAccess cache) so a
+ * concurrent out-of-band edit (e.g. the /wechat:access terminal skill
+ * editing admins/trusted) landing within the cache window isn't
+ * clobbered by a stale read-modify-write.
+ *
+ * Busts the module-level loadAccess() cache on a real write (fix round 1,
+ * guest-path CRITICAL finding): the guest-path's 允许 command flow does
+ * appendAllowFrom() then IMMEDIATELY redispatches the guest's original
+ * message back through the inbound pipeline in the same tick. Without
+ * this, mw-access's own loadAccess() call for that redispatch could still
+ * see a cache populated (by any recent unrelated inbound) up to 5s BEFORE
+ * this write — so the guest chat reads as still not-allowlisted, falls
+ * into the guest branch again, and gets silently swallowed by its own
+ * seenMessage dedup (the original request was already resolved/deleted,
+ * so there's nothing to re-notify either). Nulling here forces the very
+ * next loadAccess() call to re-read disk, closing that window. Knock-on:
+ * the tier-membership invalidator (setSessionInvalidator) now also fires
+ * immediately instead of up to 5s later — benign, it's a shutdown/respawn
+ * signal already designed to be idempotent and rare.
+ *
+ * Idempotent: returns false (no write, no cache bust) if `userId` is
+ * already present.
+ */
+export function appendAllowFrom(userId: string): boolean {
+  const access = readAccessFile()
+  if (access.allowFrom.includes(userId)) return false
+  saveAccess({ ...access, allowFrom: [...access.allowFrom, userId] })
+  _accessCache = null
+  _accessCacheTime = 0
+  return true
+}
+
 // Cache access in memory — re-read from disk every 5s max
 let _accessCache: Access | null = null
 let _accessCacheTime = 0
@@ -170,6 +216,12 @@ export function assertAllowedChat(chat_id: string): void {
 }
 
 export function isAdmin(userId: string): boolean {
+  // The allowFrom fallback below is a compatibility layer for early
+  // single-user installs that predate `admins`. resolveTier (user-tier.ts)
+  // deliberately does NOT carry the same fallback — see its doc comment and
+  // docs/superpowers/specs/2026-08-18-owner-onboarding-design.md §A1 for why
+  // that asymmetry is intentional and setup-flow.ts now writes `admins` on
+  // first bind so new installs never depend on this fallback.
   const access = loadAccess()
   if (access.admins?.length) return access.admins.includes(userId)
   return access.allowFrom.includes(userId)
