@@ -578,11 +578,53 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toContain('不支持主从模式')
   })
 
-  it('returns false for unrecognised slash words like /health (lets admin-commands handle)', async () => {
-    const { cmds, sendMessage } = setup()
+  // A3 (spec §A3): mw-admin runs BEFORE mw-mode in the real pipeline (see
+  // src/daemon/inbound/build.ts), so a real /health message never reaches
+  // mode-commands at all — admin-commands always claims it first, even for
+  // non-admins (it replies "not an admin", but still consumes). Called in
+  // isolation here (as every other test in this file does), mode-commands
+  // genuinely doesn't recognise `/health` — the unknown-command catch below
+  // now surfaces a hint instead of silently falling through to the LLM.
+  it('/health (unrecognised by mode-commands itself) is caught by the unknown-command hint', async () => {
+    const { cmds, sentMessages } = setup()
     const consumed = await cmds.handle(inbound('/health'))
+    expect(consumed).toBe(true)
+    expect(sentMessages[0]?.[1]).toBe('❓ 不认识 /health。看全部命令发 /help。')
+  })
+
+  // ── unknown pure-slash commands (A3 — spec §A3) ───────────────────────
+  // Deliberately narrow: only a bare ASCII word (no args, no Chinese, 2-16
+  // letters) that isn't one of this file's known commands gets the hint.
+  // Everything else — arguments, Chinese, length outside the range, known
+  // commands — falls through unchanged (the user might be talking, not
+  // commanding).
+
+  it('/foobar (unknown bare slash word) is consumed with the exact hint copy', async () => {
+    const { cmds, sentMessages } = setup()
+    const consumed = await cmds.handle(inbound('/foobar'))
+    expect(consumed).toBe(true)
+    expect(sentMessages[0]?.[1]).toBe('❓ 不认识 /foobar。看全部命令发 /help。')
+  })
+
+  it('/foobar with an argument falls through unchanged (not consumed)', async () => {
+    const { cmds, sendMessage } = setup()
+    const consumed = await cmds.handle(inbound('/foobar 参数'))
     expect(consumed).toBe(false)
     expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('/中文 (non-ASCII slash word) falls through unchanged', async () => {
+    const { cmds, sendMessage } = setup()
+    const consumed = await cmds.handle(inbound('/中文'))
+    expect(consumed).toBe(false)
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('/cc (a known command) is unaffected by the unknown-command catch', async () => {
+    const { cmds, sentMessages } = setup()
+    const consumed = await cmds.handle(inbound('/cc'))
+    expect(consumed).toBe(true)
+    expect(sentMessages[0]?.[1]).not.toContain('不认识')
   })
 
   // ── /name <nick> — user self-rename (PR2 #17) ────────────────────────
@@ -672,6 +714,17 @@ describe('makeModeCommands', () => {
     const text = sentMessages[0]?.[1] ?? ''
     expect(text).toContain('模式切换')
     expect(text).not.toContain('管理员命令')
+  })
+
+  // A3 (spec §A3): /help's mode-switch line had fallen behind /mode's list
+  // by two providers (/gemini /agy missing) — pin both providers present so
+  // that regression can't silently recur.
+  it('/help mode-switch line includes /gemini and /agy (aligned with /mode)', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/help'))
+    const text = sentMessages[0]?.[1] ?? ''
+    expect(text).toContain('/gemini')
+    expect(text).toContain('/agy')
   })
 
   it('/help from admin contains both mode-switch and admin sections', async () => {

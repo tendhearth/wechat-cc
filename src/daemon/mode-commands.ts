@@ -81,6 +81,23 @@ export interface ModeCommands {
 // case-sensitive though (canonical lowercase ids).
 const COMMAND_REGEX = /^\s*\/([a-z][a-z_-]*)(?:\s+(.+))?\s*$/i
 
+// A3 (spec §A3): the slash-words this file recognises somewhere below (the
+// isProviderCommand table + every other bare/argument-taking branch in
+// `handle()`). Kept as an explicit list rather than derived at runtime so
+// reviewers see it grow in the same diff as a new branch — checklist item
+// for "adding a command", paired with the /help + /mode lists below.
+const KNOWN_SLASH_COMMANDS = new Set([
+  'cc', 'codex', 'cursor', 'api', 'gemini', 'agy', // isProviderCommand
+  'set', 'solo', 'mode', 'both', 'parallel', 'chat', 'stop', 'whoami', 'name', 'help',
+])
+
+// A3: a bare, ASCII-only, 2-16 letter slash command ⇒ almost certainly a
+// typo'd or half-remembered command, not the user talking to the bot (real
+// sentences carry spaces/punctuation/Chinese). Deliberately narrow: an
+// argument, Chinese characters, or a length outside this range fall through
+// unchanged below — the user might genuinely be mid-sentence.
+const UNKNOWN_SLASH_RE = /^\/[a-zA-Z]{2,16}$/
+
 export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
   function isProviderCommand(slashWord: string): ProviderId | null {
     const lower = slashWord.toLowerCase()
@@ -171,7 +188,8 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       '这里是微信通道，可以直接跟我对话。可用命令：',
       '',
       '**模式切换**',
-      '/cc /codex /cursor /api — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)',
+      // Provider checklist: keep this list in sync with /mode's list below (~:434).
+      '/cc /codex /cursor /api /gemini /agy — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)',
       '/cc + codex — Claude 主答，Codex 当工具 (primary_tool)',
       '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
       '/chat [p1 p2 …] — 圆桌讨论',
@@ -431,6 +449,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           `已注册 provider: ${deps.registry.list().join(', ')}`,
           `默认: ${deps.defaultProviderId}`,
           '',
+          // Provider checklist: keep this list in sync with /help's mode-switch line above (~:174).
           '可用命令: /cc /codex /cursor /api /gemini /agy /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',
         ]
         await reply(msg.chatId, lines.join('\n'))
@@ -574,6 +593,21 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       // /help — user-facing command reference (/帮助 alias handled above COMMAND_REGEX)
       if (slashWord.toLowerCase() === 'help' && tail === '') {
         return handleHelp(msg, deps.isAdmin?.(msg.userId) ?? false)
+      }
+
+      // A3 (spec §A3): unknown pure-slash command — a typo'd/half-remembered
+      // command word, not conversation. Reply with a pointer to /help and
+      // consume, instead of silently handing it to the LLM as prose (the F4
+      // bug: `/health` typo'd as `/helth` used to become an odd LLM reply).
+      // Runs LAST, after every known branch above (including admin-commands
+      // slash words like /health — those run in mw-admin, BEFORE mw-mode,
+      // in the real pipeline, so by the time an unrecognised word reaches
+      // here nothing upstream claimed it).
+      const trimmedText = msg.text.trim()
+      if (UNKNOWN_SLASH_RE.test(trimmedText) && !KNOWN_SLASH_COMMANDS.has(slashWord.toLowerCase())) {
+        await reply(msg.chatId, `❓ 不认识 ${trimmedText}。看全部命令发 /help。`)
+        deps.log('MODE_CMD', `chat=${msg.chatId} → unknown slash command ${trimmedText}`)
+        return true
       }
 
       // Not a mode command — let other handlers (admin-commands, onboarding,
