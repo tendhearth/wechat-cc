@@ -17,7 +17,7 @@ import type { GuardLifecycle } from '../guard/lifecycle'
 import type { PollingLifecycle } from '../polling-lifecycle'
 import type { InboundPipelineDeps } from '../inbound/build'
 import type { PipelineRun } from '../inbound/types'
-import { isAdmin, loadAccess } from '../../lib/access'
+import { isAdmin, loadAccess, appendAllowFrom } from '../../lib/access'
 import { resolveTier } from '../../core/user-tier'
 import { makeAdminCommands } from '../admin-commands'
 import { makeModeCommands } from '../mode-commands'
@@ -26,13 +26,15 @@ import type { CareLedger } from '../companion/care-ledger'
 import type { ReplySinks } from '../reply-sinks'
 import { loadCompanionConfig } from '../companion/config'
 import { resolveAdminChatId } from '../companion/resolve-admin'
-import { makeGuestRequestStore } from '../guest-requests'
+import { makeGuestRequestStore, GUEST_REQUEST_TTL_MS } from '../guest-requests'
 import { makeForwardBudget } from '../../core/forward-budget'
 import type { InboundMsg } from '../../core/prompt-format'
 import { parseRevealCommand } from '../../core/reveal-command'
 import { parseLetterCommand } from '../../core/penpal-letter-command'
 import { parsePairCommand } from '../../core/pair-command'
 import { parseSeekCommand, resolveSeekRef } from '../../core/seek-command'
+import { parseGuestCommand } from '../../core/guest-command'
+import { previewText } from '../inbound/mw-access'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider } from '../../lib/agent-config'
@@ -581,6 +583,79 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
               } else {
                 await boot.social.broker.cancelSeek(res.id)
                 if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, '已作废')
+              }
+              return
+            }
+          }
+          // 允许/拒绝/邀请码/待批准 (guest path spec §3) — admin-gated,
+          // deterministic parse, mirrors 揭晓/回信/配对 above. Unlike those,
+          // this block is NOT gated behind an optional boot.X wire —
+          // guestRequests/guestForwardBudget are unconditionally constructed
+          // above, so the guest path is always live; the only gate is
+          // isAdmin(msg.chatId) (same identity gate mw-access's guest
+          // branch itself never bypasses — a non-admin sending "允许
+          // 123456" falls straight through to a normal turn, matching
+          // parseGuestCommand's own deterministic-exact-match contract).
+          if (isAdmin(msg.chatId)) {
+            const guestCmd = parseGuestCommand(msg.text)
+            if (guestCmd) {
+              if (guestCmd.kind === 'allow') {
+                const request = guestRequests.resolve(guestCmd.code, 'allowed')
+                if (!request) {
+                  if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, '❌ 码不对或已过期(发「待批准」看当前请求)')
+                  return
+                }
+                appendAllowFrom(request.chatId)
+                if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, `✅ 已允许 ${request.chatId}`)
+                await ilink.sendMessage(request.chatId, '主人同意啦!')
+                // Re-fire the guest's original message through the FULL
+                // pipeline (not just this inner dispatch closure) — same
+                // onboarding-echo posture as makeOnboardingHandler's
+                // dispatchInbound above: redispatch:true so mw-dedup
+                // doesn't swallow it, and running the whole pipeline (not
+                // just coordinator.dispatch) lets mw-onboarding pick it up
+                // and ask the guest's nickname before echoing their
+                // original question back through the provider.
+                await refs.pipeline.deref('guest approve redispatch')({
+                  msg: request.firstMsg,
+                  receivedAtMs: Date.now(),
+                  requestId: randomBytes(4).toString('hex'),
+                  redispatch: true,
+                })
+                return
+              }
+              if (guestCmd.kind === 'deny') {
+                const request = guestRequests.resolve(guestCmd.code, 'denied')
+                if (!request) {
+                  if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, '❌ 码不对或已过期(发「待批准」看当前请求)')
+                  return
+                }
+                // The guest gets NOTHING — spec §3: "不替 owner 说难听话;
+                // 此后纯静默" (guestRequests.wasDenied now gates mw-access's
+                // guest branch silent on every future message from them).
+                if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, '已拒绝,ta 不会再打扰你。')
+                return
+              }
+              if (guestCmd.kind === 'invite') {
+                const invite = guestRequests.createInvite()
+                if (boot.sendAssistantText) {
+                  void boot.sendAssistantText(
+                    msg.chatId,
+                    `邀请码:${invite.code}(48 小时内有效,一次一人)。把这串数字发给朋友,ta 加我微信好友后把码发给我就能聊了。`,
+                  )
+                }
+                return
+              }
+              // 'pending'
+              const pending = guestRequests.listPending()
+              if (boot.sendAssistantText) {
+                const text = pending.length === 0
+                  ? '目前没有待批准的请求。'
+                  : pending.map(r => {
+                      const hoursLeft = Math.max(0, Math.floor((r.createdAt + GUEST_REQUEST_TTL_MS - Date.now()) / 3_600_000))
+                      return `「${r.code}」 ${r.chatId}:"${previewText(r.firstMsg.text)}"(剩 ${hoursLeft} 小时)`
+                    }).join('\n')
+                void boot.sendAssistantText(msg.chatId, text)
               }
               return
             }

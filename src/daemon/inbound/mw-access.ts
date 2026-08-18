@@ -54,8 +54,10 @@ const NEUTRAL_REPLY_TEXT = '我需要主人确认一下,稍等哦~'
 const PREVIEW_MAX_LEN = 60
 
 /** ≤60 chars, `\n` → space — guest text NEVER reaches a prompt; this is
- *  purely for the owner-facing notification line (spec §0 red line). */
-function previewText(text: string): string {
+ *  purely for owner-facing display (the owner notify line here, and the
+ *  「待批准」 listing rendered by the T5 owner-command seam in
+ *  pipeline-deps.ts — spec §0 red line, shared by both call sites). */
+export function previewText(text: string): string {
   return text.replace(/\n/g, ' ').slice(0, PREVIEW_MAX_LEN)
 }
 
