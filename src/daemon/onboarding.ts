@@ -180,7 +180,7 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
     deleteAwaiting(msg.chatId)
     await deps.sendMessage(
       msg.chatId,
-      `好的 ${proposed}, 刚才你说「${aw.triggerText}」, 回答下：`,
+      `好的 ${proposed}!想看我全部玩法,随时发 /help。刚才你说「${aw.triggerText}」,回答下:`,
     )
     void deps.dispatchInbound(aw.fromMessage).catch(err => {
       deps.log('ONBOARDING', `echo dispatch failed chat=${msg.chatId}: ${err}`)
@@ -317,7 +317,7 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
       deps.log('ONBOARDING', `start chat=${msg.chatId} userId=${msg.userId}`)
       await deps.sendMessage(
         msg.chatId,
-        `你好呀！我是 ${deps.botName(msg.chatId)}，先问一下我应该怎么称呼你?比如「Nate」「丸子」（中文 / 英文都行）。`,
+        `你好呀!我是 ${deps.botName(msg.chatId)}——住在你微信里的 AI 伙伴,能聊天、帮你干活、记得你说过的事。先问一下,我应该怎么称呼你?比如「Nate」「丸子」(中文/英文都行)`,
       )
       return true
     },
