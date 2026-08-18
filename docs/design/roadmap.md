@@ -1,6 +1,7 @@
 # Build Roadmap — 脊柱 + 情感陪伴 bundle
 
-> **状态:P1→P4a 已全部实现并合入 master(PR #61, 2026-07-10)。** 剩余:Phase 4b(bundle 组装,等 dogfood 反馈)+ onboarding。原排序记录保留如下。日期:2026-07-09。
+> **状态:P1→P4a 已全部实现并合入 master(PR #61, 2026-07-10)。** 4b 点名的「该段 onboarding」已于 2026-08-18 落地(owner 侧;guest 路径下一轮)——见
+> `docs/superpowers/specs/2026-08-18-owner-onboarding-design.md`。剩余:Phase 4b 其余部分(bundle 组装,等 dogfood 反馈)。原排序记录保留如下。日期:2026-07-09。
 > 配套:`agent-social-network.md`(社交=倒刺)、`companion-liveness-layer.md`(活人感 + 设置=钥匙)。战略见 positioning 记忆。
 
 ## 排序三原则
@@ -34,7 +35,8 @@ _overview 合成(work+life)、observations/milestones、memory 工具、tier + �
 
 ## Phase 4 — 人设 + 情感陪伴 bundle(组合前面所有)
 - **4a. 人设/白纸养成/对标**:设置给种子 + 从记忆涌现。依赖 1a + 记忆。
-- **4b. 组装 bundle** = 温暖人设 preset + 主动关心开高 + 相关插件 + 该段 onboarding + 云托管/便宜后端部署路径。
+- **4b. 组装 bundle** = 温暖人设 preset + 主动关心开高 + 相关插件 + ~~该段 onboarding~~(owner 侧 done, 2026-08-18, 见
+  `docs/superpowers/specs/2026-08-18-owner-onboarding-design.md`;guest 路径未动)+ 云托管/便宜后端部署路径。
 - 依赖:前面全部。这是**拼装**,非新建。
 
 ---

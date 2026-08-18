@@ -28,6 +28,9 @@ mechanisms (zero new tools/stores):
 - Freshness metric = **total message count in the chat** (`messages` table,
   cheap sync COUNT on the bun:sqlite handle) — threshold const
   `NEW_RELATIONSHIP_MSG_COUNT = 50` (≈ first days of chatting).
+  [2026-08-18: code is `30` (`src/lib/messages-store.ts`); the `50` here is
+  doc drift, not a re-tuning — code is authoritative. See
+  `docs/superpowers/specs/2026-08-18-owner-onboarding-design.md` §E.]
   buildInstructions is sync, so the count helper must be sync (standalone
   `countMessagesSync(db, chatId)` export in messages-store; the async store
   API is unchanged).
