@@ -1,0 +1,58 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`makeModeCommands > /help for admin tier is byte-identical to the pre-tiering output (snapshot-style assertion) 1`] = `
+"这里是微信通道，可以直接跟我对话。可用命令：
+
+**模式切换**
+/cc /codex /cursor /api /gemini /agy — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)
+/cc + codex — Claude 主答，Codex 当工具 (primary_tool)
+/both [p1 p2 …] — 并行回复（裸=全部 provider）
+/chat [p1 p2 …] — 圆桌讨论
+/solo /stop /mode — 回到默认 / 退出 / 显示当前模式
+/set — 本对话偏好(拆分回复、主动关心档位、表情包、每日打猎)
+
+**身份**
+/whoami — 显示你的身份 + 当前模式
+/name <昵称> — 设置或改昵称
+
+**项目切换 / 陪伴**
+直接说"切到 <alias>"、"开启陪伴"、"别烦我" — 自然语言走得通，没做 slash 形式
+
+**文件**
+拖图片/文件给我即可
+
+或者直接提问、丢代码、让我跑命令。
+
+**管理员命令**
+/health · /health ai — bot / AI 健康
+/reset (/重置) — 重置当前 chat
+/botname [name] — 设置/查看 bot 显示名
+/hearth help — vault 治理（hearth 子命令）
+清理 <bot> / 清理 all-expired — 清理过期 bot
+整理记忆 / 看记忆 — 重新整理 / 查看 CC 对你的理解
+让<名字>执行 <任务> — 派活给已配对的「手」电脑（一个大脑多手）"
+`;
+
+exports[`makeModeCommands > /help for trusted tier (non-admin) is byte-identical to the pre-tiering output, and matches admin's output minus the admin section 1`] = `
+"这里是微信通道，可以直接跟我对话。可用命令：
+
+**模式切换**
+/cc /codex /cursor /api /gemini /agy — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)
+/cc + codex — Claude 主答，Codex 当工具 (primary_tool)
+/both [p1 p2 …] — 并行回复（裸=全部 provider）
+/chat [p1 p2 …] — 圆桌讨论
+/solo /stop /mode — 回到默认 / 退出 / 显示当前模式
+/set — 本对话偏好(拆分回复、主动关心档位、表情包、每日打猎)
+
+**身份**
+/whoami — 显示你的身份 + 当前模式
+/name <昵称> — 设置或改昵称
+
+**项目切换 / 陪伴**
+直接说"切到 <alias>"、"开启陪伴"、"别烦我" — 自然语言走得通，没做 slash 形式
+
+**文件**
+拖图片/文件给我即可
+
+或者直接提问、丢代码、让我跑命令。"
+`;

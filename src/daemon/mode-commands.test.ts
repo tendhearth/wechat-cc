@@ -750,6 +750,67 @@ describe('makeModeCommands', () => {
     expect(msgsUser[0]?.[1]).toContain('模式切换')
   })
 
+  // ── /help tiering (spec §5): resolveTier === 'guest', NOT isAdmin ────
+
+  it('/help for a guest tier chat shows only the guest-usable blocks (whoami/name, /set split, files) — asserts the hidden blocks are absent', async () => {
+    const { cmds, sentMessages } = setup({ tier: 'guest' })
+    await cmds.handle(inbound('/help'))
+    const text = sentMessages[0]?.[1] ?? ''
+    // Present: opening blurb, identity, /set split, files.
+    expect(text).toContain('这里是微信通道')
+    expect(text).toContain('/whoami')
+    expect(text).toContain('/name <昵称>')
+    expect(text).toContain('/set split')
+    expect(text).toContain('拖图片/文件给我即可')
+    // Absent: provider switching, /set care (and the rest of /set), 陪伴/配对.
+    expect(text).not.toContain('模式切换')
+    expect(text).not.toContain('/cc ')
+    expect(text).not.toContain('/codex')
+    expect(text).not.toContain('/cursor')
+    expect(text).not.toContain('/both')
+    expect(text).not.toContain('/chat ')
+    expect(text).not.toContain('/mode')
+    expect(text).not.toContain('主动关心档位')
+    expect(text).not.toContain('care')
+    expect(text).not.toContain('关心')
+    expect(text).not.toContain('表情包')
+    expect(text).not.toContain('打猎')
+    expect(text).not.toContain('陪伴')
+    expect(text).not.toContain('配对')
+    expect(text).not.toContain('切到 <alias>')
+    // Guest is never admin — admin section stays hidden even if isAdmin
+    // somehow said true for this chat's userId (defense-in-depth).
+    expect(text).not.toContain('管理员命令')
+  })
+
+  it('/help for a guest tier chat is consumed even when isAdmin(userId) reports true (resolveTier wins, not isAdmin)', async () => {
+    const { cmds, sentMessages } = setup({ tier: 'guest', isAdmin: () => true })
+    await cmds.handle(inbound('/help'))
+    const text = sentMessages[0]?.[1] ?? ''
+    expect(text).not.toContain('管理员命令')
+    expect(text).not.toContain('模式切换')
+  })
+
+  it('/help for admin tier is byte-identical to the pre-tiering output (snapshot-style assertion)', async () => {
+    const { cmds, sentMessages } = setup({ tier: 'admin', isAdmin: () => true })
+    await cmds.handle(inbound('/help'))
+    expect(sentMessages[0]?.[1]).toMatchSnapshot()
+  })
+
+  it('/help for trusted tier (non-admin) is byte-identical to the pre-tiering output, and matches admin\'s output minus the admin section', async () => {
+    const { cmds: cmdsTrusted, sentMessages: msgsTrusted } = setup({ tier: 'trusted', isAdmin: () => false })
+    const { cmds: cmdsAdmin, sentMessages: msgsAdmin } = setup({ tier: 'admin', isAdmin: () => true })
+    await cmdsTrusted.handle(inbound('/help'))
+    await cmdsAdmin.handle(inbound('/help'))
+    const trustedText = msgsTrusted[0]?.[1] ?? ''
+    const adminText = msgsAdmin[0]?.[1] ?? ''
+    expect(trustedText).toMatchSnapshot()
+    // Same core content as admin's — admin's output is exactly the trusted
+    // output plus the appended admin section.
+    expect(adminText.startsWith(trustedText)).toBe(true)
+    expect(adminText.slice(trustedText.length)).toContain('管理员命令')
+  })
+
   describe('N-way grammar', () => {
     it('/chat claude codex cursor sets chatroom with 3 participants', async () => {
       const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'cursor'] })

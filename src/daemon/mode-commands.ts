@@ -184,31 +184,64 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
   }
 
   async function handleHelp(msg: InboundMsg, admin: boolean): Promise<boolean> {
-    const lines = [
-      '这里是微信通道，可以直接跟我对话。可用命令：',
-      '',
-      '**模式切换**',
-      // Provider checklist: keep this list in sync with /mode's list below (~:434).
-      '/cc /codex /cursor /api /gemini /agy — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)',
-      '/cc + codex — Claude 主答，Codex 当工具 (primary_tool)',
-      '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
-      '/chat [p1 p2 …] — 圆桌讨论',
-      '/solo /stop /mode — 回到默认 / 退出 / 显示当前模式',
-      '/set — 本对话偏好(拆分回复、主动关心档位、表情包、每日打猎)',
-      '',
-      '**身份**',
-      '/whoami — 显示你的身份 + 当前模式',
-      '/name <昵称> — 设置或改昵称',
-      '',
-      '**项目切换 / 陪伴**',
-      '直接说"切到 <alias>"、"开启陪伴"、"别烦我" — 自然语言走得通，没做 slash 形式',
-      '',
-      '**文件**',
-      '拖图片/文件给我即可',
-      '',
-      '或者直接提问、丢代码、让我跑命令。',
-    ]
-    if (admin) {
+    // /help 分层 (spec §5): gated by resolveTier === 'guest', NOT isAdmin.
+    // isAdmin's allowFrom fallback can misjudge an old install's actual
+    // owner (falls back to allowFrom membership before admins[] has ever
+    // been backfilled), which would incorrectly hand THAT owner the guest
+    // help text; resolveTier's own fallback ladder (user-tier.ts) treats
+    // that same owner correctly, and the owner returns to full /help the
+    // moment `hearth doctor` backfills admins[]. Guests only see the slice
+    // of /help that's actually usable/meaningful at their tier: the
+    // opening blurb, identity (/whoami /name), /set split, and file
+    // send/receive — provider switching, /set care, and 陪伴/配对 are
+    // either refused outright at guest tier or meaningless to a chat that
+    // was never allowlisted for them.
+    const isGuest = deps.resolveTier(msg.chatId) === 'guest'
+    const lines = isGuest
+      ? [
+          '这里是微信通道，可以直接跟我对话。可用命令：',
+          '',
+          '**身份**',
+          '/whoami — 显示你的身份 + 当前模式',
+          '/name <昵称> — 设置或改昵称',
+          '',
+          '**设置**',
+          '/set split on|off — 回复像真人一样分几条发（别名: 拆分 开|关）',
+          '',
+          '**文件**',
+          '拖图片/文件给我即可',
+          '',
+          '或者直接提问、丢代码、让我跑命令。',
+        ]
+      : [
+          '这里是微信通道，可以直接跟我对话。可用命令：',
+          '',
+          '**模式切换**',
+          // Provider checklist: keep this list in sync with /mode's list below (~:434).
+          '/cc /codex /cursor /api /gemini /agy — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)',
+          '/cc + codex — Claude 主答，Codex 当工具 (primary_tool)',
+          '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
+          '/chat [p1 p2 …] — 圆桌讨论',
+          '/solo /stop /mode — 回到默认 / 退出 / 显示当前模式',
+          '/set — 本对话偏好(拆分回复、主动关心档位、表情包、每日打猎)',
+          '',
+          '**身份**',
+          '/whoami — 显示你的身份 + 当前模式',
+          '/name <昵称> — 设置或改昵称',
+          '',
+          '**项目切换 / 陪伴**',
+          '直接说"切到 <alias>"、"开启陪伴"、"别烦我" — 自然语言走得通，没做 slash 形式',
+          '',
+          '**文件**',
+          '拖图片/文件给我即可',
+          '',
+          '或者直接提问、丢代码、让我跑命令。',
+        ]
+    // Guests can never be admin (a guest chat isn't allowlisted, let alone
+    // in admins[]) — `!isGuest` here is defense-in-depth against an
+    // identity-resolution mismatch between isAdmin(userId) and
+    // resolveTier(chatId), not an expected real-world combination.
+    if (admin && !isGuest) {
       lines.push(
         '',
         '**管理员命令**',
@@ -222,7 +255,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       )
     }
     await reply(msg.chatId, lines.join('\n'))
-    deps.log('MODE_CMD', `chat=${msg.chatId} → /help (admin=${admin})`)
+    deps.log('MODE_CMD', `chat=${msg.chatId} → /help (admin=${admin}, tier=${isGuest ? 'guest' : 'non-guest'})`)
     return true
   }
 
