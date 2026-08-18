@@ -150,6 +150,11 @@ export function sessionAuthEnv(tier: UserTier, sessionToken?: string): Record<st
  * upstream allowlist gate has already rejected outright-blocked users.
  */
 export function resolveTier(chatId: string, access: Access): UserTier {
+  // Deliberately NO allowFrom fallback here (unlike isAdmin in access.ts,
+  // which keeps one for early single-user installs) — a chatId not in
+  // `admins` maps straight to guest/trusted below. setup-flow.ts writes
+  // `admins` on first bind so a fresh owner never depends on a fallback.
+  // See docs/superpowers/specs/2026-08-18-owner-onboarding-design.md §A1.
   if (access.admins?.includes(chatId)) return 'admin'
   if (access.trusted?.includes(chatId)) return 'trusted'
   return 'guest'

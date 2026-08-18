@@ -170,6 +170,12 @@ export function assertAllowedChat(chat_id: string): void {
 }
 
 export function isAdmin(userId: string): boolean {
+  // The allowFrom fallback below is a compatibility layer for early
+  // single-user installs that predate `admins`. resolveTier (user-tier.ts)
+  // deliberately does NOT carry the same fallback — see its doc comment and
+  // docs/superpowers/specs/2026-08-18-owner-onboarding-design.md §A1 for why
+  // that asymmetry is intentional and setup-flow.ts now writes `admins` on
+  // first bind so new installs never depend on this fallback.
   const access = loadAccess()
   if (access.admins?.length) return access.admins.includes(userId)
   return access.allowFrom.includes(userId)

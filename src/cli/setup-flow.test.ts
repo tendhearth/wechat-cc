@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { determineScenario, pollSetupQrStatus, requestSetupQrCode, defaultFetchBinary } from './setup-flow'
+import { determineScenario, pollSetupQrStatus, requestSetupQrCode, defaultFetchBinary, persistConfirmedAccount } from './setup-flow'
 import { avatarInfo } from '../core/avatar/store'
 
 describe('setup-flow', () => {
@@ -134,6 +134,74 @@ describe('setup-flow', () => {
     })
 
     expect(result).toEqual({ status: 'scaned_but_redirect', baseUrl: 'https://next.example' })
+  })
+})
+
+// ── persistConfirmedAccount — admins bootstrap (spec §A1) ───────────────────
+// Terminal-installed owner used to land in the guest tier: bind wrote
+// allowFrom but never admins, and resolveTier (unlike isAdmin) has no
+// allowFrom fallback. First bind now writes admins too, but ONLY when admins
+// is empty/missing — an existing installation's admins list, or a second
+// account bound onto an already-admin'd install, must not be touched.
+describe('persistConfirmedAccount admins bootstrap (A1)', () => {
+  it('first bind with no access.json → admins gets [ilink_user_id]', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'setup-admins-first-'))
+    try {
+      persistConfirmedAccount({
+        stateDir,
+        currentBaseUrl: 'https://ilinkai.weixin.qq.com',
+        status: { status: 'confirmed', bot_token: 'tok', ilink_bot_id: 'bot:1/im-bot', ilink_user_id: 'user-1' },
+      })
+      const access = JSON.parse(readFileSync(join(stateDir, 'access.json'), 'utf8')) as { allowFrom: string[]; admins?: string[] }
+      expect(access.allowFrom).toContain('user-1')
+      expect(access.admins).toEqual(['user-1'])
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('admins already populated → left untouched (does not overwrite an existing installation)', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'setup-admins-existing-'))
+    try {
+      mkdirSync(stateDir, { recursive: true })
+      writeFileSync(join(stateDir, 'access.json'), JSON.stringify({
+        dmPolicy: 'allowlist',
+        allowFrom: ['user-1'],
+        admins: ['user-1'],
+      }))
+      persistConfirmedAccount({
+        stateDir,
+        currentBaseUrl: 'https://ilinkai.weixin.qq.com',
+        status: { status: 'confirmed', bot_token: 'tok', ilink_bot_id: 'bot:1/im-bot', ilink_user_id: 'user-1' },
+      })
+      const access = JSON.parse(readFileSync(join(stateDir, 'access.json'), 'utf8')) as { allowFrom: string[]; admins?: string[] }
+      expect(access.admins).toEqual(['user-1'])
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('second account bound onto the same install → admins stays [owner], new user only joins allowFrom', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'setup-admins-second-account-'))
+    try {
+      // First bind establishes admins=[owner].
+      persistConfirmedAccount({
+        stateDir,
+        currentBaseUrl: 'https://ilinkai.weixin.qq.com',
+        status: { status: 'confirmed', bot_token: 'tok-1', ilink_bot_id: 'bot:1/im-bot', ilink_user_id: 'owner' },
+      })
+      // Second bind, different WeChat account/user, same installation.
+      persistConfirmedAccount({
+        stateDir,
+        currentBaseUrl: 'https://ilinkai.weixin.qq.com',
+        status: { status: 'confirmed', bot_token: 'tok-2', ilink_bot_id: 'bot:2/im-bot', ilink_user_id: 'second-user' },
+      })
+      const access = JSON.parse(readFileSync(join(stateDir, 'access.json'), 'utf8')) as { allowFrom: string[]; admins?: string[] }
+      expect(access.allowFrom).toEqual(expect.arrayContaining(['owner', 'second-user']))
+      expect(access.admins).toEqual(['owner'])
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
   })
 })
 

@@ -689,6 +689,84 @@ describe('readExpiredBots', () => {
 // read plus a `createRequire().resolve()`, so calling them for real needs
 // nothing installed — whichever way resolution goes on this machine, the
 // contract is "returns two booleans and never throws".
+// ── adminsBootstrap check (spec §A1) ─────────────────────────────────────────
+// allowFrom non-empty + admins empty/missing ⇒ owner silently resolves to the
+// guest tier (resolveTier has no allowFrom fallback). doctor surfaces a
+// warning + fix hint here instead of auto-migrating access.json.
+describe('analyzeDoctor — adminsBootstrap check', () => {
+  it('allowFrom non-empty + admins missing → adminsBootstrap.ok=false with warning + fix copy', () => {
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: () => null,
+      readAccounts: () => [{ id: 'bot-1', botId: 'bot-1', userId: 'u1', baseUrl: 'https://ilink' }],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: ['u1'] }),
+      readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      daemon: () => ({ alive: false, pid: null }),
+      service: missingSystemd,
+    })
+    expect(report.checks.adminsBootstrap.ok).toBe(false)
+    expect(report.checks.adminsBootstrap.severity).toBe('soft')
+    expect(report.checks.adminsBootstrap.fix?.action).toBe(
+      '⚠️ access.json 有 allowFrom 但 admins 为空——owner 会落到 guest 档(工具全被拒)。把你的 user_id 加进 admins: ["u1"]',
+    )
+  })
+
+  it('allowFrom non-empty + admins non-empty → adminsBootstrap.ok=true, no fix', () => {
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: () => null,
+      readAccounts: () => [{ id: 'bot-1', botId: 'bot-1', userId: 'u1', baseUrl: 'https://ilink' }],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: ['u1'], admins: ['u1'] }),
+      readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      daemon: () => ({ alive: false, pid: null }),
+      service: missingSystemd,
+    })
+    expect(report.checks.adminsBootstrap.ok).toBe(true)
+    expect(report.checks.adminsBootstrap.fix).toBeUndefined()
+  })
+
+  it('allowFrom empty (fresh install) → adminsBootstrap.ok=true (nothing to warn about yet)', () => {
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: () => null,
+      readAccounts: () => [],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }),
+      readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      daemon: () => ({ alive: false, pid: null }),
+      service: missingSystemd,
+    })
+    expect(report.checks.adminsBootstrap.ok).toBe(true)
+  })
+
+  it('adminsBootstrap is NOT folded into ready/access.ok — a pre-existing allowFrom-only install stays ready=true', () => {
+    // Regression guard: this is the exact shape several pre-existing tests
+    // in this file use (allowFrom set, admins omitted) while asserting
+    // ready=true. The new check must warn without flipping that verdict —
+    // access.json edits are a permission change that needs a human, doctor
+    // only surfaces it.
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: (cmd) => `/bin/${cmd}`,
+      readAccounts: () => [{ id: 'bot-1', botId: 'bot-1', userId: 'u1', baseUrl: 'https://ilink' }],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: ['u1'] }),
+      readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      daemon: () => ({ alive: true, pid: 1 }),
+      service: installedSystemd,
+    })
+    expect(report.checks.adminsBootstrap.ok).toBe(false)
+    expect(report.checks.access.ok).toBe(true)
+    expect(report.ready).toBe(true)
+  })
+})
+
 describe('default doctor probes', () => {
   it('defaultProbeCursor returns booleans and does not throw when the SDK is absent', () => {
     const r = defaultProbeCursor()
