@@ -268,7 +268,7 @@ describe('appendAllowFrom', () => {
     expect(readRawAccess()).toBe(before)   // untouched — no write happened
   })
 
-  it('never mutates admins or trusted — byte-identical after append', () => {
+  it('never mutates admins or trusted — field-level equality after append (same elements, same order)', () => {
     writeAccess({
       dmPolicy: 'allowlist',
       allowFrom: ['alice@im.wechat'],

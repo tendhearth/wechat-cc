@@ -72,17 +72,22 @@ describe('upsertRequest', () => {
     expect(second.request.createdAt).toBe(first.request.createdAt)
   })
 
-  it('durably records notifiedAt at creation time (single-notify guarantee survives a restart)', () => {
-    const backing = makeMemStore()
-    const storeA = makeGuestRequestStore({ stateDir: '/unused', store: backing, now: () => 5_000 })
+  it('notifiedAt starts null — it is NOT stamped until markNotified() confirms the send', () => {
+    const store = makeGuestRequestStore({ stateDir: '/unused', store: makeMemStore(), now: () => 5_000 })
     const msg = mkMsg()
-    const { request } = storeA.upsertRequest({ chatId: msg.chatId, firstMsg: msg, contextToken: 'tok-1', accountId: 'acct-1' })
-    expect(request.notifiedAt).toBe(5_000)
+    const { request, fresh } = store.upsertRequest({ chatId: msg.chatId, firstMsg: msg, contextToken: 'tok-1', accountId: 'acct-1' })
+    expect(fresh).toBe(true)
+    expect(request.notifiedAt).toBeNull()
+  })
 
-    // Simulate a restart: fresh handler instance over the SAME backing store.
-    const storeB = makeGuestRequestStore({ stateDir: '/unused', store: backing, now: () => 9_000 })
-    const reread = storeB.findByCode(request.code)
-    expect(reread?.notifiedAt).toBe(5_000)
+  it('retry contract: re-upserting an existing, not-yet-notified request reports fresh:false but notifiedAt is still null — the caller\'s retry-notify signal', () => {
+    const store = makeGuestRequestStore({ stateDir: '/unused', store: makeMemStore(), now: () => 5_000 })
+    const msg = mkMsg()
+    store.upsertRequest({ chatId: msg.chatId, firstMsg: msg, contextToken: 'tok-1', accountId: 'acct-1' })
+    // No markNotified() call in between — simulates a crashed/failed prior send.
+    const second = store.upsertRequest({ chatId: msg.chatId, firstMsg: msg, contextToken: 'tok-1', accountId: 'acct-1' })
+    expect(second.fresh).toBe(false)
+    expect(second.request.notifiedAt).toBeNull()
   })
 
   it('generates a fresh unique code on collision within the request-code namespace', () => {
@@ -192,6 +197,51 @@ describe('resolve', () => {
   })
 })
 
+describe('markNotified', () => {
+  it('flips notifiedAt from null to now() on an existing pending record, and persists durably', () => {
+    const backing = makeMemStore()
+    const storeA = makeGuestRequestStore({ stateDir: '/unused', store: backing, now: () => 5_000 })
+    const msg = mkMsg()
+    const { request } = storeA.upsertRequest({ chatId: msg.chatId, firstMsg: msg, contextToken: 't', accountId: 'acct-1' })
+    expect(request.notifiedAt).toBeNull()
+
+    storeA.markNotified(msg.chatId)
+    expect(storeA.findByCode(request.code)?.notifiedAt).toBe(5_000)
+
+    // Simulate a restart: fresh handler instance over the SAME backing store.
+    const storeB = makeGuestRequestStore({ stateDir: '/unused', store: backing, now: () => 9_000 })
+    expect(storeB.findByCode(request.code)?.notifiedAt).toBe(5_000)
+  })
+
+  it('is idempotent: a second call does not overwrite an already-set notifiedAt', () => {
+    let now = 5_000
+    const store = makeGuestRequestStore({ stateDir: '/unused', store: makeMemStore(), now: () => now })
+    const msg = mkMsg()
+    const { request } = store.upsertRequest({ chatId: msg.chatId, firstMsg: msg, contextToken: 't', accountId: 'acct-1' })
+    store.markNotified(msg.chatId)
+    now = 9_000
+    store.markNotified(msg.chatId)   // second call, later "now" — must NOT bump the timestamp
+    expect(store.findByCode(request.code)?.notifiedAt).toBe(5_000)
+  })
+
+  it('no-ops on an absent chatId (no throw, nothing created)', () => {
+    const store = makeGuestRequestStore({ stateDir: '/unused', store: makeMemStore(), now: () => 1_000 })
+    expect(() => store.markNotified('nobody@im.wechat')).not.toThrow()
+    expect(store.listPending()).toEqual([])
+  })
+
+  it('no-ops on a denied (non-pending) record — does not resurrect or backdate it', () => {
+    const store = makeGuestRequestStore({ stateDir: '/unused', store: makeMemStore(), now: () => 1_000 })
+    const msg = mkMsg()
+    const { request } = store.upsertRequest({ chatId: msg.chatId, firstMsg: msg, contextToken: 't', accountId: 'acct-1' })
+    store.resolve(request.code, 'denied')
+    store.markNotified(msg.chatId)
+    // Still denied, and notifiedAt is untouched (stays null — was never notified before denial).
+    expect(store.wasDenied(msg.chatId)).toBe(true)
+    expect(store.findByCode(request.code)?.notifiedAt).toBeNull()
+  })
+})
+
 describe('listPending', () => {
   it('lists only pending (not denied) live requests, oldest first', () => {
     let now = 0
@@ -289,7 +339,7 @@ describe('on-disk shape', () => {
       contextToken: 'tok-abc',
       accountId: 'acct-1',
       createdAt: 42_000,
-      notifiedAt: 42_000,
+      notifiedAt: null,
       status: 'pending',
       firstMsg: msg,
     })
@@ -300,7 +350,21 @@ describe('on-disk shape', () => {
     expect(invites[0]).toMatchObject({ createdAt: 42_000 })
     expect(invites[0]!.code).toMatch(/^\d{6}$/)
 
-    const seen = JSON.parse(backing.get('seen')!) as string[]
-    expect(seen).toEqual(['m-1'])
+    // seen persists as id -> first-seen-timestamp (needed for its own TTL prune).
+    const seen = JSON.parse(backing.get('seen')!) as Record<string, number>
+    expect(seen).toEqual({ 'm-1': 42_000 })
+  })
+
+  it('seen ids are lazily pruned off disk past the 48h TTL, same as requests/invites', () => {
+    let now = 0
+    const backing = makeMemStore()
+    const store = makeGuestRequestStore({ stateDir: '/unused', store: backing, now: () => now })
+    store.seenMessage('old-msg')
+    now = GUEST_REQUEST_TTL_MS + 1
+    store.seenMessage('new-msg')   // any write triggers the lazy prune
+    const seen = JSON.parse(backing.get('seen')!) as Record<string, number>
+    expect(Object.keys(seen)).toEqual(['new-msg'])
+    // And the expired id is treated as unseen again (silently re-tracked).
+    expect(store.seenMessage('old-msg')).toBe(false)
   })
 })

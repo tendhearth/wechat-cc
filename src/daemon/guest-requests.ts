@@ -7,14 +7,15 @@
  * later still finds the request. Fixes the "restart amnesia" both prior
  * short-code templates (配对码, 权限中继 y/n hash) shared.
  *
- * notifiedAt is stamped INSIDE upsertRequest, in the same synchronous
- * write-through call that creates the request — not by a separate setter
- * after the notify message is actually sent (the store's public surface
- * has none). That's a deliberate trade-off: "single-notify" durability
- * beats guaranteed delivery here (spec §0 decision 1) — a crash between
- * the store write and the actual `notifyOwner` call loses that one
- * notification (recoverable via the owner's "待批准" command) rather than
- * risking a re-notify storm on every retried inbound.
+ * notifiedAt starts `null` at creation and is flipped to `now()` only by
+ * `markNotified()`, called AFTER the owner notification actually sends
+ * successfully — same shape as incident-store's markNotified-after-
+ * safeNotify (health/incident-store.ts:74-79 + health/index.ts:80-84).
+ * `ilink.sendMessage` resolving `{ error }` is a live failure mode in this
+ * repo; stamping notifiedAt eagerly at creation would let a failed send
+ * durably mark the guest "notified" with the owner never actually told —
+ * stuck on "稍等哦~" for up to 48h. See `GuestRequestStore.upsertRequest`'s
+ * doc comment for the retry contract this leaves for mw-access (T4).
  *
  * Two independent 6-digit code namespaces share the same generator
  * (genCode, node:crypto randomInt — pairing's convention, see
@@ -35,7 +36,10 @@ export interface GuestRequest {
   accountId: string               // 账号路由
   code: string                    // 6 位数字(配对码同款 randomInt padStart)
   createdAt: number
-  notifiedAt: number | null       // 单人单通知的 durable 标记
+  /** null 直到 markNotified() 在 owner 通知实际发送成功后调用 — 单人
+   *  单通知的 durable 标记,但只在"确实发出去了"之后才落定。见
+   *  GuestRequestStore.upsertRequest 的重试契约。 */
+  notifiedAt: number | null
   status: GuestRequestStatus
 }
 
@@ -45,7 +49,21 @@ export interface InviteCode {
 }
 
 export interface GuestRequestStore {
-  // 请求:每 chatId 至多一条活跃;重复入站返回既有条目(不重建、不重通知)
+  /**
+   * 请求:每 chatId 至多一条活跃;重复入站返回既有条目(不重建)。
+   *
+   * RETRY CONTRACT for callers (mw-access / T4): a fresh `GuestRequest`'s
+   * `notifiedAt` starts `null` — it is NOT stamped by this call. The
+   * caller must attempt the owner notification whenever EITHER
+   * `fresh === true` (brand-new request) OR the returned
+   * `request.notifiedAt === null` (an EXISTING request — `fresh` reads
+   * `false` for it — whose prior notify attempt crashed or the send
+   * itself failed, e.g. `ilink.sendMessage` resolving `{ error }`).
+   * Either way, call `markNotified(chatId)` immediately after a
+   * successful send. This makes "notify" retry on every guest message
+   * until it actually lands once, rather than silently marking a failed
+   * send as delivered.
+   */
   upsertRequest(input: {
     chatId: string
     firstMsg: InboundMsg
@@ -59,10 +77,19 @@ export interface GuestRequestStore {
   createInvite(): InviteCode
   consumeInvite(code: string): boolean
   wasDenied(chatId: string): boolean
+  /** Flips `notifiedAt` from `null` to `now()` on an existing PENDING
+   *  record — call this AFTER the owner notification actually sends
+   *  (repo precedent: incident-store's markNotified-after-safeNotify,
+   *  see health/incident-store.ts:74-79 + health/index.ts:80-84). No-op
+   *  — safe to call redundantly — when the record is absent, not
+   *  pending (e.g. already denied), or already notified. */
+  markNotified(chatId: string): void
   /** Records message `id` as seen and reports whether it was ALREADY seen
    *  before this call (spec §2 step 1: at-least-once redelivery guard for
    *  the guest branch, which sits upstream of mw-dedup). Persisted in the
-   *  same file so a restart mid-storm doesn't replay the guest branch. */
+   *  same file so a restart mid-storm doesn't replay the guest branch.
+   *  Same 48h TTL as requests/invites — lazily pruned, not a permanent
+   *  ledger. */
   seenMessage(id: string): boolean
 }
 
@@ -136,23 +163,37 @@ export function makeGuestRequestStore(deps: GuestRequestStoreDeps): GuestRequest
     store.set(INVITES_KEY, JSON.stringify(list))
   }
 
-  function readSeen(): string[] {
+  // id -> first-seen timestamp, so the set can be lazily pruned by the same
+  // 48h TTL instead of growing unbounded (spec doesn't mandate a TTL here,
+  // but the request/invite it dedupes against is itself only 48h-live, so
+  // there's no reason to remember an id past that).
+  function readSeen(): Record<string, number> {
     const raw = store.get(SEEN_KEY)
-    if (!raw) return []
+    if (!raw) return {}
     try {
       const parsed = JSON.parse(raw) as unknown
-      return Array.isArray(parsed) ? parsed as string[] : []
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, number>
+        : {}
     } catch {
-      return []
+      return {}
     }
   }
 
-  function writeSeen(ids: string[]): void {
-    store.set(SEEN_KEY, JSON.stringify(ids))
+  function writeSeen(all: Record<string, number>): void {
+    store.set(SEEN_KEY, JSON.stringify(all))
   }
 
   function isLive(createdAt: number): boolean {
     return now() - createdAt < GUEST_REQUEST_TTL_MS
+  }
+
+  function pruneSeen(all: Record<string, number>): Record<string, number> {
+    const out: Record<string, number> = {}
+    for (const [id, at] of Object.entries(all)) {
+      if (isLive(at)) out[id] = at
+    }
+    return out
   }
 
   /** Read + drop expired entries. Every mutating method below writes this
@@ -187,7 +228,7 @@ export function makeGuestRequestStore(deps: GuestRequestStoreDeps): GuestRequest
         accountId: input.accountId,
         code: genUniqueCode(taken),
         createdAt,
-        notifiedAt: createdAt,
+        notifiedAt: null,   // set by markNotified() AFTER the send actually succeeds
         status: 'pending',
       }
       live[input.chatId] = request
@@ -248,10 +289,25 @@ export function makeGuestRequestStore(deps: GuestRequestStoreDeps): GuestRequest
       return live[chatId]?.status === 'denied'
     },
 
+    markNotified(chatId) {
+      const live = pruneRequests(readRequests())
+      const entry = live[chatId]
+      if (!entry || entry.status !== 'pending' || entry.notifiedAt !== null) {
+        writeRequests(live)   // still commit the prune even on the no-op path
+        return
+      }
+      live[chatId] = { ...entry, notifiedAt: now() }
+      writeRequests(live)
+    },
+
     seenMessage(id) {
-      const seen = readSeen()
-      if (seen.includes(id)) return true
-      writeSeen([...seen, id])
+      const live = pruneSeen(readSeen())
+      if (id in live) {
+        writeSeen(live)
+        return true
+      }
+      live[id] = now()
+      writeSeen(live)
       return false
     },
   }
