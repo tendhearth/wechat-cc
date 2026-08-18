@@ -106,15 +106,21 @@ export interface BootstrapDeps {
    */
   careLevelFor?: (chatId: string) => 'off' | 'low' | 'high'
   /**
-   * Resolve a chat's local sticker library tags (image-stickers design §5).
-   * Read per-spawn (like `careLevelFor`'s siblings) so a newly-saved sticker
-   * shows up in the prompt without a daemon restart. Absent ⇒ the sticker
-   * prompt section is NEVER included for any chat — tests and minimal
-   * embeddings that don't wire this stay byte-identical to before the
-   * sticker feature existed. Wiring the actual thunk (sticker store lookup)
-   * happens in main.ts (later task).
+   * Resolve a chat's local sticker library tags (image-stickers design §5),
+   * tri-state (owner-onboarding design §C2 — see
+   * `BuildSystemPromptArgs.stickerTags` for the full contract): `null` means
+   * sticker prefs are OFF for this chat (no section at all); `[]` means
+   * prefs are ON but the library is empty (cold-start unlock variant); a
+   * non-empty array means prefs are ON and the library has tags (normal
+   * section). Read per-spawn (like `careLevelFor`'s siblings) so a
+   * newly-saved sticker (or a `/set stickers` flip) shows up in the prompt
+   * without a daemon restart. Absent thunk ⇒ `index.ts` defaults to `null`
+   * ⇒ NEITHER sticker section is ever included for any chat — tests and
+   * minimal embeddings that don't wire this stay byte-identical to before
+   * the sticker feature existed. Wiring the actual thunk (sticker store
+   * lookup, disambiguating pref-off from empty-library) happens in main.ts.
    */
-  stickerTagsFor?: (chatId: string) => string[]
+  stickerTagsFor?: (chatId: string) => string[] | null
   /**
    * Resolve a chat's persona content + whether it may cultivate persona.md
    * (persona design §2). Read per-spawn (like `careLevelFor`'s siblings) so
@@ -157,6 +163,24 @@ export interface BootstrapDeps {
    * count vs. NEW_RELATIONSHIP_MSG_COUNT) happens in main.ts.
    */
   newRelationshipFor?: (chatId: string) => boolean
+  /**
+   * Resolve whether the companion-offer prompt section (owner-onboarding
+   * design §C1) should be added for this chat: owner chat (same
+   * `default_chat_id`-derived判定 as `personaFor`'s `cultivate`) AND
+   * companion proactive-tick is off AND this chat's inbound message count
+   * has crossed `NEW_RELATIONSHIP_MSG_COUNT` — i.e. exactly the chats where
+   * `newRelationshipFor` has ALREADY flipped to false (same threshold,
+   * opposite side), so the two sections are naturally mutually exclusive.
+   * Read per-spawn (like `careLevelFor`'s siblings) so an `/companion_enable`
+   * call or crossing the threshold mid-conversation applies without a
+   * daemon restart. Absent ⇒ the companion-offer prompt section is NEVER
+   * included for any chat — tests and minimal embeddings that don't wire
+   * this stay byte-identical to before this feature existed. Wiring the
+   * actual thunk (owner-chat check + `loadCompanionConfig().enabled` +
+   * `countInboundMessagesSync` vs `NEW_RELATIONSHIP_MSG_COUNT`) happens in
+   * main.ts.
+   */
+  companionOfferFor?: (chatId: string) => boolean
   /**
    * Resolve whether the bubble-replies prompt section (行为流式气泡回复
    * design) should be added for this chat. Read per-spawn (like

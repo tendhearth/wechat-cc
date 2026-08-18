@@ -748,7 +748,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       daemonOpsAvailable: tierProfile.allow.has('daemon_introspect'),
       fileLocateAvailable: tierProfile.allow.has('file_locate'),
       careEnabled: (deps.careLevelFor?.(chatId) ?? 'off') !== 'off' && tierProfile.allow.has('memory_write'),
-      stickerTags: deps.stickerTagsFor?.(chatId) ?? [],
+      // Tri-state (owner-onboarding design §C2) — absent thunk defaults to
+      // `null` (pref-off shape), NOT `[]`, so an unwired bootstrap stays
+      // byte-identical to before this feature existed (the old `[]` default
+      // would now incorrectly render the cold-start unlock variant).
+      stickerTags: deps.stickerTagsFor?.(chatId) ?? null,
       persona: p?.content,
       // Like careEnabled: cultivation guidance tells the agent to WRITE
       // persona.md via memory_write, so it must also be tier-gated — a
@@ -757,6 +761,16 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // standing invitation to probe the memory surface).
       personaCultivate: p?.cultivate === true && tierProfile.allow.has('memory_write'),
       newRelationship: (deps.newRelationshipFor?.(chatId) ?? false) && tierProfile.allow.has('memory_write'),
+      // companion-offer mirrors `deps.companionOfferFor` the same way —
+      // absent thunk ⇒ section never included (owner-onboarding design §C1).
+      // Deliberately NO tier gate here (unlike careEnabled/newRelationship,
+      // which nudge memory_write-gated writes): `companion_enable` is
+      // registered for every session regardless of tier (see
+      // wechat/main.ts's registerCompanionTools call — not behind the
+      // SESSION_IS_ADMIN block), so there's no denied-tool-call risk. In
+      // practice `companionOfferFor` only ever fires true for the owner's
+      // own chat anyway, which resolves admin tier.
+      companionOffer: deps.companionOfferFor?.(chatId) ?? false,
       personaEmpty: !(p?.content && p.content.trim().length > 0),
       // core-memory-injection design §2 — this chat's OWN profile.md
       // excerpt (not the owner's). No tier gate: it's a read-only context

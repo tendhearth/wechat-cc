@@ -18,6 +18,7 @@ import type { CompanionConfig } from './companion/config'
 import { createInternalApi } from './internal-api'
 import { wireSelfRestart } from './bootstrap/wire-self-restart'
 import { SubsystemSupervisor } from './subsystems'
+import { NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
 
 // Code review pinning (I2①, 2026-08-11): wrap the REAL wireSelfRestart with
 // a spy so a couple of tests can inspect the `busy`/`lastPollSuccessAgoMs`
@@ -975,6 +976,140 @@ describe('bootstrap', () => {
     })
     const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'old-chat')
     expect(prompt).not.toContain('刚认识')
+  })
+
+  it('buildInstructions renders the sticker cold-start unlock variant when stickerTagsFor returns [] (pref on, empty library), and omits both sticker sections when it returns null (pref off) (owner-onboarding design §C2)', async () => {
+    const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      stickerTagsFor: (chatId: string) => (chatId === 'empty-lib-chat' ? [] : chatId === 'pref-off-chat' ? null : ['happy']),
+    })
+    const emptyLibPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'empty-lib-chat')
+    expect(emptyLibPrompt).toContain('你还没有表情包')
+    expect(emptyLibPrompt).toContain('save_sticker')
+    expect(emptyLibPrompt).not.toContain('send_sticker')
+
+    const prefOffPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'pref-off-chat')
+    expect(prefOffPrompt).not.toContain('你还没有表情包')
+    expect(prefOffPrompt).not.toContain('save_sticker')
+    expect(prefOffPrompt).not.toContain('send_sticker')
+
+    const nonEmptyPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'stocked-chat')
+    expect(nonEmptyPrompt).not.toContain('你还没有表情包')
+    expect(nonEmptyPrompt).toContain('send_sticker')
+  })
+
+  it('buildInstructions defaults stickerTags to null (not []) when stickerTagsFor is unwired entirely — stays byte-identical to before the sticker feature existed', async () => {
+    const withoutDep = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+    })
+    const prompt = withoutDep.buildInstructions('claude', TIER_PROFILES.admin, 'any-chat')
+    expect(prompt).not.toContain('你还没有表情包')
+    expect(prompt).not.toContain('save_sticker')
+    expect(prompt).not.toContain('send_sticker')
+  })
+
+  it('buildInstructions includes the companion-offer section when companionOfferFor returns true (owner-onboarding design §C1)', async () => {
+    const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      companionOfferFor: (chatId: string) => chatId === 'owner-chat',
+    })
+    const ownerPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(ownerPrompt).toContain('聊熟了')
+    expect(ownerPrompt).toContain('companion_enable')
+    const otherPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'other-chat')
+    expect(otherPrompt).not.toContain('聊熟了')
+  })
+
+  it('buildInstructions includes the companion-offer section for GUEST-tier chats too — deliberately NO tier gate, since companion_enable is registered regardless of tier (owner-onboarding design §C1)', async () => {
+    const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      companionOfferFor: () => true,
+    })
+    const guestPrompt = b.buildInstructions('claude', TIER_PROFILES.guest, 'owner-chat')
+    expect(guestPrompt).toContain('聊熟了')
+  })
+
+  it('buildInstructions omits the companion-offer section when companionOfferFor returns false, and is byte-identical to the thunk being absent entirely', async () => {
+    const bFalse = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      companionOfferFor: () => false,
+    })
+    const bAbsent = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+    })
+    const promptFalse = bFalse.buildInstructions('claude', TIER_PROFILES.admin, 'any-chat')
+    const promptAbsent = bAbsent.buildInstructions('claude', TIER_PROFILES.admin, 'any-chat')
+    expect(promptFalse).toBe(promptAbsent)
+    expect(promptAbsent).not.toContain('聊熟了')
+  })
+
+  it('buildInstructions is mutually exclusive between newRelationshipSection and companionOfferSection at the real NEW_RELATIONSHIP_MSG_COUNT threshold boundary (owner-onboarding design §C1) — mirrors main.ts wiring: both thunks derive from the SAME per-chat inbound count, one side `< N`, the other `>= N`', async () => {
+    let inboundCount = NEW_RELATIONSHIP_MSG_COUNT - 1
+    const b = await buildBootstrap({
+      supervisor: new SubsystemSupervisor(() => {}),
+      db: openTestDb(),
+      stateDir: '/tmp/state',
+      ilink: makeIlinkStub() as any,
+      loadProjects: () => ({ projects: {}, current: null }),
+      lastActiveChatId: () => null,
+      log: () => {},
+      internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
+      // Mirrors main.ts's actual newRelationshipFor / companionOfferFor:
+      // both read the same `inboundCount` var, thresholded on opposite sides.
+      newRelationshipFor: () => inboundCount < NEW_RELATIONSHIP_MSG_COUNT,
+      companionOfferFor: () => inboundCount >= NEW_RELATIONSHIP_MSG_COUNT,
+    })
+
+    const justBelow = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(justBelow).toContain('刚认识')
+    expect(justBelow).not.toContain('聊熟了')
+
+    inboundCount = NEW_RELATIONSHIP_MSG_COUNT
+    const atThreshold = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
+    expect(atThreshold).toContain('聊熟了')
+    expect(atThreshold).not.toContain('刚认识')
   })
 
   it('buildInstructions includes the empty-persona nudge when personaFor returns empty content and cultivate:true (onboarding-curiosity design §2)', async () => {

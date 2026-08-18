@@ -291,15 +291,31 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // onboarding-curiosity design §2 — sync because buildInstructions is
       // sync; cheap indexed COUNT per spawn (chat_id, direction indexed).
       newRelationshipFor: (c) => countInboundMessagesSync(db, c) < NEW_RELATIONSHIP_MSG_COUNT,
+      // owner-onboarding design §C1 — companion-offer nudge: owner's own
+      // chat (same default_chat_id check as personaFor's `cultivate` below),
+      // companion proactive-tick still off, and past the SAME
+      // NEW_RELATIONSHIP_MSG_COUNT threshold newRelationshipFor uses (on the
+      // opposite side — `>=` here vs `<` above), so the two prompt sections
+      // are naturally mutually exclusive for any given chat.
+      companionOfferFor: (c) => {
+        const companion = loadCompanionConfig(stateDir)
+        if (!companion.default_chat_id || c !== companion.default_chat_id) return false
+        if (companion.enabled) return false
+        return countInboundMessagesSync(db, c) >= NEW_RELATIONSHIP_MSG_COUNT
+      },
       // bubble-replies design (行为流式气泡回复) — same per-chat 拆分 pref
       // that gates route-level mechanical splitting (getChatPrefs above)
       // also gates the bubble-guidance prompt section: `/set split off`
       // silences BOTH, matching the user-facing meaning of 拆分.
       bubbleRepliesFor: (c) => chatPrefs.get(c).split !== false,
-      // image-stickers plan §5 — per-chat opt-out (chatPrefs.stickers === false)
-      // hides the sticker section from that chat's prompt; empty lib ⇒ [] ⇒
-      // stickerSection omitted entirely (see prompt-builder.ts).
-      stickerTagsFor: (c) => (chatPrefs.get(c).stickers !== false ? stickerLib.allTags() : []),
+      // image-stickers plan §5 / owner-onboarding design §C2 — per-chat
+      // opt-out (chatPrefs.stickers === false) hides BOTH sticker sections
+      // from that chat's prompt (null). Pref on ⇒ allTags(), which may
+      // itself be [] (empty library — renders the cold-start unlock variant)
+      // or non-empty (renders the normal tag-listing section). Returning
+      // null (not []) for pref-off is the disambiguation this thunk exists
+      // for — see prompt-builder.ts's BuildSystemPromptArgs.stickerTags doc.
+      stickerTagsFor: (c) => (chatPrefs.get(c).stickers !== false ? stickerLib.allTags() : null),
       // persona design §2 — owner chat's persona.md content, read fresh per
       // spawn (hand-edit shows up with no daemon restart, like careLevelFor).
       // makeMemoryFS's constructor is cheap (existsSync + maybe mkdirSync +
