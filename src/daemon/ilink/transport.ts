@@ -24,6 +24,15 @@ export interface TransportMethods {
   markChatActive(chatId: string, accountId?: string): void
   captureContextToken(chatId: string, ctxToken?: string): void
   lastActiveChatId(): string | null
+  /**
+   * Account-routing half of markChatActive, WITHOUT the lastActiveRef
+   * write (guest-path spec §2 — src/daemon/wiring/pipeline-deps.ts's
+   * hydrateChatRoute uses this for a not-yet-allowlisted guest chat, so a
+   * stranger's first message can never become the operator-relay target
+   * `lastActiveChatId()` resolves to). Same idempotent-write guard as
+   * markChatActive's own account branch.
+   */
+  routeChatToAccount(chatId: string, accountId: string): void
 }
 
 export interface TransportOpts {
@@ -130,6 +139,14 @@ export function makeTransport(ctx: IlinkContext, opts: TransportOpts = {}): Tran
       // Fallback: scan acctStore for any key (last key = most recently set)
       const keys = Object.keys(acctStore.all())
       return keys.length > 0 ? keys[keys.length - 1]! : null
+    },
+
+    routeChatToAccount(chatId, accountId) {
+      if (acctStore.get(chatId) !== accountId) {
+        acctStore.set(chatId, accountId)
+      }
+      // Deliberately NOT `lastActiveRef.current = chatId` — see this
+      // method's doc comment on TransportMethods.
     },
   }
 }

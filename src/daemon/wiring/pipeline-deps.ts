@@ -25,6 +25,9 @@ import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
 import type { ReplySinks } from '../reply-sinks'
 import { loadCompanionConfig } from '../companion/config'
+import { resolveAdminChatId } from '../companion/resolve-admin'
+import { makeGuestRequestStore } from '../guest-requests'
+import { makeForwardBudget } from '../../core/forward-budget'
 import type { InboundMsg } from '../../core/prompt-format'
 import { parseRevealCommand } from '../../core/reveal-command'
 import { parseLetterCommand } from '../../core/penpal-letter-command'
@@ -188,6 +191,37 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const recordInbound = makeRecordInbound({ stateDir, db })
   const messagesStore = makeMessagesStore(db)
   const dedupStore = makeDedupStore(db)
+  // Guest path (spec docs/superpowers/specs/2026-08-18-guest-path-design.md
+  // §1/§2) — durable pending-request/invite-code store and the per-sender
+  // forward budget mw-access's guest branch gates on. Both built ONCE here
+  // and reused across every inbound (the budget in particular needs a
+  // process-lifetime Map to actually rate-limit anything).
+  const guestRequests = makeGuestRequestStore({ stateDir })
+  const guestForwardBudget = makeForwardBudget({ perSender: 3, windowMs: 3600_000 })
+  // Targeted hydrate for a NOT-(yet)-allowlisted guest chat — replicates
+  // mw-capture-ctx's two calls (account routing + context-token capture)
+  // WITHOUT mw-capture-ctx's markChatActive side effect on lastActiveRef
+  // (spec §2: a stranger's first message must never become the
+  // operator-relay target). routeChatToAccount is the narrower seam
+  // (ilink-glue.ts / ilink/transport.ts) that does ONLY the account-routing
+  // half of markChatActive.
+  const hydrateGuestChatRoute = (msg: InboundMsg): void => {
+    ilink.routeChatToAccount(msg.chatId, msg.accountId)
+    if (msg.contextToken) ilink.captureContextToken(msg.chatId, msg.contextToken)
+  }
+  // Owner notification for the guest branch — resolveAdminChatId
+  // (admins-membership-based), NEVER resolveOperatorChatId (mw-identity has
+  // already written a conversations row for this stranger by the time
+  // mw-access runs, which would make them a resolveOperatorChatId candidate
+  // — spec §0). Direct ilink.sendMessage, same pattern as main.ts's
+  // degraded-subsystem admin summary (~:487-501) — the guest's text is
+  // truncated/escaped by mw-access BEFORE it ever reaches this closure, and
+  // never passes through a prompt.
+  const notifyOwnerOfGuest = (text: string): Promise<{ error?: string }> => {
+    const adminChatId = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+    if (!adminChatId) return Promise.resolve({ error: 'no_admin_chat_configured' })
+    return ilink.sendMessage(adminChatId, text)
+  }
   // Shared LLM-backed memory ops (overview synthesis + profile generation),
   // wired with the daemon's OWN provider registry/coordinator so both the
   // WeChat admin-command path (below) and the internal-api routes the
@@ -375,6 +409,13 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // loadAccess() has a 5s in-process TTL cache — safe to call per inbound.
       loadAccess,
       log,
+      // Guest path (spec §2) — all five wired together; mw-access falls
+      // back to the legacy silent drop if any one of them were absent.
+      guestRequests,
+      hydrateChatRoute: hydrateGuestChatRoute,
+      sendMessage: (c, t) => ilink.sendMessage(c, t),
+      notifyOwner: notifyOwnerOfGuest,
+      budget: guestForwardBudget,
     },
     capture: {
       markChatActive: (c, a) => ilink.markChatActive(c, a),

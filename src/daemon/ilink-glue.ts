@@ -74,6 +74,9 @@ export interface IlinkAdapter {
   lastActiveChatId(): string | null
   markChatActive(chatId: string, accountId?: string): void
   captureContextToken(chatId: string, ctxToken?: string): void
+  /** Account-routing without the lastActiveRef side effect — see
+   *  TransportMethods.routeChatToAccount's doc comment (guest-path §2). */
+  routeChatToAccount(chatId: string, accountId: string): void
   sendTyping(chatId: string, accountId?: string): Promise<void>
   /**
    * Long-poll wrapper for poll-loop. Detects errcode=-14 session timeout and
@@ -328,6 +331,7 @@ export function makeIlinkAdapter(opts: {
     lastActiveChatId: transport.lastActiveChatId,
     markChatActive: transport.markChatActive,
     captureContextToken: transport.captureContextToken,
+    routeChatToAccount: transport.routeChatToAccount,
     sendTyping: transport.sendTyping,
     getUpdatesForLoop: transport.getUpdatesForLoop,
 
