@@ -27,10 +27,23 @@ export interface TransportMethods {
   /**
    * Account-routing half of markChatActive, WITHOUT the lastActiveRef
    * write (guest-path spec §2 — src/daemon/wiring/pipeline-deps.ts's
-   * hydrateChatRoute uses this for a not-yet-allowlisted guest chat, so a
-   * stranger's first message can never become the operator-relay target
-   * `lastActiveChatId()` resolves to). Same idempotent-write guard as
-   * markChatActive's own account branch.
+   * hydrateChatRoute uses this for a not-yet-allowlisted guest chat).
+   * Same idempotent-write guard as markChatActive's own account branch.
+   *
+   * REAL BOUNDARY (corrected, fix round 1 Important #2 — the original
+   * version of this comment overclaimed): a hydrated stranger's chatId
+   * DOES land in `acctStore`, same as any allowlisted chat's. What this
+   * method guarantees is narrower — `lastActiveRef.current` itself is
+   * never set to a stranger, so the PRIMARY branch of
+   * `lastActiveChatId()` below is safe. Its FALLBACK branch
+   * (`Object.keys(acctStore.all())`, used only when `lastActiveRef` is
+   * still null) scans the same store this method writes to and CAN
+   * surface a hydrated stranger — that fallback has no live consumer
+   * today (grep confirms), so this is a comment-only note, not a bug fix
+   * here. Any live caller of `lastActiveChatId()`'s fallback path (or of
+   * `acctStore.all()` directly, e.g. companion.ts's `enable()` — see its
+   * own fix in the same round) MUST filter to `loadAccess().allowFrom`
+   * before treating a key from this store as "the owner's chat".
    */
   routeChatToAccount(chatId: string, accountId: string): void
 }

@@ -206,10 +206,16 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // (spec §2: a stranger's first message must never become the
   // operator-relay target). routeChatToAccount is the narrower seam
   // (ilink-glue.ts / ilink/transport.ts) that does ONLY the account-routing
-  // half of markChatActive.
+  // half of markChatActive. Split into a (chatId, accountId, contextToken)
+  // primitive so the T5 owner-command seam's 允许 handler can hydrate from
+  // a STORED GuestRequest's routing fields (fix round 1, Important #3) —
+  // not just from a live InboundMsg.
+  const hydrateRoute = (chatId: string, accountId: string, contextToken: string): void => {
+    ilink.routeChatToAccount(chatId, accountId)
+    if (contextToken) ilink.captureContextToken(chatId, contextToken)
+  }
   const hydrateGuestChatRoute = (msg: InboundMsg): void => {
-    ilink.routeChatToAccount(msg.chatId, msg.accountId)
-    if (msg.contextToken) ilink.captureContextToken(msg.chatId, msg.contextToken)
+    hydrateRoute(msg.chatId, msg.accountId, msg.contextToken ?? '')
   }
   // Owner notification for the guest branch — resolveAdminChatId
   // (admins-membership-based), NEVER resolveOperatorChatId (mw-identity has
@@ -411,13 +417,17 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // loadAccess() has a 5s in-process TTL cache — safe to call per inbound.
       loadAccess,
       log,
-      // Guest path (spec §2) — all five wired together; mw-access falls
+      // Guest path (spec §2) — all six wired together; mw-access falls
       // back to the legacy silent drop if any one of them were absent.
       guestRequests,
       hydrateChatRoute: hydrateGuestChatRoute,
       sendMessage: (c, t) => ilink.sendMessage(c, t),
       notifyOwner: notifyOwnerOfGuest,
       budget: guestForwardBudget,
+      // Injected (fix round 1, DI-convention fold #10) — mw-access no
+      // longer imports appendAllowFrom directly, matching every other
+      // side effect on this interface.
+      appendAllowFrom,
     },
     capture: {
       markChatActive: (c, a) => ilink.markChatActive(c, a),
@@ -607,7 +617,23 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
                 }
                 appendAllowFrom(request.chatId)
                 if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, `✅ 已允许 ${request.chatId}`)
-                await ilink.sendMessage(request.chatId, '主人同意啦!')
+                // Hydrate BEFORE sending the guest welcome (fix round 1,
+                // Important #3 — spec §3 calls for hydrate here too, same
+                // as mw-access's own fresh/invite-accept paths): the
+                // guest's chat was never allowlisted while pending, so
+                // mw-capture-ctx never ran for it — without this,
+                // sendMessage below can hit assertChatRoutable's
+                // "unknown chat_id" failure on a first-ever contact whose
+                // routing state was only ever captured into the STORED
+                // GuestRequest, not into ctxStore/acctStore themselves.
+                hydrateRoute(request.chatId, request.accountId, request.contextToken)
+                const guestSend = await ilink.sendMessage(request.chatId, '主人同意啦!')
+                if (guestSend.error) {
+                  // The owner already got their ✅ above (can't un-send it) —
+                  // the least we owe is a log that tells the truth instead
+                  // of silently swallowing a failed guest-facing send.
+                  log('ACCESS', `guest approve: welcome send to ${request.chatId} failed: ${guestSend.error}`)
+                }
                 // Re-fire the guest's original message through the FULL
                 // pipeline (not just this inner dispatch closure) — same
                 // onboarding-echo posture as makeOnboardingHandler's

@@ -8,6 +8,7 @@ import { mkdirSync } from 'node:fs'
 import type { WechatCompanionDep } from '../wechat-tool-deps'
 import { companionDir } from '../companion/paths'
 import { loadCompanionConfig, saveCompanionConfig, defaultCompanionConfig } from '../companion/config'
+import { loadAccess } from '../../lib/access'
 import type { IlinkContext } from './context'
 
 export function makeCompanion(ctx: IlinkContext): WechatCompanionDep {
@@ -21,6 +22,13 @@ export function makeCompanion(ctx: IlinkContext): WechatCompanionDep {
       }
 
       mkdirSync(companionDir(stateDir), { recursive: true })
+      // acctStore now also holds hydrated GUEST chats (guest-path spec §2 —
+      // mw-access's hydrateChatRoute → transport.ts's routeChatToAccount),
+      // so the raw "most recently set key" fallback below could otherwise
+      // pick a stranger who merely messaged the bot once and got a neutral
+      // reply. Filter to allowlisted chats — a stranger must never become
+      // the proactive-care destination (fix round 1, Important #2).
+      const allowedAcctKeys = Object.keys(acctStore.all()).filter(c => loadAccess().allowFrom.includes(c))
       const newCfg = {
         ...defaultCompanionConfig(),
         ...cfg,
@@ -28,7 +36,7 @@ export function makeCompanion(ctx: IlinkContext): WechatCompanionDep {
         default_chat_id:
           cfg.default_chat_id
           ?? lastActiveRef.current
-          ?? (Object.keys(acctStore.all()).slice(-1)[0] ?? null),
+          ?? (allowedAcctKeys.slice(-1)[0] ?? null),
       }
       await saveCompanionConfig(stateDir, newCfg)
 

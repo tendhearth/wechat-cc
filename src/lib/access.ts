@@ -111,16 +111,32 @@ export function saveAccess(a: Access): void {
  * Reads straight off disk (not the 5s-TTL loadAccess cache) so a
  * concurrent out-of-band edit (e.g. the /wechat:access terminal skill
  * editing admins/trusted) landing within the cache window isn't
- * clobbered by a stale read-modify-write. The append itself takes effect
- * within the existing 5s TTL/session-invalidator — no extra wiring
- * (spec §4).
+ * clobbered by a stale read-modify-write.
  *
- * Idempotent: returns false (no write) if `userId` is already present.
+ * Busts the module-level loadAccess() cache on a real write (fix round 1,
+ * guest-path CRITICAL finding): the guest-path's 允许 command flow does
+ * appendAllowFrom() then IMMEDIATELY redispatches the guest's original
+ * message back through the inbound pipeline in the same tick. Without
+ * this, mw-access's own loadAccess() call for that redispatch could still
+ * see a cache populated (by any recent unrelated inbound) up to 5s BEFORE
+ * this write — so the guest chat reads as still not-allowlisted, falls
+ * into the guest branch again, and gets silently swallowed by its own
+ * seenMessage dedup (the original request was already resolved/deleted,
+ * so there's nothing to re-notify either). Nulling here forces the very
+ * next loadAccess() call to re-read disk, closing that window. Knock-on:
+ * the tier-membership invalidator (setSessionInvalidator) now also fires
+ * immediately instead of up to 5s later — benign, it's a shutdown/respawn
+ * signal already designed to be idempotent and rare.
+ *
+ * Idempotent: returns false (no write, no cache bust) if `userId` is
+ * already present.
  */
 export function appendAllowFrom(userId: string): boolean {
   const access = readAccessFile()
   if (access.allowFrom.includes(userId)) return false
   saveAccess({ ...access, allowFrom: [...access.allowFrom, userId] })
+  _accessCache = null
+  _accessCacheTime = 0
   return true
 }
 

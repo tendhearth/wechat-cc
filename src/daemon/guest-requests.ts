@@ -63,6 +63,18 @@ export interface GuestRequestStore {
    * successful send. This makes "notify" retry on every guest message
    * until it actually lands once, rather than silently marking a failed
    * send as delivered.
+   *
+   * ROUTING REFRESH (fix round 1, fold #4): on the "existing entry"
+   * (non-fresh) path, `contextToken`/`accountId` are refreshed from THIS
+   * call's input — a truthy `input.contextToken` overwrites the stored
+   * one, an empty one is ignored (never regress a known-good token to
+   * blank). `firstMsg` is deliberately left untouched — it's the guest's
+   * ORIGINAL question, replayed verbatim on approval (see `firstMsg`'s own
+   * doc comment). Without this refresh, a guest who keeps messaging while
+   * waiting for a delayed approval would have their chat hydrated (at
+   * approval time) with whatever contextToken happened to be captured at
+   * FIRST contact — possibly hours stale — instead of the one from their
+   * most recent message.
    */
   upsertRequest(input: {
     chatId: string
@@ -216,8 +228,16 @@ export function makeGuestRequestStore(deps: GuestRequestStoreDeps): GuestRequest
       const live = pruneRequests(readRequests())
       const existing = live[input.chatId]
       if (existing) {
+        // Refresh routing info only (see this method's ROUTING REFRESH doc
+        // comment) — firstMsg/code/createdAt/notifiedAt/status all stay put.
+        const refreshed: GuestRequest = {
+          ...existing,
+          contextToken: input.contextToken || existing.contextToken,
+          accountId: input.accountId,
+        }
+        live[input.chatId] = refreshed
         writeRequests(live)
-        return { request: existing, fresh: false }
+        return { request: refreshed, fresh: false }
       }
       const taken = new Set(Object.values(live).map(r => r.code))
       const createdAt = now()

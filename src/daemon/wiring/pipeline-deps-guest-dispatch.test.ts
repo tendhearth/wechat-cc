@@ -79,10 +79,12 @@ function setup(admins: string[] = ['admin_chat']) {
   } as unknown as Bootstrap
 
   const sendMessage = vi.fn(async (_c: string, _t: string) => ({ msgId: 'sent:1' }))
+  const routeChatToAccount = vi.fn()
+  const captureContextToken = vi.fn()
   const ilink = {
     sendMessage,
-    routeChatToAccount: vi.fn(),
-    captureContextToken: vi.fn(),
+    routeChatToAccount,
+    captureContextToken,
     markChatActive: vi.fn(),
   } as unknown as IlinkAdapter
 
@@ -97,7 +99,10 @@ function setup(admins: string[] = ['admin_chat']) {
     { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
     { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: pipelineRef, ingestNudge: new Ref('ingestNudge') },
   )
-  return { pipelineDeps, coordinatorDispatch, sendAssistantText, sendMessage, pipelineRun, stateDir, guestRequests: pipelineDeps.access.guestRequests! }
+  return {
+    pipelineDeps, coordinatorDispatch, sendAssistantText, sendMessage, routeChatToAccount, captureContextToken,
+    pipelineRun, stateDir, guestRequests: pipelineDeps.access.guestRequests!,
+  }
 }
 
 function teardown(stateDir: string): void {
@@ -149,6 +154,83 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
       expect(ctx.msg).toEqual(guestFirstMsg)
       expect(ctx.redispatch).toBe(true)
       expect(coordinatorDispatch).not.toHaveBeenCalled()   // consumed, not a normal turn
+    } finally { teardown(stateDir) }
+  })
+
+  it('允许 <valid code>: hydrates the chat route from the STORED request fields BEFORE sending the guest welcome (fix round 1, Important #3)', async () => {
+    const { pipelineDeps, sendMessage, routeChatToAccount, captureContextToken, stateDir, guestRequests } = setup()
+    try {
+      const { request } = guestRequests.upsertRequest({
+        chatId: 'guest_chat', firstMsg: guestFirstMsg, contextToken: 'stored-tok', accountId: 'acct-stored',
+      })
+
+      const callOrder: string[] = []
+      routeChatToAccount.mockImplementation(() => { callOrder.push('route') })
+      captureContextToken.mockImplementation(() => { callOrder.push('capture') })
+      sendMessage.mockImplementation(async () => { callOrder.push('send'); return { msgId: 'sent:1' } })
+
+      await pipelineDeps.dispatch.coordinator.dispatch(adminMsg(`允许 ${request.code}`))
+
+      expect(routeChatToAccount).toHaveBeenCalledWith('guest_chat', 'acct-stored')
+      expect(captureContextToken).toHaveBeenCalledWith('guest_chat', 'stored-tok')
+      // hydrate (route + capture) happened before the guest-facing send.
+      expect(callOrder.indexOf('route')).toBeLessThan(callOrder.indexOf('send'))
+      expect(callOrder.indexOf('capture')).toBeLessThan(callOrder.indexOf('send'))
+    } finally { teardown(stateDir) }
+  })
+
+  it('允许 <valid code>: a failed guest-welcome send is logged (owner already got their ✅, but the failure is not swallowed)', async () => {
+    const logLines: string[] = []
+    writeAccess(['admin_chat'])
+    _clearCache(); _resetSnapshotForTest()
+    const stateDir = mkdtempSync(join(tmpdir(), 'pipeline-deps-guest-dispatch-logtest-'))
+    const db = openTestDb()
+    const sendAssistantText = vi.fn(async () => {})
+    const boot = {
+      sessionManager: { isInFlight: vi.fn(() => false) } as unknown as Bootstrap['sessionManager'],
+      sessionStore: {} as Bootstrap['sessionStore'],
+      conversationStore: { upsertIdentity: vi.fn() } as unknown as Bootstrap['conversationStore'],
+      registry: { get: vi.fn(), list: vi.fn(() => []), getCheapEval: vi.fn(() => null), has: vi.fn(() => false) } as unknown as Bootstrap['registry'],
+      coordinator: { dispatch: vi.fn(async () => {}), getMode: vi.fn((): Mode => ({ kind: 'solo', provider: 'claude' })), cancel: vi.fn(() => false) } as unknown as Bootstrap['coordinator'],
+      resolve: vi.fn(() => null),
+      formatInbound: vi.fn() as unknown as Bootstrap['formatInbound'],
+      sdkOptionsForProject: vi.fn() as unknown as Bootstrap['sdkOptionsForProject'],
+      buildInstructions: vi.fn(() => ''),
+      defaultProviderId: 'claude',
+      agentProviderKind: 'claude',
+      dispatchDelegate: vi.fn() as unknown as Bootstrap['dispatchDelegate'],
+      a2aDeps: undefined,
+      a2aServer: null,
+      agentConfig: { bot_name: null } as unknown as Bootstrap['agentConfig'],
+      sendAssistantText,
+      social: undefined,
+      penpal: undefined,
+      pairing: undefined,
+      health: fakeHealth,
+    } as unknown as Bootstrap
+    const ilink = {
+      sendMessage: vi.fn(async () => ({ msgId: 'err:1', error: 'session_timeout' })),
+      routeChatToAccount: vi.fn(),
+      captureContextToken: vi.fn(),
+      markChatActive: vi.fn(),
+    } as unknown as IlinkAdapter
+    const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
+    const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), resetNoReply: vi.fn() }
+    const replySinks = makeReplySinks()
+    const pipelineRef = new Ref<PipelineRun>('pipeline')
+    pipelineRef.set(vi.fn(async () => {}))
+    const { pipelineDeps } = buildPipelineDeps(
+      { stateDir, db, ilink, boot, log: (tag, line) => { logLines.push(`${tag} ${line}`) }, chatPrefs, careLedger, replySinks },
+      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: pipelineRef, ingestNudge: new Ref('ingestNudge') },
+    )
+    try {
+      const guestRequests = pipelineDeps.access.guestRequests!
+      const { request } = guestRequests.upsertRequest({
+        chatId: 'guest_chat', firstMsg: guestFirstMsg, contextToken: 'ctx-tok', accountId: 'acct1',
+      })
+      await pipelineDeps.dispatch.coordinator.dispatch(adminMsg(`允许 ${request.code}`))
+      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '✅ 已允许 guest_chat')   // owner still told
+      expect(logLines.some(l => l.includes('session_timeout'))).toBe(true)   // but the failure is on record
     } finally { teardown(stateDir) }
   })
 

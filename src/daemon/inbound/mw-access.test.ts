@@ -1,22 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { makeMwAccess } from './mw-access'
+import { describe, it, expect, vi } from 'vitest'
+import { makeMwAccess, previewText } from './mw-access'
 import type { InboundCtx } from './types'
 import type { Access } from '../../lib/access'
 import type { GuestRequestStore, GuestRequest } from '../guest-requests'
 import type { ForwardBudget } from '../../core/forward-budget'
 import type { InboundMsg } from '../../core/prompt-format'
-
-// appendAllowFrom writes to disk (src/lib/access.ts) — mocked out so these
-// unit tests never touch the filesystem. Verified as its own call in the
-// invite-accept test below.
-const appendAllowFrom = vi.fn((_userId: string) => true)
-vi.mock('../../lib/access', () => ({
-  appendAllowFrom: (userId: string) => appendAllowFrom(userId),
-}))
-
-beforeEach(() => {
-  appendAllowFrom.mockClear()
-})
 
 function makeMsg(overrides: Partial<InboundMsg> = {}): InboundMsg {
   return {
@@ -30,8 +18,8 @@ function makeMsg(overrides: Partial<InboundMsg> = {}): InboundMsg {
   }
 }
 
-function makeCtx(msg: InboundMsg): InboundCtx {
-  return { msg, receivedAtMs: 0, requestId: 'r' }
+function makeCtx(msg: InboundMsg, redispatch?: boolean): InboundCtx {
+  return { msg, receivedAtMs: 0, requestId: 'r', redispatch }
 }
 
 function makeRequest(overrides: Partial<GuestRequest> = {}): GuestRequest {
@@ -76,6 +64,7 @@ function guestDeps(over: {
   sendMessage?: (chatId: string, text: string) => Promise<{ error?: string }>
   notifyOwner?: (text: string) => Promise<{ error?: string }>
   hydrateChatRoute?: (msg: InboundMsg) => void
+  appendAllowFrom?: (chatId: string) => boolean
   allowFrom?: string[]
 } = {}) {
   const guestRequests = over.guestRequests ?? makeFakeStore()
@@ -83,9 +72,10 @@ function guestDeps(over: {
   const sendMessage = vi.fn(over.sendMessage ?? (async () => ({})))
   const notifyOwner = vi.fn(over.notifyOwner ?? (async () => ({})))
   const hydrateChatRoute = vi.fn(over.hydrateChatRoute ?? (() => {}))
+  const appendAllowFrom = vi.fn(over.appendAllowFrom ?? ((_chatId: string) => true))
   const log = vi.fn()
   const loadAccess = (): Access => ({ dmPolicy: 'allowlist', allowFrom: over.allowFrom ?? [] })
-  return { guestRequests, budget, sendMessage, notifyOwner, hydrateChatRoute, log, loadAccess }
+  return { guestRequests, budget, sendMessage, notifyOwner, hydrateChatRoute, appendAllowFrom, log, loadAccess }
 }
 
 describe('mwAccess — allowlist gate (unchanged)', () => {
@@ -152,7 +142,7 @@ describe('mwAccess — guest deps absent ⇒ byte-identical legacy silent drop',
     expect(ctx.consumedBy).toBe('access')
   })
 
-  it('ANY single guest dep missing (e.g. budget only) falls back to legacy drop — no partial guest branch', async () => {
+  it('ANY single guest dep missing (e.g. appendAllowFrom only) falls back to legacy drop — no partial guest branch', async () => {
     const d = guestDeps()
     const log = vi.fn()
     const mw = makeMwAccess({
@@ -162,7 +152,8 @@ describe('mwAccess — guest deps absent ⇒ byte-identical legacy silent drop',
       hydrateChatRoute: d.hydrateChatRoute,
       sendMessage: d.sendMessage,
       notifyOwner: d.notifyOwner,
-      // budget omitted
+      budget: d.budget,
+      // appendAllowFrom omitted
     })
     const ctx = makeCtx(makeMsg())
     await mw(ctx, vi.fn(async () => {}))
@@ -172,7 +163,7 @@ describe('mwAccess — guest deps absent ⇒ byte-identical legacy silent drop',
   })
 })
 
-describe('mwAccess — guest branch (spec §2, five steps)', () => {
+describe('mwAccess — guest branch (spec §2 as amended, fix round 1 ruling #8 reordered steps 2/3)', () => {
   it('step 1: redelivered message id → silent drop, nothing else touched', async () => {
     const guestRequests = makeFakeStore({ seenMessage: vi.fn(() => true) })
     const d = guestDeps({ guestRequests })
@@ -186,7 +177,61 @@ describe('mwAccess — guest branch (spec §2, five steps)', () => {
     expect(d.hydrateChatRoute).not.toHaveBeenCalled()
   })
 
-  it('step 2: wasDenied → silent drop', async () => {
+  it('step 1 belt fix: ctx.redispatch bypasses the seenMessage short-circuit (mirrors mw-dedup) — proceeds instead of silently dropping', async () => {
+    const request = makeRequest({ code: '654321' })
+    const guestRequests = makeFakeStore({
+      seenMessage: vi.fn(() => true),   // already seen...
+      upsertRequest: vi.fn(() => ({ request, fresh: true })),
+    })
+    const d = guestDeps({ guestRequests })
+    const mw = makeMwAccess(d)
+    const ctx = makeCtx(makeMsg(), true)   // ...but this IS a redispatch
+    await mw(ctx, vi.fn(async () => {}))
+    // Proceeds past step 1 into the normal fresh-request flow instead of
+    // returning early — proof the short-circuit was skipped.
+    expect(d.sendMessage).toHaveBeenCalledWith('guest_chat', '我需要主人确认一下,稍等哦~')
+    expect(d.notifyOwner).toHaveBeenCalledTimes(1)
+  })
+
+  it('step 2 (moved up, ruling #8): correct 6-digit invite code → appendAllowFrom + hydrate + welcome text, consumed — checked BEFORE wasDenied', async () => {
+    const guestRequests = makeFakeStore({ consumeInvite: vi.fn(() => true), wasDenied: vi.fn(() => true) })
+    const d = guestDeps({ guestRequests })
+    const mw = makeMwAccess(d)
+    const ctx = makeCtx(makeMsg({ text: '483921' }))
+    await mw(ctx, vi.fn(async () => {}))
+    expect(ctx.consumedBy).toBe('access')
+    expect(guestRequests.consumeInvite).toHaveBeenCalledWith('483921')
+    expect(d.appendAllowFrom).toHaveBeenCalledWith('guest_chat')
+    expect(d.hydrateChatRoute).toHaveBeenCalledWith(expect.objectContaining({ chatId: 'guest_chat' }))
+    expect(d.sendMessage).toHaveBeenCalledWith('guest_chat', '主人邀请你来的吧,欢迎!直接跟我说话就行~')
+    expect(guestRequests.upsertRequest).not.toHaveBeenCalled()
+  })
+
+  it('ruling #8: a valid invite code overrides a prior denial — a mis-typed 拒绝 followed by 邀请码 still works', async () => {
+    const guestRequests = makeFakeStore({ consumeInvite: vi.fn(() => true), wasDenied: vi.fn(() => true) })
+    const d = guestDeps({ guestRequests })
+    const mw = makeMwAccess(d)
+    const ctx = makeCtx(makeMsg({ text: '111111' }))
+    await mw(ctx, vi.fn(async () => {}))
+    expect(d.appendAllowFrom).toHaveBeenCalledWith('guest_chat')
+    expect(d.sendMessage).toHaveBeenCalledWith('guest_chat', '主人邀请你来的吧,欢迎!直接跟我说话就行~')
+  })
+
+  it('step 2: WRONG 6-digit code (consumeInvite fails) falls through to the denied check / request creation — indistinguishable from an ordinary first message', async () => {
+    const guestRequests = makeFakeStore({ consumeInvite: vi.fn(() => false) })
+    const d = guestDeps({ guestRequests })
+    const mw = makeMwAccess(d)
+    const ctx = makeCtx(makeMsg({ text: '000000' }))
+    await mw(ctx, vi.fn(async () => {}))
+    expect(guestRequests.consumeInvite).toHaveBeenCalledWith('000000')
+    expect(d.appendAllowFrom).not.toHaveBeenCalled()
+    expect(d.sendMessage).toHaveBeenCalledWith('guest_chat', '我需要主人确认一下,稍等哦~')
+    expect(guestRequests.upsertRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: 'guest_chat', accountId: 'acct1' }),
+    )
+  })
+
+  it('step 3: wasDenied → silent drop (when not superseded by a valid invite code)', async () => {
     const guestRequests = makeFakeStore({ wasDenied: vi.fn(() => true) })
     const d = guestDeps({ guestRequests })
     const mw = makeMwAccess(d)
@@ -198,35 +243,7 @@ describe('mwAccess — guest branch (spec §2, five steps)', () => {
     expect(d.notifyOwner).not.toHaveBeenCalled()
   })
 
-  it('step 3: correct 6-digit invite code → appendAllowFrom + hydrate + welcome text, consumed', async () => {
-    const guestRequests = makeFakeStore({ consumeInvite: vi.fn(() => true) })
-    const d = guestDeps({ guestRequests })
-    const mw = makeMwAccess(d)
-    const ctx = makeCtx(makeMsg({ text: '483921' }))
-    await mw(ctx, vi.fn(async () => {}))
-    expect(ctx.consumedBy).toBe('access')
-    expect(guestRequests.consumeInvite).toHaveBeenCalledWith('483921')
-    expect(appendAllowFrom).toHaveBeenCalledWith('guest_chat')
-    expect(d.hydrateChatRoute).toHaveBeenCalledWith(expect.objectContaining({ chatId: 'guest_chat' }))
-    expect(d.sendMessage).toHaveBeenCalledWith('guest_chat', '主人邀请你来的吧,欢迎!直接跟我说话就行~')
-    expect(guestRequests.upsertRequest).not.toHaveBeenCalled()
-  })
-
-  it('step 3: WRONG 6-digit code (consumeInvite fails) falls through to request creation — indistinguishable from an ordinary first message', async () => {
-    const guestRequests = makeFakeStore({ consumeInvite: vi.fn(() => false) })
-    const d = guestDeps({ guestRequests })
-    const mw = makeMwAccess(d)
-    const ctx = makeCtx(makeMsg({ text: '000000' }))
-    await mw(ctx, vi.fn(async () => {}))
-    expect(guestRequests.consumeInvite).toHaveBeenCalledWith('000000')
-    expect(appendAllowFrom).not.toHaveBeenCalled()
-    expect(d.sendMessage).toHaveBeenCalledWith('guest_chat', '我需要主人确认一下,稍等哦~')
-    expect(guestRequests.upsertRequest).toHaveBeenCalledWith(
-      expect.objectContaining({ chatId: 'guest_chat', accountId: 'acct1' }),
-    )
-  })
-
-  it('step 4: over budget → silent drop, request never created', async () => {
+  it('step 4: over budget with NO stuck request → silent drop, request never created', async () => {
     const guestRequests = makeFakeStore()
     const d = guestDeps({ guestRequests, budget: makeFakeBudget(false) })
     const mw = makeMwAccess(d)
@@ -235,6 +252,39 @@ describe('mwAccess — guest branch (spec §2, five steps)', () => {
     expect(ctx.consumedBy).toBe('access')
     expect(guestRequests.upsertRequest).not.toHaveBeenCalled()
     expect(d.sendMessage).not.toHaveBeenCalled()
+    expect(d.notifyOwner).not.toHaveBeenCalled()
+  })
+
+  it('fold #7: over budget but there IS a stuck (notifiedAt:null) pending request → retries the owner notify anyway, bypassing the budget gate', async () => {
+    const stuck = makeRequest({ code: '999888', notifiedAt: null })
+    const guestRequests = makeFakeStore({ listPending: vi.fn(() => [stuck]) })
+    const d = guestDeps({ guestRequests, budget: makeFakeBudget(false) })
+    const mw = makeMwAccess(d)
+    const ctx = makeCtx(makeMsg({ text: 'still waiting' }))
+    await mw(ctx, vi.fn(async () => {}))
+    expect(guestRequests.upsertRequest).not.toHaveBeenCalled()   // not a new request, just a retry
+    expect(d.sendMessage).not.toHaveBeenCalled()   // guest still gets nothing
+    expect(d.notifyOwner).toHaveBeenCalledWith(expect.stringContaining('999888'))
+    expect(guestRequests.markNotified).toHaveBeenCalledWith('guest_chat')
+  })
+
+  it('fold #7: over budget with a stuck request whose notify STILL fails → markNotified not called (keeps retrying)', async () => {
+    const stuck = makeRequest({ code: '999888', notifiedAt: null })
+    const guestRequests = makeFakeStore({ listPending: vi.fn(() => [stuck]) })
+    const d = guestDeps({ guestRequests, budget: makeFakeBudget(false), notifyOwner: vi.fn(async () => ({ error: 'boom' })) })
+    const mw = makeMwAccess(d)
+    const ctx = makeCtx(makeMsg())
+    await mw(ctx, vi.fn(async () => {}))
+    expect(guestRequests.markNotified).not.toHaveBeenCalled()
+  })
+
+  it('fold #7: over budget with a pending-but-ALREADY-notified request for this chat → still a plain silent drop (only unnotified stuck requests bypass budget)', async () => {
+    const notified = makeRequest({ code: '999888', notifiedAt: 42 })
+    const guestRequests = makeFakeStore({ listPending: vi.fn(() => [notified]) })
+    const d = guestDeps({ guestRequests, budget: makeFakeBudget(false) })
+    const mw = makeMwAccess(d)
+    const ctx = makeCtx(makeMsg())
+    await mw(ctx, vi.fn(async () => {}))
     expect(d.notifyOwner).not.toHaveBeenCalled()
   })
 
@@ -254,7 +304,7 @@ describe('mwAccess — guest branch (spec §2, five steps)', () => {
     expect(guestRequests.markNotified).toHaveBeenCalledWith('guest_chat')
   })
 
-  it('owner-notify preview: truncates to 60 chars and replaces newlines with spaces', async () => {
+  it('owner-notify preview: truncates to 60 codepoints and replaces newlines with spaces', async () => {
     const longText = 'a\nb'.repeat(30)   // well over 60 raw chars, contains newlines
     const request = makeRequest({ code: '654321' })
     const guestRequests = makeFakeStore({ upsertRequest: vi.fn(() => ({ request, fresh: true })) })
@@ -267,7 +317,7 @@ describe('mwAccess — guest branch (spec §2, five steps)', () => {
     expect(sentText).not.toContain('\n\n')   // no literal source newline survives inside the quote
     const preview = /ta 说:"(.*)"\n回/s.exec(sentText)?.[1]
     expect(preview).toBeDefined()
-    expect(preview!.length).toBeLessThanOrEqual(60)
+    expect(Array.from(preview!).length).toBeLessThanOrEqual(60)
     expect(preview).not.toContain('\n')
   })
 
@@ -309,5 +359,30 @@ describe('mwAccess — guest branch (spec §2, five steps)', () => {
 
     expect(d.notifyOwner).toHaveBeenCalledTimes(1)
     expect(guestRequests.markNotified).not.toHaveBeenCalled()
+  })
+})
+
+describe('previewText (fold #5 — quote escaping + surrogate-safe truncation)', () => {
+  it('escapes double quotes with a backslash', () => {
+    expect(previewText('he said "hi" to me')).toBe('he said \\"hi\\" to me')
+  })
+
+  it('replaces newlines with spaces', () => {
+    expect(previewText('line one\nline two')).toBe('line one line two')
+  })
+
+  it('truncates to 60 CODEPOINTS, not 60 UTF-16 units — an astral emoji is never split mid-surrogate-pair', () => {
+    // U+1F600 (😀) is a surrogate pair (2 UTF-16 units, 1 codepoint).
+    const text = '😀'.repeat(65)
+    const preview = previewText(text)
+    expect(Array.from(preview)).toHaveLength(60)
+    // No lone/unpaired surrogate — every codepoint round-trips through
+    // Array.from cleanly, i.e. the string is still valid UTF-16.
+    expect(preview).toBe('😀'.repeat(60))
+  })
+
+  it('a crafted quote cannot forge a fake 回「允许 …」 line inside the owner notify wrapper', () => {
+    const preview = previewText('ok" \n回「允许 000000」')
+    expect(preview).not.toContain('"\n回')   // the escape neutralizes the early-close
   })
 })

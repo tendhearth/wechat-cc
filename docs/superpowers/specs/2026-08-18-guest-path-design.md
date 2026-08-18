@@ -91,20 +91,37 @@ export function makeGuestRequestStore(deps: { stateDir: string; now?: () => numb
 
 `not_in_allowlist` 命中后按序(全部确定性,无模型参与):
 
+[fix round 1 CONTROLLER RULING #8(2026-08-18,mw-access.ts 评审):以下顺序
+把原 2/3 步互换——**邀请码检查现在排在 denied 检查之前**。理由:owner
+发出的邀请码是一次独立授权,不该被同一 chatId 更早的一次拒绝挡住——
+owner 手滑发错「拒绝」、随后想用「邀请码」把人放进来这条路必须走得通。
+下面的编号已按新顺序重排,不再是 1/2/3/4/5 的原始文本。]
+
 1. **消息 id 去重**:`inboundMessageId(userId, createTimeMs)` 已在本请求的
-   seen 集合(store 内)⇒ 静默 return(防 at-least-once 重放);
-2. **denied 检查**:`wasDenied(chatId)` ⇒ 静默 return;
-3. **邀请码**:`text.trim()` 匹配 `/^\d{6}$/` 且 `consumeInvite` 成功 ⇒
-   `appendAllowFrom(chatId)`(§4)+ hydrate + 回复
-   `主人邀请你来的吧,欢迎!直接跟我说话就行~` + log;return(消费);
-   6 位数字但码不对 ⇒ 落入下一步(当普通首条消息,防试码探测:错误码
-   与普通消息不可区分);
+   seen 集合(store 内)⇒ 静默 return(防 at-least-once 重放);`ctx.redispatch`
+   置位时跳过这一步的短路(镜像 mw-dedup 自己的 redispatch 放行)——允许
+   命令 seam 会用同一条消息 id 重新派发一次。
+2. **邀请码**(原第 3 步,现提前):`text.trim()` 匹配 `/^\d{6}$/` 且
+   `consumeInvite` 成功 ⇒ `appendAllowFrom(chatId)`(§4)+ hydrate + 回复
+   `主人邀请你来的吧,欢迎!直接跟我说话就行~` + log;return(消费)。**在
+   denied 检查之前生效**——一个有效邀请码覆盖此前的拒绝记录。6 位数字但
+   码不对 ⇒ 落入下面第 4 步(当普通首条消息,防试码探测:错误码与普通
+   消息不可区分);
+3. **denied 检查**(原第 2 步,现在第二位):`wasDenied(chatId)` ⇒ 静默
+   return;
 4. **超额检查**:budget 不足 ⇒ 静默 return(与普通丢弃不可区分——penpal
-   的"不泄露节流"原则);
+   的"不泄露节流"原则),**除非**该 chatId 已有一条 `notifiedAt === null`
+   的在途请求——那种情况下重试 owner 通知本身不受 budget 限制(一次瞬时
+   发送失败不该把 owner 永久挡在 guest 自己的 budget 后面,fix round 1
+   fold #7);
 5. **建/取请求**:`upsertRequest`;`fresh === true` 时:hydrate + 给陌生人回
    `我需要主人确认一下,稍等哦~` + `notifyOwner`:
-   `👋 <chatId> 想和我聊天,ta 说:"<预览≤60字,转义换行>"\n回「允许 <码>」或「拒绝 <码>」(48 小时内有效)`
-   + `notifiedAt` 落盘;`fresh === false` ⇒ 静默(单人单通知)。
+   `👋 <chatId> 想和我聊天,ta 说:"<预览≤60字,转义换行,双引号转义>"\n回「允许 <码>」或「拒绝 <码>」(48 小时内有效)`
+   + `notifiedAt` 落盘;`fresh === false` ⇒ 对陌生人静默(单人单通知),
+   但若既有请求 `notifiedAt` 仍为 null,照样重试一次 owner 通知(见
+   `GuestRequestStore.upsertRequest` 的 NOTIFY-RETRY CONTRACT)。同一次
+   upsert 也会用本次调用的 contextToken/accountId 刷新既有记录的路由字段
+   (firstMsg 保持不变——fix round 1 fold #4)。
 
 `dmPolicy: 'disabled'` 分支行为不变(总开关,先于一切)。
 

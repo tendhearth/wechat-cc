@@ -90,6 +90,30 @@ describe('upsertRequest', () => {
     expect(second.request.notifiedAt).toBeNull()
   })
 
+  it('fix round 1 fold #4: a repeat upsert refreshes contextToken/accountId from the LATEST call — firstMsg stays the original', () => {
+    const store = makeGuestRequestStore({ stateDir: '/unused', store: makeMemStore(), now: () => 5_000 })
+    const msg = mkMsg({ text: '第一句问题' })
+    const first = store.upsertRequest({ chatId: msg.chatId, firstMsg: msg, contextToken: 'stale-tok', accountId: 'acct-old' })
+    expect(first.fresh).toBe(true)
+
+    const second = store.upsertRequest({ chatId: msg.chatId, firstMsg: msg, contextToken: 'fresh-tok', accountId: 'acct-new' })
+    expect(second.fresh).toBe(false)
+    expect(second.request.contextToken).toBe('fresh-tok')
+    expect(second.request.accountId).toBe('acct-new')
+    // The original question is preserved verbatim for the post-approval redispatch.
+    expect(second.request.firstMsg).toEqual(msg)
+    expect(second.request.code).toBe(first.request.code)
+    expect(second.request.createdAt).toBe(first.request.createdAt)
+  })
+
+  it('fix round 1 fold #4: an empty contextToken on the repeat call does NOT regress a known-good stored token to blank', () => {
+    const store = makeGuestRequestStore({ stateDir: '/unused', store: makeMemStore(), now: () => 5_000 })
+    const msg = mkMsg()
+    store.upsertRequest({ chatId: msg.chatId, firstMsg: msg, contextToken: 'good-tok', accountId: 'acct-1' })
+    const second = store.upsertRequest({ chatId: msg.chatId, firstMsg: msg, contextToken: '', accountId: 'acct-1' })
+    expect(second.request.contextToken).toBe('good-tok')
+  })
+
   it('generates a fresh unique code on collision within the request-code namespace', () => {
     const store = makeGuestRequestStore({ stateDir: '/unused', store: makeMemStore(), now: () => 1_000 })
     // First request pins code 111111.
