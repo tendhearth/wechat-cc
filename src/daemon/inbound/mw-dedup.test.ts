@@ -5,11 +5,12 @@ import type { InboundCtx, Middleware } from './types'
 import { openTestDb } from '../../lib/db'
 import { makeDedupStore } from '../../lib/dedup-store'
 
-function ctx(text: string, createTimeMs = 1780000000000): InboundCtx {
+function ctx(text: string, createTimeMs = 1780000000000, redispatch?: boolean): InboundCtx {
   return {
     msg: { chatId: 'c1', userId: 'u1', text, msgType: 'text', createTimeMs, accountId: 'a1' } as InboundCtx['msg'],
     receivedAtMs: 1780000000500,
     requestId: 'r1',
+    ...(redispatch !== undefined ? { redispatch } : {}),
   }
 }
 
@@ -99,6 +100,39 @@ describe('mw-dedup', () => {
     let entered = false
     const spy: Middleware = async () => { entered = true }
     await compose([dedup, spy])(ctx('hi'))
+    expect(entered).toBe(false)
+  })
+
+  // ctx.redispatch bypass — onboarding's echo re-dispatch re-enters the
+  // pipeline with the SAME message id (turn-1's trigger, fired again once
+  // the nickname exchange completes) and must not be swallowed as
+  // "already handled".
+  it('ctx.redispatch=true bypasses the isHandled short-circuit — downstream runs even though already handled', async () => {
+    const { dedup, store } = wire()
+    const terminal: Middleware = async () => {}
+    const run = compose([dedup, terminal])
+    await run(ctx('hi'))
+    expect(store.isHandled('u1:1780000000000')).toBe(true)
+
+    // Same message id, redispatch=true: downstream MUST run this time.
+    let entered = false
+    const spy: Middleware = async () => { entered = true }
+    await compose([dedup, spy])(ctx('hi', 1780000000000, true))
+    expect(entered).toBe(true)
+    // markHandled still runs after — INSERT OR IGNORE, idempotent.
+    expect(store.isHandled('u1:1780000000000')).toBe(true)
+  })
+
+  it('without ctx.redispatch, a redelivery still short-circuits as before', async () => {
+    const { dedup, store } = wire()
+    const terminal: Middleware = async () => {}
+    const run = compose([dedup, terminal])
+    await run(ctx('hi'))
+    expect(store.isHandled('u1:1780000000000')).toBe(true)
+
+    let entered = false
+    const spy: Middleware = async () => { entered = true }
+    await compose([dedup, spy])(ctx('hi', 1780000000000, false))
     expect(entered).toBe(false)
   })
 })
