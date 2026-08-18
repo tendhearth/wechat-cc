@@ -356,6 +356,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     isAdmin,
     getBotName,
     setBotName,
+    stateDir,
   })
 
   const pipelineDeps: InboundPipelineDeps = {
