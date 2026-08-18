@@ -100,20 +100,20 @@ describe('async discovery e2e — topology 1: full push', () => {
     let bgDone: Promise<void> | null = null
     const rOnIntent = makeAsyncResponder({
       answerLocally: rAnswer,
-      postEcho: async (_to, m) => { const r = await sOnEcho('ccr', m); return r.ok },
+      postEcho: async (_to, m) => { const r = await sOnEcho('cc-receiver-9f2e7a1b44', m); return r.ok },
       forwardTargets: () => [],
       forwardSend: async () => false,
       markSeen: () => {}, hasSeen: () => false,
       schedule: (fn) => { bgDone = fn() },
     })
 
-    const R = { id: 'ccr', name: '小R', url: 'http://r/a2a', outbound_api_key: 'k' } as any
+    const R = { id: 'cc-receiver-9f2e7a1b44', name: '小R', url: 'http://r/a2a', outbound_api_key: 'k' } as any
     const sJobs: Array<() => Promise<void>> = []
     const broker = makeBroker({
       policy: POLICY, cheapEval: passingCheck,
       discover: async () => [R],
       // The transport seam: S's send is wired DIRECTLY onto R's onIntent handler.
-      send: async (_hand, card) => { const r = await rOnIntent({ agent: { id: 'ccs' } as any, card }); return r.async === true },
+      send: async (_hand, card) => { const r = await rOnIntent({ agent: { id: 'cc-sender-3d8c6b5e01' } as any, card }); return r.async === true },
       proposeRow: (id, r) => sSeek.propose({ id, kind: 'seek', topic: r.topic, redactedTopic: r.redactedTopic }),
       readSeek: (id) => sSeek.get(id),
       markStatus: (id, status) => sSeek.update(id, { status }),
@@ -137,8 +137,8 @@ describe('async discovery e2e — topology 1: full push', () => {
 
     const echoes = sEcho.listForSeek(intentId)
     expect(echoes).toHaveLength(1)
-    expect(echoes[0]!.id).toBe(`${intentId}:ccr`)
-    expect(echoes[0]!.peer_agent_id).toBe('ccr')
+    expect(echoes[0]!.id).toBe(`${intentId}:cc-receiver-9f2e7a1b44`)
+    expect(echoes[0]!.peer_agent_id).toBe('cc-receiver-9f2e7a1b44')
     expect(echoes[0]!.degree).toBe(1)
     expect(sSeek.get(intentId)!.status).toBe('echoed')
     expect(notify).toHaveBeenCalledTimes(1)
@@ -148,7 +148,7 @@ describe('async discovery e2e — topology 1: full push', () => {
 
 describe('async discovery e2e — topology 2: mailbox round-trip', () => {
   it('S/R both mailbox-only: a sealed intent envelope drops into R\'s queue → R dispatches it (real makeEnvelopeDispatch) → background judge yes → a sealed echo envelope drops into S\'s queue → S dispatches it → intake lands the row; both queues only ever held sealed bytes', async () => {
-    const S_ID = 'ccs'; const R_ID = 'ccr'
+    const S_ID = 'cc-sender-3d8c6b5e01'; const R_ID = 'cc-receiver-9f2e7a1b44'
     const sMailbox = generateMailboxIdentity()   // {addr, addr_priv, enc_pub, enc_priv}
     const rMailbox = generateMailboxIdentity()
     const STOR = 'stor-bearer-0000000000000'     // S presents this bearer when calling R
@@ -270,7 +270,7 @@ describe('async discovery e2e — topology 3: 2-hop per-echo relay', () => {
     const wRelay = makeRelayStore(wDb); const wSeen = makeSeenIntentStore(wDb)
     const qPledge = makePledgeStore(qDb)
 
-    const S = { id: 'ccs', name: '小S', url: 'http://s/a2a' }
+    const S = { id: 'cc-sender-3d8c6b5e01', name: '小S', url: 'http://s/a2a' }
     const W = { id: 'ccw', name: '小W', url: 'http://w/a2a' }
     const Q = { id: 'ccq', name: '小Q', url: 'http://q/a2a' }
 
@@ -352,10 +352,10 @@ describe('async discovery e2e — topology 3: 2-hop per-echo relay', () => {
 
     // W is not a seek holder for this intent — originOf resolves it via its
     // own seen-intent record, and W is the one who minted the relay leg.
-    expect(wSeen.originOf(intentId)).toBe('ccs')
+    expect(wSeen.originOf(intentId)).toBe('cc-sender-3d8c6b5e01')
     expect(mintedToken).not.toBeNull()
     const relayRow = wRelay.get(`${intentId}:${mintedToken}`)!
-    expect(relayRow.upstream_agent_id).toBe('ccs')
+    expect(relayRow.upstream_agent_id).toBe('cc-sender-3d8c6b5e01')
     expect(relayRow.downstream_agent_id).toBe('ccq')
 
     const echoes = sEcho.listForSeek(intentId)
@@ -386,11 +386,11 @@ describe('async discovery e2e — topology 3: 2-hop per-echo relay', () => {
     })
     const sHandle = { pubkey: 'S_PUBKEY', channel_id: 'S_CHANNEL' }
     const qHandle = { pubkey: 'Q_PUBKEY', channel_id: 'Q_CHANNEL' }
-    const sReveal = reconciler.onRelayReveal({ callerAgentId: 'ccs', intentId, relayToken: mintedToken!, peerHandle: sHandle })
+    const sReveal = reconciler.onRelayReveal({ callerAgentId: 'cc-sender-3d8c6b5e01', intentId, relayToken: mintedToken!, peerHandle: sHandle })
     expect(sReveal).toEqual({ mutual: false })                  // only S's leg in so far — Q gets nudged
     const qReveal = reconciler.onRelayReveal({ callerAgentId: 'ccq', intentId, peerHandle: qHandle })
     expect(qReveal).toEqual({ mutual: true, handle: sHandle })  // Q (second) learns S's handle synchronously
-    expect(forwarded).toEqual([{ to: 'ccs', handle: qHandle }]) // S (first) learns Q's handle via post-back
+    expect(forwarded).toEqual([{ to: 'cc-sender-3d8c6b5e01', handle: qHandle }]) // S (first) learns Q's handle via post-back
     expect(notified3way).toBe(1)
   })
 })
@@ -407,9 +407,9 @@ describe('async discovery e2e — topology 4: idempotency & staleness', () => {
       recordRelay: () => { throw new Error('never') }, postEcho: async () => { throw new Error('never') },
     })(senderAgentId, msg)
 
-    const msg = { agent_id: 'ccr', intent_id: 'i1', echo: { blurb: '南京摄影爱好者', degree: 1 } }
-    expect(await sOnEcho('ccr', msg)).toEqual({ ok: true })
-    expect(await sOnEcho('ccr', msg)).toEqual({ ok: true })   // exact redelivery — same PK
+    const msg = { agent_id: 'cc-receiver-9f2e7a1b44', intent_id: 'i1', echo: { blurb: '南京摄影爱好者', degree: 1 } }
+    expect(await sOnEcho('cc-receiver-9f2e7a1b44', msg)).toEqual({ ok: true })
+    expect(await sOnEcho('cc-receiver-9f2e7a1b44', msg)).toEqual({ ok: true })   // exact redelivery — same PK
 
     expect(sEcho.listForSeek('i1')).toHaveLength(1)
     expect(notify).toHaveBeenCalledTimes(1)
@@ -427,8 +427,8 @@ describe('async discovery e2e — topology 4: idempotency & staleness', () => {
       recordRelay: () => { throw new Error('never') }, postEcho: async () => { throw new Error('never') },
     })(senderAgentId, msg)
 
-    const msg = { agent_id: 'ccr', intent_id: 'i2', echo: { blurb: 'x', degree: 1 } }
-    expect(await sOnEcho('ccr', msg)).toEqual({ ok: true })   // swallowed — no probe surface for a peer
+    const msg = { agent_id: 'cc-receiver-9f2e7a1b44', intent_id: 'i2', echo: { blurb: 'x', degree: 1 } }
+    expect(await sOnEcho('cc-receiver-9f2e7a1b44', msg)).toEqual({ ok: true })   // swallowed — no probe surface for a peer
     expect(sEcho.listForSeek('i2')).toHaveLength(0)
     expect(notify).not.toHaveBeenCalled()
   })
