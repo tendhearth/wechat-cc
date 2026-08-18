@@ -1,7 +1,13 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const FILE = 'last-startup.json'
+const NOTIFIED_MARKER_FILE = 'startup-notified.json'
+
+// First-ever startup notice: a warm, human hello instead of the technical
+// pid/accounts line — the owner hasn't met the bot yet. Every later restart
+// keeps the technical copy (owner is technical; restart info has ops value).
+export const WARM_FIRST_STARTUP_TEXT = '我上线啦 👋 直接跟我说话就行;想看我能干嘛,发 /help。'
 
 // Floor on rapid restarts: KeepAlive=true means a crashing daemon will
 // re-launch within seconds. Don't notify the owner each loop — only the
@@ -65,7 +71,10 @@ export async function notifyStartup(
     return { notified: false, reason: 'no-recipients', recipients: [], sinceLastMs: sinceLast }
   }
 
-  const text = renderStartupText(ctx, sinceLast)
+  const notifiedMarkerPath = join(deps.stateDir, NOTIFIED_MARKER_FILE)
+  const isFirstEverNotify = !existsSync(notifiedMarkerPath)
+
+  const text = isFirstEverNotify ? WARM_FIRST_STARTUP_TEXT : renderStartupText(ctx, sinceLast)
   let okCount = 0
   for (const chatId of recipients) {
     try {
@@ -77,6 +86,13 @@ export async function notifyStartup(
   }
   if (okCount === 0) {
     return { notified: false, reason: 'send-failed-all', recipients, sinceLastMs: sinceLast }
+  }
+  if (isFirstEverNotify) {
+    try {
+      writeFileSync(notifiedMarkerPath, JSON.stringify({ ts: now }) + '\n', { mode: 0o600 })
+    } catch (err) {
+      deps.log('NOTIFY', `failed to write ${NOTIFIED_MARKER_FILE}: ${err instanceof Error ? err.message : String(err)}`)
+    }
   }
   deps.log('NOTIFY', `startup notify sent to ${okCount}/${recipients.length} recipient(s)`)
   return { notified: true, recipients, sinceLastMs: sinceLast }
