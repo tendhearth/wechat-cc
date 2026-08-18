@@ -29,6 +29,13 @@ export interface DelegateBuildDeps {
   /** Optional override path for the Codex CLI used by the bundled SDK. */
   codexPathOverride?: string
   /**
+   * Boot logger (same shape as BootstrapDeps.log). Optional — defaults to a
+   * no-op so existing callers (tests) that don't care about log lines don't
+   * need to pass one. Used to surface a BOOT-visible line when the codex
+   * delegate is skipped (see the codexPathOverride gate below).
+   */
+  log?: (tag: string, line: string, fields?: Record<string, unknown>) => void
+  /**
    * Test-only: pre-built delegate providers keyed by peer id, merged OVER the
    * built-in claude/codex/openai delegates. Lets a test route a peer to a fake
    * provider instead of spawning a subprocess / hitting the network. Production
@@ -87,22 +94,37 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
     },
   })
 
-  const delegateCodex = createCodexAgentProvider({
-    // A Bun-compiled desktop sidecar cannot resolve the SDK's optional
-    // platform package from /$bunfs. Reuse the verified user CLI path passed
-    // by bootstrap, just as the main Codex provider does.
-    ...(deps.codexPathOverride ? { codexPathOverride: deps.codexPathOverride } : {}),
-    ...(process.env.CODEX_MODEL || configuredAgent.model
-      ? { model: process.env.CODEX_MODEL ?? configuredAgent.model }
-      : {}),
-    // sandboxMode + approvalPolicy moved out of CodexAgentProviderOptions in
-    // Task 6 — they're now derived per-spawn from spawnOpts.tierProfile inside
-    // the provider. See the dispatchDelegate call below for the tier choice
-    // and its rationale.
-    //
-    // Deliberately NO mcpServers — bare-bones is the structural
-    // recursion-prevention guarantee.
-  })
+  // Bug #86 — mirror the openai branch below: only build the codex delegate
+  // when bootstrap has already verified a real CLI (deps.codexPathOverride).
+  // createCodexAgentProvider eagerly constructs the SDK (`new Codex()` inside
+  // its factory), which calls the bundled SDK's findCodexPath(); on a
+  // Bun-compiled desktop sidecar (/$bunfs/...) that throws because it can't
+  // resolve @openai/codex from real node_modules. Building this
+  // unconditionally meant a refused-or-absent codex CLI took the whole
+  // daemon down at boot for claude-only users. Without an override, we skip
+  // construction entirely — dispatchDelegate('codex', …) then falls through
+  // to the unknown_peer branch below, same as any other unconfigured peer.
+  const delegateCodex: AgentProvider | null = deps.codexPathOverride
+    ? createCodexAgentProvider({
+        // A Bun-compiled desktop sidecar cannot resolve the SDK's optional
+        // platform package from /$bunfs. Reuse the verified user CLI path passed
+        // by bootstrap, just as the main Codex provider does.
+        codexPathOverride: deps.codexPathOverride,
+        ...(process.env.CODEX_MODEL || configuredAgent.model
+          ? { model: process.env.CODEX_MODEL ?? configuredAgent.model }
+          : {}),
+        // sandboxMode + approvalPolicy moved out of CodexAgentProviderOptions in
+        // Task 6 — they're now derived per-spawn from spawnOpts.tierProfile inside
+        // the provider. See the dispatchDelegate call below for the tier choice
+        // and its rationale.
+        //
+        // Deliberately NO mcpServers — bare-bones is the structural
+        // recursion-prevention guarantee.
+      })
+    : (() => {
+        deps.log?.('BOOT', 'codex delegate not registered — no verified codex CLI (codexPathOverride absent); delegate_codex will report unknown_peer')
+        return null
+      })()
 
   // openai-compatible backends (DeepSeek / Kimi / Qwen / GLM / Ollama / …) as a
   // bare delegate peer. Same clean-slate contract as claude/codex: an EMPTY MCP
@@ -130,7 +152,7 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
   // Built-in delegates by peer id; test overrides win (see DelegateBuildDeps).
   const providers: Partial<Record<ProviderId, AgentProvider>> = {
     claude: delegateClaude,
-    codex: delegateCodex,
+    ...(delegateCodex ? { codex: delegateCodex } : {}),
     ...(delegateOpenai ? { openai: delegateOpenai } : {}),
     ...(deps.delegateProviders ?? {}),
   }

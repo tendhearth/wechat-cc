@@ -166,8 +166,11 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   //
   // Inner timeout (default 90s) + spawn-hard-kill (100s) protect against
   // a permanently hung `bun add` zombie.
+  // Captured once so the version-mismatch message below (which needs to
+  // know whether autofix is even reachable) doesn't re-derive it.
+  const codexInstallDir = wechatCcRepoRoot()
   void attemptCodexAutofix({
-    installDir: wechatCcRepoRoot(),
+    installDir: codexInstallDir,
     bundledSdkVersion: codexCliPkg.version,
     detectUserCodex: () => detectUserCodexOnPath(),
     envDisabled: process.env.WECHAT_CC_DISABLE_CODEX_AUTOFIX === '1',
@@ -262,13 +265,23 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     )
   } else if (codexBinary && codexVersionCheck && !codexVersionCheck.ok) {
     // VERSION MISMATCH: user has codex installed, but its protocol version
-    // doesn't match our bundled SDK. Three resolution paths:
-    //   - Wait for codex-autofix (running in background since boot start;
-    //     it'll `bun add @openai/codex-sdk@<userVer>` to realign).
-    //     Restart daemon after autofix completes.
-    //   - Manually downgrade global: `npm i -g @openai/codex@<expected>`.
-    //   - Manually upgrade wechat-cc: `bun add @openai/codex-sdk@<userVer>
-    //     @openai/codex@<userVer>` in the wechat-cc install dir.
+    // doesn't match our bundled SDK.
+    //
+    // codex-autofix (above) can only run when codexInstallDir is non-null —
+    // i.e. source-mode, where wechatCcRepoRoot() finds package.json next to
+    // this file. On a Bun-compiled desktop bundle codexInstallDir is null,
+    // autofix logs `[CODEX_AUTOFIX] skipped: no install dir resolved
+    // (compiled bundle?)` and never touches node_modules, so "wait for
+    // autofix" and "bun add ... in the install dir" are both unreachable
+    // advice there. `npm i -g` downgrade also doesn't fit the desktop
+    // install path (no npm/global install step in that flow). Branch the
+    // message so bundle users get advice that's actually actionable.
+    const resolution = codexInstallDir
+      ? `Resolution: (a) wait for the background auto-fix to realign SDK to your CLI version, then restart daemon; ` +
+        `or (b) downgrade global codex: \`npm i -g @openai/codex@${codexVersionCheck.expectedVersion}\`.`
+      : `Resolution: install a codex CLI within patch range of v${codexVersionCheck.expectedVersion} ` +
+        `(the version wechat-cc's bundled SDK expects), then restart daemon; ` +
+        `or ignore this if you don't use codex — the daemon runs fine without it.`
     deps.log('BOOT',
       `codex provider NOT registered — version mismatch. ` +
       `Your codex CLI at ${codexBinary} is ` +
@@ -276,8 +289,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       `but wechat-cc's bundled SDK expects v${codexVersionCheck.expectedVersion}. ` +
       `Patch-level differences are tolerated; this gap is not, and a mismatched ` +
       `protocol fails silently (empty replies, no error). ` +
-      `Resolution: (a) wait for the background auto-fix to realign SDK to your CLI version, then restart daemon; ` +
-      `or (b) downgrade global codex: \`npm i -g @openai/codex@${codexVersionCheck.expectedVersion}\`.`,
+      resolution,
     )
   } else {
     // NOT INSTALLED: no codex on PATH or in ~/.nvm. Tell the user the

@@ -6,6 +6,19 @@ import { buildDelegateDispatch } from './delegate'
 import { makeFakeSession } from '../../core/test-helpers'
 import type { AgentProvider } from '../../core/agent-provider'
 
+// Bug #86 regression seam — spy on the real factory so we can assert it is
+// NEVER invoked when no codexPathOverride is supplied. This is the only way
+// to observe "construction was skipped" from outside delegate.ts: the real
+// createCodexAgentProvider eagerly constructs the SDK (new Codex() inside
+// its factory), which is exactly what crashes boot in a compiled bundle
+// (findCodexPath() can't resolve @openai/codex from /$bunfs). Mocking it
+// here means these tests don't depend on that codepath actually throwing —
+// they assert the conditional construction directly.
+const createCodexAgentProviderMock = vi.fn((_opts?: unknown) => ({ spawn: vi.fn() }) as unknown as AgentProvider)
+vi.mock('../../core/codex-agent-provider', () => ({
+  createCodexAgentProvider: (opts?: unknown) => createCodexAgentProviderMock(opts),
+}))
+
 function tmpState(): string {
   return mkdtempSync(join(tmpdir(), 'delegate-'))
 }
@@ -65,6 +78,42 @@ describe('buildDelegateDispatch — openai/Kimi peer wiring', () => {
     const dispatch = buildDelegateDispatch({ stateDir: tmpState() })
     const r = await dispatch('bogus-provider', 'hi')
     expect(r).toEqual({ ok: false, reason: 'unknown_peer: bogus-provider' })
+  })
+})
+
+// ─── codex delegate is conditional on a verified CLI (#86) ─────────────────
+describe('buildDelegateDispatch — codex peer is conditional on codexPathOverride', () => {
+  it('does NOT construct the codex provider when no codexPathOverride is passed (the boot-crash regression)', () => {
+    createCodexAgentProviderMock.mockClear()
+    buildDelegateDispatch({ stateDir: tmpState() })
+    // The real factory eagerly constructs the SDK — never calling it at all
+    // (not "call it and swallow the throw") is the fix: a refused/absent
+    // codex CLI must not touch codex construction at boot.
+    expect(createCodexAgentProviderMock).not.toHaveBeenCalled()
+  })
+
+  it('reports unknown_peer for codex when no codexPathOverride is passed', async () => {
+    const dispatch = buildDelegateDispatch({ stateDir: tmpState() })
+    const r = await dispatch('codex', 'hi')
+    expect(r).toEqual({ ok: false, reason: 'unknown_peer: codex' })
+  })
+
+  it('logs a BOOT-visible line when the codex delegate is skipped', () => {
+    const log = vi.fn()
+    buildDelegateDispatch({ stateDir: tmpState(), log })
+    expect(log).toHaveBeenCalledWith('BOOT', expect.stringContaining('codex delegate not registered'))
+  })
+
+  it('DOES construct the codex provider when codexPathOverride is passed (verified CLI)', () => {
+    createCodexAgentProviderMock.mockClear()
+    const log = vi.fn()
+    buildDelegateDispatch({ stateDir: tmpState(), codexPathOverride: '/usr/local/bin/codex', log })
+    expect(createCodexAgentProviderMock).toHaveBeenCalledTimes(1)
+    expect(createCodexAgentProviderMock).toHaveBeenCalledWith(
+      expect.objectContaining({ codexPathOverride: '/usr/local/bin/codex' }),
+    )
+    // No skip line when the delegate was actually built.
+    expect(log).not.toHaveBeenCalledWith('BOOT', expect.stringContaining('codex delegate not registered'))
   })
 })
 

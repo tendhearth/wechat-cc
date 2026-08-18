@@ -47,6 +47,10 @@ Non-allowlisted WeChat friends (people the owner already friend-accepted) get a 
 
 Terminal `/wechat:access` remains the full management surface.
 
+### Re-cut: bundle boot crash with a refused/absent Codex CLI (issue #86)
+
+The first v1.4.0 tag was cut and drafted but never published; it is re-cut with this fix (same posture as the v1.3.8 re-cut). On the compiled bundle, when the codex version gate refused registration — or codex simply wasn't installed — the delegate layer still constructed the codex provider, whose SDK resolves its CLI eagerly and cannot do so inside a single-file bundle: boot died for claude-only users with no opt-out. The codex delegate is now conditional on a verified CLI (mirroring the openai branch), a missing peer fails cleanly at call time (`unknown_peer: codex`), and the version-mismatch guidance no longer advises a background auto-fix that is unreachable on bundles. Reported externally against 1.3.8 with a precise root cause — thank you.
+
 ## Known / deferred
 
 - agy's wechat-MCP live round (an `/agy` message exercising real tools) is the one leg pending real-device verification; token `routeAllow` narrowing follows it.

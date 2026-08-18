@@ -988,6 +988,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // registry's main providers (no mcpServers — recursion prevention).
   const dispatchDelegate = buildDelegateDispatch({
     stateDir: deps.stateDir,
+    log: deps.log,
     ...(claudeBin ? { claudeBin } : {}),
     ...(codexBinary && codexVersionCheck?.ok ? { codexPathOverride: codexBinary } : {}),
     // busy-registry hold (spec 2026-08-11 §2, Task 4 step 3 + Task 6) —
