@@ -122,3 +122,22 @@ schema 进 schema.ts;index.ts 挂载跟随既有姿势。
 - 微信内斜杠命令(自然语言经 MCP 工具已覆盖「明早八点提醒我」);
 - companion agenda 合并/去重(分界清晰,各活各的);
 - admin 跨聊天提醒(拍板落选项;真有需求再开一档)。
+
+## 5. 实现期批注(2026-08-20,SDD 执行完结)
+
+- **[fix-wave 增补]** 终审唯一 Important:新外发生产者无量控(退避只治
+  重试风暴,不治首发爆发)。已修入 371e3557:schedule 侧每聊天 pending
+  上限 `MAX_PENDING_PER_CHAT = 20`(超限 `ok:false, too_many_pending`)+
+  sweeper 侧每次扫描发送尝试预算 `MAX_SENDS_PER_SWEEP = 30`(超出者计
+  deferred、下轮按 due_at ASC 优先)。退避挡下的行不消耗预算。
+- **[偏差登记,plan 授权]** §2.2 说 "listDue 的 SQL 过滤退避" ——实现放在
+  sweeper 的循环顶闸(June 自己的 "sweep policy lives in the sweeper"
+  分界),SQL 保持简单;行为等价。§2.4 说接线放 wire-*.ts——实际落在
+  main.ts step-4 的 sup.start 块(mailbox-poller 同位同姿势,那才是现行
+  惯例;wire-*.ts 家族装的是 bootstrap 产物组装)。
+- **[fix-wave 增补]** markSent 加 `AND status='pending'` 守卫(cancel 与
+  send 的亚秒竞态不再回写成 sent)。send→markSent 之间崩溃 = 重启后至多
+  重发一次(at-least-once,main.ts 注释已如实写明)。
+- **[parked,终审裁决]** 理论饥饿:全系统持续超载(聚合待发 > 30/轮×多
+  聊天)下,单行可能 24h 内始终未获尝试而永不 markFailed——固定预算+
+  退避设计的固有边界,每聊天 20 上限压住聚合需求;登记不修。
