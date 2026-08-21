@@ -54,7 +54,7 @@ describe('reminders store', () => {
   it('recordAttempt bumps attempts + last_error but keeps it pending/due', async () => {
     const store = makeRemindersStore(db)
     const id = await store.schedule({ chat_id: 'u', due_at: '2026-06-18T10:00:00Z', text: 't' })
-    await store.recordAttempt(id, 'missing_context_token')
+    await store.recordAttempt(id, 'missing_context_token', '2026-06-18T10:15:00Z')
     const all = await store.list('u')
     expect(all[0]!.status).toBe('pending')
     expect(all[0]!.attempts).toBe(1)
