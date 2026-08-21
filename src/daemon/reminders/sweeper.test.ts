@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openTestDb, type Db } from '../../lib/db'
-import { makeRemindersStore, type ReminderRecord } from './store'
-import { runReminderSweep, RETRY_WINDOW_MS, backoffMs } from './sweeper'
+import { makeRemindersStore } from './store'
+import { runReminderSweep, RETRY_WINDOW_MS, backoffMs, MAX_SENDS_PER_SWEEP } from './sweeper'
 
 const noop = () => {}
 const noopLog = () => {}
@@ -122,5 +122,57 @@ describe('runReminderSweep', () => {
     const result = await runReminderSweep({ store, send, nowIso: '2026-08-20T10:01:01.000Z', log: noop })
     expect(send).toHaveBeenCalledTimes(1)
     expect(result.delivered).toBe(1)
+  })
+
+  it('caps send attempts at MAX_SENDS_PER_SWEEP; the rest stay pending and deferred', async () => {
+    const store = makeRemindersStore(db)
+    const total = MAX_SENDS_PER_SWEEP + 1
+    for (let i = 0; i < total; i++) {
+      // Stagger due_at so listDue's ORDER BY due_at ASC gives a deterministic
+      // oldest-first order — the last one scheduled is the one left over.
+      await store.schedule({
+        chat_id: 'u',
+        due_at: new Date(Date.parse('2026-08-20T09:00:00.000Z') + i * 1000).toISOString(),
+        text: `msg${i}`,
+      })
+    }
+    const send = vi.fn().mockResolvedValue({ ok: true })
+
+    const res = await runReminderSweep({ store, send, nowIso: '2026-08-20T10:00:00.000Z', log: noopLog })
+
+    expect(send).toHaveBeenCalledTimes(MAX_SENDS_PER_SWEEP)
+    expect(res.delivered).toBe(MAX_SENDS_PER_SWEEP)
+    expect(res.deferred).toBe(1)
+
+    const stillPending = await store.listDue('2026-08-20T10:00:00.000Z')
+    expect(stillPending).toHaveLength(1)
+    expect(stillPending[0]!.text).toBe(`msg${total - 1}`)
+
+    // Next sweep delivers the leftover row (untouched, not backed off).
+    const send2 = vi.fn().mockResolvedValue({ ok: true })
+    const res2 = await runReminderSweep({ store, send: send2, nowIso: '2026-08-20T10:01:00.000Z', log: noopLog })
+    expect(send2).toHaveBeenCalledTimes(1)
+    expect(res2.delivered).toBe(1)
+    expect(await store.listDue('2026-08-20T10:01:00.000Z')).toHaveLength(0)
+  })
+
+  it('maxSendsPerSweep is overridable via SweepDeps', async () => {
+    const store = makeRemindersStore(db)
+    for (let i = 0; i < 5; i++) {
+      await store.schedule({
+        chat_id: 'u',
+        due_at: new Date(Date.parse('2026-08-20T09:00:00.000Z') + i * 1000).toISOString(),
+        text: `msg${i}`,
+      })
+    }
+    const send = vi.fn().mockResolvedValue({ ok: true })
+
+    const res = await runReminderSweep({
+      store, send, nowIso: '2026-08-20T10:00:00.000Z', log: noopLog, maxSendsPerSweep: 2,
+    })
+
+    expect(send).toHaveBeenCalledTimes(2)
+    expect(res.delivered).toBe(2)
+    expect(res.deferred).toBe(3)
   })
 })

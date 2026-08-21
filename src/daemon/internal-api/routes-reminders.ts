@@ -9,7 +9,7 @@
  * guest path is a harassment/impersonation primitive. File/operator tokens
  * (the CLI) are unrestricted. The 403 never echoes the requested chat_id.
  */
-import { makeRemindersStore } from '../reminders/store'
+import { makeRemindersStore, MAX_PENDING_PER_CHAT } from '../reminders/store'
 import type { InternalApiDeps, RouteHandler, RouteTable } from './types'
 import { errMsg } from './types'
 import type { ReminderScheduleRequestT, ReminderCancelRequestT } from './schema'
@@ -29,10 +29,17 @@ export function remindersRoutes(deps: InternalApiDeps): RouteTable {
       const { chat_id, text, due_at, delay_seconds } = body as ReminderScheduleRequestT
       if (scopeDenied(chat_id, caller)) return DENIED
       try {
+        const store = makeRemindersStore(deps.db)
+        // Per-chat pending cap (review issue 1a) — closes the schedule-time
+        // half of the volume-cap fix; the sweeper's per-sweep send budget
+        // (sweeper.ts) closes the delivery-time half.
+        const pending = await store.countPending(chat_id)
+        if (pending >= MAX_PENDING_PER_CHAT) {
+          return { status: 200, body: { ok: false, error: 'too_many_pending' } }
+        }
         const dueIso = due_at !== undefined
           ? new Date(due_at).toISOString()
           : new Date(Date.now() + delay_seconds! * 1000).toISOString()
-        const store = makeRemindersStore(deps.db)
         const id = await store.schedule({ chat_id, due_at: dueIso, text })
         deps.log?.('REMINDERS', `scheduled ${id} → ${chat_id} at ${dueIso}`)
         return { status: 200, body: { ok: true, reminder_id: id, due_at: dueIso } }

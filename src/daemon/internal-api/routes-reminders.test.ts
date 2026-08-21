@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openTestDb, type Db } from '../../lib/db'
 import { remindersRoutes } from './routes-reminders'
+import { MAX_PENDING_PER_CHAT } from '../reminders/store'
 import type { InternalApiDeps } from './types'
 
 describe('reminders routes', () => {
@@ -52,5 +53,39 @@ describe('reminders routes', () => {
     const due = Date.parse((r.body as any).due_at)
     expect(due).toBeGreaterThanOrEqual(before + 55_000)
     expect(due).toBeLessThanOrEqual(Date.now() + 65_000)
+  })
+
+  it('schedule: per-chat pending cap — the 20th succeeds, the 21st is rejected', async () => {
+    for (let i = 0; i < MAX_PENDING_PER_CHAT; i++) {
+      const r = await routes['POST /v1/reminders/schedule']!(
+        new URLSearchParams(), { chat_id: 'u1', text: `n${i}`, delay_seconds: 60 }, sessionCaller)
+      expect(r.status).toBe(200)
+      expect((r.body as any).ok).toBe(true)
+    }
+    const r21 = await routes['POST /v1/reminders/schedule']!(
+      new URLSearchParams(), { chat_id: 'u1', text: 'one too many', delay_seconds: 60 }, sessionCaller)
+    expect(r21.status).toBe(200)
+    expect((r21.body as any).ok).toBe(false)
+    expect((r21.body as any).error).toBe('too_many_pending')
+
+    const l = await routes['GET /v1/reminders/list']!(new URLSearchParams({ chat_id: 'u1' }), undefined, sessionCaller)
+    expect((l.body as any).reminders).toHaveLength(MAX_PENDING_PER_CHAT)
+  })
+
+  it('schedule: non-pending rows do not count toward the cap', async () => {
+    let lastId = ''
+    for (let i = 0; i < MAX_PENDING_PER_CHAT; i++) {
+      const r = await routes['POST /v1/reminders/schedule']!(
+        new URLSearchParams(), { chat_id: 'u1', text: `n${i}`, delay_seconds: 60 }, sessionCaller)
+      lastId = (r.body as any).reminder_id
+    }
+    // Cancel one, freeing a slot under the cap.
+    const c = await routes['POST /v1/reminders/cancel']!(
+      new URLSearchParams(), { chat_id: 'u1', reminder_id: lastId }, sessionCaller)
+    expect((c.body as any).cancelled).toBe(true)
+
+    const r = await routes['POST /v1/reminders/schedule']!(
+      new URLSearchParams(), { chat_id: 'u1', text: 'fits now', delay_seconds: 60 }, sessionCaller)
+    expect((r.body as any).ok).toBe(true)
   })
 })

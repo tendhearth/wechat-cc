@@ -17,6 +17,15 @@ import type { Db } from '../../lib/db'
 
 export type ReminderStatus = 'pending' | 'sent' | 'cancelled' | 'failed'
 
+/**
+ * Per-chat pending-reminder cap (spec 2026-08-20-reminders-port review, issue
+ * 1a). Enforced at schedule time by the route handler via countPending() —
+ * an unbounded queue per chat is a first-attempt outbound-burst path the
+ * sweeper's per-sweep budget alone doesn't close (a single chat could still
+ * accumulate thousands of same-minute reminders across many turns).
+ */
+export const MAX_PENDING_PER_CHAT = 20
+
 export interface ReminderRecord {
   id: string             // rmr_<random>
   chat_id: string        // which WeChat user gets this
@@ -38,6 +47,8 @@ export interface RemindersStore {
   list(chatId: string): Promise<ReminderRecord[]>
   /** Pending reminders with due_at <= `nowIso`, oldest-due first. */
   listDue(nowIso: string): Promise<ReminderRecord[]>
+  /** Count of currently-pending reminders for a chat (schedule-time volume cap). */
+  countPending(chatId: string): Promise<number>
   /** Mark delivered. */
   markSent(id: string): Promise<void>
   /** Mark permanently failed (retry window exhausted) with a reason. */
@@ -93,8 +104,15 @@ export function makeRemindersStore(db: Db): RemindersStore {
   const stmtListDue = db.query<Row, [string]>(
     `SELECT ${COLS} FROM reminders WHERE status = 'pending' AND due_at <= ? ORDER BY due_at ASC`,
   )
+  const stmtCountPending = db.query<{ c: number }, [string]>(
+    "SELECT COUNT(*) as c FROM reminders WHERE chat_id = ? AND status = 'pending'",
+  )
+  // Status-guarded: a cancel landing between the sweeper's listDue snapshot
+  // and this UPDATE must win — a cancelled row must never be flipped back to
+  // 'sent' (review issue 2). Rows that are no longer 'pending' are left
+  // untouched; .changes will be 0 for them.
   const stmtMarkSent = db.query<unknown, [string]>(
-    "UPDATE reminders SET status = 'sent', attempts = attempts + 1 WHERE id = ?",
+    "UPDATE reminders SET status = 'sent', attempts = attempts + 1 WHERE id = ? AND status = 'pending'",
   )
   const stmtMarkFailed = db.query<unknown, [string, string]>(
     "UPDATE reminders SET status = 'failed', attempts = attempts + 1, last_error = ? WHERE id = ?",
@@ -123,6 +141,10 @@ export function makeRemindersStore(db: Db): RemindersStore {
     },
     async listDue(nowIso) {
       return stmtListDue.all(nowIso).map(rowToRecord)
+    },
+    async countPending(chatId) {
+      const row = stmtCountPending.get(chatId)
+      return row ? row.c : 0
     },
     async markSent(id) {
       stmtMarkSent.run(id)

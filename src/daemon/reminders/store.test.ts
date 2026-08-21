@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openTestDb, type Db } from '../../lib/db'
-import { makeRemindersStore } from './store'
+import { makeRemindersStore, MAX_PENDING_PER_CHAT } from './store'
 
 describe('reminders store', () => {
   let db: Db
@@ -113,5 +113,35 @@ describe('reminders store', () => {
     const id = await store.schedule({ chat_id: 'u1', due_at: '2026-08-20T10:00:00.000Z', text: 'hi' })
     const rec = (await store.list('u1')).find(r => r.id === id)!
     expect(rec.last_attempt_at).toBeNull()
+  })
+
+  it('countPending only counts pending rows for the given chat', async () => {
+    const store = makeRemindersStore(db)
+    await store.schedule({ chat_id: 'u', due_at: '2026-06-18T10:00:00Z', text: 'a' })
+    const sentId = await store.schedule({ chat_id: 'u', due_at: '2026-06-18T10:00:00Z', text: 'b' })
+    await store.markSent(sentId)
+    await store.schedule({ chat_id: 'other', due_at: '2026-06-18T10:00:00Z', text: 'c' })
+
+    expect(await store.countPending('u')).toBe(1)
+    expect(await store.countPending('other')).toBe(1)
+    expect(await store.countPending('nobody')).toBe(0)
+  })
+
+  it('markSent is a no-op (status guard) once a reminder was already cancelled — TOCTOU safety', async () => {
+    const store = makeRemindersStore(db)
+    const id = await store.schedule({ chat_id: 'u', due_at: '2026-06-18T10:00:00Z', text: 't' })
+    expect(await store.cancel(id, 'u')).toBe(true)
+
+    // A send that raced the cancel (sweeper snapshot pre-dates the cancel)
+    // must not flip the row back to 'sent'.
+    await store.markSent(id)
+
+    const rec = (await store.list('u'))[0]!
+    expect(rec.status).toBe('cancelled')
+    expect(rec.attempts).toBe(0)
+  })
+
+  it('MAX_PENDING_PER_CHAT is 20', () => {
+    expect(MAX_PENDING_PER_CHAT).toBe(20)
   })
 })

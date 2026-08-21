@@ -31,6 +31,17 @@ export function backoffMs(attempts: number): number {
   return Math.min(3_600_000, 60_000 * 2 ** (attempts - 1))
 }
 
+/**
+ * Per-sweep send-attempt budget (review issue 1b). Backoff only spaces out
+ * *retries* — the unbounded first-attempt case (many reminders due in the
+ * same sweep) was still a burst path straight into ilink.sendMessage, which
+ * is exactly what WeChat risk control watches. Rows beyond the budget are
+ * left untouched (not attempted, not backed off) and are picked up on the
+ * next sweep — listDue's `due_at ASC` ordering means the oldest-due rows
+ * always get first crack at the budget.
+ */
+export const MAX_SENDS_PER_SWEEP = 30
+
 export interface SweepDeps {
   store: RemindersStore
   /** Deliver a message to a chat. Resolves {ok} — never throws for normal failures. */
@@ -39,6 +50,8 @@ export interface SweepDeps {
   nowIso: string
   log: (tag: string, line: string) => void
   retryWindowMs?: number
+  /** Override the per-sweep send-attempt budget. Defaults to MAX_SENDS_PER_SWEEP. */
+  maxSendsPerSweep?: number
 }
 
 export interface SweepResult {
@@ -55,9 +68,11 @@ export interface SweepResult {
  */
 export async function runReminderSweep(deps: SweepDeps): Promise<SweepResult> {
   const retryWindow = deps.retryWindowMs ?? RETRY_WINDOW_MS
+  const maxSends = deps.maxSendsPerSweep ?? MAX_SENDS_PER_SWEEP
   const nowMs = Date.parse(deps.nowIso)
   const due = await deps.store.listDue(deps.nowIso)
   const result: SweepResult = { delivered: 0, retried: 0, failed: 0, deferred: 0 }
+  let sendAttempts = 0
 
   for (const rec of due) {
     // Backoff gate: a previously-failed reminder is only eligible again once
@@ -70,6 +85,14 @@ export async function runReminderSweep(deps: SweepDeps): Promise<SweepResult> {
         continue
       }
     }
+
+    // Per-sweep send budget: rows beyond the budget stay pending untouched
+    // (no attempt recorded, no backoff applied) and surface again next sweep.
+    if (sendAttempts >= maxSends) {
+      result.deferred++
+      continue
+    }
+    sendAttempts++
 
     let outcome: { ok: boolean; error?: string }
     try {
@@ -94,7 +117,7 @@ export async function runReminderSweep(deps: SweepDeps): Promise<SweepResult> {
     } else {
       await deps.store.recordAttempt(rec.id, err, deps.nowIso)
       result.retried++
-      deps.log('REMINDERS', `deferred ${rec.id} → ${rec.chat_id} (will retry): ${err}`)
+      deps.log('REMINDERS', `retry recorded ${rec.id} → ${rec.chat_id} (backoff applies): ${err}`)
     }
   }
 

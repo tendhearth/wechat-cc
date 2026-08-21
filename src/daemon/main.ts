@@ -482,8 +482,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // precise-time delivery. Optional subsystem: a broken sweeper degrades,
     // never blocks boot. Store is db-backed so pending reminders survive
     // restarts; send goes through the live ilink adapter and checks .error
-    // (sendMessage never rejects). Sub-second ticks — no holdBusy needed
-    // (an idle self-restart mid-sweep just re-sweeps next boot).
+    // (sendMessage never rejects). No holdBusy needed: the tick INTERVAL is
+    // 60s and the sweep BODY itself is sub-second, so a self-restart lands
+    // between sweeps almost always. Worst case if a restart (or crash) lands
+    // between a successful send and the markSent that follows it: at-least-
+    // once delivery — the reminder is re-sent on the next sweep because the
+    // row is still 'pending' — not a delay.
     const remindersLc = await sup.start('reminders', () => registerReminders({
       store: makeRemindersStore(db),
       send: async (chatId, text) => {
