@@ -478,6 +478,46 @@ export const ConversationSetModeResponse = z.union([
   z.object({ error: z.string() }),
 ])
 
+// ── reminders (per-chat precise-time; spec 2026-08-20-reminders-port) ────────
+// Caller supplies EITHER an absolute due_at (ISO 8601) OR a relative
+// delay_seconds (the daemon computes due_at = now + delay using its own clock,
+// avoiding timezone ambiguity). Exactly one must be present. Session-origin
+// callers are scoped to their own chat in routes-reminders.ts.
+
+export const ReminderScheduleRequest = z.object({
+  chat_id: z.string().min(1),
+  text: z.string().min(1).max(4000),
+  due_at: z.string().datetime({ offset: true }).optional(),
+  delay_seconds: z.number().int().min(1).max(60 * 60 * 24 * 365).optional(),
+}).refine(
+  b => (b.due_at === undefined) !== (b.delay_seconds === undefined),
+  { message: 'provide exactly one of due_at or delay_seconds' },
+)
+export const ReminderScheduleResponse = z.union([
+  z.object({ ok: z.literal(true), reminder_id: z.string(), due_at: z.string() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+
+export const ReminderCancelRequest = z.object({
+  chat_id: z.string().min(1),
+  reminder_id: z.string().min(1),
+})
+export const ReminderCancelResponse = z.union([
+  z.object({ ok: z.literal(true), cancelled: z.boolean() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+
+export const ReminderListQuery = z.object({ chat_id: z.string().min(1) })
+export const ReminderListResponse = z.union([
+  z.object({ ok: z.literal(true), reminders: z.array(z.object({
+    id: z.string(), due_at: z.string(), text: z.string(), status: z.string(),
+  })) }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+
+export type ReminderScheduleRequestT = z.infer<typeof ReminderScheduleRequest>
+export type ReminderCancelRequestT = z.infer<typeof ReminderCancelRequest>
+
 // ── Inferred TS type aliases ────────────────────────────────────────────
 // Convention: <Schema>T is z.infer<typeof <Schema>>. JSDoc consumers and
 // handler signatures import these aliases.
@@ -613,6 +653,11 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/plugins/install': PluginInstallRequest,
   'POST /v1/plugins/upgrade': PluginInstallRequest,
   'POST /v1/license/activate': LicenseActivateRequest,
+
+  // reminders
+  'POST /v1/reminders/schedule': ReminderScheduleRequest,
+  'POST /v1/reminders/cancel': ReminderCancelRequest,
+  'GET /v1/reminders/list': ReminderListQuery,
 }
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
@@ -646,4 +691,9 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/a2a/test': A2ATestResponse,
   'POST /v1/a2a/preview': A2APreviewResponse,
   'POST /v1/a2a/install': A2AInstallResponse,
+
+  // reminders
+  'POST /v1/reminders/schedule': ReminderScheduleResponse,
+  'POST /v1/reminders/cancel': ReminderCancelResponse,
+  'GET /v1/reminders/list': ReminderListResponse,
 }

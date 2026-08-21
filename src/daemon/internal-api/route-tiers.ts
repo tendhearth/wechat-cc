@@ -31,6 +31,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // same trust class as reply/reply_voice, so it's guest not trusted.
   'POST /v1/wechat/send_sticker': 'guest',
   'GET /v1/stickers': 'guest',
+  // reminders — scope (own chat only for session callers) is enforced in
+  // routes-reminders.ts; the tier floor is guest ("提醒我" is harmless).
+  'POST /v1/reminders/schedule': 'guest',
+  'POST /v1/reminders/cancel': 'guest',
+  'GET /v1/reminders/list': 'guest',
   // trusted — operator/agent ops (also reachable by the CLI, capped at trusted)
   'POST /v1/wechat/broadcast': 'trusted',
   'POST /v1/wechat/send_file': 'trusted',

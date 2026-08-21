@@ -28,6 +28,7 @@ import { daemonControlRoutes } from './routes-daemon-control'
 import { fileRoutes } from './routes-files'
 import { customerReviewRoutes } from './routes-customer-review'
 import { federationRoutes } from './routes-federation'
+import { remindersRoutes } from './routes-reminders'
 import type {
   MemoryReadRequestT, MemoryWriteRequestT, MemoryDeleteRequestT,
   ProjectsSwitchRequestT, ProjectsAddRequestT, ProjectsRemoveRequestT,
@@ -702,6 +703,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     ...memoryRoutes(deps),
     ...penpalRoutes(deps),
     ...healthRoutes(deps),
+    ...remindersRoutes(deps),
     ...pluginRoutes(deps),
     ...licenseRoutes(deps),
     ...daemonControlRoutes(deps),
