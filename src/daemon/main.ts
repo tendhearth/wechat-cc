@@ -23,6 +23,8 @@ import { registerPolling } from './polling-lifecycle'
 import { registerSessions } from './sessions-lifecycle'
 import { registerIlink } from './ilink-lifecycle'
 import { registerMailboxPoller } from './bootstrap/wire-mailbox'
+import { registerReminders } from './reminders/sweeper'
+import { makeRemindersStore } from './reminders/store'
 import { buildInboundPipeline } from './inbound/build'
 import { runStartupSweeps } from './startup-sweeps'
 import { wireMain } from './wiring'
@@ -476,6 +478,21 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const mailboxLc = await sup.start('mailbox-poller',
       () => boot.mailboxPollerDeps ? registerMailboxPoller(boot.mailboxPollerDeps) : undefined)
     if (mailboxLc) lc.register(mailboxLc)
+    // Reminder sweeper (spec 2026-08-20-reminders-port) — multi-user
+    // precise-time delivery. Optional subsystem: a broken sweeper degrades,
+    // never blocks boot. Store is db-backed so pending reminders survive
+    // restarts; send goes through the live ilink adapter and checks .error
+    // (sendMessage never rejects). Sub-second ticks — no holdBusy needed
+    // (an idle self-restart mid-sweep just re-sweeps next boot).
+    const remindersLc = await sup.start('reminders', () => registerReminders({
+      store: makeRemindersStore(db),
+      send: async (chatId, text) => {
+        const r = await ilink.sendMessage(chatId, text) as { msgId?: string; error?: string }
+        return r.error ? { ok: false, error: r.error } : { ok: true }
+      },
+      log: (t, l) => log(t, l),
+    }))
+    if (remindersLc) lc.register(remindersLc)
     // 5. one-shot startup sweeps — fire-and-forget
     runStartupSweeps(wired.startupDeps)
     const modeStr = dangerously ? 'mode=dangerouslySkipPermissions=true (no WeChat permission prompts will fire)' : 'mode=strict (Phase 1 permission relay active)'
