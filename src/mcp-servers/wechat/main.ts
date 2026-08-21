@@ -95,6 +95,78 @@ server.registerTool(
   },
 )
 
+// ─── reminders(每聊天、分钟级、一次性)────────────────────────────────
+// 与 companion/agenda(operator-only、天粒度)不同:这是给「当前聊天」设的
+// 精确时间提醒,由 daemon 的 sweeper 直接投递,跨重启存活。chat_id 必须是
+// 当前对话的 chat_id —— 服务端按会话身份校验,给别的聊天设提醒会被 403。
+
+server.registerTool(
+  'schedule_reminder',
+  {
+    title: 'Schedule a precise-time reminder',
+    description:
+      '给当前聊天的用户设一个精确时间的提醒，到点由 daemon 直接发出（不依赖本会话存活，跨重启）。' +
+      'chat_id=当前对话的 chat_id（服务端校验，只能给本聊天设）。' +
+      '二选一：delay_seconds（相对秒数，首选，免时区计算）或 due_at（绝对 ISO 8601 时间）。' +
+      'text=到点要发的内容。返回 { ok, reminder_id, due_at }。适合"X 小时后/几点提醒我"。' +
+      '若到点时投递失败会按指数退避自动重试最多 24 小时。',
+    inputSchema: {
+      chat_id: z.string(),
+      text: z.string().min(1).max(4000),
+      delay_seconds: z.number().int().min(1).max(60 * 60 * 24 * 365).optional(),
+      due_at: z.string().optional(),
+    },
+  },
+  async ({ chat_id, text, delay_seconds, due_at }) => {
+    try {
+      const payload: Record<string, unknown> = { chat_id, text }
+      if (delay_seconds !== undefined) payload.delay_seconds = delay_seconds
+      if (due_at !== undefined) payload.due_at = due_at
+      const r = await client.request<unknown>('POST', '/v1/reminders/schedule', payload)
+      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
+    } catch (err) {
+      logErr(`schedule_reminder failed: ${formatError(err)}`)
+      return { content: [{ type: 'text', text: `schedule_reminder failed: ${formatError(err)}` }], isError: true }
+    }
+  },
+)
+
+server.registerTool(
+  'cancel_reminder',
+  {
+    title: 'Cancel a pending reminder',
+    description: '取消当前聊天一个还未触发的提醒。reminder_id 来自 schedule_reminder / list_reminders；chat_id=当前对话的 chat_id。返回 { ok, cancelled }。',
+    inputSchema: { chat_id: z.string(), reminder_id: z.string() },
+  },
+  async ({ chat_id, reminder_id }) => {
+    try {
+      const r = await client.request<unknown>('POST', '/v1/reminders/cancel', { chat_id, reminder_id })
+      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
+    } catch (err) {
+      logErr(`cancel_reminder failed: ${formatError(err)}`)
+      return { content: [{ type: 'text', text: `cancel_reminder failed: ${formatError(err)}` }], isError: true }
+    }
+  },
+)
+
+server.registerTool(
+  'list_reminders',
+  {
+    title: "List this chat's reminders",
+    description: '列出当前聊天的所有提醒（含 pending/sent/cancelled/failed）。chat_id=当前对话的 chat_id。返回 { ok, reminders:[{id,due_at,text,status}] }。',
+    inputSchema: { chat_id: z.string() },
+  },
+  async ({ chat_id }) => {
+    try {
+      const r = await client.request<unknown>('GET', `/v1/reminders/list?chat_id=${encodeURIComponent(chat_id)}`)
+      return { content: [{ type: 'text', text: JSON.stringify(r) }] }
+    } catch (err) {
+      logErr(`list_reminders failed: ${formatError(err)}`)
+      return { content: [{ type: 'text', text: `list_reminders failed: ${formatError(err)}` }], isError: true }
+    }
+  },
+)
+
 // Tool families — each module registers its own group (thin wrappers over the
 // internal-api client). Order is preserved from the original single-file table.
 registerMemoryTools(server, client)
