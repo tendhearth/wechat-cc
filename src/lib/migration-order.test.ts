@@ -80,6 +80,7 @@ const RELEASED: Record<number, string> = {
   25: '9a92ded4cc2a112e',
   28: '686280c60efec07d',
   29: '1080cd923b01b817',
+  30: '284ffada29666219',
 }
 
 it('every released migration still produces the schema it was published with', () => {
