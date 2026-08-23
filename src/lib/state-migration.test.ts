@@ -82,12 +82,17 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v26-v28 (customer review): tasks/evidence, completed-elsewhere feedback,
     // and safe analysis coverage metadata.
     // v29 (reminders): per-chat reminders with minute-precise due times.
-    expect(v).toBe(29)
+    // v30 (cross-session FTS): session_turns_fts (FTS5 virtual table + its
+    // five shadow tables) + session_fts_state incremental watermark.
+    expect(v).toBe(30)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
       'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'message_attempts', 'messages',
-      'milestones', 'observations', 'penpal_channel', 'penpal_letter', 'reminders', 'session_state', 'sessions', 'social_echo', 'social_pledge', 'social_relay', 'social_seek', 'social_seen_intent', 'thread_extract_state', 'threads', 'turn_records',
+      'milestones', 'observations', 'penpal_channel', 'penpal_letter', 'reminders', 'session_fts_state', 'session_state',
+      'session_turns_fts', 'session_turns_fts_config', 'session_turns_fts_content', 'session_turns_fts_data',
+      'session_turns_fts_docsize', 'session_turns_fts_idx',
+      'sessions', 'social_echo', 'social_pledge', 'social_relay', 'social_seek', 'social_seen_intent', 'thread_extract_state', 'threads', 'turn_records',
     ])
   })
 
