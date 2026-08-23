@@ -224,6 +224,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           '/chat [p1 p2 …] — 圆桌讨论',
           '/solo /stop /mode — 回到默认 / 退出 / 显示当前模式',
           '/set — 本对话偏好(拆分回复、主动关心档位、表情包、每日打猎)',
+          '改配置直接说就行 — 例如"换成 gemini flash"、"把知识内核打开"(管理员)',
           '',
           '**身份**',
           '/whoami — 显示你的身份 + 当前模式',

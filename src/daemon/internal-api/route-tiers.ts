@@ -206,6 +206,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/knowledge/facts/set_fact_status': 'admin',
   'GET /v1/knowledge/facts/extraction_status': 'admin',
   'POST /v1/knowledge/person/brief': 'admin',
+  // Config surface (config_get/config_set MCP tools) — admin-only: reads and
+  // writes the owner's daemon configuration (whitelist-bounded in
+  // src/lib/config-surface.ts). Same trust class as the facts routes above.
+  'GET /v1/config/surface': 'admin',
+  'POST /v1/config/set': 'admin',
   // admin — reads the owner's private wxvault history and stores personal
   // customer judgments. Never expose to guest/trusted chat sessions.
   'GET /v1/customer-review/contacts': 'admin',

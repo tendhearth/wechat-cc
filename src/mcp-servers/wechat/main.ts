@@ -33,6 +33,7 @@ import { registerKnowledgeSearchTool } from './tools-knowledge'
 import { registerFederatedQueryTool } from './tools-federated'
 import { registerGraphTools } from './tools-graph'
 import { registerFactsTools } from './tools-facts'
+import { registerConfigTools } from './tools-config'
 import { registerPersonTools } from './tools-person'
 
 const baseUrl = process.env.WECHAT_INTERNAL_API
@@ -208,6 +209,10 @@ if (SESSION_IS_ADMIN) {
   // above, so admin-only.
   registerFactsTools(server, client)
   registerPersonTools(server, client)
+  // Config surface: config_get/config_set read+write the owner's daemon
+  // configuration through the whitelist in src/lib/config-surface.ts —
+  // a config write steers the daemon itself, so admin-only ('config_admin').
+  registerConfigTools(server, client)
 }
 
 const transport = new StdioServerTransport()
