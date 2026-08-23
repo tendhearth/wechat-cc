@@ -5,6 +5,7 @@
  * Refs are passed in for late-bound polling/guard access from closures.
  */
 import { join } from 'node:path'
+import { recallFromMemory } from '../memory/recall'
 import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { dirname } from 'node:path'
@@ -482,6 +483,10 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     recall: {
       isAdmin,
       log,
+      // Non-admin lane — deterministic keyword recall over the chat's OWN
+      // memory files only (same subtree memory_read grants it). Sync under
+      // the hood; wrapped to satisfy the middleware's async contract.
+      recallFallback: async (chatId: string, text: string) => recallFromMemory(stateDir, chatId, text),
       // Auto-recall (2026-08 memory-upgrades) — hybrid search over the
       // knowledge kernel, embedder-fallback shape mirrors POST /v1/knowledge/
       // search (routes-knowledge.ts): the shared embedder is the single

@@ -509,6 +509,32 @@ describe('facts store', () => {
       s.close()
     })
 
+    it('conflictedFactGroups finds active same-predicate multi-value groups, newest first', () => {
+      const s = freshStore()
+      s.upsertFact({ contact: 'u1', predicate: '住在', value: '北京' }, 1000)
+      const b = s.upsertFact({ contact: 'u1', predicate: '住在', value: '上海' }, 2000)
+      s.upsertFact({ contact: 'u1', predicate: '喜欢', value: '茶' }, 1000)      // single value — not a group
+      s.upsertFact({ contact: 'u2', predicate: '工作在', value: 'A公司' }, 1000)
+      s.upsertFact({ contact: 'u2', predicate: '工作在', value: 'B公司' }, 3000)
+      const groups = s.conflictedFactGroups(10)
+      expect(groups).toHaveLength(2)
+      const g1 = groups.find((g) => g.contact === 'u1')!
+      expect(g1.predicate).toBe('住在')
+      expect(g1.facts.map((f) => f.value)).toEqual(['上海', '北京'])   // updated_at DESC
+      expect(g1.facts[0]!.id).toBe(b.id)
+      expect(s.conflictedFactGroups(1)).toHaveLength(1)                // limit respected
+      s.close()
+    })
+
+    it('conflictedFactGroups ignores superseded rows', () => {
+      const s = freshStore()
+      const a = s.upsertFact({ contact: 'u1', predicate: '住在', value: '北京' }, 1000)
+      const b = s.upsertFact({ contact: 'u1', predicate: '住在', value: '上海' }, 2000)
+      s.supersedeFactById(a.id, b.id, 3000)
+      expect(s.conflictedFactGroups(10)).toEqual([])
+      s.close()
+    })
+
     it('factById returns the row or null', () => {
       const s = freshStore()
       const a = s.upsertFact({ contact: 'u1', predicate: 'p', value: 'v' }, 1000)

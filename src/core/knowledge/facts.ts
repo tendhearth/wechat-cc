@@ -30,6 +30,8 @@ export interface FactsApi {
    *  passes a deterministic guard (both ids exist, same contact+predicate,
    *  loser active) — invalid pairs are skipped, never an error. */
   supersede(pairs: Array<{ supersede: number; by: number }>, now: number): object
+  /** Stock-sweep feed — see KnowledgeStore.conflictedFactGroups. */
+  conflictedGroups(limit: number): ReturnType<KnowledgeStore['conflictedFactGroups']>
   contactFacts(name: string): object
   findFacts(kind: string | null, predicate: string | null, query: string | null, status: string | null, limit: number | null): object
   setFactStatus(id: number, status: string, now: number): object
@@ -129,6 +131,7 @@ export function makeFactsApi(store: KnowledgeStore): FactsApi {
       return { results: store.findFactRows(kind, predicate, query, status ?? 'active', limit ?? 50) }
     },
     setFactStatus(id, status, now) { return { ok: store.setFactStatusById(id, status, now) } },
+    conflictedGroups(limit) { return store.conflictedFactGroups(limit) },
     extractionStatus() {
       const g = grouped(); const per: any[] = []; let caught = 0
       for (const [c, rows] of g) {
