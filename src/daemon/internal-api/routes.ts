@@ -18,6 +18,7 @@ import { makeEventsStore } from '../events/store'
 import { a2aRoutes } from './routes-a2a'
 import { socialRoutes } from './routes-social'
 import { knowledgeRoutes } from './routes-knowledge'
+import { configRoutes } from './routes-config'
 import { pairRoutes } from './routes-pair'
 import { memoryRoutes } from './routes-memory'
 import { penpalRoutes } from './routes-penpal'
@@ -709,6 +710,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     ...a2aRoutes(deps),
     ...socialRoutes(deps),
     ...knowledgeRoutes(deps),
+    ...configRoutes(deps),
     ...pairRoutes(deps),
     ...memoryRoutes(deps),
     ...penpalRoutes(deps),

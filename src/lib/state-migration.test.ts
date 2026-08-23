@@ -84,7 +84,9 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v29 (reminders): per-chat reminders with minute-precise due times.
     // v30 (cross-session FTS): session_turns_fts (FTS5 virtual table + its
     // five shadow tables) + session_fts_state incremental watermark.
-    expect(v).toBe(30)
+    // v31 (config-surface audit): events.kind CHECK widened with
+    // 'config_changed' — no new tables.
+    expect(v).toBe(31)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',

@@ -105,7 +105,7 @@ describe('TIER_PROFILES', () => {
     expect(TIER_PROFILES.trusted.relay.has('memory_delete')).toBe(true)
     // trusted denies all admin-exclusive tools (was 0 before
     // self-diagnosis / remediation / plugin tools existed).
-    expect(TIER_PROFILES.trusted.deny.size).toBe(10)
+    expect(TIER_PROFILES.trusted.deny.size).toBe(11)
     expect(TIER_PROFILES.trusted.deny.has('daemon_introspect')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('daemon_remediate')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('file_locate')).toBe(true)
@@ -116,6 +116,7 @@ describe('TIER_PROFILES', () => {
     expect(TIER_PROFILES.trusted.deny.has('graph_query')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('facts_query')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('person_query')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('config_admin')).toBe(true)
   })
 
   it('guest allows only reply/share_page/memory_read/observations_read', () => {
@@ -423,6 +424,12 @@ describe('facts_query / person_query tier kinds (Knowledge Facts/Person inproc F
     expect(classifyToolUse('mcp__wechat__set_fact_status', { id: 1, status: 'resolved' })).toBe('facts_query')
     expect(classifyToolUse('mcp__wechat__extraction_status', {})).toBe('facts_query')
   })
+  it('classifies config_get/config_set as ToolKind config_admin (admin-only)', () => {
+    expect(classifyToolUse('mcp__wechat__config_get', {})).toBe('config_admin')
+    expect(classifyToolUse('mcp__wechat__config_set', { key: 'model', value: 'x', reason: 'r' })).toBe('config_admin')
+    expect(TIER_PROFILES.guest.deny.has('config_admin')).toBe(true)
+  })
+
   it('classifies the person_brief MCP tool as ToolKind person_query', () => {
     expect(classifyToolUse('mcp__wechat__person_brief', { name: 'x' })).toBe('person_query')
   })
