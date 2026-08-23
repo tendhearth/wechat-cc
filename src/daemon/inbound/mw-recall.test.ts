@@ -33,12 +33,43 @@ describe('makeMwRecall', () => {
     expect(next).toHaveBeenCalled()
   })
 
-  it('non-admin chat → recall fn NOT called', async () => {
+  it('non-admin chat → kernel recall fn NOT called', async () => {
     const recall = vi.fn(async () => ['x'])
     const ctx = ctxWith('最近上海的事', 'guest1')
     await makeMwRecall({ recall, isAdmin: () => false, log: noopLog })(ctx, async () => {})
     expect(recall).not.toHaveBeenCalled()
     expect(ctx.msg.recall).toBeUndefined()
+  })
+
+  it('non-admin chat uses recallFallback (own-memory lane) when wired', async () => {
+    const recall = vi.fn(async () => ['kernel'])
+    const recallFallback = vi.fn(async () => ['[notes/a.md] 上次说的事'])
+    const ctx = ctxWith('最近上海的事', 'guest1')
+    await makeMwRecall({ recall, recallFallback, isAdmin: () => false, log: noopLog })(ctx, async () => {})
+    expect(recall).not.toHaveBeenCalled()
+    expect(recallFallback).toHaveBeenCalledWith('guest1', '最近上海的事')
+    expect(ctx.msg.recall).toEqual(['[notes/a.md] 上次说的事'])
+  })
+
+  it('admin chat prefers the kernel lane even when fallback is wired', async () => {
+    const recall = vi.fn(async () => ['kernel'])
+    const recallFallback = vi.fn(async () => ['own'])
+    const ctx = ctxWith('最近上海的事')
+    await makeMwRecall({ recall, recallFallback, isAdmin: () => true, log: noopLog })(ctx, async () => {})
+    expect(ctx.msg.recall).toEqual(['kernel'])
+    expect(recallFallback).not.toHaveBeenCalled()
+  })
+
+  it('fallback errors are swallowed like kernel errors', async () => {
+    const next = vi.fn(async () => {})
+    const ctx = ctxWith('最近上海的事', 'guest1')
+    await makeMwRecall({
+      recallFallback: async () => { throw new Error('fs boom') },
+      isAdmin: () => false,
+      log: noopLog,
+    })(ctx, next)
+    expect(ctx.msg.recall).toBeUndefined()
+    expect(next).toHaveBeenCalled()
   })
 
   it('recall fn throws → passthrough without recall, logged, next still called', async () => {

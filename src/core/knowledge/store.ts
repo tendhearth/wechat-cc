@@ -215,6 +215,10 @@ export interface KnowledgeStore {
    *  never rewrites history. */
   supersedeFactById(oldId: number, newId: number, now: number): boolean
   factById(id: number): FactRow | null
+  /** ACTIVE same-(contact,predicate) groups with ≥2 distinct values — the
+   *  stock-conflict sweep's feed. Facts inside each group are newest-first
+   *  (updated_at DESC). */
+  conflictedFactGroups(limit: number): Array<{ contact: string; predicate: string; facts: FactRow[] }>
   /** `[last_ts, last_local_id]`, `[0, 0]` when the contact has no watermark
    *  row yet. */
   factWatermark(contact: string): [number, number]
@@ -825,6 +829,25 @@ export function openKnowledge(root: string): KnowledgeStore {
     factById(id) {
       const r = factsDb.query('SELECT * FROM facts WHERE id=?').get(id) as any
       return r ? parseFactRow(r) : null
+    },
+
+    conflictedFactGroups(limit) {
+      // Stock-sweep feed: ACTIVE same-(contact,predicate) groups holding ≥2
+      // distinct values — contradictions recorded before conflict detection
+      // existed (or whose judge call failed). Newest-first inside each group
+      // so the sweep can treat facts[0] as the presumed-current value.
+      const groups = factsDb.query(
+        `SELECT contact, predicate FROM facts WHERE status='active'
+         GROUP BY contact, predicate HAVING COUNT(DISTINCT value) >= 2
+         ORDER BY MAX(updated_at) DESC LIMIT ?`,
+      ).all(limit) as Array<{ contact: string; predicate: string }>
+      return groups.map((g) => ({
+        contact: g.contact,
+        predicate: g.predicate,
+        facts: (factsDb.query(
+          "SELECT * FROM facts WHERE contact=? AND predicate=? AND status='active' ORDER BY updated_at DESC, id DESC",
+        ).all(g.contact, g.predicate) as any[]).map(parseFactRow),
+      }))
     },
 
     factWatermark(contact) {

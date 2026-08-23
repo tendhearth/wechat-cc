@@ -3,9 +3,12 @@
  * into the inbound envelope so a live turn starts with relevant memory even
  * when the agent doesn't call knowledge_search/memory_read itself.
  *
- * Admin-gated: the kernel indexes the owner's whole WeChat archive, the same
- * private-data trust class as the admin-only knowledge_search MCP tool — a
- * guest/trusted chat must never receive recall from it.
+ * Two lanes, tier-split: admin chats search the knowledge kernel (the
+ * owner's whole WeChat archive — same private-data trust class as the
+ * admin-only knowledge_search MCP tool); every other chat gets the
+ * `recallFallback` lane, which searches only that chat's OWN
+ * memory/<chatId>/*.md files (src/daemon/memory/recall.ts). A non-admin
+ * chat must never receive kernel recall.
  *
  * Soft-fail by design: timeout, embedder error, or an empty result all mean
  * "no recall block this turn", never a failed turn. Runs BEFORE next() (the
@@ -19,8 +22,11 @@ export const RECALL_TIMEOUT_MS = 4000
 export const RECALL_MIN_QUERY = 4
 
 export interface RecallMwDeps {
-  /** Undefined ⇔ knowledge kernel not wired — middleware is inert. */
+  /** Admin lane: knowledge-kernel hybrid search. Undefined ⇔ kernel not wired. */
   recall?: (chatId: string, text: string) => Promise<string[]>
+  /** Non-admin lane: the chat's OWN memory/<chatId>/*.md files (the same
+   *  subtree memory_read grants it) — never the kernel. Undefined ⇔ off. */
+  recallFallback?: (chatId: string, text: string) => Promise<string[]>
   isAdmin: (chatId: string) => boolean
   timeoutMs?: number
   log: (tag: string, line: string) => void
@@ -30,11 +36,12 @@ export function makeMwRecall(deps: RecallMwDeps): Middleware {
   const timeoutMs = deps.timeoutMs ?? RECALL_TIMEOUT_MS
   return async (ctx, next) => {
     const { msg } = ctx
-    if (deps.recall && deps.isAdmin(msg.chatId) && msg.text.trim().length >= RECALL_MIN_QUERY) {
+    const lane = deps.isAdmin(msg.chatId) ? deps.recall : deps.recallFallback
+    if (lane && msg.text.trim().length >= RECALL_MIN_QUERY) {
       let timer: ReturnType<typeof setTimeout> | undefined
       try {
         const items = await Promise.race([
-          deps.recall(msg.chatId, msg.text),
+          lane(msg.chatId, msg.text),
           new Promise<string[]>((_, rej) => {
             timer = setTimeout(() => rej(new Error('recall_timeout')), timeoutMs)
           }),

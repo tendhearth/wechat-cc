@@ -8,6 +8,7 @@
 import { readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { runExtraction } from './extract'
+import { runConflictSweep } from './sweep-conflicts'
 import { makeInProcFactsCall } from './facts-inproc'
 import type { FactsApi } from '../../../core/knowledge/facts'
 
@@ -36,6 +37,9 @@ export interface CycleDeps {
   factsApi?: FactsApi
 }
 
+/** Stock-conflict groups judged per ingest cycle — one cheapEval covers all of them. */
+const SWEEP_GROUPS_PER_CYCLE = 5
+
 export interface CycleReport {
   decrypted: boolean
   rebuilt: boolean
@@ -43,6 +47,9 @@ export interface CycleReport {
   transcribed: boolean
   batches: number
   recorded: number
+  /** Stock-conflict sweep: groups judged / facts superseded this cycle (0/0 when no in-proc facts store). */
+  sweptGroups: number
+  sweptSuperseded: number
   /** The source mtime observed this cycle; the caller stores it as next lastSourceMtime. */
   newSourceMtime: number
 }
@@ -93,7 +100,7 @@ async function tryBuild(d: CycleDeps, tool: string): Promise<boolean> {
 export async function runIngestCycle(d: CycleDeps): Promise<CycleReport> {
   const report: CycleReport = {
     decrypted: false, rebuilt: false, indexed: false, transcribed: false,
-    batches: 0, recorded: 0, newSourceMtime: d.lastSourceMtime,
+    batches: 0, recorded: 0, sweptGroups: 0, sweptSuperseded: 0, newSourceMtime: d.lastSourceMtime,
   }
 
   // 1. Poke wxvault to force an incremental re-decrypt (it refreshes lazily).
@@ -121,6 +128,14 @@ export async function runIngestCycle(d: CycleDeps): Promise<CycleReport> {
     })
     report.batches = batches
     report.recorded = recorded
+    // 4. Stock-conflict sweep (temporal-validity backfill) — bounded at
+    // SWEEP_GROUPS_PER_CYCLE groups and ≤1 cheapEval per cycle; only on the
+    // in-proc facts path (the retired-plugin bridge never grows this).
+    const sweep = await runConflictSweep({
+      facts: d.factsApi, cheapEval: d.cheapEval, cap: SWEEP_GROUPS_PER_CYCLE, log: d.log,
+    })
+    report.sweptGroups = sweep.groups
+    report.sweptSuperseded = sweep.superseded
   } else if (d.hasTool('extraction_batch')) {
     const { batches, recorded } = await runExtraction({
       call: d.bridge.call, cheapEval: d.cheapEval, cap: d.cap, log: d.log,
