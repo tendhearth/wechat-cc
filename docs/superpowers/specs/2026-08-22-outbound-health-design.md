@@ -120,3 +120,18 @@ tracker 实例由 ilink-glue 构造并随 adapter 暴露
 - episode 跨重启持久化;
 - owner 恢复通知;
 - 按 chat 维度的外发健康(故障是账号级的,spike 已证)。
+
+## 6. 实现期批注(2026-08-22,SDD 执行完结)
+
+- **[fix-wave 增补]** doctor 探针 fetch 加 `AbortSignal.timeout(3000)`——
+  终审唯一 Important:daemon 假死(进程活、事件循环卡)时 TCP 能连上但
+  永无响应,doctor 会无限挂起,恰是本功能针对的最重病类(680fb102)。
+- **[偏差登记,评审背书]** §4 设想的 __e2e__ harness 测法在 Task 2 不可行
+  (真 DaemonHandle 不暴露 adapter、__e2e__ 被默认 vitest config 排除):
+  adapter 级测试落在 ilink-glue 高度直连 startFakeIlink(真实线上往返);
+  端到端链(真 bootDaemon→HTTP /v1/health)由 Task 5 的
+  __e2e__/outbound-health.e2e.test.ts 补齐。fake server 的
+  failSendMessage 缺省 errcode -6(不可重试,省 2s/次的重试等待)。
+- **[deferred]** 多账号共用一个 adapter 级 tracker(账号级信号会合流——
+  现单账号,spec 范围内);记录性 minor 清单见 SDD ledger 与终审报告
+  (log() 在 record 调用内直写 stderr 属既有系统模式等)。
