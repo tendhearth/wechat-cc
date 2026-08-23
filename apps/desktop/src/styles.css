@@ -1261,11 +1261,15 @@ input { font: inherit; color: inherit; }
 .qr-modal-step { font-weight: 600; font-size: 14px; }
 .qr-modal-help { font-size: 12px; color: var(--ink-3); }
 
-/* Settings drawer */
+/* Settings drawer — dressed in the app's hand-drawn paper language: the
+   default gray SaaS chrome read as a different product next to the cream
+   dashboard (2026-08-23 UI review #6). Every override below is scoped to
+   .settings-drawer so the shared .toggle/.btn/.toggle-row primitives keep
+   their global look elsewhere (wizard, panes). */
 .settings-drawer {
   position: fixed; top: 0; right: 0; bottom: 0; width: 380px;
-  background: var(--paper); border-left: 1px solid var(--hair);
-  box-shadow: -8px 0 24px rgba(0,0,0,0.08);
+  background: var(--app-bg); border-left: 1px solid rgba(89, 63, 44, .16);
+  box-shadow: -10px 0 30px rgba(89, 63, 44, .12);
   /* Above .window-drag-titlebar (1100): the drawer head's close × sits
    * inside the drag strip's band; below the strip it would swallow the
    * click as a window drag. Same rationale for .a2a-drawer / .lightbox. */
@@ -1281,19 +1285,71 @@ input { font: inherit; color: inherit; }
 }
 .drawer-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 18px 22px; border-bottom: 1px solid var(--hair);
+  padding: 18px 22px; border-bottom: 1px solid rgba(89, 63, 44, .12);
 }
-.drawer-head h2 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.drawer-head h2 { margin: 0; color: #593F2C; font-size: 17px; font-weight: 700; letter-spacing: 0; }
 .drawer-close {
-  border: 0; background: transparent;
+  border: 0; background: transparent; color: #8d7563;
   font-size: 20px; cursor: pointer; line-height: 1;
 }
-.drawer-body { padding: 18px 22px; overflow-y: auto; flex: 1; }
-.drawer-section { margin-bottom: 28px; }
+.drawer-close:hover { color: #593F2C; }
+.drawer-body { padding: 20px 22px; overflow-y: auto; flex: 1; }
+.drawer-section { margin-bottom: 30px; }
+/* Section headers wear the same wooden tag as the memory panels
+   (memory-section-title-bg.png) at drawer scale — the drawer's one
+   signature element; everything else stays quiet paper + warm ink. */
 .drawer-section h3 {
-  font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
-  color: var(--ink-3); margin: 0 0 10px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  margin: 0 0 12px -4px;
+  padding: 0 14px;
+  border: 11px solid transparent;
+  border-image: url("./assets/memory-section-title-bg.png") 36 42 fill stretch;
+  color: #5b4330;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: .02em;
 }
+
+/* Cards inside the drawer: warm paper on cream, hand-warm hairlines. */
+.settings-drawer .toggle-row {
+  border: 1px solid rgba(89, 63, 44, .14);
+  border-radius: 10px;
+  background: #fffdf8;
+}
+.settings-drawer .toggle-row + .toggle-row { margin-top: 10px; }
+.settings-drawer .toggle-row .lab { color: #593F2C; }
+.settings-drawer .toggle-row .sub { color: #8d7563; }
+.settings-drawer .toggle { background: #d9c6ae; }
+.settings-drawer .toggle.on { background: #8a5a36; }
+.settings-drawer .toggle::after { background: #fffdf8; }
+/* 自动同意工具调用 = bypass permissions — the one switch that deserves a
+   raised eyebrow: terracotta edge + tinted card, warning-colored when on. */
+.settings-drawer .toggle-row--danger {
+  border-color: rgba(201, 106, 63, .38);
+  border-left: 3px solid #c96a3f;
+  background: #fff9f3;
+}
+.settings-drawer .toggle-row--danger .toggle.on { background: #c96a3f; }
+.settings-drawer .btn {
+  border-color: rgba(89, 63, 44, .24);
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #593F2C;
+}
+.settings-drawer .btn:hover { border-color: #8a5a36; color: #3f2c1e; }
+.settings-drawer .license-row input {
+  border-color: rgba(89, 63, 44, .2);
+  background: #fffdf8;
+  color: #593F2C;
+}
+.settings-drawer .license-row input::placeholder { color: #b39a83; }
+.settings-drawer .license-status { color: #8d7563; }
+.settings-drawer .drawer-section-help { color: #a08a75; }
+.settings-drawer .project-admin-row:hover { background: rgba(248, 234, 211, .55); }
+.settings-drawer .empty-state { color: #a08a75; }
 
 /* ═══════════════════════════════════════════════════════════════════════ */
 /*  DASHBOARD MODE                                                        */
