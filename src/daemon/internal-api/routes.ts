@@ -71,6 +71,15 @@ function memoryScopeDenied(path: string, caller?: { tier: UserTier; origin: stri
   return !(norm === caller.chatId || norm.startsWith(`${caller.chatId}/`))
 }
 
+function toWireOutbound(h: import('../ilink/outbound-health').OutboundHealth) {
+  return {
+    state: h.state,
+    consecutive_failures: h.consecutiveFailures,
+    last_ok_at: h.lastOkAt,
+    last_error: h.lastError,
+  }
+}
+
 export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext): RouteTable {
   return {
     'GET /v1/health': () => ({
@@ -85,6 +94,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
         sessions_live: deps.listSessions?.()?.length ?? 0,
         heartbeat_fresh: deps.heartbeatFresh?.() ?? null,
         subsystems: deps.subsystems?.() ?? [],
+        ...(deps.outbound ? { outbound: toWireOutbound(deps.outbound()) } : {}),
       },
     }),
 

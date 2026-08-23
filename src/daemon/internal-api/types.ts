@@ -392,6 +392,8 @@ export interface InternalApiDeps {
    * (minimal-deps 测试路径)。
    */
   subsystems?: () => import('../subsystems').SubsystemStatus[]
+  /** Passive outbound link health from ilink-glue (spec 2026-08-22-outbound-health). */
+  outbound?: () => import('../ilink/outbound-health').OutboundHealth
   /**
    * busy-registry hold (spec 2026-08-11 §2, Task 4 step 1) — index.ts's
    * dispatcher holds a token for the duration of every AUTHENTICATED

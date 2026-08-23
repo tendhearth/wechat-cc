@@ -37,6 +37,13 @@ describe('HealthResponse', () => {
   it('rejects missing daemon_pid', () => {
     expect(HealthResponse.safeParse({ ok: true }).success).toBe(false)
   })
+  it('HealthResponse accepts the outbound sibling field and stays optional', () => {
+    expect(HealthResponse.safeParse({ ok: true, daemon_pid: 1 }).success).toBe(true)
+    expect(HealthResponse.safeParse({ ok: true, daemon_pid: 1, outbound: {
+      state: 'degraded', consecutive_failures: 3, last_ok_at: null, last_error: 'errcode=-2: prepare failed',
+    } }).success).toBe(true)
+    expect(HealthResponse.safeParse({ ok: true, daemon_pid: 1, outbound: { state: 'weird' } }).success).toBe(false)
+  })
 })
 
 // ── memory/read ──────────────────────────────────────────────────────────────

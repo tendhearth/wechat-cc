@@ -32,6 +32,15 @@ export const HealthResponse = z.object({
   heartbeat_fresh: z.boolean().nullable().optional(),
   // Subsystem degraded-boot (spec 2026-08-17) — 启动降级状态表。
   subsystems: z.array(SubsystemStatusSchema).optional(),
+  // Passive outbound link health (spec 2026-08-22-outbound-health) — sibling
+  // of subsystems by design: subsystems is the supervisor's BOOT-time list,
+  // outbound is a RUNTIME link signal. Optional for older daemons.
+  outbound: z.object({
+    state: z.enum(['unknown', 'ok', 'degraded']),
+    consecutive_failures: z.number(),
+    last_ok_at: z.string().nullable(),
+    last_error: z.string().nullable(),
+  }).optional(),
 })
 
 // ── POST /v1/memory/read ─────────────────────────────────────────────────────
