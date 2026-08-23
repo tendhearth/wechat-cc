@@ -65,3 +65,47 @@ test('find_facts obligation query; set_fact_status; extraction_status counts', (
   expect((api.findFacts('obligation', null, null, 'resolved', 50) as any).results.length).toBe(1)
   s.close()
 })
+
+test('record reports same-predicate conflicts without auto-superseding', () => {
+  const s = seed(); const api = makeFactsApi(s)
+  const b1 = api.nextBatch('wxid_a', 1) as any
+  api.record(b1.batch_id, [{ kind: 'attribute', predicate: '住在', value: '北京', source_msg_keys: [] }], 1000)
+  const b2 = api.nextBatch('wxid_a', 40) as any
+  const res = api.record(b2.batch_id, [{ kind: 'attribute', predicate: '住在', value: '上海', source_msg_keys: [] }], 2000) as any
+  expect(res.conflicts).toHaveLength(1)
+  expect(res.conflicts[0].predicate).toBe('住在')
+  expect(res.conflicts[0].value).toBe('上海')
+  expect(res.conflicts[0].against.map((a: any) => a.value)).toEqual(['北京'])
+  // both still active — resolution is the judge's job, not record's
+  expect(s.factsForContact('wxid_a', 'active')).toHaveLength(2)
+  s.close()
+})
+
+test('record with no same-predicate clash reports empty conflicts', () => {
+  const s = seed(); const api = makeFactsApi(s)
+  const b = api.nextBatch('wxid_a', 40) as any
+  const res = api.record(b.batch_id, [
+    { kind: 'attribute', predicate: '喜欢', value: '茶', source_msg_keys: [] },
+    { kind: 'attribute', predicate: '住在', value: '北京', source_msg_keys: [] },
+  ], 1000) as any
+  expect(res.conflicts).toEqual([])
+  s.close()
+})
+
+test('supersede applies valid pairs and skips invalid ones', () => {
+  const s = seed(); const api = makeFactsApi(s)
+  const beijing = s.upsertFact({ contact: 'wxid_a', kind: 'attribute', predicate: '住在', value: '北京' }, 1000)
+  const shanghai = s.upsertFact({ contact: 'wxid_a', kind: 'attribute', predicate: '住在', value: '上海' }, 2000)
+  const tea = s.upsertFact({ contact: 'wxid_a', kind: 'attribute', predicate: '喜欢', value: '茶' }, 1000)
+  const res = api.supersede([
+    { supersede: beijing.id, by: shanghai.id },     // valid
+    { supersede: 99999, by: shanghai.id },          // unknown id — skipped
+    { supersede: tea.id, by: shanghai.id },         // predicate mismatch — skipped
+    { supersede: shanghai.id, by: shanghai.id },    // self-pair — skipped
+    null as never,                                  // garbage element — skipped
+  ], 3000) as any
+  expect(res).toEqual({ superseded: 1 })
+  expect(s.factsForContact('wxid_a', 'active').map((f) => f.value).sort()).toEqual(['上海', '茶'])
+  expect(s.factById(beijing.id)!.superseded_by).toBe(shanghai.id)
+  s.close()
+})

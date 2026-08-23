@@ -109,6 +109,13 @@ export interface FactRow {
   status: string
   created_at: number
   updated_at: number
+  /** Temporal validity (2026-08 memory-upgrades): when the fact became true
+   *  (stamped `now` at insert; backfilled from `created_at` on upgraded
+   *  stores), when it was invalidated by a supersede, and which fact id
+   *  superseded it. All null while the fact is live. */
+  valid_from: number | null
+  invalidated_at: number | null
+  superseded_by: number | null
 }
 
 export interface KnowledgeStore {
@@ -196,8 +203,18 @@ export interface KnowledgeStore {
    *  is an ordered union (no dupes), `confidence` takes the max by
    *  `{low:0,med:1,high:2}`, `related_contact`/`time_ref` fill only when
    *  currently absent, and `status` is left untouched (a resolved fact
-   *  merging new evidence stays resolved). Returns which branch fired. */
-  upsertFact(fact: Fact & { contact: string }, now: number): 'inserted' | 'merged'
+   *  merging new evidence stays resolved). Returns which branch fired plus
+   *  the row id (inserted or existing) — conflict detection needs the id. */
+  upsertFact(fact: Fact & { contact: string }, now: number): { outcome: 'inserted' | 'merged'; id: number }
+  /** Same-predicate different-value ACTIVE facts for a contact — the
+   *  conflict-candidate set a just-recorded fact is judged against. */
+  activeFactsSharingPredicate(contact: string, predicate: string, excludeValue: string): FactRow[]
+  /** Marks `oldId` superseded by `newId` (status='superseded',
+   *  invalidated_at=now, superseded_by=newId). Only fires on an ACTIVE row —
+   *  returns false (and stamps nothing) otherwise, so a double supersede
+   *  never rewrites history. */
+  supersedeFactById(oldId: number, newId: number, now: number): boolean
+  factById(id: number): FactRow | null
   /** `[last_ts, last_local_id]`, `[0, 0]` when the contact has no watermark
    *  row yet. */
   factWatermark(contact: string): [number, number]
@@ -615,6 +632,18 @@ export function openKnowledge(root: string): KnowledgeStore {
     CREATE TABLE IF NOT EXISTS extraction_state (
       contact TEXT PRIMARY KEY, last_ts INTEGER, last_local_id INTEGER DEFAULT 0,
       updated_at INTEGER);`)
+  // Temporal validity (2026-08 memory-upgrades) — guarded ALTER so a facts.db
+  // created before these columns existed upgrades in place. valid_from
+  // backfills from created_at exactly once (only when the column was just
+  // added, i.e. every existing row has NULL there).
+  const factCols = new Set(
+    (factsDb.query('PRAGMA table_info(facts)').all() as Array<{ name: string }>).map((c) => c.name),
+  )
+  const hadValidFrom = factCols.has('valid_from')
+  if (!hadValidFrom) factsDb.exec('ALTER TABLE facts ADD COLUMN valid_from INTEGER')
+  if (!factCols.has('invalidated_at')) factsDb.exec('ALTER TABLE facts ADD COLUMN invalidated_at INTEGER')
+  if (!factCols.has('superseded_by')) factsDb.exec('ALTER TABLE facts ADD COLUMN superseded_by INTEGER')
+  if (!hadValidFrom) factsDb.exec('UPDATE facts SET valid_from = created_at WHERE valid_from IS NULL')
 
   return {
     putSourceMessages(msgs) {
@@ -763,21 +792,39 @@ export function openKnowledge(root: string): KnowledgeStore {
       const cur = factsDb.query('SELECT * FROM facts WHERE contact=? AND predicate=? AND value=?')
         .get(fact.contact, fact.predicate, fact.value) as any
       if (!cur) {
-        factsDb.query(`INSERT INTO facts(contact,kind,predicate,value,related_contact,time_ref,
-          confidence,source_msg_keys,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
+        const r = factsDb.query(`INSERT INTO facts(contact,kind,predicate,value,related_contact,time_ref,
+          confidence,source_msg_keys,status,created_at,updated_at,valid_from) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
           .run(fact.contact, fact.kind ?? null, fact.predicate, fact.value,
                fact.related_contact ?? null, fact.time_ref ?? null, conf,
-               JSON.stringify(keys), 'active', now, now)
-        return 'inserted'
+               JSON.stringify(keys), 'active', now, now, now)
+        return { outcome: 'inserted', id: Number((r as unknown as { lastInsertRowid: number | bigint }).lastInsertRowid) }
       }
       const prev = parseFactRow(cur)
       const merged = [...new Set([...prev.source_msg_keys, ...keys])] // ordered union
       const best = (CONF_RANK[conf] ?? 1) > (CONF_RANK[prev.confidence ?? 'med'] ?? 1) ? conf : prev.confidence
       factsDb.query(`UPDATE facts SET kind=?, related_contact=?, time_ref=?, confidence=?,
-        source_msg_keys=?, updated_at=? WHERE id=?`) // status untouched
+        source_msg_keys=?, updated_at=? WHERE id=?`) // status + valid_from untouched
         .run(fact.kind || prev.kind, fact.related_contact || prev.related_contact,
              fact.time_ref || prev.time_ref, best, JSON.stringify(merged), now, prev.id)
-      return 'merged'
+      return { outcome: 'merged', id: prev.id }
+    },
+
+    activeFactsSharingPredicate(contact, predicate, excludeValue) {
+      return (factsDb.query(
+        "SELECT * FROM facts WHERE contact=? AND predicate=? AND value<>? AND status='active' ORDER BY updated_at DESC",
+      ).all(contact, predicate, excludeValue) as any[]).map(parseFactRow)
+    },
+
+    supersedeFactById(oldId, newId, now) {
+      const c = factsDb.query(
+        "UPDATE facts SET status='superseded', invalidated_at=?, superseded_by=?, updated_at=? WHERE id=? AND status='active'",
+      ).run(now, newId, now, oldId)
+      return (c as unknown as { changes: number }).changes > 0
+    },
+
+    factById(id) {
+      const r = factsDb.query('SELECT * FROM facts WHERE id=?').get(id) as any
+      return r ? parseFactRow(r) : null
     },
 
     factWatermark(contact) {

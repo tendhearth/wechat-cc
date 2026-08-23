@@ -391,10 +391,10 @@ describe('facts store', () => {
       contact: 'wxid_a', kind: 'entity', predicate: 'works_at', value: 'Acme',
       confidence: 'low', source_msg_keys: ['Msg_x:1'],
     }
-    expect(s.upsertFact(f, 1000)).toBe('inserted')
+    expect(s.upsertFact(f, 1000).outcome).toBe('inserted')
     // merge: higher confidence wins, msg_keys ordered-union, related/time_ref fill, status untouched
     expect(s.upsertFact({ ...f, confidence: 'high', related_contact: 'wxid_b',
-                          time_ref: '2025', source_msg_keys: ['Msg_x:1', 'Msg_y:2'] }, 2000)).toBe('merged')
+                          time_ref: '2025', source_msg_keys: ['Msg_x:1', 'Msg_y:2'] }, 2000).outcome).toBe('merged')
     const rows = s.factsForContact('wxid_a', 'active')
     expect(rows.length).toBe(1)
     expect(rows[0]!.confidence).toBe('high')                       // max(low,high)
@@ -457,6 +457,95 @@ describe('facts store', () => {
     expect(s.findFactRows('obligation', null, null, 'active', 50).length).toBe(0)
     expect(s.findFactRows('obligation', null, null, 'resolved', 50).length).toBe(1)
     s.close()
+  })
+
+  describe('temporal validity (2026-08 memory-upgrades)', () => {
+    it('insert stamps valid_from = now and returns the row id', () => {
+      const s = freshStore()
+      const r = s.upsertFact({ contact: 'u1', kind: 'attribute', predicate: '住在', value: '北京' }, 1000)
+      expect(r.outcome).toBe('inserted')
+      expect(r.id).toBeGreaterThan(0)
+      const row = s.factsForContact('u1', 'active')[0]!
+      expect(row.id).toBe(r.id)
+      expect(row.valid_from).toBe(1000)
+      expect(row.invalidated_at).toBeNull()
+      expect(row.superseded_by).toBeNull()
+      s.close()
+    })
+
+    it('merge keeps the original valid_from and returns the existing id', () => {
+      const s = freshStore()
+      const a = s.upsertFact({ contact: 'u1', predicate: '住在', value: '北京' }, 1000)
+      const b = s.upsertFact({ contact: 'u1', predicate: '住在', value: '北京', confidence: 'high' }, 2000)
+      expect(b).toEqual({ outcome: 'merged', id: a.id })
+      expect(s.factsForContact('u1', 'active')[0]!.valid_from).toBe(1000)
+      s.close()
+    })
+
+    it('activeFactsSharingPredicate finds same-predicate different-value active facts only', () => {
+      const s = freshStore()
+      const a = s.upsertFact({ contact: 'u1', kind: 'attribute', predicate: '住在', value: '北京' }, 1000)
+      s.upsertFact({ contact: 'u1', kind: 'attribute', predicate: '住在', value: '上海' }, 2000)
+      s.upsertFact({ contact: 'u1', kind: 'attribute', predicate: '喜欢', value: '茶' }, 2000)     // other predicate
+      s.upsertFact({ contact: 'u2', kind: 'attribute', predicate: '住在', value: '广州' }, 2000)   // other contact
+      const hits = s.activeFactsSharingPredicate('u1', '住在', '上海')
+      expect(hits.map((h) => h.value)).toEqual(['北京'])
+      expect(hits[0]!.id).toBe(a.id)
+      s.close()
+    })
+
+    it('supersedeFactById flips status + stamps invalidated_at/superseded_by; refuses non-active', () => {
+      const s = freshStore()
+      const a = s.upsertFact({ contact: 'u1', predicate: '住在', value: '北京' }, 1000)
+      const b = s.upsertFact({ contact: 'u1', predicate: '住在', value: '上海' }, 2000)
+      expect(s.supersedeFactById(a.id, b.id, 3000)).toBe(true)
+      expect(s.factsForContact('u1', 'active').map((f) => f.value)).toEqual(['上海'])
+      const dead = s.factsForContact('u1', 'superseded')[0]!
+      expect(dead.invalidated_at).toBe(3000)
+      expect(dead.superseded_by).toBe(b.id)
+      expect(dead.status).toBe('superseded')
+      expect(s.supersedeFactById(a.id, b.id, 4000)).toBe(false)  // already superseded — no double stamp
+      expect(s.factsForContact('u1', 'superseded')[0]!.invalidated_at).toBe(3000)
+      s.close()
+    })
+
+    it('factById returns the row or null', () => {
+      const s = freshStore()
+      const a = s.upsertFact({ contact: 'u1', predicate: 'p', value: 'v' }, 1000)
+      expect(s.factById(a.id)?.value).toBe('v')
+      expect(s.factById(999999)).toBeNull()
+      s.close()
+    })
+
+    it('reopening a pre-upgrade facts.db adds the columns and backfills valid_from from created_at', () => {
+      const migDir = mkdtempSync(join(tmpdir(), 'kk-facts-migrate-'))
+      try {
+        // Simulate a facts.db created BEFORE the temporal columns existed.
+        const legacy = new Database(join(migDir, 'facts.db'), { create: true })
+        legacy.exec(`
+          CREATE TABLE IF NOT EXISTS facts (
+            id INTEGER PRIMARY KEY, contact TEXT, kind TEXT, predicate TEXT, value TEXT,
+            related_contact TEXT, time_ref TEXT, confidence TEXT, source_msg_keys TEXT,
+            status TEXT, created_at INTEGER, updated_at INTEGER,
+            UNIQUE(contact, predicate, value));
+          CREATE TABLE IF NOT EXISTS extraction_state (
+            contact TEXT PRIMARY KEY, last_ts INTEGER, last_local_id INTEGER DEFAULT 0,
+            updated_at INTEGER);`)
+        legacy.query(`INSERT INTO facts(contact,kind,predicate,value,related_contact,time_ref,
+          confidence,source_msg_keys,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
+          .run('u1', 'entity', 'p', 'v', null, null, 'med', '[]', 'active', 777, 777)
+        legacy.close()
+
+        const s = openKnowledge(migDir)
+        const row = s.factsForContact('u1', 'active')[0]!
+        expect(row.valid_from).toBe(777)          // backfilled from created_at
+        expect(row.invalidated_at).toBeNull()
+        expect(row.superseded_by).toBeNull()
+        s.close()
+      } finally {
+        rmSync(migDir, { recursive: true, force: true })
+      }
+    })
   })
 
   it('oneToOneTextMessages excludes groups and non-text; recentMessages is newest-first', () => {

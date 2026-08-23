@@ -10,6 +10,7 @@ function fakeFacts(over: Partial<FactsApi> = {}): FactsApi {
     findFacts: vi.fn(() => ({ results: [] })),
     setFactStatus: vi.fn(() => ({ ok: true })),
     extractionStatus: vi.fn(() => ({})),
+    supersede: vi.fn(() => ({ superseded: 0 })),
     ...over,
   }
 }
@@ -71,4 +72,12 @@ describe('makeInProcFactsCall', () => {
     expect(now).toBeGreaterThanOrEqual(before)
     expect(now).toBeLessThanOrEqual(after)
   })
+})
+
+it('supersede_facts routes to FactsApi.supersede with the pairs', async () => {
+  const facts = fakeFacts({ supersede: vi.fn((pairs: Array<{ supersede: number; by: number }>) => ({ superseded: pairs.length })) })
+  const call = makeInProcFactsCall(facts, () => 42)
+  const out = JSON.parse(await call('supersede_facts', { pairs: [{ supersede: 1, by: 2 }] }))
+  expect(out).toEqual({ superseded: 1 })
+  expect(facts.supersede).toHaveBeenCalledWith([{ supersede: 1, by: 2 }], 42)
 })

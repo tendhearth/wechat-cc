@@ -26,6 +26,10 @@ const decodeBatchId = (b: string): [string, number, number] => {
 export interface FactsApi {
   nextBatch(contact: string | null, limit: number): object
   record(batchId: string, facts: Fact[], now: number): object
+  /** Apply judge-approved supersede pairs (old fact loses to new). Each pair
+   *  passes a deterministic guard (both ids exist, same contact+predicate,
+   *  loser active) — invalid pairs are skipped, never an error. */
+  supersede(pairs: Array<{ supersede: number; by: number }>, now: number): object
   contactFacts(name: string): object
   findFacts(kind: string | null, predicate: string | null, query: string | null, status: string | null, limit: number | null): object
   setFactStatus(id: number, status: string, now: number): object
@@ -80,12 +84,40 @@ export function makeFactsApi(store: KnowledgeStore): FactsApi {
     record(batchId, facts, now) {
       const [contact, ts, localId] = decodeBatchId(batchId)
       let inserted = 0, merged = 0
+      const conflicts: Array<{ id: number; predicate: string; value: string; against: Array<{ id: number; value: string }> }> = []
       for (const f of facts ?? []) {
         const withContact = { ...f, contact: f.contact ?? contact }
-        if (store.upsertFact(withContact, now) === 'inserted') inserted++; else merged++
+        const r = store.upsertFact(withContact, now)
+        if (r.outcome === 'inserted') inserted++; else merged++
+        // Temporal validity: a same-predicate different-value ACTIVE fact is a
+        // conflict CANDIDATE — reported, never auto-resolved here (predicates
+        // can be multi-valued; exclusive-vs-coexisting is the judge's call).
+        const against = store.activeFactsSharingPredicate(withContact.contact, withContact.predicate, withContact.value)
+        if (against.length > 0) {
+          conflicts.push({ id: r.id, predicate: withContact.predicate, value: withContact.value,
+                           against: against.map((a) => ({ id: a.id, value: a.value })) })
+        }
       }
       store.advanceFactWatermark(contact, ts, localId, now)
-      return { recorded: inserted, merged, advanced_to: store.factWatermark(contact)[0] }
+      return { recorded: inserted, merged, advanced_to: store.factWatermark(contact)[0], conflicts }
+    },
+
+    supersede(pairs, now) {
+      let superseded = 0
+      for (const p of pairs ?? []) {
+        if (!p || typeof p.supersede !== 'number' || typeof p.by !== 'number' || p.supersede === p.by) continue
+        // Deterministic guard — the judge's output steers WHICH conflict wins,
+        // never WHAT can conflict: both rows must exist, share contact +
+        // predicate, and the loser must still be active. Anything else is a
+        // hallucinated/stale pair and is skipped silently.
+        const oldRow = store.factById(p.supersede)
+        const newRow = store.factById(p.by)
+        if (!oldRow || !newRow) continue
+        if (oldRow.contact !== newRow.contact || oldRow.predicate !== newRow.predicate) continue
+        if (oldRow.status !== 'active') continue
+        if (store.supersedeFactById(p.supersede, p.by, now)) superseded++
+      }
+      return { superseded }
     },
     contactFacts(name) {
       const un = resolveContact(name)

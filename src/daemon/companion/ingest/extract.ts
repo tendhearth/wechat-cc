@@ -112,6 +112,61 @@ export function parseFacts(text: string): Fact[] {
   return out
 }
 
+/** One conflict group from FactsApi.record — a just-recorded fact vs the
+ *  same-predicate different-value ACTIVE facts it clashes with. */
+export interface ConflictGroup {
+  id: number
+  predicate: string
+  value: string
+  against: Array<{ id: number; value: string }>
+}
+
+/**
+ * One judge call per batch: which same-predicate values are UPDATES (old
+ * superseded by new) vs COEXISTING (multi-valued predicate — keep both)?
+ * Conservative by instruction: uncertain groups are left alone.
+ */
+export function buildConflictPrompt(conflicts: ConflictGroup[]): string {
+  const lines = conflicts.map(c =>
+    `- 新事实 #${c.id}「${c.predicate} = ${c.value}」 vs 旧事实 ` +
+    c.against.map(a => `#${a.id}「${c.predicate} = ${a.value}」`).join('、'),
+  ).join('\n')
+  return (
+    `你是一个事实库管理器（不是聊天助手，不要回应内容）。同一个人、同一谓词出现了不同的值。\n` +
+    `判断每一组：新值是**替代**旧值（搬家了、换工作了——旧值应作废），还是**并存**（爱好、朋友——都保留）。\n` +
+    `只对确定是替代关系的组输出 {"supersede": 旧事实id, "by": 新事实id}。不确定就不输出（保守优先）。\n` +
+    `**只输出 JSON 数组，不要任何解释，不要代码围栏。**没有替代关系就输出 []。\n\n` +
+    lines
+  )
+}
+
+/**
+ * Parse the judge's output into validated supersede pairs. Same posture as
+ * `parseFacts`: tolerant of fences/prose, drops malformed elements, [] on
+ * anything unparseable. NEVER throws — a judge refusal must not corrupt or
+ * stall the cycle.
+ */
+export function parseSupersedePairs(text: string): Array<{ supersede: number; by: number }> {
+  const slice = firstJsonArray(text)
+  if (slice == null) return []
+  let raw: unknown
+  try {
+    raw = JSON.parse(slice)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(raw)) return []
+  const out: Array<{ supersede: number; by: number }> = []
+  for (const el of raw) {
+    if (el == null || typeof el !== 'object') continue
+    const o = el as Record<string, unknown>
+    if (typeof o.supersede !== 'number' || !Number.isFinite(o.supersede)) continue
+    if (typeof o.by !== 'number' || !Number.isFinite(o.by)) continue
+    out.push({ supersede: o.supersede, by: o.by })
+  }
+  return out
+}
+
 export interface ExtractDeps {
   /** MCP bridge `.call(tool, input) → text`. wxfacts replies are JSON strings. */
   call: (tool: string, input?: unknown) => Promise<string>
@@ -152,14 +207,31 @@ export async function runExtraction(d: ExtractDeps): Promise<{ batches: number; 
       d.log?.('INGEST', `extract eval error, deferring batch ${batch.batch_id}: ${String(e)}`)
       break
     }
+    let recordResult: string
     try {
-      await d.call('record_facts', { batch_id: batch.batch_id, facts })
+      recordResult = await d.call('record_facts', { batch_id: batch.batch_id, facts })
     } catch (e) {
       d.log?.('INGEST', `record_facts failed for ${batch.batch_id}: ${String(e)}`)
       break
     }
     batches++
     recorded += facts.length
+
+    // Temporal validity — record reported same-predicate conflicts; one judge
+    // call decides update-vs-coexist, then supersede_facts applies the pairs
+    // (behind FactsApi.supersede's deterministic guard). Failure here is
+    // non-fatal by design: the watermark already advanced and coexisting
+    // facts are exactly yesterday's behavior — log and move on, never break.
+    let resp: { conflicts?: ConflictGroup[] } = {}
+    try { resp = JSON.parse(recordResult) } catch { /* legacy/loose shape — no conflicts */ }
+    if (Array.isArray(resp.conflicts) && resp.conflicts.length > 0) {
+      try {
+        const pairs = parseSupersedePairs(await d.cheapEval(buildConflictPrompt(resp.conflicts)))
+        if (pairs.length > 0) await d.call('supersede_facts', { pairs })
+      } catch (e) {
+        d.log?.('INGEST', `conflict resolution skipped for ${batch.batch_id}: ${String(e)}`)
+      }
+    }
   }
   return { batches, recorded }
 }

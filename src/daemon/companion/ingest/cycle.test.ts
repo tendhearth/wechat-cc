@@ -99,6 +99,7 @@ describe('runIngestCycle — factsApi (in-proc extraction)', () => {
       findFacts: vi.fn(),
       setFactStatus: vi.fn(),
       extractionStatus: vi.fn(),
+      supersede: vi.fn(() => ({ superseded: 0 })),
     }
     const bridge = { call: vi.fn(async (_t: string, _i?: unknown) => '{}') }
     const d = deps({ tools: [], bridge })   // no tools at all — extraction_batch absent
@@ -122,6 +123,7 @@ describe('runIngestCycle — factsApi (in-proc extraction)', () => {
       findFacts: vi.fn(),
       setFactStatus: vi.fn(),
       extractionStatus: vi.fn(),
+      supersede: vi.fn(() => ({ superseded: 0 })),
     }
     const bridge = { call: vi.fn(async (_t: string, _i?: unknown) => '{}') }
     const d = deps({ tools: [], bridge, cheapEval: async () => '[{"kind":"entity","predicate":"是","value":"x"}]' })
