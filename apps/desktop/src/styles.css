@@ -5930,6 +5930,59 @@ input { font: inherit; color: inherit; }
   gap: 12px;
 }
 .converse-scroll .empty-state { padding: 40px; text-align: center; color: var(--ink-3); font-size: 13px; }
+/* First-visit vignette — CC waiting, not a void (UI review #4). */
+.converse-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px;
+  text-align: center;
+}
+.converse-empty-art {
+  width: min(230px, 50vw);
+  margin-bottom: 10px;
+  user-select: none;
+  pointer-events: none;
+}
+.converse-empty h2 {
+  margin: 0;
+  color: #593F2C;
+  font-size: 19px;
+  font-weight: 700;
+}
+.converse-empty p {
+  margin: 2px 0 16px;
+  color: #8d7563;
+  font-size: 13px;
+}
+.converse-starters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  max-width: 560px;
+}
+/* Same wooden chip as the memory hero tags — clickable here. */
+.converse-starter {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 18px;
+  border: 12px solid transparent;
+  border-image: url("./assets/memory-tag-bg.png") 24 28 fill stretch;
+  background: transparent;
+  color: #8a5a36;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform .12s ease;
+}
+.converse-starter:hover { transform: translateY(-2px); color: #593F2C; }
+.converse-starter:active { transform: translateY(0); }
 .converse-msg { display: flex; align-items: flex-end; gap: 6px; }
 .converse-msg-user { justify-content: flex-end; }
 .converse-msg-cc { justify-content: flex-start; }

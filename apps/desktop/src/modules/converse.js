@@ -238,11 +238,33 @@ async function toggleMic(deps) {
   reflectMic()
 }
 
+// First-visit filler (2026-08-23 UI review #4): the pane used to be one
+// placeholder line at the top and 500px of void — an empty screen should
+// be an invitation to act. CC's companion vignette + three starters that
+// map to things the bot can actually do; clicking one fills the compose
+// box (never auto-sends — the send stays the owner's move).
+const STARTERS = [
+  "今天有什么要跟进的事吗？",
+  "说说你最近对我的观察。",
+  "陪我随便聊两句。",
+]
+
+function emptyStateHtml() {
+  return `<div class="converse-empty">
+    <img class="converse-empty-art" src="./assets/memory-companion.png" alt="" draggable="false" />
+    <h2>CC 在这儿</h2>
+    <p>直接在这里聊，不走微信。想不好开场？挑一个：</p>
+    <div class="converse-starters">
+      ${STARTERS.map(t => `<button class="converse-starter" type="button" data-starter="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join("")}
+    </div>
+  </div>`
+}
+
 function renderMessages() {
   const scroll = document.getElementById("converse-scroll")
   if (!scroll) return
   scroll.innerHTML = messages.length === 0
-    ? `<p class="empty-state">跟 CC 说点什么吧——直接在这里聊，不走微信。</p>`
+    ? emptyStateHtml()
     : messages.map(messageHtml).join("")
   requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight })
 }
@@ -330,6 +352,16 @@ function wireEvents(root, deps) {
   root.querySelector("#converse-scroll")?.addEventListener("click", (ev) => {
     const target = ev.target
     if (!(target instanceof HTMLElement)) return
+    const starter = target.closest(".converse-starter")
+    if (starter instanceof HTMLElement) {
+      const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById("converse-input"))
+      if (input) {
+        input.value = starter.dataset.starter ?? starter.textContent ?? ""
+        input.focus()
+        input.dispatchEvent(new Event("input", { bubbles: true }))
+      }
+      return
+    }
     const btn = target.closest(".voice-replay-btn")
     if (!(btn instanceof HTMLElement)) return
     const id = Number(btn.dataset.msgId)
