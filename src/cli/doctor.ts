@@ -660,6 +660,7 @@ export async function probeOutboundWarning(
   try {
     const res = await fetchFn(`http://127.0.0.1:${daemon.internal_api.port}/v1/health`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(3000),
     })
     if (!res.ok) return null
     const body = await res.json() as { outbound?: { state?: string; consecutive_failures?: number; last_error?: string | null } }

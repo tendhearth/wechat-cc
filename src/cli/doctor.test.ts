@@ -814,4 +814,16 @@ describe('probeOutboundWarning', () => {
     const boom = async () => { throw new Error('conn refused') }
     expect(await probeOutboundWarning(daemonAlive, boom as any, () => 'tok')).toBeNull()
   })
+
+  it('passes an AbortSignal with 3s timeout to fetch', async () => {
+    const daemonAlive = { alive: true, pid: 1, internal_api: { port: 12345, token_file_path: '/tmp/tok' } } as any
+    let capturedInit: any
+    const fetchFn = async (_url: string, init?: any) => {
+      capturedInit = init
+      return new Response(JSON.stringify({ ok: true, daemon_pid: 1, outbound: { state: 'ok' } }), { status: 200 }) as unknown as Response
+    }
+    await probeOutboundWarning(daemonAlive, fetchFn as any, () => 'tok')
+    expect(capturedInit).toBeDefined()
+    expect(capturedInit.signal).toBeInstanceOf(AbortSignal)
+  })
 })
