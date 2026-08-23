@@ -20,6 +20,7 @@ import type { PermissionMode } from '../../core/capability-matrix'
 import { makeMemoryFS } from '../memory/fs-api'
 import { parseAgenda, selectDue, markResolved } from '../companion/agenda'
 import { makeMessagesStore, type MessagesStore } from '../../lib/messages-store'
+import { recentInboundTexts } from './recent-inbound'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { careLevel, shouldSpeak } from '../companion/calibration'
 import type { CareLedger } from '../companion/care-ledger'
@@ -554,11 +555,14 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     const memoryRoot = join(deps.stateDir, 'memory')
     const events = makeEventsStore(deps.db, chatId, { migrateFromFile: join(memoryRoot, chatId, 'events.jsonl') })
     const observations = makeObservationsStore(deps.db, chatId, { migrateFromFile: join(memoryRoot, chatId, 'observations.jsonl') })
+    // Hoisted above the agent so introspect and threads extraction share one
+    // store — introspect's recent-inbound feed reads the same canonical
+    // messages table the extractor consumes.
+    const messagesStore = makeMessagesStore(deps.db)
     const agent = makeIntrospectAgent({
       chatId, events, observations,
       memorySnapshot: () => buildMemorySnapshot(deps.stateDir, chatId),
-      // Matches legacy main.ts v0.4.1 — recentInboundForChat() also returned [].
-      recentInboundMessages: () => Promise.resolve([] as string[]),
+      recentInboundMessages: () => recentInboundTexts(messagesStore, chatId),
       sdkEval,
     })
     // Isolated so a rare introspect-side throw (e.g. events.append db error)
@@ -576,7 +580,6 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     // also accumulate threads, not just the companion default_chat_id.
     // Parse failure per-chat is swallowed: watermark stays, retried next tick.
     // One-chat failure does not abort extraction for the remaining chats.
-    const messagesStore = makeMessagesStore(deps.db)
     const threadsStore = makeThreadsStore(deps.db)
     let allChatIds: string[]
     try {
