@@ -6,7 +6,7 @@ import { defineCommand, runMain } from 'citty'
 import selfPkg from './package.json' with { type: 'json' }
 import { STATE_DIR } from './src/lib/config'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider, activeModel, type AgentConfig, type AgentProviderKind } from './src/lib/agent-config'
-import { analyzeDoctor, defaultDoctorDeps, printDoctor, serviceStatus, setupStatus } from './src/cli/doctor'
+import { analyzeDoctor, defaultDoctorDeps, printDoctor, probeOutboundWarning, serviceStatus, setupStatus } from './src/cli/doctor'
 import { buildServicePlan, installService, startService, stopService, uninstallService } from './src/cli/service-manager'
 import { compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from './src/lib/runtime-info'
 import { delegateMemoryOp, type CliApiInfo } from './src/lib/cli-llm-eval'
@@ -251,10 +251,14 @@ const doctorCmd = defineCommand({
   args: {
     json: { type: 'boolean', description: 'machine-readable output' },
   },
-  run({ args }) {
+  async run({ args }) {
     const report = analyzeDoctor(defaultDoctorDeps())
     if (args.json) console.log(JSON.stringify(DoctorOutput.parse(report), null, 2))
-    else printDoctor(report)
+    else {
+      printDoctor(report)
+      const warn = await probeOutboundWarning(report.checks.daemon)
+      if (warn) console.log(warn)
+    }
   },
 })
 
