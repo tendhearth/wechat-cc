@@ -33,6 +33,17 @@ export interface FakeIlinkHandle {
   outbox(): readonly OutboundMsg[]
   /** Reset outbox + queue (between tests in same suite). */
   reset(): void
+  /**
+   * Force `ilink/bot/sendmessage` to fail with a wire-level error (HTTP 200,
+   * non-zero errcode) until `succeedSendMessage()` or `reset()` is called.
+   * Failed calls are NOT captured into the outbox. Default errcode -6
+   * ("auth failed") is non-retryable per isRetryableSendError — keeps
+   * tests fast by skipping ilinkSendMessage's 1s retry backoff. Added for
+   * spec 2026-08-22-outbound-health Task 2; Task 5 reuses this toggle.
+   */
+  failSendMessage(opts?: { errcode?: number; errmsg?: string }): void
+  /** Restore sendmessage to success (also cleared by reset()). */
+  succeedSendMessage(): void
   /** Stop server, free port. */
   stop(): Promise<void>
 }
@@ -40,6 +51,7 @@ export interface FakeIlinkHandle {
 export async function startFakeIlink(): Promise<FakeIlinkHandle> {
   const queue: RawUpdate[] = []
   const captured: OutboundMsg[] = []
+  let sendMessageFailure: { errcode: number; errmsg: string } | null = null
 
   const server = Bun.serve({
     port: 0,  // random
@@ -73,6 +85,9 @@ export async function startFakeIlink(): Promise<FakeIlinkHandle> {
       const msg = (body.msg as Record<string, unknown> | undefined) ?? body
       const itemList = msg.item_list as Array<{ text_item?: { text?: string } }> | undefined
       if (url.pathname === '/ilink/bot/sendmessage') {
+        if (sendMessageFailure) {
+          return Response.json({ errcode: sendMessageFailure.errcode, errmsg: sendMessageFailure.errmsg })
+        }
         captured.push({
           endpoint: 'sendmessage',
           chatId: String(msg.to_user_id ?? ''),
@@ -113,7 +128,9 @@ export async function startFakeIlink(): Promise<FakeIlinkHandle> {
     port,
     enqueueInbound(update) { queue.push(update) },
     outbox() { return [...captured] },
-    reset() { queue.length = 0; captured.length = 0 },
+    reset() { queue.length = 0; captured.length = 0; sendMessageFailure = null },
+    failSendMessage(opts) { sendMessageFailure = { errcode: opts?.errcode ?? -6, errmsg: opts?.errmsg ?? 'auth failed' } },
+    succeedSendMessage() { sendMessageFailure = null },
     async waitForOutbound(predicate, timeoutMs = 5000) {
       const start = Date.now()
       while (Date.now() - start < timeoutMs) {

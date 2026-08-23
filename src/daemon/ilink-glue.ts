@@ -33,6 +33,7 @@ import { makeIlinkContext, type Account } from './ilink/context'
 import { makeVoice } from './ilink/voice'
 import { makeCompanion } from './ilink/companion'
 import { makeTransport } from './ilink/transport'
+import { makeOutboundHealthTracker, type OutboundHealth } from './ilink/outbound-health'
 import type { Db } from '../lib/db'
 import type { ConversationStore } from '../core/conversation-store'
 import { makeMessagesStore } from '../lib/messages-store'
@@ -51,6 +52,8 @@ export type IlinkAccount = import('./ilink/context').Account
 export interface IlinkAdapter {
   sendMessage(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
   sendFile(chatId: string, path: string): Promise<void>
+  /** Passive outbound link health (spec 2026-08-22-outbound-health). */
+  outboundHealth(): OutboundHealth
   editMessage(chatId: string, msgId: string, text: string): Promise<void>
   broadcast(text: string, accountId?: string): Promise<{ ok: number; failed: number }>
   sharePage(title: string, content: string, opts?: { needs_approval?: boolean; chat_id?: string; account_id?: string }): Promise<{ url: string; slug: string }>
@@ -128,6 +131,7 @@ export function makeIlinkAdapter(opts: {
 
   const voice = makeVoice(ctx)
   const companion = makeCompanion(ctx)
+  const outbound = makeOutboundHealthTracker({ log: (t, l) => log(t, l) })
 
   // PR4 Task 15 — when ilink rejects an account with errcode=-14 ("rebound
   // elsewhere"), fan out a 3-line user-facing notification to every chat
@@ -157,6 +161,7 @@ export function makeIlinkAdapter(opts: {
   const adapter: IlinkAdapter = {
     async sendMessage(chatId, text) {
       if (!text) return { msgId: `err:${Date.now()}`, error: 'empty text' }
+      let reachedWire = false
       try {
         // Use the in-memory ctxStore / acctStore directly — sendReplyOnce
         // re-reads context_tokens.json from disk and would miss tokens
@@ -167,9 +172,11 @@ export function makeIlinkAdapter(opts: {
         const acct = resolveAccount(chatId)
         const ctxToken = ctxStore.get(chatId)
         const chunks = chunk(text, MAX_TEXT_CHUNK)
+        reachedWire = true
         for (const part of chunks) {
           await ilinkSendMessage(acct.baseUrl, acct.token, botTextMessage(chatId, part, ctxToken))
         }
+        outbound.recordSuccess(new Date().toISOString())
         // Record ONE row with the full pre-chunk text (fire-and-forget;
         // recording failure must never break the send result).
         void messagesStore.append({
@@ -188,12 +195,18 @@ export function makeIlinkAdapter(opts: {
         }).catch(err => log('MESSAGES', `outbound record failed: ${err instanceof Error ? err.message : err}`))
         return { msgId: `sent:${Date.now()}` }
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        // Only wire failures feed the health tracker — routing errors
+        // (unroutable chat, unknown account) say nothing about the link.
+        if (reachedWire) outbound.recordFailure(new Date().toISOString(), msg)
         return {
           msgId: `err:${Date.now()}`,
-          error: err instanceof Error ? err.message : String(err),
+          error: msg,
         }
       }
     },
+
+    outboundHealth: () => outbound.snapshot(),
 
     async sendFile(chatId, filePath) {
       assertSendable(filePath)
