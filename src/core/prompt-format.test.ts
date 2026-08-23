@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatInbound } from './prompt-format'
+import { formatInbound, RECALL_BLOCK_MAX } from './prompt-format'
 
 describe('formatInbound', () => {
   it('wraps a plain text message with channel tag', () => {
@@ -58,6 +58,47 @@ describe('formatInbound', () => {
       text: 'hi', msgType: 'text', createTimeMs: 1, accountId: 'a',
     })
     expect(out).not.toContain('<quote')
+  })
+
+  it('renders a <recall> element before the body when msg.recall is set', () => {
+    const out = formatInbound({
+      chatId: 'c', userId: 'u', userName: 'x',
+      text: 'hi', msgType: 'text', createTimeMs: 1, accountId: 'a',
+      recall: ['[2026-08-01 张三] 上次说搬去上海', '[2026-08-02 我] 记得带书'],
+    })
+    expect(out).toContain('<recall hint="自动检索的相关片段，可能不相关，仅供参考">')
+    expect(out).toContain('</recall>')
+    expect(out.indexOf('<recall')).toBeLessThan(out.indexOf('hi'))
+    expect(out).toContain('上次说搬去上海')
+    expect(out).toContain('记得带书')
+  })
+
+  it('omits <recall> entirely when recall is absent, empty, or blank-only', () => {
+    const base = { chatId: 'c', userId: 'u', userName: 'x', text: 'hi', msgType: 'text', createTimeMs: 1, accountId: 'a' }
+    expect(formatInbound(base)).not.toContain('<recall')
+    expect(formatInbound({ ...base, recall: [] })).not.toContain('<recall')
+    expect(formatInbound({ ...base, recall: ['  ', ''] })).not.toContain('<recall')
+  })
+
+  it('escapes recall body', () => {
+    const out = formatInbound({
+      chatId: 'c', userId: 'u', userName: 'x',
+      text: 'hi', msgType: 'text', createTimeMs: 1, accountId: 'a',
+      recall: ['a < b & <script>'],
+    })
+    expect(out).toContain('a &lt; b &amp; &lt;script&gt;')
+    expect(out).not.toContain('<script>')
+  })
+
+  it('caps the joined recall block at RECALL_BLOCK_MAX chars', () => {
+    const out = formatInbound({
+      chatId: 'c', userId: 'u', userName: 'x',
+      text: 'hi', msgType: 'text', createTimeMs: 1, accountId: 'a',
+      recall: ['x'.repeat(2000)],
+    })
+    const start = out.indexOf('仅供参考">\n') + '仅供参考">\n'.length
+    const body = out.slice(start, out.indexOf('\n</recall>'))
+    expect(body.length).toBeLessThanOrEqual(RECALL_BLOCK_MAX)
   })
 
   it('emits ts as ISO-8601 UTC (legible to the agent), not raw epoch ms', () => {

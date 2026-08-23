@@ -17,6 +17,7 @@ import { makeMwMessages, type MessagesMwDeps } from './mw-messages'
 import { makeMwActivity, type ActivityMwDeps } from './mw-activity'
 import { makeMwMilestone, type MilestoneMwDeps } from './mw-milestone'
 import { makeMwWelcome, type WelcomeMwDeps } from './mw-welcome'
+import { makeMwRecall, type RecallMwDeps } from './mw-recall'
 import { makeMwLlmHealth, type MwLlmHealthDeps } from './mw-llm-health'
 import { makeMwDispatch, type DispatchMwDeps } from './mw-dispatch'
 
@@ -38,6 +39,7 @@ export interface InboundPipelineDeps {
   activity: ActivityMwDeps
   milestone: MilestoneMwDeps
   welcome: WelcomeMwDeps
+  recall: RecallMwDeps
   llmHealth: MwLlmHealthDeps
   dispatch: DispatchMwDeps
 }
@@ -75,6 +77,10 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     makeMwActivity(d.activity),
     makeMwMilestone(d.milestone),
     makeMwWelcome(d.welcome),
+    // Recall runs after every consuming middleware (only messages that will
+    // reach dispatch pay the embed cost) and BEFORE llm-health/dispatch so
+    // the <recall> element is on ctx.msg when dispatch formats the envelope.
+    makeMwRecall(d.recall),
     // LLM health gate runs immediately BEFORE dispatch (the terminal
     // middleware where the LLM turn actually happens) — degraded LLM means
     // every inbound would otherwise drive one doomed API call per message

@@ -25,7 +25,17 @@ export interface InboundMsg {
    */
   contextToken?: string
   attachments?: { kind: 'image' | 'file' | 'voice'; path: string; caption?: string }[]
+  /**
+   * Auto-recall (2026-08 memory-upgrades) — pre-formatted memory snippets
+   * attached by mw-recall (admin chats only), rendered as a <recall> element
+   * ahead of the message body so the agent starts the turn with relevant
+   * context even when it never calls knowledge_search/memory_read itself.
+   */
+  recall?: string[]
 }
+
+/** Cap on the rendered <recall> body — recall is a hint, not a transcript. */
+export const RECALL_BLOCK_MAX = 800
 
 export function formatInbound(m: InboundMsg): string {
   const attrs = [
@@ -45,7 +55,11 @@ export function formatInbound(m: InboundMsg): string {
   const quoteEl = m.quote
     ? `<quote type="${escAttr(m.quote.type)}">${escBody(m.quote.text)}</quote>`
     : ''
-  const body = [quoteEl, escBody(m.text), ...attachmentLines].filter(Boolean).join('\n')
+  const recallLines = (m.recall ?? []).filter(r => r.trim().length > 0)
+  const recallEl = recallLines.length
+    ? `<recall hint="自动检索的相关片段，可能不相关，仅供参考">\n${escBody(recallLines.join('\n')).slice(0, RECALL_BLOCK_MAX)}\n</recall>`
+    : ''
+  const body = [recallEl, quoteEl, escBody(m.text), ...attachmentLines].filter(Boolean).join('\n')
   return `<wechat ${attrs}>\n${body}\n</wechat>`
 }
 

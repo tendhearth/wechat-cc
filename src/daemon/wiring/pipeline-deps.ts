@@ -479,6 +479,35 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     },
     milestone: { fireMilestonesFor, log },
     welcome: { maybeWriteWelcomeObservation, log },
+    recall: {
+      isAdmin,
+      log,
+      // Auto-recall (2026-08 memory-upgrades) — hybrid search over the
+      // knowledge kernel, embedder-fallback shape mirrors POST /v1/knowledge/
+      // search (routes-knowledge.ts): the shared embedder is the single
+      // source of truth for the model space, so query and index always live
+      // in the same space. Absent embedder/embedQuery ⇒ dep stays undefined
+      // and mw-recall is inert (same gating as the route's 400 fallback).
+      ...(boot.knowledge?.embedQuery && boot.knowledge.embedder
+        ? {
+            recall: async (_chatId: string, text: string) => {
+              const k = boot.knowledge!
+              const vec = await k.embedQuery!(text)
+              const { results } = k.search(k.store, {
+                queryVector: vec,
+                queryText: text,
+                model_id: k.embedder!.model_id,
+                limit: 3,
+              })
+              return results.map((r) => {
+                // source.db stamps seconds; tolerate ms just in case.
+                const ts = new Date(r.time * (r.time < 1e12 ? 1000 : 1)).toISOString().slice(0, 10)
+                return `[${ts} ${r.sender}] ${r.text.slice(0, 160)}`
+              })
+            },
+          }
+        : {}),
+    },
     llmHealth: {
       health: boot.health.health,
       sendMessage: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string }),

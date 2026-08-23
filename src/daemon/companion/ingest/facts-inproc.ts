@@ -1,8 +1,8 @@
 /**
  * Adapter: in-process FactsApi → the `(tool, input) => Promise<string>` call
  * shape `runExtraction` (extract.ts) expects from the MCP bridge. Serves
- * ONLY `extraction_batch`/`record_facts` — the two tools extract.ts uses —
- * and JSON.stringify's the FactsApi result so extract.ts's existing
+ * ONLY `extraction_batch`/`record_facts`/`supersede_facts` — the three tools
+ * extract.ts uses — and JSON.stringify's the FactsApi result so extract.ts's existing
  * `call → JSON string` contract is unchanged. This is what lets
  * companion-ingest's auto-extraction loop keep working after the wxfacts
  * plugin is retired (no MCP subprocess, no `..`).
@@ -21,6 +21,9 @@ export function makeInProcFactsCall(
     if (tool === 'record_facts') {
       return JSON.stringify(facts.record(b.batch_id as string, (b.facts as any[] | undefined) ?? [], nowFn()))
     }
-    throw new Error('in-proc facts serves only extraction_batch/record_facts, got ' + tool)
+    if (tool === 'supersede_facts') {
+      return JSON.stringify(facts.supersede((b.pairs as Array<{ supersede: number; by: number }> | undefined) ?? [], nowFn()))
+    }
+    throw new Error('in-proc facts serves only extraction_batch/record_facts/supersede_facts, got ' + tool)
   }
 }
