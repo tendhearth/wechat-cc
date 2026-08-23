@@ -1419,8 +1419,15 @@ input { font: inherit; color: inherit; }
   gap: clamp(14px, 3vw, 37px);
   max-width: max(260px, calc(100% - 430px));
   min-width: 0;
-  overflow: hidden;
+  /* Scroll, never clip: between ~900-1400px the 100%-430px budget shrinks
+     faster than the clamped item widths, and hidden overflow silently
+     amputated the last tabs (觅食/插件 unreachable at 1243px — well above
+     the 760px window minimum). */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
+.dash-nav::-webkit-scrollbar { display: none; }
 [data-platform="macos"] .dash-nav { top: 33px; }
 .dash-nav-link {
   position: relative;
@@ -1623,12 +1630,15 @@ input { font: inherit; color: inherit; }
   top: 0;
   right: 0;
   left: 0;
-  height: 22px;
+  /* Tall enough to cover the floating workspace-tabs zone below (top:16 +
+     ~32px pill) — at 22px, scrolling text passed almost un-faded behind the
+     semi-transparent toggle and read as overlapped garbage. */
+  height: 64px;
   pointer-events: none;
   background: linear-gradient(
     to bottom,
     var(--app-bg) 0%,
-    rgba(254, 249, 239, .88) 42%,
+    rgba(254, 249, 239, .92) 55%,
     rgba(254, 249, 239, 0) 100%
   );
 }
@@ -2215,6 +2225,12 @@ input { font: inherit; color: inherit; }
   font-size: 16px;
   line-height: 1.35;
   font-weight: 700;
+}
+.dialogue-time {
+  margin-left: 10px;
+  color: #b39a83;
+  font-size: 12px;
+  font-weight: 400;
 }
 .dialogue-ai-tag {
   margin-left: 4px;
@@ -3548,7 +3564,9 @@ input { font: inherit; color: inherit; }
   gap: 56px;
   align-items: center;
   min-height: 560px;
-  flex: 0 0 560px;
+  /* auto, not a fixed 560px basis: overflow (extra tag rows, long summary)
+     must push the grid below down rather than paint over its headers. */
+  flex: 0 0 auto;
 }
 .memory-profile-copy {
   min-width: 0;
@@ -3614,6 +3632,12 @@ input { font: inherit; color: inherit; }
 .memory-profile-tags span {
   display: inline-flex;
   align-items: center;
+  /* Chips must never wrap to a second line — a wrapped tag overflows the
+     fixed-height hero into the grid below (see tidyProfileTag). */
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   min-height: 40px;
   padding: 0 25px;
   border: 12px solid transparent;
@@ -3904,7 +3928,9 @@ input { font: inherit; color: inherit; }
 .memory-profile-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: stretch;
+  /* start, not stretch: the personality column is usually shorter than the
+     project map — stretching it left a ~400px blank tail inside its border. */
+  align-items: start;
   gap: 34px;
   width: 100%;
   margin-top: -32px;

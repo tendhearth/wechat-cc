@@ -591,7 +591,7 @@ export function renderMemoryProfileOverview(deps) {
         </div>
         <p>${escapeHtml(profile.summary)}</p>
         <div class="memory-profile-tags">
-          ${profile.tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join("")}
+          ${profile.tags.map(tag => `<span title="${escapeHtml(tag)}">${escapeHtml(tidyProfileTag(tag))}</span>`).join("")}
         </div>
       </div>
       ${embryoEnabled ? renderMemoryEmbryo(embryo) : renderMemoryEmbryoDisabled()}
@@ -640,7 +640,7 @@ export function renderMemoryProfileOverview(deps) {
             ${profile.snippets.length ? profile.snippets.map(item => `
               <article>
                 <h3>${escapeHtml(item.title)}</h3>
-                <p>${escapeHtml(item.body)}</p>
+                ${item.body ? `<p>${escapeHtml(item.body)}</p>` : ""}
               </article>
             `).join("") : `<article class="memory-snippet-empty"><h3>还没有足够的长期记忆</h3><p>当 CC 积累到稳定的观察、里程碑或长期记忆后，会在这里整理成可检查的内容。</p></article>`}
           </div>
@@ -902,6 +902,18 @@ if (typeof window !== "undefined") {
   window.addEventListener("resize", fitMemoryArtboard)
 }
 
+// Hero tags live inside a FIXED-height artboard hero (560px): a tag long
+// enough to wrap (e.g. the overview's "其他 6 个项目（…全枚举…）" aggregate
+// entry) overflows the hero box straight into the grid below and gets
+// covered by the 长期人格倾向 label. Tags are chips, not prose — strip the
+// parenthetical enumeration and cap the length; the full text stays in the
+// title attribute.
+/** @param {string} tag */
+export function tidyProfileTag(tag) {
+  const stripped = String(tag || "").replace(/[（(].*$/, "").trim()
+  return stripped.length > 16 ? `${stripped.slice(0, 15)}…` : stripped
+}
+
 /**
  * @param {string} friendly
  * @param {number} totalFiles
@@ -1013,7 +1025,7 @@ function buildMemoryProfileModel(friendly, totalFiles, updatedAt) {
       { icon: "alert-02", title: "风险", body: "压力升高时会减少表达，同时会去确认自己的价值。" },
     ],
     snippets: ovProjects.length > 0
-      ? ovProjects.map(p => ({ title: p.name, body: p.summary || "——" }))
+      ? ovProjects.map(p => ({ title: p.name, body: p.summary }))
       : remembered.length > 0
       ? remembered.map((body, index) => ({
           title: index === 0 ? "最近观察" : `记忆片段 ${index + 1}`,

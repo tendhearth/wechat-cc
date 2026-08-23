@@ -119,3 +119,15 @@ describe('generateMemoryProfile', () => {
     expect(statusEl.textContent).toContain('需要守护进程运行后才能刷新画像')
   })
 })
+
+import { tidyProfileTag } from './memory.js'
+
+describe('tidyProfileTag', () => {
+  it('strips the parenthetical enumeration and caps length', () => {
+    expect(tidyProfileTag('其他 6 个项目（kawanco-dev、nvidia-competition、sec-company、signal-processing-agent、writter、wxvault）'))
+      .toBe('其他 6 个项目')
+    expect(tidyProfileTag('wechat-cc')).toBe('wechat-cc')
+    expect(tidyProfileTag('一个非常非常非常非常长的项目名称超过限制')).toBe('一个非常非常非常非常长的项目名…')
+    expect(tidyProfileTag('')).toBe('')
+  })
+})

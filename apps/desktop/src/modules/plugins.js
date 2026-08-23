@@ -14,6 +14,11 @@
 
 import { invokeApi } from '../api.js'
 
+// Packages whose MCP tools were retired when their logic moved into the
+// daemon's in-process Knowledge Kernel — kept on disk as library modules
+// only. Keep in sync with src/core/knowledge/* inlining.
+const RETIRED_INPROC = new Set(['wxperson', 'wxfacts', 'wxgraph'])
+
 /** CLI bridge (invoke("wechat_cli_text"/"wechat_cli_json", {args})) — set in init.
  * Needed to run a plugin's setup via the CLI (`plugin setup <name>`), which
  * streams progress; invokeApi (HTTP) is for the read/toggle routes.
@@ -58,6 +63,11 @@ async function refreshInstalled() {
     const li = document.createElement('li')
     li.className = 'a2a-agent-card' + (live ? '' : ' paused')
     li.dataset.name = p.name
+    // These packages were inlined into the daemon's in-process Knowledge
+    // Kernel (src/core/knowledge/*) — the MCP tools are retired and the
+    // enable/disable toggle is meaningless (it neither turns the kernel on
+    // nor off). Show them as built-in facts, not switchable plugins.
+    const retiredInproc = RETIRED_INPROC.has(p.name)
     const tools = Array.isArray(p.tools) && p.tools.length
       ? `<div class="plugin-tools">工具：${p.tools.map(/** @param {string} t */ t => escapeHtml(t)).join(' · ')}</div>`
       : ''
@@ -70,17 +80,17 @@ async function refreshInstalled() {
     const sync = p.has_sync ? syncStatusHtml(p.sync_status) : ''
     li.innerHTML = `
       <header class="a2a-card-head">
-        <span class="dot ${live ? 'on' : 'off'}"></span>
+        <span class="dot ${retiredInproc ? 'off' : live ? 'on' : 'off'}"></span>
         <strong>${escapeHtml(String(p.display_name ?? p.name))}</strong>
         <span class="plugin-name">${escapeHtml(p.name)}</span>
         ${p.version ? `<span class="plugin-ver">v${escapeHtml(String(p.version))}</span>` : ''}
-        <span class="plugin-source">${p.source === 'bundled' ? '内置' : '用户'}</span>
+        <span class="plugin-source">${retiredInproc ? '已内置到 daemon' : p.source === 'bundled' ? '内置' : '用户'}</span>
       </header>
       ${desc}
       ${tools}
-      ${warn}
+      ${retiredInproc ? '' : warn}
       ${sync}
-      <div class="a2a-card-actions">
+      ${retiredInproc ? '' : `<div class="a2a-card-actions">
         ${(p.has_setup && !p.ready)
           ? `<button class="btn" data-action="setup" data-name="${escapeHtml(p.name)}">连接微信并解密</button>` : ''}
         ${(p.has_sync && p.enabled && p.ready)
@@ -89,7 +99,7 @@ async function refreshInstalled() {
                 data-name="${escapeHtml(p.name)}" data-enabled="${p.enabled}">
           ${p.enabled ? '停用' : '启用'}
         </button>
-      </div>
+      </div>`}
     `
     list.appendChild(li)
   }
