@@ -288,8 +288,22 @@ async function sendMessage(deps) {
   input.disabled = true
   renderMessages()
 
+  // A turn legitimately takes 1-3 minutes when the owner session cold-starts
+  // — a bare "…" for that long reads as "it's broken". Stage the pending
+  // copy over time so the wait explains itself.
+  const PENDING_STAGES = [
+    [8_000, "正在想…"],
+    [30_000, "还在想——第一次开口要先热身，可能要一两分钟。"],
+    [90_000, "在认真组织语言，再等等我。"],
+  ]
+  const pendingTimers = PENDING_STAGES.map(([delay, copy]) => setTimeout(() => {
+    const m = messages.find(x => x.id === pendingId)
+    if (m && m.pending) { m.text = String(copy); renderMessages() }
+  }, Number(delay)))
+
   try {
     const reply = await deps.invoke("agent_converse", { text })
+    pendingTimers.forEach(clearTimeout)
     messages = messages.filter(m => m.id !== pendingId)
     const replyText = String(reply ?? "")
     if (replyText.trim() === "") {
@@ -307,11 +321,14 @@ async function sendMessage(deps) {
     // text in place so the user doesn't lose it and can just retry.
     input.value = ""
   } catch (err) {
+    pendingTimers.forEach(clearTimeout)
     messages = messages.filter(m => m.id !== pendingId)
     const raw = formatInvokeError(err)
     const friendly = /session_busy/.test(raw)
       ? "CC 正在忙（可能在回微信），稍等再试"
-      : raw
+      : /timed out/i.test(raw)
+        ? "这轮想得太久，连接先断开了——回复可能已经发到微信；也可以再试一次"
+        : raw
     messages.push({ id: nextId++, role: "error", text: friendly })
   } finally {
     sending = false

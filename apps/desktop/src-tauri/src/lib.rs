@@ -484,7 +484,13 @@ async fn agent_converse(text: String) -> Result<String, String> {
         .map_err(|e| format!("token read error: {e}"))?;
 
     let url = format!("{base_url}/v1/companion/converse");
-    let duration = Duration::from_secs(60);
+    // Must outlast the daemon's own turn budget (turnTimeoutMs, default 10
+    // minutes — bootstrap/index.ts): the converse route replies only when
+    // the turn finishes, and a cold-start owner turn routinely runs past a
+    // minute. A 60s client timeout dropped a completed 108s reply on the
+    // floor (2026-08-24 一直没回复 bug): the sink captured it, the HTTP
+    // response was written, and nobody was listening.
+    let duration = Duration::from_secs(630);
     // reqwest's `json` feature is not enabled in this crate (see Cargo.toml —
     // default-features = false, only "rustls-tls"), so serialize the body by
     // hand rather than pull in a new feature flag.
