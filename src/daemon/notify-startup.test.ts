@@ -211,6 +211,7 @@ describe('notify-startup', () => {
           loadAccess: () => ({ allowFrom: ['owner'] }),
           send: async () => { throw new Error('network down') },
           log: () => {},
+          retryDelayMs: 1,
         },
         { pid: 1, accounts: 1, dangerously: true }
       )
@@ -239,5 +240,44 @@ describe('notify-startup', () => {
   it('renderStartupText: dangerously toggles the mode tag', () => {
     expect(renderStartupText({ pid: 1, accounts: 1, dangerously: true }, null)).toMatch(/✅ unattended/)
     expect(renderStartupText({ pid: 1, accounts: 1, dangerously: false }, null)).toMatch(/⚠️ strict/)
+  })
+})
+
+describe('send-result honesty + not-ready retry (2026-08-24)', () => {
+  it('a send that RESOLVES with an error field is a failure, not a success', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'notify-'))
+    const logs: string[] = []
+    const r = await notifyStartup({
+      stateDir: dir,
+      loadAccess: () => ({ allowFrom: ['owner1'] }),
+      // glue-shaped failure: resolves, carries error (ilink-glue never throws)
+      send: async () => ({ msgId: 'err:1', error: 'ilink/sendmessage errcode=-2: prepare failed' }),
+      log: (t, l) => logs.push(`${t} ${l}`),
+      retryDelayMs: 1,
+    }, { pid: 1, accounts: 1, dangerously: true })
+    expect(r.notified).toBe(false)
+    expect(r.reason).toBe('send-failed-all')
+    expect(logs.some(l => l.includes('sent to 1/1'))).toBe(false)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('retries once after a delay when the channel is not ready yet, and succeeds', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'notify-'))
+    let calls = 0
+    const r = await notifyStartup({
+      stateDir: dir,
+      loadAccess: () => ({ allowFrom: ['owner1'] }),
+      send: async () => {
+        calls++
+        return calls === 1
+          ? { msgId: 'err:1', error: 'errcode=-2: prepare failed' }
+          : { msgId: 'sent:2' }
+      },
+      log: () => {},
+      retryDelayMs: 1,
+    }, { pid: 1, accounts: 1, dangerously: true })
+    expect(calls).toBe(2)
+    expect(r.notified).toBe(true)
+    rmSync(dir, { recursive: true, force: true })
   })
 })
