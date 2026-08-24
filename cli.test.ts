@@ -58,6 +58,7 @@ describe('citty migrated commands', () => {
       'account',
       'agent',
       'avatar',
+      'backup',
       'companion',
       'connection',
       'conversations',
