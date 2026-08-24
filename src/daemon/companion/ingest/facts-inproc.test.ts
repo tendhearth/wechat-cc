@@ -12,6 +12,8 @@ function fakeFacts(over: Partial<FactsApi> = {}): FactsApi {
     extractionStatus: vi.fn(() => ({})),
     supersede: vi.fn(() => ({ superseded: 0 })),
     conflictedGroups: vi.fn(() => []),
+    obligationHeavyContacts: vi.fn(() => []),
+    mergeObligations: vi.fn(() => ({ merged: 0 })),
     ...over,
   }
 }

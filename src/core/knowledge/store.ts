@@ -219,6 +219,9 @@ export interface KnowledgeStore {
    *  stock-conflict sweep's feed. Facts inside each group are newest-first
    *  (updated_at DESC). */
   conflictedFactGroups(limit: number): Array<{ contact: string; predicate: string; facts: FactRow[] }>
+  /** Contacts carrying ≥2 ACTIVE obligations, heaviest first — the
+   *  obligation-dedup sweep's feed. */
+  obligationHeavyContacts(limit: number): Array<{ contact: string; n: number }>
   /** `[last_ts, last_local_id]`, `[0, 0]` when the contact has no watermark
    *  row yet. */
   factWatermark(contact: string): [number, number]
@@ -829,6 +832,14 @@ export function openKnowledge(root: string): KnowledgeStore {
     factById(id) {
       const r = factsDb.query('SELECT * FROM facts WHERE id=?').get(id) as any
       return r ? parseFactRow(r) : null
+    },
+
+    obligationHeavyContacts(limit) {
+      return factsDb.query(
+        `SELECT contact, COUNT(*) AS n FROM facts
+         WHERE kind='obligation' AND status='active'
+         GROUP BY contact HAVING n >= 2 ORDER BY n DESC LIMIT ?`,
+      ).all(limit) as Array<{ contact: string; n: number }>
     },
 
     conflictedFactGroups(limit) {

@@ -9,6 +9,7 @@ import { readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { runExtraction } from './extract'
 import { runConflictSweep } from './sweep-conflicts'
+import { runObligationDedup } from './sweep-obligation-dupes'
 import { makeInProcFactsCall } from './facts-inproc'
 import type { FactsApi } from '../../../core/knowledge/facts'
 
@@ -39,6 +40,8 @@ export interface CycleDeps {
 
 /** Stock-conflict groups judged per ingest cycle — one cheapEval covers all of them. */
 const SWEEP_GROUPS_PER_CYCLE = 5
+/** Obligation-dedup contacts judged per cycle — one cheapEval each. */
+const DEDUP_CONTACTS_PER_CYCLE = 2
 
 export interface CycleReport {
   decrypted: boolean
@@ -50,6 +53,9 @@ export interface CycleReport {
   /** Stock-conflict sweep: groups judged / facts superseded this cycle (0/0 when no in-proc facts store). */
   sweptGroups: number
   sweptSuperseded: number
+  /** Obligation-dedup sweep: contacts judged / duplicates merged this cycle. */
+  dedupContacts: number
+  dedupMerged: number
   /** The source mtime observed this cycle; the caller stores it as next lastSourceMtime. */
   newSourceMtime: number
 }
@@ -100,7 +106,8 @@ async function tryBuild(d: CycleDeps, tool: string): Promise<boolean> {
 export async function runIngestCycle(d: CycleDeps): Promise<CycleReport> {
   const report: CycleReport = {
     decrypted: false, rebuilt: false, indexed: false, transcribed: false,
-    batches: 0, recorded: 0, sweptGroups: 0, sweptSuperseded: 0, newSourceMtime: d.lastSourceMtime,
+    batches: 0, recorded: 0, sweptGroups: 0, sweptSuperseded: 0,
+    dedupContacts: 0, dedupMerged: 0, newSourceMtime: d.lastSourceMtime,
   }
 
   // 1. Poke wxvault to force an incremental re-decrypt (it refreshes lazily).
@@ -136,6 +143,14 @@ export async function runIngestCycle(d: CycleDeps): Promise<CycleReport> {
     })
     report.sweptGroups = sweep.groups
     report.sweptSuperseded = sweep.superseded
+    // 5. Obligation dedup (待办 follow-up) — cross-predicate duplicate
+    // promises the conflict sweep can't see; ≤DEDUP_CONTACTS_PER_CYCLE cheap
+    // calls per cycle.
+    const dedup = await runObligationDedup({
+      facts: d.factsApi, cheapEval: d.cheapEval, contactCap: DEDUP_CONTACTS_PER_CYCLE, log: d.log,
+    })
+    report.dedupContacts = dedup.contacts
+    report.dedupMerged = dedup.merged
   } else if (d.hasTool('extraction_batch')) {
     const { batches, recorded } = await runExtraction({
       call: d.bridge.call, cheapEval: d.cheapEval, cap: d.cap, log: d.log,
