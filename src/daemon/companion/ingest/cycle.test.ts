@@ -103,6 +103,7 @@ describe('runIngestCycle — factsApi (in-proc extraction)', () => {
       conflictedGroups: vi.fn(() => []),
       obligationHeavyContacts: vi.fn(() => []),
       mergeObligations: vi.fn(() => ({ merged: 0 })),
+      settleObligations: vi.fn(() => ({ settled: 0 })),
     }
     const bridge = { call: vi.fn(async (_t: string, _i?: unknown) => '{}') }
     const d = deps({ tools: [], bridge })   // no tools at all — extraction_batch absent
@@ -130,6 +131,7 @@ describe('runIngestCycle — factsApi (in-proc extraction)', () => {
       conflictedGroups: vi.fn(() => []),
       obligationHeavyContacts: vi.fn(() => []),
       mergeObligations: vi.fn(() => ({ merged: 0 })),
+      settleObligations: vi.fn(() => ({ settled: 0 })),
     }
     const bridge = { call: vi.fn(async (_t: string, _i?: unknown) => '{}') }
     const d = deps({ tools: [], bridge, cheapEval: async () => '[{"kind":"entity","predicate":"是","value":"x"}]' })

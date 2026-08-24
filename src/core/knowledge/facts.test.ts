@@ -110,6 +110,27 @@ test('supersede applies valid pairs and skips invalid ones', () => {
   s.close()
 })
 
+test('settleObligations resolves only this contact\'s active obligations', () => {
+  const s = seed(); const api = makeFactsApi(s)
+  const mine = s.upsertFact({ contact: 'wxid_a', kind: 'obligation', predicate: 'lend_book', value: '还书' }, 1000)
+  const theirs = s.upsertFact({ contact: 'wxid_b', kind: 'obligation', predicate: 'x', value: 'y' }, 1000)
+  const attr = s.upsertFact({ contact: 'wxid_a', kind: 'attribute', predicate: 'city', value: '上海' }, 1000)
+  const done = s.upsertFact({ contact: 'wxid_a', kind: 'obligation', predicate: 'z', value: 'w' }, 1000)
+  s.setFactStatusById(done.id, 'resolved', 1500)
+  const res = api.settleObligations('wxid_a', [
+    mine.id,      // valid
+    theirs.id,    // other contact — skipped
+    attr.id,      // not an obligation — skipped
+    done.id,      // already resolved — skipped
+    99999,        // unknown id — skipped
+  ], 3000) as { settled: number }
+  expect(res).toEqual({ settled: 1 })
+  expect(s.factById(mine.id)!.status).toBe('resolved')
+  expect(s.factById(theirs.id)!.status).toBe('active')
+  expect(s.factById(attr.id)!.status).toBe('active')
+  s.close()
+})
+
 test('mergeObligations applies same-contact obligation pairs, skips everything else', () => {
   const s = seed(); const api = makeFactsApi(s)
   const a = s.upsertFact({ contact: 'wxid_a', kind: 'obligation', predicate: 'help_vps', value: '帮忙配 VPS' }, 1000)

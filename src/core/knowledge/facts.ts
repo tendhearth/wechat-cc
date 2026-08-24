@@ -39,6 +39,10 @@ export interface FactsApi {
    *  routinely land under different predicates) but tighter on kind — both
    *  rows must be same-contact ACTIVE obligations. Invalid pairs skipped. */
   mergeObligations(pairs: Array<{ supersede: number; by: number }>, now: number): object
+  /** Settle judge-approved obligations: each id must be THIS contact's
+   *  active obligation (deterministic guard against hallucinated ids —
+   *  the judge steers WHICH obligation is done, never WHOSE). */
+  settleObligations(contact: string, ids: number[], now: number): object
   contactFacts(name: string): object
   findFacts(kind: string | null, predicate: string | null, query: string | null, status: string | null, limit: number | null): object
   setFactStatus(id: number, status: string, now: number): object
@@ -153,6 +157,18 @@ export function makeFactsApi(store: KnowledgeStore): FactsApi {
         if (store.supersedeFactById(p.supersede, p.by, now)) merged++
       }
       return { merged }
+    },
+    settleObligations(contact, ids, now) {
+      const un = resolveContact(contact)
+      let settled = 0
+      for (const id of ids ?? []) {
+        if (typeof id !== 'number' || !Number.isFinite(id)) continue
+        const row = store.factById(id)
+        if (!row || row.contact !== un) continue
+        if (row.kind !== 'obligation' || row.status !== 'active') continue
+        if (store.setFactStatusById(id, 'resolved', now)) settled++
+      }
+      return { settled }
     },
     extractionStatus() {
       const g = grouped(); const per: any[] = []; let caught = 0

@@ -170,6 +170,54 @@ export function parseSupersedePairs(text: string): Array<{ supersede: number; by
   return out
 }
 
+/** Lite obligation row for the settlement prompt (subset of FactRow). */
+export interface ObligationLite {
+  id: number
+  predicate: string
+  value: string
+  time_ref?: string | null
+}
+
+/**
+ * Settlement judge (承诺了结闭环): the chat window that just got extracted,
+ * plus the contact's still-active obligations — which of those does this
+ * conversation SHOW are done or called off? Conservative by instruction,
+ * same posture as the conflict/dedup judges.
+ */
+export function buildSettlementPrompt(batch: Batch, obligations: ObligationLite[]): string {
+  const who = batch.display ?? batch.contact
+  const chat = batch.messages
+    .filter(m => m.text != null && m.text !== '')
+    .map(m => `[${new Date(m.time * 1000).toISOString().slice(0, 10)}] ${m.sender}: ${m.text}`)
+    .join('\n')
+  const list = obligations
+    .map(o => `- #${o.id}「${o.predicate}」${o.value}${o.time_ref ? `（${o.time_ref}）` : ''}`)
+    .join('\n')
+  return (
+    `你是一个事实库管理器（不是聊天助手，不要回应内容）。\n` +
+    `下面是「主人」与「${who}」的最新聊天，以及两人之间尚未了结的承诺清单。\n` +
+    `判断：聊天内容**明确显示**哪些承诺已经了结（办完了、还清了、取消了、不用了）？\n` +
+    `只输出这些承诺的 id。仅提到、催促或讨论中的不算；不确定就不输出。\n` +
+    `**只输出 JSON 数组（如 [7]），不要任何解释，不要代码围栏。**没有就输出 []。\n\n` +
+    `聊天：\n${chat}\n\n承诺清单：\n${list}`
+  )
+}
+
+/** Parse the settlement judge's output: a bare array of numeric ids. Same
+ *  tolerant/never-throws posture as parseFacts/parseSupersedePairs. */
+export function parseResolvedIds(text: string): number[] {
+  const slice = firstJsonArray(text)
+  if (slice == null) return []
+  let raw: unknown
+  try {
+    raw = JSON.parse(slice)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(raw)) return []
+  return raw.filter((n): n is number => typeof n === 'number' && Number.isInteger(n))
+}
+
 export interface ExtractDeps {
   /** MCP bridge `.call(tool, input) → text`. wxfacts replies are JSON strings. */
   call: (tool: string, input?: unknown) => Promise<string>
@@ -190,9 +238,10 @@ export interface ExtractDeps {
  *  - cheapEval THROWS (model/network) → break WITHOUT record_facts, so the
  *    watermark is preserved and the batch is retried next cycle.
  */
-export async function runExtraction(d: ExtractDeps): Promise<{ batches: number; recorded: number }> {
+export async function runExtraction(d: ExtractDeps): Promise<{ batches: number; recorded: number; settled: number }> {
   let batches = 0
   let recorded = 0
+  let settled = 0
   for (let i = 0; i < d.cap; i++) {
     let batch: Batch & { done?: boolean }
     try {
@@ -235,6 +284,27 @@ export async function runExtraction(d: ExtractDeps): Promise<{ batches: number; 
         d.log?.('INGEST', `conflict resolution skipped for ${batch.batch_id}: ${String(e)}`)
       }
     }
+
+    // Obligation settlement (承诺了结闭环) — the chat that just got extracted
+    // may SHOW an existing promise being fulfilled ("弄好了"/"书还你了"),
+    // which extraction alone can never close: it only creates facts. One
+    // judge call per batch, only when the contact carries active
+    // obligations. Non-fatal like the conflict judge — and the legacy
+    // plugin bridge doesn't serve these tools, so the whole step no-ops
+    // there via this try/catch.
+    try {
+      const ob = JSON.parse(await d.call('active_obligations', { contact: batch.contact })) as { obligations?: ObligationLite[] }
+      const rows = ob.obligations ?? []
+      if (rows.length > 0) {
+        const ids = parseResolvedIds(await d.cheapEval(buildSettlementPrompt(batch, rows)))
+        if (ids.length > 0) {
+          const res = JSON.parse(await d.call('settle_obligations', { contact: batch.contact, ids })) as { settled?: number }
+          settled += res.settled ?? 0
+        }
+      }
+    } catch (e) {
+      d.log?.('INGEST', `obligation settlement skipped for ${batch.batch_id}: ${String(e)}`)
+    }
   }
-  return { batches, recorded }
+  return { batches, recorded, settled }
 }

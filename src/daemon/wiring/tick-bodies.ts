@@ -318,7 +318,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         })
         lastIngestSourceMtime = report.newSourceMtime
         if (report.batches || report.rebuilt || report.indexed || report.transcribed) {
-          deps.log('INGEST', `cycle: decrypted=${report.decrypted} rebuilt=${report.rebuilt} indexed=${report.indexed} transcribed=${report.transcribed} batches=${report.batches} facts=${report.recorded}`)
+          deps.log('INGEST', `cycle: decrypted=${report.decrypted} rebuilt=${report.rebuilt} indexed=${report.indexed} transcribed=${report.transcribed} batches=${report.batches} facts=${report.recorded} settled=${report.settled}`)
         }
         // D1 — distill the owner's kernel knowledge (facts + graph, in-process)
         // into knowledge.md (always-on memory). Owner chat only (no chatId→name

@@ -56,6 +56,8 @@ export interface CycleReport {
   /** Obligation-dedup sweep: contacts judged / duplicates merged this cycle. */
   dedupContacts: number
   dedupMerged: number
+  /** Obligation settlement: promises the chat showed as done, auto-resolved this cycle. */
+  settled: number
   /** The source mtime observed this cycle; the caller stores it as next lastSourceMtime. */
   newSourceMtime: number
 }
@@ -107,7 +109,7 @@ export async function runIngestCycle(d: CycleDeps): Promise<CycleReport> {
   const report: CycleReport = {
     decrypted: false, rebuilt: false, indexed: false, transcribed: false,
     batches: 0, recorded: 0, sweptGroups: 0, sweptSuperseded: 0,
-    dedupContacts: 0, dedupMerged: 0, newSourceMtime: d.lastSourceMtime,
+    dedupContacts: 0, dedupMerged: 0, settled: 0, newSourceMtime: d.lastSourceMtime,
   }
 
   // 1. Poke wxvault to force an incremental re-decrypt (it refreshes lazily).
@@ -130,11 +132,12 @@ export async function runIngestCycle(d: CycleDeps): Promise<CycleReport> {
   // the in-process FactsApi (post wxfacts-plugin-retirement); fall back to
   // the MCP bridge, gated on hasTool, when no in-process facts store exists.
   if (d.factsApi) {
-    const { batches, recorded } = await runExtraction({
+    const { batches, recorded, settled } = await runExtraction({
       call: makeInProcFactsCall(d.factsApi), cheapEval: d.cheapEval, cap: d.cap, log: d.log,
     })
     report.batches = batches
     report.recorded = recorded
+    report.settled = settled
     // 4. Stock-conflict sweep (temporal-validity backfill) — bounded at
     // SWEEP_GROUPS_PER_CYCLE groups and ≤1 cheapEval per cycle; only on the
     // in-proc facts path (the retired-plugin bridge never grows this).
