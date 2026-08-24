@@ -1752,6 +1752,18 @@ input { font: inherit; color: inherit; }
 .todo-remind-custom input { border: 1px solid rgba(89, 63, 44, .2); border-radius: 6px; background: #fffdf8; color: #593F2C; padding: 4px 6px; font: inherit; font-size: 12px; }
 .todo-remind-ok { color: #4d7c4d; font-size: 12.5px; }
 .todo-remind-err { color: #b0563a; font-size: 12.5px; }
+.todo-settled { margin-top: 28px; }
+.todo-settled > summary {
+  color: #a08a75;
+  font-size: 12.5px;
+  cursor: pointer;
+  user-select: none;
+  padding: 6px 2px;
+}
+.todo-settled > summary:hover { color: #5b4330; }
+.todo-settled ul { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.todo-item-settled { background: rgba(255, 253, 248, .6); border-style: dashed; }
+.todo-item-settled .todo-text { color: #a08a75; text-decoration: line-through; text-decoration-color: rgba(160, 138, 117, .5); }
 
 /* ─── dialogue page ─────────────────────────────────────────────────── */
 .dash-pane[data-pane="sessions"] {

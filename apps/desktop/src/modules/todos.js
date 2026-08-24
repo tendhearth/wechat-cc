@@ -44,6 +44,17 @@ export function groupObligations(rows, names) {
   return out
 }
 
+/** Recently settled obligations (auto or manual), for the 最近了结 block:
+ *  last 7 days, newest first, capped. Exported for tests.
+ *  @param {ObligationRow[]} rows @param {number} nowSec */
+export function recentSettled(rows, nowSec) {
+  const cutoff = nowSec - 7 * 86400
+  return rows
+    .filter(r => r.updated_at > cutoff)
+    .sort((a, b) => b.updated_at - a.updated_at)
+    .slice(0, 20)
+}
+
 /** Quick reminder slots for the 提醒我 flow. Exported for tests.
  *  @param {Date} now */
 export function reminderSlots(now) {
@@ -80,18 +91,33 @@ async function refresh() {
   if (loading) return
   loading = true
   try {
-    const [factsResp, contactsResp] = await Promise.all([
+    const [factsResp, contactsResp, settledResp] = await Promise.all([
       /** @type {Promise<{ results?: ObligationRow[] }>} */ (api("POST", "/v1/knowledge/facts/find_facts", { kind: "obligation", status: "active", limit: 200 })),
       /** @type {Promise<{ contacts?: Array<{ username: string, display: string }> }>} */ (api("POST", "/v1/knowledge/graph/top_contacts", { by: "closeness", limit: 500 }).catch(() => ({ contacts: [] }))),
+      /** @type {Promise<{ results?: ObligationRow[] }>} */ (api("POST", "/v1/knowledge/facts/find_facts", { kind: "obligation", status: "resolved", limit: 100 }).catch(() => ({ results: [] }))),
     ])
     const rows = factsResp.results ?? []
     const names = new Map((contactsResp.contacts ?? []).map(c => [c.username, c.display]))
+    const settled = recentSettled(settledResp.results ?? [], Math.floor(Date.now() / 1000))
     if (meta) meta.textContent = rows.length ? `${rows.length} 条没了结的承诺` : ""
+    const settledHtml = settled.length === 0 ? "" : `
+      <details class="todo-settled">
+        <summary>最近了结 ${settled.length} 条 — 聊天里说办好了会自动划掉，误划可以捞回来</summary>
+        <ul>${settled.map(r => `<li class="todo-item todo-item-settled" data-fact-id="${r.id}">
+          <div class="todo-main">
+            <p class="todo-text">${escapeHtml(r.value)}</p>
+            <div class="todo-meta">${escapeHtml(names.get(r.contact) ?? r.contact)}</div>
+          </div>
+          <div class="todo-actions">
+            <button class="btn ghost" data-todo-action="revive" data-fact-id="${r.id}">没办完，捞回</button>
+          </div>
+        </li>`).join("")}</ul>
+      </details>`
     if (rows.length === 0) {
       list.innerHTML = `<div class="todos-empty">
         <h2>都了结了</h2>
         <p>你和朋友之间没有挂着的承诺。聊天里一旦出现新的约定，这里会自己长出来。</p>
-      </div>`
+      </div>` + settledHtml
       return
     }
     const groups = groupObligations(rows, names)
@@ -100,7 +126,7 @@ async function refresh() {
         <h2>${escapeHtml(g.display)}<span class="todo-count">${g.items.length}</span></h2>
         <ul>${g.items.map(itemHtml).join("")}</ul>
       </section>
-    `).join("")
+    `).join("") + settledHtml
   } catch (err) {
     list.innerHTML = `<p class="empty-state">待办读不出来：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
   } finally {
@@ -182,9 +208,11 @@ async function onListClick(ev) {
     if (actions instanceof HTMLElement) openRemindPicker(actions, factId, text)
     return
   }
-  // resolve / reject — fact-status writes; the fact store's merge semantics
-  // make this permanent (an identical re-extraction merges, never revives).
-  const status = action === "resolve" ? "resolved" : "rejected"
+  // resolve / reject / revive — fact-status writes; the fact store's merge
+  // semantics make resolve/reject permanent (an identical re-extraction
+  // merges, never revives), while revive is the owner's undo for a
+  // mis-settled promise (auto or manual) — back to active, back on the list.
+  const status = action === "resolve" ? "resolved" : action === "revive" ? "active" : "rejected"
   if (btn instanceof HTMLButtonElement) btn.disabled = true
   try {
     await api("POST", "/v1/knowledge/facts/set_fact_status", { id: factId, status })

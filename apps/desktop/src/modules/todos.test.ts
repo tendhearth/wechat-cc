@@ -6,7 +6,7 @@ vi.mock('../api.js', () => ({ invokeApi: vi.fn() }))
 // @ts-expect-error minimal DOM stub before import (module shape parity with memory.test.ts)
 globalThis.document = { getElementById: () => null, querySelectorAll: () => [] }
 
-const { groupObligations, reminderSlots } = await import('./todos.js')
+const { groupObligations, reminderSlots, recentSettled } = await import('./todos.js')
 
 function row(id: number, contact: string, value: string, updated: number) {
   return { id, contact, kind: 'obligation', predicate: 'p', value, time_ref: null, confidence: 'med', updated_at: updated }
@@ -22,6 +22,22 @@ describe('groupObligations', () => {
     ] as never, names)
     expect(groups.map(g => g.display)).toEqual(['张三', 'wx_b'])   // wx_a 有 300 → 排前;wx_b 无 display → 回退 username
     expect(groups[0]!.items.map(i => i.value)).toEqual(['新的', '旧的'])
+  })
+})
+
+describe('recentSettled', () => {
+  const now = 1_756_000_000
+  const day = 86400
+  it('keeps only the last 7 days, newest first, capped at 20', () => {
+    const rows = [
+      row(1, 'wx_a', '三天前了结', now - 3 * day),
+      row(2, 'wx_a', '刚了结', now - 60),
+      row(3, 'wx_a', '八天前了结', now - 8 * day),   // outside window
+    ]
+    expect(recentSettled(rows as never, now).map((r: { value: string }) => r.value))
+      .toEqual(['刚了结', '三天前了结'])
+    const many = Array.from({ length: 30 }, (_, i) => row(i, 'wx_a', `v${i}`, now - i * 60))
+    expect(recentSettled(many as never, now)).toHaveLength(20)
   })
 })
 
