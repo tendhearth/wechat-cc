@@ -36,7 +36,9 @@ export function buildExtractionPrompt(batch: Batch): string {
   const who = batch.display ?? batch.contact
   const lines = batch.messages
     .filter(m => m.text != null && m.text !== '')
-    .map(m => `[${m.msg_key}] ${m.sender}: ${m.text}`)
+    // Date prefix: without it the model cannot resolve "明晚"/"下周" into the
+    // YYYY-MM-DD the time_ref instruction asks for.
+    .map(m => `[${m.msg_key} ${new Date(m.time * 1000).toISOString().slice(0, 10)}] ${m.sender}: ${m.text}`)
     .join('\n')
   return (
     `你是一个信息抽取器（不是聊天助手，不要回应消息内容）。\n` +
@@ -46,6 +48,7 @@ export function buildExtractionPrompt(batch: Batch): string {
     `每条事实给出 {kind,predicate,value,related_contact?,time_ref?,confidence,source_msg_keys}：\n` +
     `- kind ∈ entity|relation|obligation|attribute|event\n` +
     `- source_msg_keys = 该事实来自哪几条消息的 msg_key\n` +
+    `- time_ref：能从上下文推出具体日期就写 YYYY-MM-DD（消息里带时间戳），推不出才写原话（如"下周"）\n` +
     `- confidence ∈ low|med|high\n` +
     `没有值得记的就返回 []。**只输出 JSON 数组，不要任何解释，不要代码围栏。**\n\n` +
     lines

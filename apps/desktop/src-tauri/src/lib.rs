@@ -770,9 +770,20 @@ async fn customer_review_api(
     // a generic daemon proxy. Reject anything outside the workspace's own
     // prefix, and any traversal-ish path, before touching the token.
     let route = path.split('?').next().unwrap_or("");
-    if !(route == "/v1/customer-review" || route.starts_with("/v1/customer-review/"))
-        || path.contains("..")
-    {
+    // 待办 workspace (2026-08-24) shares this channel: obligation list +
+    // status writes, contact display names, reminder scheduling — all the
+    // owner's own private data, exactly customer review's trust class.
+    // Still a hard allow-list, still no generic proxying.
+    const OWNER_WORKSPACE_ROUTES: [&str; 4] = [
+        "/v1/knowledge/facts/find_facts",
+        "/v1/knowledge/facts/set_fact_status",
+        "/v1/knowledge/graph/top_contacts",
+        "/v1/reminders/schedule",
+    ];
+    let allowed = route == "/v1/customer-review"
+        || route.starts_with("/v1/customer-review/")
+        || OWNER_WORKSPACE_ROUTES.contains(&route);
+    if !allowed || path.contains("..") {
         return Err(format!("customer_review_api refuses path: {path}"));
     }
     if method != "GET" && method != "POST" {

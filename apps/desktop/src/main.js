@@ -33,6 +33,7 @@ import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisio
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initCustomerReviewPage, stopCustomerReviewPolling } from "./modules/customer-review.js"
+import { initTodosPage } from "./modules/todos.js"
 import { initConversePage } from "./modules/converse.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
 import { initPluginsTab, refresh as refreshPlugins } from "./modules/plugins.js"
@@ -476,14 +477,24 @@ function activateDialogueWorkspace() {
   const active = document.querySelector(".dialogue-workspace-tab.is-active")
   const mode = active instanceof HTMLElement ? active.dataset.dialogueMode : "cc"
   const dialogueRoot = document.getElementById("dialogue-root")
+  const todosRoot = document.getElementById("todos-root")
   const reviewRoot = document.getElementById("customer-review-root")
   if (mode === "customer-review") {
     if (dialogueRoot) dialogueRoot.hidden = true
+    if (todosRoot) todosRoot.hidden = true
     if (reviewRoot) reviewRoot.hidden = false
     stopDialogueAutoRefresh()
     initCustomerReviewPage()
+  } else if (mode === "todos") {
+    if (dialogueRoot) dialogueRoot.hidden = true
+    if (todosRoot) todosRoot.hidden = false
+    if (reviewRoot) reviewRoot.hidden = true
+    stopDialogueAutoRefresh()
+    stopCustomerReviewPolling()
+    initTodosPage(deps)
   } else {
     if (dialogueRoot) dialogueRoot.hidden = false
+    if (todosRoot) todosRoot.hidden = true
     if (reviewRoot) reviewRoot.hidden = true
     stopCustomerReviewPolling()
     initDialoguePage(deps)

@@ -409,6 +409,42 @@ Bun.serve({
       }
     }
 
+    // 待办 tab (2026-08-24) — same live-proxy posture as customer-review
+    // above, but an explicit per-route allowlist: obligations read, fact
+    // status write (resolve/reject a promise), contact display names, and
+    // reminder scheduling. Nothing else under /v1/knowledge or /v1/reminders
+    // passes through the shim.
+    const TODOS_PROXY_ROUTES = new Set([
+      '/v1/knowledge/facts/find_facts',
+      '/v1/knowledge/facts/set_fact_status',
+      '/v1/knowledge/graph/top_contacts',
+      '/v1/reminders/schedule',
+    ])
+    if (TODOS_PROXY_ROUTES.has(url.pathname) && req.method === 'POST') {
+      if (isCrossSiteRequest(req)) return new Response('forbidden', { status: 403 })
+      if (dryRun) return Response.json({ error: 'not_wired_in_mock' }, { status: 503 })
+      try {
+        const infoRaw = await Bun.file(join(STATE_DIR, 'internal-api-info.json')).text()
+        const info = JSON.parse(infoRaw) as { baseUrl?: string; operatorTokenFilePath?: string }
+        if (!info.baseUrl || !info.operatorTokenFilePath) {
+          return Response.json({ error: 'daemon info unavailable' }, { status: 503 })
+        }
+        const token = (await Bun.file(info.operatorTokenFilePath).text()).trim()
+        const upstream = await fetch(info.baseUrl + url.pathname, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: await req.text(),
+          signal: AbortSignal.timeout(30_000),
+        })
+        return new Response(await upstream.text(), {
+          status: upstream.status,
+          headers: { 'content-type': 'application/json' },
+        })
+      } catch (err) {
+        return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 502 })
+      }
+    }
+
     if (url.pathname === '/__invoke' && req.method === 'POST') {
       // CSRF: /__invoke executes commands as the developer, and since the dev
       // server became `tauri dev`'s beforeDevCommand it is open for the whole

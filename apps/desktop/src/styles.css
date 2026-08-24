@@ -1673,6 +1673,86 @@ input { font: inherit; color: inherit; }
 .dash-pane[hidden] { display: none !important; }
 .dash-pane { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; background: var(--app-bg); }
 
+/* ─── todos page (待办 workspace tab) ─────────────────────────────────── */
+.todos-page {
+  flex: 1;
+  min-height: 0;
+  padding: 64px clamp(24px, 6vw, 80px) 40px;
+  overflow-y: auto;
+  background: var(--app-bg);
+}
+.todos-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 860px;
+  margin: 0 auto 22px;
+}
+.todos-head h1 { margin: 0 0 4px; color: #593F2C; font-size: 22px; font-weight: 700; }
+.todos-head p { margin: 0; color: #8d7563; font-size: 13px; }
+.todos-head .meta { margin-left: 8px; color: #b39a83; }
+.todos-list { max-width: 860px; margin: 0 auto; }
+.todos-empty {
+  padding: 60px 20px;
+  text-align: center;
+}
+.todos-empty h2 { margin: 0 0 6px; color: #593F2C; font-size: 18px; }
+.todos-empty p { margin: 0; color: #8d7563; font-size: 13px; }
+.todo-group { margin-bottom: 26px; }
+.todo-group > h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  margin: 0 0 10px -4px;
+  padding: 0 14px;
+  border: 11px solid transparent;
+  border-image: url("./assets/memory-section-title-bg.png") 36 42 fill stretch;
+  color: #5b4330;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.todo-count { color: #a08a75; font-size: 12px; font-weight: 600; }
+.todo-group ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.todo-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 16px;
+  border: 1px solid rgba(89, 63, 44, .14);
+  border-radius: 10px;
+  background: #fffdf8;
+  transition: opacity .3s ease, transform .3s ease;
+}
+.todo-item.is-done { opacity: 0; transform: translateX(14px); }
+.todo-text { margin: 0 0 3px; color: #593F2C; font-size: 13.5px; line-height: 1.55; }
+.todo-meta { color: #a08a75; font-size: 11.5px; }
+.todo-time { color: #8a5a36; font-weight: 600; }
+.todo-actions { position: relative; display: flex; gap: 6px; flex-shrink: 0; }
+.todos-page .btn { border-color: rgba(89, 63, 44, .24); background: #fffdf8; color: #593F2C; border-radius: 8px; }
+.todos-page .btn:hover { border-color: #8a5a36; color: #3f2c1e; }
+.todo-remind-pop {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(89, 63, 44, .2);
+  border-radius: 10px;
+  background: var(--app-bg);
+  box-shadow: 0 8px 24px rgba(89, 63, 44, .14);
+  white-space: nowrap;
+}
+.todo-remind-custom { display: inline-flex; align-items: center; gap: 6px; color: #8d7563; font-size: 12px; }
+.todo-remind-custom input { border: 1px solid rgba(89, 63, 44, .2); border-radius: 6px; background: #fffdf8; color: #593F2C; padding: 4px 6px; font: inherit; font-size: 12px; }
+.todo-remind-ok { color: #4d7c4d; font-size: 12.5px; }
+.todo-remind-err { color: #b0563a; font-size: 12.5px; }
+
 /* ─── dialogue page ─────────────────────────────────────────────────── */
 .dash-pane[data-pane="sessions"] {
   position: relative;

@@ -17,8 +17,9 @@ describe('buildExtractionPrompt', () => {
     const p = buildExtractionPrompt(batch)
     expect(p).toContain('张三')
     expect(p).toContain('只输出 JSON 数组')
-    expect(p).toContain('[k1] 张三: 我下周还你那本书')
-    expect(p).toContain('[k3] 主人: 好')
+    // Message lines carry the date so the model can resolve 下周 → YYYY-MM-DD
+    expect(p).toContain('[k1 1970-01-01] 张三: 我下周还你那本书')
+    expect(p).toContain('[k3 1970-01-01] 主人: 好')
   })
   it('omits messages with null text', () => {
     expect(buildExtractionPrompt(batch)).not.toContain('k2')

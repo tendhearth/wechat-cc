@@ -67,6 +67,14 @@ async function getApiCredentials() {
  * @param {Record<string, unknown>} [body]
  * @returns {Promise<unknown>}
  */
+const OWNER_WORKSPACE_PATHS = new Set([
+  '/v1/knowledge/facts/find_facts',
+  '/v1/knowledge/facts/set_fact_status',
+  '/v1/knowledge/graph/top_contacts',
+  '/v1/reminders/schedule',
+])
+
+/** @param {'GET' | 'POST'} method @param {string} path @param {Record<string, unknown>} [body] */
 async function callOwnerWorkspace(method, path, body) {
   const raw = /** @type {string} */ (await ipcInvoke('customer_review_api', {
     method,
@@ -107,9 +115,13 @@ export async function invokeApi(method, path, body, opts) {
  * @returns {Promise<unknown>}
  */
 async function callApi(method, path, body, retried, opts) {
-  // Customer review is intentionally owner-only: the host holds that
-  // credential, so the request never runs in this file. See callOwnerWorkspace.
-  if (path.startsWith('/v1/customer-review')) return callOwnerWorkspace(method, path, body)
+  // Owner-only workspace routes: the host holds the admin credential, so
+  // these requests never run in this file. See callOwnerWorkspace. The 待办
+  // routes (obligation read/write, contact names, reminder scheduling) are
+  // the same trust class as customer review — the owner's private data.
+  if (path.startsWith('/v1/customer-review') || OWNER_WORKSPACE_PATHS.has(path.split('?')[0] ?? path)) {
+    return callOwnerWorkspace(method, path, body)
+  }
   const { baseUrl, token } = await getApiCredentials()
   const url = baseUrl + path
   /** @type {RequestInit} */
