@@ -6,7 +6,7 @@ vi.mock('../api.js', () => ({ invokeApi: vi.fn() }))
 // @ts-expect-error minimal DOM stub before import (module shape parity with memory.test.ts)
 globalThis.document = { getElementById: () => null, querySelectorAll: () => [] }
 
-const { groupObligations, reminderSlots, recentSettled } = await import('./todos.js')
+const { groupObligations, reminderSlots, recentSettled, timeBadge } = await import('./todos.js')
 
 function row(id: number, contact: string, value: string, updated: number) {
   return { id, contact, kind: 'obligation', predicate: 'p', value, time_ref: null, confidence: 'med', updated_at: updated }
@@ -38,6 +38,20 @@ describe('recentSettled', () => {
       .toEqual(['刚了结', '三天前了结'])
     const many = Array.from({ length: 30 }, (_, i) => row(i, 'wx_a', `v${i}`, now - i * 60))
     expect(recentSettled(many as never, now)).toHaveLength(20)
+  })
+})
+
+describe('timeBadge', () => {
+  const today = new Date('2026-08-24T15:00:00')
+  it('flags overdue / today / tomorrow from a leading YYYY-MM-DD', () => {
+    expect(timeBadge('2026-08-20', today)).toEqual({ label: '逾期', cls: 'overdue' })
+    expect(timeBadge('2026-08-24', today)).toEqual({ label: '今天', cls: 'today' })
+    expect(timeBadge('2026-08-25 下午', today)).toEqual({ label: '明天', cls: 'soon' })
+  })
+  it('null for far-future, unparseable, or empty refs', () => {
+    expect(timeBadge('2026-09-20', today)).toBeNull()
+    expect(timeBadge('下周', today)).toBeNull()
+    expect(timeBadge(null, today)).toBeNull()
   })
 })
 

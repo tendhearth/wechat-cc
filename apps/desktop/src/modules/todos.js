@@ -55,6 +55,23 @@ export function recentSettled(rows, nowSec) {
     .slice(0, 20)
 }
 
+/** Urgency badge from a fact's time_ref: the extractor writes a leading
+ *  YYYY-MM-DD when the date was derivable (else a raw phrase like 「下周」,
+ *  which gets no badge). Exported for tests.
+ *  @param {string|null|undefined} timeRef @param {Date} now
+ *  @returns {{ label: string, cls: string } | null} */
+export function timeBadge(timeRef, now) {
+  const m = timeRef?.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return null
+  const due = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const days = Math.round((due.getTime() - today.getTime()) / 86400000)
+  if (days < 0) return { label: "逾期", cls: "overdue" }
+  if (days === 0) return { label: "今天", cls: "today" }
+  if (days === 1) return { label: "明天", cls: "soon" }
+  return null
+}
+
 /** Quick reminder slots for the 提醒我 flow. Exported for tests.
  *  @param {Date} now */
 export function reminderSlots(now) {
@@ -71,9 +88,11 @@ export function reminderSlots(now) {
 /** @param {ObligationRow} r */
 function itemHtml(r) {
   const time = r.time_ref ? `<span class="todo-time">${escapeHtml(r.time_ref)}</span>` : ""
+  const badge = timeBadge(r.time_ref, new Date())
+  const badgeHtml = badge ? `<span class="todo-badge todo-badge-${badge.cls}">${badge.label}</span>` : ""
   return `<li class="todo-item" data-fact-id="${r.id}">
     <div class="todo-main">
-      <p class="todo-text">${escapeHtml(r.value)}</p>
+      <p class="todo-text">${badgeHtml}${escapeHtml(r.value)}</p>
       <div class="todo-meta">${escapeHtml(r.predicate)}${time ? " · " : ""}${time}</div>
     </div>
     <div class="todo-actions">

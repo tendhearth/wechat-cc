@@ -1752,6 +1752,18 @@ input { font: inherit; color: inherit; }
 .todo-remind-custom input { border: 1px solid rgba(89, 63, 44, .2); border-radius: 6px; background: #fffdf8; color: #593F2C; padding: 4px 6px; font: inherit; font-size: 12px; }
 .todo-remind-ok { color: #4d7c4d; font-size: 12.5px; }
 .todo-remind-err { color: #b0563a; font-size: 12.5px; }
+.todo-badge {
+  display: inline-block;
+  margin-right: 7px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: 1px;
+}
+.todo-badge-overdue { background: rgba(176, 86, 58, .14); color: #b0563a; }
+.todo-badge-today { background: rgba(138, 90, 54, .16); color: #8a5a36; }
+.todo-badge-soon { background: rgba(89, 63, 44, .1); color: #6d543f; }
 .todo-settled { margin-top: 28px; }
 .todo-settled > summary {
   color: #a08a75;
