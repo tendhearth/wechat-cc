@@ -1876,6 +1876,11 @@ input { font: inherit; color: inherit; }
 .customer-review-primary:hover:not(:disabled) { background: #593f2c; }
 .customer-review-primary:disabled { cursor: default; opacity: .42; }
 .customer-review-secondary { padding: 8px 12px; border: 1px solid rgba(89, 63, 44, .15); background: #684a35; }
+.customer-review-submit-hint {
+  margin: 6px 0 0;
+  color: #a08a75;
+  font-size: 11.5px;
+}
 .customer-review-inline-error { margin: 7px 0 0; color: #a84f3b; font-size: 11px; }
 .customer-review-recent-section { padding: 22px 0; border-bottom: 1px solid rgba(89, 63, 44, .1); }
 .customer-review-history-section { padding-top: 22px; }

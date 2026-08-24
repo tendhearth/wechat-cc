@@ -84,10 +84,15 @@ export function reviewProgressCopy(status, createdAt, nowMs = Date.now()) {
       detail: `${elapsed} · 通常会在几秒内开始分析。`,
     }
   }
+  // Honest expectations, staged by reality: a three-month range with a few
+  // thousand messages measures ~3 minutes (2026-08-24: 2525 msgs ≈ 3min) —
+  // the old "20–60 秒" promise made a healthy run read as a hang.
   return {
     kicker: '正在分析',
     detail: elapsedSeconds < 60
-      ? `${elapsed} · 通常需要 20–60 秒。`
-      : `${elapsed} · 较长的沟通范围可能需要 1–2 分钟。`,
+      ? `${elapsed} · 通常一到几分钟，取决于聊天量。`
+      : elapsedSeconds < 180
+        ? `${elapsed} · 聊天多的范围要两三分钟，可以先去别的页看看。`
+        : `${elapsed} · 大量聊天记录会到三五分钟，仍在认真读。`,
   }
 }
