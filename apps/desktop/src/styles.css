@@ -2553,7 +2553,7 @@ input { font: inherit; color: inherit; }
 }
 
 .ai-orbit-visual {
-  width: min(500px, 48vw);
+  width: min(500px, 48vw, calc((100vh - 320px) * 1.5));
   min-width: 0;
   aspect-ratio: 3 / 2;
   position: relative;
@@ -2561,7 +2561,7 @@ input { font: inherit; color: inherit; }
 }
 
 .companion-intro {
-  width: min(500px, 48vw);
+  width: min(500px, 48vw, calc((100vh - 320px) * 1.5));
   min-width: 0;
   align-self: center;
   margin-bottom: 15px;

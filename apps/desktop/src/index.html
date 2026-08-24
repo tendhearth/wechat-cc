@@ -414,13 +414,16 @@
                 </div>
               </section>
 
-              <!-- 上次故障横幅(Task 8, spec 2026-08-03-connection-health §8):
-                   桌面没开着时通知无处可去 —— 2026-08-02 那次断了 10.5 小时,
-                   主人只有翻日志才发现。只要有故障记录就显示最新一条,不受
-                   "未读"影响;见 modules/dashboard.js 的 loadLastIncident。 -->
-              <p id="dash-health-banner" class="dash-health-banner" hidden></p>
-
               <section class="moment-users" aria-label="用户连接状态">
+                <!-- 上次故障横幅(Task 8, spec 2026-08-03-connection-health §8):
+                     桌面没开着时通知无处可去 —— 2026-08-02 那次断了 10.5 小时,
+                     主人只有翻日志才发现。只要有故障记录就显示最新一条,不受
+                     "未读"影响;见 modules/dashboard.js 的 loadLastIncident。
+                     Lives INSIDE the right column on purpose: as a direct
+                     grid child it grabbed the (1,2) cell whenever it became
+                     visible, shoving .moment-users to a second row and
+                     pushing 添加用户 below the fold. -->
+                <p id="dash-health-banner" class="dash-health-banner" hidden></p>
                 <h2>当前连接中的用户</h2>
                 <div id="accounts-current" class="current-user-card"></div>
                 <div class="moment-subhead" id="accounts-subhead">
