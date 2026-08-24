@@ -75,13 +75,13 @@
           <!-- 02 Agent -->
           <section id="screen-provider" class="screen">
             <div class="card">
-              <div class="card-h">选择 Agent · Choose agent</div>
+              <div class="card-h">选谁当你的 AI</div>
               <div class="agent-grid">
                 <button class="agent" data-provider="claude">
                   <div class="head">
                     <div class="logo logo-img"><img src="./wechat-cc-logo.png" alt="" /></div>
                     <div class="name">Claude Code</div>
-                    <span class="recommend">Recommended</span>
+                    <span class="recommend">推荐</span>
                     <span class="pick"></span>
                   </div>
                   <div class="desc">深度思考、长上下文、复杂任务首选。</div>
@@ -133,7 +133,7 @@
                   <span class="pip"></span>
                   <span id="qr-message">轮询扫码状态…</span>
                 </div>
-                <div class="qr-ttl" id="qr-ttl">on demand</div>
+                <div class="qr-ttl" id="qr-ttl">—</div>
                 <div class="qr-actions">
                   <button id="qr-refresh" class="btn ghost">刷新二维码</button>
                   <button id="continue-service" class="btn primary" disabled>继续</button>
@@ -147,7 +147,7 @@
           <!-- 04 后台 -->
           <section id="screen-service" class="screen">
             <div class="card">
-              <div class="card-h">后台服务 · Background Service</div>
+              <div class="card-h">后台服务</div>
               <div class="bg-body">
                 <div class="desc" id="service-summary"></div>
                 <div class="bg-actions">
@@ -159,7 +159,7 @@
 
                 <div class="toggle-row">
                   <div>
-                    <div class="lab">开机自启 · Launch at login</div>
+                    <div class="lab">开机自启</div>
                     <div class="sub">登录系统时自动启动 daemon。</div>
                   </div>
                   <button class="toggle" id="screen-autostart-toggle" data-toggle aria-pressed="false"></button>
@@ -167,7 +167,7 @@
 
                 <div class="toggle-row warn-edge">
                   <div>
-                    <div class="lab">自动同意工具调用 · Auto-approve tool calls<span style="color: var(--green-ink); font-size: 10.5px; margin-left: 6px; font-weight: 500;">推荐</span></div>
+                    <div class="lab">自动同意工具调用<span style="color: var(--green-ink); font-size: 10.5px; margin-left: 6px; font-weight: 500;">推荐</span></div>
                     <div class="sub">关闭后，每次工具调用都需要在微信里回 y / n（10 分钟超时即拒绝）。日常会被刷屏，建议保留勾选。</div>
                   </div>
                   <button class="toggle on" id="screen-unattended-toggle" data-toggle aria-pressed="true"></button>
@@ -175,7 +175,7 @@
 
                 <div class="toggle-row">
                   <div>
-                    <div class="lab">网络守护 · Network guard</div>
+                    <div class="lab">网络守护</div>
                     <div class="sub">每 30 秒查公网 IP；变了就探一次 google.com。不通时关闭 Claude session，下条入站发"VPN 掉了"。<span id="screen-guard-status-line" class="guard-status-line">—</span></div>
                   </div>
                   <button class="toggle" id="screen-guard-toggle" data-toggle aria-pressed="false"></button>
@@ -185,7 +185,7 @@
 
             <div class="card">
               <div class="plan-h">
-                技术详情 · Technical details
+                技术详情
                 <span class="chev" id="service-plan-toggle">▾</span>
               </div>
               <pre id="service-plan"></pre>

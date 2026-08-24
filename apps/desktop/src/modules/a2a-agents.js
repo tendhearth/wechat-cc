@@ -460,16 +460,16 @@ async function onCardAction(e) {
       alert(`${wasPaused ? '恢复' : '暂停'}失败：${err instanceof Error ? err.message : String(err)}`)
     }
   } else if (action === 'remove') {
-    if (!confirm(`Remove agent '${id}'?`)) return
+    if (!confirm(`断开和「${id}」的连接？之后可以随时重新配对。`)) return
     try {
       await invokeApi('POST', '/v1/a2a/remove', { id })
       await refresh()
     } catch (err) {
-      alert(`Failed to remove agent: ${err instanceof Error ? err.message : String(err)}`)
+      alert(`断开失败：${err instanceof Error ? err.message : String(err)}`)
     }
   } else if (action === 'activity') {
     await openActivityDrawer(id).catch(err =>
-      alert(`Failed to load activity: ${err instanceof Error ? err.message : String(err)}`)
+      alert(`往来记录打不开：${err instanceof Error ? err.message : String(err)}`)
     )
   } else if (action === 'test') {
     await openTestModal(id).catch(err =>
@@ -1051,7 +1051,7 @@ async function onPreviewSubmit(e) {
       if (idInput) idInput.value = slugify(String(resp.name ?? ''))
     }
   } catch (err) {
-    alert(`Failed to fetch agent card: ${err instanceof Error ? err.message : String(err)}`)
+    alert(`没找到对方 bot：${err instanceof Error ? err.message : String(err)}`)
   } finally {
     if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '看看是谁 →' }
   }
@@ -1064,7 +1064,7 @@ async function onInstallConfirm() {
   const keyInput = /** @type {HTMLInputElement | null} */ (preview.querySelector('input[name="outbound_key"]'))
   const id = idInput?.value?.trim() ?? ''
   const outboundKey = keyInput?.value?.trim() ?? ''
-  if (!id) { alert('Please enter a local id (slug) for this agent.'); return }
+  if (!id) { alert('先给它起个短名（英文或数字）。'); return }
 
   const confirmBtn = document.getElementById('a2a-install-confirm')
   if (confirmBtn instanceof HTMLButtonElement) { confirmBtn.disabled = true; confirmBtn.textContent = '连接中…' }
@@ -1093,7 +1093,7 @@ async function onInstallConfirm() {
         `  -d '{"agent_id":"${id}","text":"hello"}'`
     }
   } catch (err) {
-    alert(`Install failed: ${err instanceof Error ? err.message : String(err)}`)
+    alert(`没连上：${err instanceof Error ? err.message : String(err)}`)
   } finally {
     if (confirmBtn instanceof HTMLButtonElement) { confirmBtn.disabled = false; confirmBtn.textContent = '连上' }
   }
