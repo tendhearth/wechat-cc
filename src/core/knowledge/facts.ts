@@ -33,7 +33,10 @@ export interface FactsApi {
   /** Stock-sweep feed — see KnowledgeStore.conflictedFactGroups. */
   conflictedGroups(limit: number): ReturnType<KnowledgeStore['conflictedFactGroups']>
   /** Obligation-dedup feed — see KnowledgeStore.obligationHeavyContacts. */
-  obligationHeavyContacts(limit: number): ReturnType<KnowledgeStore['obligationHeavyContacts']>
+  obligationHeavyContacts(limit: number, minCount?: number): ReturnType<KnowledgeStore['obligationHeavyContacts']>
+  /** Recent text messages with this contact, chronological (oldest first) —
+   *  the settlement backfill's evidence window. */
+  recentMessages(contact: string, limit: number): Array<{ sender: string; time: number; text: string | null }>
   /** Merge duplicate obligations (judge-approved): the loser is superseded
    *  by the keeper. Guard is looser than supersede() on predicate (dupes
    *  routinely land under different predicates) but tighter on kind — both
@@ -143,7 +146,8 @@ export function makeFactsApi(store: KnowledgeStore): FactsApi {
     },
     setFactStatus(id, status, now) { return { ok: store.setFactStatusById(id, status, now) } },
     conflictedGroups(limit) { return store.conflictedFactGroups(limit) },
-    obligationHeavyContacts(limit) { return store.obligationHeavyContacts(limit) },
+    obligationHeavyContacts(limit, minCount) { return store.obligationHeavyContacts(limit, minCount) },
+    recentMessages(contact, limit) { return store.recentMessages(resolveContact(contact), limit).reverse() },
     mergeObligations(pairs, now) {
       let merged = 0
       for (const p of pairs ?? []) {

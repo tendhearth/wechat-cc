@@ -607,6 +607,10 @@ describe('obligation dedup feed', () => {
     const heavy = s.obligationHeavyContacts(10)
     expect(heavy).toEqual([{ contact: 'u1', n: 3 }, { contact: 'u2', n: 2 }])
     expect(s.obligationHeavyContacts(1)).toHaveLength(1)
+    // settlement-backfill feed: minCount=1 includes single-obligation contacts
+    expect(s.obligationHeavyContacts(10, 1)).toEqual([
+      { contact: 'u1', n: 3 }, { contact: 'u2', n: 2 }, { contact: 'u3', n: 1 },
+    ])
     s.close()
   })
 })

@@ -221,7 +221,7 @@ export interface KnowledgeStore {
   conflictedFactGroups(limit: number): Array<{ contact: string; predicate: string; facts: FactRow[] }>
   /** Contacts carrying ≥2 ACTIVE obligations, heaviest first — the
    *  obligation-dedup sweep's feed. */
-  obligationHeavyContacts(limit: number): Array<{ contact: string; n: number }>
+  obligationHeavyContacts(limit: number, minCount?: number): Array<{ contact: string; n: number }>
   /** `[last_ts, last_local_id]`, `[0, 0]` when the contact has no watermark
    *  row yet. */
   factWatermark(contact: string): [number, number]
@@ -847,12 +847,14 @@ export function openKnowledge(root: string): KnowledgeStore {
       return r ? parseFactRow(r) : null
     },
 
-    obligationHeavyContacts(limit) {
+    obligationHeavyContacts(limit, minCount = 2) {
+      // minCount=2 is the dedup feed (a duplicate needs a pair); the
+      // settlement backfill passes 1 — a lone promise can still be settled.
       return factsDb.query(
         `SELECT contact, COUNT(*) AS n FROM facts
          WHERE kind='obligation' AND status='active'
-         GROUP BY contact HAVING n >= 2 ORDER BY n DESC LIMIT ?`,
-      ).all(limit) as Array<{ contact: string; n: number }>
+         GROUP BY contact HAVING n >= ? ORDER BY n DESC LIMIT ?`,
+      ).all(minCount, limit) as Array<{ contact: string; n: number }>
     },
 
     conflictedFactGroups(limit) {

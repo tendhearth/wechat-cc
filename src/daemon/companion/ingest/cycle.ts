@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { runExtraction } from './extract'
 import { runConflictSweep } from './sweep-conflicts'
 import { runObligationDedup } from './sweep-obligation-dupes'
+import { runSettlementBackfill } from './sweep-obligation-settled'
 import { makeInProcFactsCall } from './facts-inproc'
 import type { FactsApi } from '../../../core/knowledge/facts'
 
@@ -42,6 +43,8 @@ export interface CycleDeps {
 const SWEEP_GROUPS_PER_CYCLE = 5
 /** Obligation-dedup contacts judged per cycle — one cheapEval each. */
 const DEDUP_CONTACTS_PER_CYCLE = 2
+/** Settlement-backfill contacts judged per cycle — one cheapEval each. */
+const SETTLE_CONTACTS_PER_CYCLE = 2
 
 export interface CycleReport {
   decrypted: boolean
@@ -56,8 +59,11 @@ export interface CycleReport {
   /** Obligation-dedup sweep: contacts judged / duplicates merged this cycle. */
   dedupContacts: number
   dedupMerged: number
-  /** Obligation settlement: promises the chat showed as done, auto-resolved this cycle. */
+  /** Obligation settlement: promises the chat showed as done, auto-resolved
+   *  this cycle (per-batch step + stock backfill combined). */
   settled: number
+  /** Settlement backfill: contacts whose recent chat was judged this cycle. */
+  settleContacts: number
   /** The source mtime observed this cycle; the caller stores it as next lastSourceMtime. */
   newSourceMtime: number
 }
@@ -109,7 +115,7 @@ export async function runIngestCycle(d: CycleDeps): Promise<CycleReport> {
   const report: CycleReport = {
     decrypted: false, rebuilt: false, indexed: false, transcribed: false,
     batches: 0, recorded: 0, sweptGroups: 0, sweptSuperseded: 0,
-    dedupContacts: 0, dedupMerged: 0, settled: 0, newSourceMtime: d.lastSourceMtime,
+    dedupContacts: 0, dedupMerged: 0, settled: 0, settleContacts: 0, newSourceMtime: d.lastSourceMtime,
   }
 
   // 1. Poke wxvault to force an incremental re-decrypt (it refreshes lazily).
@@ -154,6 +160,15 @@ export async function runIngestCycle(d: CycleDeps): Promise<CycleReport> {
     })
     report.dedupContacts = dedup.contacts
     report.dedupMerged = dedup.merged
+    // 6. Settlement backfill (承诺了结闭环) — stock obligations whose
+    // completion was chatted about BEFORE the per-batch step existed sit
+    // behind the extraction watermark; replay recent chat through the same
+    // judge. ≤SETTLE_CONTACTS_PER_CYCLE cheap calls; dormant chats skipped.
+    const settle = await runSettlementBackfill({
+      facts: d.factsApi, cheapEval: d.cheapEval, contactCap: SETTLE_CONTACTS_PER_CYCLE, log: d.log,
+    })
+    report.settleContacts = settle.contacts
+    report.settled += settle.settled
   } else if (d.hasTool('extraction_batch')) {
     const { batches, recorded } = await runExtraction({
       call: d.bridge.call, cheapEval: d.cheapEval, cap: d.cap, log: d.log,

@@ -110,6 +110,14 @@ test('supersede applies valid pairs and skips invalid ones', () => {
   s.close()
 })
 
+test('recentMessages returns the contact\'s texts oldest-first', () => {
+  const s = seed(); const api = makeFactsApi(s)
+  const msgs = api.recentMessages('wxid_a', 10)
+  expect(msgs.map(m => m.text)).toEqual(['a1', 'a2'])
+  expect(api.recentMessages('wxid_a', 1).map(m => m.text)).toEqual(['a2'])  // newest kept when capped
+  s.close()
+})
+
 test('settleObligations resolves only this contact\'s active obligations', () => {
   const s = seed(); const api = makeFactsApi(s)
   const mine = s.upsertFact({ contact: 'wxid_a', kind: 'obligation', predicate: 'lend_book', value: '还书' }, 1000)
