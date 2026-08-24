@@ -416,6 +416,13 @@ export function openKnowledge(root: string): KnowledgeStore {
 
   // ---- semantic.db --------------------------------------------------------
   const semanticDb = openSqlite(join(root, 'semantic.db'))
+  // In-memory vector matrix cache (2026-08-24): auto-recall runs a
+  // semanticSearch per admin message, and loadVectors was re-reading the
+  // whole matrix from SQLite every call (~105MB / ~300ms cold at 53k
+  // vectors). Invalidation is count-based — a cheap COUNT per read compares
+  // against the count captured at cache time, so writes from THIS process
+  // (indexer) and any other process are both picked up. Keyed per model_id.
+  const vectorCache = new Map<string, { rowids: number[]; dim: number; mat: Float32Array; count: number }>()
   semanticDb.exec(`
     CREATE TABLE IF NOT EXISTS chunks (
       rowid INTEGER PRIMARY KEY,
@@ -694,6 +701,11 @@ export function openKnowledge(root: string): KnowledgeStore {
     },
 
     loadVectors(model_id) {
+      const count = stmtCountByModel.get(model_id)?.n ?? 0
+      const cached = vectorCache.get(model_id)
+      if (cached && cached.count === count) {
+        return { rowids: cached.rowids, dim: cached.dim, mat: cached.mat }
+      }
       const rows = stmtLoadVectors.all(model_id)
       if (rows.length === 0) return { rowids: [], dim: 0, mat: new Float32Array(0) }
       const dim = rows[0]!.vector.byteLength / 4
@@ -704,6 +716,7 @@ export function openKnowledge(root: string): KnowledgeStore {
         const v = new Float32Array(r.vector.buffer, r.vector.byteOffset, dim)
         mat.set(v, i * dim)
       })
+      vectorCache.set(model_id, { rowids, dim, mat, count })
       return { rowids, dim, mat }
     },
 
