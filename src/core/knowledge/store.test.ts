@@ -610,3 +610,29 @@ describe('obligation dedup feed', () => {
     s.close()
   })
 })
+
+describe('vector cache (2026-08-24: auto-recall pays a full-matrix disk read per message)', () => {
+  it('loadVectors reflects writes made after a cached read (count-based invalidation)', () => {
+    const s = freshStore()
+    const chunk = (key: string, vec: number[]) => ({ msg_key: key, conversation: 'c', sender: 's', time: 1, kind: 'text', text: 't', vector: vec })
+    s.putSemantic('m1', 'v1', [chunk('a:1', [1, 0])])
+    expect(s.loadVectors('m1').rowids).toHaveLength(1)
+    expect(s.loadVectors('m1').rowids).toHaveLength(1)   // cached path
+    s.putSemantic('m1', 'v1', [chunk('a:2', [0, 1])])    // write AFTER cache
+    const after = s.loadVectors('m1')
+    expect(after.rowids).toHaveLength(2)                  // cache must not serve stale
+    expect(after.mat).toHaveLength(4)
+    s.close()
+  })
+
+  it('cache is per model_id', () => {
+    const s = freshStore()
+    const chunk = (key: string, vec: number[]) => ({ msg_key: key, conversation: 'c', sender: 's', time: 1, kind: 'text', text: 't', vector: vec })
+    s.putSemantic('m1', 'v1', [chunk('a:1', [1, 0])])
+    s.putSemantic('m2', 'v1', [chunk('a:1', [1, 0, 0])])
+    expect(s.loadVectors('m1').dim).toBe(2)
+    expect(s.loadVectors('m2').dim).toBe(3)
+    expect(s.loadVectors('m1').dim).toBe(2)
+    s.close()
+  })
+})
