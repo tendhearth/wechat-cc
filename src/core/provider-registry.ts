@@ -57,8 +57,16 @@ export interface ProviderRegistry {
 // claude. Future providers append here.
 const CHEAP_EVAL_PREFERENCE: ProviderId[] = ['openai', 'agy', 'claude', 'codex', 'gemini']
 
-export function createProviderRegistry(): ProviderRegistry {
+/** How long a cheapEval provider sits out after throwing. Long enough to
+ *  stop hammering a dead credential every 25-minute ingest cycle, short
+ *  enough that a re-login is picked up within minutes. */
+const CHEAP_EVAL_COOLDOWN_MS = 10 * 60_000
+
+export function createProviderRegistry(opts?: { now?: () => number }): ProviderRegistry {
+  const now = opts?.now ?? Date.now
   const entries = new Map<ProviderId, { provider: AgentProvider; opts: ProviderRegistration }>()
+  // cheapEval failover state — per-registry (= per-daemon-lifetime), never persisted.
+  const cheapEvalCooldownUntil = new Map<ProviderId, number>()
   const registry: ProviderRegistry = {
     register(id, provider, opts) {
       if (entries.has(id)) throw new Error(`provider already registered: ${id}`)
@@ -74,22 +82,50 @@ export function createProviderRegistry(): ProviderRegistry {
       return Array.from(entries.keys())
     },
     getCheapEval() {
-      // Preferred providers first. Both shipped providers' cheapEval
-      // implementations are arrow-like (close over `opts` via closure,
-      // never reference `this`), so we return the function directly
-      // without binding. If a future provider needs `this`, wrap with
-      // `.bind(entry.provider)` at that callsite.
+      // Preferred order first, then any other registered provider. The
+      // implementations are arrow-like (close over `opts`, never `this`),
+      // so calling them unbound is safe.
+      const candidates: Array<{ id: ProviderId; fn: CheapEval }> = []
       for (const id of CHEAP_EVAL_PREFERENCE) {
         const ce = entries.get(id)?.provider.cheapEval
-        if (ce) return ce
+        if (ce) candidates.push({ id, fn: ce })
       }
-      // Any other registered provider — order doesn't strictly matter,
-      // we just need SOMETHING that works.
       for (const [id, entry] of entries) {
         if (CHEAP_EVAL_PREFERENCE.includes(id)) continue
-        if (entry.provider.cheapEval) return entry.provider.cheapEval
+        if (entry.provider.cheapEval) candidates.push({ id, fn: entry.provider.cheapEval })
       }
-      return null
+      if (candidates.length === 0) return null
+      if (candidates.length === 1) return candidates[0]!.fn
+
+      // Runtime failover (2026-08-24): the static preference order once froze
+      // the entire ingest pipeline — agy sat at slot 2 with a dead credential
+      // and every extract/judge call failed for hours without ever trying the
+      // healthy providers behind it. A throwing provider goes on cooldown and
+      // the call falls through; only when EVERY candidate fails does the
+      // error propagate (callers' watermark-preserving retry semantics rely
+      // on that).
+      return async (prompt: string) => {
+        let lastErr: unknown = new Error('no cheapEval provider available')
+        let attempted = 0
+        for (const c of candidates) {
+          const until = cheapEvalCooldownUntil.get(c.id) ?? 0
+          if (until > now()) continue
+          attempted++
+          try {
+            return await c.fn(prompt)
+          } catch (err) {
+            cheapEvalCooldownUntil.set(c.id, now() + CHEAP_EVAL_COOLDOWN_MS)
+            lastErr = err
+          }
+        }
+        if (attempted === 0) {
+          // Everyone is cooling down — try the first candidate anyway rather
+          // than failing on a stale blacklist.
+          cheapEvalCooldownUntil.delete(candidates[0]!.id)
+          return candidates[0]!.fn(prompt)
+        }
+        throw lastErr
+      }
     },
     getStrongEval(id) {
       return entries.get(id)?.provider.strongEval ?? null

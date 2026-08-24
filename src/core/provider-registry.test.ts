@@ -139,3 +139,57 @@ describe('ProviderRegistry', () => {
     })
   })
 })
+
+describe('getCheapEval — runtime failover (2026-08-24: agy auth-dead froze the whole ingest pipeline)', () => {
+  function reg(impls: Record<string, (p: string) => Promise<string>>, now = () => 1000) {
+    const r = createProviderRegistry({ now })
+    for (const [id, cheapEval] of Object.entries(impls)) {
+      r.register(id, { id, cheapEval } as never, {} as never)
+    }
+    return r
+  }
+
+  it('falls through to the next provider when the preferred one throws', async () => {
+    const calls: string[] = []
+    const r = reg({
+      agy: async () => { calls.push('agy'); throw new Error('authentication failed') },
+      claude: async () => { calls.push('claude'); return 'ok-from-claude' },
+    })
+    const ce = r.getCheapEval()!
+    expect(await ce('prompt')).toBe('ok-from-claude')
+    expect(calls).toEqual(['agy', 'claude'])
+  })
+
+  it('puts a failing provider on cooldown — later calls skip it without retrying', async () => {
+    const calls: string[] = []
+    let t = 1000
+    const r = reg({
+      agy: async () => { calls.push('agy'); throw new Error('auth') },
+      claude: async () => { calls.push('claude'); return 'ok' },
+    }, () => t)
+    const ce = r.getCheapEval()!
+    await ce('a')                      // agy fails → cooldown, claude answers
+    await ce('b')                      // agy skipped entirely
+    expect(calls).toEqual(['agy', 'claude', 'claude'])
+    t += 11 * 60_000                   // past the 10-minute cooldown
+    await ce('c')                      // agy retried
+    expect(calls[calls.length - 2]).toBe('agy')
+  })
+
+  it('throws the last error when every provider fails (watermark-preserving semantics intact)', async () => {
+    const r = reg({
+      agy: async () => { throw new Error('agy down') },
+      claude: async () => { throw new Error('claude down') },
+    })
+    await expect(r.getCheapEval()!('p')).rejects.toThrow('claude down')
+  })
+
+  it('single provider: failures still throw (no cooldown lockout with nowhere to go)', async () => {
+    let fail = true
+    const r = reg({ claude: async () => { if (fail) throw new Error('blip'); return 'ok' } })
+    const ce = r.getCheapEval()!
+    await expect(ce('p')).rejects.toThrow('blip')
+    fail = false
+    expect(await ce('p')).toBe('ok')   // immediately usable again
+  })
+})
