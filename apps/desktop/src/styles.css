@@ -2534,11 +2534,15 @@ input { font: inherit; color: inherit; }
 .moment-body {
   flex: 1;
   min-height: 0;
-  padding: clamp(36px, 6vh, 52px) clamp(30px, 3.4vw, 42px) 28px;
+  /* 52px floor: the rail's wavy paper edge overhangs ~20px into the pane —
+     a shorter clamp let the headline ride up underneath it on short windows. */
+  padding: clamp(52px, 6vh, 60px) clamp(30px, 3.4vw, 42px) 28px;
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(285px, .8fr);
   gap: clamp(28px, 3vw, 42px);
-  align-items: center;
+  /* safe: when content is taller than the viewport, centering must not
+     push the title above the scrollable area (classic center-overflow). */
+  align-items: safe center;
   overflow-y: auto;
   background: var(--app-bg);
 }
@@ -5942,7 +5946,7 @@ input { font: inherit; color: inherit; }
   text-align: center;
 }
 .converse-empty-art {
-  width: min(230px, 50vw);
+  width: min(190px, 45vw);
   margin-bottom: 10px;
   user-select: none;
   pointer-events: none;
@@ -5996,23 +6000,23 @@ input { font: inherit; color: inherit; }
   word-break: break-word;
 }
 .converse-msg-user .converse-bubble {
-  background: var(--green);
-  color: #fff;
+  background: #a06b42;
+  color: #fffdf8;
   border-bottom-right-radius: 4px;
 }
 .converse-msg-cc .converse-bubble {
-  background: var(--paper-2);
-  color: var(--ink);
-  border: 1px solid var(--hair);
+  background: #fffdf8;
+  color: #593F2C;
+  border: 1px solid rgba(89, 63, 44, .16);
   border-bottom-left-radius: 4px;
 }
 .converse-msg-cc.is-pending .converse-bubble { color: var(--ink-3); }
 .voice-replay-btn {
   flex: 0 0 auto;
   width: 22px; height: 22px;
-  border: 1px solid var(--hair-2);
+  border: 1px solid rgba(89, 63, 44, .2);
   border-radius: 50%;
-  background: var(--paper);
+  background: #fffdf8;
   color: var(--ink-3);
   font-size: 10px;
   line-height: 1;
@@ -6048,51 +6052,61 @@ input { font: inherit; color: inherit; }
   align-items: flex-end;
   gap: 10px;
   padding: 14px 20px;
-  border-top: 1px solid var(--hair);
-  background: var(--paper);
+  border-top: 1px solid rgba(89, 63, 44, .14);
+  background: var(--app-bg);
 }
 .converse-textarea {
   flex: 1;
   min-height: 40px;
   max-height: 160px;
   padding: 9px 12px;
-  border: 1px solid var(--hair-2);
+  border: 1px solid rgba(89, 63, 44, .2);
   border-radius: 9px;
-  background: #fff;
-  color: var(--ink);
+  background: #fffdf8;
+  color: #593F2C;
   font-size: 13.5px;
   line-height: 1.5;
   font-family: inherit;
   resize: vertical;
 }
-.converse-textarea:focus { outline: none; border-color: var(--green-ink); box-shadow: 0 0 0 3px var(--green-soft); }
+.converse-textarea::placeholder { color: #b39a83; }
+.converse-textarea:focus { outline: none; border-color: #8a5a36; box-shadow: 0 0 0 3px rgba(190, 139, 80, .18); }
 .converse-textarea:disabled { opacity: .6; }
-.converse-send-btn { flex: 0 0 auto; height: 40px; }
+/* .btn.primary (0,2,0) outweighs a single class — match it and win on
+   source order so the send button goes warm inside this pane only. */
+.converse-compose .converse-send-btn {
+  flex: 0 0 auto;
+  height: 40px;
+  border-color: #8a5a36;
+  background: #8a5a36;
+  color: #fffdf8;
+}
+.converse-compose .converse-send-btn:hover { border-color: #6f4527; background: #6f4527; color: #fffdf8; }
 .converse-voice-toggle {
   flex: 0 0 auto;
   height: 40px;
   padding: 0 12px;
-  border: 1px solid var(--hair-2);
+  border: 1px solid rgba(89, 63, 44, .2);
   border-radius: 9px;
-  background: var(--paper);
-  color: var(--ink-3);
+  background: #fffdf8;
+  color: #8d7563;
   font-size: 13px;
   cursor: pointer;
 }
-.converse-voice-toggle:hover { color: var(--ink); }
+.converse-voice-toggle:hover { color: #593F2C; }
 .converse-voice-toggle.is-on {
-  border-color: var(--green-ink);
-  background: var(--green-soft);
-  color: var(--green-ink);
+  border-color: #8a5a36;
+  background: rgba(248, 234, 211, .7);
+  color: #8a5a36;
 }
 .converse-mic {
   flex: 0 0 auto;
   height: 40px;
   padding: 0 12px;
-  border: 1px solid var(--hair-2);
+  border: 1px solid rgba(89, 63, 44, .2);
   border-radius: 9px;
-  background: var(--paper);
-  color: var(--ink-3);
+  background: #fffdf8;
+  color: #8d7563;
   font-size: 13px;
   cursor: pointer;
 }

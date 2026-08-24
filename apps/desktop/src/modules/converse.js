@@ -251,7 +251,7 @@ const STARTERS = [
 
 function emptyStateHtml() {
   return `<div class="converse-empty">
-    <img class="converse-empty-art" src="./assets/memory-companion.png" alt="" draggable="false" />
+    <img class="converse-empty-art" src="./assets/animation/bear-complete.png" alt="" draggable="false" />
     <h2>CC 在这儿</h2>
     <p>直接在这里聊，不走微信。想不好开场？挑一个：</p>
     <div class="converse-starters">
