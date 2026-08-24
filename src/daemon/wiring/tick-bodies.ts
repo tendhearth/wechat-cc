@@ -242,6 +242,10 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
   // builders only run when the decrypted source advanced past this). Reset to 0
   // on restart → one catch-up build after a restart, which is harmless.
   let lastIngestSourceMtime = 0
+  // Builder repeat-timeout damper — one map across all cycles (see
+  // BUILDER_COOLDOWN_MS in cycle.ts for why: each failed attempt can hold
+  // the __ingest__ exclusive slot for a full MCP request timeout).
+  const ingestBuilderHealth = { fails: new Map<string, { n: number; skipUntil: number }>() }
 
   /**
    * WRITE-side knowledge ingestion. Drives the plugins' builders + wxfacts
@@ -315,6 +319,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
           cap: INGEST_BATCH_CAP,
           log: (tag, msg) => deps.log(tag, msg),
           factsApi: cheapEval ? factsApi : undefined,
+          builderHealth: ingestBuilderHealth,
         })
         lastIngestSourceMtime = report.newSourceMtime
         if (report.batches || report.rebuilt || report.indexed || report.transcribed) {
