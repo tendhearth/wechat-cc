@@ -623,6 +623,19 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     // as the steps above; isolated try/catch so a gardener failure cannot
     // break the rest of the tick. See docs/superpowers/specs/2026-07-10-
     // memory-gardener-design.md.
+    // Daily backup (2026-08-24) — the irreplaceable slice (main db, facts,
+    // memory .md, configs) is ~2MB; snapshotting it once per introspect tick
+    // is the cheapest insurance in the codebase. Isolated try/catch like
+    // every other step; keep a two-week window.
+    try {
+      const { createBackup, pruneBackups } = await import('../../lib/backup')
+      const b = await createBackup({ stateDir: deps.stateDir })
+      const pruned = pruneBackups(deps.stateDir, 14)
+      deps.log('BACKUP', `daily snapshot ${b.path.split('/').pop()} (${Math.round(b.bytes / 1024)}KB)${pruned > 0 ? `, pruned ${pruned}` : ''}`)
+    } catch (err) {
+      deps.log('BACKUP', `daily snapshot failed: ${err instanceof Error ? err.message : err}`)
+    }
+
     try {
       const { gardened, skipped } = await runGarden({
         memoryRoot,

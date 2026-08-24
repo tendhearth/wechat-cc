@@ -26,6 +26,8 @@ export interface StartupNotifyDeps {
   send: (chatId: string, text: string) => Promise<unknown>
   log: (tag: string, line: string) => void
   now?: () => number
+  /** Delay before the one not-ready retry (default 15s; tests pass 1). */
+  retryDelayMs?: number
 }
 
 export interface StartupNotifyResult {
@@ -86,14 +88,41 @@ export async function notifyStartup(
   const isFirstEverNotify = !alreadyNotified && prevTs === null
 
   const text = isFirstEverNotify ? WARM_FIRST_STARTUP_TEXT : renderStartupText(ctx, sinceLast)
-  let okCount = 0
-  for (const chatId of recipients) {
+  // ilink-glue's sendMessage NEVER throws — failures come back as a resolved
+  // `{ error }` (see ilink-glue.ts). The old try/catch-only accounting
+  // counted every one of those as delivered ("sent to 1/1") while the boot
+  // log right above it said RETRY_FAIL. Check the resolved shape too, and
+  // give the channel one patient retry: at boot the WeChat session isn't
+  // prepared yet (errcode=-2), and the transport's own 3×1s retries are all
+  // spent before it comes up.
+  const trySend = async (chatId: string): Promise<boolean> => {
     try {
-      await deps.send(chatId, text)
-      okCount++
+      const res = await deps.send(chatId, text)
+      const err = (res as { error?: string } | null | undefined)?.error
+      if (err) {
+        deps.log('NOTIFY', `send to ${chatId} failed: ${err}`)
+        return false
+      }
+      return true
     } catch (err) {
       deps.log('NOTIFY', `send to ${chatId} failed: ${err instanceof Error ? err.message : String(err)}`)
+      return false
     }
+  }
+  let okCount = 0
+  let pending = recipients.slice()
+  for (let round = 0; round < 2 && pending.length > 0; round++) {
+    if (round > 0) {
+      const delay = deps.retryDelayMs ?? 15_000
+      deps.log('NOTIFY', `channel not ready — retrying ${pending.length} recipient(s) in ${Math.round(delay / 1000)}s`)
+      await new Promise(r => setTimeout(r, delay))
+    }
+    const stillFailing: string[] = []
+    for (const chatId of pending) {
+      if (await trySend(chatId)) okCount++
+      else stillFailing.push(chatId)
+    }
+    pending = stillFailing
   }
   if (okCount === 0) {
     return { notified: false, reason: 'send-failed-all', recipients, sinceLastMs: sinceLast }
