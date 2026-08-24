@@ -13,6 +13,11 @@ const FAILURE_MODES = [
   'explicit_quiet',
   'long_silence_initiative',
   'cross_chat_isolation',
+  // 2026-08-24 (memory-upgrades follow-up): does a fact stated once survive
+  // DAYS of unrelated chatter? Every earlier trajectory spans 1-2 days with
+  // little noise — this is the LongMemEval-style needle-in-a-week case the
+  // memory pipeline (agent .md writes + gardener curation) must not lose.
+  'long_gap_distractor_recall',
 ] as const
 
 const DIMENSIONS = ['recall', 'inference', 'calibration', 'initiative', 'restraint'] as const

@@ -1,0 +1,68 @@
+trajectory:
+  id: long_gap_distractor_recall_v1
+  failure_mode: long_gap_distractor_recall
+  description: |
+    A concrete, unusual fact is stated once (毛豆的疫苗预约 9月3日 下午4点,
+    宠物医院在虹口), then six days of plausible unrelated chatter pile on top
+    (work, food, weather, a different appointment as an interference lure).
+    On day 7 a recall probe asks for the detail. The memory pipeline — the
+    agent's own .md writes plus whatever the gardener curated in between —
+    must surface the right date/place, not the day-5 interference appointment
+    (9月5日 牙医) and not a hallucinated blend.
+
+  contact:
+    chat_id: chat_longgap_1
+    user_name: 顾时瑞
+    persona: companion
+    profile_md: |
+      # 顾时瑞
+      - 养了一只柯基叫毛豆
+    preferences_md: |
+      # preferences
+      - 简短
+    initial_observations: []
+    initial_memory_files: {}
+
+  companion_config:
+    enabled: true
+    default_chat_id: chat_longgap_1
+    quiet_hours_local: null
+
+  events:
+    - at: 2026-08-10T20:00:00+08:00
+      kind: user_message
+      text: "帮我记着：毛豆 9月3日 下午4点打疫苗，约的是虹口那家宠物医院"
+
+    - at: 2026-08-11T12:30:00+08:00
+      kind: user_message
+      text: "中午吃了家新的兰州拉面，一般般"
+
+    - at: 2026-08-12T19:00:00+08:00
+      kind: user_message
+      text: "这周上线压力大，连续加班三天了"
+
+    - at: 2026-08-13T09:00:00+08:00
+      kind: user_message
+      text: "今天路上看到只橘猫特别胖，拍给你看（图就不发了）"
+
+    # Interference lure: a DIFFERENT appointment with a nearby date. A memory
+    # that stores "some appointment in early September" instead of the
+    # specifics will blend these two.
+    - at: 2026-08-14T15:00:00+08:00
+      kind: user_message
+      text: "我自己约了 9月5日 上午的牙医，洗个牙"
+
+    - at: 2026-08-15T22:00:00+08:00
+      kind: user_message
+      text: "周末打算去爬佘山，放松一下"
+
+    - at: 2026-08-16T14:00:00+08:00
+      kind: probe
+      probe_kind: memory_recall
+      ask: "毛豆疫苗是哪天来着？在哪家医院？"
+      expected:
+        decision: send
+        summary: "答出 9月3日（下午4点加分）和虹口的宠物医院；不得说成 9月5日 或牙医那单"
+        must_recall: ["9月3日", "虹口"]
+        must_not_recall: ["9月5日"]
+        dimensions: [recall, calibration]

@@ -62,3 +62,25 @@ describe('waitForNewReply', () => {
     expect(c1Replies.at(-1)?.text).toBe('NEW')
   })
 })
+
+describe('waitForNewReply — settle window (split-reply burst)', () => {
+  it('absorbs the whole burst of same-turn bubbles before resolving', async () => {
+    const outbox: Array<{ endpoint: string; chatId: string; text: string }> = []
+    const ilink = {
+      outbox: () => outbox as never,
+      waitForOutbound: async (pred: (m: never) => boolean, timeoutMs = 5000) => {
+        const start = Date.now()
+        while (Date.now() - start < timeoutMs) {
+          if (pred(outbox as never)) return outbox as never
+          await new Promise(r => setTimeout(r, 10))
+        }
+        throw new Error('timeout')
+      },
+    }
+    // Burst: bubble 1 now, bubble 2 after 300ms — well inside the settle window.
+    setTimeout(() => outbox.push({ endpoint: 'sendmessage', chatId: 'c1', text: '气泡一' }), 30)
+    setTimeout(() => outbox.push({ endpoint: 'sendmessage', chatId: 'c1', text: '气泡二' }), 330)
+    const replies = await waitForNewReply(ilink as never, 'c1', 5000, 600)
+    expect(replies.map(r => r.text)).toEqual(['气泡一', '气泡二'])
+  })
+})

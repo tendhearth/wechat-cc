@@ -48,15 +48,33 @@ function nextMessageId(): number { return messageIdCounter++ }
  * later inbound). Trajectories that send multiple messages to one chat
  * (fact_update_supersede, wrong_inference_correction) depend on this.
  */
-export function waitForNewReply(
+export async function waitForNewReply(
   ilink: FakeIlinkHandle,
   chatId: string,
   timeoutMs = 120_000,
+  settleMs = 1500,
 ): Promise<readonly OutboundMsg[]> {
   const replyCount = (msgs: readonly OutboundMsg[]): number =>
     msgs.filter(m => m.endpoint === 'sendmessage' && m.chatId === chatId).length
   const before = replyCount(ilink.outbox())
-  return ilink.waitForOutbound(msgs => replyCount(msgs) > before, timeoutMs)
+  await ilink.waitForOutbound(msgs => replyCount(msgs) > before, timeoutMs)
+  // Settle: reply-splitting (split defaults ON) delivers one TURN as a burst
+  // of bubbles. Returning on the first bubble left the rest to land inside
+  // the NEXT event's window — observed 2026-08-24: a probe captured the
+  // previous message's trailing bubble as its own answer, replay raced past
+  // the still-running probe turn, and daemon.stop() tore the db out from
+  // under it. Keep absorbing until the outbox stays quiet for settleMs.
+  const settleDeadline = Date.now() + 20_000
+  let seen = replyCount(ilink.outbox())
+  while (Date.now() < settleDeadline) {
+    try {
+      await ilink.waitForOutbound(msgs => replyCount(msgs) > seen, settleMs)
+      seen = replyCount(ilink.outbox())
+    } catch {
+      break   // settleMs of quiet — the turn's burst is over
+    }
+  }
+  return ilink.outbox().filter(m => m.endpoint === 'sendmessage' && m.chatId === chatId)
 }
 
 export async function startEvalDaemon(opts: EvalDaemonOpts): Promise<EvalDaemon> {
@@ -67,6 +85,14 @@ export async function startEvalDaemon(opts: EvalDaemonOpts): Promise<EvalDaemon>
   mkdirSync(join(stateDir, 'accounts', 'bot1'), { recursive: true })
 
   const allChatIds = Object.keys(opts.knownUsers)
+  // Suppress the startup notify (2026-08-24): once notify-startup began
+  // REALLY delivering (the honest-accounting fix), its "我上线啦 👋" landed in
+  // the fake-ilink outbox and satisfied event #0's waitForNewReply — shifting
+  // every subsequent capture off by one (the probe then "answered" with the
+  // previous message's reply). A last-startup.json stamped now trips the
+  // 60-second crash-loop floor, which skips the notify deterministically.
+  writeFileSync(join(stateDir, 'last-startup.json'), JSON.stringify({ ts: Date.now(), pid: 0 }) + '\n')
+  writeFileSync(join(stateDir, 'startup-notified.json'), JSON.stringify({ ts: Date.now() }) + '\n')
   writeFileSync(join(stateDir, 'access.json'), JSON.stringify({
     dmPolicy: 'allowlist',
     allowFrom: allChatIds,
