@@ -109,3 +109,22 @@ test('supersede applies valid pairs and skips invalid ones', () => {
   expect(s.factById(beijing.id)!.superseded_by).toBe(shanghai.id)
   s.close()
 })
+
+test('mergeObligations applies same-contact obligation pairs, skips everything else', () => {
+  const s = seed(); const api = makeFactsApi(s)
+  const a = s.upsertFact({ contact: 'wxid_a', kind: 'obligation', predicate: 'help_vps', value: '帮忙配 VPS' }, 1000)
+  const b = s.upsertFact({ contact: 'wxid_a', kind: 'obligation', predicate: 'setup_tailscale', value: '帮忙配 Tailscale 和 VPS' }, 2000)
+  const other = s.upsertFact({ contact: 'wxid_b', kind: 'obligation', predicate: 'x', value: 'y' }, 1000)
+  const attr = s.upsertFact({ contact: 'wxid_a', kind: 'attribute', predicate: 'city', value: '上海' }, 1000)
+  const res = api.mergeObligations([
+    { supersede: a.id, by: b.id },        // valid cross-predicate obligation pair
+    { supersede: other.id, by: b.id },    // different contact — skipped
+    { supersede: attr.id, by: b.id },     // not an obligation — skipped
+    { supersede: b.id, by: b.id },        // self — skipped
+  ], 3000) as { merged: number }
+  expect(res).toEqual({ merged: 1 })
+  expect(s.factById(a.id)!.status).toBe('superseded')
+  expect(s.factById(a.id)!.superseded_by).toBe(b.id)
+  expect(s.factById(other.id)!.status).toBe('active')
+  expect(s.factById(attr.id)!.status).toBe('active')
+})

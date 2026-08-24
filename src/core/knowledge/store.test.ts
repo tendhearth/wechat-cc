@@ -593,3 +593,20 @@ describe('facts store', () => {
     s.close()
   })
 })
+
+describe('obligation dedup feed', () => {
+  it('obligationHeavyContacts lists contacts with ≥2 active obligations, heaviest first', () => {
+    const s = freshStore()
+    s.upsertFact({ contact: 'u1', kind: 'obligation', predicate: 'a', value: 'v1' }, 1)
+    s.upsertFact({ contact: 'u1', kind: 'obligation', predicate: 'b', value: 'v2' }, 2)
+    s.upsertFact({ contact: 'u1', kind: 'obligation', predicate: 'c', value: 'v3' }, 3)
+    s.upsertFact({ contact: 'u2', kind: 'obligation', predicate: 'd', value: 'v4' }, 4)
+    s.upsertFact({ contact: 'u2', kind: 'obligation', predicate: 'e', value: 'v5' }, 5)
+    s.upsertFact({ contact: 'u3', kind: 'obligation', predicate: 'f', value: 'v6' }, 6)   // only 1 — excluded
+    s.upsertFact({ contact: 'u4', kind: 'entity', predicate: 'g', value: 'v7' }, 7)       // not obligation
+    const heavy = s.obligationHeavyContacts(10)
+    expect(heavy).toEqual([{ contact: 'u1', n: 3 }, { contact: 'u2', n: 2 }])
+    expect(s.obligationHeavyContacts(1)).toHaveLength(1)
+    s.close()
+  })
+})

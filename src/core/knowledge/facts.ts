@@ -32,6 +32,13 @@ export interface FactsApi {
   supersede(pairs: Array<{ supersede: number; by: number }>, now: number): object
   /** Stock-sweep feed — see KnowledgeStore.conflictedFactGroups. */
   conflictedGroups(limit: number): ReturnType<KnowledgeStore['conflictedFactGroups']>
+  /** Obligation-dedup feed — see KnowledgeStore.obligationHeavyContacts. */
+  obligationHeavyContacts(limit: number): ReturnType<KnowledgeStore['obligationHeavyContacts']>
+  /** Merge duplicate obligations (judge-approved): the loser is superseded
+   *  by the keeper. Guard is looser than supersede() on predicate (dupes
+   *  routinely land under different predicates) but tighter on kind — both
+   *  rows must be same-contact ACTIVE obligations. Invalid pairs skipped. */
+  mergeObligations(pairs: Array<{ supersede: number; by: number }>, now: number): object
   contactFacts(name: string): object
   findFacts(kind: string | null, predicate: string | null, query: string | null, status: string | null, limit: number | null): object
   setFactStatus(id: number, status: string, now: number): object
@@ -132,6 +139,21 @@ export function makeFactsApi(store: KnowledgeStore): FactsApi {
     },
     setFactStatus(id, status, now) { return { ok: store.setFactStatusById(id, status, now) } },
     conflictedGroups(limit) { return store.conflictedFactGroups(limit) },
+    obligationHeavyContacts(limit) { return store.obligationHeavyContacts(limit) },
+    mergeObligations(pairs, now) {
+      let merged = 0
+      for (const p of pairs ?? []) {
+        if (!p || typeof p.supersede !== 'number' || typeof p.by !== 'number' || p.supersede === p.by) continue
+        const loser = store.factById(p.supersede)
+        const keeper = store.factById(p.by)
+        if (!loser || !keeper) continue
+        if (loser.contact !== keeper.contact) continue
+        if (loser.kind !== 'obligation' || keeper.kind !== 'obligation') continue
+        if (loser.status !== 'active' || keeper.status !== 'active') continue
+        if (store.supersedeFactById(p.supersede, p.by, now)) merged++
+      }
+      return { merged }
+    },
     extractionStatus() {
       const g = grouped(); const per: any[] = []; let caught = 0
       for (const [c, rows] of g) {
