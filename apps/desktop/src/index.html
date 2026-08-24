@@ -722,28 +722,28 @@
          the dashboard main pane. Sibling to #qr-modal. -->
     <dialog id="a2a-add-modal" class="a2a-modal">
       <button id="a2a-add-modal-close" class="a2a-modal-x" type="button" aria-label="关闭"><span data-hg-icon="cancel-01" data-hg-size="18"></span></button>
-      <h3>Add A2A Agent</h3>
+      <h3>手动连一个 bot</h3>
       <form id="a2a-add-form">
-        <label>Agent URL <input type="url" name="url" required placeholder="https://example.com/a2a"></label>
+        <label>对方 bot 的地址 <input type="url" name="url" required placeholder="https://example.com/a2a"></label>
         <div class="a2a-form-actions">
-          <button type="submit">Fetch Agent Card →</button>
+          <button type="submit">看看是谁 →</button>
         </div>
       </form>
       <section id="a2a-add-preview" hidden>
         <h4 id="a2a-preview-name"></h4>
         <p id="a2a-preview-description"></p>
         <ul id="a2a-preview-capabilities"></ul>
-        <label>Local id (slug) <input name="id" required></label>
-        <label>Outbound API key <input name="outbound_key" placeholder="From the agent's docs (optional)"></label>
+        <label>给它起个短名（英文/数字） <input name="id" required></label>
+        <label>对方给的钥匙（选填） <input name="outbound_key" placeholder="对方 bot 文档里的 API key"></label>
         <div class="a2a-form-actions">
-          <button id="a2a-install-confirm" type="button">Install</button>
-          <button id="a2a-install-cancel" type="button">Cancel</button>
+          <button id="a2a-install-confirm" type="button">连上</button>
+          <button id="a2a-install-cancel" type="button">算了</button>
         </div>
       </section>
       <section id="a2a-add-success" hidden>
-        <p>✅ Installed. Share this key with the agent so it can call back:</p>
+        <p>✅ 连上了。把下面这段发给对方，对方的 bot 才能回消息给你：</p>
         <pre id="a2a-add-curl"></pre>
-        <button id="a2a-add-close" type="button">Close</button>
+        <button id="a2a-add-close" type="button">好</button>
       </section>
     </dialog>
 
@@ -751,19 +751,19 @@
          (call external agent) without dropping to CLI. -->
     <dialog id="a2a-test-modal" class="a2a-modal">
       <button id="a2a-test-modal-close" class="a2a-modal-x" type="button" aria-label="关闭"><span data-hg-icon="cancel-01" data-hg-size="18"></span></button>
-      <h3 id="a2a-test-title">Test agent</h3>
+      <h3 id="a2a-test-title">测试连通</h3>
       <p class="a2a-test-help">
-        <strong>Inbound</strong>: send a synthetic notify to your own WeChat chat (validates server + key + routing).<br>
-        <strong>Outbound</strong>: call the external agent's URL (validates URL + outbound_api_key).
+        <strong>测试接收</strong>：给你自己的微信发一条测试消息，验证对方能送进来。<br>
+        <strong>测试发送</strong>：呼叫对方 bot 的地址，验证你能送出去。
       </p>
       <label>
-        Message text
+        测试内容
         <input id="a2a-test-text" type="text" />
       </label>
       <div class="a2a-form-actions">
-        <button id="a2a-test-inbound" class="btn" type="button">Test Inbound</button>
-        <button id="a2a-test-outbound" class="btn" type="button">Test Outbound</button>
-        <button id="a2a-test-close" class="btn ghost" type="button">Close</button>
+        <button id="a2a-test-inbound" class="btn" type="button">测试接收</button>
+        <button id="a2a-test-outbound" class="btn" type="button">测试发送</button>
+        <button id="a2a-test-close" class="btn ghost" type="button">关闭</button>
       </div>
       <div id="a2a-test-result" class="a2a-test-result"></div>
     </dialog>
@@ -771,7 +771,7 @@
     <!-- A2A Activity drawer — top-level overlay, hidden by default. -->
     <aside id="a2a-activity-drawer" class="a2a-drawer" hidden>
       <header class="a2a-drawer-head">
-        <h3 id="a2a-activity-title">Activity</h3>
+        <h3 id="a2a-activity-title">最近往来</h3>
         <button id="a2a-activity-close" class="drawer-close" type="button" aria-label="关闭"><span data-hg-icon="cancel-01" data-hg-size="18"></span></button>
       </header>
       <ul id="a2a-activity-list" class="a2a-activity-list"></ul>

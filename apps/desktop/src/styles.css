@@ -5391,6 +5391,25 @@ input { font: inherit; color: inherit; }
   font-family: var(--mono, monospace);
 }
 
+/* Folded plumbing (endpoint URLs, raw counters) — present for the operator,
+   invisible until asked for. */
+.a2a-tech {
+  margin: 4px 0 2px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+.a2a-tech summary {
+  cursor: pointer;
+  color: #a08a75;
+  user-select: none;
+}
+.a2a-tech code {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: rgba(248, 234, 211, .5);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
 .a2a-card-counts {
   color: var(--ink-3);
   font-size: 11.5px;

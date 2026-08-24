@@ -156,7 +156,7 @@ test('Pause / Resume toggles the agent paused state', async ({ page, shimUrl, sh
   await expect(card).toHaveClass(/paused/)
 
   // The pause button should now read "Resume"
-  await expect(card.locator('button[data-action="pause"]')).toHaveText('Resume')
+  await expect(card.locator('button[data-action="pause"]')).toHaveText('恢复')
 
   // Click Resume
   await card.locator('button[data-action="pause"]').click()
@@ -170,7 +170,7 @@ test('Pause / Resume toggles the agent paused state', async ({ page, shimUrl, sh
     { timeout: 8_000 }
   )
   await expect(card).not.toHaveClass(/paused/)
-  await expect(card.locator('button[data-action="pause"]')).toHaveText('Pause')
+  await expect(card.locator('button[data-action="pause"]')).toHaveText('暂停')
 })
 
 test('Activity drawer opens with recent events', async ({ page, shimUrl, shim }) => {
@@ -309,7 +309,7 @@ test('Test button opens modal and inbound/outbound both report success', async (
 
   // After 2 tests, counts should be ≥1 each (the shim bumps counts on test)
   const card2 = page.locator('.a2a-agent-card[data-id="test-bot"]')
-  await expect(card2.locator('.a2a-card-counts')).toContainText(/↓ 1.*↑ 1/)
+  await expect(card2.locator('.a2a-card-counts')).toContainText(/收到 1 条.*送出 1 条/)
 })
 
 test('Test button reports failure for unknown_agent', async ({ page, shimUrl, shim }) => {
