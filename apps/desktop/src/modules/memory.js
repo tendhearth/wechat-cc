@@ -570,7 +570,11 @@ export function renderMemoryProfileOverview(deps) {
     .sort()
     .at(-1)
   const latestObservation = memoryState.observations[0]?.ts
-  const updatedAt = latestObservation || latestFileMtime
+  // Whichever source moved LAST. `latestObservation || latestFileMtime`
+  // short-circuited on any observation at all, so 重新整理 rewrote
+  // _overview.md and the kicker still said 更新于 5 天前 — the newest
+  // observation's age — no matter how many times it was clicked.
+  const updatedAt = newestTimestamp(latestObservation, latestFileMtime)
   const profile = buildMemoryProfileModel(friendly, totalFiles, updatedAt)
   const embryo = buildMemoryEmbryoModel(totalFiles)
   const embryoEnabled = isMemoryEmbryoEnabled()
@@ -908,6 +912,13 @@ if (typeof window !== "undefined") {
 // covered by the 长期人格倾向 label. Tags are chips, not prose — strip the
 // parenthetical enumeration and cap the length; the full text stays in the
 // title attribute.
+/** Latest of several ISO-8601-ish timestamps (lexicographic == chronological);
+ *  undefined when none. @param {...(string|undefined)} candidates */
+export function newestTimestamp(...candidates) {
+  const real = candidates.filter(Boolean).map(String).sort()
+  return real.length ? real[real.length - 1] : undefined
+}
+
 /** @param {string} tag */
 export function tidyProfileTag(tag) {
   const stripped = String(tag || "").replace(/[（(].*$/, "").trim()

@@ -131,3 +131,17 @@ describe('tidyProfileTag', () => {
     expect(tidyProfileTag('')).toBe('')
   })
 })
+
+import { newestTimestamp } from './memory.js'
+
+describe('newestTimestamp', () => {
+  it('picks whichever source moved last — file rewrites must beat stale observations', () => {
+    expect(newestTimestamp('2026-08-18T10:00:00Z', '2026-08-23T19:11:00Z')).toBe('2026-08-23T19:11:00Z')
+    expect(newestTimestamp('2026-08-23T19:11:00Z', '2026-08-18T10:00:00Z')).toBe('2026-08-23T19:11:00Z')
+  })
+  it('tolerates missing sources', () => {
+    expect(newestTimestamp(undefined, '2026-08-23T19:11:00Z')).toBe('2026-08-23T19:11:00Z')
+    expect(newestTimestamp('2026-08-23T19:11:00Z', undefined)).toBe('2026-08-23T19:11:00Z')
+    expect(newestTimestamp(undefined, undefined)).toBeUndefined()
+  })
+})
