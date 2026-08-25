@@ -787,7 +787,7 @@ async fn customer_review_api(
     // status writes, contact display names, reminder scheduling — all the
     // owner's own private data, exactly customer review's trust class.
     // Still a hard allow-list, still no generic proxying.
-    const OWNER_WORKSPACE_ROUTES: [&str; 4] = [
+    const OWNER_WORKSPACE_ROUTES: [&str; 5] = [
         "/v1/knowledge/facts/find_facts",
         "/v1/llm/keys",
         "/v1/knowledge/facts/set_fact_status",
