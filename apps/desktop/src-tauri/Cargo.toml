@@ -27,3 +27,5 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # not accept `cfg(debug_assertions)` as a target predicate.
 tokio = { version = "1", features = ["process", "io-util", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+tauri-plugin-updater = "2.10.1"
+tauri-plugin-process = "2.3.1"

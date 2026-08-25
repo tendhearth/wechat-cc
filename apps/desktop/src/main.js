@@ -34,6 +34,7 @@ import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modul
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { stopCustomerReviewPolling } from "./modules/customer-review.js"
 import { initTodosPage } from "./modules/todos.js"
+import { startAppUpdateChecks } from "./modules/app-update.js"
 import { initConversePage } from "./modules/converse.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
 import { initPluginsTab, refresh as refreshPlugins } from "./modules/plugins.js"
@@ -1323,6 +1324,7 @@ async function boot() {
   mountHugeicons()
   wireDoctorSubscribers()
   wireEvents()
+  startAppUpdateChecks()
   // Refresh an already-configured local WeChat archive on every desktop
   // launch. Keep it off the critical render path: decrypting larger archives
   // can take seconds, while the dashboard should remain immediately usable.

@@ -81,6 +81,15 @@
       "rpm": {
         "postInstallScript": "scripts/postinst.sh"
       }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://dl.tendhearth.com/wechat-cc/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU1N0FCNDY1REQ3RDQ5NEYKUldSUFNYM2RaYlI2VmJ6d3p0dzFEQmlmTEdlZTRGTFF2V0lWOWpoYlNXblMraXlDZWduQy9tVngK"
     }
   }
 }
