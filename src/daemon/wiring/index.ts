@@ -28,6 +28,8 @@ export interface WireMainOpts {
   stateDir: string
   db: Db
   ilink: IlinkAdapter
+  /** Sticker library — threaded to tick-bodies' daily sticker-artist step. */
+  stickers?: import('../stickers').StickerLib
   /** Loaded before makeIlinkAdapter — passed separately because IlinkAdapter doesn't expose accounts. */
   accounts: IlinkAccount[]
   boot: Bootstrap

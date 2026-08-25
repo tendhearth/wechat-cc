@@ -49,6 +49,9 @@ export interface TickDeps {
   stateDir: string
   db: Db
   ilink: IlinkAdapter
+  /** Curated sticker library — enables the daily sticker-artist step in
+   *  introspectTick. Absent ⇒ the step never runs (tests, minimal embeds). */
+  stickers?: import('../stickers').StickerLib
   boot: Bootstrap
   /**
    * Task 11 — companion ticks aren't user-initiated, but the session
@@ -639,6 +642,31 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       deps.log('BACKUP', `daily snapshot ${b.path.split('/').pop()} (${Math.round(b.bytes / 1024)}KB)${pruned > 0 ? `, pruned ${pruned}` : ''}`)
     } catch (err) {
       deps.log('BACKUP', `daily snapshot failed: ${err instanceof Error ? err.message : err}`)
+    }
+
+    // 觅食式表情生长 (2026-08-25) — once a day CC draws itself a sticker for
+    // a mood the library doesn't cover yet, and announces it like a small
+    // gift. Self-gating (22h marker + pool exhaustion) and every failure
+    // mode non-fatal — see sticker-artist.ts.
+    if (deps.stickers && sdkEval) {
+      try {
+        const { runStickerArtist } = await import('../sticker-artist')
+        const ownerChat = loadCompanionConfig(deps.stateDir).default_chat_id
+        await runStickerArtist({
+          stateDir: deps.stateDir,
+          lib: deps.stickers,
+          cheapEval: sdkEval,
+          log: (t, l) => deps.log(t, l),
+          notify: async (mood) => {
+            if (!ownerChat) return
+            const path = deps.stickers!.resolve(mood)
+            if (path) await deps.ilink.sendFile(ownerChat, path)
+            await deps.ilink.sendMessage(ownerChat, `我画了张新表情!以后想说「${mood}」的时候就用它~`)
+          },
+        })
+      } catch (err) {
+        deps.log('STICKERS', `artist step failed: ${err instanceof Error ? err.message : err}`)
+      }
     }
 
     try {
