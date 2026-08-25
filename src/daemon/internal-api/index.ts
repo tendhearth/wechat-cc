@@ -379,6 +379,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       deps.llmHealth = h
       if (registered) deps.llmRegistered = registered
     },
+    setSettingsLink(fn) {
+      deps.settingsLink = fn
+    },
     mintSessionToken,
     invalidateSession(sessionKey: string) {
       registry.invalidateSession(sessionKey)

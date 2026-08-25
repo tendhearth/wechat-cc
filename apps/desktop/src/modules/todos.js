@@ -11,7 +11,7 @@
 // Same vanilla-module shape as customer-review.js: renderSkeleton once,
 // refresh() re-fetches, actions call the admin internal-api routes.
 
-import { escapeHtml } from "../view.js"
+import { escapeHtml, showToast } from "../view.js"
 import { invokeApi } from "../api.js"
 
 /** @typedef {{ id: number, contact: string, kind: string|null, predicate: string, value: string, time_ref: string|null, confidence: string, updated_at: number }} ObligationRow */
@@ -241,7 +241,7 @@ async function onListClick(ev) {
     }
   } catch (err) {
     if (btn instanceof HTMLButtonElement) btn.disabled = false
-    alert(`没改成：${err instanceof Error ? err.message : String(err)}`)
+    showToast(`没改成：${err instanceof Error ? err.message : String(err)}`)
   }
 }
 

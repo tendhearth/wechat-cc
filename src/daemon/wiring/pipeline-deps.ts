@@ -152,6 +152,9 @@ const CLI_ENTRY = join(REPO_ROOT, 'cli.ts')
 
 export interface BuildPipelineDepsResult {
   pipelineDeps: InboundPipelineDeps
+  /** Mint a fresh settings-panel URL (10-min single-active token) — the
+   *  desktop 「手机上改设置」 QR entry (GET /v1/settings/link). */
+  settingsPanelLink: () => Promise<string | null>
   /**
    * App-conversation-channel converse closure (voice arc Stage 0, Task 2).
    * Late-bound onto internal-api by main.ts via setCompanionConverse()
@@ -844,5 +847,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
   }
 
-  return { pipelineDeps, companionConverse }
+  return { pipelineDeps, companionConverse, settingsPanelLink: () => settingsPanel.linkUrl() }
 }

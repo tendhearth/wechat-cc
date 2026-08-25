@@ -213,6 +213,15 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     },
 
     // ── user name (RFC 03 P1.B B3) ──────────────────────────────────────
+    // 设置面板链接 (2026-08-25) — 此刻页「手机上改设置」二维码的数据源。
+    // 每次调用都换新令牌(单活 10 分钟),与 /set 的链接同一套机制。
+    'GET /v1/settings/link': async () => {
+      if (!deps.settingsLink) return { status: 503, body: { error: 'settings_link_not_wired' } }
+      const url = await deps.settingsLink()
+      if (!url) return { status: 200, body: { ok: false, error: 'no_lan_or_owner' } }
+      return { status: 200, body: { ok: true, url } }
+    },
+
     // LLM key 图形化填入 (2026-08-25, owner: 「你让小白用户写到变量里?」)
     // — 桌面大脑卡的「OpenAI/Gemini +」表单落到这里;daemon 自己写
     // daemon.env(0600,原子替换),用户永远不用知道那个文件存在。

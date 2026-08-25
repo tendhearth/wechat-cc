@@ -6343,3 +6343,52 @@ input { font: inherit; color: inherit; }
 .brain-cmd code { background: rgba(89, 63, 44, .08); padding: 4px 10px; border-radius: 6px; font-size: 11.5px; color: #5a3f2d; overflow-x: auto; }
 .brain-copy { font: inherit; font-size: 11px; padding: 2px 10px; border: 1.5px solid rgba(89, 63, 44, .25); border-radius: 999px; background: #fffdf8; color: #5a3f2d; cursor: pointer; }
 .brain-setup-note { color: #8b5e3c; font-size: 11.5px; margin-top: 4px; }
+
+/* ─── 全局提示条(替代 alert) ───────────────────────────────── */
+#app-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 34px;
+  transform: translateX(-50%) translateY(8px);
+  z-index: 9999;
+  padding: 9px 20px;
+  border-radius: 20px;
+  background: #5a3f2d;
+  color: #fffdf8;
+  font-size: 13px;
+  opacity: 0;
+  pointer-events: none;
+  transition: .25s;
+}
+#app-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.phone-settings-btn {
+  margin-top: 8px;
+  padding: 6px 14px;
+  border: 1.5px dashed rgba(89, 63, 44, .3);
+  border-radius: 10px;
+  background: rgba(255, 253, 248, .55);
+  color: #8b5e3c;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.phone-settings-btn:hover { border-color: #8a5a36; color: #5a3f2d; }
+#phone-settings-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(89, 63, 44, .35);
+}
+#phone-settings-modal .qr-card {
+  background: #fffdf8;
+  border: 2px solid rgba(89, 63, 44, .3);
+  border-radius: 18px 22px 16px 24px / 22px 16px 24px 18px;
+  padding: 24px 28px;
+  text-align: center;
+  color: #5a3f2d;
+}
+#phone-settings-modal .qr-card svg { width: 220px; height: 220px; }
+#phone-settings-modal .qr-note { margin-top: 10px; color: #8b5e3c; font-size: 12.5px; }

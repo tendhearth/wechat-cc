@@ -131,14 +131,14 @@
                 <p id="qr-title">使用微信扫描二维码，激活应用</p>
                 <div class="poll" id="qr-poll" hidden>
                   <span class="pip"></span>
-                  <span id="qr-message">轮询扫码状态…</span>
+                  <span id="qr-message">等你扫码中…</span>
                 </div>
                 <div class="qr-ttl" id="qr-ttl">—</div>
                 <div class="qr-actions">
                   <button id="qr-refresh" class="btn ghost">刷新二维码</button>
                   <button id="continue-service" class="btn primary" disabled>继续</button>
                 </div>
-                <button id="qr-raw-toggle" class="qr-raw-toggle" type="button">显示原始响应</button>
+                <button id="qr-raw-toggle" class="qr-raw-toggle" type="button">技术详情</button>
                 <pre id="qr-raw"></pre>
               </div>
             </div>
@@ -422,6 +422,7 @@
                 <h2>当前连接中的用户</h2>
                 <div id="accounts-current" class="current-user-card"></div>
                 <div id="brain-health" class="brain-health" hidden></div>
+                <button id="open-phone-settings" class="phone-settings-btn" type="button" title="生成二维码,手机扫码打开设置页(10 分钟内有效)">📱 手机上改设置</button>
                 <div class="moment-subhead" id="accounts-subhead">
                   <h2>子用户</h2>
                   <span class="meta" id="accounts-meta">—</span>

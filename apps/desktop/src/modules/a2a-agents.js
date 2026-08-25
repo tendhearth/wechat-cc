@@ -1,3 +1,4 @@
+import { showToast } from "../view.js"
 // @ts-check
 /// <reference lib="dom" />
 /**
@@ -457,7 +458,7 @@ async function onCardAction(e) {
       await invokeApi('POST', '/v1/a2a/pause', { id, paused: !wasPaused })
       await refresh()
     } catch (err) {
-      alert(`${wasPaused ? '恢复' : '暂停'}失败：${err instanceof Error ? err.message : String(err)}`)
+      showToast(`${wasPaused ? '恢复' : '暂停'}失败：${err instanceof Error ? err.message : String(err)}`)
     }
   } else if (action === 'remove') {
     if (!confirm(`断开和「${id}」的连接？之后可以随时重新配对。`)) return
@@ -465,15 +466,15 @@ async function onCardAction(e) {
       await invokeApi('POST', '/v1/a2a/remove', { id })
       await refresh()
     } catch (err) {
-      alert(`断开失败：${err instanceof Error ? err.message : String(err)}`)
+      showToast(`断开失败：${err instanceof Error ? err.message : String(err)}`)
     }
   } else if (action === 'activity') {
     await openActivityDrawer(id).catch(err =>
-      alert(`往来记录打不开：${err instanceof Error ? err.message : String(err)}`)
+      showToast(`往来记录打不开：${err instanceof Error ? err.message : String(err)}`)
     )
   } else if (action === 'test') {
     await openTestModal(id).catch(err =>
-      alert(`打不开测试窗口：${err instanceof Error ? err.message : String(err)}`)
+      showToast(`打不开测试窗口：${err instanceof Error ? err.message : String(err)}`)
     )
   }
 }
@@ -1024,7 +1025,7 @@ async function onPreviewSubmit(e) {
   if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '找它中…' }
   try {
     const resp = /** @type {Record<string, any>} */ (await invokeApi('POST', '/v1/a2a/preview', { url }))
-    if (resp && 'error' in resp) { alert(String(resp.error)); return }
+    if (resp && 'error' in resp) { showToast(String(resp.error)); return }
     previewedCard = resp
     previewedUrl = url
 
@@ -1051,7 +1052,7 @@ async function onPreviewSubmit(e) {
       if (idInput) idInput.value = slugify(String(resp.name ?? ''))
     }
   } catch (err) {
-    alert(`没找到对方 bot：${err instanceof Error ? err.message : String(err)}`)
+    showToast(`没找到对方 bot：${err instanceof Error ? err.message : String(err)}`)
   } finally {
     if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '看看是谁 →' }
   }
@@ -1064,7 +1065,7 @@ async function onInstallConfirm() {
   const keyInput = /** @type {HTMLInputElement | null} */ (preview.querySelector('input[name="outbound_key"]'))
   const id = idInput?.value?.trim() ?? ''
   const outboundKey = keyInput?.value?.trim() ?? ''
-  if (!id) { alert('先给它起个短名（英文或数字）。'); return }
+  if (!id) { showToast('先给它起个短名（英文或数字）。'); return }
 
   const confirmBtn = document.getElementById('a2a-install-confirm')
   if (confirmBtn instanceof HTMLButtonElement) { confirmBtn.disabled = true; confirmBtn.textContent = '连接中…' }
@@ -1076,7 +1077,7 @@ async function onInstallConfirm() {
       outbound_api_key: outboundKey,
     }))
     if (!r || !r.ok) {
-      alert(String(r?.error ?? 'install failed'))
+      showToast(String(r?.error ?? 'install failed'))
       return
     }
     const info = /** @type {Record<string, any>} */ (await invokeApi('GET', '/v1/a2a/info').catch(() => null))
@@ -1093,7 +1094,7 @@ async function onInstallConfirm() {
         `  -d '{"agent_id":"${id}","text":"hello"}'`
     }
   } catch (err) {
-    alert(`没连上：${err instanceof Error ? err.message : String(err)}`)
+    showToast(`没连上：${err instanceof Error ? err.message : String(err)}`)
   } finally {
     if (confirmBtn instanceof HTMLButtonElement) { confirmBtn.disabled = false; confirmBtn.textContent = '连上' }
   }

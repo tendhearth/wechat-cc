@@ -75,6 +75,9 @@ export interface WiredDeps {
    * once wireMain returns (bootstrap must be ready first).
    */
   companionConverse: (text: string) => Promise<{ reply: string }>
+  /** Mint a fresh graphical-settings-panel URL (10-min token). Null when no
+   *  LAN/owner. Wired to GET /v1/settings/link for the desktop QR entry. */
+  settingsPanelLink: () => Promise<string | null>
   companionPushDeps: CompanionPushDeps
   companionIntrospectDeps: CompanionIntrospectDeps
   companionIngestDeps: CompanionIngestDeps
@@ -118,11 +121,12 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     // comment in ./tick-bodies.ts).
     health: opts.boot.health.health,
   })
-  const { pipelineDeps, companionConverse } = buildPipelineDeps(opts, refs)
+  const { pipelineDeps, companionConverse, settingsPanelLink } = buildPipelineDeps(opts, refs)
   const lifecycleDeps = buildLifecycleDeps(opts, ticks)
   return {
     pipelineDeps,
     companionConverse,
+    settingsPanelLink,
     ...lifecycleDeps,
     ticks,
     refs,

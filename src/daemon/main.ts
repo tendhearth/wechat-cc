@@ -478,6 +478,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // at request time, so this late assignment is safe (mirrors setConversation).
     internalApi.setCompanionConverse(wired.companionConverse)
     ticksRef = wired.ticks
+    internalApi.setSettingsLink(wired.settingsPanelLink)
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
     wireRef(wired.refs.pipeline, pipeline)
     // 4. register lifecycles (LIFO stop = startup order reversed)

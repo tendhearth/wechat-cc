@@ -16,7 +16,7 @@
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
 import { invokeApi } from "./api.js"
-import { initialMode, restartButtonState, afterScanTarget } from "./view.js"
+import { initialMode, restartButtonState, afterScanTarget , showToast } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
 import { createConversationsPoller } from "./conversations-poller.js"
 import {
@@ -493,6 +493,26 @@ function activateDialogueWorkspace() {
 // ─── DOM event wiring ────────────────────────────────────────────────
 
 function wireEvents() {
+  // 手机上改设置 — 拿一条新鲜的面板链接,渲染成二维码弹层(手机扫码直开)
+  document.getElementById("open-phone-settings")?.addEventListener("click", async () => {
+    try {
+      const r = /** @type {{ ok?: boolean, url?: string, error?: string }} */ (await deps.invokeApi("GET", "/v1/settings/link"))
+      if (!r || !r.ok || !r.url) {
+        const why = r && r.error === "no_lan_or_owner" ? "拿不到局域网地址(检查 Wi-Fi)或还没绑定微信" : (r && r.error) || "未知原因"
+        showToast(`生成不了设置链接:${why}`)
+        return
+      }
+      const svg = /** @type {string} */ (await deps.invoke("render_qr_svg", { text: r.url }))
+      const modal = document.createElement("div")
+      modal.id = "phone-settings-modal"
+      modal.innerHTML = `<div class="qr-card">${svg}<div class="qr-note">手机扫码打开设置 · 10 分钟内有效<br>手机和电脑要在同一个 Wi-Fi</div></div>`
+      modal.addEventListener("click", () => modal.remove())
+      document.body.appendChild(modal)
+    } catch (err) {
+      showToast(`生成设置二维码失败:${err instanceof Error ? err.message : err}`)
+    }
+  })
+
   // 大脑卡交互:测试连接(唯一的真实拨号入口)/ 接入表单 / 复制命令 / 保存 key / 重启
   document.getElementById("brain-health")?.addEventListener("click", (ev) => {
     const t = ev.target instanceof HTMLElement ? ev.target : null
