@@ -3,12 +3,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeStickerLib } from './stickers'
-import { pickMissingMood, buildStickerPrompt, runStickerArtist, STICKER_MOOD_POOL } from './sticker-artist'
+import { pickMissingMood, pickDrawTarget, buildStickerPrompt, runStickerArtist, STICKER_MOOD_POOL, STICKER_MOOD_POOL_EXTENDED, CC_DRAWN_CAP } from './sticker-artist'
 
 const GOOD_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320"><circle cx="160" cy="150" r="90" fill="#f5ead8" stroke="#5a3f2d" stroke-width="4"/></svg>'
 
 function tempPng(dir: string): string {
-  const p = join(dir, 'drawn.png')
+  const p = join(dir, `cc-drawn-${Math.random().toString(36).slice(2)}.png`)
   writeFileSync(p, 'png-bytes')
   return p
 }
@@ -60,12 +60,44 @@ describe('runStickerArtist', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  it('all moods covered → no model call, no marker churn', async () => {
-    const { stateDir, lib, cheapEval, rasterize, notify } = setup({ tags: STICKER_MOOD_POOL.map(m => [m]) })
+  it('both pools covered + no CC-drawn variations possible → no model call', async () => {
+    const { stateDir, lib, cheapEval, rasterize, notify } = setup({
+      tags: [...STICKER_MOOD_POOL, ...STICKER_MOOD_POOL_EXTENDED].map(m => [m]),
+    })
     const r = await runStickerArtist({ stateDir, lib, cheapEval, rasterize, notify, log: () => {}, now: () => 1_000 })
     expect(r.drawn).toBeNull()
     expect(cheapEval).not.toHaveBeenCalled()
     rmSync(stateDir, { recursive: true, force: true })
+  })
+
+  it('growth curve: phase 1 daily; phase 2 weekly; variations after both pools; cap retires the brush', () => {
+    const entry = (file: string, tag: string) => ({ file, tags: [tag] })
+    // phase 1: first uncovered base mood, daily cadence
+    const t1 = pickDrawTarget([])!
+    expect(t1.mood).toBe(STICKER_MOOD_POOL[0])
+    expect(t1.intervalMs).toBeLessThan(24 * 3600_000)
+    // phase 2: base covered → extended mood, weekly cadence
+    const base = STICKER_MOOD_POOL.map((m, i) => entry(`cc-drawn-${i}.png`, m))
+    const t2 = pickDrawTarget(base)!
+    expect(t2.mood).toBe(STICKER_MOOD_POOL_EXTENDED[0])
+    expect(t2.intervalMs).toBeGreaterThan(100 * 3600_000)
+    // variations: both pools covered → a new take on an existing CC-drawn mood
+    const all = [...base, ...STICKER_MOOD_POOL_EXTENDED.map((m, i) => entry(`cc-drawn-x${i}.png`, m))]
+    const t3 = pickDrawTarget(all, () => 0)!
+    expect(t3.variation).toBe(true)
+    expect(t3.mood).toBe(STICKER_MOOD_POOL[0])
+    // cap: CC_DRAWN_CAP drawn files → done
+    const capped = Array.from({ length: CC_DRAWN_CAP }, (_, i) => entry(`cc-drawn-c${i}.png`, STICKER_MOOD_POOL[i % 10]!))
+      .concat(STICKER_MOOD_POOL_EXTENDED.map((m, i) => entry(`seed${i}.png`, m)))
+    expect(pickDrawTarget(capped)).toBeNull()
+    // starter-pack files (non cc-drawn) never count toward the cap
+    const starterOnly = [...STICKER_MOOD_POOL, ...STICKER_MOOD_POOL_EXTENDED].map((m, i) => entry(`starter${i}.png`, m))
+    expect(pickDrawTarget(starterOnly)).toBeNull()   // nothing CC-drawn to vary either
+  })
+
+  it('variation prompt asks for a different take', () => {
+    const p = buildStickerPrompt('晚安', { variation: true })
+    expect(p).toContain('换一个完全不同的构图')
   })
 
   it('unsafe SVG or failed rasterize → nothing saved, notify not called, marker still stamped', async () => {
