@@ -41,6 +41,7 @@ import { startCustomerReviewRuntime } from './customer-review/runtime'
 import { SUPERVISED_ENV } from '../core/supervised-env'
 import { SubsystemSupervisor } from './subsystems'
 import { removeAgyGlobalMcp } from './bootstrap/agy-mcp-config'
+import { removeCursorGlobalMcp } from './bootstrap/cursor-mcp-config'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -182,6 +183,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // crash-exit skips this and leaves the dead-token entry on disk, but
     // that's fine — boot rewrites/upserts it fresh next start regardless.
     try { if (bootRef?.registry?.has?.('agy')) removeAgyGlobalMcp({ log }) } catch (err) { log('AGY', `mcp config cleanup error: ${err instanceof Error ? err.message : String(err)}`) }
+    try { if (bootRef?.registry?.has?.('cursor')) removeCursorGlobalMcp({ log }) } catch (err) { log('CURSOR', `mcp config cleanup error: ${err instanceof Error ? err.message : String(err)}`) }
     try { db.close() } catch (err) { console.error('db close failed:', err) }
     releaseInstanceLock(PID_PATH)
   }

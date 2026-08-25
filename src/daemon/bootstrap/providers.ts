@@ -23,6 +23,7 @@ import { dirname, join } from 'node:path'
 import { buildOpenaiMcpSpecs, type McpStdioSpec } from './mcp-specs'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { setupAgyGlobalMcp } from './agy-mcp-config'
+import { setupCursorGlobalMcp } from './cursor-mcp-config'
 import { agyVersionOk } from './agy-version-check'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
 import type { BootstrapDeps } from './types'
@@ -316,8 +317,49 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // @cursor/sdk` and the registration silently skips.
   //
   // See docs/superpowers/specs/2026-05-23-cursor-sdk-provider-design.md.
+  // cursor-agent CLI (subscription auth via `cursor-agent login`) — the
+  // preferred path (owner 2026-08-25: 大部分 cursor 用户用订阅,不是 API key).
+  // Same TEST-RUNNER PATH-fallback guard as agy below: a dev box with
+  // cursor-agent installed must not register a real provider in every test
+  // bootstrap — tests opt in via `cursorAgentBin` in seeded agent-config.
+  const cursorAgentBin = configuredAgent.cursorAgentBin ?? (UNDER_TEST_RUNNER ? null : findOnPath('cursor-agent'))
+  let cursorCliRegistered = false
+  if (cursorAgentBin && probeBinaryVersion(cursorAgentBin) !== null) {
+    try {
+      const { createCursorCliProvider } = await import('../../core/cursor-cli-provider')
+      // Tier C global MCP upsert into ~/.cursor/mcp.json — cursor-agent's
+      // only global MCP surface, same one-trusted-token contract as agy
+      // (see cursor-mcp-config.ts). Missing internalApi/mint ⇒ provider
+      // still registers, loudly without tools.
+      if (wechatStdioForCursor && mintSessionToken) {
+        setupCursorGlobalMcp({
+          wechatSpec: wechatStdioForCursor,
+          mintToken: () => mintSessionToken('trusted', 'cursor-static'),
+          log: deps.log,
+        })
+      } else {
+        deps.log('BOOT', 'cursor: internalApi/mintSessionToken unavailable — wechat MCP not wired (cursor will have no tools)')
+      }
+      registry.register(
+        'cursor',
+        createCursorCliProvider({
+          bin: cursorAgentBin,
+          model: configuredAgent.cursorModel ?? 'auto',
+          log: deps.log,
+        }),
+        { displayName: 'Cursor', canResume: () => true },
+      )
+      cursorCliRegistered = true
+      deps.log('BOOT', 'cursor: cursor-agent CLI present (subscription auth) — provider registered')
+    } catch (err) {
+      deps.log('BOOT', `cursor: CLI registration failed — ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
   const cursorKey = process.env.CURSOR_API_KEY
-  if (cursorKey && !configuredAgent.cursorModel) {
+  if (cursorCliRegistered) {
+    // CLI path won — the SDK/API-key fallback below is skipped entirely.
+  } else if (cursorKey && !configuredAgent.cursorModel) {
     // Cursor SDK's @cursor/sdk/dist/esm/options.d.ts says model is "required
     // for local agents" — local is the only mode wechat-cc uses today.
     // Fail-fast at boot with an actionable message rather than crash on

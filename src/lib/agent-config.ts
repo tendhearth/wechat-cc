@@ -29,6 +29,9 @@ export interface AgentConfig {
   // no modelForProvider/withModelForProvider counterpart.
   agyModel?: string
   agyBin?: string
+  /** Resolved `cursor-agent` binary path override (tests opt in; production
+   *  falls back to PATH lookup — see providers.ts's cursor CLI branch). */
+  cursorAgentBin?: string
   // When true, the daemon spawned by `service install` runs with
   // `cli.ts run --dangerously` (Claude SDK permissionMode=bypassPermissions).
   // Wizard-installed daemons need this on by default — there is no human
@@ -181,6 +184,7 @@ const AgentConfigSchema = z.object({
   geminiModel: z.string().optional(),
   agyModel: z.string().optional(),
   agyBin: z.string().optional(),
+  cursorAgentBin: z.string().optional(),
   dangerouslySkipPermissions: z.boolean().default(true),
   autoStart: z.boolean().default(true),
   closeStopsDaemon: z.boolean().default(false),
@@ -269,6 +273,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.geminiModel === 'string' ? { geminiModel: parsed.geminiModel } : {}),
       ...(typeof parsed.agyModel === 'string' ? { agyModel: parsed.agyModel } : {}),
       ...(typeof parsed.agyBin === 'string' ? { agyBin: parsed.agyBin } : {}),
+      ...(typeof parsed.cursorAgentBin === 'string' ? { cursorAgentBin: parsed.cursorAgentBin } : {}),
       dangerouslySkipPermissions,
       autoStart,
       closeStopsDaemon,
