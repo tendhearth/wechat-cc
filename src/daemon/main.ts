@@ -30,7 +30,7 @@ import { runStartupSweeps } from './startup-sweeps'
 import { wireMain } from './wiring'
 import type { TickBodies } from './wiring/tick-bodies'
 import { makeChatPrefs } from './chat-prefs'
-import { makeStickerLib } from './stickers'
+import { makeStickerLib, seedStarterStickers, starterStickersDir } from './stickers'
 import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
@@ -210,6 +210,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // below. Mirrors chatPrefs above: a second instance would read a stale
     // in-memory index (write-through only protects its own writes).
     const stickerLib = makeStickerLib(stateDir)
+    // 初始表情包 — a fresh install gets the bundled bear pack so CC can send
+    // stickers from day one (empty-library-only; owner curation wins forever).
+    {
+      const packDir = starterStickersDir()
+      if (packDir) seedStarterStickers(stickerLib, packDir, (t, l) => log(t, l))
+    }
     // Single shared care-ledger instance for this daemon — mirrors chatPrefs
     // above. pushTick claims/reads it; the inbound path resets the no-reply
     // streak on every message. A second instance would have a stale

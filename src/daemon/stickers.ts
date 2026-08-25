@@ -5,8 +5,10 @@
  * chat-prefs store pattern: injectable store seam, corrupt-value handling
  * (skip, never throw).
  */
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
-import { basename, extname, join, resolve as resolvePath } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { dirname, basename, extname, join, resolve as resolvePath } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { compiledRepoRoot, isCompiledBundle } from '../lib/runtime-info'
 import { makeStateStore, type StateStore } from './state-store'
 
 const ALLOWED_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp'])
@@ -129,5 +131,45 @@ export function makeStickerLib(stateDir: string, deps?: { store?: StateStore; ra
       for (const e of entries()) for (const t of e.tags) set.add(t)
       return [...set].sort()
     },
+  }
+}
+
+
+/**
+ * 初始表情包 (2026-08-25, owner: 用户一开始不知道有表情包,给个初始) —
+ * bundled starter pack at `<repo>/assets/starter-stickers/` (5 张手绘熊 +
+ * manifest.json). Seeded ONLY into an EMPTY library, once: the moment the
+ * owner saves/curates anything, this never touches the library again.
+ */
+export function starterStickersDir(): string | null {
+  const root = isCompiledBundle()
+    ? compiledRepoRoot()
+    : join(dirname(fileURLToPath(import.meta.url)), '..', '..')   // src/daemon → repo
+  if (!root) return null
+  const dir = join(root, 'assets', 'starter-stickers')
+  return existsSync(dir) ? dir : null
+}
+
+/** Returns how many stickers were seeded (0 = library non-empty / pack absent / bad manifest). */
+export function seedStarterStickers(lib: StickerLib, packDir: string, log?: (tag: string, line: string) => void): number {
+  try {
+    if (lib.list().length > 0) return 0
+    const manifest = JSON.parse(readFileSync(join(packDir, 'manifest.json'), 'utf8')) as unknown
+    if (!Array.isArray(manifest)) return 0
+    let seeded = 0
+    for (const entry of manifest) {
+      const e = entry as { file?: unknown; tags?: unknown; desc?: unknown }
+      if (typeof e.file !== 'string' || !Array.isArray(e.tags)) continue
+      try {
+        lib.save(join(packDir, e.file), e.tags as string[], typeof e.desc === 'string' ? e.desc : undefined)
+        seeded++
+      } catch (err) {
+        log?.('STICKERS', `starter seed skipped ${e.file}: ${String(err)}`)
+      }
+    }
+    if (seeded > 0) log?.('STICKERS', `starter pack seeded: ${seeded} sticker(s)`)
+    return seeded
+  } catch {
+    return 0
   }
 }
