@@ -3740,6 +3740,22 @@ input { font: inherit; color: inherit; }
 .memory-profile-copy {
   min-width: 0;
 }
+.memory-summary-more { margin-top: 14px; display: grid; gap: 14px; }
+.memory-summary-more p { max-width: 800px; margin: 0; color: #6f543f; font-size: 26px; line-height: 1.55; white-space: pre-line; }
+.memory-summary-toggle {
+  margin-top: 14px;
+  padding: 6px 18px;
+  border: 2px solid rgba(89, 63, 44, .3);
+  border-radius: 12px 14px 10px 16px / 14px 10px 16px 12px;
+  background: rgba(255, 253, 248, .8);
+  color: #8b5e3c;
+  font: inherit;
+  font-size: 20px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.memory-summary-toggle:hover { border-color: #8a5a36; color: #5a3f2d; }
+
 /* CC 手绘小像 — hero 右列(原记忆胚胎位) */
 .cc-portrait-card {
   margin: 0;

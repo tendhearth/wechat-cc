@@ -600,7 +600,14 @@ export function renderMemoryProfileOverview(deps) {
             更新画像
           </button>
         </div>
-        <p>${escapeHtml(profile.summary)}</p>
+        ${(() => {
+          const paras = summaryParagraphs(profile.summary)
+          const lead = paras[0] || ""
+          const more = paras.slice(1)
+          return `<p>${escapeHtml(lead)}</p>` + (more.length ? `
+            <div class="memory-summary-more" id="memory-summary-more" hidden>${more.map(pp => `<p>${escapeHtml(pp)}</p>`).join("")}</div>
+            <button class="memory-summary-toggle" id="memory-summary-toggle" type="button">展开全文 ▾</button>` : "")
+        })()}
         <div class="memory-profile-tags">
           ${profile.tags.map(tag => `<span title="${escapeHtml(tag)}">${escapeHtml(tidyProfileTag(tag))}</span>`).join("")}
         </div>
@@ -660,9 +667,27 @@ export function renderMemoryProfileOverview(deps) {
     </div>
     </div>
   `
+  root.querySelector("#memory-summary-toggle")?.addEventListener("click", () => {
+    const more = document.getElementById("memory-summary-more")
+    const btn = document.getElementById("memory-summary-toggle")
+    if (!more || !btn) return
+    more.hidden = !more.hidden
+    btn.textContent = more.hidden ? "展开全文 ▾" : "收起 ▴"
+    requestAnimationFrame(() => fitMemoryArtboard())
+  })
   requestAnimationFrame(() => {
     fitMemoryArtboard()
   })
+}
+
+/** Split the profile summary into clean paragraphs: markdown hr lines
+ *  (--- / ***) dropped, blank-line separated. First paragraph is the lead;
+ *  the rest collapse behind 展开全文 so a multi-paragraph overview doesn't
+ *  blow the hero composition apart. Exported for tests.
+ *  @param {string} summary */
+export function summaryParagraphs(summary) {
+  const lines = String(summary || "").split("\n").filter(l => !/^\s*[-*_]{3,}\s*$/.test(l))
+  return lines.join("\n").split(/\n{2,}/).map(p => p.trim()).filter(Boolean)
 }
 
 /** CC 手绘小像 — fetched pre-sanitized from the daemon (reject-only
