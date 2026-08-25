@@ -90,15 +90,21 @@ fn render_qr_svg(text: String) -> Result<String, String> {
 // itself remains a regular webview page, so it can reuse the same Canvas scene
 // and assets as the dashboard rather than keeping a second animation engine in
 // Rust. A second request focuses the existing window instead of stacking copies.
+// ASYNC on purpose (2026-08-25, Windows 卡死 fix): Tauri v2's documented
+// rule is that creating a webview window inside a SYNCHRONOUS command
+// deadlocks on Windows — wry marshals window creation onto the main thread
+// while the sync command may itself be blocking that thread. `async fn`
+// moves the command off the main thread, which is the officially
+// recommended fix. macOS never deadlocked here; behavior there is unchanged.
 #[tauri::command]
-fn open_companion_window(app: AppHandle) -> Result<(), String> {
+async fn open_companion_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("companion") {
         window.show().map_err(|err| format!("show companion window: {err}"))?;
         window.set_focus().map_err(|err| format!("focus companion window: {err}"))?;
         return Ok(());
     }
 
-    WebviewWindowBuilder::new(
+    let builder = WebviewWindowBuilder::new(
         &app,
         "companion",
         WebviewUrl::App("companion-window.html".into()),
@@ -113,9 +119,16 @@ fn open_companion_window(app: AppHandle) -> Result<(), String> {
     .decorations(false)
     .always_on_top(true)
     .skip_taskbar(true)
-    .resizable(true)
-    .build()
-    .map_err(|err| format!("create companion window: {err}"))?;
+    .resizable(true);
+
+    // Windows: an undecorated window keeps its DWM shadow by default, which
+    // paints an opaque halo/flicker around a TRANSPARENT window. Drop it.
+    #[cfg(target_os = "windows")]
+    let builder = builder.shadow(false);
+
+    builder
+        .build()
+        .map_err(|err| format!("create companion window: {err}"))?;
 
     Ok(())
 }

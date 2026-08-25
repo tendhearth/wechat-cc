@@ -553,8 +553,22 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
 // and gated the side-effect on `import.meta.main` — when cli.ts imports this
 // module, import.meta.main is false (standard ESM semantics), so no daemon
 // would start. Compiled `wechat-cc-cli.exe run` would silently no-op.
+import { existsSync as fsExistsSync, readFileSync as fsReadFileSync } from 'node:fs'
 export async function main() {
   const stateDir = process.env.WECHAT_CC_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'wechat')
+  // daemon.env — provider API keys' restart-surviving home (env-file.ts).
+  // Loaded BEFORE bootDaemon so provider registration sees the keys; the
+  // real environment always wins over the file. Key NAMES only in logs.
+  try {
+    const envPath = join(stateDir, 'daemon.env')
+    if (fsExistsSync(envPath)) {
+      const { parseEnvFile } = await import('../lib/env-file')
+      const fileEnv = parseEnvFile(fsReadFileSync(envPath, 'utf8'))
+      const applied = Object.keys(fileEnv).filter(k => process.env[k] === undefined)
+      for (const k of applied) process.env[k] = fileEnv[k]!
+      if (applied.length > 0) log('DAEMON', `daemon.env loaded: ${applied.join(', ')}`)
+    }
+  } catch (err) { log('DAEMON', `daemon.env load failed (continuing): ${err instanceof Error ? err.message : err}`) }
   const dangerously = process.argv.includes('--dangerously')
   let handle: DaemonHandle
   try { handle = await bootDaemon({ stateDir, dangerously }) } catch (err) { console.error('[wechat-cc] fatal:', err); process.exit(1) }
