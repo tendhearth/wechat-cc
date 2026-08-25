@@ -166,8 +166,8 @@ export interface ConversationCoordinatorDeps {
 export function authFailNotice(providerId: ProviderId): string {
   const hint = capabilitiesFor(providerId).authFailHint
   return hint
-    ? `😴 我的大脑(${providerId})登录过期了,暂时想不了事…\n${hint}\n弄好之后再发我一条,就能叫醒我~`
-    : `😴 我的大脑(${providerId})登录过期了,暂时想不了事…让主人在电脑上重新登录一下,再发我一条就能叫醒我~`
+    ? `我这会儿够不着自己的脑子了,${providerId} 的登录好像过期了。\n${hint}\n弄好之后再发我一条,我就回来了。`
+    : `我这会儿够不着自己的脑子了,${providerId} 的登录好像过期了。让主人在电脑上重新登录一下,再发我一条,我就回来了。`
 }
 
 /** User-facing notice when a turn dies with a GENERIC error and produced no
@@ -178,9 +178,9 @@ export function authFailNotice(providerId: ProviderId): string {
 export function turnErrorNotice(providerId: ProviderId, error: string | undefined): string {
   const e = (error ?? '').toLowerCase()
   if (/enoent|not found|no such file|spawn|not installed/.test(e)) {
-    return `😵 我的大脑(${providerId})好像还没接好,这条没处理成…让主人在电脑上打开 wechat-cc 的「此刻」页,点一下「🧠 大脑」卡把我接上,再发我一条就好~`
+    return `这条我收到了,但没想起来怎么回——我的脑子(${providerId})好像还没在电脑上接好。麻烦主人打开 wechat-cc,在「此刻」页点一下大脑卡帮我接上,弄好再发我一条就行。`
   }
-  return `😵‍💫 呜,我刚才脑子短路了,这条没处理成…缓一会儿再发我一次?要是一直这样,让主人看看电脑上「此刻」页的「🧠 大脑」卡。`
+  return `刚刚脑子卡了一下,这条没接住…过一会儿再发我一次?老是这样的话,让主人在电脑上看看「此刻」页的大脑卡。`
 }
 
 /** Turn-taking policy for a mode (D3 — turn-entry unification). */
@@ -389,7 +389,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     } catch (err) {
       deps.log('TURN_TIMEOUT', `release ${alias}/${providerId} threw: ${err instanceof Error ? err.message : err}`)
     }
-    await deps.sendAssistantText?.(chatId, '⏱ 处理超时了，刚才那条没能回复，请稍后重发一次。')
+    await deps.sendAssistantText?.(chatId, '想了半天没想出来,刚才那条掉了…再发我一次?')
   }
   // RFC 03 review #11 — per-chat AbortController for in-flight chatroom
   // loops. dispatchChatroom registers; coordinator.cancel() signals; /stop

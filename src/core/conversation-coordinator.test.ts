@@ -486,7 +486,7 @@ describe('ConversationCoordinator', () => {
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
     const [chatId, text] = sendAssistantText.mock.calls[0]!
     expect(chatId).toBe('chat-1')
-    expect(text).toMatch(/超时|重发/)
+    expect(text).toMatch(/掉了|再发/)
   }, 3000)
 
   it('emits a structured TurnRecord for a completed solo turn', async () => {
@@ -1060,7 +1060,7 @@ describe('ConversationCoordinator', () => {
       // Codex's reply still forwarded with the parallel-mode prefix.
       expect(sent.some(t => t === '[Codex] codex reply')).toBe(true)
       // One timeout notice for the stalled side.
-      expect(sent.some(t => /超时|重发/.test(t))).toBe(true)
+      expect(sent.some(t => /掉了|再发/.test(t))).toBe(true)
     }, 3000)
 
     it('on acquire failure in parallel: the other provider still replies (allSettled acquire)', async () => {
@@ -1566,9 +1566,9 @@ describe('ConversationCoordinator', () => {
       // Both sessions released on timeout.
       expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: 'chat-r' })
       expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'codex', chatId: 'chat-r' })
-      // User sees a retry notice — "重发" is in the per-provider timeout message.
+      // User sees a retry notice — "再发" is in the per-provider timeout message.
       const sent = sendAssistantText.mock.calls.map(call => call[1] as string)
-      expect(sent.some(t => /重发/.test(t))).toBe(true)
+      expect(sent.some(t => /再发/.test(t))).toBe(true)
       // haikuEval not called (returned early on empty openings).
       expect(haikuEval).not.toHaveBeenCalled()
     }, 3000)
