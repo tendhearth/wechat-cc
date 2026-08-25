@@ -386,19 +386,20 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           const careState = p.care ?? '未设置'
           const stickersState = p.stickers === undefined ? '未设置' : (p.stickers ? 'on' : 'off')
           const huntState = p.hunt === undefined ? '未设置' : (p.hunt ? 'on' : 'off')
-          // Admin bonus: the graphical settings panel link (WeChat-tappable).
-          // Non-fatal — a null link (no LAN / no owner) keeps the old reply.
+          // Concise overview (owner feedback 2026-08-25: 回复应该更简洁,具体
+          // 修改到页面里) — values only; the panel link is where changes
+          // happen. The verbose per-key usage only appears when NO panel
+          // link is available (non-admin, no LAN, panel unwired).
           let panelLine = ''
           if (deps.isAdmin?.(msg.userId ?? msg.chatId) && deps.settingsPanelLink) {
             try {
               const url = await deps.settingsPanelLink()
-              if (url) panelLine = `\n\n📱 图形设置面板(点开就能改,10 分钟内有效):\n${url}`
-            } catch { /* keep the plain reply */ }
+              if (url) panelLine = `\n\n📱 点开修改(10 分钟内有效):\n${url}`
+            } catch { /* fall through to usage lines */ }
           }
-          await reply(
-            msg.chatId,
-            `当前设置(本对话):\n· split(拆分回复): ${splitState}\n· 关心(主动关心档位): ${careState}\n· 表情(表情包): ${stickersState}\n· 打猎(每日打猎): ${huntState}\n\n用法: /set split on|off — 回复像真人一样分几条发\n用法: /set care off|low|high — 主动关心档位(别名: 关心 关|低|高)\n用法: /set stickers on|off — 表情包开关(别名: 表情 开|关)\n用法: /set hunt on|off — 每日打猎开关(别名: 打猎 开|关)` + panelLine,
-          )
+          const values = `本对话设置:\n· 拆分回复: ${splitState}\n· 主动关心: ${careState}\n· 表情包: ${stickersState}\n· 每日打猎: ${huntState}`
+          const usage = panelLine ? '' : `\n\n改法: /set split|care|stickers|hunt <值>(别名: 拆分/关心/表情/打猎 开|关)`
+          await reply(msg.chatId, values + panelLine + usage)
           return true
         }
         const m2 = /^(split|拆分|care|关心|stickers|表情|hunt|打猎)\s+(\S+)$/i.exec(tail)
