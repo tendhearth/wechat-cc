@@ -990,13 +990,15 @@ const INCIDENTS_POLL_INTERVAL_MS = 60_000
  * it without awaiting, same fire-and-forget posture as checkExpiredDiff.
  */
 // ── 大脑体检 (LLM channel health, 2026-08-25) ─────────────────────────
-// 「连接正常」只证明微信侧;这块小卡真拨每个 provider(daemon 缓存 5 分钟)
-// 回答另一半问题:CC 的大脑现在接得通吗?
+// 「连接正常」只证明微信侧。这块小卡回答另一半:CC 的大脑接得通吗?
+// 真拨(?fresh=1)只在用户点「测试连接」时发生 —— 绝不自动外呼(owner
+// ruling:网络不稳时的无人值守外呼是风控/封号形状)。平时只显示上次
+// 测试结果 + 未接入 provider 的配置方法。
 
-const BRAIN_POLL_INTERVAL_MS = 5 * 60_000
+const BRAIN_POLL_INTERVAL_MS = 60_000
 let _lastBrainCheckAt = 0
 
-const PROVIDER_LABELS = { claude: "Claude", codex: "Codex", cursor: "Cursor", agy: "Gemini", openai: "OpenAI", gemini: "Gemini" }
+const PROVIDER_LABELS = { claude: "Claude", codex: "Codex", cursor: "Cursor", agy: "Gemini(agy)", openai: "OpenAI", gemini: "Gemini" }
 
 /** @param {{ invokeApi: Function }} deps @param {boolean} fresh */
 export async function loadBrainHealth(deps, fresh) {
@@ -1004,41 +1006,49 @@ export async function loadBrainHealth(deps, fresh) {
   if (!el) return
   if (fresh) {
     el.hidden = false
-    el.innerHTML = `<span class="brain-title">🧠 大脑</span><span class="brain-checking">正在逐个拨号体检…(最长约 1 分钟)</span>`
+    el.innerHTML = `<span class="brain-title">🧠 大脑</span><span class="brain-checking">正在逐个拨号测试…(最长约 1 分钟)</span>`
   }
   const r = await deps.invokeApi("GET", `/v1/llm/health${fresh ? "?fresh=1" : ""}`, undefined, { timeoutMs: 150_000 }).catch(() => null)
-  if (!r || r.ok !== true || !Array.isArray(r.results) || r.results.length === 0) { el.hidden = true; return }
-  const chips = r.results.map(x => {
-    const label = PROVIDER_LABELS[x.provider] || x.provider
-    const isDefault = x.provider === r.default_provider
+  if (!r || r.ok !== true) { el.hidden = true; return }
+  const results = Array.isArray(r.results) ? r.results : []
+  const byId = new Map(results.map(x => [x.provider, x]))
+  const registered = Array.isArray(r.registered) ? r.registered : []
+  const chips = registered.map(id => {
+    const label = PROVIDER_LABELS[id] || id
+    const x = byId.get(id)
+    const isDefault = id === r.default_provider
+    if (!x) return `<span class="brain-chip brain-meh${isDefault ? " brain-default" : ""}" title="已接入,还没测试过 — 点「测试连接」">${escapeHtml(label)} ?</span>`
     const cls = x.ok === true ? "ok" : x.ok === false ? "bad" : "meh"
     const mark = x.ok === true ? "✓" : x.ok === false ? "✗" : "—"
     const title = x.ok === true
       ? `${label} 正常 · ${Math.round(x.latency_ms / 1000)}s`
-      : x.ok === false
-        ? (x.hint || x.error || "不可用")
-        : "无法探测"
+      : x.ok === false ? (x.hint || x.error || "不可用") : "无法探测"
     return `<span class="brain-chip brain-${cls}${isDefault ? " brain-default" : ""}" title="${escapeHtml(title)}">${escapeHtml(label)} ${mark}</span>`
   }).join("")
-  const broken = r.results.filter(x => x.ok === false)
+  const unconfigured = Array.isArray(r.unconfigured) ? r.unconfigured : []
+  const moreChips = unconfigured.map(u =>
+    `<span class="brain-chip brain-off" title="${escapeHtml(u.how)}">${escapeHtml(PROVIDER_LABELS[u.provider] || u.provider)} +</span>`,
+  ).join("")
+  const broken = results.filter(x => x.ok === false)
   const hintLine = broken.length
     ? `<div class="brain-hint">${escapeHtml(broken.map(b => `${PROVIDER_LABELS[b.provider] || b.provider}:${b.hint || (b.auth_failed ? "登录失效" : b.error === "timeout" ? "超时没应答" : "连不上")}`).join(" · "))}</div>`
     : ""
+  const when = r.checked_at ? `<span class="brain-when">上次测试 ${formatRelativeTime(r.checked_at)}</span>` : `<span class="brain-when">还没测试过</span>`
   el.innerHTML = `
-    <span class="brain-title">🧠 大脑</span>${chips}
-    <button class="brain-recheck" type="button" data-action="brain-recheck" title="重新逐个拨号">体检</button>
+    <span class="brain-title">🧠 大脑</span>${chips}${moreChips}
+    ${when}
+    <button class="brain-recheck" type="button" data-action="brain-recheck" title="真拨每个已接入的 provider,验证通道+大脑">测试连接</button>
     ${hintLine}`
   el.hidden = false
 }
 
-/** Piggybacks the 5s doctor tick, throttled — same posture as
- *  checkIncidentsOnPoll below. The daemon caches for 5 min, so even an
- *  unthrottled poll wouldn't re-dial; the throttle just avoids HTTP chatter. */
+/** Piggybacks the 5s doctor tick, throttled. CACHED-ONLY (?fresh 缺省) —
+ *  纯读上次结果,绝不触发真实拨号,与 owner 的「只有用户点击才检测」一致。 */
 export function checkBrainHealthOnPoll(deps) {
   const now = Date.now()
   if (_lastBrainCheckAt !== 0 && now - _lastBrainCheckAt < BRAIN_POLL_INTERVAL_MS) return Promise.resolve()
   _lastBrainCheckAt = now
-  return loadBrainHealth(deps, false).catch(err => console.warn("[brain] health check failed:", err))
+  return loadBrainHealth(deps, false).catch(err => console.warn("[brain] health render failed:", err))
 }
 
 export function checkIncidentsOnPoll(deps) {

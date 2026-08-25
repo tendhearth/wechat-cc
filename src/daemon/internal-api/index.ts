@@ -375,8 +375,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setIncidents(incidents) {
       deps.incidents = incidents
     },
-    setLlmHealth(h) {
+    setLlmHealth(h, registered) {
       deps.llmHealth = h
+      if (registered) deps.llmRegistered = registered
     },
     mintSessionToken,
     invalidateSession(sessionKey: string) {

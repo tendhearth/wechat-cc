@@ -213,12 +213,22 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     },
 
     // ── user name (RFC 03 P1.B B3) ──────────────────────────────────────
-    // LLM 通道体检 (2026-08-25) — 微信通道绿灯不等于大脑能用;这条路由
-    // 真拨每个 provider(缓存 5 分钟,?fresh=1 强制重拨,即桌面「体检」钮)。
+    // LLM 通道体检 (2026-08-25) — 微信通道绿灯不等于大脑能用。真拨只在
+    // ?fresh=1(用户点「测试连接」)时发生 —— 绝不自动外呼(owner ruling:
+    // 网络不稳时的无人值守外呼是风控/封号形状);默认只回上次结果 +
+    // 已注册/未接入清单(未接入的带配置方法人话)。
     'GET /v1/llm/health': async (q) => {
       if (!deps.llmHealth) return { status: 503, body: { error: 'llm_health_not_wired' } }
+      const { unconfiguredHints } = await import('../llm-health')
       const fresh = q.get('fresh') === '1'
-      return { status: 200, body: { ok: true, ...(await deps.llmHealth.probe(fresh)) } }
+      const report = fresh ? await deps.llmHealth.dial() : deps.llmHealth.cached()
+      const registered = deps.llmRegistered?.() ?? []
+      return { status: 200, body: {
+        ok: true,
+        registered,
+        unconfigured: unconfiguredHints(registered),
+        ...(report ?? { checked_at: null, default_provider: null, results: [] }),
+      } }
     },
 
     'POST /v1/user/set_name': async (_q, body) => {

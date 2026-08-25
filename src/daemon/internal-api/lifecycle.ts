@@ -16,7 +16,7 @@ export interface InternalApiLifecycle extends Lifecycle {
   setPairing(pairing: NonNullable<InternalApiDeps['pairing']>): void
   setMemory(memory: NonNullable<InternalApiDeps['memoryLlm']>): void
   setIncidents(incidents: NonNullable<InternalApiDeps['incidents']>): void
-  setLlmHealth(h: NonNullable<InternalApiDeps['llmHealth']>): void
+  setLlmHealth(h: NonNullable<InternalApiDeps['llmHealth']>, registered?: () => string[]): void
   mintSessionToken(tier: import('../../core/user-tier').UserTier, sessionKey: string): string
   invalidateSession(sessionKey: string): void
 }
@@ -57,7 +57,7 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     setPairing: (pairing) => api.setPairing(pairing),
     setMemory: (memory) => api.setMemory(memory),
     setIncidents: (incidents) => api.setIncidents(incidents),
-    setLlmHealth: (h) => api.setLlmHealth(h),
+    setLlmHealth: (h, registered) => api.setLlmHealth(h, registered),
     mintSessionToken: (tier, sessionKey) => api.mintSessionToken(tier, sessionKey),
     invalidateSession: (sessionKey) => api.invalidateSession(sessionKey),
     stop: async () => {

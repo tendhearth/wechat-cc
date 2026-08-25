@@ -21,8 +21,8 @@ describe('makeLlmHealth', () => {
       timeoutMs: 5_000,
       log: () => {},
     })
-    const r = await h.probe(true)
-    const by = Object.fromEntries(r.results.map(x => [x.provider, x]))
+    const r = await h.dial()
+    const by = Object.fromEntries(r.results.map((x: { provider: string; latency_ms: number }) => [x.provider, x]))
     expect(by['claude']).toMatchObject({ ok: true })
     expect(by['claude']!.latency_ms).toBeGreaterThanOrEqual(0)
     expect(by['cursor']).toMatchObject({ ok: false, auth_failed: true, hint: '跑一次 cursor-agent login' })
@@ -38,7 +38,7 @@ describe('makeLlmHealth', () => {
       timeoutMs: 50,
       log: () => {},
     })
-    const r = await h.probe(true)
+    const r = await h.dial()
     expect(r.results[0]).toMatchObject({ ok: false, error: 'timeout' })
   })
 
@@ -49,28 +49,33 @@ describe('makeLlmHealth', () => {
       timeoutMs: 1_000,
       log: () => {},
     })
-    const r = await h.probe(true)
+    const r = await h.dial()
     expect(r.results[0]).toMatchObject({ provider: 'openai', ok: null })
   })
 
-  it('caches results for ttl; fresh=true bypasses', async () => {
+  it('cached() NEVER dials — only dial() does, and concurrent dials coalesce', async () => {
     const cheapEval = vi.fn(async () => 'ok')
-    let t = 1_000_000
     const h = makeLlmHealth({
       registry: reg({ claude: { cheapEval } }) as never,
       defaultProviderId: 'claude' as never,
       timeoutMs: 1_000,
-      ttlMs: 60_000,
-      now: () => t,
       log: () => {},
     })
-    await h.probe(false)
-    await h.probe(false)
-    expect(cheapEval).toHaveBeenCalledTimes(1)     // cached
-    await h.probe(true)
-    expect(cheapEval).toHaveBeenCalledTimes(2)     // fresh bypass
-    t += 61_000
-    await h.probe(false)
-    expect(cheapEval).toHaveBeenCalledTimes(3)     // ttl lapsed
+    expect(h.cached()).toBeNull()
+    expect(cheapEval).not.toHaveBeenCalled()       // no auto-dial, ever
+    const [a, b] = await Promise.all([h.dial(), h.dial()])
+    expect(cheapEval).toHaveBeenCalledTimes(1)     // coalesced
+    expect(a).toBe(b)
+    expect(h.cached()).toBe(a)                     // cached() returns it without dialing
+    expect(cheapEval).toHaveBeenCalledTimes(1)
+  })
+
+  it('unconfigured hints cover known providers minus registered', async () => {
+    const { unconfiguredHints, PROVIDER_SETUP_HINTS } = await import('./llm-health')
+    const hints = unconfiguredHints(['claude', 'codex'])
+    expect(hints.map(h2 => h2.provider)).not.toContain('claude')
+    expect(hints.map(h2 => h2.provider)).toContain('cursor')
+    expect(hints.find(h2 => h2.provider === 'cursor')!.how).toContain('cursor-agent login')
+    expect(Object.keys(PROVIDER_SETUP_HINTS).length).toBeGreaterThanOrEqual(6)
   })
 })

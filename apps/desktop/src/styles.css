@@ -6332,3 +6332,5 @@ input { font: inherit; color: inherit; }
 }
 .brain-recheck:hover { border-color: #8a5a36; }
 .brain-hint { flex-basis: 100%; color: #b0563a; font-size: 12px; }
+.brain-off { background: transparent; border: 1.5px dashed rgba(89, 63, 44, .3); color: #a08a75; cursor: help; }
+.brain-when { color: #a08a75; font-size: 11.5px; }

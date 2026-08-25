@@ -370,6 +370,8 @@ export interface InternalApiDeps {
   /** LLM 通道体检 (llm-health.ts) — late-bound like memoryLlm (needs the
    *  provider registry). GET /v1/llm/health 503s until set. */
   llmHealth?: import('../llm-health').LlmHealth
+  /** Registered provider ids (registry.list) — set alongside llmHealth. */
+  llmRegistered?: () => string[]
   /**
    * Resolves the default admin chat_id (access.json's single admin) when a
    * memory route's request body omits `chat_id`. Wired eagerly in main.ts
@@ -446,7 +448,7 @@ export interface InternalApi {
    * 503 until this is called.
    */
   setDelegate(d: InternalApiDelegateDep): void
-  setLlmHealth(h: import('../llm-health').LlmHealth): void
+  setLlmHealth(h: import('../llm-health').LlmHealth, registered?: () => string[]): void
   /**
    * Late-bind the conversation controller (coordinator.setMode) after
    * bootstrap has constructed the coordinator. /v1/conversation/set-mode

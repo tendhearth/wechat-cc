@@ -446,9 +446,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // health runtime actually wrote, not a second stale copy.
     internalApi.setIncidents(boot.health.incidents)
     // LLM 通道体检 (llm-health.ts) — needs the registry, so late-bound like
-    // setMemory above. Also fire ONE background probe at boot: the owner
-    // learns 「大脑连不上」 from the log/dashboard, not from a user's failed
-    // message.
+    // setMemory above. NO boot probe and no timer (owner ruling 2026-08-25):
+    // dialing happens ONLY when the user clicks 测试连接 — unprompted
+    // automated outbound calls on a flaky network are a risk-control (封号)
+    // shape. GET /v1/llm/health without ?fresh=1 never dials.
     {
       const { makeLlmHealth } = await import('./llm-health')
       const { capabilitiesFor } = await import('../core/capability-matrix')
@@ -458,13 +459,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         hintFor: (id) => capabilitiesFor(id).authFailHint,
         log,
       })
-      internalApi.setLlmHealth(llmHealth)
-      void llmHealth.probe(false).then(r => {
-        const bad = r.results.filter(x => x.ok === false)
-        log('LLM_HEALTH', bad.length === 0
-          ? `boot probe: ${r.results.filter(x => x.ok === true).length}/${r.results.length} provider(s) ok`
-          : `boot probe: BROKEN — ${bad.map(b => `${b.provider}(${b.auth_failed ? 'auth' : b.error})`).join(', ')}`)
-      }).catch(err => log('LLM_HEALTH', `boot probe failed: ${err instanceof Error ? err.message : err}`))
+      internalApi.setLlmHealth(llmHealth, () => boot.registry.list())
     }
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({

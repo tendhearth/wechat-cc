@@ -4,7 +4,7 @@
  *
  * The dashboard's 「连接正常」 only proves the WECHAT side (ilink heartbeat).
  * The brain side — claude/codex/cursor/agy auth — could be dead and nothing
- * showed it until a user message failed. This module actually DIALS each
+ * showed it until a user message failed. `dial()` actually calls each
  * registered provider (one tiny cheapEval, 「只回复:ok」) and classifies:
  *   ok           — round-trip succeeded (latency recorded)
  *   auth_failed  — credentials stale; `hint` carries the provider's own
@@ -14,9 +14,11 @@
  *   error        — anything else (binary missing, network, …)
  *   ok:null      — provider exposes no eval surface to probe (untested)
  *
- * Cost control: results are cached (default 5 min) — the desktop can poll
- * freely; a real re-dial happens only on TTL lapse or an explicit
- * fresh=true (the 「体检」 button).
+ * USER-INITIATED ONLY (owner ruling 2026-08-25): a dial round happens
+ * exclusively when the user clicks 测试连接 — never at boot, never on a
+ * timer or cache TTL. Unprompted automated calls on a flaky network are
+ * exactly the shape that trips provider risk-control (封号 risk). `cached()`
+ * returns the last user-initiated result and NEVER dials.
  */
 import type { ProviderId } from '../core/conversation'
 
@@ -45,13 +47,34 @@ export interface LlmHealthDeps {
   /** Provider-specific fix-it line (bootstrap wires capabilitiesFor(...).authFailHint). */
   hintFor?: (id: ProviderId) => string | undefined
   timeoutMs?: number
-  ttlMs?: number
   now?: () => number
   log: (tag: string, line: string) => void
 }
 
 export interface LlmHealth {
-  probe(fresh: boolean): Promise<LlmHealthReport>
+  /** Last user-initiated report, or null. NEVER dials. */
+  cached(): LlmHealthReport | null
+  /** One user-initiated dial round (concurrent callers coalesce). */
+  dial(): Promise<LlmHealthReport>
+}
+
+/** 人话 setup hints for providers that are NOT registered — surfaces in the
+ *  desktop 大脑 card so「桌面版不知道在哪里配置」has an answer per provider. */
+export const PROVIDER_SETUP_HINTS: Record<string, string> = {
+  claude: '安装 Claude Code 并在终端登录一次(claude)',
+  codex: '安装 codex CLI 并登录一次',
+  cursor: '终端跑:curl https://cursor.com/install -fsS | bash,然后 cursor-agent login(用 Cursor 订阅账号)',
+  agy: '安装 Antigravity CLI(agy)并登录一次(Google AI Pro 订阅)',
+  openai: '把 WECHAT_OPENAI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env,并配置 openaiBaseUrl/openaiModel',
+  gemini: '把 GEMINI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env',
+}
+
+/** Known providers not currently registered, each with its setup hint. */
+export function unconfiguredHints(registered: string[]): Array<{ provider: string; how: string }> {
+  const have = new Set(registered)
+  return Object.entries(PROVIDER_SETUP_HINTS)
+    .filter(([id]) => !have.has(id))
+    .map(([provider, how]) => ({ provider, how }))
 }
 
 const PROBE_PROMPT = '只回复两个字母:ok'
@@ -61,9 +84,8 @@ const AUTH_RE = /auth_failed|not logged in|login required|credential|unauthentic
 
 export function makeLlmHealth(deps: LlmHealthDeps): LlmHealth {
   const timeoutMs = deps.timeoutMs ?? 45_000
-  const ttlMs = deps.ttlMs ?? 5 * 60_000
   const now = deps.now ?? (() => Date.now())
-  let cached: { at: number; report: LlmHealthReport } | null = null
+  let cached: LlmHealthReport | null = null
   let inFlight: Promise<LlmHealthReport> | null = null
 
   async function probeOne(id: ProviderId): Promise<LlmProbeResult> {
@@ -105,13 +127,15 @@ export function makeLlmHealth(deps: LlmHealthDeps): LlmHealth {
     for (const r of results) {
       if (r.ok === false) deps.log('LLM_HEALTH', `${r.provider}: ${r.auth_failed ? 'AUTH FAILED' : r.error}`)
     }
-    cached = { at: now(), report }
+    cached = report
     return report
   }
 
   return {
-    async probe(fresh) {
-      if (!fresh && cached && now() - cached.at < ttlMs) return cached.report
+    cached() {
+      return cached
+    },
+    async dial() {
       // Coalesce concurrent callers onto one dial round.
       if (!inFlight) {
         inFlight = runProbe().finally(() => { inFlight = null })
