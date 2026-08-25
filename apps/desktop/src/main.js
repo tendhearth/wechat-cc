@@ -32,7 +32,7 @@ import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
-import { initCustomerReviewPage, stopCustomerReviewPolling } from "./modules/customer-review.js"
+import { stopCustomerReviewPolling } from "./modules/customer-review.js"
 import { initTodosPage } from "./modules/todos.js"
 import { initConversePage } from "./modules/converse.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
@@ -479,13 +479,10 @@ function activateDialogueWorkspace() {
   const dialogueRoot = document.getElementById("dialogue-root")
   const todosRoot = document.getElementById("todos-root")
   const reviewRoot = document.getElementById("customer-review-root")
-  if (mode === "customer-review") {
-    if (dialogueRoot) dialogueRoot.hidden = true
-    if (todosRoot) todosRoot.hidden = true
-    if (reviewRoot) reviewRoot.hidden = false
-    stopDialogueAutoRefresh()
-    initCustomerReviewPage()
-  } else if (mode === "todos") {
+  // 客户回顾 tab retired (2026-08-25, owner: 「客户回顾其实应该是待办」)
+  // — the obligation fact store behind 待办 covers the same ground
+  // continuously. Module + routes kept for now; only the entry is gone.
+  if (mode === "todos") {
     if (dialogueRoot) dialogueRoot.hidden = true
     if (todosRoot) todosRoot.hidden = false
     if (reviewRoot) reviewRoot.hidden = true

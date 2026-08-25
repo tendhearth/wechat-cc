@@ -3744,9 +3744,10 @@ input { font: inherit; color: inherit; }
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  width: 484px;
+  width: auto;
+  max-width: 100%;
   min-height: 84px;
-  padding: 0 31px;
+  padding: 0 56px 0 72px;
   transform: translateY(10px);
   border-radius: 0;
   color: #8b5e3c;
@@ -3755,6 +3756,7 @@ input { font: inherit; color: inherit; }
   box-shadow: none;
   font-size: 22px;
   font-weight: 700;
+  white-space: nowrap;
 }
 .memory-profile-kicker .spark {
   font-family: var(--mono);
@@ -3763,8 +3765,10 @@ input { font: inherit; color: inherit; }
 .memory-profile-kicker > span:not(.spark) {
   display: inline-block;
   font-size: 22px;
-  transform: translateX(30px) skewY(-1deg);
+  transform: skewY(-1deg);
   transform-origin: left center;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .memory-profile-title-row {
   display: flex;
