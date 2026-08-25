@@ -159,6 +159,8 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // ⚠️ RELEASE-REVIEW FLAG(下次 dev→master surface)。
   'POST /v1/memory/synthesize': 'trusted',
   'POST /v1/memory/profile/generate': 'trusted',
+  'POST /v1/memory/portrait/generate': 'trusted',
+  'GET /v1/memory/portrait': 'trusted',
   // 桌面读故障记录以显示"上次故障"横幅。trusted:桌面/CLI 的唯一凭据是
   // 0600 文件 token;内容只有时间戳与分类,不含聊天数据。
   'GET /v1/health/incidents': 'trusted',

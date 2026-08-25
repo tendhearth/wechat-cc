@@ -3740,6 +3740,43 @@ input { font: inherit; color: inherit; }
 .memory-profile-copy {
   min-width: 0;
 }
+/* CC 手绘小像 — hero 右列(原记忆胚胎位) */
+.cc-portrait-card {
+  margin: 0;
+  justify-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+.cc-portrait-frame {
+  width: 480px;
+  height: 480px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background: #fffdf8;
+  border: 3px solid rgba(89, 63, 44, .35);
+  border-radius: 18px 22px 16px 24px / 22px 16px 24px 18px;
+  box-shadow: 0 10px 32px rgba(89, 63, 44, .12);
+  transform: rotate(-1.2deg);
+}
+.cc-portrait-frame svg {
+  width: 100%;
+  height: 100%;
+}
+.cc-portrait-empty .cc-portrait-frame {
+  border-style: dashed;
+  background: rgba(255, 253, 248, .6);
+  font-size: 96px;
+}
+.cc-portrait-card figcaption {
+  color: #8b5e3c;
+  font-size: 22px;
+  font-weight: 700;
+  transform: rotate(-0.6deg);
+}
 .memory-profile-kicker {
   display: inline-flex;
   align-items: center;
