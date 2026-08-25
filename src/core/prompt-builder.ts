@@ -342,7 +342,7 @@ function toolsSection(): string {
 
 项目 / 路由：
 - \`list_projects()\` / \`switch_project(alias)\` / \`add_project(alias, path)\` / \`remove_project(alias)\` — 项目别名管理。
-- \`set_user_name(chat_id, name)\` — 记住新用户的显示名称。
+- \`set_user_name(chat_id, name)\` — 记住新用户的显示名称。name 传称呼本身:用户说「叫我大人」⇒ name 是「大人」,别把「叫我/请叫我」这类话术存进去。
 
 语音 TTS 配置：
 - \`voice_config_status()\` — 查询当前 TTS 配置状态（不返回 api_key）。

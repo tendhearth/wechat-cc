@@ -12,6 +12,7 @@ import { basename } from 'node:path'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
 import { splitReply, paceMs } from '../reply-split'
 import { lookup } from '../../core/capability-matrix'
+import { normalizeUserName } from '../../lib/user-name'
 import type { Mode } from '../../core/conversation'
 import type { UserTier } from '../../core/user-tier'
 import { makeEventsStore } from '../events/store'
@@ -217,7 +218,9 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       // Body is pre-validated by index.ts via UserSetNameRequest schema.
       const { chat_id, name } = body as UserSetNameRequestT
       try {
-        await deps.setUserName(chat_id, name)
+        // 「叫我大人」→「大人」 — the model routinely stores the human's whole
+        // answer phrase as the name; normalize at the boundary (user-name.ts).
+        await deps.setUserName(chat_id, normalizeUserName(name))
         return { status: 200, body: { ok: true } }
       } catch (err) {
         return { status: 200, body: { ok: false, error: errMsg(err) } }

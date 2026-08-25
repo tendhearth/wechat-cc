@@ -3786,10 +3786,6 @@ input { font: inherit; color: inherit; }
   color: #6f543f;
   font-size: 26px;
   line-height: 1.55;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
   white-space: pre-line;
 }
 .memory-profile-tags {
