@@ -213,6 +213,14 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     },
 
     // ── user name (RFC 03 P1.B B3) ──────────────────────────────────────
+    // LLM 通道体检 (2026-08-25) — 微信通道绿灯不等于大脑能用;这条路由
+    // 真拨每个 provider(缓存 5 分钟,?fresh=1 强制重拨,即桌面「体检」钮)。
+    'GET /v1/llm/health': async (q) => {
+      if (!deps.llmHealth) return { status: 503, body: { error: 'llm_health_not_wired' } }
+      const fresh = q.get('fresh') === '1'
+      return { status: 200, body: { ok: true, ...(await deps.llmHealth.probe(fresh)) } }
+    },
+
     'POST /v1/user/set_name': async (_q, body) => {
       if (!deps.setUserName) return { status: 503, body: { error: 'set_user_name_not_wired' } }
       // Body is pre-validated by index.ts via UserSetNameRequest schema.

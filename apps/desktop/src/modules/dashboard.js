@@ -989,6 +989,58 @@ const INCIDENTS_POLL_INTERVAL_MS = 60_000
  * rejects) so tests can await it; main.js's doctorPoller subscriber fires
  * it without awaiting, same fire-and-forget posture as checkExpiredDiff.
  */
+// ── 大脑体检 (LLM channel health, 2026-08-25) ─────────────────────────
+// 「连接正常」只证明微信侧;这块小卡真拨每个 provider(daemon 缓存 5 分钟)
+// 回答另一半问题:CC 的大脑现在接得通吗?
+
+const BRAIN_POLL_INTERVAL_MS = 5 * 60_000
+let _lastBrainCheckAt = 0
+
+const PROVIDER_LABELS = { claude: "Claude", codex: "Codex", cursor: "Cursor", agy: "Gemini", openai: "OpenAI", gemini: "Gemini" }
+
+/** @param {{ invokeApi: Function }} deps @param {boolean} fresh */
+export async function loadBrainHealth(deps, fresh) {
+  const el = document.getElementById("brain-health")
+  if (!el) return
+  if (fresh) {
+    el.hidden = false
+    el.innerHTML = `<span class="brain-title">🧠 大脑</span><span class="brain-checking">正在逐个拨号体检…(最长约 1 分钟)</span>`
+  }
+  const r = await deps.invokeApi("GET", `/v1/llm/health${fresh ? "?fresh=1" : ""}`, undefined, { timeoutMs: 150_000 }).catch(() => null)
+  if (!r || r.ok !== true || !Array.isArray(r.results) || r.results.length === 0) { el.hidden = true; return }
+  const chips = r.results.map(x => {
+    const label = PROVIDER_LABELS[x.provider] || x.provider
+    const isDefault = x.provider === r.default_provider
+    const cls = x.ok === true ? "ok" : x.ok === false ? "bad" : "meh"
+    const mark = x.ok === true ? "✓" : x.ok === false ? "✗" : "—"
+    const title = x.ok === true
+      ? `${label} 正常 · ${Math.round(x.latency_ms / 1000)}s`
+      : x.ok === false
+        ? (x.hint || x.error || "不可用")
+        : "无法探测"
+    return `<span class="brain-chip brain-${cls}${isDefault ? " brain-default" : ""}" title="${escapeHtml(title)}">${escapeHtml(label)} ${mark}</span>`
+  }).join("")
+  const broken = r.results.filter(x => x.ok === false)
+  const hintLine = broken.length
+    ? `<div class="brain-hint">${escapeHtml(broken.map(b => `${PROVIDER_LABELS[b.provider] || b.provider}:${b.hint || (b.auth_failed ? "登录失效" : b.error === "timeout" ? "超时没应答" : "连不上")}`).join(" · "))}</div>`
+    : ""
+  el.innerHTML = `
+    <span class="brain-title">🧠 大脑</span>${chips}
+    <button class="brain-recheck" type="button" data-action="brain-recheck" title="重新逐个拨号">体检</button>
+    ${hintLine}`
+  el.hidden = false
+}
+
+/** Piggybacks the 5s doctor tick, throttled — same posture as
+ *  checkIncidentsOnPoll below. The daemon caches for 5 min, so even an
+ *  unthrottled poll wouldn't re-dial; the throttle just avoids HTTP chatter. */
+export function checkBrainHealthOnPoll(deps) {
+  const now = Date.now()
+  if (_lastBrainCheckAt !== 0 && now - _lastBrainCheckAt < BRAIN_POLL_INTERVAL_MS) return Promise.resolve()
+  _lastBrainCheckAt = now
+  return loadBrainHealth(deps, false).catch(err => console.warn("[brain] health check failed:", err))
+}
+
 export function checkIncidentsOnPoll(deps) {
   const now = Date.now()
   if (_lastIncidentsCheckAt !== 0 && now - _lastIncidentsCheckAt < INCIDENTS_POLL_INTERVAL_MS) return Promise.resolve()

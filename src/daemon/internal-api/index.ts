@@ -375,6 +375,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setIncidents(incidents) {
       deps.incidents = incidents
     },
+    setLlmHealth(h) {
+      deps.llmHealth = h
+    },
     mintSessionToken,
     invalidateSession(sessionKey: string) {
       registry.invalidateSession(sessionKey)

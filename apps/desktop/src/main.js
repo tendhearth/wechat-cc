@@ -27,7 +27,7 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkBrainHealthOnPoll, loadBrainHealth } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
@@ -298,6 +298,7 @@ function wireDoctorSubscribers() {
   // outage that starts while the app is open surfaces without the owner
   // needing to revisit the overview pane.
   doctorPoller.subscribe(() => checkIncidentsOnPoll(deps))
+  doctorPoller.subscribe(() => checkBrainHealthOnPoll(deps))
   conversationsPoller.subscribe(report => {
     if (state.mode === "dashboard") renderConversations(report, { invoke })
   })
@@ -492,6 +493,12 @@ function activateDialogueWorkspace() {
 // ─── DOM event wiring ────────────────────────────────────────────────
 
 function wireEvents() {
+  // 大脑体检按钮 — 强制重拨(绕过 daemon 的 5 分钟缓存)
+  document.getElementById("brain-health")?.addEventListener("click", (ev) => {
+    const btn = ev.target instanceof HTMLElement ? ev.target.closest('[data-action="brain-recheck"]') : null
+    if (btn) loadBrainHealth(deps, true).catch(err => console.warn("[brain] recheck failed:", err))
+  })
+
   // 后厨 sub-tabs (会话/插件/日志) — one identical strip lives at the top of
   // each of the three backstage panes; clicking just switches the dash pane.
   document.querySelectorAll(".dialogue-workspace-tab[data-backstage-pane]").forEach(tab => {
