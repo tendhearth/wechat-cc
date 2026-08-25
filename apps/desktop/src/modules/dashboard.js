@@ -1027,7 +1027,7 @@ export async function loadBrainHealth(deps, fresh) {
   }).join("")
   const unconfigured = Array.isArray(r.unconfigured) ? r.unconfigured : []
   const moreChips = unconfigured.map(u =>
-    `<span class="brain-chip brain-off" title="${escapeHtml(u.how)}">${escapeHtml(PROVIDER_LABELS[u.provider] || u.provider)} +</span>`,
+    `<button class="brain-chip brain-off" type="button" data-brain-setup="${escapeHtml(u.provider)}" title="${escapeHtml(u.how)}">${escapeHtml(PROVIDER_LABELS[u.provider] || u.provider)} +</button>`,
   ).join("")
   const broken = results.filter(x => x.ok === false)
   const hintLine = broken.length
@@ -1038,8 +1038,66 @@ export async function loadBrainHealth(deps, fresh) {
     <span class="brain-title">🧠 大脑</span>${chips}${moreChips}
     ${when}
     <button class="brain-recheck" type="button" data-action="brain-recheck" title="真拨每个已接入的 provider,验证通道+大脑">测试连接</button>
-    ${hintLine}`
+    ${hintLine}
+    <div class="brain-setup" id="brain-setup" hidden></div>`
   el.hidden = false
+}
+
+// CLI/订阅型 provider 的接入命令(点「+」显示,可一键复制,不用小白翻文档)
+const CLI_SETUP = {
+  claude: { title: "Claude Code(订阅)", cmds: ["npm install -g @anthropic-ai/claude-code", "claude"], note: "第二条命令会引导浏览器登录" },
+  codex: { title: "Codex CLI(订阅)", cmds: ["npm install -g @openai/codex", "codex"], note: "首次运行会引导登录" },
+  cursor: { title: "Cursor(订阅)", cmds: ["curl https://cursor.com/install -fsS | bash", "cursor-agent login"], note: "用你的 Cursor 账号在浏览器点一下授权" },
+  agy: { title: "Gemini · Antigravity(订阅)", cmds: ["agy"], note: "需先安装 Antigravity CLI,首次运行引导 Google 登录" },
+}
+
+/** 点「+」徽章 → 就地展开接入表单/命令。 @param {{ invokeApi: Function }} _deps @param {string} provider */
+export function openBrainSetup(_deps, provider) {
+  const box = document.getElementById("brain-setup")
+  if (!box) return
+  box.hidden = false
+  if (provider === "openai" || provider === "gemini") {
+    const isOpenai = provider === "openai"
+    box.innerHTML = `
+      <div class="brain-setup-title">接入 ${isOpenai ? "OpenAI 兼容接口" : "Gemini(API Key)"}</div>
+      <div class="brain-setup-form">
+        <input type="password" id="brain-key" placeholder="API Key(粘贴到这里)" autocomplete="off" />
+        ${isOpenai ? `<input type="text" id="brain-baseurl" placeholder="接口地址,如 https://api.openai.com/v1" autocomplete="off" />
+        <input type="text" id="brain-model" placeholder="模型名,如 gpt-5" autocomplete="off" />` : `<input type="text" id="brain-model" placeholder="模型名,可留空" autocomplete="off" />`}
+        <button class="brain-recheck" type="button" data-action="brain-save-key" data-provider="${provider}">保存</button>
+        <span class="brain-setup-status" id="brain-setup-status"></span>
+      </div>`
+    return
+  }
+  const c = CLI_SETUP[provider]
+  if (!c) { box.hidden = true; return }
+  box.innerHTML = `
+    <div class="brain-setup-title">接入 ${escapeHtml(c.title)} — 在终端里跑:</div>
+    ${c.cmds.map(cmd => `
+      <div class="brain-cmd"><code>${escapeHtml(cmd)}</code><button class="brain-copy" type="button" data-copy-cmd="${escapeHtml(cmd)}">复制</button></div>`).join("")}
+    <div class="brain-setup-note">${escapeHtml(c.note)},完成后回来点「测试连接」。</div>`
+}
+
+/** 保存 API key(走 owner-workspace 通道,daemon 落 daemon.env,值不进日志)。
+ *  @param {{ invokeApi: Function }} deps @param {string} provider */
+export async function saveBrainKey(deps, provider) {
+  const status = document.getElementById("brain-setup-status")
+  const key = /** @type {HTMLInputElement|null} */ (document.getElementById("brain-key"))?.value.trim() ?? ""
+  if (!key) { if (status) status.textContent = "先粘贴 Key"; return }
+  const baseUrl = /** @type {HTMLInputElement|null} */ (document.getElementById("brain-baseurl"))?.value.trim()
+  const model = /** @type {HTMLInputElement|null} */ (document.getElementById("brain-model"))?.value.trim()
+  if (status) status.textContent = "保存中…"
+  try {
+    const r = await deps.invokeApi("POST", "/v1/llm/keys", Object.assign({ provider, key },
+      baseUrl ? { base_url: baseUrl } : {}, model ? { model } : {}))
+    if (r && r.ok) {
+      if (status) status.innerHTML = `已保存 ✓ 重启 CC 后生效 <button class="brain-recheck" type="button" data-action="brain-restart">立即重启</button>`
+    } else {
+      if (status) status.textContent = `没保存上:${(r && r.error) || "unknown"}`
+    }
+  } catch (err) {
+    if (status) status.textContent = `没保存上:${err instanceof Error ? err.message : err}`
+  }
 }
 
 /** Piggybacks the 5s doctor tick, throttled. CACHED-ONLY (?fresh 缺省) —

@@ -416,6 +416,7 @@ Bun.serve({
     // passes through the shim.
     const TODOS_PROXY_ROUTES = new Set([
       '/v1/knowledge/facts/find_facts',
+      '/v1/llm/keys',
       '/v1/knowledge/facts/set_fact_status',
       '/v1/knowledge/graph/top_contacts',
       '/v1/reminders/schedule',

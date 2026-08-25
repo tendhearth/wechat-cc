@@ -27,7 +27,7 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkBrainHealthOnPoll, loadBrainHealth } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkBrainHealthOnPoll, loadBrainHealth, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
@@ -493,10 +493,32 @@ function activateDialogueWorkspace() {
 // ─── DOM event wiring ────────────────────────────────────────────────
 
 function wireEvents() {
-  // 大脑体检按钮 — 强制重拨(绕过 daemon 的 5 分钟缓存)
+  // 大脑卡交互:测试连接(唯一的真实拨号入口)/ 接入表单 / 复制命令 / 保存 key / 重启
   document.getElementById("brain-health")?.addEventListener("click", (ev) => {
-    const btn = ev.target instanceof HTMLElement ? ev.target.closest('[data-action="brain-recheck"]') : null
-    if (btn) loadBrainHealth(deps, true).catch(err => console.warn("[brain] recheck failed:", err))
+    const t = ev.target instanceof HTMLElement ? ev.target : null
+    if (!t) return
+    if (t.closest('[data-action="brain-recheck"]')) {
+      loadBrainHealth(deps, true).catch(err => console.warn("[brain] recheck failed:", err))
+      return
+    }
+    const setup = t.closest("[data-brain-setup]")
+    if (setup instanceof HTMLElement && setup.dataset.brainSetup) {
+      openBrainSetup(deps, setup.dataset.brainSetup)
+      return
+    }
+    const copy = t.closest("[data-copy-cmd]")
+    if (copy instanceof HTMLElement && copy.dataset.copyCmd) {
+      navigator.clipboard?.writeText(copy.dataset.copyCmd).then(() => { copy.textContent = "已复制 ✓"; setTimeout(() => { copy.textContent = "复制" }, 1500) }).catch(() => {})
+      return
+    }
+    const save = t.closest('[data-action="brain-save-key"]')
+    if (save instanceof HTMLElement && save.dataset.provider) {
+      saveBrainKey(deps, save.dataset.provider).catch(err => console.warn("[brain] save key failed:", err))
+      return
+    }
+    if (t.closest('[data-action="brain-restart"]')) {
+      restartDaemon(deps).catch(err => console.warn("[brain] restart failed:", err))
+    }
   })
 
   // 后厨 sub-tabs (会话/插件/日志) — one identical strip lives at the top of

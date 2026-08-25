@@ -213,6 +213,41 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     },
 
     // ── user name (RFC 03 P1.B B3) ──────────────────────────────────────
+    // LLM key 图形化填入 (2026-08-25, owner: 「你让小白用户写到变量里?」)
+    // — 桌面大脑卡的「OpenAI/Gemini +」表单落到这里;daemon 自己写
+    // daemon.env(0600,原子替换),用户永远不用知道那个文件存在。
+    // admin 层(密钥),桌面走 owner-workspace 通道。值绝不进日志。
+    'POST /v1/llm/keys': async (_q, body) => {
+      const b = (body ?? {}) as { provider?: unknown; key?: unknown; base_url?: unknown; model?: unknown }
+      const provider = b.provider
+      if (provider !== 'openai' && provider !== 'gemini') {
+        return { status: 400, body: { error: 'unsupported_provider (openai | gemini)' } }
+      }
+      const key = typeof b.key === 'string' ? b.key.trim() : ''
+      if (key === '' || key.length > 500 || /\s/.test(key)) {
+        return { status: 400, body: { error: 'invalid_key' } }
+      }
+      const { existsSync: envExists, readFileSync: envRead, writeFileSync: envWrite, renameSync: envRename } = await import('node:fs')
+      const { join: envJoin } = await import('node:path')
+      const { upsertEnvFile } = await import('../../lib/env-file')
+      const { writeConfigKey } = await import('../../lib/config-surface')
+      const envName = provider === 'openai' ? 'WECHAT_OPENAI_API_KEY' : 'GEMINI_API_KEY'
+      const envPath = envJoin(deps.stateDir, 'daemon.env')
+      const current = envExists(envPath) ? envRead(envPath, 'utf8') : ''
+      const tmp = `${envPath}.tmp`
+      envWrite(tmp, upsertEnvFile(current, { [envName]: key }), { mode: 0o600 })
+      envRename(tmp, envPath)
+      // Companion config fields ride the validated config surface.
+      if (provider === 'openai') {
+        if (typeof b.base_url === 'string' && b.base_url.trim() !== '') await writeConfigKey(deps.stateDir, 'openaiBaseUrl', b.base_url.trim())
+        if (typeof b.model === 'string' && b.model.trim() !== '') await writeConfigKey(deps.stateDir, 'openaiModel', b.model.trim())
+      } else if (typeof b.model === 'string' && b.model.trim() !== '') {
+        await writeConfigKey(deps.stateDir, 'geminiModel', b.model.trim())
+      }
+      deps.log?.('LLM_HEALTH', `${envName} saved via desktop form (value not logged) — restart to register`)
+      return { status: 200, body: { ok: true, restart_required: true } }
+    },
+
     // LLM 通道体检 (2026-08-25) — 微信通道绿灯不等于大脑能用。真拨只在
     // ?fresh=1(用户点「测试连接」)时发生 —— 绝不自动外呼(owner ruling:
     // 网络不稳时的无人值守外呼是风控/封号形状);默认只回上次结果 +

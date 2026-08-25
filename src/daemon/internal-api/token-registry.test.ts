@@ -42,6 +42,7 @@ describe('token-registry', () => {
       'GET /v1/customer-review/history',
       'POST /v1/customer-review/item',
       'POST /v1/knowledge/facts/find_facts',
+      'POST /v1/llm/keys',
       'POST /v1/knowledge/facts/set_fact_status',
       'POST /v1/knowledge/graph/top_contacts',
       'POST /v1/reminders/schedule',

@@ -6334,3 +6334,12 @@ input { font: inherit; color: inherit; }
 .brain-hint { flex-basis: 100%; color: #b0563a; font-size: 12px; }
 .brain-off { background: transparent; border: 1.5px dashed rgba(89, 63, 44, .3); color: #a08a75; cursor: help; }
 .brain-when { color: #a08a75; font-size: 11.5px; }
+.brain-setup { flex-basis: 100%; margin-top: 6px; padding-top: 8px; border-top: 1px dashed rgba(89, 63, 44, .18); }
+.brain-setup-title { color: #5a3f2d; font-weight: 700; font-size: 12.5px; margin-bottom: 6px; }
+.brain-setup-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.brain-setup-form input { font: inherit; font-size: 12px; padding: 5px 9px; border: 1.5px solid rgba(89, 63, 44, .25); border-radius: 8px; background: #fffdf8; color: #5a3f2d; min-width: 200px; }
+.brain-setup-status { color: #4d7c4d; font-size: 12px; }
+.brain-cmd { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+.brain-cmd code { background: rgba(89, 63, 44, .08); padding: 4px 10px; border-radius: 6px; font-size: 11.5px; color: #5a3f2d; overflow-x: auto; }
+.brain-copy { font: inherit; font-size: 11px; padding: 2px 10px; border: 1.5px solid rgba(89, 63, 44, .25); border-radius: 999px; background: #fffdf8; color: #5a3f2d; cursor: pointer; }
+.brain-setup-note { color: #8b5e3c; font-size: 11.5px; margin-top: 4px; }

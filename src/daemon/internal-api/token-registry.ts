@@ -150,6 +150,7 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           // webview JS never holds this token): obligation list + status
           // writes, contact display names, reminder scheduling.
           'POST /v1/knowledge/facts/find_facts',
+          'POST /v1/llm/keys',
           'POST /v1/knowledge/facts/set_fact_status',
           'POST /v1/knowledge/graph/top_contacts',
           'POST /v1/reminders/schedule',

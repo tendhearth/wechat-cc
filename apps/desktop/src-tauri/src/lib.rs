@@ -789,6 +789,7 @@ async fn customer_review_api(
     // Still a hard allow-list, still no generic proxying.
     const OWNER_WORKSPACE_ROUTES: [&str; 4] = [
         "/v1/knowledge/facts/find_facts",
+        "/v1/llm/keys",
         "/v1/knowledge/facts/set_fact_status",
         "/v1/knowledge/graph/top_contacts",
         "/v1/reminders/schedule",

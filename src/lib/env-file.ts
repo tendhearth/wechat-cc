@@ -30,3 +30,27 @@ export function parseEnvFile(content: string): Record<string, string> {
   }
   return out
 }
+
+
+/**
+ * Update KEY=VALUE lines in an env file body, preserving every other line
+ * (comments, blanks, unknown content) byte-for-byte. Existing keys are
+ * replaced in place; new keys are appended. Values are written raw (callers
+ * pass trimmed secrets; quoting is unnecessary for the daemon's own parser).
+ */
+export function upsertEnvFile(content: string, updates: Record<string, string>): string {
+  const remaining = { ...updates }
+  const lines = content.split('\n').map(line => {
+    const stripped = (line.trim().startsWith('export ') ? line.trim().slice(7) : line.trim())
+    const eq = stripped.indexOf('=')
+    if (eq <= 0) return line
+    const name = stripped.slice(0, eq).trim()
+    if (!(name in remaining)) return line
+    const value = remaining[name]!
+    delete remaining[name]
+    return `${name}=${value}`
+  })
+  while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') lines.pop()
+  for (const [name, value] of Object.entries(remaining)) lines.push(`${name}=${value}`)
+  return lines.join('\n') + '\n'
+}

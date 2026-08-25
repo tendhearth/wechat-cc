@@ -160,6 +160,7 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/memory/synthesize': 'trusted',
   'POST /v1/memory/profile/generate': 'trusted',
   'GET /v1/llm/health': 'trusted',
+  'POST /v1/llm/keys': 'admin',
   'POST /v1/memory/portrait/generate': 'trusted',
   'GET /v1/memory/portrait': 'trusted',
   // 桌面读故障记录以显示"上次故障"横幅。trusted:桌面/CLI 的唯一凭据是
