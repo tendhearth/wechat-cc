@@ -27,6 +27,8 @@ import type { CareLedger } from '../companion/care-ledger'
 import type { ReplySinks } from '../reply-sinks'
 import { loadCompanionConfig } from '../companion/config'
 import { resolveAdminChatId } from '../companion/resolve-admin'
+import { makeSettingsPanel } from '../settings-panel'
+import { makeEventsStore } from '../events/store'
 import { makeGuestRequestStore, GUEST_REQUEST_TTL_MS } from '../guest-requests'
 import { makeForwardBudget } from '../../core/forward-budget'
 import type { InboundMsg } from '../../core/prompt-format'
@@ -338,6 +340,26 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     },
   })
 
+  // 微信可点开的图形设置面板 (2026-08-25) — lazily-started LAN server, every
+  // endpoint gated on a one-active 10-min token. /set (no args) from an
+  // admin appends the link. See settings-panel.ts's security posture.
+  const settingsPanel = makeSettingsPanel({
+    stateDir,
+    ownerChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null),
+    chatPrefs: {
+      get: (c) => ({ ...chatPrefs.get(c) }),
+      set: (c, patch) => ({ ...chatPrefs.set(c, patch as Parameters<typeof chatPrefs.set>[1]) }),
+    },
+    getUserName: (c) => ilink.resolveUserName(c) ?? null,
+    setUserName: (c, n) => ilink.setUserName(c, n),
+    audit: (reasoning) => {
+      const auditChat = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) ?? '_operator'
+      makeEventsStore(db, auditChat).append({ kind: 'config_changed', trigger: 'settings_panel', reasoning })
+        .catch(() => { /* audit is best-effort — same posture as routes-config */ })
+    },
+    log: (tag, line) => log(tag, line),
+  })
+
   const modeHandler = makeModeCommands({
     coordinator: boot.coordinator,
     registry: boot.registry,
@@ -362,6 +384,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     chatPrefs,
     log,
     isAdmin,
+    settingsPanelLink: () => settingsPanel.linkUrl(),
     // /agy's tier-C guest gate (mode-commands.ts) — same loadAccess() +
     // resolveTier() pairing the coordinator's own resolveTier closure uses
     // (bootstrap/index.ts). loadAccess() has a 5s in-process TTL cache, so

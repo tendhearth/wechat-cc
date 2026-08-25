@@ -59,6 +59,10 @@ export interface ModeCommandsDeps {
   log: (tag: string, line: string) => void
   /** Returns true when userId belongs to an admin. Used by /help to gate the admin section. */
   isAdmin?: (userId: string) => boolean
+  /** Mint a tappable graphical-settings-panel URL (10-min one-active token,
+   *  LAN only) — appended to the admin's `/set` overview reply. Absent or
+   *  resolving null ⇒ the reply is byte-identical to before this existed. */
+  settingsPanelLink?: () => Promise<string | null>
   /**
    * Resolve a chat's access tier. Used ONLY to gate `/agy`: agy's MCP tool
    * access is tier-C (spec 2026-08-17-agy-provider-design.md §3) — its
@@ -382,9 +386,18 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           const careState = p.care ?? '未设置'
           const stickersState = p.stickers === undefined ? '未设置' : (p.stickers ? 'on' : 'off')
           const huntState = p.hunt === undefined ? '未设置' : (p.hunt ? 'on' : 'off')
+          // Admin bonus: the graphical settings panel link (WeChat-tappable).
+          // Non-fatal — a null link (no LAN / no owner) keeps the old reply.
+          let panelLine = ''
+          if (deps.isAdmin?.(msg.userId ?? msg.chatId) && deps.settingsPanelLink) {
+            try {
+              const url = await deps.settingsPanelLink()
+              if (url) panelLine = `\n\n📱 图形设置面板(点开就能改,10 分钟内有效):\n${url}`
+            } catch { /* keep the plain reply */ }
+          }
           await reply(
             msg.chatId,
-            `当前设置(本对话):\n· split(拆分回复): ${splitState}\n· 关心(主动关心档位): ${careState}\n· 表情(表情包): ${stickersState}\n· 打猎(每日打猎): ${huntState}\n\n用法: /set split on|off — 回复像真人一样分几条发\n用法: /set care off|low|high — 主动关心档位(别名: 关心 关|低|高)\n用法: /set stickers on|off — 表情包开关(别名: 表情 开|关)\n用法: /set hunt on|off — 每日打猎开关(别名: 打猎 开|关)`,
+            `当前设置(本对话):\n· split(拆分回复): ${splitState}\n· 关心(主动关心档位): ${careState}\n· 表情(表情包): ${stickersState}\n· 打猎(每日打猎): ${huntState}\n\n用法: /set split on|off — 回复像真人一样分几条发\n用法: /set care off|low|high — 主动关心档位(别名: 关心 关|低|高)\n用法: /set stickers on|off — 表情包开关(别名: 表情 开|关)\n用法: /set hunt on|off — 每日打猎开关(别名: 打猎 开|关)` + panelLine,
           )
           return true
         }
