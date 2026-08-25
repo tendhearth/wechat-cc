@@ -54,7 +54,9 @@ if (process.platform === 'darwin') {
   sigPath = `${artifactPath}.sig`
 }
 if (!existsSync(artifactPath) || !existsSync(sigPath)) {
-  console.error(`找不到 updater 产物:\n  ${artifactPath}\n  ${sigPath}\n先在 apps/desktop 跑 bun run build(需要 TAURI_SIGNING_PRIVATE_KEY_PATH=~/.tauri/wechat-cc-updater.key)`)
+  console.error(`找不到 updater 产物:\n  ${artifactPath}\n  ${sigPath}\n先在 apps/desktop 跑:
+  TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/wechat-cc-updater.key)" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" bunx tauri build --bundles app
+(dmg 打包器当前有故障,--bundles app 跳过它;签名密码为空但必须显式传)`)
   process.exit(1)
 }
 const signature = readFileSync(sigPath, 'utf8').trim()
