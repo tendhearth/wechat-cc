@@ -1043,12 +1043,35 @@ export async function loadBrainHealth(deps, fresh) {
   el.hidden = false
 }
 
-// CLI/订阅型 provider 的接入命令(点「+」显示,可一键复制,不用小白翻文档)
+// CLI/订阅型 provider 的接入命令(点「+」显示,可一键复制,不用小白翻文档)。
+// 命令是 macOS/Linux 的官方原生安装器(不预设用户装过 Node/npm);
+// Windows 上如实指去官网而不是给一条跑不了的 Unix 命令。
+const IS_WINDOWS = typeof navigator !== "undefined" && /Win/i.test(navigator.platform || "")
 const CLI_SETUP = {
-  claude: { title: "Claude Code(订阅)", cmds: ["npm install -g @anthropic-ai/claude-code", "claude"], note: "第二条命令会引导浏览器登录" },
-  codex: { title: "Codex CLI(订阅)", cmds: ["npm install -g @openai/codex", "codex"], note: "首次运行会引导登录" },
-  cursor: { title: "Cursor(订阅)", cmds: ["curl https://cursor.com/install -fsS | bash", "cursor-agent login"], note: "用你的 Cursor 账号在浏览器点一下授权" },
-  agy: { title: "Gemini · Antigravity(订阅)", cmds: ["agy"], note: "需先安装 Antigravity CLI,首次运行引导 Google 登录" },
+  claude: {
+    title: "Claude Code(订阅)",
+    cmds: ["curl -fsSL https://claude.ai/install.sh | bash", "claude"],
+    win: "Windows:打开 claude.com/claude-code 下载安装,装好后在终端跑一次 claude 登录",
+    note: "第二条命令会引导浏览器登录",
+  },
+  codex: {
+    title: "Codex CLI(订阅)",
+    cmds: ["brew install codex", "codex"],
+    win: "Windows:参见 openai.com 的 Codex CLI 安装说明",
+    note: "没有 Homebrew 的话参见官网其它安装方式;首次运行会引导登录",
+  },
+  cursor: {
+    title: "Cursor(订阅)",
+    cmds: ["curl https://cursor.com/install -fsS | bash", "cursor-agent login"],
+    win: "Windows:参见 cursor.com/cli 的 Windows 安装说明(或在 WSL 里执行左边命令)",
+    note: "用你的 Cursor 账号在浏览器点一下授权",
+  },
+  agy: {
+    title: "Gemini · Antigravity(订阅)",
+    cmds: ["agy"],
+    win: "Windows:参见 Antigravity 官网安装说明",
+    note: "需先安装 Antigravity CLI,首次运行引导 Google 登录",
+  },
 }
 
 /** 点「+」徽章 → 就地展开接入表单/命令。 @param {{ invokeApi: Function }} _deps @param {string} provider */
@@ -1071,8 +1094,12 @@ export function openBrainSetup(_deps, provider) {
   }
   const c = CLI_SETUP[provider]
   if (!c) { box.hidden = true; return }
-  box.innerHTML = `
-    <div class="brain-setup-title">接入 ${escapeHtml(c.title)} — 在终端里跑:</div>
+  box.innerHTML = IS_WINDOWS
+    ? `
+    <div class="brain-setup-title">接入 ${escapeHtml(c.title)}</div>
+    <div class="brain-setup-note">${escapeHtml(c.win)};装好登录后回来点「测试连接」。</div>`
+    : `
+    <div class="brain-setup-title">接入 ${escapeHtml(c.title)} — 在终端里逐条跑:</div>
     ${c.cmds.map(cmd => `
       <div class="brain-cmd"><code>${escapeHtml(cmd)}</code><button class="brain-copy" type="button" data-copy-cmd="${escapeHtml(cmd)}">复制</button></div>`).join("")}
     <div class="brain-setup-note">${escapeHtml(c.note)},完成后回来点「测试连接」。</div>`
