@@ -204,6 +204,9 @@ export interface PollLoopOptions {
       sync_buf?: string
       expired?: boolean
       standby?: boolean
+      /** Client-side long-poll timeout (server never answered) — see the
+       *  zombie guard in runLoop. Not a healthy empty poll. */
+      timed_out?: boolean
     }>
   }
   parse: (updates: RawUpdate[], deps: ParseDeps) => InboundMsg[]
@@ -297,6 +300,10 @@ export interface PollLoopHandle {
   running(): string[]
 }
 
+/** Consecutive client-timeout long-poll rounds before wechat health is
+ *  flipped to failing (~3 min at the 35s client timeout). */
+export const ZOMBIE_TIMEOUT_STREAK = 5
+
 interface LoopRecord {
   abort: AbortController
   promise: Promise<void>
@@ -327,6 +334,7 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
   async function runLoop(account: Account, sig: AbortSignal): Promise<void> {
     let syncBuf = account.syncBuf
     let failStreak = 0
+    let timeoutStreak = 0
 
     log('POLL', `loop started for ${account.id}`)
 
@@ -336,9 +344,36 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
 
         if (sig.aborted) break
 
-        // Successful round-trip — stamp the daemon-health heartbeat. Guarded
-        // so a bad callback can't kill the poll loop.
+        // Round-trip completed (answered OR client-timeout) — stamp the
+        // daemon-health heartbeat: the process is alive and the loop is
+        // turning, which is all the instance lock cares about. Guarded so a
+        // bad callback can't kill the poll loop.
         try { onPollCycle?.() } catch { /* never throw into the loop */ }
+
+        // Zombie long-poll guard (2026-08-25, 「新好友消息没反应,自检才好」
+        // root-cause): a CLIENT-side timeout is not a healthy empty poll —
+        // a live ilink long-poll answers within its own server window; a
+        // round our own AbortController had to kill means the server never
+        // responded. One is transient; a STREAK means the session is a
+        // zombie: no error is thrown, no message ever arrives (strangers
+        // who scan the QR get dead silence), and before this guard each
+        // such round even stamped the connection heartbeat + wechat health
+        // as SUCCESS — the outage was invisible until someone complained
+        // and the owner ran 自检. Now: timed-out rounds stamp nothing, and
+        // a streak flips wechat health to degraded so the existing
+        // health-notify machinery tells the owner proactively.
+        if (resp.timed_out) {
+          timeoutStreak++
+          if (timeoutStreak === ZOMBIE_TIMEOUT_STREAK || (timeoutStreak > ZOMBIE_TIMEOUT_STREAK && timeoutStreak % 20 === 0)) {
+            log('POLL', `long-poll client-timeout x${timeoutStreak} in a row for ${account.id} — server not answering; inbound delivery may be stalled (zombie session)`)
+            health?.recordFailure('wechat', new Error(`ilink long-poll client-timeout x${timeoutStreak}`))
+          }
+          continue
+        }
+        if (timeoutStreak > 0) {
+          if (timeoutStreak >= ZOMBIE_TIMEOUT_STREAK) log('POLL', `long-poll answering again for ${account.id} after ${timeoutStreak} timed-out round(s)`)
+          timeoutStreak = 0
+        }
 
         // Adapter has marked the bot session expired — self-terminate. The
         // ilink-glue wrapper has already written to SessionStateStore, so
@@ -359,6 +394,12 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
             accountId: account.id,
             resolveUserName,
           })
+          // Arrival evidence INDEPENDENT of pipeline completion — mw-trace
+          // only logs [INBOUND] when the middleware chain finishes, so a
+          // hung turn used to leave zero trace that a message ever arrived.
+          if (msgs.length > 0) {
+            log('POLL', `inbound ${msgs.length} message(s) from ${[...new Set(msgs.map(m => m.chatId))].join(',')}`)
+          }
           for (const msg of msgs) {
             try {
               await onInbound(msg)

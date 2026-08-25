@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { getEventListeners } from 'node:events'
-import { parseUpdates, startLongPollLoops, sleep, type RawUpdate } from './poll-loop'
+import { parseUpdates, startLongPollLoops, sleep, ZOMBIE_TIMEOUT_STREAK, type RawUpdate } from './poll-loop'
 import type { Account } from './ilink-glue'
 
 /**
@@ -539,6 +539,114 @@ describe('startLongPollLoops', () => {
     const start = Date.now()
     await handle.stop()
     expect(Date.now() - start).toBeLessThan(1000)  // resolves promptly
+  })
+})
+
+describe('startLongPollLoops — zombie long-poll detection (timed_out rounds)', () => {
+  const baseAcct: Account = {
+    id: 'A1', botId: 'b', userId: 'ubot', baseUrl: 'https://x', token: 'T', syncBuf: '',
+  }
+  const timedOutRound = { updates: [], sync_buf: '', timed_out: true }
+
+  it('a timed_out round stamps neither recordHeartbeat nor health.recordSuccess', async () => {
+    const getUpdates = vi.fn()
+      .mockResolvedValueOnce(timedOutRound)
+      .mockImplementation(async () => { await new Promise(r => setTimeout(r, 50)); return timedOutRound })
+    const recordHeartbeat = vi.fn()
+    const events: string[] = []
+    const handle = startLongPollLoops({
+      accounts: [baseAcct],
+      onInbound: async () => {},
+      ilink: { getUpdates },
+      parse: () => [],
+      resolveUserName: () => undefined,
+      recordHeartbeat,
+      health: {
+        recordFailure: () => { events.push('fail') },
+        recordSuccess: () => { events.push('ok') },
+      },
+    } as never)
+    await waitFor(() => getUpdates.mock.calls.length >= 2)
+    await handle.stop()
+    expect(recordHeartbeat).not.toHaveBeenCalled()
+    expect(events).not.toContain('ok')
+  })
+
+  it(`${ZOMBIE_TIMEOUT_STREAK} consecutive timed_out rounds → health failure + loud POLL log`, async () => {
+    let calls = 0
+    const getUpdates = vi.fn().mockImplementation(async () => {
+      calls++
+      if (calls > 1) await new Promise(r => setTimeout(r, 0))
+      return timedOutRound
+    })
+    const lines: string[] = []
+    const events: string[] = []
+    const handle = startLongPollLoops({
+      accounts: [baseAcct],
+      onInbound: async () => {},
+      ilink: { getUpdates },
+      parse: () => [],
+      resolveUserName: () => undefined,
+      log: (_tag: string, line: string) => { lines.push(line) },
+      health: {
+        recordFailure: () => { events.push('fail') },
+        recordSuccess: () => { events.push('ok') },
+      },
+    } as never)
+    await waitFor(() => events.includes('fail'))
+    await handle.stop()
+    expect(events).toContain('fail')
+    expect(events).not.toContain('ok')
+    expect(lines.some(l => l.includes('long-poll') && l.includes('timeout'))).toBe(true)
+  })
+
+  it('one answered round resets the streak and stamps the heartbeat again', async () => {
+    let calls = 0
+    const getUpdates = vi.fn().mockImplementation(async () => {
+      calls++
+      if (calls > 1) await new Promise(r => setTimeout(r, 0))
+      // 3 timed-out rounds (below threshold), then real (answered) rounds
+      return calls <= 3 ? timedOutRound : { updates: [], sync_buf: '' }
+    })
+    const recordHeartbeat = vi.fn()
+    const events: string[] = []
+    const handle = startLongPollLoops({
+      accounts: [baseAcct],
+      onInbound: async () => {},
+      ilink: { getUpdates },
+      parse: () => [],
+      resolveUserName: () => undefined,
+      recordHeartbeat,
+      health: {
+        recordFailure: () => { events.push('fail') },
+        recordSuccess: () => { events.push('ok') },
+      },
+    } as never)
+    await waitFor(() => recordHeartbeat.mock.calls.length > 0)
+    await handle.stop()
+    expect(events).not.toContain('fail')     // streak never reached threshold
+    expect(events).toContain('ok')
+  })
+
+  it('logs delivered inbound chats at arrival (evidence independent of the pipeline)', async () => {
+    const updates: RawUpdate[] = [
+      { from_user_id: 'stranger1', create_time_ms: 1000, message_type: 1, message_state: 2, item_list: [{ type: 1, text_item: { text: 'hi' } }] },
+    ]
+    const getUpdates = vi.fn()
+      .mockResolvedValueOnce({ updates, sync_buf: 'b2' })
+      .mockImplementation(async () => { await new Promise(r => setTimeout(r, 50)); return { updates: [], sync_buf: 'b2' } })
+    const lines: string[] = []
+    const handle = startLongPollLoops({
+      accounts: [baseAcct],
+      onInbound: async () => {},
+      ilink: { getUpdates },
+      parse: (us, deps) => parseUpdates(us, deps),
+      resolveUserName: () => undefined,
+      log: (_tag: string, line: string) => { lines.push(line) },
+    })
+    await waitFor(() => lines.some(l => l.includes('stranger1')))
+    await handle.stop()
+    expect(lines.some(l => l.includes('inbound') && l.includes('stranger1'))).toBe(true)
   })
 })
 

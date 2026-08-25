@@ -56,6 +56,12 @@ export interface GetUpdatesResp {
   msgs?: WeixinMessage[]
   get_updates_buf?: string
   longpolling_timeout_ms?: number
+  /** CLIENT-side marker (never from the server): our own AbortController
+   *  killed the request because the server never answered within
+   *  LONG_POLL_TIMEOUT_MS. A healthy idle long-poll answers (empty) within
+   *  the server's own window — a streak of these means the session is a
+   *  zombie. See poll-loop.ts's zombie guard. */
+  timed_out?: boolean
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────
@@ -114,7 +120,10 @@ export async function ilinkGetUpdates(baseUrl: string, token: string, buf: strin
     return JSON.parse(raw) as GetUpdatesResp
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      return { ret: 0, msgs: [], get_updates_buf: buf }
+      // Success-SHAPED so a lone timeout doesn't trip the error path, but
+      // stamped timed_out so the poll loop can tell it apart from a real
+      // answered-empty round (zombie-session detection).
+      return { ret: 0, msgs: [], get_updates_buf: buf, timed_out: true }
     }
     throw err
   }

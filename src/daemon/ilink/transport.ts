@@ -20,6 +20,8 @@ export interface TransportMethods {
     expired?: boolean
     /** expired-but-recoverable: a sibling device took the session (multi-device). */
     standby?: boolean
+    /** Client-side long-poll timeout — see GetUpdatesResp.timed_out. */
+    timed_out?: boolean
   }>
   markChatActive(chatId: string, accountId?: string): void
   captureContextToken(chatId: string, ctxToken?: string): void
@@ -118,7 +120,7 @@ export function makeTransport(ctx: IlinkContext, opts: TransportOpts = {}): Tran
         }
         return { expired: true }
       }
-      return { updates: resp.msgs, sync_buf: resp.get_updates_buf }
+      return { updates: resp.msgs, sync_buf: resp.get_updates_buf, ...(resp.timed_out ? { timed_out: true } : {}) }
     },
 
     // accountId is the bot that just received a message from this chat —

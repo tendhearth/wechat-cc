@@ -90,6 +90,8 @@ export interface IlinkAdapter {
     sync_buf?: string
     expired?: boolean
     standby?: boolean
+    /** Client-side long-poll timeout — see GetUpdatesResp.timed_out. */
+    timed_out?: boolean
   }>
   handlePermissionReply(text: string): boolean
   /** Session state accessor for admin commands (/health, cleanup). */

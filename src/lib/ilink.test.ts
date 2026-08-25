@@ -58,7 +58,7 @@ it('ilinkGetUpdates passes a custom timeoutMs through to the abort cap', async (
     })) as any
   try {
     const resp = await ilinkGetUpdates('https://x.test', 'tok', '', 200)
-    expect(resp).toEqual({ ret: 0, msgs: [], get_updates_buf: '' })
+    expect(resp).toEqual({ ret: 0, msgs: [], get_updates_buf: '', timed_out: true })
     expect(abortFired).toBe(true)
     expect(elapsed).toBeLessThan(5000)
   } finally {
