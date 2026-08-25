@@ -425,9 +425,13 @@ function setToggle(id, on) {
 /** @param {string} name */
 function switchPane(name) {
   const overviewWasHidden = name === "overview" && !!(/** @type {HTMLElement | null} */ (document.querySelector('.dash-pane[data-pane="overview"]')))?.hidden
+  const backstagePanes = new Set(["sessions", "plugins", "logs"])
   document.querySelectorAll(".dash-nav-link[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
-    htmlEl.classList.toggle("active", htmlEl.dataset.pane === name && !htmlEl.classList.contains("disabled"))
+    const hit = htmlEl.dataset.backstageEntry === "true"
+      ? backstagePanes.has(name)
+      : htmlEl.dataset.pane === name
+    htmlEl.classList.toggle("active", hit && !htmlEl.classList.contains("disabled"))
   })
   document.querySelectorAll(".dash-pane[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
@@ -454,6 +458,9 @@ function switchPane(name) {
     })
     loadMemoryTopZone(deps).catch(err => console.error("memory top zone failed", err))
   }
+  if (name === "todos") {
+    initTodosPage(deps)
+  }
   if (name === "sessions") {
     activateDialogueWorkspace()
   } else {
@@ -474,41 +481,23 @@ function switchPane(name) {
 }
 
 function activateDialogueWorkspace() {
-  const active = document.querySelector(".dialogue-workspace-tab.is-active")
-  const mode = active instanceof HTMLElement ? active.dataset.dialogueMode : "cc"
+  // 后厨's 会话 view. 待办 is a top-level pane now and 客户回顾 is retired
+  // (2026-08-25 owner IA decisions) — no mode branching left here.
   const dialogueRoot = document.getElementById("dialogue-root")
-  const todosRoot = document.getElementById("todos-root")
-  const reviewRoot = document.getElementById("customer-review-root")
-  // 客户回顾 tab retired (2026-08-25, owner: 「客户回顾其实应该是待办」)
-  // — the obligation fact store behind 待办 covers the same ground
-  // continuously. Module + routes kept for now; only the entry is gone.
-  if (mode === "todos") {
-    if (dialogueRoot) dialogueRoot.hidden = true
-    if (todosRoot) todosRoot.hidden = false
-    if (reviewRoot) reviewRoot.hidden = true
-    stopDialogueAutoRefresh()
-    stopCustomerReviewPolling()
-    initTodosPage(deps)
-  } else {
-    if (dialogueRoot) dialogueRoot.hidden = false
-    if (todosRoot) todosRoot.hidden = true
-    if (reviewRoot) reviewRoot.hidden = true
-    stopCustomerReviewPolling()
-    initDialoguePage(deps)
-  }
+  if (dialogueRoot) dialogueRoot.hidden = false
+  stopCustomerReviewPolling()
+  initDialoguePage(deps)
 }
 
 // ─── DOM event wiring ────────────────────────────────────────────────
 
 function wireEvents() {
-  document.querySelectorAll(".dialogue-workspace-tab").forEach(tab => {
+  // 后厨 sub-tabs (会话/插件/日志) — one identical strip lives at the top of
+  // each of the three backstage panes; clicking just switches the dash pane.
+  document.querySelectorAll(".dialogue-workspace-tab[data-backstage-pane]").forEach(tab => {
     tab.addEventListener("click", () => {
-      document.querySelectorAll(".dialogue-workspace-tab").forEach(other => {
-        const selected = other === tab
-        other.classList.toggle("is-active", selected)
-        other.setAttribute("aria-selected", selected ? "true" : "false")
-      })
-      activateDialogueWorkspace()
+      const el = /** @type {HTMLElement} */ (tab)
+      if (el.dataset.backstagePane) switchPane(el.dataset.backstagePane)
     })
   })
   // `data-tauri-drag-region` alone is not reliable with the macOS overlay

@@ -324,22 +324,22 @@
               <span>记忆</span>
               <span class="count" id="memory-count"></span>
             </button>
-            <button class="dash-nav-link" data-pane="sessions">
-              <span class="ic" data-hg-icon="user" data-hg-size="16"></span>
-              <span>对话</span>
-              <span class="count" id="sessions-count"></span>
-            </button>
             <button class="dash-nav-link" data-pane="converse">
               <span class="ic" data-hg-icon="smile" data-hg-size="16"></span>
               <span>跟 CC 说</span>
+            </button>
+            <button class="dash-nav-link" data-pane="todos">
+              <span class="ic" data-hg-icon="checkmark-circle-02" data-hg-size="16"></span>
+              <span>待办</span>
             </button>
             <button class="dash-nav-link" data-pane="a2a-agents">
               <span class="ic" data-hg-icon="settings-01" data-hg-size="16"></span>
               <span>觅食</span>
             </button>
-            <button class="dash-nav-link" data-pane="plugins">
+            <button class="dash-nav-link" data-pane="sessions" data-backstage-entry="true">
               <span class="ic" data-hg-icon="plug-01" data-hg-size="16"></span>
-              <span>插件</span>
+              <span>后厨</span>
+              <span class="count" id="sessions-count"></span>
             </button>
           </nav>
 
@@ -355,11 +355,6 @@
                hook is unused here but main.js handles it elsewhere
                (e.g. on the add-user card). -->
           <div class="dash-utilities">
-            <button class="dash-nav-link dash-utility-link" data-pane="logs" title="日志" aria-label="日志" data-tooltip="日志">
-              <span class="ic" data-hg-icon="archive" data-hg-size="18"></span>
-              <span>日志</span>
-              <span class="count" id="logs-count"></span>
-            </button>
             <button id="settings-open" class="rail-gear" type="button" title="设置" aria-label="设置" data-tooltip="设置">
               <span class="ic" data-hg-icon="settings-01" data-hg-size="18"></span>
               <span>设置</span>
@@ -558,13 +553,18 @@
 
           <!-- ── pane: sessions ─────────────────────────────────────── -->
           <article class="dash-pane" data-pane="sessions" hidden>
-            <div class="dialogue-workspace-tabs" role="tablist" aria-label="对话视图">
-              <button class="dialogue-workspace-tab is-active" type="button" role="tab" data-dialogue-mode="cc" aria-selected="true">CC 对话</button>
-              <button class="dialogue-workspace-tab" type="button" role="tab" data-dialogue-mode="todos" aria-selected="false">待办</button>
+            <div class="dialogue-workspace-tabs" role="tablist" aria-label="后厨视图">
+              <button class="dialogue-workspace-tab is-active" type="button" role="tab" data-backstage-pane="sessions" aria-selected="true">会话</button>
+              <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="plugins" aria-selected="false">插件</button>
+              <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="logs" aria-selected="false">日志</button>
             </div>
             <div id="dialogue-root" class="dialogue-page"></div>
-            <div id="todos-root" class="todos-page" hidden></div>
             <div id="customer-review-root" class="customer-review-page" hidden></div>
+          </article>
+
+          <!-- ── pane: todos (待办 — 一级入口) ─────────────────────── -->
+          <article class="dash-pane" data-pane="todos" hidden>
+            <div id="todos-root" class="todos-page"></div>
           </article>
 
           <!-- ── pane: converse (in-app compose UI) ─────────────────── -->
@@ -574,6 +574,11 @@
 
           <!-- ── pane: logs ─────────────────────────────────────────── -->
           <article class="dash-pane" data-pane="logs" hidden>
+            <div class="dialogue-workspace-tabs" role="tablist" aria-label="后厨视图">
+              <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="sessions" aria-selected="false">会话</button>
+              <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="plugins" aria-selected="false">插件</button>
+              <button class="dialogue-workspace-tab is-active" type="button" role="tab" data-backstage-pane="logs" aria-selected="true">日志</button>
+            </div>
             <div class="topbar">
               <span class="crumb">日志 · Logs <span class="meta" id="logs-meta">—</span></span>
               <div class="actions">
@@ -694,6 +699,11 @@
 
           <!-- ── pane: plugins ─────────────────────────────────────────── -->
           <article class="dash-pane" data-pane="plugins" hidden>
+            <div class="dialogue-workspace-tabs" role="tablist" aria-label="后厨视图">
+              <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="sessions" aria-selected="false">会话</button>
+              <button class="dialogue-workspace-tab is-active" type="button" role="tab" data-backstage-pane="plugins" aria-selected="true">插件</button>
+              <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="logs" aria-selected="false">日志</button>
+            </div>
             <div class="topbar">
               <span class="crumb">插件</span>
               <div class="actions">
