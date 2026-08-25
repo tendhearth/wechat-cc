@@ -164,8 +164,23 @@ export interface ConversationCoordinatorDeps {
  *  session lapsed and they need to re-run the provider's login command
  *  on the same machine. */
 export function authFailNotice(providerId: ProviderId): string {
-  return capabilitiesFor(providerId).authFailHint
-    ?? `⚠ ${providerId} 登录已过期，请在电脑上重新登录后再发消息。`
+  const hint = capabilitiesFor(providerId).authFailHint
+  return hint
+    ? `😴 我的大脑(${providerId})登录过期了,暂时想不了事…\n${hint}\n弄好之后再发我一条,就能叫醒我~`
+    : `😴 我的大脑(${providerId})登录过期了,暂时想不了事…让主人在电脑上重新登录一下,再发我一条就能叫醒我~`
+}
+
+/** User-facing notice when a turn dies with a GENERIC error and produced no
+ *  reply at all (owner 2026-08-25: 「用户发你好,应该有个回复,比如大脑还未
+ *  接入」— silence reads as being ignored). Two flavors: a spawn/missing-
+ *  binary shape means the brain was never hooked up; anything else is a
+ *  transient hiccup. Both point at the desktop 大脑 card, in CC's voice. */
+export function turnErrorNotice(providerId: ProviderId, error: string | undefined): string {
+  const e = (error ?? '').toLowerCase()
+  if (/enoent|not found|no such file|spawn|not installed/.test(e)) {
+    return `😵 我的大脑(${providerId})好像还没接好,这条没处理成…让主人在电脑上打开 wechat-cc 的「此刻」页,点一下「🧠 大脑」卡把我接上,再发我一条就好~`
+  }
+  return `😵‍💫 呜,我刚才脑子短路了,这条没处理成…缓一会儿再发我一次?要是一直这样,让主人看看电脑上「此刻」页的「🧠 大脑」卡。`
 }
 
 /** Turn-taking policy for a mode (D3 — turn-entry unification). */
@@ -554,6 +569,17 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       }
 
       outcome = summary.error ? 'error' : 'completed'
+
+      // Generic-error silence guard (2026-08-25): a turn that died with an
+      // error, called no reply tool and produced no assistant text used to
+      // leave the user staring at nothing — silence reads as being ignored.
+      // Tell them, in CC's voice, that the message was dropped and where the
+      // fix lives. Unthrottled on purpose (same rationale as the timeout
+      // notice: each dropped message deserves an acknowledgement).
+      if (summary.error && !replyToolCalled && assistantTexts.length === 0) {
+        await deps.sendAssistantText?.(msg.chatId, turnErrorNotice(providerId, summary.error))
+        return
+      }
 
       // Same fallback semantics as the legacy routeInbound: only forward
       // raw assistant text when the agent did NOT call a reply-family
