@@ -12,20 +12,32 @@ const CHECK_INTERVAL_MS = 24 * 3600_000
 
 let bannerShownForVersion = ""
 
+// ── updater IPC 走全局 Tauri 对象 ──
+// 本 app 无 bundler(frontendDist 直指 ../src 原始文件),裸模块
+// `import("@tauri-apps/plugin-updater")` 在 webview 里永远解析不了 ——
+// 每次 check 都在 throw,又被静默 catch 吃掉,updater 自 1.6.1 起从未
+// 工作过(owner 实测「好像也没有?」)。改为 __TAURI__.core.invoke 直调
+// 插件命令(协议镜像 plugin-updater/dist-js/index.js)。
+function tauriCore() {
+  return /** @type {any} */ (window).__TAURI__?.core ?? null
+}
+
 async function checkOnce() {
   try {
-    const { check } = await import("@tauri-apps/plugin-updater")
-    const update = await check()
-    if (!update || !update.available) return
-    if (bannerShownForVersion === update.version) return
-    bannerShownForVersion = update.version
-    showBanner(update)
+    const core = tauriCore()
+    if (!core) return   // mock/浏览器环境
+    // metadata: { rid, currentVersion, version, date, body } | null
+    const metadata = await core.invoke("plugin:updater|check", {})
+    if (!metadata || !metadata.version) return
+    if (bannerShownForVersion === metadata.version) return
+    bannerShownForVersion = metadata.version
+    showBanner(metadata)
   } catch {
     /* offline / endpoint unset / dev mode — stay silent */
   }
 }
 
-/** @param {import("@tauri-apps/plugin-updater").Update} update */
+/** @param {{ rid: number, version: string, body?: string }} update */
 function showBanner(update) {
   document.getElementById("app-update-banner")?.remove()
   const el = document.createElement("div")
@@ -45,7 +57,9 @@ function showBanner(update) {
       try {
         let downloaded = 0
         let total = 0
-        await update.downloadAndInstall((ev2) => {
+        const core = tauriCore()
+        const channel = new core.Channel()
+        channel.onmessage = (/** @type {any} */ ev2) => {
           if (ev2.event === "Started") total = ev2.data.contentLength ?? 0
           else if (ev2.event === "Progress") {
             downloaded += ev2.data.chunkLength
@@ -55,7 +69,8 @@ function showBanner(update) {
           } else if (ev2.event === "Finished") {
             if (text) text.textContent = "安装中…"
           }
-        })
+        }
+        await core.invoke("plugin:updater|download_and_install", { onEvent: channel, rid: update.rid })
         if (text) text.textContent = "装好了,重启后就是新版本"
         const btn = el.querySelector('[data-au="install"]')
         if (btn instanceof HTMLButtonElement) {
@@ -70,8 +85,7 @@ function showBanner(update) {
       return
     }
     if (t.dataset.au === "relaunch") {
-      const { relaunch } = await import("@tauri-apps/plugin-process")
-      await relaunch()
+      await tauriCore()?.invoke("plugin:process|restart", {})
     }
   })
   document.body.appendChild(el)
