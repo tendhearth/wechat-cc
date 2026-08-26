@@ -10,7 +10,7 @@ import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import type { Ref } from '../../lib/lifecycle'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
@@ -348,9 +348,22 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // 微信可点开的图形设置面板 (2026-08-25) — lazily-started LAN server, every
   // endpoint gated on a one-active 10-min token. /set (no args) from an
   // admin appends the link. See settings-panel.ts's security posture.
+  // Remote tunnel opt-in (随身 CC out-of-home) — resolve id/relay BEFORE the
+  // panel so its /m page can bake them in for out-of-home phones.
+  const remoteCfg = loadAgentConfig(stateDir) as { remote_tunnel?: boolean; remote_relay_url?: string }
+  let remoteTunnel: { id: string; relay: string } | null = null
+  if (remoteCfg.remote_tunnel === true) {
+    const idPath = join(stateDir, 'tunnel-id.json')
+    let did: string
+    try { did = (JSON.parse(readFileSync(idPath, 'utf8')) as { id: string }).id }
+    catch { did = 't' + randomBytes(18).toString('hex'); try { writeFileSync(idPath, JSON.stringify({ id: did }), { mode: 0o600 }) } catch { /* best effort */ } }
+    remoteTunnel = { id: did, relay: remoteCfg.remote_relay_url ?? 'wss://brain.youdamaster.cc/tunnel/phone' }
+  }
+
   const settingsPanel = makeSettingsPanel({
     stateDir,
     ownerChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null),
+    ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
     // 随身 CC 数据面 — facts/graph 来自 boot.knowledge(缺则手机页对应区留白)
     ...(boot.knowledge?.facts ? {
       todos: {
@@ -377,6 +390,23 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     },
     log: (tag, line) => log(tag, line),
   })
+
+  // 远程中继隧道 daemon leg — dials /tunnel/daemon out (NAT-piercing); phone
+  // reaches it via the SAME settingsPanel.handleRequest. OFF unless
+  // remote_tunnel:true (resolved into remoteTunnel above).
+  if (remoteTunnel) {
+    const daemonId = remoteTunnel.id
+    const daemonRelay = (remoteCfg.remote_relay_url ?? 'wss://brain.youdamaster.cc/tunnel/phone').replace('/tunnel/phone', '/tunnel/daemon')
+    import('../tunnel-client').then(({ makeTunnelClient }) => {
+      makeTunnelClient({
+        daemonId,
+        handleRequest: (req) => settingsPanel.handleRequest(req),
+        relayUrl: daemonRelay,
+        log: (tag, line) => log(tag, line),
+      }).start()
+      log('TUNNEL', `remote tunnel enabled — dialing relay as ${daemonId.slice(0, 8)}…`)
+    }).catch(err => log('TUNNEL', `tunnel client load failed: ${err instanceof Error ? err.message : err}`))
+  }
 
   const modeHandler = makeModeCommands({
     coordinator: boot.coordinator,

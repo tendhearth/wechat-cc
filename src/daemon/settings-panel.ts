@@ -57,6 +57,9 @@ export interface SettingsPanelDeps {
   }
   /** 表情库(只读展示 + 图片文件服务)。 */
   stickers?: { list(): Array<{ file: string; tags: string[]; desc?: string }>; dir: string }
+  /** 远程隧道信息(启用时):relay wss + 本机 daemon id。手机页出门时用它
+   *  经中继访问。缺省 ⇒ 手机页只能在同一 Wi-Fi 直连。 */
+  remoteInfo?: () => { relay: string; id: string } | null
   /** config_changed audit sink (events store append) — best-effort. */
   audit?: (reasoning: string) => void
   log: (tag: string, line: string) => void
@@ -74,6 +77,9 @@ export interface SettingsPanel {
   /** Mint a fresh token and return the tappable URL (starts the server on
    *  first use). Null when no LAN address / no owner is resolvable. */
   linkUrl(): Promise<string | null>
+  /** Route one request — shared by the LAN Bun.serve and the remote tunnel
+   *  client, so /m/* and /set/* behave identically over both transports. */
+  handleRequest(req: Request): Promise<Response>
 }
 
 /** First non-internal IPv4 address (en0 preferred). Exported for tests. */
@@ -148,6 +154,17 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       portrait,
       stickers: deps.stickers?.list() ?? [],
     }
+  }
+
+  const json = (body: object, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8' } })
+
+  // Shared router — the LAN Bun.serve and the remote tunnel client both call
+  // this, so /m/* and /set/* behave identically over both transports.
+  const handleRequest = async (req: Request): Promise<Response> => {
+    const url = new URL(req.url)
+    const t = url.searchParams.get('d') ?? url.searchParams.get('t')
+    return await routeRequest(url, t, req)
   }
 
   const panel: SettingsPanel = {
@@ -226,17 +243,31 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       }
     },
 
+    handleRequest,
     async start(port = 0) {
       if (server) return { port: server.port! }
-      const json = (body: object, status = 200) =>
-        new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8' } })
       server = Bun.serve({
         hostname: '0.0.0.0',
         port,
-        fetch: async (req) => {
-          const url = new URL(req.url)
-          const t = url.searchParams.get('d') ?? url.searchParams.get('t')
+        fetch: handleRequest,
+      })
+      deps.log('SETTINGS', `panel listening on 0.0.0.0:${server.port} (token-gated)`)
+      return { port: server.port! }
+    },
 
+    async stop() {
+      if (server) { server.stop(true); server = null }
+    },
+
+    async linkUrl() {
+      const ip = lanIp()
+      if (!ip || !deps.ownerChatId()) return null
+      const { port } = await panel.start()
+      return `http://${ip}:${port}/set?t=${panel.issueToken()}`
+    },
+  }
+
+  async function routeRequest(url: URL, t: string | null, req: Request): Promise<Response> {
           // ── tokenless surfaces (non-sensitive) ─────────────────────────
           if (url.pathname === '/m/icon.png') {
             const { starterStickersDir } = await import('./stickers')
@@ -286,7 +317,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             return json({ ok: true, device_token: token })
           }
           if (url.pathname === '/m') {
-            return new Response(phoneHtml(t!), { headers: { 'content-type': 'text/html; charset=utf-8' } })
+            return new Response(phoneHtml(t!, deps.remoteInfo?.() ?? null), { headers: { 'content-type': 'text/html; charset=utf-8' } })
           }
           if (url.pathname === '/m/api/state' && req.method === 'GET') {
             return json(phoneState())
@@ -315,23 +346,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             return new Response(readFileSync(fp), { headers: { 'content-type': type } })
           }
           return json({ error: 'not_found' }, 404)
-        },
-      })
-      deps.log('SETTINGS', `panel listening on 0.0.0.0:${server.port} (token-gated)`)
-      return { port: server.port! }
-    },
-
-    async stop() {
-      if (server) { server.stop(true); server = null }
-    },
-
-    async linkUrl() {
-      const ip = lanIp()
-      if (!ip || !deps.ownerChatId()) return null
-      const { port } = await panel.start()
-      return `http://${ip}:${port}/set?t=${panel.issueToken()}`
-    },
   }
+
   return panel
 }
 
@@ -491,7 +507,7 @@ try {
 </script></body>`
 
 /** 随身 CC 手机页 — 待办 / 小像 / 表情,自包含无 CDN,PWA 可加主屏。 */
-export function phoneHtml(token: string): string {
+export function phoneHtml(token: string, remote: { relay: string; id: string } | null): string {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>CC</title>
@@ -543,12 +559,78 @@ export function phoneHtml(token: string): string {
 <div id="toast"></div>
 <script>
 var T = ${JSON.stringify(token)}
-try { if (T.charAt(0) === "d") localStorage.setItem("deviceToken", T) } catch (e) {}
+var REMOTE = ${JSON.stringify(remote)}
+try {
+  if (T.charAt(0) === "d") localStorage.setItem("deviceToken", T)
+  if (REMOTE) localStorage.setItem("ccRemote", JSON.stringify(REMOTE))
+  else { var rr = localStorage.getItem("ccRemote"); if (rr) REMOTE = JSON.parse(rr) }
+} catch (e) {}
 var isDevice = T.charAt(0) === "d"
 if (!isDevice) document.getElementById("pairbar").hidden = false
 function toast(m) { var t = document.getElementById("toast"); t.textContent = m; t.classList.add("show"); setTimeout(function(){ t.classList.remove("show") }, 1800) }
 function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;") }
 function q(p) { return p + (p.indexOf("?") < 0 ? "?" : "&") + (isDevice ? "d=" : "t=") + encodeURIComponent(T) }
+// 传输层:先直连(同 Wi-Fi),失败且配了 remote 就走中继隧道(端到端加密)。
+var b64u = { enc: function(b){ return btoa(String.fromCharCode.apply(null, new Uint8Array(b))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"") },
+  dec: function(s){ s = s.replace(/-/g,"+").replace(/_/g,"/"); var bin = atob(s); var a = new Uint8Array(bin.length); for (var i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a } }
+var tun = null
+function tunnel() {
+  if (tun) return tun
+  tun = new Promise(function(resolve, reject) {
+    if (!REMOTE) { reject(new Error("no_remote")); return }
+    var ws = new WebSocket(REMOTE.relay + "?id=" + encodeURIComponent(REMOTE.id))
+    var key = null, kp = null, pending = {}, sid = "s"
+    var ready = false
+    ws.onopen = async function() {
+      kp = await crypto.subtle.generateKey({ name:"X25519" }, true, ["deriveKey","deriveBits"])
+      var raw = await crypto.subtle.exportKey("raw", kp.publicKey)
+      ws.send(JSON.stringify({ stream: sid, frame: { hs: b64u.enc(raw) } }))
+    }
+    ws.onmessage = async function(ev) {
+      var m = JSON.parse(ev.data)
+      if (m.stream !== sid) return
+      if (m.frame && m.frame.hs) {
+        var pub = await crypto.subtle.importKey("raw", b64u.dec(m.frame.hs), { name:"X25519" }, true, [])
+        var bits = await crypto.subtle.deriveBits({ name:"X25519", public: pub }, kp.privateKey, 256)
+        var hk = await crypto.subtle.importKey("raw", new Uint8Array(bits), "HKDF", false, ["deriveKey"])
+        key = await crypto.subtle.deriveKey({ name:"HKDF", hash:"SHA-256", salt:new Uint8Array(0), info:new TextEncoder().encode("wechat-cc/tunnel/v1") }, hk, { name:"AES-GCM", length:256 }, false, ["encrypt","decrypt"])
+        ready = true; resolve(send)
+        return
+      }
+      if (!key) return
+      var iv = b64u.dec(m.frame.iv), ct = b64u.dec(m.frame.ct)
+      var pt = await crypto.subtle.decrypt({ name:"AES-GCM", iv: iv }, key, ct)
+      var r = JSON.parse(new TextDecoder().decode(pt))
+      var cb = pending[r.rid]; delete pending[r.rid]
+      if (cb) cb(r)
+    }
+    ws.onerror = function(){ reject(new Error("ws_error")) }
+    ws.onclose = function(){ tun = null; if (!ready) reject(new Error("ws_closed")) }
+    var ridSeq = 0
+    async function send(path, opts) {
+      var rid = "r" + (ridSeq++)
+      var body = JSON.stringify({ path: q(path), method: (opts && opts.method) || "GET", body: opts && opts.body, rid: rid })
+      var iv = crypto.getRandomValues(new Uint8Array(12))
+      var ct = await crypto.subtle.encrypt({ name:"AES-GCM", iv: iv }, key, new TextEncoder().encode(body))
+      return new Promise(function(res) {
+        pending[rid] = function(r){ res({ status: r.status, text: function(){ return Promise.resolve(r.body) }, json: function(){ return Promise.resolve(JSON.parse(r.body)) } }) }
+        ws.send(JSON.stringify({ stream: sid, frame: { iv: b64u.enc(iv), ct: b64u.enc(ct) } }))
+      })
+    }
+  })
+  return tun
+}
+// api():直连优先(2.5s 超时),失败落隧道。返回 {status, json(), text()}。
+function api(path, opts) {
+  var ctrl = new AbortController()
+  var to = setTimeout(function(){ ctrl.abort() }, 2500)
+  return fetch(q(path), Object.assign({ signal: ctrl.signal }, opts || {})).then(function(r){
+    clearTimeout(to); return r
+  }).catch(function() {
+    clearTimeout(to)
+    return tunnel().then(function(send){ return send(path, opts) })
+  })
+}
 document.getElementById("pairbtn").addEventListener("click", function() {
   fetch(q("/set/api/pair"), { method: "POST" }).then(function(r){ return r.json() }).then(function(r) {
     if (r.ok && r.device_token) {
