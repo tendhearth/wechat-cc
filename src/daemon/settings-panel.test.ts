@@ -65,6 +65,18 @@ describe('settings panel', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
+  it('apply: forget_devices wipes all paired device tokens (they stop validating)', async () => {
+    const { port } = await panel.start(0)
+    const base = `http://127.0.0.1:${port}`
+    const t = panel.issueToken()
+    const r = await (await fetch(`${base}/set/api/pair?t=${t}`, { method: 'POST' })).json() as { device_token: string }
+    expect(panel.validToken(r.device_token)).toBe(true)
+    expect((await panel.apply({ op: 'forget_devices' })).ok).toBe(true)
+    expect(panel.validToken(r.device_token)).toBe(false)   // revoked immediately
+    const st = panel.state() as { remote?: { devices: number } }
+    expect(st.remote?.devices).toBe(0)
+  })
+
   it('apply: set_remote toggles remote_tunnel in config and requests a restart', async () => {
     expect((await panel.apply({ op: 'set_remote', enabled: true })).ok).toBe(true)
     expect(JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8')).remote_tunnel).toBe(true)

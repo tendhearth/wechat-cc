@@ -21,7 +21,7 @@
  *    conversational where CC can confirm context.
  */
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { basename, join } from 'node:path'
 import { normalizeUserName } from '../lib/user-name'
@@ -201,7 +201,9 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         persona,
         prefs: deps.chatPrefs.get(owner),
         config,
-        remote: deps.remote ? { available: true, enabled: deps.remote.isEnabled() } : { available: false, enabled: false },
+        remote: deps.remote
+          ? { available: true, enabled: deps.remote.isEnabled(), devices: Object.keys(readDevices()).length }
+          : { available: false, enabled: false, devices: 0 },
       }
     },
 
@@ -234,6 +236,13 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             return { ok: false, error: 'invalid_value' }
           }
           deps.chatPrefs.set(owner, { [key]: b.value })
+          return { ok: true }
+        }
+        if (b.op === 'forget_devices') {
+          // 安全 review HIGH 收尾 (2026-08-26):设备令牌长期有效是产品决策
+          // (加主屏永不过期),但必须可撤销。一键全忘,手机重新配对即可。
+          try { rmSync(devicesPath(), { force: true }) } catch { /* already gone */ }
+          deps.audit?.('随身 CC:忘掉所有已配对设备 — 设置面板')
           return { ok: true }
         }
         if (b.op === 'set_remote') {
@@ -460,6 +469,7 @@ export function pageHtml(token: string): string {
   <p class="hint">开启后,手机加到主屏,出门也能看待办和 CC 画的你</p>
   <label class="row"><span><b>出门也能用</b><small>经加密中继回家,数据只在你自己电脑上,中间人看不到</small></span><input type="checkbox" class="switch" id="f-remote"></label>
   <div class="say" id="remote-hint">开启需要重启一下 CC(约十几秒),之后在同一 Wi-Fi 下打开随身 CC,点「把 CC 带在身上」即可</div>
+  <label class="row" id="row-devices" hidden><span><b>已配对设备</b><small id="devices-count"></small></span><button type="button" id="forget-devices" style="font:inherit;font-size:12.5px;padding:5px 12px;border:1.5px solid var(--line);border-radius:999px;background:var(--card);color:var(--accent);cursor:pointer">全部忘掉</button></label>
 </section>
 
 <section>
@@ -512,6 +522,7 @@ async function load() {
   if (s.remote && s.remote.available) {
     $("sec-remote").hidden = false
     $("f-remote").checked = s.remote.enabled === true
+    if (s.remote.devices > 0) { $("row-devices").hidden = false; $("devices-count").textContent = s.remote.devices + " 台手机拿着长期钥匙" }
   }
   const care = s.prefs.care || "low"
   for (const b of $("f-care").querySelectorAll("button")) b.classList.toggle("on", b.dataset.v === care)
@@ -532,6 +543,11 @@ wireSwitch("f-hunt", "pref", "hunt")
 wireSwitch("f-knowledge", "config", "knowledge_enabled")
 wireSwitch("f-social", "config", "social_enabled")
 wireSwitch("f-autostart", "config", "autoStart")
+$("forget-devices").addEventListener("click", async () => {
+  if (!confirm("忘掉所有已配对设备?手机上的随身 CC 会立即失效,需要重新配对。")) return
+  const r = await api("/set/api/apply", { op: "forget_devices" })
+  if (r.ok) { $("row-devices").hidden = true; toast("都忘掉了,手机要重新配对") }
+})
 $("f-remote").addEventListener("change", async e => {
   const on = e.target.checked
   const h = $("remote-hint")
