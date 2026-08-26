@@ -450,7 +450,7 @@ export function pageHtml(token: string): string {
   .save { font:inherit; padding:8px 16px; border:0; border-radius:10px; background:var(--accent); color:#fff; margin-top:8px }
 </style></head><body>
 <h1>🐻 CC 的设置</h1>
-<div class="sub">改完立即生效 · 链接 10 分钟内有效 · <a href="/m?t=${token}" style="color:var(--accent)">随身 CC →</a></div>
+<div class="sub">改完立即生效 · 链接 10 分钟内有效 · <a href="javascript:void(0)" onclick="ccNav('/m')" style="color:var(--accent)">随身 CC →</a></div>
 
 <section id="sec-persona">
   <h2>人格与称呼</h2>
@@ -691,6 +691,15 @@ function api(path, opts) {
 }
 // 壳模式(公网 pset 引导页注入):没有可用的直连域,强制走隧道。
 if (window.__CC_SHELL__) { REMOTE = window.__CC_SHELL__; preferTunnel = true }
+// 页面间跳转:壳模式下相对路径指向壳域(404),必须经壳流程重进。
+function ccNav(path) {
+  if (window.__CC_SHELL__) {
+    location.href = "/pset/#id=" + encodeURIComponent(window.__CC_SHELL__.id) + "&t=" + encodeURIComponent(T) + "&p=" + encodeURIComponent(path)
+    location.reload()
+    return
+  }
+  location.href = q(path)
+}
 `
 
 /** 随身 CC 手机页 — 待办 / 小像 / 表情,自包含无 CDN,PWA 可加主屏。 */
@@ -775,7 +784,7 @@ document.querySelectorAll("nav button[data-p]").forEach(function(b) {
     document.querySelectorAll(".pane").forEach(function(p){ p.classList.toggle("on", p.id === "p-" + b.dataset.p) })
   })
 })
-document.getElementById("nav-set").addEventListener("click", function(){ location.href = q("/set") })
+document.getElementById("nav-set").addEventListener("click", function(){ ccNav("/set") })
 function render(s) {
   var t = document.getElementById("todos")
   var groups = {}
