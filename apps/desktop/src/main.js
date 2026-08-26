@@ -506,7 +506,12 @@ function wireEvents() {
       const svg = /** @type {string} */ (await deps.invoke("render_qr_svg", { text: r.url }))
       const modal = document.createElement("div")
       modal.id = "phone-settings-modal"
-      modal.innerHTML = `<div class="qr-card">${svg}<div class="qr-note">手机扫码打开设置 · 10 分钟内有效<br>手机和电脑要在同一个 Wi-Fi</div></div>`
+      // https 链接 = 走公网壳页(远程隧道开着),任何网络都能扫开;
+      // http = 纯 LAN 链接,才需要同一 Wi-Fi 的提示。
+      const note = r.url.startsWith("https")
+        ? "手机扫码打开设置 · 10 分钟内有效<br>流量或任何 Wi-Fi 都能打开"
+        : "手机扫码打开设置 · 10 分钟内有效<br>手机和电脑要在同一个 Wi-Fi"
+      modal.innerHTML = `<div class="qr-card">${svg}<div class="qr-note">${note}</div></div>`
       modal.addEventListener("click", () => modal.remove())
       document.body.appendChild(modal)
     } catch (err) {

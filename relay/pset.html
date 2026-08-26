@@ -1,0 +1,81 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CC</title>
+<!--
+  pset — 公网引导壳 (2026-08-26)。部署在中继 VPS 的静态目录,解决
+  「手机走流量扫不开 LAN 二维码」:壳从公网加载,真正的页面通过 E2E
+  隧道取回注入。锚点携带 id/令牌 —— # 后的内容不发给服务器,中继
+  连令牌都看不到;页面数据全程密文,中继盲转。
+  流程:解析 hash → Image() 探测 LAN icon(在家 → 直接跳 LAN 原始
+  地址,最快路径)→ 不通 → 隧道握手(HKDF salt=令牌)→ 密文取页 →
+  注入 window.__CC_SHELL__ 后 document.write(页面自身的传输层看到
+  壳标记即强制走隧道)。
+-->
+<style>
+  body { margin:0; font-family:system-ui,-apple-system,"PingFang SC",sans-serif; background:#f5ead8; color:#5a3f2d; display:grid; place-items:center; min-height:100vh }
+  .box { text-align:center; padding:24px } .box .b { font-size:52px } .box p { color:#8b5e3c; font-size:14px }
+</style></head><body>
+<div class="box"><div class="b">🐻</div><p id="msg">正在找回家的路…</p></div>
+<script>
+var P = {}
+location.hash.slice(1).split("&").forEach(function(kv){ var i = kv.indexOf("="); if (i > 0) P[kv.slice(0,i)] = decodeURIComponent(kv.slice(i+1)) })
+var ID = P.id, T = P.t, PATH = P.p || "/m", LAN = P.lan
+var msg = document.getElementById("msg")
+if (!ID || !T) { msg.textContent = "链接不完整,回微信跟 CC 再要一个" }
+
+var b64u = { enc: function(b){ return btoa(String.fromCharCode.apply(null, new Uint8Array(b))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"") },
+  dec: function(s){ s = s.replace(/-/g,"+").replace(/_/g,"/"); var bin = atob(s); var a = new Uint8Array(bin.length); for (var i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a } }
+
+function viaTunnel() {
+  msg.textContent = "从远处连回你的电脑…(加密直达)"
+  var relay = "wss://" + location.host + "/tunnel/phone"
+  var ws = new WebSocket(relay + "?id=" + encodeURIComponent(ID))
+  var key = null, kp = null
+  var timer = setTimeout(function(){ msg.textContent = "连不上家里的电脑 — 看看它开着没、CC 在跑没" }, 20000)
+  ws.onopen = async function() {
+    kp = await crypto.subtle.generateKey({ name:"X25519" }, true, ["deriveKey","deriveBits"])
+    ws.send(JSON.stringify({ hs: b64u.enc(await crypto.subtle.exportKey("raw", kp.publicKey)) }))
+  }
+  ws.onmessage = async function(ev) {
+    var f = JSON.parse(ev.data)
+    if (f.error) { clearTimeout(timer); msg.textContent = f.error === "daemon_offline" ? "家里的 CC 不在线 — 电脑开着吗?" : ("连接出错:" + f.error); return }
+    if (f.hs) {
+      var pub = await crypto.subtle.importKey("raw", b64u.dec(f.hs), { name:"X25519" }, true, [])
+      var bits = await crypto.subtle.deriveBits({ name:"X25519", public: pub }, kp.privateKey, 256)
+      var hk = await crypto.subtle.importKey("raw", new Uint8Array(bits), "HKDF", false, ["deriveKey"])
+      key = await crypto.subtle.deriveKey({ name:"HKDF", hash:"SHA-256", salt:new TextEncoder().encode(T), info:new TextEncoder().encode("wechat-cc/tunnel/v1") }, hk, { name:"AES-GCM", length:256 }, false, ["encrypt","decrypt"])
+      var body = JSON.stringify({ path: PATH + "?t=" + T, method: "GET", rid: "shell" })
+      var iv = crypto.getRandomValues(new Uint8Array(12))
+      var ct = await crypto.subtle.encrypt({ name:"AES-GCM", iv: iv }, key, new TextEncoder().encode(body))
+      ws.send(JSON.stringify({ iv: b64u.enc(iv), ct: b64u.enc(ct) }))
+      return
+    }
+    if (!key || !f.iv) return
+    var pt = await crypto.subtle.decrypt({ name:"AES-GCM", iv: b64u.dec(f.iv) }, key, b64u.dec(f.ct))
+    var r = JSON.parse(new TextDecoder().decode(pt))
+    clearTimeout(timer)
+    ws.close()
+    if (r.status === 401) { msg.textContent = "链接过期啦,回微信跟 CC 再要一个" ; return }
+    if (r.status !== 200) { msg.textContent = "打开失败(" + r.status + "),稍后再试" ; return }
+    var shell = { relay: relay, id: ID }
+    var html = r.body.replace(/<script>/, "<scr" + "ipt>window.__CC_SHELL__=" + JSON.stringify(shell) + ";</scr" + "ipt><scr" + "ipt>")
+    document.open(); document.write(html); document.close()
+  }
+  ws.onerror = function(){ clearTimeout(timer); msg.textContent = "网络不给力,稍后再试" }
+}
+
+if (ID && T) {
+  if (LAN) {
+    // 在家优先:LAN icon 图片探测(passive 混合内容,浏览器放行)。
+    // 通 → 直接跳 LAN 原始地址(最快、可加主屏);2s 不通 → 隧道。
+    var probe = new Image()
+    var settled = false
+    var lanTimer = setTimeout(function(){ if (!settled) { settled = true; viaTunnel() } }, 2000)
+    probe.onload = function(){ if (!settled) { settled = true; clearTimeout(lanTimer); location.replace("http://" + LAN + PATH + "?t=" + T) } }
+    probe.onerror = function(){ if (!settled) { settled = true; clearTimeout(lanTimer); viaTunnel() } }
+    probe.src = "http://" + LAN + "/m/icon.png?_=" + Date.now()
+  } else {
+    viaTunnel()
+  }
+}
+</script></body></html>

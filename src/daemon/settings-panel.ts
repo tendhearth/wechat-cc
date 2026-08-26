@@ -289,7 +289,16 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       const ip = lanIp()
       if (!ip || !deps.ownerChatId()) return null
       const { port } = await panel.start()
-      return `http://${ip}:${port}/set?t=${panel.issueToken()}`
+      const token = panel.issueToken()
+      // 远程隧道开着 → 链接指向中继上的公网壳页(owner 2026-08-26:人在
+      // 电脑旁但手机走流量是常态,LAN 链接打不开)。令牌放 # 锚点 ——
+      // 锚点不上服务器,中继看不到;壳先探 LAN(在家秒开),不通走隧道。
+      const remote = deps.remoteInfo?.()
+      if (remote) {
+        const base = remote.relay.replace(/^wss:/, 'https:').replace(/\/tunnel\/phone$/, '')
+        return `${base}/pset/#id=${encodeURIComponent(remote.id)}&t=${token}&p=${encodeURIComponent('/set')}&lan=${ip}:${port}`
+      }
+      return `http://${ip}:${port}/set?t=${token}`
     },
   }
 
@@ -483,16 +492,21 @@ export function pageHtml(token: string): string {
 
 <div id="toast"></div>
 <script>
-const T = ${JSON.stringify(token)};
+var T = ${JSON.stringify(token)};
+var REMOTE = null;
+try { var rr = localStorage.getItem("ccRemote"); if (rr) REMOTE = JSON.parse(rr) } catch (e) {}
 const $ = id => document.getElementById(id);
+function q(p) { return p + (p.indexOf("?") < 0 ? "?" : "&") + "t=" + encodeURIComponent(T) }
 function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 1400) }
-async function api(path, body) {
-  const r = await fetch(path + "?t=" + T, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : undefined)
+${TUNNEL_CLIENT_JS}
+// sapi:设置页的 JSON 封装,底下走共享 api()(在家直连,壳/出门走隧道)。
+async function sapi(path, body) {
+  const r = await api(path, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : undefined)
   if (r.status === 401) { document.body.innerHTML = '<div style="text-align:center;padding-top:40vh">⏳ 链接过期啦,回微信跟 CC 再要一个~</div>'; throw new Error("expired") }
   return r.json()
 }
 async function apply(op, extra, okMsg) {
-  const r = await api("/set/api/apply", Object.assign({ op }, extra))
+  const r = await sapi("/set/api/apply", Object.assign({ op }, extra))
   toast(r.ok ? (okMsg || "已保存 ✓") : ("没改成: " + (r.error || "unknown")))
   return r.ok
 }
@@ -507,7 +521,7 @@ function wireText(id, fn) {
   $(id).addEventListener("change", e => { const v = e.target.value.trim(); if (v) fn(v) })
 }
 async function load() {
-  const s = await api("/set/api/state")
+  const s = await sapi("/set/api/state")
   if (!s.ok) { toast("读取失败"); return }
   $("f-name").value = s.name || ""
   $("f-botname").value = s.config.bot_name || ""
@@ -545,14 +559,14 @@ wireSwitch("f-social", "config", "social_enabled")
 wireSwitch("f-autostart", "config", "autoStart")
 $("forget-devices").addEventListener("click", async () => {
   if (!confirm("忘掉所有已配对设备?手机上的随身 CC 会立即失效,需要重新配对。")) return
-  const r = await api("/set/api/apply", { op: "forget_devices" })
+  const r = await sapi("/set/api/apply", { op: "forget_devices" })
   if (r.ok) { $("row-devices").hidden = true; toast("都忘掉了,手机要重新配对") }
 })
 $("f-remote").addEventListener("change", async e => {
   const on = e.target.checked
   const h = $("remote-hint")
   h.textContent = on ? "正在开启并重启 CC…十几秒后回来,在同一 Wi-Fi 下打开随身 CC 点「把 CC 带在身上」" : "已关闭出门访问"
-  const r = await api("/set/api/apply", { op: "set_remote", enabled: on })
+  const r = await sapi("/set/api/apply", { op: "set_remote", enabled: on })
   if (!r.ok) { h.textContent = "没改成:" + (r.error || ""); e.target.checked = !on }
 })
 load().catch(() => {})
@@ -593,73 +607,9 @@ try {
 } catch (e) { document.getElementById("msg").textContent = "浏览器不让存钥匙,回微信重新拿链接吧" }
 </script></body>`
 
-/** 随身 CC 手机页 — 待办 / 小像 / 表情,自包含无 CDN,PWA 可加主屏。 */
-export function phoneHtml(token: string, remote: { relay: string; id: string } | null): string {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>CC</title>
-<link rel="manifest" href="/m/manifest.json">
-<link rel="apple-touch-icon" href="/m/icon.png">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<style>
-  :root { --ink:#5a3f2d; --soft:#8b5e3c; --accent:#b0563a; --paper:#f5ead8; --card:#fffdf8; --line:rgba(89,63,44,.25); }
-  * { box-sizing:border-box }
-  body { margin:0; font-family:system-ui,-apple-system,"PingFang SC",sans-serif; background:var(--paper); color:var(--ink); padding-bottom:70px }
-  header { padding:18px 16px 8px } header h1 { font-size:22px; margin:0 }
-  header .sub { color:var(--soft); font-size:12.5px }
-  .pane { padding:8px 14px 20px; display:none } .pane.on { display:block }
-  .card { background:var(--card); border:1.5px solid var(--line); border-radius:14px 18px 12px 20px; padding:12px 14px; margin-bottom:10px }
-  .todo { display:flex; align-items:center; gap:10px }
-  .todo .tx { flex:1; min-width:0 } .todo .tx b { font-size:14px; font-weight:600; display:block }
-  .todo .tx small { color:var(--soft) }
-  .todo button { font:inherit; font-size:12.5px; padding:5px 12px; border:1.5px solid var(--line); border-radius:999px; background:var(--card); color:var(--ink) }
-  .todo button.done-btn { background:var(--accent); border-color:var(--accent); color:#fff }
-  .grp { color:var(--accent); font-size:13px; font-weight:700; margin:14px 2px 6px }
-  .empty { text-align:center; color:var(--soft); padding:40px 10px }
-  .portrait { text-align:center; padding:12px }
-  .portrait .frame { display:inline-block; background:var(--card); border:2.5px solid var(--line); border-radius:16px 20px 14px 22px; padding:16px; transform:rotate(-1deg); max-width:78vw }
-  .portrait svg { width:100%; height:auto } .portrait figcaption { color:var(--soft); font-size:13px; margin-top:8px }
-  .stgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px }
-  .stgrid figure { margin:0; background:var(--card); border:1.5px solid var(--line); border-radius:12px; padding:8px; text-align:center }
-  .stgrid img { width:100%; height:84px; object-fit:contain } .stgrid figcaption { font-size:11.5px; color:var(--soft) }
-  nav { position:fixed; left:0; right:0; bottom:0; display:flex; background:var(--card); border-top:1.5px solid var(--line); padding-bottom:env(safe-area-inset-bottom) }
-  nav button { flex:1; font:inherit; font-size:12px; padding:10px 0 8px; border:0; background:none; color:var(--soft) }
-  nav button.on { color:var(--accent); font-weight:700 }
-  nav button .i { display:block; font-size:20px }
-  #pairbar { margin:8px 14px; padding:9px 12px; background:rgba(176,86,58,.08); border-radius:10px; font-size:12.5px; color:var(--soft) }
-  #pairbar button { font:inherit; font-size:12.5px; margin-left:8px; padding:4px 12px; border:1.5px solid var(--accent); border-radius:999px; background:var(--accent); color:#fff }
-  #toast { position:fixed; left:50%; bottom:76px; transform:translateX(-50%); background:var(--ink); color:#fff; padding:7px 16px; border-radius:16px; font-size:12.5px; opacity:0; transition:.25s; pointer-events:none }
-  #toast.show { opacity:1 }
-</style></head><body>
-<header><h1>🐻 CC</h1><div class="sub" id="sub">随身小窗 · 数据都在你自己电脑上</div></header>
-<div id="pairbar" hidden>这个链接 10 分钟就过期<button id="pairbtn">把 CC 带在身上</button></div>
-<div class="pane on" id="p-todos"><div id="todos"></div></div>
-<div class="pane" id="p-portrait"><div class="portrait" id="portrait"></div></div>
-<div class="pane" id="p-stickers"><div class="stgrid" id="stickers"></div></div>
-<nav>
-  <button data-p="todos" class="on"><span class="i">📋</span>待办</button>
-  <button data-p="portrait"><span class="i">🖼</span>CC画的你</button>
-  <button data-p="stickers"><span class="i">🐻</span>表情</button>
-  <button id="nav-set"><span class="i">⚙️</span>设置</button>
-</nav>
-<div id="toast"></div>
-<script>
-var T = ${JSON.stringify(token)}
-var REMOTE = ${JSON.stringify(remote)}
-try {
-  if (T.charAt(0) === "d") localStorage.setItem("deviceToken", T)
-  if (REMOTE) localStorage.setItem("ccRemote", JSON.stringify(REMOTE))
-  else { var rr = localStorage.getItem("ccRemote"); if (rr) REMOTE = JSON.parse(rr) }
-} catch (e) {}
-var isDevice = T.charAt(0) === "d"
-if (!isDevice) document.getElementById("pairbar").hidden = false
-if ("serviceWorker" in navigator) { navigator.serviceWorker.register("/m/sw.js", { scope: "/m" }).catch(function(){}) }
-function toast(m) { var t = document.getElementById("toast"); t.textContent = m; t.classList.add("show"); setTimeout(function(){ t.classList.remove("show") }, 1800) }
-function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;") }
-function q(p) { return p + (p.indexOf("?") < 0 ? "?" : "&") + (isDevice ? "d=" : "t=") + encodeURIComponent(T) }
+const TUNNEL_CLIENT_JS = `
 // 传输层:先直连(同 Wi-Fi),失败且配了 remote 就走中继隧道(端到端加密)。
-var b64u = { enc: function(b){ return btoa(String.fromCharCode.apply(null, new Uint8Array(b))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"") },
+var b64u = { enc: function(b){ return btoa(String.fromCharCode.apply(null, new Uint8Array(b))).replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"") },
   dec: function(s){ s = s.replace(/-/g,"+").replace(/_/g,"/"); var bin = atob(s); var a = new Uint8Array(bin.length); for (var i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a } }
 var tun = null
 function tunnel() {
@@ -730,6 +680,76 @@ function api(path, opts) {
     return tunnel().then(function(send){ return send(path, opts) })
   })
 }
+// 壳模式(公网 pset 引导页注入):没有可用的直连域,强制走隧道。
+if (window.__CC_SHELL__) { REMOTE = window.__CC_SHELL__; preferTunnel = true }
+`
+
+/** 随身 CC 手机页 — 待办 / 小像 / 表情,自包含无 CDN,PWA 可加主屏。 */
+export function phoneHtml(token: string, remote: { relay: string; id: string } | null): string {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>CC</title>
+<link rel="manifest" href="/m/manifest.json">
+<link rel="apple-touch-icon" href="/m/icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<style>
+  :root { --ink:#5a3f2d; --soft:#8b5e3c; --accent:#b0563a; --paper:#f5ead8; --card:#fffdf8; --line:rgba(89,63,44,.25); }
+  * { box-sizing:border-box }
+  body { margin:0; font-family:system-ui,-apple-system,"PingFang SC",sans-serif; background:var(--paper); color:var(--ink); padding-bottom:70px }
+  header { padding:18px 16px 8px } header h1 { font-size:22px; margin:0 }
+  header .sub { color:var(--soft); font-size:12.5px }
+  .pane { padding:8px 14px 20px; display:none } .pane.on { display:block }
+  .card { background:var(--card); border:1.5px solid var(--line); border-radius:14px 18px 12px 20px; padding:12px 14px; margin-bottom:10px }
+  .todo { display:flex; align-items:center; gap:10px }
+  .todo .tx { flex:1; min-width:0 } .todo .tx b { font-size:14px; font-weight:600; display:block }
+  .todo .tx small { color:var(--soft) }
+  .todo button { font:inherit; font-size:12.5px; padding:5px 12px; border:1.5px solid var(--line); border-radius:999px; background:var(--card); color:var(--ink) }
+  .todo button.done-btn { background:var(--accent); border-color:var(--accent); color:#fff }
+  .grp { color:var(--accent); font-size:13px; font-weight:700; margin:14px 2px 6px }
+  .empty { text-align:center; color:var(--soft); padding:40px 10px }
+  .portrait { text-align:center; padding:12px }
+  .portrait .frame { display:inline-block; background:var(--card); border:2.5px solid var(--line); border-radius:16px 20px 14px 22px; padding:16px; transform:rotate(-1deg); max-width:78vw }
+  .portrait svg { width:100%; height:auto } .portrait figcaption { color:var(--soft); font-size:13px; margin-top:8px }
+  .stgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px }
+  .stgrid figure { margin:0; background:var(--card); border:1.5px solid var(--line); border-radius:12px; padding:8px; text-align:center }
+  .stgrid img { width:100%; height:84px; object-fit:contain } .stgrid figcaption { font-size:11.5px; color:var(--soft) }
+  nav { position:fixed; left:0; right:0; bottom:0; display:flex; background:var(--card); border-top:1.5px solid var(--line); padding-bottom:env(safe-area-inset-bottom) }
+  nav button { flex:1; font:inherit; font-size:12px; padding:10px 0 8px; border:0; background:none; color:var(--soft) }
+  nav button.on { color:var(--accent); font-weight:700 }
+  nav button .i { display:block; font-size:20px }
+  #pairbar { margin:8px 14px; padding:9px 12px; background:rgba(176,86,58,.08); border-radius:10px; font-size:12.5px; color:var(--soft) }
+  #pairbar button { font:inherit; font-size:12.5px; margin-left:8px; padding:4px 12px; border:1.5px solid var(--accent); border-radius:999px; background:var(--accent); color:#fff }
+  #toast { position:fixed; left:50%; bottom:76px; transform:translateX(-50%); background:var(--ink); color:#fff; padding:7px 16px; border-radius:16px; font-size:12.5px; opacity:0; transition:.25s; pointer-events:none }
+  #toast.show { opacity:1 }
+</style></head><body>
+<header><h1>🐻 CC</h1><div class="sub" id="sub">随身小窗 · 数据都在你自己电脑上</div></header>
+<div id="pairbar" hidden>这个链接 10 分钟就过期<button id="pairbtn">把 CC 带在身上</button></div>
+<div class="pane on" id="p-todos"><div id="todos"></div></div>
+<div class="pane" id="p-portrait"><div class="portrait" id="portrait"></div></div>
+<div class="pane" id="p-stickers"><div class="stgrid" id="stickers"></div></div>
+<nav>
+  <button data-p="todos" class="on"><span class="i">📋</span>待办</button>
+  <button data-p="portrait"><span class="i">🖼</span>CC画的你</button>
+  <button data-p="stickers"><span class="i">🐻</span>表情</button>
+  <button id="nav-set"><span class="i">⚙️</span>设置</button>
+</nav>
+<div id="toast"></div>
+<script>
+var T = ${JSON.stringify(token)}
+var REMOTE = ${JSON.stringify(remote)}
+try {
+  if (T.charAt(0) === "d") localStorage.setItem("deviceToken", T)
+  if (REMOTE) localStorage.setItem("ccRemote", JSON.stringify(REMOTE))
+  else { var rr = localStorage.getItem("ccRemote"); if (rr) REMOTE = JSON.parse(rr) }
+} catch (e) {}
+var isDevice = T.charAt(0) === "d"
+if (!isDevice) document.getElementById("pairbar").hidden = false
+if ("serviceWorker" in navigator) { navigator.serviceWorker.register("/m/sw.js", { scope: "/m" }).catch(function(){}) }
+function toast(m) { var t = document.getElementById("toast"); t.textContent = m; t.classList.add("show"); setTimeout(function(){ t.classList.remove("show") }, 1800) }
+function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;") }
+function q(p) { return p + (p.indexOf("?") < 0 ? "?" : "&") + (isDevice ? "d=" : "t=") + encodeURIComponent(T) }
+${TUNNEL_CLIENT_JS}
 document.getElementById("pairbtn").addEventListener("click", function() {
   fetch(q("/set/api/pair"), { method: "POST" }).then(function(r){ return r.json() }).then(function(r) {
     if (r.ok && r.device_token) {
