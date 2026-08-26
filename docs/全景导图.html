@@ -36,7 +36,7 @@
   <ul><li>做 <b>微信当手机聊天面</b> · 不做 <b>自建手机聊天界面</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>CC 本来就住在用户微信里,自建聊天界面等于跟微信打架,必输。手机 app 的价值只在微信给不了的三样:陪伴的可视化随身(待办/画像/表情)、独立推送(daemon 挂了微信恰好发不出「我病了」)、远程掌控</span></li>
 <li>做 <b>台阶 A:PWA 先行</b> <span class="badge done">定</span> · 不做 <b>直接上原生 app</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>零商店、零审核、零新代码栈,先验证「人们到底会不会在手机上看 CC」。台阶 B(Tauri v2 移动壳 + 桌面 Widget + 原生推送)挂在 A 验证有人用之后——Apple $99/年正好和 macOS 签名公证同一笔钱,一鱼两吃</span></li>
 <li><span class="badge todo">待</span> <b>台阶 B:手机桌面 Widget</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>CC 小熊住在手机桌面:今天画了新表情就换上、有逾期待办就举牌子。最贴 CC 人设的一击,也是微信永远给不了的。解锁条件:台阶 A 验证 + 决定掏 $99</span></li>
-<li><span class="badge todo">待</span> <b>台阶 C:微信小程序</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>分发最顺但 AI/远控类目审核敏感、个人主体限制多。放最后看监管</span></li>
+<li><del>台阶 C:微信小程序</del> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>owner 2026-08-26 拍板:暂时不用。原始顾虑仍在(AI/远控类目审核敏感、个人主体限制多),且 PWA + 微信内置浏览器已覆盖手机场景,没有它非做不可的理由。将来若重提,从这里捡起</span></li>
 <li>做 <b>设备配对长期令牌(在家扫码换一枚,加主屏永不过期)</b> · 不做 <b>每次回微信要新链接</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>10 分钟短令牌对「加到主屏随时打开」是致命摩擦。长期令牌落盘 0600、上限 20 台,后来它还成了隧道认证的绑定秘密——一个机制吃两份饭</span></li></ul>
 </details>
 
