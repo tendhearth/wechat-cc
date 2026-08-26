@@ -3336,12 +3336,12 @@ input { font: inherit; color: inherit; }
 #provider-menu {
   position: fixed;
   z-index: 9999;
-  width: 144px;
-  padding: 6px 0;
-  border: 1px solid #e2e2e4;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 4px 16px rgba(0,0,0,.10);
+  width: 158px;
+  padding: 6px;
+  border: 1px solid rgba(139, 96, 54, .24);
+  border-radius: 14px;
+  background: rgba(255, 251, 242, .98);
+  box-shadow: 0 6px 18px rgba(112, 76, 42, .16);
 }
 #provider-menu button {
   width: 100%;
@@ -3357,7 +3357,8 @@ input { font: inherit; color: inherit; }
   border-radius: 0;
 }
 #provider-menu button:hover {
-  background: #f4f4f5;
+  background: rgba(139, 96, 54, .08);
+  border-radius: 9px;
 }
 #provider-menu button.provider-menu-active {
   font-weight: 700;
@@ -6306,33 +6307,47 @@ input { font: inherit; color: inherit; }
   align-items: center;
   gap: 8px;
   margin-top: 10px;
-  padding: 8px 12px;
-  border: 1.5px dashed rgba(89, 63, 44, .22);
-  border-radius: 12px;
-  background: rgba(255, 253, 248, .55);
+  padding: 10px 14px;
+  border: 1px solid rgba(139, 96, 54, .22);
+  border-radius: 14px 18px 12px 16px;
+  background: rgba(255, 249, 237, .88);
+  box-shadow: 0 3px 10px rgba(112, 76, 42, .08);
   font-size: 12.5px;
 }
 .brain-title { color: #8b5e3c; font-weight: 700; }
 .brain-checking { color: #a08a75; }
-.brain-chip { padding: 2px 9px; border-radius: 999px; font-weight: 600; }
-.brain-ok { background: rgba(77, 124, 77, .12); color: #4d7c4d; }
-.brain-bad { background: rgba(176, 86, 58, .14); color: #b0563a; }
-.brain-meh { background: rgba(89, 63, 44, .08); color: #a08a75; }
-.brain-default { outline: 1.5px solid currentColor; }
-.brain-recheck {
-  margin-left: auto;
-  padding: 2px 12px;
-  border: 1.5px solid rgba(89, 63, 44, .25);
+.brain-chip {
+  padding: 3px 11px;
   border-radius: 999px;
-  background: #fffdf8;
-  color: #5a3f2d;
+  font-weight: 500;
+  background: rgba(255, 253, 248, .92);
+  border: 1px solid rgba(139, 96, 54, .24);
+  box-shadow: 0 2px 6px rgba(112, 76, 42, .06);
+}
+.brain-ok { color: #5d7c52; }
+.brain-bad { color: #b0563a; border-color: rgba(176, 86, 58, .35); }
+.brain-meh { color: #a08a75; }
+.brain-default { border-color: rgba(139, 96, 54, .55); font-weight: 650; }
+.brain-recheck {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  min-height: 28px;
+  padding: 4px 13px;
+  border: 1px solid rgba(139, 96, 54, .26);
+  border-radius: 999px;
+  background: rgba(255, 249, 237, .92);
+  box-shadow: 0 3px 10px rgba(112, 76, 42, .10);
+  color: #6b492d;
   font: inherit;
   font-size: 12px;
+  font-weight: 650;
   cursor: pointer;
 }
-.brain-recheck:hover { border-color: #8a5a36; }
+.brain-recheck:hover { border-color: rgba(139, 96, 54, .5); color: #5a3f2d; }
 .brain-hint { flex-basis: 100%; color: #b0563a; font-size: 12px; }
-.brain-off { background: transparent; border: 1.5px dashed rgba(89, 63, 44, .3); color: #a08a75; cursor: help; }
+.brain-off { background: transparent; border-style: dashed; color: #b0a08c; cursor: pointer; box-shadow: none; }
+.brain-off:hover { color: #8b5e3c; border-color: rgba(139, 96, 54, .45); }
 .brain-when { color: #a08a75; font-size: 11.5px; }
 .brain-setup { flex-basis: 100%; margin-top: 6px; padding-top: 8px; border-top: 1px dashed rgba(89, 63, 44, .18); }
 .brain-setup-title { color: #5a3f2d; font-weight: 700; font-size: 12.5px; margin-bottom: 6px; }
@@ -6362,17 +6377,23 @@ input { font: inherit; color: inherit; }
 }
 #app-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .phone-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
   margin-top: 8px;
-  padding: 6px 14px;
-  border: 1.5px dashed rgba(89, 63, 44, .3);
-  border-radius: 10px;
-  background: rgba(255, 253, 248, .55);
-  color: #8b5e3c;
+  padding: 5px 13px;
+  border: 1px solid rgba(139, 96, 54, .26);
+  border-radius: 999px;
+  background: rgba(255, 249, 237, .88);
+  box-shadow: 0 3px 10px rgba(112, 76, 42, .10);
+  color: #6b492d;
   font: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
+  font-weight: 650;
   cursor: pointer;
 }
-.phone-settings-btn:hover { border-color: #8a5a36; color: #5a3f2d; }
+.phone-settings-btn:hover { border-color: rgba(139, 96, 54, .5); color: #5a3f2d; }
 #phone-settings-modal {
   position: fixed;
   inset: 0;

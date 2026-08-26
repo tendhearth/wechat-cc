@@ -1236,7 +1236,7 @@ describe('provider menu', () => {
     expect(els.dashPending.textContent).toBe('切换 provider 失败')
   })
 
-  it('toggleUserProviderMenu populates card menu with claude, codex, gemini buttons', async () => {
+  it('toggleUserProviderMenu populates card menu from the registered-provider fallback', async () => {
     const { menuButtons } = installProviderMenuDom()
     const row = { dataset: { chatId: 'chat-1', currentProvider: 'claude' } }
     const anchor = {
@@ -1252,7 +1252,8 @@ describe('provider menu', () => {
       makeProviderReport('claude'),
     )
 
-    expect(menuButtons.map(b => b.dataset.provider)).toEqual(['claude', 'codex', 'gemini'])
+    // 与大脑区同源:未拿到 /v1/llm/health registered 前用保守兜底
+    expect(menuButtons.map(b => b.dataset.provider)).toEqual(['claude', 'codex', 'cursor'])
   })
 
   it('user card provider click invokes mode set with JSON solo provider', async () => {
@@ -1267,7 +1268,7 @@ describe('provider menu', () => {
     const invoke = vi.fn(async () => ({ ok: true }))
 
     await toggleUserProviderMenu({ invoke, doctorPoller: { refresh: vi.fn(async () => null) } }, anchor, makeProviderReport('claude'))
-    const geminiBtn = menuButtons.find(b => b.dataset.provider === 'gemini')
+    const geminiBtn = menuButtons.find(b => b.dataset.provider === 'cursor')
     expect(geminiBtn).toBeDefined()
     for (const handler of geminiBtn!._clickHandlers) {
       await handler({ stopPropagation: () => {} })
@@ -1280,7 +1281,7 @@ describe('provider menu', () => {
     expect(modeSetCall).toBeDefined()
     const args = (modeSetCall as any)[1].args
     expect(args[2]).toBe('chat-1')
-    expect(JSON.parse(args[3])).toEqual({ kind: 'solo', provider: 'gemini' })
+    expect(JSON.parse(args[3])).toEqual({ kind: 'solo', provider: 'cursor' })
     expect(args[4]).toBe('--json')
   })
 })

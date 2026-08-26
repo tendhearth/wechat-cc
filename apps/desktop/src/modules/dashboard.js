@@ -11,7 +11,12 @@
 import { dashboardHero, accountRows, formatRelativeTime, escapeHtml, restartButtonState, deleteAccountConfirmCopy, diagnose } from "../view.js"
 import { icon } from "./icons.js"
 
-const USER_CARD_PROVIDERS = ["claude", "codex", "gemini"]
+// provider 菜单的数据源 = 大脑区已注册列表(/v1/llm/health registered),
+// 由 renderBrainHealth 更新;拿到前用保守兜底。owner 2026-08-26:「切换
+// 只有三个,底下大脑有这么多,很怪」—— 两处必须同源。
+let _registeredProviders = null
+const FALLBACK_PROVIDERS = ["claude", "codex", "cursor"]
+const menuProviders = () => (_registeredProviders && _registeredProviders.length ? _registeredProviders : FALLBACK_PROVIDERS)
 const COMPANION_HERO_COPIES = [
   { headline: "此刻，陪你一起看鱼", meta: "把鼠标轻轻移进鱼缸，看看谁会先回应你" },
   { headline: "给忙碌留一小片水光", meta: "在这里慢慢游一会儿，也没关系" },
@@ -651,12 +656,10 @@ export async function toggleProviderMenu(deps, report) {
   if (!anchor) return
 
   const currentProvider = report?.checks?.provider?.provider || "codex"
-  const providers = ["claude", "codex", "cursor"]
 
-  // Build menu buttons
-  menu.innerHTML = providers.map(p => {
+  menu.innerHTML = menuProviders().map(p => {
     const active = p === currentProvider
-    return `<button class="${active ? "provider-menu-active" : ""}" data-provider="${escapeHtml(p)}">${escapeHtml(p)}</button>`
+    return `<button class="${active ? "provider-menu-active" : ""}" data-provider="${escapeHtml(p)}">${escapeHtml(PROVIDER_LABELS[p] || p)}</button>`
   }).join("")
 
   // Position: fixed, anchored below the .provider-switch button.
@@ -732,9 +735,9 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
   // No chat_id yet (freshly bound, no conversation) → switch provider UI-only.
   const noChat = !chatId
 
-  menu.innerHTML = USER_CARD_PROVIDERS.map(p => {
+  menu.innerHTML = menuProviders().map(p => {
     const active = p === currentProvider
-    return `<button class="${active ? "provider-menu-active" : ""}" data-provider="${escapeHtml(p)}">${escapeHtml(p)}</button>`
+    return `<button class="${active ? "provider-menu-active" : ""}" data-provider="${escapeHtml(p)}">${escapeHtml(PROVIDER_LABELS[p] || p)}</button>`
   }).join("")
 
   const rect = anchor.getBoundingClientRect()
@@ -1006,13 +1009,14 @@ export async function loadBrainHealth(deps, fresh) {
   if (!el) return
   if (fresh) {
     el.hidden = false
-    el.innerHTML = `<span class="brain-title">🧠 大脑</span><span class="brain-checking">正在逐个拨号测试…(最长约 1 分钟)</span>`
+    el.innerHTML = `<span class="brain-title">CC 的大脑</span><span class="brain-checking">正在逐个拨号测试…(最长约 1 分钟)</span>`
   }
   const r = await deps.invokeApi("GET", `/v1/llm/health${fresh ? "?fresh=1" : ""}`, undefined, { timeoutMs: 150_000 }).catch(() => null)
   if (!r || r.ok !== true) { el.hidden = true; return }
   const results = Array.isArray(r.results) ? r.results : []
   const byId = new Map(results.map(x => [x.provider, x]))
   const registered = Array.isArray(r.registered) ? r.registered : []
+  if (registered.length) _registeredProviders = registered
   const chips = registered.map(id => {
     const label = PROVIDER_LABELS[id] || id
     const x = byId.get(id)
@@ -1035,7 +1039,7 @@ export async function loadBrainHealth(deps, fresh) {
     : ""
   const when = r.checked_at ? `<span class="brain-when">上次测试 ${formatRelativeTime(r.checked_at)}</span>` : `<span class="brain-when">还没测试过</span>`
   el.innerHTML = `
-    <span class="brain-title">🧠 大脑</span>${chips}${moreChips}
+    <span class="brain-title">CC 的大脑</span>${chips}${moreChips}
     ${when}
     <button class="brain-recheck" type="button" data-action="brain-recheck" title="真拨每个已接入的 provider,验证通道+大脑">测试连接</button>
     ${hintLine}
