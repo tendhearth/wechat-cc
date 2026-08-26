@@ -120,6 +120,31 @@ async function uploadR2(token: string): Promise<boolean> {
   }
   await put(artifactName, new Uint8Array(readFileSync(artifactPath)), 'application/octet-stream')
   await put('latest.json', JSON.stringify(latest, null, 2), 'application/json')
+
+  // 旧版清理 — 每平台只留最近 KEEP_VERSIONS 版,免费额度(10GB)永远够用。
+  try {
+    const KEEP_VERSIONS = 3
+    const list = await fetch(`${base}/${hosting.bucket}/objects?per_page=1000`, { headers: H })
+    const listBody = await list.json() as { success: boolean; result?: Array<{ key: string }> }
+    const keys = (listBody.result ?? []).map(o => o.key)
+    // key 形如 wechat-cc_<semver>_<platform>(.app.tar.gz|-setup.exe)
+    const parsed = keys
+      .map(k => { const m = k.match(/^wechat-cc_(\d+\.\d+\.\d+)_(.+?)(\.app\.tar\.gz|-setup\.exe)$/); return m ? { key: k, version: m[1]!, platform: m[2]! } : null })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+    const byPlatform = new Map<string, typeof parsed>()
+    for (const a of parsed) { const arr = byPlatform.get(a.platform) ?? []; arr.push(a); byPlatform.set(a.platform, arr) }
+    const semver = (v: string) => v.split('.').map(Number)
+    const cmp = (a: string, b: string) => { const [x, y] = [semver(a), semver(b)]; return (x[0]! - y[0]!) || (x[1]! - y[1]!) || (x[2]! - y[2]!) }
+    for (const arr of byPlatform.values()) {
+      const stale = arr.sort((a, b) => cmp(b.version, a.version)).slice(KEEP_VERSIONS)
+      for (const s2 of stale) {
+        const del = await fetch(`${base}/${hosting.bucket}/objects/${encodeURIComponent(s2.key)}`, { method: 'DELETE', headers: H })
+        console.log(`${del.ok ? '已清理旧版' : '清理失败(不影响发布)'}: ${s2.key}`)
+      }
+    }
+  } catch (e) {
+    console.log(`旧版清理跳过(不影响发布): ${e instanceof Error ? e.message : e}`)
+  }
   return true
 }
 
