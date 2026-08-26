@@ -82,7 +82,17 @@ function escapeText(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 }
 
+const FOCUS_RECHECK_MIN_MS = 60 * 60_000
+let _lastCheckAt = 0
+
 export function startAppUpdateChecks() {
-  setTimeout(() => { checkOnce() }, CHECK_DELAY_MS)
-  setInterval(() => { checkOnce() }, CHECK_INTERVAL_MS)
+  setTimeout(() => { _lastCheckAt = Date.now(); checkOnce() }, CHECK_DELAY_MS)
+  setInterval(() => { _lastCheckAt = Date.now(); checkOnce() }, CHECK_INTERVAL_MS)
+  // 常驻 app 只靠 24h 定时会错过发布窗口一整天(owner 实测「没看到升级」)。
+  // 窗口获得焦点时补查,1 小时节流 —— 用户回到 app 的那一刻最该看到横幅。
+  window.addEventListener("focus", () => {
+    if (Date.now() - _lastCheckAt < FOCUS_RECHECK_MIN_MS) return
+    _lastCheckAt = Date.now()
+    checkOnce()
+  })
 }
