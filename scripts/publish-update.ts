@@ -36,14 +36,21 @@ const hosting: Hosting = existsSync(HOSTING_PATH)
 const conf = JSON.parse(readFileSync(join(DESKTOP, 'src-tauri', 'tauri.conf.json'), 'utf8')) as { version: string }
 const version = conf.version
 
-// ── 1. collect this platform's artifacts ────────────────────────────────
-const platformKey = process.platform === 'darwin'
+// ── 1. collect artifacts ────────────────────────────────────────────────
+// 默认取本平台构建产物;--platform + --artifact 可覆盖(例:Windows 机器
+// 只编译,exe 拉回 Mac 签名后在 Mac 发布 —— Windows 上无法给 tauri 传
+// 空密码环境变量,签名固定在 Mac 做)。
+const platformKey = arg('--platform') ?? (process.platform === 'darwin'
   ? `darwin-${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}`
-  : process.platform === 'win32' ? 'windows-x86_64' : `linux-${process.arch}`
+  : process.platform === 'win32' ? 'windows-x86_64' : `linux-${process.arch}`)
 
 let artifactPath: string
 let sigPath: string
-if (process.platform === 'darwin') {
+const artifactOverride = arg('--artifact')
+if (artifactOverride) {
+  artifactPath = artifactOverride
+  sigPath = `${artifactOverride}.sig`
+} else if (process.platform === 'darwin') {
   const macosDir = join(DESKTOP, 'src-tauri', 'target', 'release', 'bundle', 'macos')
   artifactPath = join(macosDir, 'wechat-cc.app.tar.gz')
   sigPath = `${artifactPath}.sig`
@@ -60,7 +67,7 @@ if (!existsSync(artifactPath) || !existsSync(sigPath)) {
   process.exit(1)
 }
 const signature = readFileSync(sigPath, 'utf8').trim()
-const artifactName = `wechat-cc_${version}_${platformKey}${process.platform === 'darwin' ? '.app.tar.gz' : '-setup.exe'}`
+const artifactName = `wechat-cc_${version}_${platformKey}${platformKey.startsWith('darwin') ? '.app.tar.gz' : '-setup.exe'}`
 const artifactUrl = `${hosting.baseUrl}/${artifactName}`
 
 // ── 2. merge latest.json (preserve other platforms) ─────────────────────
