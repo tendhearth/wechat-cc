@@ -27,7 +27,7 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkBrainHealthOnPoll, loadBrainHealth, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, closeTroubleshoot, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
@@ -515,13 +515,17 @@ function wireEvents() {
   })
 
   // 大脑卡交互:测试连接(唯一的真实拨号入口)/ 接入表单 / 复制命令 / 保存 key / 重启
+  document.getElementById("brain-selfcheck")?.addEventListener("click", () => {
+    runTroubleshoot(deps).catch(err => console.warn("[brain] selfcheck failed:", err))
+  })
   document.getElementById("brain-health")?.addEventListener("click", (ev) => {
     const t = ev.target instanceof HTMLElement ? ev.target : null
     if (!t) return
-    if (t.closest('[data-action="brain-recheck"]')) {
-      loadBrainHealth(deps, true).catch(err => console.warn("[brain] recheck failed:", err))
+    if (t.closest('[data-action="brain-recheck"]') || t.closest('[data-action="brain-troubleshoot"]')) {
+      runTroubleshoot(deps).catch(err => console.warn("[brain] troubleshoot failed:", err))
       return
     }
+    if (t.closest('[data-action="brain-close"]')) { closeTroubleshoot(deps); return }
     const setup = t.closest("[data-brain-setup]")
     if (setup instanceof HTMLElement && setup.dataset.brainSetup) {
       openBrainSetup(deps, setup.dataset.brainSetup)

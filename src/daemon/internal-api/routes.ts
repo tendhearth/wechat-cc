@@ -261,6 +261,15 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     // ?fresh=1(用户点「测试连接」)时发生 —— 绝不自动外呼(owner ruling:
     // 网络不稳时的无人值守外呼是风控/封号形状);默认只回上次结果 +
     // 已注册/未接入清单(未接入的带配置方法人话)。
+    // 网络体检(排障前置,2026-08-26)— provider 连不上大多是国际出口
+    // 问题而非登录问题;先分清,修复指引才对路。daemon 侧 HTTPS 可达性
+    // (HEAD,不带 key,不调真实 API),用户点击触发。
+    'POST /v1/net/probe': async () => {
+      const { probeTargetsFor, runNetProbe, verdictOf } = await import('../net-probe')
+      const registered = deps.llmRegistered?.() ?? []
+      const results = await runNetProbe(probeTargetsFor(registered))
+      return { status: 200, body: { ok: true, results, verdict: verdictOf(results) } }
+    },
     'GET /v1/llm/health': async (q) => {
       if (!deps.llmHealth) return { status: 503, body: { error: 'llm_health_not_wired' } }
       const { unconfiguredHints } = await import('../llm-health')

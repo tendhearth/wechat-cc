@@ -160,6 +160,7 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/memory/synthesize': 'trusted',
   'POST /v1/memory/profile/generate': 'trusted',
   'GET /v1/llm/health': 'trusted',
+  'POST /v1/net/probe': 'trusted',
   'POST /v1/llm/keys': 'admin',
   'GET /v1/settings/link': 'trusted',
   'POST /v1/memory/portrait/generate': 'trusted',

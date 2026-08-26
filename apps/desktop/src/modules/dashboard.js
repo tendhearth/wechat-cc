@@ -993,26 +993,85 @@ const INCIDENTS_POLL_INTERVAL_MS = 60_000
  * it without awaiting, same fire-and-forget posture as checkExpiredDiff.
  */
 // ── 大脑体检 (LLM channel health, 2026-08-25) ─────────────────────────
-// 「连接正常」只证明微信侧。这块小卡回答另一半:CC 的大脑接得通吗?
-// 真拨(?fresh=1)只在用户点「测试连接」时发生 —— 绝不自动外呼(owner
-// ruling:网络不稳时的无人值守外呼是风控/封号形状)。平时只显示上次
-// 测试结果 + 未接入 provider 的配置方法。
+// 大脑区 = 病历本,不是仪表盘 (owner 2026-08-26:CC 正常回话就说明大脑
+// 没事,常驻展示一排技术名词+问号只会吓到用户 —— troubleshoot 化):
+//  - 平时:整块隐藏(没病不翻病历)
+//  - daemon 报告异常(缓存健康态有红)→ 浮一条告警「CC 最近有几句话
+//    没接住…」→ 点开进入排障
+//  - 排障第一步是网络体检(POST /v1/net/probe,daemon 侧测):国内环境
+//    provider 连不上大多是国际出口没通(代理),不是登录问题 —— 分清
+//    才能给对修复指引。国际不通就不真拨大脑,先修网络
+// 真拨(?fresh=1)只在排障流程里发生 —— 绝不自动外呼(owner ruling)。
 
 const BRAIN_POLL_INTERVAL_MS = 60_000
 let _lastBrainCheckAt = 0
+let _troubleshootOpen = false
 
 const PROVIDER_LABELS = { claude: "Claude", codex: "Codex", cursor: "Cursor", agy: "Gemini(agy)", openai: "OpenAI", gemini: "Gemini" }
 
-/** @param {{ invokeApi: Function }} deps @param {boolean} fresh */
+/**
+ * cached 巡检入口(poll 驱动,永不拨号):决定「隐藏 / 告警条 / 排障面板刷新」。
+ * @param {{ invokeApi: Function }} deps @param {boolean} fresh
+ */
 export async function loadBrainHealth(deps, fresh) {
   const el = document.getElementById("brain-health")
   if (!el) return
-  if (fresh) {
-    el.hidden = false
-    el.innerHTML = `<span class="brain-title">CC 的大脑</span><span class="brain-checking">正在逐个拨号测试…(最长约 1 分钟)</span>`
+  if (fresh) { await runTroubleshoot(deps); return }   // 旧调用路径直通排障
+  const r = await deps.invokeApi("GET", "/v1/llm/health", undefined, { timeoutMs: 30_000 }).catch(() => null)
+  if (!r || r.ok !== true) { if (!_troubleshootOpen) el.hidden = true; return }
+  const registered = Array.isArray(r.registered) ? r.registered : []
+  if (registered.length) _registeredProviders = registered
+  if (_troubleshootOpen) return   // 排障面板开着时不覆盖它
+  const results = Array.isArray(r.results) ? r.results : []
+  const broken = results.filter(x => x.ok === false)
+  if (broken.length === 0) { el.hidden = true; return }   // 没病不翻病历
+  // 告警条:一句人话 + 入口,不铺技术细节
+  el.innerHTML = `
+    <span class="brain-alert-text">CC 最近有几句话没接住,可能是脑子的事</span>
+    <button class="brain-recheck" type="button" data-action="brain-troubleshoot">看看怎么回事</button>`
+  el.hidden = false
+}
+
+/** 排障流程:网络体检 → (国际通才)真拨大脑 → 状态与修复指引。 */
+export async function runTroubleshoot(deps) {
+  const el = document.getElementById("brain-health")
+  if (!el) return
+  _troubleshootOpen = true
+  el.hidden = false
+  el.innerHTML = `
+    <span class="brain-title">给 CC 做个体检</span>
+    <button class="brain-close" type="button" data-action="brain-close" title="收起">收起</button>
+    <div class="brain-steps" id="brain-steps"><div class="brain-checking">第一步:检查网络…</div></div>`
+  const steps = el.querySelector("#brain-steps")
+  if (!steps) return
+
+  // ── 第一步:网络体检(daemon 侧视角,不带 key,零费用零风险)──
+  const net = await deps.invokeApi("POST", "/v1/net/probe", {}, { timeoutMs: 20_000 }).catch(() => null)
+  const netRows = net && net.ok
+    ? net.results.map(x => `<div class="brain-net-row ${x.ok ? "ok" : "bad"}">${x.ok ? "✓" : "✗"} ${escapeHtml(x.label)}${x.ok ? ` <span class="brain-when">${x.latency_ms}ms</span>` : " 不通"}</div>`).join("")
+    : `<div class="brain-net-row bad">✗ 网络检查没跑起来</div>`
+  const verdict = net && net.ok ? net.verdict : "offline"
+
+  if (verdict !== "ok") {
+    const advice = verdict === "no_international"
+      ? "基础网络是通的,但国际访问不通 —— Claude / OpenAI 这些大脑在国内需要代理才能连上。开好代理,再点下面重试。"
+      : "网络好像整个断了,先看看 Wi-Fi / 网线,再回来重试。"
+    steps.innerHTML = `
+      <div class="brain-step-title">网络</div>${netRows}
+      <div class="brain-hint">${escapeHtml(advice)}</div>
+      <button class="brain-recheck" type="button" data-action="brain-troubleshoot">我处理好了,再测一次</button>`
+    return
   }
-  const r = await deps.invokeApi("GET", `/v1/llm/health${fresh ? "?fresh=1" : ""}`, undefined, { timeoutMs: 150_000 }).catch(() => null)
-  if (!r || r.ok !== true) { el.hidden = true; return }
+
+  // ── 第二步:真拨大脑(唯一的真实拨号入口)──
+  steps.innerHTML = `
+    <div class="brain-step-title">网络</div>${netRows}
+    <div class="brain-checking">网络没问题。第二步:逐个叫醒大脑…(最长约 1 分钟)</div>`
+  const r = await deps.invokeApi("GET", "/v1/llm/health?fresh=1", undefined, { timeoutMs: 150_000 }).catch(() => null)
+  if (!r || r.ok !== true) {
+    steps.innerHTML = `<div class="brain-step-title">网络</div>${netRows}<div class="brain-hint">大脑测试没跑起来,稍后再试。</div>`
+    return
+  }
   const results = Array.isArray(r.results) ? r.results : []
   const byId = new Map(results.map(x => [x.provider, x]))
   const registered = Array.isArray(r.registered) ? r.registered : []
@@ -1021,7 +1080,7 @@ export async function loadBrainHealth(deps, fresh) {
     const label = PROVIDER_LABELS[id] || id
     const x = byId.get(id)
     const isDefault = id === r.default_provider
-    if (!x) return `<span class="brain-chip brain-meh${isDefault ? " brain-default" : ""}" title="已接入,还没测试过 — 点「测试连接」">${escapeHtml(label)} ?</span>`
+    if (!x) return `<span class="brain-chip brain-meh${isDefault ? " brain-default" : ""}" title="没探测到">${escapeHtml(label)} ?</span>`
     const cls = x.ok === true ? "ok" : x.ok === false ? "bad" : "meh"
     const mark = x.ok === true ? "✓" : x.ok === false ? "✗" : "—"
     const title = x.ok === true
@@ -1036,15 +1095,22 @@ export async function loadBrainHealth(deps, fresh) {
   const broken = results.filter(x => x.ok === false)
   const hintLine = broken.length
     ? `<div class="brain-hint">${escapeHtml(broken.map(b => `${PROVIDER_LABELS[b.provider] || b.provider}:${b.hint || (b.auth_failed ? "登录失效" : b.error === "timeout" ? "超时没应答" : "连不上")}`).join(" · "))}</div>`
-    : ""
-  const when = r.checked_at ? `<span class="brain-when">上次测试 ${formatRelativeTime(r.checked_at)}</span>` : `<span class="brain-when">还没测试过</span>`
-  el.innerHTML = `
-    <span class="brain-title">CC 的大脑</span>${chips}${moreChips}
-    ${when}
-    <button class="brain-recheck" type="button" data-action="brain-recheck" title="真拨每个已接入的 provider,验证通道+大脑">测试连接</button>
+    : `<div class="brain-net-row ok">✓ 大脑都醒着,一切正常</div>`
+  steps.innerHTML = `
+    <div class="brain-step-title">网络</div>${netRows}
+    <div class="brain-step-title">大脑</div>
+    <div>${chips}${moreChips}</div>
     ${hintLine}
+    <button class="brain-recheck" type="button" data-action="brain-troubleshoot">再测一次</button>
     <div class="brain-setup" id="brain-setup" hidden></div>`
-  el.hidden = false
+}
+
+/** 收起排障面板;若缓存里仍有红,回到告警条。 */
+export function closeTroubleshoot(deps) {
+  _troubleshootOpen = false
+  const el = document.getElementById("brain-health")
+  if (el) el.hidden = true
+  loadBrainHealth(deps, false).catch(() => {})
 }
 
 // CLI/订阅型 provider 的接入命令(点「+」显示,可一键复制,不用小白翻文档)。
