@@ -579,26 +579,27 @@ function tunnel() {
   tun = new Promise(function(resolve, reject) {
     if (!REMOTE) { reject(new Error("no_remote")); return }
     var ws = new WebSocket(REMOTE.relay + "?id=" + encodeURIComponent(REMOTE.id))
-    var key = null, kp = null, pending = {}, sid = "s"
+    // relay tags streams itself — the phone sends/receives BARE frames.
+    var key = null, kp = null, pending = {}
     var ready = false
     ws.onopen = async function() {
       kp = await crypto.subtle.generateKey({ name:"X25519" }, true, ["deriveKey","deriveBits"])
       var raw = await crypto.subtle.exportKey("raw", kp.publicKey)
-      ws.send(JSON.stringify({ stream: sid, frame: { hs: b64u.enc(raw) } }))
+      ws.send(JSON.stringify({ hs: b64u.enc(raw) }))
     }
     ws.onmessage = async function(ev) {
-      var m = JSON.parse(ev.data)
-      if (m.stream !== sid) return
-      if (m.frame && m.frame.hs) {
-        var pub = await crypto.subtle.importKey("raw", b64u.dec(m.frame.hs), { name:"X25519" }, true, [])
+      var f = JSON.parse(ev.data)
+      if (f.error) { reject(new Error(f.error)); return }
+      if (f.hs) {
+        var pub = await crypto.subtle.importKey("raw", b64u.dec(f.hs), { name:"X25519" }, true, [])
         var bits = await crypto.subtle.deriveBits({ name:"X25519", public: pub }, kp.privateKey, 256)
         var hk = await crypto.subtle.importKey("raw", new Uint8Array(bits), "HKDF", false, ["deriveKey"])
         key = await crypto.subtle.deriveKey({ name:"HKDF", hash:"SHA-256", salt:new Uint8Array(0), info:new TextEncoder().encode("wechat-cc/tunnel/v1") }, hk, { name:"AES-GCM", length:256 }, false, ["encrypt","decrypt"])
         ready = true; resolve(send)
         return
       }
-      if (!key) return
-      var iv = b64u.dec(m.frame.iv), ct = b64u.dec(m.frame.ct)
+      if (!key || !f.iv) return
+      var iv = b64u.dec(f.iv), ct = b64u.dec(f.ct)
       var pt = await crypto.subtle.decrypt({ name:"AES-GCM", iv: iv }, key, ct)
       var r = JSON.parse(new TextDecoder().decode(pt))
       var cb = pending[r.rid]; delete pending[r.rid]
@@ -614,7 +615,7 @@ function tunnel() {
       var ct = await crypto.subtle.encrypt({ name:"AES-GCM", iv: iv }, key, new TextEncoder().encode(body))
       return new Promise(function(res) {
         pending[rid] = function(r){ res({ status: r.status, text: function(){ return Promise.resolve(r.body) }, json: function(){ return Promise.resolve(JSON.parse(r.body)) } }) }
-        ws.send(JSON.stringify({ stream: sid, frame: { iv: b64u.enc(iv), ct: b64u.enc(ct) } }))
+        ws.send(JSON.stringify({ iv: b64u.enc(iv), ct: b64u.enc(ct) }))
       })
     }
   })
