@@ -111,9 +111,12 @@ export async function notifyStartup(
   }
   let okCount = 0
   let pending = recipients.slice()
-  for (let round = 0; round < 2 && pending.length > 0; round++) {
+  // 4 rounds, 15s→30s→60s backoff (2026-08-26 循环巡检发现:自愈重启后
+  // ilink prepare 常要 30-60s 才 ready,旧的 2 轮×15s 两枪都落在就绪前,
+  // 恢复通知每次自愈重启都丢 —— 日志里连续三次 send-failed-all)。
+  for (let round = 0; round < 4 && pending.length > 0; round++) {
     if (round > 0) {
-      const delay = deps.retryDelayMs ?? 15_000
+      const delay = (deps.retryDelayMs ?? 15_000) * Math.pow(2, round - 1)
       deps.log('NOTIFY', `channel not ready — retrying ${pending.length} recipient(s) in ${Math.round(delay / 1000)}s`)
       await new Promise(r => setTimeout(r, delay))
     }
