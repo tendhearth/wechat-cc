@@ -135,6 +135,8 @@ export interface PipelineDepsOpts {
    * A second instance would never see the capture.
    */
   replySinks: ReplySinks
+  /** Sticker library — 随身 CC 手机页展示 + 图片服务(main.ts 传入)。 */
+  stickers?: import('../stickers').StickerLib
 }
 
 export interface PipelineDepsRefs {
@@ -349,6 +351,19 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const settingsPanel = makeSettingsPanel({
     stateDir,
     ownerChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null),
+    // 随身 CC 数据面 — facts/graph 来自 boot.knowledge(缺则手机页对应区留白)
+    ...(boot.knowledge?.facts ? {
+      todos: {
+        facts: {
+          findFacts: (k, pr, q2, st, li) => boot.knowledge!.facts!.findFacts(k, pr, q2, st, li),
+          setFactStatus: (id, st, n) => boot.knowledge!.facts!.setFactStatus(id, st, n),
+        },
+        names: () => {
+          try { return (boot.knowledge?.graph?.topContacts('closeness', 500, 'person') ?? []) as Array<{ username: string; display: string }> } catch { return [] }
+        },
+      },
+    } : {}),
+    ...(opts.stickers ? { stickers: { list: () => opts.stickers!.list(), dir: join(stateDir, 'stickers') } } : {}),
     chatPrefs: {
       get: (c) => ({ ...chatPrefs.get(c) }),
       set: (c, patch) => ({ ...chatPrefs.set(c, patch as Parameters<typeof chatPrefs.set>[1]) }),

@@ -23,8 +23,9 @@
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { normalizeUserName } from '../lib/user-name'
+import { safeSvg } from '../lib/svg-sanitize'
 import { writeConfigKey, readConfigSurface } from '../lib/config-surface'
 
 export const SETTINGS_LINK_TTL_MS = 10 * 60_000
@@ -46,6 +47,16 @@ export interface SettingsPanelDeps {
   }
   getUserName: (chatId: string) => string | null
   setUserName: (chatId: string, name: string) => Promise<void>
+  /** 随身 CC 数据面(待办) — 注入 facts + 联系人显示名。缺省 ⇒ 手机页无待办区。 */
+  todos?: {
+    facts: {
+      findFacts(kind: string | null, predicate: string | null, query: string | null, status: string | null, limit: number | null): object
+      setFactStatus(id: number, status: string, now: number): object
+    }
+    names: () => Array<{ username: string; display: string }>
+  }
+  /** 表情库(只读展示 + 图片文件服务)。 */
+  stickers?: { list(): Array<{ file: string; tags: string[]; desc?: string }>; dir: string }
   /** config_changed audit sink (events store append) — best-effort. */
   audit?: (reasoning: string) => void
   log: (tag: string, line: string) => void
@@ -77,15 +88,66 @@ export function lanIp(): string | null {
   return null
 }
 
+const DEVICES_FILE = 'settings-devices.json'
+const MAX_DEVICES = 20
+
 export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const now = deps.now ?? (() => Date.now())
   let active: { token: string; expiresAt: number } | null = null
   let server: ReturnType<typeof Bun.serve> | null = null
 
+  // 长期设备令牌(随身 CC 配对):在家扫码用短令牌换一枚,加进主屏后
+  // 一直有效。落盘 JSON(0600 state dir),上限 MAX_DEVICES 防无限膨胀。
+  const devicesPath = () => join(deps.stateDir, DEVICES_FILE)
+  const readDevices = (): Record<string, { created_at: string }> => {
+    try { return JSON.parse(readFileSync(devicesPath(), 'utf8')) as Record<string, { created_at: string }> } catch { return {} }
+  }
+  const issueDeviceToken = (): string | null => {
+    const devices = readDevices()
+    if (Object.keys(devices).length >= MAX_DEVICES) return null
+    const token = 'd' + randomBytes(24).toString('hex')
+    devices[token] = { created_at: new Date().toISOString() }
+    writeFileSync(devicesPath(), JSON.stringify(devices, null, 2), { mode: 0o600 })
+    return token
+  }
+  const validDeviceToken = (t: string | null | undefined): boolean =>
+    !!t && t.startsWith('d') && t in readDevices()
+
   const personaPath = (): string | null => {
     const owner = deps.ownerChatId()
     if (!owner || owner.includes('..') || owner.includes('/') || owner.includes('\\')) return null
     return join(deps.stateDir, 'memory', owner, 'persona.md')
+  }
+
+  // 随身 CC 首页数据:待办(活跃+最近了结,带显示名)、小像、表情库。
+  const phoneState = (): object => {
+    const owner = deps.ownerChatId()
+    const names = new Map((deps.todos?.names() ?? []).map(c => [c.username, c.display]))
+    const deco = (rows: Array<{ contact: string } & Record<string, unknown>>) =>
+      rows.map(r => ({ ...r, display: names.get(r.contact) ?? r.contact }))
+    const active = deps.todos
+      ? deco(((deps.todos.facts.findFacts('obligation', null, null, 'active', 200) as { results?: never[] }).results ?? []))
+      : []
+    const settledAll = deps.todos
+      ? deco(((deps.todos.facts.findFacts('obligation', null, null, 'resolved', 100) as { results?: never[] }).results ?? []))
+      : []
+    const cutoff = Math.floor(now() / 1000) - 7 * 86400
+    const settled = settledAll.filter(r => {
+      const u = (r as unknown as { updated_at?: number }).updated_at
+      return typeof u === 'number' && u > cutoff
+    }).slice(0, 20)
+    let portrait: string | null = null
+    if (owner) {
+      const pp = join(deps.stateDir, 'memory', owner, 'portrait.svg')
+      if (existsSync(pp)) portrait = safeSvgFile(pp)
+    }
+    return {
+      ok: true,
+      name: owner ? deps.getUserName(owner) ?? '' : '',
+      todos: { active, settled },
+      portrait,
+      stickers: deps.stickers?.list() ?? [],
+    }
   }
 
   const panel: SettingsPanel = {
@@ -96,6 +158,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     },
 
     validToken(t) {
+      if (validDeviceToken(t)) return true
       return !!t && !!active && t === active.token && now() < active.expiresAt
     },
 
@@ -172,13 +235,39 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         port,
         fetch: async (req) => {
           const url = new URL(req.url)
-          const t = url.searchParams.get('t')
+          const t = url.searchParams.get('d') ?? url.searchParams.get('t')
+
+          // ── tokenless surfaces (non-sensitive) ─────────────────────────
+          if (url.pathname === '/m/icon.png') {
+            const { starterStickersDir } = await import('./stickers')
+            const dir = starterStickersDir()
+            const icon = dir ? join(dir, 'bear-complete.png') : null
+            if (icon && existsSync(icon)) {
+              return new Response(readFileSync(icon), { headers: { 'content-type': 'image/png' } })
+            }
+            return json({ error: 'not_found' }, 404)
+          }
+          if (url.pathname === '/m/manifest.json') {
+            return json({
+              name: 'CC', short_name: 'CC', start_url: '/m', display: 'standalone',
+              background_color: '#f5ead8', theme_color: '#f5ead8',
+              icons: [{ src: '/m/icon.png', sizes: '360x360', type: 'image/png' }],
+            })
+          }
+          if (url.pathname === '/m' && !panel.validToken(t)) {
+            // localStorage bootstrap:加进主屏后 start_url 无参 —— 从本机
+            // 存的 deviceToken 续命;没有则提示回微信要新链接。
+            return new Response(M_BOOTSTRAP_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } })
+          }
+
           if (!panel.validToken(t)) {
             if (url.pathname === '/set') {
               return new Response(EXPIRED_HTML, { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } })
             }
             return json({ error: 'unauthorized' }, 401)
           }
+
+          // ── token-gated ────────────────────────────────────────────────
           if (url.pathname === '/set') {
             return new Response(pageHtml(t!), { headers: { 'content-type': 'text/html; charset=utf-8' } })
           }
@@ -189,6 +278,41 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             let body: unknown
             try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
             return json(await panel.apply(body))
+          }
+          if (url.pathname === '/set/api/pair' && req.method === 'POST') {
+            const token = issueDeviceToken()
+            if (!token) return json({ ok: false, error: 'device_limit' })
+            deps.log('SETTINGS', 'phone device paired (token issued)')
+            return json({ ok: true, device_token: token })
+          }
+          if (url.pathname === '/m') {
+            return new Response(phoneHtml(t!), { headers: { 'content-type': 'text/html; charset=utf-8' } })
+          }
+          if (url.pathname === '/m/api/state' && req.method === 'GET') {
+            return json(phoneState())
+          }
+          if (url.pathname === '/m/api/todo' && req.method === 'POST') {
+            let body: unknown
+            try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
+            const b = (body ?? {}) as { id?: unknown; status?: unknown }
+            if (typeof b.id !== 'number' || (b.status !== 'resolved' && b.status !== 'active' && b.status !== 'rejected')) {
+              return json({ ok: false, error: 'invalid' }, 400)
+            }
+            if (!deps.todos) return json({ ok: false, error: 'todos_not_wired' }, 503)
+            deps.todos.facts.setFactStatus(b.id, b.status, Math.floor(now() / 1000))
+            return json({ ok: true })
+          }
+          if (url.pathname.startsWith('/m/api/sticker/') && req.method === 'GET') {
+            if (!deps.stickers) return json({ error: 'not_found' }, 404)
+            const raw = decodeURIComponent(url.pathname.slice('/m/api/sticker/'.length))
+            const name = basename(raw)
+            // basename + known-in-library double guard — never a free file read.
+            if (name !== raw || !deps.stickers.list().some(e => e.file === name)) return json({ error: 'not_found' }, 404)
+            const fp = join(deps.stickers.dir, name)
+            if (!existsSync(fp)) return json({ error: 'not_found' }, 404)
+            const ext = name.split('.').pop()?.toLowerCase() ?? 'png'
+            const type = ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png'
+            return new Response(readFileSync(fp), { headers: { 'content-type': type } })
           }
           return json({ error: 'not_found' }, 404)
         },
@@ -209,6 +333,10 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     },
   }
   return panel
+}
+
+function safeSvgFile(path: string): string | null {
+  try { return safeSvg(readFileSync(path, 'utf8')) } catch { return null }
 }
 
 const EXPIRED_HTML = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -251,7 +379,7 @@ export function pageHtml(token: string): string {
   .save { font:inherit; padding:8px 16px; border:0; border-radius:10px; background:var(--accent); color:#fff; margin-top:8px }
 </style></head><body>
 <h1>🐻 CC 的设置</h1>
-<div class="sub">改完立即生效 · 链接 10 分钟内有效</div>
+<div class="sub">改完立即生效 · 链接 10 分钟内有效 · <a href="/m?t=${token}" style="color:var(--accent)">随身 CC →</a></div>
 
 <section id="sec-persona">
   <h2>人格与称呼</h2>
@@ -346,5 +474,140 @@ wireSwitch("f-knowledge", "config", "knowledge_enabled")
 wireSwitch("f-social", "config", "social_enabled")
 wireSwitch("f-autostart", "config", "autoStart")
 load().catch(() => {})
+</script></body></html>`
+}
+
+
+const M_BOOTSTRAP_HTML = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="manifest" href="/m/manifest.json"><title>CC</title>
+<body style="font-family:system-ui;background:#f5ead8;color:#5a3f2d;display:grid;place-items:center;height:100vh;margin:0">
+<div style="text-align:center"><div style="font-size:52px">🐻</div><p id="msg">正在找你的钥匙…</p></div>
+<script>
+try {
+  var d = localStorage.getItem("deviceToken")
+  if (d) { location.replace("/m?d=" + encodeURIComponent(d)) }
+  else { document.getElementById("msg").textContent = "还没配对过 — 回微信跟 CC 说「/set」拿个新链接,打开后点「把 CC 带在身上」" }
+} catch (e) { document.getElementById("msg").textContent = "浏览器不让存钥匙,回微信重新拿链接吧" }
+</script></body>`
+
+/** 随身 CC 手机页 — 待办 / 小像 / 表情,自包含无 CDN,PWA 可加主屏。 */
+export function phoneHtml(token: string): string {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>CC</title>
+<link rel="manifest" href="/m/manifest.json">
+<link rel="apple-touch-icon" href="/m/icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<style>
+  :root { --ink:#5a3f2d; --soft:#8b5e3c; --accent:#b0563a; --paper:#f5ead8; --card:#fffdf8; --line:rgba(89,63,44,.25); }
+  * { box-sizing:border-box }
+  body { margin:0; font-family:system-ui,-apple-system,"PingFang SC",sans-serif; background:var(--paper); color:var(--ink); padding-bottom:70px }
+  header { padding:18px 16px 8px } header h1 { font-size:22px; margin:0 }
+  header .sub { color:var(--soft); font-size:12.5px }
+  .pane { padding:8px 14px 20px; display:none } .pane.on { display:block }
+  .card { background:var(--card); border:1.5px solid var(--line); border-radius:14px 18px 12px 20px; padding:12px 14px; margin-bottom:10px }
+  .todo { display:flex; align-items:center; gap:10px }
+  .todo .tx { flex:1; min-width:0 } .todo .tx b { font-size:14px; font-weight:600; display:block }
+  .todo .tx small { color:var(--soft) }
+  .todo button { font:inherit; font-size:12.5px; padding:5px 12px; border:1.5px solid var(--line); border-radius:999px; background:var(--card); color:var(--ink) }
+  .todo button.done-btn { background:var(--accent); border-color:var(--accent); color:#fff }
+  .grp { color:var(--accent); font-size:13px; font-weight:700; margin:14px 2px 6px }
+  .empty { text-align:center; color:var(--soft); padding:40px 10px }
+  .portrait { text-align:center; padding:12px }
+  .portrait .frame { display:inline-block; background:var(--card); border:2.5px solid var(--line); border-radius:16px 20px 14px 22px; padding:16px; transform:rotate(-1deg); max-width:78vw }
+  .portrait svg { width:100%; height:auto } .portrait figcaption { color:var(--soft); font-size:13px; margin-top:8px }
+  .stgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px }
+  .stgrid figure { margin:0; background:var(--card); border:1.5px solid var(--line); border-radius:12px; padding:8px; text-align:center }
+  .stgrid img { width:100%; height:84px; object-fit:contain } .stgrid figcaption { font-size:11.5px; color:var(--soft) }
+  nav { position:fixed; left:0; right:0; bottom:0; display:flex; background:var(--card); border-top:1.5px solid var(--line); padding-bottom:env(safe-area-inset-bottom) }
+  nav button { flex:1; font:inherit; font-size:12px; padding:10px 0 8px; border:0; background:none; color:var(--soft) }
+  nav button.on { color:var(--accent); font-weight:700 }
+  nav button .i { display:block; font-size:20px }
+  #pairbar { margin:8px 14px; padding:9px 12px; background:rgba(176,86,58,.08); border-radius:10px; font-size:12.5px; color:var(--soft) }
+  #pairbar button { font:inherit; font-size:12.5px; margin-left:8px; padding:4px 12px; border:1.5px solid var(--accent); border-radius:999px; background:var(--accent); color:#fff }
+  #toast { position:fixed; left:50%; bottom:76px; transform:translateX(-50%); background:var(--ink); color:#fff; padding:7px 16px; border-radius:16px; font-size:12.5px; opacity:0; transition:.25s; pointer-events:none }
+  #toast.show { opacity:1 }
+</style></head><body>
+<header><h1>🐻 CC</h1><div class="sub" id="sub">随身小窗 · 数据都在你自己电脑上</div></header>
+<div id="pairbar" hidden>这个链接 10 分钟就过期<button id="pairbtn">把 CC 带在身上</button></div>
+<div class="pane on" id="p-todos"><div id="todos"></div></div>
+<div class="pane" id="p-portrait"><div class="portrait" id="portrait"></div></div>
+<div class="pane" id="p-stickers"><div class="stgrid" id="stickers"></div></div>
+<nav>
+  <button data-p="todos" class="on"><span class="i">📋</span>待办</button>
+  <button data-p="portrait"><span class="i">🖼</span>CC画的你</button>
+  <button data-p="stickers"><span class="i">🐻</span>表情</button>
+  <button id="nav-set"><span class="i">⚙️</span>设置</button>
+</nav>
+<div id="toast"></div>
+<script>
+var T = ${JSON.stringify(token)}
+try { if (T.charAt(0) === "d") localStorage.setItem("deviceToken", T) } catch (e) {}
+var isDevice = T.charAt(0) === "d"
+if (!isDevice) document.getElementById("pairbar").hidden = false
+function toast(m) { var t = document.getElementById("toast"); t.textContent = m; t.classList.add("show"); setTimeout(function(){ t.classList.remove("show") }, 1800) }
+function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;") }
+function q(p) { return p + (p.indexOf("?") < 0 ? "?" : "&") + (isDevice ? "d=" : "t=") + encodeURIComponent(T) }
+document.getElementById("pairbtn").addEventListener("click", function() {
+  fetch(q("/set/api/pair"), { method: "POST" }).then(function(r){ return r.json() }).then(function(r) {
+    if (r.ok && r.device_token) {
+      try { localStorage.setItem("deviceToken", r.device_token) } catch (e) {}
+      T = r.device_token; isDevice = true
+      document.getElementById("pairbar").hidden = true
+      toast("配好了,把这页加到主屏幕就能一直用")
+    } else toast("没配上:" + (r.error || ""))
+  }).catch(function(){ toast("没配上,网络不通") })
+})
+document.querySelectorAll("nav button[data-p]").forEach(function(b) {
+  b.addEventListener("click", function() {
+    document.querySelectorAll("nav button").forEach(function(o){ o.classList.toggle("on", o === b) })
+    document.querySelectorAll(".pane").forEach(function(p){ p.classList.toggle("on", p.id === "p-" + b.dataset.p) })
+  })
+})
+document.getElementById("nav-set").addEventListener("click", function(){ location.href = q("/set") })
+function render(s) {
+  var t = document.getElementById("todos")
+  var groups = {}
+  s.todos.active.forEach(function(r){ (groups[r.display] = groups[r.display] || []).push(r) })
+  var h = ""
+  Object.keys(groups).forEach(function(g) {
+    h += '<div class="grp">' + esc(g) + '</div>'
+    groups[g].forEach(function(r) {
+      h += '<div class="card todo"><div class="tx"><b>' + esc(r.value) + '</b><small>' + esc(r.time_ref || "") + '</small></div>' +
+           '<button class="done-btn" data-id="' + r.id + '" data-st="resolved">完成</button></div>'
+    })
+  })
+  if (!s.todos.active.length) h = '<div class="empty">都了结了 ✨<br><small>聊天里出现新约定会自己长出来</small></div>'
+  if (s.todos.settled.length) {
+    h += '<div class="grp">最近了结</div>'
+    s.todos.settled.forEach(function(r) {
+      h += '<div class="card todo" style="opacity:.65"><div class="tx"><b style="text-decoration:line-through">' + esc(r.value) + '</b><small>' + esc(r.display) + '</small></div>' +
+           '<button data-id="' + r.id + '" data-st="active">捞回</button></div>'
+    })
+  }
+  t.innerHTML = h
+  document.getElementById("portrait").innerHTML = s.portrait
+    ? '<figure class="frame">' + s.portrait + '<figcaption>CC 画的你</figcaption></figure>'
+    : '<div class="empty">CC 还没画你 — 在电脑记忆页点「更新画像」</div>'
+  var sg = document.getElementById("stickers")
+  sg.innerHTML = s.stickers.length ? s.stickers.map(function(e) {
+    return '<figure><img src="' + q("/m/api/sticker/" + encodeURIComponent(e.file)) + '" loading="lazy"><figcaption>' + esc(e.tags.join(" · ")) + '</figcaption></figure>'
+  }).join("") : '<div class="empty">表情库还空着</div>'
+}
+document.getElementById("todos").addEventListener("click", function(ev) {
+  var b = ev.target.closest("button[data-id]")
+  if (!b) return
+  fetch(q("/m/api/todo"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: Number(b.dataset.id), status: b.dataset.st }) })
+    .then(function(r){ return r.json() }).then(function(r) { if (r.ok) { toast(b.dataset.st === "active" ? "捞回来了" : "划掉了 ✓"); load() } else toast("没改成") })
+    .catch(function(){ toast("网络不通") })
+})
+function load() {
+  fetch(q("/m/api/state")).then(function(r) {
+    if (r.status === 401) { try { localStorage.removeItem("deviceToken") } catch (e) {}; location.replace("/m"); return null }
+    return r.json()
+  }).then(function(s){ if (s && s.ok) render(s) }).catch(function(){ toast("连不上家里的电脑 — 要在同一个 Wi-Fi") })
+}
+load()
 </script></body></html>`
 }

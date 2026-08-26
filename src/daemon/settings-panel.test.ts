@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeSettingsPanel, SETTINGS_LINK_TTL_MS, type SettingsPanel } from './settings-panel'
+import { writeFileSync as wf } from 'node:fs'
 
 const OWNER = 'owner_chat@im.wechat'
 
@@ -29,6 +30,16 @@ describe('settings panel', () => {
     panel = makeSettingsPanel({
       stateDir,
       ownerChatId: () => OWNER,
+      todos: {
+        facts: {
+          findFacts: (_k, _p, _q, status) => ({ results: status === 'active'
+            ? [{ id: 7, contact: 'wx_f', predicate: '还书', value: '答应还《三体》', time_ref: null, updated_at: 100 }]
+            : [{ id: 9, contact: 'wx_f', predicate: 'x', value: '已还的书', time_ref: null, updated_at: 90 }] }),
+          setFactStatus: (id, status) => { prefs['_lastSet'] = { id, status } as never; return { ok: true } },
+        },
+        names: () => [{ username: 'wx_f', display: '小飞' }],
+      },
+      stickers: { list: () => [{ file: 'bear.png', tags: ['开心'] }], dir: join(stateDir, 'stickers') },
       chatPrefs: {
         get: (c) => prefs[c] ?? {},
         set: (c, patch) => { prefs[c] = { ...(prefs[c] ?? {}), ...patch }; return prefs[c]! },
@@ -112,5 +123,83 @@ describe('settings panel', () => {
     expect(prefs[OWNER]!['stickers']).toBe(false)
     nowMs += SETTINGS_LINK_TTL_MS + 1
     expect((await fetch(`${base}/set/api/state?t=${t}`)).status).toBe(401)
+  })
+})
+
+
+describe('随身 CC (phone PWA + device pairing)', () => {
+  let stateDir: string
+  let panel: SettingsPanel
+  let nowMs: number
+  const prefs: Record<string, Record<string, unknown>> = {}
+
+  beforeEach(() => {
+    stateDir = seedStateDir()
+    mkdirSync(join(stateDir, 'stickers'), { recursive: true })
+    wf(join(stateDir, 'stickers', 'bear.png'), 'png-bytes')
+    wf(join(stateDir, 'memory', OWNER, 'portrait.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320"><circle cx="1" cy="1" r="1" fill="none" stroke="#5a3f2d"/></svg>')
+    nowMs = 1_000_000
+    prefs[OWNER] = {}
+    panel = makeSettingsPanel({
+      stateDir,
+      ownerChatId: () => OWNER,
+      chatPrefs: { get: (c) => prefs[c] ?? {}, set: (c, patch) => { prefs[c] = { ...(prefs[c] ?? {}), ...patch }; return prefs[c]! } },
+      getUserName: () => '大人',
+      setUserName: async () => {},
+      todos: {
+        facts: {
+          findFacts: (_k, _p, _q, status) => ({ results: status === 'active'
+            ? [{ id: 7, contact: 'wx_f', predicate: '还书', value: '答应还《三体》', time_ref: null, updated_at: 100 }] : [] }),
+          setFactStatus: () => ({ ok: true }),
+        },
+        names: () => [{ username: 'wx_f', display: '小飞' }],
+      },
+      stickers: { list: () => [{ file: 'bear.png', tags: ['开心'] }], dir: join(stateDir, 'stickers') },
+      log: () => {},
+      now: () => nowMs,
+    })
+  })
+  afterEach(async () => { await panel.stop(); rmSync(stateDir, { recursive: true, force: true }) })
+
+  it('pairing: short token mints a durable device token that survives short-token expiry', async () => {
+    const { port } = await panel.start(0)
+    const base = `http://127.0.0.1:${port}`
+    const t = panel.issueToken()
+    const r = await (await fetch(`${base}/set/api/pair?t=${t}`, { method: 'POST' })).json() as { ok: boolean; device_token: string }
+    expect(r.ok).toBe(true)
+    expect(r.device_token.length).toBeGreaterThanOrEqual(32)
+    nowMs += SETTINGS_LINK_TTL_MS + 1
+    expect((await fetch(`${base}/m/api/state?d=${r.device_token}`)).status).toBe(200)   // device token still valid
+    expect((await fetch(`${base}/m/api/state?t=${t}`)).status).toBe(401)                // short token dead
+  })
+
+  it('/m without token serves the localStorage bootstrap (200), API stays 401', async () => {
+    const { port } = await panel.start(0)
+    const base = `http://127.0.0.1:${port}`
+    const page = await fetch(`${base}/m`)
+    expect(page.status).toBe(200)
+    expect(await page.text()).toContain('deviceToken')
+    expect((await fetch(`${base}/m/api/state`)).status).toBe(401)
+  })
+
+  it('phone state: todos with display names, portrait svg, sticker tags', async () => {
+    const { port } = await panel.start(0)
+    const base = `http://127.0.0.1:${port}`
+    const t = panel.issueToken()
+    const s2 = await (await fetch(`${base}/m/api/state?t=${t}`)).json() as { todos: { active: Array<{ display: string }> }; portrait: string | null; stickers: Array<{ tags: string[] }> }
+    expect(s2.todos.active[0]!.display).toBe('小飞')
+    expect(s2.portrait).toContain('<svg')
+    expect(s2.stickers[0]!.tags).toEqual(['开心'])
+  })
+
+  it('sticker image serving guards path traversal; icon is tokenless', async () => {
+    const { port } = await panel.start(0)
+    const base = `http://127.0.0.1:${port}`
+    const t = panel.issueToken()
+    expect((await fetch(`${base}/m/api/sticker/bear.png?t=${t}`)).status).toBe(200)
+    expect((await fetch(`${base}/m/api/sticker/..%2F..%2Fagent-config.json?t=${t}`)).status).toBe(404)
+    const icon = await fetch(`${base}/m/icon.png`)
+    expect([200, 404]).toContain(icon.status)   // bundled art may be absent in test env — must not 401
+    expect(icon.status).not.toBe(401)
   })
 })
