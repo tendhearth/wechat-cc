@@ -57,6 +57,12 @@ export function makeTunnelHub(opts: {
     phones.delete(streamId)
     daemonPhones.get(p.daemonId)?.delete(streamId)
     rl.drop(`stream:${streamId}`)   // free the rate-limit bucket too
+    // 通知 daemon 该 stream 已关 — 否则它的每-stream 密钥条目要等到
+    // daemon 自己重连才清(正确性 review LOW:无界泄漏)。
+    const daemon = daemons.get(p.daemonId)
+    if (daemon && daemon.readyState === 1) {
+      try { daemon.send(JSON.stringify({ stream: streamId, closed: true })) } catch { /* best effort */ }
+    }
   }
 
   return {

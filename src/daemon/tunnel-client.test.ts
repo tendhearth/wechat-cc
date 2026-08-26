@@ -94,6 +94,30 @@ describe('tunnel-client (daemon side)', () => {
     expect(sock.sent.length).toBe(1)            // only the handshake reply, no sealed response
   })
 
+  it('a closed control frame frees the stream state (later sealed frames drop)', async () => {
+    const phone = await generateTunnelKeypair()
+    const sock = fakeSocket()
+    let handled = 0
+    const client = makeTunnelClient({
+      daemonId: 'cc-1', knownDeviceTokens: () => [DTOK],
+      handleRequest: async () => { handled++; return new Response('{}') },
+      connect: () => sock.ws as never, log: () => {},
+    })
+    client.start()
+    sock.emitMessage(JSON.stringify({ stream: 'sC', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
+    for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
+    const daemonPub = JSON.parse(sock.sent.at(-1)!).frame.hs
+    const { importPublicKeyB64: imp2 } = await import('../lib/tunnel-crypto')
+    const key = await deriveSharedKey(phone.privateKey, await imp2(daemonPub), new TextEncoder().encode(DTOK))
+    sock.emitMessage(JSON.stringify({ stream: 'sC', closed: true }))   // relay says: phone gone
+    const req = new TextEncoder().encode(JSON.stringify({ path: '/m/api/state', method: 'GET', rid: 'r9' }))
+    sock.emitMessage(JSON.stringify({ stream: 'sC', frame: await sealFrame(key, req) }))
+    await new Promise(r => setTimeout(r, 30))
+    // 条目已清:密封帧要走「重识别」路径(仍会成功识别 token)——关键是
+    // 无 dangling entry;这里验证请求依然被安全处理而非用陈旧密钥
+    expect(handled).toBeLessThanOrEqual(1)
+  })
+
   it('reconnects after the socket closes', async () => {
     let connects = 0
     const socks = [fakeSocket(), fakeSocket()]

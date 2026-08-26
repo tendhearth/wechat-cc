@@ -88,6 +88,17 @@ describe('makeTunnelHub — content-blind daemon<->phone relay', () => {
     hub.dropPhone(attach.streamId!)   // idempotent
   })
 
+  it('phone disconnect notifies the daemon with a closed control frame', () => {
+    const hub = makeTunnelHub({ now: () => 0 })
+    const daemon = fakeWs()
+    const phone = fakeWs()
+    hub.registerDaemon('cc-1', daemon.ws)
+    const attach = hub.attachPhone('cc-1', phone.ws)
+    hub.dropPhone(attach.streamId!)
+    const last = JSON.parse(daemon.sent.at(-1)!)
+    expect(last).toEqual({ stream: attach.streamId, closed: true })
+  })
+
   it('oversized frame is rejected before forwarding', () => {
     const hub = makeTunnelHub({ maxFrameBytes: 20, now: () => 0 })
     const daemon = fakeWs()

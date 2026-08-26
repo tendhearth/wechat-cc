@@ -512,7 +512,7 @@ async function sapi(path, body) {
 }
 async function apply(op, extra, okMsg) {
   const r = await sapi("/set/api/apply", Object.assign({ op }, extra))
-  toast(r.ok ? (okMsg || "已保存 ✓") : ("没改成: " + (r.error || "unknown")))
+  toast(r.ok ? (okMsg || "已保存 ✓") : (r.error === "lan_only" ? "这个开关要在家里(和电脑同一网络)才能动" : "没改成: " + (r.error || "unknown")))
   return r.ok
 }
 function wireSwitch(id, kind, key) {

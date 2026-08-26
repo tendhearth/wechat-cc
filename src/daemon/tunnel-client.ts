@@ -149,9 +149,10 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     ws.addEventListener('open', () => log('TUNNEL', `connected to relay as ${deps.daemonId}`))
     ws.addEventListener('message', (ev) => {
       const raw = typeof ev.data === 'string' ? ev.data : String(ev.data)
-      let msg: { stream?: unknown; frame?: unknown }
+      let msg: { stream?: unknown; frame?: unknown; closed?: unknown }
       try { msg = JSON.parse(raw) } catch { return }
       if (typeof msg.stream !== 'string') return
+      if (msg.closed === true) { streams.delete(msg.stream); return }   // relay 通知手机断开 — 释放该 stream 的密钥条目
       void onStreamFrame(msg.stream, msg.frame)
     })
     ws.addEventListener('close', () => {
