@@ -56,6 +56,7 @@ export function makeTunnelHub(opts: {
     if (!p) return
     phones.delete(streamId)
     daemonPhones.get(p.daemonId)?.delete(streamId)
+    rl.drop(`stream:${streamId}`)   // free the rate-limit bucket too
   }
 
   return {
@@ -73,6 +74,7 @@ export function makeTunnelHub(opts: {
         for (const sid of streams) {
           try { phones.get(sid)?.ws.close() } catch { /* best effort */ }
           phones.delete(sid)
+          rl.drop(`stream:${sid}`)
         }
         daemonPhones.delete(id)
       }

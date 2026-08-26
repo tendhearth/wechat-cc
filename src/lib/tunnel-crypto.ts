@@ -63,17 +63,32 @@ export async function importPublicKeyB64(b64: string): Promise<CryptoKey> {
   return subtle.importKey('raw', unb64u(b64), { name: 'X25519' }, true, [])
 }
 
-/** X25519 ECDH → HKDF-SHA256 → AES-256-GCM key. */
-export async function deriveSharedKey(myPrivate: CryptoKey, theirPublic: CryptoKey): Promise<CryptoKey> {
-  const shared = await subtle.deriveBits({ name: 'X25519', public: theirPublic }, myPrivate, 256)
-  const hkdfKey = await subtle.importKey('raw', new Uint8Array(shared), 'HKDF', false, ['deriveKey'])
+/** Raw X25519 ECDH bits — the daemon reuses these across candidate binding
+ *  secrets so it does ECDH once per stream, not once per known device. */
+export async function deriveSharedBits(myPrivate: CryptoKey, theirPublic: CryptoKey): Promise<ArrayBuffer> {
+  return subtle.deriveBits({ name: 'X25519', public: theirPublic }, myPrivate, 256)
+}
+
+/** HKDF-SHA256(bits, salt=bindSecret) → AES-256-GCM key. The bindSecret is
+ *  the tunnel's authentication: mixing the DEVICE TOKEN (which a relay never
+ *  sees) into the salt means a relay that substitutes its own X25519 pubkey
+ *  derives a DIFFERENT key than the daemon computes — its forged frames fail
+ *  GCM auth, defeating the MITM. Empty bindSecret ⇒ unauthenticated (tests). */
+export async function hkdfAesKey(bits: ArrayBuffer, bindSecret: Uint8Array = HKDF_SALT): Promise<CryptoKey> {
+  const hkdfKey = await subtle.importKey('raw', new Uint8Array(bits), 'HKDF', false, ['deriveKey'])
   return subtle.deriveKey(
-    { name: 'HKDF', hash: 'SHA-256', salt: HKDF_SALT, info: HKDF_INFO },
+    { name: 'HKDF', hash: 'SHA-256', salt: bindSecret.length > 0 ? bindSecret : HKDF_SALT, info: HKDF_INFO },
     hkdfKey,
     { name: 'AES-GCM', length: 256 },
     false,
     ['encrypt', 'decrypt'],
   )
+}
+
+/** X25519 ECDH → HKDF-SHA256 → AES-256-GCM. `bindSecret` (the device token)
+ *  authenticates the channel against a MITM relay — see hkdfAesKey. */
+export async function deriveSharedKey(myPrivate: CryptoKey, theirPublic: CryptoKey, bindSecret?: Uint8Array): Promise<CryptoKey> {
+  return hkdfAesKey(await deriveSharedBits(myPrivate, theirPublic), bindSecret)
 }
 
 export async function sealFrame(key: CryptoKey, plaintext: Uint8Array): Promise<SealedFrame> {

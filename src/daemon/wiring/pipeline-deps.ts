@@ -413,6 +413,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       makeTunnelClient({
         daemonId,
         handleRequest: (req) => settingsPanel.handleRequest(req),
+        knownDeviceTokens: () => {
+          try { return Object.keys(JSON.parse(readFileSync(join(stateDir, 'settings-devices.json'), 'utf8'))) } catch { return [] }
+        },
         relayUrl: daemonRelay,
         log: (tag, line) => log(tag, line),
       }).start()

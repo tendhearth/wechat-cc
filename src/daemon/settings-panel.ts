@@ -302,6 +302,14 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
               icons: [{ src: '/m/icon.png', sizes: '360x360', type: 'image/png' }],
             })
           }
+          if (url.pathname === '/m/sw.js') {
+            // Service worker — WITHOUT it the PWA shell can't load off-LAN
+            // (the origin is the daemon's LAN address, unreachable outside).
+            // Caches the last tokened /m document + icon so the shell loads
+            // from cache offline; the page's own api() then reaches data over
+            // the tunnel. Header widens scope to /m (sw sits at /m/sw.js).
+            return new Response(SW_JS, { headers: { 'content-type': 'application/javascript; charset=utf-8', 'Service-Worker-Allowed': '/m' } })
+          }
           if (url.pathname === '/m' && !panel.validToken(t)) {
             // localStorage bootstrap:加进主屏后 start_url 无参 —— 从本机
             // 存的 deviceToken 续命;没有则提示回微信要新链接。
@@ -325,6 +333,13 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           if (url.pathname === '/set/api/apply' && req.method === 'POST') {
             let body: unknown
             try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
+            // set_remote (toggle remote access + restart the daemon) is a
+            // flow-shaped op — refuse it over the tunnel; you only toggle remote
+            // access from home anyway, and a leaked device token must not be
+            // able to flip config + force restarts remotely.
+            if ((body as { op?: unknown })?.op === 'set_remote' && url.searchParams.get('_via') === 'tunnel') {
+              return json({ ok: false, error: 'lan_only' })
+            }
             return json(await panel.apply(body))
           }
           if (url.pathname === '/set/api/pair' && req.method === 'POST') {
@@ -529,6 +544,27 @@ load().catch(() => {})
 }
 
 
+const SW_JS = `
+const CACHE = 'cc-shell-v1'
+self.addEventListener('install', function(e){ self.skipWaiting() })
+self.addEventListener('activate', function(e){ e.waitUntil(self.clients.claim()) })
+self.addEventListener('fetch', function(e){
+  var url = new URL(e.request.url)
+  if (e.request.mode === 'navigate' && url.pathname === '/m') {
+    // network-first for the shell; cache the tokened doc; fall back offline.
+    e.respondWith(fetch(e.request).then(function(r){
+      var copy = r.clone(); caches.open(CACHE).then(function(c){ c.put('shell', copy) }); return r
+    }).catch(function(){ return caches.open(CACHE).then(function(c){ return c.match('shell') }).then(function(m){ return m || new Response('离线且没有缓存,请先在家里打开一次', { status: 503 }) }) }))
+    return
+  }
+  if (url.pathname === '/m/icon.png' || url.pathname === '/m/manifest.json') {
+    e.respondWith(caches.open(CACHE).then(function(c){ return c.match(e.request).then(function(m){ return m || fetch(e.request).then(function(r){ c.put(e.request, r.clone()); return r }) }) }))
+    return
+  }
+  // /m/api/* and everything else — let the page decide (LAN → tunnel).
+})
+`
+
 const M_BOOTSTRAP_HTML = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="manifest" href="/m/manifest.json"><title>CC</title>
 <body style="font-family:system-ui;background:#f5ead8;color:#5a3f2d;display:grid;place-items:center;height:100vh;margin:0">
@@ -602,6 +638,7 @@ try {
 } catch (e) {}
 var isDevice = T.charAt(0) === "d"
 if (!isDevice) document.getElementById("pairbar").hidden = false
+if ("serviceWorker" in navigator) { navigator.serviceWorker.register("/m/sw.js", { scope: "/m" }).catch(function(){}) }
 function toast(m) { var t = document.getElementById("toast"); t.textContent = m; t.classList.add("show"); setTimeout(function(){ t.classList.remove("show") }, 1800) }
 function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;") }
 function q(p) { return p + (p.indexOf("?") < 0 ? "?" : "&") + (isDevice ? "d=" : "t=") + encodeURIComponent(T) }
@@ -617,6 +654,7 @@ function tunnel() {
     // relay tags streams itself — the phone sends/receives BARE frames.
     var key = null, kp = null, pending = {}
     var ready = false
+    function failAllPending(err) { for (var k in pending) { try { pending[k](null, err) } catch (e) {} } pending = {} }
     ws.onopen = async function() {
       kp = await crypto.subtle.generateKey({ name:"X25519" }, true, ["deriveKey","deriveBits"])
       var raw = await crypto.subtle.exportKey("raw", kp.publicKey)
@@ -629,7 +667,9 @@ function tunnel() {
         var pub = await crypto.subtle.importKey("raw", b64u.dec(f.hs), { name:"X25519" }, true, [])
         var bits = await crypto.subtle.deriveBits({ name:"X25519", public: pub }, kp.privateKey, 256)
         var hk = await crypto.subtle.importKey("raw", new Uint8Array(bits), "HKDF", false, ["deriveKey"])
-        key = await crypto.subtle.deriveKey({ name:"HKDF", hash:"SHA-256", salt:new Uint8Array(0), info:new TextEncoder().encode("wechat-cc/tunnel/v1") }, hk, { name:"AES-GCM", length:256 }, false, ["encrypt","decrypt"])
+        // Key BOUND to the device token — proves to the daemon we hold it,
+        // without ever putting it on the wire; defeats a MITM relay.
+        key = await crypto.subtle.deriveKey({ name:"HKDF", hash:"SHA-256", salt:new TextEncoder().encode(T), info:new TextEncoder().encode("wechat-cc/tunnel/v1") }, hk, { name:"AES-GCM", length:256 }, false, ["encrypt","decrypt"])
         ready = true; resolve(send)
         return
       }
@@ -641,29 +681,36 @@ function tunnel() {
       if (cb) cb(r)
     }
     ws.onerror = function(){ reject(new Error("ws_error")) }
-    ws.onclose = function(){ tun = null; if (!ready) reject(new Error("ws_closed")) }
+    ws.onclose = function(){ tun = null; failAllPending(new Error("closed")); if (!ready) reject(new Error("ws_closed")) }
     var ridSeq = 0
     async function send(path, opts) {
       var rid = "r" + (ridSeq++)
-      var body = JSON.stringify({ path: q(path), method: (opts && opts.method) || "GET", body: opts && opts.body, rid: rid })
+      // token NEVER travels — the bound key already authenticated us; the
+      // daemon injects the device token server-side. Send the BARE path.
+      var body = JSON.stringify({ path: path, method: (opts && opts.method) || "GET", body: opts && opts.body, rid: rid })
       var iv = crypto.getRandomValues(new Uint8Array(12))
       var ct = await crypto.subtle.encrypt({ name:"AES-GCM", iv: iv }, key, new TextEncoder().encode(body))
-      return new Promise(function(res) {
-        pending[rid] = function(r){ res({ status: r.status, text: function(){ return Promise.resolve(r.body) }, json: function(){ return Promise.resolve(JSON.parse(r.body)) } }) }
+      return new Promise(function(res, rej) {
+        pending[rid] = function(r, err){ if (err) { rej(err); return } res({ status: r.status, text: function(){ return Promise.resolve(r.body) }, json: function(){ return Promise.resolve(JSON.parse(r.body)) } }) }
         ws.send(JSON.stringify({ iv: b64u.enc(iv), ct: b64u.enc(ct) }))
       })
     }
   })
   return tun
 }
-// api():直连优先(2.5s 超时),失败落隧道。返回 {status, json(), text()}。
+// api():在家直连,出门走隧道。一旦直连失败一次就记住"在外面",后续
+// 直接走隧道,不再每次白等 2.5s。返回 {status, json(), text()}。
+var preferTunnel = false
 function api(path, opts) {
+  if (preferTunnel && REMOTE) return tunnel().then(function(send){ return send(path, opts) })
   var ctrl = new AbortController()
   var to = setTimeout(function(){ ctrl.abort() }, 2500)
   return fetch(q(path), Object.assign({ signal: ctrl.signal }, opts || {})).then(function(r){
     clearTimeout(to); return r
   }).catch(function() {
     clearTimeout(to)
+    if (!REMOTE) throw new Error("no_lan_no_remote")
+    preferTunnel = true
     return tunnel().then(function(send){ return send(path, opts) })
   })
 }

@@ -65,6 +65,19 @@ describe('tunnel-crypto', () => {
     expect(s1.ct).not.toBe(s2.ct)
   })
 
+  it('bindSecret authenticates: same ECDH but different bind secrets → different keys (MITM defeat)', async () => {
+    const a = await generateTunnelKeypair()
+    const b = await generateTunnelKeypair()
+    const tokenA = new TextEncoder().encode('device-token-A')
+    const tokenB = new TextEncoder().encode('device-token-B')
+    const kA = await deriveSharedKey(a.privateKey, b.publicKey, tokenA)
+    const kB = await deriveSharedKey(b.privateKey, a.publicKey, tokenB)   // wrong token
+    const sealed = await sealFrame(kA, new TextEncoder().encode('secret'))
+    await expect(openFrame(kB, sealed)).rejects.toBeTruthy()              // token mismatch → GCM fails
+    const kBok = await deriveSharedKey(b.privateKey, a.publicKey, tokenA) // right token
+    expect(new TextDecoder().decode(await openFrame(kBok, sealed))).toBe('secret')
+  })
+
   it('uses X25519 (WebCrypto-portable), verified by importing a raw 32-byte key', async () => {
     const a = await generateTunnelKeypair()
     const raw = await webcrypto.subtle.exportKey('raw', a.publicKey)

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { generateTunnelKeypair, deriveSharedKey, sealFrame, openFrame, exportPublicKeyB64 } from '../lib/tunnel-crypto'
+const DTOK = 'dtest0000'
 import { makeTunnelClient, handshakePlaintext } from './tunnel-client'
 
 // A fake WS pair: daemon-side socket the client drives; test plays the relay+phone.
@@ -26,6 +27,7 @@ describe('tunnel-client (daemon side)', () => {
     let seenPath = ''
     const client = makeTunnelClient({
       daemonId: 'cc-1',
+      knownDeviceTokens: () => [DTOK],
       handleRequest: async (req) => {
         seenPath = new URL(req.url).pathname
         return new Response(JSON.stringify({ ok: true, echo: await req.text() }), { headers: { 'content-type': 'application/json' } })
@@ -45,7 +47,7 @@ describe('tunnel-client (daemon side)', () => {
     expect(daemonPub).toBeTruthy()
 
     // phone derives the shared key and sends a sealed request
-    const key = await deriveSharedKey(phone.privateKey, await importDaemonPub(daemonPub!))
+    const key = await deriveSharedKey(phone.privateKey, await importDaemonPub(daemonPub!), new TextEncoder().encode(DTOK))
     const reqBytes = new TextEncoder().encode(JSON.stringify({ path: '/m/api/state', method: 'POST', body: 'hello' }))
     sock.emitMessage(JSON.stringify({ stream: 'sA', frame: await sealFrame(key, reqBytes) }))
     for (let i = 0; i < 20 && sock.sent.length < 2; i++) await new Promise(r => setTimeout(r, 5))
@@ -62,18 +64,41 @@ describe('tunnel-client (daemon side)', () => {
 
   it('a sealed request before handshake is dropped (no key yet)', async () => {
     const sock = fakeSocket()
-    const client = makeTunnelClient({ daemonId: 'cc-1', handleRequest: async () => new Response('x'), connect: () => sock.ws as never, log: () => {} })
+    const client = makeTunnelClient({ daemonId: 'cc-1', knownDeviceTokens: () => [DTOK], handleRequest: async () => new Response('x'), connect: () => sock.ws as never, log: () => {} })
     client.start()
     sock.emitMessage(JSON.stringify({ stream: 'sZ', frame: { iv: 'aa', ct: 'bb' } }))
     await new Promise(r => setTimeout(r, 0))
     expect(sock.sent).toHaveLength(0)   // nothing sealed back
   })
 
+  it('a frame from a device whose token the daemon does not know is dropped (MITM/unknown device)', async () => {
+    const phone = await generateTunnelKeypair()
+    const sock = fakeSocket()
+    let handled = false
+    const client = makeTunnelClient({
+      daemonId: 'cc-1', knownDeviceTokens: () => ['dsomeother'],   // NOT the phone's token
+      handleRequest: async () => { handled = true; return new Response('x') },
+      connect: () => sock.ws as never, log: () => {},
+    })
+    client.start()
+    sock.emitMessage(JSON.stringify({ stream: 'sB', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
+    for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
+    const daemonPub = JSON.parse(sock.sent.at(-1)!).frame.hs
+    // phone binds to ITS token 'dmine' — daemon only knows 'dsomeother'
+    const { importPublicKeyB64: imp } = await import('../lib/tunnel-crypto')
+    const key = await deriveSharedKey(phone.privateKey, await imp(daemonPub), new TextEncoder().encode('dmine'))
+    const req = new TextEncoder().encode(JSON.stringify({ path: '/m/api/state', method: 'GET', rid: 'r1' }))
+    sock.emitMessage(JSON.stringify({ stream: 'sB', frame: await sealFrame(key, req) }))
+    await new Promise(r => setTimeout(r, 30))
+    expect(handled).toBe(false)                 // never reached the router
+    expect(sock.sent.length).toBe(1)            // only the handshake reply, no sealed response
+  })
+
   it('reconnects after the socket closes', async () => {
     let connects = 0
     const socks = [fakeSocket(), fakeSocket()]
     const client = makeTunnelClient({
-      daemonId: 'cc-1', handleRequest: async () => new Response('x'),
+      daemonId: 'cc-1', knownDeviceTokens: () => [DTOK], handleRequest: async () => new Response('x'),
       connect: () => socks[connects++]!.ws as never, reconnectMs: 5, log: () => {},
     })
     client.start()
