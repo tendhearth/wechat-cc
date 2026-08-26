@@ -128,6 +128,14 @@ export async function notifyStartup(
     pending = stillFailing
   }
   if (okCount === 0) {
+    // 微信 ilink 约束(2026-08-26 巡检定案):bot 主动推送需要近期用户
+    // 交互票据,票据过期时 prepare 必败、重试无用 —— 用户一说话票据
+    // 即刷新。把通知存为待发,inbound 侧(side-effects flushPendingNotify)
+    // 在用户下条消息后补发。
+    try {
+      writeFileSync(join(deps.stateDir, 'pending-notify.json'), JSON.stringify({ text, recipients: pending, ts: now }) + '\n', { mode: 0o600 })
+      deps.log('NOTIFY', `queued for next inbound (ticket likely expired) — ${pending.length} recipient(s)`)
+    } catch { /* best effort */ }
     return { notified: false, reason: 'send-failed-all', recipients, sinceLastMs: sinceLast }
   }
   // Backfill the marker on the upgrade path too (alreadyNotified=false,

@@ -200,7 +200,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   }
   const getBotName = (): string | null => boot.agentConfig.bot_name ?? null
 
-  const recordInbound = makeRecordInbound({ stateDir, db })
+  const recordInbound = makeRecordInbound({
+    stateDir, db,
+    sendMessage: (cid, txt) => ilink.sendMessage(cid, txt) as Promise<{ msgId?: string; error?: string }>,
+    log: (tag, line) => log(tag, line),
+  })
   const messagesStore = makeMessagesStore(db)
   const dedupStore = makeDedupStore(db)
   // Guest path (spec docs/superpowers/specs/2026-08-18-guest-path-design.md
