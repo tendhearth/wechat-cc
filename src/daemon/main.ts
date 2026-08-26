@@ -464,6 +464,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({
       stickers: stickerLib,
+      requestRestart: (reason) => requestRestart(reason),
       stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,
       // Task 11 — tick-bodies pass this to resolveTier() when computing
       // the companion's tierProfile. Same singleton import the bootstrap

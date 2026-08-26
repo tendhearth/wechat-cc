@@ -137,6 +137,8 @@ export interface PipelineDepsOpts {
   replySinks: ReplySinks
   /** Sticker library — 随身 CC 手机页展示 + 图片服务(main.ts 传入)。 */
   stickers?: import('../stickers').StickerLib
+  /** 触发 daemon 重启(远程访问开关切换后套用新隧道接线)。main.ts 传入。 */
+  requestRestart?: (reason: string) => void
 }
 
 export interface PipelineDepsRefs {
@@ -364,6 +366,16 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     stateDir,
     ownerChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
+    ...(opts.requestRestart ? {
+      remote: {
+        isEnabled: () => (loadAgentConfig(stateDir) as { remote_tunnel?: boolean }).remote_tunnel === true,
+        setEnabled: (on: boolean) => {
+          const cur = loadAgentConfig(stateDir)
+          saveAgentConfig(stateDir, { ...cur, remote_tunnel: on } as typeof cur)
+        },
+        requestRestart: () => opts.requestRestart!('remote-toggle'),
+      },
+    } : {}),
     // 随身 CC 数据面 — facts/graph 来自 boot.knowledge(缺则手机页对应区留白)
     ...(boot.knowledge?.facts ? {
       todos: {

@@ -47,6 +47,15 @@ describe('settings panel', () => {
       getUserName: () => '大人',
       setUserName,
       audit,
+      remote: {
+        isEnabled: () => { try { return JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8')).remote_tunnel === true } catch { return false } },
+        setEnabled: (on) => {
+          const cfg = JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))
+          cfg.remote_tunnel = on
+          writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify(cfg))
+        },
+        requestRestart: () => { prefs['_restarted'] = { yes: true } as never },
+      },
       log: () => {},
       now: () => nowMs,
     })
@@ -54,6 +63,13 @@ describe('settings panel', () => {
   afterEach(async () => {
     await panel.stop()
     rmSync(stateDir, { recursive: true, force: true })
+  })
+
+  it('apply: set_remote toggles remote_tunnel in config and requests a restart', async () => {
+    expect((await panel.apply({ op: 'set_remote', enabled: true })).ok).toBe(true)
+    expect(JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8')).remote_tunnel).toBe(true)
+    expect(prefs['_restarted']).toEqual({ yes: true })
+    expect((await panel.apply({ op: 'set_remote', enabled: 'nope' })).ok).toBe(false)
   })
 
   it('issueToken: fresh token validates; expires after TTL; reissue revokes the old one', () => {

@@ -30,6 +30,8 @@ export interface WireMainOpts {
   ilink: IlinkAdapter
   /** Sticker library — threaded to tick-bodies' daily sticker-artist step. */
   stickers?: import('../stickers').StickerLib
+  /** 远程访问开关的重启触发(settings-panel set_remote)。 */
+  requestRestart?: (reason: string) => void
   /** Loaded before makeIlinkAdapter — passed separately because IlinkAdapter doesn't expose accounts. */
   accounts: IlinkAccount[]
   boot: Bootstrap

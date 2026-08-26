@@ -60,6 +60,13 @@ export interface SettingsPanelDeps {
   /** 远程隧道信息(启用时):relay wss + 本机 daemon id。手机页出门时用它
    *  经中继访问。缺省 ⇒ 手机页只能在同一 Wi-Fi 直连。 */
   remoteInfo?: () => { relay: string; id: string } | null
+  /** 远程访问一键开关(2026-08-26):读/写 remote_tunnel + 触发重启。
+   *  缺省 ⇒ 设置页不显示远程访问开关。 */
+  remote?: {
+    isEnabled: () => boolean
+    setEnabled: (on: boolean) => void
+    requestRestart: () => void
+  }
   /** config_changed audit sink (events store append) — best-effort. */
   audit?: (reasoning: string) => void
   log: (tag: string, line: string) => void
@@ -194,6 +201,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         persona,
         prefs: deps.chatPrefs.get(owner),
         config,
+        remote: deps.remote ? { available: true, enabled: deps.remote.isEnabled() } : { available: false, enabled: false },
       }
     },
 
@@ -226,6 +234,15 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             return { ok: false, error: 'invalid_value' }
           }
           deps.chatPrefs.set(owner, { [key]: b.value })
+          return { ok: true }
+        }
+        if (b.op === 'set_remote') {
+          if (typeof b.enabled !== 'boolean') return { ok: false, error: 'invalid_value' }
+          if (!deps.remote) return { ok: false, error: 'remote_not_wired' }
+          deps.remote.setEnabled(b.enabled)
+          deps.audit?.(`remote_tunnel: → ${b.enabled} — 设置面板`)
+          // Restart applies the new tunnel wiring (dials out / stops).
+          deps.remote.requestRestart()
           return { ok: true }
         }
         if (b.op === 'set_config') {
@@ -423,6 +440,13 @@ export function pageHtml(token: string): string {
   <div class="say">💬 也可以直接说:「别拆分回复了」「关心档位调低点」</div>
 </section>
 
+<section id="sec-remote" hidden>
+  <h2>随身 CC</h2>
+  <p class="hint">开启后,手机加到主屏,出门也能看待办和 CC 画的你</p>
+  <label class="row"><span><b>出门也能用</b><small>经加密中继回家,数据只在你自己电脑上,中间人看不到</small></span><input type="checkbox" class="switch" id="f-remote"></label>
+  <div class="say" id="remote-hint">开启需要重启一下 CC(约十几秒),之后在同一 Wi-Fi 下打开随身 CC,点「把 CC 带在身上」即可</div>
+</section>
+
 <section>
   <details><summary>⚙️ 技术详情(好奇再点)</summary>
     <label class="row"><span><b>模型</b><small>CC 用哪个大脑思考</small></span><input type="text" id="f-model" style="width:190px"></label>
@@ -470,6 +494,10 @@ async function load() {
   $("f-knowledge").checked = s.config.knowledge_enabled === true
   $("f-social").checked = s.config.social_enabled === true
   $("f-autostart").checked = s.config.autoStart === true
+  if (s.remote && s.remote.available) {
+    $("sec-remote").hidden = false
+    $("f-remote").checked = s.remote.enabled === true
+  }
   const care = s.prefs.care || "low"
   for (const b of $("f-care").querySelectorAll("button")) b.classList.toggle("on", b.dataset.v === care)
 }
@@ -489,6 +517,13 @@ wireSwitch("f-hunt", "pref", "hunt")
 wireSwitch("f-knowledge", "config", "knowledge_enabled")
 wireSwitch("f-social", "config", "social_enabled")
 wireSwitch("f-autostart", "config", "autoStart")
+$("f-remote").addEventListener("change", async e => {
+  const on = e.target.checked
+  const h = $("remote-hint")
+  h.textContent = on ? "正在开启并重启 CC…十几秒后回来,在同一 Wi-Fi 下打开随身 CC 点「把 CC 带在身上」" : "已关闭出门访问"
+  const r = await api("/set/api/apply", { op: "set_remote", enabled: on })
+  if (!r.ok) { h.textContent = "没改成:" + (r.error || ""); e.target.checked = !on }
+})
 load().catch(() => {})
 </script></body></html>`
 }
