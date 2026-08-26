@@ -17,6 +17,7 @@ import { makeTurnRecordStore } from '../core/turn-record-store'
 import { providerDisplayName } from './provider-display-names'
 import { loadAllAccounts, makeIlinkAdapter } from './ilink-glue'
 import { registerInternalApi } from './internal-api/lifecycle'
+import { makeMessagesStore } from '../lib/messages-store'
 import { registerCompanionPush, registerCompanionIntrospect, registerIngest } from './companion/lifecycle'
 import { registerGuard } from './guard/lifecycle'
 import { registerPolling } from './polling-lifecycle'
@@ -237,6 +238,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       setChatPref: (c, p) => chatPrefs.set(c, p),
       stickers: stickerLib,
       replySinks,
+      // chat_history 工具后端(provider-handoff 的逃生口)
+      messages: (() => { const ms = makeMessagesStore(db); return { listRange: (c: string, o: { limit: number; beforeTs?: string }) => ms.listRange(c, o), search: (c: string, q: string, l: number) => ms.search(c, q, l) } })(),
       setUserName: (chatId, name) => ilink.setUserName(chatId, name),
       voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus(), synthesizeSpeech: (t) => ilink.voice.synthesizeSpeech(t), transcribe: (a, m) => ilink.voice.transcribe!(a, m), saveSTTConfig: (i) => ilink.voice.saveSTTConfig!(i), sttStatus: () => ilink.voice.sttStatus!() },
       sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),

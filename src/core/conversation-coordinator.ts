@@ -20,6 +20,7 @@ import type { ConversationStore } from './conversation-store'
 import type { ProviderRegistry } from './provider-registry'
 import type { Mode, ProviderId } from './conversation'
 import type { InboundMsg } from './prompt-format'
+import { makeHandoffLedger, buildHandoffBlock, type HandoffTurn } from './provider-handoff'
 import { buildOpeningPrompt, buildRebuttalPrompt, buildVerdictPrompt, buildConvergencePrompt, parseConvergence, type Opening } from './chatroom-conductor'
 import { assertSupported, capabilitiesFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
 import { collectTurn, TURN_TIMEOUT_CODE, type TurnSummary } from './agent-provider'
@@ -110,6 +111,11 @@ export interface ConversationCoordinatorDeps {
    */
   recordTurn?: (record: TurnRecord) => void
   format: (msg: InboundMsg) => string
+  /**
+   * 换 provider 交接 (provider-handoff.ts):最近 N 条干净对话,注入切换后
+   * 第一条 prompt。缺省 ⇒ 交接块只有提示语,没有近况原文。
+   */
+  recentTurns?: (chatId: string, n: number) => Promise<HandoffTurn[]>
   sendAssistantText?: (chatId: string, text: string) => Promise<void>
   /**
    * Optional `fields` arg lands in the JSONL sidecar (channel.log.jsonl)
@@ -254,6 +260,8 @@ export interface ConversationCoordinator {
 }
 
 export function createConversationCoordinator(deps: ConversationCoordinatorDeps): ConversationCoordinator {
+  // 换 provider 不断片 — setMode 标记,下一次 solo dispatch 取用(取即清)。
+  const handoffLedger = makeHandoffLedger()
   function defaultMode(): Mode {
     return { kind: 'solo', provider: deps.defaultProviderId }
   }
@@ -544,7 +552,15 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // this turn for its entire lifetime — cleared in the finally below,
       // same lifecycle as chatroom's inFlightAborters.
       unregisterCancel = registerHandleCancel(msg.chatId, () => { void handle.cancel?.() })
-      const text = deps.format(msg)
+      let text = deps.format(msg)
+      // 换 provider 后的第一条:前置交接块(近况原文 + chat_history 提示)。
+      const handoff = handoffLedger.takeHandoff(msg.chatId)
+      if (handoff) {
+        let recent: HandoffTurn[] = []
+        try { recent = await deps.recentTurns?.(msg.chatId, 12) ?? [] } catch { /* 交接是增强,拿不到就只给提示语 */ }
+        text = `${buildHandoffBlock(handoff.from, handoff.to, recent)}\n\n${text}`
+        deps.log?.('HANDOFF', `chat=${msg.chatId} ${handoff.from}→${handoff.to} recent=${recent.length}`)
+      }
       summary = await collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs })
       const assistantTexts = summary.assistantText
       const replyToolCalled = summary.replyToolCalled
@@ -1040,6 +1056,11 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       validateMode(mode)
       const oldMode = getMode(chatId)
       deps.conversationStore.set(chatId, mode)
+      // 换 provider 交接:solo→solo 且 provider 变化时标记。同 provider 换
+      // 模型不换会话线(session key 含 provider 不含 model),无需交接。
+      if (oldMode.kind === 'solo' && mode.kind === 'solo' && oldMode.provider !== mode.provider) {
+        handoffLedger.markSwitch(chatId, oldMode.provider, mode.provider)
+      }
     },
     cancel(chatId) {
       let cancelledAny = false

@@ -51,11 +51,10 @@
 </details>
 
 <details class="sec">
-  <summary>上下文交接(换 provider 不断片) <span class="count">4</span></summary>
-  <ul><li>做 <b>codex 式四段交接摘要</b> <span class="badge todo">待</span> · 不做 <b>原始记录全量转发</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>2026 行业共识:交接像写工单,不是转发邮件线程——原始记录大半是工具报错、澄清、走错的岔路,信噪比差。codex 开源的四段结构直接可抄:当前进度和关键决策 / 约束和用户偏好 / 还剩什么没做 / 继续工作必需的关键数据。SessionStore.setSummary 的坑早留好了,零生产调用者</span></li>
-<li>做 <b>近段用户原话原样保留</b> · 不做 <b>全部摘要</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>codex 保留 ~20k tokens 用户消息原文。最不能压缩失真的就是用户自己说过的话</span></li>
-<li>做 <b>Amp 式按需回查(chat_history 工具)</b> <span class="badge todo">待</span> · 不做 <b>纯摘要断后路</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>四家 harness(Claude Code/Codex/OpenCode/Amp)里只有 Amp 有事后回查机制(thread references),也被认为质量损失最小。摘要必然有损,留逃生口:MessagesStore.listRange/search 早就有,只差暴露成 MCP 工具</span></li>
-<li>做 <b>摘要永远从消息库生成</b> · 不做 <b>摘要套摘要</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>codex 明确警告多次压缩累积降质。切 A→B→C 时,B→C 的交接基于 B 的真实对话,不是把 A→B 的摘要再摘要</span></li></ul>
+  <summary>上下文交接(换 provider 不断片) <span class="count">3</span></summary>
+  <ul><li>做 <b>近段原文直接交接</b> <span class="badge done">定</span> · 不做 <del>codex 式 LLM 摘要</del> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>实现时修订:codex 摘要是为了压缩几十万 token 的工具调用噪音;我们消息库存的就是干净的用户↔CC 短消息,最近 12 条才 1-2k tokens——摘要在这里只引入损耗和异步 LLM 调用,零压缩收益。保留 codex 真正的洞见:用户原话最不能压缩失真,以及「摘要前缀框架」(交接块自称系统交接,叮嘱别重新自我介绍别重复回答)。setMode 标记 → 切换后第一条 prompt 前置 &lt;handoff&gt; 块,取即清</span></li>
+<li>做 <b>Amp 式按需回查(chat_history 工具)</b> <span class="badge done">定</span> · 不做 <b>纯交接块断后路</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>四家 harness(Claude Code/Codex/OpenCode/Amp)里只有 Amp 有事后回查机制(thread references),也被认为质量损失最小。近况块必然有限,留逃生口:chat_history(chatId, limit, query?, before?) 按时间/搜索/翻页查原文,admin tier</span></li>
+<li>做 <b>交接块永远从消息库现取</b> · 不做 <b>交接套交接</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>codex 明确警告多次压缩累积降质。切 A→B→C 时,B→C 的交接从消息库现取 B 段真实对话,天然不套娃</span></li></ul>
 </details>
 
 <details class="sec">

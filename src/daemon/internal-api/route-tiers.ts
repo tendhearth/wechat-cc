@@ -188,6 +188,7 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // that would let a trusted contact read the owner's full cross-conversation
   // archive. Revisit once that scoping lands or a real "agent" caller
   // identity beyond trusted/admin exists.
+  'GET /v1/chat/history': 'admin',
   'GET /v1/knowledge/messages': 'admin',
   'POST /v1/knowledge/search': 'admin',
   'GET /v1/knowledge/semantic/status': 'admin',

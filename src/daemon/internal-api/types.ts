@@ -248,6 +248,12 @@ export interface InternalApiDeps {
    * `search` are present — `knowledge_enabled` alone doesn't guarantee an
    * embed script resolved.
    */
+  /** chat_history 工具后端(provider-handoff 的 Amp 式逃生口)— 消息库
+   *  的窄读面。main.ts 注入 makeMessagesStore(db) 的两个方法。 */
+  messages?: {
+    listRange(chatId: string, opts: { limit: number; beforeTs?: string }): Promise<Array<{ ts: string; direction: string; kind: string; text: string }>>
+    search(chatId: string, query: string, limit: number): Promise<Array<{ ts: string; direction: string; kind: string; text: string }>>
+  }
   knowledge?: {
     store: import('../../core/knowledge/store').KnowledgeStore
     search: typeof import('../../core/knowledge/search').semanticSearch
