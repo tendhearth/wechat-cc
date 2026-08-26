@@ -118,8 +118,8 @@ async function uploadR2(token: string): Promise<boolean> {
     })
     if (!r.ok) throw new Error(`PUT ${key} → ${r.status}: ${(await r.text()).slice(0, 200)}`)
   }
-  await put(artifactName, new Uint8Array(readFileSync(artifactPath)), 'application/octet-stream')
-  await put('latest.json', JSON.stringify(latest, null, 2), 'application/json')
+  await put(`${hosting.keyPrefix}/${artifactName}`, new Uint8Array(readFileSync(artifactPath)), 'application/octet-stream')
+  await put(`${hosting.keyPrefix}/latest.json`, JSON.stringify(latest, null, 2), 'application/json')
 
   // 旧版清理 — 每平台只留最近 KEEP_VERSIONS 版,免费额度(10GB)永远够用。
   try {
@@ -129,7 +129,7 @@ async function uploadR2(token: string): Promise<boolean> {
     const keys = (listBody.result ?? []).map(o => o.key)
     // key 形如 wechat-cc_<semver>_<platform>(.app.tar.gz|-setup.exe)
     const parsed = keys
-      .map(k => { const m = k.match(/^wechat-cc_(\d+\.\d+\.\d+)_(.+?)(\.app\.tar\.gz|-setup\.exe)$/); return m ? { key: k, version: m[1]!, platform: m[2]! } : null })
+      .map(k => { const m = k.match(/wechat-cc_(\d+\.\d+\.\d+)_(.+?)(\.app\.tar\.gz|-setup\.exe)$/); return m ? { key: k, version: m[1]!, platform: m[2]! } : null })
       .filter((x): x is NonNullable<typeof x> => x !== null)
     const byPlatform = new Map<string, typeof parsed>()
     for (const a of parsed) { const arr = byPlatform.get(a.platform) ?? []; arr.push(a); byPlatform.set(a.platform, arr) }
