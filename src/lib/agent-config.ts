@@ -32,6 +32,10 @@ export interface AgentConfig {
   /** Resolved `cursor-agent` binary path override (tests opt in; production
    *  falls back to PATH lookup — see providers.ts's cursor CLI branch). */
   cursorAgentBin?: string
+  /** 随身 CC 远程隧道开关(2026-08-26):true 则 daemon 拨中继,手机出门
+   *  可访问。默认关。`remote_relay_url` 可覆盖默认 relay。 */
+  remote_tunnel?: boolean
+  remote_relay_url?: string
   // When true, the daemon spawned by `service install` runs with
   // `cli.ts run --dangerously` (Claude SDK permissionMode=bypassPermissions).
   // Wizard-installed daemons need this on by default — there is no human
@@ -185,6 +189,8 @@ const AgentConfigSchema = z.object({
   agyModel: z.string().optional(),
   agyBin: z.string().optional(),
   cursorAgentBin: z.string().optional(),
+  remote_tunnel: z.boolean().optional(),
+  remote_relay_url: z.string().optional(),
   dangerouslySkipPermissions: z.boolean().default(true),
   autoStart: z.boolean().default(true),
   closeStopsDaemon: z.boolean().default(false),
@@ -274,6 +280,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.agyModel === 'string' ? { agyModel: parsed.agyModel } : {}),
       ...(typeof parsed.agyBin === 'string' ? { agyBin: parsed.agyBin } : {}),
       ...(typeof parsed.cursorAgentBin === 'string' ? { cursorAgentBin: parsed.cursorAgentBin } : {}),
+      ...(typeof parsed.remote_tunnel === 'boolean' ? { remote_tunnel: parsed.remote_tunnel } : {}),
+      ...(typeof parsed.remote_relay_url === 'string' ? { remote_relay_url: parsed.remote_relay_url } : {}),
       dangerouslySkipPermissions,
       autoStart,
       closeStopsDaemon,
