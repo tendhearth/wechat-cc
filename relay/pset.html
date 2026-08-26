@@ -20,6 +20,9 @@
 var P = {}
 location.hash.slice(1).split("&").forEach(function(kv){ var i = kv.indexOf("="); if (i > 0) P[kv.slice(0,i)] = decodeURIComponent(kv.slice(i+1)) })
 var ID = P.id, T = P.t, PATH = P.p || "/m", LAN = P.lan
+// 配对过的手机:设备令牌存在本域 localStorage(注入页写的),永不过期 ——
+// 优先于 hash 里可能已过期的 10 分钟短令牌。加主屏后重开因此总能进。
+try { var dt = localStorage.getItem("deviceToken"); if (dt) T = dt } catch (e) {}
 var msg = document.getElementById("msg")
 if (!ID || !T) { msg.textContent = "链接不完整,回微信跟 CC 再要一个" }
 

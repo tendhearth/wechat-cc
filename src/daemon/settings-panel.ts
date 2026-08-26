@@ -541,6 +541,10 @@ async function load() {
   if (s.remote && s.remote.available) {
     $("sec-remote").hidden = false
     $("f-remote").checked = s.remote.enabled === true
+    if (window.__CC_SHELL__ || preferTunnel) {
+      $("f-remote").disabled = true
+      $("remote-hint").textContent = "出门在外不能动这个开关 — 回家(和电脑同一网络)再改"
+    }
     if (s.remote.devices > 0) { $("row-devices").hidden = false; $("devices-count").textContent = s.remote.devices + " 台手机拿着长期钥匙" }
   }
   const care = s.prefs.care || "low"
