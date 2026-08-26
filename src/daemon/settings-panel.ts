@@ -393,6 +393,11 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             if (!existsSync(fp)) return json({ error: 'not_found' }, 404)
             const ext = name.split('.').pop()?.toLowerCase() ?? 'png'
             const type = ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png'
+            // 隧道/壳模式的图片通道:隧道 body 是 JSON 文本,二进制走不了 ——
+            // ?b64=1 返回 base64 载荷,页面拼 data URI(出门表情不再裂图)。
+            if (url.searchParams.get('b64') === '1') {
+              return json({ ok: true, mime: type, data: readFileSync(fp).toString('base64') })
+            }
             return new Response(readFileSync(fp), { headers: { 'content-type': type } })
           }
           return json({ error: 'not_found' }, 404)
@@ -792,9 +797,22 @@ function render(s) {
     ? '<figure class="frame">' + s.portrait + '<figcaption>CC 画的你</figcaption></figure>'
     : '<div class="empty">CC 还没画你 — 在电脑记忆页点「更新画像」</div>'
   var sg = document.getElementById("stickers")
-  sg.innerHTML = s.stickers.length ? s.stickers.map(function(e) {
-    return '<figure><img src="' + q("/m/api/sticker/" + encodeURIComponent(e.file)) + '" loading="lazy"><figcaption>' + esc(e.tags.join(" · ")) + '</figcaption></figure>'
-  }).join("") : '<div class="empty">表情库还空着</div>'
+  if (!s.stickers.length) { sg.innerHTML = '<div class="empty">表情库还空着</div>' }
+  else if (!preferTunnel) {
+    sg.innerHTML = s.stickers.map(function(e) {
+      return '<figure><img src="' + q("/m/api/sticker/" + encodeURIComponent(e.file)) + '" loading="lazy"><figcaption>' + esc(e.tags.join(" · ")) + '</figcaption></figure>'
+    }).join("")
+  } else {
+    // 隧道/壳模式:<img src> 直连必然失败,走 api() 取 base64 拼 data URI。
+    sg.innerHTML = s.stickers.map(function(e, i) {
+      return '<figure><img data-sti="' + i + '" alt=""><figcaption>' + esc(e.tags.join(" · ")) + '</figcaption></figure>'
+    }).join("")
+    s.stickers.forEach(function(e, i) {
+      api("/m/api/sticker/" + encodeURIComponent(e.file) + "?b64=1").then(function(r){ return r.json() }).then(function(r) {
+        if (r && r.ok) { var img = sg.querySelector('[data-sti="' + i + '"]'); if (img) img.src = "data:" + r.mime + ";base64," + r.data }
+      }).catch(function(){})
+    })
+  }
 }
 document.getElementById("todos").addEventListener("click", function(ev) {
   var b = ev.target.closest("button[data-id]")

@@ -220,6 +220,16 @@ describe('随身 CC (phone PWA + device pairing)', () => {
     expect(s2.stickers[0]!.tags).toEqual(['开心'])
   })
 
+  it('sticker ?b64=1 returns JSON data-URI payload (tunnel/shell mode images)', async () => {
+    const { port } = await panel.start(0)
+    const base = `http://127.0.0.1:${port}`
+    const t = panel.issueToken()
+    const r = await (await fetch(`${base}/m/api/sticker/bear.png?b64=1&t=${t}`)).json() as { ok: boolean; mime: string; data: string }
+    expect(r.ok).toBe(true)
+    expect(r.mime).toBe('image/png')
+    expect(Buffer.from(r.data, 'base64').toString()).toBe('png-bytes')
+  })
+
   it('sticker image serving guards path traversal; icon is tokenless', async () => {
     const { port } = await panel.start(0)
     const base = `http://127.0.0.1:${port}`
