@@ -51,17 +51,21 @@ if (await compiled.exited !== 0) {
 }
 
 if (process.platform === 'win32') {
-  // Bun 1.3.x accepts --windows-hide-console but still emits a CONSOLE PE.
-  // Keep the established CI workaround here too, so local and CI builds agree.
+  // Bun 1.3.x accepts --windows-hide-console but still emits a CONSOLE PE;
+  // Bun 1.4+ honors the flag and emits GUI directly (2026-08-26, first
+  // real Windows build). Idempotent: CONSOLE(3) → patch to GUI(2);
+  // already-GUI(2) → nothing to do; anything else is genuinely unexpected.
   const bytes = new Uint8Array(await Bun.file(output).arrayBuffer())
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const peOffset = view.getUint32(0x3c, true)
   const subsystemOffset = peOffset + 0x5c
-  if (view.getUint16(subsystemOffset, true) !== 3) {
-    throw new Error('expected a CONSOLE PE sidecar before applying the GUI-subsystem workaround')
+  const subsystem = view.getUint16(subsystemOffset, true)
+  if (subsystem === 3) {
+    view.setUint16(subsystemOffset, 2, true)
+    await Bun.write(output, bytes)
+  } else if (subsystem !== 2) {
+    throw new Error(`unexpected PE subsystem ${subsystem} (want CONSOLE=3 or GUI=2)`)
   }
-  view.setUint16(subsystemOffset, 2, true)
-  await Bun.write(output, bytes)
 } else {
   chmodSync(output, 0o755)
 }
