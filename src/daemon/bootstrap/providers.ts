@@ -133,7 +133,10 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // RFC 03 §3.6 / C7 — auth-agnostic. We do NOT pass `apiKey` to the codex
   // provider; the user's `codex login` or OPENAI_API_KEY env are honored
   // transparently by the SDK.
-  const registry = createProviderRegistry()
+  const registry = createProviderRegistry({
+    ...(configuredAgent.cheapEvalProvider ? { cheapEvalProvider: configuredAgent.cheapEvalProvider } : {}),
+    log: (line) => deps.log('REGISTRY', line),
+  })
   registry.register(
     'claude',
     createClaudeAgentProvider({
@@ -175,6 +178,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     bundledSdkVersion: codexCliPkg.version,
     detectUserCodex: () => detectUserCodexOnPath(),
     envDisabled: process.env.WECHAT_CC_DISABLE_CODEX_AUTOFIX === '1',
+    gitCheckout: codexInstallDir !== null && existsSync(join(codexInstallDir, '.git')),
+    envForced: process.env.WECHAT_CC_FORCE_CODEX_AUTOFIX === '1',
     log: (line) => deps.log('CODEX_AUTOFIX', line),
   }).then((outcome) => {
     switch (outcome.status) {
@@ -459,6 +464,12 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         },
       )
       deps.log('BOOT', 'openai: base_url + model + WECHAT_OPENAI_API_KEY present — provider registered')
+      // 外部集成反馈 #2:openai 在 cheapEval 偏好序第一,注册即承接全部
+      // 后台评估(记忆整理/moderator/introspect)。端点若是特化服务,请在
+      // agent-config 里 cheap_eval_provider 指定别家。
+      if (!configuredAgent.cheapEvalProvider) {
+        deps.log('BOOT', 'openai: 注意 — 该端点现在也承接全部内部 cheapEval 评估;如非通用大模型,设置 cheap_eval_provider 指定其他 provider')
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       deps.log('BOOT', `openai: registration failed (${msg}) — provider not registered`)

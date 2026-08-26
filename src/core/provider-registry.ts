@@ -62,7 +62,18 @@ const CHEAP_EVAL_PREFERENCE: ProviderId[] = ['openai', 'agy', 'claude', 'codex',
  *  enough that a re-login is picked up within minutes. */
 const CHEAP_EVAL_COOLDOWN_MS = 10 * 60_000
 
-export function createProviderRegistry(opts?: { now?: () => number }): ProviderRegistry {
+export function createProviderRegistry(opts?: {
+  now?: () => number
+  /**
+   * 显式指定 cheapEval 的 provider (agent-config `cheap_eval_provider`)。
+   * 外部集成反馈 #2 (2026-08-26):openai 在偏好序第一,配置 openai-compatible
+   * provider 即静默劫持全部后台评估(记忆整理/moderator/introspect)——当
+   * base_url 指向特化本地服务时,内部评估要么得到无意义回答、要么把费用记
+   * 到意外的账上。指定后只用它(不参与 failover 轮替);未指定保持原偏好序。
+   */
+  cheapEvalProvider?: string
+  log?: (line: string) => void
+}): ProviderRegistry {
   const now = opts?.now ?? Date.now
   const entries = new Map<ProviderId, { provider: AgentProvider; opts: ProviderRegistration }>()
   // cheapEval failover state — per-registry (= per-daemon-lifetime), never persisted.
@@ -82,6 +93,12 @@ export function createProviderRegistry(opts?: { now?: () => number }): ProviderR
       return Array.from(entries.keys())
     },
     getCheapEval() {
+      // 显式指定优先 — 见 opts.cheapEvalProvider 文档。
+      if (opts?.cheapEvalProvider) {
+        const pinned = entries.get(opts.cheapEvalProvider as ProviderId)?.provider.cheapEval
+        if (pinned) return pinned
+        opts.log?.(`cheap_eval_provider=${opts.cheapEvalProvider} 未注册或无 cheapEval — 回落偏好序`)
+      }
       // Preferred order first, then any other registered provider. The
       // implementations are arrow-like (close over `opts`, never `this`),
       // so calling them unbound is safe.

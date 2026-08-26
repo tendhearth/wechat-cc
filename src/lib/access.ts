@@ -164,6 +164,21 @@ let _invalidator: (() => void) | null = null
  * sets do. Errors thrown by the callback are swallowed so a buggy
  * invalidator can't crash the access reader.
  */
+/**
+ * Remove a userId from allowFrom. 外部集成反馈 #5 (2026-08-26):此前只有
+ * "加人"的路径,移除只能手编 access.json。镜像 appendAllowFrom:真写才
+ * 清缓存;不在列时返回 false。管理员本人不可移除(防自锁)。
+ */
+export function removeAllowFrom(userId: string): { ok: boolean; reason?: string } {
+  const access = readAccessFile()
+  if (!access.allowFrom.includes(userId)) return { ok: false, reason: 'not_in_allowlist' }
+  if ((access.admins ?? []).includes(userId)) return { ok: false, reason: 'is_admin' }
+  saveAccess({ ...access, allowFrom: access.allowFrom.filter(u => u !== userId) })
+  _accessCache = null
+  _accessCacheTime = 0
+  return { ok: true }
+}
+
 export function setSessionInvalidator(fn: (() => void) | null): void {
   _invalidator = fn
 }

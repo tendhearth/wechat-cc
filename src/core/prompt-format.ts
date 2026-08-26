@@ -12,6 +12,12 @@ export interface InboundMsg {
    * `<quote type="…">…</quote>` element inside the <wechat> envelope.
    */
   quote?: { type: string; text: string }
+  /**
+   * 微信侧的消息 id(ilink MessageItem.msg_id,取首个带 id 的 item)。
+   * 外部 provider 集成反馈 #4 (2026-08-26):信封里没有它,provider 侧
+   * 无法做端到端幂等,只能信任上游 mw-dedup。有才渲染,老 provider 无感。
+   */
+  msgId?: string
   accountId: string
   /**
    * ilink-issued per-chat context token. ilink requires it on outbound
@@ -44,6 +50,7 @@ export function formatInbound(m: InboundMsg): string {
     `user_id="${escAttr(m.userId)}"`,
     `account="${escAttr(m.accountId)}"`,
     `msg_type="${escAttr(m.msgType)}"`,
+    m.msgId ? `msg_id="${escAttr(m.msgId)}"` : '',
     `ts="${new Date(m.createTimeMs).toISOString()}"`,
   ].filter(Boolean).join(' ')
 

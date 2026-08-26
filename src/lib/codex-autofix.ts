@@ -50,6 +50,15 @@ export interface CodexAutofixDeps {
   isWritable?: (path: string) => boolean
   /** True when WECHAT_CC_DISABLE_CODEX_AUTOFIX=1 (or any non-empty value). */
   envDisabled?: boolean
+  /**
+   * True when the install root is a git checkout (.git present). 外部集成
+   * 反馈 #7 (2026-08-26):对 source checkout 用户,daemon 后台 bun add 改写
+   * 自己的 node_modules 会弄脏 git 状态,出乎意料 —— 检测到 .git 默认跳过。
+   * WECHAT_CC_FORCE_CODEX_AUTOFIX=1 可强制打开(源码开发者自愿选择)。
+   */
+  gitCheckout?: boolean
+  /** True when WECHAT_CC_FORCE_CODEX_AUTOFIX=1 — overrides the gitCheckout skip. */
+  envForced?: boolean
   /** Caller's logger. Called with single-line messages tagged at the
    *  call site. */
   log: (line: string) => void
@@ -76,6 +85,10 @@ export async function attemptCodexAutofix(
   deps: CodexAutofixDeps,
 ): Promise<CodexAutofixOutcome> {
   if (deps.envDisabled) {
+    return { status: 'disabled' }
+  }
+  if (deps.gitCheckout && !deps.envForced) {
+    deps.log('codex-autofix: skipped — git checkout detected (set WECHAT_CC_FORCE_CODEX_AUTOFIX=1 to opt in)')
     return { status: 'disabled' }
   }
 

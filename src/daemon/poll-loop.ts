@@ -165,6 +165,8 @@ export function parseUpdates(
       }
     }
 
+    const rawMsgId = msg.message_id ?? (msg.item_list ?? []).find(i => i.msg_id)?.msg_id
+    const firstMsgId = rawMsgId !== undefined && rawMsgId !== null ? String(rawMsgId) : undefined
     const inbound: InboundMsg = {
       chatId: fromUserId,
       userId: fromUserId,
@@ -173,6 +175,7 @@ export function parseUpdates(
       msgType,
       createTimeMs: msg.create_time_ms ?? 0,
       accountId: deps.accountId,
+      ...(firstMsgId ? { msgId: firstMsgId } : {}),
       ...(quote !== undefined ? { quote } : {}),
       // ilink puts context_token on every inbound message; threading it
       // through to onInbound lets the daemon persist it before replying.

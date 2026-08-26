@@ -530,7 +530,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     if (remindersLc) lc.register(remindersLc)
     // 5. one-shot startup sweeps — fire-and-forget
     runStartupSweeps(wired.startupDeps)
-    const modeStr = dangerously ? 'mode=dangerouslySkipPermissions=true (no WeChat permission prompts will fire)' : 'mode=strict (Phase 1 permission relay active)'
+    // 外部集成反馈 #6:这个 flag 的语义像"跳过工具确认",实际是全局提权
+    // (resolveEffectiveTier 对每个 allowlist 会话都返回 admin)。日志明说,
+    // 让 operator 看清 blast radius;按会话生效见导图 [待]。
+    const modeStr = dangerously
+      ? 'mode=dangerouslySkipPermissions=true — 注意:此模式下所有 allowlist 会话均按 admin 处理(全局提权),不只是跳过确认'
+      : 'mode=strict (Phase 1 permission relay active)'
     log('DAEMON', `started pid=${process.pid} accounts=${accounts.length} ${modeStr}`)
     if (dangerously) log('DAEMON', 'warning: Claude will still confirm destructive ops via natural-language reply, but no permission prompts will appear.')
     // Subsystem degraded-boot (spec 2026-08-17 §3) — 启动完成后的一次性
