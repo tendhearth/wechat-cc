@@ -315,9 +315,11 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           }
           if (url.pathname === '/m/manifest.json') {
             return json({
-              name: 'CC', short_name: 'CC', start_url: '/m', display: 'standalone',
+              name: 'CC', short_name: 'CC', id: '/m', start_url: '/m', scope: '/m', display: 'standalone',
               background_color: '#f5ead8', theme_color: '#f5ead8',
-              icons: [{ src: '/m/icon.png', sizes: '360x360', type: 'image/png' }],
+              // bear-complete.png 实际是 340x360;声明尺寸必须跟真实一致,否则
+              // 浏览器判定不匹配、拒用这个图标,主屏就退化成通用字母图标。
+              icons: [{ src: '/m/icon.png', sizes: '340x360', type: 'image/png' }],
             })
           }
           if (url.pathname === '/m/sw.js') {
