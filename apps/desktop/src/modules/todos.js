@@ -234,7 +234,14 @@ async function onListClick(ev) {
   const status = action === "resolve" ? "resolved" : action === "revive" ? "active" : "rejected"
   if (btn instanceof HTMLButtonElement) btn.disabled = true
   try {
-    await api("POST", "/v1/knowledge/facts/set_fact_status", { id: factId, status })
+    const r = /** @type {{ ok?: boolean }} */ (await api("POST", "/v1/knowledge/facts/set_fact_status", { id: factId, status }))
+    if (r && r.ok === false) {
+      // 200 但底层没改成(这条 fact 可能已被合并/删除)—— 别假装划掉了,
+      // 否则会「闪一下完成又弹回来」。和 scheduleReminder 一样检查 ok。
+      if (btn instanceof HTMLButtonElement) btn.disabled = false
+      showToast("没改成：这条可能已经变了,刷新看看")
+      return
+    }
     if (item instanceof HTMLElement) {
       item.classList.add("is-done")
       setTimeout(() => { refresh().catch(() => {}) }, 350)
@@ -244,6 +251,12 @@ async function onListClick(ev) {
     showToast(`没改成：${err instanceof Error ? err.message : String(err)}`)
   }
 }
+
+// Exported for tests — the ok:false-slips-through regression above is DOM-
+// driven, so the test drives this handler with a stub event + api.
+export { onListClick as __onListClick }
+/** @param {typeof invokeApi} fn */
+export function __setApi(fn) { api = fn }
 
 /**
  * Init the 待办 tab. Idempotent via dataset.ready (same shape as

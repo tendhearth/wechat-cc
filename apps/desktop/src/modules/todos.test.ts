@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('../view.js', () => ({ escapeHtml: (s: string) => s }))
+const showToast = vi.fn()
+vi.mock('../view.js', () => ({ escapeHtml: (s: string) => s, showToast: (m: string) => showToast(m) }))
 vi.mock('../api.js', () => ({ invokeApi: vi.fn() }))
 
 // @ts-expect-error minimal DOM stub before import (module shape parity with memory.test.ts)
 globalThis.document = { getElementById: () => null, querySelectorAll: () => [] }
 
-const { groupObligations, reminderSlots, recentSettled, timeBadge } = await import('./todos.js')
+const { groupObligations, reminderSlots, recentSettled, timeBadge, __onListClick, __setApi } = await import('./todos.js')
 
 function row(id: number, contact: string, value: string, updated: number) {
   return { id, contact, kind: 'obligation', predicate: 'p', value, time_ref: null, confidence: 'med', updated_at: updated }
@@ -61,5 +62,47 @@ describe('reminderSlots', () => {
     expect(morning.map(s => s.label)).toEqual(['今晚 21:00', '明早 9:30'])
     const late = reminderSlots(new Date('2026-08-24T22:30:00'))
     expect(late.map(s => s.label)).toEqual(['明早 9:30'])
+  })
+})
+
+describe('onListClick — 200 但 ok:false 不能假装划掉', () => {
+  class HTMLElementStub {
+    dataset: Record<string, string> = {}
+    classList = { add: vi.fn(), toggle: vi.fn() }
+    _closest: Record<string, unknown> = {}
+    closest(sel: string) { return (this._closest[sel] as unknown) ?? null }
+    querySelector() { return null }
+  }
+  class HTMLButtonElementStub extends HTMLElementStub { disabled = false }
+
+  function wire(apiResult: unknown) {
+    // @ts-expect-error stub globals for instanceof checks in onListClick
+    globalThis.HTMLElement = HTMLElementStub
+    // @ts-expect-error stub globals for instanceof checks in onListClick
+    globalThis.HTMLButtonElement = HTMLButtonElementStub
+    const item = new HTMLElementStub()
+    const btn = new HTMLButtonElementStub()
+    btn.dataset = { todoAction: 'resolve', factId: '5' }
+    btn._closest = { '[data-todo-action]': btn, '.todo-item': item, '.todo-actions': null }
+    const api = vi.fn(async () => apiResult)
+    __setApi(api)
+    showToast.mockClear()
+    return { item, btn, api, ev: { target: btn } as unknown as MouseEvent }
+  }
+
+  it('ok:false → 不打 is-done、重新启用按钮、提示', async () => {
+    const { item, btn, api, ev } = wire({ ok: false })
+    await __onListClick(ev)
+    expect(api).toHaveBeenCalledWith('POST', '/v1/knowledge/facts/set_fact_status', { id: 5, status: 'resolved' })
+    expect(item.classList.add).not.toHaveBeenCalledWith('is-done')
+    expect(btn.disabled).toBe(false)
+    expect(showToast).toHaveBeenCalled()
+  })
+
+  it('ok:true → 划掉(打 is-done)', async () => {
+    const { item, ev } = wire({ ok: true })
+    await __onListClick(ev)
+    expect(item.classList.add).toHaveBeenCalledWith('is-done')
+    expect(showToast).not.toHaveBeenCalled()
   })
 })
