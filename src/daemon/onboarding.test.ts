@@ -269,6 +269,7 @@ describe('makeOnboardingHandler', () => {
       await handler.handle(mkMsg({ userId: 'admin-1', chatId: 'admin-1', text: '小希' }))
       expect(botNameSet).toEqual(['小希'])
       expect(getBotNameLive()).toBe('小希')
+      expect(sent[2]).toContain('小希')            // 暖暖地认下这个名字
       expect(sent[2]).toMatch(/刚才你说「你好」/)
       expect(dispatched).toHaveLength(1)
       expect(dispatched[0]!.text).toBe('你好')
