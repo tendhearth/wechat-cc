@@ -61,6 +61,14 @@ const CHEAP_EVAL_PREFERENCE: ProviderId[] = ['openai', 'agy', 'claude', 'codex',
  *  stop hammering a dead credential every 25-minute ingest cycle, short
  *  enough that a re-login is picked up within minutes. */
 const CHEAP_EVAL_COOLDOWN_MS = 10 * 60_000
+// auth 失败不会自愈(要用户重登),用更长冷却 —— 否则每 10 分钟白白
+// spawn 一次坏 provider 的子进程 + 可能超时(2026-08-27 日志:agy 登录
+// 过期,ingest 每周期先试 agy 失败再轮替到 claude)。仍周期性复查,
+// 以防用户已重登。
+const CHEAP_EVAL_AUTH_COOLDOWN_MS = 60 * 60_000
+function isAuthError(err: unknown): boolean {
+  return err instanceof Error && /auth_failed|authentication failed/i.test(err.message)
+}
 
 export function createProviderRegistry(opts?: {
   now?: () => number
@@ -131,7 +139,8 @@ export function createProviderRegistry(opts?: {
           try {
             return await c.fn(prompt)
           } catch (err) {
-            cheapEvalCooldownUntil.set(c.id, now() + CHEAP_EVAL_COOLDOWN_MS)
+            const cd = isAuthError(err) ? CHEAP_EVAL_AUTH_COOLDOWN_MS : CHEAP_EVAL_COOLDOWN_MS
+            cheapEvalCooldownUntil.set(c.id, now() + cd)
             lastErr = err
           }
         }

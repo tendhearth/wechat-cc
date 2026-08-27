@@ -176,6 +176,23 @@ describe('getCheapEval — runtime failover (2026-08-24: agy auth-dead froze the
     expect(calls[calls.length - 2]).toBe('agy')
   })
 
+  it('an auth failure gets a longer cooldown than a transient one (does not self-heal in 10min)', async () => {
+    const calls: string[] = []
+    let t = 1000
+    const r = reg({
+      agy: async () => { calls.push('agy'); throw new Error('auth_failed: credentials stale') },
+      claude: async () => { calls.push('claude'); return 'ok' },
+    }, () => t)
+    const ce = r.getCheapEval()!
+    await ce('a')                      // agy auth-fails → 60min cooldown
+    t += 11 * 60_000                   // past the 10min transient cooldown…
+    await ce('b')                      // …but agy still skipped (auth cooldown is 60min)
+    expect(calls.filter(c => c === 'agy')).toHaveLength(1)
+    t += 50 * 60_000                   // past the 60min auth cooldown
+    await ce('c')                      // now agy retried
+    expect(calls.filter(c => c === 'agy')).toHaveLength(2)
+  })
+
   it('throws the last error when every provider fails (watermark-preserving semantics intact)', async () => {
     const r = reg({
       agy: async () => { throw new Error('agy down') },
