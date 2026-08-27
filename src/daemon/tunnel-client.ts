@@ -57,7 +57,7 @@ export function handshakePlaintext(frame: unknown): string | null {
 export interface TunnelClient { start(): void; stop(): void }
 
 export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
-  const relayUrl = deps.relayUrl ?? 'wss://brain.youdamaster.cc/tunnel/daemon'
+  const relayUrl = deps.relayUrl ?? 'wss://cc.tendhearth.com/tunnel/daemon'
   const reconnectMs = deps.reconnectMs ?? 15_000
   const log = deps.log ?? (() => {})
   // Per-stream ephemeral state: our keypair, the raw ECDH bits, and — once the

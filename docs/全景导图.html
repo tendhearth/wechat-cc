@@ -41,13 +41,14 @@
 </details>
 
 <details class="sec">
-  <summary>远程中继(出门也能用) <span class="count">7</span></summary>
+  <summary>远程中继(出门也能用) <span class="count">8</span></summary>
   <ul><li>做 <b>自研 E2E 隧道(经自有 relay 盲转)</b> <span class="badge done">定</span> · 不做 <b>Tailscale 当产品方案</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>Tailscale 真 E2E 且零运维,但要用户装第三方 app + 注册账号——自己用完美,给小白不行。自研隧道是唯一同时满足「小白零安装」和「数据不出厂」的方案。Tailscale 保留为 owner 自用的快速通道</span></li>
 <li>做 <b>中继盲转(relay 只见密文)</b> · 不做 <b>Cloudflare Tunnel</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>cloudflared 零代码,但 TLS 在 CF 边缘终结,CF 理论上可见明文——与「不出厂」原则正面冲突。要在上面叠应用层加密,工作量就等于自研,那不如自研</span></li>
 <li>做 <b>HKDF 把设备令牌绑进密钥派生</b> <span class="badge done">定</span> · 不做 <b>裸 X25519 握手</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>安全 review 抓到的 CRITICAL:未认证握手可被恶意中继 MITM——中继各自跟手机、daemon 握手,中间透明转发看明文。绑定令牌后中继不知令牌算不出密钥,伪造帧过不了 GCM。副产品:设备令牌从此全程不上线,daemon 用已知的 ≤20 个令牌试解密识别设备</span></li>
 <li>做 <b>set_remote 等流程型操作只允局域网</b> · 不做 <b>隧道可翻任何配置</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>泄漏的设备令牌不该能远程翻配置+强制重启。危险操作留在家里,和「provider 切换等留在对话里让 CC 确认」同一姿态</span></li>
 <li>做 <b>Service Worker 缓存页面壳</b> · 不做 <b>只有数据面走隧道</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>正确性 review 抓到的红线:PWA 的源是局域网地址,出门根本加载不出页面本身——数据面通了页面打不开等于零。SW 缓存壳,在家打开一次,出门从缓存加载,API 再走隧道</span></li>
 <li>做 <b>直连失败一次就记住走隧道</b> · 不做 <b>每个请求都先等 2.5s 超时</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>出门时每次白等 2.5s 是体验灾难。preferTunnel 记忆 + 断线拒绝所有在飞请求</span></li>
+<li>做 <b>中继统一到 cc.tendhearth.com</b> · 不做 <b>沿用 brain.youdamaster.cc</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>owner:/set 登录页显示的是 brain.youdamaster(私人代理域),该统一到品牌域 tendhearth。新建 cc.tendhearth.com(同一 VPS,克隆 /tunnel WS + /mailbox + /pset 静态,自签证书 CF Full)。代码 4 处默认值切换;HKDF salt=设备令牌与域名无关,切换不破加密;brain.youdamaster.cc 保留不动兜底旧配对</span></li>
 <li>做 <b>扫码链接指向公网壳页(pset)</b> · 不做 <b>二维码里放 LAN 地址</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>owner:人在电脑旁但手机走流量是常态,LAN 链接扫了打不开。壳页托管在中继静态目录,令牌放 # 锚点(不上服务器,中继连令牌都看不到);壳先 Image() 探测 LAN icon(在家 2s 内跳 LAN 最快路径),不通走 E2E 隧道取页注入。/set 与 /m 共享同一传输层(TUNNEL_CLIENT_JS),微信里发的设置链接同样受益</span></li></ul>
 </details>
 

@@ -363,7 +363,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     let did: string
     try { did = (JSON.parse(readFileSync(idPath, 'utf8')) as { id: string }).id }
     catch { did = 't' + randomBytes(18).toString('hex'); try { writeFileSync(idPath, JSON.stringify({ id: did }), { mode: 0o600 }) } catch { /* best effort */ } }
-    remoteTunnel = { id: did, relay: remoteCfg.remote_relay_url ?? 'wss://brain.youdamaster.cc/tunnel/phone' }
+    remoteTunnel = { id: did, relay: remoteCfg.remote_relay_url ?? 'wss://cc.tendhearth.com/tunnel/phone' }
   }
 
   const settingsPanel = makeSettingsPanel({
@@ -412,7 +412,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // remote_tunnel:true (resolved into remoteTunnel above).
   if (remoteTunnel) {
     const daemonId = remoteTunnel.id
-    const daemonRelay = (remoteCfg.remote_relay_url ?? 'wss://brain.youdamaster.cc/tunnel/phone').replace('/tunnel/phone', '/tunnel/daemon')
+    const daemonRelay = (remoteCfg.remote_relay_url ?? 'wss://cc.tendhearth.com/tunnel/phone').replace('/tunnel/phone', '/tunnel/daemon')
     import('../tunnel-client').then(({ makeTunnelClient }) => {
       makeTunnelClient({
         daemonId,
