@@ -2,7 +2,7 @@
  * wechat-mcp Config tools — lets the agent read and change the owner's
  * daemon configuration conversationally ("把知识内核打开"、"换成 gemini
  * flash"), backed by the whitelist-bounded config surface
- * (src/lib/config-surface.ts) via /v1/config/*. Admin-only (user-tier.ts
+ * (src/daemon/config-surface.ts) via /v1/config/*. Admin-only (user-tier.ts
  * 'config_admin'): a config write steers the daemon itself, same fail-closed
  * posture as daemon_remediate. Mirrors tools-facts.ts's registerFactsTools
  * shape.

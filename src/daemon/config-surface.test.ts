@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readConfigSurface, writeConfigKey, CONFIG_SURFACE } from './config-surface'
-import { loadAgentConfig } from './agent-config'
+import { loadAgentConfig } from '../lib/agent-config'
 import { loadCompanionConfig } from '../daemon/companion/config'
 
 describe('config surface', () => {

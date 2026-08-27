@@ -16,9 +16,9 @@
  * through it the owner — when the change actually lands: models hot-reload
  * per spawn (mtime-cached readers), knowledge/social wiring happens at boot.
  */
-import { loadAgentConfig, saveAgentConfig, type AgentConfig } from './agent-config'
-import { loadCompanionConfig, saveCompanionConfig, type CompanionConfig } from '../daemon/companion/config'
-import { NICKNAME_RE } from '../daemon/nickname'
+import { loadAgentConfig, saveAgentConfig, type AgentConfig } from '../lib/agent-config'
+import { loadCompanionConfig, saveCompanionConfig, type CompanionConfig } from './companion/config'
+import { NICKNAME_RE } from './nickname'
 
 export type ConfigEffect = 'immediate' | 'daemon-restart' | 'next-tick' | 'reinstall'
 

@@ -1,7 +1,7 @@
 /**
  * internal-api config-surface routes — the whitelist-only read/write face
  * behind the admin-only config_get/config_set MCP tools (see
- * src/lib/config-surface.ts for the whitelist and its security rationale).
+ * src/daemon/config-surface.ts for the whitelist and its security rationale).
  * Mirrors routes-memory.ts's shape: `configRoutes(deps): RouteTable`,
  * `{ status, body }` returns, inline validation.
  *
@@ -12,7 +12,7 @@
  * strictly better than a config change that claims to have failed but took.
  */
 import type { InternalApiDeps, RouteTable } from './types'
-import { readConfigSurface, writeConfigKey } from '../../lib/config-surface'
+import { readConfigSurface, writeConfigKey } from '../config-surface'
 import { makeEventsStore } from '../events/store'
 
 export function configRoutes(deps: InternalApiDeps): RouteTable {

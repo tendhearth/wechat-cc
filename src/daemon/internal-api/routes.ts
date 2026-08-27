@@ -239,7 +239,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       const { existsSync: envExists, readFileSync: envRead, writeFileSync: envWrite, renameSync: envRename } = await import('node:fs')
       const { join: envJoin } = await import('node:path')
       const { upsertEnvFile } = await import('../../lib/env-file')
-      const { writeConfigKey } = await import('../../lib/config-surface')
+      const { writeConfigKey } = await import('../config-surface')
       const envName = provider === 'openai' ? 'WECHAT_OPENAI_API_KEY' : 'GEMINI_API_KEY'
       const envPath = envJoin(deps.stateDir, 'daemon.env')
       const current = envExists(envPath) ? envRead(envPath, 'utf8') : ''

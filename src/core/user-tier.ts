@@ -42,7 +42,7 @@ export type ToolKind =
   | 'graph_query'        // admin-only: read the owner's contact/relationship graph (contact_profile/top_contacts/relationship_subgraph/connectors/graph_status, Knowledge Graph inproc) — same private-data trust class as knowledge_search.
   | 'facts_query'        // admin-only: read/write the owner's structured fact store (extraction_batch/record_facts/contact_facts/find_facts/set_fact_status/extraction_status, Knowledge Facts/Person inproc) — same private-data trust class as graph_query.
   | 'person_query'       // admin-only: assemble a per-contact unified brief (person_brief, Knowledge Facts/Person inproc) — same private-data trust class as facts_query/graph_query.
-  | 'config_admin'       // admin-only: read/write the owner's daemon configuration through the whitelist-bounded config surface (config_get/config_set, src/lib/config-surface.ts) — a config write steers the daemon itself, so fail closed to admin.
+  | 'config_admin'       // admin-only: read/write the owner's daemon configuration through the whitelist-bounded config surface (config_get/config_set, src/daemon/config-surface.ts) — a config write steers the daemon itself, so fail closed to admin.
 
 const ALL_KINDS: ReadonlySet<ToolKind> = new Set([
   'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
@@ -245,7 +245,7 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
       || sub === 'find_facts' || sub === 'set_fact_status' || sub === 'extraction_status') return 'facts_query'
     if (sub === 'person_brief') return 'person_query'
     // Config surface — admin-only read/write of the owner's daemon config
-    // (whitelist-bounded in src/lib/config-surface.ts).
+    // (whitelist-bounded in src/daemon/config-surface.ts).
     if (sub === 'config_get' || sub === 'config_set') return 'config_admin'
     // Explicit write mapping — must NOT fall through to the fs_read default
     // below: set_chat_pref mutates chat_prefs.json (care level / split).

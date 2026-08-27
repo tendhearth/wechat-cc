@@ -25,7 +25,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { networkInterfaces } from 'node:os'
 import { basename, join } from 'node:path'
 import { normalizeUserName } from '../lib/user-name'
-import { writeConfigKey, readConfigSurface } from '../lib/config-surface'
+import { writeConfigKey, readConfigSurface } from './config-surface'
 import { safeSvgFile, EXPIRED_HTML, SW_JS, M_BOOTSTRAP_HTML, pageHtml, phoneHtml } from './settings-panel-html'
 
 export const SETTINGS_LINK_TTL_MS = 10 * 60_000

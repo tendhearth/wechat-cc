@@ -210,7 +210,7 @@ if (SESSION_IS_ADMIN) {
   registerFactsTools(server, client)
   registerPersonTools(server, client)
   // Config surface: config_get/config_set read+write the owner's daemon
-  // configuration through the whitelist in src/lib/config-surface.ts —
+  // configuration through the whitelist in src/daemon/config-surface.ts —
   // a config write steers the daemon itself, so admin-only ('config_admin').
   registerConfigTools(server, client)
 }
