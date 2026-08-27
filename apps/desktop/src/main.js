@@ -108,17 +108,7 @@ async function withRefreshFeedback(button, fn) {
  * @param {string} cmd
  * @param {Record<string, unknown>} args
  */
-const invoke = (cmd, args) => {
-  // TEMP DIAG (guard auto-enable hunt): log a stack trace whenever `guard
-  // enable` is invoked from the frontend, revealing the exact trigger path
-  // (which handler, whether a real user gesture vs a programmatic call).
-  // Pairs with the backend GUARD_DIAG line in cli.ts. Remove once root-caused.
-  if (cmd === "wechat_cli_json" && Array.isArray(/** @type {any} */ (args)?.args)
-      && /** @type {any} */ (args).args[0] === "guard" && /** @type {any} */ (args).args[1] === "enable") {
-    console.warn("[guard-diag] invoke guard ENABLE — stack:\n", new Error().stack)
-  }
-  return ipcInvoke(cmd, args, state)
-}
+const invoke = (cmd, args) => ipcInvoke(cmd, args, state)
 
 const doctorPoller = createDoctorPoller({ invoke, intervalMs: 5000 })
 const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 10000 })
@@ -660,24 +650,6 @@ function wireEvents() {
       }
     })
   })
-
-  // TEMP DIAGNOSTIC (network-guard auto-enable hunt): log a stack trace
-  // whenever either guard toggle GAINS the `on` class, so we can see exactly
-  // what flipped it (a real user click logs from the handler above; anything
-  // else — refreshGuardStatus syncing a truthy `guard status`, or an unknown
-  // path — is the culprit). Remove once the root cause is confirmed.
-  for (const id of ["guard-toggle", "screen-guard-toggle"]) {
-    const el = document.getElementById(id)
-    if (!el) continue
-    let wasOn = el.classList.contains("on")
-    new MutationObserver(() => {
-      const on = el.classList.contains("on")
-      if (on && !wasOn) {
-        console.warn(`[guard-diag] #${id} → ON. mode=${state.mode} stack:`, new Error().stack)
-      }
-      wasOn = on
-    }).observe(el, { attributes: true, attributeFilter: ["class"] })
-  }
 
   wireSettingsDrawer({
     deps: { invoke },

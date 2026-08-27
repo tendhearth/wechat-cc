@@ -201,3 +201,31 @@ if (!process.argv.includes('--no-github')) {
     console.log(up.status === 0 ? `GitHub: 上传 ${assetLabel} → ${tag}` : `GitHub: 上传失败 — ${up.stderr?.slice(0, 160)}`)
   }
 }
+
+// ── 5. 三通道漂移校验 (2026-08-26 架构审查:三通道靠约定不靠校验) ──
+// 发布后核对三处版本一致:R2 latest.json / GitHub latest release /
+// 本次期望版本。任一不一致 → 醒目告警 + 非零退出,让 CI/人当场发现,
+// 避免「自动更新已到新版但下载页还是旧版」这类静默漂移。
+// --no-github 或 R2 未上传时,对应通道跳过校验(不误报)。
+if (uploaded && !process.argv.includes('--no-verify')) {
+  const problems: string[] = []
+  try {
+    const r2 = await (await fetch(`${hosting.baseUrl}/latest.json`, { cache: 'no-store' } as RequestInit)).json() as { version?: string }
+    if (r2.version !== version) problems.push(`R2 latest.json=${r2.version} ≠ 期望 ${version}`)
+  } catch (e) { problems.push(`R2 latest.json 读取失败: ${e instanceof Error ? e.message : e}`) }
+  if (!process.argv.includes('--no-github')) {
+    try {
+      const rel = await (await fetch('https://api.github.com/repos/tendhearth/wechat-cc/releases/latest', { headers: { 'Accept': 'application/vnd.github+json' } })).json() as { tag_name?: string }
+      const ghVer = (rel.tag_name ?? '').replace(/^desktop-v/, '')
+      if (ghVer !== version) problems.push(`GitHub latest=${ghVer || '(无)'} ≠ 期望 ${version}`)
+    } catch (e) { problems.push(`GitHub release 读取失败: ${e instanceof Error ? e.message : e}`) }
+  }
+  if (problems.length) {
+    console.error('\n⚠️  通道漂移!三处版本不一致:')
+    for (const p of problems) console.error(`   - ${p}`)
+    console.error('   自动更新(R2)与下载页(GitHub)可能给用户不同版本。请修复后重跑。')
+    process.exitCode = 1
+  } else {
+    console.log(`✓ 三通道版本一致(v${version}):R2 + GitHub 同步`)
+  }
+}
