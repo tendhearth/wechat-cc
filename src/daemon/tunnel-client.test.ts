@@ -15,6 +15,7 @@ function fakeSocket() {
       readyState: 1,
     },
     sent,
+    emitOpen: () => handlers['open']?.({}),
     emitMessage: (data: string) => handlers['message']?.({ data }),
     emitClose: () => handlers['close']?.({}),
   }
@@ -131,6 +132,31 @@ describe('tunnel-client (daemon side)', () => {
     await new Promise(r => setTimeout(r, 20))
     expect(connects).toBe(2)
     client.stop()
+  })
+
+  it('collapses reconnect churn into one disconnect line + one recovery summary', async () => {
+    // Regression (2026-08-27 日志:网络抖动时每 15s 刷一条 "socket closed",
+    // 1338 行淹没真信号)。现在:首次断开一条,后续静默重试,恢复报摘要。
+    const logs: string[] = []
+    const socks = [fakeSocket(), fakeSocket(), fakeSocket()]
+    let ci = 0, clock = 0
+    const client = makeTunnelClient({
+      daemonId: 'cc-1', knownDeviceTokens: () => [DTOK], handleRequest: async () => new Response('x'),
+      connect: () => socks[ci++]!.ws as never, reconnectMs: 3, now: () => (clock += 1000),
+      log: (_tag, line) => logs.push(line),
+    })
+    client.start()
+    socks[0]!.emitClose()                          // 1st close → one "socket closed" line
+    await new Promise(r => setTimeout(r, 12))      // reconnect → sock1
+    socks[1]!.emitClose()                          // churn → NO new "socket closed" line
+    await new Promise(r => setTimeout(r, 12))      // reconnect → sock2
+    socks[2]!.emitOpen()                           // recovery → summary
+    client.stop()
+    const closedLines = logs.filter(l => l.includes('socket closed'))
+    const recoveredLines = logs.filter(l => l.includes('reconnected to relay after'))
+    expect(closedLines).toHaveLength(1)            // churn collapsed
+    expect(recoveredLines).toHaveLength(1)         // one recovery summary
+    expect(recoveredLines[0]).toContain('attempt')
   })
 })
 

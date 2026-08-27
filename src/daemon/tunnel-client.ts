@@ -43,6 +43,8 @@ export interface TunnelClientDeps {
   connect?: (url: string) => TunnelWS
   relayUrl?: string
   reconnectMs?: number
+  /** Injected clock (tests). Backoff/down-time accounting only. */
+  now?: () => number
   log?: (tag: string, line: string) => void
 }
 
@@ -58,8 +60,14 @@ export interface TunnelClient { start(): void; stop(): void }
 
 export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   const relayUrl = deps.relayUrl ?? 'wss://cc.tendhearth.com/tunnel/daemon'
-  const reconnectMs = deps.reconnectMs ?? 15_000
+  // 指数退避重连(2026-08-27 日志:网络抖动时固定 15s 重连,恢复慢 + 日志
+  // 刷屏)。首次断开 2s 重试(瞬时抖动秒回),连败翻倍到 reconnectMs 上限。
+  const maxReconnectMs = deps.reconnectMs ?? 15_000
+  const minReconnectMs = 2_000
   const log = deps.log ?? (() => {})
+  let reconnectAttempts = 0     // 连续失败计数(open 成功清零)
+  let downSince = 0             // 首次断开时刻(重连成功时算下线时长)
+  let now = deps.now ?? (() => Date.now())
   // Per-stream ephemeral state: our keypair, the raw ECDH bits, and — once the
   // first frame identifies the device — the token-bound key + that device token.
   const streams = new Map<string, { kp: TunnelKeypair; bits: ArrayBuffer; key?: CryptoKey; device?: string }>()
@@ -146,7 +154,15 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     if (stopped) return
     const url = `${relayUrl}?id=${encodeURIComponent(deps.daemonId)}`
     ws = connect(url)
-    ws.addEventListener('open', () => log('TUNNEL', `connected to relay as ${deps.daemonId}`))
+    ws.addEventListener('open', () => {
+      if (reconnectAttempts > 0) {
+        // 从一段断连中恢复 —— 一条摘要代替刷屏(N 次尝试 / 下线 Xs)。
+        log('TUNNEL', `reconnected to relay after ${reconnectAttempts} attempt(s), down ${Math.round((now() - downSince) / 1000)}s`)
+      } else {
+        log('TUNNEL', `connected to relay as ${deps.daemonId}`)
+      }
+      reconnectAttempts = 0
+    })
     ws.addEventListener('message', (ev) => {
       const raw = typeof ev.data === 'string' ? ev.data : String(ev.data)
       let msg: { stream?: unknown; frame?: unknown; closed?: unknown }
@@ -159,8 +175,12 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       streams.clear()
       ws = null
       if (stopped) return
-      log('TUNNEL', `relay socket closed — reconnecting in ${Math.round(reconnectMs / 1000)}s`)
-      reconnectTimer = setTimeout(open, reconnectMs)
+      // 指数退避:min·2^n,封顶 max。只在首次断开记一条,后续静默重试
+      // (避免网络抖动时每 15s 刷一行)—— 恢复时的 open 摘要报清总账。
+      if (reconnectAttempts === 0) { downSince = now(); log('TUNNEL', 'relay socket closed — reconnecting…') }
+      const delay = Math.min(maxReconnectMs, minReconnectMs * 2 ** reconnectAttempts)
+      reconnectAttempts++
+      reconnectTimer = setTimeout(open, delay)
     })
     ws.addEventListener('error', () => { try { ws?.close() } catch { /* noop */ } })
   }
