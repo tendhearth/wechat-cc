@@ -115,15 +115,17 @@ async function sapi(path, body) {
   return r.json()
 }
 async function apply(op, extra, okMsg) {
-  const r = await sapi("/set/api/apply", Object.assign({ op }, extra))
+  let r
+  try { r = await sapi("/set/api/apply", Object.assign({ op }, extra)) }
+  catch (e) { toast("没连上 — 待在家里(和电脑同一网络)再试"); return false }  // 网络/过期:别静默,让调用方回滚
   toast(r.ok ? (okMsg || "已保存 ✓") : (r.error === "lan_only" ? "这个开关要在家里(和电脑同一网络)才能动" : "没改成: " + (r.error || "unknown")))
   return r.ok
 }
 function wireSwitch(id, kind, key) {
-  $(id).addEventListener("change", e => {
+  $(id).addEventListener("change", async e => {
     const v = e.target.checked
-    if (kind === "pref") apply("set_pref", { key, value: v })
-    else apply("set_config", { key, value: v })
+    const ok = await apply(kind === "pref" ? "set_pref" : "set_config", { key, value: v })
+    if (!ok) e.target.checked = !v   // 保存失败 → 回滚开关,别让 UI 撒谎(下次 load 会打回原形)
   })
 }
 function wireText(id, fn) {
@@ -179,7 +181,9 @@ $("f-remote").addEventListener("change", async e => {
   const on = e.target.checked
   const h = $("remote-hint")
   h.textContent = on ? "正在开启并重启 CC…十几秒后回来,在同一 Wi-Fi 下打开随身 CC 点「把 CC 带在身上」" : "已关闭出门访问"
-  const r = await sapi("/set/api/apply", { op: "set_remote", enabled: on })
+  let r
+  try { r = await sapi("/set/api/apply", { op: "set_remote", enabled: on }) }
+  catch (err) { h.textContent = "没连上 — 待在家里再试"; e.target.checked = !on; return }
   if (!r.ok) { h.textContent = "没改成:" + (r.error || ""); e.target.checked = !on }
 })
 load().catch(() => {})
@@ -412,7 +416,7 @@ function render(s) {
   t.innerHTML = h
   document.getElementById("portrait").innerHTML = s.portrait
     ? '<figure class="frame">' + s.portrait + '<figcaption>CC 画的你</figcaption></figure>'
-    : '<div class="empty">CC 还没画你 — 在电脑记忆页点「更新画像」</div>'
+    : '<div class="empty">CC 还在慢慢认识你 🖍<br><small>聊得多了,它会自己给你画一张</small></div>'
   var sg = document.getElementById("stickers")
   if (!s.stickers.length) { sg.innerHTML = '<div class="empty">表情库还空着</div>' }
   else if (!preferTunnel) {
