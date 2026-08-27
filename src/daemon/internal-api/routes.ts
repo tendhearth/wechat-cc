@@ -265,10 +265,13 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     // 问题而非登录问题;先分清,修复指引才对路。daemon 侧 HTTPS 可达性
     // (HEAD,不带 key,不调真实 API),用户点击触发。
     'POST /v1/net/probe': async () => {
-      const { probeTargetsFor, runNetProbe, verdictOf } = await import('../net-probe')
+      const { probeTargetsFor, runNetProbe, verdictOf, dialAdvisable } = await import('../net-probe')
       const registered = deps.llmRegistered?.() ?? []
-      const results = await runNetProbe(probeTargetsFor(registered))
-      return { status: 200, body: { ok: true, results, verdict: verdictOf(results) } }
+      const endpoints = deps.llmEndpoints?.() ?? undefined   // 自配 base_url(国内/本地大脑)→ 探真实端点
+      const results = await runNetProbe(probeTargetsFor(registered, endpoints))
+      // dial_advisable:哪怕国际不通,只要有个已注册大脑端点可达就该真拨 ——
+      // 别把国内/本地自配的大脑挡在「先开代理」的墙后面。
+      return { status: 200, body: { ok: true, results, verdict: verdictOf(results), dial_advisable: dialAdvisable(results, registered, endpoints) } }
     },
     'GET /v1/llm/health': async (q) => {
       if (!deps.llmHealth) return { status: 503, body: { error: 'llm_health_not_wired' } }

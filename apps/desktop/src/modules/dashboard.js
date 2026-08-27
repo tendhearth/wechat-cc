@@ -1080,10 +1080,14 @@ export async function runTroubleshoot(deps) {
     ? net.results.map(x => `<div class="brain-net-row ${x.ok ? "ok" : "bad"}">${x.ok ? "✓" : "✗"} ${escapeHtml(x.label)}${x.ok ? ` <span class="brain-when">${x.latency_ms}ms</span>` : " 不通"}</div>`).join("")
     : `<div class="brain-net-row bad">✗ 网络检查没跑起来</div>`
   const verdict = net && net.ok ? net.verdict : "offline"
+  // 国际通 → 照旧真拨(不回归国际大脑的常见路径)。国际不通时,只要有一个
+  // 已注册大脑的端点可达(dial_advisable)也真拨 —— 救国内/本地自配大脑,
+  // 别把明明能用的大脑挡在「先开代理」的墙后面。
+  const proceed = verdict === "ok" || (net && net.ok && net.dial_advisable === true)
 
-  if (verdict !== "ok") {
+  if (!proceed) {
     const advice = verdict === "no_international"
-      ? "基础网络是通的,但国际访问不通 —— Claude / OpenAI 这些大脑在国内需要代理才能连上。开好代理,再点下面重试。"
+      ? "基础网络是通的,但你配的大脑端点连不上 —— Claude / OpenAI 这些在国内要代理才能连;开好代理,或换个能直连的大脑(国内/本地端点),再点下面重试。"
       : "网络好像整个断了,先看看 Wi-Fi / 网线,再回来重试。"
     steps.innerHTML = `
       <div class="brain-step-title">网络</div>${netRows}

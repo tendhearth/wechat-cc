@@ -378,6 +378,9 @@ export interface InternalApiDeps {
   llmHealth?: import('../llm-health').LlmHealth
   /** Registered provider ids (registry.list) — set alongside llmHealth. */
   llmRegistered?: () => string[]
+  /** provider id → 自配 base_url(如 openai-compatible 的国内/本地端点),
+   *  给网络体检探真实端点用。set alongside llmHealth. */
+  llmEndpoints?: () => Record<string, string>
   /** Graphical-settings-panel link minter (settings-panel.ts, late-bound). */
   settingsLink?: () => Promise<string | null>
   /**
@@ -456,7 +459,7 @@ export interface InternalApi {
    * 503 until this is called.
    */
   setDelegate(d: InternalApiDelegateDep): void
-  setLlmHealth(h: import('../llm-health').LlmHealth, registered?: () => string[]): void
+  setLlmHealth(h: import('../llm-health').LlmHealth, registered?: () => string[], endpoints?: () => Record<string, string>): void
   setSettingsLink(fn: () => Promise<string | null>): void
   /**
    * Late-bind the conversation controller (coordinator.setMode) after

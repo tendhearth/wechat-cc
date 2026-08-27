@@ -462,7 +462,14 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         hintFor: (id) => capabilitiesFor(id).authFailHint,
         log,
       })
-      internalApi.setLlmHealth(llmHealth, () => boot.registry.list())
+      internalApi.setLlmHealth(llmHealth, () => boot.registry.list(), () => {
+        // 自配 base_url:目前只有 openai-compatible 端点可指向国内/本地服务。
+        // 网络体检据此探真实端点,而非硬编码的 api.openai.com。
+        const eps: Record<string, string> = {}
+        const b = boot.agentConfig.openaiBaseUrl
+        if (b) eps.openai = b
+        return eps
+      })
     }
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({

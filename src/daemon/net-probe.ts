@@ -30,15 +30,54 @@ const PROVIDER_ENDPOINTS: Record<string, ProbeTarget> = {
   cursor: { id: 'cursor', label: 'Cursor', url: 'https://cursor.com' },
 }
 
-/** 基线永远测;provider 端点按已注册列表选,去重。 */
-export function probeTargetsFor(registered: string[]): ProbeTarget[] {
+/** base_url → 干净的 origin(scheme://host[:port]),给 HEAD 探测用;非法则 null。 */
+function originOf(url: string): string | null {
+  try { return new URL(url).origin } catch { return null }
+}
+
+/**
+ * 某 provider 真正要探测的端点。overrides 里若有该 provider 自配的 base_url
+ * (openai-compatible 指向国内/本地服务),就探那个真实端点而非硬编码的
+ * api.openai.com —— 否则国内自配大脑的用户会被误判成「连不上」。
+ */
+export function endpointFor(pid: string, overrides?: Record<string, string>): ProbeTarget | null {
+  const custom = overrides?.[pid]
+  if (custom) {
+    const origin = originOf(custom)
+    if (origin) {
+      const base = PROVIDER_ENDPOINTS[pid]
+      return { id: `custom_${pid}`, label: `${base?.label ?? pid}(自配)`, url: origin }
+    }
+  }
+  return PROVIDER_ENDPOINTS[pid] ?? null
+}
+
+/** 基线永远测;provider 端点按已注册列表选(尊重自配 base_url),去重。 */
+export function probeTargetsFor(registered: string[], overrides?: Record<string, string>): ProbeTarget[] {
   const targets = [...BASELINES]
   const seen = new Set(targets.map(t => t.id))
   for (const pid of registered) {
-    const ep = PROVIDER_ENDPOINTS[pid]
+    const ep = endpointFor(pid, overrides)
     if (ep && !seen.has(ep.id)) { seen.add(ep.id); targets.push(ep) }
   }
   return targets
+}
+
+/**
+ * 值不值得真拨大脑?—— 只要有一个已注册 provider 的端点可达就值(哪怕国际
+ * 出口整个不通:用户的大脑可能是国内/本地自配的)。这样排障就不会因为
+ * google 连不上,把一个明明能用的国内大脑挡在「先开代理」的墙后面。
+ * 没有可解析端点的情况(比如全是没静态映射的 provider)→ 返回 true,让真拨
+ * 自己说话,不预先拦。
+ */
+export function dialAdvisable(results: ProbeResult[], registered: string[], overrides?: Record<string, string>): boolean {
+  const epIds = new Set<string>()
+  for (const pid of registered) {
+    const ep = endpointFor(pid, overrides)
+    if (ep) epIds.add(ep.id)
+  }
+  if (epIds.size === 0) return true
+  return results.some(r => epIds.has(r.id) && r.ok)
 }
 
 const PROBE_TIMEOUT_MS = 6000
