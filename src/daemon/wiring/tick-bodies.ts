@@ -52,6 +52,8 @@ export interface TickDeps {
   /** Curated sticker library — enables the daily sticker-artist step in
    *  introspectTick. Absent ⇒ the step never runs (tests, minimal embeds). */
   stickers?: import('../stickers').StickerLib
+  /** CC 画的你 —— 自动刷新小像(portrait-artist)。缺省 ⇒ 不自动刷新。 */
+  generatePortrait?: (adminChatId: string) => Promise<{ ok: boolean; error?: string }>
   boot: Bootstrap
   /**
    * Task 11 — companion ticks aren't user-initiated, but the session
@@ -666,6 +668,40 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         })
       } catch (err) {
         deps.log('STICKERS', `artist step failed: ${err instanceof Error ? err.message : err}`)
+      }
+    }
+
+    // CC 画的你,慢慢长 (2026-08-27) — 档案比上次画像新且过了最短间隔时,
+    // 静默重画小像。自我门控 + 每失败非致命,见 portrait-artist.ts。
+    if (deps.generatePortrait) {
+      try {
+        const { runPortraitArtist } = await import('../portrait-artist')
+        const { existsSync, readFileSync, statSync } = await import('node:fs')
+        const ownerChat = loadCompanionConfig(deps.stateDir).default_chat_id
+        if (ownerChat) {
+          const memDir = join(deps.stateDir, 'memory', ownerChat)
+          await runPortraitArtist({
+            adminChatId: ownerChat,
+            generate: deps.generatePortrait,
+            portraitGeneratedAt: () => {
+              try {
+                const j = JSON.parse(readFileSync(join(memDir, 'portrait.json'), 'utf8')) as { generated_at?: string }
+                return j.generated_at ? Date.parse(j.generated_at) : null
+              } catch { return null }
+            },
+            profileMtime: () => {
+              let newest: number | null = null
+              for (const f of ['_profile.json', '_overview.md', 'profile.md']) {
+                const fp = join(memDir, f)
+                if (existsSync(fp)) { const m = statSync(fp).mtimeMs; if (newest === null || m > newest) newest = m }
+              }
+              return newest
+            },
+            log: (t, l) => deps.log(t, l),
+          })
+        }
+      } catch (err) {
+        deps.log('PORTRAIT', `artist step failed: ${err instanceof Error ? err.message : err}`)
       }
     }
 

@@ -23,6 +23,7 @@ import type { ReplySinks } from '../reply-sinks'
 import { buildPipelineDeps } from './pipeline-deps'
 import { buildLifecycleDeps } from './lifecycle-deps'
 import { buildTickBodies, type TickBodies } from './tick-bodies'
+import { makeMemoryLlmOps } from '../memory-llm-ops'
 
 export interface WireMainOpts {
   stateDir: string
@@ -114,9 +115,18 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     pipeline: new Ref<PipelineRun>('pipeline'),
     ingestNudge: new Ref<() => void>('ingestNudge'),
   }
+  // CC 画的你 —— 小像自动刷新用的 generatePortrait(portrait-artist tick)。
+  // memory-llm-ops 是无状态工厂(每次读盘),tick 与 pipeline-deps 各持一个
+  // 无妨。构造在 buildTickBodies 前,以便传入。
+  const tickMemoryLlm = makeMemoryLlmOps({
+    stateDir: opts.stateDir, db: opts.db,
+    getMode: (cid) => opts.boot.coordinator.getMode(cid),
+    registry: opts.boot.registry,
+  })
   const ticks = buildTickBodies({
     ...opts,
     permissionMode: opts.dangerously ? 'dangerously' : 'strict',
+    generatePortrait: (chatId) => tickMemoryLlm.generatePortrait(chatId),
     // Connection-health gate (Task 7) — companion ticks read
     // boot.health.health.shouldSuspend('wechat') to stop proactive outbound
     // while the connection is confirmed down (see TickDeps.health's doc
