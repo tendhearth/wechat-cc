@@ -1022,6 +1022,9 @@ export async function loadBrainHealth(deps, fresh) {
   const registered = Array.isArray(r.registered) ? r.registered : []
   if (registered.length) _registeredProviders = registered
   if (_troubleshootOpen) return   // 排障面板开着时不覆盖它
+  // 还没接任何大脑(新装机常态:没装 CLI、没填 key)—— 这不是「病」是
+  // 「还没开始」,必须显眼引导,否则用户被卡死(owner 2026-08-26)。
+  if (registered.length === 0) { renderNoBrain(deps); return }
   const results = Array.isArray(r.results) ? r.results : []
   const broken = results.filter(x => x.ok === false)
   if (broken.length === 0) { el.hidden = true; return }   // 没病不翻病历
@@ -1030,6 +1033,32 @@ export async function loadBrainHealth(deps, fresh) {
     <span class="brain-alert-text">CC 最近有几句话没接住,可能是脑子的事</span>
     <button class="brain-recheck" type="button" data-action="brain-troubleshoot">看看怎么回事</button>`
   el.hidden = false
+}
+
+/**
+ * 还没接大脑的引导卡。API Key 放第一位 —— 新机器上它是唯一免安装即用
+ * 的路,还能接任何 OpenAI 兼容端点(OpenAI/Kimi/DeepSeek/本地…),不锁死
+ * 在某家订阅 CLI。想用订阅的走第二条(装 CLI)。owner 2026-08-26。
+ */
+export function renderNoBrain(deps) {
+  const el = document.getElementById("brain-health")
+  if (!el) return
+  el.hidden = false
+  el.innerHTML = `
+    <div class="brain-nobrain">
+      <div class="nb-head"><b>先给 CC 接上大脑</b><small>CC 需要一个大模型来思考 —— 挑一种接上就能聊</small></div>
+      <div class="nb-opts">
+        <button class="nb-opt nb-primary" type="button" data-action="nb-apikey">
+          <span class="nb-ico">🔑</span>
+          <span class="nb-txt"><b>用 API Key 接入</b><small>最快 · 免安装 · OpenAI / Kimi / DeepSeek / 本地都行</small></span>
+        </button>
+        <button class="nb-opt" type="button" data-action="nb-cli">
+          <span class="nb-ico">💳</span>
+          <span class="nb-txt"><b>用订阅登录</b><small>已有 Claude / Codex / Cursor 订阅?装它的登录工具</small></span>
+        </button>
+      </div>
+      <div class="brain-setup" id="brain-setup" hidden></div>
+    </div>`
 }
 
 /** 排障流程:网络体检 → (国际通才)真拨大脑 → 状态与修复指引。 */

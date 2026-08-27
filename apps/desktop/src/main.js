@@ -531,6 +531,19 @@ function wireEvents() {
       return
     }
     if (t.closest('[data-action="brain-close"]')) { closeTroubleshoot(deps); return }
+    // 接大脑引导:API Key 直开 OpenAI 兼容表单;订阅登录列 CLI 选项
+    if (t.closest('[data-action="nb-apikey"]')) { openBrainSetup(deps, "openai"); return }
+    if (t.closest('[data-action="nb-cli"]')) {
+      const box = document.getElementById("brain-setup")
+      if (box) {
+        box.hidden = false
+        box.innerHTML = '<div class="brain-setup-title">用哪家订阅?点一个看安装方法</div>'
+          + '<div class="nb-cli-row">'
+          + ['claude','codex','cursor'].map(function(pv){ return '<button class="brain-chip brain-off" type="button" data-brain-setup="'+pv+'">'+pv+'</button>' }).join('')
+          + '</div><div id="brain-setup" style="margin-top:8px"></div>'
+      }
+      return
+    }
     const setup = t.closest("[data-brain-setup]")
     if (setup instanceof HTMLElement && setup.dataset.brainSetup) {
       openBrainSetup(deps, setup.dataset.brainSetup)

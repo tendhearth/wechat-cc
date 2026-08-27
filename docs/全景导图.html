@@ -76,11 +76,12 @@
 </details>
 
 <details class="sec">
-  <summary>小白阻力 <span class="count">5</span></summary>
+  <summary>小白阻力 <span class="count">6</span></summary>
   <ul><li>做 <b>/set 图形设置面板 + 欢迎语自然引导</b> <span class="badge done">定</span> · 不做 <b>让用户背命令</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>owner 原话:微信用户不知道怎么命令,前期一个设置面板能非常好地帮助他们。第一次打招呼简短自我介绍,自然时机只提一次「发 /set 就有设置」,让设置在像真人聊天中完成</span></li>
 <li>做 <b>接入卡不拦路</b> · 不做 <b>向导式强制流程</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>环境检测都过了说明用户装了 CLI;检测不过,让他填 llm key 也没用。卡片是信息不是闸门</span></li>
 <li>做 <b>远程访问一键开关(面板点一下,自动写配置+重启)</b> · 不做 <b>让用户改 JSON + 手动重启</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>owner 手动趟出来的路(改 config、SIGTERM、绕 lockfile 守卫)必须变成用户点一下的按钮,这是「我能用」到「用户能用」最关键的一跳</span></li>
 <li>做 <b>大脑区 = 病历本(异常才浮现,排障式)</b> · 不做 <b>常驻仪表盘</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>owner:CC 正常回话就说明大脑没事,常驻一排技术名词+问号只会吓到用户。平时整块隐藏;daemon 缓存健康态有红才浮告警条「CC 最近有几句话没接住」→ 点开排障;低调「状态自检」文字入口留给主动想查的人</span></li>
+<li>做 <b>没接大脑时显眼引导,API Key 放第一位</b> · 不做 <b>只在有 CLI 时才给入口</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>owner:新 Windows 装机没有 claude/codex CLI,若只认订阅 CLI 就把用户卡死。修上轮 troubleshoot 化引入的 bug(registered=[] 被当「没病」隐藏)。新装机显示「先给 CC 接上大脑」卡,API Key 接入排第一——免安装即用,接任何 OpenAI 兼容端点(OpenAI/Kimi/DeepSeek/本地),彻底不锁死在某家订阅;想用订阅的走第二条装 CLI</span></li>
 <li>做 <b>排障先测网络出口再拨大脑</b> · 不做 <b>上来就测 provider</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>owner:有些 provider 不能直连,要先看网络访问质量(类似 ip111)。国内环境连不上大多是国际出口没通(代理),不是登录问题——分清才能给对修复指引。daemon 侧 HEAD 探测(daemon 才是真正发请求的进程),不带 key 零费用;国际不通就不真拨,先修网络</span></li></ul>
 </details>
 
