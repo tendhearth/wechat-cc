@@ -43,6 +43,24 @@ export interface InboundMsg {
 /** Cap on the rendered <recall> body — recall is a hint, not a transcript. */
 export const RECALL_BLOCK_MAX = 800
 
+/**
+ * 本地钟点 + 时区偏移的 ISO(如 2026-08-27T22:00:00+08:00)。信封的「当前
+ * 时间」基准用它而非 UTC 的 …Z —— CC 对「明天早上8点」「周三下午」这类
+ * 本地钟点推理才算得对(2026-08-27:UTC-only 让 CC 无从知道用户时区,
+ * 设提醒可能整点差 8 小时)。同一时刻,只是显示成本地墙钟 + 偏移;
+ * Date.parse 仍还原到正确 instant。
+ */
+export function toLocalISO(ms: number): string {
+  const d = new Date(ms)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const offMin = -d.getTimezoneOffset()   // 分钟:本地相对 UTC 的偏移(东为正)
+  const sign = offMin >= 0 ? '+' : '-'
+  const a = Math.abs(offMin)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` +
+    `${sign}${pad(Math.floor(a / 60))}:${pad(a % 60)}`
+}
+
 export function formatInbound(m: InboundMsg): string {
   const attrs = [
     `chat_id="${escAttr(m.chatId)}"`,
@@ -51,7 +69,7 @@ export function formatInbound(m: InboundMsg): string {
     `account="${escAttr(m.accountId)}"`,
     `msg_type="${escAttr(m.msgType)}"`,
     m.msgId ? `msg_id="${escAttr(m.msgId)}"` : '',
-    `ts="${new Date(m.createTimeMs).toISOString()}"`,
+    `ts="${toLocalISO(m.createTimeMs)}"`,
   ].filter(Boolean).join(' ')
 
   const attachmentLines = (m.attachments ?? []).map(a => {

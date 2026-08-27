@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatInbound, RECALL_BLOCK_MAX } from './prompt-format'
+import { formatInbound, toLocalISO, RECALL_BLOCK_MAX } from './prompt-format'
 
 describe('formatInbound', () => {
   it('wraps a plain text message with channel tag', () => {
@@ -106,7 +106,18 @@ describe('formatInbound', () => {
       chatId: 'c', userId: 'u', userName: 'x',
       text: 'hi', msgType: 'text', createTimeMs: 1_000_000, accountId: 'a',
     })
-    expect(out).toContain('ts="1970-01-01T00:16:40.000Z"') // new Date(1_000_000).toISOString()
+    // ts 现在是带时区偏移的本地 ISO(见 toLocalISO)—— 结构 + 还原同一时刻,
+    // 不依赖运行机器的时区。
+    const m = out.match(/ts="([^"]+)"/)
+    expect(m).not.toBeNull()
+    expect(m![1]).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/)
+    expect(Date.parse(m![1]!)).toBe(1_000_000)   // 同一时刻,零时区 bug
     expect(out).not.toContain('ts="1000000"')
+  })
+
+  it('toLocalISO: ISO with local offset that parses back to the same instant', () => {
+    const out = toLocalISO(1_700_000_000_000)
+    expect(out).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/)
+    expect(Date.parse(out)).toBe(1_700_000_000_000)   // instant preserved regardless of machine TZ
   })
 })
