@@ -236,6 +236,21 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       if (key === '' || key.length > 500 || /\s/.test(key)) {
         return { status: 400, body: { error: 'invalid_key' } }
       }
+      // openai 兼容接口:daemon 要 base_url + model 都在才注册(bootstrap/
+      // providers.ts)。只写 key 会「保存成功」却在重启后没接上 —— 假成功。
+      // 按「本次请求带的 或 之前已存的」算有效值,缺任一就拒,不写 key。
+      // (允许只更新 key 的场景:base_url/model 已在 config 里就放行。)
+      if (provider === 'openai') {
+        const reqBase = typeof b.base_url === 'string' ? b.base_url.trim() : ''
+        const reqModel = typeof b.model === 'string' ? b.model.trim() : ''
+        const { loadAgentConfig } = await import('../../lib/agent-config')
+        const existing = loadAgentConfig(deps.stateDir)
+        const effBase = reqBase || existing.openaiBaseUrl || ''
+        const effModel = reqModel || existing.openaiModel || ''
+        if (!effBase || !effModel) {
+          return { status: 400, body: { error: 'openai_needs_base_url_and_model' } }
+        }
+      }
       const { existsSync: envExists, readFileSync: envRead, writeFileSync: envWrite, renameSync: envRename } = await import('node:fs')
       const { join: envJoin } = await import('node:path')
       const { upsertEnvFile } = await import('../../lib/env-file')

@@ -1061,7 +1061,7 @@ export function renderNoBrain(deps) {
     </div>`
 }
 
-/** 排障流程:网络体检 → (国际通才)真拨大脑 → 状态与修复指引。 */
+/** 排障流程:网络体检 →(有可达大脑端点就)真拨大脑 → 状态与修复指引。 */
 export async function runTroubleshoot(deps) {
   const el = document.getElementById("brain-health")
   if (!el) return
@@ -1216,6 +1216,13 @@ export async function saveBrainKey(deps, provider) {
   if (!key) { if (status) status.textContent = "先粘贴 Key"; return }
   const baseUrl = /** @type {HTMLInputElement|null} */ (document.getElementById("brain-baseurl"))?.value.trim()
   const model = /** @type {HTMLInputElement|null} */ (document.getElementById("brain-model"))?.value.trim()
+  // openai 兼容接口:daemon 要 key+base_url+model 三样齐才注册(providers.ts)。
+  // 只填 key 就保存会回「已保存✓重启后生效」,重启后却没接上 —— 假成功。
+  // 这里先拦住,让「已保存」永远是真的。
+  if (provider === "openai" && (!baseUrl || !model)) {
+    if (status) status.textContent = "还要填接口地址和模型名,CC 才接得上"
+    return
+  }
   if (status) status.textContent = "保存中…"
   try {
     const r = await deps.invokeApi("POST", "/v1/llm/keys", Object.assign({ provider, key },
