@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CC — 住进你微信的那只熊</title>
+<meta name="description" content="CC 是一只住在你微信里的陪伴熊:记得你说过的话,替你记着答应别人的事,还会画画。数据全在你自己电脑上。">
+<meta property="og:title" content="CC — 住进你微信的那只熊">
+<meta property="og:description" content="记得你、替你记事、会画画的微信陪伴熊。数据不出你的电脑。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23f6efe0'/%3E%3Ctext y='24' x='4' font-size='22'%3E%F0%9F%90%BB%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;800&display=swap">
+<style>
+  :root {
+    --paper:#f6efe0; --paper-elev:#efe6d3; --ink:#2a2118; --ink-soft:#6b5d4a;
+    --muted:#9a8d78; --accent:#c66127; --accent-cc:#b0563a; --card:#fffdf7;
+    --rule:#e3d9c5; --good:#5d7c52;
+    --serif:"Charter","Iowan Old Style","Songti SC",Georgia,serif;
+    --sans:"Nunito",ui-sans-serif,-apple-system,"PingFang SC",system-ui,sans-serif;
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --paper:#17140f; --paper-elev:#1f1b14; --ink:#f2ead7; --ink-soft:#cabfa8;
+      --muted:#8a7f6b; --accent:#e58148; --accent-cc:#d98a5c; --card:#211c14;
+      --rule:#2f2a20; --good:#8bab7a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#17140f; --paper-elev:#1f1b14; --ink:#f2ead7; --ink-soft:#cabfa8;
+    --muted:#8a7f6b; --accent:#e58148; --accent-cc:#d98a5c; --card:#211c14;
+    --rule:#2f2a20; --good:#8bab7a;
+  }
+  * { box-sizing:border-box }
+  html { -webkit-text-size-adjust:100% }
+  body {
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:var(--sans); line-height:1.6; font-weight:600;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:760px; margin:0 auto; padding:0 22px }
+
+  /* torn-paper top edge, echoing the desktop app */
+  .edge { height:14px; background:var(--paper-elev);
+    -webkit-mask:radial-gradient(10px 12px at 12px 100%,#0000 96%,#000) repeat-x 0 0/24px 14px;
+    mask:radial-gradient(10px 12px at 12px 100%,#0000 96%,#000) repeat-x 0 0/24px 14px; }
+
+  header.hero { text-align:center; padding:38px 0 8px }
+  .bear { font-size:76px; line-height:1; filter:saturate(1.05) }
+  .kicker { color:var(--accent); font-weight:800; letter-spacing:.14em;
+    text-transform:uppercase; font-size:12.5px; margin:14px 0 6px }
+  h1 { font-family:var(--serif); font-weight:700; font-size:clamp(30px,7vw,44px);
+    line-height:1.15; margin:0 auto; max-width:15ch; text-wrap:balance; letter-spacing:-.01em }
+  .lede { color:var(--ink-soft); font-size:clamp(16px,3.6vw,18.5px); max-width:34ch;
+    margin:16px auto 0; text-wrap:balance }
+
+  /* download card */
+  .dl { background:var(--card); border:1.5px solid var(--rule);
+    border-radius:20px 26px 18px 24px; padding:22px; margin:30px 0 12px;
+    box-shadow:0 8px 26px rgba(112,76,42,.09) }
+  .dl-primary { display:flex; align-items:center; gap:14px; flex-wrap:wrap; justify-content:center }
+  .btn { display:inline-flex; align-items:center; gap:9px; font:inherit; font-weight:800;
+    font-size:17px; padding:14px 26px; border-radius:999px; border:0; cursor:pointer;
+    background:var(--accent-cc); color:#fff; text-decoration:none;
+    box-shadow:0 6px 16px rgba(176,86,58,.28); transition:transform .12s, box-shadow .12s }
+  .btn:hover { transform:translateY(-1px); box-shadow:0 9px 22px rgba(176,86,58,.34) }
+  .btn:focus-visible { outline:3px solid var(--accent); outline-offset:2px }
+  .btn .ico { font-size:20px }
+  .plat-note { color:var(--muted); font-size:13px; text-align:center; margin-top:12px }
+  .alt { text-align:center; margin-top:6px; font-size:14px }
+  .alt a { color:var(--accent); text-decoration:none; border-bottom:1px dotted currentColor; padding-bottom:1px }
+  .alt a:hover { color:var(--accent-cc) }
+
+  .say { text-align:center; color:var(--muted); font-size:13.5px; margin:4px 0 40px }
+  .say b { color:var(--good); font-weight:800 }
+
+  section.what { border-top:1px solid var(--rule); padding:34px 0 12px }
+  .what h2 { font-family:var(--serif); font-weight:700; font-size:22px; margin:0 0 20px; text-align:center }
+  .traits { display:grid; gap:16px; grid-template-columns:1fr }
+  @media (min-width:560px) { .traits { grid-template-columns:1fr 1fr } }
+  .trait { background:var(--card); border:1.5px solid var(--rule); border-radius:16px 20px 14px 18px; padding:16px 18px }
+  .trait .t-ico { font-size:24px; line-height:1 }
+  .trait h3 { font-size:15.5px; margin:9px 0 4px; font-weight:800 }
+  .trait p { margin:0; color:var(--ink-soft); font-size:14px; line-height:1.55 }
+
+  .req { color:var(--muted); font-size:12.5px; text-align:center; margin:26px auto 0; max-width:40ch; line-height:1.7 }
+  footer { text-align:center; color:var(--muted); font-size:12.5px; padding:34px 0 48px }
+  footer a { color:var(--accent); text-decoration:none }
+  .ver { font-variant-numeric:tabular-nums }
+</style>
+</head>
+<body>
+<div class="edge" aria-hidden="true"></div>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="bear" aria-hidden="true">🐻</div>
+    <p class="kicker">wechat · cc</p>
+    <h1>此刻,有只熊住进了你的微信</h1>
+    <p class="lede">它记得你说过的话,替你记着答应别人的事,偶尔还画画。装在你自己的电脑上——它的记忆,只属于你。</p>
+  </header>
+
+  <div class="dl">
+    <div class="dl-primary" id="dl-primary">
+      <!-- filled by JS; static fallback below for no-JS -->
+      <a class="btn" id="btn-mac" href="https://dl.tendhearth.com/wechat-cc/wechat-cc_1.6.2_aarch64.dmg">
+        <span class="ico" aria-hidden="true"></span> 下载给 Mac
+      </a>
+      <a class="btn" id="btn-win" href="https://dl.tendhearth.com/wechat-cc/wechat-cc_1.6.2_windows-x86_64-setup.exe">
+        <span class="ico" aria-hidden="true">⊞</span> 下载给 Windows
+      </a>
+    </div>
+    <p class="plat-note" id="plat-note">选一个开始 · 装好后扫码绑定你的微信</p>
+    <p class="alt" id="alt-link" hidden></p>
+  </div>
+  <p class="say">最新版 <span class="ver">v1.6.2</span> · <b>免费</b> · 装好之后它会自己保持更新</p>
+
+  <section class="what">
+    <h2>CC 是谁</h2>
+    <div class="traits">
+      <div class="trait">
+        <div class="t-ico" aria-hidden="true">🧠</div>
+        <h3>它记得你</h3>
+        <p>聊得越久,它越懂你的性格、在忙什么、习惯怎么说话。换个大脑(Claude / Codex …)也不会忘。</p>
+      </div>
+      <div class="trait">
+        <div class="t-ico" aria-hidden="true">📋</div>
+        <h3>替你记事</h3>
+        <p>你答应别人的事、别人托付你的事,它悄悄记着,该提醒的时候提醒你。</p>
+      </div>
+      <div class="trait">
+        <div class="t-ico" aria-hidden="true">🎨</div>
+        <h3>它会画画</h3>
+        <p>它给你画一幅小像,还会照着心情给自己攒表情包,慢慢长出一整套。</p>
+      </div>
+      <div class="trait">
+        <div class="t-ico" aria-hidden="true">🔒</div>
+        <h3>只在你的电脑上</h3>
+        <p>记忆、消息、画像全存在你自己电脑里,不上任何云。出门想看,走加密直连回家取。</p>
+      </div>
+    </div>
+    <p class="req">Mac 需要 Apple 芯片(M 系列)· Windows 10/11 64 位<br>装好后在电脑上打开,用微信扫码绑定即可开始。</p>
+  </section>
+
+  <footer>
+    tendhearth · <a href="https://tendhearth.com">tend your second brain</a>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  var ua = navigator.userAgent || ""
+  var plat = navigator.platform || ""
+  var isWin = /Win/i.test(plat) || /Windows/i.test(ua)
+  var isMac = /Mac/i.test(plat) || /Mac OS X/i.test(ua)
+  // iOS/Android: 手机装不了桌面版 —— 引导回电脑
+  var isMobile = /iPhone|iPad|iPod|Android/i.test(ua)
+  var mac = document.getElementById("btn-mac")
+  var win = document.getElementById("btn-win")
+  var note = document.getElementById("plat-note")
+  var alt = document.getElementById("alt-link")
+
+  function only(keep, drop, altLabel, altEl) {
+    drop.parentNode.removeChild(drop)
+    alt.hidden = false
+    alt.innerHTML = '也可以 <a href="' + altEl + '">' + altLabel + '</a>'
+  }
+
+  if (isMobile) {
+    note.textContent = "CC 是电脑上的程序 —— 用电脑打开这个页面来下载,手机负责扫码绑定微信"
+    mac.parentNode.removeChild(mac); win.parentNode.removeChild(win)
+    alt.hidden = false
+    alt.innerHTML = '桌面端下载:<a href="' + mac.href + '">Mac</a> · <a href="' + win.href + '">Windows</a>'
+  } else if (isWin && !isMac) {
+    only(win, mac, "下载 Mac 版", mac.href)
+  } else if (isMac && !isWin) {
+    only(mac, win, "下载 Windows 版", win.href)
+  }
+})()
+</script>
+</body>
+</html>
