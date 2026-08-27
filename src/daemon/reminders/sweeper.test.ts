@@ -65,6 +65,20 @@ describe('runReminderSweep', () => {
     expect((await store.list('u'))[0]!.status).toBe('failed')
   })
 
+  it('never gives up a reminder blocked only by an expired push window (errcode=-2) — defers, not fails', async () => {
+    const store = makeRemindersStore(db)
+    const due = '2026-06-18T10:00:00.000Z'
+    await store.schedule({ chat_id: 'u', due_at: due, text: '记得吃药' })
+    // 票据过期:errcode=-2 —— 主人太久没说话,窗口没开
+    const send = vi.fn().mockResolvedValue({ ok: false, error: 'ilink/sendmessage errcode=-2: prepare failed' })
+    // 远超 24h 重试窗口
+    const past = new Date(Date.parse(due) + RETRY_WINDOW_MS + 5 * 3600_000).toISOString()
+    const res = await runReminderSweep({ store, send, nowIso: past, log: noopLog })
+    expect(res.failed).toBe(0)             // 不放弃
+    expect(res.deferred).toBe(1)           // 保持 pending 等主人回来
+    expect((await store.list('u'))[0]!.status).toBe('pending')   // 提醒还活着
+  })
+
   it('treats a thrown send as a failure (no crash)', async () => {
     const store = makeRemindersStore(db)
     await store.schedule({ chat_id: 'u', due_at: '2026-06-18T10:00:00Z', text: 't' })

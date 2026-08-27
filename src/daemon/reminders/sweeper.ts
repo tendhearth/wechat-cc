@@ -17,6 +17,7 @@
  */
 import type { Lifecycle } from '../../lib/lifecycle'
 import type { RemindersStore } from './store'
+import { isProactiveWindowClosed } from '../ilink/outbound-health'
 
 /** How long after due_at we keep retrying a failing delivery before giving up. */
 export const RETRY_WINDOW_MS = 24 * 60 * 60 * 1000 // 24h
@@ -109,6 +110,17 @@ export async function runReminderSweep(deps: SweepDeps): Promise<SweepResult> {
     }
 
     const err = outcome.error ?? 'unknown_error'
+    // 票据过期(errcode=-2)不是提醒的错,是"主人太久没说话、微信主动推送
+    // 窗口没开"。窗口一旦被主人下条消息刷新即可送 —— 绝不因 24h 时钟放弃
+    // (那会永久丢失一条主人设的提醒),而是保持 pending 退避重试(封顶
+    // 60min)。迟到的提醒也是安全网,远好过丢失。(2026-08-27:实机日志抓到
+    // 一条提醒 30 次重试后 gave up,含 prepare failed,主人从没收到。)
+    if (isProactiveWindowClosed(err)) {
+      await deps.store.recordAttempt(rec.id, err, deps.nowIso)
+      result.deferred++
+      deps.log('REMINDERS', `deferred ${rec.id} → ${rec.chat_id}(推送窗口未开,等主人回来即送): ${err}`)
+      continue
+    }
     const deadline = Date.parse(rec.due_at) + retryWindow
     if (Number.isFinite(deadline) && nowMs > deadline) {
       await deps.store.markFailed(rec.id, err)
