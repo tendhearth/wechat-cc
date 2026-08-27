@@ -19,8 +19,17 @@ export interface DetectorContext {
   /**
    * YYYY-MM-DD UTC keys (`toISOString().slice(0, 10)`). Caller MUST use the
    * same convention — has7DayStreak compares against UTC "today" + 6 prior
-   * UTC days. Future v0.5 may switch to local-wallclock; keep keys generated
-   * in one place to ease that migration.
+   * UTC days.
+   *
+   * Local-wallclock would match the owner's lived "7 天连续" better (an
+   * evening message in PDT lands in the next UTC day, so a UTC streak can
+   * break for someone who did message every local day). Deliberately
+   * deferred, not overlooked: the activity store keys rows by UTC day for
+   * TEST DETERMINISM (store.test.ts pins a 23:30Z/00:30Z pair as two days —
+   * under local keys that becomes tz-dependent, passing or failing by the CI
+   * machine's zone). Switching means injecting a tz into the store + detector
+   * and a one-time streak rebuild on deploy. Worth doing as its own change
+   * (keep keys generated in one place to ease it); not an unattended edit.
    */
   daysWithMessage: string[]
 }
@@ -39,7 +48,7 @@ const SPECS: MilestoneSpec[] = [
   },
   {
     id: 'ms_1000msg',
-    body: '我们聊了第 1000 条。',
+    body: '我们聊了第 1000 条 — 一千条了,攒了好多我们俩的日子。',
     fires: ctx => ctx.turnCount >= 1000,
   },
   {
