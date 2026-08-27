@@ -85,7 +85,7 @@ export interface IlinkAdapter {
    * Long-poll wrapper for poll-loop. Detects errcode=-14 session timeout and
    * flips SessionStateStore + returns { expired: true } so the loop stops.
    */
-  getUpdatesForLoop(accountId: string, baseUrl: string, token: string, syncBuf: string): Promise<{
+  getUpdatesForLoop(accountId: string, baseUrl: string, token: string, syncBuf: string, signal?: AbortSignal): Promise<{
     updates?: unknown[]
     sync_buf?: string
     expired?: boolean

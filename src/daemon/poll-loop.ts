@@ -202,7 +202,7 @@ export interface PollLoopOptions {
      * `expired: true` so the loop can self-terminate and flag the bot in
      * SessionStateStore for the /health admin command.
      */
-    getUpdates: (accountId: string, baseUrl: string, token: string, syncBuf: string) => Promise<{
+    getUpdates: (accountId: string, baseUrl: string, token: string, syncBuf: string, signal?: AbortSignal) => Promise<{
       updates?: RawUpdate[]
       sync_buf?: string
       expired?: boolean
@@ -343,7 +343,7 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
 
     while (!sig.aborted) {
       try {
-        const resp = await ilink.getUpdates(account.id, account.baseUrl, account.token, syncBuf)
+        const resp = await ilink.getUpdates(account.id, account.baseUrl, account.token, syncBuf, sig)
 
         if (sig.aborted) break
 

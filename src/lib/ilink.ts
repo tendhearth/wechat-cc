@@ -83,11 +83,18 @@ function buildHeaders(token?: string): Record<string, string> {
   return h
 }
 
-export async function ilinkPost(baseUrl: string, endpoint: string, body: object, token?: string, timeoutMs = API_TIMEOUT_MS): Promise<string> {
+export async function ilinkPost(baseUrl: string, endpoint: string, body: object, token?: string, timeoutMs = API_TIMEOUT_MS, externalSignal?: AbortSignal): Promise<string> {
   const url = new URL(endpoint, baseUrl.endsWith('/') ? baseUrl : baseUrl + '/')
   const json = JSON.stringify(body)
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), timeoutMs)
+  // 外部停止信号(shutdown/自愈重启)—— 立刻 abort 在飞请求,长轮询不必
+  // 干等自己的 25-30s 超时。已 aborted 则同步 abort;否则挂 once 监听。
+  const onExternalAbort = () => ctrl.abort()
+  if (externalSignal) {
+    if (externalSignal.aborted) ctrl.abort()
+    else externalSignal.addEventListener('abort', onExternalAbort, { once: true })
+  }
   try {
     const res = await fetch(url.toString(), {
       method: 'POST',
@@ -106,17 +113,18 @@ export async function ilinkPost(baseUrl: string, endpoint: string, body: object,
     // releases the socket immediately.
     ctrl.abort()
     clearTimeout(t)
+    externalSignal?.removeEventListener('abort', onExternalAbort)
   }
 }
 
 // ── API calls ─────────────────────────────────────────────────────────────
 
-export async function ilinkGetUpdates(baseUrl: string, token: string, buf: string, timeoutMs: number = LONG_POLL_TIMEOUT_MS): Promise<GetUpdatesResp> {
+export async function ilinkGetUpdates(baseUrl: string, token: string, buf: string, timeoutMs: number = LONG_POLL_TIMEOUT_MS, signal?: AbortSignal): Promise<GetUpdatesResp> {
   try {
     const raw = await ilinkPost(baseUrl, 'ilink/bot/getupdates', {
       get_updates_buf: buf,
       base_info: ILINK_BASE_INFO,
-    }, token, timeoutMs)
+    }, token, timeoutMs, signal)
     return JSON.parse(raw) as GetUpdatesResp
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {

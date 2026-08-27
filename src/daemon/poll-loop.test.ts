@@ -323,12 +323,39 @@ describe('startLongPollLoops', () => {
     })
     await waitFor(() => seen.length >= 2)
     expect(seen).toEqual(['a', 'b'])
-    expect(getUpdates).toHaveBeenCalledWith('A1', 'https://x', 'T', '')
+    expect(getUpdates).toHaveBeenCalledWith('A1', 'https://x', 'T', '', expect.any(AbortSignal))
     // second call uses updated syncBuf from first response (4th positional arg)
     if (getUpdates.mock.calls.length >= 2) {
       expect(getUpdates.mock.calls[1]![3]).toBe('buf2')
     }
     await handle.stop()
+  })
+
+  it('stop() aborts an in-flight long-poll at once — does not wait its 25-30s timeout', async () => {
+    // Regression (2026-08-27 日志:每次自愈重启 "stop timeout (5000ms)"):
+    // the long-poll fetch got no abort signal, so stop() blocked on it until
+    // the poll's OWN timeout, blowing the lifecycle's 5s budget. Now the loop
+    // threads its abort signal into getUpdates; a stop() aborts the in-flight
+    // poll immediately.
+    let sawSignal: AbortSignal | undefined
+    const getUpdates = vi.fn((_id: string, _url: string, _tok: string, _buf: string, signal?: AbortSignal) =>
+      new Promise<{ updates: RawUpdate[]; sync_buf: string; timed_out?: boolean }>((resolve) => {
+        sawSignal = signal
+        // model a 30s long-poll that only returns when aborted (or never)
+        if (signal) signal.addEventListener('abort', () => resolve({ updates: [], sync_buf: '', timed_out: true }), { once: true })
+      }))
+    const handle = startLongPollLoops({
+      accounts: [baseAcct],
+      onInbound: async () => {},
+      ilink: { getUpdates },
+      parse: () => [],
+      resolveUserName: () => undefined,
+    })
+    await waitFor(() => getUpdates.mock.calls.length >= 1)
+    expect(sawSignal).toBeInstanceOf(AbortSignal)
+    const t0 = Date.now()
+    await handle.stop()
+    expect(Date.now() - t0).toBeLessThan(1000)   // fast — not the 25-30s poll timeout
   })
 
   it('calls onPollCycle after a successful getUpdates (daemon-health heartbeat hook)', async () => {
