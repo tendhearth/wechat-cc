@@ -654,25 +654,27 @@ function wireEvents() {
   wireSettingsDrawer({
     deps: { invoke },
     onToggleChange: async (id, on) => {
+      // 返回 false → 持久化失败,让 settings-drawer 回滚开关(别让 UI 撒谎)。
       if (id === "unattended-toggle") {
         state.unattended = on
         try {
           await invoke("wechat_cli_text", { args: ["provider", "set", state.selectedProvider || "claude", "--unattended", on ? "true" : "false"] })
-        } catch (err) { console.error("unattended set failed:", err) }
+        } catch (err) { console.error("unattended set failed:", err); state.unattended = !on; return false }
       } else if (id === "autostart-toggle") {
         state.autoStart = on
         try {
           await invoke("wechat_cli_text", { args: ["provider", "set", state.selectedProvider || "claude", "--auto-start", on ? "true" : "false"] })
-        } catch (err) { console.error("autoStart set failed:", err) }
+        } catch (err) { console.error("autoStart set failed:", err); state.autoStart = !on; return false }
       } else if (id === "guard-toggle") {
         try {
           await invoke("wechat_cli_json", { args: ["guard", on ? "enable" : "disable", "--json"] })
           refreshGuardStatus()
-        } catch (err) { console.error("guard toggle failed:", err) }
+        } catch (err) { console.error("guard toggle failed:", err); return false }
       } else if (id === "memory-embryo-toggle") {
         setMemoryEmbryoEnabled(on)
         renderMemoryProfileOverview(deps)
       }
+      return true
     },
   })
 

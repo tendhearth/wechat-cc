@@ -129,7 +129,7 @@ export function closeSettingsDrawer() {
  * Attach drawer event handlers. Safe to call multiple times — only
  * the first call wires.
  *
- * @param {{ onToggleChange: (id: string, on: boolean) => void, deps?: { invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> } }} opts
+ * @param {{ onToggleChange: (id: string, on: boolean) => void | boolean | Promise<void | boolean>, deps?: { invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> } }} opts
  */
 export function wireSettingsDrawer(opts) {
   if (listenersAttached) return
@@ -166,14 +166,21 @@ export function wireSettingsDrawer(opts) {
   })
 
   // Toggle clicks inside the drawer — flip aria-pressed + .on, then
-  // notify caller for persistence side effects.
+  // notify caller for persistence side effects. 持久化失败(onToggleChange
+  // 返回 false / 抛错)就回滚开关,别让 UI 撒谎——和手机设置页同一姿态。
   document.querySelectorAll("#settings-drawer [data-toggle]").forEach((el) => {
-    el.addEventListener("click", () => {
+    el.addEventListener("click", async () => {
       const pressed = el.getAttribute("aria-pressed") === "true"
       const next = !pressed
       el.setAttribute("aria-pressed", String(next))
       el.classList.toggle("on", next)
-      opts.onToggleChange(el.id, next)
+      try {
+        const ok = await opts.onToggleChange(el.id, next)
+        if (ok === false) throw new Error("persist_failed")
+      } catch {
+        el.setAttribute("aria-pressed", String(pressed))
+        el.classList.toggle("on", pressed)
+      }
     })
   })
 }
