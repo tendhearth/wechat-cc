@@ -331,6 +331,27 @@ describe('startLongPollLoops', () => {
     await handle.stop()
   })
 
+  it('stop() returns within the grace even if a loop is wedged (Bun fetch-abort latency / bad network)', async () => {
+    // Regression (2026-08-27:部分自愈重启仍 stop timeout 5s —— Bun 的
+    // fetch-abort 传播在网络坏态下可 >5s)。stop() 不该被无界拖住:abort
+    // 后有界宽限,到点返回,进程退出会销毁 socket。
+    const getUpdates = vi.fn(() => new Promise<{ updates: RawUpdate[]; sync_buf: string }>(() => {
+      // never resolves — models a fetch whose abort doesn't propagate promptly
+    }))
+    const handle = startLongPollLoops({
+      accounts: [baseAcct],
+      onInbound: async () => {},
+      ilink: { getUpdates },
+      parse: () => [],
+      resolveUserName: () => undefined,
+      stopGraceMs: 30,   // tiny grace for the test
+    })
+    await waitFor(() => getUpdates.mock.calls.length >= 1)
+    const t0 = Date.now()
+    await handle.stop()                       // must not hang on the wedged loop
+    expect(Date.now() - t0).toBeLessThan(500) // returned via grace, not blocked forever
+  })
+
   it('stop() aborts an in-flight long-poll at once — does not wait its 25-30s timeout', async () => {
     // Regression (2026-08-27 日志:每次自愈重启 "stop timeout (5000ms)"):
     // the long-poll fetch got no abort signal, so stop() blocked on it until

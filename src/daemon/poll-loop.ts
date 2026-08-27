@@ -260,6 +260,8 @@ export interface PollLoopOptions {
   }
   /** Test injection point; defaults to this file's sleep(). */
   sleepFn?: (ms: number, signal: AbortSignal) => Promise<void>
+  /** 停止宽限:abort 后最多等这么久让 loop 自然退出,超时也返回(见 stop()）。 */
+  stopGraceMs?: number
 }
 
 function sleepImpl(ms: number, signal: AbortSignal): Promise<void> {
@@ -331,6 +333,7 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
   } = opts
   const resolveUserName = opts.resolveUserName ?? (() => undefined)
   const sleep = opts.sleepFn ?? sleepImpl
+  const stopGraceMs = opts.stopGraceMs ?? 2_000
 
   const loops = new Map<string, LoopRecord>()
 
@@ -494,7 +497,15 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
     running: () => Array.from(loops.keys()),
     async stop(): Promise<void> {
       for (const record of loops.values()) record.abort.abort()
-      await Promise.all(Array.from(loops.values()).map(r => r.promise))
+      // abort 已发出;进程正在退出,socket 会随进程销毁。Bun 的 fetch-abort
+      // 传播偶有延迟(网络坏态下可 >5s),不该让它拖住 lifecycle 的停止预算
+      // —— 给一个有界宽限,loop 正常退出就走,拖太久也返回(不再 stop
+      // timeout 刷屏)。宽限用不可 abort 的裸计时,不受同一停止信号影响。
+      const allExited = Promise.all(Array.from(loops.values()).map(r => r.promise))
+      await Promise.race([
+        allExited,
+        new Promise<void>(res => setTimeout(res, stopGraceMs)),
+      ])
     },
   }
 }
