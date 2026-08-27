@@ -830,15 +830,17 @@ function render(s) {
 document.getElementById("todos").addEventListener("click", function(ev) {
   var b = ev.target.closest("button[data-id]")
   if (!b) return
-  fetch(q("/m/api/todo"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: Number(b.dataset.id), status: b.dataset.st }) })
+  // 走隧道感知的 api()(在家直连,出门/壳模式走隧道)—— 不能用裸 fetch,
+  // 否则出门时待办勾选打不到家里的 daemon。
+  api("/m/api/todo", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: Number(b.dataset.id), status: b.dataset.st }) })
     .then(function(r){ return r.json() }).then(function(r) { if (r.ok) { toast(b.dataset.st === "active" ? "捞回来了" : "划掉了 ✓"); load() } else toast("没改成") })
     .catch(function(){ toast("网络不通") })
 })
 function load() {
-  fetch(q("/m/api/state")).then(function(r) {
+  api("/m/api/state").then(function(r) {
     if (r.status === 401) { try { localStorage.removeItem("deviceToken") } catch (e) {}; location.replace("/m"); return null }
     return r.json()
-  }).then(function(s){ if (s && s.ok) render(s) }).catch(function(){ toast("连不上家里的电脑 — 要在同一个 Wi-Fi") })
+  }).then(function(s){ if (s && s.ok) render(s) }).catch(function(){ toast("连不上家里的电脑 — 看看它开着没") })
 }
 load()
 </script></body></html>`
