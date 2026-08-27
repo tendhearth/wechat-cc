@@ -176,6 +176,20 @@ describe('getCheapEval — runtime failover (2026-08-24: agy auth-dead froze the
     expect(calls[calls.length - 2]).toBe('agy')
   })
 
+  it("agy's ambiguous 'authentication failed or timed out' is treated as TRANSIENT, not auth (owner can log in — it's network/timeout)", async () => {
+    const calls: string[] = []
+    let t = 1000
+    const r = reg({
+      agy: async () => { calls.push('agy'); throw new Error('agy result status=ERROR: authentication failed or timed out') },
+      claude: async () => { calls.push('claude'); return 'ok' },
+    }, () => t)
+    const ce = r.getCheapEval()!
+    await ce('a')                      // agy fails → SHORT (10min) cooldown, not 60min
+    t += 11 * 60_000                   // past the 10min transient cooldown
+    await ce('b')                      // agy retried (would still be sidelined if mis-classed as auth)
+    expect(calls.filter(c => c === 'agy')).toHaveLength(2)
+  })
+
   it('an auth failure gets a longer cooldown than a transient one (does not self-heal in 10min)', async () => {
     const calls: string[] = []
     let t = 1000

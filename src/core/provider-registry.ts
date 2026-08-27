@@ -61,13 +61,15 @@ const CHEAP_EVAL_PREFERENCE: ProviderId[] = ['openai', 'agy', 'claude', 'codex',
  *  stop hammering a dead credential every 25-minute ingest cycle, short
  *  enough that a re-login is picked up within minutes. */
 const CHEAP_EVAL_COOLDOWN_MS = 10 * 60_000
-// auth 失败不会自愈(要用户重登),用更长冷却 —— 否则每 10 分钟白白
-// spawn 一次坏 provider 的子进程 + 可能超时(2026-08-27 日志:agy 登录
-// 过期,ingest 每周期先试 agy 失败再轮替到 claude)。仍周期性复查,
-// 以防用户已重登。
+// 确认的 auth 失败(登录过期)不会自愈,用更长冷却,少做无用重试。
+// 只认 `auth_failed:` 前缀 —— 这是 assertNotAuthFailed 在 isAuthFail 确认
+// 真登录问题后才加的确定信号。刻意不匹配裸 "authentication failed":agy
+// CLI 把认证与超时打包成 "authentication failed or timed out"(2026-08-27:
+// owner 确认 agy 能登录,这条其实是网络/超时,和同期 getUpdates cert /
+// 隧道 churn 同源),那是瞬时错误,该走短冷却自愈,不能误判成登录过期。
 const CHEAP_EVAL_AUTH_COOLDOWN_MS = 60 * 60_000
 function isAuthError(err: unknown): boolean {
-  return err instanceof Error && /auth_failed|authentication failed/i.test(err.message)
+  return err instanceof Error && /auth_failed\b/i.test(err.message)
 }
 
 export function createProviderRegistry(opts?: {
