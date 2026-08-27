@@ -32,6 +32,39 @@ describe('notify-startup', () => {
     }
   })
 
+  it('errcode=-2(推送窗口关闭)记成平静态,不喊 failed;真错才喊 failed', async () => {
+    for (const [err, expectCalm] of [
+      ['ilink/sendmessage errcode=-2: prepare failed', true],
+      ['ilink/sendmessage errcode=500: internal', false],
+    ] as const) {
+      const stateDir = makeStateDir()
+      try {
+        const logs: string[] = []
+        await notifyStartup(
+          {
+            stateDir,
+            loadAccess: () => ({ allowFrom: ['owner-wxid'] }),
+            send: async () => ({ error: err }),   // 每轮都失败
+            log: (_tag, line) => { logs.push(line) },
+            now: () => 1_700_000_000_000,
+            retryDelayMs: 0,                        // 别让 4 轮退避拖慢测试
+          },
+          { pid: 42, accounts: 1, dangerously: true }
+        )
+        const joined = logs.join('\n')
+        if (expectCalm) {
+          expect(joined).toContain('暂不可推送')
+          expect(joined).not.toContain('send to owner-wxid failed')
+        } else {
+          expect(joined).toContain('send to owner-wxid failed')
+          expect(joined).not.toContain('暂不可推送')
+        }
+      } finally {
+        rmSync(stateDir, { recursive: true, force: true })
+      }
+    }
+  })
+
   it('first-ever startup writes the one-time notified marker', async () => {
     const stateDir = makeStateDir()
     try {

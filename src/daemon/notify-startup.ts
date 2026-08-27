@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { isProactiveWindowClosed } from './ilink/outbound-health'
 
 const FILE = 'last-startup.json'
 const NOTIFIED_MARKER_FILE = 'startup-notified.json'
@@ -100,12 +101,19 @@ export async function notifyStartup(
       const res = await deps.send(chatId, text)
       const err = (res as { error?: string } | null | undefined)?.error
       if (err) {
-        deps.log('NOTIFY', `send to ${chatId} failed: ${err}`)
+        // errcode=-2「prepare failed」是预期态,不是链路坏了:要么通道刚
+        // 重启还没就绪(下一轮重试就好),要么推送票据过期(下面会转存
+        // pending,用户一说话就补发)。用平静措辞记,别在日志里喊「failed」
+        // 让技术主人误以为出事(循环巡检里这条曾累计上百条噪声)。
+        if (isProactiveWindowClosed(err)) deps.log('NOTIFY', `to ${chatId} 暂不可推送(通道未就绪/票据待刷新):${err}`)
+        else deps.log('NOTIFY', `send to ${chatId} failed: ${err}`)
         return false
       }
       return true
     } catch (err) {
-      deps.log('NOTIFY', `send to ${chatId} failed: ${err instanceof Error ? err.message : String(err)}`)
+      const msg = err instanceof Error ? err.message : String(err)
+      if (isProactiveWindowClosed(msg)) deps.log('NOTIFY', `to ${chatId} 暂不可推送(通道未就绪/票据待刷新):${msg}`)
+      else deps.log('NOTIFY', `send to ${chatId} failed: ${msg}`)
       return false
     }
   }
