@@ -79,10 +79,14 @@ export async function buildDetectorContext(deps: BuildContextDeps): Promise<Dete
   const recent = await activity.recentDays(7)
   const daysWithMessage = recent.map(r => r.date)
 
+  // CC 画的你:第一幅小像落盘即触发一次报喜(后续刷新静默,见 portrait-artist)。
+  const portraitExists = existsSync(join(memoryRoot, deps.chatId, 'portrait.svg'))
+
   return {
     chatId: deps.chatId,
     turnCount,
     handoffMarkerExists,
+    portraitExists,
     pushRepliedHistory,
     daysWithMessage,
   }

@@ -11,6 +11,7 @@ function ctx(stateRoot: string, chatId: string, overrides: Partial<DetectorConte
     chatId,
     turnCount: 0,
     handoffMarkerExists: false,
+    portraitExists: false,
     pushRepliedHistory: [],
     daysWithMessage: [],
     ...overrides,
@@ -46,6 +47,14 @@ describe('milestone detector', () => {
     const store = makeMilestonesStore(db, 'chat_x')
     const fired = await detectMilestones(store, ctx(dir, 'chat_x', { turnCount: 1000 }))
     expect(fired).toContain('ms_1000msg')
+  })
+
+  it('fires ms_first_portrait once when the first portrait exists', async () => {
+    const store = makeMilestonesStore(db, 'chat_p')
+    const fired = await detectMilestones(store, ctx(dir, 'chat_p', { portraitExists: true }))
+    expect(fired).toContain('ms_first_portrait')
+    const again = await detectMilestones(store, ctx(dir, 'chat_p', { portraitExists: true }))
+    expect(again).not.toContain('ms_first_portrait')   // reach-once
   })
 
   it('fires ms_first_handoff when handoff marker exists', async () => {

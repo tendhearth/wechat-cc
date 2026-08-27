@@ -14,6 +14,7 @@ export interface DetectorContext {
   chatId: string
   turnCount: number               // total turns across all sessions for this chat
   handoffMarkerExists: boolean    // _handoff.md present in any project memory
+  portraitExists: boolean         // CC 第一次画出主人的小像(portrait.svg present)
   pushRepliedHistory: string[]    // event_ids of pushes that user replied to
   /**
    * YYYY-MM-DD UTC keys (`toISOString().slice(0, 10)`). Caller MUST use the
@@ -40,6 +41,11 @@ const SPECS: MilestoneSpec[] = [
     id: 'ms_1000msg',
     body: '我们聊了第 1000 条。',
     fires: ctx => ctx.turnCount >= 1000,
+  },
+  {
+    id: 'ms_first_portrait',
+    body: '我好像能想象出你的样子了 — 给你画了张小像。在记忆页,或手机上打开随身 CC 就能看到。',
+    fires: ctx => ctx.portraitExists,
   },
   {
     id: 'ms_first_handoff',
