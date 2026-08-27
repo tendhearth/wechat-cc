@@ -33,7 +33,7 @@ import { makeIlinkContext, type Account } from './ilink/context'
 import { makeVoice } from './ilink/voice'
 import { makeCompanion } from './ilink/companion'
 import { makeTransport } from './ilink/transport'
-import { makeOutboundHealthTracker, type OutboundHealth } from './ilink/outbound-health'
+import { makeOutboundHealthTracker, isProactiveWindowClosed, type OutboundHealth } from './ilink/outbound-health'
 import type { Db } from '../lib/db'
 import type { ConversationStore } from '../core/conversation-store'
 import { makeMessagesStore } from '../lib/messages-store'
@@ -200,7 +200,10 @@ export function makeIlinkAdapter(opts: {
         const msg = err instanceof Error ? err.message : String(err)
         // Only wire failures feed the health tracker — routing errors
         // (unroutable chat, unknown account) say nothing about the link.
-        if (reachedWire) outbound.recordFailure(new Date().toISOString(), msg)
+        // errcode=-2(prepare failed)= 主动推送窗口已关,非链路故障,也不喂
+        // (否则每次 boot 给离线用户发通知失败都误报 degraded)。见
+        // isProactiveWindowClosed 的说明。
+        if (reachedWire && !isProactiveWindowClosed(msg)) outbound.recordFailure(new Date().toISOString(), msg)
         return {
           msgId: `err:${Date.now()}`,
           error: msg,

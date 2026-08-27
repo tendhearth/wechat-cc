@@ -12,6 +12,17 @@
  */
 export type OutboundState = 'unknown' | 'ok' | 'degraded'
 
+/**
+ * errcode=-2 (prepare failed) = 微信主动推送窗口已关(用户太久没说话,ilink
+ * 拒绝 bot 主动 push),不是出站链路故障 —— 链路健康,用户下条消息一到票据
+ * 即刷新。健康追踪必须把它和真正的链路故障(连不上/TLS/auth)分开,否则每次
+ * boot 给离线用户发通知失败都误报 degraded,真正的链路问题反被淹没(2026-08-27
+ * 日志:57 次 degraded 几乎全是 boot 时票据过期的误报,只 2 次真恢复)。
+ */
+export function isProactiveWindowClosed(error: string): boolean {
+  return /errcode=-2\b/.test(error)
+}
+
 export interface OutboundHealth {
   state: OutboundState
   consecutiveFailures: number

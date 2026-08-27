@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeOutboundHealthTracker } from './outbound-health'
+import { makeOutboundHealthTracker, isProactiveWindowClosed } from './outbound-health'
 
 const T0 = '2026-08-22T10:00:00.000Z'
 const T1 = '2026-08-22T10:01:00.000Z'
@@ -90,5 +90,14 @@ describe('outbound health tracker', () => {
     const t = makeOutboundHealthTracker({ log: () => {} })
     t.recordFailure(T0, 'x'.repeat(500))
     expect(t.snapshot().lastError!.length).toBe(200)
+  })
+
+  it('isProactiveWindowClosed: errcode=-2 (prepare failed) is a closed window, not a link failure', () => {
+    expect(isProactiveWindowClosed('ilink/sendmessage errcode=-2: prepare failed')).toBe(true)
+    expect(isProactiveWindowClosed('errcode=-2')).toBe(true)
+    // genuine link failures are NOT window-closed
+    expect(isProactiveWindowClosed('Unable to connect. Is the computer able to access the url?')).toBe(false)
+    expect(isProactiveWindowClosed('ilink/sendmessage errcode=-6: auth failed')).toBe(false)
+    expect(isProactiveWindowClosed('The socket connection was closed unexpectedly')).toBe(false)
   })
 })
