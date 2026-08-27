@@ -55,7 +55,7 @@
       "binaries/wechat-cc-cli"
     ],
     "resources": [
-      "../../../plugins/"
+      "../../../plugins/README.md"
     ],
     "macOS": {
       "dmg": {
