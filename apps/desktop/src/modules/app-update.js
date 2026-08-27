@@ -80,6 +80,10 @@ function showBanner(update) {
         }
       } catch (err) {
         if (text) text.textContent = `更新没成功:${err instanceof Error ? err.message : err} — 稍后会再试`
+        // 让「稍后会再试」成真:清掉去重标记,下次 focus/24h 检查会重新拉取
+        // (拿到新的 rid)并再出横幅。否则本次会话内 checkOnce 一直被挡住,
+        // 得等重启 app 才会再提示,承诺就成了空话。
+        bannerShownForVersion = ""
         setTimeout(() => el.remove(), 5000)
       }
       return

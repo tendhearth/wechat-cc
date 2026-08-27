@@ -1098,7 +1098,7 @@ export async function runTroubleshoot(deps) {
     <div class="brain-checking">网络没问题。第二步:逐个叫醒大脑…(最长约 1 分钟)</div>`
   const r = await deps.invokeApi("GET", "/v1/llm/health?fresh=1", undefined, { timeoutMs: 150_000 }).catch(() => null)
   if (!r || r.ok !== true) {
-    steps.innerHTML = `<div class="brain-step-title">网络</div>${netRows}<div class="brain-hint">大脑测试没跑起来,稍后再试。</div>`
+    steps.innerHTML = `<div class="brain-step-title">网络</div>${netRows}<div class="brain-hint">大脑测试没跑起来,稍后再试。</div><button class="brain-recheck" type="button" data-action="brain-troubleshoot">再测一次</button>`
     return
   }
   const results = Array.isArray(r.results) ? r.results : []
