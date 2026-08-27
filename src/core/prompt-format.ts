@@ -44,10 +44,11 @@ export interface InboundMsg {
 export const RECALL_BLOCK_MAX = 800
 
 /**
- * 本地钟点 + 时区偏移的 ISO(如 2026-08-27T22:00:00+08:00)。信封的「当前
+ * 本地钟点 + 时区偏移的 ISO(如 2026-08-27T09:05:53-07:00)。偏移一律取自
+ * 运行机器的系统时区(getTimezoneOffset),不假设任何地区。信封的「当前
  * 时间」基准用它而非 UTC 的 …Z —— CC 对「明天早上8点」「周三下午」这类
  * 本地钟点推理才算得对(2026-08-27:UTC-only 让 CC 无从知道用户时区,
- * 设提醒可能整点差 8 小时)。同一时刻,只是显示成本地墙钟 + 偏移;
+ * 设提醒可能整点差几小时)。同一时刻,只是显示成系统本地墙钟 + 偏移;
  * Date.parse 仍还原到正确 instant。
  */
 export function toLocalISO(ms: number): string {
