@@ -18,6 +18,7 @@
 import type { Lifecycle } from '../../lib/lifecycle'
 import type { RemindersStore } from './store'
 import { isProactiveWindowClosed } from '../ilink/outbound-health'
+import { toLocalISO } from '../../core/prompt-format'
 
 /** How long after due_at we keep retrying a failing delivery before giving up. */
 export const RETRY_WINDOW_MS = 24 * 60 * 60 * 1000 // 24h
@@ -67,6 +68,23 @@ export interface SweepResult {
  * Pure w.r.t. wall-clock (now is injected); the only side effects are through
  * the injected store + send.
  */
+/** 迟到多久才在提醒前加说明(正常一次 sweep 内送达不算迟)。 */
+export const LATE_REMINDER_THRESHOLD_MS = 30 * 60_000
+
+/**
+ * 迟到的提醒前置一句 CC 口吻的说明,让「晚 2 小时突然弹出的记得吃药」不
+ * 迷惑(2026-08-27:票据过期/网络抖动会让提醒迟到送达,原文照发读起来
+ * 像凭空冒出来)。未超阈值 → 原文。无 emoji,符合 CC 身份。
+ */
+export function lateReminderText(text: string, dueAtIso: string, nowMs: number): string {
+  const due = Date.parse(dueAtIso)
+  if (!Number.isFinite(due) || nowMs - due < LATE_REMINDER_THRESHOLD_MS) return text
+  const local = toLocalISO(due)            // 2026-08-27T15:00:00-07:00
+  const md = local.slice(5, 10).replace('-', '月') + '日'   // 08月27日
+  const hm = local.slice(11, 16)                             // 15:00
+  return `这条提醒晚了点(本该 ${md} ${hm} 提醒你)——刚才没连上你,现在补给你:\n${text}`
+}
+
 export async function runReminderSweep(deps: SweepDeps): Promise<SweepResult> {
   const retryWindow = deps.retryWindowMs ?? RETRY_WINDOW_MS
   const maxSends = deps.maxSendsPerSweep ?? MAX_SENDS_PER_SWEEP
@@ -97,7 +115,7 @@ export async function runReminderSweep(deps: SweepDeps): Promise<SweepResult> {
 
     let outcome: { ok: boolean; error?: string }
     try {
-      outcome = await deps.send(rec.chat_id, rec.text)
+      outcome = await deps.send(rec.chat_id, lateReminderText(rec.text, rec.due_at, nowMs))
     } catch (err) {
       outcome = { ok: false, error: err instanceof Error ? err.message : String(err) }
     }

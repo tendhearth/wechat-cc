@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openTestDb, type Db } from '../../lib/db'
 import { makeRemindersStore } from './store'
-import { runReminderSweep, RETRY_WINDOW_MS, backoffMs, MAX_SENDS_PER_SWEEP } from './sweeper'
+import { runReminderSweep, lateReminderText, LATE_REMINDER_THRESHOLD_MS, RETRY_WINDOW_MS, backoffMs, MAX_SENDS_PER_SWEEP } from './sweeper'
 
 const noop = () => {}
 const noopLog = () => {}
@@ -188,5 +188,16 @@ describe('runReminderSweep', () => {
     expect(send).toHaveBeenCalledTimes(2)
     expect(res.delivered).toBe(2)
     expect(res.deferred).toBe(3)
+  })
+
+  it('lateReminderText: on-time delivery is verbatim; late delivery is prefixed with the due time', () => {
+    const due = '2026-08-27T22:00:00.000Z'
+    // on time (within threshold) → unchanged
+    expect(lateReminderText('记得吃药', due, Date.parse(due) + 60_000)).toBe('记得吃药')
+    // late (past threshold) → prefixed, original text preserved at the end
+    const late = lateReminderText('记得吃药', due, Date.parse(due) + LATE_REMINDER_THRESHOLD_MS + 60_000)
+    expect(late).not.toBe('记得吃药')
+    expect(late).toContain('晚了点')
+    expect(late.endsWith('记得吃药')).toBe(true)
   })
 })
