@@ -28,16 +28,11 @@ import type { ReplySinks } from '../reply-sinks'
 import { loadCompanionConfig } from '../companion/config'
 import { resolveAdminChatId } from '../companion/resolve-admin'
 import { makeSettingsPanel } from '../settings-panel'
+import { makeCommandRouter } from './command-router'
 import { makeEventsStore } from '../events/store'
-import { makeGuestRequestStore, GUEST_REQUEST_TTL_MS } from '../guest-requests'
+import { makeGuestRequestStore } from '../guest-requests'
 import { makeForwardBudget } from '../../core/forward-budget'
 import type { InboundMsg } from '../../core/prompt-format'
-import { parseRevealCommand } from '../../core/reveal-command'
-import { parseLetterCommand } from '../../core/penpal-letter-command'
-import { parsePairCommand } from '../../core/pair-command'
-import { parseSeekCommand, resolveSeekRef } from '../../core/seek-command'
-import { parseGuestCommand } from '../../core/guest-command'
-import { previewText } from '../inbound/mw-access'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider } from '../../lib/agent-config'
@@ -231,6 +226,22 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const hydrateGuestChatRoute = (msg: InboundMsg): void => {
     hydrateRoute(msg.chatId, msg.accountId, msg.contextToken ?? '')
   }
+
+  // 管理员控制命令路由 — 从 dispatch 闭包抽出(命令逻辑本体在 command-router.ts)。
+  const commandRouter = makeCommandRouter({
+    isAdmin: (c) => isAdmin(c),
+    loadAccess: () => loadAccess(),
+    appendAllowFrom: (c) => { appendAllowFrom(c) },
+    ...(boot.sendAssistantText ? { sendAssistantText: (c, t) => boot.sendAssistantText!(c, t) } : {}),
+    ...(boot.social ? { social: { revealer: boot.social.revealer, seekStore: boot.social.seekStore, broker: boot.social.broker } } : {}),
+    ...(boot.penpal ? { penpal: boot.penpal } : {}),
+    ...(boot.pairing ? { pairing: boot.pairing } : {}),
+    guestRequests,
+    hydrateRoute,
+    sendMessage: (c, t) => ilink.sendMessage(c, t).then(r => r as { error?: string }),
+    redispatch: (run) => refs.pipeline.deref('guest approve redispatch')(run),
+    log: (tag, line) => log(tag, line),
+  })
   // Owner notification for the guest branch — resolveAdminChatId
   // (admins-membership-based), NEVER resolveOperatorChatId (mw-identity has
   // already written a conversations row for this stranger by the time
@@ -620,206 +631,10 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         // connected id), the operator previously got silence; now a gentle
         // one-line "not found" reply so a mistyped id doesn't look like the
         // bot ignored them.
+        // 管理员控制命令(揭晓/回信/配对/派/访客许可)由 command-router 处理;
+        // 命中即止,否则落到正常 agent 分发。逻辑本体见 command-router.ts。
         dispatch: async (msg) => {
-          if (boot.social && isAdmin(msg.chatId)) {
-            const cmd = parseRevealCommand(msg.text)
-            if (cmd) {
-              const echoOutcome = await boot.social.revealer.revealEcho(cmd.id)
-              const outcome = echoOutcome === null ? await boot.social.revealer.revealPledge(cmd.id) : echoOutcome
-              if (outcome === null && boot.sendAssistantText) {
-                void boot.sendAssistantText(msg.chatId, `没找到「${cmd.id}」这条,可能已过期或已牵线。`)
-              }
-              return
-            }
-          }
-          // Pen-pal outbound reply (Task 10) — the owner's "回信 <channel>
-          // <text>" WeChat reply sends a letter on that open channel instead
-          // of dispatching a normal agent turn. Guarded on boot.penpal being
-          // wired (Task 11); until then this block is inert and every
-          // message — including a well-formed "回信" — falls through to a
-          // normal turn, same as boot.social above.
-          if (boot.penpal && isAdmin(msg.chatId)) {
-            const letterCmd = parseLetterCommand(msg.text)
-            if (letterCmd) {
-              const r = await boot.penpal.sendLetter(letterCmd.channel, letterCmd.text)
-              if (!r.ok && boot.sendAssistantText) {
-                void boot.sendAssistantText(msg.chatId, '没找到这条笔友通道 / 发送失败。')
-              }
-              return
-            }
-          }
-          // 配对 (spec §7) — admin-gated, deterministic parse, mirrors 揭晓/回信.
-          // Inert (falls through to a normal turn) until boot.pairing is wired
-          // (Task 6, i.e. mailbox_relays configured). start()/accept() are
-          // SYNC calls the caller is waiting on — this seam renders EVERY
-          // outcome itself (success + all failure reasons). boot.pairing's
-          // own `notify` dep is reserved for the initiator's ASYNC poller
-          // (card found later / TTL expiry) — see pairing.ts's notify doc
-          // comment; it does NOT fire for anything start()/accept() resolve
-          // synchronously, so there is no double-message here.
-          if (boot.pairing && isAdmin(msg.chatId)) {
-            const pair = parsePairCommand(msg.text)
-            if (pair) {
-              if (pair.kind === 'start') {
-                const r = await boot.pairing.start()
-                if (boot.sendAssistantText) {
-                  const text = r.ok
-                    ? `配对码 ${r.code},发给朋友,10 分钟内有效`
-                    : '中继暂时够不着,配对码没能生成——稍后再试'
-                  void boot.sendAssistantText(msg.chatId, text)
-                }
-              } else {
-                const r = await boot.pairing.accept(pair.code)
-                if (boot.sendAssistantText) {
-                  const text = r.ok
-                    ? `和 ${r.peer.name} 的 bot 连上了 ✓ 现在可以互相觅食/写信了`
-                    : r.reason === 'self_pair'
-                      ? '这是你自己的码,换个朋友的码试试'
-                      : r.reason === 'id_conflict'
-                        ? '对方 bot 使用旧版共享身份且与你已有的朋友撞名——请让对方升级出唯一身份后重试'
-                        : r.reason === 'relay_drop_failed'
-                          ? '名片没能投到中继,配对没完成——请重试'
-                          : '码不对或已过期,让朋友重新生成一个'
-                  void boot.sendAssistantText(msg.chatId, text)
-                }
-              }
-              return
-            }
-          }
-          // 派 / 取消 (P4 派心愿) — admin-gated confirm/cancel of a `proposed`
-          // social_seek row, mirrors the 揭晓/配对 blocks above (renders every
-          // outcome itself, no engine notify). `派` is ALREADY the delegate
-          // imperative (admin-commands.ts's DELEGATE_RE: 让/派 <hand> 执行/跑
-          // <task>) — parseSeekCommand's id-charset guard ([0-9a-fA-F-]+)
-          // keeps a delegate command like "派 家里 跑 拉日志" from ever
-          // matching here (belt); makeMwAdmin already runs before this
-          // dispatch seam in the wired pipeline and consumes DELEGATE_RE
-          // first (suspenders). Inert (falls through) until boot.social is
-          // wired, same posture as the 揭晓/配对 blocks.
-          if (boot.social && isAdmin(msg.chatId)) {
-            const cmd = parseSeekCommand(msg.text)
-            if (cmd) {
-              const res = resolveSeekRef(cmd.ref, boot.social.seekStore.list())
-              if (!res.ok) {
-                if (boot.sendAssistantText) {
-                  const text = res.reason === 'ambiguous'
-                    ? '有多条心愿匹配这个开头,请给更长的编号(≥6 位)'
-                    : '这条心愿不存在或已处理'
-                  void boot.sendAssistantText(msg.chatId, text)
-                }
-                return
-              }
-              if (cmd.kind === 'confirm') {
-                const r = await boot.social.broker.confirmSeek(res.id)
-                if (boot.sendAssistantText) {
-                  void boot.sendAssistantText(msg.chatId, r.ok ? '已发出,觅食中…(稍后回来看回声)' : '这条心愿不存在或已处理')
-                }
-              } else {
-                await boot.social.broker.cancelSeek(res.id)
-                if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, '已作废')
-              }
-              return
-            }
-          }
-          // 允许/拒绝/邀请码/待批准 (guest path spec §3) — admin-gated,
-          // deterministic parse, mirrors 揭晓/回信/配对 above. Unlike those,
-          // this block is NOT gated behind an optional boot.X wire —
-          // guestRequests/guestForwardBudget are unconditionally constructed
-          // above, so the guest path is always live; the gate is
-          // isAdmin(msg.chatId) (same identity gate mw-access's guest
-          // branch itself never bypasses — a non-admin sending "允许
-          // 123456" falls straight through to a normal turn, matching
-          // parseGuestCommand's own deterministic-exact-match contract)
-          // PLUS [fix-wave ruling, CONTROLLER — Important 2] a real,
-          // non-empty `access.admins` list. On a legacy admins-empty
-          // install, `isAdmin()` falls back to allowFrom membership — so
-          // an already-approved guest (who IS in allowFrom) would also
-          // read as "admin" and could mint invite codes / run 允许/拒绝
-          // themselves. Requiring `admins?.length` here closes that
-          // escalation chain the same way mw-access's guest branch does
-          // (src/daemon/inbound/mw-access.ts) — on such an install this
-          // block simply never fires; the guest text falls through to
-          // `boot.coordinator.dispatch(msg)` below like any other message.
-          if (loadAccess().admins?.length && isAdmin(msg.chatId)) {
-            const guestCmd = parseGuestCommand(msg.text)
-            if (guestCmd) {
-              if (guestCmd.kind === 'allow') {
-                const request = guestRequests.resolve(guestCmd.code, 'allowed')
-                if (!request) {
-                  if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, '❌ 码不对或已过期(发「待批准」看当前请求)')
-                  return
-                }
-                appendAllowFrom(request.chatId)
-                if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, `✅ 已允许 ${request.chatId}`)
-                // Hydrate BEFORE sending the guest welcome (fix round 1,
-                // Important #3 — spec §3 calls for hydrate here too, same
-                // as mw-access's own fresh/invite-accept paths): the
-                // guest's chat was never allowlisted while pending, so
-                // mw-capture-ctx never ran for it — without this,
-                // sendMessage below can hit assertChatRoutable's
-                // "unknown chat_id" failure on a first-ever contact whose
-                // routing state was only ever captured into the STORED
-                // GuestRequest, not into ctxStore/acctStore themselves.
-                hydrateRoute(request.chatId, request.accountId, request.contextToken)
-                const guestSend = await ilink.sendMessage(request.chatId, '主人同意啦!')
-                if (guestSend.error) {
-                  // The owner already got their ✅ above (can't un-send it) —
-                  // the least we owe is a log that tells the truth instead
-                  // of silently swallowing a failed guest-facing send.
-                  log('ACCESS', `guest approve: welcome send to ${request.chatId} failed: ${guestSend.error}`)
-                }
-                // Re-fire the guest's original message through the FULL
-                // pipeline (not just this inner dispatch closure) — same
-                // onboarding-echo posture as makeOnboardingHandler's
-                // dispatchInbound above: redispatch:true so mw-dedup
-                // doesn't swallow it, and running the whole pipeline (not
-                // just coordinator.dispatch) lets mw-onboarding pick it up
-                // and ask the guest's nickname before echoing their
-                // original question back through the provider.
-                await refs.pipeline.deref('guest approve redispatch')({
-                  msg: request.firstMsg,
-                  receivedAtMs: Date.now(),
-                  requestId: randomBytes(4).toString('hex'),
-                  redispatch: true,
-                })
-                return
-              }
-              if (guestCmd.kind === 'deny') {
-                const request = guestRequests.resolve(guestCmd.code, 'denied')
-                if (!request) {
-                  if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, '❌ 码不对或已过期(发「待批准」看当前请求)')
-                  return
-                }
-                // The guest gets NOTHING — spec §3: "不替 owner 说难听话;
-                // 此后纯静默" (guestRequests.wasDenied now gates mw-access's
-                // guest branch silent on every future message from them).
-                if (boot.sendAssistantText) void boot.sendAssistantText(msg.chatId, '已拒绝,ta 不会再打扰你。')
-                return
-              }
-              if (guestCmd.kind === 'invite') {
-                const invite = guestRequests.createInvite()
-                if (boot.sendAssistantText) {
-                  void boot.sendAssistantText(
-                    msg.chatId,
-                    `邀请码:${invite.code}(48 小时内有效,一次一人)。把这串数字发给朋友,ta 加我微信好友后把码发给我就能聊了。`,
-                  )
-                }
-                return
-              }
-              // 'pending'
-              const pending = guestRequests.listPending()
-              if (boot.sendAssistantText) {
-                const text = pending.length === 0
-                  ? '目前没有待批准的请求。'
-                  : pending.map(r => {
-                      const hoursLeft = Math.max(0, Math.floor((r.createdAt + GUEST_REQUEST_TTL_MS - Date.now()) / 3_600_000))
-                      return `「${r.code}」 ${r.chatId}:"${previewText(r.firstMsg.text)}"(剩 ${hoursLeft} 小时)`
-                    }).join('\n')
-                void boot.sendAssistantText(msg.chatId, text)
-              }
-              return
-            }
-          }
+          if (await commandRouter.tryHandle(msg)) return
           return boot.coordinator.dispatch(msg)
         },
       },
