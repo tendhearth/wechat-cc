@@ -3,180 +3,249 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>CC — 住进你微信的那只熊</title>
-<meta name="description" content="CC 是一只住在你微信里的陪伴熊:记得你说过的话,替你记着答应别人的事,还会画画。数据全在你自己电脑上。">
-<meta property="og:title" content="CC — 住进你微信的那只熊">
-<meta property="og:description" content="记得你、替你记事、会画画的微信陪伴熊。数据不出你的电脑。">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23f6efe0'/%3E%3Ctext y='24' x='4' font-size='22'%3E%F0%9F%90%BB%3C/text%3E%3C/svg%3E">
+<title>CC — 住在你电脑里的那只熊</title>
+<meta name="description" content="CC 是一只住在你微信里的小熊:替你记着答应别人的事,给你画画,记得你的每一天——全都安安静静待在你自己的电脑上。">
+<meta property="og:title" content="CC — 住在你电脑里的那只熊">
+<meta property="og:description" content="你陪 CC 说说话,CC 替你记着那些事。记忆只属于你俩。">
+<meta property="og:image" content="https://wechat-cc.tendhearth.com/hero-bear.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23f4ead6'/%3E%3Ctext y='25' x='3.5' font-size='23'%3E%F0%9F%90%BB%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&family=Noto+Serif+SC:wght@600;700&display=swap">
 <style>
   :root {
-    --paper:#f6efe0; --paper-elev:#efe6d3; --ink:#2a2118; --ink-soft:#6b5d4a;
-    --muted:#9a8d78; --accent:#c66127; --accent-cc:#b0563a; --card:#fffdf7;
-    --rule:#e3d9c5; --good:#5d7c52;
-    --serif:"Charter","Iowan Old Style","Songti SC",Georgia,serif;
+    --paper:#f4ead6; --paper-warm:#efe0c6; --card:#fffdf8; --ink:#3a2c1c; --ink-soft:#6f5c43;
+    --muted:#9c8a6e; --accent:#c66127; --accent-cc:#b0563a; --rule:#e4d7bd; --good:#5d7c52;
+    --glow-a:#f8ecd0; --glow-b:#f2dcc0;
+    --serif:"Noto Serif SC","Songti SC",Georgia,serif;
     --sans:"Nunito",ui-sans-serif,-apple-system,"PingFang SC",system-ui,sans-serif;
   }
   :root:not([data-theme="light"]) {
     @media (prefers-color-scheme: dark) {
-      --paper:#17140f; --paper-elev:#1f1b14; --ink:#f2ead7; --ink-soft:#cabfa8;
-      --muted:#8a7f6b; --accent:#e58148; --accent-cc:#d98a5c; --card:#211c14;
-      --rule:#2f2a20; --good:#8bab7a;
+      --paper:#181410; --paper-warm:#211a12; --card:#221b12; --ink:#f2e7d2; --ink-soft:#cdbda0;
+      --muted:#8d7f68; --accent:#e58148; --accent-cc:#dd8a5b; --rule:#332a1e; --good:#8bab7a;
+      --glow-a:#241a10; --glow-b:#1c150e;
     }
   }
   :root[data-theme="dark"] {
-    --paper:#17140f; --paper-elev:#1f1b14; --ink:#f2ead7; --ink-soft:#cabfa8;
-    --muted:#8a7f6b; --accent:#e58148; --accent-cc:#d98a5c; --card:#211c14;
-    --rule:#2f2a20; --good:#8bab7a;
+    --paper:#181410; --paper-warm:#211a12; --card:#221b12; --ink:#f2e7d2; --ink-soft:#cdbda0;
+    --muted:#8d7f68; --accent:#e58148; --accent-cc:#dd8a5b; --rule:#332a1e; --good:#8bab7a;
+    --glow-a:#241a10; --glow-b:#1c150e;
   }
   * { box-sizing:border-box }
   html { -webkit-text-size-adjust:100% }
   body {
-    margin:0; background:var(--paper); color:var(--ink);
-    font-family:var(--sans); line-height:1.6; font-weight:600;
+    margin:0; color:var(--ink); font-family:var(--sans); font-weight:600; line-height:1.62;
     -webkit-font-smoothing:antialiased;
+    background:
+      radial-gradient(120% 80% at 50% -8%, var(--glow-a), transparent 60%),
+      var(--paper);
   }
-  .wrap { max-width:760px; margin:0 auto; padding:0 22px }
+  .wrap { max-width:840px; margin:0 auto; padding:0 22px }
+  @media (prefers-reduced-motion:no-preference) {
+    @keyframes bob { 0%,100%{transform:translateY(0) rotate(-1deg)} 50%{transform:translateY(-9px) rotate(-1deg)} }
+    @keyframes fadeup { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:none} }
+  }
 
-  /* torn-paper top edge, echoing the desktop app */
-  .edge { height:14px; background:var(--paper-elev);
-    -webkit-mask:radial-gradient(10px 12px at 12px 100%,#0000 96%,#000) repeat-x 0 0/24px 14px;
-    mask:radial-gradient(10px 12px at 12px 100%,#0000 96%,#000) repeat-x 0 0/24px 14px; }
+  /* ── hero ── */
+  header.hero { text-align:center; padding:34px 0 6px }
+  .stage {
+    position:relative; display:inline-block; margin:0 auto 6px; max-width:min(92vw,560px);
+  }
+  .stage img {
+    display:block; width:100%; height:auto; border-radius:22px 28px 20px 26px;
+    box-shadow:0 20px 50px rgba(112,76,42,.20); border:3px solid var(--card);
+    animation:bob 6s ease-in-out infinite;
+  }
+  .bubble {
+    position:absolute; top:8%; left:-4%; background:var(--card); color:var(--ink);
+    border:1.5px solid var(--rule); border-radius:16px 16px 16px 4px; padding:7px 13px;
+    font-size:13.5px; font-weight:700; box-shadow:0 6px 16px rgba(112,76,42,.14);
+    animation:fadeup .7s .5s both;
+  }
+  .kicker { color:var(--accent); font-weight:800; letter-spacing:.16em; text-transform:uppercase; font-size:12px; margin:20px 0 8px }
+  h1 { font-family:var(--serif); font-weight:700; font-size:clamp(28px,6.6vw,42px); line-height:1.22; margin:0 auto; max-width:16ch; text-wrap:balance }
+  .lede { color:var(--ink-soft); font-size:clamp(15.5px,3.4vw,18px); max-width:32ch; margin:15px auto 0; text-wrap:balance }
 
-  header.hero { text-align:center; padding:38px 0 8px }
-  .bear { font-size:76px; line-height:1; filter:saturate(1.05) }
-  .kicker { color:var(--accent); font-weight:800; letter-spacing:.14em;
-    text-transform:uppercase; font-size:12.5px; margin:14px 0 6px }
-  h1 { font-family:var(--serif); font-weight:700; font-size:clamp(30px,7vw,44px);
-    line-height:1.15; margin:0 auto; max-width:15ch; text-wrap:balance; letter-spacing:-.01em }
-  .lede { color:var(--ink-soft); font-size:clamp(16px,3.6vw,18.5px); max-width:34ch;
-    margin:16px auto 0; text-wrap:balance }
-
-  /* download card */
-  .dl { background:var(--card); border:1.5px solid var(--rule);
-    border-radius:20px 26px 18px 24px; padding:22px; margin:30px 0 12px;
-    box-shadow:0 8px 26px rgba(112,76,42,.09) }
-  .dl-primary { display:flex; align-items:center; gap:14px; flex-wrap:wrap; justify-content:center }
-  .btn { display:inline-flex; align-items:center; gap:9px; font:inherit; font-weight:800;
-    font-size:17px; padding:14px 26px; border-radius:999px; border:0; cursor:pointer;
-    background:var(--accent-cc); color:#fff; text-decoration:none;
-    box-shadow:0 6px 16px rgba(176,86,58,.28); transition:transform .12s, box-shadow .12s }
-  .btn:hover { transform:translateY(-1px); box-shadow:0 9px 22px rgba(176,86,58,.34) }
-  .btn:focus-visible { outline:3px solid var(--accent); outline-offset:2px }
+  /* ── download ── */
+  .dl { text-align:center; margin:28px 0 8px }
+  .btn {
+    display:inline-flex; align-items:center; gap:10px; font:inherit; font-weight:800; font-size:17.5px;
+    padding:15px 30px; border-radius:999px; border:0; cursor:pointer; text-decoration:none;
+    background:var(--accent-cc); color:#fff; box-shadow:0 8px 20px rgba(176,86,58,.30);
+    transition:transform .12s, box-shadow .12s;
+  }
+  .btn:hover { transform:translateY(-2px); box-shadow:0 12px 26px rgba(176,86,58,.36) }
+  .btn:focus-visible { outline:3px solid var(--accent); outline-offset:3px }
   .btn .ico { font-size:20px }
-  .plat-note { color:var(--muted); font-size:13px; text-align:center; margin-top:12px }
-  .alt { text-align:center; margin-top:6px; font-size:14px }
-  .alt a { color:var(--accent); text-decoration:none; border-bottom:1px dotted currentColor; padding-bottom:1px }
+  .plat-note { color:var(--muted); font-size:13px; margin-top:11px }
+  .alt { margin-top:7px; font-size:13.5px }
+  .alt a { color:var(--accent); text-decoration:none; border-bottom:1px dotted currentColor }
   .alt a:hover { color:var(--accent-cc) }
+  .say { text-align:center; color:var(--muted); font-size:13px; margin:2px 0 46px }
+  .say .ver { font-variant-numeric:tabular-nums; color:var(--ink-soft); font-weight:800 }
 
-  .say { text-align:center; color:var(--muted); font-size:13.5px; margin:4px 0 40px }
-  .say b { color:var(--good); font-weight:800 }
+  /* ── together (vignettes) ── */
+  section { border-top:1px solid var(--rule); padding:40px 0 8px }
+  .sec-h { font-family:var(--serif); font-weight:700; font-size:23px; margin:0 0 4px; text-align:center }
+  .sec-sub { text-align:center; color:var(--muted); font-size:14px; margin:0 auto 26px; max-width:34ch }
+  .vigs { display:grid; gap:15px; grid-template-columns:1fr }
+  @media (min-width:640px) { .vigs { grid-template-columns:repeat(3,1fr) } }
+  .vig { background:var(--card); border:1.5px solid var(--rule); border-radius:18px 22px 16px 20px; padding:20px 18px; text-align:center }
+  .vig .emoji { font-size:30px; line-height:1 }
+  .vig h3 { font-size:16px; margin:11px 0 5px; font-weight:800 }
+  .vig p { margin:0; color:var(--ink-soft); font-size:13.8px; line-height:1.55 }
 
-  section.what { border-top:1px solid var(--rule); padding:34px 0 12px }
-  .what h2 { font-family:var(--serif); font-weight:700; font-size:22px; margin:0 0 20px; text-align:center }
-  .traits { display:grid; gap:16px; grid-template-columns:1fr }
-  @media (min-width:560px) { .traits { grid-template-columns:1fr 1fr } }
-  .trait { background:var(--card); border:1.5px solid var(--rule); border-radius:16px 20px 14px 18px; padding:16px 18px }
-  .trait .t-ico { font-size:24px; line-height:1 }
-  .trait h3 { font-size:15.5px; margin:9px 0 4px; font-weight:800 }
-  .trait p { margin:0; color:var(--ink-soft); font-size:14px; line-height:1.55 }
+  /* ── lives in wechat (chat snippet) ── */
+  .chat { max-width:400px; margin:0 auto; background:var(--paper-warm); border:1.5px solid var(--rule);
+    border-radius:18px; padding:16px 16px 18px; box-shadow:inset 0 1px 0 rgba(255,255,255,.4) }
+  .msg { display:flex; margin:8px 0; font-size:14.5px }
+  .msg.me { justify-content:flex-end }
+  .msg .b { max-width:78%; padding:9px 13px; border-radius:14px; line-height:1.5 }
+  .msg.me .b { background:#95d16a; color:#173a08; border-radius:14px 14px 4px 14px }
+  .msg.cc .b { background:var(--card); border:1.5px solid var(--rule); border-radius:14px 14px 14px 4px }
+  .msg .cc-ava { width:30px; height:30px; border-radius:9px; margin-right:8px; flex:0 0 30px; display:grid; place-items:center; background:var(--paper); font-size:18px; align-self:flex-end }
 
-  .req { color:var(--muted); font-size:12.5px; text-align:center; margin:26px auto 0; max-width:40ch; line-height:1.7 }
-  footer { text-align:center; color:var(--muted); font-size:12.5px; padding:34px 0 48px }
+  /* ── stays home (privacy as warmth) ── */
+  .home { text-align:center; max-width:36ch; margin:0 auto }
+  .home .emoji { font-size:40px }
+  .home p { color:var(--ink-soft); font-size:15px; margin:12px 0 0 }
+  .home b { color:var(--ink); font-weight:800 }
+
+  /* ── closing CTA ── */
+  .close { text-align:center; padding:44px 0 8px }
+  .close .line { font-family:var(--serif); font-size:20px; color:var(--ink); margin:0 0 20px }
+
+  footer { text-align:center; color:var(--muted); font-size:12.5px; padding:36px 0 50px; border-top:1px solid var(--rule); margin-top:44px }
   footer a { color:var(--accent); text-decoration:none }
-  .ver { font-variant-numeric:tabular-nums }
 </style>
 </head>
 <body>
-<div class="edge" aria-hidden="true"></div>
 <div class="wrap">
 
   <header class="hero">
-    <div class="bear" aria-hidden="true">🐻</div>
+    <div class="stage">
+      <img src="hero-bear.png" alt="CC 小熊坐在长满水草的鱼缸旁,手扶着玻璃看鱼" width="560" height="374">
+      <span class="bubble">我在这儿陪你 🌿</span>
+    </div>
     <p class="kicker">wechat · cc</p>
-    <h1>此刻,有只熊住进了你的微信</h1>
-    <p class="lede">它记得你说过的话,替你记着答应别人的事,偶尔还画画。装在你自己的电脑上——它的记忆,只属于你。</p>
+    <h1>一只住在你电脑里的小熊</h1>
+    <p class="lede">你陪 CC 说说话,CC 替你记着那些事——记得你的日子,替你守着答应别人的约定,偶尔还给你画张画。</p>
   </header>
 
   <div class="dl">
-    <div class="dl-primary" id="dl-primary">
-      <!-- filled by JS; static fallback below for no-JS -->
-      <a class="btn" id="btn-mac" href="https://dl.tendhearth.com/wechat-cc/wechat-cc_1.6.2_aarch64.dmg">
-        <span class="ico" aria-hidden="true"></span> 下载给 Mac
-      </a>
-      <a class="btn" id="btn-win" href="https://dl.tendhearth.com/wechat-cc/wechat-cc_1.6.2_windows-x86_64-setup.exe">
-        <span class="ico" aria-hidden="true">⊞</span> 下载给 Windows
+    <div id="dl-slot">
+      <a class="btn" id="btn-primary" href="https://github.com/tendhearth/wechat-cc/releases/latest">
+        <span class="ico" aria-hidden="true">🐻</span> 把 CC 带回家
       </a>
     </div>
-    <p class="plat-note" id="plat-note">选一个开始 · 装好后扫码绑定你的微信</p>
+    <p class="plat-note" id="plat-note">选一个开始 · 装好后用微信扫码,它就住进来了</p>
     <p class="alt" id="alt-link" hidden></p>
   </div>
-  <p class="say">最新版 <span class="ver">v1.6.2</span> · <b>免费</b> · 装好之后它会自己保持更新</p>
+  <p class="say">最新版 <span class="ver" id="ver">…</span> · 免费 · 装好之后它会自己保持更新</p>
 
-  <section class="what">
-    <h2>CC 是谁</h2>
-    <div class="traits">
-      <div class="trait">
-        <div class="t-ico" aria-hidden="true">🧠</div>
+  <section>
+    <h2 class="sec-h">你们一起做的事</h2>
+    <p class="sec-sub">CC 不是一个工具,是一个会记着你的伙伴</p>
+    <div class="vigs">
+      <div class="vig">
+        <div class="emoji" aria-hidden="true">🧠</div>
         <h3>它记得你</h3>
-        <p>聊得越久,它越懂你的性格、在忙什么、习惯怎么说话。换个大脑(Claude / Codex …)也不会忘。</p>
+        <p>聊得越久越懂你——你的性子、在忙什么、习惯怎么说话。换个大脑也不会忘。</p>
       </div>
-      <div class="trait">
-        <div class="t-ico" aria-hidden="true">📋</div>
-        <h3>替你记事</h3>
-        <p>你答应别人的事、别人托付你的事,它悄悄记着,该提醒的时候提醒你。</p>
+      <div class="vig">
+        <div class="emoji" aria-hidden="true">📋</div>
+        <h3>替你记着约定</h3>
+        <p>你答应别人的、别人托付你的,它悄悄记下,该提醒时轻轻提醒你。</p>
       </div>
-      <div class="trait">
-        <div class="t-ico" aria-hidden="true">🎨</div>
-        <h3>它会画画</h3>
-        <p>它给你画一幅小像,还会照着心情给自己攒表情包,慢慢长出一整套。</p>
-      </div>
-      <div class="trait">
-        <div class="t-ico" aria-hidden="true">🔒</div>
-        <h3>只在你的电脑上</h3>
-        <p>记忆、消息、画像全存在你自己电脑里,不上任何云。出门想看,走加密直连回家取。</p>
+      <div class="vig">
+        <div class="emoji" aria-hidden="true">🎨</div>
+        <h3>它会给你画画</h3>
+        <p>给你画一幅小像,还照着心情给自己攒表情,一点点长出一整套。</p>
       </div>
     </div>
-    <p class="req">Mac 需要 Apple 芯片(M 系列)· Windows 10/11 64 位<br>装好后在电脑上打开,用微信扫码绑定即可开始。</p>
   </section>
 
+  <section>
+    <h2 class="sec-h">它就住在你的微信里</h2>
+    <p class="sec-sub">不用开新的 app——像跟朋友发消息一样跟它说话</p>
+    <div class="chat" aria-label="和 CC 的微信对话示例">
+      <div class="msg me"><div class="b">周五提醒我给妈妈打电话</div></div>
+      <div class="msg cc"><div class="cc-ava" aria-hidden="true">🐻</div><div class="b">记下啦,周五提醒你 📞<br>要不要我也画只熊举着小牌子？</div></div>
+      <div class="msg me"><div class="b">哈哈好啊</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="home">
+      <div class="emoji" aria-hidden="true">🏠</div>
+      <h2 class="sec-h">只在你自己的电脑上</h2>
+      <p>记忆、消息、你们一起画的画,<b>全都待在你自己的电脑里</b>,不上任何云。出门想它了,走加密直连回家取——你们之间的话,只属于你们俩。</p>
+    </div>
+  </section>
+
+  <div class="close">
+    <p class="line">CC 在等你回家。</p>
+    <div id="close-slot">
+      <a class="btn" href="https://github.com/tendhearth/wechat-cc/releases/latest">
+        <span class="ico" aria-hidden="true">🐻</span> 把 CC 带回家
+      </a>
+    </div>
+    <p class="plat-note">Mac 需要 Apple 芯片 · Windows 10/11 64 位</p>
+  </div>
+
   <footer>
-    tendhearth · <a href="https://tendhearth.com">tend your second brain</a>
+    tendhearth · <a href="https://tendhearth.com">tend your second brain</a> · <a href="https://github.com/tendhearth/wechat-cc/releases">所有版本</a>
   </footer>
 
 </div>
 
 <script>
 (function () {
-  var ua = navigator.userAgent || ""
-  var plat = navigator.platform || ""
+  var ua = navigator.userAgent || "", plat = navigator.platform || ""
   var isWin = /Win/i.test(plat) || /Windows/i.test(ua)
   var isMac = /Mac/i.test(plat) || /Mac OS X/i.test(ua)
-  // iOS/Android: 手机装不了桌面版 —— 引导回电脑
   var isMobile = /iPhone|iPad|iPod|Android/i.test(ua)
-  var mac = document.getElementById("btn-mac")
-  var win = document.getElementById("btn-win")
-  var note = document.getElementById("plat-note")
-  var alt = document.getElementById("alt-link")
+  var REPO = "tendhearth/wechat-cc"
 
-  function only(keep, drop, altLabel, altEl) {
-    drop.parentNode.removeChild(drop)
-    alt.hidden = false
-    alt.innerHTML = '也可以 <a href="' + altEl + '">' + altLabel + '</a>'
-  }
+  function pick(assets, re) { for (var i=0;i<assets.length;i++) if (re.test(assets[i].name)) return assets[i].browser_download_url; return null }
+  function label(kind) { return kind === "mac" ? "下载给 Mac" : "下载给 Windows" }
 
-  if (isMobile) {
-    note.textContent = "CC 是电脑上的程序 —— 用电脑打开这个页面来下载,手机负责扫码绑定微信"
-    mac.parentNode.removeChild(mac); win.parentNode.removeChild(win)
-    alt.hidden = false
-    alt.innerHTML = '桌面端下载:<a href="' + mac.href + '">Mac</a> · <a href="' + win.href + '">Windows</a>'
-  } else if (isWin && !isMac) {
-    only(win, mac, "下载 Mac 版", mac.href)
-  } else if (isMac && !isWin) {
-    only(mac, win, "下载 Windows 版", win.href)
-  }
+  // GitHub Release 是唯一事实源:版本号 + 下载链接都现拉,页面永不手改。
+  fetch("https://api.github.com/repos/" + REPO + "/releases/latest", { headers:{ "Accept":"application/vnd.github+json" } })
+    .then(function(r){ return r.ok ? r.json() : null })
+    .then(function(rel){
+      if (!rel) return
+      var ver = (rel.tag_name || "").replace(/^desktop-v/, "")
+      var v = document.getElementById("ver"); if (v && ver) v.textContent = "v" + ver
+      var assets = rel.assets || []
+      var macUrl = pick(assets, /\.dmg$/i)
+      var winUrl = pick(assets, /setup\.exe$/i) || pick(assets, /\.exe$/i)
+      var relPage = rel.html_url
+
+      ;["dl-slot","close-slot"].forEach(function(slotId, idx){
+        var slot = document.getElementById(slotId); if (!slot) return
+        function btn(url, ico, text){ return '<a class="btn" href="'+ (url||relPage) +'"><span class="ico" aria-hidden="true">'+ico+'</span> '+text+'</a>' }
+        if (isMobile) {
+          slot.innerHTML = btn(relPage, "🐻", "在电脑上打开来下载")
+        } else if (isWin && winUrl) {
+          slot.innerHTML = btn(winUrl, "⊞", "下载给 Windows")
+        } else if (isMac && macUrl) {
+          slot.innerHTML = btn(macUrl, "", "下载给 Mac")
+        } else {
+          // 识别不出/资产缺失 → 保留「带回家」通往 release 页,双平台自选
+          slot.innerHTML = btn(relPage, "🐻", "把 CC 带回家")
+        }
+        // 只在首个下载区显示「换个平台」小链接
+        if (idx === 0) {
+          var alt = document.getElementById("alt-link"), note = document.getElementById("plat-note")
+          if (isMobile) { alt.hidden=false; alt.innerHTML = '桌面端:<a href="'+(macUrl||relPage)+'">Mac</a> · <a href="'+(winUrl||relPage)+'">Windows</a>'; if(note) note.textContent="CC 是电脑上的程序 · 手机负责扫码绑微信" }
+          else if (isWin && macUrl) { alt.hidden=false; alt.innerHTML = '也可以 <a href="'+macUrl+'">下载 Mac 版</a>' }
+          else if (isMac && winUrl) { alt.hidden=false; alt.innerHTML = '也可以 <a href="'+winUrl+'">下载 Windows 版</a>' }
+        }
+      })
+    })
+    .catch(function(){ /* 离线/限流 → 静态「带回家」按钮兜底,通往 release 页 */ })
 })()
 </script>
 </body>

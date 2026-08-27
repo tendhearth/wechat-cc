@@ -170,3 +170,34 @@ if (!uploaded) {
   console.log(`已发布 v${version} (${platformKey}) → ${hosting.baseUrl}/latest.json`)
   console.log('提醒:R2 bucket 需绑定自定义域(R2 → Settings → Custom Domains → 绑定 dl.tendhearth.com)后,更新源才对外可达。')
 }
+
+
+// ── 4. GitHub Release —— 面向新用户的下载单一事实源 (owner 2026-08-26) ──
+// updater 产物(.app.tar.gz / setup.exe)进 R2 走自动更新;GitHub Release
+// 挂「给新用户装」的安装包(mac: .dmg, win: setup.exe)+ changelog。下载页
+// 通过 GitHub API 现拉最新 release,永不手改。--no-github 可跳过。
+if (!process.argv.includes('--no-github')) {
+  const tag = `desktop-v${version}`
+  const isMac = platformKey.startsWith('darwin')
+  // mac 给 dmg(新用户友好);win 的 setup.exe 既是 updater 产物也是安装包。
+  const asset = isMac
+    ? join(DESKTOP, 'src-tauri/target/release/bundle/dmg', `wechat-cc_${version}_aarch64.dmg`)
+    : artifactPath
+  const assetLabel = isMac ? `wechat-cc_${version}_aarch64.dmg` : `wechat-cc_${version}_windows-x64-setup.exe`
+  if (!existsSync(asset)) {
+    console.log(`GitHub: 找不到 ${asset} — 跳过(mac 需先 tauri build --bundles dmg)`)
+  } else {
+    const { spawnSync } = await import('node:child_process')
+    const gh = (args: string[], opts: object = {}) => spawnSync('gh', args, { encoding: 'utf8', ...opts })
+    // release 存在?不存在则建(草稿转正靠 --latest);存在则只补当前平台资产。
+    const view = gh(['release', 'view', tag])
+    if (view.status !== 0) {
+      const notes = arg('--notes') ?? `wechat-cc 桌面版 ${version}`
+      const created = gh(['release', 'create', tag, '--title', `wechat-cc ${version}`, '--notes', notes, '--latest'])
+      console.log(created.status === 0 ? `GitHub: 建 release ${tag}` : `GitHub: 建 release 失败 — ${created.stderr?.slice(0, 160)}`)
+    }
+    // 幂等上传(--clobber 覆盖同名资产)
+    const up = gh(['release', 'upload', tag, `${asset}#${assetLabel}`, '--clobber'])
+    console.log(up.status === 0 ? `GitHub: 上传 ${assetLabel} → ${tag}` : `GitHub: 上传失败 — ${up.stderr?.slice(0, 160)}`)
+  }
+}

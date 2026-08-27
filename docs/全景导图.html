@@ -59,10 +59,12 @@
 </details>
 
 <details class="sec">
-  <summary>更新分发 <span class="count">3</span></summary>
+  <summary>更新分发 <span class="count">5</span></summary>
   <ul><li>做 <b>R2 + 自域名 + Tauri updater 全自动</b> <span class="badge done">定</span> · 不做 <b>Cloudflare Pages 托管产物</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>mac 产物 91MB,Pages 单文件上限 25MB。R2 免费档 10GB 存储 + 永久 $0 下载流量,绑 dl.tendhearth.com。更新横幅点一下→下载→装好→重启,用户零命令</span></li>
 <li>做 <b>Windows 只编译,签名和发布固定在 Mac</b> <span class="badge done">定</span> · 不做 <b>Windows 上跑签名</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>Win32 层空环境变量等于删除——无法给 tauri 传空密码,签名步骤在无 TTY 的 SSH 里等密码挂死,这是平台死结不是配置问题。.sig 是 minisign 签名、平台无关,exe 拉回 Mac 签(publish-update --platform/--artifact 参数已固化这条流水线)</span></li>
-<li>做 <b>$1 预算告警 + 每 IP 限流 + 每平台只留 3 版</b> · 不做 <b>裸奔等账单</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>owner 原话:我担心扣费了但我不知道。告警邮件先于任何真实扣费到达</span></li></ul>
+<li>做 <b>$1 预算告警 + 每 IP 限流 + 每平台只留 3 版</b> · 不做 <b>裸奔等账单</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>owner 原话:我担心扣费了但我不知道。告警邮件先于任何真实扣费到达</span></li>
+<li>做 <b>GitHub Release 当新用户下载的单一事实源</b> <span class="badge done">定</span> · 不做 <b>下载页硬编码版本号/链接</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>owner 拍板:两套分发(R2 自动更新 + 下载页)早脱节,GitHub release 停在 1.3.8。定案:发版脚本自动建 Release + 传安装包(mac dmg / win setup.exe),下载页通过 GitHub API 现拉最新版本+链接,永不手改。R2 仍管 Tauri 自动更新(老用户无感升级),GitHub 管新用户装机——各司其职,一次发版两边同步</span></li>
+<li>做 <b>下载页:熊做主角 + 一句互惠 + 隐私说成安全感</b> · 不做 <b>emoji hero + 通用特性卡</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>owner「感觉不是很好」。调研 Finch/Pi/Dot/Obsidian:陪伴型产品的角色就是 hero(不是聊天截图),Finch 式一句话融合角色+互惠(「你陪 CC,CC 替你记着那些事」),隐私学 Dot/Anytype 说成「只属于你俩」的安全感而非规格表。五段式:熊 hero→一起做的事→就住在你微信里(暖色聊天片段)→只在你电脑上→CC 在等你回家</span></li></ul>
 </details>
 
 <details class="sec">
