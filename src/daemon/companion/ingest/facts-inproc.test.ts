@@ -16,6 +16,8 @@ function fakeFacts(over: Partial<FactsApi> = {}): FactsApi {
     mergeObligations: vi.fn(() => ({ merged: 0 })),
     settleObligations: vi.fn(() => ({ settled: 0 })),
     recentMessages: vi.fn(() => []),
+    judgeFingerprint: vi.fn(() => null),
+    setJudgeFingerprint: vi.fn(),
     ...over,
   }
 }

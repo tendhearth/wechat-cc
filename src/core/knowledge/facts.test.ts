@@ -157,3 +157,11 @@ test('mergeObligations applies same-contact obligation pairs, skips everything e
   expect(s.factById(other.id)!.status).toBe('active')
   expect(s.factById(attr.id)!.status).toBe('active')
 })
+
+test('judgeFingerprint/setJudgeFingerprint pass through to the store', () => {
+  const s = seed(); const api = makeFactsApi(s)
+  expect(api.judgeFingerprint('conflict:wxid_a:city')).toBeNull()
+  api.setJudgeFingerprint('conflict:wxid_a:city', '1=上海|2=北京', 100)
+  expect(api.judgeFingerprint('conflict:wxid_a:city')).toBe('1=上海|2=北京')
+  s.close()
+})

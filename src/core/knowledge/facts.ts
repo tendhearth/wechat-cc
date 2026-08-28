@@ -34,6 +34,11 @@ export interface FactsApi {
   conflictedGroups(limit: number): ReturnType<KnowledgeStore['conflictedFactGroups']>
   /** Obligation-dedup feed — see KnowledgeStore.obligationHeavyContacts. */
   obligationHeavyContacts(limit: number, minCount?: number): ReturnType<KnowledgeStore['obligationHeavyContacts']>
+  /** Sweep judge-state passthrough — the "already judged this exact stock"
+   *  fingerprint the sweeps use to stop re-judging unchanged stock every
+   *  cycle. See KnowledgeStore.judgeFingerprint. */
+  judgeFingerprint(key: string): string | null
+  setJudgeFingerprint(key: string, fingerprint: string, now: number): void
   /** Recent text messages with this contact, chronological (oldest first) —
    *  the settlement backfill's evidence window. */
   recentMessages(contact: string, limit: number): Array<{ sender: string; time: number; text: string | null }>
@@ -147,6 +152,8 @@ export function makeFactsApi(store: KnowledgeStore): FactsApi {
     setFactStatus(id, status, now) { return { ok: store.setFactStatusById(id, status, now) } },
     conflictedGroups(limit) { return store.conflictedFactGroups(limit) },
     obligationHeavyContacts(limit, minCount) { return store.obligationHeavyContacts(limit, minCount) },
+    judgeFingerprint(key) { return store.judgeFingerprint(key) },
+    setJudgeFingerprint(key, fingerprint, now) { store.setJudgeFingerprint(key, fingerprint, now) },
     recentMessages(contact, limit) { return store.recentMessages(resolveContact(contact), limit).reverse() },
     mergeObligations(pairs, now) {
       let merged = 0

@@ -615,6 +615,29 @@ describe('obligation dedup feed', () => {
   })
 })
 
+describe('judge state (2026-08-28: sweeps re-judged unchanged stock every cycle)', () => {
+  it('judgeFingerprint round-trips per key and returns null when unset', () => {
+    const s = freshStore()
+    expect(s.judgeFingerprint('conflict:u1:住在')).toBeNull()
+    s.setJudgeFingerprint('conflict:u1:住在', 'fp-1', 1000)
+    expect(s.judgeFingerprint('conflict:u1:住在')).toBe('fp-1')
+    s.setJudgeFingerprint('conflict:u1:住在', 'fp-2', 2000)      // upsert overwrites
+    expect(s.judgeFingerprint('conflict:u1:住在')).toBe('fp-2')
+    expect(s.judgeFingerprint('obdupe:u1')).toBeNull()           // keys independent
+    s.close()
+  })
+
+  it('judge state survives reopen (persisted, not in-memory)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kk-judge-'))
+    const s1 = openKnowledge(dir)
+    s1.setJudgeFingerprint('settle:u9', '4200|1,2', 1000)
+    s1.close()
+    const s2 = openKnowledge(dir)
+    expect(s2.judgeFingerprint('settle:u9')).toBe('4200|1,2')
+    s2.close()
+  })
+})
+
 describe('vector cache (2026-08-24: auto-recall pays a full-matrix disk read per message)', () => {
   it('loadVectors reflects writes made after a cached read (count-based invalidation)', () => {
     const s = freshStore()

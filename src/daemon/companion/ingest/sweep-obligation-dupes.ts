@@ -9,13 +9,23 @@
  * deterministic guard (same contact, both active obligations).
  *
  * Convergence: merged losers leave the active set, so a contact drops out
- * of the heavy feed once clean; a judge that keeps answering [] costs one
- * cheap call per cycle for the top contacts and nothing changes — same
- * "conservative by instruction" posture as the conflict sweep.
+ * of the heavy feed once clean; a [] verdict now records a judge_state
+ * fingerprint (2026-08-28) so the contact is skipped for free until its
+ * obligation stock actually changes — before that, the same top contacts
+ * were re-judged every 25-minute cycle forever while the rest of the heavy
+ * feed starved behind the cap. The feed is overscanned so skipped contacts
+ * make room for that backlog.
  */
 import type { FactsApi } from '../../../core/knowledge/facts'
 import type { FactRow } from '../../../core/knowledge/store'
 import { parseSupersedePairs } from './extract'
+import { SWEEP_FEED_OVERSCAN } from './sweep-conflicts'
+
+/** Content fingerprint of one contact's active obligations — judged again
+ *  only when the set (id, predicate, value, time_ref) changes. */
+export function obligationFingerprint(rows: Array<Pick<FactRow, 'id' | 'predicate' | 'value' | 'time_ref'>>): string {
+  return rows.map((r) => `${r.id}=${r.predicate}=${r.value}=${r.time_ref ?? ''}`).sort().join('|')
+}
 
 export interface ObligationDedupDeps {
   facts: FactsApi
@@ -49,7 +59,7 @@ export interface ObligationDedupReport {
 export async function runObligationDedup(d: ObligationDedupDeps): Promise<ObligationDedupReport> {
   let heavy: Array<{ contact: string; n: number }>
   try {
-    heavy = d.facts.obligationHeavyContacts(d.contactCap)
+    heavy = d.facts.obligationHeavyContacts(d.contactCap * SWEEP_FEED_OVERSCAN)
   } catch (e) {
     d.log?.('INGEST', `obligation dedup feed failed: ${String(e)}`)
     return { contacts: 0, merged: 0 }
@@ -57,9 +67,13 @@ export async function runObligationDedup(d: ObligationDedupDeps): Promise<Obliga
   let merged = 0
   let judged = 0
   for (const h of heavy) {
+    if (judged >= d.contactCap) break
     const byKind = (d.facts.contactFacts(h.contact) as { by_kind?: Record<string, FactRow[]> }).by_kind ?? {}
     const rows = byKind['obligation'] ?? []
     if (rows.length < 2) continue
+    const key = `obdupe:${h.contact}`
+    const fingerprint = obligationFingerprint(rows)
+    if (d.facts.judgeFingerprint(key) === fingerprint) continue   // unchanged stock — skip for free
     judged++
     try {
       const pairs = parseSupersedePairs(await d.cheapEval(buildObligationDedupPrompt(h.contact, rows)))
@@ -67,9 +81,12 @@ export async function runObligationDedup(d: ObligationDedupDeps): Promise<Obliga
         const res = d.facts.mergeObligations(pairs, Math.floor(Date.now() / 1000)) as { merged?: number }
         merged += res.merged ?? 0
       }
+      // Verdict recorded (even []): pre-judge fingerprint marks the stock as
+      // judged; a merge changes the rows so the contact re-opens naturally.
+      d.facts.setJudgeFingerprint(key, fingerprint, Math.floor(Date.now() / 1000))
     } catch (e) {
-      // Same non-fatal posture as every other judge: nothing changed, the
-      // contact stays in the feed, the next cycle retries.
+      // Same non-fatal posture as every other judge: no fingerprint recorded,
+      // the contact stays in the feed, the next cycle retries.
       d.log?.('INGEST', `obligation dedup judge failed for ${h.contact} (retry next cycle): ${String(e)}`)
     }
   }

@@ -222,6 +222,11 @@ export interface KnowledgeStore {
   /** Contacts carrying ≥2 ACTIVE obligations, heaviest first — the
    *  obligation-dedup sweep's feed. */
   obligationHeavyContacts(limit: number, minCount?: number): Array<{ contact: string; n: number }>
+  /** Sweep judge-state: the fingerprint last judged under `key` (null =
+   *  never judged). Sweeps skip stock whose fingerprint hasn't changed
+   *  since the last no-action verdict — see companion/ingest sweeps. */
+  judgeFingerprint(key: string): string | null
+  setJudgeFingerprint(key: string, fingerprint: string, now: number): void
   /** `[last_ts, last_local_id]`, `[0, 0]` when the contact has no watermark
    *  row yet. */
   factWatermark(contact: string): [number, number]
@@ -645,7 +650,9 @@ export function openKnowledge(root: string): KnowledgeStore {
       UNIQUE(contact, predicate, value));
     CREATE TABLE IF NOT EXISTS extraction_state (
       contact TEXT PRIMARY KEY, last_ts INTEGER, last_local_id INTEGER DEFAULT 0,
-      updated_at INTEGER);`)
+      updated_at INTEGER);
+    CREATE TABLE IF NOT EXISTS judge_state (
+      key TEXT PRIMARY KEY, fingerprint TEXT, judged_at INTEGER);`)
   // Temporal validity (2026-08 memory-upgrades) — guarded ALTER so a facts.db
   // created before these columns existed upgrades in place. valid_from
   // backfills from created_at exactly once (only when the column was just
@@ -874,6 +881,18 @@ export function openKnowledge(root: string): KnowledgeStore {
           "SELECT * FROM facts WHERE contact=? AND predicate=? AND status='active' ORDER BY updated_at DESC, id DESC",
         ).all(g.contact, g.predicate) as any[]).map(parseFactRow),
       }))
+    },
+
+    judgeFingerprint(key) {
+      const r = factsDb.query('SELECT fingerprint FROM judge_state WHERE key=?').get(key) as
+        { fingerprint: string } | null
+      return r ? r.fingerprint : null
+    },
+
+    setJudgeFingerprint(key, fingerprint, now) {
+      factsDb.query(`INSERT INTO judge_state(key,fingerprint,judged_at) VALUES(?,?,?)
+        ON CONFLICT(key) DO UPDATE SET fingerprint=excluded.fingerprint, judged_at=excluded.judged_at`)
+        .run(key, fingerprint, now)
     },
 
     factWatermark(contact) {

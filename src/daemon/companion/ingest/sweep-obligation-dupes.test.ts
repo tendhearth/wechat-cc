@@ -9,12 +9,15 @@ function fact(id: number, predicate: string, value: string, time_ref: string | n
 }
 
 function api(heavy: Array<{ contact: string; n: number }>, rows: unknown[], mergedLog: unknown[] = []): FactsApi {
+  const judgeState = new Map<string, string>()
   return {
     nextBatch: vi.fn(), record: vi.fn(), findFacts: vi.fn(), setFactStatus: vi.fn(),
     extractionStatus: vi.fn(), conflictedGroups: vi.fn(() => []), supersede: vi.fn(),
     obligationHeavyContacts: vi.fn(() => heavy),
     contactFacts: vi.fn(() => ({ by_kind: { obligation: rows } })),
     mergeObligations: vi.fn((pairs: unknown[]) => { mergedLog.push(...pairs); return { merged: pairs.length } }),
+    judgeFingerprint: vi.fn((key: string) => judgeState.get(key) ?? null),
+    setJudgeFingerprint: vi.fn((key: string, fp: string) => { judgeState.set(key, fp) }),
   } as unknown as FactsApi
 }
 
@@ -63,5 +66,46 @@ describe('runObligationDedup', () => {
     const r = await runObligationDedup({ facts: api([], []), cheapEval, contactCap: 3 })
     expect(r).toEqual({ contacts: 0, merged: 0 })
     expect(cheapEval).not.toHaveBeenCalled()
+  })
+
+  it('unchanged contact stock judged once with [] is NOT re-judged next cycle', async () => {
+    const facts = api([{ contact: 'u1', n: 2 }], [fact(11, 'a', 'x'), fact(22, 'b', 'y')])
+    const cheapEval = vi.fn(async () => '[]')
+    await runObligationDedup({ facts, cheapEval, contactCap: 3 })
+    expect(cheapEval).toHaveBeenCalledTimes(1)
+    const r2 = await runObligationDedup({ facts, cheapEval, contactCap: 3 })
+    expect(cheapEval).toHaveBeenCalledTimes(1)                  // second cycle: zero calls
+    expect(r2).toEqual({ contacts: 0, merged: 0 })
+  })
+
+  it('a contact whose obligations changed since the verdict IS re-judged', async () => {
+    const rows: unknown[] = [fact(11, 'a', 'x'), fact(22, 'b', 'y')]
+    const facts = api([{ contact: 'u1', n: 2 }], rows)
+    const cheapEval = vi.fn(async () => '[]')
+    await runObligationDedup({ facts, cheapEval, contactCap: 3 })
+    rows.push(fact(33, 'c', 'z'))                               // new obligation extracted
+    await runObligationDedup({ facts, cheapEval, contactCap: 3 })
+    expect(cheapEval).toHaveBeenCalledTimes(2)
+  })
+
+  it('skipped unchanged contacts make room for the backlog beyond the cap', async () => {
+    const facts = api([{ contact: 'u1', n: 3 }, { contact: 'u2', n: 2 }],
+                      [fact(11, 'a', 'x'), fact(22, 'b', 'y')])
+    const cheapEval = vi.fn(async () => '[]')
+    const r1 = await runObligationDedup({ facts, cheapEval, contactCap: 1 })
+    expect(r1.contacts).toBe(1)                                 // cap respected: only u1 judged
+    const r2 = await runObligationDedup({ facts, cheapEval, contactCap: 1 })
+    expect(r2.contacts).toBe(1)                                 // u1 skipped, u2 gets its turn
+    expect(cheapEval).toHaveBeenCalledTimes(2)
+    const r3 = await runObligationDedup({ facts, cheapEval, contactCap: 1 })
+    expect(r3.contacts).toBe(0)                                 // both settled into fingerprints
+  })
+
+  it('judge throw records no fingerprint — the contact is retried next cycle', async () => {
+    const facts = api([{ contact: 'u1', n: 2 }], [fact(11, 'a', 'x'), fact(22, 'b', 'y')])
+    await runObligationDedup({ facts, cheapEval: async () => { throw new Error('down') }, contactCap: 3 })
+    const cheapEval = vi.fn(async () => '[]')
+    await runObligationDedup({ facts, cheapEval, contactCap: 3 })
+    expect(cheapEval).toHaveBeenCalledTimes(1)                  // retried, not skipped
   })
 })
