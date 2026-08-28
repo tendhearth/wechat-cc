@@ -77,6 +77,17 @@ describe('parseUpdates', () => {
     expect(msgs[0]!.text).toBe('hi')
   })
 
+  it('毒丸防护:item_list 里的 null 元素被跳过,好 item 照常解析(不抛)', () => {
+    const raw = [{
+      message_id: 7, from_user_id: 'u1', create_time_ms: 1000,
+      message_type: 1, message_state: 2,
+      item_list: [null, { type: 1, text_item: { text: 'ok' } }],
+    }] as unknown as RawUpdate[]
+    const msgs = parseUpdates(raw, { accountId: 'A', resolveUserName: () => 'x' })
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0]!.text).toBe('ok')
+  })
+
   it('毒丸防护:updates 不是数组时返回空、不抛', () => {
     expect(parseUpdates(null as unknown as RawUpdate[], { accountId: 'A', resolveUserName: () => undefined })).toEqual([])
     expect(parseUpdates({ length: 3 } as unknown as RawUpdate[], { accountId: 'A', resolveUserName: () => undefined })).toEqual([])

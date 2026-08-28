@@ -104,6 +104,7 @@ export function parseUpdates(
 
     let msgType = 'unknown'
     for (const item of msg.item_list ?? []) {
+      if (!item || typeof item !== 'object') continue   // 毒丸防护(同 msg 层):item_list 里的 null/原始值元素 → 跳过,别让 item.ref_msg 抛
       // Capture the first quoted message as structured content. ilink inlines
       // the quoted text in ref_msg (no stable id), richest field first. A
       // degenerate ref_msg with neither a known type nor any text is skipped
