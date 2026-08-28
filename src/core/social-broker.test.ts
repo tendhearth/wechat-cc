@@ -67,7 +67,27 @@ describe('makeBroker.propose — gates + persists, sends nothing', () => {
     const out = await broker.propose('涉密意图')
     expect(out.ok).toBe(false)
     expect((out as any).reason).toMatch(/.+/)
+    expect((out as any).reason).not.toBe('checker_unavailable')   // 真被策略拦下:不是"服务不可用"
     expect(proposedCount).toBe(0)
+  })
+
+  it('propose distinguishes checker-unavailable (LLM error/timeout) from a policy block', async () => {
+    const broker = makeBroker(stubDeps({
+      cheapEval: async () => { throw new Error('cannot connect') },   // 审查器炸了,不是内容违规
+    }))
+    const out = await broker.propose('完全正常的话题')
+    expect(out.ok).toBe(false)
+    expect((out as any).reason).toBe('checker_unavailable')   // 让主人知道是服务慢/坏,稍后再试
+  })
+
+  it('propose runs topic + city gates in parallel (both dispatched)', async () => {
+    let calls = 0
+    const broker = makeBroker(stubDeps({
+      cheapEval: async () => { calls++; return JSON.stringify({ violation: false, redacted: 'ok' }) },
+    }))
+    const out = await broker.propose('找搭子', { city: '某城' })
+    expect(out.ok).toBe(true)
+    expect(calls).toBe(2)   // topic + city 都审查了
   })
 
   it('propose gates the city too: redacted city rides through', async () => {

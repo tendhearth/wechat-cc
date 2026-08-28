@@ -99,13 +99,21 @@ export function makeBroker(deps: BrokerDeps) {
     // owner will see and approve. It sends nothing and schedules no forage.
     async propose(topic: string, opts?: { city?: string }): Promise<ProposeOutcome> {
       const intent = newIntentId()
-      const gated = await gateOutbound(topic, { policy: deps.policy, cheapEval: deps.cheapEval })
-      if (!gated.ok) return { ok: false, reason: gated.violations.join('; ') || 'blocked' }
-      let redactedCity: string | undefined
-      if (opts?.city) {
-        const gatedCity = await gateOutbound(opts.city, { policy: deps.policy, cheapEval: deps.cheapEval })
-        if (gatedCity.ok) redactedCity = gatedCity.redacted   // else omit city (safe degradation)
+      // 话题和城市是两次独立的脱敏审查 —— 并行,别串行(带城市原本要等两次
+      // LLM,现在压到一次的时间)。
+      const [gated, gatedCity] = await Promise.all([
+        gateOutbound(topic, { policy: deps.policy, cheapEval: deps.cheapEval }),
+        opts?.city
+          ? gateOutbound(opts.city, { policy: deps.policy, cheapEval: deps.cheapEval })
+          : Promise.resolve(null),
+      ])
+      if (!gated.ok) {
+        // 区分「审查器不可用(超时/出错)」和「内容真被策略拦下」—— 前者是
+        // 服务慢/坏,该让主人稍后再试,而不是误以为自己说了违规的话。
+        const checkerDown = gated.violations.some(v => v.startsWith('checker_'))
+        return { ok: false, reason: checkerDown ? 'checker_unavailable' : (gated.violations.join('; ') || 'blocked') }
       }
+      const redactedCity = gatedCity?.ok ? gatedCity.redacted : undefined   // 城市审查失败 → 安全降级:省略城市
       deps.proposeRow(intent, { topic, redactedTopic: gated.redacted, ...(redactedCity ? { redactedCity } : {}) })
       return { ok: true, intent_id: intent, redacted: gated.redacted, ...(redactedCity ? { redacted_city: redactedCity } : {}) }
     },

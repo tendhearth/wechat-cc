@@ -1,9 +1,23 @@
-import { describe, expect, it } from 'vitest'
-import { gateOutbound } from './a2a-disclosure'
+import { describe, expect, it, vi } from 'vitest'
+import { gateOutbound, GATE_TIMEOUT_MS } from './a2a-disclosure'
 
 const policy = '可透露:兴趣爱好、大致意向、所在城市。不透露:住址、收入、健康、第三方好友。'
 
 describe('gateOutbound', () => {
+  it('fails CLOSED (checker_timeout) when the checker hangs past the timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      const cheapEval = () => new Promise<string>(() => {})   // 永不返回,模拟坏网/慢 provider
+      const p = gateOutbound('随便什么', { policy, cheapEval })
+      await vi.advanceTimersByTimeAsync(GATE_TIMEOUT_MS + 10)
+      const r = await p
+      expect(r.ok).toBe(false)
+      expect(r.violations).toContain('checker_timeout')   // 不再无限等
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('passes clean, policy-compliant text unchanged', async () => {
     const cheapEval = async () => JSON.stringify({ violation: false, redacted: '我主人也爱摄影,周末常拍' })
     const r = await gateOutbound('我主人也爱摄影,周末常拍', { policy, cheapEval })
