@@ -194,7 +194,10 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       const raw = typeof ev.data === 'string' ? ev.data : String(ev.data)
       let msg: { stream?: unknown; frame?: unknown; closed?: unknown; pong?: unknown; ping?: unknown }
       try { msg = JSON.parse(raw) } catch { return }
-      if (msg.pong !== undefined) { awaitingPong = false; return }   // 心跳回执 → 连接还活着
+      // 收到任何 relay 帧都证明连接活着 —— 清掉待 pong,别在活跃会话里(pong
+      // 被代理拖慢、但数据帧在流)误杀健康连接。ping/pong 只是空闲时的兜底。
+      awaitingPong = false
+      if (msg.pong !== undefined) return   // 纯心跳回执,不是数据帧
       if (typeof msg.stream !== 'string') return
       if (msg.closed === true) { streams.delete(msg.stream); return }   // relay 通知手机断开 — 释放该 stream 的密钥条目
       void onStreamFrame(msg.stream, msg.frame)

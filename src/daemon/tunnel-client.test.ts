@@ -50,6 +50,27 @@ describe('tunnel-client (daemon side)', () => {
     }
   })
 
+  it('心跳:活跃数据帧也算「活着」,不在会话中误杀(pong 被拖慢也不怕)', () => {
+    vi.useFakeTimers()
+    try {
+      const sock = fakeSocket()
+      const client = makeTunnelClient({
+        daemonId: 'cc-1', knownDeviceTokens: () => [DTOK],
+        handleRequest: async () => new Response('x'),
+        connect: () => sock.ws as never, log: () => {},
+        pingIntervalMs: 100, now: () => 0,
+      })
+      client.start()
+      sock.emitOpen()
+      vi.advanceTimersByTime(100)                                   // 发出 ping、等 pong
+      sock.emitMessage(JSON.stringify({ stream: 'sX', frame: {} })) // 来了个数据帧 = 连接活着
+      vi.advanceTimersByTime(100)                                   // 不该判死
+      expect(sock.ws.close).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('decrypts a phone request, runs handleRequest, seals the response back under the stream', async () => {
     const phone = await generateTunnelKeypair()
     const sock = fakeSocket()
