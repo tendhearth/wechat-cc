@@ -158,7 +158,14 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       init.body = parsed.body
       init.headers = { 'content-type': 'application/json' }
     }
-    const synthUrl = new URL(`http://127.0.0.1${parsed.path}`)
+    // 路径来自手机 —— 已认证但仍是不可信输入。必须以 / 开头,否则 new URL 会把
+    // 它拼进 authority(host 被污染 → 误路由到别的 pathname);畸形路径(如裸 %、
+    // 带空格)还会让 new URL 直接抛 —— 而 onStreamFrame 是 void 调用,抛出即变成
+    // 未捕获的 promise rejection。两种都干净丢弃,不路由、不 reject。
+    if (!parsed.path.startsWith('/')) { log('TUNNEL', `non-absolute path on ${stream} — dropped`); return }
+    let synthUrl: URL
+    try { synthUrl = new URL(`http://127.0.0.1${parsed.path}`) }
+    catch { log('TUNNEL', `unparseable path on ${stream} — dropped`); return }
     synthUrl.searchParams.delete('d'); synthUrl.searchParams.delete('t')
     if (st.device) synthUrl.searchParams.set('d', st.device)
     // Mark tunnel-origin so mutating/dangerous ops can refuse over remote.

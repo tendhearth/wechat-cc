@@ -112,6 +112,30 @@ describe('tunnel-client (daemon side)', () => {
     expect(JSON.parse(opened.body)).toEqual({ ok: true, echo: 'hello' })
   })
 
+  it('畸形路径被干净丢弃 —— 不路由、不 unhandled reject(边界测试)', async () => {
+    // '%' / ' /x' 会让 new URL 抛(onStreamFrame 是 void 调用 → 未捕获 rejection);
+    // 'set/api' 会把 host 污染成 127.0.0.1set → 误路由到 /api。都该被丢弃。
+    for (const badPath of ['%', ' /x', 'set/api', '@evil.com/steal']) {
+      const phone = await generateTunnelKeypair()
+      const sock = fakeSocket()
+      let calls = 0
+      const client = makeTunnelClient({
+        daemonId: 'cc-1', knownDeviceTokens: () => [DTOK],
+        handleRequest: async () => { calls++; return new Response('x') },
+        connect: () => sock.ws as never, log: () => {},
+      })
+      client.start()
+      sock.emitMessage(JSON.stringify({ stream: 'sA', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
+      for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
+      const daemonPub = handshakePlaintext(JSON.parse(sock.sent.at(-1)!).frame)!
+      const key = await deriveSharedKey(phone.privateKey, await importDaemonPub(daemonPub), new TextEncoder().encode(DTOK))
+      const reqBytes = new TextEncoder().encode(JSON.stringify({ path: badPath, method: 'GET' }))
+      sock.emitMessage(JSON.stringify({ stream: 'sA', frame: await sealFrame(key, reqBytes) }))
+      for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 5))
+      expect(calls).toBe(0)   // 畸形路径 → handleRequest 从没被调用,也没崩
+    }
+  })
+
   it('a sealed request before handshake is dropped (no key yet)', async () => {
     const sock = fakeSocket()
     const client = makeTunnelClient({ daemonId: 'cc-1', knownDeviceTokens: () => [DTOK], handleRequest: async () => new Response('x'), connect: () => sock.ws as never, log: () => {} })
