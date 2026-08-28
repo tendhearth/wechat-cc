@@ -22,6 +22,34 @@ function fakeSocket() {
 }
 
 describe('tunnel-client (daemon side)', () => {
+  it('心跳:定时 ping;有 pong 就保持,连续两轮没 pong 就强制 close(触发重连)', () => {
+    vi.useFakeTimers()
+    try {
+      const sock = fakeSocket()
+      const client = makeTunnelClient({
+        daemonId: 'cc-1', knownDeviceTokens: () => [DTOK],
+        handleRequest: async () => new Response('x'),
+        connect: () => sock.ws as never, log: () => {},
+        pingIntervalMs: 100, now: () => 0,
+      })
+      client.start()
+      sock.emitOpen()
+      // 第一轮:发出 ping,还没判死
+      vi.advanceTimersByTime(100)
+      expect(sock.sent.some(s => s.includes('"ping"'))).toBe(true)
+      expect(sock.ws.close).not.toHaveBeenCalled()
+      // 回 pong → 活着,下一轮继续 ping、不关
+      sock.emitMessage(JSON.stringify({ pong: 0 }))
+      vi.advanceTimersByTime(100)
+      expect(sock.ws.close).not.toHaveBeenCalled()
+      // 这一轮 ping 没人回 → 再下一轮判死、强制 close
+      vi.advanceTimersByTime(100)
+      expect(sock.ws.close).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('decrypts a phone request, runs handleRequest, seals the response back under the stream', async () => {
     const phone = await generateTunnelKeypair()
     const sock = fakeSocket()

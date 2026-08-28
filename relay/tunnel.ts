@@ -112,8 +112,15 @@ export function makeTunnelHub(opts: {
 
     onDaemonFrame(daemonId, raw) {
       if (Buffer.byteLength(raw, 'utf8') > maxFrame) return
-      let msg: { stream?: unknown; frame?: unknown }
+      let msg: { stream?: unknown; frame?: unknown; ping?: unknown }
       try { msg = JSON.parse(raw) } catch { return }
+      // 心跳:daemon ping → relay pong。让 daemon 能确认这条长连还活着;过代理
+      // 被静默掐断时收不到 pong,daemon 就会判死并重连(2026-08-28)。
+      if (msg.ping !== undefined) {
+        const daemon = daemons.get(daemonId)
+        if (daemon && daemon.readyState === 1) { try { daemon.send(JSON.stringify({ pong: msg.ping })) } catch { /* best effort */ } }
+        return
+      }
       if (typeof msg.stream !== 'string') return
       const p = phones.get(msg.stream)
       if (!p || p.daemonId !== daemonId || p.ws.readyState !== 1) return   // unknown/foreign stream — drop

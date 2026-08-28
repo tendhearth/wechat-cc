@@ -43,6 +43,8 @@ export interface TunnelClientDeps {
   connect?: (url: string) => TunnelWS
   relayUrl?: string
   reconnectMs?: number
+  /** 心跳间隔(ms)。默认 20s。一轮 ping 没等到 pong 就判连接已死、强制重连。 */
+  pingIntervalMs?: number
   /** Injected clock (tests). Backoff/down-time accounting only. */
   now?: () => number
   log?: (tag: string, line: string) => void
@@ -74,6 +76,30 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   let ws: TunnelWS | null = null
   let stopped = false
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  // 心跳(2026-08-28 实测:过公司安全代理时,长连 WS 会被静默掐断 —— TCP 壳
+  // 还在、close 帧不来,于是 daemon 以为还连着、relay 却早把它踢了,手机报
+  // daemon_offline / 握手超时)。定时 ping,relay 回 pong;一轮没等到 pong 就
+  // 判定连接已死,强制 close 触发重连(relay 端 registerDaemon 会用新 socket
+  // 替换僵尸)。
+  const PING_INTERVAL_MS = deps.pingIntervalMs ?? 20_000
+  let pingTimer: ReturnType<typeof setInterval> | null = null
+  let awaitingPong = false
+  function stopHeartbeat(): void { if (pingTimer) { clearInterval(pingTimer); pingTimer = null } awaitingPong = false }
+  function startHeartbeat(sock: TunnelWS): void {
+    stopHeartbeat()
+    awaitingPong = false
+    pingTimer = setInterval(() => {
+      if (ws !== sock || stopped) { stopHeartbeat(); return }
+      if (awaitingPong) {                 // 上一轮 ping 没回 pong → 连接已死
+        stopHeartbeat()
+        try { sock.close() } catch { /* close 会触发 onclose → 重连 */ }
+        return
+      }
+      awaitingPong = true
+      try { sock.send(JSON.stringify({ ping: now() })) } catch { /* onclose 会接手 */ }
+    }, PING_INTERVAL_MS)
+    if (typeof (pingTimer as unknown as { unref?: () => void }).unref === 'function') (pingTimer as unknown as { unref: () => void }).unref()
+  }
 
   const defaultConnect = (url: string): TunnelWS => new (globalThis as unknown as { WebSocket: new (u: string) => TunnelWS }).WebSocket(url)
   const connect = deps.connect ?? defaultConnect
@@ -162,16 +188,19 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
         log('TUNNEL', `connected to relay as ${deps.daemonId}`)
       }
       reconnectAttempts = 0
+      if (ws) startHeartbeat(ws)
     })
     ws.addEventListener('message', (ev) => {
       const raw = typeof ev.data === 'string' ? ev.data : String(ev.data)
-      let msg: { stream?: unknown; frame?: unknown; closed?: unknown }
+      let msg: { stream?: unknown; frame?: unknown; closed?: unknown; pong?: unknown; ping?: unknown }
       try { msg = JSON.parse(raw) } catch { return }
+      if (msg.pong !== undefined) { awaitingPong = false; return }   // 心跳回执 → 连接还活着
       if (typeof msg.stream !== 'string') return
       if (msg.closed === true) { streams.delete(msg.stream); return }   // relay 通知手机断开 — 释放该 stream 的密钥条目
       void onStreamFrame(msg.stream, msg.frame)
     })
     ws.addEventListener('close', () => {
+      stopHeartbeat()
       streams.clear()
       ws = null
       if (stopped) return
@@ -189,6 +218,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     start() { stopped = false; open() },
     stop() {
       stopped = true
+      stopHeartbeat()
       if (reconnectTimer) clearTimeout(reconnectTimer)
       try { ws?.close() } catch { /* noop */ }
       ws = null

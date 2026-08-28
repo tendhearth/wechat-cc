@@ -17,6 +17,14 @@ function fakeWs() {
 }
 
 describe('makeTunnelHub — content-blind daemon<->phone relay', () => {
+  it('心跳:daemon 发 {ping} → relay 回 {pong}(值原样带回)', () => {
+    const hub = makeTunnelHub({ now: () => 0 })
+    const daemon = fakeWs()
+    hub.registerDaemon('cc-1', daemon.ws)
+    hub.onDaemonFrame('cc-1', JSON.stringify({ ping: 42 }))
+    expect(daemon.sent.map(s => JSON.parse(s)).some(m => m.pong === 42)).toBe(true)
+  })
+
   it('routes a phone frame to the registered daemon and the reply back', () => {
     const hub = makeTunnelHub({ rate: { capacity: 100, refillPerSec: 100 }, now: () => 0 })
     const daemon = fakeWs()
