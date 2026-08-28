@@ -191,18 +191,23 @@ describe('makeIlinkAdapter (composed)', () => {
     await a.flush()
   })
 
-  it('askUser times out after given ms and returns timeout', async () => {
+  it('askUser fails fast to undelivered when the prompt can’t be sent (was: dead-waited to timeout)', async () => {
+    // Regression (2026-08-27 用户反馈:没给权限就整轮卡死). Sending to an
+    // unroutable chat makes sendMessage return { error } — the same shape as
+    // a closed proactive-push window (errcode=-2), which is the real-world
+    // trigger: the approver is usually NOT the chat that started the turn, so
+    // their push window is often closed. askUser must resolve 'undelivered'
+    // AT ONCE, not dead-wait the full timeout (which raced the turn's own
+    // no-activity kill → user got nothing). Pre-fix this returned 'timeout'
+    // only after burning the whole window.
     vi.useFakeTimers()
     try {
       const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
-      // askUser registers pending + best-effort sends (send will fail silently — no real ilink).
-      // We use vi.advanceTimersByTimeAsync which processes all timers+microtasks iteratively,
-      // including the send-retry timeouts (1s each, 3 attempts max) and the sweep timer.
-      const p = a.askUser('chat-1', 'test', 'abc12', 50)
-      // Advance past the timeout + retries (50ms timeout + 1 sweep at 51ms +
-      // up to 3s of ilinkSendMessage retries).
-      await vi.advanceTimersByTimeAsync(4000)
-      await expect(p).resolves.toBe('timeout')
+      const p = a.askUser('chat-1', 'test', 'abc12', 600_000)
+      // Process the send's microtasks; the fail-fast resolves WELL before the
+      // 600s timeout (if it regressed, only the sweep at 600s would resolve).
+      await vi.advanceTimersByTimeAsync(100)
+      await expect(p).resolves.toBe('undelivered')
     } finally {
       vi.useRealTimers()
     }

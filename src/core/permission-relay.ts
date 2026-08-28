@@ -38,7 +38,7 @@ export function effectivePolicy(
 }
 
 export interface PermissionRelayDeps {
-  askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout'>
+  askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
   /**
    * chatId of the chat that initiated this dispatch (for routing context
    * only — NOT the prompt target). Kept for log correlation; relay
@@ -109,10 +109,14 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool {
     const answer = await deps.askUser(target, prompt, hash, DEFAULT_TIMEOUT_MS)
     if (answer === 'allow') return { behavior: 'allow' } satisfies PermissionResult
     deps.log('PERMISSION', `${answer}: tool=${toolName} hash=${hash}`)
-    return {
-      behavior: 'deny',
-      message: answer === 'timeout' ? 'User did not reply in time; request denied' : 'User denied the request',
-    } satisfies PermissionResult
+    // 'undelivered' ≠ denied: the approver never saw the prompt (their push
+    // window was closed). Tell the agent honestly so it can relay a useful
+    // message to the initiating user instead of a false "主人拒绝了".
+    const message = answer === 'undelivered'
+      ? 'Could not deliver the approval request to the admin (their message window is likely closed). Tell the user this action needs the owner’s approval but the owner couldn’t be reached right now — ask them to try again shortly, or have the owner send you a message first.'
+      : answer === 'timeout' ? 'User did not reply in time; request denied'
+      : 'User denied the request'
+    return { behavior: 'deny', message } satisfies PermissionResult
   }
 }
 

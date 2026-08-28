@@ -1,4 +1,4 @@
-export type PermissionDecision = 'allow' | 'deny' | 'timeout'
+export type PermissionDecision = 'allow' | 'deny' | 'timeout' | 'undelivered'
 
 interface Entry {
   resolve: (d: PermissionDecision) => void
@@ -22,6 +22,20 @@ export class PendingPermissions {
     if (!entry) return false
     this.entries.delete(hash)
     entry.resolve(decision)
+    return true
+  }
+
+  /**
+   * Resolve a pending request as 'undelivered' — the approval prompt could
+   * not be sent to the approver (e.g. their proactive-push window is closed),
+   * so no reply can ever come. Fail fast instead of dead-waiting the full
+   * timeout (which would hang the whole turn until it gets timeout-killed).
+   */
+  fail(hash: string): boolean {
+    const entry = this.entries.get(hash)
+    if (!entry) return false
+    this.entries.delete(hash)
+    entry.resolve('undelivered')
     return true
   }
 

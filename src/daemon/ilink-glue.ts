@@ -72,7 +72,7 @@ export interface IlinkAdapter {
   projects: WechatProjectsDep
   voice: WechatVoiceDep
   companion: WechatCompanionDep
-  askUser(chatId: string, prompt: string, hash: string, timeoutMs: number): Promise<'allow' | 'deny' | 'timeout'>
+  askUser(chatId: string, prompt: string, hash: string, timeoutMs: number): Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
   loadProjects(): { projects: Record<string, { path: string; last_active: number }>; current: string | null }
   lastActiveChatId(): string | null
   markChatActive(chatId: string, accountId?: string): void
@@ -318,8 +318,26 @@ export function makeIlinkAdapter(opts: {
       // Using setTimeout so fake-timer tests can advance past the timeout.
       const t = setTimeout(() => { pending.sweep() }, timeoutMs + 1)
       if (typeof t.unref === 'function') t.unref()
-      // Best-effort send — don't throw if it fails.
-      adapter.sendMessage(chatId, prompt).catch(() => {})
+      // Deliver the approval prompt. CRITICAL (2026-08-27 用户反馈:没给权限
+      // 就整轮卡死):if the prompt can't reach the approver — most often the
+      // admin's proactive-push window is closed (errcode=-2), since the
+      // approver is usually NOT the chat that triggered this turn — then no
+      // reply can EVER come. Don't dead-wait the full 10-min timeout (which
+      // races the turn's own no-activity kill → user gets nothing). Resolve
+      // 'undelivered' at once so the turn ends now with an honest reason.
+      adapter.sendMessage(chatId, prompt).then(
+        (res) => {
+          const err = (res as { error?: string } | null | undefined)?.error
+          if (err) {
+            log('PERMISSION', `approval prompt undelivered to ${chatId}: ${err} — failing fast (not waiting ${Math.round(timeoutMs / 1000)}s)`)
+            pending.fail(hash)
+          }
+        },
+        (err) => {
+          log('PERMISSION', `approval prompt send threw for ${chatId}: ${err instanceof Error ? err.message : String(err)} — failing fast`)
+          pending.fail(hash)
+        },
+      )
       return resultPromise
     },
 

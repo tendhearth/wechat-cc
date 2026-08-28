@@ -29,7 +29,7 @@ export interface BootstrapDeps {
     projects: WechatProjectsDep
     voice: WechatVoiceDep
     companion: WechatCompanionDep
-    askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow'|'deny'|'timeout'>
+    askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow'|'deny'|'timeout'|'undelivered'>
   }
   loadProjects: () => { projects: Record<string, { path: string; last_active: number }>; current: string | null }
   lastActiveChatId: () => string | null
