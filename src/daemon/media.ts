@@ -64,13 +64,23 @@ export async function downloadCdnMedia(media: CDNMedia, aesKeyHexOverride?: stri
 // Windows silently truncates.
 const ILLEGAL_FILENAME_CHARS = /[\x00-\x1f<>:"/\\|?*]/g
 
+// 把不可信字符串收敛成一个安全的单层路径段:去掉非法字符(含 / \ → 无法拼出
+// 子目录/越界)、去掉首尾的 . 和空格(挡住 `.`、`..`、Windows 静默截断的尾点)。
+// 结果永远是 inboxDir 的直接子项,拼不出 ../ 越界。空则回落到 '_'。
+function safePathSegment(s: string): string {
+  const cleaned = s.replace(ILLEGAL_FILENAME_CHARS, '_').replace(/^[. ]+/, '').replace(/[. ]+$/, '')
+  return cleaned || '_'
+}
+
 export async function saveToInbox(
   buf: Buffer,
   filename: string,
   userId: string | undefined,
   inboxDir: string,
 ): Promise<string> {
-  const dir = userId ? join(inboxDir, userId) : inboxDir
+  // userId 来自 from_user_id(不可信服务器响应/坏网篡改)—— 不能直接进 path join,
+  // 否则 `../../x` 会越出 inboxDir → 任意文件写入。收敛成安全单层段。
+  const dir = userId ? join(inboxDir, safePathSegment(userId)) : inboxDir
   mkdirSync(dir, { recursive: true })
   const cleaned = filename.replace(ILLEGAL_FILENAME_CHARS, '_').replace(/[. ]+$/, '')
   const safeName = `${Date.now()}-${cleaned || 'file'}`

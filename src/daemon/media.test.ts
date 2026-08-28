@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { parseAesKey, decryptAesEcb, encryptAesEcb, saveToInbox, buildInboundFilePreview, aesEcbPaddedSize, assertSendable, materializeAttachments, parseWavHeader, PENDING_CDN_REF } from './media'
-import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync, truncateSync } from 'node:fs'
+import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync, truncateSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { Buffer } from 'node:buffer'
 import type { InboundMsg } from '../core/prompt-format'
 
@@ -84,6 +84,20 @@ describe('saveToInbox', () => {
     expect(basename).not.toContain('\\')
     expect(basename).not.toContain('\0')
     expect(basename).toContain('中文')
+  })
+
+  it('恶意 userId(路径穿越)不会越出 inboxDir —— 任意文件写入防护', async () => {
+    for (const evil of ['../../escape', '..', '../../../tmp/pwn', '/etc/x', '..\\..\\win']) {
+      const inbox = mkdtempSync(join(tmpdir(), 'wcc-inbox-'))
+      const real = realpathSync(inbox)
+      const p = realpathSync(await saveToInbox(Buffer.from('x'), 'a.txt', evil, inbox))
+      // 落地路径必须仍在 inboxDir 之内(直接子项),绝不能逃出去
+      expect(p === real || p.startsWith(real + sep)).toBe(true)
+      // userId 段不含分隔符、不是 . / ..
+      const seg = p.slice(real.length).split(sep).filter(Boolean)[0] ?? ''
+      expect(seg).not.toBe('..')
+      expect(seg).not.toBe('.')
+    }
   })
 
   it('writes to inboxDir root when userId omitted', async () => {
