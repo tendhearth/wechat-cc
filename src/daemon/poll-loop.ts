@@ -82,7 +82,15 @@ export function parseUpdates(
 ): InboundMsg[] {
   const results: InboundMsg[] = []
 
+  // 毒丸防护(边界测试 2026-08-28):updates 是不可信的服务器响应 —— 坏网/代理
+  // 篡改可能塞进 null 元素或非数组。若 `for..of` 或 `msg.xxx` 抛出,poll 循环外
+  // 层会 catch,但 sync_buf 在 parse 之后才 persist,于是同一批毒丸永远重取、
+  // 永远抛、游标不前进 → 机器人静默卡死、后续消息全收不到。跳过畸形元素,让
+  // 好消息照常解析、游标照常前进。
+  if (!Array.isArray(updates)) return results
+
   for (const msg of updates) {
+    if (!msg || typeof msg !== 'object') continue   // null / 原始值元素 → 跳过,别让 msg.xxx 抛
     // Only process user messages (type=1) that are finished (state=2)
     if (msg.message_type !== 1) continue
     if (msg.message_state !== undefined && msg.message_state !== 2) continue

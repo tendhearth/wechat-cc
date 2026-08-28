@@ -64,6 +64,24 @@ describe('parseUpdates', () => {
     expect(msg!.createTimeMs).toBe(1234000)
   })
 
+  it('毒丸防护:updates 里 null / 原始值元素被跳过,好消息照常解析(不抛)', () => {
+    const good = {
+      message_id: 9, from_user_id: 'u1', create_time_ms: 1000,
+      message_type: 1, message_state: 2, item_list: [{ type: 1, text_item: { text: 'hi' } }],
+    }
+    // 坏网/代理篡改塞进 null、数字、字符串等畸形元素 —— 之前 msg.message_type 会
+    // 在 null 上抛,连累整批(sync_buf 不前进 → 永远重取 → 机器人卡死)。
+    const raw = [null, 42, 'garbage', good] as unknown as RawUpdate[]
+    const msgs = parseUpdates(raw, { accountId: 'A', resolveUserName: () => 'x' })
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0]!.text).toBe('hi')
+  })
+
+  it('毒丸防护:updates 不是数组时返回空、不抛', () => {
+    expect(parseUpdates(null as unknown as RawUpdate[], { accountId: 'A', resolveUserName: () => undefined })).toEqual([])
+    expect(parseUpdates({ length: 3 } as unknown as RawUpdate[], { accountId: 'A', resolveUserName: () => undefined })).toEqual([])
+  })
+
   it('uses create_time_ms directly (already in ms)', () => {
     const raw: RawUpdate[] = [{
       from_user_id: 'u',
