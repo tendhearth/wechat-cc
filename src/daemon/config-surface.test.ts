@@ -51,6 +51,18 @@ describe('config surface', () => {
     expect(await writeConfigKey(stateDir, 'knowledge_embed_runtime', 'rust')).toMatchObject({ ok: false, error: 'invalid_value' })
   })
 
+  it('number key (day_tz_offset_minutes): sets int, clears to null on empty, rejects non-int/out-of-range', async () => {
+    // 设一个有效偏移(UTC+8 = 480)
+    expect((await writeConfigKey(stateDir, 'day_tz_offset_minutes', '480')).ok).toBe(true)
+    expect(loadAgentConfig(stateDir).day_tz_offset_minutes).toBe(480)
+    // 清空 → null(回到跟随系统)
+    expect((await writeConfigKey(stateDir, 'day_tz_offset_minutes', '')).ok).toBe(true)
+    expect(loadAgentConfig(stateDir).day_tz_offset_minutes ?? null).toBe(null)
+    // 非整数 / 超范围 → 拒绝
+    expect(await writeConfigKey(stateDir, 'day_tz_offset_minutes', '8.5')).toMatchObject({ ok: false, error: 'invalid_value' })
+    expect(await writeConfigKey(stateDir, 'day_tz_offset_minutes', '9999')).toMatchObject({ ok: false, error: 'invalid_value' })
+  })
+
   it('companion.* keys route to the companion config store', async () => {
     const r = await writeConfigKey(stateDir, 'companion.import_local_history', 'true')
     expect(r).toMatchObject({ ok: true })

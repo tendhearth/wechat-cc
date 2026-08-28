@@ -191,7 +191,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       if (!owner) return { ok: false, error: 'no_owner' }
       const pp = personaPath()
       const persona = pp && existsSync(pp) ? readFileSync(pp, 'utf8') : ''
-      const config: Record<string, string | boolean | null> = {}
+      const config: Record<string, string | boolean | number | null> = {}
       for (const row of readConfigSurface(deps.stateDir)) {
         if (PANEL_CONFIG_KEYS.includes(row.key)) config[row.key] = row.value
       }

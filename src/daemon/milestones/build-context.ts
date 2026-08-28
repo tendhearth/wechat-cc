@@ -20,11 +20,21 @@ import { makeActivityStore } from '../activity/store'
 import { makeSessionStore } from '../../core/session-store'
 import type { Db } from '../../lib/db'
 import { resolveProjectJsonlPath } from '../sessions/path-resolver'
+import { localDayKey } from '../../core/prompt-format'
 
 export interface BuildContextDeps {
   stateDir: string
   chatId: string
   db: Db
+  /** Clock — defaults to Date.now. Tests pin it so streak day-keys are stable. */
+  now?: () => number
+  /**
+   * Timezone offset (minutes ahead of UTC) for the streak's day bucketing.
+   * null/undefined → system tz (auto, DST-correct). MUST match what the
+   * activity WRITE path (side-effects makeRecordInbound) uses, or the written
+   * days won't line up with last7DayKeys. Both read it from the same config.
+   */
+  dayTzOffsetMinutes?: number | null
 }
 
 export async function buildDetectorContext(deps: BuildContextDeps): Promise<DetectorContext> {
@@ -69,15 +79,22 @@ export async function buildDetectorContext(deps: BuildContextDeps): Promise<Dete
   const pushed = (await events.list()).filter(e => e.kind === 'cron_eval_pushed')
   const pushRepliedHistory = pushed.map(e => e.id)
 
-  // daysWithMessage: real values from activity.jsonl. v0.4 stubbed this
-  // to []; v0.4.1 wires it. The detector's has7DayStreak helper is now
-  // fed real data — streak milestone fires when 7 consecutive UTC days
-  // each have at least 1 inbound message.
+  // daysWithMessage: real values from the activity store, bucketed by the
+  // owner's LOCAL day (system tz or configured offset — MUST match the write
+  // path). The streak milestone fires when the last 7 local days each have
+  // ≥1 inbound message.
+  const now = deps.now ?? Date.now
+  const dayKey = (ms: number) => localDayKey(ms, deps.dayTzOffsetMinutes)
   const activity = makeActivityStore(deps.db, deps.chatId, {
     migrateFromFile: join(memoryRoot, deps.chatId, 'activity.jsonl'),
+    dayOffsetMinutes: deps.dayTzOffsetMinutes,
+    now,
   })
   const recent = await activity.recentDays(7)
   const daysWithMessage = recent.map(r => r.date)
+  // today + 6 prior local days — computed with the SAME tz as the write path.
+  const nowMs = now()
+  const last7DayKeys = Array.from({ length: 7 }, (_, i) => dayKey(nowMs - i * 86400_000))
 
   // CC 画的你:第一幅小像落盘即触发一次报喜(后续刷新静默,见 portrait-artist)。
   const portraitExists = existsSync(join(memoryRoot, deps.chatId, 'portrait.svg'))
@@ -89,5 +106,6 @@ export async function buildDetectorContext(deps: BuildContextDeps): Promise<Dete
     portraitExists,
     pushRepliedHistory,
     daysWithMessage,
+    last7DayKeys,
   }
 }

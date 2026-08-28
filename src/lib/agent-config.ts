@@ -138,6 +138,11 @@ export interface AgentConfig {
   // mirroring wxgraph's own env-var escape hatch for undetectable-owner
   // accounts.
   knowledge_owner?: string
+  // 「连续 N 天」这类按天分桶功能用的时区偏移(相对 UTC 的分钟,东为正:
+  // UTC+8 → 480,PDT → -420)。缺省/ null → 跟随运行机器的系统时区(自动,
+  // 夏令时也对;daemon 在用户机器上,系统时区即用户此刻所在)。手动设值是
+  // 「万一用户想自己钉一个时区」的口子。见 core/prompt-format.ts localDayKey。
+  day_tz_offset_minutes?: number | null
 }
 
 // ── A2A sub-schemas ──────────────────────────────────────────────────────────
@@ -227,6 +232,7 @@ const AgentConfigSchema = z.object({
   knowledge_embed_script: z.string().optional(),
   knowledge_embed_runtime: z.enum(['python', 'js']).optional(),
   knowledge_owner: z.string().optional(),
+  day_tz_offset_minutes: z.number().int().min(-720).max(840).nullable().optional(),
 })
 
 /**
@@ -314,6 +320,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.knowledge_embed_script === 'string' ? { knowledge_embed_script: parsed.knowledge_embed_script } : {}),
       ...(parsed.knowledge_embed_runtime === 'python' || parsed.knowledge_embed_runtime === 'js' ? { knowledge_embed_runtime: parsed.knowledge_embed_runtime } : {}),
       ...(typeof parsed.knowledge_owner === 'string' ? { knowledge_owner: parsed.knowledge_owner } : {}),
+      ...(typeof parsed.day_tz_offset_minutes === 'number' ? { day_tz_offset_minutes: parsed.day_tz_offset_minutes } : {}),
     }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }

@@ -1,7 +1,14 @@
 /**
- * Per-chat daily activity tracker. One row per (chat_id, UTC date) with
+ * Per-chat daily activity tracker. One row per (chat_id, LOCAL date) with
  * first message timestamp + count. Detector reads recentDays(7) to
  * evaluate the 7-day-streak milestone.
+ *
+ * The day key is the LOCAL calendar day (system tz by default, or a
+ * configured fixed offset) computed AT RECORD TIME and never recomputed —
+ * so a user who travels/relocates doesn't see historical data drift; each
+ * row was bucketed for wherever they were when the message arrived. See
+ * core/prompt-format.ts `localDayKey`. (Rows written before this change are
+ * UTC-keyed; the streak simply rebuilds from new local-keyed rows over ~7d.)
  *
  * Backed by the daemon's SQLite db (PR7 — moved off
  * <stateRoot>/<chat>/activity.jsonl). recordInbound is a single
@@ -9,9 +16,10 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { renameMigrated, type Db } from '../../lib/db'
+import { localDayKey } from '../../core/prompt-format'
 
 export interface ActivityRecord {
-  date: string                // YYYY-MM-DD UTC
+  date: string                // YYYY-MM-DD LOCAL (system tz or configured offset)
   first_msg_ts: string        // ISO
   msg_count: number
 }
@@ -31,10 +39,14 @@ export interface ActivityStoreOpts {
    * past their N-day window and assert against an empty result).
    */
   now?: () => number
-}
-
-function utcDateKey(d: Date): string {
-  return d.toISOString().slice(0, 10)
+  /**
+   * Timezone offset (minutes ahead of UTC) for day bucketing. null/undefined
+   * → follow the system tz per-timestamp (auto, DST-correct). A fixed number
+   * is the manual override. MUST match what the streak reader (build-context)
+   * uses, or written keys won't line up with the days it checks. Tests pass
+   * a fixed value so day boundaries don't depend on the CI machine's zone.
+   */
+  dayOffsetMinutes?: number | null
 }
 
 interface Row {
@@ -46,6 +58,7 @@ interface Row {
 export function makeActivityStore(db: Db, chatId: string, opts: ActivityStoreOpts = {}): ActivityStore {
   if (opts.migrateFromFile) maybeImportLegacy(db, chatId, opts.migrateFromFile)
   const now = opts.now ?? Date.now
+  const dayKey = (ms: number) => localDayKey(ms, opts.dayOffsetMinutes)
 
   // INSERT…ON CONFLICT keeps the existing first_msg_ts (we want the very
   // first message of the day) and increments msg_count by 1. Atomic.
@@ -59,12 +72,11 @@ export function makeActivityStore(db: Db, chatId: string, opts: ActivityStoreOpt
 
   return {
     async recordInbound(when) {
-      stmtRecord.run(chatId, utcDateKey(when), when.toISOString())
+      stmtRecord.run(chatId, dayKey(when.getTime()), when.toISOString())
     },
 
     async recentDays(n) {
-      const cutoff = new Date(now() - n * 86400_000)
-      const cutoffKey = utcDateKey(cutoff)
+      const cutoffKey = dayKey(now() - n * 86400_000)
       return stmtRecent.all(chatId, cutoffKey).map(r => ({
         date: r.date,
         first_msg_ts: r.first_msg_ts,

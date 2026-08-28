@@ -14,6 +14,7 @@ function ctx(stateRoot: string, chatId: string, overrides: Partial<DetectorConte
     portraitExists: false,
     pushRepliedHistory: [],
     daysWithMessage: [],
+    last7DayKeys: [],
     ...overrides,
   }
 }
@@ -69,16 +70,21 @@ describe('milestone detector', () => {
     expect(fired).toContain('ms_first_push_reply')
   })
 
-  it('fires ms_7day_streak when last 7 days all have messages', async () => {
+  it('fires ms_7day_streak when every last7DayKey has a message', async () => {
     const store = makeMilestonesStore(db, 'chat_x')
-    const today = new Date()
-    const days: string[] = []
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(today.getTime() - i * 86400_000)
-      days.push(d.toISOString().slice(0, 10))
-    }
-    const fired = await detectMilestones(store, ctx(dir, 'chat_x', { daysWithMessage: days }))
+    // Arbitrary fixed keys — the detector just intersects daysWithMessage with
+    // last7DayKeys, so the tz/now decision (build-context's job) is out of scope.
+    const last7 = ['2026-08-27', '2026-08-26', '2026-08-25', '2026-08-24', '2026-08-23', '2026-08-22', '2026-08-21']
+    const fired = await detectMilestones(store, ctx(dir, 'chat_x', { daysWithMessage: [...last7], last7DayKeys: last7 }))
     expect(fired).toContain('ms_7day_streak')
+  })
+
+  it('does NOT fire ms_7day_streak when one of the last 7 days is missing', async () => {
+    const store = makeMilestonesStore(db, 'chat_x')
+    const last7 = ['2026-08-27', '2026-08-26', '2026-08-25', '2026-08-24', '2026-08-23', '2026-08-22', '2026-08-21']
+    const gapped = last7.filter(k => k !== '2026-08-24')   // 断了一天
+    const fired = await detectMilestones(store, ctx(dir, 'chat_x', { daysWithMessage: gapped, last7DayKeys: last7 }))
+    expect(fired).not.toContain('ms_7day_streak')
   })
 
   it('subsequent calls do not re-fire same milestone', async () => {

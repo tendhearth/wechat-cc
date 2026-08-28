@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatInbound, toLocalISO, RECALL_BLOCK_MAX } from './prompt-format'
+import { formatInbound, toLocalISO, localDayKey, RECALL_BLOCK_MAX } from './prompt-format'
 
 describe('formatInbound', () => {
   it('wraps a plain text message with channel tag', () => {
@@ -119,5 +119,25 @@ describe('formatInbound', () => {
     const out = toLocalISO(1_700_000_000_000)
     expect(out).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/)
     expect(Date.parse(out)).toBe(1_700_000_000_000)   // instant preserved regardless of machine TZ
+  })
+})
+
+describe('localDayKey', () => {
+  const evening = Date.parse('2026-08-28T04:30:00Z')   // = 27th evening in the Americas
+
+  it('fixed offset: UTC+8 rolls a UTC-evening instant into the next local day', () => {
+    // 04:30Z at UTC+8 = 12:30 same day → 08-28. At UTC-7 = 21:30 prev day → 08-27.
+    expect(localDayKey(evening, 480)).toBe('2026-08-28')   // UTC+8
+    expect(localDayKey(evening, -420)).toBe('2026-08-27')  // UTC-7 (PDT)
+    expect(localDayKey(evening, 0)).toBe('2026-08-28')     // UTC
+  })
+
+  it('offset=0 equals the UTC calendar day', () => {
+    expect(localDayKey(Date.parse('2026-08-27T23:59:59Z'), 0)).toBe('2026-08-27')
+    expect(localDayKey(Date.parse('2026-08-28T00:00:01Z'), 0)).toBe('2026-08-28')
+  })
+
+  it('omitted offset follows the system tz (parses to a valid day key)', () => {
+    expect(localDayKey(evening)).toMatch(/^\d{4}-\d{2}-\d{2}$/)
   })
 })

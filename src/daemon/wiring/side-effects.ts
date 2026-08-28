@@ -24,11 +24,17 @@ export interface SideEffectDeps {
   /** pending-notify 补发通道(makeRecordInbound → flushPendingNotify)。 */
   sendMessage?: (chatId: string, text: string) => Promise<{ msgId?: string; error?: string }>
   log?: (tag: string, line: string) => void
+  /**
+   * 「连续 N 天」按天分桶的时区偏移(相对 UTC 分钟,东为正)。null/缺省 →
+   * 跟随系统时区。写(recordInbound)与读(buildDetectorContext)两条路必须
+   * 用同一个值 —— 都从同一份 config 读。见 core/prompt-format.ts localDayKey。
+   */
+  dayTzOffsetMinutes?: number | null
 }
 
 export function makeFireMilestonesFor(deps: SideEffectDeps): (chatId: string) => Promise<void> {
   return async (chatId: string) => {
-    const ctx = await buildDetectorContext({ stateDir: deps.stateDir, chatId, db: deps.db })
+    const ctx = await buildDetectorContext({ stateDir: deps.stateDir, chatId, db: deps.db, dayTzOffsetMinutes: deps.dayTzOffsetMinutes })
     const memRoot = join(deps.stateDir, 'memory')
     const milestones = makeMilestonesStore(deps.db, chatId, { migrateFromFile: join(memRoot, chatId, 'milestones.jsonl') })
     const events = makeEventsStore(deps.db, chatId, { migrateFromFile: join(memRoot, chatId, 'events.jsonl') })
@@ -42,7 +48,7 @@ export function makeFireMilestonesFor(deps: SideEffectDeps): (chatId: string) =>
 export function makeRecordInbound(deps: SideEffectDeps): (chatId: string, when: Date) => Promise<void> {
   return async (chatId: string, when: Date) => {
     const memRoot = join(deps.stateDir, 'memory')
-    const store = makeActivityStore(deps.db, chatId, { migrateFromFile: join(memRoot, chatId, 'activity.jsonl') })
+    const store = makeActivityStore(deps.db, chatId, { migrateFromFile: join(memRoot, chatId, 'activity.jsonl'), dayOffsetMinutes: deps.dayTzOffsetMinutes })
     await store.recordInbound(when)
     // 补发错过的启动恢复通知:用户刚说话 = ilink 票据刚刷新,现在能发了。
     // 见 notify-startup.ts 的 pending-notify 说明。只补给刚说话的这个 chat。

@@ -62,6 +62,24 @@ export function toLocalISO(ms: number): string {
     `${sign}${pad(Math.floor(a / 60))}:${pad(a % 60)}`
 }
 
+/**
+ * 本地日历日键 `YYYY-MM-DD`,给「连续 N 天」这类按天分桶的功能用。
+ *
+ * `offsetMinutes` = 相对 UTC 的分钟(东为正:UTC+8 → 480,PDT → -420)。
+ *  - 省略 → 跟随运行机器在该时刻的系统时区(自动,且 getTimezoneOffset 逐
+ *    时刻取值,夏令时也对)。daemon 跑在用户自己机器上,系统时区即"用户
+ *    此刻人在哪",旅行会自动跟。
+ *  - 传值 → 手动覆盖的口子(万一将来 daemon 上服务器,或用户就想钉死一个
+ *    时区)。固定偏移不做夏令时换算 —— 对没有夏令时的地区(如中国)没问题。
+ *
+ * 关键约定:**记录时按当时的偏移算好写进去,永不回改**。因此旅行迁移不会
+ * 让历史数据漂移 —— 每条记录在发生那一刻就按对当时的用户正确的那天分好了。
+ */
+export function localDayKey(ms: number, offsetMinutes?: number | null): string {
+  const off = offsetMinutes ?? -new Date(ms).getTimezoneOffset()
+  return new Date(ms + off * 60_000).toISOString().slice(0, 10)
+}
+
 export function formatInbound(m: InboundMsg): string {
   const attrs = [
     `chat_id="${escAttr(m.chatId)}"`,

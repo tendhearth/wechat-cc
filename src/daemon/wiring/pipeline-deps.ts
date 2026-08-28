@@ -174,7 +174,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // is tuned for notify/send; exec needs a long one. Lazily built + reused.
   let execA2AClient: import('../../core/a2a-client').A2AClient | undefined
 
-  const fireMilestonesFor = makeFireMilestonesFor({ stateDir, db })
+  const fireMilestonesFor = makeFireMilestonesFor({ stateDir, db, dayTzOffsetMinutes: boot.agentConfig.day_tz_offset_minutes })
 
   // Disk-first then mutate: if saveAgentConfig throws (EACCES, ENOSPC),
   // the in-memory boot.agentConfig stays untouched so callers can retry.
@@ -199,6 +199,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     stateDir, db,
     sendMessage: (cid, txt) => ilink.sendMessage(cid, txt) as Promise<{ msgId?: string; error?: string }>,
     log: (tag, line) => log(tag, line),
+    dayTzOffsetMinutes: boot.agentConfig.day_tz_offset_minutes,
   })
   const messagesStore = makeMessagesStore(db)
   const dedupStore = makeDedupStore(db)

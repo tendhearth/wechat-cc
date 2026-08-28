@@ -29,13 +29,15 @@ interface ConfigKeySpec {
   key: string
   store: 'agent' | 'companion'
   field: keyof AgentConfig | keyof CompanionConfig
-  type: 'string' | 'boolean' | 'enum'
+  type: 'string' | 'boolean' | 'enum' | 'number'
   values?: readonly string[]
   writable: boolean
   effect: ConfigEffect
   description: string
   /** Extra guard for string keys — runs after the type coercion. */
   validate?: (v: string) => boolean
+  /** number keys only: an empty value clears the field back to its default. */
+  nullable?: boolean
 }
 
 export const CONFIG_SURFACE: readonly ConfigKeySpec[] = [
@@ -56,6 +58,10 @@ export const CONFIG_SURFACE: readonly ConfigKeySpec[] = [
     effect: 'immediate', description: 'agy (Antigravity) 模型 id', validate: (v) => MODEL_RE.test(v) },
   { key: 'openaiBaseUrl', store: 'agent', field: 'openaiBaseUrl', type: 'string', writable: true,
     effect: 'immediate', description: 'OpenAI 兼容后端地址 (http(s) URL)', validate: (v) => URL_RE.test(v) },
+  { key: 'day_tz_offset_minutes', store: 'agent', field: 'day_tz_offset_minutes', type: 'number', writable: true,
+    nullable: true, effect: 'daemon-restart',
+    description: '「连续 N 天」的时区偏移(相对 UTC 的分钟,东为正:UTC+8=480,PDT=-420)。留空 = 跟随系统时区(默认,推荐)',
+    validate: (v) => { const n = Number(v); return Number.isInteger(n) && n >= -720 && n <= 840 } },
   { key: 'knowledge_enabled', store: 'agent', field: 'knowledge_enabled', type: 'boolean', writable: true,
     effect: 'daemon-restart', description: '知识内核（微信档案向量检索/图谱/事实库）总开关' },
   { key: 'knowledge_embed_runtime', store: 'agent', field: 'knowledge_embed_runtime', type: 'enum',
@@ -82,8 +88,8 @@ const FALSE_WORDS = new Set(['off', 'false', '0', 'no', '关', '否'])
 
 export interface ConfigSurfaceRow {
   key: string
-  value: string | boolean | null
-  type: 'string' | 'boolean' | 'enum'
+  value: string | boolean | number | null
+  type: 'string' | 'boolean' | 'enum' | 'number'
   values?: readonly string[]
   writable: boolean
   effect: ConfigEffect
@@ -122,12 +128,23 @@ export async function writeConfigKey(
   if (!spec.writable) return { ok: false, error: 'read_only_key' }
 
   const rawStr = typeof value === 'boolean' ? String(value) : String(value ?? '').trim()
-  let coerced: string | boolean
+  let coerced: string | boolean | number | null
   if (spec.type === 'boolean') {
     const lower = rawStr.toLowerCase()
     if (TRUE_WORDS.has(lower)) coerced = true
     else if (FALSE_WORDS.has(lower)) coerced = false
     else return { ok: false, error: 'invalid_value', detail: '布尔值请用 on/off/true/false/开/关' }
+  } else if (spec.type === 'number') {
+    if (rawStr.length === 0) {
+      if (!spec.nullable) return { ok: false, error: 'invalid_value', detail: '不能为空' }
+      coerced = null   // 清空 → 回到默认(如时区回到跟随系统)
+    } else {
+      const n = Number(rawStr)
+      if (!Number.isInteger(n) || (spec.validate && !spec.validate(rawStr))) {
+        return { ok: false, error: 'invalid_value', detail: spec.description }
+      }
+      coerced = n
+    }
   } else if (spec.type === 'enum') {
     if (!spec.values!.includes(rawStr)) {
       return { ok: false, error: 'invalid_value', detail: `可选值: ${spec.values!.join(' | ')}` }
