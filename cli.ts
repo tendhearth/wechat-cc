@@ -3619,6 +3619,7 @@ const SUBCOMMANDS = {
 export const cittyRoot = defineCommand({
   meta: {
     name: 'wechat-cc',
+    version: selfPkg.version,   // citty 据此自动响应 `wechat-cc --version`
     description: 'WeChat bridge for Claude Code (Agent SDK daemon)',
   },
   subCommands: SUBCOMMANDS,
