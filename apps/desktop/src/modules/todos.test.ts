@@ -7,7 +7,7 @@ vi.mock('../api.js', () => ({ invokeApi: vi.fn() }))
 // @ts-expect-error minimal DOM stub before import (module shape parity with memory.test.ts)
 globalThis.document = { getElementById: () => null, querySelectorAll: () => [] }
 
-const { groupObligations, reminderSlots, recentSettled, timeBadge, __onListClick, __setApi } = await import('./todos.js')
+const { groupObligations, reminderSlots, recentSettled, timeBadge, __onListClick, __setApi, __onOutsideRemindClick } = await import('./todos.js')
 
 function row(id: number, contact: string, value: string, updated: number) {
   return { id, contact, kind: 'obligation', predicate: 'p', value, time_ref: null, confidence: 'med', updated_at: updated }
@@ -104,5 +104,23 @@ describe('onListClick — 200 但 ok:false 不能假装划掉', () => {
     await __onListClick(ev)
     expect(item.classList.add).toHaveBeenCalledWith('is-done')
     expect(showToast).not.toHaveBeenCalled()
+  })
+})
+
+describe('提醒选择器 — 点外面/Esc 自动关掉', () => {
+  class NodeStub {}
+  it('点在选择器内 → 不关;点在外面 → 关', () => {
+    // @ts-expect-error stub Node for instanceof check
+    globalThis.Node = NodeStub
+    const inside = new NodeStub()
+    const outside = new NodeStub()
+    let removed = 0
+    const pop = { contains: (n: unknown) => n === inside, remove: () => { removed++ } }
+    // @ts-expect-error minimal document stub
+    globalThis.document = { getElementById: () => pop, removeEventListener: () => {} }
+    __onOutsideRemindClick({ target: inside } as unknown as Event)
+    expect(removed).toBe(0)                       // 点内部,保持打开
+    __onOutsideRemindClick({ target: outside } as unknown as Event)
+    expect(removed).toBe(1)                       // 点外部,收起来
   })
 })

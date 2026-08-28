@@ -188,10 +188,32 @@ function openRemindPicker(host, factId, text) {
     if (!at) return
     await scheduleReminder(factId, text, at, pop)
   })
+  // 点选择器以外的地方 / 按 Esc → 自动关掉(改了主意时能收起来)。延到下一个
+  // tick 再挂,免得把「提醒我」这次点击本身当成外部点击、刚开就被关掉。
+  setTimeout(() => {
+    document.addEventListener("click", onOutsideRemindClick, true)
+    document.addEventListener("keydown", onRemindKeydown, true)
+  }, 0)
+}
+
+/** @param {Event} ev */
+function onOutsideRemindClick(ev) {
+  const pop = document.getElementById("todo-remind-pop")
+  if (!pop) { closeRemindPicker(); return }        // 已经没了,顺手摘监听
+  const target = ev.target
+  if (target instanceof Node && pop.contains(target)) return   // 点在选择器内,忽略
+  closeRemindPicker()
+}
+
+/** @param {KeyboardEvent} ev */
+function onRemindKeydown(ev) {
+  if (ev.key === "Escape") closeRemindPicker()
 }
 
 function closeRemindPicker() {
   document.getElementById("todo-remind-pop")?.remove()
+  document.removeEventListener("click", onOutsideRemindClick, true)
+  document.removeEventListener("keydown", onRemindKeydown, true)
 }
 
 /** @param {number} factId @param {string} text @param {string} atIso @param {HTMLElement} pop */
@@ -254,7 +276,7 @@ async function onListClick(ev) {
 
 // Exported for tests — the ok:false-slips-through regression above is DOM-
 // driven, so the test drives this handler with a stub event + api.
-export { onListClick as __onListClick }
+export { onListClick as __onListClick, onOutsideRemindClick as __onOutsideRemindClick }
 /** @param {typeof invokeApi} fn */
 export function __setApi(fn) { api = fn }
 
