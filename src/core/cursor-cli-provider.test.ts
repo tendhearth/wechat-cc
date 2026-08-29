@@ -1,5 +1,6 @@
 // cursor-cli-provider tests — all via the injected spawnFn (fake cursor-agent).
 import { describe, it, expect } from 'vitest'
+import { tmpdir } from 'node:os'
 import { CURSOR_CLI_CAPABILITIES, createCursorCliProvider } from './cursor-cli-provider'
 import { TIER_PROFILES } from './user-tier'
 
@@ -24,7 +25,11 @@ const RESULT = '{"type":"result","subtype":"success","is_error":false,"result":"
 const AUTH_TEXT = '{"type":"assistant","message":{"content":[{"type":"text","text":"Not logged in"}]}}'
 
 const ctx = { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict' as const, chatId: 'chat1' }
-const project = { alias: 'p', path: '/tmp' }
+// NOT '/tmp': on Linux `tmpdir()` IS '/tmp', so a '/tmp' fixture path made
+// the "one-shots don't run in the project dir" assertion vacuously false —
+// dev CI's ubuntu job was red on exactly this for weeks while macOS
+// (/var/folders/…) stayed green. See memory: macos-only green blind spot.
+const project = { alias: 'p', path: '/srv/fake-project' }
 
 async function drain(it: AsyncIterable<{ kind: string }>) { const out = []; for await (const e of it) out.push(e); return out }
 
@@ -103,7 +108,8 @@ describe('createCursorCliProvider', () => {
     const ok = fakeCursor([INIT, TEXT, RESULT])
     const p1 = createCursorCliProvider({ bin: 'cursor-agent', model: 'auto', spawnFn: ok.spawnFn, log: () => {} })
     await expect((p1.cheapEval!)('q')).resolves.toBe('收到')
-    expect(ok.calls[0]!.cwd).not.toBe(project.path)   // one-shots run in tmpdir
+    expect(ok.calls[0]!.cwd).toBe(tmpdir())           // one-shots run in tmpdir…
+    expect(ok.calls[0]!.cwd).not.toBe(project.path)   // …never in the project dir
     const bad = fakeCursor([INIT, AUTH_TEXT, RESULT])
     const p2 = createCursorCliProvider({ bin: 'cursor-agent', model: 'auto', spawnFn: bad.spawnFn, log: () => {} })
     await expect((p2.cheapEval!)('q')).rejects.toThrow(/auth_failed/)
