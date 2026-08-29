@@ -82,6 +82,16 @@ export function createProviderRegistry(opts?: {
    * 到意外的账上。指定后只用它(不参与 failover 轮替);未指定保持原偏好序。
    */
   cheapEvalProvider?: string
+  /**
+   * 后台 cheapEval 的网络预检(2026-08-29):开机 0.2s 的 introspect 补跑
+   * 曾在代理未就绪时 spawn agy → agy 刷 token 撞超时 → 弹浏览器 OAuth 页。
+   * failover 试某候选前先问一句「它的端点可达吗」,不可达直接跳过(不入
+   * 冷却——网络恢复即重试),落到下一家。预检自身抛错按可达处理(fail-
+   * open,探测机器坏了不能反过来卡死评估)。不影响 llm-health 的用户主动
+   * 真拨(那条路直接调各 provider 的 cheapEval,不走这里)。daemon 侧用
+   * net-probe 的端点表包一个带 TTL 缓存的实现注入;core 保持纯净。
+   */
+  cheapEvalPreflight?: (id: string) => Promise<boolean>
   log?: (line: string) => void
 }): ProviderRegistry {
   const now = opts?.now ?? Date.now
@@ -134,9 +144,23 @@ export function createProviderRegistry(opts?: {
       return async (prompt: string) => {
         let lastErr: unknown = new Error('no cheapEval provider available')
         let attempted = 0
+        let preflightSkipped = 0
         for (const c of candidates) {
           const until = cheapEvalCooldownUntil.get(c.id) ?? 0
           if (until > now()) continue
+          if (opts?.cheapEvalPreflight) {
+            let reachable = true
+            try {
+              reachable = await opts.cheapEvalPreflight(c.id)
+            } catch {
+              // fail-open: a broken probe must never block evals
+            }
+            if (!reachable) {
+              preflightSkipped++
+              opts.log?.(`cheapEval preflight: ${c.id} 端点不可达 — 跳过(不入冷却)`)
+              continue
+            }
+          }
           attempted++
           try {
             return await c.fn(prompt)
@@ -147,6 +171,12 @@ export function createProviderRegistry(opts?: {
           }
         }
         if (attempted === 0) {
+          // 网络预检把所有人都拦了 → 抛错让调用方按「本轮失败,下轮重试」
+          // 处理(所有后台 judge 都有这个姿势),绝不硬闯——硬闯正是要防
+          // 的那次 agy spawn。
+          if (preflightSkipped > 0) {
+            throw new Error('no reachable cheapEval provider (network preflight)')
+          }
           // Everyone is cooling down — try the first candidate anyway rather
           // than failing on a stale blacklist.
           cheapEvalCooldownUntil.delete(candidates[0]!.id)

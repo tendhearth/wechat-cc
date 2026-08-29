@@ -26,6 +26,7 @@ import { setupAgyGlobalMcp } from './agy-mcp-config'
 import { setupCursorGlobalMcp } from './cursor-mcp-config'
 import { agyVersionOk } from './agy-version-check'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
+import { makeCheapEvalPreflight } from './cheap-eval-preflight'
 import type { BootstrapDeps } from './types'
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
 
@@ -135,6 +136,19 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // transparently by the SDK.
   const registry = createProviderRegistry({
     ...(configuredAgent.cheapEvalProvider ? { cheapEvalProvider: configuredAgent.cheapEvalProvider } : {}),
+    // 后台 cheapEval 网络预检(2026-08-29,弹 OAuth 浏览器页根治的最后一块):
+    // failover 试某候选前 HEAD 探它的 API origin,不可达直接落到下一家,
+    // 不再冷启动一个注定撞网络超时的 CLI。UNDER_TEST_RUNNER 下不接——单测
+    // 里的 buildBootstrap 绝不能发真实网络探测(同文件 agy/cursor 门的姿势)。
+    ...(UNDER_TEST_RUNNER ? {} : {
+      cheapEvalPreflight: makeCheapEvalPreflight({
+        overrides: (): Record<string, string> => {
+          const b = configuredAgent.openaiBaseUrl
+          return b ? { openai: b } : {}
+        },
+        log: (line) => deps.log('REGISTRY', line),
+      }),
+    }),
     log: (line) => deps.log('REGISTRY', line),
   })
   registry.register(
