@@ -48,29 +48,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Pull the first-party wxvault plugin (private repo) into plugins/ so
-      # tauri.conf's `resources: ["../../../plugins/"]` bundles it into the app.
-      # Shell-guarded on the token (not an `if:` on secrets, which the Actions
-      # context doesn't allow) so forks/PRs without the secret still build —
-      # just without the bundled plugin. .git is dropped so it isn't bundled.
-      - name: Bundle first-party wxvault plugin (private)
-        shell: bash
-        env:
-          WXVAULT_PAT: ${{ secrets.RELEASE_PAT_WECHAT_CC }}
-        run: |
-          if [ -z "${WXVAULT_PAT}" ]; then
-            if [[ "${GITHUB_REF}" == refs/tags/desktop-v* ]]; then
-              echo "::error::RELEASE_PAT_WECHAT_CC is required for desktop releases; refusing to publish an installer without wxvault"
-              exit 1
-            fi
-            echo "::notice::no RELEASE_PAT_WECHAT_CC — validation build will omit bundled wxvault"
-            exit 0
-          fi
-          rm -rf plugins/wxvault
-          git clone --depth 1 "https://x-access-token:${WXVAULT_PAT}@github.com/tendhearth/wxvault.git" plugins/wxvault
-          rm -rf plugins/wxvault/.git
-          test -f plugins/wxvault/wechat-cc.plugin.json
-          echo "bundled wxvault ($(ls plugins/wxvault | wc -l | tr -d ' ') files)"
+      # NOTE (2026-08-29): the "Bundle first-party wxvault plugin" step that
+      # lived here was removed — tauri.conf's resources were deliberately
+      # narrowed to plugins/README.md by 1747de09 (2026-08-26 security fix:
+      # the plugins/ glob once swept 105MB of decrypted private WeChat data
+      # into a Windows installer via a resolved symlink; published mac dmgs
+      # never actually bundled wxvault because macOS bundling doesn't follow
+      # symlinks). The daemon loads plugins from the user's install at
+      # runtime; the installer doesn't carry plugin sources. The clone step
+      # and its "refuse release without wxvault" gate were dead weight after
+      # that — restore from git history if bundled distribution ever returns.
 
       - name: Install Linux system deps
         if: matrix.os == 'ubuntu-latest'
