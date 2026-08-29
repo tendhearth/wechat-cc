@@ -32,6 +32,39 @@ describe('notify-startup', () => {
     }
   })
 
+  it('errcode=-2(推送窗口关闭)记成平静态,不喊 failed;真错才喊 failed', async () => {
+    for (const [err, expectCalm] of [
+      ['ilink/sendmessage errcode=-2: prepare failed', true],
+      ['ilink/sendmessage errcode=500: internal', false],
+    ] as const) {
+      const stateDir = makeStateDir()
+      try {
+        const logs: string[] = []
+        await notifyStartup(
+          {
+            stateDir,
+            loadAccess: () => ({ allowFrom: ['owner-wxid'] }),
+            send: async () => ({ error: err }),   // 每轮都失败
+            log: (_tag, line) => { logs.push(line) },
+            now: () => 1_700_000_000_000,
+            retryDelayMs: 0,                        // 别让 4 轮退避拖慢测试
+          },
+          { pid: 42, accounts: 1, dangerously: true }
+        )
+        const joined = logs.join('\n')
+        if (expectCalm) {
+          expect(joined).toContain('暂不可推送')
+          expect(joined).not.toContain('send to owner-wxid failed')
+        } else {
+          expect(joined).toContain('send to owner-wxid failed')
+          expect(joined).not.toContain('暂不可推送')
+        }
+      } finally {
+        rmSync(stateDir, { recursive: true, force: true })
+      }
+    }
+  })
+
   it('first-ever startup writes the one-time notified marker', async () => {
     const stateDir = makeStateDir()
     try {
@@ -211,6 +244,7 @@ describe('notify-startup', () => {
           loadAccess: () => ({ allowFrom: ['owner'] }),
           send: async () => { throw new Error('network down') },
           log: () => {},
+          retryDelayMs: 1,
         },
         { pid: 1, accounts: 1, dangerously: true }
       )
@@ -239,5 +273,44 @@ describe('notify-startup', () => {
   it('renderStartupText: dangerously toggles the mode tag', () => {
     expect(renderStartupText({ pid: 1, accounts: 1, dangerously: true }, null)).toMatch(/✅ unattended/)
     expect(renderStartupText({ pid: 1, accounts: 1, dangerously: false }, null)).toMatch(/⚠️ strict/)
+  })
+})
+
+describe('send-result honesty + not-ready retry (2026-08-24)', () => {
+  it('a send that RESOLVES with an error field is a failure, not a success', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'notify-'))
+    const logs: string[] = []
+    const r = await notifyStartup({
+      stateDir: dir,
+      loadAccess: () => ({ allowFrom: ['owner1'] }),
+      // glue-shaped failure: resolves, carries error (ilink-glue never throws)
+      send: async () => ({ msgId: 'err:1', error: 'ilink/sendmessage errcode=-2: prepare failed' }),
+      log: (t, l) => logs.push(`${t} ${l}`),
+      retryDelayMs: 1,
+    }, { pid: 1, accounts: 1, dangerously: true })
+    expect(r.notified).toBe(false)
+    expect(r.reason).toBe('send-failed-all')
+    expect(logs.some(l => l.includes('sent to 1/1'))).toBe(false)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('retries once after a delay when the channel is not ready yet, and succeeds', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'notify-'))
+    let calls = 0
+    const r = await notifyStartup({
+      stateDir: dir,
+      loadAccess: () => ({ allowFrom: ['owner1'] }),
+      send: async () => {
+        calls++
+        return calls === 1
+          ? { msgId: 'err:1', error: 'errcode=-2: prepare failed' }
+          : { msgId: 'sent:2' }
+      },
+      log: () => {},
+      retryDelayMs: 1,
+    }, { pid: 1, accounts: 1, dangerously: true })
+    expect(calls).toBe(2)
+    expect(r.notified).toBe(true)
+    rmSync(dir, { recursive: true, force: true })
   })
 })

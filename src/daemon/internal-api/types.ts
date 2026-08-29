@@ -248,6 +248,12 @@ export interface InternalApiDeps {
    * `search` are present — `knowledge_enabled` alone doesn't guarantee an
    * embed script resolved.
    */
+  /** chat_history 工具后端(provider-handoff 的 Amp 式逃生口)— 消息库
+   *  的窄读面。main.ts 注入 makeMessagesStore(db) 的两个方法。 */
+  messages?: {
+    listRange(chatId: string, opts: { limit: number; beforeTs?: string }): Promise<Array<{ ts: string; direction: string; kind: string; text: string }>>
+    search(chatId: string, query: string, limit: number): Promise<Array<{ ts: string; direction: string; kind: string; text: string }>>
+  }
   knowledge?: {
     store: import('../../core/knowledge/store').KnowledgeStore
     search: typeof import('../../core/knowledge/search').semanticSearch
@@ -367,6 +373,16 @@ export interface InternalApiDeps {
    * colliding with that unrelated, pre-existing dep.
    */
   memoryLlm?: import('../memory-llm-ops').MemoryLlmOps
+  /** LLM 通道体检 (llm-health.ts) — late-bound like memoryLlm (needs the
+   *  provider registry). GET /v1/llm/health 503s until set. */
+  llmHealth?: import('../llm-health').LlmHealth
+  /** Registered provider ids (registry.list) — set alongside llmHealth. */
+  llmRegistered?: () => string[]
+  /** provider id → 自配 base_url(如 openai-compatible 的国内/本地端点),
+   *  给网络体检探真实端点用。set alongside llmHealth. */
+  llmEndpoints?: () => Record<string, string>
+  /** Graphical-settings-panel link minter (settings-panel.ts, late-bound). */
+  settingsLink?: () => Promise<string | null>
   /**
    * Resolves the default admin chat_id (access.json's single admin) when a
    * memory route's request body omits `chat_id`. Wired eagerly in main.ts
@@ -392,6 +408,8 @@ export interface InternalApiDeps {
    * (minimal-deps 测试路径)。
    */
   subsystems?: () => import('../subsystems').SubsystemStatus[]
+  /** Passive outbound link health from ilink-glue (spec 2026-08-22-outbound-health). */
+  outbound?: () => import('../ilink/outbound-health').OutboundHealth
   /**
    * busy-registry hold (spec 2026-08-11 §2, Task 4 step 1) — index.ts's
    * dispatcher holds a token for the duration of every AUTHENTICATED
@@ -441,6 +459,8 @@ export interface InternalApi {
    * 503 until this is called.
    */
   setDelegate(d: InternalApiDelegateDep): void
+  setLlmHealth(h: import('../llm-health').LlmHealth, registered?: () => string[], endpoints?: () => Record<string, string>): void
+  setSettingsLink(fn: () => Promise<string | null>): void
   /**
    * Late-bind the conversation controller (coordinator.setMode) after
    * bootstrap has constructed the coordinator. /v1/conversation/set-mode

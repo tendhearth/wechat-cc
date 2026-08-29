@@ -14,12 +14,14 @@ import type { IlinkContext } from './context'
 
 export interface TransportMethods {
   sendTyping(chatId: string, accountId?: string): Promise<void>
-  getUpdatesForLoop(accountId: string, baseUrl: string, token: string, syncBuf: string): Promise<{
+  getUpdatesForLoop(accountId: string, baseUrl: string, token: string, syncBuf: string, signal?: AbortSignal): Promise<{
     updates?: unknown[]
     sync_buf?: string
     expired?: boolean
     /** expired-but-recoverable: a sibling device took the session (multi-device). */
     standby?: boolean
+    /** Client-side long-poll timeout — see GetUpdatesResp.timed_out. */
+    timed_out?: boolean
   }>
   markChatActive(chatId: string, accountId?: string): void
   captureContextToken(chatId: string, ctxToken?: string): void
@@ -95,8 +97,8 @@ export function makeTransport(ctx: IlinkContext, opts: TransportOpts = {}): Tran
     // poll-loop callback. Catches ilink errcode=-14 (session timeout) and
     // flips SessionStateStore so /health can surface it later. Silent on the
     // state transition per 2026-04-24 pull-based design decision.
-    async getUpdatesForLoop(accountId, baseUrl, token, syncBuf) {
-      const resp = await ilinkGetUpdates(baseUrl, token, syncBuf)
+    async getUpdatesForLoop(accountId, baseUrl, token, syncBuf, signal) {
+      const resp = await ilinkGetUpdates(baseUrl, token, syncBuf, undefined, signal)
       if (resp.errcode === -14 || resp.ret === -14) {
         // errcode=-14 = "this token's session was taken over elsewhere". For a
         // MULTI-DEVICE account (shared via `account export/import` — marked by a
@@ -118,7 +120,7 @@ export function makeTransport(ctx: IlinkContext, opts: TransportOpts = {}): Tran
         }
         return { expired: true }
       }
-      return { updates: resp.msgs, sync_buf: resp.get_updates_buf }
+      return { updates: resp.msgs, sync_buf: resp.get_updates_buf, ...(resp.timed_out ? { timed_out: true } : {}) }
     },
 
     // accountId is the bot that just received a message from this chat —

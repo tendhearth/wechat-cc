@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from 'vitest'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { analyzeDoctor, setupStatus, serviceStatus, readDaemon, readAccess, readExpiredBots, defaultProbeCursor, defaultProbeGemini } from './doctor'
+import { analyzeDoctor, setupStatus, serviceStatus, readDaemon, readAccess, readExpiredBots, defaultProbeCursor, defaultProbeGemini, probeOutboundWarning } from './doctor'
 import { openWechatDb } from '../lib/db'
 import { makeSessionStateStore } from '../core/session-state'
 
@@ -791,5 +791,39 @@ describe('default doctor probes', () => {
     const r = defaultProbeGemini()
     expect(typeof r.apiKeySet).toBe('boolean')
     expect(typeof r.sdkInstalled).toBe('boolean')
+  })
+})
+
+describe('probeOutboundWarning', () => {
+  it('returns the warning line when outbound is degraded', async () => {
+    const daemonAlive = { alive: true, pid: 1, internal_api: { port: 12345, token_file_path: '/tmp/tok' } } as any
+    const fetchFn = async () => new Response(JSON.stringify({ ok: true, daemon_pid: 1, outbound: {
+      state: 'degraded', consecutive_failures: 4, last_ok_at: null, last_error: 'errcode=-2: prepare failed',
+    } }), { status: 200 }) as unknown as Response
+    const line = await probeOutboundWarning(daemonAlive, fetchFn as any, () => 'tok')
+    expect(line).toBe('⚠️ 外发链路故障（连续 4 次失败，最近错误 errcode=-2: prepare failed）。多为微信端会话闲置过期——给 bot 随便发条消息即可恢复；恢复后积压的提醒会自动补投。')
+  })
+
+  it('returns null for ok, unknown, missing field, dead daemon, or fetch failure', async () => {
+    const okFetch = async () => new Response(JSON.stringify({ ok: true, daemon_pid: 1, outbound: { state: 'ok', consecutive_failures: 0, last_ok_at: null, last_error: null } }), { status: 200 }) as unknown as Response
+    const daemonAlive = { alive: true, pid: 1, internal_api: { port: 12345, token_file_path: '/tmp/tok' } } as any
+    expect(await probeOutboundWarning(daemonAlive, okFetch as any, () => 'tok')).toBeNull()
+    const noField = async () => new Response(JSON.stringify({ ok: true, daemon_pid: 1 }), { status: 200 }) as unknown as Response
+    expect(await probeOutboundWarning(daemonAlive, noField as any, () => 'tok')).toBeNull()
+    expect(await probeOutboundWarning({ alive: false, pid: null } as any, okFetch as any, () => 'tok')).toBeNull()
+    const boom = async () => { throw new Error('conn refused') }
+    expect(await probeOutboundWarning(daemonAlive, boom as any, () => 'tok')).toBeNull()
+  })
+
+  it('passes an AbortSignal with 3s timeout to fetch', async () => {
+    const daemonAlive = { alive: true, pid: 1, internal_api: { port: 12345, token_file_path: '/tmp/tok' } } as any
+    let capturedInit: any
+    const fetchFn = async (_url: string, init?: any) => {
+      capturedInit = init
+      return new Response(JSON.stringify({ ok: true, daemon_pid: 1, outbound: { state: 'ok' } }), { status: 200 }) as unknown as Response
+    }
+    await probeOutboundWarning(daemonAlive, fetchFn as any, () => 'tok')
+    expect(capturedInit).toBeDefined()
+    expect(capturedInit.signal).toBeInstanceOf(AbortSignal)
   })
 })

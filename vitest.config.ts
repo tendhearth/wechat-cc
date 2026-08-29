@@ -8,5 +8,9 @@ export default defineConfig({
     // appendFileSyncs to STATE_DIR; without this opt-out a vitest run
     // appends test garbage to a live operator's log file.
     env: { WECHAT_DISABLE_LOG_FILE: '1' },
+    // Bundled-plugin hermeticity — see vitest.setup.ts: a dev box with
+    // plugins/wxsearch/.venv installed must not leak wxsearch into every
+    // buildBootstrap-based test.
+    setupFiles: ['./vitest.setup.ts'],
   },
 })

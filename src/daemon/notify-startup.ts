@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { isProactiveWindowClosed } from './ilink/outbound-health'
 
 const FILE = 'last-startup.json'
 const NOTIFIED_MARKER_FILE = 'startup-notified.json'
@@ -26,6 +27,8 @@ export interface StartupNotifyDeps {
   send: (chatId: string, text: string) => Promise<unknown>
   log: (tag: string, line: string) => void
   now?: () => number
+  /** Delay before the one not-ready retry (default 15s; tests pass 1). */
+  retryDelayMs?: number
 }
 
 export interface StartupNotifyResult {
@@ -86,16 +89,61 @@ export async function notifyStartup(
   const isFirstEverNotify = !alreadyNotified && prevTs === null
 
   const text = isFirstEverNotify ? WARM_FIRST_STARTUP_TEXT : renderStartupText(ctx, sinceLast)
-  let okCount = 0
-  for (const chatId of recipients) {
+  // ilink-glue's sendMessage NEVER throws — failures come back as a resolved
+  // `{ error }` (see ilink-glue.ts). The old try/catch-only accounting
+  // counted every one of those as delivered ("sent to 1/1") while the boot
+  // log right above it said RETRY_FAIL. Check the resolved shape too, and
+  // give the channel one patient retry: at boot the WeChat session isn't
+  // prepared yet (errcode=-2), and the transport's own 3×1s retries are all
+  // spent before it comes up.
+  const trySend = async (chatId: string): Promise<boolean> => {
     try {
-      await deps.send(chatId, text)
-      okCount++
+      const res = await deps.send(chatId, text)
+      const err = (res as { error?: string } | null | undefined)?.error
+      if (err) {
+        // errcode=-2「prepare failed」是预期态,不是链路坏了:要么通道刚
+        // 重启还没就绪(下一轮重试就好),要么推送票据过期(下面会转存
+        // pending,用户一说话就补发)。用平静措辞记,别在日志里喊「failed」
+        // 让技术主人误以为出事(循环巡检里这条曾累计上百条噪声)。
+        if (isProactiveWindowClosed(err)) deps.log('NOTIFY', `to ${chatId} 暂不可推送(通道未就绪/票据待刷新):${err}`)
+        else deps.log('NOTIFY', `send to ${chatId} failed: ${err}`)
+        return false
+      }
+      return true
     } catch (err) {
-      deps.log('NOTIFY', `send to ${chatId} failed: ${err instanceof Error ? err.message : String(err)}`)
+      const msg = err instanceof Error ? err.message : String(err)
+      if (isProactiveWindowClosed(msg)) deps.log('NOTIFY', `to ${chatId} 暂不可推送(通道未就绪/票据待刷新):${msg}`)
+      else deps.log('NOTIFY', `send to ${chatId} failed: ${msg}`)
+      return false
     }
   }
+  let okCount = 0
+  let pending = recipients.slice()
+  // 4 rounds, 15s→30s→60s backoff (2026-08-26 循环巡检发现:自愈重启后
+  // ilink prepare 常要 30-60s 才 ready,旧的 2 轮×15s 两枪都落在就绪前,
+  // 恢复通知每次自愈重启都丢 —— 日志里连续三次 send-failed-all)。
+  for (let round = 0; round < 4 && pending.length > 0; round++) {
+    if (round > 0) {
+      const delay = (deps.retryDelayMs ?? 15_000) * Math.pow(2, round - 1)
+      deps.log('NOTIFY', `channel not ready — retrying ${pending.length} recipient(s) in ${Math.round(delay / 1000)}s`)
+      await new Promise(r => setTimeout(r, delay))
+    }
+    const stillFailing: string[] = []
+    for (const chatId of pending) {
+      if (await trySend(chatId)) okCount++
+      else stillFailing.push(chatId)
+    }
+    pending = stillFailing
+  }
   if (okCount === 0) {
+    // 微信 ilink 约束(2026-08-26 巡检定案):bot 主动推送需要近期用户
+    // 交互票据,票据过期时 prepare 必败、重试无用 —— 用户一说话票据
+    // 即刷新。把通知存为待发,inbound 侧(side-effects flushPendingNotify)
+    // 在用户下条消息后补发。
+    try {
+      writeFileSync(join(deps.stateDir, 'pending-notify.json'), JSON.stringify({ text, recipients: pending, ts: now }) + '\n', { mode: 0o600 })
+      deps.log('NOTIFY', `queued for next inbound (ticket likely expired) — ${pending.length} recipient(s)`)
+    } catch { /* best effort */ }
     return { notified: false, reason: 'send-failed-all', recipients, sinceLastMs: sinceLast }
   }
   // Backfill the marker on the upgrade path too (alreadyNotified=false,

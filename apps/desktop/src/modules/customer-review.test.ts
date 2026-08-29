@@ -94,12 +94,12 @@ describe("reviewProgressCopy", () => {
   it("shows elapsed time and a range instead of a false exact ETA", () => {
     expect(reviewProgressCopy("analyzing", "2026-07-15T10:00:00.000Z", Date.parse("2026-07-15T10:00:32.000Z"))).toEqual({
       kicker: "正在分析",
-      detail: "已等待 32 秒 · 通常需要 20–60 秒。",
+      detail: "已等待 32 秒 · 通常一到几分钟，取决于聊天量。",
     })
   })
 
   it("sets a longer expectation only after a minute", () => {
     expect(reviewProgressCopy("analyzing", "2026-07-15T10:00:00.000Z", Date.parse("2026-07-15T10:01:05.000Z")).detail)
-      .toBe("已等待 1 分 5 秒 · 较长的沟通范围可能需要 1–2 分钟。")
+      .toBe("已等待 1 分 5 秒 · 聊天多的范围要两三分钟，可以先去别的页看看。")
   })
 })

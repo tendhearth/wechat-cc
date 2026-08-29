@@ -25,7 +25,7 @@ function readRawAccess(): string {
   return readFileSync(ACCESS_FILE, 'utf8')
 }
 
-const { gate, isAdmin, loadAccess, saveAccess, appendAllowFrom, _clearCache, setSessionInvalidator, _resetSnapshotForTest } = await import('./access')
+const { gate, isAdmin, loadAccess, saveAccess, appendAllowFrom, removeAllowFrom, _clearCache, setSessionInvalidator, _resetSnapshotForTest } = await import('./access')
 
 beforeEach(() => {
   try { rmSync(ACCESS_FILE) } catch {}
@@ -308,5 +308,25 @@ describe('appendAllowFrom', () => {
     const onDisk = JSON.parse(readRawAccess()) as { dmPolicy: string; allowFrom: string[] }
     expect(onDisk.dmPolicy).toBe('allowlist')
     expect(onDisk.allowFrom).toEqual(['guest@im.wechat'])
+  })
+})
+
+
+// removeAllowFrom — 外部集成反馈 #5:补齐"移除"路径(此前只能手编文件)。
+describe('removeAllowFrom', () => {
+  it('removes a present userId, persists, busts the cache', () => {
+    writeAccess({ dmPolicy: 'allowlist', allowFrom: ['a@im.wechat', 'b@im.wechat'] })
+    expect(removeAllowFrom('a@im.wechat')).toEqual({ ok: true })
+    const onDisk = JSON.parse(readRawAccess()) as { allowFrom: string[] }
+    expect(onDisk.allowFrom).toEqual(['b@im.wechat'])
+    expect(loadAccess().allowFrom).toEqual(['b@im.wechat'])   // cache busted
+  })
+
+  it('refuses to remove an admin (self-lockout guard) and an absent id', () => {
+    writeAccess({ dmPolicy: 'allowlist', allowFrom: ['boss@im.wechat'], admins: ['boss@im.wechat'] })
+    expect(removeAllowFrom('boss@im.wechat')).toEqual({ ok: false, reason: 'is_admin' })
+    expect(removeAllowFrom('ghost@im.wechat')).toEqual({ ok: false, reason: 'not_in_allowlist' })
+    const onDisk = JSON.parse(readRawAccess()) as { allowFrom: string[] }
+    expect(onDisk.allowFrom).toEqual(['boss@im.wechat'])   // untouched
   })
 })

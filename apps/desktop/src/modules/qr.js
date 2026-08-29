@@ -45,8 +45,8 @@ export async function refreshQr(deps, state) {
   if (messageEl) messageEl.textContent = ""
   if (pollEl) pollEl.hidden = true
   if (ttlEl) ttlEl.textContent = qr.expires_in_ms
-    ? `${Math.floor(qr.expires_in_ms / 1000)}s ttl`
-    : "scan now"
+    ? `${Math.floor(qr.expires_in_ms / 1000)} 秒内有效`
+    : "现在扫码"
   if (rawEl) rawEl.textContent = JSON.stringify(qr, null, 2)
   if (continueBtn) continueBtn.disabled = true
   state.qrTimer = setInterval(() => pollQr(deps, state), POLL_INTERVAL_MS)

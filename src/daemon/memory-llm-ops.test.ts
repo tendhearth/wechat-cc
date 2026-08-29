@@ -47,3 +47,54 @@ describe('makeMemoryLlmOps', () => {
     await expect(ops.synthesize('a')).rejects.toThrow(/no LLM provider/)
   })
 })
+
+describe('generatePortrait (CC 手绘小像)', () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } = require('node:fs') as typeof import('node:fs')
+  const { tmpdir } = require('node:os') as typeof import('node:os')
+  const { join } = require('node:path') as typeof import('node:path')
+
+  const GOOD_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320"><circle cx="160" cy="120" r="60" fill="none" stroke="#5a3f2d" stroke-width="4"/></svg>'
+
+  function seedState(overview = '# 主人\n全栈开发者,喜欢咖啡和键盘。'): string {
+    const dir = mkdtempSync(join(tmpdir(), 'portrait-'))
+    mkdirSync(join(dir, 'memory', 'admin1'), { recursive: true })
+    if (overview) writeFileSync(join(dir, 'memory', 'admin1', '_overview.md'), overview)
+    return dir
+  }
+
+  it('从画像素材取材,产出净化后的 portrait.svg + 元数据', async () => {
+    const stateDir = seedState()
+    const { ops, cheapEval } = make({ stateDir })
+    cheapEval.mockResolvedValueOnce('好的!给主人画一张:\n```svg\n' + GOOD_SVG + '\n```')
+    const r = await ops.generatePortrait('admin1') as { ok: boolean }
+    expect(r.ok).toBe(true)
+    expect(readFileSync(join(stateDir, 'memory', 'admin1', 'portrait.svg'), 'utf8')).toBe(GOOD_SVG)
+    const meta = JSON.parse(readFileSync(join(stateDir, 'memory', 'admin1', 'portrait.json'), 'utf8'))
+    expect(typeof meta.generated_at).toBe('string')
+    expect(String(cheapEval.mock.calls.at(-1)?.[0])).toContain('咖啡')   // material reached the prompt
+  })
+
+  it('模型输出危险 SVG → ok:false,不落盘', async () => {
+    const stateDir = seedState()
+    const { ops, cheapEval } = make({ stateDir })
+    cheapEval.mockResolvedValueOnce('<svg onload="alert(1)"><circle r="5"/></svg>')
+    const r = await ops.generatePortrait('admin1') as { ok: boolean; error?: string }
+    expect(r.ok).toBe(false)
+    expect(existsSync(join(stateDir, 'memory', 'admin1', 'portrait.svg'))).toBe(false)
+  })
+
+  it('无任何素材 → ok:false no_profile,不调模型', async () => {
+    const stateDir = seedState('')
+    const { ops, cheapEval } = make({ stateDir })
+    const r = await ops.generatePortrait('admin1') as { ok: boolean; error?: string }
+    expect(r.ok).toBe(false)
+    expect(r.error).toBe('no_profile')
+    expect(cheapEval).not.toHaveBeenCalled()
+  })
+
+  it('路径不安全的 chatId → ok:false', async () => {
+    const { ops } = make({ stateDir: seedState() })
+    const r = await ops.generatePortrait('../evil') as { ok: boolean }
+    expect(r.ok).toBe(false)
+  })
+})

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatInbound } from './prompt-format'
+import { formatInbound, toLocalISO, localDayKey, RECALL_BLOCK_MAX } from './prompt-format'
 
 describe('formatInbound', () => {
   it('wraps a plain text message with channel tag', () => {
@@ -60,12 +60,84 @@ describe('formatInbound', () => {
     expect(out).not.toContain('<quote')
   })
 
+  it('renders a <recall> element before the body when msg.recall is set', () => {
+    const out = formatInbound({
+      chatId: 'c', userId: 'u', userName: 'x',
+      text: 'hi', msgType: 'text', createTimeMs: 1, accountId: 'a',
+      recall: ['[2026-08-01 张三] 上次说搬去上海', '[2026-08-02 我] 记得带书'],
+    })
+    expect(out).toContain('<recall hint="自动检索的相关片段，可能不相关，仅供参考">')
+    expect(out).toContain('</recall>')
+    expect(out.indexOf('<recall')).toBeLessThan(out.indexOf('hi'))
+    expect(out).toContain('上次说搬去上海')
+    expect(out).toContain('记得带书')
+  })
+
+  it('omits <recall> entirely when recall is absent, empty, or blank-only', () => {
+    const base = { chatId: 'c', userId: 'u', userName: 'x', text: 'hi', msgType: 'text', createTimeMs: 1, accountId: 'a' }
+    expect(formatInbound(base)).not.toContain('<recall')
+    expect(formatInbound({ ...base, recall: [] })).not.toContain('<recall')
+    expect(formatInbound({ ...base, recall: ['  ', ''] })).not.toContain('<recall')
+  })
+
+  it('escapes recall body', () => {
+    const out = formatInbound({
+      chatId: 'c', userId: 'u', userName: 'x',
+      text: 'hi', msgType: 'text', createTimeMs: 1, accountId: 'a',
+      recall: ['a < b & <script>'],
+    })
+    expect(out).toContain('a &lt; b &amp; &lt;script&gt;')
+    expect(out).not.toContain('<script>')
+  })
+
+  it('caps the joined recall block at RECALL_BLOCK_MAX chars', () => {
+    const out = formatInbound({
+      chatId: 'c', userId: 'u', userName: 'x',
+      text: 'hi', msgType: 'text', createTimeMs: 1, accountId: 'a',
+      recall: ['x'.repeat(2000)],
+    })
+    const start = out.indexOf('仅供参考">\n') + '仅供参考">\n'.length
+    const body = out.slice(start, out.indexOf('\n</recall>'))
+    expect(body.length).toBeLessThanOrEqual(RECALL_BLOCK_MAX)
+  })
+
   it('emits ts as ISO-8601 UTC (legible to the agent), not raw epoch ms', () => {
     const out = formatInbound({
       chatId: 'c', userId: 'u', userName: 'x',
       text: 'hi', msgType: 'text', createTimeMs: 1_000_000, accountId: 'a',
     })
-    expect(out).toContain('ts="1970-01-01T00:16:40.000Z"') // new Date(1_000_000).toISOString()
+    // ts 现在是带时区偏移的本地 ISO(见 toLocalISO)—— 结构 + 还原同一时刻,
+    // 不依赖运行机器的时区。
+    const m = out.match(/ts="([^"]+)"/)
+    expect(m).not.toBeNull()
+    expect(m![1]).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/)
+    expect(Date.parse(m![1]!)).toBe(1_000_000)   // 同一时刻,零时区 bug
     expect(out).not.toContain('ts="1000000"')
+  })
+
+  it('toLocalISO: ISO with local offset that parses back to the same instant', () => {
+    const out = toLocalISO(1_700_000_000_000)
+    expect(out).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/)
+    expect(Date.parse(out)).toBe(1_700_000_000_000)   // instant preserved regardless of machine TZ
+  })
+})
+
+describe('localDayKey', () => {
+  const evening = Date.parse('2026-08-28T04:30:00Z')   // = 27th evening in the Americas
+
+  it('fixed offset: UTC+8 rolls a UTC-evening instant into the next local day', () => {
+    // 04:30Z at UTC+8 = 12:30 same day → 08-28. At UTC-7 = 21:30 prev day → 08-27.
+    expect(localDayKey(evening, 480)).toBe('2026-08-28')   // UTC+8
+    expect(localDayKey(evening, -420)).toBe('2026-08-27')  // UTC-7 (PDT)
+    expect(localDayKey(evening, 0)).toBe('2026-08-28')     // UTC
+  })
+
+  it('offset=0 equals the UTC calendar day', () => {
+    expect(localDayKey(Date.parse('2026-08-27T23:59:59Z'), 0)).toBe('2026-08-27')
+    expect(localDayKey(Date.parse('2026-08-28T00:00:01Z'), 0)).toBe('2026-08-28')
+  })
+
+  it('omitted offset follows the system tz (parses to a valid day key)', () => {
+    expect(localDayKey(evening)).toMatch(/^\d{4}-\d{2}-\d{2}$/)
   })
 })

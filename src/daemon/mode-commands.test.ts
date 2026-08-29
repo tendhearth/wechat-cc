@@ -1052,7 +1052,7 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toContain('未设置')
     await cmds.handle(inbound('/set stickers off'))
     await cmds.handle(inbound('/set'))
-    expect(sentMessages[2]?.[1]).toContain('表情(表情包): off')
+    expect(sentMessages[2]?.[1]).toContain('表情包: off')
   })
 
   // ── /set hunt|打猎 — daily hunt toggle (Task 2) ────────────────────────
@@ -1102,7 +1102,7 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).toContain('未设置')
     await cmds.handle(inbound('/set hunt off'))
     await cmds.handle(inbound('/set'))
-    expect(sentMessages[2]?.[1]).toContain('打猎(每日打猎): off')
+    expect(sentMessages[2]?.[1]).toContain('每日打猎: off')
   })
 
   it('/help line mentions 每日打猎', async () => {

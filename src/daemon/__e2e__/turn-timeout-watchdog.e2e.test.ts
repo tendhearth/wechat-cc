@@ -42,7 +42,11 @@ describe('e2e: per-turn watchdog ends a stalled turn without wedging the daemon'
         daemon.sendText('chat1', 'HANG please')
         const replies = await daemon.waitForReplyTo('chat1', 8000)
         expect(
-          replies.some(m => m.endpoint === 'sendmessage' && m.chatId === 'chat1' && /超时|重发/.test(m.text ?? '')),
+          // v1.4.1 的人话化把通知从「…超时…」改成「想了半天没想出来,刚才
+          // 那条掉了…再发我一次?」,旧正则 /超时|重发/ 从此匹配不上("再发"
+          // ≠"重发"),e2e job 在每个 PR 上红了一路没人认领。匹配语义锚点
+          // 而非全文,文案微调不再打断 e2e。
+          replies.some(m => m.endpoint === 'sendmessage' && m.chatId === 'chat1' && /再发我一次|超时/.test(m.text ?? '')),
           'chat1 should receive the watchdog timeout notice',
         ).toBe(true)
 

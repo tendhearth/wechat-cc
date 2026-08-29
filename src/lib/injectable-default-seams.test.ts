@@ -47,6 +47,7 @@ const BOUNDARY: Record<string, string> = {
   defaultProbeCursor: 'spawns the cursor CLI to read its version (src/cli/doctor.ts)',
   defaultProbeGemini: 'spawns the gemini CLI to read its version (src/cli/doctor.ts)',
   defaultSpawnFn: 'spawns the agy (Antigravity) CLI child process per turn (src/core/agy-agent-provider.ts)',
+  defaultConnect: 'opens an outbound WebSocket to the remote relay (src/daemon/tunnel-client.ts)',
 }
 
 /** Seams whose default is a plain value or a pure computation — injecting one
@@ -78,7 +79,11 @@ const PURE: Record<string, string> = {
  * Read the implementation before adding anything here. "Crosses a boundary"
  * is not the same as "cannot be tested", and the gap between those two is
  * where an untested default hides. */
-const BOUNDARY_UNTESTABLE = new Set<string>()
+const BOUNDARY_UNTESTABLE = new Set<string>([
+  // Opens a live outbound WebSocket to the remote relay — a hermetic test
+  // can't stand up a real relay; every tunnel-client test injects `connect`.
+  'defaultConnect',
+])
 
 const SEAM_RE = /\?\?\s*(default[A-Z]\w*)/g
 

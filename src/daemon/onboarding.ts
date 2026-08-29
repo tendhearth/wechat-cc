@@ -268,9 +268,11 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
     }
     deleteAwaiting(msg.chatId)
     deps.log('ONBOARDING', `bot_name set chat=${msg.chatId} → "${proposed}"`)
+    // 给我起名是陪伴关系里一个有分量的时刻 —— 暖一点地认下这个名字,别只回
+    // 平淡的「好的」(跟给用户起昵称时的「好的 大人!」保持同样的温度)。
     await deps.sendMessage(
       msg.chatId,
-      `好的。刚才你说「${aw.fromMessage.text}」, 回答下：`,
+      `好嘞,以后你就叫我「${proposed}」🐻 刚才你说「${aw.fromMessage.text}」, 回答下：`,
     )
     void deps.dispatchInbound(aw.fromMessage).catch(err => {
       deps.log('ONBOARDING', `echo dispatch failed chat=${msg.chatId}: ${err}`)

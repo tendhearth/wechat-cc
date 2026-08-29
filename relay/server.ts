@@ -9,6 +9,7 @@ import { Database } from 'bun:sqlite'
 import { makeMailboxStore } from './mailbox-store'
 import { verifyFetchSig, verifyAckSig } from './mailbox-auth'
 import { makeRateLimiter } from './rate-limit'
+import { makeTunnelHub, type TunnelSocket } from './tunnel'
 
 export interface RelayServer { fetchHandler(req: Request, ip: string): Promise<Response>; sweep(now: number): number }
 
@@ -64,16 +65,60 @@ export function makeRelayServer(opts: {
   }
 }
 
-/** Bun.serve entry — used by the VPS runbook (Task 13), not by vitest. */
+/** Bun.serve entry — used by the VPS runbook (Task 13), not by vitest.
+ *  Serves the mailbox HTTP routes AND the 随身 CC tunnel WebSocket (both
+ *  content-blind). Nginx proxies /mailbox/ → /* and /tunnel/ → this port. */
 export function startRelay(opts: { port?: number; dbPath?: string } = {}): { stop(): void; port: number } {
   const db = new Database(opts.dbPath ?? 'mailbox.sqlite')
   db.run('PRAGMA journal_mode = WAL')
   const relay = makeRelayServer({ db })
-  const server = Bun.serve({
+  const hub = makeTunnelHub()
+  // ws.data carries the role so message/close know how to route.
+  type WsData = { role: 'daemon'; id: string } | { role: 'phone'; streamId: string; daemonId: string }
+  const server = Bun.serve<WsData>({
     port: opts.port ?? 8787,
     fetch(req, srv) {
+      const url = new URL(req.url)
+      // Daemon dials out and holds one socket: /tunnel/daemon?id=<opaque>
+      if (url.pathname === '/tunnel/daemon') {
+        const id = url.searchParams.get('id')
+        if (!id) return new Response('missing id', { status: 400 })
+        if (srv.upgrade(req, { data: { role: 'daemon', id } })) return undefined as unknown as Response
+        return new Response('expected websocket', { status: 426 })
+      }
+      // Phone connects: /tunnel/phone?id=<daemon-id>
+      if (url.pathname === '/tunnel/phone') {
+        const daemonId = url.searchParams.get('id')
+        if (!daemonId) return new Response('missing id', { status: 400 })
+        // Upgrade first, then attach in `open` (need the ws handle for the hub).
+        if (srv.upgrade(req, { data: { role: 'phone', streamId: '', daemonId } })) return undefined as unknown as Response
+        return new Response('expected websocket', { status: 426 })
+      }
       const ip = srv.requestIP(req)?.address ?? 'unknown'
       return relay.fetchHandler(req, ip)
+    },
+    websocket: {
+      maxPayloadLength: 512 * 1024,
+      idleTimeout: 120,   // seconds; daemon sends app-level pings under this
+      open(ws) {
+        const d = ws.data
+        const sock: TunnelSocket = { send: (s) => ws.send(s), close: () => ws.close(), get readyState() { return ws.readyState } }
+        if (d.role === 'daemon') { hub.registerDaemon(d.id, sock); return }
+        const r = hub.attachPhone(d.daemonId, sock)
+        if (!r.ok) { ws.send(JSON.stringify({ error: r.error })); ws.close(); return }
+        d.streamId = r.streamId!
+      },
+      message(ws, message) {
+        const d = ws.data
+        const raw = typeof message === 'string' ? message : message.toString()
+        if (d.role === 'daemon') hub.onDaemonFrame(d.id, raw)
+        else if (d.streamId) hub.onPhoneFrame(d.streamId, raw)
+      },
+      close(ws) {
+        const d = ws.data
+        if (d.role === 'daemon') hub.dropDaemon(d.id)
+        else if (d.streamId) hub.dropPhone(d.streamId)
+      },
     },
   })
   const sweepTimer = setInterval(() => relay.sweep(Date.now()), 60 * 60_000)   // hourly TTL sweep

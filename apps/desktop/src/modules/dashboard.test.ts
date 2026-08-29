@@ -17,7 +17,41 @@ beforeEach(() => {
 })
 
 // Import AFTER document stub so setPending's getElementById doesn't crash
-const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, __resetDashboardState, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, loadLastIncident, checkIncidentsOnPoll } = await import('./dashboard.js')
+const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, __resetDashboardState, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, loadLastIncident, checkIncidentsOnPoll, saveBrainKey } = await import('./dashboard.js')
+
+// Map-backed getElementById so saveBrainKey can read form input values.
+function stubBrainForm(fields: Record<string, string>) {
+  const status = { textContent: '', innerHTML: '' }
+  const els: Record<string, unknown> = { 'brain-setup-status': status }
+  for (const [id, value] of Object.entries(fields)) els[id] = { value }
+  // @ts-expect-error minimal stub
+  globalThis.document = { getElementById: (id: string) => els[id] ?? null }
+  return status
+}
+
+describe('saveBrainKey — openai 兼容接口必须三样齐', () => {
+  it('只填 key(缺 base_url/model)→ 拦住,不发请求,提示补全', async () => {
+    const status = stubBrainForm({ 'brain-key': 'sk-abc', 'brain-baseurl': '', 'brain-model': '' })
+    const invokeApi = vi.fn(async () => ({ ok: true }))
+    await saveBrainKey({ invokeApi }, 'openai')
+    expect(invokeApi).not.toHaveBeenCalled()
+    expect(String(status.textContent)).toContain('接口地址')
+  })
+
+  it('三样齐 → 正常发请求', async () => {
+    stubBrainForm({ 'brain-key': 'sk-abc', 'brain-baseurl': 'https://llm.mycorp.cn/v1', 'brain-model': 'qwen-max' })
+    const invokeApi = vi.fn(async () => ({ ok: true }))
+    await saveBrainKey({ invokeApi }, 'openai')
+    expect(invokeApi).toHaveBeenCalledWith('POST', '/v1/llm/keys', expect.objectContaining({ provider: 'openai', key: 'sk-abc', base_url: 'https://llm.mycorp.cn/v1', model: 'qwen-max' }))
+  })
+
+  it('gemini 只填 key → 不被 openai 规则误拦', async () => {
+    stubBrainForm({ 'brain-key': 'gk-xyz', 'brain-model': '' })
+    const invokeApi = vi.fn(async () => ({ ok: true }))
+    await saveBrainKey({ invokeApi }, 'gemini')
+    expect(invokeApi).toHaveBeenCalled()
+  })
+})
 
 // In-memory localStorage stub — real round-trip semantics (get after set),
 // unlike memory.test.ts's bare no-op stub, because loadLastIncident's
@@ -1236,7 +1270,7 @@ describe('provider menu', () => {
     expect(els.dashPending.textContent).toBe('切换 provider 失败')
   })
 
-  it('toggleUserProviderMenu populates card menu with claude, codex, gemini buttons', async () => {
+  it('toggleUserProviderMenu populates card menu from the registered-provider fallback', async () => {
     const { menuButtons } = installProviderMenuDom()
     const row = { dataset: { chatId: 'chat-1', currentProvider: 'claude' } }
     const anchor = {
@@ -1252,7 +1286,8 @@ describe('provider menu', () => {
       makeProviderReport('claude'),
     )
 
-    expect(menuButtons.map(b => b.dataset.provider)).toEqual(['claude', 'codex', 'gemini'])
+    // 与大脑区同源:未拿到 /v1/llm/health registered 前用保守兜底
+    expect(menuButtons.map(b => b.dataset.provider)).toEqual(['claude', 'codex', 'cursor'])
   })
 
   it('user card provider click invokes mode set with JSON solo provider', async () => {
@@ -1267,7 +1302,7 @@ describe('provider menu', () => {
     const invoke = vi.fn(async () => ({ ok: true }))
 
     await toggleUserProviderMenu({ invoke, doctorPoller: { refresh: vi.fn(async () => null) } }, anchor, makeProviderReport('claude'))
-    const geminiBtn = menuButtons.find(b => b.dataset.provider === 'gemini')
+    const geminiBtn = menuButtons.find(b => b.dataset.provider === 'cursor')
     expect(geminiBtn).toBeDefined()
     for (const handler of geminiBtn!._clickHandlers) {
       await handler({ stopPropagation: () => {} })
@@ -1280,7 +1315,7 @@ describe('provider menu', () => {
     expect(modeSetCall).toBeDefined()
     const args = (modeSetCall as any)[1].args
     expect(args[2]).toBe('chat-1')
-    expect(JSON.parse(args[3])).toEqual({ kind: 'solo', provider: 'gemini' })
+    expect(JSON.parse(args[3])).toEqual({ kind: 'solo', provider: 'cursor' })
     expect(args[4]).toBe('--json')
   })
 })

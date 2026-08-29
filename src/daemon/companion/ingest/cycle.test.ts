@@ -90,15 +90,81 @@ describe('runIngestCycle', () => {
   })
 })
 
+describe('builder cooldown (repeat-timeout damper)', () => {
+  it('after 3 consecutive failures a builder is skipped until the cooldown lapses', async () => {
+    const { BUILDER_COOLDOWN_MS } = await import('./cycle')
+    const health = { fails: new Map() }
+    let t = 1_000_000
+    const mk = (mtime: number) => {
+      const seen: string[] = []
+      const bridge = { call: vi.fn(async (tool: string) => {
+        seen.push(tool)
+        if (tool === 'voice_backfill') throw new Error('MCP error -32001: Request timed out')
+        return tool === 'extraction_batch' ? DONE : '{}'
+      }) }
+      return { seen, d: deps({ tools: ALL, bridge, sourceMaxMtime: () => mtime, lastSourceMtime: mtime - 1 }) }
+    }
+    // three failing cycles — still attempted each time
+    for (let i = 0; i < 3; i++) {
+      const { seen, d } = mk(100 + i)
+      await runIngestCycle({ ...d, builderHealth: health, now: () => t })
+      expect(seen).toContain('voice_backfill')
+    }
+    // 4th cycle: cooling down — not attempted
+    const c4 = mk(200)
+    const r4 = await runIngestCycle({ ...c4.d, builderHealth: health, now: () => t })
+    expect(c4.seen).not.toContain('voice_backfill')
+    expect(r4.transcribed).toBe(false)
+    // cooldown lapsed — attempted again
+    t += BUILDER_COOLDOWN_MS + 1
+    const c5 = mk(300)
+    await runIngestCycle({ ...c5.d, builderHealth: health, now: () => t })
+    expect(c5.seen).toContain('voice_backfill')
+  })
+
+  it('one success wipes the failure streak', async () => {
+    const health = { fails: new Map() }
+    let fail = true
+    const mkAlt = (mtime: number) => {
+      const seen: string[] = []
+      const bridge = { call: vi.fn(async (tool: string) => {
+        seen.push(tool)
+        if (tool === 'voice_backfill' && fail) throw new Error('timeout')
+        return tool === 'extraction_batch' ? DONE : '{}'
+      }) }
+      return { seen, d: deps({ tools: ALL, bridge, sourceMaxMtime: () => mtime, lastSourceMtime: mtime - 1 }) }
+    }
+    await runIngestCycle({ ...mkAlt(100).d, builderHealth: health, now: () => 1 })  // fail 1
+    await runIngestCycle({ ...mkAlt(101).d, builderHealth: health, now: () => 1 })  // fail 2
+    fail = false
+    await runIngestCycle({ ...mkAlt(102).d, builderHealth: health, now: () => 1 })  // success — streak reset
+    fail = true
+    // two more failures ≠ 3 consecutive → still attempted on the next cycle
+    await runIngestCycle({ ...mkAlt(103).d, builderHealth: health, now: () => 1 })
+    await runIngestCycle({ ...mkAlt(104).d, builderHealth: health, now: () => 1 })
+    const last = mkAlt(105)
+    await runIngestCycle({ ...last.d, builderHealth: health, now: () => 1 })
+    expect(last.seen).toContain('voice_backfill')
+  })
+})
+
 describe('runIngestCycle — factsApi (in-proc extraction)', () => {
   it('with factsApi present, extraction runs through it — bridge.call NOT called for extraction_batch, even when hasTool is false', async () => {
     const factsApi = {
       nextBatch: vi.fn(() => ({ done: true })),
       record: vi.fn(),
-      contactFacts: vi.fn(),
+      contactFacts: vi.fn(() => ({ by_kind: {} })),
       findFacts: vi.fn(),
       setFactStatus: vi.fn(),
       extractionStatus: vi.fn(),
+      supersede: vi.fn(() => ({ superseded: 0 })),
+      conflictedGroups: vi.fn(() => []),
+      obligationHeavyContacts: vi.fn(() => []),
+      mergeObligations: vi.fn(() => ({ merged: 0 })),
+      settleObligations: vi.fn(() => ({ settled: 0 })),
+      recentMessages: vi.fn(() => []),
+      judgeFingerprint: vi.fn(() => null),
+      setJudgeFingerprint: vi.fn(),
     }
     const bridge = { call: vi.fn(async (_t: string, _i?: unknown) => '{}') }
     const d = deps({ tools: [], bridge })   // no tools at all — extraction_batch absent
@@ -118,10 +184,18 @@ describe('runIngestCycle — factsApi (in-proc extraction)', () => {
           : { done: true }
       }),
       record: vi.fn(() => ({ recorded: 1, merged: 0, advanced_to: 1 })),
-      contactFacts: vi.fn(),
+      contactFacts: vi.fn(() => ({ by_kind: {} })),
       findFacts: vi.fn(),
       setFactStatus: vi.fn(),
       extractionStatus: vi.fn(),
+      supersede: vi.fn(() => ({ superseded: 0 })),
+      conflictedGroups: vi.fn(() => []),
+      obligationHeavyContacts: vi.fn(() => []),
+      mergeObligations: vi.fn(() => ({ merged: 0 })),
+      settleObligations: vi.fn(() => ({ settled: 0 })),
+      recentMessages: vi.fn(() => []),
+      judgeFingerprint: vi.fn(() => null),
+      setJudgeFingerprint: vi.fn(),
     }
     const bridge = { call: vi.fn(async (_t: string, _i?: unknown) => '{}') }
     const d = deps({ tools: [], bridge, cheapEval: async () => '[{"kind":"entity","predicate":"是","value":"x"}]' })

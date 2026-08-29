@@ -237,7 +237,7 @@ export interface GateBaseCapability {
 /** Injected deps for the gate — bootstrap supplies the real ones; tests fake them.
  *  Kept abstract so the provider module doesn't import bootstrap. */
 export interface GeminiGateDeps {
-  askUser: (adminChatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout'>
+  askUser: (adminChatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
   adminFor: (chatId: string) => string | null
   modeFor: (chatId: string) => string
   lookupBase: (mode: string, permissionMode: PermissionMode) => GateBaseCapability
@@ -297,7 +297,10 @@ export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) =>
       const hash = shortHash(`${ctx.chatId}:${toolName}:${seq}`)
       const answer = await deps.askUser(admin, `Gemini wants to run ${toolName}`, hash, GEMINI_RELAY_TIMEOUT_MS)
       if (answer === 'allow') return { allow: true }
-      return { allow: false, message: answer === 'timeout' ? 'no reply in time; denied' : 'denied by operator' }
+      const message = answer === 'undelivered'
+        ? 'could not reach the owner for approval (their message window is likely closed) — tell the user to try again shortly or have the owner message first'
+        : answer === 'timeout' ? 'no reply in time; denied' : 'denied by operator'
+      return { allow: false, message }
     }
   }
 }

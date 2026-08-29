@@ -2,7 +2,10 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Permissions for the wechat-cc desktop wizard. Grants the bundled wechat-cc-cli sidecar permission to execute and stream output back to the GUI.",
-  "windows": ["main", "companion"],
+  "windows": [
+    "main",
+    "companion"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
@@ -17,6 +20,8 @@
           "args": true
         }
       ]
-    }
+    },
+    "updater:default",
+    "process:allow-restart"
   ]
 }

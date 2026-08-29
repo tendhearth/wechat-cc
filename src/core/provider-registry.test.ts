@@ -139,3 +139,156 @@ describe('ProviderRegistry', () => {
     })
   })
 })
+
+describe('getCheapEval — runtime failover (2026-08-24: agy auth-dead froze the whole ingest pipeline)', () => {
+  function reg(impls: Record<string, (p: string) => Promise<string>>, now = () => 1000) {
+    const r = createProviderRegistry({ now })
+    for (const [id, cheapEval] of Object.entries(impls)) {
+      r.register(id, { id, cheapEval } as never, {} as never)
+    }
+    return r
+  }
+
+  it('falls through to the next provider when the preferred one throws', async () => {
+    const calls: string[] = []
+    const r = reg({
+      agy: async () => { calls.push('agy'); throw new Error('authentication failed') },
+      claude: async () => { calls.push('claude'); return 'ok-from-claude' },
+    })
+    const ce = r.getCheapEval()!
+    expect(await ce('prompt')).toBe('ok-from-claude')
+    expect(calls).toEqual(['agy', 'claude'])
+  })
+
+  it('puts a failing provider on cooldown — later calls skip it without retrying', async () => {
+    const calls: string[] = []
+    let t = 1000
+    const r = reg({
+      agy: async () => { calls.push('agy'); throw new Error('auth') },
+      claude: async () => { calls.push('claude'); return 'ok' },
+    }, () => t)
+    const ce = r.getCheapEval()!
+    await ce('a')                      // agy fails → cooldown, claude answers
+    await ce('b')                      // agy skipped entirely
+    expect(calls).toEqual(['agy', 'claude', 'claude'])
+    t += 11 * 60_000                   // past the 10-minute cooldown
+    await ce('c')                      // agy retried
+    expect(calls[calls.length - 2]).toBe('agy')
+  })
+
+  it("agy's ambiguous 'authentication failed or timed out' is treated as TRANSIENT, not auth (owner can log in — it's network/timeout)", async () => {
+    const calls: string[] = []
+    let t = 1000
+    const r = reg({
+      agy: async () => { calls.push('agy'); throw new Error('agy result status=ERROR: authentication failed or timed out') },
+      claude: async () => { calls.push('claude'); return 'ok' },
+    }, () => t)
+    const ce = r.getCheapEval()!
+    await ce('a')                      // agy fails → SHORT (10min) cooldown, not 60min
+    t += 11 * 60_000                   // past the 10min transient cooldown
+    await ce('b')                      // agy retried (would still be sidelined if mis-classed as auth)
+    expect(calls.filter(c => c === 'agy')).toHaveLength(2)
+  })
+
+  it('an auth failure gets a longer cooldown than a transient one (does not self-heal in 10min)', async () => {
+    const calls: string[] = []
+    let t = 1000
+    const r = reg({
+      agy: async () => { calls.push('agy'); throw new Error('auth_failed: credentials stale') },
+      claude: async () => { calls.push('claude'); return 'ok' },
+    }, () => t)
+    const ce = r.getCheapEval()!
+    await ce('a')                      // agy auth-fails → 60min cooldown
+    t += 11 * 60_000                   // past the 10min transient cooldown…
+    await ce('b')                      // …but agy still skipped (auth cooldown is 60min)
+    expect(calls.filter(c => c === 'agy')).toHaveLength(1)
+    t += 50 * 60_000                   // past the 60min auth cooldown
+    await ce('c')                      // now agy retried
+    expect(calls.filter(c => c === 'agy')).toHaveLength(2)
+  })
+
+  it('throws the last error when every provider fails (watermark-preserving semantics intact)', async () => {
+    const r = reg({
+      agy: async () => { throw new Error('agy down') },
+      claude: async () => { throw new Error('claude down') },
+    })
+    await expect(r.getCheapEval()!('p')).rejects.toThrow('claude down')
+  })
+
+  it('single provider: failures still throw (no cooldown lockout with nowhere to go)', async () => {
+    let fail = true
+    const r = reg({ claude: async () => { if (fail) throw new Error('blip'); return 'ok' } })
+    const ce = r.getCheapEval()!
+    await expect(ce('p')).rejects.toThrow('blip')
+    fail = false
+    expect(await ce('p')).toBe('ok')   // immediately usable again
+  })
+})
+
+describe('getCheapEval — network preflight (2026-08-29: boot-time agy spawn with Google unreachable popped the OAuth browser)', () => {
+  function reg(
+    impls: Record<string, (p: string) => Promise<string>>,
+    preflight: (id: string) => Promise<boolean>,
+    now = () => 1000,
+  ) {
+    const r = createProviderRegistry({ now, cheapEvalPreflight: preflight })
+    for (const [id, cheapEval] of Object.entries(impls)) {
+      r.register(id, { id, cheapEval } as never, {} as never)
+    }
+    return r
+  }
+
+  it('an unreachable candidate is skipped WITHOUT being called — the call lands on the next one', async () => {
+    const calls: string[] = []
+    const r = reg({
+      agy: async () => { calls.push('agy'); return 'from-agy' },
+      claude: async () => { calls.push('claude'); return 'from-claude' },
+    }, async (id) => id !== 'agy')
+    expect(await r.getCheapEval()!('p')).toBe('from-claude')
+    expect(calls).toEqual(['claude'])                       // agy never spawned
+  })
+
+  it('a preflight skip does NOT cool the provider down — it is re-checked on the very next call', async () => {
+    const calls: string[] = []
+    let reachable = false
+    const r = reg({
+      agy: async () => { calls.push('agy'); return 'from-agy' },
+      claude: async () => { calls.push('claude'); return 'from-claude' },
+    }, async (id) => id === 'agy' ? reachable : true)
+    await r.getCheapEval()!('a')                            // agy skipped → claude
+    reachable = true                                        // network came back
+    expect(await r.getCheapEval()!('b')).toBe('from-agy')   // no cooldown in the way
+    expect(calls).toEqual(['claude', 'agy'])
+  })
+
+  it('ALL candidates unreachable → throws instead of force-calling anyone', async () => {
+    const calls: string[] = []
+    const r = reg({
+      agy: async () => { calls.push('agy'); return 'x' },
+      claude: async () => { calls.push('claude'); return 'y' },
+    }, async () => false)
+    await expect(r.getCheapEval()!('p')).rejects.toThrow(/reachable/)
+    expect(calls).toEqual([])                               // nobody spawned
+  })
+
+  it('a preflight that THROWS fails open — the candidate still runs', async () => {
+    const r = reg({
+      agy: async () => 'from-agy',
+    }, async () => { throw new Error('probe machinery broke') })
+    expect(await r.getCheapEval()!('p')).toBe('from-agy')
+  })
+
+  it('everyone cooling down but reachable → the stale-blacklist escape still force-tries the first candidate', async () => {
+    const calls: string[] = []
+    let t = 1000
+    const r = reg({
+      agy: async () => { calls.push('agy'); throw new Error('down') },
+      claude: async () => { calls.push('claude'); throw new Error('down') },
+    }, async () => true, () => t)
+    await r.getCheapEval()!('a').catch(() => {})            // both fail → both cooling
+    calls.length = 0
+    const r2 = await r.getCheapEval()!('b').catch(() => 'threw')
+    expect(r2).toBe('threw')
+    expect(calls).toEqual(['agy'])                          // escape hatch force-tried first
+  })
+})

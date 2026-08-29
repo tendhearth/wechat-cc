@@ -20,6 +20,18 @@ describe('PendingPermissions', () => {
     await expect(p).resolves.toBe('deny')
   })
 
+  it('fail resolves register() promise with undelivered (fail-fast, no dead-wait)', async () => {
+    const reg = new PendingPermissions()
+    const p = reg.register('undel1', 600_000)
+    expect(reg.fail('undel1')).toBe(true)
+    await expect(p).resolves.toBe('undelivered')   // resolves NOW, not after 10min
+  })
+
+  it('fail returns false when hash not registered', () => {
+    const reg = new PendingPermissions()
+    expect(reg.fail('ghost')).toBe(false)
+  })
+
   it('consume returns false when hash not registered', () => {
     const reg = new PendingPermissions()
     expect(reg.consume('ghost', 'allow')).toBe(false)

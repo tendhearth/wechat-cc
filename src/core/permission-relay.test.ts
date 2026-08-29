@@ -29,6 +29,23 @@ describe('makeCanUseTool', () => {
     expect(ask).toHaveBeenCalledWith('admin-chat', expect.stringContaining('Bash'), expect.any(String), expect.any(Number))
   })
 
+  it('undelivered → deny with an honest "couldn’t reach the owner" message (not a false denial)', async () => {
+    const ask = vi.fn().mockResolvedValue('undelivered')
+    const fn = makeCanUseTool({
+      askUser: ask,
+      resolveTier: () => 'admin',
+      adminChatId: () => 'admin-chat',
+      initiatingChatId: () => 'guest-chat',
+      log: () => {},
+      ...baseMode,
+    })
+    const res = await fn('Bash', { command: 'rm -rf /tmp/x' }, { signal: new AbortController().signal, toolUseID: 't1' } as any)
+    expect(res.behavior).toBe('deny')
+    // message must say the owner couldn't be reached — NOT that they denied it.
+    expect(String((res as { message?: string }).message)).toMatch(/could not|couldn|reach|approval/i)
+    expect(String((res as { message?: string }).message)).not.toMatch(/User denied/)
+  })
+
   it('denies the wechat reply tool in chatroom mode (force plain text) without prompting', async () => {
     const ask = vi.fn()
     const fn = makeCanUseTool({

@@ -12,12 +12,14 @@ import { basename } from 'node:path'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
 import { splitReply, paceMs } from '../reply-split'
 import { lookup } from '../../core/capability-matrix'
+import { normalizeUserName } from '../../lib/user-name'
 import type { Mode } from '../../core/conversation'
 import type { UserTier } from '../../core/user-tier'
 import { makeEventsStore } from '../events/store'
 import { a2aRoutes } from './routes-a2a'
 import { socialRoutes } from './routes-social'
 import { knowledgeRoutes } from './routes-knowledge'
+import { configRoutes } from './routes-config'
 import { pairRoutes } from './routes-pair'
 import { memoryRoutes } from './routes-memory'
 import { penpalRoutes } from './routes-penpal'
@@ -28,6 +30,7 @@ import { daemonControlRoutes } from './routes-daemon-control'
 import { fileRoutes } from './routes-files'
 import { customerReviewRoutes } from './routes-customer-review'
 import { federationRoutes } from './routes-federation'
+import { remindersRoutes } from './routes-reminders'
 import type {
   MemoryReadRequestT, MemoryWriteRequestT, MemoryDeleteRequestT,
   ProjectsSwitchRequestT, ProjectsAddRequestT, ProjectsRemoveRequestT,
@@ -70,6 +73,15 @@ function memoryScopeDenied(path: string, caller?: { tier: UserTier; origin: stri
   return !(norm === caller.chatId || norm.startsWith(`${caller.chatId}/`))
 }
 
+function toWireOutbound(h: import('../ilink/outbound-health').OutboundHealth) {
+  return {
+    state: h.state,
+    consecutive_failures: h.consecutiveFailures,
+    last_ok_at: h.lastOkAt,
+    last_error: h.lastError,
+  }
+}
+
 export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext): RouteTable {
   return {
     'GET /v1/health': () => ({
@@ -84,6 +96,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
         sessions_live: deps.listSessions?.()?.length ?? 0,
         heartbeat_fresh: deps.heartbeatFresh?.() ?? null,
         subsystems: deps.subsystems?.() ?? [],
+        ...(deps.outbound ? { outbound: toWireOutbound(deps.outbound()) } : {}),
       },
     }),
 
@@ -200,12 +213,103 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     },
 
     // ── user name (RFC 03 P1.B B3) ──────────────────────────────────────
+    // 设置面板链接 (2026-08-25) — 此刻页「手机上改设置」二维码的数据源。
+    // 每次调用都换新令牌(单活 10 分钟),与 /set 的链接同一套机制。
+    'GET /v1/settings/link': async () => {
+      if (!deps.settingsLink) return { status: 503, body: { error: 'settings_link_not_wired' } }
+      const url = await deps.settingsLink()
+      if (!url) return { status: 200, body: { ok: false, error: 'no_lan_or_owner' } }
+      return { status: 200, body: { ok: true, url } }
+    },
+
+    // LLM key 图形化填入 (2026-08-25, owner: 「你让小白用户写到变量里?」)
+    // — 桌面大脑卡的「OpenAI/Gemini +」表单落到这里;daemon 自己写
+    // daemon.env(0600,原子替换),用户永远不用知道那个文件存在。
+    // admin 层(密钥),桌面走 owner-workspace 通道。值绝不进日志。
+    'POST /v1/llm/keys': async (_q, body) => {
+      const b = (body ?? {}) as { provider?: unknown; key?: unknown; base_url?: unknown; model?: unknown }
+      const provider = b.provider
+      if (provider !== 'openai' && provider !== 'gemini') {
+        return { status: 400, body: { error: 'unsupported_provider (openai | gemini)' } }
+      }
+      const key = typeof b.key === 'string' ? b.key.trim() : ''
+      if (key === '' || key.length > 500 || /\s/.test(key)) {
+        return { status: 400, body: { error: 'invalid_key' } }
+      }
+      // openai 兼容接口:daemon 要 base_url + model 都在才注册(bootstrap/
+      // providers.ts)。只写 key 会「保存成功」却在重启后没接上 —— 假成功。
+      // 按「本次请求带的 或 之前已存的」算有效值,缺任一就拒,不写 key。
+      // (允许只更新 key 的场景:base_url/model 已在 config 里就放行。)
+      if (provider === 'openai') {
+        const reqBase = typeof b.base_url === 'string' ? b.base_url.trim() : ''
+        const reqModel = typeof b.model === 'string' ? b.model.trim() : ''
+        const { loadAgentConfig } = await import('../../lib/agent-config')
+        const existing = loadAgentConfig(deps.stateDir)
+        const effBase = reqBase || existing.openaiBaseUrl || ''
+        const effModel = reqModel || existing.openaiModel || ''
+        if (!effBase || !effModel) {
+          return { status: 400, body: { error: 'openai_needs_base_url_and_model' } }
+        }
+      }
+      const { existsSync: envExists, readFileSync: envRead, writeFileSync: envWrite, renameSync: envRename } = await import('node:fs')
+      const { join: envJoin } = await import('node:path')
+      const { upsertEnvFile } = await import('../../lib/env-file')
+      const { writeConfigKey } = await import('../config-surface')
+      const envName = provider === 'openai' ? 'WECHAT_OPENAI_API_KEY' : 'GEMINI_API_KEY'
+      const envPath = envJoin(deps.stateDir, 'daemon.env')
+      const current = envExists(envPath) ? envRead(envPath, 'utf8') : ''
+      const tmp = `${envPath}.tmp`
+      envWrite(tmp, upsertEnvFile(current, { [envName]: key }), { mode: 0o600 })
+      envRename(tmp, envPath)
+      // Companion config fields ride the validated config surface.
+      if (provider === 'openai') {
+        if (typeof b.base_url === 'string' && b.base_url.trim() !== '') await writeConfigKey(deps.stateDir, 'openaiBaseUrl', b.base_url.trim())
+        if (typeof b.model === 'string' && b.model.trim() !== '') await writeConfigKey(deps.stateDir, 'openaiModel', b.model.trim())
+      } else if (typeof b.model === 'string' && b.model.trim() !== '') {
+        await writeConfigKey(deps.stateDir, 'geminiModel', b.model.trim())
+      }
+      deps.log?.('LLM_HEALTH', `${envName} saved via desktop form (value not logged) — restart to register`)
+      return { status: 200, body: { ok: true, restart_required: true } }
+    },
+
+    // LLM 通道体检 (2026-08-25) — 微信通道绿灯不等于大脑能用。真拨只在
+    // ?fresh=1(用户点「测试连接」)时发生 —— 绝不自动外呼(owner ruling:
+    // 网络不稳时的无人值守外呼是风控/封号形状);默认只回上次结果 +
+    // 已注册/未接入清单(未接入的带配置方法人话)。
+    // 网络体检(排障前置,2026-08-26)— provider 连不上大多是国际出口
+    // 问题而非登录问题;先分清,修复指引才对路。daemon 侧 HTTPS 可达性
+    // (HEAD,不带 key,不调真实 API),用户点击触发。
+    'POST /v1/net/probe': async () => {
+      const { probeTargetsFor, runNetProbe, verdictOf, dialAdvisable } = await import('../net-probe')
+      const registered = deps.llmRegistered?.() ?? []
+      const endpoints = deps.llmEndpoints?.() ?? undefined   // 自配 base_url(国内/本地大脑)→ 探真实端点
+      const results = await runNetProbe(probeTargetsFor(registered, endpoints))
+      // dial_advisable:哪怕国际不通,只要有个已注册大脑端点可达就该真拨 ——
+      // 别把国内/本地自配的大脑挡在「先开代理」的墙后面。
+      return { status: 200, body: { ok: true, results, verdict: verdictOf(results), dial_advisable: dialAdvisable(results, registered, endpoints) } }
+    },
+    'GET /v1/llm/health': async (q) => {
+      if (!deps.llmHealth) return { status: 503, body: { error: 'llm_health_not_wired' } }
+      const { unconfiguredHints } = await import('../llm-health')
+      const fresh = q.get('fresh') === '1'
+      const report = fresh ? await deps.llmHealth.dial() : deps.llmHealth.cached()
+      const registered = deps.llmRegistered?.() ?? []
+      return { status: 200, body: {
+        ok: true,
+        registered,
+        unconfigured: unconfiguredHints(registered),
+        ...(report ?? { checked_at: null, default_provider: null, results: [] }),
+      } }
+    },
+
     'POST /v1/user/set_name': async (_q, body) => {
       if (!deps.setUserName) return { status: 503, body: { error: 'set_user_name_not_wired' } }
       // Body is pre-validated by index.ts via UserSetNameRequest schema.
       const { chat_id, name } = body as UserSetNameRequestT
       try {
-        await deps.setUserName(chat_id, name)
+        // 「叫我大人」→「大人」 — the model routinely stores the human's whole
+        // answer phrase as the name; normalize at the boundary (user-name.ts).
+        await deps.setUserName(chat_id, normalizeUserName(name))
         return { status: 200, body: { ok: true } }
       } catch (err) {
         return { status: 200, body: { ok: false, error: errMsg(err) } }
@@ -698,10 +802,12 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
     ...a2aRoutes(deps),
     ...socialRoutes(deps),
     ...knowledgeRoutes(deps),
+    ...configRoutes(deps),
     ...pairRoutes(deps),
     ...memoryRoutes(deps),
     ...penpalRoutes(deps),
     ...healthRoutes(deps),
+    ...remindersRoutes(deps),
     ...pluginRoutes(deps),
     ...licenseRoutes(deps),
     ...daemonControlRoutes(deps),

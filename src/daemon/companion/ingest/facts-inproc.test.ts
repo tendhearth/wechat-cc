@@ -10,6 +10,14 @@ function fakeFacts(over: Partial<FactsApi> = {}): FactsApi {
     findFacts: vi.fn(() => ({ results: [] })),
     setFactStatus: vi.fn(() => ({ ok: true })),
     extractionStatus: vi.fn(() => ({})),
+    supersede: vi.fn(() => ({ superseded: 0 })),
+    conflictedGroups: vi.fn(() => []),
+    obligationHeavyContacts: vi.fn(() => []),
+    mergeObligations: vi.fn(() => ({ merged: 0 })),
+    settleObligations: vi.fn(() => ({ settled: 0 })),
+    recentMessages: vi.fn(() => []),
+    judgeFingerprint: vi.fn(() => null),
+    setJudgeFingerprint: vi.fn(),
     ...over,
   }
 }
@@ -71,4 +79,35 @@ describe('makeInProcFactsCall', () => {
     expect(now).toBeGreaterThanOrEqual(before)
     expect(now).toBeLessThanOrEqual(after)
   })
+})
+
+it('active_obligations returns the contact\'s active obligation rows from contactFacts', async () => {
+  const rows = [{ id: 7, kind: 'obligation', predicate: 'p', value: 'v' }]
+  const facts = fakeFacts({ contactFacts: vi.fn(() => ({ by_kind: { obligation: rows } })) })
+  const call = makeInProcFactsCall(facts)
+  const out = JSON.parse(await call('active_obligations', { contact: 'alice' }))
+  expect(facts.contactFacts).toHaveBeenCalledWith('alice')
+  expect(out).toEqual({ obligations: rows })
+})
+
+it('active_obligations returns [] when the contact has no obligation kind', async () => {
+  const facts = fakeFacts({ contactFacts: vi.fn(() => ({ by_kind: {} })) })
+  const call = makeInProcFactsCall(facts)
+  expect(JSON.parse(await call('active_obligations', { contact: 'alice' }))).toEqual({ obligations: [] })
+})
+
+it('settle_obligations routes to FactsApi.settleObligations with contact + ids', async () => {
+  const facts = fakeFacts({ settleObligations: vi.fn(() => ({ settled: 2 })) })
+  const call = makeInProcFactsCall(facts, () => 42)
+  const out = JSON.parse(await call('settle_obligations', { contact: 'alice', ids: [7, 9] }))
+  expect(out).toEqual({ settled: 2 })
+  expect(facts.settleObligations).toHaveBeenCalledWith('alice', [7, 9], 42)
+})
+
+it('supersede_facts routes to FactsApi.supersede with the pairs', async () => {
+  const facts = fakeFacts({ supersede: vi.fn((pairs: Array<{ supersede: number; by: number }>) => ({ superseded: pairs.length })) })
+  const call = makeInProcFactsCall(facts, () => 42)
+  const out = JSON.parse(await call('supersede_facts', { pairs: [{ supersede: 1, by: 2 }] }))
+  expect(out).toEqual({ superseded: 1 })
+  expect(facts.supersede).toHaveBeenCalledWith([{ supersede: 1, by: 2 }], 42)
 })

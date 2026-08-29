@@ -25,6 +25,7 @@ import {
   WechatBroadcastRequest, WechatBroadcastResponse,
   DelegateRequest, DelegateResponse,
   ConversationSetModeRequest, ConversationSetModeResponse,
+  ReminderScheduleRequest,
 } from './schema'
 
 // ── health ──────────────────────────────────────────────────────────────────
@@ -35,6 +36,13 @@ describe('HealthResponse', () => {
   })
   it('rejects missing daemon_pid', () => {
     expect(HealthResponse.safeParse({ ok: true }).success).toBe(false)
+  })
+  it('HealthResponse accepts the outbound sibling field and stays optional', () => {
+    expect(HealthResponse.safeParse({ ok: true, daemon_pid: 1 }).success).toBe(true)
+    expect(HealthResponse.safeParse({ ok: true, daemon_pid: 1, outbound: {
+      state: 'degraded', consecutive_failures: 3, last_ok_at: null, last_error: 'errcode=-2: prepare failed',
+    } }).success).toBe(true)
+    expect(HealthResponse.safeParse({ ok: true, daemon_pid: 1, outbound: { state: 'weird' } }).success).toBe(false)
   })
 })
 
@@ -598,23 +606,39 @@ describe('ConversationSetModeResponse', () => {
   })
 })
 
+// ── reminders ────────────────────────────────────────────────────────────────
+
+describe('ReminderScheduleRequest', () => {
+  it('accepts delay_seconds alone', () => {
+    expect(ReminderScheduleRequest.safeParse({ chat_id: 'u1', text: 'hi', delay_seconds: 60 }).success).toBe(true)
+  })
+  it('accepts due_at alone', () => {
+    expect(ReminderScheduleRequest.safeParse({ chat_id: 'u1', text: 'hi', due_at: '2026-08-20T10:00:00Z' }).success).toBe(true)
+  })
+  it('rejects both or neither', () => {
+    expect(ReminderScheduleRequest.safeParse({ chat_id: 'u1', text: 'hi' }).success).toBe(false)
+    expect(ReminderScheduleRequest.safeParse({ chat_id: 'u1', text: 'hi', due_at: '2026-08-20T10:00:00Z', delay_seconds: 60 }).success).toBe(false)
+  })
+})
+
 // ── schema lookup tables ─────────────────────────────────────────────────────
 
 describe('schema lookup tables', () => {
-  it('REQUEST_SCHEMAS has 38 entries', () => {
+  it('REQUEST_SCHEMAS has 41 entries', () => {
     // 19 original + 4 a2a dashboard routes (preview, install, remove, pause)
     // + 1 a2a server-side test route (Test button) + 1 memory/delete
     // + 1 companion/import-local + 3 plugins (toggle, install, upgrade)
     // + 1 license/activate + 8 customer-review routes
+    // + 3 reminders (schedule, cancel, list query)
     // (P4: social/seek's SocialSeekRequest was deleted — the propose/
     // confirm/cancel routes that replaced it are inline-validated, no
     // REQUEST_SCHEMAS entry, per the pair/inbound routes' precedent.)
-    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(38)
+    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(41)
   })
-  it('RESPONSE_SCHEMAS has 30 entries (one per route)', () => {
+  it('RESPONSE_SCHEMAS has 33 entries (one per route)', () => {
     // 25 original + 2 a2a dashboard response schemas (preview, install)
     // + 1 a2a server-side test response + 1 memory/delete
-    // + 1 companion/import-local
-    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(30)
+    // + 1 companion/import-local + 3 reminders (schedule, cancel, list)
+    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(33)
   })
 })

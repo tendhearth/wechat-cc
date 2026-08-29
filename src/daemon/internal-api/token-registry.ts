@@ -145,6 +145,15 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           'GET /v1/customer-review/recent',
           'GET /v1/customer-review/history',
           'POST /v1/customer-review/item',
+          // 待办 workspace (2026-08-24) — same owner-only trust class and the
+          // same delivery channel (the Tauri host's owner-workspace command;
+          // webview JS never holds this token): obligation list + status
+          // writes, contact display names, reminder scheduling.
+          'POST /v1/knowledge/facts/find_facts',
+          'POST /v1/llm/keys',
+          'POST /v1/knowledge/facts/set_fact_status',
+          'POST /v1/knowledge/graph/top_contacts',
+          'POST /v1/reminders/schedule',
           // hearth federation mint (grant-gated, see routes-federation.ts) —
           // the operator token alone is not enough; readGrant(stateDir) must
           // also be non-null (explicit owner authorization, design option B).

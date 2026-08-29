@@ -1,3 +1,4 @@
+import { showToast } from "../view.js"
 // @ts-check
 /// <reference lib="dom" />
 /**
@@ -118,12 +119,13 @@ export async function refresh() {
  */
 function renderServerBanner(info, banner) {
   if (!info) {
-    banner.innerHTML = '<span class="dot off"></span> A2A 状态未知（daemon 未启动？）'
+    banner.innerHTML = '<span class="dot off"></span> 连不上你的 bot——daemon 没在跑？'
   } else if (!info.enabled) {
-    banner.innerHTML = '<span class="dot off"></span> A2A 入站服务器已禁用 — 编辑 <code>agent-config.json</code> 加 <code>"a2a_listen": { "port": 8717 }</code> 后重启 daemon'
+    banner.innerHTML = '<span class="dot off"></span> 觅食网还没开通 — 在 <code>agent-config.json</code> 加 <code>"a2a_listen": { "port": 8717 }</code> 后重启 daemon'
   } else {
     const url = String(info.base_url ?? '')
-    banner.innerHTML = `<span class="dot on"></span> A2A 服务器运行中，外部 agent 调用此地址：<code class="a2a-base-url">${escapeHtml(url)}/a2a/notify</code>`
+    banner.innerHTML = `<span class="dot on"></span> 你的 bot 在线，朋友的 bot 能找到它
+      <details class="a2a-tech"><summary>接入地址</summary><code class="a2a-base-url">${escapeHtml(url)}/a2a/notify</code></details>`
   }
 }
 
@@ -137,25 +139,32 @@ function renderServerBanner(info, banner) {
 function renderAgents(agents, list) {
   list.innerHTML = ''
   if (agents.length === 0) {
-    list.innerHTML = '<li class="empty">No agents registered. Click "+ Add Agent" to install one.</li>'
+    list.innerHTML = '<li class="empty">还没连上朋友的 bot — 生成一个配对码念给朋友，就能连上。</li>'
     return
   }
   for (const a of agents) {
     const li = document.createElement('li')
     li.className = 'a2a-agent-card' + (a.paused ? ' paused' : '')
     li.dataset.id = a.id
+    const inbound = a.counts?.inbound ?? 0
+    const outbound = a.counts?.outbound ?? 0
+    const exchanged = inbound + outbound > 0
+      ? `收到 ${inbound} 条 · 送出 ${outbound} 条`
+      : '还没有来往 — 撒个心愿试试'
     li.innerHTML = `
       <header class="a2a-card-head">
         <span class="dot ${a.paused ? 'off' : 'on'}"></span>
-        <strong>${escapeHtml(a.id)}</strong> · ${escapeHtml(a.name)}
+        <strong>${escapeHtml(a.name)}</strong>
+        <span class="plugin-name">${escapeHtml(a.id)}</span>
+        ${a.paused ? '<span class="plugin-source">已暂停</span>' : ''}
       </header>
-      <div class="a2a-card-url">${escapeHtml(a.url)}</div>
-      <div class="a2a-card-counts">↓ ${a.counts?.inbound ?? 0} · ↑ ${a.counts?.outbound ?? 0}</div>
+      <div class="a2a-card-counts">${exchanged}</div>
+      <details class="a2a-tech"><summary>技术详情</summary><code>${escapeHtml(a.url)}</code> · ↓ ${inbound} · ↑ ${outbound}</details>
       <div class="a2a-card-actions">
-        <button class="btn ghost" data-action="pause" data-id="${escapeHtml(a.id)}">${a.paused ? 'Resume' : 'Pause'}</button>
-        <button class="btn ghost" data-action="test" data-id="${escapeHtml(a.id)}">Test</button>
-        <button class="btn ghost" data-action="activity" data-id="${escapeHtml(a.id)}">Activity</button>
-        <button class="btn danger" data-action="remove" data-id="${escapeHtml(a.id)}">Remove</button>
+        <button class="btn ghost" data-action="pause" data-id="${escapeHtml(a.id)}">${a.paused ? '恢复' : '暂停'}</button>
+        <button class="btn ghost" data-action="test" data-id="${escapeHtml(a.id)}">测试连通</button>
+        <button class="btn ghost" data-action="activity" data-id="${escapeHtml(a.id)}">看往来</button>
+        <button class="btn danger" data-action="remove" data-id="${escapeHtml(a.id)}">断开</button>
       </div>
     `
     list.appendChild(li)
@@ -449,23 +458,23 @@ async function onCardAction(e) {
       await invokeApi('POST', '/v1/a2a/pause', { id, paused: !wasPaused })
       await refresh()
     } catch (err) {
-      alert(`Failed to ${wasPaused ? 'resume' : 'pause'} agent: ${err instanceof Error ? err.message : String(err)}`)
+      showToast(`${wasPaused ? '恢复' : '暂停'}失败：${err instanceof Error ? err.message : String(err)}`)
     }
   } else if (action === 'remove') {
-    if (!confirm(`Remove agent '${id}'?`)) return
+    if (!confirm(`断开和「${id}」的连接？之后可以随时重新配对。`)) return
     try {
       await invokeApi('POST', '/v1/a2a/remove', { id })
       await refresh()
     } catch (err) {
-      alert(`Failed to remove agent: ${err instanceof Error ? err.message : String(err)}`)
+      showToast(`断开失败：${err instanceof Error ? err.message : String(err)}`)
     }
   } else if (action === 'activity') {
     await openActivityDrawer(id).catch(err =>
-      alert(`Failed to load activity: ${err instanceof Error ? err.message : String(err)}`)
+      showToast(`往来记录打不开：${err instanceof Error ? err.message : String(err)}`)
     )
   } else if (action === 'test') {
     await openTestModal(id).catch(err =>
-      alert(`Failed to open test dialog: ${err instanceof Error ? err.message : String(err)}`)
+      showToast(`打不开测试窗口：${err instanceof Error ? err.message : String(err)}`)
     )
   }
 }
@@ -939,7 +948,7 @@ async function openTestModal(id) {
   const modal = document.getElementById('a2a-test-modal')
   if (!(modal instanceof HTMLDialogElement)) return
   const title = document.getElementById('a2a-test-title')
-  if (title) title.textContent = `Test '${id}'`
+  if (title) title.textContent = `测试连通 · ${id}`
   const textInput = /** @type {HTMLInputElement | null} */ (document.getElementById('a2a-test-text'))
   if (textInput) textInput.value = `test from ${id} via wechat-cc`
   const result = document.getElementById('a2a-test-result')
@@ -1013,10 +1022,10 @@ async function onPreviewSubmit(e) {
   const urlInput = /** @type {HTMLInputElement} */ (form.elements.namedItem('url'))
   const url = urlInput.value
   const submitBtn = /** @type {HTMLButtonElement | null} */ (form.querySelector('button[type="submit"]'))
-  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Fetching…' }
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '找它中…' }
   try {
     const resp = /** @type {Record<string, any>} */ (await invokeApi('POST', '/v1/a2a/preview', { url }))
-    if (resp && 'error' in resp) { alert(String(resp.error)); return }
+    if (resp && 'error' in resp) { showToast(String(resp.error)); return }
     previewedCard = resp
     previewedUrl = url
 
@@ -1043,9 +1052,9 @@ async function onPreviewSubmit(e) {
       if (idInput) idInput.value = slugify(String(resp.name ?? ''))
     }
   } catch (err) {
-    alert(`Failed to fetch agent card: ${err instanceof Error ? err.message : String(err)}`)
+    showToast(`没找到对方 bot：${err instanceof Error ? err.message : String(err)}`)
   } finally {
-    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Fetch Agent Card →' }
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '看看是谁 →' }
   }
 }
 
@@ -1056,10 +1065,10 @@ async function onInstallConfirm() {
   const keyInput = /** @type {HTMLInputElement | null} */ (preview.querySelector('input[name="outbound_key"]'))
   const id = idInput?.value?.trim() ?? ''
   const outboundKey = keyInput?.value?.trim() ?? ''
-  if (!id) { alert('Please enter a local id (slug) for this agent.'); return }
+  if (!id) { showToast('先给它起个短名（英文或数字）。'); return }
 
   const confirmBtn = document.getElementById('a2a-install-confirm')
-  if (confirmBtn instanceof HTMLButtonElement) { confirmBtn.disabled = true; confirmBtn.textContent = 'Installing…' }
+  if (confirmBtn instanceof HTMLButtonElement) { confirmBtn.disabled = true; confirmBtn.textContent = '连接中…' }
   try {
     const r = /** @type {Record<string, any>} */ (await invokeApi('POST', '/v1/a2a/install', {
       id,
@@ -1068,7 +1077,7 @@ async function onInstallConfirm() {
       outbound_api_key: outboundKey,
     }))
     if (!r || !r.ok) {
-      alert(String(r?.error ?? 'install failed'))
+      showToast(String(r?.error ?? 'install failed'))
       return
     }
     const info = /** @type {Record<string, any>} */ (await invokeApi('GET', '/v1/a2a/info').catch(() => null))
@@ -1085,9 +1094,9 @@ async function onInstallConfirm() {
         `  -d '{"agent_id":"${id}","text":"hello"}'`
     }
   } catch (err) {
-    alert(`Install failed: ${err instanceof Error ? err.message : String(err)}`)
+    showToast(`没连上：${err instanceof Error ? err.message : String(err)}`)
   } finally {
-    if (confirmBtn instanceof HTMLButtonElement) { confirmBtn.disabled = false; confirmBtn.textContent = 'Install' }
+    if (confirmBtn instanceof HTMLButtonElement) { confirmBtn.disabled = false; confirmBtn.textContent = '连上' }
   }
 }
 
@@ -1096,7 +1105,7 @@ async function openActivityDrawer(id) {
   const drawer = /** @type {HTMLElement | null} */ (document.getElementById('a2a-activity-drawer'))
   const titleEl = document.getElementById('a2a-activity-title')
   if (!drawer || !titleEl) return
-  titleEl.textContent = `${id} — recent activity`
+  titleEl.textContent = `${id} · 最近往来`
   const ul = document.getElementById('a2a-activity-list')
   if (ul) ul.innerHTML = '<li class="empty">加载中…</li>'
   drawer.hidden = false

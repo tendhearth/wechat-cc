@@ -20,6 +20,7 @@ import type { ConversationStore } from './conversation-store'
 import type { ProviderRegistry } from './provider-registry'
 import type { Mode, ProviderId } from './conversation'
 import type { InboundMsg } from './prompt-format'
+import { makeHandoffLedger, buildHandoffBlock, type HandoffTurn } from './provider-handoff'
 import { buildOpeningPrompt, buildRebuttalPrompt, buildVerdictPrompt, buildConvergencePrompt, parseConvergence, type Opening } from './chatroom-conductor'
 import { assertSupported, capabilitiesFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
 import { collectTurn, TURN_TIMEOUT_CODE, type TurnSummary } from './agent-provider'
@@ -110,6 +111,11 @@ export interface ConversationCoordinatorDeps {
    */
   recordTurn?: (record: TurnRecord) => void
   format: (msg: InboundMsg) => string
+  /**
+   * 换 provider 交接 (provider-handoff.ts):最近 N 条干净对话,注入切换后
+   * 第一条 prompt。缺省 ⇒ 交接块只有提示语,没有近况原文。
+   */
+  recentTurns?: (chatId: string, n: number) => Promise<HandoffTurn[]>
   sendAssistantText?: (chatId: string, text: string) => Promise<void>
   /**
    * Optional `fields` arg lands in the JSONL sidecar (channel.log.jsonl)
@@ -164,8 +170,23 @@ export interface ConversationCoordinatorDeps {
  *  session lapsed and they need to re-run the provider's login command
  *  on the same machine. */
 export function authFailNotice(providerId: ProviderId): string {
-  return capabilitiesFor(providerId).authFailHint
-    ?? `⚠ ${providerId} 登录已过期，请在电脑上重新登录后再发消息。`
+  const hint = capabilitiesFor(providerId).authFailHint
+  return hint
+    ? `我这会儿够不着自己的脑子了,${providerId} 的登录好像过期了。\n${hint}\n弄好之后再发我一条,我就回来了。`
+    : `我这会儿够不着自己的脑子了,${providerId} 的登录好像过期了。让主人在电脑上重新登录一下,再发我一条,我就回来了。`
+}
+
+/** User-facing notice when a turn dies with a GENERIC error and produced no
+ *  reply at all (owner 2026-08-25: 「用户发你好,应该有个回复,比如大脑还未
+ *  接入」— silence reads as being ignored). Two flavors: a spawn/missing-
+ *  binary shape means the brain was never hooked up; anything else is a
+ *  transient hiccup. Both point at the desktop 大脑 card, in CC's voice. */
+export function turnErrorNotice(providerId: ProviderId, error: string | undefined): string {
+  const e = (error ?? '').toLowerCase()
+  if (/enoent|not found|no such file|spawn|not installed/.test(e)) {
+    return `这条我收到了,但没想起来怎么回——我的脑子(${providerId})好像还没在电脑上接好。麻烦主人打开 wechat-cc,在「此刻」页点一下大脑卡帮我接上,弄好再发我一条就行。`
+  }
+  return `刚刚脑子卡了一下,这条没接住…过一会儿再发我一次?老是这样的话,让主人在电脑上看看「此刻」页的大脑卡。`
 }
 
 /** Turn-taking policy for a mode (D3 — turn-entry unification). */
@@ -239,6 +260,8 @@ export interface ConversationCoordinator {
 }
 
 export function createConversationCoordinator(deps: ConversationCoordinatorDeps): ConversationCoordinator {
+  // 换 provider 不断片 — setMode 标记,下一次 solo dispatch 取用(取即清)。
+  const handoffLedger = makeHandoffLedger()
   function defaultMode(): Mode {
     return { kind: 'solo', provider: deps.defaultProviderId }
   }
@@ -374,7 +397,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     } catch (err) {
       deps.log('TURN_TIMEOUT', `release ${alias}/${providerId} threw: ${err instanceof Error ? err.message : err}`)
     }
-    await deps.sendAssistantText?.(chatId, '⏱ 处理超时了，刚才那条没能回复，请稍后重发一次。')
+    await deps.sendAssistantText?.(chatId, '想了半天没想出来,刚才那条掉了…再发我一次?')
   }
   // RFC 03 review #11 — per-chat AbortController for in-flight chatroom
   // loops. dispatchChatroom registers; coordinator.cancel() signals; /stop
@@ -529,7 +552,15 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // this turn for its entire lifetime — cleared in the finally below,
       // same lifecycle as chatroom's inFlightAborters.
       unregisterCancel = registerHandleCancel(msg.chatId, () => { void handle.cancel?.() })
-      const text = deps.format(msg)
+      let text = deps.format(msg)
+      // 换 provider 后的第一条:前置交接块(近况原文 + chat_history 提示)。
+      const handoff = handoffLedger.takeHandoff(msg.chatId)
+      if (handoff) {
+        let recent: HandoffTurn[] = []
+        try { recent = await deps.recentTurns?.(msg.chatId, 12) ?? [] } catch { /* 交接是增强,拿不到就只给提示语 */ }
+        text = `${buildHandoffBlock(handoff.from, handoff.to, recent)}\n\n${text}`
+        deps.log?.('HANDOFF', `chat=${msg.chatId} ${handoff.from}→${handoff.to} recent=${recent.length}`)
+      }
       summary = await collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs })
       const assistantTexts = summary.assistantText
       const replyToolCalled = summary.replyToolCalled
@@ -554,6 +585,17 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       }
 
       outcome = summary.error ? 'error' : 'completed'
+
+      // Generic-error silence guard (2026-08-25): a turn that died with an
+      // error, called no reply tool and produced no assistant text used to
+      // leave the user staring at nothing — silence reads as being ignored.
+      // Tell them, in CC's voice, that the message was dropped and where the
+      // fix lives. Unthrottled on purpose (same rationale as the timeout
+      // notice: each dropped message deserves an acknowledgement).
+      if (summary.error && !replyToolCalled && assistantTexts.length === 0) {
+        await deps.sendAssistantText?.(msg.chatId, turnErrorNotice(providerId, summary.error))
+        return
+      }
 
       // Same fallback semantics as the legacy routeInbound: only forward
       // raw assistant text when the agent did NOT call a reply-family
@@ -1014,6 +1056,11 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       validateMode(mode)
       const oldMode = getMode(chatId)
       deps.conversationStore.set(chatId, mode)
+      // 换 provider 交接:solo→solo 且 provider 变化时标记。同 provider 换
+      // 模型不换会话线(session key 含 provider 不含 model),无需交接。
+      if (oldMode.kind === 'solo' && mode.kind === 'solo' && oldMode.provider !== mode.provider) {
+        handoffLedger.markSwitch(chatId, oldMode.provider, mode.provider)
+      }
     },
     cancel(chatId) {
       let cancelledAny = false

@@ -3,7 +3,7 @@
  * AND by recipient mailbox; an empty bucket → the drop is refused (429). In
  * memory only (v0 single relay). See spec §3.1 (限流).
  */
-export interface RateLimiter { allow(key: string, now: number): boolean }
+export interface RateLimiter { allow(key: string, now: number): boolean; drop(key: string): void }
 
 export function makeRateLimiter(opts: { capacity: number; refillPerSec: number }): RateLimiter {
   const buckets = new Map<string, { tokens: number; ts: number }>()
@@ -16,5 +16,6 @@ export function makeRateLimiter(opts: { capacity: number; refillPerSec: number }
       buckets.set(key, { tokens: tokens - 1, ts: now })
       return true
     },
+    drop(key) { buckets.delete(key) },
   }
 }

@@ -1,0 +1,5 @@
+{
+  "bucket": "wechat-cc-updates",
+  "baseUrl": "https://dl.tendhearth.com/wechat-cc",
+  "keyPrefix": "wechat-cc"
+}

@@ -41,6 +41,7 @@ import { makeResolver } from '../../core/project-resolver'
 import { makeCanUseTool } from '../../core/permission-relay'
 import { capabilitiesFor, capabilityProviderIds, type PermissionMode } from '../../core/capability-matrix'
 import { formatInbound } from '../../core/prompt-format'
+import { makeMessagesStore } from '../../lib/messages-store'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import { findOnPath } from '../../lib/util'
 import { existsSync, readFileSync } from 'node:fs'
@@ -943,6 +944,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     reportLlmTurnOutcome(health, record.outcome, record.error)
   }
 
+  const handoffMessages = makeMessagesStore(deps.db)
   const coordinator = createConversationCoordinator({
     resolveProject: resolve,
     manager: sessionManager,
@@ -950,6 +952,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     registry,
     defaultProviderId,
     format: formatInbound,
+    // 换 provider 交接的近况原文 — 消息库最近 n 条(text 类为主,升序)。
+    recentTurns: async (chatId, n) => {
+      const rows = await handoffMessages.listRange(chatId, { limit: n })
+      return rows.filter(r => r.text.trim().length > 0)
+        .map(r => ({ dir: r.direction === 'in' ? 'in' as const : 'out' as const, text: r.text, ts: r.ts }))
+    },
     permissionMode,
     turnTimeoutMs,
     recordTurn,

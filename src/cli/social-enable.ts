@@ -20,7 +20,7 @@ import { join } from 'node:path'
 
 export const DEFAULT_SOCIAL_DISCLOSURE_POLICY =
   '可以说我的兴趣、想找的同好或资源;不可透露我的真实姓名、住址、电话或任何联系方式,也不提及除我和收件方以外的任何第三方。'
-export const DEFAULT_MAILBOX_RELAYS = ['https://brain.youdamaster.cc/mailbox']
+export const DEFAULT_MAILBOX_RELAYS = ['https://cc.tendhearth.com/mailbox']
 
 function readRawConfig(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {}

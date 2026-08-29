@@ -391,10 +391,10 @@ describe('facts store', () => {
       contact: 'wxid_a', kind: 'entity', predicate: 'works_at', value: 'Acme',
       confidence: 'low', source_msg_keys: ['Msg_x:1'],
     }
-    expect(s.upsertFact(f, 1000)).toBe('inserted')
+    expect(s.upsertFact(f, 1000).outcome).toBe('inserted')
     // merge: higher confidence wins, msg_keys ordered-union, related/time_ref fill, status untouched
     expect(s.upsertFact({ ...f, confidence: 'high', related_contact: 'wxid_b',
-                          time_ref: '2025', source_msg_keys: ['Msg_x:1', 'Msg_y:2'] }, 2000)).toBe('merged')
+                          time_ref: '2025', source_msg_keys: ['Msg_x:1', 'Msg_y:2'] }, 2000).outcome).toBe('merged')
     const rows = s.factsForContact('wxid_a', 'active')
     expect(rows.length).toBe(1)
     expect(rows[0]!.confidence).toBe('high')                       // max(low,high)
@@ -459,6 +459,123 @@ describe('facts store', () => {
     s.close()
   })
 
+  describe('temporal validity (2026-08 memory-upgrades)', () => {
+    it('insert stamps valid_from = now and returns the row id', () => {
+      const s = freshStore()
+      const r = s.upsertFact({ contact: 'u1', kind: 'attribute', predicate: '住在', value: '北京' }, 1000)
+      expect(r.outcome).toBe('inserted')
+      expect(r.id).toBeGreaterThan(0)
+      const row = s.factsForContact('u1', 'active')[0]!
+      expect(row.id).toBe(r.id)
+      expect(row.valid_from).toBe(1000)
+      expect(row.invalidated_at).toBeNull()
+      expect(row.superseded_by).toBeNull()
+      s.close()
+    })
+
+    // 15s: windows-latest 的慢盘让每个 freshStore() 测试跑 1-3s,这条实测
+    // 5107ms 撞过默认 5s 上限(2026-08-29,同代码另一 windows leg 绿)。
+    it('merge keeps the original valid_from and returns the existing id', { timeout: 15_000 }, () => {
+      const s = freshStore()
+      const a = s.upsertFact({ contact: 'u1', predicate: '住在', value: '北京' }, 1000)
+      const b = s.upsertFact({ contact: 'u1', predicate: '住在', value: '北京', confidence: 'high' }, 2000)
+      expect(b).toEqual({ outcome: 'merged', id: a.id })
+      expect(s.factsForContact('u1', 'active')[0]!.valid_from).toBe(1000)
+      s.close()
+    })
+
+    it('activeFactsSharingPredicate finds same-predicate different-value active facts only', () => {
+      const s = freshStore()
+      const a = s.upsertFact({ contact: 'u1', kind: 'attribute', predicate: '住在', value: '北京' }, 1000)
+      s.upsertFact({ contact: 'u1', kind: 'attribute', predicate: '住在', value: '上海' }, 2000)
+      s.upsertFact({ contact: 'u1', kind: 'attribute', predicate: '喜欢', value: '茶' }, 2000)     // other predicate
+      s.upsertFact({ contact: 'u2', kind: 'attribute', predicate: '住在', value: '广州' }, 2000)   // other contact
+      const hits = s.activeFactsSharingPredicate('u1', '住在', '上海')
+      expect(hits.map((h) => h.value)).toEqual(['北京'])
+      expect(hits[0]!.id).toBe(a.id)
+      s.close()
+    })
+
+    it('supersedeFactById flips status + stamps invalidated_at/superseded_by; refuses non-active', () => {
+      const s = freshStore()
+      const a = s.upsertFact({ contact: 'u1', predicate: '住在', value: '北京' }, 1000)
+      const b = s.upsertFact({ contact: 'u1', predicate: '住在', value: '上海' }, 2000)
+      expect(s.supersedeFactById(a.id, b.id, 3000)).toBe(true)
+      expect(s.factsForContact('u1', 'active').map((f) => f.value)).toEqual(['上海'])
+      const dead = s.factsForContact('u1', 'superseded')[0]!
+      expect(dead.invalidated_at).toBe(3000)
+      expect(dead.superseded_by).toBe(b.id)
+      expect(dead.status).toBe('superseded')
+      expect(s.supersedeFactById(a.id, b.id, 4000)).toBe(false)  // already superseded — no double stamp
+      expect(s.factsForContact('u1', 'superseded')[0]!.invalidated_at).toBe(3000)
+      s.close()
+    })
+
+    it('conflictedFactGroups finds active same-predicate multi-value groups, newest first', () => {
+      const s = freshStore()
+      s.upsertFact({ contact: 'u1', predicate: '住在', value: '北京' }, 1000)
+      const b = s.upsertFact({ contact: 'u1', predicate: '住在', value: '上海' }, 2000)
+      s.upsertFact({ contact: 'u1', predicate: '喜欢', value: '茶' }, 1000)      // single value — not a group
+      s.upsertFact({ contact: 'u2', predicate: '工作在', value: 'A公司' }, 1000)
+      s.upsertFact({ contact: 'u2', predicate: '工作在', value: 'B公司' }, 3000)
+      const groups = s.conflictedFactGroups(10)
+      expect(groups).toHaveLength(2)
+      const g1 = groups.find((g) => g.contact === 'u1')!
+      expect(g1.predicate).toBe('住在')
+      expect(g1.facts.map((f) => f.value)).toEqual(['上海', '北京'])   // updated_at DESC
+      expect(g1.facts[0]!.id).toBe(b.id)
+      expect(s.conflictedFactGroups(1)).toHaveLength(1)                // limit respected
+      s.close()
+    })
+
+    it('conflictedFactGroups ignores superseded rows', () => {
+      const s = freshStore()
+      const a = s.upsertFact({ contact: 'u1', predicate: '住在', value: '北京' }, 1000)
+      const b = s.upsertFact({ contact: 'u1', predicate: '住在', value: '上海' }, 2000)
+      s.supersedeFactById(a.id, b.id, 3000)
+      expect(s.conflictedFactGroups(10)).toEqual([])
+      s.close()
+    })
+
+    it('factById returns the row or null', () => {
+      const s = freshStore()
+      const a = s.upsertFact({ contact: 'u1', predicate: 'p', value: 'v' }, 1000)
+      expect(s.factById(a.id)?.value).toBe('v')
+      expect(s.factById(999999)).toBeNull()
+      s.close()
+    })
+
+    it('reopening a pre-upgrade facts.db adds the columns and backfills valid_from from created_at', () => {
+      const migDir = mkdtempSync(join(tmpdir(), 'kk-facts-migrate-'))
+      try {
+        // Simulate a facts.db created BEFORE the temporal columns existed.
+        const legacy = new Database(join(migDir, 'facts.db'), { create: true })
+        legacy.exec(`
+          CREATE TABLE IF NOT EXISTS facts (
+            id INTEGER PRIMARY KEY, contact TEXT, kind TEXT, predicate TEXT, value TEXT,
+            related_contact TEXT, time_ref TEXT, confidence TEXT, source_msg_keys TEXT,
+            status TEXT, created_at INTEGER, updated_at INTEGER,
+            UNIQUE(contact, predicate, value));
+          CREATE TABLE IF NOT EXISTS extraction_state (
+            contact TEXT PRIMARY KEY, last_ts INTEGER, last_local_id INTEGER DEFAULT 0,
+            updated_at INTEGER);`)
+        legacy.query(`INSERT INTO facts(contact,kind,predicate,value,related_contact,time_ref,
+          confidence,source_msg_keys,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
+          .run('u1', 'entity', 'p', 'v', null, null, 'med', '[]', 'active', 777, 777)
+        legacy.close()
+
+        const s = openKnowledge(migDir)
+        const row = s.factsForContact('u1', 'active')[0]!
+        expect(row.valid_from).toBe(777)          // backfilled from created_at
+        expect(row.invalidated_at).toBeNull()
+        expect(row.superseded_by).toBeNull()
+        s.close()
+      } finally {
+        rmSync(migDir, { recursive: true, force: true })
+      }
+    })
+  })
+
   it('oneToOneTextMessages excludes groups and non-text; recentMessages is newest-first', () => {
     const s = freshStore()
     s.putSourceMessages([
@@ -475,6 +592,76 @@ describe('facts store', () => {
     expect(oto.map((m) => m.msg_key).sort()).toEqual(['Msg_a:1', 'Msg_a:2'])  // no group, no voice
     const recent = s.recentMessages('wxid_a', 5)
     expect(recent.map((m) => m.text)).toEqual(['yo', 'hi'])                    // newest-first by time
+    s.close()
+  })
+})
+
+describe('obligation dedup feed', () => {
+  it('obligationHeavyContacts lists contacts with ≥2 active obligations, heaviest first', () => {
+    const s = freshStore()
+    s.upsertFact({ contact: 'u1', kind: 'obligation', predicate: 'a', value: 'v1' }, 1)
+    s.upsertFact({ contact: 'u1', kind: 'obligation', predicate: 'b', value: 'v2' }, 2)
+    s.upsertFact({ contact: 'u1', kind: 'obligation', predicate: 'c', value: 'v3' }, 3)
+    s.upsertFact({ contact: 'u2', kind: 'obligation', predicate: 'd', value: 'v4' }, 4)
+    s.upsertFact({ contact: 'u2', kind: 'obligation', predicate: 'e', value: 'v5' }, 5)
+    s.upsertFact({ contact: 'u3', kind: 'obligation', predicate: 'f', value: 'v6' }, 6)   // only 1 — excluded
+    s.upsertFact({ contact: 'u4', kind: 'entity', predicate: 'g', value: 'v7' }, 7)       // not obligation
+    const heavy = s.obligationHeavyContacts(10)
+    expect(heavy).toEqual([{ contact: 'u1', n: 3 }, { contact: 'u2', n: 2 }])
+    expect(s.obligationHeavyContacts(1)).toHaveLength(1)
+    // settlement-backfill feed: minCount=1 includes single-obligation contacts
+    expect(s.obligationHeavyContacts(10, 1)).toEqual([
+      { contact: 'u1', n: 3 }, { contact: 'u2', n: 2 }, { contact: 'u3', n: 1 },
+    ])
+    s.close()
+  })
+})
+
+describe('judge state (2026-08-28: sweeps re-judged unchanged stock every cycle)', () => {
+  it('judgeFingerprint round-trips per key and returns null when unset', () => {
+    const s = freshStore()
+    expect(s.judgeFingerprint('conflict:u1:住在')).toBeNull()
+    s.setJudgeFingerprint('conflict:u1:住在', 'fp-1', 1000)
+    expect(s.judgeFingerprint('conflict:u1:住在')).toBe('fp-1')
+    s.setJudgeFingerprint('conflict:u1:住在', 'fp-2', 2000)      // upsert overwrites
+    expect(s.judgeFingerprint('conflict:u1:住在')).toBe('fp-2')
+    expect(s.judgeFingerprint('obdupe:u1')).toBeNull()           // keys independent
+    s.close()
+  })
+
+  it('judge state survives reopen (persisted, not in-memory)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kk-judge-'))
+    const s1 = openKnowledge(dir)
+    s1.setJudgeFingerprint('settle:u9', '4200|1,2', 1000)
+    s1.close()
+    const s2 = openKnowledge(dir)
+    expect(s2.judgeFingerprint('settle:u9')).toBe('4200|1,2')
+    s2.close()
+  })
+})
+
+describe('vector cache (2026-08-24: auto-recall pays a full-matrix disk read per message)', () => {
+  it('loadVectors reflects writes made after a cached read (count-based invalidation)', () => {
+    const s = freshStore()
+    const chunk = (key: string, vec: number[]) => ({ msg_key: key, conversation: 'c', sender: 's', time: 1, kind: 'text', text: 't', vector: vec })
+    s.putSemantic('m1', 'v1', [chunk('a:1', [1, 0])])
+    expect(s.loadVectors('m1').rowids).toHaveLength(1)
+    expect(s.loadVectors('m1').rowids).toHaveLength(1)   // cached path
+    s.putSemantic('m1', 'v1', [chunk('a:2', [0, 1])])    // write AFTER cache
+    const after = s.loadVectors('m1')
+    expect(after.rowids).toHaveLength(2)                  // cache must not serve stale
+    expect(after.mat).toHaveLength(4)
+    s.close()
+  })
+
+  it('cache is per model_id', () => {
+    const s = freshStore()
+    const chunk = (key: string, vec: number[]) => ({ msg_key: key, conversation: 'c', sender: 's', time: 1, kind: 'text', text: 't', vector: vec })
+    s.putSemantic('m1', 'v1', [chunk('a:1', [1, 0])])
+    s.putSemantic('m2', 'v1', [chunk('a:1', [1, 0, 0])])
+    expect(s.loadVectors('m1').dim).toBe(2)
+    expect(s.loadVectors('m2').dim).toBe(3)
+    expect(s.loadVectors('m1').dim).toBe(2)
     s.close()
   })
 })

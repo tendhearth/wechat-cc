@@ -17,18 +17,21 @@ import { makeTurnRecordStore } from '../core/turn-record-store'
 import { providerDisplayName } from './provider-display-names'
 import { loadAllAccounts, makeIlinkAdapter } from './ilink-glue'
 import { registerInternalApi } from './internal-api/lifecycle'
+import { makeMessagesStore } from '../lib/messages-store'
 import { registerCompanionPush, registerCompanionIntrospect, registerIngest } from './companion/lifecycle'
 import { registerGuard } from './guard/lifecycle'
 import { registerPolling } from './polling-lifecycle'
 import { registerSessions } from './sessions-lifecycle'
 import { registerIlink } from './ilink-lifecycle'
 import { registerMailboxPoller } from './bootstrap/wire-mailbox'
+import { registerReminders } from './reminders/sweeper'
+import { makeRemindersStore } from './reminders/store'
 import { buildInboundPipeline } from './inbound/build'
 import { runStartupSweeps } from './startup-sweeps'
 import { wireMain } from './wiring'
 import type { TickBodies } from './wiring/tick-bodies'
 import { makeChatPrefs } from './chat-prefs'
-import { makeStickerLib } from './stickers'
+import { makeStickerLib, seedStarterStickers, starterStickersDir } from './stickers'
 import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
@@ -39,6 +42,7 @@ import { startCustomerReviewRuntime } from './customer-review/runtime'
 import { SUPERVISED_ENV } from '../core/supervised-env'
 import { SubsystemSupervisor } from './subsystems'
 import { removeAgyGlobalMcp } from './bootstrap/agy-mcp-config'
+import { removeCursorGlobalMcp } from './bootstrap/cursor-mcp-config'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -180,6 +184,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // crash-exit skips this and leaves the dead-token entry on disk, but
     // that's fine — boot rewrites/upserts it fresh next start regardless.
     try { if (bootRef?.registry?.has?.('agy')) removeAgyGlobalMcp({ log }) } catch (err) { log('AGY', `mcp config cleanup error: ${err instanceof Error ? err.message : String(err)}`) }
+    try { if (bootRef?.registry?.has?.('cursor')) removeCursorGlobalMcp({ log }) } catch (err) { log('CURSOR', `mcp config cleanup error: ${err instanceof Error ? err.message : String(err)}`) }
     try { db.close() } catch (err) { console.error('db close failed:', err) }
     releaseInstanceLock(PID_PATH)
   }
@@ -208,6 +213,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // below. Mirrors chatPrefs above: a second instance would read a stale
     // in-memory index (write-through only protects its own writes).
     const stickerLib = makeStickerLib(stateDir)
+    // 初始表情包 — a fresh install gets the bundled bear pack so CC can send
+    // stickers from day one (empty-library-only; owner curation wins forever).
+    {
+      const packDir = starterStickersDir()
+      if (packDir) seedStarterStickers(stickerLib, packDir, (t, l) => log(t, l))
+    }
     // Single shared care-ledger instance for this daemon — mirrors chatPrefs
     // above. pushTick claims/reads it; the inbound path resets the no-reply
     // streak on every message. A second instance would have a stale
@@ -227,6 +238,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       setChatPref: (c, p) => chatPrefs.set(c, p),
       stickers: stickerLib,
       replySinks,
+      // chat_history 工具后端(provider-handoff 的逃生口)
+      messages: (() => { const ms = makeMessagesStore(db); return { listRange: (c: string, o: { limit: number; beforeTs?: string }) => ms.listRange(c, o), search: (c: string, q: string, l: number) => ms.search(c, q, l) } })(),
       setUserName: (chatId, name) => ilink.setUserName(chatId, name),
       voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus(), synthesizeSpeech: (t) => ilink.voice.synthesizeSpeech(t), transcribe: (a, m) => ilink.voice.transcribe!(a, m), saveSTTConfig: (i) => ilink.voice.saveSTTConfig!(i), sttStatus: () => ilink.voice.sttStatus!() },
       sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),
@@ -243,6 +256,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // Subsystem degraded-boot (spec 2026-08-17) — sup 在本调用之前创建,
       // 直接传引用,无需 thunk-over-bootRef 姿势。
       subsystems: () => sup.statuses(),
+      outbound: () => ilink.outboundHealth(),
       // Admin remediation hooks (POST /v1/sessions/release, /v1/daemon/restart).
       releaseSession: (k) => bootRef?.sessionManager?.release(k) ?? Promise.resolve(),
       requestRestart: () => requestRestart('internal-api'),
@@ -434,8 +448,33 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // desktop's "last incident" banner + notification) reads what the
     // health runtime actually wrote, not a second stale copy.
     internalApi.setIncidents(boot.health.incidents)
+    // LLM 通道体检 (llm-health.ts) — needs the registry, so late-bound like
+    // setMemory above. NO boot probe and no timer (owner ruling 2026-08-25):
+    // dialing happens ONLY when the user clicks 测试连接 — unprompted
+    // automated outbound calls on a flaky network are a risk-control (封号)
+    // shape. GET /v1/llm/health without ?fresh=1 never dials.
+    {
+      const { makeLlmHealth } = await import('./llm-health')
+      const { capabilitiesFor } = await import('../core/capability-matrix')
+      const llmHealth = makeLlmHealth({
+        registry: boot.registry,
+        defaultProviderId: boot.defaultProviderId,
+        hintFor: (id) => capabilitiesFor(id).authFailHint,
+        log,
+      })
+      internalApi.setLlmHealth(llmHealth, () => boot.registry.list(), () => {
+        // 自配 base_url:目前只有 openai-compatible 端点可指向国内/本地服务。
+        // 网络体检据此探真实端点,而非硬编码的 api.openai.com。
+        const eps: Record<string, string> = {}
+        const b = boot.agentConfig.openaiBaseUrl
+        if (b) eps.openai = b
+        return eps
+      })
+    }
     // 3. main-wiring builds all deps for pipeline + lifecycles
     const wired = wireMain({
+      stickers: stickerLib,
+      requestRestart: (reason) => requestRestart(reason),
       stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,
       // Task 11 — tick-bodies pass this to resolveTier() when computing
       // the companion's tierProfile. Same singleton import the bootstrap
@@ -450,6 +489,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // at request time, so this late assignment is safe (mirrors setConversation).
     internalApi.setCompanionConverse(wired.companionConverse)
     ticksRef = wired.ticks
+    internalApi.setSettingsLink(wired.settingsPanelLink)
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
     wireRef(wired.refs.pipeline, pipeline)
     // 4. register lifecycles (LIFO stop = startup order reversed)
@@ -476,9 +516,33 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const mailboxLc = await sup.start('mailbox-poller',
       () => boot.mailboxPollerDeps ? registerMailboxPoller(boot.mailboxPollerDeps) : undefined)
     if (mailboxLc) lc.register(mailboxLc)
+    // Reminder sweeper (spec 2026-08-20-reminders-port) — multi-user
+    // precise-time delivery. Optional subsystem: a broken sweeper degrades,
+    // never blocks boot. Store is db-backed so pending reminders survive
+    // restarts; send goes through the live ilink adapter and checks .error
+    // (sendMessage never rejects). No holdBusy needed: the tick INTERVAL is
+    // 60s and the sweep BODY itself is sub-second, so a self-restart lands
+    // between sweeps almost always. Worst case if a restart (or crash) lands
+    // between a successful send and the markSent that follows it: at-least-
+    // once delivery — the reminder is re-sent on the next sweep because the
+    // row is still 'pending' — not a delay.
+    const remindersLc = await sup.start('reminders', () => registerReminders({
+      store: makeRemindersStore(db),
+      send: async (chatId, text) => {
+        const r = await ilink.sendMessage(chatId, text) as { msgId?: string; error?: string }
+        return r.error ? { ok: false, error: r.error } : { ok: true }
+      },
+      log: (t, l) => log(t, l),
+    }))
+    if (remindersLc) lc.register(remindersLc)
     // 5. one-shot startup sweeps — fire-and-forget
     runStartupSweeps(wired.startupDeps)
-    const modeStr = dangerously ? 'mode=dangerouslySkipPermissions=true (no WeChat permission prompts will fire)' : 'mode=strict (Phase 1 permission relay active)'
+    // 外部集成反馈 #6:这个 flag 的语义像"跳过工具确认",实际是全局提权
+    // (resolveEffectiveTier 对每个 allowlist 会话都返回 admin)。日志明说,
+    // 让 operator 看清 blast radius;按会话生效见导图 [待]。
+    const modeStr = dangerously
+      ? 'mode=dangerouslySkipPermissions=true — 注意:此模式下所有 allowlist 会话均按 admin 处理(全局提权),不只是跳过确认'
+      : 'mode=strict (Phase 1 permission relay active)'
     log('DAEMON', `started pid=${process.pid} accounts=${accounts.length} ${modeStr}`)
     if (dangerously) log('DAEMON', 'warning: Claude will still confirm destructive ops via natural-language reply, but no permission prompts will appear.')
     // Subsystem degraded-boot (spec 2026-08-17 §3) — 启动完成后的一次性
@@ -524,8 +588,22 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
 // and gated the side-effect on `import.meta.main` — when cli.ts imports this
 // module, import.meta.main is false (standard ESM semantics), so no daemon
 // would start. Compiled `wechat-cc-cli.exe run` would silently no-op.
+import { existsSync as fsExistsSync, readFileSync as fsReadFileSync } from 'node:fs'
 export async function main() {
   const stateDir = process.env.WECHAT_CC_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'wechat')
+  // daemon.env — provider API keys' restart-surviving home (env-file.ts).
+  // Loaded BEFORE bootDaemon so provider registration sees the keys; the
+  // real environment always wins over the file. Key NAMES only in logs.
+  try {
+    const envPath = join(stateDir, 'daemon.env')
+    if (fsExistsSync(envPath)) {
+      const { parseEnvFile } = await import('../lib/env-file')
+      const fileEnv = parseEnvFile(fsReadFileSync(envPath, 'utf8'))
+      const applied = Object.keys(fileEnv).filter(k => process.env[k] === undefined)
+      for (const k of applied) process.env[k] = fileEnv[k]!
+      if (applied.length > 0) log('DAEMON', `daemon.env loaded: ${applied.join(', ')}`)
+    }
+  } catch (err) { log('DAEMON', `daemon.env load failed (continuing): ${err instanceof Error ? err.message : err}`) }
   const dangerously = process.argv.includes('--dangerously')
   let handle: DaemonHandle
   try { handle = await bootDaemon({ stateDir, dangerously }) } catch (err) { console.error('[wechat-cc] fatal:', err); process.exit(1) }

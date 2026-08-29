@@ -73,6 +73,12 @@ describe('route-tiers', () => {
     expect(minTierFor('POST /v1/memory/profile/generate')).toBe('trusted')
   })
 
+  it('reminder routes are guest-reachable (scope enforced in-handler)', () => {
+    expect(minTierFor('POST /v1/reminders/schedule')).toBe('guest')
+    expect(minTierFor('POST /v1/reminders/cancel')).toBe('guest')
+    expect(minTierFor('GET /v1/reminders/list')).toBe('guest')
+  })
+
   it('every registered route has an explicit min tier (no accidental default-deny)', () => {
     const deps = { stateDir: '/tmp', daemonPid: 1 } as unknown as InternalApiDeps
     const routes = makeRoutes({ deps, getDelegate: () => null, maybePrefix: (_c, t) => t })

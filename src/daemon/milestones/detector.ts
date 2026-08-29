@@ -14,14 +14,21 @@ export interface DetectorContext {
   chatId: string
   turnCount: number               // total turns across all sessions for this chat
   handoffMarkerExists: boolean    // _handoff.md present in any project memory
+  portraitExists: boolean         // CC 第一次画出主人的小像(portrait.svg present)
   pushRepliedHistory: string[]    // event_ids of pushes that user replied to
   /**
-   * YYYY-MM-DD UTC keys (`toISOString().slice(0, 10)`). Caller MUST use the
-   * same convention — has7DayStreak compares against UTC "today" + 6 prior
-   * UTC days. Future v0.5 may switch to local-wallclock; keep keys generated
-   * in one place to ease that migration.
+   * Local calendar-day keys (`YYYY-MM-DD`) that had ≥1 inbound message —
+   * from the activity store, bucketed by the owner's LOCAL day (system tz
+   * or configured offset; see core/prompt-format.ts localDayKey).
    */
   daysWithMessage: string[]
+  /**
+   * The last 7 local-day keys (today + 6 prior) the caller expects for an
+   * unbroken streak, computed with the SAME tz convention as daysWithMessage.
+   * has7DayStreak just checks all 7 are present — keeping the tz/now decision
+   * in one place (build-context) and the detector pure.
+   */
+  last7DayKeys: string[]
 }
 
 interface MilestoneSpec {
@@ -38,8 +45,13 @@ const SPECS: MilestoneSpec[] = [
   },
   {
     id: 'ms_1000msg',
-    body: '我们聊了第 1000 条。',
+    body: '我们聊了第 1000 条 — 一千条了,攒了好多我们俩的日子。',
     fires: ctx => ctx.turnCount >= 1000,
+  },
+  {
+    id: 'ms_first_portrait',
+    body: '我好像能想象出你的样子了 — 给你画了张小像。在记忆页,或手机上打开随身 CC 就能看到。',
+    fires: ctx => ctx.portraitExists,
   },
   {
     id: 'ms_first_handoff',
@@ -54,21 +66,15 @@ const SPECS: MilestoneSpec[] = [
   {
     id: 'ms_7day_streak',
     body: '我们已经连续 7 天每天都聊。',
-    fires: ctx => has7DayStreak(ctx.daysWithMessage),
+    fires: ctx => has7DayStreak(ctx.daysWithMessage, ctx.last7DayKeys),
   },
 ]
 
-function has7DayStreak(days: string[]): boolean {
-  if (days.length < 7) return false
+/** Every one of the caller's last-7 local-day keys had a message. */
+function has7DayStreak(days: string[], last7DayKeys: string[]): boolean {
+  if (last7DayKeys.length < 7) return false
   const set = new Set(days)
-  const today = new Date()
-  // UTC-day comparison — see DetectorContext.daysWithMessage doc.
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(today.getTime() - i * 86400_000)
-    const key = d.toISOString().slice(0, 10)
-    if (!set.has(key)) return false
-  }
-  return true
+  return last7DayKeys.every(k => set.has(k))
 }
 
 export async function detectMilestones(store: MilestonesStore, ctx: DetectorContext): Promise<string[]> {

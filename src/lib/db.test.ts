@@ -218,7 +218,7 @@ describe('migration v27/v28 — customer review completed elsewhere and analysis
     runMigrations(db)
 
     const version = db.query('PRAGMA user_version').get() as { user_version: number }
-    expect(version.user_version).toBe(28)
+    expect(version.user_version).toBe(31)
     expect(db.query('SELECT commitment FROM customer_review_items').get()).toMatchObject({ commitment: '发送报价' })
     expect(db.query('SELECT evidence_key FROM customer_review_evidence').get()).toMatchObject({ evidence_key: 'e1' })
     expect(db.query("SELECT name FROM sqlite_master WHERE name = 'customer_review_analysis_issues'").get()).toMatchObject({ name: 'customer_review_analysis_issues' })

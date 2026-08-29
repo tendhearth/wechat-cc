@@ -16,7 +16,7 @@
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
 import { invokeApi } from "./api.js"
-import { initialMode, restartButtonState, afterScanTarget } from "./view.js"
+import { initialMode, restartButtonState, afterScanTarget , showToast } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
 import { createConversationsPoller } from "./conversations-poller.js"
 import {
@@ -27,12 +27,14 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, closeTroubleshoot, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
-import { initCustomerReviewPage, stopCustomerReviewPolling } from "./modules/customer-review.js"
+import { stopCustomerReviewPolling } from "./modules/customer-review.js"
+import { initTodosPage } from "./modules/todos.js"
+import { startAppUpdateChecks } from "./modules/app-update.js"
 import { initConversePage } from "./modules/converse.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
 import { initPluginsTab, refresh as refreshPlugins } from "./modules/plugins.js"
@@ -106,17 +108,7 @@ async function withRefreshFeedback(button, fn) {
  * @param {string} cmd
  * @param {Record<string, unknown>} args
  */
-const invoke = (cmd, args) => {
-  // TEMP DIAG (guard auto-enable hunt): log a stack trace whenever `guard
-  // enable` is invoked from the frontend, revealing the exact trigger path
-  // (which handler, whether a real user gesture vs a programmatic call).
-  // Pairs with the backend GUARD_DIAG line in cli.ts. Remove once root-caused.
-  if (cmd === "wechat_cli_json" && Array.isArray(/** @type {any} */ (args)?.args)
-      && /** @type {any} */ (args).args[0] === "guard" && /** @type {any} */ (args).args[1] === "enable") {
-    console.warn("[guard-diag] invoke guard ENABLE — stack:\n", new Error().stack)
-  }
-  return ipcInvoke(cmd, args, state)
-}
+const invoke = (cmd, args) => ipcInvoke(cmd, args, state)
 
 const doctorPoller = createDoctorPoller({ invoke, intervalMs: 5000 })
 const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 10000 })
@@ -297,6 +289,7 @@ function wireDoctorSubscribers() {
   // outage that starts while the app is open surfaces without the owner
   // needing to revisit the overview pane.
   doctorPoller.subscribe(() => checkIncidentsOnPoll(deps))
+  doctorPoller.subscribe(() => checkBrainHealthOnPoll(deps))
   conversationsPoller.subscribe(report => {
     if (state.mode === "dashboard") renderConversations(report, { invoke })
   })
@@ -424,9 +417,13 @@ function setToggle(id, on) {
 /** @param {string} name */
 function switchPane(name) {
   const overviewWasHidden = name === "overview" && !!(/** @type {HTMLElement | null} */ (document.querySelector('.dash-pane[data-pane="overview"]')))?.hidden
+  const backstagePanes = new Set(["sessions", "plugins", "logs"])
   document.querySelectorAll(".dash-nav-link[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
-    htmlEl.classList.toggle("active", htmlEl.dataset.pane === name && !htmlEl.classList.contains("disabled"))
+    const hit = htmlEl.dataset.backstageEntry === "true"
+      ? backstagePanes.has(name)
+      : htmlEl.dataset.pane === name
+    htmlEl.classList.toggle("active", hit && !htmlEl.classList.contains("disabled"))
   })
   document.querySelectorAll(".dash-pane[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
@@ -453,6 +450,9 @@ function switchPane(name) {
     })
     loadMemoryTopZone(deps).catch(err => console.error("memory top zone failed", err))
   }
+  if (name === "todos") {
+    initTodosPage(deps)
+  }
   if (name === "sessions") {
     activateDialogueWorkspace()
   } else {
@@ -473,34 +473,93 @@ function switchPane(name) {
 }
 
 function activateDialogueWorkspace() {
-  const active = document.querySelector(".dialogue-workspace-tab.is-active")
-  const mode = active instanceof HTMLElement ? active.dataset.dialogueMode : "cc"
+  // 后厨's 会话 view. 待办 is a top-level pane now and 客户回顾 is retired
+  // (2026-08-25 owner IA decisions) — no mode branching left here.
   const dialogueRoot = document.getElementById("dialogue-root")
-  const reviewRoot = document.getElementById("customer-review-root")
-  if (mode === "customer-review") {
-    if (dialogueRoot) dialogueRoot.hidden = true
-    if (reviewRoot) reviewRoot.hidden = false
-    stopDialogueAutoRefresh()
-    initCustomerReviewPage()
-  } else {
-    if (dialogueRoot) dialogueRoot.hidden = false
-    if (reviewRoot) reviewRoot.hidden = true
-    stopCustomerReviewPolling()
-    initDialoguePage(deps)
-  }
+  if (dialogueRoot) dialogueRoot.hidden = false
+  stopCustomerReviewPolling()
+  initDialoguePage(deps)
 }
 
 // ─── DOM event wiring ────────────────────────────────────────────────
 
 function wireEvents() {
-  document.querySelectorAll(".dialogue-workspace-tab").forEach(tab => {
+  // 手机上改设置 — 拿一条新鲜的面板链接,渲染成二维码弹层(手机扫码直开)
+  document.getElementById("open-phone-settings")?.addEventListener("click", async () => {
+    try {
+      const r = /** @type {{ ok?: boolean, url?: string, error?: string }} */ (await deps.invokeApi("GET", "/v1/settings/link"))
+      if (!r || !r.ok || !r.url) {
+        const why = r && r.error === "no_lan_or_owner" ? "拿不到局域网地址(检查 Wi-Fi)或还没绑定微信" : (r && r.error) || "未知原因"
+        showToast(`生成不了设置链接:${why}`)
+        return
+      }
+      const svg = /** @type {string} */ (await deps.invoke("render_qr_svg", { text: r.url }))
+      const modal = document.createElement("div")
+      modal.id = "phone-settings-modal"
+      // https 链接 = 走公网壳页(远程隧道开着),任何网络都能扫开;
+      // http = 纯 LAN 链接,才需要同一 Wi-Fi 的提示。
+      const note = r.url.startsWith("https")
+        ? "手机扫码打开设置 · 10 分钟内有效<br>流量或任何 Wi-Fi 都能打开"
+        : "手机扫码打开设置 · 10 分钟内有效<br>手机和电脑要在同一个 Wi-Fi"
+      modal.innerHTML = `<div class="qr-card">${svg}<div class="qr-note">${note}</div></div>`
+      modal.addEventListener("click", () => modal.remove())
+      document.body.appendChild(modal)
+    } catch (err) {
+      showToast(`生成设置二维码失败:${err instanceof Error ? err.message : err}`)
+    }
+  })
+
+  // 大脑卡交互:测试连接(唯一的真实拨号入口)/ 接入表单 / 复制命令 / 保存 key / 重启
+  document.getElementById("brain-selfcheck")?.addEventListener("click", () => {
+    runTroubleshoot(deps).catch(err => console.warn("[brain] selfcheck failed:", err))
+  })
+  document.getElementById("brain-health")?.addEventListener("click", (ev) => {
+    const t = ev.target instanceof HTMLElement ? ev.target : null
+    if (!t) return
+    if (t.closest('[data-action="brain-recheck"]') || t.closest('[data-action="brain-troubleshoot"]')) {
+      runTroubleshoot(deps).catch(err => console.warn("[brain] troubleshoot failed:", err))
+      return
+    }
+    if (t.closest('[data-action="brain-close"]')) { closeTroubleshoot(deps); return }
+    // 接大脑引导:API Key 直开 OpenAI 兼容表单;订阅登录列 CLI 选项
+    if (t.closest('[data-action="nb-apikey"]')) { openBrainSetup(deps, "openai"); return }
+    if (t.closest('[data-action="nb-cli"]')) {
+      const box = document.getElementById("brain-setup")
+      if (box) {
+        box.hidden = false
+        box.innerHTML = '<div class="brain-setup-title">用哪家订阅?点一个看安装方法</div>'
+          + '<div class="nb-cli-row">'
+          + ['claude','codex','cursor'].map(function(pv){ return '<button class="brain-chip brain-off" type="button" data-brain-setup="'+pv+'">'+pv+'</button>' }).join('')
+          + '</div><div id="brain-setup" style="margin-top:8px"></div>'
+      }
+      return
+    }
+    const setup = t.closest("[data-brain-setup]")
+    if (setup instanceof HTMLElement && setup.dataset.brainSetup) {
+      openBrainSetup(deps, setup.dataset.brainSetup)
+      return
+    }
+    const copy = t.closest("[data-copy-cmd]")
+    if (copy instanceof HTMLElement && copy.dataset.copyCmd) {
+      navigator.clipboard?.writeText(copy.dataset.copyCmd).then(() => { copy.textContent = "已复制 ✓"; setTimeout(() => { copy.textContent = "复制" }, 1500) }).catch(() => {})
+      return
+    }
+    const save = t.closest('[data-action="brain-save-key"]')
+    if (save instanceof HTMLElement && save.dataset.provider) {
+      saveBrainKey(deps, save.dataset.provider).catch(err => console.warn("[brain] save key failed:", err))
+      return
+    }
+    if (t.closest('[data-action="brain-restart"]')) {
+      restartDaemon(deps).catch(err => console.warn("[brain] restart failed:", err))
+    }
+  })
+
+  // 后厨 sub-tabs (会话/插件/日志) — one identical strip lives at the top of
+  // each of the three backstage panes; clicking just switches the dash pane.
+  document.querySelectorAll(".dialogue-workspace-tab[data-backstage-pane]").forEach(tab => {
     tab.addEventListener("click", () => {
-      document.querySelectorAll(".dialogue-workspace-tab").forEach(other => {
-        const selected = other === tab
-        other.classList.toggle("is-active", selected)
-        other.setAttribute("aria-selected", selected ? "true" : "false")
-      })
-      activateDialogueWorkspace()
+      const el = /** @type {HTMLElement} */ (tab)
+      if (el.dataset.backstagePane) switchPane(el.dataset.backstagePane)
     })
   })
   // `data-tauri-drag-region` alone is not reliable with the macOS overlay
@@ -592,46 +651,30 @@ function wireEvents() {
     })
   })
 
-  // TEMP DIAGNOSTIC (network-guard auto-enable hunt): log a stack trace
-  // whenever either guard toggle GAINS the `on` class, so we can see exactly
-  // what flipped it (a real user click logs from the handler above; anything
-  // else — refreshGuardStatus syncing a truthy `guard status`, or an unknown
-  // path — is the culprit). Remove once the root cause is confirmed.
-  for (const id of ["guard-toggle", "screen-guard-toggle"]) {
-    const el = document.getElementById(id)
-    if (!el) continue
-    let wasOn = el.classList.contains("on")
-    new MutationObserver(() => {
-      const on = el.classList.contains("on")
-      if (on && !wasOn) {
-        console.warn(`[guard-diag] #${id} → ON. mode=${state.mode} stack:`, new Error().stack)
-      }
-      wasOn = on
-    }).observe(el, { attributes: true, attributeFilter: ["class"] })
-  }
-
   wireSettingsDrawer({
     deps: { invoke },
     onToggleChange: async (id, on) => {
+      // 返回 false → 持久化失败,让 settings-drawer 回滚开关(别让 UI 撒谎)。
       if (id === "unattended-toggle") {
         state.unattended = on
         try {
           await invoke("wechat_cli_text", { args: ["provider", "set", state.selectedProvider || "claude", "--unattended", on ? "true" : "false"] })
-        } catch (err) { console.error("unattended set failed:", err) }
+        } catch (err) { console.error("unattended set failed:", err); state.unattended = !on; return false }
       } else if (id === "autostart-toggle") {
         state.autoStart = on
         try {
           await invoke("wechat_cli_text", { args: ["provider", "set", state.selectedProvider || "claude", "--auto-start", on ? "true" : "false"] })
-        } catch (err) { console.error("autoStart set failed:", err) }
+        } catch (err) { console.error("autoStart set failed:", err); state.autoStart = !on; return false }
       } else if (id === "guard-toggle") {
         try {
           await invoke("wechat_cli_json", { args: ["guard", on ? "enable" : "disable", "--json"] })
           refreshGuardStatus()
-        } catch (err) { console.error("guard toggle failed:", err) }
+        } catch (err) { console.error("guard toggle failed:", err); return false }
       } else if (id === "memory-embryo-toggle") {
         setMemoryEmbryoEnabled(on)
         renderMemoryProfileOverview(deps)
       }
+      return true
     },
   })
 
@@ -1277,6 +1320,7 @@ async function boot() {
   mountHugeicons()
   wireDoctorSubscribers()
   wireEvents()
+  startAppUpdateChecks()
   // Refresh an already-configured local WeChat archive on every desktop
   // launch. Keep it off the critical render path: decrypting larger archives
   // can take seconds, while the dashboard should remain immediately usable.

@@ -42,6 +42,9 @@ export function makeMwTranscribeVoice(deps: TranscribeVoiceMwDeps): Middleware {
   return async (ctx: InboundCtx, next) => {
     const transcribe = deps.transcribeVoice
     const atts = ctx.msg.attachments
+    // 有真实语音附件(不是待拉取占位)？
+    const hasRealVoice = !!atts?.some(a => a.kind === 'voice' && a.path && a.path !== PENDING_CDN_REF)
+    let transcribedAny = false
     if (transcribe && atts) {
       for (const att of atts) {
         if (att.kind !== 'voice' || !att.path || att.path === PENDING_CDN_REF) continue
@@ -50,6 +53,7 @@ export function makeMwTranscribeVoice(deps: TranscribeVoiceMwDeps): Middleware {
           const { text } = await transcribe(buf, mimeFor(att.path))
           const clean = (text ?? '').trim()
           if (!clean) continue
+          transcribedAny = true
           const line = `[语音] ${clean}`
           // Replace the poll-loop placeholder; otherwise append a line.
           ctx.msg.text = (!ctx.msg.text || ctx.msg.text === '(non-text message)')
@@ -62,6 +66,12 @@ export function makeMwTranscribeVoice(deps: TranscribeVoiceMwDeps): Middleware {
           deps.log('STT', `transcribe failed for ${att.path}: ${err instanceof Error ? err.message : String(err)}`)
         }
       }
+    }
+    // 语音没转成文字(STT 没配 / 转写失败 / 空转写)且没有别的文字 —— 给 CC
+    // 一个能懂的信号,让它温柔请对方打字,而不是对着「(non-text message)」
+    // 瞎回应一条它根本读不了的语音(2026-08-27:STT 未配时的真实场景)。
+    if (hasRealVoice && !transcribedAny && (!ctx.msg.text || ctx.msg.text === '(non-text message)')) {
+      ctx.msg.text = '[对方发来一条语音,但语音转文字没接/没转出来,我这边读不了内容。温柔地请 ta 把要说的打字发我,别假装听懂了。]'
     }
     await next()
   }

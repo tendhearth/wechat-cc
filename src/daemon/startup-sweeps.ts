@@ -3,6 +3,7 @@ import type { Db } from '../lib/db'
 import type { IlinkAdapter } from './ilink-glue'
 import { cleanupOldInbox } from './media'
 import { loadCompanionConfig } from './companion/config'
+import { loadAgentConfig } from '../lib/agent-config'
 import { loadAccess } from '../lib/access'
 import { notifyStartup } from './notify-startup'
 import { buildDetectorContext } from './milestones/build-context'
@@ -43,7 +44,8 @@ async function runMilestoneSweep(deps: StartupSweepDeps): Promise<void> {
   try {
     const bootChatId = loadCompanionConfig(deps.stateDir).default_chat_id
     if (!bootChatId) return
-    const ctx = await buildDetectorContext({ stateDir: deps.stateDir, chatId: bootChatId, db: deps.db })
+    const dayTzOffsetMinutes = loadAgentConfig(deps.stateDir).day_tz_offset_minutes
+    const ctx = await buildDetectorContext({ stateDir: deps.stateDir, chatId: bootChatId, db: deps.db, dayTzOffsetMinutes })
     const memRoot = join(deps.stateDir, 'memory')
     const milestones = makeMilestonesStore(deps.db, bootChatId, {
       migrateFromFile: join(memRoot, bootChatId, 'milestones.jsonl'),

@@ -6,7 +6,7 @@ import { defineCommand, runMain } from 'citty'
 import selfPkg from './package.json' with { type: 'json' }
 import { STATE_DIR } from './src/lib/config'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider, activeModel, type AgentConfig, type AgentProviderKind } from './src/lib/agent-config'
-import { analyzeDoctor, defaultDoctorDeps, printDoctor, serviceStatus, setupStatus } from './src/cli/doctor'
+import { analyzeDoctor, defaultDoctorDeps, printDoctor, probeOutboundWarning, serviceStatus, setupStatus } from './src/cli/doctor'
 import { buildServicePlan, installService, startService, stopService, uninstallService } from './src/cli/service-manager'
 import { compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from './src/lib/runtime-info'
 import { delegateMemoryOp, type CliApiInfo } from './src/lib/cli-llm-eval'
@@ -251,10 +251,14 @@ const doctorCmd = defineCommand({
   args: {
     json: { type: 'boolean', description: 'machine-readable output' },
   },
-  run({ args }) {
+  async run({ args }) {
     const report = analyzeDoctor(defaultDoctorDeps())
     if (args.json) console.log(JSON.stringify(DoctorOutput.parse(report), null, 2))
-    else printDoctor(report)
+    else {
+      printDoctor(report)
+      const warn = await probeOutboundWarning(report.checks.daemon)
+      if (warn) console.log(warn)
+    }
   },
 })
 
@@ -797,21 +801,6 @@ const guardStatusCmd = defineCommand({
 async function setGuardEnabled(enabled: boolean, json: boolean): Promise<void> {
   const { loadGuardConfig, saveGuardConfig } = await import('./src/daemon/guard/store')
   const cfg = loadGuardConfig(STATE_DIR)
-  // TEMP DIAG (network-guard auto-enable hunt): persistently record WHO turned
-  // guard ON. The CLI is short-lived, so pid/ppid + the parent process command
-  // reveal whether it was the Tauri GUI (wechat_cc_desktop), a terminal `bun`,
-  // or something else. Written to channel.log so it survives even when no
-  // devtools console is open at the moment of the intermittent bug. Remove
-  // once the root cause is confirmed.
-  if (enabled) {
-    try {
-      const { log } = await import('./src/lib/log')
-      const { execSync } = await import('node:child_process')
-      let parent = '?'
-      try { parent = execSync(`ps -o comm= -p ${process.ppid}`, { encoding: 'utf8' }).trim() } catch { /* best-effort */ }
-      log('GUARD_DIAG', `guard ENABLE invoked (was ${cfg.enabled}) pid=${process.pid} ppid=${process.ppid} parent="${parent}" argv=${JSON.stringify(process.argv.slice(2))}`)
-    } catch { /* diagnostics must never break the command */ }
-  }
   cfg.enabled = enabled
   saveGuardConfig(STATE_DIR, cfg)
   if (json) console.log(JSON.stringify((enabled ? GuardEnableOutput : GuardDisableOutput).parse({ ok: true, enabled: cfg.enabled })))
@@ -1676,6 +1665,43 @@ const accountTakeoverCmd = defineCommand({
       console.error(`account takeover failed: ${msg}`); process.exit(1)
     }
   },
+})
+
+// 外部集成反馈 #5 (2026-08-26):allowlist 此前只有"加人"路径(管理员聊天流程),
+// 移除要手编 access.json。list/remove 补齐;daemon 的 5s TTL 缓存意味着改动
+// 数秒内生效,无需重启。
+const accessListCmd = defineCommand({
+  meta: { name: 'list', description: 'Show access.json: admins / trusted / allowFrom' },
+  args: { json: { type: 'boolean', description: 'JSON envelope' } },
+  async run({ args }) {
+    const { loadAccess } = await import('./src/lib/access.ts')
+    const a = loadAccess()
+    if (args.json) { console.log(JSON.stringify({ ok: true, dmPolicy: a.dmPolicy, admins: a.admins ?? [], trusted: a.trusted ?? [], allowFrom: a.allowFrom })); return }
+    console.log(`dmPolicy: ${a.dmPolicy}`)
+    console.log(`admins (${(a.admins ?? []).length}):`); for (const u of a.admins ?? []) console.log(`  ${u}`)
+    console.log(`trusted (${(a.trusted ?? []).length}):`); for (const u of a.trusted ?? []) console.log(`  ${u}`)
+    console.log(`allowFrom (${a.allowFrom.length}):`); for (const u of a.allowFrom) console.log(`  ${u}`)
+  },
+})
+
+const accessRemoveCmd = defineCommand({
+  meta: { name: 'remove', description: 'Remove a userId from allowFrom (admins refuse — self-lockout guard). Takes effect within ~5s, no restart.' },
+  args: {
+    userId: { type: 'positional', required: true, description: 'The chat/user id to remove', valueHint: 'xxx@im.wechat' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { removeAllowFrom } = await import('./src/lib/access.ts')
+    const r = removeAllowFrom(args.userId)
+    if (args.json) { console.log(JSON.stringify({ ok: r.ok, ...(r.reason ? { reason: r.reason } : {}) })); if (!r.ok) process.exitCode = 1; return }
+    if (r.ok) console.log(`✅ 已移除 ${args.userId}(daemon 数秒内生效)`)
+    else { console.log(r.reason === 'is_admin' ? `❌ ${args.userId} 是管理员,拒绝移除(防自锁)。` : `❌ ${args.userId} 不在 allowFrom 里。`); process.exitCode = 1 }
+  },
+})
+
+const accessCmd = defineCommand({
+  meta: { name: 'access', description: 'Allowlist management (list / remove) — the add path stays in the admin chat flow' },
+  subCommands: { list: accessListCmd, remove: accessRemoveCmd },
 })
 
 const accountCmd = defineCommand({
@@ -3479,7 +3505,65 @@ const licenseCmd = defineCommand({
   subCommands: { status: licenseStatusCmd, activate: licenseActivateCmd, deactivate: licenseDeactivateCmd },
 })
 
+const backupCreateCmd = defineCommand({
+  meta: { name: 'create', description: '立即做一次备份快照（仅不可再生数据，约 2MB）' },
+  args: { keep: { type: 'string', description: '备份后仅保留最新 N 份（默认不清理）' } },
+  async run({ args }) {
+    const { createBackup, pruneBackups } = await import('./src/lib/backup')
+    const r = await createBackup({ stateDir: STATE_DIR })
+    console.log(`✓ 已备份 → ${r.path} (${Math.round(r.bytes / 1024)}KB, ${r.entries.length} 项)`)
+    const keep = Number(args.keep)
+    if (Number.isFinite(keep) && keep > 0) {
+      const removed = pruneBackups(STATE_DIR, keep)
+      if (removed > 0) console.log(`已清理 ${removed} 份旧备份，保留最新 ${keep} 份`)
+    }
+  },
+})
+
+const backupListCmd = defineCommand({
+  meta: { name: 'list', description: '列出已有备份（新→旧）' },
+  async run() {
+    const { listBackups } = await import('./src/lib/backup')
+    const all = listBackups(STATE_DIR)
+    if (all.length === 0) { console.log('还没有备份 — 跑 `wechat-cc backup create` 做第一份。'); return }
+    for (const b of all) console.log(`${b.path}  ${Math.round(b.bytes / 1024)}KB`)
+  },
+})
+
+const backupRestoreCmd = defineCommand({
+  meta: { name: 'restore', description: '从备份恢复（需先停掉 daemon；被替换的文件会存进 restore-undo-*）' },
+  args: { file: { type: 'positional', required: true, description: '备份文件路径（backup list 里的一行）' } },
+  async run({ args }) {
+    const { restoreBackup } = await import('./src/lib/backup')
+    const daemonRunning = () => {
+      try {
+        const info = JSON.parse(require('node:fs').readFileSync(join(STATE_DIR, 'internal-api-info.json'), 'utf8'))
+        // Liveness = the recorded pid still exists. A sync signal-0 probe —
+        // no fetch, no async, works even when the http face is wedged.
+        if (typeof info.pid === 'number') { process.kill(info.pid, 0); return true }
+        return false
+      } catch { return false }
+    }
+    const r = await restoreBackup({ stateDir: STATE_DIR, file: String(args.file), daemonRunning })
+    if (!r.ok) {
+      if (r.error === 'daemon_running') {
+        console.error('✗ daemon 正在运行 — 先 `wechat-cc daemon stop`（或停掉 LaunchAgent）再恢复。')
+      } else {
+        console.error(`✗ 备份文件读不了：${r.detail ?? r.error}`)
+      }
+      process.exit(1)
+    }
+    console.log(`✓ 已恢复 ${r.restored.length} 项。被替换的旧文件在 ${r.undoDir} — 确认无误后可删。`)
+  },
+})
+
+const backupCmd = defineCommand({
+  meta: { name: 'backup', description: '备份/恢复不可再生数据（记忆、事实库、配置）' },
+  subCommands: { create: backupCreateCmd, list: backupListCmd, restore: backupRestoreCmd },
+})
+
 const SUBCOMMANDS = {
+  backup: backupCmd,
   status: statusCmd,
   plugin: pluginCmd,
   license: licenseCmd,
@@ -3503,6 +3587,7 @@ const SUBCOMMANDS = {
   // PR4 batch 3b — memory / account / daemon / demo namespaces.
   memory: memoryCmd,
   account: accountCmd,
+  access: accessCmd,
   companion: companionCmd,
   // connection-owner detection (Task 4).
   connection: connectionCmd,
@@ -3534,6 +3619,7 @@ const SUBCOMMANDS = {
 export const cittyRoot = defineCommand({
   meta: {
     name: 'wechat-cc',
+    version: selfPkg.version,   // citty 据此自动响应 `wechat-cc --version`
     description: 'WeChat bridge for Claude Code (Agent SDK daemon)',
   },
   subCommands: SUBCOMMANDS,

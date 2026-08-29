@@ -23,8 +23,10 @@ import { dirname, join } from 'node:path'
 import { buildOpenaiMcpSpecs, type McpStdioSpec } from './mcp-specs'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { setupAgyGlobalMcp } from './agy-mcp-config'
+import { setupCursorGlobalMcp } from './cursor-mcp-config'
 import { agyVersionOk } from './agy-version-check'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
+import { makeCheapEvalPreflight } from './cheap-eval-preflight'
 import type { BootstrapDeps } from './types'
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
 
@@ -132,7 +134,23 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // RFC 03 §3.6 / C7 — auth-agnostic. We do NOT pass `apiKey` to the codex
   // provider; the user's `codex login` or OPENAI_API_KEY env are honored
   // transparently by the SDK.
-  const registry = createProviderRegistry()
+  const registry = createProviderRegistry({
+    ...(configuredAgent.cheapEvalProvider ? { cheapEvalProvider: configuredAgent.cheapEvalProvider } : {}),
+    // 后台 cheapEval 网络预检(2026-08-29,弹 OAuth 浏览器页根治的最后一块):
+    // failover 试某候选前 HEAD 探它的 API origin,不可达直接落到下一家,
+    // 不再冷启动一个注定撞网络超时的 CLI。UNDER_TEST_RUNNER 下不接——单测
+    // 里的 buildBootstrap 绝不能发真实网络探测(同文件 agy/cursor 门的姿势)。
+    ...(UNDER_TEST_RUNNER ? {} : {
+      cheapEvalPreflight: makeCheapEvalPreflight({
+        overrides: (): Record<string, string> => {
+          const b = configuredAgent.openaiBaseUrl
+          return b ? { openai: b } : {}
+        },
+        log: (line) => deps.log('REGISTRY', line),
+      }),
+    }),
+    log: (line) => deps.log('REGISTRY', line),
+  })
   registry.register(
     'claude',
     createClaudeAgentProvider({
@@ -174,6 +192,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     bundledSdkVersion: codexCliPkg.version,
     detectUserCodex: () => detectUserCodexOnPath(),
     envDisabled: process.env.WECHAT_CC_DISABLE_CODEX_AUTOFIX === '1',
+    gitCheckout: codexInstallDir !== null && existsSync(join(codexInstallDir, '.git')),
+    envForced: process.env.WECHAT_CC_FORCE_CODEX_AUTOFIX === '1',
     log: (line) => deps.log('CODEX_AUTOFIX', line),
   }).then((outcome) => {
     switch (outcome.status) {
@@ -316,8 +336,49 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // @cursor/sdk` and the registration silently skips.
   //
   // See docs/superpowers/specs/2026-05-23-cursor-sdk-provider-design.md.
+  // cursor-agent CLI (subscription auth via `cursor-agent login`) — the
+  // preferred path (owner 2026-08-25: 大部分 cursor 用户用订阅,不是 API key).
+  // Same TEST-RUNNER PATH-fallback guard as agy below: a dev box with
+  // cursor-agent installed must not register a real provider in every test
+  // bootstrap — tests opt in via `cursorAgentBin` in seeded agent-config.
+  const cursorAgentBin = configuredAgent.cursorAgentBin ?? (UNDER_TEST_RUNNER ? null : findOnPath('cursor-agent'))
+  let cursorCliRegistered = false
+  if (cursorAgentBin && probeBinaryVersion(cursorAgentBin) !== null) {
+    try {
+      const { createCursorCliProvider } = await import('../../core/cursor-cli-provider')
+      // Tier C global MCP upsert into ~/.cursor/mcp.json — cursor-agent's
+      // only global MCP surface, same one-trusted-token contract as agy
+      // (see cursor-mcp-config.ts). Missing internalApi/mint ⇒ provider
+      // still registers, loudly without tools.
+      if (wechatStdioForCursor && mintSessionToken) {
+        setupCursorGlobalMcp({
+          wechatSpec: wechatStdioForCursor,
+          mintToken: () => mintSessionToken('trusted', 'cursor-static'),
+          log: deps.log,
+        })
+      } else {
+        deps.log('BOOT', 'cursor: internalApi/mintSessionToken unavailable — wechat MCP not wired (cursor will have no tools)')
+      }
+      registry.register(
+        'cursor',
+        createCursorCliProvider({
+          bin: cursorAgentBin,
+          model: configuredAgent.cursorModel ?? 'auto',
+          log: deps.log,
+        }),
+        { displayName: 'Cursor', canResume: () => true },
+      )
+      cursorCliRegistered = true
+      deps.log('BOOT', 'cursor: cursor-agent CLI present (subscription auth) — provider registered')
+    } catch (err) {
+      deps.log('BOOT', `cursor: CLI registration failed — ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
   const cursorKey = process.env.CURSOR_API_KEY
-  if (cursorKey && !configuredAgent.cursorModel) {
+  if (cursorCliRegistered) {
+    // CLI path won — the SDK/API-key fallback below is skipped entirely.
+  } else if (cursorKey && !configuredAgent.cursorModel) {
     // Cursor SDK's @cursor/sdk/dist/esm/options.d.ts says model is "required
     // for local agents" — local is the only mode wechat-cc uses today.
     // Fail-fast at boot with an actionable message rather than crash on
@@ -417,6 +478,12 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         },
       )
       deps.log('BOOT', 'openai: base_url + model + WECHAT_OPENAI_API_KEY present — provider registered')
+      // 外部集成反馈 #2:openai 在 cheapEval 偏好序第一,注册即承接全部
+      // 后台评估(记忆整理/moderator/introspect)。端点若是特化服务,请在
+      // agent-config 里 cheap_eval_provider 指定别家。
+      if (!configuredAgent.cheapEvalProvider) {
+        deps.log('BOOT', 'openai: 注意 — 该端点现在也承接全部内部 cheapEval 评估;如非通用大模型,设置 cheap_eval_provider 指定其他 provider')
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       deps.log('BOOT', `openai: registration failed (${msg}) — provider not registered`)

@@ -90,15 +90,21 @@ fn render_qr_svg(text: String) -> Result<String, String> {
 // itself remains a regular webview page, so it can reuse the same Canvas scene
 // and assets as the dashboard rather than keeping a second animation engine in
 // Rust. A second request focuses the existing window instead of stacking copies.
+// ASYNC on purpose (2026-08-25, Windows 卡死 fix): Tauri v2's documented
+// rule is that creating a webview window inside a SYNCHRONOUS command
+// deadlocks on Windows — wry marshals window creation onto the main thread
+// while the sync command may itself be blocking that thread. `async fn`
+// moves the command off the main thread, which is the officially
+// recommended fix. macOS never deadlocked here; behavior there is unchanged.
 #[tauri::command]
-fn open_companion_window(app: AppHandle) -> Result<(), String> {
+async fn open_companion_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("companion") {
         window.show().map_err(|err| format!("show companion window: {err}"))?;
         window.set_focus().map_err(|err| format!("focus companion window: {err}"))?;
         return Ok(());
     }
 
-    WebviewWindowBuilder::new(
+    let builder = WebviewWindowBuilder::new(
         &app,
         "companion",
         WebviewUrl::App("companion-window.html".into()),
@@ -113,9 +119,16 @@ fn open_companion_window(app: AppHandle) -> Result<(), String> {
     .decorations(false)
     .always_on_top(true)
     .skip_taskbar(true)
-    .resizable(true)
-    .build()
-    .map_err(|err| format!("create companion window: {err}"))?;
+    .resizable(true);
+
+    // Windows: an undecorated window keeps its DWM shadow by default, which
+    // paints an opaque halo/flicker around a TRANSPARENT window. Drop it.
+    #[cfg(target_os = "windows")]
+    let builder = builder.shadow(false);
+
+    builder
+        .build()
+        .map_err(|err| format!("create companion window: {err}"))?;
 
     Ok(())
 }
@@ -484,7 +497,13 @@ async fn agent_converse(text: String) -> Result<String, String> {
         .map_err(|e| format!("token read error: {e}"))?;
 
     let url = format!("{base_url}/v1/companion/converse");
-    let duration = Duration::from_secs(60);
+    // Must outlast the daemon's own turn budget (turnTimeoutMs, default 10
+    // minutes — bootstrap/index.ts): the converse route replies only when
+    // the turn finishes, and a cold-start owner turn routinely runs past a
+    // minute. A 60s client timeout dropped a completed 108s reply on the
+    // floor (2026-08-24 一直没回复 bug): the sink captured it, the HTTP
+    // response was written, and nobody was listening.
+    let duration = Duration::from_secs(630);
     // reqwest's `json` feature is not enabled in this crate (see Cargo.toml —
     // default-features = false, only "rustls-tls"), so serialize the body by
     // hand rather than pull in a new feature flag.
@@ -764,9 +783,21 @@ async fn customer_review_api(
     // a generic daemon proxy. Reject anything outside the workspace's own
     // prefix, and any traversal-ish path, before touching the token.
     let route = path.split('?').next().unwrap_or("");
-    if !(route == "/v1/customer-review" || route.starts_with("/v1/customer-review/"))
-        || path.contains("..")
-    {
+    // 待办 workspace (2026-08-24) shares this channel: obligation list +
+    // status writes, contact display names, reminder scheduling — all the
+    // owner's own private data, exactly customer review's trust class.
+    // Still a hard allow-list, still no generic proxying.
+    const OWNER_WORKSPACE_ROUTES: [&str; 5] = [
+        "/v1/knowledge/facts/find_facts",
+        "/v1/llm/keys",
+        "/v1/knowledge/facts/set_fact_status",
+        "/v1/knowledge/graph/top_contacts",
+        "/v1/reminders/schedule",
+    ];
+    let allowed = route == "/v1/customer-review"
+        || route.starts_with("/v1/customer-review/")
+        || OWNER_WORKSPACE_ROUTES.contains(&route);
+    if !allowed || path.contains("..") {
         return Err(format!("customer_review_api refuses path: {path}"));
     }
     if method != "GET" && method != "POST" {
@@ -846,6 +877,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             wechat_cli_json,
             wechat_cli_json_via_file,

@@ -25,7 +25,7 @@ describe('activity store', () => {
   })
 
   it('records first message of a day', async () => {
-    const store = makeActivityStore(db, 'chat_x', { now: FIXED_NOW })
+    const store = makeActivityStore(db, 'chat_x', { now: FIXED_NOW, dayOffsetMinutes: 0 })
     await store.recordInbound(new Date('2026-04-29T08:00:00Z'))
     const days = await store.recentDays(30)
     expect(days).toHaveLength(1)
@@ -34,7 +34,7 @@ describe('activity store', () => {
   })
 
   it('increments msg_count for same-day messages without adding new entries', async () => {
-    const store = makeActivityStore(db, 'chat_x', { now: FIXED_NOW })
+    const store = makeActivityStore(db, 'chat_x', { now: FIXED_NOW, dayOffsetMinutes: 0 })
     await store.recordInbound(new Date('2026-04-29T08:00:00Z'))
     await store.recordInbound(new Date('2026-04-29T14:00:00Z'))
     await store.recordInbound(new Date('2026-04-29T22:00:00Z'))
@@ -44,7 +44,7 @@ describe('activity store', () => {
   })
 
   it('appends new entries on day change', async () => {
-    const store = makeActivityStore(db, 'chat_x', { now: FIXED_NOW })
+    const store = makeActivityStore(db, 'chat_x', { now: FIXED_NOW, dayOffsetMinutes: 0 })
     await store.recordInbound(new Date('2026-04-28T23:30:00Z'))
     await store.recordInbound(new Date('2026-04-29T00:30:00Z'))
     const days = await store.recentDays(30)
@@ -53,7 +53,7 @@ describe('activity store', () => {
   })
 
   it('recentDays(N) limits how far back we read', async () => {
-    const store = makeActivityStore(db, 'chat_x', { now: FIXED_NOW })
+    const store = makeActivityStore(db, 'chat_x', { now: FIXED_NOW, dayOffsetMinutes: 0 })
     await store.recordInbound(new Date('2026-01-01T00:00:00Z'))
     await store.recordInbound(new Date('2026-04-28T00:00:00Z'))
     await store.recordInbound(new Date('2026-04-29T00:00:00Z'))
@@ -61,9 +61,18 @@ describe('activity store', () => {
     expect(days.map(d => d.date)).toEqual(['2026-04-28', '2026-04-29'])
   })
 
+  it('buckets by LOCAL day, not UTC — a UTC-evening message lands in the next local day (UTC+8)', async () => {
+    // 22:30Z at UTC+8 is 06:30 next local day → local day is 04-29, not 04-28.
+    // This is the whole point: the owner's lived "today", not UTC's.
+    const store = makeActivityStore(db, 'chat_x', { now: FIXED_NOW, dayOffsetMinutes: 480 })
+    await store.recordInbound(new Date('2026-04-28T22:30:00Z'))
+    const days = await store.recentDays(30)
+    expect(days.map(d => d.date)).toEqual(['2026-04-29'])
+  })
+
   it('different chatIds keep separate counts', async () => {
-    const a = makeActivityStore(db, 'chat_a', { now: FIXED_NOW })
-    const b = makeActivityStore(db, 'chat_b', { now: FIXED_NOW })
+    const a = makeActivityStore(db, 'chat_a', { now: FIXED_NOW, dayOffsetMinutes: 0 })
+    const b = makeActivityStore(db, 'chat_b', { now: FIXED_NOW, dayOffsetMinutes: 0 })
     await a.recordInbound(new Date('2026-04-29T08:00:00Z'))
     await a.recordInbound(new Date('2026-04-29T09:00:00Z'))
     await b.recordInbound(new Date('2026-04-29T10:00:00Z'))

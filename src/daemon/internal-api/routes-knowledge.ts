@@ -38,6 +38,20 @@ export function knowledgeRoutes(deps: InternalApiDeps): RouteTable {
       return { status: 200, body: { ok: true, watermark } }
     },
 
+    // 换 provider 交接的 Amp 式逃生口(provider-handoff.ts):按 chat 查
+    // 近期原文或全文搜索 —— 面向 agent 的 chat_history 工具后端。
+    'GET /v1/chat/history': async (q) => {
+      if (!deps.messages) return { status: 503, body: { error: 'messages_not_wired' } }
+      const chatId = q.get('chatId')
+      if (!chatId) return { status: 400, body: { error: 'chatId_required' } }
+      const rawLimit = Number(q.get('limit') ?? '30')
+      const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.trunc(rawLimit), 200) : 30
+      const query = q.get('query')
+      const rows = query && query.trim().length > 0
+        ? await deps.messages.search(chatId, query.trim(), limit)
+        : await deps.messages.listRange(chatId, { limit, ...(q.get('before') ? { beforeTs: q.get('before')! } : {}) })
+      return { status: 200, body: { messages: rows.map(r => ({ ts: r.ts, dir: r.direction, kind: r.kind, text: r.text })) } }
+    },
     'GET /v1/knowledge/messages': (q) => {
       if (!deps.knowledge) return { status: 503, body: { error: 'knowledge_not_wired' } }
       const since = Number(q.get('since_watermark') ?? '0')

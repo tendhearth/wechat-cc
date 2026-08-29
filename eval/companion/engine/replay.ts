@@ -92,8 +92,14 @@ export async function replay(trajectory: Trajectory, opts: ReplayOpts): Promise<
             const newOnes = outbox.slice(outboxBefore)
             const lastNew = newOnes[newOnes.length - 1]
             ctx.lastUserMessageReply[eventChatId] = { text: lastNew?.text ?? '' }
+            // Diagnostic (2026-08-24 misalignment hunt): record what THIS
+            // event actually captured, so an off-by-one (event N satisfied by
+            // event N-1's late reply) is visible in the jsonl instead of
+            // only surfacing as a nonsensical probe answer at the end.
+            ;(result as { capturedReply?: string }).capturedReply = lastNew?.text ?? ''
           } catch (err) {
             ctx.lastUserMessageReply[eventChatId] = { error: err instanceof Error ? err.message : String(err) }
+            ;(result as { capturedReplyError?: string }).capturedReplyError = err instanceof Error ? err.message : String(err)
           }
         } else if (event.kind === 'tick') {
           // The companion tick fires against companion_config.default_chat_id and

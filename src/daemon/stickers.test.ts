@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, existsSync, unlinkSync, readFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeStickerLib } from './stickers'
+import { makeStickerLib, seedStarterStickers } from './stickers'
 
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), 'stickers-'))
@@ -182,5 +182,50 @@ describe('stickers', () => {
       lib.save(b, ['apple', 'mango'])
       expect(lib.allTags()).toEqual(['apple', 'mango', 'zebra'])
     } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
+
+
+describe('seedStarterStickers (初始表情包)', () => {
+  function seedPack(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'starter-pack-'))
+    writeFileSync(join(dir, 'bear.png'), 'png-bytes')
+    writeFileSync(join(dir, 'fish.png'), 'png-bytes')
+    writeFileSync(join(dir, 'manifest.json'), JSON.stringify([
+      { file: 'bear.png', tags: ['开心'], desc: '小熊' },
+      { file: 'fish.png', tags: ['摸鱼'] },
+      { file: 'missing.png', tags: ['无'] },          // 文件不存在 — 跳过不炸
+    ]))
+    return dir
+  }
+
+  it('seeds an EMPTY library from the pack manifest, skipping broken entries', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'sticker-state-'))
+    const lib = makeStickerLib(stateDir)
+    const n = seedStarterStickers(lib, seedPack())
+    expect(n).toBe(2)
+    expect(lib.allTags()).toEqual(['开心', '摸鱼'])
+    rmSync(stateDir, { recursive: true, force: true })
+  })
+
+  it('does NOTHING when the library already has stickers (owner curation wins)', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'sticker-state-'))
+    const lib = makeStickerLib(stateDir)
+    const pack = seedPack()
+    lib.save(join(pack, 'bear.png'), ['已有'])
+    const n = seedStarterStickers(lib, pack)
+    expect(n).toBe(0)
+    expect(lib.allTags()).toEqual(['已有'])
+    rmSync(stateDir, { recursive: true, force: true })
+  })
+
+  it('missing pack dir / bad manifest → 0, no throw', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'sticker-state-'))
+    const lib = makeStickerLib(stateDir)
+    expect(seedStarterStickers(lib, '/nonexistent/dir')).toBe(0)
+    const bad = mkdtempSync(join(tmpdir(), 'starter-bad-'))
+    writeFileSync(join(bad, 'manifest.json'), 'not json')
+    expect(seedStarterStickers(lib, bad)).toBe(0)
+    rmSync(stateDir, { recursive: true, force: true })
   })
 })

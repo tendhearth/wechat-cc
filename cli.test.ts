@@ -55,9 +55,11 @@ describe('citty migrated commands', () => {
   it('exposes the full migrated subcommand surface (batches 1 through 3c)', () => {
     const subs = cittyRoot.subCommands as Record<string, unknown>
     expect(Object.keys(subs).sort()).toEqual([
+      'access',
       'account',
       'agent',
       'avatar',
+      'backup',
       'companion',
       'connection',
       'conversations',

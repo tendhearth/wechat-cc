@@ -109,6 +109,13 @@ export interface FactRow {
   status: string
   created_at: number
   updated_at: number
+  /** Temporal validity (2026-08 memory-upgrades): when the fact became true
+   *  (stamped `now` at insert; backfilled from `created_at` on upgraded
+   *  stores), when it was invalidated by a supersede, and which fact id
+   *  superseded it. All null while the fact is live. */
+  valid_from: number | null
+  invalidated_at: number | null
+  superseded_by: number | null
 }
 
 export interface KnowledgeStore {
@@ -196,8 +203,30 @@ export interface KnowledgeStore {
    *  is an ordered union (no dupes), `confidence` takes the max by
    *  `{low:0,med:1,high:2}`, `related_contact`/`time_ref` fill only when
    *  currently absent, and `status` is left untouched (a resolved fact
-   *  merging new evidence stays resolved). Returns which branch fired. */
-  upsertFact(fact: Fact & { contact: string }, now: number): 'inserted' | 'merged'
+   *  merging new evidence stays resolved). Returns which branch fired plus
+   *  the row id (inserted or existing) — conflict detection needs the id. */
+  upsertFact(fact: Fact & { contact: string }, now: number): { outcome: 'inserted' | 'merged'; id: number }
+  /** Same-predicate different-value ACTIVE facts for a contact — the
+   *  conflict-candidate set a just-recorded fact is judged against. */
+  activeFactsSharingPredicate(contact: string, predicate: string, excludeValue: string): FactRow[]
+  /** Marks `oldId` superseded by `newId` (status='superseded',
+   *  invalidated_at=now, superseded_by=newId). Only fires on an ACTIVE row —
+   *  returns false (and stamps nothing) otherwise, so a double supersede
+   *  never rewrites history. */
+  supersedeFactById(oldId: number, newId: number, now: number): boolean
+  factById(id: number): FactRow | null
+  /** ACTIVE same-(contact,predicate) groups with ≥2 distinct values — the
+   *  stock-conflict sweep's feed. Facts inside each group are newest-first
+   *  (updated_at DESC). */
+  conflictedFactGroups(limit: number): Array<{ contact: string; predicate: string; facts: FactRow[] }>
+  /** Contacts carrying ≥2 ACTIVE obligations, heaviest first — the
+   *  obligation-dedup sweep's feed. */
+  obligationHeavyContacts(limit: number, minCount?: number): Array<{ contact: string; n: number }>
+  /** Sweep judge-state: the fingerprint last judged under `key` (null =
+   *  never judged). Sweeps skip stock whose fingerprint hasn't changed
+   *  since the last no-action verdict — see companion/ingest sweeps. */
+  judgeFingerprint(key: string): string | null
+  setJudgeFingerprint(key: string, fingerprint: string, now: number): void
   /** `[last_ts, last_local_id]`, `[0, 0]` when the contact has no watermark
    *  row yet. */
   factWatermark(contact: string): [number, number]
@@ -392,6 +421,13 @@ export function openKnowledge(root: string): KnowledgeStore {
 
   // ---- semantic.db --------------------------------------------------------
   const semanticDb = openSqlite(join(root, 'semantic.db'))
+  // In-memory vector matrix cache (2026-08-24): auto-recall runs a
+  // semanticSearch per admin message, and loadVectors was re-reading the
+  // whole matrix from SQLite every call (~105MB / ~300ms cold at 53k
+  // vectors). Invalidation is count-based — a cheap COUNT per read compares
+  // against the count captured at cache time, so writes from THIS process
+  // (indexer) and any other process are both picked up. Keyed per model_id.
+  const vectorCache = new Map<string, { rowids: number[]; dim: number; mat: Float32Array; count: number }>()
   semanticDb.exec(`
     CREATE TABLE IF NOT EXISTS chunks (
       rowid INTEGER PRIMARY KEY,
@@ -614,7 +650,21 @@ export function openKnowledge(root: string): KnowledgeStore {
       UNIQUE(contact, predicate, value));
     CREATE TABLE IF NOT EXISTS extraction_state (
       contact TEXT PRIMARY KEY, last_ts INTEGER, last_local_id INTEGER DEFAULT 0,
-      updated_at INTEGER);`)
+      updated_at INTEGER);
+    CREATE TABLE IF NOT EXISTS judge_state (
+      key TEXT PRIMARY KEY, fingerprint TEXT, judged_at INTEGER);`)
+  // Temporal validity (2026-08 memory-upgrades) — guarded ALTER so a facts.db
+  // created before these columns existed upgrades in place. valid_from
+  // backfills from created_at exactly once (only when the column was just
+  // added, i.e. every existing row has NULL there).
+  const factCols = new Set(
+    (factsDb.query('PRAGMA table_info(facts)').all() as Array<{ name: string }>).map((c) => c.name),
+  )
+  const hadValidFrom = factCols.has('valid_from')
+  if (!hadValidFrom) factsDb.exec('ALTER TABLE facts ADD COLUMN valid_from INTEGER')
+  if (!factCols.has('invalidated_at')) factsDb.exec('ALTER TABLE facts ADD COLUMN invalidated_at INTEGER')
+  if (!factCols.has('superseded_by')) factsDb.exec('ALTER TABLE facts ADD COLUMN superseded_by INTEGER')
+  if (!hadValidFrom) factsDb.exec('UPDATE facts SET valid_from = created_at WHERE valid_from IS NULL')
 
   return {
     putSourceMessages(msgs) {
@@ -658,6 +708,11 @@ export function openKnowledge(root: string): KnowledgeStore {
     },
 
     loadVectors(model_id) {
+      const count = stmtCountByModel.get(model_id)?.n ?? 0
+      const cached = vectorCache.get(model_id)
+      if (cached && cached.count === count) {
+        return { rowids: cached.rowids, dim: cached.dim, mat: cached.mat }
+      }
       const rows = stmtLoadVectors.all(model_id)
       if (rows.length === 0) return { rowids: [], dim: 0, mat: new Float32Array(0) }
       const dim = rows[0]!.vector.byteLength / 4
@@ -668,6 +723,7 @@ export function openKnowledge(root: string): KnowledgeStore {
         const v = new Float32Array(r.vector.buffer, r.vector.byteOffset, dim)
         mat.set(v, i * dim)
       })
+      vectorCache.set(model_id, { rowids, dim, mat, count })
       return { rowids, dim, mat }
     },
 
@@ -763,21 +819,80 @@ export function openKnowledge(root: string): KnowledgeStore {
       const cur = factsDb.query('SELECT * FROM facts WHERE contact=? AND predicate=? AND value=?')
         .get(fact.contact, fact.predicate, fact.value) as any
       if (!cur) {
-        factsDb.query(`INSERT INTO facts(contact,kind,predicate,value,related_contact,time_ref,
-          confidence,source_msg_keys,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
+        const r = factsDb.query(`INSERT INTO facts(contact,kind,predicate,value,related_contact,time_ref,
+          confidence,source_msg_keys,status,created_at,updated_at,valid_from) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
           .run(fact.contact, fact.kind ?? null, fact.predicate, fact.value,
                fact.related_contact ?? null, fact.time_ref ?? null, conf,
-               JSON.stringify(keys), 'active', now, now)
-        return 'inserted'
+               JSON.stringify(keys), 'active', now, now, now)
+        return { outcome: 'inserted', id: Number((r as unknown as { lastInsertRowid: number | bigint }).lastInsertRowid) }
       }
       const prev = parseFactRow(cur)
       const merged = [...new Set([...prev.source_msg_keys, ...keys])] // ordered union
       const best = (CONF_RANK[conf] ?? 1) > (CONF_RANK[prev.confidence ?? 'med'] ?? 1) ? conf : prev.confidence
       factsDb.query(`UPDATE facts SET kind=?, related_contact=?, time_ref=?, confidence=?,
-        source_msg_keys=?, updated_at=? WHERE id=?`) // status untouched
+        source_msg_keys=?, updated_at=? WHERE id=?`) // status + valid_from untouched
         .run(fact.kind || prev.kind, fact.related_contact || prev.related_contact,
              fact.time_ref || prev.time_ref, best, JSON.stringify(merged), now, prev.id)
-      return 'merged'
+      return { outcome: 'merged', id: prev.id }
+    },
+
+    activeFactsSharingPredicate(contact, predicate, excludeValue) {
+      return (factsDb.query(
+        "SELECT * FROM facts WHERE contact=? AND predicate=? AND value<>? AND status='active' ORDER BY updated_at DESC",
+      ).all(contact, predicate, excludeValue) as any[]).map(parseFactRow)
+    },
+
+    supersedeFactById(oldId, newId, now) {
+      const c = factsDb.query(
+        "UPDATE facts SET status='superseded', invalidated_at=?, superseded_by=?, updated_at=? WHERE id=? AND status='active'",
+      ).run(now, newId, now, oldId)
+      return (c as unknown as { changes: number }).changes > 0
+    },
+
+    factById(id) {
+      const r = factsDb.query('SELECT * FROM facts WHERE id=?').get(id) as any
+      return r ? parseFactRow(r) : null
+    },
+
+    obligationHeavyContacts(limit, minCount = 2) {
+      // minCount=2 is the dedup feed (a duplicate needs a pair); the
+      // settlement backfill passes 1 — a lone promise can still be settled.
+      return factsDb.query(
+        `SELECT contact, COUNT(*) AS n FROM facts
+         WHERE kind='obligation' AND status='active'
+         GROUP BY contact HAVING n >= ? ORDER BY n DESC LIMIT ?`,
+      ).all(minCount, limit) as Array<{ contact: string; n: number }>
+    },
+
+    conflictedFactGroups(limit) {
+      // Stock-sweep feed: ACTIVE same-(contact,predicate) groups holding ≥2
+      // distinct values — contradictions recorded before conflict detection
+      // existed (or whose judge call failed). Newest-first inside each group
+      // so the sweep can treat facts[0] as the presumed-current value.
+      const groups = factsDb.query(
+        `SELECT contact, predicate FROM facts WHERE status='active'
+         GROUP BY contact, predicate HAVING COUNT(DISTINCT value) >= 2
+         ORDER BY MAX(updated_at) DESC LIMIT ?`,
+      ).all(limit) as Array<{ contact: string; predicate: string }>
+      return groups.map((g) => ({
+        contact: g.contact,
+        predicate: g.predicate,
+        facts: (factsDb.query(
+          "SELECT * FROM facts WHERE contact=? AND predicate=? AND status='active' ORDER BY updated_at DESC, id DESC",
+        ).all(g.contact, g.predicate) as any[]).map(parseFactRow),
+      }))
+    },
+
+    judgeFingerprint(key) {
+      const r = factsDb.query('SELECT fingerprint FROM judge_state WHERE key=?').get(key) as
+        { fingerprint: string } | null
+      return r ? r.fingerprint : null
+    },
+
+    setJudgeFingerprint(key, fingerprint, now) {
+      factsDb.query(`INSERT INTO judge_state(key,fingerprint,judged_at) VALUES(?,?,?)
+        ON CONFLICT(key) DO UPDATE SET fingerprint=excluded.fingerprint, judged_at=excluded.judged_at`)
+        .run(key, fingerprint, now)
     },
 
     factWatermark(contact) {

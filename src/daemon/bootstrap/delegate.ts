@@ -134,9 +134,12 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
   // null, so `peer === 'openai'` reports unknown_peer like any unconfigured
   // provider. API key is env-only (WECHAT_OPENAI_API_KEY), mirroring
   // bootstrap/index.ts's main-provider registration.
+  // 外部集成反馈 #3 (2026-08-26):配齐即全会话可 delegate 相当于给所有
+  // 会话开了一条通往该端点的路;delegateOpenai:false 可关(默认 true 保持
+  // 向后兼容 —— "端点只服务某一个会话"的场景显式关掉)。
   const openaiKey = process.env.WECHAT_OPENAI_API_KEY
   const delegateOpenai: AgentProvider | null =
-    openaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel
+    configuredAgent.delegateOpenai !== false && openaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel
       ? (() => {
           const baseURL = configuredAgent.openaiBaseUrl
           const defaultModel = configuredAgent.openaiModel

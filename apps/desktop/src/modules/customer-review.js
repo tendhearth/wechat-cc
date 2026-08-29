@@ -109,7 +109,6 @@ function renderShell(root) {
   root.innerHTML = `
     <aside class="customer-review-sidebar">
       <header class="customer-review-heading">
-        <span class="customer-review-kicker">CUSTOMER REVIEW</span>
         <h1>客户回顾</h1>
         <p>把聊天中的明确承诺整理成待你核对的事项。</p>
       </header>
@@ -127,9 +126,11 @@ function renderShell(root) {
           <label><span>结束日期</span><input id="customer-review-to" type="date" value="${range.to}" max="${range.to}" /></label>
         </div>
         <p id="customer-review-form-error" class="customer-review-inline-error" hidden></p>
-        <button id="customer-review-submit" class="customer-review-primary" type="button" disabled>
+        <button id="customer-review-submit" class="customer-review-primary" type="button" disabled
+                title="先在上面选一位客户">
           ${icon("play", { size: 16 })}<span>开始回顾</span>
         </button>
+        <p class="customer-review-submit-hint" id="customer-review-submit-hint">先选一位客户，按钮就会亮起来。</p>
       </section>
       <section class="customer-review-recent-section" aria-labelledby="customer-review-recent-title">
         <div class="customer-review-section-head"><h2 id="customer-review-recent-title">最近回顾的客户</h2></div>
@@ -358,6 +359,8 @@ function renderSelectedContact(root) {
   selected.hidden = !selectedContact
   selected.innerHTML = selectedContact ? `<span class="customer-review-contact-avatar">${escapeHtml(selectedContact.displayName.slice(0, 1) || "客")}</span><span><strong>${escapeHtml(selectedContact.displayName)}</strong><small>已选择</small></span><button type="button" data-action="clear-contact" aria-label="重新选择">${icon("cancel-01", { size: 15 })}</button>` : ""
   if (submit) submit.disabled = !selectedContact
+  const hint = document.getElementById("customer-review-submit-hint")
+  if (hint) hint.hidden = !!selectedContact
 }
 
 /** @param {HTMLElement} root */

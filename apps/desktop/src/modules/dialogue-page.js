@@ -216,9 +216,8 @@ function messageHtml(m, ctx) {
     src: isUser ? ctx.userAvatar : ctx.botAvatar,
     avatarKey: isUser ? ctx.userAvatarKey : ctx.botAvatarKey,
   })
-  const author = isUser
-    ? `<div class="dialogue-author">${escapeHtml(name)}</div>`
-    : `<div class="dialogue-author">${escapeHtml(name)}</div>`
+  const time = formatTurnTime(m.ts)
+  const author = `<div class="dialogue-author">${escapeHtml(name)}${time ? `<span class="dialogue-time">${escapeHtml(time)}</span>` : ""}</div>`
   const body = m.text
     .split("\n")
     .filter(line => line.length > 0)
@@ -232,7 +231,15 @@ function messageHtml(m, ctx) {
 
 /** Bot display label — provider-aware. @param {Message} m */
 function botLabel(m) {
-  return "wechat-cc"
+  return m.provider ? `wechat-cc · ${m.provider}` : "wechat-cc"
+}
+
+/** HH:MM for a message ts; a timeline without times isn't a timeline.
+ *  @param {string} ts */
+function formatTurnTime(ts) {
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ""
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
 }
 
 /** @type {Message[]} loaded timeline messages (ascending), kept for export. */

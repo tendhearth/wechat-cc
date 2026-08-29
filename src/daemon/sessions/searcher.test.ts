@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { searchAcrossSessions } from './searcher'
@@ -85,6 +85,60 @@ describe('searchAcrossSessions', () => {
         const hits = await searchAcrossSessions('plain', { stateDir, home, db })
         expect(hits).toHaveLength(1)
         expect(hits[0]!.session_has_reply_tool).toBe(false)
+      },
+    )
+  })
+
+  it('short (<3 char) query falls back to the substring scan and still finds hits', async () => {
+    await withFakeHome(
+      (projects) => {
+        const turn = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '去上海出差' }] } })
+        writeFileSync(join(projects, 'sid-S.jsonl'), turn + '\n')
+        writeFileSync(join(stateDir, 'sessions.json'), JSON.stringify({
+          version: 1, sessions: { s: { session_id: 'sid-S', last_used_at: '2026-04-29T00:00:00Z' } },
+        }))
+      },
+      async (home) => {
+        const hits = await searchAcrossSessions('上海', { stateDir, home, db })   // 2 chars — trigram can't
+        expect(hits).toHaveLength(1)
+        expect(hits[0]!.snippet).toContain('上海')
+      },
+    )
+  })
+
+  it('re-search after new turns are appended finds the new content (incremental FTS refresh)', async () => {
+    await withFakeHome(
+      (projects) => {
+        const t1 = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'first message' }] } })
+        writeFileSync(join(projects, 'sid-I.jsonl'), t1 + '\n')
+        writeFileSync(join(stateDir, 'sessions.json'), JSON.stringify({
+          version: 1, sessions: { inc: { session_id: 'sid-I', last_used_at: '2026-04-29T00:00:00Z' } },
+        }))
+      },
+      async (home) => {
+        expect(await searchAcrossSessions('first message', { stateDir, home, db })).toHaveLength(1)
+        const projects = join(home, '.claude', 'projects', 'test-cwd')
+        const t2 = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'appended needle later' }] } })
+        appendFileSync(join(projects, 'sid-I.jsonl'), t2 + '\n')
+        const hits = await searchAcrossSessions('appended needle', { stateDir, home, db })
+        expect(hits).toHaveLength(1)
+        expect(hits[0]!.turn_index).toBe(1)
+      },
+    )
+  })
+
+  it('honors the limit across FTS results', async () => {
+    await withFakeHome(
+      (projects) => {
+        const lines = Array.from({ length: 5 }, (_, i) =>
+          JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `repeated phrase ${i}` }] } }))
+        writeFileSync(join(projects, 'sid-L.jsonl'), lines.join('\n') + '\n')
+        writeFileSync(join(stateDir, 'sessions.json'), JSON.stringify({
+          version: 1, sessions: { lim: { session_id: 'sid-L', last_used_at: '2026-04-29T00:00:00Z' } },
+        }))
+      },
+      async (home) => {
+        expect(await searchAcrossSessions('repeated phrase', { stateDir, home, db, limit: 2 })).toHaveLength(2)
       },
     )
   })

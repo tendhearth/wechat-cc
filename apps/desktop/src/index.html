@@ -75,13 +75,13 @@
           <!-- 02 Agent -->
           <section id="screen-provider" class="screen">
             <div class="card">
-              <div class="card-h">选择 Agent · Choose agent</div>
+              <div class="card-h">选谁当你的 AI</div>
               <div class="agent-grid">
                 <button class="agent" data-provider="claude">
                   <div class="head">
                     <div class="logo logo-img"><img src="./wechat-cc-logo.png" alt="" /></div>
                     <div class="name">Claude Code</div>
-                    <span class="recommend">Recommended</span>
+                    <span class="recommend">推荐</span>
                     <span class="pick"></span>
                   </div>
                   <div class="desc">深度思考、长上下文、复杂任务首选。</div>
@@ -131,14 +131,14 @@
                 <p id="qr-title">使用微信扫描二维码，激活应用</p>
                 <div class="poll" id="qr-poll" hidden>
                   <span class="pip"></span>
-                  <span id="qr-message">轮询扫码状态…</span>
+                  <span id="qr-message">等你扫码中…</span>
                 </div>
-                <div class="qr-ttl" id="qr-ttl">on demand</div>
+                <div class="qr-ttl" id="qr-ttl">—</div>
                 <div class="qr-actions">
                   <button id="qr-refresh" class="btn ghost">刷新二维码</button>
                   <button id="continue-service" class="btn primary" disabled>继续</button>
                 </div>
-                <button id="qr-raw-toggle" class="qr-raw-toggle" type="button">显示原始响应</button>
+                <button id="qr-raw-toggle" class="qr-raw-toggle" type="button">技术详情</button>
                 <pre id="qr-raw"></pre>
               </div>
             </div>
@@ -147,7 +147,7 @@
           <!-- 04 后台 -->
           <section id="screen-service" class="screen">
             <div class="card">
-              <div class="card-h">后台服务 · Background Service</div>
+              <div class="card-h">后台服务</div>
               <div class="bg-body">
                 <div class="desc" id="service-summary"></div>
                 <div class="bg-actions">
@@ -159,7 +159,7 @@
 
                 <div class="toggle-row">
                   <div>
-                    <div class="lab">开机自启 · Launch at login</div>
+                    <div class="lab">开机自启</div>
                     <div class="sub">登录系统时自动启动 daemon。</div>
                   </div>
                   <button class="toggle" id="screen-autostart-toggle" data-toggle aria-pressed="false"></button>
@@ -167,7 +167,7 @@
 
                 <div class="toggle-row warn-edge">
                   <div>
-                    <div class="lab">自动同意工具调用 · Auto-approve tool calls<span style="color: var(--green-ink); font-size: 10.5px; margin-left: 6px; font-weight: 500;">推荐</span></div>
+                    <div class="lab">自动同意工具调用<span style="color: var(--green-ink); font-size: 10.5px; margin-left: 6px; font-weight: 500;">推荐</span></div>
                     <div class="sub">关闭后，每次工具调用都需要在微信里回 y / n（10 分钟超时即拒绝）。日常会被刷屏，建议保留勾选。</div>
                   </div>
                   <button class="toggle on" id="screen-unattended-toggle" data-toggle aria-pressed="true"></button>
@@ -175,7 +175,7 @@
 
                 <div class="toggle-row">
                   <div>
-                    <div class="lab">网络守护 · Network guard</div>
+                    <div class="lab">网络守护</div>
                     <div class="sub">每 30 秒查公网 IP；变了就探一次 google.com。不通时关闭 Claude session，下条入站发"VPN 掉了"。<span id="screen-guard-status-line" class="guard-status-line">—</span></div>
                   </div>
                   <button class="toggle" id="screen-guard-toggle" data-toggle aria-pressed="false"></button>
@@ -185,7 +185,7 @@
 
             <div class="card">
               <div class="plan-h">
-                技术详情 · Technical details
+                技术详情
                 <span class="chev" id="service-plan-toggle">▾</span>
               </div>
               <pre id="service-plan"></pre>
@@ -263,7 +263,7 @@
         </section>
         <section class="drawer-section">
           <h3>行为</h3>
-          <div class="toggle-row">
+          <div class="toggle-row toggle-row--danger">
             <div>
               <div class="lab">自动同意工具调用</div>
               <div class="sub">关闭后，每次工具调用都需要在微信里回 y / n（10 分钟超时即拒绝）。</div>
@@ -324,22 +324,22 @@
               <span>记忆</span>
               <span class="count" id="memory-count"></span>
             </button>
-            <button class="dash-nav-link" data-pane="sessions">
-              <span class="ic" data-hg-icon="user" data-hg-size="16"></span>
-              <span>对话</span>
-              <span class="count" id="sessions-count"></span>
-            </button>
             <button class="dash-nav-link" data-pane="converse">
               <span class="ic" data-hg-icon="smile" data-hg-size="16"></span>
               <span>跟 CC 说</span>
+            </button>
+            <button class="dash-nav-link" data-pane="todos">
+              <span class="ic" data-hg-icon="checkmark-circle-02" data-hg-size="16"></span>
+              <span>待办</span>
             </button>
             <button class="dash-nav-link" data-pane="a2a-agents">
               <span class="ic" data-hg-icon="settings-01" data-hg-size="16"></span>
               <span>觅食</span>
             </button>
-            <button class="dash-nav-link" data-pane="plugins">
+            <button class="dash-nav-link" data-pane="sessions" data-backstage-entry="true">
               <span class="ic" data-hg-icon="plug-01" data-hg-size="16"></span>
-              <span>插件</span>
+              <span>后厨</span>
+              <span class="count" id="sessions-count"></span>
             </button>
           </nav>
 
@@ -355,11 +355,6 @@
                hook is unused here but main.js handles it elsewhere
                (e.g. on the add-user card). -->
           <div class="dash-utilities">
-            <button class="dash-nav-link dash-utility-link" data-pane="logs" title="日志" aria-label="日志" data-tooltip="日志">
-              <span class="ic" data-hg-icon="archive" data-hg-size="18"></span>
-              <span>日志</span>
-              <span class="count" id="logs-count"></span>
-            </button>
             <button id="settings-open" class="rail-gear" type="button" title="设置" aria-label="设置" data-tooltip="设置">
               <span class="ic" data-hg-icon="settings-01" data-hg-size="18"></span>
               <span>设置</span>
@@ -414,15 +409,21 @@
                 </div>
               </section>
 
-              <!-- 上次故障横幅(Task 8, spec 2026-08-03-connection-health §8):
-                   桌面没开着时通知无处可去 —— 2026-08-02 那次断了 10.5 小时,
-                   主人只有翻日志才发现。只要有故障记录就显示最新一条,不受
-                   "未读"影响;见 modules/dashboard.js 的 loadLastIncident。 -->
-              <p id="dash-health-banner" class="dash-health-banner" hidden></p>
-
               <section class="moment-users" aria-label="用户连接状态">
+                <!-- 上次故障横幅(Task 8, spec 2026-08-03-connection-health §8):
+                     桌面没开着时通知无处可去 —— 2026-08-02 那次断了 10.5 小时,
+                     主人只有翻日志才发现。只要有故障记录就显示最新一条,不受
+                     "未读"影响;见 modules/dashboard.js 的 loadLastIncident。
+                     Lives INSIDE the right column on purpose: as a direct
+                     grid child it grabbed the (1,2) cell whenever it became
+                     visible, shoving .moment-users to a second row and
+                     pushing 添加用户 below the fold. -->
+                <p id="dash-health-banner" class="dash-health-banner" hidden></p>
                 <h2>当前连接中的用户</h2>
                 <div id="accounts-current" class="current-user-card"></div>
+                <div id="brain-health" class="brain-health" hidden></div>
+                <button id="open-phone-settings" class="phone-settings-btn" type="button" title="生成二维码,手机扫码打开设置页(10 分钟内有效)"><span aria-hidden="true">↗</span> 手机扫码改设置</button>
+                <button id="brain-selfcheck" class="brain-quiet-link" type="button" title="网络 + 大脑逐项检查(只在你点的时候测)">状态自检</button>
                 <div class="moment-subhead" id="accounts-subhead">
                   <h2>子用户</h2>
                   <span class="meta" id="accounts-meta">—</span>
@@ -555,12 +556,18 @@
 
           <!-- ── pane: sessions ─────────────────────────────────────── -->
           <article class="dash-pane" data-pane="sessions" hidden>
-            <div class="dialogue-workspace-tabs" role="tablist" aria-label="对话视图">
-              <button class="dialogue-workspace-tab is-active" type="button" role="tab" data-dialogue-mode="cc" aria-selected="true">CC 对话</button>
-              <button class="dialogue-workspace-tab" type="button" role="tab" data-dialogue-mode="customer-review" aria-selected="false">客户回顾</button>
+            <div class="dialogue-workspace-tabs" role="tablist" aria-label="后厨视图">
+              <button class="dialogue-workspace-tab is-active" type="button" role="tab" data-backstage-pane="sessions" aria-selected="true">会话</button>
+              <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="plugins" aria-selected="false">插件</button>
+              <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="logs" aria-selected="false">日志</button>
             </div>
             <div id="dialogue-root" class="dialogue-page"></div>
             <div id="customer-review-root" class="customer-review-page" hidden></div>
+          </article>
+
+          <!-- ── pane: todos (待办 — 一级入口) ─────────────────────── -->
+          <article class="dash-pane" data-pane="todos" hidden>
+            <div id="todos-root" class="todos-page"></div>
           </article>
 
           <!-- ── pane: converse (in-app compose UI) ─────────────────── -->
@@ -570,6 +577,11 @@
 
           <!-- ── pane: logs ─────────────────────────────────────────── -->
           <article class="dash-pane" data-pane="logs" hidden>
+            <div class="dialogue-workspace-tabs" role="tablist" aria-label="后厨视图">
+              <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="sessions" aria-selected="false">会话</button>
+              <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="plugins" aria-selected="false">插件</button>
+              <button class="dialogue-workspace-tab is-active" type="button" role="tab" data-backstage-pane="logs" aria-selected="true">日志</button>
+            </div>
             <div class="topbar">
               <span class="crumb">日志 · Logs <span class="meta" id="logs-meta">—</span></span>
               <div class="actions">
@@ -690,6 +702,11 @@
 
           <!-- ── pane: plugins ─────────────────────────────────────────── -->
           <article class="dash-pane" data-pane="plugins" hidden>
+            <div class="dialogue-workspace-tabs" role="tablist" aria-label="后厨视图">
+              <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="sessions" aria-selected="false">会话</button>
+              <button class="dialogue-workspace-tab is-active" type="button" role="tab" data-backstage-pane="plugins" aria-selected="true">插件</button>
+              <button class="dialogue-workspace-tab" type="button" role="tab" data-backstage-pane="logs" aria-selected="false">日志</button>
+            </div>
             <div class="topbar">
               <span class="crumb">插件</span>
               <div class="actions">
@@ -719,28 +736,28 @@
          the dashboard main pane. Sibling to #qr-modal. -->
     <dialog id="a2a-add-modal" class="a2a-modal">
       <button id="a2a-add-modal-close" class="a2a-modal-x" type="button" aria-label="关闭"><span data-hg-icon="cancel-01" data-hg-size="18"></span></button>
-      <h3>Add A2A Agent</h3>
+      <h3>手动连一个 bot</h3>
       <form id="a2a-add-form">
-        <label>Agent URL <input type="url" name="url" required placeholder="https://example.com/a2a"></label>
+        <label>对方 bot 的地址 <input type="url" name="url" required placeholder="https://example.com/a2a"></label>
         <div class="a2a-form-actions">
-          <button type="submit">Fetch Agent Card →</button>
+          <button type="submit">看看是谁 →</button>
         </div>
       </form>
       <section id="a2a-add-preview" hidden>
         <h4 id="a2a-preview-name"></h4>
         <p id="a2a-preview-description"></p>
         <ul id="a2a-preview-capabilities"></ul>
-        <label>Local id (slug) <input name="id" required></label>
-        <label>Outbound API key <input name="outbound_key" placeholder="From the agent's docs (optional)"></label>
+        <label>给它起个短名（英文/数字） <input name="id" required></label>
+        <label>对方给的钥匙（选填） <input name="outbound_key" placeholder="对方 bot 文档里的 API key"></label>
         <div class="a2a-form-actions">
-          <button id="a2a-install-confirm" type="button">Install</button>
-          <button id="a2a-install-cancel" type="button">Cancel</button>
+          <button id="a2a-install-confirm" type="button">连上</button>
+          <button id="a2a-install-cancel" type="button">算了</button>
         </div>
       </section>
       <section id="a2a-add-success" hidden>
-        <p>✅ Installed. Share this key with the agent so it can call back:</p>
+        <p>✅ 连上了。把下面这段发给对方，对方的 bot 才能回消息给你：</p>
         <pre id="a2a-add-curl"></pre>
-        <button id="a2a-add-close" type="button">Close</button>
+        <button id="a2a-add-close" type="button">好</button>
       </section>
     </dialog>
 
@@ -748,19 +765,19 @@
          (call external agent) without dropping to CLI. -->
     <dialog id="a2a-test-modal" class="a2a-modal">
       <button id="a2a-test-modal-close" class="a2a-modal-x" type="button" aria-label="关闭"><span data-hg-icon="cancel-01" data-hg-size="18"></span></button>
-      <h3 id="a2a-test-title">Test agent</h3>
+      <h3 id="a2a-test-title">测试连通</h3>
       <p class="a2a-test-help">
-        <strong>Inbound</strong>: send a synthetic notify to your own WeChat chat (validates server + key + routing).<br>
-        <strong>Outbound</strong>: call the external agent's URL (validates URL + outbound_api_key).
+        <strong>测试接收</strong>：给你自己的微信发一条测试消息，验证对方能送进来。<br>
+        <strong>测试发送</strong>：呼叫对方 bot 的地址，验证你能送出去。
       </p>
       <label>
-        Message text
+        测试内容
         <input id="a2a-test-text" type="text" />
       </label>
       <div class="a2a-form-actions">
-        <button id="a2a-test-inbound" class="btn" type="button">Test Inbound</button>
-        <button id="a2a-test-outbound" class="btn" type="button">Test Outbound</button>
-        <button id="a2a-test-close" class="btn ghost" type="button">Close</button>
+        <button id="a2a-test-inbound" class="btn" type="button">测试接收</button>
+        <button id="a2a-test-outbound" class="btn" type="button">测试发送</button>
+        <button id="a2a-test-close" class="btn ghost" type="button">关闭</button>
       </div>
       <div id="a2a-test-result" class="a2a-test-result"></div>
     </dialog>
@@ -768,7 +785,7 @@
     <!-- A2A Activity drawer — top-level overlay, hidden by default. -->
     <aside id="a2a-activity-drawer" class="a2a-drawer" hidden>
       <header class="a2a-drawer-head">
-        <h3 id="a2a-activity-title">Activity</h3>
+        <h3 id="a2a-activity-title">最近往来</h3>
         <button id="a2a-activity-close" class="drawer-close" type="button" aria-label="关闭"><span data-hg-icon="cancel-01" data-hg-size="18"></span></button>
       </header>
       <ul id="a2a-activity-list" class="a2a-activity-list"></ul>

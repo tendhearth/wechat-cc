@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { getEventListeners } from 'node:events'
-import { parseUpdates, startLongPollLoops, sleep, type RawUpdate } from './poll-loop'
+import { parseUpdates, startLongPollLoops, sleep, ZOMBIE_TIMEOUT_STREAK, type RawUpdate } from './poll-loop'
 import type { Account } from './ilink-glue'
 
 /**
@@ -62,6 +62,35 @@ describe('parseUpdates', () => {
       text: 'hi', msgType: 'text', accountId: 'A',
     })
     expect(msg!.createTimeMs).toBe(1234000)
+  })
+
+  it('毒丸防护:updates 里 null / 原始值元素被跳过,好消息照常解析(不抛)', () => {
+    const good = {
+      message_id: 9, from_user_id: 'u1', create_time_ms: 1000,
+      message_type: 1, message_state: 2, item_list: [{ type: 1, text_item: { text: 'hi' } }],
+    }
+    // 坏网/代理篡改塞进 null、数字、字符串等畸形元素 —— 之前 msg.message_type 会
+    // 在 null 上抛,连累整批(sync_buf 不前进 → 永远重取 → 机器人卡死)。
+    const raw = [null, 42, 'garbage', good] as unknown as RawUpdate[]
+    const msgs = parseUpdates(raw, { accountId: 'A', resolveUserName: () => 'x' })
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0]!.text).toBe('hi')
+  })
+
+  it('毒丸防护:item_list 里的 null 元素被跳过,好 item 照常解析(不抛)', () => {
+    const raw = [{
+      message_id: 7, from_user_id: 'u1', create_time_ms: 1000,
+      message_type: 1, message_state: 2,
+      item_list: [null, { type: 1, text_item: { text: 'ok' } }],
+    }] as unknown as RawUpdate[]
+    const msgs = parseUpdates(raw, { accountId: 'A', resolveUserName: () => 'x' })
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0]!.text).toBe('ok')
+  })
+
+  it('毒丸防护:updates 不是数组时返回空、不抛', () => {
+    expect(parseUpdates(null as unknown as RawUpdate[], { accountId: 'A', resolveUserName: () => undefined })).toEqual([])
+    expect(parseUpdates({ length: 3 } as unknown as RawUpdate[], { accountId: 'A', resolveUserName: () => undefined })).toEqual([])
   })
 
   it('uses create_time_ms directly (already in ms)', () => {
@@ -323,12 +352,60 @@ describe('startLongPollLoops', () => {
     })
     await waitFor(() => seen.length >= 2)
     expect(seen).toEqual(['a', 'b'])
-    expect(getUpdates).toHaveBeenCalledWith('A1', 'https://x', 'T', '')
+    expect(getUpdates).toHaveBeenCalledWith('A1', 'https://x', 'T', '', expect.any(AbortSignal))
     // second call uses updated syncBuf from first response (4th positional arg)
     if (getUpdates.mock.calls.length >= 2) {
       expect(getUpdates.mock.calls[1]![3]).toBe('buf2')
     }
     await handle.stop()
+  })
+
+  it('stop() returns within the grace even if a loop is wedged (Bun fetch-abort latency / bad network)', async () => {
+    // Regression (2026-08-27:部分自愈重启仍 stop timeout 5s —— Bun 的
+    // fetch-abort 传播在网络坏态下可 >5s)。stop() 不该被无界拖住:abort
+    // 后有界宽限,到点返回,进程退出会销毁 socket。
+    const getUpdates = vi.fn(() => new Promise<{ updates: RawUpdate[]; sync_buf: string }>(() => {
+      // never resolves — models a fetch whose abort doesn't propagate promptly
+    }))
+    const handle = startLongPollLoops({
+      accounts: [baseAcct],
+      onInbound: async () => {},
+      ilink: { getUpdates },
+      parse: () => [],
+      resolveUserName: () => undefined,
+      stopGraceMs: 30,   // tiny grace for the test
+    })
+    await waitFor(() => getUpdates.mock.calls.length >= 1)
+    const t0 = Date.now()
+    await handle.stop()                       // must not hang on the wedged loop
+    expect(Date.now() - t0).toBeLessThan(500) // returned via grace, not blocked forever
+  })
+
+  it('stop() aborts an in-flight long-poll at once — does not wait its 25-30s timeout', async () => {
+    // Regression (2026-08-27 日志:每次自愈重启 "stop timeout (5000ms)"):
+    // the long-poll fetch got no abort signal, so stop() blocked on it until
+    // the poll's OWN timeout, blowing the lifecycle's 5s budget. Now the loop
+    // threads its abort signal into getUpdates; a stop() aborts the in-flight
+    // poll immediately.
+    let sawSignal: AbortSignal | undefined
+    const getUpdates = vi.fn((_id: string, _url: string, _tok: string, _buf: string, signal?: AbortSignal) =>
+      new Promise<{ updates: RawUpdate[]; sync_buf: string; timed_out?: boolean }>((resolve) => {
+        sawSignal = signal
+        // model a 30s long-poll that only returns when aborted (or never)
+        if (signal) signal.addEventListener('abort', () => resolve({ updates: [], sync_buf: '', timed_out: true }), { once: true })
+      }))
+    const handle = startLongPollLoops({
+      accounts: [baseAcct],
+      onInbound: async () => {},
+      ilink: { getUpdates },
+      parse: () => [],
+      resolveUserName: () => undefined,
+    })
+    await waitFor(() => getUpdates.mock.calls.length >= 1)
+    expect(sawSignal).toBeInstanceOf(AbortSignal)
+    const t0 = Date.now()
+    await handle.stop()
+    expect(Date.now() - t0).toBeLessThan(1000)   // fast — not the 25-30s poll timeout
   })
 
   it('calls onPollCycle after a successful getUpdates (daemon-health heartbeat hook)', async () => {
@@ -539,6 +616,114 @@ describe('startLongPollLoops', () => {
     const start = Date.now()
     await handle.stop()
     expect(Date.now() - start).toBeLessThan(1000)  // resolves promptly
+  })
+})
+
+describe('startLongPollLoops — zombie long-poll detection (timed_out rounds)', () => {
+  const baseAcct: Account = {
+    id: 'A1', botId: 'b', userId: 'ubot', baseUrl: 'https://x', token: 'T', syncBuf: '',
+  }
+  const timedOutRound = { updates: [], sync_buf: '', timed_out: true }
+
+  it('a timed_out round stamps neither recordHeartbeat nor health.recordSuccess', async () => {
+    const getUpdates = vi.fn()
+      .mockResolvedValueOnce(timedOutRound)
+      .mockImplementation(async () => { await new Promise(r => setTimeout(r, 50)); return timedOutRound })
+    const recordHeartbeat = vi.fn()
+    const events: string[] = []
+    const handle = startLongPollLoops({
+      accounts: [baseAcct],
+      onInbound: async () => {},
+      ilink: { getUpdates },
+      parse: () => [],
+      resolveUserName: () => undefined,
+      recordHeartbeat,
+      health: {
+        recordFailure: () => { events.push('fail') },
+        recordSuccess: () => { events.push('ok') },
+      },
+    } as never)
+    await waitFor(() => getUpdates.mock.calls.length >= 2)
+    await handle.stop()
+    expect(recordHeartbeat).not.toHaveBeenCalled()
+    expect(events).not.toContain('ok')
+  })
+
+  it(`${ZOMBIE_TIMEOUT_STREAK} consecutive timed_out rounds → health failure + loud POLL log`, async () => {
+    let calls = 0
+    const getUpdates = vi.fn().mockImplementation(async () => {
+      calls++
+      if (calls > 1) await new Promise(r => setTimeout(r, 0))
+      return timedOutRound
+    })
+    const lines: string[] = []
+    const events: string[] = []
+    const handle = startLongPollLoops({
+      accounts: [baseAcct],
+      onInbound: async () => {},
+      ilink: { getUpdates },
+      parse: () => [],
+      resolveUserName: () => undefined,
+      log: (_tag: string, line: string) => { lines.push(line) },
+      health: {
+        recordFailure: () => { events.push('fail') },
+        recordSuccess: () => { events.push('ok') },
+      },
+    } as never)
+    await waitFor(() => events.includes('fail'))
+    await handle.stop()
+    expect(events).toContain('fail')
+    expect(events).not.toContain('ok')
+    expect(lines.some(l => l.includes('long-poll') && l.includes('timeout'))).toBe(true)
+  })
+
+  it('one answered round resets the streak and stamps the heartbeat again', async () => {
+    let calls = 0
+    const getUpdates = vi.fn().mockImplementation(async () => {
+      calls++
+      if (calls > 1) await new Promise(r => setTimeout(r, 0))
+      // 3 timed-out rounds (below threshold), then real (answered) rounds
+      return calls <= 3 ? timedOutRound : { updates: [], sync_buf: '' }
+    })
+    const recordHeartbeat = vi.fn()
+    const events: string[] = []
+    const handle = startLongPollLoops({
+      accounts: [baseAcct],
+      onInbound: async () => {},
+      ilink: { getUpdates },
+      parse: () => [],
+      resolveUserName: () => undefined,
+      recordHeartbeat,
+      health: {
+        recordFailure: () => { events.push('fail') },
+        recordSuccess: () => { events.push('ok') },
+      },
+    } as never)
+    await waitFor(() => recordHeartbeat.mock.calls.length > 0)
+    await handle.stop()
+    expect(events).not.toContain('fail')     // streak never reached threshold
+    expect(events).toContain('ok')
+  })
+
+  it('logs delivered inbound chats at arrival (evidence independent of the pipeline)', async () => {
+    const updates: RawUpdate[] = [
+      { from_user_id: 'stranger1', create_time_ms: 1000, message_type: 1, message_state: 2, item_list: [{ type: 1, text_item: { text: 'hi' } }] },
+    ]
+    const getUpdates = vi.fn()
+      .mockResolvedValueOnce({ updates, sync_buf: 'b2' })
+      .mockImplementation(async () => { await new Promise(r => setTimeout(r, 50)); return { updates: [], sync_buf: 'b2' } })
+    const lines: string[] = []
+    const handle = startLongPollLoops({
+      accounts: [baseAcct],
+      onInbound: async () => {},
+      ilink: { getUpdates },
+      parse: (us, deps) => parseUpdates(us, deps),
+      resolveUserName: () => undefined,
+      log: (_tag: string, line: string) => { lines.push(line) },
+    })
+    await waitFor(() => lines.some(l => l.includes('stranger1')))
+    await handle.stop()
+    expect(lines.some(l => l.includes('inbound') && l.includes('stranger1'))).toBe(true)
   })
 })
 

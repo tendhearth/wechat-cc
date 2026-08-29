@@ -759,6 +759,97 @@ export const migrations: Migration[] = [
       ) STRICT;
     `)
   },
+  // v29 — reminders (ported from the June feat/reminders branch, dcbaf94b;
+  // spec docs/superpowers/specs/2026-08-20-reminders-port-design.md).
+  // Per-chat, minute-precise, one-shot reminders delivered by the reminder
+  // sweeper (src/daemon/reminders). Unlike the companion agenda (day-granular,
+  // operator-only), due_at is a full ISO 8601 timestamp, any chat_id, and
+  // pending rows survive restarts. attempts/last_error/last_attempt_at track
+  // delivery retries — last_attempt_at drives the sweeper's exponential
+  // backoff (June's every-60s retry violated the no-retry-storm rule).
+  // The June branch numbered this v15; it lands here as v29 because
+  // user_version is a COUNT (#79) — body is IF NOT EXISTS, replay-safe.
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS reminders (
+        id              TEXT PRIMARY KEY NOT NULL,
+        chat_id         TEXT NOT NULL,
+        due_at          TEXT NOT NULL,            -- ISO 8601, full timestamp
+        text            TEXT NOT NULL,
+        created_at      TEXT NOT NULL,            -- ISO 8601
+        status          TEXT NOT NULL DEFAULT 'pending'
+                          CHECK (status IN ('pending','sent','cancelled','failed')),
+        attempts        INTEGER NOT NULL DEFAULT 0,
+        last_error      TEXT,
+        last_attempt_at TEXT                      -- ISO 8601; drives retry backoff
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS reminders_status_due ON reminders(status, due_at);
+      CREATE INDEX IF NOT EXISTS reminders_chat ON reminders(chat_id, due_at);
+    `)
+  },
+  // v30 — cross-session FTS (the "SQLite FTS upgrade tracked for v0.5" from
+  // sessions/searcher.ts, landed by 2026-08-23-memory-upgrades). One FTS5
+  // trigram row per session-jsonl line (trigram matches CJK the way
+  // knowledge/semantic.db's chunks_fts already does); alias/session_id/
+  // turn_index are UNINDEXED payload for hit resolution. session_fts_state
+  // tracks the per-file incremental watermark (lines_indexed) plus byte_size
+  // so a truncated/rewritten transcript triggers a from-scratch reindex.
+  // FTS5 virtual tables cannot be STRICT; the state table is.
+  (db) => {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS session_turns_fts USING fts5(
+        text, alias UNINDEXED, session_id UNINDEXED, turn_index UNINDEXED,
+        tokenize='trigram'
+      );
+      CREATE TABLE IF NOT EXISTS session_fts_state (
+        path          TEXT PRIMARY KEY NOT NULL,
+        alias         TEXT NOT NULL,
+        session_id    TEXT NOT NULL,
+        lines_indexed INTEGER NOT NULL,
+        byte_size     INTEGER NOT NULL
+      ) STRICT;
+    `)
+  },
+  // v31 — widen events.kind CHECK with 'config_changed' (config-surface
+  // audit: every successful config_set MCP write lands one row, mirroring
+  // memory_deleted's audit posture). Same rebuild dance as v8: SQLite can't
+  // widen a CHECK in place, so copy → drop → rename → reindex. Same
+  // hasEvents guard as the previous widening — unit-test harnesses that
+  // start mid-chain may not have an events table yet.
+  (db) => {
+    const hasEvents = db
+      .query<{ cnt: number }, []>(
+        "SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type='table' AND name='events'"
+      )
+      .get()
+    if (!hasEvents || hasEvents.cnt === 0) return
+    db.exec(`
+      CREATE TABLE events_new (
+        id TEXT PRIMARY KEY NOT NULL,
+        chat_id TEXT NOT NULL,
+        ts TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN (
+          'cron_eval_pushed', 'cron_eval_skipped', 'cron_eval_failed',
+          'observation_written', 'milestone',
+          'memory_deleted', 'threads_extracted', 'config_changed'
+        )),
+        trigger TEXT NOT NULL,
+        reasoning TEXT NOT NULL,
+        push_text TEXT,
+        observation_id TEXT,
+        milestone_id TEXT,
+        jsonl_session_id TEXT,
+        memory_path TEXT
+      ) STRICT;
+      INSERT INTO events_new
+        SELECT id, chat_id, ts, kind, trigger, reasoning,
+               push_text, observation_id, milestone_id, jsonl_session_id, memory_path
+        FROM events;
+      DROP TABLE events;
+      ALTER TABLE events_new RENAME TO events;
+      CREATE INDEX events_chat_ts ON events(chat_id, ts DESC);
+    `)
+  },
 ]
 
 export interface OpenDbOpts {

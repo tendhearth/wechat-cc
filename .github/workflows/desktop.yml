@@ -272,6 +272,18 @@ jobs:
           # runner image ever stops giving Finder a usable session, delete this
           # line to fall back to the plain (but always-building) dmg.
           TAURI_BUNDLER_DMG_IGNORE_CI: 'true'
+          # Updater-artifact signing (2026-08-29): since auto-update shipped
+          # (v1.6.1, pubkey in tauri.conf), `tauri build` HARD-FAILS after
+          # bundling when it finds the pubkey but no private key — this broke
+          # every CI build on desktop-v1.6.4 while local (keyed) builds kept
+          # working, which is why 1.6.1/1.6.2 were hand-built. The key pair
+          # lives in the operator's ~/.tauri/wechat-cc-updater.key; to make CI
+          # builds work, add it as the TAURI_SIGNING_PRIVATE_KEY repo secret
+          # (`gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/wechat-cc-updater.key`).
+          # Until the secret exists this env resolves to '' and the build
+          # fails at the same place it does today — plumbing, not a fix.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Upload bundle artefacts
         uses: actions/upload-artifact@v4

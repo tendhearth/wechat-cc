@@ -26,6 +26,31 @@ const decodeBatchId = (b: string): [string, number, number] => {
 export interface FactsApi {
   nextBatch(contact: string | null, limit: number): object
   record(batchId: string, facts: Fact[], now: number): object
+  /** Apply judge-approved supersede pairs (old fact loses to new). Each pair
+   *  passes a deterministic guard (both ids exist, same contact+predicate,
+   *  loser active) — invalid pairs are skipped, never an error. */
+  supersede(pairs: Array<{ supersede: number; by: number }>, now: number): object
+  /** Stock-sweep feed — see KnowledgeStore.conflictedFactGroups. */
+  conflictedGroups(limit: number): ReturnType<KnowledgeStore['conflictedFactGroups']>
+  /** Obligation-dedup feed — see KnowledgeStore.obligationHeavyContacts. */
+  obligationHeavyContacts(limit: number, minCount?: number): ReturnType<KnowledgeStore['obligationHeavyContacts']>
+  /** Sweep judge-state passthrough — the "already judged this exact stock"
+   *  fingerprint the sweeps use to stop re-judging unchanged stock every
+   *  cycle. See KnowledgeStore.judgeFingerprint. */
+  judgeFingerprint(key: string): string | null
+  setJudgeFingerprint(key: string, fingerprint: string, now: number): void
+  /** Recent text messages with this contact, chronological (oldest first) —
+   *  the settlement backfill's evidence window. */
+  recentMessages(contact: string, limit: number): Array<{ sender: string; time: number; text: string | null }>
+  /** Merge duplicate obligations (judge-approved): the loser is superseded
+   *  by the keeper. Guard is looser than supersede() on predicate (dupes
+   *  routinely land under different predicates) but tighter on kind — both
+   *  rows must be same-contact ACTIVE obligations. Invalid pairs skipped. */
+  mergeObligations(pairs: Array<{ supersede: number; by: number }>, now: number): object
+  /** Settle judge-approved obligations: each id must be THIS contact's
+   *  active obligation (deterministic guard against hallucinated ids —
+   *  the judge steers WHICH obligation is done, never WHOSE). */
+  settleObligations(contact: string, ids: number[], now: number): object
   contactFacts(name: string): object
   findFacts(kind: string | null, predicate: string | null, query: string | null, status: string | null, limit: number | null): object
   setFactStatus(id: number, status: string, now: number): object
@@ -80,12 +105,40 @@ export function makeFactsApi(store: KnowledgeStore): FactsApi {
     record(batchId, facts, now) {
       const [contact, ts, localId] = decodeBatchId(batchId)
       let inserted = 0, merged = 0
+      const conflicts: Array<{ id: number; predicate: string; value: string; against: Array<{ id: number; value: string }> }> = []
       for (const f of facts ?? []) {
         const withContact = { ...f, contact: f.contact ?? contact }
-        if (store.upsertFact(withContact, now) === 'inserted') inserted++; else merged++
+        const r = store.upsertFact(withContact, now)
+        if (r.outcome === 'inserted') inserted++; else merged++
+        // Temporal validity: a same-predicate different-value ACTIVE fact is a
+        // conflict CANDIDATE — reported, never auto-resolved here (predicates
+        // can be multi-valued; exclusive-vs-coexisting is the judge's call).
+        const against = store.activeFactsSharingPredicate(withContact.contact, withContact.predicate, withContact.value)
+        if (against.length > 0) {
+          conflicts.push({ id: r.id, predicate: withContact.predicate, value: withContact.value,
+                           against: against.map((a) => ({ id: a.id, value: a.value })) })
+        }
       }
       store.advanceFactWatermark(contact, ts, localId, now)
-      return { recorded: inserted, merged, advanced_to: store.factWatermark(contact)[0] }
+      return { recorded: inserted, merged, advanced_to: store.factWatermark(contact)[0], conflicts }
+    },
+
+    supersede(pairs, now) {
+      let superseded = 0
+      for (const p of pairs ?? []) {
+        if (!p || typeof p.supersede !== 'number' || typeof p.by !== 'number' || p.supersede === p.by) continue
+        // Deterministic guard — the judge's output steers WHICH conflict wins,
+        // never WHAT can conflict: both rows must exist, share contact +
+        // predicate, and the loser must still be active. Anything else is a
+        // hallucinated/stale pair and is skipped silently.
+        const oldRow = store.factById(p.supersede)
+        const newRow = store.factById(p.by)
+        if (!oldRow || !newRow) continue
+        if (oldRow.contact !== newRow.contact || oldRow.predicate !== newRow.predicate) continue
+        if (oldRow.status !== 'active') continue
+        if (store.supersedeFactById(p.supersede, p.by, now)) superseded++
+      }
+      return { superseded }
     },
     contactFacts(name) {
       const un = resolveContact(name)
@@ -97,6 +150,37 @@ export function makeFactsApi(store: KnowledgeStore): FactsApi {
       return { results: store.findFactRows(kind, predicate, query, status ?? 'active', limit ?? 50) }
     },
     setFactStatus(id, status, now) { return { ok: store.setFactStatusById(id, status, now) } },
+    conflictedGroups(limit) { return store.conflictedFactGroups(limit) },
+    obligationHeavyContacts(limit, minCount) { return store.obligationHeavyContacts(limit, minCount) },
+    judgeFingerprint(key) { return store.judgeFingerprint(key) },
+    setJudgeFingerprint(key, fingerprint, now) { store.setJudgeFingerprint(key, fingerprint, now) },
+    recentMessages(contact, limit) { return store.recentMessages(resolveContact(contact), limit).reverse() },
+    mergeObligations(pairs, now) {
+      let merged = 0
+      for (const p of pairs ?? []) {
+        if (!p || typeof p.supersede !== 'number' || typeof p.by !== 'number' || p.supersede === p.by) continue
+        const loser = store.factById(p.supersede)
+        const keeper = store.factById(p.by)
+        if (!loser || !keeper) continue
+        if (loser.contact !== keeper.contact) continue
+        if (loser.kind !== 'obligation' || keeper.kind !== 'obligation') continue
+        if (loser.status !== 'active' || keeper.status !== 'active') continue
+        if (store.supersedeFactById(p.supersede, p.by, now)) merged++
+      }
+      return { merged }
+    },
+    settleObligations(contact, ids, now) {
+      const un = resolveContact(contact)
+      let settled = 0
+      for (const id of ids ?? []) {
+        if (typeof id !== 'number' || !Number.isFinite(id)) continue
+        const row = store.factById(id)
+        if (!row || row.contact !== un) continue
+        if (row.kind !== 'obligation' || row.status !== 'active') continue
+        if (store.setFactStatusById(id, 'resolved', now)) settled++
+      }
+      return { settled }
+    },
     extractionStatus() {
       const g = grouped(); const per: any[] = []; let caught = 0
       for (const [c, rows] of g) {

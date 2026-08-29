@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "wechat-cc",
-  "version": "1.4.0",
+  "version": "1.6.4",
   "identifier": "dev.wechat-cc.installer",
   "build": {
     "frontendDist": "../src",
@@ -36,7 +36,14 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg", "deb", "rpm", "nsis", "msi"],
+    "targets": [
+      "app",
+      "dmg",
+      "deb",
+      "rpm",
+      "nsis",
+      "msi"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -48,14 +55,23 @@
       "binaries/wechat-cc-cli"
     ],
     "resources": [
-      "../../../plugins/"
+      "../../../plugins/README.md"
     ],
     "macOS": {
       "dmg": {
         "background": "dmg/background.tiff",
-        "windowSize": { "width": 660, "height": 400 },
-        "appPosition": { "x": 180, "y": 170 },
-        "applicationFolderPosition": { "x": 480, "y": 170 }
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        },
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        }
       }
     },
     "linux": {
@@ -65,6 +81,15 @@
       "rpm": {
         "postInstallScript": "scripts/postinst.sh"
       }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://dl.tendhearth.com/wechat-cc/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU1N0FCNDY1REQ3RDQ5NEYKUldSUFNYM2RaYlI2VmJ6d3p0dzFEQmlmTEdlZTRGTFF2V0lWOWpoYlNXblMraXlDZWduQy9tVngK"
     }
   }
 }

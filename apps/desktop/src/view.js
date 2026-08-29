@@ -614,3 +614,18 @@ export function updateApplyLine(result) {
   }
   return frameApply(result.reason, result.message, result.details)
 }
+
+
+/** 轻量提示条 — 替代原生 alert()(突兀且措辞偏技术)。 @param {string} msg */
+export function showToast(msg) {
+  let el = document.getElementById("app-toast")
+  if (!el) {
+    el = document.createElement("div")
+    el.id = "app-toast"
+    document.body.appendChild(el)
+  }
+  el.textContent = msg
+  el.classList.add("show")
+  clearTimeout(/** @type {{ _t?: number }} */ (el)._t)
+  ;/** @type {{ _t?: number }} */ (el)._t = setTimeout(() => el.classList.remove("show"), 2600)
+}

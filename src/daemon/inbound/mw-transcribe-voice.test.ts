@@ -78,12 +78,40 @@ describe('mwTranscribeVoice', () => {
     expect(ctx.msg.text).toBe('x')
   })
 
-  it('transcribeVoice 未注入 → no-op(仍调 next)', async () => {
+  it('transcribeVoice 未注入 + 有语音 → 注入「读不了」信号(仍调 next)', async () => {
     const next = vi.fn(async () => {})
     const mw = makeMwTranscribeVoice({ log: () => {} })
     const ctx = mkCtx({ attachments: [{ kind: 'voice', path: '/v.amr' }] })
     await mw(ctx, next)
     expect(next).toHaveBeenCalled()
+    // STT 没接:别让 CC 对着「(non-text message)」瞎回应一条读不了的语音。
+    expect(ctx.msg.text).toContain('语音')
+    expect(ctx.msg.text).toContain('打字')
+    expect(ctx.msg.text).not.toBe('(non-text message)')
+  })
+
+  it('转写全失败 + 无其它文本 → 注入「读不了」信号(而不是留占位符)', async () => {
+    const transcribeVoice = vi.fn(async () => { throw new Error('no_stt_config') })
+    const { mw } = make({ transcribeVoice })
+    const ctx = mkCtx({ text: '(non-text message)', attachments: [{ kind: 'voice', path: '/v.amr' }] })
+    await mw(ctx, async () => {})
+    expect(ctx.msg.text).toContain('打字')
+  })
+
+  it('有一条转写成功 → 不注入「读不了」信号', async () => {
+    const transcribeVoice = vi.fn().mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce({ text: '好的' })
+    const { mw } = make({ transcribeVoice })
+    const ctx = mkCtx({ text: '(non-text message)', attachments: [
+      { kind: 'voice', path: '/bad.amr' }, { kind: 'voice', path: '/ok.amr' },
+    ] })
+    await mw(ctx, async () => {})
+    expect(ctx.msg.text).toBe('[语音] 好的')   // 成功的那条,不掺入兜底信号
+  })
+
+  it('PENDING 占位语音不触发「读不了」信号(还没拉到,不是读不了)', async () => {
+    const mw = makeMwTranscribeVoice({ log: () => {} })
+    const ctx = mkCtx({ attachments: [{ kind: 'voice', path: PENDING_CDN_REF }] })
+    await mw(ctx, async () => {})
     expect(ctx.msg.text).toBe('(non-text message)')
   })
 

@@ -643,6 +643,35 @@ function readInternalApiInfo(stateDir: string): { port: number; token_file_path:
   }
 }
 
+/**
+ * Probe the running daemon's /v1/health for outbound link state and return
+ * the human warning line for `doctor` output — or null when there is
+ * nothing to warn about (ok/unknown/unreachable: doctor only speaks on
+ * anomalies). Never throws; a dead daemon or fetch error is null.
+ */
+export async function probeOutboundWarning(
+  daemon: DaemonSnapshot,
+  fetchFn: typeof fetch = fetch,
+  readToken: (path: string) => string | null = (p) => { try { return readFileSync(p, 'utf8').trim() } catch { return null } },
+): Promise<string | null> {
+  if (!daemon.alive || !daemon.internal_api) return null
+  const token = readToken(daemon.internal_api.token_file_path)
+  if (!token) return null
+  try {
+    const res = await fetchFn(`http://127.0.0.1:${daemon.internal_api.port}/v1/health`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(3000),
+    })
+    if (!res.ok) return null
+    const body = await res.json() as { outbound?: { state?: string; consecutive_failures?: number; last_error?: string | null } }
+    const ob = body.outbound
+    if (!ob || ob.state !== 'degraded') return null
+    return `⚠️ 外发链路故障（连续 ${ob.consecutive_failures ?? '?'} 次失败，最近错误 ${ob.last_error ?? '未知'}）。多为微信端会话闲置过期——给 bot 随便发条消息即可恢复；恢复后积压的提醒会自动补投。`
+  } catch {
+    return null
+  }
+}
+
 function safeReaddir(path: string): string[] {
   try { return readdirSync(path) } catch { return [] }
 }

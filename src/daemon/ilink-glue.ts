@@ -33,6 +33,7 @@ import { makeIlinkContext, type Account } from './ilink/context'
 import { makeVoice } from './ilink/voice'
 import { makeCompanion } from './ilink/companion'
 import { makeTransport } from './ilink/transport'
+import { makeOutboundHealthTracker, isProactiveWindowClosed, type OutboundHealth } from './ilink/outbound-health'
 import type { Db } from '../lib/db'
 import type { ConversationStore } from '../core/conversation-store'
 import { makeMessagesStore } from '../lib/messages-store'
@@ -51,6 +52,8 @@ export type IlinkAccount = import('./ilink/context').Account
 export interface IlinkAdapter {
   sendMessage(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
   sendFile(chatId: string, path: string): Promise<void>
+  /** Passive outbound link health (spec 2026-08-22-outbound-health). */
+  outboundHealth(): OutboundHealth
   editMessage(chatId: string, msgId: string, text: string): Promise<void>
   broadcast(text: string, accountId?: string): Promise<{ ok: number; failed: number }>
   sharePage(title: string, content: string, opts?: { needs_approval?: boolean; chat_id?: string; account_id?: string }): Promise<{ url: string; slug: string }>
@@ -69,7 +72,7 @@ export interface IlinkAdapter {
   projects: WechatProjectsDep
   voice: WechatVoiceDep
   companion: WechatCompanionDep
-  askUser(chatId: string, prompt: string, hash: string, timeoutMs: number): Promise<'allow' | 'deny' | 'timeout'>
+  askUser(chatId: string, prompt: string, hash: string, timeoutMs: number): Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
   loadProjects(): { projects: Record<string, { path: string; last_active: number }>; current: string | null }
   lastActiveChatId(): string | null
   markChatActive(chatId: string, accountId?: string): void
@@ -82,11 +85,13 @@ export interface IlinkAdapter {
    * Long-poll wrapper for poll-loop. Detects errcode=-14 session timeout and
    * flips SessionStateStore + returns { expired: true } so the loop stops.
    */
-  getUpdatesForLoop(accountId: string, baseUrl: string, token: string, syncBuf: string): Promise<{
+  getUpdatesForLoop(accountId: string, baseUrl: string, token: string, syncBuf: string, signal?: AbortSignal): Promise<{
     updates?: unknown[]
     sync_buf?: string
     expired?: boolean
     standby?: boolean
+    /** Client-side long-poll timeout — see GetUpdatesResp.timed_out. */
+    timed_out?: boolean
   }>
   handlePermissionReply(text: string): boolean
   /** Session state accessor for admin commands (/health, cleanup). */
@@ -128,6 +133,7 @@ export function makeIlinkAdapter(opts: {
 
   const voice = makeVoice(ctx)
   const companion = makeCompanion(ctx)
+  const outbound = makeOutboundHealthTracker({ log: (t, l) => log(t, l) })
 
   // PR4 Task 15 — when ilink rejects an account with errcode=-14 ("rebound
   // elsewhere"), fan out a 3-line user-facing notification to every chat
@@ -157,6 +163,7 @@ export function makeIlinkAdapter(opts: {
   const adapter: IlinkAdapter = {
     async sendMessage(chatId, text) {
       if (!text) return { msgId: `err:${Date.now()}`, error: 'empty text' }
+      let reachedWire = false
       try {
         // Use the in-memory ctxStore / acctStore directly — sendReplyOnce
         // re-reads context_tokens.json from disk and would miss tokens
@@ -167,9 +174,11 @@ export function makeIlinkAdapter(opts: {
         const acct = resolveAccount(chatId)
         const ctxToken = ctxStore.get(chatId)
         const chunks = chunk(text, MAX_TEXT_CHUNK)
+        reachedWire = true
         for (const part of chunks) {
           await ilinkSendMessage(acct.baseUrl, acct.token, botTextMessage(chatId, part, ctxToken))
         }
+        outbound.recordSuccess(new Date().toISOString())
         // Record ONE row with the full pre-chunk text (fire-and-forget;
         // recording failure must never break the send result).
         void messagesStore.append({
@@ -188,12 +197,21 @@ export function makeIlinkAdapter(opts: {
         }).catch(err => log('MESSAGES', `outbound record failed: ${err instanceof Error ? err.message : err}`))
         return { msgId: `sent:${Date.now()}` }
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        // Only wire failures feed the health tracker — routing errors
+        // (unroutable chat, unknown account) say nothing about the link.
+        // errcode=-2(prepare failed)= 主动推送窗口已关,非链路故障,也不喂
+        // (否则每次 boot 给离线用户发通知失败都误报 degraded)。见
+        // isProactiveWindowClosed 的说明。
+        if (reachedWire && !isProactiveWindowClosed(msg)) outbound.recordFailure(new Date().toISOString(), msg)
         return {
           msgId: `err:${Date.now()}`,
-          error: err instanceof Error ? err.message : String(err),
+          error: msg,
         }
       }
     },
+
+    outboundHealth: () => outbound.snapshot(),
 
     async sendFile(chatId, filePath) {
       assertSendable(filePath)
@@ -300,8 +318,26 @@ export function makeIlinkAdapter(opts: {
       // Using setTimeout so fake-timer tests can advance past the timeout.
       const t = setTimeout(() => { pending.sweep() }, timeoutMs + 1)
       if (typeof t.unref === 'function') t.unref()
-      // Best-effort send — don't throw if it fails.
-      adapter.sendMessage(chatId, prompt).catch(() => {})
+      // Deliver the approval prompt. CRITICAL (2026-08-27 用户反馈:没给权限
+      // 就整轮卡死):if the prompt can't reach the approver — most often the
+      // admin's proactive-push window is closed (errcode=-2), since the
+      // approver is usually NOT the chat that triggered this turn — then no
+      // reply can EVER come. Don't dead-wait the full 10-min timeout (which
+      // races the turn's own no-activity kill → user gets nothing). Resolve
+      // 'undelivered' at once so the turn ends now with an honest reason.
+      adapter.sendMessage(chatId, prompt).then(
+        (res) => {
+          const err = (res as { error?: string } | null | undefined)?.error
+          if (err) {
+            log('PERMISSION', `approval prompt undelivered to ${chatId}: ${err} — failing fast (not waiting ${Math.round(timeoutMs / 1000)}s)`)
+            pending.fail(hash)
+          }
+        },
+        (err) => {
+          log('PERMISSION', `approval prompt send threw for ${chatId}: ${err instanceof Error ? err.message : String(err)} — failing fast`)
+          pending.fail(hash)
+        },
+      )
       return resultPromise
     },
 

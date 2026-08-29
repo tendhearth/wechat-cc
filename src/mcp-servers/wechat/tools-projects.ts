@@ -80,7 +80,7 @@ export function registerProjectTools(server: McpServer, client: InternalApiClien
     'set_user_name',
     {
       title: 'Persist a wechat user display name',
-      description: '记住新用户的显示名称。',
+      description: '记住新用户的显示名称。传"称呼本身"(如用户说"叫我大人"就传"大人"),不要把"叫我/请叫我"这类话术一起存进去。',
       inputSchema: { chat_id: z.string(), name: z.string() },
     },
     async ({ chat_id, name }) => {

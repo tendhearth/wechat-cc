@@ -1,5 +1,21 @@
 import type { CheapEval } from './agent-provider'
 
+/** 脱敏审查的 LLM 调用上限:坏网/慢 provider 下不干等到它自己的超时(几十秒)。
+ *  超时按「审查器不可用」处理(fail closed)——见 gateOutbound。 */
+export const GATE_TIMEOUT_MS = 12_000
+
+async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let t: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_, rej) => { t = setTimeout(() => rej(new Error('gate_timeout')), ms) }),
+    ])
+  } finally {
+    if (t) clearTimeout(t)
+  }
+}
+
 const CHECKER_PROMPT = (policy: string, text: string) => `你是一个隐私披露审查器。判断下面这段"要发给一位已配对好友的 agent"的文本是否违反主人的披露策略。
 铁律(高于策略,必须严格执行,这是本层唯一的第三方防护):绝不能提到除"我主人"和"收件方"以外的任何第三方(包括任何其他人的姓名、称呼、可识别的事);绝不含联系方式。
 披露策略:
@@ -16,10 +32,11 @@ export async function gateOutbound(
 ): Promise<{ ok: boolean; redacted: string; violations: string[] }> {
   let raw: string
   try {
-    raw = await opts.cheapEval(CHECKER_PROMPT(opts.policy, text))
+    raw = await withTimeout(opts.cheapEval(CHECKER_PROMPT(opts.policy, text)), GATE_TIMEOUT_MS)
   } catch (err) {
     // Fail CLOSED — a disclosure leak is worse than a dropped match.
-    return { ok: false, redacted: '', violations: ['checker_error: ' + (err instanceof Error ? err.message : String(err))] }
+    const msg = err instanceof Error ? err.message : String(err)
+    return { ok: false, redacted: '', violations: [msg === 'gate_timeout' ? 'checker_timeout' : 'checker_error: ' + msg] }
   }
   let parsedRaw: unknown
   try {

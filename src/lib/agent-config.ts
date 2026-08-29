@@ -29,6 +29,20 @@ export interface AgentConfig {
   // no modelForProvider/withModelForProvider counterpart.
   agyModel?: string
   agyBin?: string
+  /** Resolved `cursor-agent` binary path override (tests opt in; production
+   *  falls back to PATH lookup — see providers.ts's cursor CLI branch). */
+  cursorAgentBin?: string
+  /** 随身 CC 远程隧道开关(2026-08-26):true 则 daemon 拨中继,手机出门
+   *  可访问。默认关。`remote_relay_url` 可覆盖默认 relay。 */
+  remote_tunnel?: boolean
+  remote_relay_url?: string
+  /** cheapEval 显式指定(外部集成反馈 #2):设定后内部一次性评估只走
+   *  该 provider,openai 注册不再静默劫持。 */
+  cheapEvalProvider?: string
+  /** openai delegate peer 开关(外部集成反馈 #3):默认 true(向后兼容,
+   *  配齐即所有会话可 delegate_openai);false 则不构建该 peer —— 端点只
+   *  服务特定会话的场景用它关掉这条"通往端点的路"。 */
+  delegateOpenai?: boolean
   // When true, the daemon spawned by `service install` runs with
   // `cli.ts run --dangerously` (Claude SDK permissionMode=bypassPermissions).
   // Wizard-installed daemons need this on by default — there is no human
@@ -124,6 +138,11 @@ export interface AgentConfig {
   // mirroring wxgraph's own env-var escape hatch for undetectable-owner
   // accounts.
   knowledge_owner?: string
+  // 「连续 N 天」这类按天分桶功能用的时区偏移(相对 UTC 的分钟,东为正:
+  // UTC+8 → 480,PDT → -420)。缺省/ null → 跟随运行机器的系统时区(自动,
+  // 夏令时也对;daemon 在用户机器上,系统时区即用户此刻所在)。手动设值是
+  // 「万一用户想自己钉一个时区」的口子。见 core/prompt-format.ts localDayKey。
+  day_tz_offset_minutes?: number | null
 }
 
 // ── A2A sub-schemas ──────────────────────────────────────────────────────────
@@ -181,6 +200,11 @@ const AgentConfigSchema = z.object({
   geminiModel: z.string().optional(),
   agyModel: z.string().optional(),
   agyBin: z.string().optional(),
+  cursorAgentBin: z.string().optional(),
+  remote_tunnel: z.boolean().optional(),
+  remote_relay_url: z.string().optional(),
+  cheapEvalProvider: z.string().optional(),
+  delegateOpenai: z.boolean().optional(),
   dangerouslySkipPermissions: z.boolean().default(true),
   autoStart: z.boolean().default(true),
   closeStopsDaemon: z.boolean().default(false),
@@ -208,6 +232,7 @@ const AgentConfigSchema = z.object({
   knowledge_embed_script: z.string().optional(),
   knowledge_embed_runtime: z.enum(['python', 'js']).optional(),
   knowledge_owner: z.string().optional(),
+  day_tz_offset_minutes: z.number().int().min(-720).max(840).nullable().optional(),
 })
 
 /**
@@ -269,6 +294,11 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.geminiModel === 'string' ? { geminiModel: parsed.geminiModel } : {}),
       ...(typeof parsed.agyModel === 'string' ? { agyModel: parsed.agyModel } : {}),
       ...(typeof parsed.agyBin === 'string' ? { agyBin: parsed.agyBin } : {}),
+      ...(typeof parsed.cursorAgentBin === 'string' ? { cursorAgentBin: parsed.cursorAgentBin } : {}),
+      ...(typeof parsed.remote_tunnel === 'boolean' ? { remote_tunnel: parsed.remote_tunnel } : {}),
+      ...(typeof parsed.remote_relay_url === 'string' ? { remote_relay_url: parsed.remote_relay_url } : {}),
+      ...(typeof parsed.cheapEvalProvider === 'string' ? { cheapEvalProvider: parsed.cheapEvalProvider } : {}),
+      ...(typeof parsed.delegateOpenai === 'boolean' ? { delegateOpenai: parsed.delegateOpenai } : {}),
       dangerouslySkipPermissions,
       autoStart,
       closeStopsDaemon,
@@ -290,6 +320,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.knowledge_embed_script === 'string' ? { knowledge_embed_script: parsed.knowledge_embed_script } : {}),
       ...(parsed.knowledge_embed_runtime === 'python' || parsed.knowledge_embed_runtime === 'js' ? { knowledge_embed_runtime: parsed.knowledge_embed_runtime } : {}),
       ...(typeof parsed.knowledge_owner === 'string' ? { knowledge_owner: parsed.knowledge_owner } : {}),
+      ...(typeof parsed.day_tz_offset_minutes === 'number' ? { day_tz_offset_minutes: parsed.day_tz_offset_minutes } : {}),
     }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }

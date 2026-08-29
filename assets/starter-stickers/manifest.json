@@ -1,0 +1,7 @@
+[
+  { "file": "bear-complete.png", "tags": ["开心", "好奇"], "desc": "小熊够到了小蜜蜂,开心" },
+  { "file": "onboarding-success.png", "tags": ["庆祝", "搞定"], "desc": "小熊看着满满的鱼缸,大功告成" },
+  { "file": "onboarding-missing.png", "tags": ["送你", "礼物"], "desc": "小熊拎着袋装小鱼要送给你" },
+  { "file": "companion-fish.png", "tags": ["摸鱼"], "desc": "一条悠哉的金鱼" },
+  { "file": "moment-ai-offline.png", "tags": ["发呆", "陪着"], "desc": "小熊安静地坐着看鱼缸,陪着你" }
+]

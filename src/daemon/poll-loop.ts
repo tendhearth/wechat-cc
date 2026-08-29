@@ -82,7 +82,15 @@ export function parseUpdates(
 ): InboundMsg[] {
   const results: InboundMsg[] = []
 
+  // 毒丸防护(边界测试 2026-08-28):updates 是不可信的服务器响应 —— 坏网/代理
+  // 篡改可能塞进 null 元素或非数组。若 `for..of` 或 `msg.xxx` 抛出,poll 循环外
+  // 层会 catch,但 sync_buf 在 parse 之后才 persist,于是同一批毒丸永远重取、
+  // 永远抛、游标不前进 → 机器人静默卡死、后续消息全收不到。跳过畸形元素,让
+  // 好消息照常解析、游标照常前进。
+  if (!Array.isArray(updates)) return results
+
   for (const msg of updates) {
+    if (!msg || typeof msg !== 'object') continue   // null / 原始值元素 → 跳过,别让 msg.xxx 抛
     // Only process user messages (type=1) that are finished (state=2)
     if (msg.message_type !== 1) continue
     if (msg.message_state !== undefined && msg.message_state !== 2) continue
@@ -96,6 +104,7 @@ export function parseUpdates(
 
     let msgType = 'unknown'
     for (const item of msg.item_list ?? []) {
+      if (!item || typeof item !== 'object') continue   // 毒丸防护(同 msg 层):item_list 里的 null/原始值元素 → 跳过,别让 item.ref_msg 抛
       // Capture the first quoted message as structured content. ilink inlines
       // the quoted text in ref_msg (no stable id), richest field first. A
       // degenerate ref_msg with neither a known type nor any text is skipped
@@ -165,6 +174,8 @@ export function parseUpdates(
       }
     }
 
+    const rawMsgId = msg.message_id ?? (msg.item_list ?? []).find(i => i.msg_id)?.msg_id
+    const firstMsgId = rawMsgId !== undefined && rawMsgId !== null ? String(rawMsgId) : undefined
     const inbound: InboundMsg = {
       chatId: fromUserId,
       userId: fromUserId,
@@ -173,6 +184,7 @@ export function parseUpdates(
       msgType,
       createTimeMs: msg.create_time_ms ?? 0,
       accountId: deps.accountId,
+      ...(firstMsgId ? { msgId: firstMsgId } : {}),
       ...(quote !== undefined ? { quote } : {}),
       // ilink puts context_token on every inbound message; threading it
       // through to onInbound lets the daemon persist it before replying.
@@ -199,11 +211,14 @@ export interface PollLoopOptions {
      * `expired: true` so the loop can self-terminate and flag the bot in
      * SessionStateStore for the /health admin command.
      */
-    getUpdates: (accountId: string, baseUrl: string, token: string, syncBuf: string) => Promise<{
+    getUpdates: (accountId: string, baseUrl: string, token: string, syncBuf: string, signal?: AbortSignal) => Promise<{
       updates?: RawUpdate[]
       sync_buf?: string
       expired?: boolean
       standby?: boolean
+      /** Client-side long-poll timeout (server never answered) — see the
+       *  zombie guard in runLoop. Not a healthy empty poll. */
+      timed_out?: boolean
     }>
   }
   parse: (updates: RawUpdate[], deps: ParseDeps) => InboundMsg[]
@@ -254,6 +269,8 @@ export interface PollLoopOptions {
   }
   /** Test injection point; defaults to this file's sleep(). */
   sleepFn?: (ms: number, signal: AbortSignal) => Promise<void>
+  /** 停止宽限:abort 后最多等这么久让 loop 自然退出,超时也返回(见 stop()）。 */
+  stopGraceMs?: number
 }
 
 function sleepImpl(ms: number, signal: AbortSignal): Promise<void> {
@@ -297,6 +314,10 @@ export interface PollLoopHandle {
   running(): string[]
 }
 
+/** Consecutive client-timeout long-poll rounds before wechat health is
+ *  flipped to failing (~3 min at the 35s client timeout). */
+export const ZOMBIE_TIMEOUT_STREAK = 5
+
 interface LoopRecord {
   abort: AbortController
   promise: Promise<void>
@@ -321,24 +342,53 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
   } = opts
   const resolveUserName = opts.resolveUserName ?? (() => undefined)
   const sleep = opts.sleepFn ?? sleepImpl
+  const stopGraceMs = opts.stopGraceMs ?? 2_000
 
   const loops = new Map<string, LoopRecord>()
 
   async function runLoop(account: Account, sig: AbortSignal): Promise<void> {
     let syncBuf = account.syncBuf
     let failStreak = 0
+    let timeoutStreak = 0
 
     log('POLL', `loop started for ${account.id}`)
 
     while (!sig.aborted) {
       try {
-        const resp = await ilink.getUpdates(account.id, account.baseUrl, account.token, syncBuf)
+        const resp = await ilink.getUpdates(account.id, account.baseUrl, account.token, syncBuf, sig)
 
         if (sig.aborted) break
 
-        // Successful round-trip — stamp the daemon-health heartbeat. Guarded
-        // so a bad callback can't kill the poll loop.
+        // Round-trip completed (answered OR client-timeout) — stamp the
+        // daemon-health heartbeat: the process is alive and the loop is
+        // turning, which is all the instance lock cares about. Guarded so a
+        // bad callback can't kill the poll loop.
         try { onPollCycle?.() } catch { /* never throw into the loop */ }
+
+        // Zombie long-poll guard (2026-08-25, 「新好友消息没反应,自检才好」
+        // root-cause): a CLIENT-side timeout is not a healthy empty poll —
+        // a live ilink long-poll answers within its own server window; a
+        // round our own AbortController had to kill means the server never
+        // responded. One is transient; a STREAK means the session is a
+        // zombie: no error is thrown, no message ever arrives (strangers
+        // who scan the QR get dead silence), and before this guard each
+        // such round even stamped the connection heartbeat + wechat health
+        // as SUCCESS — the outage was invisible until someone complained
+        // and the owner ran 自检. Now: timed-out rounds stamp nothing, and
+        // a streak flips wechat health to degraded so the existing
+        // health-notify machinery tells the owner proactively.
+        if (resp.timed_out) {
+          timeoutStreak++
+          if (timeoutStreak === ZOMBIE_TIMEOUT_STREAK || (timeoutStreak > ZOMBIE_TIMEOUT_STREAK && timeoutStreak % 20 === 0)) {
+            log('POLL', `long-poll client-timeout x${timeoutStreak} in a row for ${account.id} — server not answering; inbound delivery may be stalled (zombie session)`)
+            health?.recordFailure('wechat', new Error(`ilink long-poll client-timeout x${timeoutStreak}`))
+          }
+          continue
+        }
+        if (timeoutStreak > 0) {
+          if (timeoutStreak >= ZOMBIE_TIMEOUT_STREAK) log('POLL', `long-poll answering again for ${account.id} after ${timeoutStreak} timed-out round(s)`)
+          timeoutStreak = 0
+        }
 
         // Adapter has marked the bot session expired — self-terminate. The
         // ilink-glue wrapper has already written to SessionStateStore, so
@@ -359,6 +409,12 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
             accountId: account.id,
             resolveUserName,
           })
+          // Arrival evidence INDEPENDENT of pipeline completion — mw-trace
+          // only logs [INBOUND] when the middleware chain finishes, so a
+          // hung turn used to leave zero trace that a message ever arrived.
+          if (msgs.length > 0) {
+            log('POLL', `inbound ${msgs.length} message(s) from ${[...new Set(msgs.map(m => m.chatId))].join(',')}`)
+          }
           for (const msg of msgs) {
             try {
               await onInbound(msg)
@@ -450,7 +506,15 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
     running: () => Array.from(loops.keys()),
     async stop(): Promise<void> {
       for (const record of loops.values()) record.abort.abort()
-      await Promise.all(Array.from(loops.values()).map(r => r.promise))
+      // abort 已发出;进程正在退出,socket 会随进程销毁。Bun 的 fetch-abort
+      // 传播偶有延迟(网络坏态下可 >5s),不该让它拖住 lifecycle 的停止预算
+      // —— 给一个有界宽限,loop 正常退出就走,拖太久也返回(不再 stop
+      // timeout 刷屏)。宽限用不可 abort 的裸计时,不受同一停止信号影响。
+      const allExited = Promise.all(Array.from(loops.values()).map(r => r.promise))
+      await Promise.race([
+        allExited,
+        new Promise<void>(res => setTimeout(res, stopGraceMs)),
+      ])
     },
   }
 }

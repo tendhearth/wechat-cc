@@ -20,6 +20,7 @@ import type { PermissionMode } from '../../core/capability-matrix'
 import { makeMemoryFS } from '../memory/fs-api'
 import { parseAgenda, selectDue, markResolved } from '../companion/agenda'
 import { makeMessagesStore, type MessagesStore } from '../../lib/messages-store'
+import { recentInboundTexts } from './recent-inbound'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { careLevel, shouldSpeak } from '../companion/calibration'
 import type { CareLedger } from '../companion/care-ledger'
@@ -48,6 +49,11 @@ export interface TickDeps {
   stateDir: string
   db: Db
   ilink: IlinkAdapter
+  /** Curated sticker library — enables the daily sticker-artist step in
+   *  introspectTick. Absent ⇒ the step never runs (tests, minimal embeds). */
+  stickers?: import('../stickers').StickerLib
+  /** CC 画的你 —— 自动刷新小像(portrait-artist)。缺省 ⇒ 不自动刷新。 */
+  generatePortrait?: (adminChatId: string) => Promise<{ ok: boolean; error?: string }>
   boot: Bootstrap
   /**
    * Task 11 — companion ticks aren't user-initiated, but the session
@@ -241,6 +247,10 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
   // builders only run when the decrypted source advanced past this). Reset to 0
   // on restart → one catch-up build after a restart, which is harmless.
   let lastIngestSourceMtime = 0
+  // Builder repeat-timeout damper — one map across all cycles (see
+  // BUILDER_COOLDOWN_MS in cycle.ts for why: each failed attempt can hold
+  // the __ingest__ exclusive slot for a full MCP request timeout).
+  const ingestBuilderHealth = { fails: new Map<string, { n: number; skipUntil: number }>() }
 
   /**
    * WRITE-side knowledge ingestion. Drives the plugins' builders + wxfacts
@@ -314,10 +324,11 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
           cap: INGEST_BATCH_CAP,
           log: (tag, msg) => deps.log(tag, msg),
           factsApi: cheapEval ? factsApi : undefined,
+          builderHealth: ingestBuilderHealth,
         })
         lastIngestSourceMtime = report.newSourceMtime
         if (report.batches || report.rebuilt || report.indexed || report.transcribed) {
-          deps.log('INGEST', `cycle: decrypted=${report.decrypted} rebuilt=${report.rebuilt} indexed=${report.indexed} transcribed=${report.transcribed} batches=${report.batches} facts=${report.recorded}`)
+          deps.log('INGEST', `cycle: decrypted=${report.decrypted} rebuilt=${report.rebuilt} indexed=${report.indexed} transcribed=${report.transcribed} batches=${report.batches} facts=${report.recorded} settled=${report.settled}`)
         }
         // D1 — distill the owner's kernel knowledge (facts + graph, in-process)
         // into knowledge.md (always-on memory). Owner chat only (no chatId→name
@@ -554,11 +565,14 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     const memoryRoot = join(deps.stateDir, 'memory')
     const events = makeEventsStore(deps.db, chatId, { migrateFromFile: join(memoryRoot, chatId, 'events.jsonl') })
     const observations = makeObservationsStore(deps.db, chatId, { migrateFromFile: join(memoryRoot, chatId, 'observations.jsonl') })
+    // Hoisted above the agent so introspect and threads extraction share one
+    // store — introspect's recent-inbound feed reads the same canonical
+    // messages table the extractor consumes.
+    const messagesStore = makeMessagesStore(deps.db)
     const agent = makeIntrospectAgent({
       chatId, events, observations,
       memorySnapshot: () => buildMemorySnapshot(deps.stateDir, chatId),
-      // Matches legacy main.ts v0.4.1 — recentInboundForChat() also returned [].
-      recentInboundMessages: () => Promise.resolve([] as string[]),
+      recentInboundMessages: () => recentInboundTexts(messagesStore, chatId),
       sdkEval,
     })
     // Isolated so a rare introspect-side throw (e.g. events.append db error)
@@ -576,7 +590,6 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     // also accumulate threads, not just the companion default_chat_id.
     // Parse failure per-chat is swallowed: watermark stays, retried next tick.
     // One-chat failure does not abort extraction for the remaining chats.
-    const messagesStore = makeMessagesStore(deps.db)
     const threadsStore = makeThreadsStore(deps.db)
     let allChatIds: string[]
     try {
@@ -620,6 +633,78 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     // as the steps above; isolated try/catch so a gardener failure cannot
     // break the rest of the tick. See docs/superpowers/specs/2026-07-10-
     // memory-gardener-design.md.
+    // Daily backup (2026-08-24) — the irreplaceable slice (main db, facts,
+    // memory .md, configs) is ~2MB; snapshotting it once per introspect tick
+    // is the cheapest insurance in the codebase. Isolated try/catch like
+    // every other step; keep a two-week window.
+    try {
+      const { createBackup, pruneBackups } = await import('../../lib/backup')
+      const b = await createBackup({ stateDir: deps.stateDir })
+      const pruned = pruneBackups(deps.stateDir, 14)
+      deps.log('BACKUP', `daily snapshot ${b.path.split('/').pop()} (${Math.round(b.bytes / 1024)}KB)${pruned > 0 ? `, pruned ${pruned}` : ''}`)
+    } catch (err) {
+      deps.log('BACKUP', `daily snapshot failed: ${err instanceof Error ? err.message : err}`)
+    }
+
+    // 觅食式表情生长 (2026-08-25) — once a day CC draws itself a sticker for
+    // a mood the library doesn't cover yet, and announces it like a small
+    // gift. Self-gating (22h marker + pool exhaustion) and every failure
+    // mode non-fatal — see sticker-artist.ts.
+    if (deps.stickers && sdkEval) {
+      try {
+        const { runStickerArtist } = await import('../sticker-artist')
+        const ownerChat = loadCompanionConfig(deps.stateDir).default_chat_id
+        await runStickerArtist({
+          stateDir: deps.stateDir,
+          lib: deps.stickers,
+          cheapEval: sdkEval,
+          log: (t, l) => deps.log(t, l),
+          notify: async (mood) => {
+            if (!ownerChat) return
+            const path = deps.stickers!.resolve(mood)
+            if (path) await deps.ilink.sendFile(ownerChat, path)
+            await deps.ilink.sendMessage(ownerChat, `我画了张新表情!以后想说「${mood}」的时候就用它~`)
+          },
+        })
+      } catch (err) {
+        deps.log('STICKERS', `artist step failed: ${err instanceof Error ? err.message : err}`)
+      }
+    }
+
+    // CC 画的你,慢慢长 (2026-08-27) — 档案比上次画像新且过了最短间隔时,
+    // 静默重画小像。自我门控 + 每失败非致命,见 portrait-artist.ts。
+    if (deps.generatePortrait) {
+      try {
+        const { runPortraitArtist } = await import('../portrait-artist')
+        const { existsSync, readFileSync, statSync } = await import('node:fs')
+        const ownerChat = loadCompanionConfig(deps.stateDir).default_chat_id
+        if (ownerChat) {
+          const memDir = join(deps.stateDir, 'memory', ownerChat)
+          await runPortraitArtist({
+            adminChatId: ownerChat,
+            generate: deps.generatePortrait,
+            portraitGeneratedAt: () => {
+              try {
+                const j = JSON.parse(readFileSync(join(memDir, 'portrait.json'), 'utf8')) as { generated_at?: string }
+                return j.generated_at ? Date.parse(j.generated_at) : null
+              } catch { return null }
+            },
+            profileMtime: () => {
+              let newest: number | null = null
+              for (const f of ['_profile.json', '_overview.md', 'profile.md']) {
+                const fp = join(memDir, f)
+                if (existsSync(fp)) { const m = statSync(fp).mtimeMs; if (newest === null || m > newest) newest = m }
+              }
+              return newest
+            },
+            log: (t, l) => deps.log(t, l),
+          })
+        }
+      } catch (err) {
+        deps.log('PORTRAIT', `artist step failed: ${err instanceof Error ? err.message : err}`)
+      }
+    }
+
     try {
       const { gardened, skipped } = await runGarden({
         memoryRoot,
