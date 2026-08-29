@@ -14,9 +14,10 @@
  * below, always fixed, never threaded from a spawn context.
  *
  * Safety rules this module exists to uphold (spec §3, last paragraph):
- *  - only ever touch our own namespaced entry (`wechat-cc:wechat`) —
- *    anything else already in `mcpServers` (or at the file root) is
- *    round-tripped untouched;
+ *  - only ever touch our own namespaced entry (`wechat-cc-wechat`, plus a
+ *    purge of the legacy colon-carrying `wechat-cc:wechat`) — anything else
+ *    already in `mcpServers` (or at the file root) is round-tripped
+ *    untouched;
  *  - read-modify-write, never blind-overwrite;
  *  - create the file/dirs if absent;
  *  - idempotent: recomputing the same entry from the same inputs must NOT
@@ -34,8 +35,20 @@ import { join } from 'node:path'
 import type { McpStdioSpec } from '../../core/mcp-stdio-spec'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
 
-/** Our namespaced entry key inside `mcpServers` — never touch any other key. */
-export const AGY_WECHAT_MCP_NAMESPACE_ID = 'wechat-cc:wechat'
+/** Our namespaced entry key inside `mcpServers` — never touch any other key.
+ *
+ *  MUST stay inside `[a-zA-Z0-9_-]`: agy derives tool names as
+ *  `mcp_<serverKey>_<tool>` and validates the WHOLE name against
+ *  `^[a-zA-Z0-9_-]{1,64}$`. The original `wechat-cc:wechat` carried a colon,
+ *  so agy silently rejected all 32 wechat tools at every boot and the
+ *  provider ran tool-less from 2026-08-17 until this was caught in its
+ *  cli.log on 2026-08-29 ("encountered invalid tool …" ×32). */
+export const AGY_WECHAT_MCP_NAMESPACE_ID = 'wechat-cc-wechat'
+
+/** The pre-2026-08-29 colon-carrying key — purged on sight by both setup
+ *  (one-time migration) and remove, so stale entries with dead tokens don't
+ *  linger in the operator's config. */
+const LEGACY_NAMESPACE_ID = 'wechat-cc:wechat'
 
 const CONFIG_FILE_NAME = 'mcp_config.json'
 
@@ -133,9 +146,11 @@ export function setupAgyGlobalMcp(opts: PrepareAgyMcpOpts): boolean {
     },
   }
 
+  const migratedServers = { ...existingServers }
+  delete migratedServers[LEGACY_NAMESPACE_ID]   // one-time colon-key migration
   const newRoot: McpConfigRoot = {
     ...existingRoot,
-    mcpServers: { ...existingServers, [AGY_WECHAT_MCP_NAMESPACE_ID]: entry },
+    mcpServers: { ...migratedServers, [AGY_WECHAT_MCP_NAMESPACE_ID]: entry },
   }
   const newText = JSON.stringify(newRoot, null, 2) + '\n'
 
@@ -209,12 +224,14 @@ export function removeAgyGlobalMcp(opts: RemoveAgyMcpOpts): boolean {
   const existingRoot: McpConfigRoot = parsed
   const existingServers = isPlainObject(existingRoot.mcpServers) ? existingRoot.mcpServers : undefined
 
-  if (!existingServers || !(AGY_WECHAT_MCP_NAMESPACE_ID in existingServers)) {
-    return false // our entry isn't there — idempotent no-op
+  if (!existingServers ||
+      !(AGY_WECHAT_MCP_NAMESPACE_ID in existingServers || LEGACY_NAMESPACE_ID in existingServers)) {
+    return false // neither our entry nor the legacy one is there — idempotent no-op
   }
 
   const remainingServers = { ...existingServers }
   delete remainingServers[AGY_WECHAT_MCP_NAMESPACE_ID]
+  delete remainingServers[LEGACY_NAMESPACE_ID]
   const newRoot: McpConfigRoot = { ...existingRoot, mcpServers: remainingServers }
   const newText = JSON.stringify(newRoot, null, 2) + '\n'
 

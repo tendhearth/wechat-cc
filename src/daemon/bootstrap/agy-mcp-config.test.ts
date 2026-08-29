@@ -303,3 +303,67 @@ describe('removeAgyGlobalMcp — mirror of setup, cleans up on graceful shutdown
     expect(calls.some(([, line]) => line.includes('skipped under test runner'))).toBe(true)
   })
 })
+
+describe('namespace id vs agy tool-name validation (2026-08-29 real-deploy finding)', () => {
+  // agy names MCP tools `mcp_<serverKey>_<tool>` and validates the WHOLE
+  // name against ^[a-zA-Z0-9_-]{1,64}$. The original namespace
+  // 'wechat-cc:wechat' carried a colon, so agy rejected all 32 wechat tools
+  // at every boot ("encountered invalid tool …") and the provider silently
+  // ran tool-less for its entire life. This test encodes agy's constraint.
+  it('every derived tool name matches the agy charset ^[a-zA-Z0-9_-]{1,64}$', () => {
+    const longestTool = 'companion_import_local'   // longest wechat MCP tool name
+    const derived = `mcp_${AGY_WECHAT_MCP_NAMESPACE_ID}_${longestTool}`
+    expect(derived).toMatch(/^[a-zA-Z0-9_-]{1,64}$/)
+  })
+})
+
+describe('legacy colon namespace migration', () => {
+  let dir: string
+  beforeEach(() => { dir = tmpConfigDir() })
+
+  it('setup drops the legacy "wechat-cc:wechat" entry while writing the new one; user entries intact', () => {
+    const path = join(dir, 'mcp_config.json')
+    writeFileSync(path, JSON.stringify({
+      mcpServers: {
+        'wechat-cc:wechat': { command: '/old/bun', args: [], env: { WECHAT_SESSION_TOKEN: 'stale' } },
+        'user-server': { command: '/theirs', args: ['x'] },
+      },
+    }, null, 2) + '\n')
+    const { log } = fakeLog()
+    const changed = setupAgyGlobalMcp({ wechatSpec, mintToken: () => 'tok-mig', geminiConfigDir: dir, log })
+    expect(changed).toBe(true)
+    const parsed = JSON.parse(readFileSync(path, 'utf8'))
+    expect(parsed.mcpServers['wechat-cc:wechat']).toBeUndefined()
+    expect(parsed.mcpServers[AGY_WECHAT_MCP_NAMESPACE_ID]).toBeDefined()
+    expect(parsed.mcpServers['user-server']).toEqual({ command: '/theirs', args: ['x'] })
+  })
+
+  it('setup after migration is idempotent (second call ⇒ false, no rewrite)', () => {
+    const path = join(dir, 'mcp_config.json')
+    writeFileSync(path, JSON.stringify({
+      mcpServers: { 'wechat-cc:wechat': { command: '/old/bun', args: [] } },
+    }, null, 2) + '\n')
+    const { log } = fakeLog()
+    setupAgyGlobalMcp({ wechatSpec, mintToken: () => 'tok-a', geminiConfigDir: dir, log })
+    const before = readFileSync(path, 'utf8')
+    const again = setupAgyGlobalMcp({ wechatSpec, mintToken: () => 'tok-a', geminiConfigDir: dir, log })
+    expect(again).toBe(false)
+    expect(readFileSync(path, 'utf8')).toBe(before)
+  })
+
+  it('remove cleans the legacy entry too (even when only the legacy key exists)', () => {
+    const path = join(dir, 'mcp_config.json')
+    writeFileSync(path, JSON.stringify({
+      mcpServers: {
+        'wechat-cc:wechat': { command: '/old/bun', args: [] },
+        'user-server': { command: '/theirs', args: [] },
+      },
+    }, null, 2) + '\n')
+    const { log } = fakeLog()
+    const removed = removeAgyGlobalMcp({ geminiConfigDir: dir, log })
+    expect(removed).toBe(true)
+    const parsed = JSON.parse(readFileSync(path, 'utf8'))
+    expect(parsed.mcpServers['wechat-cc:wechat']).toBeUndefined()
+    expect(parsed.mcpServers['user-server']).toBeDefined()
+  })
+})
