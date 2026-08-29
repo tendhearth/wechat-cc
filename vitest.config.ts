@@ -12,5 +12,13 @@ export default defineConfig({
     // plugins/wxsearch/.venv installed must not leak wxsearch into every
     // buildBootstrap-based test.
     setupFiles: ['./vitest.setup.ts'],
+    // windows-latest runners have chronically slow disk I/O: on a bad day
+    // MULTIPLE unrelated suites (store, shim.e2e, powershell-validator,
+    // social CLI) blow the 5s default purely on runner slowness — observed
+    // 2026-08-29 across three runs, a different victim each time, all
+    // "Test timed out in 5000ms". Per-test timeout bumps are whack-a-mole;
+    // raise the platform default instead. macOS/Linux keep the strict 5s so
+    // a genuine hang still fails fast where the signal is trustworthy.
+    testTimeout: process.platform === 'win32' ? 20_000 : 5_000,
   },
 })
