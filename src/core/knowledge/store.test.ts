@@ -473,7 +473,9 @@ describe('facts store', () => {
       s.close()
     })
 
-    it('merge keeps the original valid_from and returns the existing id', () => {
+    // 15s: windows-latest 的慢盘让每个 freshStore() 测试跑 1-3s,这条实测
+    // 5107ms 撞过默认 5s 上限(2026-08-29,同代码另一 windows leg 绿)。
+    it('merge keeps the original valid_from and returns the existing id', { timeout: 15_000 }, () => {
       const s = freshStore()
       const a = s.upsertFact({ contact: 'u1', predicate: '住在', value: '北京' }, 1000)
       const b = s.upsertFact({ contact: 'u1', predicate: '住在', value: '北京', confidence: 'high' }, 2000)
