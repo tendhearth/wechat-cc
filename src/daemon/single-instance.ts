@@ -127,6 +127,10 @@ export function releaseInstanceLock(pidPath: string): void {
 // only refuse start if a current process is actually our daemon.
 function isOurDaemon(pid: number): boolean {
   if (!processExists(pid)) return false
+  // The current process is unambiguously ours. Avoid shelling out to ps /
+  // tasklist for this case: hardened launch contexts and test sandboxes may
+  // deny process-table inspection even though kill(self, 0) succeeds.
+  if (pid === process.pid) return true
   const pf = platform()
   if (pf === 'linux') return matchLinuxComm(pid)
   if (pf === 'win32') return matchWindowsImage(pid)
