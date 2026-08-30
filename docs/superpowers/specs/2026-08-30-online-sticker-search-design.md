@@ -49,7 +49,7 @@ from what it sends so the reach-out converges.
 |----------|--------|
 | Image source | **Tenor** (Google, official API) behind a pluggable `StickerSource` interface |
 | Trigger | **Local-first** with richness threshold: reach online only when a mood has `< K` local stickers |
-| Convergence | **Converge at K** — once a mood has K local stickers, never reach online for it again (K default 3) |
+| Convergence | **Converge at K** — once a mood has K local stickers, never reach online for it again (K default 5) |
 | Auto-save | **On successful send** — fetched sticker is saved to the local library, tagged by mood |
 | Where the logic lives | **Method A — a dedicated `search_online_sticker` tool**; the daemon route owns the K-threshold + fetch + save, keeping the network egress an explicit, separately tier-gateable action |
 
@@ -126,7 +126,7 @@ In `stickers.ts` (or a sibling), a small pure function over `list()`:
 export function countForTag(entries: StickerEntry[], tag: string): number
 ```
 
-`K` lives as a named constant (default **3**), documented next to it.
+`K` lives as a named constant (default **5**), documented next to it.
 
 ### 3. Route: `POST /v1/wechat/search_online_sticker`
 
@@ -206,11 +206,11 @@ default to `reply` to match `send_sticker`.)
 1. Owner (empty-ish library) says something sad; sticker pref ON.
 2. `emptyStickerSection` told CC it can reach online → CC calls
    `search_online_sticker(chat_id, mood='安慰', query='comforting hug bear')`.
-3. Route: `countForTag(list, '安慰') = 0 < 3` → `TenorSource.search('comforting hug bear')`.
+3. Route: `countForTag(list, '安慰') = 0 < 5` → `TenorSource.search('comforting hug bear')`.
 4. First hit downloaded → `ilink.sendFile` → `stickers.save(tmp, ['安慰'], …)`.
-5. Library now has 1 `安慰` sticker. Next two 安慰 moments repeat (→2, →3).
-6. At 3 `安慰` stickers, `count >= K` → future 安慰 requests send **local**
-   (random among the 3), no network. Converged.
+5. Library now has 1 `安慰` sticker. The next four 安慰 moments repeat (→2…→5).
+6. At 5 `安慰` stickers, `count >= K` → future 安慰 requests send **local**
+   (random among the 5), no network. Converged.
 
 ## Error Handling
 
@@ -245,7 +245,7 @@ default to `reply` to match `send_sticker`.)
 
 ## Open Questions (resolve during implementation)
 
-- Exact `K` (default 3) and cooldown duration — pick sane defaults, tune later.
+- `K` = **5** (locked); cooldown duration — pick a sane default, tune later.
 - Whether `search_online_sticker` warrants a tier distinct from `send_sticker`
   given its network egress (default: same `reply` tier).
 - Temp-dir location and byte cap constant.
