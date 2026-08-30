@@ -361,6 +361,8 @@ export interface InternalApiDeps {
     list(): { file: string; tags: string[]; desc?: string }[]
     allTags(): string[]
   }
+  /** Optional online sticker provider; absent keeps the feature safely disabled. */
+  stickerSource?: import('../sticker-source').StickerSource
   /**
    * LLM 记忆操作(daemon-only, spec 2026-07-23-daemon-owns-llm-memory-ops) —
    * synthesize/generateProfile, late-bound by main.ts's `setMemory()` after

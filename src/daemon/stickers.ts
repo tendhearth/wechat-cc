@@ -19,6 +19,14 @@ export interface StickerEntry {
   desc?: string
 }
 
+/** A mood with this many local stickers no longer needs online search. */
+export const ONLINE_STICKER_K = 5
+
+export function countForTag(entries: StickerEntry[], tag: string): number {
+  const target = tag.trim().toLowerCase()
+  return entries.filter((entry) => entry.tags.some((item) => item.trim().toLowerCase() === target)).length
+}
+
 export interface StickerLib {
   /** Copies sourcePath into the library. Throws Error('invalid_extension') / Error('empty_tags') / Error('invalid_tag'). */
   save(sourcePath: string, tags: string[], desc?: string): { file: string; tags: string[] }

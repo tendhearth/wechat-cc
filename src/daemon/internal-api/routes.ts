@@ -8,7 +8,9 @@
  * sections are kept in stable order to match the original file's layout
  * so blame survives the split.
  */
-import { basename } from 'node:path'
+import { basename, join } from 'node:path'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
 import { splitReply, paceMs } from '../reply-split'
 import { lookup } from '../../core/capability-matrix'
@@ -31,6 +33,8 @@ import { fileRoutes } from './routes-files'
 import { customerReviewRoutes } from './routes-customer-review'
 import { federationRoutes } from './routes-federation'
 import { remindersRoutes } from './routes-reminders'
+import { countForTag, ONLINE_STICKER_K } from '../stickers'
+import { makeCooldown } from '../sticker-source'
 import type {
   MemoryReadRequestT, MemoryWriteRequestT, MemoryDeleteRequestT,
   ProjectsSwitchRequestT, ProjectsAddRequestT, ProjectsRemoveRequestT,
@@ -83,6 +87,7 @@ function toWireOutbound(h: import('../ilink/outbound-health').OutboundHealth) {
 }
 
 export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext): RouteTable {
+  const onlineStickerCooldown = makeCooldown(5 * 60_000)
   return {
     'GET /v1/health': () => ({
       status: 200,
@@ -767,6 +772,41 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
         return { status: 200, body: { ok: true, file: basename(path) } }
       } catch (err) {
         return { status: 200, body: { ok: false, error: errMsg(err) } }
+      }
+    },
+    'POST /v1/wechat/search_online_sticker': async (_q, body) => {
+      if (!deps.stickerSource) return { status: 503, body: { error: 'sticker_source_not_wired' } }
+      if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
+      const b = (body ?? {}) as { chat_id?: unknown; mood?: unknown; query?: unknown }
+      if (typeof b.chat_id !== 'string' || !b.chat_id.trim()) return { status: 400, body: { error: 'chat_id required (non-empty string)' } }
+      if (typeof b.mood !== 'string' || !b.mood.trim()) return { status: 400, body: { error: 'mood required (non-empty string)' } }
+      if (typeof b.query !== 'string' || !b.query.trim()) return { status: 400, body: { error: 'query required (non-empty string)' } }
+      if (!deps.ilink) return { status: 503, body: { error: 'ilink_not_wired' } }
+      const chatId = b.chat_id.trim(), mood = b.mood.trim(), query = b.query.trim()
+      if (countForTag(deps.stickers.list(), mood) >= ONLINE_STICKER_K) {
+        const local = deps.stickers.resolve(mood)
+        if (local) try {
+          await deps.ilink.sendFile(chatId, local)
+          return { status: 200, body: { ok: true, source: 'local', file: basename(local) } }
+        } catch (err) { return { status: 200, body: { ok: false, error: errMsg(err) } } }
+      }
+      if (!onlineStickerCooldown.ready(chatId, Date.now())) return { status: 200, body: { ok: false, reason: 'throttled' } }
+      let scratch: string | undefined
+      try {
+        const hits = await deps.stickerSource.search(query, { limit: 8 })
+        if (!hits[0]) return { status: 200, body: { ok: false, reason: 'no_online_result' } }
+        const download = await deps.stickerSource.download(hits[0].url)
+        if (!download) return { status: 200, body: { ok: false, reason: 'no_online_result' } }
+        scratch = mkdtempSync(join(tmpdir(), 'online-sticker-'))
+        const path = join(scratch, `${hits[0].id}.${download.ext}`)
+        writeFileSync(path, download.bytes)
+        await deps.ilink.sendFile(chatId, path)
+        const saved = deps.stickers.save(path, [mood], `CC 联网找的「${mood}」表情`)
+        return { status: 200, body: { ok: true, source: 'online', file: saved.file } }
+      } catch (err) {
+        return { status: 200, body: { ok: false, error: errMsg(err) } }
+      } finally {
+        if (scratch) rmSync(scratch, { recursive: true, force: true })
       }
     },
     'POST /v1/stickers': (_q, body) => {

@@ -30,6 +30,7 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // images, no arbitrary-path read) and has no exfiltration surface —
   // same trust class as reply/reply_voice, so it's guest not trusted.
   'POST /v1/wechat/send_sticker': 'guest',
+  'POST /v1/wechat/search_online_sticker': 'guest',
   'GET /v1/stickers': 'guest',
   // reminders — scope (own chat only for session callers) is enforced in
   // routes-reminders.ts; the tier floor is guest ("提醒我" is harmless).

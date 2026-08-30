@@ -2,11 +2,20 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, existsSync, unlinkSync, readFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeStickerLib, seedStarterStickers } from './stickers'
+import { countForTag, makeStickerLib, ONLINE_STICKER_K, seedStarterStickers } from './stickers'
 
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), 'stickers-'))
 }
+
+describe('countForTag', () => {
+  const entries = [{ file: 'a.png', tags: ['安慰'] }, { file: 'b.png', tags: ['安慰', '晚安'] }]
+  it('counts trim/case-insensitive matches and locks K', () => {
+    expect(countForTag(entries, ' 安慰 ')).toBe(2)
+    expect(countForTag(entries, 'missing')).toBe(0)
+    expect(ONLINE_STICKER_K).toBe(5)
+  })
+})
 
 describe('stickers', () => {
   it('save() copies the file, writes the index, and returns the entry', () => {

@@ -264,6 +264,7 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     // are library management over the sticker store, classified like the
     // memory/ family they mirror.
     if (sub === 'send_sticker') return 'reply'
+    if (sub === 'search_online_sticker') return 'reply'
     if (sub === 'save_sticker') return 'memory_write'
     if (sub === 'list_stickers') return 'memory_read'
     // Other wechat tools: classify as fs_read (safest non-reply default

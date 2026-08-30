@@ -210,6 +210,7 @@ describe('classifyToolUse', () => {
   })
   it('send_sticker → reply, save_sticker → memory_write, list_stickers → memory_read', () => {
     expect(classifyToolUse('mcp__wechat__send_sticker', {})).toBe('reply')
+    expect(classifyToolUse('mcp__wechat__search_online_sticker', {})).toBe('reply')
     expect(classifyToolUse('mcp__wechat__save_sticker', {})).toBe('memory_write')
     expect(classifyToolUse('mcp__wechat__list_stickers', {})).toBe('memory_read')
   })

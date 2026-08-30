@@ -104,6 +104,23 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
   )
 
   server.registerTool(
+    'search_online_sticker',
+    {
+      title: 'Search the internet for a sticker and send it',
+      description: '按情绪联网找一张表情包发到对话并自动收进本地库。mood 用中文情绪词，query 用英文关键词效果最好；本地同类已攒够时会直接发本地表情。',
+      inputSchema: { chat_id: z.string(), mood: z.string(), query: z.string() },
+    },
+    async ({ chat_id, mood, query }) => {
+      try {
+        const r = await client.request<unknown>('POST', '/v1/wechat/search_online_sticker', { chat_id, mood, query })
+        return { content: [{ type: 'text', text: JSON.stringify(r) }] }
+      } catch (err) {
+        return passthroughErrorResult(err, 'search_online_sticker')
+      }
+    },
+  )
+
+  server.registerTool(
     'broadcast',
     {
       title: 'Broadcast text to all online users',

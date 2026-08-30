@@ -581,7 +581,7 @@ export function stickerSection(tags: string[]): string {
   const safeTags = tags.filter((t) => !/[\r\n  ]/.test(t) && t.length <= 20).slice(0, 30)
   return `## 表情包
 
-本地表情库可用 tags: ${safeTags.join(', ')}。情绪强/庆祝/安慰的时刻可以用 \`send_sticker(tag)\` 发一张表情包，一次最多一张，配合文字而不是替代文字；没有合适的 tag 就不用，别硬凑；用户发来好的表情图时可以用 \`save_sticker\` 收进库（先问一句）。`
+本地表情库可用 tags: ${safeTags.join(', ')}。情绪强/庆祝/安慰的时刻可以用 \`send_sticker(tag)\` 发一张表情包，一次最多一张，配合文字而不是替代文字；本地没有合适的、或想换新鲜表情时，可以用 \`search_online_sticker(mood, query)\` 联网找一张（mood 用中文情绪词，query 用英文关键词效果最好），发出去会自动收进库；用户发来好的表情图时可以用 \`save_sticker\` 收进库（先问一句）。`
 }
 
 /**
@@ -593,7 +593,7 @@ export function stickerSection(tags: string[]): string {
  * learned `save_sticker` exists until the owner happened to ask.
  */
 export function stickerEmptyLibrarySection(): string {
-  return '你还没有表情包。聊天里遇到值得存的表情/梗图,可以用 save_sticker 存进库,以后就能发给对方。'
+  return '你还没有表情包。情绪强/庆祝/安慰的时刻，可以用 search_online_sticker(mood, query) 联网找一张表情发过去（mood 用中文情绪词，query 用英文关键词），发出去会自动收进库；聊天里遇到值得存的表情/梗图，也可以用 save_sticker 存进库。'
 }
 
 function memorySection(): string {
