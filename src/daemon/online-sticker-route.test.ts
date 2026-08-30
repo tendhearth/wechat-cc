@@ -11,7 +11,7 @@ function route(deps: Record<string, unknown>) {
   return routes['POST /v1/wechat/search_online_sticker']!
 }
 
-const ilink = (sendFile = vi.fn(async () => {})) => ({
+const ilink = (sendFile: (chatId: string, path: string) => Promise<void> = vi.fn(async () => {})) => ({
   sendReply: vi.fn(async () => ({ msgId: '1' })), sendFile,
   editMessage: vi.fn(async () => {}), broadcast: vi.fn(async () => ({ ok: 0, failed: 0 })),
 })
