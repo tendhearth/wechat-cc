@@ -220,11 +220,18 @@ jobs:
       # peOff. IMAGE_OPTIONAL_HEADER.Subsystem lives at peOff+0x5c
       # (a UInt16; PE32 and PE32+ both keep it at the same offset since
       # the optional header layout is identical up through the data
-      # directories). We assert the byte is 3 (IMAGE_SUBSYSTEM_WINDOWS_CUI)
-      # before flipping to 2 (IMAGE_SUBSYSTEM_WINDOWS_GUI) — read-after-
-      # write verifies the flip persisted. Either invariant failing
-      # fails the build loudly so a future Bun fix doesn't silently
-      # double-flip.
+      # directories). 3 = IMAGE_SUBSYSTEM_WINDOWS_CUI (console, the bug),
+      # 2 = IMAGE_SUBSYSTEM_WINDOWS_GUI (what we want).
+      #
+      # IDEMPOTENT (2026-08-31): this used to hard-assert 3 before flipping,
+      # deliberately, so that a future Bun fix could not silently double-flip.
+      # That future arrived — the pinned Bun now honours
+      # --windows-hide-console and emits 2 on its own, so the assertion
+      # started failing the whole Windows build. Now: 2 ⇒ already correct,
+      # log and move on; 3 ⇒ flip and verify; anything else ⇒ still a loud
+      # failure, because an unexpected subsystem means our offset math or the
+      # binary layout is no longer what we think it is. Safe in both
+      # directions, including a Bun regression back to 3.
       - name: Hide console on Windows sidecar (workaround for Bun --windows-hide-console no-op)
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -233,8 +240,12 @@ jobs:
           $bytes = [System.IO.File]::ReadAllBytes($path)
           $peOff = [BitConverter]::ToInt32($bytes, 0x3c)
           $before = [BitConverter]::ToUInt16($bytes, $peOff + 0x5c)
+          if ($before -eq 2) {
+            Write-Output "PE subsystem already 2 (GUI/hidden) — Bun honoured --windows-hide-console, nothing to flip"
+            exit 0
+          }
           if ($before -ne 3) {
-            Write-Error "expected PE subsystem=3 (CONSOLE) before flip, got $before — Bun may have fixed --windows-hide-console; remove this workaround"
+            Write-Error "unexpected PE subsystem=$before (want 3=CONSOLE to flip, or 2=GUI already done) — offset math or binary layout changed, refusing to patch bytes"
             exit 1
           }
           $bytes[$peOff + 0x5c] = 2
