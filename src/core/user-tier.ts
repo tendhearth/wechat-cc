@@ -265,6 +265,8 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     // memory/ family they mirror.
     if (sub === 'send_sticker') return 'reply'
     if (sub === 'search_online_sticker') return 'reply'
+    if (sub === 'send_online_sticker_candidate') return 'reply'
+    if (sub === 'sticker_feedback') return 'reply'
     if (sub === 'save_sticker') return 'memory_write'
     if (sub === 'list_stickers') return 'memory_read'
     // Other wechat tools: classify as fs_read (safest non-reply default

@@ -8,6 +8,7 @@ export interface StickerSource {
 }
 export interface TenorDeps { apiKey: string; fetch?: typeof fetch; maxBytes?: number }
 export interface GiphyDeps { apiKey: string; fetch?: typeof fetch; maxBytes?: number }
+export interface GiphyRelayDeps { endpoint: string; fetch?: typeof fetch }
 
 function extFromUrl(url: string): string | null {
   try {
@@ -80,6 +81,36 @@ export function makeGiphySource(deps: GiphyDeps): StickerSource {
         if (!response.ok) return null
         const bytes = new Uint8Array(await response.arrayBuffer())
         return bytes.length > 0 && bytes.length <= maxBytes ? { bytes, ext } : null
+      } catch { return null }
+    },
+  }
+}
+
+/** GIPHY search through the hosted relay; the API key never reaches the client. */
+export function makeGiphyRelaySource(deps: GiphyRelayDeps): StickerSource {
+  const doFetch = deps.fetch ?? fetch
+  return {
+    async search(query, opts) {
+      const url = new URL(deps.endpoint)
+      url.search = new URLSearchParams({ q: query, limit: String(opts?.limit ?? 8) }).toString()
+      try {
+        const response = await doFetch(url)
+        if (!response.ok) return []
+        const body = await response.json() as { data?: unknown }
+        return Array.isArray(body.data) ? body.data.flatMap((raw) => {
+          const item = raw as { id?: unknown; url?: unknown }
+          return typeof item.id === 'string' && typeof item.url === 'string' ? [{ id: item.id, url: item.url }] : []
+        }) : []
+      } catch { return [] }
+    },
+    async download(url) {
+      const ext = extFromUrl(url)
+      if (!ext || !ALLOWED_DOWNLOAD_EXTS.has(ext)) return null
+      try {
+        const response = await doFetch(url)
+        if (!response.ok) return null
+        const bytes = new Uint8Array(await response.arrayBuffer())
+        return bytes.length > 0 && bytes.length <= DEFAULT_MAX_BYTES ? { bytes, ext } : null
       } catch { return null }
     },
   }

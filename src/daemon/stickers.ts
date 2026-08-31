@@ -31,7 +31,7 @@ export interface StickerLib {
   /** Copies sourcePath into the library. Throws Error('invalid_extension') / Error('empty_tags') / Error('invalid_tag'). */
   save(sourcePath: string, tags: string[], desc?: string): { file: string; tags: string[] }
   /** ABSOLUTE path of a random match; trim+case-insensitive tag compare. */
-  resolve(tag: string): string | null
+  resolve(tag: string, chatId?: string): string | null
   list(): StickerEntry[]
   /** Unique, sorted. */
   allTags(): string[]
@@ -77,7 +77,7 @@ function parseIndexValue(raw: string): IndexValue | null {
   }
 }
 
-export function makeStickerLib(stateDir: string, deps?: { store?: StateStore; random?: () => number }): StickerLib {
+export function makeStickerLib(stateDir: string, deps?: { store?: StateStore; random?: () => number; feedback?: { weight(chatId: string, file: string): number } }): StickerLib {
   const dir = join(stateDir, 'stickers')
   const store = deps?.store ?? makeStateStore(join(dir, 'stickers.json'), { debounceMs: 0 })
   const random = deps?.random ?? Math.random
@@ -120,14 +120,21 @@ export function makeStickerLib(stateDir: string, deps?: { store?: StateStore; ra
       return { file: candidate, tags: normalizedTags }
     },
 
-    resolve(tag) {
+    resolve(tag, chatId?: string) {
       const target = tag.trim().toLowerCase()
       const matches = entries()
         .filter((e) => e.tags.some((t) => t.trim().toLowerCase() === target))
         .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0))
       if (matches.length === 0) return null
-      const idx = Math.floor(random() * matches.length)
-      return resolvePath(dir, matches[idx]!.file)
+      if (!chatId || !deps?.feedback) {
+        const idx = Math.floor(random() * matches.length)
+        return resolvePath(dir, matches[idx]!.file)
+      }
+      const weighted = matches.map((entry) => ({ entry, weight: deps.feedback!.weight(chatId, entry.file) }))
+      const total = weighted.reduce((sum, item) => sum + item.weight, 0)
+      let cursor = random() * total
+      for (const item of weighted) { cursor -= item.weight; if (cursor <= 0) return resolvePath(dir, item.entry.file) }
+      return resolvePath(dir, weighted[weighted.length - 1]!.entry.file)
     },
 
     list() {

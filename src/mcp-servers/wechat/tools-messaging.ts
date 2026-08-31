@@ -121,6 +121,62 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
   )
 
   server.registerTool(
+    'search_online_sticker_candidates',
+    {
+      title: 'Search sticker candidates for visual selection',
+      description: '联网搜索多张候选表情并返回预览，不发送。先根据语境看图选择最匹配的一张，再调用 send_online_sticker_candidate。',
+      inputSchema: { query: z.string() },
+    },
+    async ({ query }) => {
+      try {
+        const r = await client.request<{ candidates?: Array<{ id: string; url: string }> }>('POST', '/v1/wechat/search_online_sticker_candidates', { query })
+        const content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [{ type: 'text', text: JSON.stringify(r) }]
+        for (const candidate of (r.candidates ?? []).slice(0, 6)) {
+          try {
+            const response = await fetch(candidate.url)
+            if (!response.ok) continue
+            const mimeType = response.headers.get('content-type')?.split(';')[0] ?? 'image/gif'
+            if (!mimeType.startsWith('image/')) continue
+            const data = Buffer.from(await response.arrayBuffer()).toString('base64')
+            content.push({ type: 'image', data, mimeType })
+          } catch { /* one bad preview must not hide the others */ }
+        }
+        return { content }
+      } catch (err) { return passthroughErrorResult(err, 'search_online_sticker_candidates') }
+    },
+  )
+
+  server.registerTool(
+    'send_online_sticker_candidate',
+    {
+      title: 'Send a selected online sticker candidate',
+      description: '发送已视觉确认的联网表情，并在发送成功后收进本地库。仅在比较候选图片后调用。',
+      inputSchema: { chat_id: z.string(), mood: z.string(), id: z.string(), url: z.string() },
+    },
+    async ({ chat_id, mood, id, url }) => {
+      try {
+        const r = await client.request<unknown>('POST', '/v1/wechat/send_online_sticker_candidate', { chat_id, mood, id, url })
+        return { content: [{ type: 'text', text: JSON.stringify(r) }] }
+      } catch (err) { return passthroughErrorResult(err, 'send_online_sticker_candidate') }
+    },
+  )
+
+  server.registerTool(
+    'sticker_feedback',
+    {
+      title: 'Record sticker feedback',
+      description: '记录用户对刚发表情包的反馈，让后续选择更懂用户。用户说“这张不错/喜欢”用 positive；说“不是这个/太夸张/不喜欢”用 negative。',
+      inputSchema: { chat_id: z.string(), signal: z.enum(['positive', 'negative']), file: z.string().optional() },
+    },
+    async ({ chat_id, signal, file }) => {
+      try {
+        const r = await client.request<unknown>('POST', '/v1/wechat/sticker_feedback', { chat_id, signal, ...(file ? { file } : {}) })
+        return { content: [{ type: 'text', text: JSON.stringify(r) }] }
+      } catch (err) { return passthroughErrorResult(err, 'sticker_feedback') }
+    },
+  )
+
+  server.registerTool(
     'broadcast',
     {
       title: 'Broadcast text to all online users',

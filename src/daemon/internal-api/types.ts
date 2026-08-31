@@ -355,7 +355,7 @@ export interface InternalApiDeps {
    */
   stickers?: {
     /** ABSOLUTE path of a random match for `tag`; trim+case-insensitive; null if no match. */
-    resolve(tag: string): string | null
+    resolve(tag: string, chatId?: string): string | null
     /** Copies sourcePath into the library. Throws Error('invalid_extension') / Error('empty_tags') / fs errors. */
     save(sourcePath: string, tags: string[], desc?: string): { file: string; tags: string[] }
     list(): { file: string; tags: string[]; desc?: string }[]
@@ -363,6 +363,7 @@ export interface InternalApiDeps {
   }
   /** Optional online sticker provider; absent keeps the feature safely disabled. */
   stickerSource?: import('../sticker-source').StickerSource
+  stickerFeedback?: import('../sticker-feedback').StickerFeedback
   /**
    * LLM 记忆操作(daemon-only, spec 2026-07-23-daemon-owns-llm-memory-ops) —
    * synthesize/generateProfile, late-bound by main.ts's `setMemory()` after

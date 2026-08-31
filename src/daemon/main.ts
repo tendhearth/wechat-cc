@@ -32,7 +32,8 @@ import { wireMain } from './wiring'
 import type { TickBodies } from './wiring/tick-bodies'
 import { makeChatPrefs } from './chat-prefs'
 import { makeStickerLib, seedStarterStickers, starterStickersDir } from './stickers'
-import { makeGiphySource } from './sticker-source'
+import { makeGiphyRelaySource, makeGiphySource } from './sticker-source'
+import { makeStickerFeedback } from './sticker-feedback'
 import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
@@ -213,16 +214,18 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // plan) — backs the /v1/stickers* routes and the stickerTagsFor thunk
     // below. Mirrors chatPrefs above: a second instance would read a stale
     // in-memory index (write-through only protects its own writes).
-    const stickerLib = makeStickerLib(stateDir)
+    const stickerFeedback = makeStickerFeedback(stateDir)
+    const stickerLib = makeStickerLib(stateDir, { feedback: stickerFeedback })
     // 初始表情包 — a fresh install gets the bundled bear pack so CC can send
     // stickers from day one (empty-library-only; owner curation wins forever).
     {
       const packDir = starterStickersDir()
       if (packDir) seedStarterStickers(stickerLib, packDir, (t, l) => log(t, l))
     }
+    const giphyRelay = process.env.WECHAT_CC_GIPHY_RELAY_URL ?? 'https://wechat-cc-giphy-relay.moxiuwen-giphy.workers.dev/search'
     const giphyKey = process.env.WECHAT_CC_GIPHY_KEY
-    const stickerSource = giphyKey ? makeGiphySource({ apiKey: giphyKey }) : undefined
-    if (stickerSource) log('STICKERS', 'online sticker source: GIPHY (WECHAT_CC_GIPHY_KEY set)')
+    const stickerSource = giphyKey ? makeGiphySource({ apiKey: giphyKey }) : makeGiphyRelaySource({ endpoint: giphyRelay })
+    log('STICKERS', giphyKey ? 'online sticker source: GIPHY (local key)' : `online sticker source: GIPHY relay (${giphyRelay})`)
     // Single shared care-ledger instance for this daemon — mirrors chatPrefs
     // above. pushTick claims/reads it; the inbound path resets the no-reply
     // streak on every message. A second instance would have a stale
@@ -241,6 +244,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       getChatPrefs: (c) => chatPrefs.get(c),
       setChatPref: (c, p) => chatPrefs.set(c, p),
       stickers: stickerLib,
+      stickerFeedback,
       stickerSource,
       replySinks,
       // chat_history 工具后端(provider-handoff 的逃生口)
