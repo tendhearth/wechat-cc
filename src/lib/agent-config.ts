@@ -74,6 +74,22 @@ export interface AgentConfig {
   // `dialogue lock set` / `dialogue unlock` CLI commands.
   dialogue_lock_hash?: string
   // 乙 v2 — BRAIN side: listen for hand WebSocket connections on this host:port.
+  //
+  // REACHABILITY (2026-08-31 audit — read this before deleting anything):
+  // these two fields, `core/yi-hub.ts`, `daemon/yi-ws-{server,client}.ts` and
+  // the `transport === 'ws'` branch in wiring/pipeline-deps.ts have NO CLI or
+  // desktop entry point, and no pairing path ever writes `transport:'ws'`
+  // (hand invite/join, /v1/a2a/install and /a2a/pair all write 'push';
+  // the 6-digit pairing code writes 'mailbox'). So the ws limb is reachable
+  // ONLY by hand-editing agent-config.json — which reads as dead code and has
+  // already been proposed for deletion once.
+  //
+  // It is NOT dead, and deleting it removes a capability nothing else covers:
+  // push delegation requires the hand to have a reachable url, so a hand
+  // behind NAT can only be driven over a hand-dialled WebSocket. (The mailbox
+  // transport solves the same NAT problem for the SOCIAL layer only — it does
+  // not carry /a2a/exec.) The real gap is the missing entry point, not the
+  // code. Wire one before assuming nobody wants it.
   yi_hub_listen?: { host: string; port: number }
   // 乙 v2 — HAND side: connect outbound to this brain WebSocket URL.
   yi_brain?: { url: string; handId: string; authToken: string }

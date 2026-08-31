@@ -44,6 +44,7 @@ import { makeFireMilestonesFor, makeRecordInbound, makeMaybeWriteWelcomeObservat
 import { makeMessagesStore } from '../../lib/messages-store'
 import { makeMemoryLlmOps } from '../memory-llm-ops'
 import { makeDedupStore } from '../../lib/dedup-store'
+import { DEFAULT_DELEGATE_TIMEOUT_MS } from '../../core/a2a-delegate'
 import type { YiHub, YiDispatch } from '../../core/yi-hub'
 import type { ExecResult } from '../../core/a2a-server'
 import type { Mode, ProviderId } from '../../core/conversation'
@@ -326,7 +327,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // boot.selfId is resolved exactly once at bootstrap and shared by
       // every outbound seam — see Bootstrap['selfId']'s doc comment.
       const selfId = boot.selfId
-      const timeoutMs = Number(process.env.WECHAT_A2A_EXEC_TIMEOUT_MS) || 300_000
+      const timeoutMs = Number(process.env.WECHAT_A2A_EXEC_TIMEOUT_MS) || DEFAULT_DELEGATE_TIMEOUT_MS
       // Stub hub: when Part B hasn't wired yiHub yet, ws hands fall back to
       // a graceful offline error rather than crashing.
       const stubHub: Pick<YiHub, 'dispatchTask' | 'isConnected'> = {
