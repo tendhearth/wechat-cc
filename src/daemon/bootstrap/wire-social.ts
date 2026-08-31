@@ -246,20 +246,51 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         : undefined
 
       // v2: transport-selected fire-and-forget POST to a registry peer —
+      // 社交往来记账 —— `rankPeersByCloseness` 按 a2a_events 的 recency/volume/
+      // reciprocity 给 peer 排序,但 social 侧从建成起【只读不写】这张表:真机
+      // a2a_events 恒为 0 行,排序实际退化成 id 字典序,桌面「看往来」也只看得
+      // 见 notify。这里补上出入站留痕。
+      //
+      // 事件 text 会被渲染进桌面活动流,所以只记【无内容标签】—— 心愿正文、
+      // 明信片内容、信件一律不进来。信件(/a2a/letter)刻意完全不记:它是匿名
+      // 层最敏感的一环,而对"亲密度"这个信号也最没有信息量。
+      const SOCIAL_EVENT_LABEL: Record<'/a2a/intent' | '/a2a/echo', string> = {
+        '/a2a/intent': '社交:派出心愿',
+        '/a2a/echo': '社交:回明信片',
+      }
+      const recordSocialEvent = (direction: 'in' | 'out', agentId: string, text: string, ok = true): void => {
+        try { deps.eventsStore.append({ direction, agent_id: agentId, text, status: ok ? 'ok' : 'http_error' }) }
+        catch (err) { deps.log('SOCIAL_REC', `event append failed agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`) }
+      }
+
       // mailbox coords when present, else push HTTP. Used by intent sends,
       // echo returns and relay echo returns alike (spec §1 selection rule).
       // Declared early (only needs mailboxSender/a2aRegistry/a2aClient,
       // already in scope) so every downstream construct below (broker.send,
       // socialOnIntent's postEcho, socialOnEcho's postEcho) can share it.
       const postToHand = async (hand: A2AAgentRecord, path: '/a2a/intent' | '/a2a/echo', body: Record<string, unknown>): Promise<boolean> => {
+        const label = SOCIAL_EVENT_LABEL[path]
         const peer = peerMailboxOf(hand)
         if (peer) {
-          try { await mailboxSender.send({ path, bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } }, peer); return true }
-          catch (err) { deps.log('SOCIAL_REC', `mailbox ${path} drop failed agent=${hand.id}: ${err instanceof Error ? err.message : String(err)}`); return false }
+          try {
+            const dropped = await mailboxSender.send({ path, bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } }, peer)
+            // The EVENT carries the true drop outcome, but the return value
+            // stays `true` regardless: the mailbox contract is fire-and-forget,
+            // where `asked` means "attempted" (a successful drop still doesn't
+            // mean the peer read it — store-and-forward). Deliberate; see
+            // bootstrap.test.ts's url-less-mailbox-peer discover case.
+            recordSocialEvent('out', hand.id, label, dropped)
+            return true
+          } catch (err) {
+            deps.log('SOCIAL_REC', `mailbox ${path} drop failed agent=${hand.id}: ${err instanceof Error ? err.message : String(err)}`)
+            recordSocialEvent('out', hand.id, label, false)
+            return false
+          }
         }
         if (!hand.url) return false
         const url = path === '/a2a/intent' ? intentUrl(hand.url) : echoUrl(hand.url)
         const r = await a2aClient.send({ url, bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
+        recordSocialEvent('out', hand.id, label, r.ok)
         return r.ok
       }
       const postToPeer = async (agentId: string, path: '/a2a/intent' | '/a2a/echo', body: Record<string, unknown>): Promise<boolean> => {
@@ -568,7 +599,10 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         postEcho: (to, m) => postToPeer(to, '/a2a/echo', m),
         log: deps.log,
       })
-      socialOnEcho = async ({ agent, msg }) => echoHandler(agent.id, msg)
+      socialOnEcho = async ({ agent, msg }) => {
+        recordSocialEvent('in', agent.id, '社交:收到明信片')
+        return echoHandler(agent.id, msg)
+      }
 
       // Answer path: the spine's judge + pledge-on-yes is the LOCAL answer. The
       // v2 async responder wraps it with fast-ack + background judge/echo/
@@ -588,7 +622,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         }
         return receipt
       }
-      socialOnIntent = makeAsyncResponder({
+      const asyncResponder = makeAsyncResponder({
         answerLocally,
         postEcho: (to, m) => postToPeer(to, '/a2a/echo', m),
         // Forward to our OWN paired peers, minus the sender; same cap as discover.
@@ -632,6 +666,10 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         schedule: makeBusySchedule('social-responder', deps.holdBusy, deps.log),
         log: deps.log,
       })
+      socialOnIntent = async (event) => {
+        recordSocialEvent('in', event.agent.id, '社交:收到心愿')
+        return asyncResponder(event)
+      }
 
       const broker = makeBroker({
         policy: socialPolicy,
