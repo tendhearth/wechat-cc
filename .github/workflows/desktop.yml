@@ -17,6 +17,20 @@ on:
 jobs:
   build:
     name: build · ${{ matrix.label }}
+    # 更新签名私钥只挂在这个环境上,而且带必需审批人(2026-08-31)。
+    #
+    # 为什么要这道门:公钥烧在每个已安装的 app 里,所以拿着私钥就能让全部
+    # 已安装的 wechat-cc 自动下载并运行任意代码 —— 这是远程代码执行的授权
+    # 钥匙,不是普通构建凭证。仓库是公开的、不止一个人有写权限,而 Actions
+    # 的仓库级 secret 对任何能往分支推工作流的人都是可取的。挂到环境上 +
+    # 必需审批,就把"任何人随时可用"降级成"经 owner 点头才可用",而且每次
+    # 取用都留痕、都会通知。
+    #
+    # 代价:每次桌面构建(含 workflow_dispatch 的验证构建)都要点一次批准。
+    # 可以接受 —— 这个工作流只在 desktop-v* tag 和手动触发时才跑,不是每次
+    # 提交。tauri build 只要发现配置里有公钥就强制签名,所以验证构建同样
+    # 需要这把钥匙,没法只给正式发版开门。
+    environment: release-signing
     strategy:
       fail-fast: false
       matrix:
@@ -259,16 +273,17 @@ jobs:
           # runner image ever stops giving Finder a usable session, delete this
           # line to fall back to the plain (but always-building) dmg.
           TAURI_BUNDLER_DMG_IGNORE_CI: 'true'
-          # Updater-artifact signing (2026-08-29): since auto-update shipped
-          # (v1.6.1, pubkey in tauri.conf), `tauri build` HARD-FAILS after
-          # bundling when it finds the pubkey but no private key — this broke
-          # every CI build on desktop-v1.6.4 while local (keyed) builds kept
-          # working, which is why 1.6.1/1.6.2 were hand-built. The key pair
-          # lives in the operator's ~/.tauri/wechat-cc-updater.key; to make CI
-          # builds work, add it as the TAURI_SIGNING_PRIVATE_KEY repo secret
-          # (`gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/wechat-cc-updater.key`).
-          # Until the secret exists this env resolves to '' and the build
-          # fails at the same place it does today — plumbing, not a fix.
+          # Updater-artifact signing. Since auto-update shipped (v1.6.1,
+          # pubkey in tauri.conf), `tauri build` HARD-FAILS after bundling when
+          # it finds the pubkey but no private key — that broke every CI build
+          # from v1.6.1 through v1.6.4, which is why those installers had to be
+          # hand-built on the operator's Mac.
+          #
+          # The key now lives as an ENVIRONMENT secret on `release-signing`
+          # (see the job's `environment:` comment for why it is gated there and
+          # not repo-wide). _PASSWORD is intentionally unset: the key pair was
+          # generated without one, and an absent secret resolves to '' — which
+          # is exactly what the local signed builds pass.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
