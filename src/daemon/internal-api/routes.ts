@@ -792,6 +792,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
       }
       if (!onlineStickerCooldown.ready(chatId, Date.now())) return { status: 200, body: { ok: false, reason: 'throttled' } }
       let scratch: string | undefined
+      let onlineSent = false
       try {
         const hits = await deps.stickerSource.search(query, { limit: 8 })
         if (!hits[0]) return { status: 200, body: { ok: false, reason: 'no_online_result' } }
@@ -801,11 +802,13 @@ export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext
         const path = join(scratch, `${hits[0].id}.${download.ext}`)
         writeFileSync(path, download.bytes)
         await deps.ilink.sendFile(chatId, path)
+        onlineSent = true
         const saved = deps.stickers.save(path, [mood], `CC 联网找的「${mood}」表情`)
         return { status: 200, body: { ok: true, source: 'online', file: saved.file } }
       } catch (err) {
         return { status: 200, body: { ok: false, error: errMsg(err) } }
       } finally {
+        if (!onlineSent) onlineStickerCooldown.reset(chatId)
         if (scratch) rmSync(scratch, { recursive: true, force: true })
       }
     },

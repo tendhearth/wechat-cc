@@ -31,6 +31,8 @@ describe('makeCooldown', () => {
     expect(cooldown.ready('a', 500)).toBe(false)
     expect(cooldown.ready('b', 500)).toBe(true)
     expect(cooldown.ready('a', 1000)).toBe(true)
+    cooldown.reset('a')
+    expect(cooldown.ready('a', 1000)).toBe(true)
   })
 })
 

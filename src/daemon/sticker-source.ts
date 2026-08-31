@@ -85,7 +85,7 @@ export function makeGiphySource(deps: GiphyDeps): StickerSource {
   }
 }
 
-export function makeCooldown(ms: number): { ready(key: string, now: number): boolean } {
+export function makeCooldown(ms: number): { ready(key: string, now: number): boolean; reset(key: string): void } {
   const last = new Map<string, number>()
   return { ready(key, now) {
     if (ms <= 0) return true
@@ -93,5 +93,5 @@ export function makeCooldown(ms: number): { ready(key: string, now: number): boo
     if (previous !== undefined && now - previous < ms) return false
     last.set(key, now)
     return true
-  } }
+  }, reset(key) { last.delete(key) } }
 }
