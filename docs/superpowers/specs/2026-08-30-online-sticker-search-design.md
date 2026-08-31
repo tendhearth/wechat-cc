@@ -113,7 +113,7 @@ export function makeTenorSource(deps: TenorDeps): StickerSource
   (NSFW guard). Pick the GIF media object's URL from each result.
 - Network failure, non-200, or malformed JSON ⇒ return `[]` (never throw),
   so the route degrades to "no online sticker" cleanly.
-- Config: read `WECHAT_CC_TENOR_KEY` in `main.ts` wiring. Absent ⇒ no source
+- Config: read `WECHAT_CC_GIPHY_KEY` in `main.ts` wiring. Absent ⇒ no source
   wired ⇒ route reports the online capability unavailable and the tool nudges
   text fallback.
 

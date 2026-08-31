@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { makeCooldown, makeTenorSource } from './sticker-source'
+import { makeCooldown, makeGiphySource, makeTenorSource } from './sticker-source'
 
 describe('Tenor sticker source', () => {
   it('searches with the safe filter and extracts GIFs', async () => {
@@ -31,5 +31,14 @@ describe('makeCooldown', () => {
     expect(cooldown.ready('a', 500)).toBe(false)
     expect(cooldown.ready('b', 500)).toBe(true)
     expect(cooldown.ready('a', 1000)).toBe(true)
+  })
+})
+
+describe('GIPHY sticker source', () => {
+  it('searches stickers and extracts original media URLs', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: 'g1', images: { original: { url: 'https://i.giphy.com/g1.gif' } } }] }), { status: 200 })) as unknown as typeof globalThis.fetch
+    const hits = await makeGiphySource({ apiKey: 'KEY', fetch }).search('hug', { limit: 2 })
+    expect(hits).toEqual([{ id: 'g1', url: 'https://i.giphy.com/g1.gif' }])
+    expect(String((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![0])).toContain('api_key=KEY')
   })
 })

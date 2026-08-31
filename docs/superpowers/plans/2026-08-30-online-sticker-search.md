@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let CC autonomously fetch a sticker from the internet (Tenor) and send it when its local library is thin for a mood, auto-saving each sent sticker so the library self-grows and converges.
+**Goal:** Let CC autonomously fetch a sticker from the internet (GIPHY) and send it when its local library is thin for a mood, auto-saving each sent sticker so the library self-grows and converges.
 
-**Architecture:** A pluggable `StickerSource` (first impl: Tenor) owns all network I/O (search + download). A new daemon route `POST /v1/wechat/search_online_sticker` owns the policy: count local stickers for the mood, send a local one when the mood already has ≥K (K=5), otherwise search online → download → send via ilink → `stickers.save` (auto-grow) → cleanup. A new MCP tool `search_online_sticker` exposes it to the agent; prompt nudges (including the empty-library section) teach when to use it. Everything degrades to text when no API key / on any network error.
+**Architecture:** A pluggable `StickerSource` (first impl: GIPHY) owns all network I/O (search + download). A new daemon route `POST /v1/wechat/search_online_sticker` owns the policy: count local stickers for the mood, send a local one when the mood already has ≥K (K=5), otherwise search online → download → send via ilink → `stickers.save` (auto-grow) → cleanup. A new MCP tool `search_online_sticker` exposes it to the agent; prompt nudges (including the empty-library section) teach when to use it. Everything degrades to text when no API key / on any network error.
 
 **Tech Stack:** TypeScript, Bun + Vitest (`bun --bun vitest run`), MCP SDK, existing internal-api route table + `StickerLib` store seam.
 
@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **K threshold = 5** (locked). Named constant, documented at definition.
-- **Zero-config-safe:** no `WECHAT_CC_TENOR_KEY` ⇒ `stickerSource` dep absent ⇒ route returns `503 sticker_source_not_wired` ⇒ tool tells the agent online is unavailable ⇒ text fallback. No crashes.
+- **Zero-config-safe:** no `WECHAT_CC_GIPHY_KEY` ⇒ `stickerSource` dep absent ⇒ route returns `503 sticker_source_not_wired` ⇒ tool tells the agent online is unavailable ⇒ text fallback. No crashes.
 - **Never throw across the network boundary:** `StickerSource.search`/`download` return `[]`/`null` on any network/HTTP/parse error, never throw.
 - **Auto-save only after a successful `ilink.sendFile`.** A failed send saves nothing.
 - **Tenor content filter = `high`** on every search.

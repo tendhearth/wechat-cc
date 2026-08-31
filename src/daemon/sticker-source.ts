@@ -7,6 +7,7 @@ export interface StickerSource {
   download(url: string): Promise<{ bytes: Uint8Array; ext: string } | null>
 }
 export interface TenorDeps { apiKey: string; fetch?: typeof fetch; maxBytes?: number }
+export interface GiphyDeps { apiKey: string; fetch?: typeof fetch; maxBytes?: number }
 
 function extFromUrl(url: string): string | null {
   try {
@@ -34,6 +35,40 @@ export function makeTenorSource(deps: TenorDeps): StickerSource {
           const result = raw as { id?: unknown; media_formats?: { gif?: { url?: unknown } } }
           const mediaUrl = result.media_formats?.gif?.url
           return typeof result.id === 'string' && typeof mediaUrl === 'string' ? [{ id: result.id, url: mediaUrl }] : []
+        })
+      } catch { return [] }
+    },
+    async download(url) {
+      const ext = extFromUrl(url)
+      if (!ext || !ALLOWED_DOWNLOAD_EXTS.has(ext)) return null
+      try {
+        const response = await doFetch(url)
+        if (!response.ok) return null
+        const bytes = new Uint8Array(await response.arrayBuffer())
+        return bytes.length > 0 && bytes.length <= maxBytes ? { bytes, ext } : null
+      } catch { return null }
+    },
+  }
+}
+
+/** GIPHY sticker search source. Network failures always degrade to []/null. */
+export function makeGiphySource(deps: GiphyDeps): StickerSource {
+  const doFetch = deps.fetch ?? fetch
+  const maxBytes = deps.maxBytes ?? DEFAULT_MAX_BYTES
+  return {
+    async search(query, opts) {
+      const url = 'https://api.giphy.com/v1/stickers/search?' + new URLSearchParams({
+        api_key: deps.apiKey, q: query, limit: String(opts?.limit ?? 8), rating: 'pg-13',
+      })
+      try {
+        const response = await doFetch(url)
+        if (!response.ok) return []
+        const body = await response.json() as { data?: unknown }
+        if (!Array.isArray(body.data)) return []
+        return body.data.flatMap((raw) => {
+          const item = raw as { id?: unknown; images?: { original?: { url?: unknown }; downsized?: { url?: unknown } } }
+          const mediaUrl = item.images?.original?.url ?? item.images?.downsized?.url
+          return typeof item.id === 'string' && typeof mediaUrl === 'string' ? [{ id: item.id, url: mediaUrl }] : []
         })
       } catch { return [] }
     },

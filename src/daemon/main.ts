@@ -32,7 +32,7 @@ import { wireMain } from './wiring'
 import type { TickBodies } from './wiring/tick-bodies'
 import { makeChatPrefs } from './chat-prefs'
 import { makeStickerLib, seedStarterStickers, starterStickersDir } from './stickers'
-import { makeTenorSource } from './sticker-source'
+import { makeGiphySource } from './sticker-source'
 import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
@@ -220,9 +220,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       const packDir = starterStickersDir()
       if (packDir) seedStarterStickers(stickerLib, packDir, (t, l) => log(t, l))
     }
-    const tenorKey = process.env.WECHAT_CC_TENOR_KEY
-    const stickerSource = tenorKey ? makeTenorSource({ apiKey: tenorKey }) : undefined
-    if (stickerSource) log('STICKERS', 'online sticker source: Tenor (WECHAT_CC_TENOR_KEY set)')
+    const giphyKey = process.env.WECHAT_CC_GIPHY_KEY
+    const stickerSource = giphyKey ? makeGiphySource({ apiKey: giphyKey }) : undefined
+    if (stickerSource) log('STICKERS', 'online sticker source: GIPHY (WECHAT_CC_GIPHY_KEY set)')
     // Single shared care-ledger instance for this daemon — mirrors chatPrefs
     // above. pushTick claims/reads it; the inbound path resets the no-reply
     // streak on every message. A second instance would have a stale
