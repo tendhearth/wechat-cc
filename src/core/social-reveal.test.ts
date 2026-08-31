@@ -15,13 +15,15 @@ function fixture(postPeerReveal: any) {
   const pledgeStore = makePledgeStore(db)
   const seekStore = makeSeekStore(db)
   const notify = vi.fn()
-  const opened: string[] = []; const finalized: Array<[string, PenpalHandle]> = []
+  const opened: string[] = []; const finalized: Array<[string, PenpalHandle | undefined]> = []
+  const stashed: Array<[string, PenpalHandle]> = []
   const channel: ChannelPort = {
     openLocal: (rowId) => { opened.push(rowId); return SELF_HANDLE },
     finalize: (rowId, h) => { finalized.push([rowId, h]) },
+    stashPeer: (rowId, h) => { stashed.push([rowId, h]) },
   }
   const revealer = makeRevealer({ echoStore, pledgeStore, seekStore, postPeerReveal, channel, notify })
-  return { db, echoStore, pledgeStore, seekStore, notify, revealer, opened, finalized }
+  return { db, echoStore, pledgeStore, seekStore, notify, revealer, opened, finalized, stashed }
 }
 
 describe('makeRevealer — echo side (I reveal first)', () => {
@@ -91,8 +93,8 @@ describe('makeRevealer — echo side (I reveal first)', () => {
 })
 
 describe('makeRevealer — inbound (peer reveals first)', () => {
-  it('peer reveals before me → mutual:false, beat #2 (await_reveal) fires; peerHandle NOT persisted (no channel row yet)', () => {
-    const { echoStore, notify, revealer, finalized } = fixture(vi.fn())
+  it('peer reveals before me → mutual:false, beat #2 (await_reveal) fires; peerHandle stashed but channel NOT opened', () => {
+    const { echoStore, notify, revealer, stashed } = fixture(vi.fn())
     echoStore.create({ id: 'i1:ccb', seekId: 'i1', peerMasked: '第 1 度的某人', degree: 1, content: 'x', peerAgentId: 'ccb' })
 
     const resp = revealer.onInboundReveal({ agentId: 'ccb', intentId: 'i1', peerHandle: PEER_HANDLE })
@@ -100,7 +102,11 @@ describe('makeRevealer — inbound (peer reveals first)', () => {
     expect(resp).toEqual({ mutual: false })
     expect(echoStore.get('i1:ccb')!.peer_revealed_at).not.toBeNull()
     expect(notify).toHaveBeenCalledWith('await_reveal', expect.objectContaining({ intentId: 'i1', peerAgentId: 'ccb' }))
-    expect(finalized).toEqual([])                            // M2: no channel row yet, can't persist
+    // 2026-08-30:handle 现在【立刻落盘】。旧行为是丢弃、靠我后揭晓时的同步
+    // mutual 响应补送 —— 信箱传输没有同步响应,那样会让后揭晓的一方永远停在
+    // pending 通道上(见下面的异步 describe)。提前铸行是纯本地动作,我的
+    // handle 在我真正同意之前不会送出去。
+    expect(stashed).toContainEqual(['i1:ccb', PEER_HANDLE])
   })
 
   it('second revealer gets mutual synchronously with our handle (I revealed first, peer calls in)', () => {
@@ -215,13 +221,15 @@ describe('makeRevealer — relay branch (2-hop, spec #2)', () => {
   })
 
   it('inbound relay reveal (carries relay_token) resolves the relay echo, not the direct key', () => {
-    const { echoStore, notify, revealer, finalized } = fixture(vi.fn())
+    const { echoStore, notify, revealer, stashed } = fixture(vi.fn())
     echoStore.create({ id: 'i1:ccw:T', seekId: 'i1', peerMasked: '第 2 度的某人', degree: 2, content: 'x', peerAgentId: null, relayVia: 'ccw', relayToken: 'T' })
     const resp = revealer.onInboundReveal({ agentId: 'ccw', intentId: 'i1', relayToken: 'T', peerHandle: PEER_HANDLE })
     expect(resp).toEqual({ mutual: false })
     expect(echoStore.get('i1:ccw:T')!.peer_revealed_at).not.toBeNull()
     expect(notify).toHaveBeenCalledWith('await_reveal', expect.objectContaining({ intentId: 'i1' }))
-    expect(finalized).toEqual([])
+    // 2026-08-30:与 direct 分支一致,提前落盘并按【中继腿的 rowId】归位
+    // (中继腿恰恰是最需要它的场景 —— 两端都在 NAT 后、只能走信箱)。
+    expect(stashed).toEqual([['i1:ccw:T', PEER_HANDLE]])
   })
 
   it('inbound relay reveal completing me → mutual, crosses handle via channel, content-free notify', () => {
@@ -248,5 +256,52 @@ describe('makeRevealer — relay branch (2-hop, spec #2)', () => {
     expect(first).toEqual({ mutual: true, handle: SELF_HANDLE })
     expect(second).toEqual({ mutual: true, handle: SELF_HANDLE })
     expect(notify.mock.calls.filter((c: any[]) => c[0] === 'connected').length).toBe(1)
+  })
+})
+
+// 2026-08-30 —— 信箱(异步)传输下的互揭收口。
+// 信箱是「投递即返回」:成功投出只能报 {mutual:false},没有同步响应可以
+// 回递对方的 handle。互揭这件事本来就被设计成「两台机器各自两行、都标记即
+// 成立」,所以判定必须从本地行推出,而不是依赖传输层的答复。
+describe('makeRevealer — 异步传输(信箱)下的互揭', () => {
+  it('对端先揭晓、我后揭晓,传输层给不出 mutual → 我仍然 connected 且握有对方 handle', async () => {
+    const post = vi.fn(async () => ({ mutual: false }))   // 信箱投递成功的唯一可能答复
+    const { echoStore, seekStore, notify, revealer, stashed } = fixture(post)
+    seekStore.create({ id: 'i1', kind: 'seek', topic: 't' })
+    echoStore.create({ id: 'i1:ccb', seekId: 'i1', peerMasked: '第 1 度的某人', degree: 1, content: 'x', peerAgentId: 'ccb' })
+
+    // ① 对端先揭晓:我尚未同意,但对方的 handle 必须留住(没有第二次机会)
+    revealer.onInboundReveal({ agentId: 'ccb', intentId: 'i1', peerHandle: PEER_HANDLE })
+    expect(stashed).toContainEqual(['i1:ccb', PEER_HANDLE])
+
+    // ② 我后揭晓:本地两行都已标记 ⇒ 已连上,不该停在 awaiting_peer
+    const outcome = await revealer.revealEcho('i1:ccb')
+    expect(outcome).toEqual({ state: 'connected' })
+    expect(echoStore.get('i1:ccb')!.status).toBe('revealed')
+    expect(seekStore.get('i1')!.status).toBe('connected')
+    expect(notify).toHaveBeenCalledWith('connected', expect.objectContaining({ intentId: 'i1' }))
+  })
+
+  it('pledge 侧同理:对端先揭晓后我后揭晓,异步也能连上', async () => {
+    const post = vi.fn(async () => ({ mutual: false }))
+    const { pledgeStore, revealer, stashed } = fixture(post)
+    pledgeStore.create({ id: 'i2:ccs', intentId: 'i2', seekerAgentId: 'ccs', topic: 't' })
+
+    revealer.onInboundReveal({ agentId: 'ccs', intentId: 'i2', peerHandle: PEER_HANDLE })
+    expect(stashed).toContainEqual(['i2:ccs', PEER_HANDLE])
+
+    expect(await revealer.revealPledge('i2:ccs')).toEqual({ state: 'connected' })
+    expect(pledgeStore.get('i2:ccs')!.peer_revealed_at).not.toBeNull()
+  })
+
+  it('对端根本没揭晓过 → 异步投递后仍是 awaiting_peer(不能假装连上)', async () => {
+    const post = vi.fn(async () => ({ mutual: false }))
+    const { echoStore, seekStore, revealer, notify } = fixture(post)
+    seekStore.create({ id: 'i3', kind: 'seek', topic: 't' })
+    echoStore.create({ id: 'i3:ccb', seekId: 'i3', peerMasked: '第 1 度的某人', degree: 1, content: 'x', peerAgentId: 'ccb' })
+
+    expect(await revealer.revealEcho('i3:ccb')).toEqual({ state: 'awaiting_peer' })
+    expect(echoStore.get('i3:ccb')!.status).not.toBe('revealed')
+    expect(notify).not.toHaveBeenCalledWith('connected', expect.anything())
   })
 })

@@ -11,7 +11,7 @@ describe('receiveLetter idempotency (M3)', () => {
     const channelStore = makeChannelStore(db); const letterStore = makeLetterStore(db)
     const me = generateKeypair(); const peer = generateKeypair()
     channelStore.create({ id: 'r1', seekId: 's', myPrivkey: me.privateKey, myPubkey: me.publicKey, myChannelId: 'mc', degree: 0, peerAgentId: 'q' })
-    channelStore.setPeerHandle('r1', { pubkey: peer.publicKey, channel_id: 'pc' })
+    channelStore.setPeerHandle('r1', { pubkey: peer.publicKey, channel_id: 'pc' }); channelStore.setStatus('r1', 'open')
     const sealed = sealLetter(deriveSharedKey(peer.privateKey, me.publicKey), 'hello')
     const notify = vi.fn()
     const c = makeCorrespondent({ channelStore, letterStore, postLetter: async () => true, notifyInbound: notify })

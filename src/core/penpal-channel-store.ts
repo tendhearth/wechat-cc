@@ -19,6 +19,12 @@ export interface ChannelStore {
   create(c: { id: string; seekId: string; myPrivkey: string; myPubkey: string; myChannelId: string; degree: number; relayVia?: string | null; peerAgentId?: string | null }): void
   get(id: string): ChannelRow | null
   getByMyChannelId(channelId: string): ChannelRow | null
+  /** Stores the peer's crossed handle. Deliberately does NOT touch `status`:
+   *  the handle can legitimately land BEFORE my own consent (the peer revealed
+   *  first, and an async transport gives no second chance to deliver it), and a
+   *  channel must never read as `open` — the 信箱 surface filters on exactly
+   *  that — until both sides have consented. Opening is an explicit
+   *  `setStatus(id, 'open')` at the mutual instant. */
   setPeerHandle(id: string, handle: PenpalHandle): void
   setStatus(id: string, status: ChannelRow['status']): void
   list(): ChannelRow[]
@@ -33,7 +39,7 @@ export function makeChannelStore(db: Db): ChannelStore {
   const selByChan = db.query<ChannelRow, [string]>('SELECT * FROM penpal_channel WHERE my_channel_id = ?')
   const selAll = db.query<ChannelRow, []>('SELECT * FROM penpal_channel ORDER BY created_at DESC, rowid DESC')
   const updPeer = db.query<unknown, [string, string, string | null, string]>(
-    `UPDATE penpal_channel SET peer_pubkey = ?, peer_channel_id = ?, peer_mailbox = ?, status = 'open' WHERE id = ?`,
+    `UPDATE penpal_channel SET peer_pubkey = ?, peer_channel_id = ?, peer_mailbox = ? WHERE id = ?`,
   )
   const updStatus = db.query<unknown, [string, string]>('UPDATE penpal_channel SET status = ? WHERE id = ?')
   return {

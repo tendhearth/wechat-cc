@@ -58,7 +58,8 @@ function port(store: ReturnType<typeof makeChannelStore>, mbx: { addr: string; e
       store.create({ id: rowId, seekId: ctx.seekId, myPrivkey: kp.privateKey, myPubkey: kp.publicKey, myChannelId: mcid, degree: ctx.degree, relayVia: ctx.relayVia ?? null, peerAgentId: ctx.peerAgentId ?? null })
       return buildCrossedHandle({ my_pubkey: kp.publicKey, my_channel_id: mcid }, mbx)
     },
-    finalize(rowId: string, h: any) { store.setPeerHandle(rowId, h) },
+    finalize(rowId: string, h?: any) { if (h) store.setPeerHandle(rowId, h); store.setStatus(rowId, 'open') },
+    stashPeer(rowId: string, h: any) { store.setPeerHandle(rowId, h) },
   }
 }
 

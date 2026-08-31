@@ -384,7 +384,14 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           channelStore.create({ id: rowId, seekId: ctx.seekId, myPrivkey: kp.privateKey, myPubkey: kp.publicKey, myChannelId, degree: ctx.degree, relayVia: ctx.relayVia ?? null, peerAgentId: ctx.peerAgentId ?? null })
           return buildCrossedHandle({ my_pubkey: kp.publicKey, my_channel_id: myChannelId }, myMailbox)
         },
-        finalize(rowId, peerHandle) { channelStore.setPeerHandle(rowId, peerHandle) },
+        finalize(rowId, peerHandle) {
+          // peerHandle is absent on the async (mailbox) path — it was already
+          // stashed when the peer's reveal arrived. Opening is the explicit
+          // status flip either way.
+          if (peerHandle) channelStore.setPeerHandle(rowId, peerHandle)
+          channelStore.setStatus(rowId, 'open')
+        },
+        stashPeer(rowId, peerHandle) { channelStore.setPeerHandle(rowId, peerHandle) },
       }
 
       // Outbound reveal POST to a peer's /a2a/reveal. null on unreachable/unknown.
@@ -399,19 +406,28 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       const postPeerReveal = async (agentId: string, intentId: string, relayToken?: string): Promise<{ mutual: boolean; handle?: PenpalHandle } | null> => {
         const hand = a2aRegistry.get(agentId)
         if (!hand) return null
-        // reveal-over-mailbox is deferred (spec §10): a mailbox peer has no
-        // url for revealUrl(). Mirror postReveal's peerMailboxOf short-
-        // circuit — skip cleanly. (Only transport:'mailbox' can lack a url
-        // per the A2AAgentRecord schema, but this also fails closed on any
-        // other malformed/url-less record rather than throwing.)
-        if (!hand.url) return null
         const rowId = relayToken ? `${intentId}:${agentId}:${relayToken}` : `${intentId}:${agentId}`
         const ch = channelStore.get(rowId)
         const myHandle = ch ? buildCrossedHandle({ my_pubkey: ch.my_pubkey, my_channel_id: ch.my_channel_id }, myMailbox) : undefined
-        const r = await a2aClient.send({
-          url: revealUrl(hand.url), bearer: hand.outbound_api_key,
-          body: { agent_id: SOCIAL_SELF_ID, intent_id: intentId, ...(relayToken ? { relay_token: relayToken } : {}), ...(myHandle ? { peer_handle: myHandle } : {}) },
-        })
+        const body = { agent_id: SOCIAL_SELF_ID, intent_id: intentId, ...(relayToken ? { relay_token: relayToken } : {}), ...(myHandle ? { peer_handle: myHandle } : {}) }
+        // A url-less record is a mailbox-only peer (both ends behind NAT — the
+        // exact case the mailbox transport exists for). Was deferred (spec
+        // §10) and returned null here, which made 揭晓 structurally impossible
+        // for those peers: seeks and echoes flowed over the mailbox but the
+        // connection could never actually be made. Drop the reveal async
+        // instead. A successful drop means "told them, mutuality unknown" ⇒
+        // {mutual:false}; the revealer derives the true state from its own two
+        // rows once the peer's reveal lands in our mailbox (see
+        // social-reveal.ts — mutuality is row-derived, not transport-derived).
+        // Push peers keep the synchronous round-trip: its `mutual:true` fast
+        // path is strictly better feedback when a url exists.
+        if (!hand.url) {
+          const peer = peerMailboxOf(hand)
+          if (!peer) return null   // no url AND no mailbox ⇒ genuinely unreachable
+          const dropped = await mailboxSender.send({ path: '/a2a/reveal', bearer: hand.outbound_api_key, body }, peer)
+          return dropped ? { mutual: false } : null
+        }
+        const r = await a2aClient.send({ url: revealUrl(hand.url), bearer: hand.outbound_api_key, body })
         if (!r.ok) return null
         return r.response as { mutual: boolean; handle?: PenpalHandle }
       }

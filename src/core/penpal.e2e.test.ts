@@ -51,7 +51,8 @@ function makeTestChannelPort(store: ChannelStore): ChannelPort {
       store.create({ id: rowId, seekId: ctx.seekId, myPrivkey: kp.privateKey, myPubkey: kp.publicKey, myChannelId, degree: ctx.degree, relayVia: ctx.relayVia ?? null, peerAgentId: ctx.peerAgentId ?? null })
       return { pubkey: kp.publicKey, channel_id: myChannelId }
     },
-    finalize(rowId, peerHandle) { store.setPeerHandle(rowId, peerHandle) },
+    finalize(rowId: string, peerHandle?: any) { if (peerHandle) store.setPeerHandle(rowId, peerHandle); store.setStatus(rowId, 'open') },
+    stashPeer(rowId: string, peerHandle: any) { store.setPeerHandle(rowId, peerHandle) },
   }
 }
 
@@ -115,7 +116,7 @@ describe('penpal channel e2e — direct (1-hop)', () => {
     })
 
     // 1) A reveals first — opens A's channel, POSTs A's handle. B hasn't
-    //    revealed yet, so B answers { mutual: false } and does NOT finalize.
+    //    revealed yet, so B answers { mutual: false } and does NOT open.
     const aFirst = await aRevealer.revealEcho(echoId)
     expect(aFirst).toEqual({ state: 'awaiting_peer' })
     const aPendingChannel = aChannelStore.get(echoId)!
@@ -123,8 +124,13 @@ describe('penpal channel e2e — direct (1-hop)', () => {
     expect(aPendingChannel.peer_pubkey).toBeNull()
     const bPendingPledge = bPledge.get(pledgeId)!
     expect(bPendingPledge.peer_revealed_at).not.toBeNull()   // A's reveal landed on B
-    expect(bPendingPledge.self_revealed_at).toBeNull()       // B hasn't revealed — no finalize yet
-    expect(bChannelStore.get(pledgeId)).toBeNull()           // B's channel doesn't exist yet
+    expect(bPendingPledge.self_revealed_at).toBeNull()       // B hasn't revealed
+    // 2026-08-30:B 现在会【立刻把 A 的 handle 落盘】(mint 行 + stashPeer),
+    // 因为异步传输没有第二次投递的机会。但通道仍是 pending —— 在 B 的主人
+    // 同意之前不能算 open(信箱面按 open 过滤,open 即视为已同意)。
+    const bStashed = bChannelStore.get(pledgeId)!
+    expect(bStashed.status).toBe('pending')                  // 未同意 ⇒ 不 open
+    expect(bStashed.peer_pubkey).not.toBeNull()              // 但 A 的 handle 已留住
 
     // 2) B reveals back — opens B's channel, POSTs B's handle. A's onInboundReveal
     //    fires synchronously inside this call and learns mutual too.

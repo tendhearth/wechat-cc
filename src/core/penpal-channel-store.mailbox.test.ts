@@ -13,6 +13,7 @@ describe('penpal-channel-store peer_mailbox', () => {
     const store = makeChannelStore(openTestDb())
     store.create({ id: 'r1', seekId: 's1', myPrivkey: 'pk', myPubkey: 'pub', myChannelId: 'mc', degree: 1, peerAgentId: 'q' })
     store.setPeerHandle('r1', { pubkey: 'ppub', channel_id: 'pc', mailbox: { addr: 'A', enc_pub: 'E', relays: ['https://r/'] } })
+    store.setStatus('r1', 'open')   // 开通道现在是显式的一步(见 store 注释)
     const row = store.get('r1')!
     expect(row.peer_pubkey).toBe('ppub')
     expect(row.status).toBe('open')
