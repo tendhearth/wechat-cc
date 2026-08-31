@@ -310,7 +310,11 @@ jobs:
           # at runtime; the rest are silently ignored.
           path: |
             apps/desktop/src-tauri/target/release/bundle/dmg/*
-            apps/desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz
+            # 必须带 .sig:自动更新的 latest.json 要引用它,而 scripts/
+            # publish-update.ts 从产物目录里读。2026-08-31 之前这里写死
+            # `*.app.tar.gz`,把签名排除在外 —— nsis/msi 用的是 `*` 所以
+            # 一直带着,唯独 macOS 漏了,推更新时只能本地补签。
+            apps/desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz*
             apps/desktop/src-tauri/target/release/bundle/nsis/*
             apps/desktop/src-tauri/target/release/bundle/msi/*
             apps/desktop/src-tauri/target/release/bundle/deb/*
