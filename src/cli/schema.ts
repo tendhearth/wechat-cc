@@ -112,6 +112,9 @@ export const DoctorOutput = z.object({
   expiredBots: z.array(ExpiredBotEntry),
   heartbeats: z.record(z.string(), z.string().nullable()),
   nextActions: z.array(z.string()),
+  satelliteRepos: z.array(z.object({
+    name: z.string(), path: z.string(), branch: z.string(), ahead: z.number(),
+  })).optional(),
 })
 export type DoctorOutputT = z.infer<typeof DoctorOutput>
 
