@@ -117,3 +117,57 @@ describe('wireSocial — 给 v1 对端发心愿时留下告警', () => {
     expect(absent.some(l => l.includes('proto_version'))).toBe(false)
   })
 })
+
+// 二跳转发此前是 push-only:forwardTargets 明确把 url-less 的信箱对端过滤掉
+// (注释:"2-hop forward transport is STILL push-only"),而 forwardSend 又直接
+// 用 a2aClient 打 intentUrl(hand.url)。结果是 NAT 后的朋友的朋友永远收不到
+// 转发的心愿 —— 和刚修的「揭晓走信箱」同源:一度能走信箱,二度却走不了。
+describe('wireSocial — 二跳转发要能落到 url-less 的信箱对端', () => {
+  it('W 收到 hop=1 的心愿 → 转发时把只有信箱的 Q 也算作目标,并按信箱投递', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'wire-social-fwd-'))
+    try {
+      const h = harness(stateDir)
+      const SENDER = { ...PEER, id: 'cc-sender' }
+      // Q:双 NAT 的朋友的朋友 —— 没有 url,只有完整的信箱坐标。
+      // relays 指向一个必然拒连的本地端口:投递会失败(快),但"选中并按信箱
+      // 投递"这个事实已经由出站事件记录下来了。
+      const Q = {
+        id: 'cc-q', name: 'Q', inbound_api_key: 'in-key-0123456789', outbound_api_key: 'out-key',
+        capabilities: [], paused: false, transport: 'mailbox' as const,
+        mailbox_addr: 'QADDR', mailbox_enc_pub: 'QENCPUB', relays: ['http://127.0.0.1:9'],
+      }
+      const reg: A2ARegistry = {
+        list: () => [SENDER, Q],
+        get: (id: string) => (id === Q.id ? Q : id === SENDER.id ? SENDER : null),
+        verifyBearer: () => null, add: () => {}, remove: () => {}, setPaused: () => {},
+        update: () => { throw new Error('unused') },
+      } as unknown as A2ARegistry
+
+      const wiring = await wireSocial({
+        log: () => {}, stateDir, db: openTestDb(), configuredAgent: h.configuredAgent,
+        selfId: 'test-self', registry: h.registry, defaultProviderId: 'claude', pluginMcp: {},
+        currentClaudeModel: () => 'claude-opus-4-8', claudeBin: undefined,
+        resolveOperatorChatId: () => null, sendAssistantText: undefined,
+        a2aRegistry: reg, a2aClient: h.a2aClient, eventsStore: h.eventsStore,
+        getServerBaseUrl: () => null, holdBusy: () => () => {},
+      })
+      expect(wiring.onIntent).toBeDefined()
+
+      const receipt = await wiring.onIntent!({
+        agent: SENDER as never,
+        card: {
+          intent_id: 'i-fwd-1', kind: 'seek', topic: '找会修胶片相机的师傅',
+          hop: 1, expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        } as never,
+      })
+      expect(receipt.match).toBe('no')   // v2 快速 ack
+
+      // 后台扇出:Q 必须被选中,且走的是 postToHand(信箱分支)
+      await vi.waitFor(() => expect(h.eventsStore.counts(Q.id).outbound).toBeGreaterThan(0))
+      const rows = h.eventsStore.recentForAgent(Q.id, 5)
+      expect(rows.some(r => r.direction === 'out' && r.text.includes('心愿'))).toBe(true)
+      // 不回头发给来源
+      expect(h.eventsStore.counts(SENDER.id).outbound).toBe(0)
+    } finally { rmSync(stateDir, { recursive: true, force: true }) }
+  })
+})

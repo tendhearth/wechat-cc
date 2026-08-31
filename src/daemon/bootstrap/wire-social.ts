@@ -641,13 +641,17 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         // Guarded: a registry lookup failure must NOT reject the whole /a2a/intent
         // — W still returns its own local match (fail-closed: forward nothing).
         forwardTargets: (excludeAgentId) => {
-          // url-less mailbox peers can't take a push /a2a/intent (intentUrl
-          // needs a url); 2-hop forward transport is STILL push-only (spec
-          // §4) even though degree-1 discover now opens to mailbox peers
-          // (see broker.discover below) — skip them here.
+          // 2026-08-31: url-less mailbox peers are targets again. They used to
+          // be filtered out here because forwardSend went straight to
+          // a2aClient/intentUrl(hand.url) — so the friend-of-a-friend behind
+          // NAT could never be reached at hop 2 even though degree-1 discover
+          // had already opened to mailbox peers. forwardSend now goes through
+          // postToHand (mailbox coord when present, else push), exactly like
+          // broker.send, so the filter is no longer needed — and the echo
+          // return leg was already transport-agnostic.
           try {
             return rankPeersByCloseness(
-              a2aRegistry.list().filter(a => !a.paused && a.id !== excludeAgentId && !(a.transport === 'mailbox' && !a.url)),
+              a2aRegistry.list().filter(a => !a.paused && a.id !== excludeAgentId),
               deps.eventsStore, Date.now(), 5,
             )
           }
@@ -656,14 +660,10 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
             return []
           }
         },
-        forwardSend: async (hand, card) => {
-          // forwardTargets already filters url-less mailbox peers out, but
-          // this closure's own type doesn't carry that guarantee — guard
-          // here too (treated the same as any other unreachable target).
-          if (!hand.url) return false
-          const r = await a2aClient.send({ url: intentUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, card } })
-          return r.ok
-        },
+        // Same send path as degree-1 (`broker.send` below): mailbox coord when
+        // the peer has one, else push. Replaces a hand-rolled push-only call
+        // that made hop-2 unreachable for NAT'd peers.
+        forwardSend: (hand, card) => postToHand(hand, '/a2a/intent', { card }),
         markSeen: (intentId, expiresAt, origin) => {
           // The responder core swallows a markSeen throw (empty catch); log it
           // here so a dedup-write failure is observable at the wiring seam.
