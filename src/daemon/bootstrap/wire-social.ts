@@ -7,6 +7,7 @@ import { makeEchoStore } from '../../core/social-echo-store'
 import { makePledgeStore } from '../../core/social-pledge-store'
 import { makeRevealer, type Revealer, type RevealBeat, type NotifyCtx, type ChannelPort } from '../../core/social-reveal'
 import { makeAsyncResponder } from '../../core/social-async-responder'
+import { A2A_PROTO_VERSION } from '../../core/a2a-intent'
 import { makeEchoIntake } from '../../core/social-echo-intake'
 import { makeEchoHandler } from '../../core/social-echo-relay'
 import { makeRelayStore } from '../../core/social-relay-store'
@@ -270,6 +271,17 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // socialOnIntent's postEcho, socialOnEcho's postEcho) can share it.
       const postToHand = async (hand: A2AAgentRecord, path: '/a2a/intent' | '/a2a/echo', body: Record<string, unknown>): Promise<boolean> => {
         const label = SOCIAL_EVENT_LABEL[path]
+        // proto v2 (2026-07-22) retired the sync MatchReceipt echo: a v1 peer
+        // still ACCEPTS an intent but can never echo back. a2a-intent.ts says
+        // "fleet must upgrade", yet nothing ever checked before sending — so a
+        // stale peer looks identical to "nobody happened to match", on both
+        // ends, forever. Warn-only per that same spec (never refuse).
+        // Only an EXPLICITLY recorded old version warns: the field is absent on
+        // every pairing-code edge (pairing never writes it), and treating
+        // absent as v1 would warn on almost every healthy peer.
+        if (path === '/a2a/intent' && typeof hand.proto_version === 'number' && hand.proto_version < A2A_PROTO_VERSION) {
+          deps.log('SOCIAL_REC', `peer ${hand.id} 记录的 proto_version=${hand.proto_version} < ${A2A_PROTO_VERSION}:v2 已退役同步回声,这台对端收得到心愿但回不来明信片 —— 让对方升级`)
+        }
         const peer = peerMailboxOf(hand)
         if (peer) {
           try {
