@@ -10,7 +10,7 @@ beforeEach(() => {
   globalThis.Node = NodeStub
 })
 
-const { renderForageDesk } = await import('./a2a-agents.js')
+const { renderForageDesk, peerReach } = await import('./a2a-agents.js')
 const { invokeApi } = await import('../api.js')
 
 function fakeEl() {
@@ -646,5 +646,29 @@ describe('笔友信箱', () => {
     await __onMailboxActionForTest?.({ target: btn } as any)          // 收起
     renderForageDesk({ agents: [], seeks: [], echoes: [], inbound: null, mailbox: [chan] })
     expect(el['fd-mailbox'].innerHTML).toContain('fd-mail-chan')      // 恢复重建
+  })
+})
+
+describe('peerReach — 伙伴卡片的可达性一行', () => {
+  it('信箱对端(没有 url)显示中继而不是 "undefined"', () => {
+    const line = peerReach({
+      transport: 'mailbox',
+      mailbox_addr: 'MCowBQYDK2VwAyEAOmw1Jrcc',
+      relays: ['https://cc.tendhearth.com/mailbox'],
+    })
+    expect(line).not.toContain('undefined')
+    expect(line).toContain('信箱')
+    expect(line).toContain('cc.tendhearth.com')
+  })
+
+  it('push 对端仍显示它的 url', () => {
+    expect(peerReach({ transport: 'push', url: 'http://127.0.0.1:8790' }))
+      .toContain('http://127.0.0.1:8790')
+  })
+
+  it('两样都没有时说人话,不吐 undefined', () => {
+    const line = peerReach({ transport: 'mailbox' })
+    expect(line).not.toContain('undefined')
+    expect(line.length).toBeGreaterThan(0)
   })
 })

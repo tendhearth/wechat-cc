@@ -202,7 +202,7 @@ function renderAgents(agents, list) {
         ${a.paused ? '<span class="plugin-source">已暂停</span>' : ''}
       </header>
       <div class="a2a-card-counts">${exchanged}</div>
-      <details class="a2a-tech"><summary>技术详情</summary><code>${escapeHtml(a.url)}</code> · ↓ ${inbound} · ↑ ${outbound}</details>
+      <details class="a2a-tech"><summary>技术详情</summary><code>${escapeHtml(peerReach(a))}</code> · ↓ ${inbound} · ↑ ${outbound}</details>
       <div class="a2a-card-actions">
         <button class="btn ghost" data-action="pause" data-id="${escapeHtml(a.id)}">${a.paused ? '恢复' : '暂停'}</button>
         <button class="btn ghost" data-action="test" data-id="${escapeHtml(a.id)}">测试连通</button>
@@ -218,6 +218,24 @@ function renderAgents(agents, list) {
  * Render the whole 觅食台 from live data.
  * @param {{ agents:Array<any>|null, seeks:Array<any>|null, echoes:Array<any>|null, inbound:any, mailbox?:Array<any>|null }} data
  */
+/**
+ * 伙伴的可达地址,一行人话。
+ *
+ * 六位配对码建立的对端**没有 url** —— 它的可达性在 transport/mailbox_addr/
+ * relays 里。原先这里直接印 `a.url`,对信箱对端就渲染出字符串 "undefined",
+ * 看着像装坏了。见 routes-a2a.list.test.ts(接口那半边的同一个洞)。
+ */
+export function peerReach(a) {
+  if (a.url) return a.url
+  if (a.transport === 'mailbox') {
+    const hosts = (a.relays ?? [])
+      .map(u => { try { return new URL(u).host } catch { return u } })
+      .join('、')
+    return hosts ? `信箱 · 经 ${hosts}` : '信箱 · 还没有中继'
+  }
+  return '没有地址'
+}
+
 export function renderForageDesk(data) {
   const agents = Array.isArray(data.agents) ? data.agents : []
   const seeks  = Array.isArray(data.seeks) ? data.seeks : []
