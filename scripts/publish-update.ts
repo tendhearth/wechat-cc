@@ -17,6 +17,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 
 const ROOT = join(import.meta.dir, '..')
@@ -96,10 +97,30 @@ const latest: LatestJson = {
 }
 
 // ── 3. upload to R2, else stage locally ─────────────────────────────────
+/**
+ * R2 令牌来源,按优先级:env → macOS 钥匙串 → 桌面明文文件(遗留)。
+ *
+ * 钥匙串这一条是 2026-08-31 加的。此前唯一的落盘位置是
+ * `~/Desktop/cloudflare_key.txt` —— 一个明文令牌躺在桌面上,而它和更新签名
+ * 私钥合起来就是完整的发布权限(签名保证"包是你签的",latest.json 决定
+ * "大家该装哪个")。桌面路径保留为兼容回落,但会提示迁移。
+ *
+ * 存进钥匙串:
+ *   security add-generic-password -a "$USER" -s wechat-cc-r2 -w '<token>' -U
+ */
 function readToken(): string | null {
   if (process.env.CF_API_TOKEN) return process.env.CF_API_TOKEN.trim()
+  try {
+    const r = spawnSync('security', ['find-generic-password', '-s', 'wechat-cc-r2', '-w'],
+      { encoding: 'utf8', timeout: 5000, windowsHide: true })
+    if (r.status === 0 && typeof r.stdout === 'string' && r.stdout.trim()) return r.stdout.trim()
+  } catch { /* 非 macOS 或钥匙串不可用 —— 回落到下面 */ }
   const f = join(homedir(), 'Desktop', 'cloudflare_key.txt')
-  if (existsSync(f)) return readFileSync(f, 'utf8').trim()
+  if (existsSync(f)) {
+    console.warn(`⚠️  正在从桌面明文文件读 R2 令牌(${f})。建议迁进钥匙串后删掉它:
+  security add-generic-password -a "$USER" -s wechat-cc-r2 -w "$(cat '${f}')" -U && rm '${f}'`)
+    return readFileSync(f, 'utf8').trim()
+  }
   return null
 }
 
