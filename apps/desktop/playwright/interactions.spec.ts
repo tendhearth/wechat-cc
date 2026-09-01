@@ -161,15 +161,39 @@ test('drawer toggle: aria-pressed flips on click', async ({ page, shimUrl, shim 
   await expect(toggle).toHaveAttribute('aria-pressed', initial === 'true' ? 'false' : 'true')
 })
 
-test('drawer toggle: .on class toggles on click', async ({ page, shimUrl, shim }) => {
+// 这条原本用 #guard-toggle 断言"点一下就亮",从 2026-07-08 起在 CI 上长期
+// 红。根因不是 flake:guard 开关会把状态持久化到 daemon,而 v1.6.4 加了
+// 「持久化失败的开关会回滚,不再静默撒谎」—— shim 跑在 mutations=blocked
+// 下,写必然抛错,于是开关如实回滚,.on 永远不出现。本地偶尔能过只是抢在
+// 回滚之前采到了乐观态,是竞速。
+//
+// 拆成两条,各自测各自该测的:
+test('drawer toggle: .on class toggles on click(纯 UI 开关,不落盘)', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
   await page.locator('#settings-open').click()
-  // Use guard-toggle which starts off (.on absent).
-  const toggle = page.locator('#guard-toggle')
+  // memory-embryo-toggle 只写本地状态(main.js 的 setMemoryEmbryoEnabled),
+  // 不打后端 —— 开关机制本身该用它来测,不该绑在一次网络写上。它初始为 on。
+  const toggle = page.locator('#memory-embryo-toggle')
+  await expect(toggle).toHaveClass(/\bon\b/)
+  await toggle.click()
   await expect(toggle).not.toHaveClass(/\bon\b/)
   await toggle.click()
   await expect(toggle).toHaveClass(/\bon\b/)
+})
+
+test('drawer toggle: 持久化失败时回滚,不静默撒谎(v1.6.4 契约)', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+  await bootIntoDashboard(page, shimUrl)
+  await page.locator('#settings-open').click()
+  // guard 开关要落盘;shim 的 mutations=blocked 让这次写必然失败。开关必须
+  // 退回原状,而不是停在乐观的"已开启"上骗人。这条契约此前没有 e2e 覆盖 ——
+  // 恰恰是它让上面那条老测试红了七周。
+  const toggle = page.locator('#guard-toggle')
+  await expect(toggle).not.toHaveClass(/\bon\b/)
+  await toggle.click()
+  await expect(toggle).not.toHaveClass(/\bon\b/)
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
 })
 
 test('drawer and wizard step-4 toggles are independent (duplicate-ID fix regression guard)', async ({ page, shimUrl, shim }) => {
