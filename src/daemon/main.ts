@@ -598,8 +598,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
 // module, import.meta.main is false (standard ESM semantics), so no daemon
 // would start. Compiled `wechat-cc-cli.exe run` would silently no-op.
 import { existsSync as fsExistsSync, readFileSync as fsReadFileSync } from 'node:fs'
+import { resolveDaemonStateDir } from './resolve-state-dir'
 export async function main() {
-  const stateDir = process.env.WECHAT_CC_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'wechat')
+  const stateDir = resolveDaemonStateDir()
   // daemon.env — provider API keys' restart-surviving home (env-file.ts).
   // Loaded BEFORE bootDaemon so provider registration sees the keys; the
   // real environment always wins over the file. Key NAMES only in logs.
