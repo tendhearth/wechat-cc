@@ -89,6 +89,33 @@ interface ActiveInitiator {
   handle: PairScheduleHandle | null
 }
 
+/**
+ * 这个 url 值不值得写进配对卡片交给**对方**?
+ *
+ * WHY(2026-09-01,Mac↔Windows 真机):卡片里的 url 来自
+ * `a2aServer.baseUrl()` = `http://${host}:${port}`,而 `a2a_listen.host`
+ * **默认就是 127.0.0.1**。于是我们把一个回环地址广播给了远端 —— 在对方
+ * 机器上它指向对方自己。仪表盘「测试连通」走 /v1/a2a/send 用的正是
+ * `agent.url`,于是对端会 POST 到自己的 8790;目前靠 bearer 不匹配才挡住,
+ * 是运气不是设计。
+ *
+ * 判定按「能不能路由到别人的机器」,不是按「是不是我自己」。私网地址
+ * (10./192.168./172.16-31)刻意**保留** —— 同一局域网内两台机器直连是
+ * 合法且有用的,恰恰是 wechat-cc 常见的部署形态。
+ */
+export function isAdvertisableUrl(url: string): boolean {
+  let host: string
+  try { host = new URL(url).hostname } catch { return false }
+  // URL 会把 IPv6 主机名带上方括号
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase()
+  if (h === 'localhost' || h.endsWith('.localhost')) return false
+  if (h === '::1' || h === '::' || h === '0.0.0.0') return false
+  if (/^127\./.test(h)) return false
+  if (/^169\.254\./.test(h)) return false        // IPv4 link-local
+  if (/^fe80:/.test(h)) return false               // IPv6 link-local
+  return true
+}
+
 export function makePairing(deps: PairingDeps): PairingEngine {
   // Fail fast at construction, not with a silent `relays[0]!` non-null
   // assertion that would only blow up (as `undefined` in a URL string) the
@@ -102,7 +129,9 @@ export function makePairing(deps: PairingDeps): PairingEngine {
   let active: ActiveInitiator | null = null
 
   function ownCard(role: PairCard['role'], nonce: string, bearer: string): PairCard {
-    const u = deps.url?.()
+    // 只广播对方**真的能拨到**的地址 —— 见 isAdvertisableUrl。
+    const raw = deps.url?.()
+    const u = raw && isAdvertisableUrl(raw) ? raw : undefined
     return {
       v: 1, role, nonce,
       self_id: deps.selfId(), name: deps.name(),
