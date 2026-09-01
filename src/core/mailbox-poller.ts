@@ -30,8 +30,9 @@ export function makeMailboxPoller(deps: {
           // null(见 mailbox-client.ts),和「今天没来信」并成一条静默路径
           // 的话,取不到信时日志里什么都没有 —— 真机上就是这样卡住的。
           // 空信箱继续保持安静(每 2 分钟一条噪音没人看)。
+          // 具体成因由 client 的 onError 单独打一行(超时 / HTTP 码 / 网络)。
           if (!page) {
-            deps.log('MAILBOX', `poll relay=${relay} 取件失败(超时/非 2xx/网络)—— 本轮跳过,游标不动`)
+            deps.log('MAILBOX', `poll relay=${relay} 取不到信 —— 本轮跳过,游标不动`)
             continue
           }
           if (page.items.length === 0) continue
