@@ -25,6 +25,7 @@ import { makeMailboxSender } from '../../core/mailbox-sender'
 import { makeMailboxClient } from '../../core/mailbox-client'
 import { loadMailboxIdentity } from '../../core/mailbox-crypto'
 import { peerMailboxOf, chooseTransport, buildCrossedHandle } from './mailbox-dispatch-seam'
+import { makeSocialPost, type PostOutcome } from './social-post-seam'
 import { makeMailboxLetterHandler } from './mailbox-letter-handler'
 import { makeRoutePostLetter } from './postletter-route'
 import { buildSharedForwardBudget } from './forward-budget-seam'
@@ -269,8 +270,19 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // Declared early (only needs mailboxSender/a2aRegistry/a2aClient,
       // already in scope) so every downstream construct below (broker.send,
       // socialOnIntent's postEcho, socialOnEcho's postEcho) can share it.
-      const postToHand = async (hand: A2AAgentRecord, path: '/a2a/intent' | '/a2a/echo', body: Record<string, unknown>): Promise<boolean> => {
-        const label = SOCIAL_EVENT_LABEL[path]
+      // 投递本体搬去 social-post-seam.ts —— 它在这个闭包里的时候,「信箱掉了
+      // 包」那条路径一次都没被测过,而那正是 2026-09-01 真机上明信片悄悄丢掉
+      // 的地方。这里只剩两件本地的事:proto_version 的告警,和把 asked /
+      // delivered 分给各自的调用方。
+      const socialPost = makeSocialPost({
+        selfId: SOCIAL_SELF_ID,
+        mailboxSend: (req, peer) => mailboxSender.send(req as Parameters<typeof mailboxSender.send>[0], peer),
+        pushSend: (req) => a2aClient.send(req as Parameters<typeof a2aClient.send>[0]),
+        urlFor: (path, base) => (path === '/a2a/intent' ? intentUrl(base) : echoUrl(base)),
+        recordEvent: (agentId, path, ok) => recordSocialEvent('out', agentId, SOCIAL_EVENT_LABEL[path], ok),
+        log: deps.log,
+      })
+      const postToHand = async (hand: A2AAgentRecord, path: '/a2a/intent' | '/a2a/echo', body: Record<string, unknown>) => {
         // proto v2 (2026-07-22) retired the sync MatchReceipt echo: a v1 peer
         // still ACCEPTS an intent but can never echo back. a2a-intent.ts says
         // "fleet must upgrade", yet nothing ever checked before sending — so a
@@ -282,34 +294,11 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         if (path === '/a2a/intent' && typeof hand.proto_version === 'number' && hand.proto_version < A2A_PROTO_VERSION) {
           deps.log('SOCIAL_REC', `peer ${hand.id} 记录的 proto_version=${hand.proto_version} < ${A2A_PROTO_VERSION}:v2 已退役同步回声,这台对端收得到心愿但回不来明信片 —— 让对方升级`)
         }
-        // 与 postPeerReveal 共用 chooseTransport —— 两处规则不能再分叉,
-        // 见 mailbox-dispatch-seam.ts 的说明。
-        const route = chooseTransport(hand)
-        if (route.kind === 'mailbox') {
-          try {
-            const dropped = await mailboxSender.send({ path, bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } }, route.peer)
-            // The EVENT carries the true drop outcome, but the return value
-            // stays `true` regardless: the mailbox contract is fire-and-forget,
-            // where `asked` means "attempted" (a successful drop still doesn't
-            // mean the peer read it — store-and-forward). Deliberate; see
-            // bootstrap.test.ts's url-less-mailbox-peer discover case.
-            recordSocialEvent('out', hand.id, label, dropped)
-            return true
-          } catch (err) {
-            deps.log('SOCIAL_REC', `mailbox ${path} drop failed agent=${hand.id}: ${err instanceof Error ? err.message : String(err)}`)
-            recordSocialEvent('out', hand.id, label, false)
-            return false
-          }
-        }
-        if (route.kind === 'unreachable') return false
-        const url = path === '/a2a/intent' ? intentUrl(route.url) : echoUrl(route.url)
-        const r = await a2aClient.send({ url, bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
-        recordSocialEvent('out', hand.id, label, r.ok)
-        return r.ok
+        return socialPost(hand, path, body)
       }
-      const postToPeer = async (agentId: string, path: '/a2a/intent' | '/a2a/echo', body: Record<string, unknown>): Promise<boolean> => {
+      const postToPeer = async (agentId: string, path: '/a2a/intent' | '/a2a/echo', body: Record<string, unknown>): Promise<PostOutcome> => {
         const hand = a2aRegistry.get(agentId)
-        if (!hand) return false
+        if (!hand) return { asked: false, delivered: false }
         return postToHand(hand, path, body)
       }
 
@@ -615,7 +604,8 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           }
           return relayToken
         },
-        postEcho: (to, m) => postToPeer(to, '/a2a/echo', m),
+        // 回声要的是【真的送到了没有】—— 见 social-post-seam.ts。
+        postEcho: async (to, m) => (await postToPeer(to, '/a2a/echo', m)).delivered,
         log: deps.log,
       })
       socialOnEcho = async ({ agent, msg }) => {
@@ -643,7 +633,8 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       }
       const asyncResponder = makeAsyncResponder({
         answerLocally,
-        postEcho: (to, m) => postToPeer(to, '/a2a/echo', m),
+        // 回声要的是【真的送到了没有】—— 见 social-post-seam.ts。
+        postEcho: async (to, m) => (await postToPeer(to, '/a2a/echo', m)).delivered,
         // Forward to our OWN paired peers, minus the sender; same cap as discover.
         // Guarded: a registry lookup failure must NOT reject the whole /a2a/intent
         // — W still returns its own local match (fail-closed: forward nothing).
@@ -670,7 +661,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         // Same send path as degree-1 (`broker.send` below): mailbox coord when
         // the peer has one, else push. Replaces a hand-rolled push-only call
         // that made hop-2 unreachable for NAT'd peers.
-        forwardSend: (hand, card) => postToHand(hand, '/a2a/intent', { card }),
+        forwardSend: async (hand, card) => (await postToHand(hand, '/a2a/intent', { card })).asked,
         markSeen: (intentId, expiresAt, origin) => {
           // The responder core swallows a markSeen throw (empty catch); log it
           // here so a dedup-write failure is observable at the wiring seam.
@@ -700,7 +691,9 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         // peer has one, else falls back to push. Only `paused` still filters
         // eligibility; the ranker changes ordering + cap only.
         discover: async (_topic) => rankPeersByCloseness(a2aRegistry.list().filter(a => !a.paused), deps.eventsStore, Date.now(), 5),
-        send: (hand, card) => postToHand(hand, '/a2a/intent', { card }),
+        // 扇出统计要的是【问过了几个】—— 信箱是 store-and-forward,投出去
+        // 就算问过,对方什么时候取件不归派心愿这一步管。
+        send: async (hand, card) => (await postToHand(hand, '/a2a/intent', { card })).asked,
         // P4 propose leg: persist a `proposed` row carrying the owner-approved
         // redacted wording (+ optional redacted city) so confirmSeek can forage
         // it verbatim, and a crash-resumed row survives WYSIWYG (redacted_topic
