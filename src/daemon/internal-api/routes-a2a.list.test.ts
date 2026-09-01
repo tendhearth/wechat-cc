@@ -36,7 +36,7 @@ function listBody() {
       eventsStore: { counts: () => ({ in: 0, out: 1 }) },
     },
   } as unknown as InternalApiDeps
-  const handler = a2aRoutes(deps)['GET /v1/a2a/list']
+  const handler = a2aRoutes(deps)['GET /v1/a2a/list']!
   const res = handler({} as never, undefined as never) as { body: { agents: Record<string, unknown>[] } }
   return res.body.agents[0]!
 }

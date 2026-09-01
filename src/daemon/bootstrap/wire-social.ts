@@ -24,7 +24,7 @@ import { rankPeersByCloseness } from '../../core/peer-closeness'
 import { makeMailboxSender } from '../../core/mailbox-sender'
 import { makeMailboxClient } from '../../core/mailbox-client'
 import { loadMailboxIdentity } from '../../core/mailbox-crypto'
-import { peerMailboxOf, buildCrossedHandle } from './mailbox-dispatch-seam'
+import { peerMailboxOf, chooseTransport, buildCrossedHandle } from './mailbox-dispatch-seam'
 import { makeMailboxLetterHandler } from './mailbox-letter-handler'
 import { makeRoutePostLetter } from './postletter-route'
 import { buildSharedForwardBudget } from './forward-budget-seam'
@@ -282,10 +282,12 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         if (path === '/a2a/intent' && typeof hand.proto_version === 'number' && hand.proto_version < A2A_PROTO_VERSION) {
           deps.log('SOCIAL_REC', `peer ${hand.id} 记录的 proto_version=${hand.proto_version} < ${A2A_PROTO_VERSION}:v2 已退役同步回声,这台对端收得到心愿但回不来明信片 —— 让对方升级`)
         }
-        const peer = peerMailboxOf(hand)
-        if (peer) {
+        // 与 postPeerReveal 共用 chooseTransport —— 两处规则不能再分叉,
+        // 见 mailbox-dispatch-seam.ts 的说明。
+        const route = chooseTransport(hand)
+        if (route.kind === 'mailbox') {
           try {
-            const dropped = await mailboxSender.send({ path, bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } }, peer)
+            const dropped = await mailboxSender.send({ path, bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } }, route.peer)
             // The EVENT carries the true drop outcome, but the return value
             // stays `true` regardless: the mailbox contract is fire-and-forget,
             // where `asked` means "attempted" (a successful drop still doesn't
@@ -299,8 +301,8 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
             return false
           }
         }
-        if (!hand.url) return false
-        const url = path === '/a2a/intent' ? intentUrl(hand.url) : echoUrl(hand.url)
+        if (route.kind === 'unreachable') return false
+        const url = path === '/a2a/intent' ? intentUrl(route.url) : echoUrl(route.url)
         const r = await a2aClient.send({ url, bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
         recordSocialEvent('out', hand.id, label, r.ok)
         return r.ok
@@ -464,13 +466,18 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         // social-reveal.ts — mutuality is row-derived, not transport-derived).
         // Push peers keep the synchronous round-trip: its `mutual:true` fast
         // path is strictly better feedback when a url exists.
-        if (!hand.url) {
-          const peer = peerMailboxOf(hand)
-          if (!peer) return null   // no url AND no mailbox ⇒ genuinely unreachable
-          const dropped = await mailboxSender.send({ path: '/a2a/reveal', bearer: hand.outbound_api_key, body }, peer)
+        // 传输选择走 chooseTransport —— 与 postToHand 同一个判定。这里原先
+        // 写的是 `if (!hand.url)`(url 优先),与 postToHand 的信箱优先相反,
+        // 于是配对对端(永远 transport:'mailbox',却可能带着 url)心愿/回声
+        // 走信箱都到了,唯独揭晓走 HTTP 打到一个到不了的地址。见
+        // mailbox-dispatch-seam.test.ts。
+        const route = chooseTransport(hand)
+        if (route.kind === 'unreachable') return null
+        if (route.kind === 'mailbox') {
+          const dropped = await mailboxSender.send({ path: '/a2a/reveal', bearer: hand.outbound_api_key, body }, route.peer)
           return dropped ? { mutual: false } : null
         }
-        const r = await a2aClient.send({ url: revealUrl(hand.url), bearer: hand.outbound_api_key, body })
+        const r = await a2aClient.send({ url: revealUrl(route.url), bearer: hand.outbound_api_key, body })
         if (!r.ok) return null
         return r.response as { mutual: boolean; handle?: PenpalHandle }
       }

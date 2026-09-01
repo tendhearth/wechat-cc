@@ -62,7 +62,7 @@ describe('makeEchoStore 幂等性(信箱重放)', () => {
   it('同一个 id 再 create 一次不抛,不产生第二行,也不回卷已有状态', () => {
     const db = openDb({ path: ':memory:' })
     const s = makeEchoStore(db)
-    const row = { id: 'i9:ccx', seekId: 'i9', peerMasked: '一位朋友', degree: 1, content: '我认识一个', peerAgentId: 'ccx', relayVia: null, relayToken: null }
+    const row = { id: 'i9:ccx', seekId: 'i9', peerMasked: '一位朋友', degree: 1, content: '我认识一个', peerAgentId: 'ccx' }
     s.create(row)
     s.setStatus('i9:ccx', 'revealed')
     s.setRevealedIdentity('i9:ccx', '老张')
