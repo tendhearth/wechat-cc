@@ -20,8 +20,15 @@ export interface PledgeStore {
 
 export function makePledgeStore(db: Db): PledgeStore {
   const ins = db.query<unknown, [string, string, string, string, string]>(
+    // 主键 `${intent_id}:${agent_id}` 是确定性的,重放带来的行与原行完全一样。
+    // 信箱传输是 at-least-once(取件后、ack 前重启必然重放),所以这里必须
+    // 幂等 —— 裸 INSERT 会抛,而调用方只 catch 一行日志,于是每次重放都留
+    // 一条假「失败」。
+    // DO NOTHING 而非 DO UPDATE:self/peer_revealed_at 可能已经写过,
+    // UPDATE 会把真实发生过的揭晓抹回 NULL。
     `INSERT INTO social_pledge(id, intent_id, seeker_agent_id, topic, self_revealed_at, peer_revealed_at, created_at)
-     VALUES (?, ?, ?, ?, NULL, NULL, ?)`,
+     VALUES (?, ?, ?, ?, NULL, NULL, ?)
+     ON CONFLICT(id) DO NOTHING`,
   )
   const selOne = db.query<PledgeRow, [string]>('SELECT * FROM social_pledge WHERE id = ?')
   const selAll = db.query<PledgeRow, []>('SELECT * FROM social_pledge ORDER BY created_at DESC, rowid DESC')

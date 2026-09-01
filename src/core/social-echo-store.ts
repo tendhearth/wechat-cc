@@ -55,8 +55,13 @@ export interface EchoStore {
 
 export function makeEchoStore(db: Db): EchoStore {
   const ins = db.query<unknown, [string, string, string, number, string, string, string | null, string | null, string | null]>(
+    // 主键是确定性的(`intent:peerAgent`,中继回声则 `intent:relayVia:relayToken`),
+    // 信箱是 at-least-once,重放带来的行与原行完全一样 —— 见 social-pledge-store
+    // 的同款说明。DO NOTHING 而非 DO UPDATE:status / self_revealed_at /
+    // peer_revealed_at / peer_masked(揭晓后会被换成真名)都可能已经更新过。
     `INSERT INTO social_echo(id, seek_id, peer_masked, degree, content, status, created_at, peer_agent_id, relay_via, relay_token)
-     VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+     ON CONFLICT(id) DO NOTHING`,
   )
   const selOne = db.query<EchoRow, [string]>('SELECT * FROM social_echo WHERE id = ?')
   const selBySeek = db.query<EchoRow, [string]>(
