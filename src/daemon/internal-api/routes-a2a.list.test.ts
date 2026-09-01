@@ -11,7 +11,7 @@
  * 这个测试把「列表要暴露传输方式与信箱可达性」钉成契约,免得下次再加一种
  * 传输时又悄悄漏掉。
  */
-import { describe, test, expect } from 'bun:test'
+import { describe, test, expect } from 'vitest'
 import { a2aRoutes } from './routes-a2a'
 import type { InternalApiDeps } from './types'
 
