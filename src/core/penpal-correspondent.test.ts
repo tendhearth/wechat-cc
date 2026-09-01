@@ -16,13 +16,13 @@ function makeCrossedChannels() {
   const channelStoreA = makeChannelStore(dbA)
   const letterStoreA = makeLetterStore(dbA)
   channelStoreA.create({ id: 'a:chan', seekId: 'seek-a', myPrivkey: a.privateKey, myPubkey: a.publicKey, myChannelId: 'chan-A', degree: 1, peerAgentId: 'ccb' })
-  channelStoreA.setPeerHandle('a:chan', { pubkey: b.publicKey, channel_id: 'chan-B' })
+  channelStoreA.setPeerHandle('a:chan', { pubkey: b.publicKey, channel_id: 'chan-B' }); channelStoreA.setStatus('a:chan', 'open')
 
   const dbB = openDb({ path: ':memory:' })
   const channelStoreB = makeChannelStore(dbB)
   const letterStoreB = makeLetterStore(dbB)
   channelStoreB.create({ id: 'b:chan', seekId: 'seek-b', myPrivkey: b.privateKey, myPubkey: b.publicKey, myChannelId: 'chan-B', degree: 1, peerAgentId: 'cca' })
-  channelStoreB.setPeerHandle('b:chan', { pubkey: a.publicKey, channel_id: 'chan-A' })
+  channelStoreB.setPeerHandle('b:chan', { pubkey: a.publicKey, channel_id: 'chan-A' }); channelStoreB.setStatus('b:chan', 'open')
 
   return { channelStoreA, letterStoreA, channelStoreB, letterStoreB }
 }
@@ -133,7 +133,7 @@ describe('makeCorrespondent', () => {
     const a = generateKeypair()
     const b = generateKeypair()
     channelStore.create({ id: 'a:relay', seekId: 'seek-a', myPrivkey: a.privateKey, myPubkey: a.publicKey, myChannelId: 'chan-A', degree: 2, relayVia: 'cc-intermediary', peerAgentId: 'cc-final-peer' })
-    channelStore.setPeerHandle('a:relay', { pubkey: b.publicKey, channel_id: 'chan-B' })
+    channelStore.setPeerHandle('a:relay', { pubkey: b.publicKey, channel_id: 'chan-B' }); channelStore.setStatus('a:relay', 'open')
     const postLetter = vi.fn().mockResolvedValue(true)
     const correspondent = makeCorrespondent({ channelStore, letterStore, postLetter, notifyInbound: vi.fn() })
 
@@ -156,7 +156,7 @@ describe('makeCorrespondent', () => {
     const a = generateKeypair()
     const b = generateKeypair()
     channelStore.create({ id: 'a:mailbox', seekId: 'seek-a', myPrivkey: a.privateKey, myPubkey: a.publicKey, myChannelId: 'chan-A', degree: 1, peerAgentId: 'ccb' })
-    channelStore.setPeerHandle('a:mailbox', { pubkey: b.publicKey, channel_id: 'chan-B', mailbox: { addr: 'A', enc_pub: 'E', relays: ['https://r/'] } })
+    channelStore.setPeerHandle('a:mailbox', { pubkey: b.publicKey, channel_id: 'chan-B', mailbox: { addr: 'A', enc_pub: 'E', relays: ['https://r/'] } }); channelStore.setStatus('a:mailbox', 'open')
     const postLetter = vi.fn().mockResolvedValue(true)
     const correspondent = makeCorrespondent({ channelStore, letterStore, postLetter, notifyInbound: vi.fn() })
 

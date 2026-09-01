@@ -30,8 +30,16 @@ export interface ChannelPort {
    *  channel id and a pending channel row keyed by `rowId` if absent, return
    *  THIS side's PenpalHandle. */
   openLocal(rowId: string, ctx: { seekId: string; degree: number; peerAgentId?: string | null; relayVia?: string | null }): PenpalHandle
-  /** Called at the mutual instant: store the peer's crossed handle, status→open. */
-  finalize(rowId: string, peerHandle: PenpalHandle): void
+  /** Called at the mutual instant: store the peer's crossed handle (when the
+   *  transport handed one back) and open the channel. `peerHandle` is optional
+   *  because an async transport (mailbox) reports no handle — by then it was
+   *  already stashed by `stashPeer` when the peer's reveal arrived. */
+  finalize(rowId: string, peerHandle?: PenpalHandle): void
+  /** Peer revealed BEFORE me: persist their handle WITHOUT opening the channel
+   *  (my owner hasn't consented yet). Over an async transport there is no
+   *  second delivery of it, so dropping it here would strand me on a pending
+   *  channel after I consent. */
+  stashPeer(rowId: string, peerHandle: PenpalHandle): void
 }
 
 export interface RevealerDeps {
@@ -72,11 +80,17 @@ export function makeRevealer(deps: RevealerDeps): Revealer {
         ? await deps.postPeerReveal(target, echo.seek_id, echo.relay_token)
         : await deps.postPeerReveal(target, echo.seek_id)
       if (!resp) return { state: 'peer_unreachable' }                                     // consent already persisted
-      if (!resp.mutual) return { state: 'awaiting_peer' }
-      deps.echoStore.setPeerRevealed(echoId, now)
+      // Mutuality is a property of the TWO LOCAL ROWS, not of the transport's
+      // answer. A mailbox drop can only ever report `mutual:false` (there is no
+      // synchronous response channel), so trusting `resp.mutual` alone would
+      // leave an async second-revealer stuck on awaiting_peer even though both
+      // sides have consented. `resp.mutual` stays authoritative for the push
+      // fast-path; the row check covers everything else.
+      if (!resp.mutual && !echo.peer_revealed_at) return { state: 'awaiting_peer' }
+      if (!echo.peer_revealed_at) deps.echoStore.setPeerRevealed(echoId, now)
       deps.echoStore.setStatus(echoId, 'revealed')
       deps.seekStore.update(echo.seek_id, { status: 'connected' })
-      if (resp.handle) deps.channel.finalize(echoId, resp.handle)
+      deps.channel.finalize(echoId, resp.handle)
       deps.notify('connected', { intentId: echo.seek_id })
       return { state: 'connected' }
     },
@@ -92,9 +106,10 @@ export function makeRevealer(deps: RevealerDeps): Revealer {
       }
       const resp = await deps.postPeerReveal(pledge.seeker_agent_id, pledge.intent_id)
       if (!resp) return { state: 'peer_unreachable' }
-      if (!resp.mutual) return { state: 'awaiting_peer' }
-      deps.pledgeStore.setPeerRevealed(pledgeId, now)
-      if (resp.handle) deps.channel.finalize(pledgeId, resp.handle)
+      // Same row-derived mutuality as revealEcho — see its comment.
+      if (!resp.mutual && !pledge.peer_revealed_at) return { state: 'awaiting_peer' }
+      if (!pledge.peer_revealed_at) deps.pledgeStore.setPeerRevealed(pledgeId, now)
+      deps.channel.finalize(pledgeId, resp.handle)
       deps.notify('connected', { intentId: pledge.intent_id })
       return { state: 'connected' }
     },
@@ -110,7 +125,7 @@ export function makeRevealer(deps: RevealerDeps): Revealer {
           // duplicate/retried inbound reveal — no writes, no notify, just a consistent answer
           if (!echo.self_revealed_at) return { mutual: false }
           const handle = deps.channel.openLocal(rowId, { seekId: intentId, degree: echo.degree, peerAgentId: echo.peer_agent_id, relayVia: echo.relay_via })
-          if (peerHandle) deps.channel.finalize(rowId, peerHandle)
+          deps.channel.finalize(rowId, peerHandle)
           return { mutual: true, handle }
         }
         deps.echoStore.setPeerRevealed(rowId, now)
@@ -122,13 +137,23 @@ export function makeRevealer(deps: RevealerDeps): Revealer {
           // channel row exists (opened at my earlier self-reveal, or here for the
           // first time if I'm revealing second synchronously).
           const handle = deps.channel.openLocal(rowId, { seekId: intentId, degree: echo.degree, peerAgentId: echo.peer_agent_id, relayVia: echo.relay_via })
-          if (peerHandle) deps.channel.finalize(rowId, peerHandle)
+          deps.channel.finalize(rowId, peerHandle)
           deps.notify('connected', { intentId, peerAgentId: agentId })
           return { mutual: true, handle }
         }
-        // Peer revealed before me — I have no channel row yet, so their presented
-        // handle can't be persisted. It is intentionally re-delivered later via the
-        // mutual response ({ mutual: true, handle }) once I reveal second.
+        // Peer revealed before me. Persist their handle NOW rather than waiting
+        // to be handed it again in the mutual response when I reveal second:
+        // over an async transport (mailbox drop) there IS no synchronous
+        // response, so discarding it here strands me on a pending channel
+        // forever — I would be "connected" with no way to open the letter
+        // channel. Minting my channel row early is purely local (openLocal is
+        // idempotent and only mints a keypair + pending row); my handle is not
+        // sent anywhere until my owner actually consents, and pending rows are
+        // invisible to the 信箱 surface (routes-penpal filters status==='open').
+        if (peerHandle) {
+          deps.channel.openLocal(rowId, { seekId: intentId, degree: echo.degree, peerAgentId: echo.peer_agent_id, relayVia: echo.relay_via })
+          deps.channel.stashPeer(rowId, peerHandle)
+        }
         deps.notify('await_reveal', { intentId, peerAgentId: agentId })
         return { mutual: false }
       }
@@ -138,15 +163,20 @@ export function makeRevealer(deps: RevealerDeps): Revealer {
           // duplicate/retried inbound reveal — no writes, no notify, just a consistent answer
           if (!pledge.self_revealed_at) return { mutual: false }
           const handle = deps.channel.openLocal(rowId, { seekId: intentId, degree: 0, peerAgentId: pledge.seeker_agent_id, relayVia: null })
-          if (peerHandle) deps.channel.finalize(rowId, peerHandle)
+          deps.channel.finalize(rowId, peerHandle)
           return { mutual: true, handle }
         }
         deps.pledgeStore.setPeerRevealed(rowId, now)
         if (pledge.self_revealed_at) {
           const handle = deps.channel.openLocal(rowId, { seekId: intentId, degree: 0, peerAgentId: pledge.seeker_agent_id, relayVia: null })
-          if (peerHandle) deps.channel.finalize(rowId, peerHandle)
+          deps.channel.finalize(rowId, peerHandle)
           deps.notify('connected', { intentId, peerAgentId: agentId })
           return { mutual: true, handle }
+        }
+        // Same early-persist as the echo branch above — see its comment.
+        if (peerHandle) {
+          deps.channel.openLocal(rowId, { seekId: intentId, degree: 0, peerAgentId: pledge.seeker_agent_id, relayVia: null })
+          deps.channel.stashPeer(rowId, peerHandle)
         }
         deps.notify('await_reveal', { intentId, peerAgentId: agentId })
         return { mutual: false }

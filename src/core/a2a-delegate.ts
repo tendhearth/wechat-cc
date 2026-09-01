@@ -11,6 +11,20 @@ import type { A2AAgentRecord } from '../lib/agent-config'
 import type { ExecResult } from './a2a-server'
 
 /**
+ * Default brain-side timeout for one delegated task (`WECHAT_A2A_EXEC_TIMEOUT_MS`
+ * overrides).
+ *
+ * MUST stay strictly below `A2A_EXEC_IDLE_TIMEOUT_S` (the hand's Bun
+ * idleTimeout, a hard 255s ceiling that cannot be raised): whoever gives up
+ * first decides what the user is told. When the hand hangs up first, the brain
+ * only sees a network error and reports 「连不上那台手」 — the exact opposite of
+ * the truth, which is that the hand is still working. Was 300_000, i.e. every
+ * task running 255–300s got that wrong message. Asserted in
+ * a2a-delegate-timeout.test.ts.
+ */
+export const DEFAULT_DELEGATE_TIMEOUT_MS = 240_000
+
+/**
  * Derive a hand's /a2a/exec URL from its registered url, tolerating the
  * common shapes the operator might have registered: a bare base, `/a2a`,
  * `/a2a/notify`, or already `/a2a/exec`.

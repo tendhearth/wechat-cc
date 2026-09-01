@@ -288,6 +288,7 @@ describe('sticker prompt section', () => {
   it('stickerSection() mentions send_sticker + lists the given tags', () => {
     const s = stickerSection(['happy', 'sad', 'party'])
     expect(s).toContain('send_sticker')
+    expect(s).toContain('search_online_sticker')
     expect(s).toContain('happy')
     expect(s).toContain('sad')
     expect(s).toContain('party')
@@ -332,7 +333,8 @@ describe('sticker prompt section', () => {
 
   it('stickerEmptyLibrarySection() mentions save_sticker verbatim (image-stickers cold-start unlock, T6-C2)', () => {
     const s = stickerEmptyLibrarySection()
-    expect(s).toBe('你还没有表情包。聊天里遇到值得存的表情/梗图,可以用 save_sticker 存进库,以后就能发给对方。')
+    expect(s).toContain('search_online_sticker')
+    expect(s).toContain('save_sticker')
   })
 
   it('buildSystemPrompt renders the empty-library variant when stickerTags is an empty array (pref on, library empty)', () => {

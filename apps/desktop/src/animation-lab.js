@@ -238,6 +238,14 @@ function canvasCssWidth() {
   return canvas.width / Math.min(devicePixelRatio || 1, 2)
 }
 
+function shouldShowInteractionHints() {
+  // Use the rendered CSS width rather than the backing bitmap: a Retina
+  // compact window can have a large canvas.width even though it is visually
+  // small. Compact aquarium windows keep the motion but omit instructional
+  // copy so it stays quiet on the desktop.
+  return canvas.getBoundingClientRect().width >= 480
+}
+
 // A compact floating window should still read as a living aquarium rather
 // than a thumbnail. Increase only the fish at small CSS widths; scenery and
 // the bear keep their normal scale so the composition does not feel crowded.
@@ -1122,11 +1130,13 @@ canvas.addEventListener("pointermove", event => {
     if (bearHovering) startBearWave()
   }
   bearHovering = overBear
-  if (inTank || overCrab) positionHint(pointer.x, pointer.y)
-  hint.classList.toggle("is-visible", inTank || overCrab)
-  hint.classList.toggle("is-water-hint", inTank)
-  hint.classList.toggle("is-grass-hint", overCrab)
-  hint.textContent = overCrab ? "点点小螃蟹，它会换个地方躲" : inTank ? "它们发现你了 · 轻点水面试试看" : "把鼠标轻轻移进鱼缸水面下方"
+  if (shouldShowInteractionHints()) {
+    if (inTank || overCrab) positionHint(pointer.x, pointer.y)
+    hint.classList.toggle("is-visible", inTank || overCrab)
+    hint.classList.toggle("is-water-hint", inTank)
+    hint.classList.toggle("is-grass-hint", overCrab)
+    hint.textContent = overCrab ? "点点小螃蟹，它会换个地方躲" : inTank ? "它们发现你了 · 轻点水面试试看" : "把鼠标轻轻移进鱼缸水面下方"
+  } else hint.classList.remove("is-visible", "is-water-hint", "is-grass-hint")
 })
 canvas.addEventListener("pointerleave", () => {
   pointer.active = false
@@ -1140,19 +1150,24 @@ canvas.addEventListener("pointerleave", () => {
 })
 canvas.addEventListener("click", event => {
   const p = positionFromEvent(event)
+  const showClickFeedback = shouldShowInteractionHints()
   if (crabContains(p.x, p.y)) {
     const action = startCrabInteraction(performance.now())
-    positionHint(p.x, p.y)
-    hint.textContent = action === "escape" ? "呀，它沿着鱼缸逃走啦～" : "它要换个地方藏起来啦～"
-    hint.classList.add("is-visible")
-    hint.classList.remove("is-water-hint")
-    hint.classList.add("is-grass-hint")
+    if (showClickFeedback) {
+      positionHint(p.x, p.y)
+      hint.textContent = action === "escape" ? "呀，它沿着鱼缸逃走啦～" : "它要换个地方藏起来啦～"
+      hint.classList.add("is-visible")
+      hint.classList.remove("is-water-hint")
+      hint.classList.add("is-grass-hint")
+    } else hint.classList.remove("is-visible", "is-water-hint", "is-grass-hint")
     return
   }
   if (waterContains(p.x, p.y) && !lotusContains(p.x, p.y)) {
     scatterFish(performance.now(), p.x, p.y)
-    hint.textContent = "呀，它们一下躲开了"
-    hint.classList.add("is-visible")
+    if (showClickFeedback) {
+      hint.textContent = "呀，它们一下躲开了"
+      hint.classList.add("is-visible")
+    } else hint.classList.remove("is-visible", "is-water-hint", "is-grass-hint")
     return
   }
   if (!bearContains(p.x, p.y)) return

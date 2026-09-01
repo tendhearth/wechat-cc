@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { platform as osPlatform } from 'node:os'
 import { createRequire } from 'node:module'
+import { spawnSync } from 'node:child_process'
 import { STATE_DIR } from '../lib/config'
 import { findOnPath, probeBinaryVersion } from '../lib/util'
 import { loadAgentConfig, type AgentConfig } from '../lib/agent-config'
@@ -12,6 +13,7 @@ import { openWechatDb } from '../lib/db'
 import { makeConversationStore } from '../core/conversation-store'
 import { makeSessionStateStore } from '../core/session-state'
 import { makeHeartbeatStore } from '../core/connection-heartbeat'
+import { scanSatelliteRepos, type SatelliteRepo } from './satellite-repos'
 
 export interface BoundAccount {
   id: string
@@ -49,6 +51,11 @@ export type Runtime = 'compiled-bundle' | 'source'
 export interface DoctorDeps {
   stateDir: string
   findOnPath: (cmd: string) => string | null
+  /**
+   * 扫 `plugins/*` 指向的卫星仓库有没有未推的提交(见 satellite-repos.ts 的
+   * 事故说明)。纯开发期检查:缺省不接线,打包版用户根本没有这些仓库。
+   */
+  scanSatellites?: () => SatelliteRepo[]
   /**
    * Sync probe of `<path> --version` — used to surface CLI versions for
    * claude/codex in the doctor report. Returns the first non-empty stdout
@@ -166,6 +173,11 @@ export interface DoctorReport {
    */
   heartbeats: Record<string, string | null>
   nextActions: string[]
+  /**
+   * 卫星仓库里未推的提交。源码模式才有;**刻意不参与 `ready`** —— 忘推一个
+   * 插件仓库不该拦住任何东西,它只是一句提醒(同 adminsBootstrap 的姿态)。
+   */
+  satelliteRepos?: SatelliteRepo[]
 }
 
 export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
@@ -372,6 +384,8 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
     expiredBots: deps.readExpiredBots(),
     heartbeats: deps.readHeartbeats ? deps.readHeartbeats() : {},
     nextActions,
+    // 开发期检查:打包版用户没有这些仓库,连扫都不该扫。
+    ...(!isBundle && deps.scanSatellites ? { satelliteRepos: deps.scanSatellites() } : {}),
   }
 }
 
@@ -449,6 +463,27 @@ export function defaultProbeGemini(): { apiKeySet: boolean; sdkInstalled: boolea
   return { apiKeySet, sdkInstalled }
 }
 
+/**
+ * 真实的卫星仓库扫描 —— `plugins/` 相对仓库根定位,git 用 spawnSync 短超时跑。
+ * 从不 fetch(见 satellite-repos.ts 的取舍说明),所以离线也是秒回。
+ */
+export function defaultScanSatellites(): SatelliteRepo[] {
+  const repoRoot = compiledRepoRoot() ?? join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+  return scanSatelliteRepos({
+    pluginsDir: join(repoRoot, 'plugins'),
+    readdir: (dir) => readdirSync(dir),
+    realpath: (p) => { try { return realpathSync(p) } catch { return null } },
+    git: (cwd, args) => {
+      try {
+        const r = spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 3000, windowsHide: true })
+        if (r.status !== 0 || typeof r.stdout !== 'string') return null
+        const out = r.stdout.trim()
+        return out === '' ? null : out
+      } catch { return null }
+    },
+  })
+}
+
 export function defaultDoctorDeps(stateDir = STATE_DIR): DoctorDeps {
   return {
     stateDir,
@@ -466,6 +501,7 @@ export function defaultDoctorDeps(stateDir = STATE_DIR): DoctorDeps {
     service: () => defaultServiceSnapshot(stateDir),
     runtime: isCompiledBundle() ? 'compiled-bundle' : 'source',
     platform: osPlatform(),
+    scanSatellites: defaultScanSatellites,
   }
 }
 
@@ -685,6 +721,9 @@ export function printDoctor(report: DoctorReport): void {
   if (report.runtime === 'source') {
     console.log(`bun: ${fmt(report.checks.bun)}`)
     console.log(`git: ${fmt(report.checks.git)}`)
+  }
+  for (const r of report.satelliteRepos ?? []) {
+    console.log(`卫星仓库 ${r.name} (${r.path}): ${r.branch} 有 ${r.ahead} 条未推提交 — 主仓库不会提醒你,记得 git -C ${r.path} push`)
   }
   console.log(`claude: ${fmtWithVersion(report.checks.claude)}`)
   console.log(`codex: ${fmtWithVersion(report.checks.codex)}`)

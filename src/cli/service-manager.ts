@@ -439,6 +439,12 @@ function launchAgentPlist(opts: { bunPath: string; binaryPath?: string; cwd: str
   // by design says nothing about it.
   const envEntries = [
     `<key>${SUPERVISED_ENV}</key><string>1</string>`,
+    // launchd does not inherit the interactive shell PATH. The compiled
+    // daemon's Codex provider still spawns the platform `node` executable,
+    // so preserve the standard Homebrew + system locations in every plist.
+    `<key>PATH</key><string>${escapeXml(['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'].join(':'))}</string>`,
+    ...(process.env.NODE_PATH ? [`<key>NODE_PATH</key><string>${escapeXml(process.env.NODE_PATH)}</string>`] : []),
+    ...(process.env.CODEX_HOME ? [`<key>CODEX_HOME</key><string>${escapeXml(process.env.CODEX_HOME)}</string>`] : []),
     ...(opts.bundledPluginsDir
       ? [`<key>WECHAT_CC_BUNDLED_PLUGINS_DIR</key><string>${escapeXml(opts.bundledPluginsDir)}</string>`]
       : []),

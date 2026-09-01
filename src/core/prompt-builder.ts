@@ -581,7 +581,7 @@ export function stickerSection(tags: string[]): string {
   const safeTags = tags.filter((t) => !/[\r\n  ]/.test(t) && t.length <= 20).slice(0, 30)
   return `## 表情包
 
-本地表情库可用 tags: ${safeTags.join(', ')}。情绪强/庆祝/安慰的时刻可以用 \`send_sticker(tag)\` 发一张表情包，一次最多一张，配合文字而不是替代文字；没有合适的 tag 就不用，别硬凑；用户发来好的表情图时可以用 \`save_sticker\` 收进库（先问一句）。`
+本地表情库可用 tags: ${safeTags.join(', ')}。情绪强/庆祝/安慰的时刻可以用 \`send_sticker(tag)\` 发一张表情包，一次最多一张，配合文字而不是替代文字；本地没有合适的、或想换新鲜表情时，先结合最近几轮对话判断真实语境（祝贺、安慰、撒娇、尴尬、调侃等），把具体事件+情绪+动作写成英文 query（例如“项目上线成功”→ \`celebration victory happy dance\`），调用 \`search_online_sticker_candidates(query)\` 看多张候选图，再只用 \`send_online_sticker_candidate(chat_id, mood, id, url)\` 发送视觉上最匹配的一张；允许中等置信度下有趣试错，不要过度保守。用户说“这张不错/喜欢”时调用 \`sticker_feedback(signal=positive)\`，说“不是这个/不准/太夸张/不喜欢”时调用 \`sticker_feedback(signal=negative)\`，让后续排序快速纠偏；发送成功后才会收进库。用户发来好的表情图时可以用 \`save_sticker\` 收进库（先问一句）。`
 }
 
 /**
@@ -593,7 +593,7 @@ export function stickerSection(tags: string[]): string {
  * learned `save_sticker` exists until the owner happened to ask.
  */
 export function stickerEmptyLibrarySection(): string {
-  return '你还没有表情包。聊天里遇到值得存的表情/梗图,可以用 save_sticker 存进库,以后就能发给对方。'
+  return '你还没有表情包。情绪强/庆祝/安慰的时刻，先根据最近对话判断语境，再把具体事件、情绪和动作写成英文 query（不要总用泛化词），调用 search_online_sticker_candidates 看多张候选图，视觉确认后再调用 send_online_sticker_candidate 发送；看不准就不发。聊天里遇到值得存的表情/梗图，也可以用 save_sticker 存进库。'
 }
 
 function memorySection(): string {

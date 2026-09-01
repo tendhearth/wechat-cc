@@ -14,6 +14,9 @@ describe('makeChannelStore', () => {
     expect(s.getByMyChannelId('chan-A')!.id).toBe('i1:ccb')
 
     s.setPeerHandle('i1:ccb', { pubkey: 'PEERPUB', channel_id: 'chan-B' })
+    // 2026-08-30:存 handle 与开通道已拆开 —— 对端先揭晓时 handle 要落盘,
+    // 但在我同意之前通道不能是 open(信箱面按 open 过滤)。
+    s.setStatus('i1:ccb', 'open')
     const opened = s.get('i1:ccb')!
     expect(opened.status).toBe('open')
     expect(opened.peer_pubkey).toBe('PEERPUB')

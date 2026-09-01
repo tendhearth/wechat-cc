@@ -17,6 +17,20 @@ on:
 jobs:
   build:
     name: build · ${{ matrix.label }}
+    # 更新签名私钥只挂在这个环境上,而且带必需审批人(2026-08-31)。
+    #
+    # 为什么要这道门:公钥烧在每个已安装的 app 里,所以拿着私钥就能让全部
+    # 已安装的 wechat-cc 自动下载并运行任意代码 —— 这是远程代码执行的授权
+    # 钥匙,不是普通构建凭证。仓库是公开的、不止一个人有写权限,而 Actions
+    # 的仓库级 secret 对任何能往分支推工作流的人都是可取的。挂到环境上 +
+    # 必需审批,就把"任何人随时可用"降级成"经 owner 点头才可用",而且每次
+    # 取用都留痕、都会通知。
+    #
+    # 代价:每次桌面构建(含 workflow_dispatch 的验证构建)都要点一次批准。
+    # 可以接受 —— 这个工作流只在 desktop-v* tag 和手动触发时才跑,不是每次
+    # 提交。tauri build 只要发现配置里有公钥就强制签名,所以验证构建同样
+    # 需要这把钥匙,没法只给正式发版开门。
+    environment: release-signing
     strategy:
       fail-fast: false
       matrix:
@@ -48,29 +62,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Pull the first-party wxvault plugin (private repo) into plugins/ so
-      # tauri.conf's `resources: ["../../../plugins/"]` bundles it into the app.
-      # Shell-guarded on the token (not an `if:` on secrets, which the Actions
-      # context doesn't allow) so forks/PRs without the secret still build —
-      # just without the bundled plugin. .git is dropped so it isn't bundled.
-      - name: Bundle first-party wxvault plugin (private)
-        shell: bash
-        env:
-          WXVAULT_PAT: ${{ secrets.RELEASE_PAT_WECHAT_CC }}
-        run: |
-          if [ -z "${WXVAULT_PAT}" ]; then
-            if [[ "${GITHUB_REF}" == refs/tags/desktop-v* ]]; then
-              echo "::error::RELEASE_PAT_WECHAT_CC is required for desktop releases; refusing to publish an installer without wxvault"
-              exit 1
-            fi
-            echo "::notice::no RELEASE_PAT_WECHAT_CC — validation build will omit bundled wxvault"
-            exit 0
-          fi
-          rm -rf plugins/wxvault
-          git clone --depth 1 "https://x-access-token:${WXVAULT_PAT}@github.com/tendhearth/wxvault.git" plugins/wxvault
-          rm -rf plugins/wxvault/.git
-          test -f plugins/wxvault/wechat-cc.plugin.json
-          echo "bundled wxvault ($(ls plugins/wxvault | wc -l | tr -d ' ') files)"
+      # NOTE (2026-08-29): the "Bundle first-party wxvault plugin" step that
+      # lived here was removed — tauri.conf's resources were deliberately
+      # narrowed to plugins/README.md by 1747de09 (2026-08-26 security fix:
+      # the plugins/ glob once swept 105MB of decrypted private WeChat data
+      # into a Windows installer via a resolved symlink; published mac dmgs
+      # never actually bundled wxvault because macOS bundling doesn't follow
+      # symlinks). The daemon loads plugins from the user's install at
+      # runtime; the installer doesn't carry plugin sources. The clone step
+      # and its "refuse release without wxvault" gate were dead weight after
+      # that — restore from git history if bundled distribution ever returns.
 
       - name: Install Linux system deps
         if: matrix.os == 'ubuntu-latest'
@@ -219,11 +220,18 @@ jobs:
       # peOff. IMAGE_OPTIONAL_HEADER.Subsystem lives at peOff+0x5c
       # (a UInt16; PE32 and PE32+ both keep it at the same offset since
       # the optional header layout is identical up through the data
-      # directories). We assert the byte is 3 (IMAGE_SUBSYSTEM_WINDOWS_CUI)
-      # before flipping to 2 (IMAGE_SUBSYSTEM_WINDOWS_GUI) — read-after-
-      # write verifies the flip persisted. Either invariant failing
-      # fails the build loudly so a future Bun fix doesn't silently
-      # double-flip.
+      # directories). 3 = IMAGE_SUBSYSTEM_WINDOWS_CUI (console, the bug),
+      # 2 = IMAGE_SUBSYSTEM_WINDOWS_GUI (what we want).
+      #
+      # IDEMPOTENT (2026-08-31): this used to hard-assert 3 before flipping,
+      # deliberately, so that a future Bun fix could not silently double-flip.
+      # That future arrived — the pinned Bun now honours
+      # --windows-hide-console and emits 2 on its own, so the assertion
+      # started failing the whole Windows build. Now: 2 ⇒ already correct,
+      # log and move on; 3 ⇒ flip and verify; anything else ⇒ still a loud
+      # failure, because an unexpected subsystem means our offset math or the
+      # binary layout is no longer what we think it is. Safe in both
+      # directions, including a Bun regression back to 3.
       - name: Hide console on Windows sidecar (workaround for Bun --windows-hide-console no-op)
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -232,8 +240,12 @@ jobs:
           $bytes = [System.IO.File]::ReadAllBytes($path)
           $peOff = [BitConverter]::ToInt32($bytes, 0x3c)
           $before = [BitConverter]::ToUInt16($bytes, $peOff + 0x5c)
+          if ($before -eq 2) {
+            Write-Output "PE subsystem already 2 (GUI/hidden) — Bun honoured --windows-hide-console, nothing to flip"
+            exit 0
+          }
           if ($before -ne 3) {
-            Write-Error "expected PE subsystem=3 (CONSOLE) before flip, got $before — Bun may have fixed --windows-hide-console; remove this workaround"
+            Write-Error "unexpected PE subsystem=$before (want 3=CONSOLE to flip, or 2=GUI already done) — offset math or binary layout changed, refusing to patch bytes"
             exit 1
           }
           $bytes[$peOff + 0x5c] = 2
@@ -272,16 +284,17 @@ jobs:
           # runner image ever stops giving Finder a usable session, delete this
           # line to fall back to the plain (but always-building) dmg.
           TAURI_BUNDLER_DMG_IGNORE_CI: 'true'
-          # Updater-artifact signing (2026-08-29): since auto-update shipped
-          # (v1.6.1, pubkey in tauri.conf), `tauri build` HARD-FAILS after
-          # bundling when it finds the pubkey but no private key — this broke
-          # every CI build on desktop-v1.6.4 while local (keyed) builds kept
-          # working, which is why 1.6.1/1.6.2 were hand-built. The key pair
-          # lives in the operator's ~/.tauri/wechat-cc-updater.key; to make CI
-          # builds work, add it as the TAURI_SIGNING_PRIVATE_KEY repo secret
-          # (`gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/wechat-cc-updater.key`).
-          # Until the secret exists this env resolves to '' and the build
-          # fails at the same place it does today — plumbing, not a fix.
+          # Updater-artifact signing. Since auto-update shipped (v1.6.1,
+          # pubkey in tauri.conf), `tauri build` HARD-FAILS after bundling when
+          # it finds the pubkey but no private key — that broke every CI build
+          # from v1.6.1 through v1.6.4, which is why those installers had to be
+          # hand-built on the operator's Mac.
+          #
+          # The key now lives as an ENVIRONMENT secret on `release-signing`
+          # (see the job's `environment:` comment for why it is gated there and
+          # not repo-wide). _PASSWORD is intentionally unset: the key pair was
+          # generated without one, and an absent secret resolves to '' — which
+          # is exactly what the local signed builds pass.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
@@ -297,7 +310,11 @@ jobs:
           # at runtime; the rest are silently ignored.
           path: |
             apps/desktop/src-tauri/target/release/bundle/dmg/*
-            apps/desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz
+            # 必须带 .sig:自动更新的 latest.json 要引用它,而 scripts/
+            # publish-update.ts 从产物目录里读。2026-08-31 之前这里写死
+            # `*.app.tar.gz`,把签名排除在外 —— nsis/msi 用的是 `*` 所以
+            # 一直带着,唯独 macOS 漏了,推更新时只能本地补签。
+            apps/desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz*
             apps/desktop/src-tauri/target/release/bundle/nsis/*
             apps/desktop/src-tauri/target/release/bundle/msi/*
             apps/desktop/src-tauri/target/release/bundle/deb/*

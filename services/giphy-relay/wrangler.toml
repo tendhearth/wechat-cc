@@ -1,0 +1,6 @@
+name = "wechat-cc-giphy-relay"
+main = "src/index.ts"
+compatibility_date = "2026-08-30"
+
+[vars]
+# Set securely with: npx wrangler secret put GIPHY_API_KEY

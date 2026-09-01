@@ -7,6 +7,7 @@ import { makeEchoStore } from '../../core/social-echo-store'
 import { makePledgeStore } from '../../core/social-pledge-store'
 import { makeRevealer, type Revealer, type RevealBeat, type NotifyCtx, type ChannelPort } from '../../core/social-reveal'
 import { makeAsyncResponder } from '../../core/social-async-responder'
+import { A2A_PROTO_VERSION } from '../../core/a2a-intent'
 import { makeEchoIntake } from '../../core/social-echo-intake'
 import { makeEchoHandler } from '../../core/social-echo-relay'
 import { makeRelayStore } from '../../core/social-relay-store'
@@ -246,20 +247,62 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         : undefined
 
       // v2: transport-selected fire-and-forget POST to a registry peer —
+      // 社交往来记账 —— `rankPeersByCloseness` 按 a2a_events 的 recency/volume/
+      // reciprocity 给 peer 排序,但 social 侧从建成起【只读不写】这张表:真机
+      // a2a_events 恒为 0 行,排序实际退化成 id 字典序,桌面「看往来」也只看得
+      // 见 notify。这里补上出入站留痕。
+      //
+      // 事件 text 会被渲染进桌面活动流,所以只记【无内容标签】—— 心愿正文、
+      // 明信片内容、信件一律不进来。信件(/a2a/letter)刻意完全不记:它是匿名
+      // 层最敏感的一环,而对"亲密度"这个信号也最没有信息量。
+      const SOCIAL_EVENT_LABEL: Record<'/a2a/intent' | '/a2a/echo', string> = {
+        '/a2a/intent': '社交:派出心愿',
+        '/a2a/echo': '社交:回明信片',
+      }
+      const recordSocialEvent = (direction: 'in' | 'out', agentId: string, text: string, ok = true): void => {
+        try { deps.eventsStore.append({ direction, agent_id: agentId, text, status: ok ? 'ok' : 'http_error' }) }
+        catch (err) { deps.log('SOCIAL_REC', `event append failed agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`) }
+      }
+
       // mailbox coords when present, else push HTTP. Used by intent sends,
       // echo returns and relay echo returns alike (spec §1 selection rule).
       // Declared early (only needs mailboxSender/a2aRegistry/a2aClient,
       // already in scope) so every downstream construct below (broker.send,
       // socialOnIntent's postEcho, socialOnEcho's postEcho) can share it.
       const postToHand = async (hand: A2AAgentRecord, path: '/a2a/intent' | '/a2a/echo', body: Record<string, unknown>): Promise<boolean> => {
+        const label = SOCIAL_EVENT_LABEL[path]
+        // proto v2 (2026-07-22) retired the sync MatchReceipt echo: a v1 peer
+        // still ACCEPTS an intent but can never echo back. a2a-intent.ts says
+        // "fleet must upgrade", yet nothing ever checked before sending — so a
+        // stale peer looks identical to "nobody happened to match", on both
+        // ends, forever. Warn-only per that same spec (never refuse).
+        // Only an EXPLICITLY recorded old version warns: the field is absent on
+        // every pairing-code edge (pairing never writes it), and treating
+        // absent as v1 would warn on almost every healthy peer.
+        if (path === '/a2a/intent' && typeof hand.proto_version === 'number' && hand.proto_version < A2A_PROTO_VERSION) {
+          deps.log('SOCIAL_REC', `peer ${hand.id} 记录的 proto_version=${hand.proto_version} < ${A2A_PROTO_VERSION}:v2 已退役同步回声,这台对端收得到心愿但回不来明信片 —— 让对方升级`)
+        }
         const peer = peerMailboxOf(hand)
         if (peer) {
-          try { await mailboxSender.send({ path, bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } }, peer); return true }
-          catch (err) { deps.log('SOCIAL_REC', `mailbox ${path} drop failed agent=${hand.id}: ${err instanceof Error ? err.message : String(err)}`); return false }
+          try {
+            const dropped = await mailboxSender.send({ path, bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } }, peer)
+            // The EVENT carries the true drop outcome, but the return value
+            // stays `true` regardless: the mailbox contract is fire-and-forget,
+            // where `asked` means "attempted" (a successful drop still doesn't
+            // mean the peer read it — store-and-forward). Deliberate; see
+            // bootstrap.test.ts's url-less-mailbox-peer discover case.
+            recordSocialEvent('out', hand.id, label, dropped)
+            return true
+          } catch (err) {
+            deps.log('SOCIAL_REC', `mailbox ${path} drop failed agent=${hand.id}: ${err instanceof Error ? err.message : String(err)}`)
+            recordSocialEvent('out', hand.id, label, false)
+            return false
+          }
         }
         if (!hand.url) return false
         const url = path === '/a2a/intent' ? intentUrl(hand.url) : echoUrl(hand.url)
         const r = await a2aClient.send({ url, bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
+        recordSocialEvent('out', hand.id, label, r.ok)
         return r.ok
       }
       const postToPeer = async (agentId: string, path: '/a2a/intent' | '/a2a/echo', body: Record<string, unknown>): Promise<boolean> => {
@@ -384,7 +427,14 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           channelStore.create({ id: rowId, seekId: ctx.seekId, myPrivkey: kp.privateKey, myPubkey: kp.publicKey, myChannelId, degree: ctx.degree, relayVia: ctx.relayVia ?? null, peerAgentId: ctx.peerAgentId ?? null })
           return buildCrossedHandle({ my_pubkey: kp.publicKey, my_channel_id: myChannelId }, myMailbox)
         },
-        finalize(rowId, peerHandle) { channelStore.setPeerHandle(rowId, peerHandle) },
+        finalize(rowId, peerHandle) {
+          // peerHandle is absent on the async (mailbox) path — it was already
+          // stashed when the peer's reveal arrived. Opening is the explicit
+          // status flip either way.
+          if (peerHandle) channelStore.setPeerHandle(rowId, peerHandle)
+          channelStore.setStatus(rowId, 'open')
+        },
+        stashPeer(rowId, peerHandle) { channelStore.setPeerHandle(rowId, peerHandle) },
       }
 
       // Outbound reveal POST to a peer's /a2a/reveal. null on unreachable/unknown.
@@ -399,19 +449,28 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       const postPeerReveal = async (agentId: string, intentId: string, relayToken?: string): Promise<{ mutual: boolean; handle?: PenpalHandle } | null> => {
         const hand = a2aRegistry.get(agentId)
         if (!hand) return null
-        // reveal-over-mailbox is deferred (spec §10): a mailbox peer has no
-        // url for revealUrl(). Mirror postReveal's peerMailboxOf short-
-        // circuit — skip cleanly. (Only transport:'mailbox' can lack a url
-        // per the A2AAgentRecord schema, but this also fails closed on any
-        // other malformed/url-less record rather than throwing.)
-        if (!hand.url) return null
         const rowId = relayToken ? `${intentId}:${agentId}:${relayToken}` : `${intentId}:${agentId}`
         const ch = channelStore.get(rowId)
         const myHandle = ch ? buildCrossedHandle({ my_pubkey: ch.my_pubkey, my_channel_id: ch.my_channel_id }, myMailbox) : undefined
-        const r = await a2aClient.send({
-          url: revealUrl(hand.url), bearer: hand.outbound_api_key,
-          body: { agent_id: SOCIAL_SELF_ID, intent_id: intentId, ...(relayToken ? { relay_token: relayToken } : {}), ...(myHandle ? { peer_handle: myHandle } : {}) },
-        })
+        const body = { agent_id: SOCIAL_SELF_ID, intent_id: intentId, ...(relayToken ? { relay_token: relayToken } : {}), ...(myHandle ? { peer_handle: myHandle } : {}) }
+        // A url-less record is a mailbox-only peer (both ends behind NAT — the
+        // exact case the mailbox transport exists for). Was deferred (spec
+        // §10) and returned null here, which made 揭晓 structurally impossible
+        // for those peers: seeks and echoes flowed over the mailbox but the
+        // connection could never actually be made. Drop the reveal async
+        // instead. A successful drop means "told them, mutuality unknown" ⇒
+        // {mutual:false}; the revealer derives the true state from its own two
+        // rows once the peer's reveal lands in our mailbox (see
+        // social-reveal.ts — mutuality is row-derived, not transport-derived).
+        // Push peers keep the synchronous round-trip: its `mutual:true` fast
+        // path is strictly better feedback when a url exists.
+        if (!hand.url) {
+          const peer = peerMailboxOf(hand)
+          if (!peer) return null   // no url AND no mailbox ⇒ genuinely unreachable
+          const dropped = await mailboxSender.send({ path: '/a2a/reveal', bearer: hand.outbound_api_key, body }, peer)
+          return dropped ? { mutual: false } : null
+        }
+        const r = await a2aClient.send({ url: revealUrl(hand.url), bearer: hand.outbound_api_key, body })
         if (!r.ok) return null
         return r.response as { mutual: boolean; handle?: PenpalHandle }
       }
@@ -552,7 +611,10 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         postEcho: (to, m) => postToPeer(to, '/a2a/echo', m),
         log: deps.log,
       })
-      socialOnEcho = async ({ agent, msg }) => echoHandler(agent.id, msg)
+      socialOnEcho = async ({ agent, msg }) => {
+        recordSocialEvent('in', agent.id, '社交:收到明信片')
+        return echoHandler(agent.id, msg)
+      }
 
       // Answer path: the spine's judge + pledge-on-yes is the LOCAL answer. The
       // v2 async responder wraps it with fast-ack + background judge/echo/
@@ -572,20 +634,24 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         }
         return receipt
       }
-      socialOnIntent = makeAsyncResponder({
+      const asyncResponder = makeAsyncResponder({
         answerLocally,
         postEcho: (to, m) => postToPeer(to, '/a2a/echo', m),
         // Forward to our OWN paired peers, minus the sender; same cap as discover.
         // Guarded: a registry lookup failure must NOT reject the whole /a2a/intent
         // — W still returns its own local match (fail-closed: forward nothing).
         forwardTargets: (excludeAgentId) => {
-          // url-less mailbox peers can't take a push /a2a/intent (intentUrl
-          // needs a url); 2-hop forward transport is STILL push-only (spec
-          // §4) even though degree-1 discover now opens to mailbox peers
-          // (see broker.discover below) — skip them here.
+          // 2026-08-31: url-less mailbox peers are targets again. They used to
+          // be filtered out here because forwardSend went straight to
+          // a2aClient/intentUrl(hand.url) — so the friend-of-a-friend behind
+          // NAT could never be reached at hop 2 even though degree-1 discover
+          // had already opened to mailbox peers. forwardSend now goes through
+          // postToHand (mailbox coord when present, else push), exactly like
+          // broker.send, so the filter is no longer needed — and the echo
+          // return leg was already transport-agnostic.
           try {
             return rankPeersByCloseness(
-              a2aRegistry.list().filter(a => !a.paused && a.id !== excludeAgentId && !(a.transport === 'mailbox' && !a.url)),
+              a2aRegistry.list().filter(a => !a.paused && a.id !== excludeAgentId),
               deps.eventsStore, Date.now(), 5,
             )
           }
@@ -594,14 +660,10 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
             return []
           }
         },
-        forwardSend: async (hand, card) => {
-          // forwardTargets already filters url-less mailbox peers out, but
-          // this closure's own type doesn't carry that guarantee — guard
-          // here too (treated the same as any other unreachable target).
-          if (!hand.url) return false
-          const r = await a2aClient.send({ url: intentUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, card } })
-          return r.ok
-        },
+        // Same send path as degree-1 (`broker.send` below): mailbox coord when
+        // the peer has one, else push. Replaces a hand-rolled push-only call
+        // that made hop-2 unreachable for NAT'd peers.
+        forwardSend: (hand, card) => postToHand(hand, '/a2a/intent', { card }),
         markSeen: (intentId, expiresAt, origin) => {
           // The responder core swallows a markSeen throw (empty catch); log it
           // here so a dedup-write failure is observable at the wiring seam.
@@ -616,6 +678,10 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         schedule: makeBusySchedule('social-responder', deps.holdBusy, deps.log),
         log: deps.log,
       })
+      socialOnIntent = async (event) => {
+        recordSocialEvent('in', event.agent.id, '社交:收到心愿')
+        return asyncResponder(event)
+      }
 
       const broker = makeBroker({
         policy: socialPolicy,

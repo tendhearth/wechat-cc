@@ -22,6 +22,18 @@ import type { A2AAgentRecord } from '../lib/agent-config'
 import type { ProviderId } from './conversation'
 import { A2A_PROTO_VERSION, IntentCardSchema, EchoMessageSchema, type IntentCard, type MatchReceipt, type EchoMessage } from './a2a-intent'
 
+/**
+ * How long the HAND holds an /a2a/exec connection open with no bytes flowing.
+ * Bun's hard maximum — it cannot be raised.
+ *
+ * Load-bearing coupling: the BRAIN's own delegate timeout MUST stay strictly
+ * below this, or the hand hangs up first on a long task and the brain sees a
+ * network error instead of its own clean timeout — surfacing to the user as
+ * 「连不上那台手」 when the truth is 「那台手还在跑」. Asserted in
+ * a2a-delegate-timeout.test.ts.
+ */
+export const A2A_EXEC_IDLE_TIMEOUT_S = 255
+
 export interface NotifyEvent {
   agent: A2AAgentRecord
   text: string
@@ -564,7 +576,7 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         // no response bytes until it finishes — Bun's default 10s idleTimeout
         // would drop the connection mid-run. Raise to Bun's max (255s). Longer
         // tasks would need response streaming/heartbeat (future).
-        idleTimeout: 255,
+        idleTimeout: A2A_EXEC_IDLE_TIMEOUT_S,
         fetch: handle,
       })
     },

@@ -41,15 +41,22 @@ async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl:
 
 // ── Pane registry + skeleton presence ───────────────────────────────────
 
-const PANES = ['overview', 'memory', 'sessions', 'logs', 'a2a-agents'] as const
+// 顶层导航项(2026-08-24 导航重构后):待办升到一级,日志/插件收进后厨
+// —— 它们仍有 pane,但不再有顶层导航按钮,所以分成两张表校验。
+const NAV_PANES = ['overview', 'memory', 'converse', 'todos', 'sessions', 'a2a-agents'] as const
+/** 有 pane、但入口在后厨标签页里(见 logs.spec.ts 的 bootAndOpenLogs)。 */
+const BACKSTAGE_PANES = ['logs', 'plugins'] as const
 
-test('dashboard renders nav + 5 panes (all attached)', async ({ page, shimUrl, shim }) => {
+test('dashboard renders nav + panes (all attached)', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
 
-  for (const pane of PANES) {
+  for (const pane of NAV_PANES) {
     await expect(page.locator(`button.dash-nav-link[data-pane="${pane}"]`)).toBeAttached()
     await expect(page.locator(`article.dash-pane[data-pane="${pane}"]`)).toBeAttached()
+  }
+  for (const pane of BACKSTAGE_PANES) {
+    await expect(page.locator(`article.dash-pane[data-pane="sessions"] .dialogue-workspace-tab[data-backstage-pane="${pane}"]`)).toBeAttached()
   }
   // Settings gear (opens drawer, not wizard — moxiuwen's gear was repurposed
   // when master's wizard refactor landed; #settings-open is the live id).
@@ -137,7 +144,8 @@ test('sessions pane mounts the dialogue-root container (Task 10 real-data page)'
 test('logs pane has meta crumb + content container', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('button.dash-nav-link[data-pane="logs"]').click()
+  await page.locator('button.dash-nav-link[data-pane="sessions"]').click()
+  await page.locator('article.dash-pane[data-pane="sessions"] .dialogue-workspace-tab[data-backstage-pane="logs"]').click()
   const pane = page.locator('article.dash-pane[data-pane="logs"]')
   await expect(pane).toBeVisible()
   await expect(pane.locator('#logs-meta')).toBeAttached()
