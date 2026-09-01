@@ -31,6 +31,11 @@ export interface MailboxPollerDeps {
   onIntent?: A2AServerOpts['onIntent']
   onEcho?: A2AServerOpts['onEcho']
   relays: string[]
+  /** 补投未送达的揭晓(`revealer.retryUndelivered`)。挂在取件同一拍上:
+   *  这一拍本来就是网络恢复后第一个动的东西,而「我同意了、但揭晓没送
+   *  出去」的行如果没人自动补,owner 屏幕上写的是「已连接」,他根本不会
+   *  再点一次 —— 能重试而没人重试等于没修。见 social-reveal.ts。 */
+  retryUndeliveredReveals?: () => Promise<number>
   shouldRun: () => boolean
   log: (tag: string, line: string) => void
 }
@@ -44,7 +49,19 @@ export function registerMailboxPoller(deps: MailboxPollerDeps): Lifecycle {
   })
   const scheduler = startCompanionScheduler({
     name: 'mailbox', intervalMs: 120_000, jitterRatio: 0.3,
-    shouldRun: deps.shouldRun, onTick: () => poller.onTick(), log: deps.log,
+    shouldRun: deps.shouldRun,
+    onTick: async () => {
+      await poller.onTick()
+      if (!deps.retryUndeliveredReveals) return
+      // 绝不让补投打断取件:补投抛了也只是一条日志,下一拍再来。
+      try {
+        const n = await deps.retryUndeliveredReveals()
+        if (n > 0) deps.log('MAILBOX', `补投揭晓 ${n} 条(此前投递失败,本地已同意)`)
+      } catch (err) {
+        deps.log('MAILBOX', `补投揭晓失败: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    },
+    log: deps.log,
   })
   let stopped = false
   return {

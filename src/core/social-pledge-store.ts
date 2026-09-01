@@ -9,6 +9,9 @@ import type { Db } from '../lib/db'
 export interface PledgeRow {
   id: string; intent_id: string; seeker_agent_id: string; topic: string
   self_revealed_at: string | null; peer_revealed_at: string | null; created_at: string
+  /** 我的揭晓**真的送到对端**的时刻。与 self_revealed_at(我的 owner 同意)
+   *  是两件事:同意是本地的,送达是网络的。合成一件事的代价见 db.ts v32。 */
+  self_reveal_delivered_at: string | null
 }
 export interface PledgeStore {
   create(p: { id: string; intentId: string; seekerAgentId: string; topic: string }): void
@@ -16,6 +19,10 @@ export interface PledgeStore {
   list(): PledgeRow[]
   setSelfRevealed(id: string, at: string): void
   setPeerRevealed(id: string, at: string): void
+  /** 记下「我的揭晓已送达」。只在 postPeerReveal 返回非 null 之后调用。 */
+  setSelfDelivered(id: string, at: string): void
+  /** 我已同意、但揭晓从没送出去的行 —— 补投扫描的输入。 */
+  listUndelivered(): PledgeRow[]
 }
 
 export function makePledgeStore(db: Db): PledgeStore {
@@ -34,11 +41,17 @@ export function makePledgeStore(db: Db): PledgeStore {
   const selAll = db.query<PledgeRow, []>('SELECT * FROM social_pledge ORDER BY created_at DESC, rowid DESC')
   const updSelf = db.query<unknown, [string, string]>('UPDATE social_pledge SET self_revealed_at = ? WHERE id = ?')
   const updPeer = db.query<unknown, [string, string]>('UPDATE social_pledge SET peer_revealed_at = ? WHERE id = ?')
+  const updDelivered = db.query<unknown, [string, string]>('UPDATE social_pledge SET self_reveal_delivered_at = ? WHERE id = ?')
+  const selUndelivered = db.query<PledgeRow, []>(
+    'SELECT * FROM social_pledge WHERE self_revealed_at IS NOT NULL AND self_reveal_delivered_at IS NULL ORDER BY created_at ASC, rowid ASC',
+  )
   return {
     create(p) { ins.run(p.id, p.intentId, p.seekerAgentId, p.topic, new Date().toISOString()) },
     get(id) { return selOne.get(id) ?? null },
     list() { return selAll.all() },
     setSelfRevealed(id, at) { updSelf.run(at, id) },
     setPeerRevealed(id, at) { updPeer.run(at, id) },
+    setSelfDelivered(id, at) { updDelivered.run(at, id) },
+    listUndelivered() { return selUndelivered.all() },
   }
 }

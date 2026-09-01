@@ -1138,6 +1138,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
         onIntent: socialWiring.onIntent,
         onEcho: socialWiring.onEcho,
         relays: mailboxRelays,
+        // 补投:每一拍取件之后,把「owner 已同意、但揭晓从没送到对端」的
+        // 行重投一遍。2026-09-01 真机上就是这里断的 —— 投递失败之后没有任何
+        // 人会再试一次,而 owner 看到的是「已连接」。见 social-reveal.ts。
+        retryUndeliveredReveals: socialWiring.social ? () => socialWiring.social!.revealer.retryUndelivered() : undefined,
         // Re-checked at every tick (mtime-cached read) so a `/set` toggle of
         // social_enabled takes effect without a daemon restart, same posture
         // as the companion schedulers' shouldRun gates.

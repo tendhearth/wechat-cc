@@ -2787,7 +2787,7 @@ describe('internal-api', () => {
       id: 'e1', seek_id: 'k1', peer_masked: 'p***', degree: 1,
       content: 'hi there', status: 'pending', created_at: 't',
       peer_agent_id: 'ccb', self_revealed_at: null, peer_revealed_at: null,
-      relay_via: null, relay_token: null,
+      relay_via: null, relay_token: null, self_reveal_delivered_at: null,
     }
 
     async function startWithSocial(
@@ -2812,15 +2812,18 @@ describe('internal-api', () => {
             echoStore: {
               create: () => {}, setStatus: () => {}, setSelfRevealed: () => {}, setPeerRevealed: () => {}, setRevealedIdentity: () => {}, listForSeek: () => [],
               listAll: () => opts.echoes ?? [], get: () => null,
+              setSelfDelivered: () => {}, listUndelivered: () => [],
             },
             pledgeStore: {
               create: () => {}, get: () => null, list: () => opts.pledges ?? [],
               setSelfRevealed: () => {}, setPeerRevealed: () => {},
+              setSelfDelivered: () => {}, listUndelivered: () => [],
             },
             revealer: {
               revealEcho: async (id: string) => opts.revealEcho ? opts.revealEcho(id) : { state: 'awaiting_peer' as const },
               revealPledge: async (id: string) => opts.revealPledge ? opts.revealPledge(id) : { state: 'awaiting_peer' as const },
               onInboundReveal: () => ({ mutual: false }),
+              retryUndelivered: async () => 0,
             },
           },
         } : {}),
@@ -2918,6 +2921,7 @@ describe('internal-api', () => {
       const pledgeRow: PledgeRow = {
         id: 'i1:cca', intent_id: 'i1', seeker_agent_id: 'cca', topic: 't',
         self_revealed_at: null, peer_revealed_at: null, created_at: 't',
+        self_reveal_delivered_at: null,
       }
 
       it('GET /v1/social/pledges returns the stored pledges', async () => {

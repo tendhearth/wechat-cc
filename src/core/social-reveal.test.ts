@@ -305,3 +305,128 @@ describe('makeRevealer — 异步传输(信箱)下的互揭', () => {
     expect(notify).not.toHaveBeenCalledWith('connected', expect.anything())
   })
 })
+
+// 2026-09-01 真机 bug:Windows 07:45 揭晓 → 本地写下 self_revealed_at → 信箱
+// 投递失败(那会儿它掉网了)→ 返回 peer_unreachable。07:47 Mac 的揭晓到达,
+// 把 peer_revealed_at 也写上了。08:46 我在 Windows 上重试揭晓,函数看见两个
+// 时间戳都在,直接短路返回 connected —— **一次都没重发**。Mac 那边永远停在
+// awaiting_peer,而两台机器都不会再说一句话。
+//
+// 根因:`peer_revealed_at` 只证明「对方的揭晓到了我这」,完全不证明「我的
+// 揭晓到了对方那」。后者是一个独立的事实,以前没有任何地方记它,于是投递
+// 失败会**永久毒化**这次揭晓,重试还理直气壮地报「已连接」。
+describe('makeRevealer — 投递失败不能毒化揭晓(self_reveal_delivered_at)', () => {
+  it('pledge:投递失败后对方揭晓到达,重试必须重发而不是短路报 connected', async () => {
+    const post = vi.fn<any>(async () => null)                 // 信箱掉线
+    const { pledgeStore, revealer } = fixture(post)
+    pledgeStore.create({ id: 'i9:cca', intentId: 'i9', seekerAgentId: 'cca', topic: 't' })
+
+    expect(await revealer.revealPledge('i9:cca')).toEqual({ state: 'peer_unreachable' })
+
+    // 对方的揭晓随后落到我的信箱里 —— 现在本地两个时间戳都有了
+    revealer.onInboundReveal({ agentId: 'cca', intentId: 'i9', peerHandle: PEER_HANDLE })
+    const row = pledgeStore.get('i9:cca')!
+    expect(row.self_revealed_at).not.toBeNull()
+    expect(row.peer_revealed_at).not.toBeNull()
+
+    post.mockClear()
+    post.mockImplementation(async () => ({ mutual: false }))  // 网络恢复
+    const out = await revealer.revealPledge('i9:cca')
+
+    expect(post).toHaveBeenCalledWith('cca', 'i9')            // ← 必须重发
+    expect(out).toEqual({ state: 'connected' })
+  })
+
+  it('echo:同样的形状 —— 投递失败 + 对方先到,重试要重发', async () => {
+    const post = vi.fn<any>(async () => null)
+    const { echoStore, seekStore, revealer } = fixture(post)
+    seekStore.create({ id: 'i9', kind: 'seek', topic: 't' })
+    echoStore.create({ id: 'i9:ccb', seekId: 'i9', peerMasked: '第 1 度的某人', degree: 1, content: 'x', peerAgentId: 'ccb' })
+
+    expect(await revealer.revealEcho('i9:ccb')).toEqual({ state: 'peer_unreachable' })
+    revealer.onInboundReveal({ agentId: 'ccb', intentId: 'i9', peerHandle: PEER_HANDLE })
+
+    post.mockClear()
+    post.mockImplementation(async () => ({ mutual: false }))
+    const out = await revealer.revealEcho('i9:ccb')
+
+    expect(post).toHaveBeenCalledWith('ccb', 'i9')
+    expect(out).toEqual({ state: 'connected' })
+  })
+
+  it('投递成功过就不再重发(短路仍然成立,不是把幂等改坏了)', async () => {
+    const post = vi.fn<any>(async () => ({ mutual: true, handle: PEER_HANDLE }))
+    const { pledgeStore, revealer } = fixture(post)
+    pledgeStore.create({ id: 'i8:cca', intentId: 'i8', seekerAgentId: 'cca', topic: 't' })
+
+    expect(await revealer.revealPledge('i8:cca')).toEqual({ state: 'connected' })
+    post.mockClear()
+    expect(await revealer.revealPledge('i8:cca')).toEqual({ state: 'connected' })
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it('投递成功但对方还没揭晓(awaiting_peer)也算已送达 —— 重试不重发', async () => {
+    const post = vi.fn<any>(async () => ({ mutual: false }))
+    const { pledgeStore, revealer } = fixture(post)
+    pledgeStore.create({ id: 'i7:cca', intentId: 'i7', seekerAgentId: 'cca', topic: 't' })
+
+    expect(await revealer.revealPledge('i7:cca')).toEqual({ state: 'awaiting_peer' })
+    // 对方的揭晓到达
+    revealer.onInboundReveal({ agentId: 'cca', intentId: 'i7', peerHandle: PEER_HANDLE })
+    post.mockClear()
+    expect(await revealer.revealPledge('i7:cca')).toEqual({ state: 'connected' })
+    expect(post).not.toHaveBeenCalled()
+  })
+})
+
+// 光能重试还不够:出问题的那次,owner 看到的是「已连接」,他没有任何理由
+// 再点一次。所以未送达的揭晓必须有人**自动**去补 —— 挂在信箱轮询同一拍上
+// (它本来就是网络恢复后第一个动的东西)。
+describe('makeRevealer.retryUndelivered — 自动补投', () => {
+  it('把所有「我已同意但没送出去」的行重投一遍,成功的标记为已送达', async () => {
+    const post = vi.fn<any>(async () => null)
+    const { pledgeStore, echoStore, seekStore, revealer } = fixture(post)
+    seekStore.create({ id: 'i1', kind: 'seek', topic: 't' })
+    echoStore.create({ id: 'i1:ccb', seekId: 'i1', peerMasked: '第 1 度的某人', degree: 1, content: 'x', peerAgentId: 'ccb' })
+    pledgeStore.create({ id: 'i2:cca', intentId: 'i2', seekerAgentId: 'cca', topic: 't' })
+    await revealer.revealEcho('i1:ccb')
+    await revealer.revealPledge('i2:cca')
+
+    post.mockClear()
+    post.mockImplementation(async () => ({ mutual: false }))
+    const n = await revealer.retryUndelivered()
+
+    expect(n).toBe(2)
+    expect(post).toHaveBeenCalledWith('ccb', 'i1')
+    expect(post).toHaveBeenCalledWith('cca', 'i2')
+
+    // 补投成功后就安静了 —— 不能每 2 分钟永远重发下去
+    post.mockClear()
+    expect(await revealer.retryUndelivered()).toBe(0)
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it('超过 14 天还没送到的行就不再重投 —— 补投必须有界(no-retry-storm)', async () => {
+    const post = vi.fn<any>(async () => ({ mutual: false }))
+    const { pledgeStore, revealer } = fixture(post)
+    pledgeStore.create({ id: 'i4:cca', intentId: 'i4', seekerAgentId: 'cca', topic: 't' })
+    pledgeStore.setSelfRevealed('i4:cca', new Date(Date.now() - 15 * 864e5).toISOString())
+
+    expect(await revealer.retryUndelivered()).toBe(0)
+    expect(post).not.toHaveBeenCalled()
+    // 放弃重投不等于抹掉同意 —— owner 手动再点一次揭晓仍然必须重发
+    expect(pledgeStore.get('i4:cca')!.self_revealed_at).not.toBeNull()
+    expect(await revealer.revealPledge('i4:cca')).toEqual({ state: 'awaiting_peer' })
+    expect(post).toHaveBeenCalledWith('cca', 'i4')
+  })
+
+  it('没同意过的行不碰(补投只补「已同意、没送到」,绝不代替 owner 同意)', async () => {
+    const post = vi.fn<any>(async () => ({ mutual: false }))
+    const { pledgeStore, revealer } = fixture(post)
+    pledgeStore.create({ id: 'i3:cca', intentId: 'i3', seekerAgentId: 'cca', topic: 't' })
+
+    expect(await revealer.retryUndelivered()).toBe(0)
+    expect(post).not.toHaveBeenCalled()
+    expect(pledgeStore.get('i3:cca')!.self_revealed_at).toBeNull()
+  })
+})

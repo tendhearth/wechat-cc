@@ -684,16 +684,18 @@ describe('wechat-mcp stdio integration', () => {
         },
         echoStore: {
           create: () => {}, setStatus: () => {}, setSelfRevealed: () => {}, setPeerRevealed: () => {}, setRevealedIdentity: () => {}, listForSeek: () => [],
-          listAll: () => [], get: () => null,
+          listAll: () => [], get: () => null, setSelfDelivered: () => {}, listUndelivered: () => [],
         },
         pledgeStore: {
           create: () => {}, get: () => null, list: () => [],
           setSelfRevealed: () => {}, setPeerRevealed: () => {},
+          setSelfDelivered: () => {}, listUndelivered: () => [],
         },
         revealer: {
           revealEcho: async () => ({ state: 'awaiting_peer' as const }),
           revealPledge: async () => ({ state: 'awaiting_peer' as const }),
           onInboundReveal: () => ({ mutual: false }),
+          retryUndelivered: async () => 0,
         },
       },
     })
