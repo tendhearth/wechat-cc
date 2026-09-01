@@ -27,7 +27,7 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, closeTroubleshoot, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
@@ -518,6 +518,10 @@ function wireEvents() {
     if (!t) return
     if (t.closest('[data-action="brain-recheck"]') || t.closest('[data-action="brain-troubleshoot"]')) {
       runTroubleshoot(deps).catch(err => console.warn("[brain] troubleshoot failed:", err))
+      return
+    }
+    if (t.closest('[data-action="brain-dial"]')) {   // 第二步:用户点了「叫醒大脑」才真拨号
+      runBrainDial(deps).catch(err => console.warn("[brain] dial failed:", err))
       return
     }
     if (t.closest('[data-action="brain-close"]')) { closeTroubleshoot(deps); return }
