@@ -283,7 +283,7 @@ describe('心愿 compose → propose → preview', () => {
     ;(invokeApi as any).mockRejectedValueOnce(new Error('social_not_wired'))
     const { __onComposeSubmitForTest } = await import('./a2a-agents.js')
     await __onComposeSubmitForTest?.(composeEvent())
-    expect(el['fd-compose-note'].textContent).toContain('wechat-cc social enable')
+    expect(el['fd-compose-note'].textContent).toContain('到「觅食网」区块可以启用')
   })
 
   it('确认派出 → POST confirm 成功后收起 compose 并清空输入', async () => {
@@ -403,7 +403,7 @@ describe('配对面板', () => {
     ;(invokeApi as any).mockRejectedValueOnce(new Error('pairing_not_wired'))
     const { __onPairStartForTest } = await import('./a2a-agents.js')
     await __onPairStartForTest?.()
-    expect(el['fd-pair-note'].textContent).toContain('wechat-cc social enable')
+    expect(el['fd-pair-note'].textContent).toContain('到「觅食网」区块可以启用')
   })
 
   it('accept 本地校验:非 6 位数字不发请求', async () => {
@@ -494,7 +494,7 @@ describe('笔友信箱', () => {
   it('mailbox:null → 未启用引导;[] → 空态文案', () => {
     const el = installDom()
     renderForageDesk({ agents: [], seeks: [], echoes: [], inbound: null, mailbox: null })
-    expect(el['fd-mailbox'].innerHTML).toContain('social enable')
+    expect(el['fd-mailbox'].innerHTML).toContain('data-action="social-enable"')
     renderForageDesk({ agents: [], seeks: [], echoes: [], inbound: null, mailbox: [] })
     expect(el['fd-mailbox'].innerHTML).toContain('还没有笔友')
   })

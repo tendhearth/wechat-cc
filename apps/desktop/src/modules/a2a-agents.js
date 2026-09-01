@@ -19,6 +19,49 @@ let previewedUrl = ''
 
 // ── public API ────────────────────────────────────────────────────────────
 
+
+// ── 社交总开关 ──────────────────────────────────────────────────────────
+//
+// 2026-08-31:此前社交未启用时,这个页面四处入口(觅食、配对、信箱、寄信)
+// 都只会说「先在命令行运行 wechat-cc social enable 并重启守护进程」——
+// 一个桌面产品把人踢回终端。被朋友拉来试用的人基本必然卡死在这一步,这是
+// "找朋友测试"的头号障碍。
+//
+// 现在给一个就地按钮。社交仍然【默认关闭】:这一下点击就是用户的明确同意
+// (社交层会代表他往外发东西,这个契约不能省)。启用后可以在觅食网区块里
+// 随时关掉 —— 开关必须双向,否则用户被单向门锁住。
+const SOCIAL_OFF_HINT = '它会让你的 CC 代表你和朋友的 CC 打交道,所以默认关着。'
+
+/** 未启用时统一的空态:一句人话 + 一个就地启用按钮(不再打发人去终端)。 */
+function renderSocialOffState(what) {
+  return `<div class="fd-empty">${escapeHtml(what)}${escapeHtml(SOCIAL_OFF_HINT)}
+    <div style="margin-top:8px"><button class="btn" data-action="social-enable" type="button">启用社交</button></div></div>`
+}
+
+/**
+ * 点「启用社交」:落盘,然后【提示】需要重启才生效 —— 不自动重启。
+ *
+ * 与同页的入站开关(/v1/social/inbound)保持一致的姿态。重启会短暂断开微信
+ * 连接,那是用户该自己挑时机的事;替他决定不合适。
+ */
+async function onSocialEnableClick(btn) {
+  if (!btn || btn.disabled) return
+  btn.disabled = true
+  const original = btn.textContent
+  btn.textContent = '启用中…'
+  try {
+    const r = /** @type {{enabled?:boolean, restart_required?:boolean}} */ (
+      await invokeApi('POST', '/v1/social/enable', { enabled: true }))
+    if (!r || r.enabled !== true) throw new Error('启用未生效')
+    btn.textContent = '已启用'
+    showToast(r.restart_required ? '社交已启用 —— 重启守护进程后生效' : '社交已启用')
+  } catch (err) {
+    btn.disabled = false
+    btn.textContent = original
+    showToast(`启用失败:${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
 export async function initA2AAgentsTab() {
   const list = document.getElementById('a2a-agents-list')
   if (!list) return
@@ -251,7 +294,7 @@ export function renderForageDesk(data) {
   }
   if (mailbox && !mailThreadOpen) {
     if (data.mailbox == null) {
-      mailbox.innerHTML = `<div class="fd-empty">笔友信箱未启用 —— 先在命令行运行 wechat-cc social enable 并重启守护进程。</div>`
+      mailbox.innerHTML = renderSocialOffState('笔友信箱还没开 —— ')
     } else if (chans.length === 0) {
       mailbox.innerHTML = `<div class="fd-empty">还没有笔友 —— 等一张明信片揭晓牵线后，就能在这里通信了。</div>`
     } else {
@@ -448,6 +491,9 @@ async function onCardAction(e) {
   const target = e.target
   if (!(target instanceof HTMLButtonElement)) return
   const action = target.dataset.action
+  // 社交总开关不针对某个 peer,所以没有 data-id —— 必须在下面那个
+  // "没有 id 就返回" 的守卫之前处理掉。
+  if (action === 'social-enable') { await onSocialEnableClick(target); return }
   const id = target.dataset.id
   if (!action || !id) return
 
@@ -619,7 +665,7 @@ async function sendMailReply(target) {
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    if (note) { note.hidden = false; note.textContent = msg === 'penpal_not_wired' ? '笔友功能未启用 —— 先在命令行运行 wechat-cc social enable 并重启守护进程。' : `寄出失败：${msg}` }
+    if (note) { note.hidden = false; note.textContent = msg === 'penpal_not_wired' ? `笔友功能未启用 —— ${SOCIAL_OFF_HINT}到「觅食网」区块可以启用。` : `寄出失败：${msg}` }
   } finally {
     target.disabled = false
   }
@@ -687,7 +733,7 @@ async function onInboundToggle() {
 /** @param {unknown} err */
 function composeErrText(err) {
   const msg = err instanceof Error ? err.message : String(err)
-  if (msg === 'social_not_wired') return '社交觅食未启用 —— 先在命令行运行 wechat-cc social enable 并重启守护进程。'
+  if (msg === 'social_not_wired') return `社交觅食未启用 —— ${SOCIAL_OFF_HINT}到「觅食网」区块可以启用。`
   return `派心愿失败：${msg}`
 }
 
@@ -805,7 +851,7 @@ const PAIR_FAIL_COPY = /** @type {Record<string, string>} */ ({
 /** @param {unknown} err */
 function pairErrText(err) {
   const msg = err instanceof Error ? err.message : String(err)
-  if (msg === 'pairing_not_wired') return '配对功能未启用 —— 先在命令行运行 wechat-cc social enable 并重启守护进程。'
+  if (msg === 'pairing_not_wired') return `配对功能未启用 —— ${SOCIAL_OFF_HINT}到「觅食网」区块可以启用。`
   return `配对失败：${msg}`
 }
 

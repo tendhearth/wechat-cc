@@ -87,6 +87,10 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // would 403 every CLI call. internal-api is 127.0.0.1 + 0600 file token = the
   // owner. confirm IS the real "broadcast to strangers" step, so FLAG all three
   // for the release security review. See docs/superpowers/specs/2026-07-20-p4-seek-confirm-design.md.
+  // 社交总开关。trusted 而非 admin:桌面端的凭证是 daemon 全局 FILE token
+  // (=trusted,见 api-info),admin 会让每一次真机点击 403 —— 2026-07-22 那个
+  // P0 就是这么来的。**发版评审时请连同同族 trusted 路由一起过一遍。**
+  'POST /v1/social/enable': 'trusted',
   'POST /v1/social/seek/propose': 'trusted',
   'POST /v1/social/seek/confirm': 'trusted',
   'POST /v1/social/seek/cancel': 'trusted',
