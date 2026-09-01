@@ -149,6 +149,7 @@ describe('applySocialSwitch —— CLI 与桌面共用的纯核心', () => {
   })
 
   it('原子写 + 0600(与 persistSelfAgentId 同一套落盘姿态)', () => {
+    if (process.platform === 'win32') return  // Windows 没有 POSIX mode,恒为 0o666
     applySocialSwitch(stateDir, true)
     expect(statSync(join(stateDir, 'agent-config.json')).mode & 0o777).toBe(0o600)
   })
