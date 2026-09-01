@@ -12,6 +12,13 @@ export interface PledgeRow {
   /** 我的揭晓**真的送到对端**的时刻。与 self_revealed_at(我的 owner 同意)
    *  是两件事:同意是本地的,送达是网络的。合成一件事的代价见 db.ts v32。 */
   self_reveal_delivered_at: string | null
+  /** 我欠这一位的明信片正文 —— 记下来才补得回去。judge 说 no 的行为 NULL。 */
+  echo_blurb: string | null
+  echo_degree: number | null
+  /** 明信片排队的时刻(补投的有界起点)。 */
+  echo_queued_at: string | null
+  /** 明信片**真的送到**的时刻。见 social-echo-retry.ts。 */
+  echo_delivered_at: string | null
 }
 export interface PledgeStore {
   create(p: { id: string; intentId: string; seekerAgentId: string; topic: string }): void
@@ -23,6 +30,12 @@ export interface PledgeStore {
   setSelfDelivered(id: string, at: string): void
   /** 我已同意、但揭晓从没送出去的行 —— 补投扫描的输入。 */
   listUndelivered(): PledgeRow[]
+  /** 记下我欠这一位的明信片(发之前先记,发失败才补得回去)。 */
+  setPendingEcho(id: string, blurb: string, degree: number, at: string): void
+  /** 明信片已送达。只在投递真的成功后调用(delivered,不是 asked)。 */
+  setEchoDelivered(id: string, at: string): void
+  /** 记了要发、但没送到的明信片 —— 补投扫描的输入。 */
+  listUndeliveredEchoes(): PledgeRow[]
 }
 
 export function makePledgeStore(db: Db): PledgeStore {
@@ -45,6 +58,13 @@ export function makePledgeStore(db: Db): PledgeStore {
   const selUndelivered = db.query<PledgeRow, []>(
     'SELECT * FROM social_pledge WHERE self_revealed_at IS NOT NULL AND self_reveal_delivered_at IS NULL ORDER BY created_at ASC, rowid ASC',
   )
+  const updPendingEcho = db.query<unknown, [string, number, string, string]>(
+    'UPDATE social_pledge SET echo_blurb = ?, echo_degree = ?, echo_queued_at = ? WHERE id = ?',
+  )
+  const updEchoDelivered = db.query<unknown, [string, string]>('UPDATE social_pledge SET echo_delivered_at = ? WHERE id = ?')
+  const selUndeliveredEchoes = db.query<PledgeRow, []>(
+    'SELECT * FROM social_pledge WHERE echo_blurb IS NOT NULL AND echo_delivered_at IS NULL ORDER BY echo_queued_at ASC, rowid ASC',
+  )
   return {
     create(p) { ins.run(p.id, p.intentId, p.seekerAgentId, p.topic, new Date().toISOString()) },
     get(id) { return selOne.get(id) ?? null },
@@ -53,5 +73,8 @@ export function makePledgeStore(db: Db): PledgeStore {
     setPeerRevealed(id, at) { updPeer.run(at, id) },
     setSelfDelivered(id, at) { updDelivered.run(at, id) },
     listUndelivered() { return selUndelivered.all() },
+    setPendingEcho(id, blurb, degree, at) { updPendingEcho.run(blurb, degree, at, id) },
+    setEchoDelivered(id, at) { updEchoDelivered.run(at, id) },
+    listUndeliveredEchoes() { return selUndeliveredEchoes.all() },
   }
 }

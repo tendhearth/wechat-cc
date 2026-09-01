@@ -690,6 +690,7 @@ describe('wechat-mcp stdio integration', () => {
           create: () => {}, get: () => null, list: () => [],
           setSelfRevealed: () => {}, setPeerRevealed: () => {},
           setSelfDelivered: () => {}, listUndelivered: () => [],
+          setPendingEcho: () => {}, setEchoDelivered: () => {}, listUndeliveredEchoes: () => [],
         },
         revealer: {
           revealEcho: async () => ({ state: 'awaiting_peer' as const }),

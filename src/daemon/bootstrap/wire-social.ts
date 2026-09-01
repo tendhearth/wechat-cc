@@ -26,6 +26,7 @@ import { makeMailboxClient } from '../../core/mailbox-client'
 import { loadMailboxIdentity } from '../../core/mailbox-crypto'
 import { peerMailboxOf, chooseTransport, buildCrossedHandle } from './mailbox-dispatch-seam'
 import { makeSocialPost, type PostOutcome } from './social-post-seam'
+import { makeEchoRetry } from '../../core/social-echo-retry'
 import { makeMailboxLetterHandler } from './mailbox-letter-handler'
 import { makeRoutePostLetter } from './postletter-route'
 import { buildSharedForwardBudget } from './forward-budget-seam'
@@ -168,6 +169,9 @@ export interface SocialWiring {
     }
   }
   resumeForaging: () => void
+  /** 补投:没送到的揭晓 + 没送到的明信片。信箱轮询每一拍调一次;社交未启用
+   *  时为 undefined。见 social-reveal.ts / social-echo-retry.ts。 */
+  sweepUndelivered?: () => Promise<{ reveals: number; echoes: number }>
 }
 
 export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
@@ -202,6 +206,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   let socialEchoStore: import('../../core/social-echo-store').EchoStore | undefined
   let socialPledgeStore: import('../../core/social-pledge-store').PledgeStore | undefined
   let socialRevealer: Revealer | undefined
+  let socialSweep: (() => Promise<{ reveals: number; echoes: number }>) | undefined
   let socialPenpal: {
     sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
     resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
@@ -495,6 +500,13 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
 
       const revealer = makeRevealer({ echoStore, pledgeStore, seekStore, postPeerReveal, channel, notify })
       socialRevealer = revealer
+      // 一次扫描补两种欠账:没送到的揭晓 + 没送到的明信片。挂在信箱轮询
+      // 同一拍上 —— 那一拍本来就是网络恢复后第一个动的东西。
+      socialSweep = async () => {
+        const reveals = await revealer.retryUndelivered()
+        const echoes = await echoRetry.retryUndeliveredEchoes()
+        return { reveals, echoes }
+      }
 
       // spec #2: the intermediary's (介绍人 / W) reveal reconciler. Both endpoints
       // reveal TO W; W pivots the two legs on the durable social_relay row and
@@ -631,10 +643,24 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         }
         return receipt
       }
+      // 我欠这一位的明信片,先记账再投递 —— 投不出去才补得回去。
+      // 记账用的 pledge 行就是 answerLocally 刚建的那条(同一个确定性主键)。
+      const postOwnEcho = async (to: string, m: { intent_id: string; echo: { blurb: string; degree: number } }): Promise<boolean> => {
+        const pledgeId = `${m.intent_id}:${to}`
+        try { pledgeStore.setPendingEcho(pledgeId, m.echo.blurb, m.echo.degree, new Date().toISOString()) }
+        catch (err) { deps.log('SOCIAL_REC', `明信片记账失败 pledge=${pledgeId}: ${err instanceof Error ? err.message : String(err)}`) }
+        // 回声要的是【真的送到了没有】—— 见 social-post-seam.ts。
+        const { delivered } = await postToPeer(to, '/a2a/echo', m)
+        if (delivered) {
+          try { pledgeStore.setEchoDelivered(pledgeId, new Date().toISOString()) }
+          catch { /* 记账失败最多多补一次,不影响正确性 */ }
+        }
+        return delivered
+      }
+      const echoRetry = makeEchoRetry({ pledgeStore, postEcho: postOwnEcho, log: deps.log })
       const asyncResponder = makeAsyncResponder({
         answerLocally,
-        // 回声要的是【真的送到了没有】—— 见 social-post-seam.ts。
-        postEcho: async (to, m) => (await postToPeer(to, '/a2a/echo', m)).delivered,
+        postEcho: postOwnEcho,
         // Forward to our OWN paired peers, minus the sender; same cap as discover.
         // Guarded: a registry lookup failure must NOT reject the whole /a2a/intent
         // — W still returns its own local match (fail-closed: forward nothing).
@@ -780,5 +806,6 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       ? { social: { broker: socialBroker, seekStore: socialSeekStore!, echoStore: socialEchoStore!, pledgeStore: socialPledgeStore!, revealer: socialRevealer!, penpal: socialPenpal! } }
       : {}),
     resumeForaging,
+    ...(socialSweep ? { sweepUndelivered: socialSweep } : {}),
   }
 }

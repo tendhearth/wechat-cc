@@ -2818,6 +2818,7 @@ describe('internal-api', () => {
               create: () => {}, get: () => null, list: () => opts.pledges ?? [],
               setSelfRevealed: () => {}, setPeerRevealed: () => {},
               setSelfDelivered: () => {}, listUndelivered: () => [],
+              setPendingEcho: () => {}, setEchoDelivered: () => {}, listUndeliveredEchoes: () => [],
             },
             revealer: {
               revealEcho: async (id: string) => opts.revealEcho ? opts.revealEcho(id) : { state: 'awaiting_peer' as const },
@@ -2922,6 +2923,7 @@ describe('internal-api', () => {
         id: 'i1:cca', intent_id: 'i1', seeker_agent_id: 'cca', topic: 't',
         self_revealed_at: null, peer_revealed_at: null, created_at: 't',
         self_reveal_delivered_at: null,
+        echo_blurb: null, echo_degree: null, echo_queued_at: null, echo_delivered_at: null,
       }
 
       it('GET /v1/social/pledges returns the stored pledges', async () => {
