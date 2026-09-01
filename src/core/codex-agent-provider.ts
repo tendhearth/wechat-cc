@@ -147,6 +147,8 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
   })
 
   return {
+    /** CLI 子进程一档(约 3-5s/次),给 20s 余量。 */
+    cheapEvalBudgetMs: 20_000,
     async cheapEval(prompt: string): Promise<string> {
       // One-shot eval via an ephemeral thread. Minimal everything — no
       // MCP, no network, no shell, no codebase context. Used by chatroom

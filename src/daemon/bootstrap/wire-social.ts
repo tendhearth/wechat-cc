@@ -217,6 +217,9 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   if (configuredAgent.social_enabled && configuredAgent.social_disclosure_policy) {
     const socialPolicy = configuredAgent.social_disclosure_policy
     const socialCheapEval = registry.getCheapEval()
+    // 闸门的超时由**实际会跑的 provider** 说了算,不再是写死的 12s。
+    // 2026-09-01:agy 单次 10.3–14.3s,12s 的常数把派心愿卡成了「时灵时不灵」。
+    const socialGateTimeoutMs = registry.getCheapEvalBudgetMs()
     if (!socialCheapEval) {
       // Same degrade pattern as the openai provider block above: log and
       // skip rather than throw. No registered provider implements cheapEval
@@ -224,6 +227,9 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // must degrade gracefully like every other optional wiring here.
       deps.log('BOOT', 'social: no cheapEval available from any registered provider — social_enabled is on but wiring is skipped (inert)')
     } else {
+      // 说出来 —— 这个数字决定派心愿会不会莫名其妙报 checker_unavailable,
+      // 以前它是个藏在常数里的 12s,查了半天才查出来。
+      deps.log('BOOT', `social: 披露闸门超时 ${socialGateTimeoutMs}ms(按实际 cheapEval provider 的延迟预算)`)
       // spec §2 — one stable-unique slug per daemon (env > config > generated),
       // resolved ONCE by bootstrap/index.ts and threaded in as `deps.selfId`
       // (shared with wirePairing + pipeline-deps' delegate path — see
@@ -321,7 +327,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       deps.log('BOOT', deps.knowledge?.facts
         ? 'social: in-process grounded judge (kernel facts + search, no spawn, provider-agnostic)'
         : 'social: judge reasons from topic only — knowledge not wired (kernel off?). Not plugin-grounded.')
-      const answerIntent = makeAnswerIntent({ judge: socialJudge, policy: socialPolicy, cheapEval: socialCheapEval })
+      const answerIntent = makeAnswerIntent({ judge: socialJudge, policy: socialPolicy, cheapEval: socialCheapEval, gateTimeoutMs: socialGateTimeoutMs })
 
       // Stores.
       const seekStore = makeSeekStore(deps.db)
@@ -710,6 +716,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       const broker = makeBroker({
         policy: socialPolicy,
         cheapEval: socialCheapEval,
+        gateTimeoutMs: socialGateTimeoutMs,
         // PC T2: ranked by a2a-interaction closeness (core/peer-closeness.ts)
         // — recency + volume + reciprocity over deps.eventsStore, descending,
         // capped at 5. v2: mailbox peers now first-class for degree-1 intents
@@ -775,7 +782,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           await broker.forage(row.id, row.redacted_topic, row.redacted_city ? { city: row.redacted_city } : undefined)
           return
         }
-        const gated = await gateOutbound(row.topic, { policy: socialPolicy, cheapEval: socialCheapEval })
+        const gated = await gateOutbound(row.topic, { policy: socialPolicy, cheapEval: socialCheapEval, timeoutMs: socialGateTimeoutMs })
         if (!gated.ok) return   // blocked at resume → nothing exposed
         await broker.forage(row.id, gated.redacted)
       }

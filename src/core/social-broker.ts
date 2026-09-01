@@ -23,6 +23,9 @@ export interface BrokerDeps {
   send: (hand: A2AAgentRecord, card: IntentCard) => Promise<boolean>
   policy: string
   cheapEval: CheapEval
+  /** 闸门的超时上限(毫秒)。来自 `ProviderRegistry.getCheapEvalBudgetMs()`
+   *  —— 实际会跑的 provider 有多慢由它说了算。缺省 ⇒ GATE_TIMEOUT_MS。 */
+  gateTimeoutMs?: number
   ttlMs?: number
   /** P4 propose leg: persist a `proposed` row carrying the owner-approved redacted wording. */
   proposeRow: (intentId: string, r: { topic: string; redactedTopic: string; redactedCity?: string }) => void
@@ -107,9 +110,9 @@ export function makeBroker(deps: BrokerDeps) {
       // 话题和城市是两次独立的脱敏审查 —— 并行,别串行(带城市原本要等两次
       // LLM,现在压到一次的时间)。
       const [gated, gatedCity] = await Promise.all([
-        gateOutbound(topic, { policy: deps.policy, cheapEval: deps.cheapEval }),
+        gateOutbound(topic, { policy: deps.policy, cheapEval: deps.cheapEval, ...(deps.gateTimeoutMs !== undefined ? { timeoutMs: deps.gateTimeoutMs } : {}) }),
         opts?.city
-          ? gateOutbound(opts.city, { policy: deps.policy, cheapEval: deps.cheapEval })
+          ? gateOutbound(opts.city, { policy: deps.policy, cheapEval: deps.cheapEval, ...(deps.gateTimeoutMs !== undefined ? { timeoutMs: deps.gateTimeoutMs } : {}) })
           : Promise.resolve(null),
       ])
       if (!gated.ok) {

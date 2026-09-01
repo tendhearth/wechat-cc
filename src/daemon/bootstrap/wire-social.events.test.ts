@@ -37,7 +37,10 @@ function harness(stateDir: string) {
     fetchAgentCard: async () => { throw new Error('unused') },
     send: async () => ({ ok: true }),
   }
-  const registry = { getCheapEval: () => async () => JSON.stringify({ violation: false }) } as unknown as ProviderRegistry
+  const registry = {
+    getCheapEval: () => async () => JSON.stringify({ violation: false }),
+    getCheapEvalBudgetMs: () => 12_000,
+  } as unknown as ProviderRegistry
   return { eventsStore, configuredAgent, a2aRegistry, a2aClient, registry, stateDir }
 }
 

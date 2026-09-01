@@ -242,6 +242,20 @@ export interface AgentProvider {
    */
   cheapEval?: CheapEval
   /**
+   * 一次 `cheapEval` 调用的**预期上限**(毫秒)。缺省 ⇒ in-process 一档。
+   *
+   * WHY(2026-09-01,真机实测):agy 的 cheapEval(订阅版 Gemini,每次一个
+   * CLI 冷启动)单次 10.3–14.3s;in-process 的 claude/openai 约 1s。披露
+   * 闸门 `GATE_TIMEOUT_MS` 写死 12s,于是派心愿**时灵时不灵**地报
+   * `checker_unavailable` —— 看起来像随机故障,其实是闸门的常数低于
+   * provider 的下限。一个常数服务不了差一个数量级的两档。
+   *
+   * 声明的是「慢到什么程度还算正常」,不是「保证多快」。延迟敏感的调用方
+   * 通过 `ProviderRegistry.getCheapEvalBudgetMs()` 拿到汇总值来定自己的
+   * 超时,而不是各自拍一个常数。
+   */
+  cheapEvalBudgetMs?: number
+  /**
    * Optional one-shot eval on the provider's STRONG (main) model — same
    * no-tools/no-session shape as cheapEval but a more capable model. Used
    * for the /chat verdict, where synthesis quality matters more than cost.

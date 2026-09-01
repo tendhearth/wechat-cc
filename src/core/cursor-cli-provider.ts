@@ -279,6 +279,8 @@ export function createCursorCliProvider(opts: CursorCliProviderOptions): AgentPr
         },
       }
     },
+    /** CLI 子进程一档,与 codex 同量级。 */
+    cheapEvalBudgetMs: 20_000,
     async cheapEval(prompt: string): Promise<string> {
       const text = await oneShotEval(spawnFn, opts.model, prompt)
       assertNotAuthFailed(text, log, 'cursor cheapEval')

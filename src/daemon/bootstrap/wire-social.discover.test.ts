@@ -72,6 +72,7 @@ describe('wireSocial — peer-closeness ranked fan-out (PC T2)', () => {
       }
       const registry = {
         getCheapEval: () => async () => JSON.stringify({ violation: false }),
+        getCheapEvalBudgetMs: () => 12_000,
       } as unknown as ProviderRegistry
       // 'near' has recent (now) + mutual (in>0,out>0) events; 'far' has none
       // — rankPeersByCloseness must place 'near' first regardless of the
@@ -128,6 +129,7 @@ describe('wireSocial — peer-closeness ranked fan-out (PC T2)', () => {
       // unconditionally on ①'s outcome.
       const registry = {
         getCheapEval: () => async () => { throw new Error('judge unused by this test') },
+        getCheapEvalBudgetMs: () => 12_000,
       } as unknown as ProviderRegistry
       const eventsStore = makeFakeEventsStore({ near: { inbound: 4, outbound: 4, ts: new Date().toISOString() } })
 

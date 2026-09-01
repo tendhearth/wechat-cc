@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createProviderRegistry } from './provider-registry'
+import { createProviderRegistry, DEFAULT_CHEAP_EVAL_BUDGET_MS } from './provider-registry'
 import { makeFakeSession } from './test-helpers'
 import type { AgentProvider } from './agent-provider'
 
@@ -290,5 +290,49 @@ describe('getCheapEval — network preflight (2026-08-29: boot-time agy spawn wi
     const r2 = await r.getCheapEval()!('b').catch(() => 'threw')
     expect(r2).toBe('threw')
     expect(calls).toEqual(['agy'])                          // escape hatch force-tried first
+  })
+})
+
+// 2026-09-01:披露闸门写死 12s 超时,而 agy(订阅版 Gemini,CLI 冷启动)
+// 单次实测 10.3–14.3s —— 派心愿时灵时不灵。一个常数服务不了 in-process
+// (约 1s)和 CLI(10-20s)两档,所以延迟预算得由 provider 自己声明,
+// 由 registry 汇总给延迟敏感的调用方。
+describe('getCheapEvalBudgetMs —— 延迟预算由 provider 声明', () => {
+  const bare = (cheap = true, budget?: number) => ({
+    name: 'p', spawn: async () => ({}) as never,
+    ...(cheap ? { cheapEval: async () => 'x' } : {}),
+    ...(budget !== undefined ? { cheapEvalBudgetMs: budget } : {}),
+  }) as never
+
+  it('没人声明 → 默认(in-process 一档)', () => {
+    const r = createProviderRegistry()
+    r.register('claude', bare(), { displayName: 'P', canResume: () => false })
+    expect(r.getCheapEvalBudgetMs()).toBe(DEFAULT_CHEAP_EVAL_BUDGET_MS)
+  })
+
+  it('取候选里最大的 —— 故障转移可能落到任何一个,不能按最快的那个定超时', () => {
+    const r = createProviderRegistry()
+    r.register('claude', bare(), { displayName: 'P', canResume: () => false })
+    r.register('agy', bare(true, 30_000), { displayName: 'P', canResume: () => false })
+    expect(r.getCheapEvalBudgetMs()).toBe(30_000)
+  })
+
+  it('钉死了 provider 就只看它的 —— 钉 claude 不该被 agy 的预算拖长', () => {
+    const r = createProviderRegistry({ cheapEvalProvider: 'claude' })
+    r.register('claude', bare(), { displayName: 'P', canResume: () => false })
+    r.register('agy', bare(true, 30_000), { displayName: 'P', canResume: () => false })
+    expect(r.getCheapEvalBudgetMs()).toBe(DEFAULT_CHEAP_EVAL_BUDGET_MS)
+  })
+
+  it('钉的那个没注册 → 回落偏好序的最大值(与 getCheapEval 的回落一致)', () => {
+    const r = createProviderRegistry({ cheapEvalProvider: 'nope' })
+    r.register('agy', bare(true, 30_000), { displayName: 'P', canResume: () => false })
+    expect(r.getCheapEvalBudgetMs()).toBe(30_000)
+  })
+
+  it('一个 cheapEval 都没有 → 默认值,不抛', () => {
+    const r = createProviderRegistry()
+    r.register('claude', bare(false), { displayName: 'P', canResume: () => false })
+    expect(r.getCheapEvalBudgetMs()).toBe(DEFAULT_CHEAP_EVAL_BUDGET_MS)
   })
 })

@@ -521,6 +521,10 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
         },
       }
     },
+    /** 真机实测(2026-09-01,gemini-3.7-flash-low,每次一个 CLI 冷启动):
+     *  单次 10.3–14.3s,并发两闸门墙钟 12.66s。30s 是留了一倍余量的「慢到
+     *  这个程度还算正常」,不是保证。见 AgentProvider.cheapEvalBudgetMs。 */
+    cheapEvalBudgetMs: 30_000,
     async cheapEval(prompt: string): Promise<string> {
       const text = await oneShotEval(spawnFn, CHEAP_EVAL_MODEL, prompt, turnTimeoutMs)
       assertNotAuthFailed(text, log, 'agy cheapEval')

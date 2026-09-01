@@ -51,6 +51,7 @@ describe('wireSocial — busy-registry hold around forage()', () => {
       // violation → propose succeeds and confirmSeek can flip it to foraging.
       const registry = {
         getCheapEval: () => async () => JSON.stringify({ violation: false }),
+        getCheapEvalBudgetMs: () => 12_000,
       } as unknown as ProviderRegistry
 
       const wiring = await wireSocial({
