@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { makeAdminCommands, friendlyDelegateReason, formatOverviewForDisplay, isDelegateName, type AdminCommandsDeps } from './admin-commands'
+import { makeAdminCommands, matchDelegate, friendlyDelegateReason, formatOverviewForDisplay, isDelegateName, type AdminCommandsDeps } from './admin-commands'
 import { makeSessionStateStore } from '../core/session-state'
 import { openTestDb, type Db } from '../lib/db'
 import type { InboundMsg } from '../core/prompt-format'
@@ -518,7 +518,10 @@ describe('admin-commands', () => {
 
     it('parses hand + task, calls delegateToHand, replies the result', async () => {
       const delegateToHand = vi.fn().mockResolvedValue({ ok: true, response: '家里 README: 项目X' })
-      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'] })
+      const cmds = make({
+        delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+        knownHandNames: () => ['家里'],
+      })
       expect(await cmds.handle(msg('让家里执行 看下README'))).toBe(true)
       await flush()
       expect(delegateToHand).toHaveBeenCalledWith('家里', '看下README')
@@ -527,7 +530,7 @@ describe('admin-commands', () => {
 
     it('does NOT hijack casual pronoun phrases ("让我执行一下X" → normal chat)', async () => {
       const delegateToHand = vi.fn()
-      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'] })
+      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'], knownHandNames: () => ['家里', '公司'] })
       // Not consumed as a command → falls through to the normal conversation path.
       expect(await cmds.handle(msg('让我执行一下这个脚本'))).toBe(false)
       expect(await cmds.handle(msg('让它跑起来再说'))).toBe(false)
@@ -537,7 +540,10 @@ describe('admin-commands', () => {
 
     it('also matches 派…跑 form and a colon', async () => {
       const delegateToHand = vi.fn().mockResolvedValue({ ok: true, response: 'r' })
-      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'] })
+      const cmds = make({
+        delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+        knownHandNames: () => ['公司'],
+      })
       expect(await cmds.handle(msg('派公司跑：跑下测试'))).toBe(true)
       await flush()
       expect(delegateToHand).toHaveBeenCalledWith('公司', '跑下测试')
@@ -545,7 +551,13 @@ describe('admin-commands', () => {
 
     it('unknown hand → replies the known list (discovery)', async () => {
       const delegateToHand = vi.fn().mockResolvedValue({ ok: false, reason: 'unknown_hand', knownHands: ['家里', '公司'] })
-      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'] })
+      // 手名在触发时就已经命中过一次,能走到 unknown_hand 说明**这中间手被
+      // 摘掉了**(移除/暂停)—— 这条分支因此仍然是活的,而且是唯一会报它的
+      // 场景。触发器本身不再拿未知名字去猜(见 matchDelegate 的取舍说明)。
+      const cmds = make({
+        delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+        knownHandNames: () => ['火星'],
+      })
       await cmds.handle(msg('让火星执行 X'))
       await flush()
       expect(sentBody(1)).toContain('已注册的')
@@ -554,7 +566,10 @@ describe('admin-commands', () => {
 
     it('unknown hand with NO hands registered → guides to pair one', async () => {
       const delegateToHand = vi.fn().mockResolvedValue({ ok: false, reason: 'unknown_hand', knownHands: [] })
-      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'] })
+      const cmds = make({
+        delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+        knownHandNames: () => ['家里'],
+      })
       await cmds.handle(msg('让家里执行 X'))
       await flush()
       expect(sentBody(1)).toContain('hand invite')
@@ -563,14 +578,16 @@ describe('admin-commands', () => {
 
     it('a failure reason is shown in friendly form, not a raw code', async () => {
       const delegateToHand = vi.fn().mockResolvedValue({ ok: false, reason: 'http_401' })
-      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'] })
+      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'], knownHandNames: () => ['家里', '公司'] })
       await cmds.handle(msg('让家里执行 X'))
       await flush()
       expect(sentBody(1)).toContain('重新配对')
     })
 
-    it('not wired → tells the operator it is off', async () => {
-      const cmds = make()  // no delegateToHand
+    it('认得出手名、但派活能力没接上 → 明说没启用', async () => {
+      // 接线不一致才会走到这里(有手名、没有 delegateToHand)。触发器现在
+      // 按名字认,所以这条分支只在这种不一致下可达 —— 保留它是防御性的。
+      const cmds = make({ knownHandNames: () => ['家里'] })  // no delegateToHand
       expect(await cmds.handle(msg('让家里执行 X'))).toBe(true)
       await flush()
       expect(sentBody(0)).toContain('派活功能未启用')
@@ -589,6 +606,7 @@ describe('admin-commands', () => {
       const holdBusy = vi.fn((label: string) => { expect(label).toBe('admin-delegate'); return releaseBusy })
       const cmds = make({
         delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+        knownHandNames: () => ['家里'],
         holdBusy,
       })
       expect(await cmds.handle(msg('让家里执行 看下README'))).toBe(true)
@@ -606,6 +624,7 @@ describe('admin-commands', () => {
       const holdBusy = vi.fn(() => releaseBusy)
       const cmds = make({
         delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+        knownHandNames: () => ['家里'],
         holdBusy,
       })
       await cmds.handle(msg('让家里执行 X'))
@@ -616,7 +635,7 @@ describe('admin-commands', () => {
     it('non-admin is consumed but does NOT delegate', async () => {
       isAdmin.mockReturnValue(false)
       const delegateToHand = vi.fn()
-      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'] })
+      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'], knownHandNames: () => ['家里', '公司'] })
       expect(await cmds.handle(msg('让家里执行 X'))).toBe(true)
       await flush()
       expect(delegateToHand).not.toHaveBeenCalled()
@@ -840,5 +859,85 @@ describe('friendlyDelegateReason —— 必须认识 Bun 的连接错误措辞,�
     expect(friendlyDelegateReason('paused')).toContain('暂停')
     expect(friendlyDelegateReason('http_401')).toContain('配对密钥')
     expect(friendlyDelegateReason('timeout')).toContain('超时')
+  })
+})
+
+// 2026-09-02。owner 在微信里发「让win想一想1+1=？」—— 没触发派活,本机答了。
+// 因为触发器卡的是**动词**:
+//
+//   /^\s*(?:让|派)\s*(\S+?)\s*(?:执行|跑)\s*.../
+//
+// 注释解释得很好(「让/派 + 执行/跑 才能挡住日常语句」),但**判别维度选错
+// 了**:按动词卡是打地鼠 —— 想一想、看看、查一下、帮我、试试……补不完。
+//
+// 天然的判别器是**名字**:手名是 owner 亲手注册的,一共就那么几个。命中
+// 已注册的手名才算派活,没命中就落回正常聊天 —— 反而比动词表更严,因为
+// 动词表要跟整个汉语日常表达竞争,而名字集合小且由人指定。
+//
+// 中文没有词间空格,所以不能靠分隔符切「名字|任务」,只能拿已知的手名去
+// 前缀匹配。
+describe('matchDelegate —— 按已注册的手名认,不按动词认', () => {
+  const hands = ['win', '家里', '公司那台']
+
+  it('owner 撞到的那句:让win想一想1+1=？', () => {
+    expect(matchDelegate('让win想一想1+1=？', hands)).toEqual({ hand: 'win', task: '想一想1+1=？' })
+  })
+
+  it.each([
+    ['让win看看日志', 'win', '看看日志'],
+    ['派家里查一下磁盘', '家里', '查一下磁盘'],
+    ['让公司那台帮我跑测试', '公司那台', '帮我跑测试'],
+    ['让win：git status', 'win', 'git status'],
+    ['让win, 重启一下', 'win', '重启一下'],
+  ])('%s', (text, hand, task) => {
+    expect(matchDelegate(text, hands)).toEqual({ hand, task })
+  })
+
+  it('名字后紧跟的「执行/跑」当语气词剥掉,不混进任务', () => {
+    expect(matchDelegate('让win执行1+1=？', hands)).toEqual({ hand: 'win', task: '1+1=？' })
+    expect(matchDelegate('派家里跑一下测试', hands)).toEqual({ hand: '家里', task: '一下测试' })
+  })
+
+  it('句中的「跑」不会把名字吃掉(中文没有词间空格,这正是旧触发器的坑)', () => {
+    // 旧版 `让(\S+?)\s*(?:执行|跑)` 会把这句切成 名字=公司那台帮我 / 任务=测试。
+    expect(matchDelegate('让公司那台帮我跑测试', hands)).toEqual({ hand: '公司那台', task: '帮我跑测试' })
+  })
+
+  it('长名字优先 —— 别被短名字抢先匹配', () => {
+    expect(matchDelegate('让win-office看看', ['win', 'win-office']))
+      .toEqual({ hand: 'win-office', task: '看看' })
+  })
+
+  it('没命中任何手名 → null,落回正常聊天(不再回「没找到叫X的手」的噪音)', () => {
+    expect(matchDelegate('让张三跑一趟', hands)).toBeNull()
+    expect(matchDelegate('让我看看这个', hands)).toBeNull()
+    expect(matchDelegate('让它跑起来', hands)).toBeNull()
+  })
+
+  it('代词永远不算手名,哪怕真有人把手起名叫「我」', () => {
+    expect(matchDelegate('让我执行一下X', ['我'])).toBeNull()
+  })
+
+  it('只有名字没有任务 → null(「让win」不是一条指令)', () => {
+    expect(matchDelegate('让win', hands)).toBeNull()
+    expect(matchDelegate('让win  ', hands)).toBeNull()
+  })
+
+  it('不以让/派开头 → null', () => {
+    expect(matchDelegate('win 你在吗', hands)).toBeNull()
+    expect(matchDelegate('我让win去做了', hands)).toBeNull()
+  })
+
+  it('一个手都没注册 → 永远 null(不会把日常语句吃掉)', () => {
+    expect(matchDelegate('让win想一想', [])).toBeNull()
+  })
+
+  it('手名打错 → null,落回正常聊天', () => {
+    // **刻意的取舍**:旧版在这里会回「没找到叫「winn」的手,已注册的:…」,
+    // 是个发现性入口。但要保住它就得让「未知名字 + 动词」也算触发,而中文
+    // 句中的动词到处都是 —— 「让张三跑一趟」会被同一条规则劫走并回一句
+    // 噪音。精确性比发现性值钱:名字从 `hand join` 的输出里就能看到。
+    expect(matchDelegate('让winn执行ls', hands)).toBeNull()
+    expect(matchDelegate('让winner去吧', hands)).toBeNull()   // 不能从更长的英文词里匹出来
   })
 })

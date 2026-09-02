@@ -70,6 +70,11 @@ export interface AdminCommandsDeps {
     { ok: true; response: string } | { ok: false; reason: string; knownHands?: string[] }
   >
   /**
+   * 已注册的手的名字/id。触发器**按名字认**派活,不按动词认 —— 见
+   * {@link matchDelegate}。缺省 ⇒ 只剩明确动词形式(向后兼容)。
+   */
+  knownHandNames?: () => readonly string[]
+  /**
    * Starts an external updater process. The updater must live outside this
    * daemon process because a real update can stop/restart the service that is
    * currently handling the WeChat message.
@@ -118,10 +123,55 @@ const SYNTHESIZE_RE = /^\s*(?:\/(?:synthesize|整理记忆)|重新整理记忆|�
 // about them. Distinct from SYNTHESIZE_RE (which *regenerates*): these are
 // "show me", anchored so they don't collide with the 重新整理/更新 phrasings.
 const SHOW_OVERVIEW_RE = /^\s*(?:\/overview|你对我的理解|看看你对我的理解|你眼中的我|你怎么(?:理解|看)我|你记得我(?:什么|啥)|查看记忆|看一下记忆|看下记忆|看记忆)\s*[?？]?\s*$/
-// 让/派 <hand> 执行/跑 <task> — delegate a task to another machine ("hand").
-// 让/派 (imperative) + 执行/跑 keeps casual speech from matching; an unknown
-// hand name still replies with the known list (doubles as discovery).
-const DELEGATE_RE = /^\s*(?:让|派)\s*(\S+?)\s*(?:执行|跑)\s*[:：]?\s*(\S[\s\S]*?)\s*$/
+// 名字后面紧跟的「执行/跑」只是语气词,剥掉,别混进任务里。
+// 刻意**只在名字已经命中之后**才剥 —— 早期版本拿它当触发器
+// (`让(\S+?)\s*(?:执行|跑)`),而中文没有词间空格,句中的「跑」会把名字
+// 吃掉:「让公司那台帮我跑测试」被切成 名字=公司那台帮我 / 任务=测试。
+const DELEGATE_VERB_PREFIX_RE = /^(?:执行|跑)\s*[:：]?\s*/
+// 让/派 <hand> <任何话> — 按**已注册的手名**认。
+//
+// WHY(2026-09-02,owner 在微信里撞到):此前只有上面那条动词形式,于是
+// 「让win想一想1+1=？」不触发派活、被本机答了。**判别维度选错了**:按动词
+// 卡是打地鼠(想一想/看看/查一下/帮我/试试……补不完),而名字是天然的判别器
+// —— 手名是 owner 亲手注册的,一共就那么几个,集合小且由人指定。按名字认
+// 反而比按动词更严:动词表要跟整个汉语日常表达竞争,名字表不用。
+//
+// 中文没有词间空格(「让win想一想」里 win 和任务是连着的),所以不能靠分隔符
+// 切,只能拿已知手名做前缀匹配 —— 这也正是它安全的原因:没注册过的名字
+// 根本进不来。
+const DELEGATE_LEAD_RE = /^\s*(?:让|派)\s*([\s\S]+)$/
+
+export interface DelegateMatch { hand: string; task: string }
+
+/**
+ * 认出一条派活指令。`knownHands` 是**已注册的手名/id**。
+ *
+ * 顺序:先试动词形式(它能把「执行/跑」剥掉,不让动词混进任务里,而且名字
+ * 未知时也返回 —— 明确说了「执行」就是明确想派活,该被告知名字打错了);
+ * 再试名字前缀形式(只认已注册的名字,认不出就落回正常聊天)。
+ */
+export function matchDelegate(text: string, knownHands: readonly string[]): DelegateMatch | null {
+  const lead = DELEGATE_LEAD_RE.exec(text)
+  if (!lead) return null
+  const rest = lead[1]!
+  // 长名字优先:别让 "win" 抢走 "win-office" 的匹配。
+  for (const name of [...knownHands].sort((a, b) => b.length - a.length)) {
+    if (!name || !isDelegateName(name)) continue
+    if (!rest.startsWith(name)) continue
+    // ASCII 名字要词边界:`win` 不能从 `winn执行ls` / `winner去吧` 里匹出来。
+    // 中文名不需要 —— 中文本来就没有词间空格,「公司那台帮我…」里
+    // 「公司那台」后面接「帮」就是一个天然边界。
+    const after = rest.charAt(name.length)
+    if (/[A-Za-z0-9]$/.test(name) && /[A-Za-z0-9_-]/.test(after)) continue
+    const task = rest.slice(name.length)
+      .replace(/^[\s,，:：、]+/, '')
+      .replace(DELEGATE_VERB_PREFIX_RE, '')   // 「让win执行1+1」→ 任务是「1+1」,不是「执行1+1」
+      .trim()
+    if (!task) return null                    // 「让win」不是一条指令
+    return { hand: name, task }
+  }
+  return null
+}
 // Pronouns aren't hand names — without this, casual speech like "让我执行一下X"
 // or "让它跑起来" would be hijacked as a delegate command (and reply "没找到叫
 // 「我」的手"). Excluding them lets such phrases fall through to normal chat;
@@ -154,10 +204,13 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
   return {
     async handle(msg) {
       const text = msg.text.trim()
-      // Match the delegate trigger once — and only treat it as a command when
-      // the name isn't a pronoun, so "让我执行一下X" falls through to normal chat.
-      const delegateMatch = DELEGATE_RE.exec(text)
-      const isDelegate = !!delegateMatch && isDelegateName(delegateMatch[1]!)
+      // 认一次派活指令。按**已注册的手名**认(不是按动词)—— 名字没命中就
+      // 落回正常聊天,所以「让我看看这个」「让张三跑一趟」都不会被劫走。
+      let handNames: readonly string[] = []
+      try { handNames = deps.knownHandNames?.() ?? [] }
+      catch { handNames = [] }   // 列不出手绝不能让整条消息处理不下去
+      const delegateMatch = matchDelegate(text, handNames)
+      const isDelegate = !!delegateMatch
       const isCmd = text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || isDelegate || RESET_RE.test(text) || UPDATE_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
       if (!isCmd) return false
 
@@ -200,7 +253,7 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
 
       if (isDelegate) {
         // Fire-and-forget: the hand runs a full agent — slow. Ack + reply later.
-        void runDelegate(deps, msg.chatId, delegateMatch![1]!.trim(), delegateMatch![2]!.trim())
+        void runDelegate(deps, msg.chatId, delegateMatch!.hand, delegateMatch!.task)
         return true
       }
 

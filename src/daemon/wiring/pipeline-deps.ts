@@ -319,6 +319,17 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       try { return await readFile(join(stateDir, 'memory', adminChatId, OVERVIEW_FILENAME), 'utf8') }
       catch { return null }
     },
+    // 触发器按**已注册的手名**认派活(不按动词)—— 见 admin-commands 的
+    // matchDelegate。id 和 name 都给,两种叫法都能触发。
+    knownHandNames: () => {
+      const a2a = boot.a2aDeps
+      if (!a2a) return []
+      try {
+        return a2a.registry.list()
+          .filter(h => h.capabilities?.includes('exec'))
+          .flatMap(h => (h.name && h.name !== h.id ? [h.id, h.name] : [h.id]))
+      } catch { return [] }
+    },
     // Delegate a task to a registered "hand" (another machine running wechat-cc
     // with A2A exec). Resolves the hand by id or name, routes ws hands through
     // the hub and push hands via HTTP /a2a/exec (one-brain-many-hands).
