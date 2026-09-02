@@ -903,6 +903,13 @@ describe('matchDelegate —— 按已注册的手名认,不按动词认', () => 
     expect(matchDelegate('让公司那台帮我跑测试', hands)).toEqual({ hand: '公司那台', task: '帮我跑测试' })
   })
 
+  it('大小写不敏感,但回的是注册时的原名(下游要按它查)', () => {
+    expect(matchDelegate('让Win看看日志', hands)).toEqual({ hand: 'win', task: '看看日志' })
+    expect(matchDelegate('让WIN看看日志', hands)).toEqual({ hand: 'win', task: '看看日志' })
+    // 边界检查也要跟着不区分大小写,别从更长的词里匹出来
+    expect(matchDelegate('让WINNER去吧', hands)).toBeNull()
+  })
+
   it('长名字优先 —— 别被短名字抢先匹配', () => {
     expect(matchDelegate('让win-office看看', ['win', 'win-office']))
       .toEqual({ hand: 'win-office', task: '看看' })

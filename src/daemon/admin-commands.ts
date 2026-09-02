@@ -157,7 +157,10 @@ export function matchDelegate(text: string, knownHands: readonly string[]): Dele
   // 长名字优先:别让 "win" 抢走 "win-office" 的匹配。
   for (const name of [...knownHands].sort((a, b) => b.length - a.length)) {
     if (!name || !isDelegateName(name)) continue
-    if (!rest.startsWith(name)) continue
+    // 大小写不敏感:`让Win看看` 要能找到名叫 `win` 的手(输入法/自动大写
+    // 每天都在制造这种差异)。中文没有大小写,toLowerCase 对它是恒等,所以
+    // 这条对两种名字都安全。返回的是**注册时的原名**,下游按它查得到。
+    if (rest.slice(0, name.length).toLowerCase() !== name.toLowerCase()) continue
     // ASCII 名字要词边界:`win` 不能从 `winn执行ls` / `winner去吧` 里匹出来。
     // 中文名不需要 —— 中文本来就没有词间空格,「公司那台帮我…」里
     // 「公司那台」后面接「帮」就是一个天然边界。
