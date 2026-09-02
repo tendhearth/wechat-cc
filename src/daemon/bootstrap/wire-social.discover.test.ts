@@ -83,7 +83,7 @@ describe('wireSocial — peer-closeness ranked fan-out (PC T2)', () => {
         log: () => {}, stateDir, db: openTestDb(), configuredAgent: baseConfiguredAgent, selfId: 'test-self',
         registry, defaultProviderId: 'claude', pluginMcp: {}, currentClaudeModel: () => 'claude-opus-4-8',
         claudeBin: undefined, resolveOperatorChatId: () => null, sendAssistantText: undefined,
-        a2aRegistry, a2aClient, eventsStore, getServerBaseUrl: () => null,
+        a2aRegistry, a2aClient, eventsStore,
       })
 
       const proposed = await wiring.social!.broker.propose('找摄影搭子')
@@ -137,7 +137,7 @@ describe('wireSocial — peer-closeness ranked fan-out (PC T2)', () => {
         log: () => {}, stateDir, db: openTestDb(), configuredAgent: baseConfiguredAgent, selfId: 'test-self',
         registry, defaultProviderId: 'claude', pluginMcp: {}, currentClaudeModel: () => 'claude-opus-4-8',
         claudeBin: undefined, resolveOperatorChatId: () => null, sendAssistantText: undefined,
-        a2aRegistry, a2aClient, eventsStore, getServerBaseUrl: () => null,
+        a2aRegistry, a2aClient, eventsStore,
       })
 
       expect(wiring.onIntent).toBeDefined()

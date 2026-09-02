@@ -1031,10 +1031,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     return cachedOperatorChatId
   }
 
-  // Single server holder — assigned once wireA2aServer builds it below. The
-  // getServerBaseUrl thunk passed to wireSocial closes over this variable, so
-  // it resolves the live server at runtime even though wireSocial runs first
-  // (it consumes onIntent/onReveal, which the a2a server construction needs).
+  // Single server holder — assigned once wireA2aServer builds it below.
+  // (曾经有一条注释说 wireSocial 的 getServerBaseUrl thunk 闭包在这上面、
+  // 所以顺序要紧。那个 dep 从头到尾没被 wireSocial 用过,注释比死代码更贵
+  // —— 它会让后来的人以为这里的顺序是有约束的。一并删掉。)
   let a2aServer: import('../../core/a2a-server').A2AServer | null = null
 
   // 降级兜底:social 抛错时的 inert wiring — 与 wireSocial 未配置时的内部
@@ -1061,7 +1061,6 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       a2aClient,
       eventsStore: a2aEventsStore,
       knowledge,
-      getServerBaseUrl: () => a2aServer ? a2aServer.baseUrl() : null,
       // busy-registry hold (spec 2026-08-11 §2, Task 4 step 4 + Task 6) —
       // broker.forage() + the async responder run as fire-and-forget
       // coroutines outside SessionManager.

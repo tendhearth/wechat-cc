@@ -192,7 +192,9 @@ export interface InternalApiDeps {
       agent_id: string
       text: string
       urgency?: 'normal' | 'critical'
-      status: 'ok' | 'auth_failed' | 'http_error' | 'timeout' | 'unknown_agent' | 'agent_paused' | 'dropped_no_operator_chat'
+      // 与 A2AEventsStore 的 EventStatus 保持一致 —— 'unknown_agent' 刻意不在
+      // 其中,原因见 a2a-events-store.ts。
+      status: 'ok' | 'auth_failed' | 'http_error' | 'timeout' | 'agent_paused' | 'dropped_no_operator_chat'
       http_status?: number
     }) => void
     /** True when the a2a HTTP listener is configured and running. */

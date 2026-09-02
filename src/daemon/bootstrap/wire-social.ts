@@ -84,7 +84,6 @@ export interface SocialDeps {
    *  wireSocial runs (it consumes onIntent/onReveal). Currently unused by the
    *  penpal-repointed wiring (reveal crosses pubkey handles, not URLs/names);
    *  kept on the interface for index.ts's existing wiring + any future use. */
-  getServerBaseUrl: () => string | null
   /**
    * busy-registry hold (spec 2026-08-11 §2, Task 4 step 4) — the broker's
    * forage() and the async responder's judge/echo/forward both run as

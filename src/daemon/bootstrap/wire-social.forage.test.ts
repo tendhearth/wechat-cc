@@ -70,7 +70,6 @@ describe('wireSocial — busy-registry hold around forage()', () => {
         a2aRegistry,
         a2aClient,
         eventsStore: makeA2AEventsStore(openTestDb()),
-        getServerBaseUrl: () => null,
         holdBusy,
       })
 

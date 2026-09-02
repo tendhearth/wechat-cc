@@ -55,7 +55,7 @@ describe('wireSocial — 社交往来落 a2a_events(亲密度排序的信号来�
         currentClaudeModel: () => 'claude-opus-4-8', claudeBin: undefined,
         resolveOperatorChatId: () => null, sendAssistantText: undefined,
         a2aRegistry: h.a2aRegistry, a2aClient: h.a2aClient, eventsStore: h.eventsStore,
-        getServerBaseUrl: () => null, holdBusy: () => () => {},
+        holdBusy: () => () => {},
       })
       expect(wiring.social).toBeDefined()
 
@@ -96,7 +96,7 @@ describe('wireSocial — 给 v1 对端发心愿时留下告警', () => {
         currentClaudeModel: () => 'claude-opus-4-8', claudeBin: undefined,
         resolveOperatorChatId: () => null, sendAssistantText: undefined,
         a2aRegistry: reg, a2aClient: h.a2aClient, eventsStore: h.eventsStore,
-        getServerBaseUrl: () => null, holdBusy: () => () => {},
+        holdBusy: () => () => {},
       })
       const proposed = await wiring.social!.broker.propose('找摄影搭子')
       if (!proposed.ok) throw new Error('propose failed')
@@ -152,7 +152,7 @@ describe('wireSocial — 二跳转发要能落到 url-less 的信箱对端', () 
         currentClaudeModel: () => 'claude-opus-4-8', claudeBin: undefined,
         resolveOperatorChatId: () => null, sendAssistantText: undefined,
         a2aRegistry: reg, a2aClient: h.a2aClient, eventsStore: h.eventsStore,
-        getServerBaseUrl: () => null, holdBusy: () => () => {},
+        holdBusy: () => () => {},
       })
       expect(wiring.onIntent).toBeDefined()
 
