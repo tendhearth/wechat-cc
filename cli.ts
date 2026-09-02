@@ -3164,7 +3164,7 @@ const handInviteCmd = defineCommand({
           if (!args.json) console.log(`· 把 A2A 监听开到 ${label} ${plan.host}:${plan.port}(要换用 --host)`)
           cmdDaemonA2AEnable(STATE_DIR, { host: plan.host, port: plan.port })
           if (!args.json) console.log('· 重启 daemon 让它生效…')
-          await restartDaemonAndWait(STATE_DIR, `http://${plan.host}:${plan.port}`, args.json === true)
+          await restartDaemonAndWait(STATE_DIR, `http://${plan.host}:${plan.port}`)
           handUrl = `http://${plan.host}:${plan.port}/a2a`
         }
       }
@@ -3192,36 +3192,41 @@ const handInviteCmd = defineCommand({
  * 重启 daemon 并等新的监听真的起来。
  *
  * 「写完配置让用户自己重启」是这条流程里最贵的一步之一:用户得知道这台是
- * launchd 还是 schtasks 还是前台跑的。daemon 自己有 `/v1/daemon/restart`
- * (优雅退出 → 进程管理器拉起),这里直接用它。
+ * launchd 还是 schtasks 还是前台跑的。
+ *
+ * **不走 `/v1/daemon/restart`** —— 那条路要 admin **session** token,只有
+ * 微信里的 agent(daemon_restart 工具)拿得到;CLI 手里的 internal-token 是
+ * trusted 档,打过去是 403。我第一版就是这么写的,真机上当场撞了。
+ * 改用仓库自己那条验证过的杀进程路径(`daemon kill-residual` 用的同一个):
+ * 读 server.pid、**核对 cmdline 确认是我们的 daemon**、SIGTERM,然后靠进程
+ * 管理器(launchd / schtasks / systemd)拉起来。
  *
  * 等的是**新地址真的出现在 a2a-info.json 里**,不是 sleep 一个拍脑袋的秒数
  * —— 后者在慢机器上会偶发失败,而失败长得像「配对码是坏的」。
+ *
+ * 前台 `wechat-cc run` 起的 daemon 没有管理器会拉它,所以等不回来时必须
+ * **明说配置已经写好了、手动起一下再跑一次**,不能只丢一句超时。
  */
-async function restartDaemonAndWait(stateDir: string, wantBaseUrl: string, quiet: boolean): Promise<void> {
+async function restartDaemonAndWait(stateDir: string, wantBaseUrl: string): Promise<void> {
   const { readA2AInfo } = await import('./src/cli/agent.ts')
-  const { readJsonFile } = await import('./src/lib/read-json-file.ts')
-  const { existsSync, readFileSync } = await import('node:fs')
-  const infoPath = join(stateDir, 'internal-api-info.json')
-  if (!existsSync(infoPath)) throw new Error('daemon 没在跑(internal-api-info.json 不存在)—— 先启动 daemon 再 invite')
-  const api = readJsonFile(infoPath) as { baseUrl?: string; tokenFilePath?: string }
-  if (!api.baseUrl || !api.tokenFilePath) throw new Error('internal-api-info.json 格式不对 —— 重启一次 daemon 再试')
-  const token = readFileSync(api.tokenFilePath, 'utf8').trim()
-  const r = await fetch(`${api.baseUrl}/v1/daemon/restart`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: '{}',
-  }).catch(() => null)
-  if (!r || !r.ok) throw new Error('重启请求没被接受 —— 手动重启 daemon 后再跑一次 hand invite')
-
+  const { killResidualDaemon, defaultResidualKillDeps } = await import('./src/cli/daemon-kill.ts')
+  const r = await killResidualDaemon(defaultResidualKillDeps(), join(STATE_DIR, 'server.pid'))
+  if (!r.killed) {
+    throw new Error(`没能停下当前 daemon(${r.message})—— A2A 配置已经写好了,手动重启 daemon 后再跑一次 hand invite`)
+  }
   const deadline = Date.now() + 90_000
   while (Date.now() < deadline) {
     await new Promise(res => setTimeout(res, 1500))
     const info = readA2AInfo(stateDir)
     if (info?.enabled && info.base_url === wantBaseUrl) return
   }
-  throw new Error(`等了 90 秒,A2A 还没在 ${wantBaseUrl} 上起来 —— 看一眼 daemon 日志`)
+  throw new Error(
+    `等了 90 秒,A2A 还没在 ${wantBaseUrl} 上起来。`
+    + `A2A 配置已经写好了 —— 如果这台的 daemon 是前台 \`wechat-cc run\` 起的,`
+    + `没有进程管理器会自动拉它:手动启动后再跑一次 hand invite 即可。`,
+  )
 }
+
 
 const handJoinCmd = defineCommand({
   meta: { name: 'join', description: 'Join a hand using its pairing code — auto-registers both sides (run on the BRAIN)' },
