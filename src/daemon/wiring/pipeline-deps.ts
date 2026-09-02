@@ -319,6 +319,30 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       try { return await readFile(join(stateDir, 'memory', adminChatId, OVERVIEW_FILENAME), 'utf8') }
       catch { return null }
     },
+    // 粘一串配对码进微信 = 加一台手。大脑那台**就是绑了微信的那台**,
+    // 让 owner 为了粘一串码去开终端没道理。内部就是 CLI 的 `hand join`。
+    joinHandByCode: async (code: string) => {
+      const { joinHand } = await import('../../cli/hand-pairing')
+      try {
+        const r = await joinHand(stateDir, { code, selfId: boot.selfId })
+        if (!r.ok) return { ok: false as const, error: r.error ?? 'pair_failed' }
+        const rec = boot.a2aDeps?.registry.get(r.id)
+        return { ok: true as const, id: r.id, name: rec?.name ?? r.id, url: r.url }
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+    // 列出已配对的手 —— 把「名字打错就列出来」那点发现性还回去
+    // (触发器改成按名字认之后,它在那条路上被拿掉了,见 matchDelegate)。
+    listHands: () => {
+      const a2a = boot.a2aDeps
+      if (!a2a) return []
+      try {
+        return a2a.registry.list()
+          .filter(h => h.capabilities?.includes('exec'))
+          .map(h => ({ id: h.id, name: h.name || h.id, ...(h.url ? { url: h.url } : {}) }))
+      } catch { return [] }
+    },
     // 触发器按**已注册的手名**认派活(不按动词)—— 见 admin-commands 的
     // matchDelegate。id 和 name 都给,两种叫法都能触发。
     knownHandNames: () => {

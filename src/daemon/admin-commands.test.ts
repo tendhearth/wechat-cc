@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { makeAdminCommands, matchDelegate, friendlyDelegateReason, formatOverviewForDisplay, isDelegateName, type AdminCommandsDeps } from './admin-commands'
+import { makeAdminCommands, matchDelegate, matchHandJoin, friendlyDelegateReason, formatOverviewForDisplay, isDelegateName, type AdminCommandsDeps } from './admin-commands'
 import { makeSessionStateStore } from '../core/session-state'
 import { openTestDb, type Db } from '../lib/db'
 import type { InboundMsg } from '../core/prompt-format'
@@ -773,6 +773,74 @@ describe('admin-commands', () => {
       expect(sendMessage).not.toHaveBeenCalled()
     })
   })
+
+  describe('粘码加手 —— 端到端行为', () => {
+    const flush = () => new Promise(r => setTimeout(r, 0))
+
+    it('配对成功 → 显出 url,然后当场试一次派活', async () => {
+      const joinHandByCode = vi.fn().mockResolvedValue({ ok: true, id: 'win', name: 'win-test', url: 'http://10.0.0.5:8717/a2a' })
+      const delegateToHand = vi.fn().mockResolvedValue({ ok: true, response: '收到' })
+      const cmds = make({
+        joinHandByCode: joinHandByCode as unknown as AdminCommandsDeps['joinHandByCode'],
+        delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+      })
+      expect(await cmds.handle(msg('WCCP1abcdef'))).toBe(true)
+      await flush()
+      expect(joinHandByCode).toHaveBeenCalledWith('WCCP1abcdef')
+      // url 必须出现 —— 粘错别人给的码,这是唯一能一眼看见的地方
+      expect(sentBody(1)).toContain('http://10.0.0.5:8717/a2a')
+      expect(delegateToHand).toHaveBeenCalled()
+      expect(sentBody(2)).toContain('通了')
+    })
+
+    it('配上了但派活不通 → **分开说**,不让半成功冒充成功', async () => {
+      // 这正是 owner 今天撞到的形态:配对成功、第一次派活才发现连不上。
+      const joinHandByCode = vi.fn().mockResolvedValue({ ok: true, id: 'win', name: 'win', url: 'http://10.0.0.5:8717/a2a' })
+      const delegateToHand = vi.fn().mockResolvedValue({ ok: false, reason: 'Was there a typo in the url or port?' })
+      const cmds = make({
+        joinHandByCode: joinHandByCode as unknown as AdminCommandsDeps['joinHandByCode'],
+        delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+      })
+      await cmds.handle(msg('WCCP1abcdef'))
+      await flush()
+      expect(sentBody(2)).toContain('配上了,但派活没通')
+      expect(sentBody(2)).toContain('连不上')      // 走 friendlyDelegateReason,不透传 Bun 原文
+    })
+
+    it('配对失败 → 友好原因,不透传裸错误', async () => {
+      const joinHandByCode = vi.fn().mockResolvedValue({ ok: false, error: 'invalid_or_expired_invite' })
+      const cmds = make({ joinHandByCode: joinHandByCode as unknown as AdminCommandsDeps['joinHandByCode'] })
+      await cmds.handle(msg('WCCP1abcdef'))
+      await flush()
+      expect(sentBody(1)).toContain('配对失败')
+    })
+
+    it('非 admin 粘码 → 消费掉但绝不配对', async () => {
+      const joinHandByCode = vi.fn()
+      const cmds = make({
+        isAdmin: () => false,
+        joinHandByCode: joinHandByCode as unknown as AdminCommandsDeps['joinHandByCode'],
+      })
+      expect(await cmds.handle(msg('WCCP1abcdef'))).toBe(true)
+      await flush()
+      expect(joinHandByCode).not.toHaveBeenCalled()
+    })
+
+    it('/hands 列出已配对的手(补回上一轮为精确性删掉的发现性)', async () => {
+      const cmds = make({ listHands: () => [{ id: 'win', name: 'win-test', url: 'http://10.0.0.5:8717/a2a' }] })
+      expect(await cmds.handle(msg('/hands'))).toBe(true)
+      await flush()
+      expect(sentBody(0)).toContain('win-test')
+      expect(sentBody(0)).toContain('让win-test')
+    })
+
+    it('一台手都没有 → 告诉他怎么加,而不是一句「没有」', async () => {
+      const cmds = make({ listHands: () => [] })
+      await cmds.handle(msg('有哪些手'))
+      await flush()
+      expect(sentBody(0)).toContain('hand invite')
+    })
+  })
 })
 
 describe('friendlyDelegateReason', () => {
@@ -946,5 +1014,38 @@ describe('matchDelegate —— 按已注册的手名认,不按动词认', () => 
     // 噪音。精确性比发现性值钱:名字从 `hand join` 的输出里就能看到。
     expect(matchDelegate('让winn执行ls', hands)).toBeNull()
     expect(matchDelegate('让winner去吧', hands)).toBeNull()   // 不能从更长的英文词里匹出来
+  })
+})
+
+// 2026-09-02 C:把 `hand join` 搬进微信 —— 大脑那台是**绑了微信的那台**,
+// 让 owner 为了粘一串码去开终端是没道理的。配完流程变成:
+//   手那台跑一条 `wechat-cc hand invite`,微信里粘一次码。
+describe('粘配对码进微信 = 加一台手', () => {
+  it('裸码直接触发(不用记命令前缀 —— 你刚从终端复制完,别再要求你想一个)', () => {
+    expect(matchHandJoin('WCCP1eyJoYW5kVXJsIjoieCJ9')).toBe('WCCP1eyJoYW5kVXJsIjoieCJ9')
+  })
+
+  it('前后有空白照样认(复制粘贴常带)', () => {
+    expect(matchHandJoin('  WCCP1abc  \n')).toBe('WCCP1abc')
+  })
+
+  it('/hand <码> 作为显式别名', () => {
+    expect(matchHandJoin('/hand WCCP1abc')).toBe('WCCP1abc')
+    expect(matchHandJoin('/配对 WCCP1abc')).toBe('WCCP1abc')
+  })
+
+  it('普通聊天不会误撞 —— WCCP1 前缀在真实对话里不存在', () => {
+    for (const t of ['今天天气不错', 'WCC 是什么', 'wccp1abc（小写不算）', '帮我看看 WCCP 这个缩写']) {
+      expect(matchHandJoin(t)).toBeNull()
+    }
+  })
+
+  it('码中间有换行(微信长文本会折行)→ 拼回去', () => {
+    expect(matchHandJoin('WCCP1abc\ndef')).toBe('WCCP1abcdef')
+  })
+
+  it('空的 /hand → null(当普通消息处理,别回一个语法错误)', () => {
+    expect(matchHandJoin('/hand')).toBeNull()
+    expect(matchHandJoin('/hand   ')).toBeNull()
   })
 })

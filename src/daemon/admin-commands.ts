@@ -75,6 +75,15 @@ export interface AdminCommandsDeps {
    */
   knownHandNames?: () => readonly string[]
   /**
+   * 用一串配对码加一台手(微信里粘码即可,大脑那台不用开终端)。
+   * 内部就是 CLI 的 `hand join`。
+   */
+  joinHandByCode?: (code: string) => Promise<
+    { ok: true; id: string; name: string; url: string } | { ok: false; error: string }
+  >
+  /** 列出已注册的手(名字 + 地址),给发现性用。 */
+  listHands?: () => readonly { id: string; name: string; url?: string }[]
+  /**
    * Starts an external updater process. The updater must live outside this
    * daemon process because a real update can stop/restart the service that is
    * currently handling the WeChat message.
@@ -110,6 +119,21 @@ const HEARTH_HELP_RE = /^\s*\/hearth(\s+help)?\s*$/
 // subprocess + clean keychain read. Emergency recovery hatch for the operator
 // when the desktop dashboard isn't reachable.
 const RESET_RE = /^\s*\/(?:reset|重置)\s*$/
+// 粘一串配对码 = 加一台手。**裸码直接认**:码以 WCCP1 开头 + base64url,
+// 真实聊天里不可能误撞;而 owner 刚从终端复制完一串码,再要求他想一个命令
+// 前缀,正是这次要拿掉的摩擦。`/hand <码>` 留作显式别名。
+const HAND_JOIN_RE = /^\s*(?:\/(?:hand|配对)\s+)?(WCCP1[A-Za-z0-9_\-\s]+)$/
+/** 列出已注册的手。补回上一轮为了精确性删掉的发现性(见 matchDelegate)。 */
+const HANDS_LIST_RE = /^\s*(?:\/hands|有哪些手|手列表|看看有哪些手)\s*[?？]?\s*$/
+
+/** 认出一串配对码(裸码或 /hand <码>)。返回去掉空白的码,或 null。 */
+export function matchHandJoin(text: string): string | null {
+  const m = HAND_JOIN_RE.exec(text)
+  if (!m) return null
+  // 微信会把长文本折行,粘过来可能带换行 —— 拼回去。
+  const code = m[1]!.replace(/\s+/g, '')
+  return code.length > 'WCCP1'.length ? code : null
+}
 const UPDATE_RE = /^\s*\/(?:update|updata)\s*$/
 // /health ai is the AI-side companion of /health: per-provider session state
 // for the current chat. Does not run the underlying CLIs (zero token, zero
@@ -214,11 +238,25 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
       catch { handNames = [] }   // 列不出手绝不能让整条消息处理不下去
       const delegateMatch = matchDelegate(text, handNames)
       const isDelegate = !!delegateMatch
-      const isCmd = text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || isDelegate || RESET_RE.test(text) || UPDATE_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
+      const handCode = matchHandJoin(text)
+      const isCmd = !!handCode || HANDS_LIST_RE.test(text) || text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || isDelegate || RESET_RE.test(text) || UPDATE_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
       if (!isCmd) return false
 
       if (!deps.isAdmin(msg.chatId)) {
         deps.log('ADMIN_CMD', `non-admin ${msg.chatId} sent "${text.slice(0, 30)}" — dropped`)
+        return true
+      }
+
+      if (handCode) {
+        await runHandJoin(deps, msg.chatId, handCode)
+        return true
+      }
+
+      if (HANDS_LIST_RE.test(text)) {
+        const hands = deps.listHands?.() ?? []
+        await deps.sendMessage(msg.chatId, hands.length
+          ? `已配对的手:\n${hands.map(h => `· ${h.name}${h.name === h.id ? '' : `(${h.id})`} → ${h.url ?? '没有地址'}`).join('\n')}\n\n说「让${hands[0]!.name} 看看…」就派给它。`
+          : '还没配对任何手。在那台机器上跑 `wechat-cc hand invite`,把它给出的码粘到这里。').catch(() => {})
         return true
       }
 
@@ -660,6 +698,39 @@ async function runDelegate(deps: AdminCommandsDeps, adminChatId: string, handNam
   } finally {
     try { releaseBusy?.() } catch { /* release 幂等且不抛,防御性 */ }
   }
+}
+
+/**
+ * 粘码加手。配完**立刻试一次**:配对成功但连不上,是 owner 今天真撞到的
+ * 失败形态 —— 那时他只会在第一次派活时才发现,而错误离根因很远。当场试
+ * 一下,把「配上了」和「配上了但连不上」分开说。
+ */
+async function runHandJoin(deps: AdminCommandsDeps, adminChatId: string, code: string): Promise<void> {
+  if (!deps.joinHandByCode) {
+    await deps.sendMessage(adminChatId, '加手功能未启用(这台没开 A2A)。').catch(() => {})
+    return
+  }
+  await deps.sendMessage(adminChatId, '🤝 正在配对…').catch(() => {})
+  let r: Awaited<ReturnType<NonNullable<AdminCommandsDeps['joinHandByCode']>>>
+  try { r = await deps.joinHandByCode(code) }
+  catch (err) { r = { ok: false, error: err instanceof Error ? err.message : String(err) } }
+  if (!r.ok) {
+    await deps.sendMessage(adminChatId, `配对失败:${friendlyDelegateReason(r.error)}`).catch(() => {})
+    deps.log('ADMIN_CMD', `hand join failed chat=${adminChatId}: ${r.error}`)
+    return
+  }
+  // 地址一定要显出来 —— 粘错一串别人给的码,这是唯一能一眼看见的地方。
+  await deps.sendMessage(adminChatId, `✅ 已加手「${r.name}」→ ${r.url}\n正在试一下能不能派活…`).catch(() => {})
+  deps.log('ADMIN_CMD', `hand joined chat=${adminChatId} id=${r.id} url=${r.url}`)
+
+  if (!deps.delegateToHand) return
+  let probe: Awaited<ReturnType<NonNullable<AdminCommandsDeps['delegateToHand']>>>
+  try { probe = await deps.delegateToHand(r.id, '只回两个字:收到') }
+  catch (err) { probe = { ok: false, reason: err instanceof Error ? err.message : String(err) } }
+  await deps.sendMessage(adminChatId, probe.ok
+    ? `🎉 通了。现在说「让${r.name} 看看…」就派给它。`
+    : `⚠️ 配上了,但派活没通:${friendlyDelegateReason(probe.reason)}\n手那台还在的话,检查它的 A2A 是否绑在这台能访问的地址上。`,
+  ).catch(() => {})
 }
 
 async function sendHealthReport(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {
