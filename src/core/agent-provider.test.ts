@@ -201,3 +201,23 @@ describe('ProviderCapabilities — per-provider self-declarations (RFC 05 Phase 
     expect(CURSOR_CAPABILITIES.supportsResume).toBe(true)
   })
 })
+
+// 2026-09-02:把「一个 text 事件 = 一条完整的助手消息」这条**跨 provider 的
+// 契约**钉下来。它此前只存在于各家实现的默契里,openai 那家违反了它整整
+// 一个版本,症状是派活/圆桌的回复被按 token 切碎(每个 delta 之间一个换行)。
+//
+// 这个断言不会替你抓住一家新 provider 违约,但它把契约写成了可读的代码 ——
+// 下一个实现者至少看得到「消费者会 join('\n')」这件事。
+describe('AgentEvent text 的契约 —— 一个事件 = 一条完整消息', () => {
+  it('collectTurn 把每个 text 事件当作一条独立消息(所以 provider 必须先聚合)', async () => {
+    const stream = (async function* () {
+      yield { kind: 'text', text: '第一条' } as AgentEvent
+      yield { kind: 'text', text: '第二条' } as AgentEvent
+      yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+    })()
+    const s = await collectTurn(stream)
+    expect(s.assistantText).toEqual(['第一条', '第二条'])
+    // 消费者的拼法:两条消息之间换行是对的 —— 前提是每一项真的是一条消息。
+    expect(s.assistantText.join('\n')).toBe('第一条\n第二条')
+  })
+})
