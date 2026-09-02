@@ -899,6 +899,7 @@ describe('ConversationCoordinator', () => {
       claudeThrows?: Error
       codexThrows?: Error
       recordTurn?: (r: import('./conversation-coordinator').TurnRecord) => void
+      haikuEval?: (prompt: string) => Promise<string>
     } = {}) {
       const store = makeMockStore()
       store.set('chat-1', { kind: 'parallel' })
@@ -962,9 +963,67 @@ describe('ConversationCoordinator', () => {
         loadAccess: adminAccess,
         log: () => {},
         ...(opts.recordTurn ? { recordTurn: opts.recordTurn } : {}),
+        ...(opts.haikuEval ? { haikuEval: opts.haikuEval } : {}),
       })
       return { c, acquire, sendAssistantText, dispatchCalls }
     }
+
+    // ── 2026-09:/both 末尾补一条收口 ───────────────────────────────────
+    // 原本是「N 条答案并排丢给用户」,合并的活全推给人 —— 在微信这块屏幕
+    // 上尤其糟。并排保留(对比本身有价值),末尾补一条能直接用的答案。
+    const textEvents = (t: string): AgentEvent[] => [
+      { kind: 'text', text: t },
+      { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+    ]
+
+    it('两条答案都拿到 → 末尾多一条 🎯 收口,并排照旧', async () => {
+      const seen: string[] = []
+      const { c, sendAssistantText } = setupParallel({
+        claudeEvents: textEvents('走 A'),
+        codexEvents: textEvents('走 B'),
+        haikuEval: async (p: string) => { seen.push(p); return '就走 A' },
+      })
+      await c.dispatch(inbound('chat-1', '选 A 还是 B?'))
+      const sent = sendAssistantText.mock.calls.map(cc => cc[1] as string)
+      expect(sent.filter(t => t.startsWith('['))).toHaveLength(2)   // 并排还在
+      expect(sent.some(t => t.startsWith('🎯'))).toBe(true)          // 收口来了
+      // 收口的输入必须是匿名的 —— 裁判也是模型,也会看名牌行事
+      expect(seen[0]).toContain('走 A')
+      expect(seen[0]).not.toContain('claude')
+    })
+
+    it('只拿到一条答案 → 不收口(一条答案的"综合"只是复读)', async () => {
+      const { c, sendAssistantText } = setupParallel({
+        claudeEvents: textEvents('走 A'),
+        codexEvents: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
+        haikuEval: async () => '不该被调用',
+      })
+      await c.dispatch(inbound('chat-1', 'q'))
+      const sent = sendAssistantText.mock.calls.map(cc => cc[1] as string)
+      expect(sent.some(t => t.startsWith('🎯'))).toBe(false)
+    })
+
+    it('没有 eval → 只并排,不抛', async () => {
+      const { c, sendAssistantText } = setupParallel({
+        claudeEvents: textEvents('走 A'),
+        codexEvents: textEvents('走 B'),
+      })
+      await c.dispatch(inbound('chat-1', 'q'))
+      const sent = sendAssistantText.mock.calls.map(cc => cc[1] as string)
+      expect(sent.filter(t => t.startsWith('['))).toHaveLength(2)
+      expect(sent.some(t => t.startsWith('🎯'))).toBe(false)
+    })
+
+    it('收口失败不影响已经发出去的并排答案', async () => {
+      const { c, sendAssistantText } = setupParallel({
+        claudeEvents: textEvents('走 A'),
+        codexEvents: textEvents('走 B'),
+        haikuEval: async () => { throw new Error('eval down') },
+      })
+      await c.dispatch(inbound('chat-1', 'q'))
+      const sent = sendAssistantText.mock.calls.map(cc => cc[1] as string)
+      expect(sent.filter(t => t.startsWith('['))).toHaveLength(2)
+    })
 
     it('on auth_failed: releases ONLY the failing provider; other provider replies normally', async () => {
       // The solo path's release-on-auth-failed pattern must extend to /both
@@ -1377,10 +1436,17 @@ describe('ConversationCoordinator', () => {
       })
       const sendAssistantText = vi.fn(async (_chatId: string, text: string) => { sent.push(text) })
       let haikuCallNum = 0
+      // 同一个 cheapEval 现在要服务三种结构完全不同的 prompt(争点地图 /
+      // 收敛判定 / 裁决),所以默认假实现按 prompt 分流 —— 一个固定串会让
+      // 争点地图解析失败,而「解析失败 = 没有争点 = 跳过互驳」是正确行为,
+      // 于是每个既有用例都会安静地少跑一拍。按 prompt 分流才是真实形状。
       const haikuEval = vi.fn(async (prompt: string) => {
         const n = haikuCallNum++
         if (typeof opts.haikuResponse === 'function') return opts.haikuResponse(n, prompt)
-        return opts.haikuResponse ?? '🎯 verdict'
+        if (opts.haikuResponse !== undefined) return opts.haikuResponse
+        if (prompt.includes('contested')) return '{"contested":["A 和 B 谁更快"],"agreed":[]}'
+        if (prompt.includes('converged')) return '{"converged":true}'
+        return '🎯 verdict'
       })
       const c = createConversationCoordinator({
         resolveProject: () => ({ alias: 'a', path: '/p' }),
@@ -1572,6 +1638,88 @@ describe('ConversationCoordinator', () => {
       // haikuEval not called (returned early on empty openings).
       expect(haikuEval).not.toHaveBeenCalled()
     }, 3000)
+
+    // ── 2026-09 改造的三条行为 ──────────────────────────────────────────
+
+    it('开场没有实质分歧 → 整个互驳拍跳过,只剩两条开场 + 裁决', async () => {
+      // 这是这次改造最省的一刀:三个模型说的是同一件事时,再逼他们互驳
+      // 只会产出客套话和虚假对立,而且贵三倍。
+      const { c, sent, acquire } = setupChatroom({
+        haikuResponse: (_n, prompt) =>
+          prompt.includes('contested') ? '{"contested":[],"agreed":["都说先压测"]}' : '🎯 verdict',
+      })
+      await c.dispatch(inbound('chat-1', '选 A 还是 B?'))
+      expect(sent.filter(t => t.startsWith('[')).length).toBe(2)   // 只有开场
+      expect(sent.some(t => t.startsWith('🎯'))).toBe(true)         // 裁决照出
+      expect(acquire.mock.calls.length).toBe(2)                     // 只 spawn 了一拍
+      // 省下这一刀是对的,但它长得跟「互驳坏了」一样 —— 必须说一句
+      expect(sent.find(t => t.startsWith('🎯'))).toContain('跳过了互驳')
+    })
+
+    it('有争点 → 照常互驳;争点原文进了第二拍的 prompt', async () => {
+      const prompts: string[] = []
+      const { c, sent } = setupChatroom({
+        haikuResponse: (_n, prompt) =>
+          prompt.includes('contested') ? '{"contested":["并发安全性谁说了算"],"agreed":[]}'
+          : prompt.includes('converged') ? '{"converged":true}'
+          : '🎯 verdict',
+      })
+      // 借 dispatch 的副作用抓不到 prompt,改从发出去的条数判断即可;
+      // prompt 内容由 chatroom-conductor.test.ts 单独覆盖。
+      void prompts
+      await c.dispatch(inbound('chat-1', '选 A 还是 B?'))
+      expect(sent.filter(t => t.startsWith('[')).length).toBeGreaterThanOrEqual(4)
+    })
+
+    it('cheapEval 缺席时不把「问不出争点」当成「没有争点」—— 退回旧行为照常互驳', async () => {
+      // 否则整个辩论会因为少了一个可选依赖而**悄悄**退化成一拍,
+      // 这正是本仓库反复栽的那种「没人告诉你」的坑。
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const sent: string[] = []
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: {
+          acquire: async ({ providerId }: AcquireRequest) => ({
+            alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+            dispatch: (): AsyncIterable<AgentEvent> => ({
+              async *[Symbol.asyncIterator]() {
+                yield { kind: 'text', text: `${providerId}-say` } as AgentEvent
+                yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+              },
+            }),
+            close: async () => {},
+          }),
+        },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText: async (_c: string, t: string) => { sent.push(t) },
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        // 刻意不给 haikuEval / verdictEval
+      })
+      await c.dispatch(inbound('chat-1', 'q'))
+      expect(sent.filter(t => t.startsWith('[')).length).toBeGreaterThanOrEqual(4)
+    })
+
+    it('互评名次跟裁决同一条消息发出,不额外打扰', async () => {
+      const { c, sent } = setupChatroom({
+        claudeReply: 'A 更好\n#RANK: B > A',
+        codexReply: 'B 更好\n#RANK: B > A',
+      })
+      await c.dispatch(inbound('chat-1', 'q'))
+      const verdict = sent.find(t => t.startsWith('🎯'))!
+      expect(verdict).toContain('📊')
+      expect(sent.filter(t => t.startsWith('📊')).length).toBe(0)   // 没有单独一条
+      // #RANK 那行是内部信号,不能出现在给用户看的发言里
+      expect(sent.some(t => t.includes('#RANK'))).toBe(false)
+    })
 
     it('emits a TurnRecord per participant per beat in chatroom mode', async () => {
       // Each runBeat call records one TurnRecord per participant. With both
