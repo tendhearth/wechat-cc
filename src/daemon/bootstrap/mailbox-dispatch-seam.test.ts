@@ -4,7 +4,7 @@ import type { A2AAgentRecord } from '../../lib/agent-config'
 
 const base = {
   id: 'cc-peer', name: 'peer', inbound_api_key: 'x'.repeat(16), outbound_api_key: 'y',
-  capabilities: [] as string[], paused: false,
+  capabilities: [] as string[], paused: false, may_exec: false,
 }
 
 const mailboxCoords = {
@@ -29,17 +29,17 @@ describe('chooseTransport', () => {
    * 而不只是把今天这一处对齐。
    */
   it('transport 声明为 mailbox 时,即使记录里有 url 也走信箱', () => {
-    const hand = { ...base, transport: 'mailbox', url: 'http://127.0.0.1:8790', ...mailboxCoords } satisfies A2AAgentRecord
+    const hand = { ...base, transport: 'mailbox', may_exec: false, url: 'http://127.0.0.1:8790', ...mailboxCoords } satisfies A2AAgentRecord
     expect(chooseTransport(hand)).toEqual({ kind: 'mailbox', peer: peerMailboxOf(hand)! })
   })
 
   it('mailbox 坐标不全时回落 url —— 声明了信箱却没坐标,不能变成不可达', () => {
-    const hand = { ...base, transport: 'mailbox', url: 'https://peer.example' } satisfies A2AAgentRecord
+    const hand = { ...base, transport: 'mailbox', may_exec: false, url: 'https://peer.example' } satisfies A2AAgentRecord
     expect(chooseTransport(hand)).toEqual({ kind: 'push', url: 'https://peer.example' })
   })
 
   it('push 对端走 url', () => {
-    const hand = { ...base, transport: 'push', url: 'https://peer.example' } satisfies A2AAgentRecord
+    const hand = { ...base, transport: 'push', may_exec: false, url: 'https://peer.example' } satisfies A2AAgentRecord
     expect(chooseTransport(hand)).toEqual({ kind: 'push', url: 'https://peer.example' })
   })
 

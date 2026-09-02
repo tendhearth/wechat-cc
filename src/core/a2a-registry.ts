@@ -20,7 +20,10 @@ import { readJsonFile } from '../lib/read-json-file'
 /** Subset of A2AAgentRecord that's safe to patch via update(). `id` is the
  *  primary key and can't be changed; `capabilities` is derived from the
  *  Agent Card; `paused` has its own toggle. */
-export type A2AAgentPatch = Partial<Pick<A2AAgentRecord, 'name' | 'url' | 'inbound_api_key' | 'outbound_api_key'>>
+/** `may_exec` 可 patch —— 重新配对(onPair)是一次**新的授权**,不只是换钥匙。
+ *  其余安全相关字段仍不可 patch:要改就走 remove + add,免得半路把一条社交
+ *  记录悄悄改成一只手。 */
+export type A2AAgentPatch = Partial<Pick<A2AAgentRecord, 'name' | 'url' | 'inbound_api_key' | 'outbound_api_key' | 'may_exec'>>
 
 export interface A2ARegistry {
   list(): readonly A2AAgentRecord[]

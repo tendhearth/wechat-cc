@@ -221,17 +221,27 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
     const started = Date.now()
     let session: Awaited<ReturnType<typeof provider.spawn>> | null = null
     try {
-      // Per-peer tier selection — restores the pre-Task-6 "read-mostly"
-      // delegate posture for codex while keeping claude auto-allow:
-      //   - Claude side: TIER_PROFILES.trusted → permissionMode='default'.
-      //     The delegate path doesn't wire canUseTool, so trusted is
-      //     functionally auto-allow (same as the prior delegate posture).
-      //   - Codex side: TIER_PROFILES.guest → sandboxMode='read-only' +
-      //     approvalPolicy='untrusted'. Matches the original "ask, don't
-      //     do" intent — delegate codex consults, it doesn't act. The
-      //     approval-policy difference vs the pre-Task-6 'never' is
-      //     functionally equivalent in delegate context (no UI to answer
-      //     either way), but the sandbox is now correctly read-only.
+      // Tier:**所有 provider 一视同仁**,都是 trusted。
+      //
+      // 2026-09-02 改。此前是 `peer === 'claude' ? trusted : guest`,理由写的是
+      // 「非 claude 的 delegate 读多写少、consult 不 act」。两个问题:
+      //
+      // 1. **它没有实现自己声称的东西。** guest 的 GUEST_ALLOW 是
+      //    {reply, share_page, memory_read, observations_read} —— **不含
+      //    fs_read**。想要的是 read-only,拿到的是 read-nothing:真机上那台
+      //    Kimi 手连自己机器上的 package.json 都读不了,自己报
+      //    「工具 "Read" 未被授权使用」。一台读不了任何东西的"手"不是手。
+      // 2. **它把安全边界放错了层。** 边界从来不是"哪个 provider",而是
+      //    "谁能派活给我" —— 而那件事此前根本没检查(只验 bearer)。现在
+      //    `/a2a/exec` 要求 `may_exec`(只有 hand accept / hand invite 那条
+      //    两端都需 CLI 访问权的路径会写 true),边界回到了它该在的地方。
+      //
+      // 授权既然已经等价于一次 SSH 密钥交换(`daemon a2a enable` 自己就警告
+      // 「treat the pairing token like a remote-shell key」),再按 provider
+      // 分档就只是历史巧合 —— claude 早就是 trusted 了。
+      //
+      // 仍然**不是 admin**:daemon_remediate / config_admin 那一档留给本机
+      // 操作者,派来的活不该能改我的 daemon 配置或重启我。
       //
       // chatId='_delegate' is a sentinel — delegate spawns are
       // daemon-initiated (not tied to any real chat). The delegate's
@@ -240,10 +250,7 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
       session = await provider.spawn(
         { alias: '_delegate', path: cwd ?? deps.stateDir },
         {
-          // claude keeps its auto-allow (trusted) posture; every other bare
-          // delegate (codex, openai/Kimi/…) is read-mostly "consult, don't
-          // act" → guest (read-only fs, writes/shell denied by the gate).
-          tierProfile: chosen === 'claude' ? TIER_PROFILES.trusted : TIER_PROFILES.guest,
+          tierProfile: TIER_PROFILES.trusted,
           // Delegate is always strict — there's no daemon-wide --dangerously
           // override path that reaches here (delegate is invoked headless
           // for one-shot consultations, not user-initiated dispatch).

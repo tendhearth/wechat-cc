@@ -3,7 +3,7 @@ import { makeEnvelopeDispatch } from './mailbox-dispatch'
 import type { A2ARegistry } from './a2a-registry'
 import type { A2AAgentRecord } from '../lib/agent-config'
 
-const rec = (id: string): A2AAgentRecord => ({ id, name: id, url: 'http://x/a2a', inbound_api_key: 'k', outbound_api_key: 'k', capabilities: [], paused: false, transport: 'push' })
+const rec = (id: string): A2AAgentRecord => ({ id, name: id, url: 'http://x/a2a', inbound_api_key: 'k', outbound_api_key: 'k', capabilities: [], paused: false, may_exec: false, transport: 'push' })
 const registry = (verify: (id: string, b: string) => A2AAgentRecord | null): A2ARegistry =>
   ({ verifyBearer: verify, list: () => [], get: () => null, add() {}, remove() {}, setPaused() {}, update: (() => { throw new Error('x') }) as any })
 const log = () => {}

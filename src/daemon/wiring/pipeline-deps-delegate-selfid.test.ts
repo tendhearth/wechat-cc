@@ -86,7 +86,7 @@ describe('pipeline-deps delegateToHand selfId (T2/T6 identity-split fix)', () =>
   const pushHand: A2AAgentRecord = {
     id: 'home', name: '家里', url: 'http://127.0.0.1:1/a2a',
     inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o'.repeat(16),
-    capabilities: ['exec'], paused: false, transport: 'push',
+    capabilities: ['exec'], paused: false, transport: 'push', may_exec: false,
   }
 
   function setup(selfId: string) {

@@ -202,6 +202,9 @@ export function a2aRoutes(deps: InternalApiDeps): RouteTable {
           capabilities: [],
           paused: false,
           transport: 'push',
+          // /v1/a2a/install 登记的是一个**别人的** bot(仪表盘/CLI 手工加)。
+          // 绝不授权它在我这台机器上派活 —— 授权只走 hand accept/invite。
+          may_exec: false,
           ...(proto_version !== undefined ? { proto_version } : {}),
         })
         return { status: 200, body: { ok: true, inbound_api_key: inboundKey } }

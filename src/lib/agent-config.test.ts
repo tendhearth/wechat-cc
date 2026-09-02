@@ -243,7 +243,7 @@ describe('agent-config — A2A fields', () => {
             outbound_api_key: 'dpb_xyz',
             capabilities: ['notify'],
             paused: false,
-            transport: 'push',
+            transport: 'push', may_exec: false,
             proto_version: 1,
           },
         ],
@@ -273,7 +273,7 @@ describe('agent-config — A2A fields', () => {
             outbound_api_key: 'dpb_xyz',
             capabilities: ['notify'],
             paused: false,
-            transport: 'push',
+            transport: 'push', may_exec: false,
           },
         ],
       }))
@@ -720,7 +720,7 @@ describe('A2AAgentRecord.transport', () => {
   it('accepts transport "ws"', () => {
     const rec = A2AAgentRecord.parse({
       id: 'home', name: 'home', url: 'http://h/a2a',
-      inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o', capabilities: ['exec'], transport: 'ws',
+      inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o', capabilities: ['exec'], transport: 'ws', may_exec: false,
     })
     expect(rec.transport).toBe('ws')
   })
@@ -805,7 +805,7 @@ describe('A2AAgentRecord url-optional-for-mailbox', () => {
     expect(A2AAgentRecord.safeParse({ ...rest, transport: 'ws' }).success).toBe(false)
   })
   it('still accepts a push record WITH a valid url (back-compat)', () => {
-    expect(A2AAgentRecord.safeParse({ ...mailboxRec, transport: 'push', url: 'https://peer.example' }).success).toBe(true)
+    expect(A2AAgentRecord.safeParse({ ...mailboxRec, transport: 'push', may_exec: false, url: 'https://peer.example' }).success).toBe(true)
   })
   it('an old mailbox config with url set still parses', () => {
     expect(A2AAgentRecord.safeParse({ ...mailboxRec, url: 'https://peer.example' }).success).toBe(true)

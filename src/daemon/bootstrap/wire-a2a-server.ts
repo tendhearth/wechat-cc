@@ -111,7 +111,12 @@ export async function wireA2aServer(deps: A2aServerDeps): Promise<A2aServerWirin
         }
         const existing = a2aRegistry.get(brainId)
         if (existing) {
-          a2aRegistry.update(brainId, { inbound_api_key: execKey })
+          // `may_exec` 必须一起写。**重新配对本身就是一次新的授权** ——
+          // 它消费掉的是本机 `hand invite` 刚铸出来的一次性密钥。
+          // 只刷 inbound_api_key 的话,一个此前以社交身份(may_exec=false)
+          // 登记过的 id 重新配成手之后仍然派不了活,而且没有任何提示:
+          // 2026-09-02 真机上就是这样,re-pair 完照旧 403。
+          a2aRegistry.update(brainId, { inbound_api_key: execKey, may_exec: true })
         } else {
           a2aRegistry.add({
             id: brainId,
@@ -122,6 +127,9 @@ export async function wireA2aServer(deps: A2aServerDeps): Promise<A2aServerWirin
             capabilities: [],
             paused: false,
             transport: 'push',
+            // 这条路径消费的是本机 `hand invite` 刚铸出来的一次性密钥 ——
+            // 操作者在这台机器上亲手生成的,与 hand accept 同等信任建立。
+            may_exec: true,
           })
         }
         a2aEventsStore.append({

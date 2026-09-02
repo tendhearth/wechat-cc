@@ -9,7 +9,7 @@ function rec(id: string, overrides: Partial<A2AAgentRecord> = {}): A2AAgentRecor
     id, name: id, url: `https://${id}/a2a`,
     inbound_api_key: `wc_${id}1234567890123456`.slice(0, 24),  // min 16
     outbound_api_key: `out_${id}`,
-    capabilities: ['notify'], paused: false, ...overrides, transport: overrides.transport ?? 'push',
+    capabilities: ['notify'], paused: false, may_exec: false, ...overrides, transport: overrides.transport ?? 'push',
   }
 }
 
@@ -200,7 +200,8 @@ describe('a2a-server', () => {
   describe('POST /a2a/exec (hand mode)', () => {
     it('runs the local agent and returns the result when authed', async () => {
       const onExec = vi.fn(async () => ({ ok: true as const, response: 'did the thing' }))
-      const alphaRec = rec('alpha')
+      // 2026-09-02:exec 现在要显式授权(may_exec),bearer 不再等于「能执行」。
+      const alphaRec = { ...rec('alpha'), may_exec: true }
       const { server, baseUrl } = await startServer({ agents: [alphaRec], onExec })
       try {
         const res = await fetch(`${baseUrl}/a2a/exec`, {
@@ -223,7 +224,7 @@ describe('a2a-server', () => {
     // 当不了手(真机上就是这样:委派只拿回「进程退出码 1」)。
     it('peer 省略时原样传 undefined,不替本机假设成 claude', async () => {
       const onExec = vi.fn(async () => ({ ok: true as const, response: 'r' }))
-      const alphaRec = rec('alpha')
+      const alphaRec = { ...rec('alpha'), may_exec: true }
       const { server, baseUrl } = await startServer({ agents: [alphaRec], onExec })
       try {
         await fetch(`${baseUrl}/a2a/exec`, {
@@ -835,5 +836,53 @@ describe('a2a-server', () => {
         expect(res.status).toBe(401)
       } finally { await server.stop() }
     })
+  })
+})
+
+// 2026-09-02。owner 的原话:「hand 的目的是连接自己的另一台 wechat-cc 设备
+// 不是么」—— 对。但在此之前,路由**分不出**谁是自己的机器:
+//
+//   `/a2a/exec` 只验 bearer,而 registry 是一张**平的**信任表,里面同时装着
+//   我自己的机器(hand accept/invite,两端都要 CLI 访问权)和朋友的 bot
+//   (六位配对码 / a2a install)。hand 侧给 brain 写的记录是 capabilities: [],
+//   跟社交对端长得一模一样。
+//
+// 于是「非 claude 的 delegate 一律 guest」那道闸其实是在**用能力钳制补一个
+// 缺失的授权检查**,而且补错了地方:卡死了合法用途(自己的手连自己机器上的
+// 文件都读不了),却没挡住真正的口子(claude 那条是 trusted,对任何已配对的
+// 对端开放)。
+//
+// 授权检查放回它该在的地方:`may_exec`。
+describe('POST /a2a/exec —— 只有我授权过的大脑能派活', () => {
+  it('may_exec=false 的对端(社交朋友、a2a install 手工加的)→ 403,不进 onExec', async () => {
+    const onExec = vi.fn(async () => ({ ok: true as const, response: 'r' }))
+    const social = { ...rec('friend'), may_exec: false }
+    const { server, baseUrl } = await startServer({ agents: [social], onExec })
+    try {
+      const r = await fetch(`${baseUrl}/a2a/exec`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${social.inbound_api_key}` },
+        body: JSON.stringify({ agent_id: 'friend', prompt: 'rm -rf /' }),
+      })
+      expect(r.status).toBe(403)
+      expect(await r.json()).toMatchObject({ error: 'exec_not_authorized' })
+      expect(onExec).not.toHaveBeenCalled()   // 连本地 agent 都不该起
+    } finally { server.stop() }
+  })
+
+  it('may_exec=true 的对端(hand accept / hand invite 建立的)→ 正常派活', async () => {
+    const onExec = vi.fn(async () => ({ ok: true as const, response: 'done' }))
+    const brain = { ...rec('mybrain'), may_exec: true }
+    const { server, baseUrl } = await startServer({ agents: [brain], onExec })
+    try {
+      const r = await fetch(`${baseUrl}/a2a/exec`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${brain.inbound_api_key}` },
+        body: JSON.stringify({ agent_id: 'mybrain', prompt: 'x' }),
+      })
+      expect(r.status).toBe(200)
+      expect(await r.json()).toMatchObject({ ok: true, response: 'done' })
+      expect(onExec).toHaveBeenCalled()
+    } finally { server.stop() }
   })
 })

@@ -43,6 +43,9 @@ export function addHand(stateDir: string, opts: { id: string; url: string; name?
     capabilities: ['exec'],
     paused: false,
     transport: 'push',
+    // 这是**大脑侧**记录的一只手 —— 是我派活给它,不是它派活给我。
+    // may_exec 只描述「谁能在我这台机器上跑东西」,所以这里是 false。
+    may_exec: false,
   })
 }
 
@@ -161,5 +164,9 @@ export function acceptBrain(stateDir: string, opts: { brainId: string; token: st
     capabilities: [],
     paused: false,
     transport: 'push',
+    // **手侧**记录的大脑 —— 这条正是「我授权它在我这台机器上派活」。
+    // `hand accept` 要求操作者在这台机器上手输共享 token,等价于一次
+    // SSH 密钥交换,这是本仓库里唯一够格开这个开关的信任建立方式。
+    may_exec: true,
   })
 }

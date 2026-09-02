@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { makeDelegateToHand } from './pipeline-deps'
 
 describe('makeDelegateToHand routing', () => {
-  const wsHand = { id: 'home', name: '家里', url: 'http://x/a2a', inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o', capabilities: ['exec'], paused: false, transport: 'ws' as const }
+  const wsHand = { id: 'home', name: '家里', url: 'http://x/a2a', inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o', capabilities: ['exec'], paused: false, may_exec: false, transport: 'ws' as const }
 
   it('routes a ws hand through the hub', async () => {
     const hub = { dispatchTask: vi.fn().mockResolvedValue({ ok: true, response: 'via-ws' }), attach: vi.fn(), detach: vi.fn(), isConnected: () => true, onMessage: vi.fn() }

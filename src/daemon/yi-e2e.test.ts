@@ -7,7 +7,7 @@ import { makeDelegateToHand } from './wiring/pipeline-deps'
 let cleanup: Array<() => void> = []
 afterEach(() => { cleanup.forEach((f) => f()); cleanup = [] })
 
-const wsHand = { id: 'home', name: '家里', url: 'http://x/a2a', inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o', capabilities: ['exec'], paused: false, transport: 'ws' as const }
+const wsHand = { id: 'home', name: '家里', url: 'http://x/a2a', inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o', capabilities: ['exec'], paused: false, may_exec: false, transport: 'ws' as const }
 const pushHand = { ...wsHand, id: 'office', name: '公司', transport: 'push' as const }
 
 describe('乙 v2 end-to-end', () => {

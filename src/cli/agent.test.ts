@@ -53,7 +53,7 @@ function agentRec(id: string, overrides: Partial<A2AAgentRecord> = {}): A2AAgent
     inbound_api_key: `wc_${'0'.repeat(32)}`.slice(0, 36),
     outbound_api_key: `out_${id}`,
     capabilities: ['notify'],
-    paused: false,
+    paused: false, may_exec: false,
     ...overrides,
     transport: overrides.transport ?? 'push',
   }

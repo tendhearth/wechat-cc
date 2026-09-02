@@ -180,6 +180,28 @@ export const A2AAgentRecord = z.object({
   relays: z.array(z.string().url()).optional(),
   /** Peer's A2A proto_version captured at install time; unset = unknown (treat as 1). */
   proto_version: z.number().int().optional(),
+  /**
+   * 这个对端是不是**我授权可以派活给我**的大脑(brain)。
+   *
+   * WHY(2026-09-02):`/a2a/exec` 此前只验 bearer —— 任何在 registry 里、
+   * bearer 对的对端都能在这台机器上跑一个本地 agent。而 registry 是一张
+   * **平的**信任表,里面同时装着两种完全不同的东西:
+   *   · 我自己的另一台机器(hand invite / hand join / hand accept —— 两端
+   *     都要 CLI 访问权,等价于一次 SSH 密钥交换)
+   *   · 朋友的 bot(六位配对码 / /a2a/pair / a2a install —— 社交层)
+   * 而 hand 侧给 brain 写的记录 `capabilities: []`,跟社交对端**长得一模
+   * 一样**,路由根本分不出来。
+   *
+   * 于是「非 claude 的 delegate 一律 guest」那道闸其实是在**用能力钳制补
+   * 一个缺失的授权检查** —— 而且补错了地方:它卡死了合法用途(我自己的
+   * 手连自己机器上的文件都读不了),却没挡住真正的口子(claude 那条路
+   * 是 trusted,对任何已配对的对端开放)。
+   *
+   * 缺省 false ⇒ **fail closed**:现有的每一条记录(社交对端、以及本字段
+   * 之前建立的手)都不能派活,要重新 `hand invite` / `hand join` 一次。
+   * 这个功能上线至今零使用(零注册手、零 `让X执行`),所以不留兼容后门。
+   */
+  may_exec: z.boolean().default(false),
 }).superRefine((rec, ctx) => {
   // url is optional ONLY for mailbox transport (pure-NAT peers have no public
   // url). push/ws still require a reachable url. spec §6.

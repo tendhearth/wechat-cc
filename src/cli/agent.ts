@@ -85,6 +85,9 @@ export async function cmdAgentAdd(stateDir: string, url: string, opts: AgentAddO
     capabilities: card.capabilities?.map(c => c.name) ?? [],
     paused: false,
     transport: 'push',
+    // 手工登记的对端默认**不能**在我这台机器上派活 —— 要授权只能走
+    // hand accept / hand invite(见 agent-config.ts 的 may_exec)。
+    may_exec: false,
   })
   console.log(`added agent '${id}'`)
   console.log(`  inbound API key: ${inboundKey}`)

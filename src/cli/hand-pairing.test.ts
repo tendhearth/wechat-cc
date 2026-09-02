@@ -38,7 +38,7 @@ describe('listPairings (role classification)', () => {
     createA2ARegistry({ stateDir }).add({
       id: 'pager', name: 'pager', url: 'https://pager/a2a',
       inbound_api_key: TOKEN, outbound_api_key: 'real-key', capabilities: ['notify'], paused: false,
-      transport: 'push',
+      transport: 'push', may_exec: false,
     })
     const p = listPairings(stateDir)
     expect(p.hands.map(h => h.id)).toEqual(['home'])
@@ -112,7 +112,7 @@ describe('smooth pairing (invite code) end-to-end', () => {
         else handRegistry.add({
           id: brainId, name: brainId, url: 'http://brain.local/a2a',
           inbound_api_key: execKey, outbound_api_key: 'unused', capabilities: [], paused: false,
-          transport: 'push',
+          transport: 'push', may_exec: false,
         })
         return { ok: true }
       },

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { buildDelegateDispatch } from './delegate'
 import { makeFakeSession } from '../../core/test-helpers'
 import type { AgentProvider } from '../../core/agent-provider'
+import { TIER_PROFILES } from '../../core/user-tier'
 
 // Bug #86 regression seam — spy on the real factory so we can assert it is
 // NEVER invoked when no codexPathOverride is supplied. This is the only way
@@ -273,5 +274,35 @@ describe('dispatchDelegate —— peer 省略时用本机自己的默认 provide
       expect(r.reason).toContain('codex')
       expect(r.reason).toContain('openai')   // 有什么要说出来
     }
+  })
+})
+
+// 2026-09-02。owner:「应该要放权的,hand 的目的是连接自己的另一台
+// wechat-cc 设备不是么」。对 —— 但放权的前提是路由**认得出**谁是自己的
+// 机器,那道 `may_exec` 授权检查同时落在 a2a-server 上(见那边的用例)。
+// 检查到位之后,按 provider 分档就只剩历史巧合:claude 早就是 trusted。
+describe('delegate 的 tier —— 所有 provider 一视同仁', () => {
+  it('非 claude 的 delegate 也拿 trusted(此前是 guest,连 fs_read 都没有)', async () => {
+    const seen: Array<{ tierProfile: unknown }> = []
+    const spy: AgentProvider = {
+      spawn: async (_p, ctx) => {
+        seen.push({ tierProfile: ctx.tierProfile })
+        return makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] })
+      },
+    }
+    const d = buildDelegateDispatch({ stateDir: tempState({ provider: 'openai' }), claudeAvailable: false, delegateProviders: { openai: spy } })
+    await d(undefined, 'x')
+    expect(seen[0]!.tierProfile).toBe(TIER_PROFILES.trusted)
+  })
+
+  it('trusted 档下 Read 是允许的 —— 这正是此前坏掉的那件事', () => {
+    // GUEST_ALLOW 不含 fs_read,所以旧档下手连自己机器上的文件都读不了。
+    expect(TIER_PROFILES.guest.deny.has('fs_read')).toBe(true)
+    expect(TIER_PROFILES.trusted.allow.has('fs_read')).toBe(true)
+  })
+
+  it('但**不是 admin**:派来的活不能改我的 daemon 配置或重启我', () => {
+    expect(TIER_PROFILES.trusted.deny.has('daemon_remediate')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('config_admin')).toBe(true)
   })
 })
