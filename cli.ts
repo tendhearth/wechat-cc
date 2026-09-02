@@ -3121,9 +3121,11 @@ const handAcceptCmd = defineCommand({
 })
 
 const handInviteCmd = defineCommand({
-  meta: { name: 'invite', description: 'Mint a one-time pairing code for a brain to join (run on the HAND)' },
+  meta: { name: 'invite', description: '一条命令把这台配成「手」:自动开 A2A 监听 + 重启 + 出配对码(在 HAND 那台跑)' },
   args: {
-    url: { type: 'string', description: "Override this hand's A2A url (else read from the running daemon's a2a-info.json)" },
+    host: { type: 'string', description: '强制绑定到这个地址(默认自动挑:Tailscale 优先,其次局域网网卡)' },
+    port: { type: 'string', description: 'A2A 端口(默认 8717)' },
+    url: { type: 'string', description: "完全覆盖这台手的 A2A url(不碰配置、不重启)" },
     cancel: { type: 'boolean', description: 'Cancel any pending invite instead of minting one' },
     json: { type: 'boolean', description: 'JSON envelope' },
   },
@@ -3135,25 +3137,49 @@ const handInviteCmd = defineCommand({
       console.log('已取消待配对邀请。'); return
     }
     try {
+      const { hostname } = await import('node:os')
+      const { readA2AInfo, cmdDaemonA2AEnable } = await import('./src/cli/agent.ts')
+      const { planHandInvite } = await import('./src/cli/hand-pairing.ts')
+      const { pickAdvertisableHost } = await import('./src/lib/local-address.ts')
+
       let handUrl = args.url
       if (!handUrl) {
-        const { readA2AInfo } = await import('./src/cli/agent.ts')
-        const info = readA2AInfo(STATE_DIR)
-        if (!info?.enabled || !info.base_url) {
-          throw new Error('A2A 未开启 —— 先跑 wechat-cc daemon a2a enable --host <本机 100.x.y.z> 并重启 daemon,或用 --url 指定')
+        const port = args.port ? Number.parseInt(args.port, 10) : undefined
+        if (port !== undefined && !Number.isFinite(port)) throw new Error(`port 得是数字,给的是 ${JSON.stringify(args.port)}`)
+        const plan = planHandInvite({
+          info: readA2AInfo(STATE_DIR),
+          pick: pickAdvertisableHost(),
+          ...(args.host ? { host: args.host } : {}),
+          ...(port !== undefined ? { port } : {}),
+        })
+        if (plan.action === 'no_address') {
+          throw new Error('找不到能让对端连上的本机地址(只有回环网卡)。装个 Tailscale,或用 --host 指定。')
         }
-        handUrl = `${info.base_url.replace(/\/+$/, '')}/a2a`
-        if (/\/\/(127\.|localhost|0\.0\.0\.0)/.test(info.base_url)) {
-          console.warn(`⚠ A2A 绑在 ${info.base_url} —— 大脑那台多半连不上。请绑到 Tailscale IP(100.x.y.z)再 invite。`)
+        if (plan.action === 'ready') {
+          handUrl = plan.handUrl
+        } else {
+          // 挑地址这件事**一定要说出来** —— 多网卡时可能挑错,默默替用户决定
+          // 还不告诉他,正是这个仓库反复栽的那种坑。
+          const label = plan.why === 'tailscale' ? 'Tailscale 地址' : plan.why === 'lan' ? '局域网地址' : '你指定的地址'
+          if (!args.json) console.log(`· 把 A2A 监听开到 ${label} ${plan.host}:${plan.port}(要换用 --host)`)
+          cmdDaemonA2AEnable(STATE_DIR, { host: plan.host, port: plan.port })
+          if (!args.json) console.log('· 重启 daemon 让它生效…')
+          await restartDaemonAndWait(STATE_DIR, `http://${plan.host}:${plan.port}`, args.json === true)
+          handUrl = `http://${plan.host}:${plan.port}/a2a`
         }
       }
-      const { code, expiresMs } = mintInvite(STATE_DIR, { handUrl, nowMs: Date.now() })
-      if (args.json) { console.log(JSON.stringify({ ok: true, code, handUrl, expiresMs })); return }
+
+      // 机器名随码带给大脑 —— 那边就不用再想一个 id/名字了。
+      const handName = hostname()
+      const { code, expiresMs } = mintInvite(STATE_DIR, { handUrl, nowMs: Date.now(), handName })
+      if (args.json) { console.log(JSON.stringify({ ok: true, code, handUrl, handName, expiresMs })); return }
       const mins = Math.round(INVITE_TTL_MS / 60_000)
-      console.log(`配对码(${mins} 分钟内有效,只能用一次):\n`)
+      console.log(`\n✅ 这台已经可以当「手」了 —— ${handUrl}`)
+      console.log(`\n配对码(${mins} 分钟内有效,只能用一次):\n`)
       console.log(`  ${code}\n`)
-      console.log('在大脑那台机器上跑(给手起个 id 和名字):')
-      console.log(`  wechat-cc hand join ${code} --id home --name 家里`)
+      console.log('在大脑那台(绑了微信的那台)跑:')
+      console.log(`  wechat-cc hand join ${code}`)
+      console.log(`\n之后在微信里说「让${handName} 看看…」就派活给这台。`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (args.json) { console.log(JSON.stringify({ ok: false, error: msg })); return }
@@ -3162,24 +3188,60 @@ const handInviteCmd = defineCommand({
   },
 })
 
+/**
+ * 重启 daemon 并等新的监听真的起来。
+ *
+ * 「写完配置让用户自己重启」是这条流程里最贵的一步之一:用户得知道这台是
+ * launchd 还是 schtasks 还是前台跑的。daemon 自己有 `/v1/daemon/restart`
+ * (优雅退出 → 进程管理器拉起),这里直接用它。
+ *
+ * 等的是**新地址真的出现在 a2a-info.json 里**,不是 sleep 一个拍脑袋的秒数
+ * —— 后者在慢机器上会偶发失败,而失败长得像「配对码是坏的」。
+ */
+async function restartDaemonAndWait(stateDir: string, wantBaseUrl: string, quiet: boolean): Promise<void> {
+  const { readA2AInfo } = await import('./src/cli/agent.ts')
+  const { readJsonFile } = await import('./src/lib/read-json-file.ts')
+  const { existsSync, readFileSync } = await import('node:fs')
+  const infoPath = join(stateDir, 'internal-api-info.json')
+  if (!existsSync(infoPath)) throw new Error('daemon 没在跑(internal-api-info.json 不存在)—— 先启动 daemon 再 invite')
+  const api = readJsonFile(infoPath) as { baseUrl?: string; tokenFilePath?: string }
+  if (!api.baseUrl || !api.tokenFilePath) throw new Error('internal-api-info.json 格式不对 —— 重启一次 daemon 再试')
+  const token = readFileSync(api.tokenFilePath, 'utf8').trim()
+  const r = await fetch(`${api.baseUrl}/v1/daemon/restart`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: '{}',
+  }).catch(() => null)
+  if (!r || !r.ok) throw new Error('重启请求没被接受 —— 手动重启 daemon 后再跑一次 hand invite')
+
+  const deadline = Date.now() + 90_000
+  while (Date.now() < deadline) {
+    await new Promise(res => setTimeout(res, 1500))
+    const info = readA2AInfo(stateDir)
+    if (info?.enabled && info.base_url === wantBaseUrl) return
+  }
+  throw new Error(`等了 90 秒,A2A 还没在 ${wantBaseUrl} 上起来 —— 看一眼 daemon 日志`)
+}
+
 const handJoinCmd = defineCommand({
   meta: { name: 'join', description: 'Join a hand using its pairing code — auto-registers both sides (run on the BRAIN)' },
   args: {
     code: { type: 'positional', required: true, description: 'The pairing code from `hand invite`', valueHint: 'code' },
-    id: { type: 'string', required: true, description: 'Hand id — lowercase slug, e.g. home' },
-    name: { type: 'string', description: 'Display name (e.g. 家里) — used in 「让<name>执行 X」' },
+    id: { type: 'string', description: 'Hand id(小写 slug)。默认从码里带来的机器名推 —— 通常不用填' },
+    name: { type: 'string', description: '显示名(如 家里)。默认用手那台的机器名 —— 微信里说「让<名字>…」就派给它' },
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
     const { joinHand } = await import('./src/cli/hand-pairing.ts')
     const selfId = process.env.WECHAT_A2A_SELF_ID || 'wechat-cc'
     try {
-      const r = await joinHand(STATE_DIR, { code: args.code, id: args.id, selfId, ...(args.name ? { name: args.name } : {}) })
+      const r = await joinHand(STATE_DIR, { code: args.code, selfId, ...(args.id ? { id: args.id } : {}), ...(args.name ? { name: args.name } : {}) })
       if (args.json) { console.log(JSON.stringify(r)); return }
       if (!r.ok) { console.error(`配对失败: ${r.error}`); process.exit(1) }
-      const label = args.name || args.id
+      // --id/--name 现在都可省 —— 名字随邀请码从手那台带过来了。
+      const label = args.name || r.id
       console.log(`✅ 已配对手「${label}」(${r.id}) → ${r.url}`)
-      console.log(`微信里说: 让${label}执行 <任务>`)
+      console.log(`微信里说:让${label} <任何话> —— 例如「让${label}看看日志」`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (args.json) { console.log(JSON.stringify({ ok: false, error: msg })); return }

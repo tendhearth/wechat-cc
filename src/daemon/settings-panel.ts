@@ -22,7 +22,6 @@
  */
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { networkInterfaces } from 'node:os'
 import { basename, join } from 'node:path'
 import { normalizeUserName } from '../lib/user-name'
 import { writeConfigKey, readConfigSurface } from './config-surface'
@@ -90,17 +89,11 @@ export interface SettingsPanel {
   handleRequest(req: Request): Promise<Response>
 }
 
-/** First non-internal IPv4 address (en0 preferred). Exported for tests. */
-export function lanIp(): string | null {
-  const ifs = networkInterfaces()
-  const names = Object.keys(ifs).sort((a, b) => (a === 'en0' ? -1 : b === 'en0' ? 1 : 0))
-  for (const name of names) {
-    for (const addr of ifs[name] ?? []) {
-      if (!addr.internal && addr.family === 'IPv4') return addr.address
-    }
-  }
-  return null
-}
+/** First non-internal IPv4 address (en0 preferred). Re-exported from
+ *  lib/local-address —— 「本机对外该报哪个地址」现在只有那一处判定
+ *  (配手的 `hand invite` 也要用它)。 */
+export { lanIp } from '../lib/local-address'
+import { lanIp } from '../lib/local-address'
 
 const DEVICES_FILE = 'settings-devices.json'
 const MAX_DEVICES = 20

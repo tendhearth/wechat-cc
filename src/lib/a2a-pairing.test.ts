@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { INVITE_TTL_MS, clearInvite, decodeInvite, mintInvite, verifyAndConsumeInvite } from './a2a-pairing'
+import { INVITE_TTL_MS, clearInvite, decodeInvite, mintInvite, slugifyHandName, verifyAndConsumeInvite } from './a2a-pairing'
 
 let stateDir: string
 const NOW = 1_000_000
@@ -64,5 +64,43 @@ describe('clearInvite', () => {
     expect(existsSync(join(stateDir, 'a2a-pair-pending.json'))).toBe(true)
     clearInvite(stateDir)
     expect(existsSync(join(stateDir, 'a2a-pair-pending.json'))).toBe(false)
+  })
+})
+
+// 2026-09-02。配一台手此前要 4 条命令,其中 `hand join <码> --id linux
+// --name 旧机器` 还要用户现想一个 slug。而**手那台自己就知道它叫什么** ——
+// 把 hostname 放进邀请码里,大脑那边就只剩「粘贴」。
+describe('邀请码带上手的身份 —— join 不用再填 --id/--name', () => {
+  it('mintInvite 带 handName,decodeInvite 原样取回', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pair-name-'))
+    const { code } = mintInvite(dir, { handUrl: 'http://10.0.0.5:8717/a2a', nowMs: Date.now(), handName: 'MacBook-Pro' })
+    expect(decodeInvite(code).handName).toBe('MacBook-Pro')
+  })
+
+  it('不带 handName 的老码仍然能解(向后兼容)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pair-name-'))
+    const { code } = mintInvite(dir, { handUrl: 'http://10.0.0.5:8717/a2a', nowMs: Date.now() })
+    const p = decodeInvite(code)
+    expect(p.handUrl).toBe('http://10.0.0.5:8717/a2a')
+    expect(p.handName).toBeUndefined()
+  })
+})
+
+describe('slugifyHandName —— 从机器名推一个合法的 hand id', () => {
+  it.each([
+    ['MacBook-Pro', 'macbook-pro'],
+    ['win-test', 'win-test'],
+    ['DESKTOP_ABC123', 'desktop-abc123'],
+    ['我的旧电脑', null],            // 纯中文推不出 slug(id 必须是小写 ascii slug)
+    ['', null],
+    ['---', null],
+    ['公司.local', null],
+  ])('%s → %s', (input, want) => {
+    expect(slugifyHandName(input)).toBe(want)
+  })
+
+  it('去掉 .local 之类的后缀,并截断到 id 的长度上限', () => {
+    expect(slugifyHandName('MacBook-Pro.local')).toBe('macbook-pro')
+    expect(slugifyHandName('a'.repeat(200))).toHaveLength(64)
   })
 })

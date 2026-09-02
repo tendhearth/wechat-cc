@@ -17,7 +17,8 @@
 import { randomBytes } from 'node:crypto'
 import { createA2ARegistry } from '../core/a2a-registry'
 import { createA2AClient } from '../core/a2a-client'
-import { decodeInvite, pairUrl } from '../lib/a2a-pairing'
+import { decodeInvite, pairUrl, slugifyHandName } from '../lib/a2a-pairing'
+import { isAdvertisableUrl } from '../core/pairing'
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
 const MIN_TOKEN = 16
@@ -27,6 +28,45 @@ function assertSlug(label: string, v: string): void {
 }
 function assertToken(token: string): void {
   if (token.length < MIN_TOKEN) throw new Error(`token must be at least ${MIN_TOKEN} chars (it's a shared secret — keep it strong)`)
+}
+
+export type InvitePlan =
+  | { action: 'ready'; handUrl: string }
+  | { action: 'enable'; host: string; port: number; why: 'tailscale' | 'lan' | 'override' }
+  | { action: 'no_address' }
+
+export const DEFAULT_HAND_PORT = 8717
+
+/**
+ * `hand invite` 之前要不要先开 A2A 监听 / 重启。**纯判定**,I/O 在 CLI。
+ *
+ * WHY:配一台手最贵的一步一直是
+ * `daemon a2a enable --host <你得自己知道的IP>` —— 用户先得搞懂「为什么
+ * 127.0.0.1 不行」。那是把我们的实现细节摊给他看。
+ *
+ * 「已经开着」不等于「可用」:开在回环或 0.0.0.0 上时,配对会成功、派活
+ * 永远失败,而症状离根因极远(2026-09-01 配对卡片广播 127.0.0.1 就是这个
+ * 形状)。所以这里复用 `isAdvertisableUrl` 判定,而不是只看 enabled 标志。
+ */
+export function planHandInvite(args: {
+  info: { enabled?: boolean; base_url?: string | null } | null
+  pick: { host: string; why: 'tailscale' | 'lan' } | null
+  host?: string
+  port?: number
+}): InvitePlan {
+  const port = args.port ?? DEFAULT_HAND_PORT
+  const current = args.info?.enabled && args.info.base_url ? args.info.base_url : null
+
+  if (args.host) {
+    const want = `http://${args.host}:${port}`
+    if (current === want) return { action: 'ready', handUrl: `${want}/a2a` }
+    return { action: 'enable', host: args.host, port, why: 'override' }
+  }
+  if (current && isAdvertisableUrl(current)) {
+    return { action: 'ready', handUrl: `${current.replace(/\/+$/, '')}/a2a` }
+  }
+  if (!args.pick) return { action: 'no_address' }
+  return { action: 'enable', host: args.pick.host, port, why: args.pick.why }
 }
 
 /** Run on the BRAIN: register a hand the brain can delegate to. */
@@ -119,16 +159,26 @@ export interface JoinResult { ok: boolean; id: string; url: string; error?: stri
  * doesn't leave a half-configured hand. Never throws on network error.
  */
 export async function joinHand(stateDir: string, opts: {
-  code: string; id: string; selfId: string; name?: string; timeoutMs?: number
+  /** 省略 ⇒ 从邀请码里带来的机器名推(手自己知道它叫什么);推不出来才报错
+   *  要求显式指定 —— 绝不替用户编一个。 */
+  code: string; id?: string; selfId: string; name?: string; timeoutMs?: number
 }): Promise<JoinResult> {
-  assertSlug('hand id', opts.id)
   assertSlug('brain self-id', opts.selfId)
-  const { handUrl, secret } = decodeInvite(opts.code)
+  const { handUrl, secret, handName } = decodeInvite(opts.code)
+  const id = opts.id ?? (handName ? slugifyHandName(handName) : null)
+  if (!id) {
+    throw new Error(handName
+      ? `没法从机器名「${handName}」推出一个合法 id(只能是小写字母/数字/短横)——请加 --id <名字>`
+      : '这张邀请码没带机器名(手那台是旧版本)——请加 --id <名字>')
+  }
+  assertSlug('hand id', id)
+  // 显示名:优先用户给的,其次手自报的机器名,最后回落到 id。
+  const displayName = opts.name ?? handName ?? id
   const execKey = randomBytes(24).toString('hex')   // brain↔hand shared exec bearer (48 hex chars)
 
   const registry = createA2ARegistry({ stateDir })
-  if (registry.get(opts.id)) registry.remove(opts.id)   // re-join overwrites
-  addHand(stateDir, { id: opts.id, url: handUrl, ...(opts.name ? { name: opts.name } : {}), token: execKey })
+  if (registry.get(id)) registry.remove(id)   // re-join overwrites
+  addHand(stateDir, { id, url: handUrl, name: displayName, token: execKey })
 
   const client = createA2AClient({ timeoutMs: opts.timeoutMs ?? 15_000 })
   const r = await client.send({
@@ -138,14 +188,14 @@ export async function joinHand(stateDir: string, opts: {
   })
   const resp = r.response as { ok?: unknown; error?: unknown } | undefined
   if (!r.ok || !resp || resp.ok !== true) {
-    registry.remove(opts.id)   // roll back — don't leave a half-paired hand
+    registry.remove(id)   // roll back — don't leave a half-paired hand
     // Prefer the hand's structured reason (e.g. invalid_or_expired_invite),
     // which the endpoint sends with a 401 — fall back to the transport error.
     const bodyErr = resp && typeof resp.error === 'string' ? resp.error : undefined
     const error = bodyErr ?? r.error ?? `http_${r.http_status ?? '?'}`
-    return { ok: false, id: opts.id, url: handUrl, error }
+    return { ok: false, id, url: handUrl, error }
   }
-  return { ok: true, id: opts.id, url: handUrl }
+  return { ok: true, id, url: handUrl }
 }
 
 /** Run on the HAND: accept a brain that may delegate tasks to this machine. */
