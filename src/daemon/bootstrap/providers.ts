@@ -150,6 +150,13 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       }),
     }),
     log: (line) => deps.log('REGISTRY', line),
+    // 诊断采集:cheapEval 失败时把真实形状落到 failure-shapes.jsonl。
+    // 这条路是 **agy 唯一真正跑的地方** —— 要修「四处判定各说各话」,
+    // 得先有真机语料,而 turn_records 里 agy 是零行(它不走会话轮次)。
+    // 只记录,不改任何分类行为。
+    onProviderFailure: (info) => {
+      void import('../diagnostics/failure-shapes').then(m => m.recordFailureShape(deps.stateDir, info))
+    },
   })
   registry.register(
     'claude',

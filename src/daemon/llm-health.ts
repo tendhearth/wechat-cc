@@ -80,7 +80,10 @@ export function unconfiguredHints(registered: string[]): Array<{ provider: strin
 const PROBE_PROMPT = '只回复两个字母:ok'
 const TIMEOUT_SENTINEL: unique symbol = Symbol('llm-probe-timeout')
 
-const AUTH_RE = /auth_failed|not logged in|login required|credential|unauthenticated|请.*登录/i
+/** 导出仅为**诊断采集**如实调用它(见 diagnostics/failure-shapes)。
+ *  复制一份必然漂 —— 这一轮已经吃过两次同款亏(连接措辞、读 JSON)。 */
+export const LLM_HEALTH_AUTH_RE = /auth_failed|not logged in|login required|credential|unauthenticated|请.*登录/i
+const AUTH_RE = LLM_HEALTH_AUTH_RE
 
 export function makeLlmHealth(deps: LlmHealthDeps): LlmHealth {
   const timeoutMs = deps.timeoutMs ?? 45_000

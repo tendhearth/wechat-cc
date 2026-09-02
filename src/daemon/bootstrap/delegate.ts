@@ -61,6 +61,8 @@ export interface DelegateBuildDeps {
    * throw. ABSENT ⇒ no-op, exactly as before this feature existed.
    */
   holdBusy?: (label: string) => () => void
+  /** 诊断采集(可选):一次 one-shot delegate 失败时交出真实形状。 */
+  onProviderFailure?: (info: { provider: string; op: 'delegate'; errorCode: string | null; message: string }) => void
 }
 
 export type DelegateDispatch = (
@@ -265,7 +267,12 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
       const response = result.assistantText.join('\n').trim()
       return { ok: true, response, duration_ms: Date.now() - started }
     } catch (err) {
-      return { ok: false, reason: err instanceof Error ? err.message : String(err) }
+      const message = err instanceof Error ? err.message : String(err)
+      try {
+        const m = /^([a-z_]+):/.exec(message)
+        deps.onProviderFailure?.({ provider: chosen, op: 'delegate', errorCode: m ? m[1]! : null, message })
+      } catch { /* 采集永不外泄 */ }
+      return { ok: false, reason: message }
     } finally {
       if (session) {
         try { await session.close() } catch { /* swallow shutdown errors */ }

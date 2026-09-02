@@ -1006,6 +1006,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // busy-registry hold (spec 2026-08-11 §2, Task 4 step 3 + Task 6) —
     // a delegate dispatch is a one-shot session outside SessionManager.
     holdBusy: busyRegistry.hold,
+    // 同上:one-shot delegate 失败也采一笔。
+    onProviderFailure: (info) => {
+      void import('../diagnostics/failure-shapes').then(m => m.recordFailureShape(deps.stateDir, info))
+    },
   })
 
   // ── A2A wiring ────────────────────────────────────────────────────────
