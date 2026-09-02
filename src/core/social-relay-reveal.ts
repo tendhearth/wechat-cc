@@ -17,10 +17,11 @@ import type { PenpalHandle } from './penpal-crypto'
 
 export interface RelayReconcilerDeps {
   relayStore: RelayStore
-  /** Complete the upstream (S) leg by posting back to S with the relay_token + Q's handle. */
-  completeUpstream(upstreamAgentId: string, intentId: string, relayToken: string, downstreamHandle: PenpalHandle): void
+  /** Complete the upstream (S) leg by posting back to S with the relay_token + Q's handle.
+   *  `relayId` lets the impl record delivery on the row (补投的欠账)。 */
+  completeUpstream(relayId: string, upstreamAgentId: string, intentId: string, relayToken: string, downstreamHandle: PenpalHandle): void
   /** Complete the downstream (Q) leg by posting back to Q (pledge keyed intent:W) with S's handle. */
-  completeDownstream(downstreamAgentId: string, intentId: string, upstreamHandle: PenpalHandle): void
+  completeDownstream(relayId: string, downstreamAgentId: string, intentId: string, upstreamHandle: PenpalHandle): void
   /** Pre-mutual nudge to the un-revealed endpoint (relayToken only when nudging S). */
   nudge(agentId: string, intentId: string, relayToken?: string): void
   /** 介绍人 warmth: tell W's own owner it connected a pair — content-free, NO real names (W never had them). */
@@ -88,8 +89,20 @@ export function makeRelayReconciler(deps: RelayReconcilerDeps): RelayReconciler 
         const sHandle = isUpstreamLeg ? (peerHandle ?? storedUpstreamHandle!) : storedUpstreamHandle!
         const qHandle = isUpstreamLeg ? storedDownstreamHandle! : (peerHandle ?? storedDownstreamHandle!)
 
-        if (isUpstreamLeg) deps.completeDownstream(relay.downstream_agent_id, intentId, sHandle)
-        else deps.completeUpstream(relay.upstream_agent_id, intentId, relay.relay_token, qHandle)
+        // 两条腿**都**补,不是只补先揭晓的那一条。
+        //
+        // 原来只 complete「先揭晓的一方」,靠后揭晓的一方从**同步返回值**里
+        // 学到 mutual。信箱传输没有同步返回值 —— mailbox-dispatch 里是
+        // `await deps.onReveal(...); return`,返回值直接丢掉。而且 2 跳的
+        // 两端不像直连那样能从自己的两行推出互揭:W 只 nudge 过对方,后揭晓
+        // 一方的 peer_revealed_at 始终是 null。于是**后揭晓的那一方被永久
+        // 晾在 awaiting_peer**。
+        //
+        // 补两条是安全的:重复的 complete 落到对端 onInboundReveal 的
+        // 「已 peer_revealed → 无写入、无通知」分支。多一次投递,换掉一个
+        // 只在异步传输上才发作、且没有任何人会告诉你的死局。
+        deps.completeUpstream(relay.id, relay.upstream_agent_id, intentId, relay.relay_token, qHandle)
+        deps.completeDownstream(relay.id, relay.downstream_agent_id, intentId, sHandle)
         deps.notify3way(intentId, sHandle, qHandle)
         return { mutual: true, handle: storedOtherHandle }
       }

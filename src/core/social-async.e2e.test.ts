@@ -379,8 +379,8 @@ describe('async discovery e2e — topology 3: 2-hop per-echo relay', () => {
     let notified3way = 0
     const reconciler = makeRelayReconciler({
       relayStore: wRelay,
-      completeUpstream: (up, _i, _tok, handle) => { forwarded.push({ to: up, handle }) },
-      completeDownstream: (down, _i, handle) => { forwarded.push({ to: down, handle }) },
+      completeUpstream: (_rid, up, _i, _tok, handle) => { forwarded.push({ to: up, handle }) },
+      completeDownstream: (_rid, down, _i, handle) => { forwarded.push({ to: down, handle }) },
       nudge: () => {},
       notify3way: () => { notified3way++ },
     })
@@ -390,7 +390,13 @@ describe('async discovery e2e — topology 3: 2-hop per-echo relay', () => {
     expect(sReveal).toEqual({ mutual: false })                  // only S's leg in so far — Q gets nudged
     const qReveal = reconciler.onRelayReveal({ callerAgentId: 'ccq', intentId, peerHandle: qHandle })
     expect(qReveal).toEqual({ mutual: true, handle: sHandle })  // Q (second) learns S's handle synchronously
-    expect(forwarded).toEqual([{ to: 'cc-sender-3d8c6b5e01', handle: qHandle }]) // S (first) learns Q's handle via post-back
+    // 2026-09-02:**两端都收到 complete**。S(先揭晓)一直如此;Q(后揭晓)
+    // 是新增的 —— 它原本只靠同步返回值,而信箱传输把返回值丢掉,于是 2 跳
+    // 里后揭晓的一方被永久晾在 awaiting_peer。见 social-relay-reveal.ts。
+    expect(forwarded).toEqual([
+      { to: 'cc-sender-3d8c6b5e01', handle: qHandle },
+      { to: 'ccq', handle: sHandle },
+    ])
     expect(notified3way).toBe(1)
   })
 })
