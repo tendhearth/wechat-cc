@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { readJsonFile } from '../lib/read-json-file'
 
 const STATE_DIR = join(homedir(), '.claude', 'channels', 'wechat')
 const ACCOUNTS_DIR = join(STATE_DIR, 'accounts')
@@ -46,7 +47,7 @@ function printAccounts(): void {
   console.log(`Bound accounts (${dirs.length}):\n`)
   for (const id of dirs) {
     try {
-      const account = JSON.parse(readFileSync(join(ACCOUNTS_DIR, id, 'account.json'), 'utf8'))
+      const account = readJsonFile<{ botId?: string; userId?: string; baseUrl?: string }>(join(ACCOUNTS_DIR, id, 'account.json'))
       console.log(`  ${id}`)
       console.log(`    botId:  ${account.botId}`)
       console.log(`    userId: ${account.userId}`)

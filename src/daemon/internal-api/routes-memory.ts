@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { InternalApiDeps, RouteTable } from './types'
 import { safeSvg } from '../../lib/svg-sanitize'
+import { readJsonFile } from '../../lib/read-json-file'
 
 export function memoryRoutes(deps: InternalApiDeps): RouteTable {
   const resolveChat = (body: unknown): string | null => {
@@ -52,7 +53,7 @@ export function memoryRoutes(deps: InternalApiDeps): RouteTable {
       // failing file behaves exactly like no portrait.
       const svg = safeSvg(readFileSync(svgPath, 'utf8'))
       let generated_at: string | null = null
-      try { generated_at = (JSON.parse(readFileSync(join(dir, 'portrait.json'), 'utf8')) as { generated_at?: string }).generated_at ?? null } catch { /* meta optional */ }
+      try { generated_at = (readJsonFile(join(dir, 'portrait.json')) as { generated_at?: string }).generated_at ?? null } catch { /* meta optional */ }
       return { status: 200, body: { ok: true, svg, generated_at } }
     },
   }

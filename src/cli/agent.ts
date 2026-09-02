@@ -21,6 +21,7 @@ import { createA2ARegistry } from '../core/a2a-registry'
 import { createA2AClient, type A2AClientOpts } from '../core/a2a-client'
 import { makeA2AEventsStore } from '../core/a2a-events-store'
 import { openWechatDb } from '../lib/db'
+import { readJsonFile } from '../lib/read-json-file'
 
 /**
  * Read the daemon-written a2a-info.json (no token; safe to read directly).
@@ -30,7 +31,7 @@ export function readA2AInfo(stateDir: string): { enabled: boolean; base_url: str
   const p = join(stateDir, 'a2a-info.json')
   if (!existsSync(p)) return null
   try {
-    return JSON.parse(readFileSync(p, 'utf8'))
+    return readJsonFile(p)
   } catch {
     return null
   }
@@ -208,7 +209,7 @@ async function testOutbound(stateDir: string, id: string, text: string, agent: {
     throw new Error('daemon not running — internal-api-info.json not found')
   }
   let info: { baseUrl?: string; tokenFilePath?: string }
-  try { info = JSON.parse(readFileSync(infoPath, 'utf8')) }
+  try { info = readJsonFile(infoPath) }
   catch (err) { throw new Error(`internal-api-info.json malformed: ${err instanceof Error ? err.message : err}`) }
   if (!info.baseUrl || !info.tokenFilePath) throw new Error('internal-api-info.json missing baseUrl or tokenFilePath')
   let token: string
@@ -363,7 +364,7 @@ function readAgentConfigRaw(stateDir: string): Record<string, unknown> {
   const path = join(stateDir, 'agent-config.json')
   if (!existsSync(path)) return {}
   try {
-    const raw = JSON.parse(readFileSync(path, 'utf8'))
+    const raw = readJsonFile(path)
     return (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw as Record<string, unknown> : {}
   } catch {
     return {}

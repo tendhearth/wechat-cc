@@ -21,9 +21,10 @@
  *   - a license key starting "DEV-"  → activate/validate locally as active
  *   - env WECHAT_CC_LS_API           → point at a mock LS server
  */
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, writeFileSync, renameSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { licensePath } from './paths'
+import { readJsonFile } from '../../lib/read-json-file'
 
 export interface LicenseCache {
   key: string
@@ -50,7 +51,7 @@ export function readCache(stateDir: string): LicenseCache | null {
   const p = licensePath(stateDir)
   if (!existsSync(p)) return null
   try {
-    const c = JSON.parse(readFileSync(p, 'utf8')) as unknown
+    const c = readJsonFile(p) as unknown
     if (c && typeof c === 'object' && typeof (c as LicenseCache).key === 'string'
         && typeof (c as LicenseCache).status === 'string') {
       const lc = c as LicenseCache

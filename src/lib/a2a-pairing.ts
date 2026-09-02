@@ -11,8 +11,9 @@
  * pending-invite file the hand's /a2a/pair verifies against. No network here.
  */
 import { randomBytes } from 'node:crypto'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { readJsonFile } from './read-json-file'
 
 const MAGIC = 'WCCP1'
 const PENDING_FILE = 'a2a-pair-pending.json'
@@ -69,7 +70,7 @@ export function verifyAndConsumeInvite(stateDir: string, secret: string, nowMs: 
   if (!existsSync(path)) return false
   let pending: { secret?: unknown; expiresMs?: unknown }
   try {
-    pending = JSON.parse(readFileSync(path, 'utf8')) as typeof pending
+    pending = readJsonFile(path) as typeof pending
   } catch {
     return false
   }

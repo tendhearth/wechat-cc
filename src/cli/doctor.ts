@@ -14,6 +14,7 @@ import { makeConversationStore } from '../core/conversation-store'
 import { makeSessionStateStore } from '../core/session-state'
 import { makeHeartbeatStore } from '../core/connection-heartbeat'
 import { scanSatelliteRepos, type SatelliteRepo } from './satellite-repos'
+import { readJsonFile } from '../lib/read-json-file'
 
 export interface BoundAccount {
   id: string
@@ -613,7 +614,7 @@ export function readAccounts(stateDir: string): BoundAccount[] {
     // the user's view without losing the audit trail on disk.
     if (id.includes('.superseded.')) continue
     try {
-      const account = JSON.parse(readFileSync(join(dir, id, 'account.json'), 'utf8')) as {
+      const account = readJsonFile(join(dir, id, 'account.json')) as {
         botId?: string
         userId?: string
         baseUrl?: string
@@ -631,7 +632,7 @@ export function readAccounts(stateDir: string): BoundAccount[] {
 
 export function readAccess(stateDir: string): AccessSnapshot {
   try {
-    const parsed = JSON.parse(readFileSync(join(stateDir, 'access.json'), 'utf8')) as Partial<AccessSnapshot>
+    const parsed = readJsonFile(join(stateDir, 'access.json')) as Partial<AccessSnapshot>
     return {
       dmPolicy: parsed.dmPolicy === 'disabled' ? 'disabled' : 'allowlist',
       allowFrom: Array.isArray(parsed.allowFrom) ? parsed.allowFrom : [],

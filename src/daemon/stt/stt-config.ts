@@ -3,8 +3,9 @@
  * file from voice-config.json (TTS) because it's an independent concern with an
  * independent save route. Mirror of tts/voice-config.ts.
  */
-import { readFileSync, writeFileSync, existsSync, renameSync, mkdirSync } from 'node:fs'
+import { writeFileSync, existsSync, renameSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { readJsonFile } from '../../lib/read-json-file'
 
 export interface STTConfig {
   provider: 'http_stt'
@@ -38,7 +39,7 @@ export function loadSTTConfig(stateDir: string): STTConfig | null {
   const p = configPath(stateDir)
   if (!existsSync(p)) return null
   try {
-    return validateSTTConfig(JSON.parse(readFileSync(p, 'utf8')))
+    return validateSTTConfig(readJsonFile(p))
   } catch {
     return null
   }

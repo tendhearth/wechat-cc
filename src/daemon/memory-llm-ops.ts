@@ -7,6 +7,7 @@
  * memory ops run — NEVER the compiled CLI sidecar (spec §1).
  */
 import type { Db } from '../lib/db'
+import { readJsonFile } from '../lib/read-json-file'
 
 export interface MemoryLlmOpsDeps {
   stateDir: string
@@ -67,7 +68,7 @@ export function makeMemoryLlmOps(deps: MemoryLlmOpsDeps): MemoryLlmOps {
       const profileJson = join(memDir, '_profile.json')
       if (existsSync(profileJson)) {
         try {
-          const p = JSON.parse(readFileSync(profileJson, 'utf8')) as { summary?: string; tags?: string[]; insight?: string }
+          const p = readJsonFile(profileJson) as { summary?: string; tags?: string[]; insight?: string }
           material = [p.summary, p.insight, (p.tags ?? []).join('、')].filter(Boolean).join('\n')
         } catch { /* fall through to overview */ }
       }

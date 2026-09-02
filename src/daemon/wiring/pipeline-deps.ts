@@ -10,7 +10,7 @@ import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import type { Ref } from '../../lib/lifecycle'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
@@ -48,6 +48,7 @@ import { DEFAULT_DELEGATE_TIMEOUT_MS } from '../../core/a2a-delegate'
 import type { YiHub, YiDispatch } from '../../core/yi-hub'
 import type { ExecResult } from '../../core/a2a-server'
 import type { Mode, ProviderId } from '../../core/conversation'
+import { readJsonFile } from '../../lib/read-json-file'
 
 export interface DelegateDeps {
   listHands: () => readonly A2AAgentRecord[]
@@ -374,7 +375,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   if (remoteCfg.remote_tunnel === true) {
     const idPath = join(stateDir, 'tunnel-id.json')
     let did: string
-    try { did = (JSON.parse(readFileSync(idPath, 'utf8')) as { id: string }).id }
+    try { did = (readJsonFile(idPath) as { id: string }).id }
     catch { did = 't' + randomBytes(18).toString('hex'); try { writeFileSync(idPath, JSON.stringify({ id: did }), { mode: 0o600 }) } catch { /* best effort */ } }
     remoteTunnel = { id: did, relay: remoteCfg.remote_relay_url ?? 'wss://cc.tendhearth.com/tunnel/phone' }
   }
@@ -431,7 +432,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         daemonId,
         handleRequest: (req) => settingsPanel.handleRequest(req),
         knownDeviceTokens: () => {
-          try { return Object.keys(JSON.parse(readFileSync(join(stateDir, 'settings-devices.json'), 'utf8'))) } catch { return [] }
+          try { return Object.keys(readJsonFile(join(stateDir, 'settings-devices.json'))) } catch { return [] }
         },
         relayUrl: daemonRelay,
         log: (tag, line) => log(tag, line),

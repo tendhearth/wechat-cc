@@ -3,8 +3,9 @@
  * IP, last reachable result, last probe timestamp) is kept in-memory by
  * the scheduler — no point persisting it; daemon restart re-probes.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { readJsonFile } from '../../lib/read-json-file'
 
 export interface GuardConfig {
   enabled: boolean
@@ -30,7 +31,7 @@ export function loadGuardConfig(stateDir: string): GuardConfig {
   const p = configPath(stateDir)
   if (!existsSync(p)) return defaultGuardConfig()
   try {
-    const raw = JSON.parse(readFileSync(p, 'utf8')) as Partial<GuardConfig>
+    const raw = readJsonFile(p) as Partial<GuardConfig>
     const d = defaultGuardConfig()
     return {
       enabled: typeof raw.enabled === 'boolean' ? raw.enabled : d.enabled,

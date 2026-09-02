@@ -44,7 +44,7 @@ import { formatInbound } from '../../core/prompt-format'
 import { makeMessagesStore } from '../../lib/messages-store'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import { findOnPath } from '../../lib/util'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { makeSessionStore } from '../../core/session-store'
@@ -78,6 +78,7 @@ import { runSourceAdapter } from '../../core/knowledge/source-adapter'
 import { runIndexer } from '../../core/knowledge/indexer'
 import { makeEmbedderService } from '../../core/knowledge/embedder-service'
 import { makeJsEmbedder, withEmbedderFallback } from '../../core/knowledge/js-embedder'
+import { readJsonFile } from '../../lib/read-json-file'
 import { rebuildGraphFromSource } from '../../core/knowledge/graph-build'
 import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
 import { makeFactsApi } from '../../core/knowledge/facts'
@@ -131,7 +132,7 @@ function hydrateClaudeAuthEnvFromUserSettings(log: BootstrapDeps['log']): void {
   if (!existsSync(settingsPath)) return
 
   try {
-    const parsed = JSON.parse(readFileSync(settingsPath, 'utf8')) as { env?: Record<string, unknown> }
+    const parsed = readJsonFile(settingsPath) as { env?: Record<string, unknown> }
     const env = parsed.env
     if (!env || typeof env !== 'object') return
 

@@ -27,6 +27,7 @@ import { basename, join } from 'node:path'
 import { normalizeUserName } from '../lib/user-name'
 import { writeConfigKey, readConfigSurface } from './config-surface'
 import { safeSvgFile, EXPIRED_HTML, SW_JS, M_BOOTSTRAP_HTML, pageHtml, phoneHtml } from './settings-panel-html'
+import { readJsonFile } from '../lib/read-json-file'
 
 export const SETTINGS_LINK_TTL_MS = 10 * 60_000
 
@@ -113,7 +114,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   // 一直有效。落盘 JSON(0600 state dir),上限 MAX_DEVICES 防无限膨胀。
   const devicesPath = () => join(deps.stateDir, DEVICES_FILE)
   const readDevices = (): Record<string, { created_at: string }> => {
-    try { return JSON.parse(readFileSync(devicesPath(), 'utf8')) as Record<string, { created_at: string }> } catch { return {} }
+    try { return readJsonFile(devicesPath()) as Record<string, { created_at: string }> } catch { return {} }
   }
   const issueDeviceToken = (): string | null => {
     const devices = readDevices()

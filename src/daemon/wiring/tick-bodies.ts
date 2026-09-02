@@ -42,6 +42,7 @@ export const INGEST_BATCH_CAP = 4
 /** Skip an ingest cycle if any chat had inbound activity within this window (owner is actively chatting). */
 export const INGEST_QUIET_MS = 3 * 60_000
 import { runGarden } from '../memory/gardener'
+import { readJsonFile } from '../../lib/read-json-file'
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
@@ -685,7 +686,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
             generate: deps.generatePortrait,
             portraitGeneratedAt: () => {
               try {
-                const j = JSON.parse(readFileSync(join(memDir, 'portrait.json'), 'utf8')) as { generated_at?: string }
+                const j = readJsonFile(join(memDir, 'portrait.json')) as { generated_at?: string }
                 return j.generated_at ? Date.parse(j.generated_at) : null
               } catch { return null }
             },

@@ -12,10 +12,11 @@
  * non-fatal and stamps the daily marker, so a broken model/renderer costs
  * one attempt per day, never a hot loop.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { safeSvg } from '../lib/svg-sanitize'
 import type { StickerLib } from './stickers'
+import { readJsonFile } from '../lib/read-json-file'
 
 /** Phase-1 moods (基础情绪) — drawn one per DAY until covered. */
 export const STICKER_MOOD_POOL: readonly string[] = [
@@ -129,7 +130,7 @@ export async function runStickerArtist(d: StickerArtistDeps): Promise<{ drawn: s
   // (success or failure) so a broken model/renderer costs one try per
   // period, never a retry loop.
   try {
-    const marker = JSON.parse(readFileSync(markerPath, 'utf8')) as { last_at?: number }
+    const marker = readJsonFile(markerPath) as { last_at?: number }
     if (typeof marker.last_at === 'number' && now() - marker.last_at < target.intervalMs) return { drawn: null }
   } catch { /* no marker yet */ }
   writeFileSync(markerPath, JSON.stringify({ last_at: now() }))

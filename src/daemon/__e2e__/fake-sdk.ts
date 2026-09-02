@@ -35,6 +35,7 @@
 import { vi } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { readJsonFile } from '../../lib/read-json-file'
 
 export interface FakeSdkScript {
   /**
@@ -194,7 +195,7 @@ async function bridgeToolCallToInternalApi(name: string, input: unknown): Promis
   if (!existsSync(apiInfoPath) || !existsSync(tokenPath)) return
   let apiInfo: { baseUrl?: string }
   try {
-    apiInfo = JSON.parse(readFileSync(apiInfoPath, 'utf8'))
+    apiInfo = readJsonFile(apiInfoPath)
   } catch { return }
   const baseUrl = apiInfo.baseUrl
   if (!baseUrl) return

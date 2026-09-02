@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { isProactiveWindowClosed } from './ilink/outbound-health'
+import { readJsonFile } from '../lib/read-json-file'
 
 const FILE = 'last-startup.json'
 const NOTIFIED_MARKER_FILE = 'startup-notified.json'
@@ -47,7 +48,7 @@ export async function notifyStartup(
 
   let prevTs: number | null = null
   try {
-    prevTs = JSON.parse(readFileSync(lastFile, 'utf8')).ts ?? null
+    prevTs = readJsonFile<{ ts?: number }>(lastFile).ts ?? null
   } catch {
     // First run or corrupt — treat as no prior startup.
   }

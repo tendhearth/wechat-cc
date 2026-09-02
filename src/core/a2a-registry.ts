@@ -12,9 +12,10 @@
  *
  * See docs/superpowers/specs/2026-05-24-a2a-integration-design.md.
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { A2AAgentRecord } from '../lib/agent-config'
+import { readJsonFile } from '../lib/read-json-file'
 
 /** Subset of A2AAgentRecord that's safe to patch via update(). `id` is the
  *  primary key and can't be changed; `capabilities` is derived from the
@@ -44,7 +45,7 @@ export function createA2ARegistry(opts: A2ARegistryOpts): A2ARegistry {
   function loadAll(): A2AAgentRecord[] {
     if (!existsSync(configPath)) return []
     try {
-      const raw = JSON.parse(readFileSync(configPath, 'utf8')) as { a2a_agents?: A2AAgentRecord[] }
+      const raw = readJsonFile(configPath) as { a2a_agents?: A2AAgentRecord[] }
       return raw.a2a_agents ?? []
     } catch {
       return []
@@ -56,7 +57,7 @@ export function createA2ARegistry(opts: A2ARegistryOpts): A2ARegistry {
     let raw: Record<string, unknown> = {}
     if (existsSync(configPath)) {
       try {
-        raw = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>
+        raw = readJsonFile(configPath) as Record<string, unknown>
       } catch {
         raw = {}
       }
