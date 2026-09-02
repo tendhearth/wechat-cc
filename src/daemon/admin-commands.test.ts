@@ -794,3 +794,51 @@ describe('isDelegateName', () => {
     for (const n of ['我', '你', '他', '她', '它', '我们', '大家', '自己']) expect(isDelegateName(n)).toBe(false)
   })
 })
+
+// 2026-09-02,真机:owner 在微信里发「让win执行1+1=？」,收到
+//
+//   派活失败:Was there a typo in the url or port?
+//
+// 那台手当时瞬时掉线(它走 WLAN,会掉 —— 见 win-test 备忘)。真实原因是
+// 「对方现在连不上」,而 owner 看到的是「你 URL 是不是打错了」——他的
+// 合理反应是去查 URL,白费功夫。
+//
+// 根因不是没人管:friendlyDelegateReason **本来就有**「连不上」那条分支,
+// 但它是照着 **Node 的错误词汇**写的(fetch failed / ECONNREFUSED /
+// ENOTFOUND)。**这个 daemon 跑在 Bun 上,Bun 说的是另一套话。** 于是分支
+// 形同虚设,原始串直通用户。
+//
+// 下面两条是这一轮真机日志里**实际出现过**的 Bun 措辞,不是想象出来的。
+describe('friendlyDelegateReason —— 必须认识 Bun 的连接错误措辞,不只是 Node 的', () => {
+  const BUN_CONNECT_ERRORS = [
+    'Was there a typo in the url or port?',              // Bun: 连接被拒
+    'Unable to connect. Is the computer able to access the url?',  // Bun: 连不上
+    'ConnectionRefused',
+  ]
+
+  it.each(BUN_CONNECT_ERRORS)('%s → 说成「连不上」,不是原样透传', (raw) => {
+    const out = friendlyDelegateReason(raw)
+    expect(out).toContain('连不上')
+    expect(out).not.toBe(raw)
+  })
+
+  it('Node 的老措辞继续认识(没有为了新的把旧的弄丢)', () => {
+    for (const raw of ['fetch failed', 'ECONNREFUSED', 'ENOTFOUND host']) {
+      expect(friendlyDelegateReason(raw)).toContain('连不上')
+    }
+  })
+
+  // 兜底刻意保持原样透传:我们自己产出的 reason 本来就是给人看的中文
+  // (如「unknown_peer: claude —— 这台机器可用的是 [openai]」),包一层
+  // 「我看不懂的错误」只会把好消息弄糟。见同文件已有的 passthrough 用例。
+  it('我们自己产出的、已经能读的原因照旧原样透传', () => {
+    const own = 'unknown_peer: claude —— 这台机器可用的是 [openai]'
+    expect(friendlyDelegateReason(own)).toBe(own)
+  })
+
+  it('已经认识的原因不受影响', () => {
+    expect(friendlyDelegateReason('paused')).toContain('暂停')
+    expect(friendlyDelegateReason('http_401')).toContain('配对密钥')
+    expect(friendlyDelegateReason('timeout')).toContain('超时')
+  })
+})

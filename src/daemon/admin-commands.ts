@@ -21,6 +21,7 @@ import type { SessionStore } from '../core/session-store'
 import type { SessionStateStore, ExpiredBot } from '../core/session-state'
 import { loadHearthApi, type HearthApi, type HearthLoadResult } from './hearth-adapter'
 import type { SynthesizeResult } from '../lib/memory-synthesis'
+import { isConnectFailure } from '../lib/net-errors'
 
 export interface AdminCommandsDeps {
   stateDir: string
@@ -555,7 +556,17 @@ export function friendlyDelegateReason(reason: string): string {
   if (reason === 'malformed hand response') return '那台手返回了无法识别的结果。'
   if (/^http_401$|unauthorized/i.test(reason)) return '配对密钥不匹配,需要重新配对(hand invite / hand join)。'
   if (/^http_/.test(reason)) return `那台手返回错误(${reason})。`
-  if (/fetch failed|ECONNREFUSED|ENOTFOUND|network|abort/i.test(reason)) return '连不上那台手(检查它是否开机、A2A 是否在 Tailscale IP 上监听)。'
+  // 连接层失败。判定收敛在 lib/net-errors —— 这条分支本来就在,只是照着
+  // **Node** 的措辞写的,而这个 daemon 跑在 **Bun** 上,Bun 说的是另一套话,
+  // 于是形同虚设:2026-09-02 owner 在微信里收到的正是 Bun 的原文
+  // 「Was there a typo in the url or port?」。
+  if (isConnectFailure(reason) || /network|abort/i.test(reason)) {
+    return '连不上那台手(它可能没开机、掉线了,或 A2A 没在对方能访问的地址上监听)。'
+  }
+  // 认不出来的原样透传 —— 刻意的:我们自己产出的 reason 本来就是给人看的
+  // 中文(如「unknown_peer: claude —— 这台机器可用的是 [openai]」),包一层
+  // 「我看不懂的错误」只会把好消息弄糟。真正的问题从来不是这条兜底,是上面
+  // 那条连接分支漏了 Bun 的措辞。
   return reason
 }
 

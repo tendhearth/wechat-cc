@@ -7,6 +7,7 @@
  * 判定全部是确定性规则 —— LLM 不参与检测,它必须比被监控对象更可靠。
  * 认不出来时一律当"不可操作",宁可晚说,不要用猜测去打扰。
  */
+import { isConnectFailure } from '../../lib/net-errors'
 
 export type FailureKind = 'login_taken_over' | 'llm_auth' | 'network' | 'unknown'
 
@@ -18,7 +19,11 @@ export interface FailureClass {
   body: string
 }
 
-const NETWORK_RE = /certificate|tls|ssl|ENOTFOUND|ECONNRESET|ECONNREFUSED|EHOSTUNREACH|ENETDOWN|timed out|timeout|Unable to connect|fetch failed|socket hang up/i
+// 连接层的措辞收敛在 lib/net-errors(Node 与 Bun 两套);这里只补 TLS/超时
+// 这类**不属于「连不上」**的网络症状。此前这条正则漏了 Bun 的
+// 「typo in the url or port」,于是一次 Bun 连接失败会被判成「非网络问题」。
+const NETWORK_EXTRA_RE = /certificate|tls|ssl|timed out|timeout/i
+const isNetworkish = (t: string): boolean => isConnectFailure(t) || NETWORK_EXTRA_RE.test(t)
 const LLM_AUTH_RE = /\b401\b|\b403\b|unauthorized|forbidden|invalid api key|authentication/i
 
 function messageOf(err: unknown): string {
@@ -42,7 +47,7 @@ export function classifyFailure(err: unknown): FailureClass {
       body: '这个微信账号在别处被重新绑定了。打开 wechat-cc 桌面端重新扫码即可恢复。',
     }
   }
-  if (NETWORK_RE.test(msg)) {
+  if (isNetworkish(msg)) {
     return {
       kind: 'network',
       actionable: false,
