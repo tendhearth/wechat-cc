@@ -13,6 +13,7 @@
  */
 import type { AgentProvider, CheapEval } from './agent-provider'
 import type { ProviderId } from './conversation'
+import { hasAuthCode } from '../lib/auth-failure'
 
 export interface ProviderRegistration {
   /** Human-readable name; used by mode-commands prompts and dashboard. */
@@ -80,9 +81,10 @@ const CHEAP_EVAL_COOLDOWN_MS = 10 * 60_000
 // owner 确认 agy 能登录,这条其实是网络/超时,和同期 getUpdates cert /
 // 隧道 churn 同源),那是瞬时错误,该走短冷却自愈,不能误判成登录过期。
 const CHEAP_EVAL_AUTH_COOLDOWN_MS = 60 * 60_000
-/** 导出仅为**诊断采集**如实调用它(见 diagnostics/failure-shapes)。 */
+/** 冷却时长这类内部决策用**窄档** —— 只认结构化码,不让厂商散文带偏。
+ *  词汇来自 lib/auth-failure。导出还为了诊断采集如实调用它本体。 */
 export function isAuthError(err: unknown): boolean {
-  return err instanceof Error && /auth_failed\b/i.test(err.message)
+  return err instanceof Error && hasAuthCode(err.message)
 }
 
 export function createProviderRegistry(opts?: {

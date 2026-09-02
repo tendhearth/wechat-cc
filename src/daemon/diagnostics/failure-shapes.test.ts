@@ -43,13 +43,14 @@ describe('classifyAll —— 如实记录四处判定,不做裁决', () => {
     expect(s.agreed).toBe(false)                      // ← 分歧,正是要采的
   })
 
-  it('agy 的模糊报错:宽集会说是 auth,而 owner 已定为按瞬时处理', () => {
-    // 2026-08-27 的判定:「authentication failed or timed out」按瞬时。
-    // 采集只如实记录分歧,不替谁改判。
+  it('agy 的模糊报错:宽档说像 auth,窄档不说,而最终判定是瞬时', () => {
+    // 「authentication failed or timed out」—— owner 2026-08-27 定为按瞬时,
+    // 2026-09-02 升成通则(歧义一律 transient)。采集只如实记录这个分歧。
     const s = buildFailureShape({ provider: 'agy', op: 'cheap_eval', message: 'authentication failed or timed out' })
-    expect(s.verdicts.llmHealthAuthRe).toBe(false)
-    expect(s.verdicts.healthClassify).toBe('network')  // 靠 timed out 先命中
-    expect(s.verdicts.providerRegistryIsAuthError).toBe(false)
+    expect(s.verdicts.llmHealthAuthRe).toBe(true)        // 宽档:含 authentication
+    expect(s.verdicts.providerRegistryIsAuthError).toBe(false)  // 窄档:没有结构化码
+    expect(s.verdicts.healthClassify).toBe('network')    // 通则生效:让位给瞬时
+    expect(s.agreed).toBe(false)                         // ← 正是要采的那种样本
   })
 
   it('带 auth_failed: 前缀 → 最窄那处才认', () => {
