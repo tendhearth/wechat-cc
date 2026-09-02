@@ -23,6 +23,9 @@ export interface BrokerDeps {
   send: (hand: A2AAgentRecord, card: IntentCard) => Promise<boolean>
   policy: string
   cheapEval: CheapEval
+  /** 闸门的超时上限(毫秒)。来自 `ProviderRegistry.getCheapEvalBudgetMs()`
+   *  —— 实际会跑的 provider 有多慢由它说了算。缺省 ⇒ GATE_TIMEOUT_MS。 */
+  gateTimeoutMs?: number
   ttlMs?: number
   /** P4 propose leg: persist a `proposed` row carrying the owner-approved redacted wording. */
   proposeRow: (intentId: string, r: { topic: string; redactedTopic: string; redactedCity?: string }) => void
@@ -44,7 +47,12 @@ export interface BrokerDeps {
 }
 export type ProposeOutcome =
   | { ok: true; intent_id: string; redacted: string; redacted_city?: string }
-  | { ok: false; reason: string }
+  /** `detail` 只在 reason='checker_unavailable' 时出现,带上 gateOutbound
+   *  分出来的那一种(checker_timeout / checker_error: … /
+   *  checker_unparseable / checker_malformed_schema)。reason 保持不变,
+   *  UI 与既有调用方不受影响 —— 这是纯附加的排查线索,见
+   *  social-broker.test.ts 的说明。 */
+  | { ok: false; reason: string; detail?: string }
 export type ConfirmOutcome =
   | { ok: true; intent_id: string }
   | { ok: false; reason: string }
@@ -102,16 +110,19 @@ export function makeBroker(deps: BrokerDeps) {
       // 话题和城市是两次独立的脱敏审查 —— 并行,别串行(带城市原本要等两次
       // LLM,现在压到一次的时间)。
       const [gated, gatedCity] = await Promise.all([
-        gateOutbound(topic, { policy: deps.policy, cheapEval: deps.cheapEval }),
+        gateOutbound(topic, { policy: deps.policy, cheapEval: deps.cheapEval, ...(deps.gateTimeoutMs !== undefined ? { timeoutMs: deps.gateTimeoutMs } : {}) }),
         opts?.city
-          ? gateOutbound(opts.city, { policy: deps.policy, cheapEval: deps.cheapEval })
+          ? gateOutbound(opts.city, { policy: deps.policy, cheapEval: deps.cheapEval, ...(deps.gateTimeoutMs !== undefined ? { timeoutMs: deps.gateTimeoutMs } : {}) })
           : Promise.resolve(null),
       ])
       if (!gated.ok) {
         // 区分「审查器不可用(超时/出错)」和「内容真被策略拦下」—— 前者是
         // 服务慢/坏,该让主人稍后再试,而不是误以为自己说了违规的话。
         const checkerDown = gated.violations.some(v => v.startsWith('checker_'))
-        return { ok: false, reason: checkerDown ? 'checker_unavailable' : (gated.violations.join('; ') || 'blocked') }
+        // 坏在哪必须带出去。原先四种故障(超时/出错/吐散文/无视 schema)
+        // 全压成一个 checker_unavailable,排查时只能靠人肉二分。
+        if (checkerDown) return { ok: false, reason: 'checker_unavailable', detail: gated.violations.join('; ') }
+        return { ok: false, reason: gated.violations.join('; ') || 'blocked' }
       }
       const redactedCity = gatedCity?.ok ? gatedCity.redacted : undefined   // 城市审查失败 → 安全降级:省略城市
       deps.proposeRow(intent, { topic, redactedTopic: gated.redacted, ...(redactedCity ? { redactedCity } : {}) })

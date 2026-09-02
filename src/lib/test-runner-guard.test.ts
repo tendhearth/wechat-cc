@@ -95,3 +95,45 @@ it('finds the test files it is supposed to be scanning (guards against a silentl
   const count = [...scanTestFiles()].length
   expect(count).toBeGreaterThan(100)
 })
+
+// 第二类「本地绿、别的平台红」:POSIX 文件权限断言。
+//
+// Windows 没有 POSIX mode 的概念,`statSync().mode & 0o777` 在那里恒为
+// 0o666(438),于是任何 `toBe(0o600)`(384)必然失败。仓库里这类断言散在
+// 五处,守卫写法还有两种(`if (win32) return` 与 `if (!win32) { … }`)——
+// **时有时无、全靠人记得**,而 macOS 上本地跑永远看不出来。
+//
+// 2026-09-01 就这么漏了一条:social-enable.test.ts 的「原子写 + 0600」少了
+// 守卫,dev 的 windows-latest 连红三次(`expected 438 to be 384`),而
+// ubuntu/macOS 全绿 —— 与 [[macos-only-green-blind-spot]] 同一类盲区。
+//
+// 判定按 it/test 块粒度而不是文件粒度:同一个文件里可以一条守了、另一条
+// 没守,正是漏掉的那次的样子。
+const MODE_ASSERTION = /mode\s*&\s*0o777|toBe\(0o[67]00\)/
+const PLATFORM_GUARD = /win32/
+
+it('每个断言 POSIX 文件权限的用例都带平台守卫 —— Windows 上 mode 恒为 0o666', () => {
+  const offenders: string[] = []
+  for (const file of scanTestFiles()) {
+    if (file === SELF) continue
+    const src = readFileSync(file, 'utf8')
+    if (!MODE_ASSERTION.test(src)) continue
+    // 按 it(/test( 切块:同一文件里守卫可能只加了一半。
+    const blocks = src.split(/\n(?=\s*(?:it|test)\()/)
+    for (const block of blocks) {
+      if (MODE_ASSERTION.test(block) && !PLATFORM_GUARD.test(block)) {
+        const title = block.match(/(?:it|test)\(\s*['"`](.*?)['"`]/)?.[1] ?? '(未命名用例)'
+        offenders.push(`${relative(REPO_ROOT, file)} — ${title}`)
+      }
+    }
+  }
+  expect(
+    offenders,
+    offenders.length === 0
+      ? ''
+      : `这些用例断言了 POSIX 文件权限却没有平台守卫,在 Windows CI 上必然报 `
+        + `\`expected 438 to be 384\`:\n  ${offenders.join('\n  ')}\n`
+        + `加一行 \`if (process.platform === 'win32') return\` —— Windows 没有 POSIX mode,`
+        + `这个断言在那里没有意义。`,
+  ).toEqual([])
+})

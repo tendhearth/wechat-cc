@@ -56,3 +56,52 @@ describe('makeMailboxClient', () => {
     expect(await makeMailboxClient().ack('https://r/', 'm', 7, 2, 'sig')).toBe(false)
   })
 })
+
+// 2026-09-01:真机上 Mac 的取件连续几百拍失败,而日志只会说「超时/非 2xx/
+// 网络」—— 三种成因的处置完全不同(超时=调 timeoutMs 或换中继;401=签名/
+// 时钟;网络=DNS/断网),混成一句等于什么都没说。手工探针一跑就发现中继
+// 好好的、200 只要 0.5s,真正的成因是间歇性超时 —— 那条日志本该直接告诉我。
+describe('onError —— 失败原因必须能区分', () => {
+  it('非 2xx 报出状态码', async () => {
+    const seen: Array<[string, string]> = []
+    const client = makeMailboxClient({
+      onError: (op, reason) => seen.push([op, reason]),
+      fetchImpl: async () => new Response('nope', { status: 401 }),
+    })
+    expect(await client.fetch('https://r/mailbox', 'm', 0, 1, 's')).toBeNull()
+    expect(seen).toEqual([['fetch', 'HTTP 401']])
+  })
+
+  it('超时报 timeout,不报成含糊的网络错误', async () => {
+    const seen: Array<[string, string]> = []
+    const client = makeMailboxClient({
+      timeoutMs: 20,
+      onError: (op, reason) => seen.push([op, reason]),
+      fetchImpl: (_u, init) => new Promise((_res, rej) => {
+        init?.signal?.addEventListener('abort', () => rej(new Error('The operation was aborted.')))
+      }),
+    })
+    expect(await client.fetch('https://r/mailbox', 'm', 0, 1, 's')).toBeNull()
+    expect(seen).toEqual([['fetch', 'timeout(20ms)']])
+  })
+
+  it('网络错误原样报出来', async () => {
+    const seen: Array<[string, string]> = []
+    const client = makeMailboxClient({
+      onError: (op, reason) => seen.push([op, reason]),
+      fetchImpl: async () => { throw new Error('getaddrinfo ENOTFOUND r') },
+    })
+    expect(await client.drop('https://r/mailbox', 'to', 'env')).toBe(false)
+    expect(seen).toEqual([['drop', 'getaddrinfo ENOTFOUND r']])
+  })
+
+  it('成功不报错', async () => {
+    const seen: unknown[] = []
+    const client = makeMailboxClient({
+      onError: (...a) => seen.push(a),
+      fetchImpl: async () => new Response(JSON.stringify({ items: [], next_cursor: 3 }), { status: 200 }),
+    })
+    expect(await client.fetch('https://r/mailbox', 'm', 0, 1, 's')).toEqual({ items: [], next_cursor: 3 })
+    expect(seen).toEqual([])
+  })
+})

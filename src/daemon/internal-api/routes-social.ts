@@ -17,6 +17,7 @@
 import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
 import { toPublicEcho } from '../../core/social-echo-store'
 import type { InternalApiDeps, RouteTable } from './types'
+import { applySocialSwitch } from '../../cli/social-enable'
 
 export function socialRoutes(deps: InternalApiDeps): RouteTable {
   return {
@@ -64,6 +65,19 @@ export function socialRoutes(deps: InternalApiDeps): RouteTable {
     'GET /v1/social/inbound': async () => {
       const l = loadAgentConfig(deps.stateDir).a2a_listen
       return { status: 200, body: l ? { enabled: true, host: l.host, port: l.port } : { enabled: false } }
+    },
+    // 社交总开关。**刻意不依赖 deps.social** —— 社交没开时那个字段根本不存在,
+    // 而"没开"恰恰是唯一需要这条路由的时候。它只读写 agent-config.json,与
+    // `wechat-cc social enable` 共用 applySocialSwitch 那一份逻辑。
+    //
+    // 为什么需要它:此前桌面端三处入口(配对面板、笔友信箱、寄信)在社交未
+    // 启用时只会说「先在命令行运行 wechat-cc social enable」—— 一个桌面产品
+    // 把人踢回终端。被朋友拉来试用的人基本必然卡死在这一步。
+    'POST /v1/social/enable': async (_q, body) => {
+      const enabled = !!((body ?? {}) as { enabled?: unknown }).enabled
+      const r = applySocialSwitch(deps.stateDir, enabled)
+      // 配对引擎/社交接线都在 boot 时完成,所以两个方向都要重启才生效。
+      return { status: 200, body: { ...r, restart_required: true } }
     },
     'POST /v1/social/inbound': async (_q, body) => {
       // `body` is null on an empty/`null` request body (readJsonBody) — guard

@@ -1,7 +1,12 @@
 import type { CheapEval } from './agent-provider'
 
-/** 脱敏审查的 LLM 调用上限:坏网/慢 provider 下不干等到它自己的超时(几十秒)。
- *  超时按「审查器不可用」处理(fail closed)——见 gateOutbound。 */
+/** 脱敏审查的 LLM 调用**兜底**上限:坏网/慢 provider 下不干等到它自己的超时
+ *  (几十秒)。超时按「审查器不可用」处理(fail closed)——见 gateOutbound。
+ *
+ *  2026-09-01:这个常数曾经是唯一的上限,而它低于 agy 的下限(CLI 冷启动
+ *  单次实测 10.3–14.3s),派心愿于是时灵时不灵地报 checker_unavailable。
+ *  现在调用方应当传 `timeoutMs`(来自
+ *  `ProviderRegistry.getCheapEvalBudgetMs()`),这里只是没人传时的默认。 */
 export const GATE_TIMEOUT_MS = 12_000
 
 async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -28,11 +33,11 @@ ${policy}
 
 export async function gateOutbound(
   text: string,
-  opts: { policy: string; cheapEval: CheapEval },
+  opts: { policy: string; cheapEval: CheapEval; timeoutMs?: number },
 ): Promise<{ ok: boolean; redacted: string; violations: string[] }> {
   let raw: string
   try {
-    raw = await withTimeout(opts.cheapEval(CHECKER_PROMPT(opts.policy, text)), GATE_TIMEOUT_MS)
+    raw = await withTimeout(opts.cheapEval(CHECKER_PROMPT(opts.policy, text)), opts.timeoutMs ?? GATE_TIMEOUT_MS)
   } catch (err) {
     // Fail CLOSED — a disclosure leak is worse than a dropped match.
     const msg = err instanceof Error ? err.message : String(err)

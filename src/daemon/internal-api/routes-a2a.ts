@@ -137,11 +137,19 @@ export function a2aRoutes(deps: InternalApiDeps): RouteTable {
     // ── a2a dashboard routes ─────────────────────────────────────────────────
     'GET /v1/a2a/list': () => {
       if (!deps.a2a) return { status: 503, body: { error: 'a2a_not_wired' } }
+      // 投影刻意逐字段挑选(而非 `...a`)—— registry 记录里有
+      // inbound/outbound_api_key,整体铺开就是把密钥送进仪表盘。
+      // transport/mailbox_addr/relays 必须在:六位配对码建立的对端**没有
+      // url**,可达性全在这三项里,漏掉就显示成「有名字、没地址」。
+      // 见 routes-a2a.list.test.ts。
       const agents = deps.a2a.registry.list().map(a => ({
         id: a.id,
         name: a.name,
         url: a.url,
         paused: a.paused,
+        transport: a.transport,
+        mailbox_addr: a.mailbox_addr,
+        relays: a.relays,
         counts: deps.a2a!.eventsStore.counts(a.id),
       }))
       return { status: 200, body: { agents } }

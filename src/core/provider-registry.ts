@@ -48,7 +48,19 @@ export interface ProviderRegistry {
    * implement strongEval; caller falls back to getCheapEval().
    */
   getStrongEval(id: ProviderId): CheapEval | null
+  /**
+   * 一次 cheapEval 的延迟预算(毫秒)—— 延迟敏感的调用方(披露闸门)据此
+   * 定自己的超时。钉死了 provider 就只看它的;否则取**候选里最大的**:
+   * 故障转移可能落到任何一个候选身上,按最快的那个定超时等于给慢的那个
+   * 判了死刑。见 AgentProvider.cheapEvalBudgetMs。
+   */
+  getCheapEvalBudgetMs(): number
 }
+
+/** 未声明 `cheapEvalBudgetMs` 的 provider 按这个算 —— 与历史上写死在
+ *  a2a-disclosure 里的 GATE_TIMEOUT_MS 同值,所以纯 in-process 的部署
+ *  行为一个字节都不变。 */
+export const DEFAULT_CHEAP_EVAL_BUDGET_MS = 12_000
 
 // Cheapest known to most expensive. Claude haiku ≈ $0.001/1K input tokens
 // and ~1s latency via in-process SDK; Codex mini ≈ $0.002/1K and ~3-5s
@@ -187,6 +199,20 @@ export function createProviderRegistry(opts?: {
     },
     getStrongEval(id) {
       return entries.get(id)?.provider.strongEval ?? null
+    },
+    getCheapEvalBudgetMs() {
+      // 与 getCheapEval 同一套候选解析(钉死优先,再偏好序,再其余),
+      // 否则超时会按一批「其实不会被调用的 provider」来定。
+      if (opts?.cheapEvalProvider) {
+        const pinned = entries.get(opts.cheapEvalProvider as ProviderId)
+        if (pinned?.provider.cheapEval) return pinned.provider.cheapEvalBudgetMs ?? DEFAULT_CHEAP_EVAL_BUDGET_MS
+      }
+      let budget = DEFAULT_CHEAP_EVAL_BUDGET_MS
+      for (const entry of entries.values()) {
+        if (!entry.provider.cheapEval) continue
+        budget = Math.max(budget, entry.provider.cheapEvalBudgetMs ?? DEFAULT_CHEAP_EVAL_BUDGET_MS)
+      }
+      return budget
     },
   }
   return registry

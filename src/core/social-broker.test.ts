@@ -237,3 +237,32 @@ describe('makeBroker.forage v2 (pre-gated, fast-ack fire-and-forget) — driven 
     await expect(d.run()).resolves.toBeDefined()   // forage swallows the write failure
   })
 })
+
+/**
+ * WHY(2026-09-01,真机上派心愿返回 `{"ok":false,"reason":"checker_unavailable"}`
+ * 之后,我一路挖了三个文件、手测 agy 的冷启动延迟才知道是「超时」):
+ *
+ * gateOutbound 分得很细 —— checker_timeout(provider 太慢)、
+ * checker_error: <msg>(认证挂了/二进制不在)、checker_unparseable(模型
+ * 吐了散文)、checker_malformed_schema(模型无视 schema)。broker 却把它们
+ * 全压成一个 `checker_unavailable`,而且没有 log 接缝、哪里都不留痕。
+ *
+ * 「审查器坏了」这个判断是对的,该保留(UI 依赖 reason)。缺的是**坏在哪**
+ * —— 加一个附加字段带出去,让它出现在 HTTP 响应里,也就是排查时第一眼
+ * 会看的地方。
+ */
+describe('propose 的审查器故障要说清是哪一种', () => {
+  const cases: Array<[string, () => Promise<string>, string]> = [
+    ['超时', async () => { await new Promise(r => setTimeout(r, 50_000)); return '' }, 'checker_timeout'],
+    ['出错', async () => { throw new Error('cannot connect') }, 'checker_error'],
+    ['吐了散文', async () => '抱歉,我不能这样做。', 'checker_unparseable'],
+  ]
+  for (const [label, cheapEval, expected] of cases) {
+    it(`${label} → detail 里带着 ${expected}`, async () => {
+      const broker = makeBroker(stubDeps({ cheapEval }))
+      const out = await broker.propose('完全正常的话题') as { ok: false; reason: string; detail?: string }
+      expect(out.reason).toBe('checker_unavailable')
+      expect(out.detail).toContain(expected)
+    }, 20_000)
+  }
+})

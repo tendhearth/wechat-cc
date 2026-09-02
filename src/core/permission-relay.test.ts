@@ -46,6 +46,40 @@ describe('makeCanUseTool', () => {
     expect(String((res as { message?: string }).message)).not.toMatch(/User denied/)
   })
 
+  // 2026-09:/both 现在也会在末尾给一条收口,而 reply 工具一走,协调器就
+  // **看不到那位说了什么** —— 收口只能拿到半场,比不收口更糟。所以扇出的
+  // 两种模式(chatroom / parallel)一视同仁,都强制纯文本。
+  it('parallel(/both)同样拒绝 reply 工具 —— 否则收口只能拿到半场', async () => {
+    const ask = vi.fn()
+    const fn = makeCanUseTool({
+      askUser: ask,
+      resolveTier: () => 'admin',
+      adminChatId: () => 'admin-chat',
+      initiatingChatId: () => 'admin-chat',
+      log: () => {},
+      ...baseMode,
+      mode: () => 'parallel' as const,
+    })
+    const res = await fn('mcp__wechat__reply', { text: 'hi' }, { signal: new AbortController().signal, toolUseID: 't1' } as any)
+    expect(res.behavior).toBe('deny')
+    if (res.behavior === 'deny') expect(res.message).toMatch(/plain text/i)
+    expect(ask).not.toHaveBeenCalled()
+  })
+
+  it('solo 不受影响 —— reply 工具照常可用', async () => {
+    const fn = makeCanUseTool({
+      askUser: vi.fn(),
+      resolveTier: () => 'admin',
+      adminChatId: () => 'admin-chat',
+      initiatingChatId: () => 'admin-chat',
+      log: () => {},
+      ...baseMode,
+      mode: () => 'solo' as const,
+    })
+    const res = await fn('mcp__wechat__reply', { text: 'hi' }, { signal: new AbortController().signal, toolUseID: 't1' } as any)
+    expect(res.behavior).toBe('allow')
+  })
+
   it('denies the wechat reply tool in chatroom mode (force plain text) without prompting', async () => {
     const ask = vi.fn()
     const fn = makeCanUseTool({

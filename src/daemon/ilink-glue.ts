@@ -37,6 +37,7 @@ import { makeOutboundHealthTracker, isProactiveWindowClosed, type OutboundHealth
 import type { Db } from '../lib/db'
 import type { ConversationStore } from '../core/conversation-store'
 import { makeMessagesStore } from '../lib/messages-store'
+import { readJsonFile } from '../lib/read-json-file'
 
 /**
  * Monotonic counter to keep same-millisecond outbound IDs unique. Module
@@ -112,7 +113,10 @@ export async function loadAllAccounts(stateDir: string): Promise<Account[]> {
     const metaPath = join(acctDir, 'account.json')
     const tokenPath = join(acctDir, 'token')
     if (!existsSync(metaPath) || !existsSync(tokenPath)) continue
-    const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as { botId: string; userId: string; baseUrl: string }
+    // BOM 容忍:PowerShell 的 Set-Content -Encoding UTF8 默认写 BOM,而裸
+    // JSON.parse 会因此抛 SyntaxError 让整个 daemon fatal 退出(2026-09-01
+    // Windows 真机实测)。见 lib/read-json-file.ts。
+    const meta = readJsonFile<{ botId: string; userId: string; baseUrl: string }>(metaPath)
     const token = readFileSync(tokenPath, 'utf8').trim()
     const syncBufPath = join(acctDir, 'sync_buf')
     const syncBuf = existsSync(syncBufPath) ? readFileSync(syncBufPath, 'utf8').trim() : ''

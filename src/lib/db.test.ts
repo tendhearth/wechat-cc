@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Database } from 'bun:sqlite'
-import { openTestDb, openDb, renameMigrated, runMigrations, withLockRetry } from './db'
+import { migrations, openTestDb, openDb, renameMigrated, runMigrations, withLockRetry } from './db'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -218,7 +218,7 @@ describe('migration v27/v28 — customer review completed elsewhere and analysis
     runMigrations(db)
 
     const version = db.query('PRAGMA user_version').get() as { user_version: number }
-    expect(version.user_version).toBe(31)
+    expect(version.user_version).toBe(migrations.length)
     expect(db.query('SELECT commitment FROM customer_review_items').get()).toMatchObject({ commitment: '发送报价' })
     expect(db.query('SELECT evidence_key FROM customer_review_evidence').get()).toMatchObject({ evidence_key: 'e1' })
     expect(db.query("SELECT name FROM sqlite_master WHERE name = 'customer_review_analysis_issues'").get()).toMatchObject({ name: 'customer_review_analysis_issues' })
@@ -473,22 +473,15 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
 
   it('upgrades a genuine desktop-v1.3.2 database normally — the repair must not fire', () => {
     // The release line's own user_version=21: social tables present at their
-    // v21 shape (no v22+ columns), no customer_review_* at all. Reconstructed
-    // by undoing v22–v25 so the fixture is what 1.3.2 actually shipped, not a
-    // fully-migrated db with the version number rewound.
-    const db = openTestDb()
-    for (const t of ['customer_reviews', 'customer_review_items', 'customer_review_evidence',
-                     'customer_review_feedback', 'customer_review_analysis_issues',
-                     'penpal_letter', 'penpal_channel']) {
-      db.exec(`DROP TABLE IF EXISTS ${t};`)
-    }
-    db.exec(`
-      ALTER TABLE social_relay DROP COLUMN upstream_handle;
-      ALTER TABLE social_relay DROP COLUMN downstream_handle;
-      ALTER TABLE social_seek DROP COLUMN redacted_topic;
-      ALTER TABLE social_seek DROP COLUMN redacted_city;
-      ALTER TABLE social_seen_intent DROP COLUMN origin_agent_id;
-    `)
+    // v21 shape (no v22+ columns), no customer_review_* at all.
+    //
+    // 2026-09-01:原来的写法是「先全量迁移,再手工 DROP 掉 v22–v25 加的东西」。
+    // 那份手工清单每加一条动 social_*/penpal_* 的迁移就会烂掉一次(v32 就把它
+    // 弄红了),而且烂法是「重复的列名」这种看不出因果的报错。改成直接跑
+    // migrations[0..20] —— 那就是 1.3.2 真正装出来的库,不需要维护任何清单。
+    const db = new Database(':memory:')
+    db.exec('PRAGMA foreign_keys = ON;')
+    for (let i = 0; i < 21; i++) migrations[i]!(db)
     db.exec('PRAGMA user_version = 21;')
 
     expect(() => runMigrations(db)).not.toThrow()

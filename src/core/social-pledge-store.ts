@@ -9,6 +9,16 @@ import type { Db } from '../lib/db'
 export interface PledgeRow {
   id: string; intent_id: string; seeker_agent_id: string; topic: string
   self_revealed_at: string | null; peer_revealed_at: string | null; created_at: string
+  /** 我的揭晓**真的送到对端**的时刻。与 self_revealed_at(我的 owner 同意)
+   *  是两件事:同意是本地的,送达是网络的。合成一件事的代价见 db.ts v32。 */
+  self_reveal_delivered_at: string | null
+  /** 我欠这一位的明信片正文 —— 记下来才补得回去。judge 说 no 的行为 NULL。 */
+  echo_blurb: string | null
+  echo_degree: number | null
+  /** 明信片排队的时刻(补投的有界起点)。 */
+  echo_queued_at: string | null
+  /** 明信片**真的送到**的时刻。见 social-echo-retry.ts。 */
+  echo_delivered_at: string | null
 }
 export interface PledgeStore {
   create(p: { id: string; intentId: string; seekerAgentId: string; topic: string }): void
@@ -16,22 +26,55 @@ export interface PledgeStore {
   list(): PledgeRow[]
   setSelfRevealed(id: string, at: string): void
   setPeerRevealed(id: string, at: string): void
+  /** 记下「我的揭晓已送达」。只在 postPeerReveal 返回非 null 之后调用。 */
+  setSelfDelivered(id: string, at: string): void
+  /** 我已同意、但揭晓从没送出去的行 —— 补投扫描的输入。 */
+  listUndelivered(): PledgeRow[]
+  /** 记下我欠这一位的明信片(发之前先记,发失败才补得回去)。 */
+  setPendingEcho(id: string, blurb: string, degree: number, at: string): void
+  /** 明信片已送达。只在投递真的成功后调用(delivered,不是 asked)。 */
+  setEchoDelivered(id: string, at: string): void
+  /** 记了要发、但没送到的明信片 —— 补投扫描的输入。 */
+  listUndeliveredEchoes(): PledgeRow[]
 }
 
 export function makePledgeStore(db: Db): PledgeStore {
   const ins = db.query<unknown, [string, string, string, string, string]>(
+    // 主键 `${intent_id}:${agent_id}` 是确定性的,重放带来的行与原行完全一样。
+    // 信箱传输是 at-least-once(取件后、ack 前重启必然重放),所以这里必须
+    // 幂等 —— 裸 INSERT 会抛,而调用方只 catch 一行日志,于是每次重放都留
+    // 一条假「失败」。
+    // DO NOTHING 而非 DO UPDATE:self/peer_revealed_at 可能已经写过,
+    // UPDATE 会把真实发生过的揭晓抹回 NULL。
     `INSERT INTO social_pledge(id, intent_id, seeker_agent_id, topic, self_revealed_at, peer_revealed_at, created_at)
-     VALUES (?, ?, ?, ?, NULL, NULL, ?)`,
+     VALUES (?, ?, ?, ?, NULL, NULL, ?)
+     ON CONFLICT(id) DO NOTHING`,
   )
   const selOne = db.query<PledgeRow, [string]>('SELECT * FROM social_pledge WHERE id = ?')
   const selAll = db.query<PledgeRow, []>('SELECT * FROM social_pledge ORDER BY created_at DESC, rowid DESC')
   const updSelf = db.query<unknown, [string, string]>('UPDATE social_pledge SET self_revealed_at = ? WHERE id = ?')
   const updPeer = db.query<unknown, [string, string]>('UPDATE social_pledge SET peer_revealed_at = ? WHERE id = ?')
+  const updDelivered = db.query<unknown, [string, string]>('UPDATE social_pledge SET self_reveal_delivered_at = ? WHERE id = ?')
+  const selUndelivered = db.query<PledgeRow, []>(
+    'SELECT * FROM social_pledge WHERE self_revealed_at IS NOT NULL AND self_reveal_delivered_at IS NULL ORDER BY created_at ASC, rowid ASC',
+  )
+  const updPendingEcho = db.query<unknown, [string, number, string, string]>(
+    'UPDATE social_pledge SET echo_blurb = ?, echo_degree = ?, echo_queued_at = ? WHERE id = ?',
+  )
+  const updEchoDelivered = db.query<unknown, [string, string]>('UPDATE social_pledge SET echo_delivered_at = ? WHERE id = ?')
+  const selUndeliveredEchoes = db.query<PledgeRow, []>(
+    'SELECT * FROM social_pledge WHERE echo_blurb IS NOT NULL AND echo_delivered_at IS NULL ORDER BY echo_queued_at ASC, rowid ASC',
+  )
   return {
     create(p) { ins.run(p.id, p.intentId, p.seekerAgentId, p.topic, new Date().toISOString()) },
     get(id) { return selOne.get(id) ?? null },
     list() { return selAll.all() },
     setSelfRevealed(id, at) { updSelf.run(at, id) },
     setPeerRevealed(id, at) { updPeer.run(at, id) },
+    setSelfDelivered(id, at) { updDelivered.run(at, id) },
+    listUndelivered() { return selUndelivered.all() },
+    setPendingEcho(id, blurb, degree, at) { updPendingEcho.run(blurb, degree, at, id) },
+    setEchoDelivered(id, at) { updEchoDelivered.run(at, id) },
+    listUndeliveredEchoes() { return selUndeliveredEchoes.all() },
   }
 }

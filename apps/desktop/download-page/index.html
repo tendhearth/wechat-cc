@@ -85,6 +85,27 @@
   .say { text-align:center; color:var(--muted); font-size:13px; margin:2px 0 46px }
   .say .ver { font-variant-numeric:tabular-nums; color:var(--ink-soft); font-weight:800 }
 
+  /* ── 朋友邀请横幅 + 装机四步(2026-08-31)── */
+  /* [hidden] 必须显式压过 display:flex —— 否则"默认隐藏"形同虚设
+     (2026-08-31 真浏览器验证时抓到:无 ?from= 参数也会显示横幅)。 */
+  .invite[hidden] { display:none }
+  .invite { display:flex; align-items:flex-start; gap:10px; margin:0 0 22px;
+            background:var(--card); border:1.5px solid var(--accent);
+            border-radius:16px 20px 14px 18px; padding:14px 16px;
+            color:var(--ink-soft); font-size:14px; line-height:1.6 }
+  .invite b { color:var(--accent-cc) }
+  .invite-ico { font-size:20px; line-height:1.3 }
+  .steps { counter-reset:s; list-style:none; padding:0; margin:0 auto; max-width:52ch }
+  .steps li { counter-increment:s; position:relative; padding:12px 0 12px 40px;
+              border-bottom:1px solid var(--rule); color:var(--ink-soft);
+              font-size:14px; line-height:1.7 }
+  .steps li:last-child { border-bottom:0 }
+  .steps li::before { content:counter(s); position:absolute; left:0; top:12px;
+                      width:26px; height:26px; border-radius:50%;
+                      background:var(--paper-warm); color:var(--accent-cc);
+                      font-weight:800; font-size:13px; display:grid; place-items:center }
+  .steps b { color:var(--ink) }
+
   /* ── together (vignettes) ── */
   section { border-top:1px solid var(--rule); padding:40px 0 8px }
   .sec-h { font-family:var(--serif); font-weight:700; font-size:23px; margin:0 0 4px; text-align:center }
@@ -122,6 +143,14 @@
 </head>
 <body>
 <div class="wrap">
+
+  <!-- 朋友邀请横幅。默认隐藏 —— 直接访问下载页的人不该看到"谁邀请你"。
+       只带一个打招呼用的名字(?from=),【不携带任何配对码或密钥】:配对码是
+       一次性密钥、10 分钟 TTL,必须在微信里当面给,不能进一条可以被转发的链接。 -->
+  <div class="invite" id="invite-banner" hidden>
+    <span class="invite-ico" aria-hidden="true">🎏</span>
+    <span><b id="invite-from"></b> 邀请你把 CC 带回家 —— 装好之后,你们的 CC 就能互相串门了。</span>
+  </div>
 
   <header class="hero">
     <div class="stage">
@@ -166,6 +195,21 @@
     </div>
   </section>
 
+  <!-- 装完之后干什么。此前这一页只有下载按钮,装完就断片 —— 被朋友拉来的人
+       不知道下一步。四步里第三步(开启社交)是新加的:社交默认关着,得他自己
+       在应用里点一下同意;第四步刻意说"找邀请你的朋友要",因为配对码只活 10
+       分钟,必须两人都在场时现给。 -->
+  <section id="after-install">
+    <h2 class="sec-h">装好之后,四步就位</h2>
+    <p class="sec-sub">大概十来分钟,不用碰命令行</p>
+    <ol class="steps">
+      <li><b>用微信扫码</b> —— 打开 CC,拿手机扫一下,它就住进你的微信了</li>
+      <li><b>接上大脑</b> —— 挑一个你已经在用的(Claude / Codex / Cursor…),或者填一个接口地址</li>
+      <li><b>打开社交</b> —— 在「觅食」页点一下「启用社交」。默认是关着的,因为这一步之后 CC 才会代表你和朋友的 CC 打交道</li>
+      <li><b>找邀请你的朋友要一个配对码</b> —— 六位数字,在微信里发给你;你跟 CC 说「配对 123456」就成了</li>
+    </ol>
+  </section>
+
   <section>
     <h2 class="sec-h">它就住在你的微信里</h2>
     <p class="sec-sub">不用开新的 app——像跟朋友发消息一样跟它说话</p>
@@ -207,6 +251,17 @@
   var isMac = /Mac/i.test(plat) || /Mac OS X/i.test(ua)
   var isMobile = /iPhone|iPad|iPod|Android/i.test(ua)
   var REPO = "tendhearth/wechat-cc"
+
+  // 邀请横幅。名字用 textContent 落地(不可信输入,绝不进 innerHTML),
+  // 并做长度截断,免得超长串把版面撑坏。
+  try {
+    var fromName = new URLSearchParams(location.search).get("from")
+    if (fromName) {
+      var el = document.getElementById("invite-from")
+      var banner = document.getElementById("invite-banner")
+      if (el && banner) { el.textContent = fromName.slice(0, 24); banner.hidden = false }
+    }
+  } catch (e) { /* 参数畸形 → 就当没有邀请,正常下载页 */ }
 
   function pick(assets, re) { for (var i=0;i<assets.length;i++) if (re.test(assets[i].name)) return assets[i].browser_download_url; return null }
   function label(kind) { return kind === "mac" ? "下载给 Mac" : "下载给 Windows" }

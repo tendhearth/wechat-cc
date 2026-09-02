@@ -185,24 +185,55 @@ remembers its choice across daemon restarts (`conversations.json`).
 | `/cc`            | **Solo · Claude** | Claude only | Single reply |
 | `/codex`         | **Solo · Codex**  | Codex only  | Single reply |
 | `/cursor`        | **Solo · Cursor** | Cursor only (if `@cursor/sdk` + `CURSOR_API_KEY` are present) | Single reply |
-| `/both`          | **Parallel** | All registered providers (or explicit list) independently | `[Claude] ...` + `[Codex] ...` + `[Cursor] ...` (one reply per participant) |
+| `/both`          | **Parallel** | All registered providers (or explicit list) independently | `[Claude] ...` + `[Codex] ...` + `[Cursor] ...`, then a 🎯 synthesis |
 | `/cc + codex`    | **Primary + Tool** | Claude main, Codex on call | Single reply; Claude self-decides when to invoke `delegate_codex` |
 | `/codex + cc`    | **Primary + Tool** | Codex main, Claude on call | Same shape, roles swapped |
-| `/chat`          | **Chatroom** | All registered providers (or explicit list), multi-round dialogue | Mixed `[Claude]` / `[Codex]` / `[Cursor]` lines as they discuss, then a final answer |
+| `/chat`          | **Chatroom** | All registered providers (or explicit list); anonymized debate | `[Claude]` / `[Codex]` / `[Cursor]` lines as they discuss, then a 🎯 verdict + 📊 peer-review line |
 | `/solo`          | revert to single-provider default | — | — |
 | `/stop`          | cancel the current `/chat` loop | — | — |
 | `/mode`          | show the current mode for this chat | — | — |
 
-- **`/chat`** — chatroom mode. Multiple agents take turns under a haiku
-  moderator that decides who speaks next per round. Bare `/chat` uses
-  all registered providers (after cursor was added, that's claude +
-  codex + cursor). Explicit form: `/chat claude codex` (2-way) or
-  `/chat claude codex cursor` (3-way). P1 caps the participant list
-  at 3 — extras are silently dropped with a log warning.
+- **`/chat`** — chatroom mode. Bare `/chat` uses all registered
+  providers; explicit form `/chat claude codex` (2-way) or
+  `/chat claude codex cursor` (3-way). Capped at 3 participants —
+  extras are dropped with a log warning.
 
-- **`/both`** (alias `/parallel`) — parallel mode. Same shape:
-  bare → all registered, explicit → `/parallel claude cursor`. ≥2
+  The pipeline (`chatroom-conductor.ts`):
+
+  1. **开场** — every participant answers independently, knowing who
+     else is at the table.
+  2. **争点地图** — one cheap eval asks what they actually disagree
+     about. **No real disagreement ⇒ the whole cross-talk round is
+     skipped** and the verdict is written straight from the openings
+     (the verdict says so, so a skipped round doesn't read like a bug).
+  3. **互驳** — anonymized. Nobody sees which model wrote which answer,
+     because a name badge buys deference: models are gentler on
+     `[Claude]` than on `Response B`. Each participant is assigned a
+     distinct critical lens (事实与证据 / 假设与推理 / 遗漏与代价) so
+     three agents don't produce three versions of the same paragraph,
+     and each returns a `#RANK:` line rating the answers.
+  4. **裁决** — also anonymized, told to take a side rather than list
+     "two perspectives", with a one-line peer-review footer
+     (`📊 互评`, Borda-counted, **self-votes excluded**).
+
+  Why anonymized peer review: borrowed from
+  [karpathy/llm-council](https://github.com/karpathy/llm-council).
+  Why heterogeneity matters: the 2026 evidence
+  ([arXiv 2502.08788](https://arxiv.org/abs/2502.08788),
+  [2605.00914](https://arxiv.org/html/2605.00914v1)) is that *unguided
+  homogeneous* debate does **not** beat one model with more compute —
+  model heterogeneity is the factor that does. wechat-cc's panel is
+  genuinely cross-vendor (Claude in-process SDK · Gemini via Antigravity ·
+  Codex · Cursor · any OpenAI-compatible endpoint), which is the case
+  where debate actually pays.
+
+- **`/both`** (alias `/parallel`) — parallel mode: everyone answers
+  independently, no cross-talk, and a short 🎯 synthesis closes it out
+  (anonymized inputs; skipped when fewer than two answers came back).
+  Bare → all registered, explicit → `/parallel claude cursor`. ≥2
   participants required; rejects unknown providers up front.
+  Cheaper and faster than `/chat` — use `/chat` when the answers are
+  likely to *conflict*, `/both` when you just want two takes.
 
 - **Legacy 2-way chats** — if you used `/chat` or `/both` before
   cursor was registered, your existing chats stay 2-way (claude +

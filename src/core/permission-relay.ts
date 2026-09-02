@@ -74,11 +74,17 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool {
     // real argument to the verdict transcript (collectTurn records only
     // replyToolCalled, not the text). So deny reply outright during a debate
     // beat — force plain text. See conversation-coordinator.runBeat.
-    if (deps.mode() === 'chatroom' && isReplyToolName(toolName)) {
-      deps.log('PERMISSION', `deny-chatroom-reply: tool=${toolName}`)
+    // 2026-09:同样的理由对 parallel(/both)也成立,而且多一条 —— /both
+    // 现在会在末尾给一条收口(见 dispatchParallel 的 buildParallelSynthesisPrompt)。
+    // reply 工具一走,协调器就**看不到那位说了什么**,收口只能拿到半场,
+    // 比不收口更糟。代价:参与者不能在 /both 里直接发图(纯文本会照常前缀
+    // 转发);/chat 早就接受了同一个代价。
+    const fanOut = deps.mode() === 'chatroom' || deps.mode() === 'parallel'
+    if (fanOut && isReplyToolName(toolName)) {
+      deps.log('PERMISSION', `deny-fanout-reply: mode=${deps.mode()} tool=${toolName}`)
       return {
         behavior: 'deny',
-        message: 'reply tool is disabled in chatroom mode — respond with plain text, the host will relay it',
+        message: 'reply tool is disabled in chatroom/parallel mode — respond with plain text, the host will relay it',
       } satisfies PermissionResult
     }
     const tier = deps.resolveTier()

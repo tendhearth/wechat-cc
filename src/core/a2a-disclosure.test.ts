@@ -67,3 +67,35 @@ describe('gateOutbound', () => {
     expect(r.ok).toBe(false)
   })
 })
+
+// 2026-09-01,真机实测:agy 的 cheapEval 单次 10.3–14.3s(gemini-3.7-flash-low,
+// CLI 冷启动),并发跑话题+城市两闸门时墙钟 12.66s —— 而 GATE_TIMEOUT_MS 是
+// 12s。于是派心愿**时灵时不灵**地报 checker_unavailable,看起来像随机故障。
+//
+// 一个写死的常数没法同时服务 in-process(约 1s)和 CLI 冷启动(10-20s)两档。
+// 闸门的超时必须由**实际会跑的 provider** 说了算。
+describe('gateOutbound —— 超时由调用方按 provider 的实际延迟给', () => {
+  it('默认仍是 GATE_TIMEOUT_MS(不改既有行为)', async () => {
+    vi.useFakeTimers()
+    try {
+      const never = new Promise<string>(() => {})
+      const p = gateOutbound('x', { policy: 'p', cheapEval: () => never })
+      await vi.advanceTimersByTimeAsync(GATE_TIMEOUT_MS + 1)
+      expect(await p).toEqual({ ok: false, redacted: '', violations: ['checker_timeout'] })
+    } finally { vi.useRealTimers() }
+  })
+
+  it('给了 timeoutMs 就用它 —— 慢 provider 不再被自己的闸门掐死', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolve!: (s: string) => void
+      const slow = new Promise<string>(r => { resolve = r })
+      const p = gateOutbound('上海', { policy: 'p', cheapEval: () => slow, timeoutMs: 30_000 })
+      // 走到 12s(旧常数)时不该超时
+      await vi.advanceTimersByTimeAsync(GATE_TIMEOUT_MS + 1)
+      resolve('{"violation": false, "redacted": "上海", "reasons": []}')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(await p).toEqual({ ok: true, redacted: '上海', violations: [] })
+    } finally { vi.useRealTimers() }
+  })
+})

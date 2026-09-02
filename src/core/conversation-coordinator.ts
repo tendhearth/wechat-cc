@@ -21,7 +21,12 @@ import type { ProviderRegistry } from './provider-registry'
 import type { Mode, ProviderId } from './conversation'
 import type { InboundMsg } from './prompt-format'
 import { makeHandoffLedger, buildHandoffBlock, type HandoffTurn } from './provider-handoff'
-import { buildOpeningPrompt, buildRebuttalPrompt, buildVerdictPrompt, buildConvergencePrompt, parseConvergence, type Opening } from './chatroom-conductor'
+import {
+  buildOpeningPrompt, buildRebuttalPrompt, buildVerdictPrompt, buildConvergencePrompt, parseConvergence,
+  labelOpenings, buildContentionPrompt, parseContention, lensFor,
+  parsePeerRank, aggregateRanking, formatRankingFooter, buildParallelSynthesisPrompt,
+  type Opening, type Contention, type RankedSpeaker,
+} from './chatroom-conductor'
 import { assertSupported, capabilitiesFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
 import { collectTurn, TURN_TIMEOUT_CODE, type TurnSummary } from './agent-provider'
 import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile } from './user-tier'
@@ -710,24 +715,64 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
 
       if (aborter.signal.aborted) { deps.log('COORDINATOR_CHATROOM', `chat=${msg.chatId} aborted mid-debate`); return }
 
+      // 从这里往下**全程匿名**。互驳与裁决的 prompt 里不再出现 provider 名字
+      // (抄 karpathy/llm-council 的 Stage 2)——模型对着名牌客气、对着陌生
+      // 名字挑刺,这是白送的偏见。用户那边照旧看到 [claude]/[codex] 前缀。
+      const labels = labelOpenings(openings)
+
+      // ── Beat ①b:争点地图。先花一次 cheapEval 问「他们到底在争什么」。
+      // 抽不出争点 ⇒ **整个互驳拍跳过**,直接收口:三个模型说的是同一件事时
+      // 再逼他们互驳,只会产出客套话和虚假对立(而且贵三倍)。
+      let contention: Contention = { contested: [], agreed: [] }
+      if (deps.haikuEval && openings.length >= 2) {
+        try { contention = parseContention(await deps.haikuEval(buildContentionPrompt(question, labels))) }
+        catch (e) { deps.log('COORDINATOR_CHATROOM', `contention map failed: ${e instanceof Error ? e.message : e}`) }
+      }
+
+      // 没有 cheapEval 时不能把「问不出争点」误当成「没有争点」—— 那会让
+      // 整个辩论悄悄退化成一拍。没有它就退回旧行为:照常互驳,只是没有靶子。
+      const shouldRebut = openings.length >= 2 && (!deps.haikuEval || contention.contested.length > 0)
+      if (openings.length >= 2 && !shouldRebut) {
+        deps.log('COORDINATOR_CHATROOM', `chat=${msg.chatId} 开场无实质分歧 —— 跳过互驳,直接裁决`)
+      }
+
+      // 跳过互驳是**正确**行为,但它长得跟「互驳这个功能坏了」一模一样 ——
+      // 用户只会看到少了两条发言。说一句,免得省下来的这一刀被当成 bug。
+      const notes: string[] = []
+      if (openings.length >= 2 && !shouldRebut) notes.push('（开场没有实质分歧，跳过了互驳这一轮）')
+
       let rebuttals: Opening[] = []
-      if (openings.length >= 2) {
-        // ── Beat ②: parallel cross-talk — each engages the others' openings.
-        rebuttals = await runBeat(msg, proj, tierProfile, openings.map(o => o.speaker),
-          (p) => buildRebuttalPrompt(question, openings, p))
+      let ranking: RankedSpeaker[] = []
+      if (shouldRebut) {
+        // ── Beat ②:匿名 + 只打争点 + 每人一个指派视角 + 顺带交一张互评票。
+        const speakers = openings.map(o => o.speaker)
+        const beat2 = await runBeat(msg, proj, tierProfile, speakers,
+          (p) => buildRebuttalPrompt(question, {
+            labels, contested: contention.contested, lens: lensFor(speakers.indexOf(p)), self: p,
+          }), true)
+        rebuttals = beat2.map(b => ({ speaker: b.speaker, text: b.text }))
+        const votes = beat2.map(b => ({ voter: b.speaker, ranking: b.ranking }))
 
         if (aborter.signal.aborted) { deps.log('COORDINATOR_CHATROOM', `chat=${msg.chatId} aborted mid-debate`); return }
 
         // ── Beat ②b (optional, capped at 1): only if still materially split.
         if (deps.haikuEval && rebuttals.length >= 2) {
           let conv = { converged: true } as { converged: boolean; disagreement?: string }
-          try { conv = parseConvergence(await deps.haikuEval(buildConvergencePrompt(question, openings, rebuttals))) }
+          try { conv = parseConvergence(await deps.haikuEval(buildConvergencePrompt(question, labels, rebuttals))) }
           catch { /* parseConvergence never throws; haikuEval might — treat as converged */ }
           if (!conv.converged && conv.disagreement) {
-            const extra = await runBeat(msg, proj, tierProfile, openings.map(o => o.speaker),
-              (p) => buildRebuttalPrompt(`${question}\n（聚焦这个分歧：${conv.disagreement}）`, [...openings, ...rebuttals], p))
-            rebuttals = [...rebuttals, ...extra]
+            const extra = await runBeat(msg, proj, tierProfile, speakers,
+              (p) => buildRebuttalPrompt(question, {
+                labels, contested: contention.contested, lens: lensFor(speakers.indexOf(p)), self: p,
+                focus: conv.disagreement!,
+              }), true)
+            rebuttals = [...rebuttals, ...extra.map(b => ({ speaker: b.speaker, text: b.text }))]
+            votes.push(...extra.map(b => ({ voter: b.speaker, ranking: b.ranking })))
           }
+        }
+        ranking = aggregateRanking(votes, labels)
+        if (ranking.length) {
+          deps.log('COORDINATOR_CHATROOM', `chat=${msg.chatId} 互评(他评,不含自投):${ranking.map(r => `${r.speaker}=${r.score}`).join(' ')}`)
         }
       }
 
@@ -738,10 +783,18 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       const verdictEval = deps.verdictEval ?? deps.haikuEval
       if (verdictEval) {
         let verdict = ''
-        try { verdict = (await verdictEval(buildVerdictPrompt(question, openings, rebuttals))).trim() }
+        try {
+          verdict = (await verdictEval(buildVerdictPrompt(question, {
+            labels, rebuttals, contested: contention.contested, ranking,
+          }))).trim()
+        }
         catch (e) { deps.log('COORDINATOR_CHATROOM', `verdict failed: ${e instanceof Error ? e.message : e}`) }
         if (verdict) {
-          await deps.sendAssistantText?.(msg.chatId, verdict.startsWith('🎯') ? verdict : `🎯 ${verdict}`)
+          // 名次跟裁决同一条消息发出去 —— 微信上多一条消息就是多一次打扰,
+          // 而这一行恰恰是让「这场辩论有没有用」变得可衡量的东西。
+          const footer = [formatRankingFooter(ranking), ...notes].filter(Boolean).join('\n')
+          const body = verdict.startsWith('🎯') ? verdict : `🎯 ${verdict}`
+          await deps.sendAssistantText?.(msg.chatId, footer ? `${body}\n\n${footer}` : body)
         }
       }
     } finally {
@@ -811,6 +864,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     // them all, so a single endedAt is the honest wall-clock for the round.
     const endedAt = nowMs()
 
+    const answers: Opening[] = []
     for (let i = 0; i < settled.length; i++) {
       const r = settled[i]!
       const providerId = participants[i]!
@@ -867,8 +921,31 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       for (const t of assistantText) {
         await deps.sendAssistantText?.(msg.chatId, `[${dn}] ${t}`)
       }
+      const joined = assistantText.join('\n').trim()
+      if (joined) answers.push({ speaker: providerId, text: joined })
+    }
+
+    // ── /both 的收口。原本是「N 条答案并排丢给用户」,合并的活全推给人 ——
+    // 在微信这块屏幕上尤其糟。并排保留(对比本身有价值),末尾补一条可以
+    // 直接用的答案。不做互驳:那是 /chat 的事,/both 要的就是便宜和快。
+    //
+    // 少于两条就没什么可合的(一条答案的"综合"只是复读);拿不到文本的
+    // 参与者(reply 工具被 permission-relay 拦掉之后已是罕见路径)不参与。
+    const synthEval = deps.verdictEval ?? deps.haikuEval
+    if (answers.length >= 2 && synthEval) {
+      try {
+        const synth = (await synthEval(buildParallelSynthesisPrompt(text, labelOpenings(answers)))).trim()
+        if (synth) await deps.sendAssistantText?.(msg.chatId, synth.startsWith('🎯') ? synth : `🎯 ${synth}`)
+      } catch (e) {
+        deps.log('COORDINATOR_PARALLEL', `synthesis failed: ${e instanceof Error ? e.message : e}`)
+      }
+    } else if (answers.length >= 2) {
+      deps.log('COORDINATOR_PARALLEL', `chat=${msg.chatId} 没有可用的 eval —— 跳过收口,只并排`)
     }
   }
+
+  /** 一位参与者在一拍里的产出。`ranking` 只有互驳拍才非空(见 parsePeerRank)。 */
+  interface BeatResult extends Opening { ranking: string[] }
 
   // One debate beat: run `participants` concurrently, each with its own prompt.
   // Emit each agent's text the moment that agent finishes (live feel, not
@@ -881,8 +958,12 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     tierProfile: TierProfile,
     participants: ProviderId[],
     promptFor: (p: ProviderId) => string,
-  ): Promise<Opening[]> {
-    const results = await Promise.all(participants.map(async (providerId): Promise<Opening | null> => {
+    /** 互驳拍为 true:把 `#RANK:` 行当作这一位投出的选票计入互评。
+     *  **剥离**那一行则是无条件的** —— 它是内部信号,任何一拍里冒出来都
+     *  不该出现在给用户看的发言里(开场并没有要求它,但模型偶尔会自作主张)。 */
+    countRank = false,
+  ): Promise<BeatResult[]> {
+    const results = await Promise.all(participants.map(async (providerId): Promise<BeatResult | null> => {
       const startedAt = nowMs()
       let summary: Awaited<ReturnType<typeof collectTurn>> | undefined
       let err: string | undefined
@@ -928,13 +1009,17 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         deps.log('COORDINATOR_CHATROOM', `chat=${msg.chatId} provider=${providerId} used reply tool in a beat — dropped`)
         return null
       }
-      const text = (summary?.assistantText ?? []).join('\n').trim()
+      const raw = (summary?.assistantText ?? []).join('\n').trim()
+      if (!raw) return null
+      const parsed = parsePeerRank(raw)
+      const text = parsed.text
+      const ranking = countRank ? parsed.ranking : []
       if (!text) return null
       const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
       await deps.sendAssistantText?.(msg.chatId, `[${dn}] ${text}`)
-      return { speaker: providerId, text }
+      return { speaker: providerId, text, ranking }
     }))
-    return results.filter((r): r is Opening => r !== null)
+    return results.filter((r): r is BeatResult => r !== null)
   }
 
   /**

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makePairing, type PairingDeps, type PairCard, type PairScheduleHandle } from './pairing'
+import { makePairing, type PairingDeps, type PairCard, type PairScheduleHandle, isAdvertisableUrl } from './pairing'
 import { deriveRendezvous } from './pairing-crypto'
 import { sealEnvelope } from './mailbox-crypto'
 import type { MailboxClient } from './mailbox-client'
@@ -347,4 +347,38 @@ describe('pairing engine', () => {
       expect(regB.records.size).toBe(0)
     })
   })
+})
+
+/**
+ * WHY(2026-09-01,Mac↔Windows 真机):配对卡片里的 url 来自
+ * `a2aServer.baseUrl()` = `http://${host}:${port}`,而 a2a_listen.host
+ * **默认就是 127.0.0.1**。于是卡片把一个回环地址广播给了远端对方 ——
+ * 在对方机器上,它指向对方自己。
+ *
+ * 后果是真的:仪表盘「测试连通」走 /v1/a2a/send,用的正是 agent.url,
+ * 于是对端会 POST 到自己的 8790。目前靠 bearer 不匹配才挡住,是运气
+ * 不是设计。配对写的永远是 transport:'mailbox'(双方本来就直连不到),
+ * 这个字段只可能误导。
+ *
+ * 判定按「能不能路由到别人的机器」,不是按「是不是我自己」:回环、
+ * link-local(169.254/fe80)、0.0.0.0、以及裸 localhost 都不该外发。
+ * 私网地址(10./192.168./172.16-31)刻意**保留** —— 同一个局域网里的
+ * 两台机器互相直连是合法且有用的。
+ */
+describe('配对卡片不广播不可路由的 url', () => {
+  const cases: Array<[string, boolean]> = [
+    ['http://127.0.0.1:8790', false],
+    ['http://localhost:8790', false],
+    ['http://[::1]:8790', false],
+    ['http://0.0.0.0:8790', false],
+    ['http://169.254.10.4:8790', false],
+    ['http://192.168.1.20:8790', true],
+    ['http://10.84.6.254:8790', true],
+    ['https://cc.example.com', true],
+  ]
+  for (const [url, shouldAdvertise] of cases) {
+    it(`${url} → ${shouldAdvertise ? '可广播' : '不广播'}`, () => {
+      expect(isAdvertisableUrl(url)).toBe(shouldAdvertise)
+    })
+  }
 })

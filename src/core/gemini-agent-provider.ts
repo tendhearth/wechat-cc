@@ -405,6 +405,8 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
         },
       }
     },
+    /** CLI 子进程一档,与 codex 同量级。 */
+    cheapEvalBudgetMs: 20_000,
     async cheapEval(prompt: string): Promise<string> {
       const resp = await opts.genai.models.generateContent({
         model: opts.cheapModel ?? opts.model,

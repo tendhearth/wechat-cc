@@ -1006,8 +1006,26 @@ const INCIDENTS_POLL_INTERVAL_MS = 60_000
 const BRAIN_POLL_INTERVAL_MS = 60_000
 let _lastBrainCheckAt = 0
 let _troubleshootOpen = false
+let _lastNetRows = ""   // 第一步网络结果,留给用户点「叫醒大脑」时第二步复用
 
 const PROVIDER_LABELS = { claude: "Claude", codex: "Codex", cursor: "Cursor", agy: "Gemini(agy)", openai: "OpenAI", gemini: "Gemini" }
+
+// 每个大脑自己的小图标(内联 SVG,自包含无外链)。不是像素级复刻官方 logo,
+// 而是用各家品牌色 + 简洁标记做到一眼可辨(Anthropic 珊瑚色星芒 / OpenAI 绿
+// 六边 / Cursor 光标 / Gemini 蓝紫四角星)。14px,基线对齐。
+const _ico = (svg) => `<span class="brain-ico" aria-hidden="true" style="display:inline-flex;vertical-align:-2px;margin-right:4px">${svg}</span>`
+const PROVIDER_ICONS = {
+  claude: _ico('<svg width="14" height="14" viewBox="0 0 16 16" fill="#D97757"><path d="M8 .8l1.3 4.5L13.4 3 11 6.9 15.2 8 11 9.1l2.4 3.9-4.1-2.3L8 15.2l-1.3-4.5L2.6 13 5 9.1.8 8 5 6.9 2.6 3l4.1 2.3z"/></svg>'),
+  openai: _ico('<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#10A37F" stroke-width="1.4" stroke-linejoin="round"><path d="M8 1.7l5.2 3v6.6L8 14.3l-5.2-3V4.7z"/><circle cx="8" cy="8" r="2.1" fill="#10A37F" stroke="none"/></svg>'),
+  codex: _ico('<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#10A37F" stroke-width="1.4" stroke-linejoin="round"><path d="M8 1.7l5.2 3v6.6L8 14.3l-5.2-3V4.7z"/><circle cx="8" cy="8" r="2.1" fill="#10A37F" stroke="none"/></svg>'),
+  cursor: _ico('<svg width="14" height="14" viewBox="0 0 16 16" fill="#6b6b6b"><path d="M3 2l9.4 5.6-4 1 2.3 4.2-1.7.9L6.7 9.5 3 13z"/></svg>'),
+  gemini: _ico('<svg width="14" height="14" viewBox="0 0 16 16" fill="#4285F4"><path d="M8 1c.5 3.5 1.9 5 5.5 5.5C10 7 8.5 8.5 8 12c-.5-3.5-2-5-5.5-5.5C6 6 7.5 4.5 8 1z"/></svg>'),
+  agy: _ico('<svg width="14" height="14" viewBox="0 0 16 16" fill="#9B72F2"><path d="M8 1c.5 3.5 1.9 5 5.5 5.5C10 7 8.5 8.5 8 12c-.5-3.5-2-5-5.5-5.5C6 6 7.5 4.5 8 1z"/></svg>'),
+}
+/** 大脑名字前挂上自己的图标;没有对应图标就只出名字。 */
+function brainLabelWithIcon(id) {
+  return `${PROVIDER_ICONS[id] || ""}${escapeHtml(PROVIDER_LABELS[id] || id)}`
+}
 
 /**
  * cached 巡检入口(poll 驱动,永不拨号):决定「隐藏 / 告警条 / 排障面板刷新」。
@@ -1096,13 +1114,35 @@ export async function runTroubleshoot(deps) {
     return
   }
 
-  // ── 第二步:真拨大脑(唯一的真实拨号入口)──
+  // ── 第一步到此为止。第二步「叫醒大脑」是真拨号(慢、要按用户红线只在点击
+  //    时发),默认不自动跑 —— 网络没问题就停下,给个按钮,用户需要再点。──
+  _lastNetRows = netRows
   steps.innerHTML = `
     <div class="brain-step-title">网络</div>${netRows}
-    <div class="brain-checking">网络没问题。第二步:逐个叫醒大脑…(最长约 1 分钟)</div>`
+    <div class="brain-net-row ok">✓ 网络没问题</div>
+    <div class="brain-hint">要逐个叫醒大脑、确认每个都能应答吗?(真拨号,最长约 1 分钟)</div>
+    <button class="brain-recheck" type="button" data-action="brain-dial">叫醒大脑</button>
+    <button class="brain-recheck brain-quiet" type="button" data-action="brain-troubleshoot">重测网络</button>`
+}
+
+/**
+ * 第二步:逐个真拨大脑(唯一的真实拨号入口)。仅在用户点「叫醒大脑」时触发。
+ * 复用第一步存下的网络结果(_lastNetRows),不重复探网络。
+ */
+export async function runBrainDial(deps) {
+  const el = document.getElementById("brain-health")
+  if (!el) return
+  el.hidden = false
+  _troubleshootOpen = true
+  const steps = el.querySelector("#brain-steps")
+  if (!steps) return
+  const netRows = _lastNetRows
+  steps.innerHTML = `
+    <div class="brain-step-title">网络</div>${netRows}
+    <div class="brain-checking">正在逐个叫醒大脑…(最长约 1 分钟)</div>`
   const r = await deps.invokeApi("GET", "/v1/llm/health?fresh=1", undefined, { timeoutMs: 150_000 }).catch(() => null)
   if (!r || r.ok !== true) {
-    steps.innerHTML = `<div class="brain-step-title">网络</div>${netRows}<div class="brain-hint">大脑测试没跑起来,稍后再试。</div><button class="brain-recheck" type="button" data-action="brain-troubleshoot">再测一次</button>`
+    steps.innerHTML = `<div class="brain-step-title">网络</div>${netRows}<div class="brain-hint">大脑测试没跑起来,稍后再试。</div><button class="brain-recheck" type="button" data-action="brain-dial">再试一次</button>`
     return
   }
   const results = Array.isArray(r.results) ? r.results : []
@@ -1113,17 +1153,17 @@ export async function runTroubleshoot(deps) {
     const label = PROVIDER_LABELS[id] || id
     const x = byId.get(id)
     const isDefault = id === r.default_provider
-    if (!x) return `<span class="brain-chip brain-meh${isDefault ? " brain-default" : ""}" title="没探测到">${escapeHtml(label)} ?</span>`
+    if (!x) return `<span class="brain-chip brain-meh${isDefault ? " brain-default" : ""}" title="没探测到">${brainLabelWithIcon(id)} ?</span>`
     const cls = x.ok === true ? "ok" : x.ok === false ? "bad" : "meh"
     const mark = x.ok === true ? "✓" : x.ok === false ? "✗" : "—"
     const title = x.ok === true
       ? `${label} 正常 · ${Math.round(x.latency_ms / 1000)}s`
       : x.ok === false ? (x.hint || x.error || "不可用") : "无法探测"
-    return `<span class="brain-chip brain-${cls}${isDefault ? " brain-default" : ""}" title="${escapeHtml(title)}">${escapeHtml(label)} ${mark}</span>`
+    return `<span class="brain-chip brain-${cls}${isDefault ? " brain-default" : ""}" title="${escapeHtml(title)}">${brainLabelWithIcon(id)} ${mark}</span>`
   }).join("")
   const unconfigured = Array.isArray(r.unconfigured) ? r.unconfigured : []
   const moreChips = unconfigured.map(u =>
-    `<button class="brain-chip brain-off" type="button" data-brain-setup="${escapeHtml(u.provider)}" title="${escapeHtml(u.how)}">${escapeHtml(PROVIDER_LABELS[u.provider] || u.provider)} +</button>`,
+    `<button class="brain-chip brain-off" type="button" data-brain-setup="${escapeHtml(u.provider)}" title="${escapeHtml(u.how)}">${brainLabelWithIcon(u.provider)} +</button>`,
   ).join("")
   const broken = results.filter(x => x.ok === false)
   const hintLine = broken.length
@@ -1134,7 +1174,7 @@ export async function runTroubleshoot(deps) {
     <div class="brain-step-title">大脑</div>
     <div>${chips}${moreChips}</div>
     ${hintLine}
-    <button class="brain-recheck" type="button" data-action="brain-troubleshoot">再测一次</button>
+    <button class="brain-recheck" type="button" data-action="brain-dial">再测一次</button>
     <div class="brain-setup" id="brain-setup" hidden></div>`
 }
 

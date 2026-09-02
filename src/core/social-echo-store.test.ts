@@ -49,3 +49,27 @@ describe('makeEchoStore', () => {
     expect(d.relay_token).toBeNull()
   })
 })
+
+/**
+ * 与 social-pledge-store 同一个洞(2026-09-01 真机闭环发现,先在 pledge 上炸的)。
+ * echo 的主键同样是确定性的(`intent:peerAgent` 或 `intent:relayVia:relayToken`),
+ * 而 wire-social.ts:561 的注释白纸黑字写着「(possibly-duplicate) insert below」
+ * —— 作者知道会重复,却让裸 INSERT 抛进 catch,于是每次信箱重放都留一条
+ * 假的「echo record failed」。DO NOTHING(不是 DO UPDATE):status /
+ * self_revealed_at / peer_revealed_at / peer_masked 都可能已经被更新过。
+ */
+describe('makeEchoStore 幂等性(信箱重放)', () => {
+  it('同一个 id 再 create 一次不抛,不产生第二行,也不回卷已有状态', () => {
+    const db = openDb({ path: ':memory:' })
+    const s = makeEchoStore(db)
+    const row = { id: 'i9:ccx', seekId: 'i9', peerMasked: '一位朋友', degree: 1, content: '我认识一个', peerAgentId: 'ccx' }
+    s.create(row)
+    s.setStatus('i9:ccx', 'revealed')
+    s.setRevealedIdentity('i9:ccx', '老张')
+    expect(() => s.create(row)).not.toThrow()
+    expect(s.listForSeek('i9')).toHaveLength(1)
+    const after = s.get('i9:ccx')!
+    expect(after.status).toBe('revealed')
+    expect(after.peer_masked).toBe('老张')
+  })
+})

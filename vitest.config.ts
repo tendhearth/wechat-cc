@@ -23,5 +23,11 @@ export default defineConfig({
     // raise the platform default instead. macOS/Linux keep the strict 5s so
     // a genuine hang still fails fast where the signal is trustworthy.
     testTimeout: process.platform === 'win32' ? 20_000 : 5_000,
+    // ...and the same for HOOKS, which the line above did not cover. 2026-09-01:
+    // knowledge/graph-store 的 `beforeEach`(mkdtempSync + openKnowledge)在
+    // windows-latest 上撞了 vitest 默认的 10s hookTimeout,红了一次、重跑就绿。
+    // 那种红最贵的地方不是它本身,是它教人别看 CI —— 见 desktop-e2e 那笔账。
+    // 建库这类重活恰恰都在 hook 里,所以这条比 testTimeout 更该抬。
+    hookTimeout: process.platform === 'win32' ? 20_000 : 10_000,
   },
 })
