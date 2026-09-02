@@ -999,6 +999,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     stateDir: deps.stateDir,
     log: deps.log,
     ...(claudeBin ? { claudeBin } : {}),
+    // 没有 claude 二进制就别把 claude 放进 delegate 名单 —— 与 codex/openai
+    // 同一个姿态。上面那条 WARNING 之前只是说说,名单照旧列着它。
+    claudeAvailable: !!claudeBin,
     ...(codexBinary && codexVersionCheck?.ok ? { codexPathOverride: codexBinary } : {}),
     // busy-registry hold (spec 2026-08-11 §2, Task 4 step 3 + Task 6) —
     // a delegate dispatch is a one-shot session outside SessionManager.

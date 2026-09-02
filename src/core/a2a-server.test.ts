@@ -217,7 +217,11 @@ describe('a2a-server', () => {
       } finally { await server.stop() }
     })
 
-    it('defaults peer to claude when omitted', async () => {
+    // 2026-09-02:缺省不再补 'claude'。哪个 agent 跑在**这台**机器上,只有
+    // 这台机器知道 —— 路由把 undefined 原样传下去,由 dispatchDelegate 用
+    // 本机自己的默认 provider 解析。写死 claude 会让任何不装 claude 的机器
+    // 当不了手(真机上就是这样:委派只拿回「进程退出码 1」)。
+    it('peer 省略时原样传 undefined,不替本机假设成 claude', async () => {
       const onExec = vi.fn(async () => ({ ok: true as const, response: 'r' }))
       const alphaRec = rec('alpha')
       const { server, baseUrl } = await startServer({ agents: [alphaRec], onExec })
@@ -227,7 +231,7 @@ describe('a2a-server', () => {
           headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
           body: JSON.stringify({ agent_id: 'alpha', prompt: 'x' }),
         })
-        expect(onExec).toHaveBeenCalledWith(expect.objectContaining({ peer: 'claude' }))
+        expect(onExec).toHaveBeenCalledWith(expect.objectContaining({ peer: undefined }))
       } finally { await server.stop() }
     })
 

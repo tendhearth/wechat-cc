@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildDelegateDispatch } from './delegate'
@@ -30,7 +30,10 @@ describe('buildDelegateDispatch — openai/Kimi peer wiring', () => {
     // of any ambient WECHAT_OPENAI_API_KEY.
     const dispatch = buildDelegateDispatch({ stateDir: tmpState() })
     const r = await dispatch('openai', 'hi')
-    expect(r).toEqual({ ok: false, reason: 'unknown_peer: openai' })
+    expect(r.ok).toBe(false)
+    // 2026-09-02:错误串现在会点名本机实际可用的 provider —— 旧断言是全等,
+    // 那会把「说清楚」这件事锁死。见 delegate.ts 的 availablePeers。
+    if (!r.ok) expect(r.reason).toContain('unknown_peer: openai')
   })
 
   it('routes peer "openai" through the delegate map and returns its reply', async () => {
@@ -77,7 +80,10 @@ describe('buildDelegateDispatch — openai/Kimi peer wiring', () => {
   it('still reports unknown_peer for a genuinely unknown provider', async () => {
     const dispatch = buildDelegateDispatch({ stateDir: tmpState() })
     const r = await dispatch('bogus-provider', 'hi')
-    expect(r).toEqual({ ok: false, reason: 'unknown_peer: bogus-provider' })
+    expect(r.ok).toBe(false)
+    // 2026-09-02:错误串现在会点名本机实际可用的 provider —— 旧断言是全等,
+    // 那会把「说清楚」这件事锁死。见 delegate.ts 的 availablePeers。
+    if (!r.ok) expect(r.reason).toContain('unknown_peer: bogus-provider')
   })
 })
 
@@ -95,7 +101,10 @@ describe('buildDelegateDispatch — codex peer is conditional on codexPathOverri
   it('reports unknown_peer for codex when no codexPathOverride is passed', async () => {
     const dispatch = buildDelegateDispatch({ stateDir: tmpState() })
     const r = await dispatch('codex', 'hi')
-    expect(r).toEqual({ ok: false, reason: 'unknown_peer: codex' })
+    expect(r.ok).toBe(false)
+    // 2026-09-02:错误串现在会点名本机实际可用的 provider —— 旧断言是全等,
+    // 那会把「说清楚」这件事锁死。见 delegate.ts 的 availablePeers。
+    if (!r.ok) expect(r.reason).toContain('unknown_peer: codex')
   })
 
   it('logs a BOOT-visible line when the codex delegate is skipped', () => {
@@ -169,7 +178,10 @@ describe('buildDelegateDispatch — busy-registry hold', () => {
     const holdBusy = vi.fn()
     const dispatch = buildDelegateDispatch({ stateDir: tmpState(), holdBusy })
     const r = await dispatch('bogus-provider', 'hi')
-    expect(r).toEqual({ ok: false, reason: 'unknown_peer: bogus-provider' })
+    expect(r.ok).toBe(false)
+    // 2026-09-02:错误串现在会点名本机实际可用的 provider —— 旧断言是全等,
+    // 那会把「说清楚」这件事锁死。见 delegate.ts 的 availablePeers。
+    if (!r.ok) expect(r.reason).toContain('unknown_peer: bogus-provider')
     expect(holdBusy).not.toHaveBeenCalled()
   })
 
@@ -191,5 +203,75 @@ describe('buildDelegateDispatch — busy-registry hold', () => {
     const r = await dispatch('openai', 'ping')
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.response).toBe('ok')
+  })
+})
+
+// 2026-09-02 真机实验的产物。把 Windows 那台配成 hand(它跑 openai-compatible
+// /Kimi,机器上既没有 claude 也没有 codex 的 CLI),然后从 Mac 委派一个任务:
+//
+//   {"ok":false,"reason":"Claude Code process exited with code 1"}
+//
+// 传输是通的(bearer 过了、路由到了、exec 真的跑了),断在**大脑替对方决定
+// 用哪个 agent**:makeDelegateToHand 写死 `peer: 'claude'`,/a2a/exec 也默认
+// 'claude'。于是**任何不装 claude/codex 的机器都当不了手**,而报错还是一句
+// 看不出因果的「进程退出码 1」。
+//
+// 正确的语义:哪个 agent 跑在**那台机器上**,该由那台机器说了算。大脑可以
+// 指定(「让 win 用 codex 跑」),但不指定时不该替它假设。
+function tempState(cfg: Record<string, unknown>): string {
+  const dir = mkdtempSync(join(tmpdir(), 'wcc-delegate-peer-'))
+  writeFileSync(join(dir, 'agent-config.json'), JSON.stringify(cfg))
+  return dir
+}
+
+describe('dispatchDelegate —— peer 省略时用本机自己的默认 provider', () => {
+  const fake = (tag: string): AgentProvider => ({
+    spawn: async () => makeFakeSession({
+      events: [{ kind: 'text', text: tag }, { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 1 }],
+    }),
+  })
+
+  it('不给 peer → 走本机配置的 provider,而不是硬编码的 claude', async () => {
+    const stateDir = tempState({ provider: 'openai' })
+    const d = buildDelegateDispatch({
+      stateDir,
+      delegateProviders: { claude: fake('CLAUDE'), openai: fake('KIMI') },
+    })
+    const r = await d(undefined, 'hi')
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.response).toContain('KIMI')
+  })
+
+  it('显式指定 peer 仍然生效(「让 win 用 codex 跑」)', async () => {
+    const stateDir = tempState({ provider: 'openai' })
+    const d = buildDelegateDispatch({
+      stateDir,
+      delegateProviders: { claude: fake('CLAUDE'), openai: fake('KIMI') },
+    })
+    const r = await d('claude', 'hi')
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.response).toContain('CLAUDE')
+  })
+
+  it('本机配置的 provider 没建成 delegate → 回落到任何一个建成的,不是直接失败', async () => {
+    // 例如配了 agy 但这台机器上 agy 的 delegate 没注册。有手总比没手好。
+    const stateDir = tempState({ provider: 'agy' })
+    const d = buildDelegateDispatch({ stateDir, claudeAvailable: false, delegateProviders: { openai: fake('KIMI') } })
+    const r = await d(undefined, 'hi')
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.response).toContain('KIMI')
+  })
+
+  it('要的 peer 这台机器上没有 → 错误里点名它到底有什么', async () => {
+    // 旧行为是让它去 spawn 一个不存在的 CLI,拿回「进程退出码 1」——
+    // 那条消息没有任何可行动的信息。
+    const stateDir = tempState({ provider: 'openai' })
+    const d = buildDelegateDispatch({ stateDir, delegateProviders: { openai: fake('KIMI') } })
+    const r = await d('codex', 'hi')
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.reason).toContain('codex')
+      expect(r.reason).toContain('openai')   // 有什么要说出来
+    }
   })
 })

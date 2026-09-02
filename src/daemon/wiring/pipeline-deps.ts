@@ -100,7 +100,11 @@ export function makeDelegateToHand(deps: DelegateDeps) {
     const hands = deps.listHands().filter(a => a.capabilities?.includes('exec'))
     const hand = hands.find(a => a.id === handName || a.name === handName)
     if (!hand) return { ok: false, reason: 'unknown_hand', knownHands: hands.map(a => a.name || a.id) }
-    const dispatch: YiDispatch = { peer: 'claude', prompt: task }
+    // **不指定 peer**:哪个 agent 跑在那台机器上,只有那台机器知道。
+    // 2026-09-02 真机实验:一台只跑 openai-compatible(Kimi)、没装 claude
+    // CLI 的机器配成 hand 之后,委派永远失败,因为这里替它选了 claude ——
+    // 而回来的错误是「Claude Code process exited with code 1」,看不出因果。
+    const dispatch: YiDispatch = { prompt: task }
     if (hand.transport === 'ws') return deps.hub.dispatchTask(hand.id, dispatch, deps.timeoutMs)
     return deps.pushDelegate(hand, dispatch, deps.selfId, deps.timeoutMs)
   }

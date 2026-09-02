@@ -26,6 +26,17 @@ export interface DelegateBuildDeps {
   stateDir: string
   /** Optional override path for the claude-code binary. */
   claudeBin?: string
+  /**
+   * 这台机器上到底有没有 Claude Code。默认 true(向后兼容:既有调用方/测试
+   * 不传就当有)。
+   *
+   * WHY:codex 和 openai 的 delegate 都是**建成了才进 providers**,唯独
+   * claude 是无条件建的。于是一台没装 claude 的机器照样对外宣称能跑 claude
+   * delegate —— bootstrap 开机明明打了「WARNING: no Claude Code binary found」,
+   * 这里却当没看见。2026-09-02 真机上就是这样:委派过去只拿回
+   * 「Claude Code process exited with code 1」。
+   */
+  claudeAvailable?: boolean
   /** Optional override path for the Codex CLI used by the bundled SDK. */
   codexPathOverride?: string
   /**
@@ -53,7 +64,15 @@ export interface DelegateBuildDeps {
 }
 
 export type DelegateDispatch = (
-  peer: ProviderId,
+  /**
+   * 省略 ⇒ **由本机自己决定**用哪个 agent(见 dispatchDelegate 的实现)。
+   *
+   * 2026-09-02 真机实验:把一台只跑 openai-compatible(Kimi)、既没有 claude
+   * 也没有 codex CLI 的机器配成 hand,委派立刻失败 —— 因为大脑那边写死了
+   * `peer: 'claude'`。哪个 agent 跑在**那台机器上**,只有那台机器知道;大脑
+   * 可以指定(「让 win 用 codex 跑」),但不指定时不该替它假设。
+   */
+  peer: ProviderId | undefined,
   prompt: string,
   cwd?: string,
 ) =>
@@ -153,8 +172,12 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
       : null
 
   // Built-in delegates by peer id; test overrides win (see DelegateBuildDeps).
+  const claudeAvailable = deps.claudeAvailable !== false
+  if (!claudeAvailable) {
+    deps.log?.('BOOT', 'claude delegate not registered — no Claude Code binary on this machine; 委派会点名本机实际可用的 provider')
+  }
   const providers: Partial<Record<ProviderId, AgentProvider>> = {
-    claude: delegateClaude,
+    ...(claudeAvailable ? { claude: delegateClaude } : {}),
     ...(delegateCodex ? { codex: delegateCodex } : {}),
     ...(delegateOpenai ? { openai: delegateOpenai } : {}),
     ...(deps.delegateProviders ?? {}),
@@ -171,9 +194,25 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
    * peer runs in deps.stateDir (a stable location with no project
    * files), preserving the "ask, don't do" framing.
    */
+  /** 本机建成了 delegate 的 provider,按「配置的默认优先」排。 */
+  const availablePeers = (): ProviderId[] => {
+    const built = (Object.keys(providers) as ProviderId[]).filter(id => providers[id])
+    const own = configuredAgent.provider as ProviderId | undefined
+    return own && built.includes(own) ? [own, ...built.filter(id => id !== own)] : built
+  }
+
   return async function dispatchDelegate(peer, prompt, cwd) {
-    const provider = providers[peer] ?? null
-    if (!provider) return { ok: false, reason: `unknown_peer: ${peer}` }
+    const available = availablePeers()
+    // peer 省略 ⇒ 用本机自己的默认(配置的 provider 优先,否则任何一个建成的)。
+    // 有手总比没手好:配了 agy 但 agy 的 delegate 没建成时,回落到建成的那个,
+    // 而不是让整台机器当不了手。
+    const chosen = peer ?? available[0]
+    if (!chosen) return { ok: false, reason: 'no_delegate_provider: 这台机器没有任何可用的 delegate provider' }
+    const provider = providers[chosen] ?? null
+    // 点名它到底有什么。旧行为是照着请求去 spawn 一个不存在的 CLI,拿回
+    // 「Claude Code process exited with code 1」—— 那条消息没有任何可行动
+    // 的信息,而真相(这台机器上根本没装 claude)一个字都没说。
+    if (!provider) return { ok: false, reason: `unknown_peer: ${chosen} —— 这台机器可用的是 [${available.join(', ') || '(无)'}]` }
     // busy-registry hold (spec 2026-08-11 §2, Task 4 step 3) — spans the
     // whole one-shot session below (spawn → dispatch → close), released in
     // the finally alongside session.close() regardless of outcome.
@@ -204,7 +243,7 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
           // claude keeps its auto-allow (trusted) posture; every other bare
           // delegate (codex, openai/Kimi/…) is read-mostly "consult, don't
           // act" → guest (read-only fs, writes/shell denied by the gate).
-          tierProfile: peer === 'claude' ? TIER_PROFILES.trusted : TIER_PROFILES.guest,
+          tierProfile: chosen === 'claude' ? TIER_PROFILES.trusted : TIER_PROFILES.guest,
           // Delegate is always strict — there's no daemon-wide --dangerously
           // override path that reaches here (delegate is invoked headless
           // for one-shot consultations, not user-initiated dispatch).

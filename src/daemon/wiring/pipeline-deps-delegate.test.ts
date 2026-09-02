@@ -14,7 +14,8 @@ describe('makeDelegateToHand routing', () => {
       timeoutMs: 1000,
     })
     await expect(delegate('家里', 'do x')).resolves.toEqual({ ok: true, response: 'via-ws' })
-    expect(hub.dispatchTask).toHaveBeenCalledWith('home', { peer: 'claude', prompt: 'do x' }, 1000)
+    // peer 不再由大脑写死 —— 见 pipeline-deps.ts 的 makeDelegateToHand。
+    expect(hub.dispatchTask).toHaveBeenCalledWith('home', { prompt: 'do x' }, 1000)
   })
 
   it('unknown hand → known list', async () => {

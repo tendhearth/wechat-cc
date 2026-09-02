@@ -48,7 +48,9 @@ export interface NotifyEvent {
  */
 export interface ExecEvent {
   agent: A2AAgentRecord
-  peer: ProviderId
+  /** 省略 ⇒ 由**本机**决定用哪个 agent(dispatchDelegate 解析)。写死 claude
+   *  会让任何不装 claude 的机器当不了手 —— 见 bootstrap/delegate.ts。 */
+  peer?: ProviderId
   prompt: string
   cwd?: string
 }
@@ -211,7 +213,7 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         request_schema: {
           agent_id: 'string (your registered id with this wechat-cc)',
           prompt: 'string (the task)',
-          peer: 'string (optional, \'claude\'|\'codex\'; default claude)',
+          peer: 'string (optional, \'claude\'|\'codex\'|…; 省略则由本机自己选)',
           cwd: 'string (optional, working directory on this machine)',
         },
       }] : []),
@@ -342,7 +344,9 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       }
       if (agent.paused) return new Response(JSON.stringify({ ok: false, reason: 'paused' }), { status: 202 })
 
-      const peer = (typeof body.peer === 'string' && body.peer ? body.peer : 'claude') as ProviderId
+      // 缺省不再补 'claude' —— 交给 onExec/dispatchDelegate 用**本机自己的**
+      // 默认 provider 解析。写死 claude 会让任何不装 claude 的机器当不了手。
+      const peer = (typeof body.peer === 'string' && body.peer ? body.peer : undefined) as ProviderId | undefined
       const cwd = typeof body.cwd === 'string' ? body.cwd : undefined
       try {
         const result = await opts.onExec({ agent, peer, prompt: body.prompt, cwd })
