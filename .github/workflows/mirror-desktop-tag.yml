@@ -3,7 +3,11 @@ name: Mirror v* tag → desktop-v* tag
 # Defense for the "I cut a release but forgot to tag desktop too" failure
 # mode that shipped v0.5.15 and v0.5.16 without a desktop bundle. The
 # release flow is two paired tags:
-#   - vX.Y.Z         — CLI tag, what `wechat-cc update` watches
+#   - vX.Y.Z         — CLI 版本标记。**注意:`wechat-cc update` 并不读它**
+#                      —— analyzeUpdate 比的是 origin/<branch>(见
+#                      src/cli/update.ts)。这个 tag 的实际作用只有一个:
+#                      被下面这个 workflow 镜像成 desktop-v*。2026-09-03
+#                      我照着旧注释以为重打 v* 会影响 CLI 用户
 #   - desktop-vX.Y.Z — desktop tag, triggers the bundle build + draft release
 #
 # Skipping the desktop tag silently breaks the GitHub Releases flow without
