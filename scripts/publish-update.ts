@@ -1,16 +1,25 @@
 /**
  * publish-update — 发布桌面更新到自托管更新源(方案 A,2026-08-25)。
  *
- * 用法(在 `cd apps/desktop && bun run build` 之后):
- *   bun scripts/publish-update.ts [--notes "一句话更新说明"]
+ * 两种用法:
+ *
+ *   本地单平台(历史用法,在 `cd apps/desktop && bun run build` 之后):
+ *     bun scripts/publish-update.ts [--notes "一句话更新说明"]
+ *
+ *   一次发全平台(CI 在 GitHub Release 点了 Publish 之后走这条):
+ *     bun scripts/publish-update.ts --from-dir ./assets --version 1.6.6 --no-github
  *
  * 做三件事:
- *  1. 收集本平台的 updater 产物(macOS: wechat-cc.app.tar.gz + .sig)
- *  2. 合并生成 latest.json(保留其它平台已有条目 —— 从线上现拉,
- *     Windows 构建在 Windows 机器上跑同一脚本即可补上自己的平台)
+ *  1. 收集 updater 产物(macOS: wechat-cc.app.tar.gz + .sig;Windows: setup.exe + .sig)
+ *  2. 合并生成 latest.json(其它平台的旧条目只在**同版本**时保留)
  *  3. 上传到 Cloudflare R2(REST API,token 读 CF_API_TOKEN 环境变量,
- *     否则读 ~/Desktop/cloudflare_key.txt)。token 无效/缺失时降级:
- *     产物 + latest.json 落到 dist-update/ 目录,手动传到任何静态托管。
+ *     否则读 macOS 钥匙串,再否则读 ~/Desktop/cloudflare_key.txt)。token
+ *     无效/缺失时降级:产物 + latest.json 落到 dist-update/ 目录。
+ *
+ * WHY --from-dir(2026-09-03):此前一次只发**跑脚本这台机器的平台**,于是
+ * 三平台用户都能自动更新这件事,需要人跑两遍脚本、两次本地构建 —— 尽管
+ * CI 刚刚已经把三个平台都构建并签好了。「发版要手工做两遍」的直接后果是
+ * 它经常只做了一遍:v1.4.1→v1.6.2 的 latest.json 长期只有 darwin 一条。
  *
  * 托管参数在 scripts/update-hosting.json(非机密):bucket/baseUrl。
  * account id 用 token 现查(/accounts),不落盘。
@@ -19,6 +28,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from
 import { homedir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
+import { readdirSync } from 'node:fs'
+import { collectPlatformsFromDir, mergePlatforms, unsignedUpdaterArtifacts, type PlatformArtifact } from './publish-update.platforms'
 
 const ROOT = join(import.meta.dir, '..')
 const DESKTOP = join(ROOT, 'apps', 'desktop')
@@ -35,41 +46,52 @@ const hosting: Hosting = existsSync(HOSTING_PATH)
   : { bucket: 'wechat-cc-updates', baseUrl: 'https://dl.tendhearth.com/wechat-cc', keyPrefix: 'wechat-cc' }
 
 const conf = JSON.parse(readFileSync(join(DESKTOP, 'src-tauri', 'tauri.conf.json'), 'utf8')) as { version: string }
-const version = conf.version
+// CI 从 release tag 拿版本(--version),本地从 tauri.conf.json 拿。
+const version = (arg('--version') ?? conf.version).replace(/^v/, '')
 
 // ── 1. collect artifacts ────────────────────────────────────────────────
-// 默认取本平台构建产物;--platform + --artifact 可覆盖(例:Windows 机器
-// 只编译,exe 拉回 Mac 签名后在 Mac 发布 —— Windows 上无法给 tauri 传
-// 空密码环境变量,签名固定在 Mac 做)。
-const platformKey = arg('--platform') ?? (process.platform === 'darwin'
-  ? `darwin-${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}`
-  : process.platform === 'win32' ? 'windows-x86_64' : `linux-${process.arch}`)
+// --from-dir:一个扁平目录里认出**所有**平台(CI 下载 release 资产后走这条)。
+// 否则:本平台构建产物;--platform + --artifact 可覆盖(例:Windows 机器只
+// 编译,exe 拉回 Mac 签名后在 Mac 发布 —— Windows 上无法给 tauri 传空密码
+// 环境变量,签名固定在 Mac 做)。
+const fromDir = arg('--from-dir')
+let targets: PlatformArtifact[]
 
-let artifactPath: string
-let sigPath: string
-const artifactOverride = arg('--artifact')
-if (artifactOverride) {
-  artifactPath = artifactOverride
-  sigPath = `${artifactOverride}.sig`
-} else if (process.platform === 'darwin') {
-  const macosDir = join(DESKTOP, 'src-tauri', 'target', 'release', 'bundle', 'macos')
-  artifactPath = join(macosDir, 'wechat-cc.app.tar.gz')
-  sigPath = `${artifactPath}.sig`
+if (fromDir) {
+  targets = collectPlatformsFromDir(fromDir, version)
+  const unsigned = unsignedUpdaterArtifacts(fromDir, readdirSync(fromDir))
+  // 缺签名要**说出来**:静默跳过的后果是那个平台的用户永远收不到更新,
+  // 而发布日志看起来一切正常。desktop-v1.6.6 第一次出包正是这样。
+  for (const u of unsigned) console.error(`⚠️  ${u} 没有配套的 .sig,不进自动更新(该平台用户收不到这一版)`)
+  if (targets.length === 0) {
+    console.error(`${fromDir} 里没有可发布的 updater 产物(需要 wechat-cc.app.tar.gz 或 wechat-cc_${version}_x64-setup.exe,各带 .sig)`)
+    process.exit(1)
+  }
+  console.log(`将发布 ${targets.length} 个平台:${targets.map(t => t.platformKey).join(', ')}`)
 } else {
-  // Windows NSIS: <name>_<version>_x64-setup.exe(.sig)
-  const nsisDir = join(DESKTOP, 'src-tauri', 'target', 'release', 'bundle', 'nsis')
-  artifactPath = join(nsisDir, `wechat-cc_${version}_x64-setup.exe`)
-  sigPath = `${artifactPath}.sig`
-}
-if (!existsSync(artifactPath) || !existsSync(sigPath)) {
-  console.error(`找不到 updater 产物:\n  ${artifactPath}\n  ${sigPath}\n先在 apps/desktop 跑:
+  const platformKey = arg('--platform') ?? (process.platform === 'darwin'
+    ? `darwin-${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}`
+    : process.platform === 'win32' ? 'windows-x86_64' : `linux-${process.arch}`)
+  const artifactOverride = arg('--artifact')
+  const artifactPath = artifactOverride
+    ?? (process.platform === 'darwin'
+      ? join(DESKTOP, 'src-tauri', 'target', 'release', 'bundle', 'macos', 'wechat-cc.app.tar.gz')
+      // Windows NSIS: <name>_<version>_x64-setup.exe(.sig)
+      : join(DESKTOP, 'src-tauri', 'target', 'release', 'bundle', 'nsis', `wechat-cc_${version}_x64-setup.exe`))
+  const sigPath = `${artifactPath}.sig`
+  if (!existsSync(artifactPath) || !existsSync(sigPath)) {
+    console.error(`找不到 updater 产物:\n  ${artifactPath}\n  ${sigPath}\n先在 apps/desktop 跑:
   TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/wechat-cc-updater.key)" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" bunx tauri build --bundles app
 (dmg 打包器当前有故障,--bundles app 跳过它;签名密码为空但必须显式传)`)
-  process.exit(1)
+    process.exit(1)
+  }
+  targets = [{
+    platformKey,
+    artifactPath,
+    sigPath,
+    artifactName: `wechat-cc_${version}_${platformKey}${platformKey.startsWith('darwin') ? '.app.tar.gz' : '-setup.exe'}`,
+  }]
 }
-const signature = readFileSync(sigPath, 'utf8').trim()
-const artifactName = `wechat-cc_${version}_${platformKey}${platformKey.startsWith('darwin') ? '.app.tar.gz' : '-setup.exe'}`
-const artifactUrl = `${hosting.baseUrl}/${artifactName}`
 
 // ── 2. merge latest.json (preserve other platforms) ─────────────────────
 interface LatestJson {
@@ -90,10 +112,10 @@ const latest: LatestJson = {
   pub_date: new Date().toISOString(),
   // Other platforms' entries survive ONLY if they were published for the
   // SAME version — stale-version entries would updater-loop users.
-  platforms: {
-    ...(existing && existing.version === version ? existing.platforms : {}),
-    [platformKey]: { signature, url: artifactUrl },
-  },
+  platforms: mergePlatforms(existing, version, Object.fromEntries(targets.map(t => [
+    t.platformKey,
+    { signature: readFileSync(t.sigPath, 'utf8').trim(), url: `${hosting.baseUrl}/${t.artifactName}` },
+  ]))),
 }
 
 // ── 3. upload to R2, else stage locally ─────────────────────────────────
@@ -146,7 +168,7 @@ async function uploadR2(token: string): Promise<boolean> {
     })
     if (!r.ok) throw new Error(`PUT ${key} → ${r.status}: ${(await r.text()).slice(0, 200)}`)
   }
-  await put(`${hosting.keyPrefix}/${artifactName}`, new Uint8Array(readFileSync(artifactPath)), 'application/octet-stream')
+  for (const t of targets) await put(`${hosting.keyPrefix}/${t.artifactName}`, new Uint8Array(readFileSync(t.artifactPath)), 'application/octet-stream')
   await put(`${hosting.keyPrefix}/latest.json`, JSON.stringify(latest, null, 2), 'application/json')
 
   // 旧版清理 — 每平台只留最近 KEEP_VERSIONS 版,免费额度(10GB)永远够用。
@@ -176,6 +198,15 @@ async function uploadR2(token: string): Promise<boolean> {
   return true
 }
 
+// --dry-run:走完收集与合并,把将要发布的 latest.json 打出来就停。
+// 上传是不可逆的(latest.json 一变,所有客户端下一次检查就按它走),所以
+// 新流程必须有一条能在**不发布**的前提下验证自己的路径。
+if (process.argv.includes('--dry-run')) {
+  console.log(JSON.stringify(latest, null, 2))
+  console.log(`\n(--dry-run:未上传。将发布 ${targets.length} 个平台)`)
+  process.exit(0)
+}
+
 const token = readToken()
 let uploaded = false
 if (token) {
@@ -184,11 +215,11 @@ if (token) {
 if (!uploaded) {
   const out = join(ROOT, 'dist-update')
   mkdirSync(out, { recursive: true })
-  copyFileSync(artifactPath, join(out, artifactName))
+  for (const t of targets) copyFileSync(t.artifactPath, join(out, t.artifactName))
   writeFileSync(join(out, 'latest.json'), JSON.stringify(latest, null, 2))
   console.log(`已暂存到 ${out}/ — 把两个文件传到 ${hosting.baseUrl}/ 即完成发布`)
 } else {
-  console.log(`已发布 v${version} (${platformKey}) → ${hosting.baseUrl}/latest.json`)
+  console.log(`已发布 v${version} (${targets.map(t => t.platformKey).join(', ')}) → ${hosting.baseUrl}/latest.json`)
   console.log('提醒:R2 bucket 需绑定自定义域(R2 → Settings → Custom Domains → 绑定 dl.tendhearth.com)后,更新源才对外可达。')
 }
 
@@ -199,11 +230,11 @@ if (!uploaded) {
 // 通过 GitHub API 现拉最新 release,永不手改。--no-github 可跳过。
 if (!process.argv.includes('--no-github')) {
   const tag = `desktop-v${version}`
-  const isMac = platformKey.startsWith('darwin')
+  const isMac = targets[0]!.platformKey.startsWith('darwin')
   // mac 给 dmg(新用户友好);win 的 setup.exe 既是 updater 产物也是安装包。
   const asset = isMac
     ? join(DESKTOP, 'src-tauri/target/release/bundle/dmg', `wechat-cc_${version}_aarch64.dmg`)
-    : artifactPath
+    : targets[0]!.artifactPath
   const assetLabel = isMac ? `wechat-cc_${version}_aarch64.dmg` : `wechat-cc_${version}_windows-x64-setup.exe`
   if (!existsSync(asset)) {
     console.log(`GitHub: 找不到 ${asset} — 跳过(mac 需先 tauri build --bundles dmg)`)
