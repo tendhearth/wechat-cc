@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -91,12 +91,25 @@ describe('recordFailureShape', () => {
     expect(JSON.parse(lines.at(-1)!).messageHead).toBe(`e${MAX_SHAPES + 19}`)
   })
 
+  // 「不可写的路径」要**跨平台**地不可写。第一版用了 `/proc/nonexistent/nope`
+  // —— 那是 POSIX 假设:Windows 上它只是个相对路径,mkdirSync(recursive) 会
+  // 老老实实建出 C:\proc\... 来,于是文件真的被创建、断言翻车,
+  // **windows-latest 连红四次**。跟今早那个 `mode & 0o777` 是同一类。
+  //
+  // 可移植的做法:先放一个**文件**,再把它当目录用。任何平台上
+  // mkdirSync 都会失败(ENOTDIR/ENOENT),而且原因是真实的。
+  const unwritableDir = (): string => {
+    const base = tmp()
+    writeFileSync(join(base, 'blocked'), 'i am a file, not a directory')
+    return join(base, 'blocked', 'nested')
+  }
+
   it('**绝不抛** —— 采集失败不能把它正在观察的那条路径带塌', () => {
-    expect(() => recordFailureShape('/proc/nonexistent/nope', { provider: 'p', op: 'turn', message: 'x' })).not.toThrow()
+    expect(() => recordFailureShape(unwritableDir(), { provider: 'p', op: 'turn', message: 'x' })).not.toThrow()
   })
 
   it('不该建的时候不建文件(路径不可写就安静放弃)', () => {
-    const dir = '/proc/nonexistent/nope'
+    const dir = unwritableDir()
     recordFailureShape(dir, { provider: 'p', op: 'turn', message: 'x' })
     expect(existsSync(join(dir, FAILURE_SHAPES_FILE))).toBe(false)
   })
