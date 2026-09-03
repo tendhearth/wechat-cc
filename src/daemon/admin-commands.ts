@@ -21,6 +21,7 @@ import type { SessionStore } from '../core/session-store'
 import type { SessionStateStore, ExpiredBot } from '../core/session-state'
 import { loadHearthApi, type HearthApi, type HearthLoadResult } from './hearth-adapter'
 import type { SynthesizeResult } from '../lib/memory-synthesis'
+import { isConnectFailure } from '../lib/net-errors'
 
 export interface AdminCommandsDeps {
   stateDir: string
@@ -69,6 +70,20 @@ export interface AdminCommandsDeps {
     { ok: true; response: string } | { ok: false; reason: string; knownHands?: string[] }
   >
   /**
+   * 已注册的手的名字/id。触发器**按名字认**派活,不按动词认 —— 见
+   * {@link matchDelegate}。缺省 ⇒ 只剩明确动词形式(向后兼容)。
+   */
+  knownHandNames?: () => readonly string[]
+  /**
+   * 用一串配对码加一台手(微信里粘码即可,大脑那台不用开终端)。
+   * 内部就是 CLI 的 `hand join`。
+   */
+  joinHandByCode?: (code: string) => Promise<
+    { ok: true; id: string; name: string; url: string } | { ok: false; error: string }
+  >
+  /** 列出已注册的手(名字 + 地址),给发现性用。 */
+  listHands?: () => readonly { id: string; name: string; url?: string }[]
+  /**
    * Starts an external updater process. The updater must live outside this
    * daemon process because a real update can stop/restart the service that is
    * currently handling the WeChat message.
@@ -104,6 +119,21 @@ const HEARTH_HELP_RE = /^\s*\/hearth(\s+help)?\s*$/
 // subprocess + clean keychain read. Emergency recovery hatch for the operator
 // when the desktop dashboard isn't reachable.
 const RESET_RE = /^\s*\/(?:reset|重置)\s*$/
+// 粘一串配对码 = 加一台手。**裸码直接认**:码以 WCCP1 开头 + base64url,
+// 真实聊天里不可能误撞;而 owner 刚从终端复制完一串码,再要求他想一个命令
+// 前缀,正是这次要拿掉的摩擦。`/hand <码>` 留作显式别名。
+const HAND_JOIN_RE = /^\s*(?:\/(?:hand|配对)\s+)?(WCCP1[A-Za-z0-9_\-\s]+)$/
+/** 列出已注册的手。补回上一轮为了精确性删掉的发现性(见 matchDelegate)。 */
+const HANDS_LIST_RE = /^\s*(?:\/hands|有哪些手|手列表|看看有哪些手)\s*[?？]?\s*$/
+
+/** 认出一串配对码(裸码或 /hand <码>)。返回去掉空白的码,或 null。 */
+export function matchHandJoin(text: string): string | null {
+  const m = HAND_JOIN_RE.exec(text)
+  if (!m) return null
+  // 微信会把长文本折行,粘过来可能带换行 —— 拼回去。
+  const code = m[1]!.replace(/\s+/g, '')
+  return code.length > 'WCCP1'.length ? code : null
+}
 const UPDATE_RE = /^\s*\/(?:update|updata)\s*$/
 // /health ai is the AI-side companion of /health: per-provider session state
 // for the current chat. Does not run the underlying CLIs (zero token, zero
@@ -117,10 +147,58 @@ const SYNTHESIZE_RE = /^\s*(?:\/(?:synthesize|整理记忆)|重新整理记忆|�
 // about them. Distinct from SYNTHESIZE_RE (which *regenerates*): these are
 // "show me", anchored so they don't collide with the 重新整理/更新 phrasings.
 const SHOW_OVERVIEW_RE = /^\s*(?:\/overview|你对我的理解|看看你对我的理解|你眼中的我|你怎么(?:理解|看)我|你记得我(?:什么|啥)|查看记忆|看一下记忆|看下记忆|看记忆)\s*[?？]?\s*$/
-// 让/派 <hand> 执行/跑 <task> — delegate a task to another machine ("hand").
-// 让/派 (imperative) + 执行/跑 keeps casual speech from matching; an unknown
-// hand name still replies with the known list (doubles as discovery).
-const DELEGATE_RE = /^\s*(?:让|派)\s*(\S+?)\s*(?:执行|跑)\s*[:：]?\s*(\S[\s\S]*?)\s*$/
+// 名字后面紧跟的「执行/跑」只是语气词,剥掉,别混进任务里。
+// 刻意**只在名字已经命中之后**才剥 —— 早期版本拿它当触发器
+// (`让(\S+?)\s*(?:执行|跑)`),而中文没有词间空格,句中的「跑」会把名字
+// 吃掉:「让公司那台帮我跑测试」被切成 名字=公司那台帮我 / 任务=测试。
+const DELEGATE_VERB_PREFIX_RE = /^(?:执行|跑)\s*[:：]?\s*/
+// 让/派 <hand> <任何话> — 按**已注册的手名**认。
+//
+// WHY(2026-09-02,owner 在微信里撞到):此前只有上面那条动词形式,于是
+// 「让win想一想1+1=？」不触发派活、被本机答了。**判别维度选错了**:按动词
+// 卡是打地鼠(想一想/看看/查一下/帮我/试试……补不完),而名字是天然的判别器
+// —— 手名是 owner 亲手注册的,一共就那么几个,集合小且由人指定。按名字认
+// 反而比按动词更严:动词表要跟整个汉语日常表达竞争,名字表不用。
+//
+// 中文没有词间空格(「让win想一想」里 win 和任务是连着的),所以不能靠分隔符
+// 切,只能拿已知手名做前缀匹配 —— 这也正是它安全的原因:没注册过的名字
+// 根本进不来。
+const DELEGATE_LEAD_RE = /^\s*(?:让|派)\s*([\s\S]+)$/
+
+export interface DelegateMatch { hand: string; task: string }
+
+/**
+ * 认出一条派活指令。`knownHands` 是**已注册的手名/id**。
+ *
+ * 顺序:先试动词形式(它能把「执行/跑」剥掉,不让动词混进任务里,而且名字
+ * 未知时也返回 —— 明确说了「执行」就是明确想派活,该被告知名字打错了);
+ * 再试名字前缀形式(只认已注册的名字,认不出就落回正常聊天)。
+ */
+export function matchDelegate(text: string, knownHands: readonly string[]): DelegateMatch | null {
+  const lead = DELEGATE_LEAD_RE.exec(text)
+  if (!lead) return null
+  const rest = lead[1]!
+  // 长名字优先:别让 "win" 抢走 "win-office" 的匹配。
+  for (const name of [...knownHands].sort((a, b) => b.length - a.length)) {
+    if (!name || !isDelegateName(name)) continue
+    // 大小写不敏感:`让Win看看` 要能找到名叫 `win` 的手(输入法/自动大写
+    // 每天都在制造这种差异)。中文没有大小写,toLowerCase 对它是恒等,所以
+    // 这条对两种名字都安全。返回的是**注册时的原名**,下游按它查得到。
+    if (rest.slice(0, name.length).toLowerCase() !== name.toLowerCase()) continue
+    // ASCII 名字要词边界:`win` 不能从 `winn执行ls` / `winner去吧` 里匹出来。
+    // 中文名不需要 —— 中文本来就没有词间空格,「公司那台帮我…」里
+    // 「公司那台」后面接「帮」就是一个天然边界。
+    const after = rest.charAt(name.length)
+    if (/[A-Za-z0-9]$/.test(name) && /[A-Za-z0-9_-]/.test(after)) continue
+    const task = rest.slice(name.length)
+      .replace(/^[\s,，:：、]+/, '')
+      .replace(DELEGATE_VERB_PREFIX_RE, '')   // 「让win执行1+1」→ 任务是「1+1」,不是「执行1+1」
+      .trim()
+    if (!task) return null                    // 「让win」不是一条指令
+    return { hand: name, task }
+  }
+  return null
+}
 // Pronouns aren't hand names — without this, casual speech like "让我执行一下X"
 // or "让它跑起来" would be hijacked as a delegate command (and reply "没找到叫
 // 「我」的手"). Excluding them lets such phrases fall through to normal chat;
@@ -153,15 +231,32 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
   return {
     async handle(msg) {
       const text = msg.text.trim()
-      // Match the delegate trigger once — and only treat it as a command when
-      // the name isn't a pronoun, so "让我执行一下X" falls through to normal chat.
-      const delegateMatch = DELEGATE_RE.exec(text)
-      const isDelegate = !!delegateMatch && isDelegateName(delegateMatch[1]!)
-      const isCmd = text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || isDelegate || RESET_RE.test(text) || UPDATE_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
+      // 认一次派活指令。按**已注册的手名**认(不是按动词)—— 名字没命中就
+      // 落回正常聊天,所以「让我看看这个」「让张三跑一趟」都不会被劫走。
+      let handNames: readonly string[] = []
+      try { handNames = deps.knownHandNames?.() ?? [] }
+      catch { handNames = [] }   // 列不出手绝不能让整条消息处理不下去
+      const delegateMatch = matchDelegate(text, handNames)
+      const isDelegate = !!delegateMatch
+      const handCode = matchHandJoin(text)
+      const isCmd = !!handCode || HANDS_LIST_RE.test(text) || text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || isDelegate || RESET_RE.test(text) || UPDATE_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
       if (!isCmd) return false
 
       if (!deps.isAdmin(msg.chatId)) {
         deps.log('ADMIN_CMD', `non-admin ${msg.chatId} sent "${text.slice(0, 30)}" — dropped`)
+        return true
+      }
+
+      if (handCode) {
+        await runHandJoin(deps, msg.chatId, handCode)
+        return true
+      }
+
+      if (HANDS_LIST_RE.test(text)) {
+        const hands = deps.listHands?.() ?? []
+        await deps.sendMessage(msg.chatId, hands.length
+          ? `已配对的手:\n${hands.map(h => `· ${h.name}${h.name === h.id ? '' : `(${h.id})`} → ${h.url ?? '没有地址'}`).join('\n')}\n\n说「让${hands[0]!.name} 看看…」就派给它。`
+          : '还没配对任何手。在那台机器上跑 `wechat-cc hand invite`,把它给出的码粘到这里。').catch(() => {})
         return true
       }
 
@@ -199,7 +294,7 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
 
       if (isDelegate) {
         // Fire-and-forget: the hand runs a full agent — slow. Ack + reply later.
-        void runDelegate(deps, msg.chatId, delegateMatch![1]!.trim(), delegateMatch![2]!.trim())
+        void runDelegate(deps, msg.chatId, delegateMatch!.hand, delegateMatch!.task)
         return true
       }
 
@@ -555,7 +650,17 @@ export function friendlyDelegateReason(reason: string): string {
   if (reason === 'malformed hand response') return '那台手返回了无法识别的结果。'
   if (/^http_401$|unauthorized/i.test(reason)) return '配对密钥不匹配,需要重新配对(hand invite / hand join)。'
   if (/^http_/.test(reason)) return `那台手返回错误(${reason})。`
-  if (/fetch failed|ECONNREFUSED|ENOTFOUND|network|abort/i.test(reason)) return '连不上那台手(检查它是否开机、A2A 是否在 Tailscale IP 上监听)。'
+  // 连接层失败。判定收敛在 lib/net-errors —— 这条分支本来就在,只是照着
+  // **Node** 的措辞写的,而这个 daemon 跑在 **Bun** 上,Bun 说的是另一套话,
+  // 于是形同虚设:2026-09-02 owner 在微信里收到的正是 Bun 的原文
+  // 「Was there a typo in the url or port?」。
+  if (isConnectFailure(reason) || /network|abort/i.test(reason)) {
+    return '连不上那台手(它可能没开机、掉线了,或 A2A 没在对方能访问的地址上监听)。'
+  }
+  // 认不出来的原样透传 —— 刻意的:我们自己产出的 reason 本来就是给人看的
+  // 中文(如「unknown_peer: claude —— 这台机器可用的是 [openai]」),包一层
+  // 「我看不懂的错误」只会把好消息弄糟。真正的问题从来不是这条兜底,是上面
+  // 那条连接分支漏了 Bun 的措辞。
   return reason
 }
 
@@ -593,6 +698,39 @@ async function runDelegate(deps: AdminCommandsDeps, adminChatId: string, handNam
   } finally {
     try { releaseBusy?.() } catch { /* release 幂等且不抛,防御性 */ }
   }
+}
+
+/**
+ * 粘码加手。配完**立刻试一次**:配对成功但连不上,是 owner 今天真撞到的
+ * 失败形态 —— 那时他只会在第一次派活时才发现,而错误离根因很远。当场试
+ * 一下,把「配上了」和「配上了但连不上」分开说。
+ */
+async function runHandJoin(deps: AdminCommandsDeps, adminChatId: string, code: string): Promise<void> {
+  if (!deps.joinHandByCode) {
+    await deps.sendMessage(adminChatId, '加手功能未启用(这台没开 A2A)。').catch(() => {})
+    return
+  }
+  await deps.sendMessage(adminChatId, '🤝 正在配对…').catch(() => {})
+  let r: Awaited<ReturnType<NonNullable<AdminCommandsDeps['joinHandByCode']>>>
+  try { r = await deps.joinHandByCode(code) }
+  catch (err) { r = { ok: false, error: err instanceof Error ? err.message : String(err) } }
+  if (!r.ok) {
+    await deps.sendMessage(adminChatId, `配对失败:${friendlyDelegateReason(r.error)}`).catch(() => {})
+    deps.log('ADMIN_CMD', `hand join failed chat=${adminChatId}: ${r.error}`)
+    return
+  }
+  // 地址一定要显出来 —— 粘错一串别人给的码,这是唯一能一眼看见的地方。
+  await deps.sendMessage(adminChatId, `✅ 已加手「${r.name}」→ ${r.url}\n正在试一下能不能派活…`).catch(() => {})
+  deps.log('ADMIN_CMD', `hand joined chat=${adminChatId} id=${r.id} url=${r.url}`)
+
+  if (!deps.delegateToHand) return
+  let probe: Awaited<ReturnType<NonNullable<AdminCommandsDeps['delegateToHand']>>>
+  try { probe = await deps.delegateToHand(r.id, '只回两个字:收到') }
+  catch (err) { probe = { ok: false, reason: err instanceof Error ? err.message : String(err) } }
+  await deps.sendMessage(adminChatId, probe.ok
+    ? `🎉 通了。现在说「让${r.name} 看看…」就派给它。`
+    : `⚠️ 配上了,但派活没通:${friendlyDelegateReason(probe.reason)}\n手那台还在的话,检查它的 A2A 是否绑在这台能访问的地址上。`,
+  ).catch(() => {})
 }
 
 async function sendHealthReport(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {

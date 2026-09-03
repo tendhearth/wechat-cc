@@ -30,7 +30,7 @@ import { serviceAction, forceKillDaemon } from "./modules/service.js"
 import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
-import { loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
+import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { stopCustomerReviewPolling } from "./modules/customer-review.js"
 import { initTodosPage } from "./modules/todos.js"
@@ -946,6 +946,9 @@ function wireEvents() {
   // initDialoguePage(deps). The old sessions list/detail/search/favorite
   // wiring lived here and is gone with the mockup-replacement rewrite.
   document.getElementById("logs-tail-select")?.addEventListener("change", () => loadLogsPane(deps))
+  // 筛选:边打边筛。不重新读日志(那要走 CLI,几百 KB),只重渲染已有的行 ——
+  // loadLogsPane 会读同一个输入框,所以自动刷新那一拍也保持筛选状态。
+  document.getElementById("logs-filter")?.addEventListener("input", () => rerenderLogs())
   document.getElementById("update-check-btn")?.addEventListener("click", () => loadUpdateProbe(deps))
   document.getElementById("update-apply-btn")?.addEventListener("click", () => applyUpdate(deps))
 

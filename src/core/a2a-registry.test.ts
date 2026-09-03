@@ -22,7 +22,7 @@ function rec(id: string, overrides: Partial<A2AAgentRecord> = {}): A2AAgentRecor
     id, name: id, url: `https://${id}.example.com/a2a`,
     inbound_api_key: `wc_${id}1234567890123456`.slice(0, 24),  // ensure min 16
     outbound_api_key: `out_${id}`,
-    capabilities: ['notify'], paused: false, ...overrides, transport: overrides.transport ?? 'push',
+    capabilities: ['notify'], paused: false, may_exec: false, ...overrides, transport: overrides.transport ?? 'push',
   }
 }
 
@@ -176,5 +176,28 @@ describe('a2a-registry', () => {
     writeConfig(stateDir, [rec('alpha')])
     const reg = createA2ARegistry({ stateDir })
     expect(() => reg.update('alpha', { inbound_api_key: 'too-short' })).toThrow(/at least 16/)
+  })
+})
+
+// 2026-09-02:重新配对(onPair 的「已存在」分支)必须能把 may_exec 从
+// false 翻成 true —— **重新配对本身就是一次新的授权**,它消费掉的是本机
+// `hand invite` 刚铸出来的一次性密钥。
+//
+// 真机上栽过:那个分支只 patch 了 inbound_api_key,于是一个此前以社交身份
+// 登记过的 id 重新配成手之后照旧 403,而且没有任何提示。修完这条路才通。
+describe('update —— may_exec 可 patch(重新配对是一次新授权)', () => {
+  it('把一条 may_exec=false 的记录翻成 true', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'a2a-reg-mayexec-'))
+    const reg = createA2ARegistry({ stateDir: dir })
+    reg.add({
+      id: 'brain', name: 'brain', url: 'http://b/a2a',
+      inbound_api_key: 'k'.repeat(16), outbound_api_key: 'unused',
+      capabilities: [], paused: false, transport: 'push', may_exec: false,
+    })
+    expect(reg.get('brain')!.may_exec).toBe(false)
+    const updated = reg.update('brain', { inbound_api_key: 'n'.repeat(16), may_exec: true })
+    expect(updated.may_exec).toBe(true)
+    // 落盘也要生效(daemon 重启后仍然算授权过)
+    expect(createA2ARegistry({ stateDir: dir }).get('brain')!.may_exec).toBe(true)
   })
 })

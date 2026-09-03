@@ -249,8 +249,8 @@ describe('penpal channel e2e — relay (2-hop, content-blind)', () => {
     let qRevealer: ReturnType<typeof makeRevealer>
     const wReconciler = makeRelayReconciler({
       relayStore: wRelay,
-      completeUpstream: (_up, i, tok, dHandle) => { void sRevealer.onInboundReveal({ agentId: W_ID, intentId: i, relayToken: tok, peerHandle: dHandle }) },
-      completeDownstream: (_down, i, uHandle) => { void qRevealer.onInboundReveal({ agentId: W_ID, intentId: i, peerHandle: uHandle }) },
+      completeUpstream: (_rid, _up, i, tok, dHandle) => { void sRevealer.onInboundReveal({ agentId: W_ID, intentId: i, relayToken: tok, peerHandle: dHandle }) },
+      completeDownstream: (_rid, _down, i, uHandle) => { void qRevealer.onInboundReveal({ agentId: W_ID, intentId: i, peerHandle: uHandle }) },
       nudge: (agentId, i, tok) => {
         if (agentId === Q_ID) void qRevealer.onInboundReveal({ agentId: W_ID, intentId: i })
         else void sRevealer.onInboundReveal({ agentId: W_ID, intentId: i, relayToken: tok })

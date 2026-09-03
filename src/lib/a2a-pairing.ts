@@ -11,8 +11,9 @@
  * pending-invite file the hand's /a2a/pair verifies against. No network here.
  */
 import { randomBytes } from 'node:crypto'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { readJsonFile } from './read-json-file'
 
 const MAGIC = 'WCCP1'
 const PENDING_FILE = 'a2a-pair-pending.json'
@@ -23,6 +24,28 @@ export interface PairCode {
   handUrl: string
   /** One-time pairing secret, matched against the hand's pending invite. */
   secret: string
+  /**
+   * 手那台机器自己的名字(通常是 hostname)。**手自己就知道它叫什么** ——
+   * 带上之后,大脑那边 `hand join <码>` 不用再填 `--id/--name`,用户不必
+   * 现想一个 slug。老码没有这个字段,解码时为 undefined(向后兼容)。
+   */
+  handName?: string
+}
+
+/**
+ * 从机器名推一个合法的 hand id(`^[a-z0-9][a-z0-9-]{0,63}$`)。
+ * 推不出来返回 null —— 调用方该要求用户显式给 `--id`,而不是编一个。
+ * 纯中文机器名就是推不出来的:id 的字符集不允许。
+ */
+export function slugifyHandName(name: string): string | null {
+  const slug = name
+    .replace(/\.(local|lan|home|internal)$/i, '')   // hostname 的常见后缀
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64)
+    .replace(/-+$/, '')
+  return /^[a-z0-9][a-z0-9-]{0,63}$/.test(slug) ? slug : null
 }
 
 function pendingPath(stateDir: string): string {
@@ -33,12 +56,12 @@ function pendingPath(stateDir: string): string {
  * On the HAND: mint a one-time invite. Persists the secret + expiry so the
  * hand's /a2a/pair can verify it later, and returns the shareable code.
  */
-export function mintInvite(stateDir: string, opts: { handUrl: string; nowMs: number }): { code: string; expiresMs: number } {
+export function mintInvite(stateDir: string, opts: { handUrl: string; nowMs: number; handName?: string }): { code: string; expiresMs: number } {
   if (!opts.handUrl) throw new Error('handUrl required (enable A2A on a reachable host first)')
   const secret = randomBytes(24).toString('base64url')
   const expiresMs = opts.nowMs + INVITE_TTL_MS
   writeFileSync(pendingPath(stateDir), JSON.stringify({ secret, expiresMs }), { mode: 0o600 })
-  const payload: PairCode = { handUrl: opts.handUrl, secret }
+  const payload: PairCode = { handUrl: opts.handUrl, secret, ...(opts.handName ? { handName: opts.handName } : {}) }
   const code = MAGIC + Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
   return { code, expiresMs }
 }
@@ -55,6 +78,8 @@ export function decodeInvite(code: string): PairCode {
   if (!p || typeof p.handUrl !== 'string' || typeof p.secret !== 'string' || !p.handUrl || !p.secret) {
     throw new Error('invalid pairing code')
   }
+  // handName 是可选的且**只是个建议**:它来自对端,不能当可信输入用在别处。
+  if (typeof p.handName !== 'string' || !p.handName) delete p.handName
   return p
 }
 
@@ -69,7 +94,7 @@ export function verifyAndConsumeInvite(stateDir: string, secret: string, nowMs: 
   if (!existsSync(path)) return false
   let pending: { secret?: unknown; expiresMs?: unknown }
   try {
-    pending = JSON.parse(readFileSync(path, 'utf8')) as typeof pending
+    pending = readJsonFile(path) as typeof pending
   } catch {
     return false
   }

@@ -13,8 +13,9 @@
  * import because the file is gone. The .migrated suffix is kept around
  * one release so a downgrade can recover; we delete it in the next major.
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { renameMigrated, type Db } from '../lib/db'
+import { readJsonFile } from '../lib/read-json-file'
 
 export interface BotSessionState {
   status: 'expired'
@@ -102,7 +103,7 @@ function maybeImportLegacy(db: Db, file: string): void {
   if (!existsSync(file)) return
   let parsed: LegacyShape | null = null
   try {
-    parsed = JSON.parse(readFileSync(file, 'utf8')) as LegacyShape
+    parsed = readJsonFile(file) as LegacyShape
   } catch {
     // Corrupt JSON — preserve the original on disk for forensic debugging
     // by NOT renaming. Returning here means we'll re-attempt import on

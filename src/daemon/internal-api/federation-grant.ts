@@ -2,8 +2,9 @@
 // authorized hearth to obtain admin-tier tokens (design option B). The mint
 // route (routes-federation.ts) requires this to exist; the CLI --authorize
 // writes it. 0600, owner-only — same trust posture as the operator token.
-import { existsSync, readFileSync, writeFileSync, unlinkSync, chmodSync } from 'node:fs'
+import { existsSync, writeFileSync, unlinkSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
+import { readJsonFile } from '../../lib/read-json-file'
 
 const GRANT_FILE = 'federated-grant.json'
 
@@ -25,7 +26,7 @@ export function readGrant(stateDir: string): FederationGrant | null {
   const p = grantPath(stateDir)
   if (!existsSync(p)) return null
   try {
-    const g = JSON.parse(readFileSync(p, 'utf8')) as Partial<FederationGrant>
+    const g = readJsonFile(p) as Partial<FederationGrant>
     if (typeof g?.integration === 'string' && typeof g?.ts === 'number') {
       return { integration: g.integration, ts: g.ts }
     }

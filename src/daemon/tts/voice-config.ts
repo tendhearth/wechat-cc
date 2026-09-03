@@ -1,5 +1,6 @@
-import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs'
+import { writeFileSync, existsSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
+import { readJsonFile } from '../../lib/read-json-file'
 
 export type VoiceConfig =
   | {
@@ -54,7 +55,7 @@ export function loadVoiceConfig(stateDir: string): VoiceConfig | null {
   const p = configPath(stateDir)
   if (!existsSync(p)) return null
   try {
-    const parsed = JSON.parse(readFileSync(p, 'utf8')) as unknown
+    const parsed = readJsonFile(p) as unknown
     return validate(parsed)
   } catch {
     return null

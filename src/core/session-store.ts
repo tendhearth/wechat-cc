@@ -21,8 +21,9 @@
  * are migrated as `provider='claude'` (matches the v0.x default), and
  * any legacy migration path lands rows under `chat_id='_legacy'`.
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { renameMigrated, type Db } from '../lib/db'
+import { readJsonFile } from '../lib/read-json-file'
 
 export type ProviderId = string  // open string per RFC 03 §3.3 (registry-driven)
 
@@ -229,7 +230,7 @@ function maybeImportLegacy(db: Db, file: string): void {
   if (!existsSync(file)) return
   let parsed: LegacyShape | null = null
   try {
-    parsed = JSON.parse(readFileSync(file, 'utf8')) as LegacyShape
+    parsed = readJsonFile(file) as LegacyShape
   } catch {
     // Corrupt JSON — preserve the original on disk for forensic debugging.
     return

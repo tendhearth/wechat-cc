@@ -36,7 +36,7 @@ export interface MailboxPollerDeps {
    *  但没送出去」的行如果没人自动补,owner 屏幕上写的是「已连接」/「回过
    *  了」,他根本不会再点一次 —— 能重试而没人重试等于没修。
    *  见 social-reveal.ts / social-echo-retry.ts。 */
-  sweepUndelivered?: () => Promise<{ reveals: number; echoes: number }>
+  sweepUndelivered?: () => Promise<{ reveals: number; echoes: number; completions: number }>
   shouldRun: () => boolean
   log: (tag: string, line: string) => void
 }
@@ -60,9 +60,10 @@ export function registerMailboxPoller(deps: MailboxPollerDeps): Lifecycle {
       if (!deps.sweepUndelivered) return
       // 绝不让补投打断取件:补投抛了也只是一条日志,下一拍再来。
       try {
-        const { reveals, echoes } = await deps.sweepUndelivered()
+        const { reveals, echoes, completions } = await deps.sweepUndelivered()
         if (reveals > 0) deps.log('MAILBOX', `补投揭晓 ${reveals} 条(此前投递失败,本地已同意)`)
         if (echoes > 0) deps.log('MAILBOX', `补发明信片 ${echoes} 条(此前投递失败,本地已答应)`)
+        if (completions > 0) deps.log('MAILBOX', `补投介绍人回投 ${completions} 条(两端已互揭,此前没送到)`)
       } catch (err) {
         deps.log('MAILBOX', `补投失败: ${err instanceof Error ? err.message : String(err)}`)
       }

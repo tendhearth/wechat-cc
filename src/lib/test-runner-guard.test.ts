@@ -109,6 +109,33 @@ it('finds the test files it is supposed to be scanning (guards against a silentl
 //
 // 判定按 it/test 块粒度而不是文件粒度:同一个文件里可以一条守了、另一条
 // 没守,正是漏掉的那次的样子。
+/**
+ * 扫描前先剥注释。
+ *
+ * 2026-09-03:两条元守卫都被**自己的解释性注释**绊倒了 —— 在
+ * failure-shapes.test.ts 里写一句「跟今早那个 `mode & 0o777` 是同一类」,
+ * 守卫就报它。**你没法在注释里记录一个 bug,否则守卫就抓你**,而记录正是
+ * 这个仓库最想留下的东西。
+ */
+function stripComments(src: string): string {
+  return src
+    // **先归一化行尾**。JS 正则里 `.` 不匹配 `\r`(它是行终止符),所以
+    // CRLF 下 `//.*$` 够不到行尾、注释根本剥不掉 —— 于是这个修复本身
+    // 在 Windows 上失效,dev 又红了一轮。修守卫的补丁自己是平台相关的,
+    // 这就是为什么下面那条 CRLF 用例必须存在。
+    .replace(/\r\n?/g, '\n')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map(l => l.replace(/(^|\s)\/\/.*$/, '$1'))
+    .join('\n')
+}
+
+it('stripComments 在 CRLF 下也要真的剥掉注释 —— Windows 的 checkout 是 CRLF', () => {
+  const lf = '  // 提到 mode & 0o777 只是解释,不该被守卫抓\nconst x = 1\n'
+  expect(MODE_ASSERTION.test(stripComments(lf))).toBe(false)
+  expect(MODE_ASSERTION.test(stripComments(lf.replace(/\n/g, '\r\n')))).toBe(false)
+})
+
 const MODE_ASSERTION = /mode\s*&\s*0o777|toBe\(0o[67]00\)/
 const PLATFORM_GUARD = /win32/
 
@@ -116,7 +143,7 @@ it('每个断言 POSIX 文件权限的用例都带平台守卫 —— Windows �
   const offenders: string[] = []
   for (const file of scanTestFiles()) {
     if (file === SELF) continue
-    const src = readFileSync(file, 'utf8')
+    const src = stripComments(readFileSync(file, 'utf8'))
     if (!MODE_ASSERTION.test(src)) continue
     // 按 it(/test( 切块:同一文件里守卫可能只加了一半。
     const blocks = src.split(/\n(?=\s*(?:it|test)\()/)
@@ -137,3 +164,20 @@ it('每个断言 POSIX 文件权限的用例都带平台守卫 —— Windows �
         + `这个断言在那里没有意义。`,
   ).toEqual([])
 })
+
+// ── 试过但**放弃**的一条守卫,记在这里免得下一个人重走 ────────────────
+//
+// 2026-09-03 failure-shapes.test.ts 拿 `/proc/nonexistent/nope` 当「不可写
+// 的路径」,而 Windows 上那只是个相对路径,mkdirSync(recursive) 会老老实实
+// 建出 C:\proc\... —— windows-latest 连红四次。跟上面那条 mode 守卫是同一
+// 类盲区的第二种形态,所以我想再加一条「测试里不许硬编码 POSIX 绝对路径」。
+//
+// **加不出来。** 正则分不出「传给假 stub 的路径字符串」和「真去读写的路径」:
+// doctor.test 的 `findOnPath: () => '/usr/bin/wsl'`、schema.test 的
+// `path: '/usr/local/bin/bun'` 都是夹具,从不碰文件系统。收窄到「同一块里
+// 出现 fs 调用名」之后仍然误报 5 个正确的用例 —— 要分清得做数据流,不是
+// 一条正则的活。
+//
+// 而一条会哭狼的守卫一定会被下一个人删掉或 skip 掉,顺带拖累旁边这条有用的。
+// 所以这条不加,教训写在 failure-shapes.test.ts 那个 `unwritableDir` 助手
+// 旁边:**别编造不可写路径,用「先写一个文件、再把它当目录」去造真实条件。**

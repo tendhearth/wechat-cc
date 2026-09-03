@@ -26,7 +26,7 @@ function agent(id: string, overrides: Partial<A2AAgentRecord> = {}): A2AAgentRec
   return {
     id, name: id, url: `http://${id}.test/a2a/notify`,
     inbound_api_key: '0123456789abcdef', outbound_api_key: 'k',
-    capabilities: [], paused: false, transport: 'push',
+    capabilities: [], paused: false, transport: 'push', may_exec: false,
     ...overrides,
   }
 }
@@ -83,7 +83,7 @@ describe('wireSocial — peer-closeness ranked fan-out (PC T2)', () => {
         log: () => {}, stateDir, db: openTestDb(), configuredAgent: baseConfiguredAgent, selfId: 'test-self',
         registry, defaultProviderId: 'claude', pluginMcp: {}, currentClaudeModel: () => 'claude-opus-4-8',
         claudeBin: undefined, resolveOperatorChatId: () => null, sendAssistantText: undefined,
-        a2aRegistry, a2aClient, eventsStore, getServerBaseUrl: () => null,
+        a2aRegistry, a2aClient, eventsStore,
       })
 
       const proposed = await wiring.social!.broker.propose('找摄影搭子')
@@ -110,7 +110,7 @@ describe('wireSocial — peer-closeness ranked fan-out (PC T2)', () => {
         agent('far'),
         agent('paused-peer', { paused: true }),
         agent('sender'), // same id as the inbound event's sender — must be excluded (never forward to the sender)
-        agent('nomail', { transport: 'mailbox', url: undefined, mailbox_addr: 'A', mailbox_enc_pub: 'E', relays: ['https://r/'] }),
+        agent('nomail', { transport: 'mailbox', may_exec: false, url: undefined, mailbox_addr: 'A', mailbox_enc_pub: 'E', relays: ['https://r/'] }),
       ]
       const a2aRegistry: A2ARegistry = {
         list: () => peers,
@@ -137,7 +137,7 @@ describe('wireSocial — peer-closeness ranked fan-out (PC T2)', () => {
         log: () => {}, stateDir, db: openTestDb(), configuredAgent: baseConfiguredAgent, selfId: 'test-self',
         registry, defaultProviderId: 'claude', pluginMcp: {}, currentClaudeModel: () => 'claude-opus-4-8',
         claudeBin: undefined, resolveOperatorChatId: () => null, sendAssistantText: undefined,
-        a2aRegistry, a2aClient, eventsStore, getServerBaseUrl: () => null,
+        a2aRegistry, a2aClient, eventsStore,
       })
 
       expect(wiring.onIntent).toBeDefined()

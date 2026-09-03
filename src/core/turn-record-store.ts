@@ -26,6 +26,9 @@ export const TURN_RECORDS_MAX_PER_CHAT = 200
 
 /** A persisted TurnRecord — the coordinator's TurnRecord plus the row id. */
 export interface StoredTurnRecord extends TurnRecord {
+  /** 这一轮调过的工具名(去重)。v35 之前的老行恒为空数组 —— 那表示
+   *  「不知道」,不是「没调工具」。 */
+  toolCalls: string[]
   id: string
 }
 
@@ -50,10 +53,19 @@ interface Row {
   reply_tool_called: number
   text_chunks: number
   error: string | null
+  tool_calls: string | null
 }
 
 const SELECT_COLS =
-  'id, chat_id, provider, alias, mode, started_at, ended_at, duration_ms, outcome, reply_tool_called, text_chunks, error'
+  'id, chat_id, provider, alias, mode, started_at, ended_at, duration_ms, outcome, reply_tool_called, text_chunks, error, tool_calls'
+
+function parseToolCalls(raw: string | null): string[] {
+  if (!raw) return []
+  try {
+    const v: unknown = JSON.parse(raw)
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+  } catch { return [] }
+}
 
 function toRecord(r: Row): StoredTurnRecord {
   return {
@@ -69,13 +81,15 @@ function toRecord(r: Row): StoredTurnRecord {
     replyToolCalled: r.reply_tool_called !== 0,
     textChunks: r.text_chunks,
     ...(r.error != null ? { error: r.error } : {}),
+    // 老行(v35 之前)没有这一列 —— 空数组表示「不知道」,不是「没调工具」。
+    toolCalls: parseToolCalls(r.tool_calls),
   }
 }
 
 export function makeTurnRecordStore(db: Db): TurnRecordStore {
-  const stmtAppend = db.query<unknown, [string, string, string, string, string, string, number, number, number, string, number, number, string | null]>(
-    `INSERT INTO turn_records(id, ts, chat_id, provider, alias, mode, started_at, ended_at, duration_ms, outcome, reply_tool_called, text_chunks, error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  const stmtAppend = db.query<unknown, [string, string, string, string, string, string, number, number, number, string, number, number, string | null, string | null]>(
+    `INSERT INTO turn_records(id, ts, chat_id, provider, alias, mode, started_at, ended_at, duration_ms, outcome, reply_tool_called, text_chunks, error, tool_calls)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
   // Keep only the newest N rows for the just-appended chat. ended_at then
   // rowid as the tiebreak mirrors the read ordering, so a prune never drops a
@@ -111,6 +125,8 @@ export function makeTurnRecordStore(db: Db): TurnRecordStore {
           id, ts, record.chatId, record.provider, record.alias, record.mode,
           record.startedAt, record.endedAt, record.durationMs, record.outcome,
           record.replyToolCalled ? 1 : 0, record.textChunks, error,
+          // 只存名字。参数里是搜索词/文件路径/消息正文,不进库。
+          record.toolCalls?.length ? JSON.stringify([...new Set(record.toolCalls)]) : null,
         )
         stmtPrune.run(record.chatId, record.chatId, TURN_RECORDS_MAX_PER_CHAT)
       })()

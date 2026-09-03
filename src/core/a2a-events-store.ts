@@ -15,12 +15,19 @@ export type EventStatus =
   | 'auth_failed'
   | 'http_error'
   | 'timeout'
-  | 'unknown_agent'
   | 'agent_paused'
   /** Inbound notify accepted (auth passed, agent registered, not paused) but
    *  dropped because the daemon has no operator chat to route into yet
    *  (fresh setup — operator hasn't sent the bot their first message). */
   | 'dropped_no_operator_chat'
+// 这里**刻意没有** 'unknown_agent'。它曾经在这个联合里,但从来没有任何地方
+// 写过 —— routes-a2a 的 /v1/a2a/send 与 /test 都是直接返回 `error:
+// 'unknown_agent'`,紧挨着的 agent_paused 分支却会 recordEvent,看上去像漏了
+// 一笔。它不是漏,是不该记:**这张表只按已注册的 agent 读**
+// (recentForAgent / counts,全仓没有全局流水),而 unknown_agent 恰恰意味着
+// 没有那个 agent。记进去等于往一张没人读得到的表里写行 —— 那是「看起来有
+// 观测」,比诚实地没有更糟。
+// HTTP 响应里的 `error: 'unknown_agent'` 是活的,不要一起删。
 
 export interface AppendInput {
   direction: EventDirection

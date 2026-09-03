@@ -7,7 +7,8 @@
  * which is required for the /project switch flow to work — the new
  * session needs the wechat MCP tool available immediately after chdir.
  */
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { existsSync, renameSync, writeFileSync } from 'fs'
+import { readJsonFile } from '../lib/read-json-file'
 
 export interface McpServerConfig {
   command: string
@@ -22,7 +23,7 @@ interface ClaudeUserConfig {
 
 function readConfig(file: string): ClaudeUserConfig {
   if (!existsSync(file)) return {}
-  try { return JSON.parse(readFileSync(file, 'utf8')) as ClaudeUserConfig }
+  try { return readJsonFile(file) as ClaudeUserConfig }
   catch { return {} }
 }
 

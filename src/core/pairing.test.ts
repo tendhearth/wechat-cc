@@ -154,7 +154,7 @@ describe('pairing engine', () => {
   it('re-pair overwrites an existing record for the same self_id AND same mailbox_addr', async () => {
     const relay = makeFakeRelay(); const regB = makeFakeRegistry()
     // A's card carries mailbox_addr 'A_MB' (its own self.mailbox_addr) → a true re-pair.
-    regB.records.set('cc-aaaa1111', { id: 'cc-aaaa1111', name: 'stale', inbound_api_key: 'x'.repeat(16), outbound_api_key: 'old', capabilities: [], paused: false, transport: 'mailbox', mailbox_addr: 'A_MB' })
+    regB.records.set('cc-aaaa1111', { id: 'cc-aaaa1111', name: 'stale', inbound_api_key: 'x'.repeat(16), outbound_api_key: 'old', capabilities: [], paused: false, transport: 'mailbox', may_exec: false, mailbox_addr: 'A_MB' })
     const A = makePairing(baseDeps({ client: relay.client, self: { mailbox_addr: 'A_MB', mailbox_enc_pub: 'A_EP', relays: ['https://r/mailbox'] }, selfId: () => 'cc-aaaa1111', name: () => 'Alice', mintKey: () => 'keyI-0000000000000000' }))
     const B = makePairing(baseDeps({ client: relay.client, registry: regB, selfId: () => 'cc-bbbb2222', mintKey: () => 'keyA-0000000000000000' }))
     const { code } = await mustStart(A)
@@ -165,7 +165,7 @@ describe('pairing engine', () => {
   it('rejects id_conflict on accept: same self_id, DIFFERENT mailbox_addr (unrelated wechat-cc peer) — no write, no card drop', async () => {
     const relay = makeFakeRelay(); const regB = makeFakeRegistry(); const notifyB = vi.fn()
     // B already has an UNRELATED peer filed under the legacy shared id 'wechat-cc'.
-    regB.records.set('wechat-cc', { id: 'wechat-cc', name: 'someone-else', inbound_api_key: 'x'.repeat(16), outbound_api_key: 'ob', capabilities: [], paused: false, transport: 'mailbox', mailbox_addr: 'OTHER_MB' })
+    regB.records.set('wechat-cc', { id: 'wechat-cc', name: 'someone-else', inbound_api_key: 'x'.repeat(16), outbound_api_key: 'ob', capabilities: [], paused: false, transport: 'mailbox', may_exec: false, mailbox_addr: 'OTHER_MB' })
     // A is a grandfathered daemon still self-reporting 'wechat-cc' with a DIFFERENT mailbox.
     const A = makePairing(baseDeps({ client: relay.client, self: { mailbox_addr: 'A_MB', mailbox_enc_pub: 'A_EP', relays: ['https://r/mailbox'] }, selfId: () => 'wechat-cc', name: () => 'Alice' }))
     const B = makePairing(baseDeps({ client: relay.client, registry: regB, selfId: () => 'cc-bbbb2222', notify: notifyB }))
@@ -185,7 +185,7 @@ describe('pairing engine', () => {
   it('rejects id_conflict in the poller: acceptor card collides with an unrelated same-id record', async () => {
     const relay = makeFakeRelay(); const regA = makeFakeRegistry(); const sched = makeManualScheduler(); const notify = vi.fn()
     // A already has an unrelated peer 'wechat-cc' with mailbox OTHER_MB.
-    regA.records.set('wechat-cc', { id: 'wechat-cc', name: 'someone-else', inbound_api_key: 'x'.repeat(16), outbound_api_key: 'ob', capabilities: [], paused: false, transport: 'mailbox', mailbox_addr: 'OTHER_MB' })
+    regA.records.set('wechat-cc', { id: 'wechat-cc', name: 'someone-else', inbound_api_key: 'x'.repeat(16), outbound_api_key: 'ob', capabilities: [], paused: false, transport: 'mailbox', may_exec: false, mailbox_addr: 'OTHER_MB' })
     const A = makePairing(baseDeps({ client: relay.client, registry: regA, schedule: sched.schedule, notify, selfId: () => 'cc-aaaa1111', name: () => 'Alice', genNonce: () => 'nA' }))
     // B is grandfathered 'wechat-cc' with a different mailbox → its acceptor card conflicts.
     const B = makePairing(baseDeps({ client: relay.client, self: { mailbox_addr: 'B_MB', mailbox_enc_pub: 'B_EP', relays: ['https://r/mailbox'] }, selfId: () => 'wechat-cc', name: () => 'Bob', genNonce: () => 'nB' }))
@@ -266,7 +266,7 @@ describe('pairing engine', () => {
       // bug would misread as "no conflict").
       regB.records.set('wechat-cc', {
         id: 'wechat-cc', name: 'someone-else', inbound_api_key: 'x'.repeat(16), outbound_api_key: 'ob',
-        capabilities: [], paused: false, transport: 'push', url: 'https://someone-else.example/webhook',
+        capabilities: [], paused: false, transport: 'push', may_exec: false, url: 'https://someone-else.example/webhook',
       })
       const code = '111222'
       const rv = deriveRendezvous(code)
@@ -297,7 +297,7 @@ describe('pairing engine', () => {
       // transport — no mailbox_addr.
       regA.records.set('wechat-cc', {
         id: 'wechat-cc', name: 'someone-else', inbound_api_key: 'x'.repeat(16), outbound_api_key: 'ob',
-        capabilities: [], paused: false, transport: 'push', url: 'https://someone-else.example/webhook',
+        capabilities: [], paused: false, transport: 'push', may_exec: false, url: 'https://someone-else.example/webhook',
       })
       const A = makePairing(baseDeps({
         client: relay.client, registry: regA, schedule: sched.schedule, notify,

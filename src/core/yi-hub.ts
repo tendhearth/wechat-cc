@@ -7,7 +7,9 @@
 import { buildRequest, parseMessage } from './yi-protocol'
 import type { ExecResult } from './a2a-server'
 
-export interface YiDispatch { peer: 'claude' | 'codex'; prompt: string; cwd?: string }
+/** `peer` 省略 ⇒ 由**手那一侧**决定用哪个 agent —— 只有那台机器知道自己装了
+ *  什么。大脑仍可显式指定(「让 win 用 codex 跑」)。见 delegate.ts。 */
+export interface YiDispatch { peer?: 'claude' | 'codex'; prompt: string; cwd?: string }
 
 interface Pending { handId: string; resolve: (r: ExecResult) => void; timer: ReturnType<typeof setTimeout> }
 

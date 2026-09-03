@@ -5,8 +5,9 @@
  * (tmp + rename). Tested via fixture files — callers pass the registry
  * path so tests can use tmpdir.
  */
-import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs'
+import { existsSync, renameSync, statSync, writeFileSync } from 'fs'
 import { isAbsolute } from 'path'
+import { readJsonFile } from './read-json-file'
 
 export const ALIAS_REGEX = /^[a-z0-9][a-z0-9_-]{1,19}$/
 
@@ -27,7 +28,7 @@ function emptyRegistry(): ProjectRegistry {
 function loadRegistry(file: string): ProjectRegistry {
   if (!existsSync(file)) return emptyRegistry()
   try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8')) as Partial<ProjectRegistry>
+    const parsed = readJsonFile(file) as Partial<ProjectRegistry>
     return {
       projects: parsed.projects ?? {},
       current: parsed.current ?? null,

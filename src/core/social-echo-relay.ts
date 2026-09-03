@@ -15,6 +15,11 @@ export interface EchoHandlerDeps {
   originOf(intentId: string): string | null
   recordRelay(intentId: string, upstreamAgentId: string, downstreamAgentId: string): string
   postEcho(toAgentId: string, msg: { intent_id: string; echo: { blurb: string; degree: number; relay_token: string } }): Promise<boolean>
+  /** 记下「W 欠 S 这张明信片」—— **发之前**记,发失败才补得回去。
+   *  反过来写的话,进程在投递和记账之间死掉,欠账就永远不存在。 */
+  markEchoOwed?(relayId: string, blurb: string, degree: number): void
+  /** 真的送到之后销账(delivered,不是 asked)。 */
+  markEchoDelivered?(relayId: string): void
   log?(tag: string, line: string): void
 }
 
@@ -29,8 +34,11 @@ export function makeEchoHandler(deps: EchoHandlerDeps) {
     if (!origin || origin === senderAgentId) return { ok: false }
     try {
       const token = deps.recordRelay(msg.intent_id, origin, senderAgentId)
+      const relayId = `${msg.intent_id}:${token}`
+      deps.markEchoOwed?.(relayId, msg.echo.blurb, msg.echo.degree)
       const ok = await deps.postEcho(origin, { intent_id: msg.intent_id, echo: { blurb: msg.echo.blurb, degree: msg.echo.degree, relay_token: token } })
-      if (!ok) log('SOCIAL_REC', `relay echo post dropped intent=${msg.intent_id} to=${origin}`)
+      if (ok) deps.markEchoDelivered?.(relayId)
+      else log('SOCIAL_REC', `relay echo post dropped intent=${msg.intent_id} to=${origin} —— 已记欠账,下一拍补投`)
       return { ok }
     } catch (err) {
       log('SOCIAL_REC', `relay echo failed intent=${msg.intent_id}: ${err instanceof Error ? err.message : String(err)}`)

@@ -1,5 +1,6 @@
 import type { STTProvider } from './types'
 import { Buffer } from 'node:buffer'
+import { isConnectFailure } from '../../lib/net-errors'
 
 export interface HttpSTTProviderOptions {
   /** Full endpoint URL, e.g. 'http://vps:8001/v1/audio/transcriptions'. */
@@ -31,7 +32,7 @@ function reasonFor(detail: string): string {
     : status === '429' ? 'rate limited'
     : /^5\d\d/.test(status ?? '') ? 'stt service error'
     : /timed out|timeout|aborted/i.test(detail) ? 'timed out (whisper server too slow / unreachable)'
-    : /ECONNREFUSED|fetch failed/i.test(detail) ? 'cannot connect (is the whisper server running?)'
+    : isConnectFailure(detail) ? 'cannot connect (is the whisper server running?)'
     : 'unknown'
 }
 

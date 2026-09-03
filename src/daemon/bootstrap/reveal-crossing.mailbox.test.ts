@@ -87,8 +87,8 @@ describe('C1 — the mailbox address actually crosses on a real reveal', () => {
     const forwarded: any[] = []
     const reconciler = makeRelayReconciler({
       relayStore,
-      completeUpstream: (id, iid, rt, h) => forwarded.push({ to: id, handle: h }),
-      completeDownstream: (id, iid, h) => forwarded.push({ to: id, handle: h }),
+      completeUpstream: (_rid, id, _iid, _rt, h) => forwarded.push({ to: id, handle: h }),
+      completeDownstream: (_rid, id, _iid, h) => forwarded.push({ to: id, handle: h }),
       nudge: () => {}, notify3way: () => {},
     })
     // S reveals to W carrying its enriched handle first (only this leg in ⇒
@@ -104,5 +104,9 @@ describe('C1 — the mailbox address actually crosses on a real reveal', () => {
     expect(qResp!.handle!.mailbox).toEqual(S_MBX)
     // S (revealed first) learns Q's mailbox via W's async post-back — mailbox intact (W never opened it).
     expect(forwarded.find(f => f.to === 's')!.handle.mailbox).toEqual(Q_MBX)
+    // 2026-09-02:后揭晓的 Q **也**要收到一条 complete。信箱传输上
+    // onRelayReveal 的同步返回值会被丢掉(mailbox-dispatch 里 `await ...; return`),
+    // 光靠同步答案会把 Q 永久晾在 awaiting_peer。见 social-relay-reveal.ts。
+    expect(forwarded.find(f => f.to === 'q')!.handle.mailbox).toEqual(S_MBX)
   })
 })

@@ -48,7 +48,9 @@ export interface NotifyEvent {
  */
 export interface ExecEvent {
   agent: A2AAgentRecord
-  peer: ProviderId
+  /** 省略 ⇒ 由**本机**决定用哪个 agent(dispatchDelegate 解析)。写死 claude
+   *  会让任何不装 claude 的机器当不了手 —— 见 bootstrap/delegate.ts。 */
+  peer?: ProviderId
   prompt: string
   cwd?: string
 }
@@ -123,7 +125,11 @@ export interface AuthFailedEvent {
    *  body is parseable AND has agent_id — pure noise (random scanners
    *  hitting the port with no body) is dropped without recording. */
   agent_id_claimed: string
-  reason: 'missing_bearer' | 'wrong_bearer' | 'agent_id_mismatch'
+  /** `exec_not_authorized`:bearer 是对的,但这个对端没有被授权在这台机器上
+   *  派活(may_exec=false)。与前三种「你不是你说的那个人」不同 —— 这是
+   *  「你是,但你没这个权限」,值得区分:前者可能是攻击,后者多半是配错了
+   *  (该走 hand accept / hand invite 而走了社交配对)。 */
+  reason: 'missing_bearer' | 'wrong_bearer' | 'agent_id_mismatch' | 'exec_not_authorized'
 }
 
 export interface A2AServerOpts {
@@ -211,7 +217,7 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         request_schema: {
           agent_id: 'string (your registered id with this wechat-cc)',
           prompt: 'string (the task)',
-          peer: 'string (optional, \'claude\'|\'codex\'; default claude)',
+          peer: 'string (optional, \'claude\'|\'codex\'|…; 省略则由本机自己选)',
           cwd: 'string (optional, working directory on this machine)',
         },
       }] : []),
@@ -342,7 +348,23 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       }
       if (agent.paused) return new Response(JSON.stringify({ ok: false, reason: 'paused' }), { status: 202 })
 
-      const peer = (typeof body.peer === 'string' && body.peer ? body.peer : 'claude') as ProviderId
+      // 授权:**只有我明确授权过的大脑**能在这台机器上跑东西。
+      //
+      // bearer 只证明「你在我的 registry 里」,而 registry 是一张**平的**表:
+      // 我自己的另一台机器(hand accept / hand invite —— 两端都要 CLI 访问权,
+      // 等价于一次 SSH 密钥交换)和朋友的 bot(六位配对码 / a2a install)
+      // 混在一起,记录形状还一模一样(都是 capabilities: [])。此前这里没有
+      // 这道检查,于是「谁能在我机器上执行代码」这件事,实际答案是「任何配过
+      // 对的人」—— 而 claude 那条路给的还是 trusted 档。见 agent-config.ts
+      // 的 may_exec。
+      if (!agent.may_exec) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'exec_not_authorized' })
+        return new Response(JSON.stringify({ error: 'exec_not_authorized' }), { status: 403 })
+      }
+
+      // 缺省不再补 'claude' —— 交给 onExec/dispatchDelegate 用**本机自己的**
+      // 默认 provider 解析。写死 claude 会让任何不装 claude 的机器当不了手。
+      const peer = (typeof body.peer === 'string' && body.peer ? body.peer : undefined) as ProviderId | undefined
       const cwd = typeof body.cwd === 'string' ? body.cwd : undefined
       try {
         const result = await opts.onExec({ agent, peer, prompt: body.prompt, cwd })

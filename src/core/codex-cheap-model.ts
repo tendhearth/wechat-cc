@@ -21,9 +21,10 @@
  * `codex login` to add a new subscription tier with cheaper models,
  * they restart the daemon and the resolver picks them up.
  */
-import { readFileSync, existsSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { readJsonFile } from '../lib/read-json-file'
 
 interface CodexModelCacheEntry {
   slug: string
@@ -58,7 +59,7 @@ export function resolveCodexCheapModel(deps: ResolveCodexCheapModelDeps = {}): s
   const path = deps.cachePath ?? join(homedir(), '.codex', 'models_cache.json')
   if (existsSync(path)) {
     try {
-      const cache = JSON.parse(readFileSync(path, 'utf8')) as CodexModelsCache
+      const cache = readJsonFile(path) as CodexModelsCache
       const eligible = (cache.models ?? [])
         .filter(m => m.visibility === 'list' && m.supported_in_api !== false && typeof m.slug === 'string' && m.slug.length > 0)
 

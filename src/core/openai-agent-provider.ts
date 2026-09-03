@@ -118,14 +118,36 @@ function makeOpenAiSession(args: {
             const turn = chatModel.streamTurn(messages, toolSpecs)
             // MUST fully drain `deltas` before awaiting `finished` — see
             // function doc + Task 6 contract #1.
+            // 文本 delta **要攒起来,一步只发一个 text 事件**。
+            //
+            // `AgentEvent{kind:'text'}` 的契约是「一条完整的助手消息」——
+            // claude/codex 的 SDK 就是这么发的,agy 的解析器按 step 聚合,
+            // cursor 按 block 聚合。此前只有这里把原始流式 delta 逐个抛出去,
+            // 而所有消费者(collectTurn → assistantText)都按「一条消息一项」
+            // 用 `join('\n')` 拼 —— 于是每个 token 之间多一个换行:
+            //
+            //   已 读取  `C:\ Users\030103 49\wcc \ package.json`
+            //
+            // 之前没人发现,是因为正常聊天走 reply 工具、根本不用
+            // assistantText;只有回落路径才拼(chatroom 每一拍 / parallel /
+            // 派活的 exec 返回),而这三条 2026-09-02 刚好全变成了主路径。
+            let textBuf = ''
+            const flushText = function* (): Generator<AgentEvent> {
+              if (textBuf === '') return
+              yield mapDeltaToEvent({ kind: 'text', text: textBuf })
+              textBuf = ''
+            }
             for await (const d of turn.deltas) {
-              if (d.kind === 'text') { yield mapDeltaToEvent(d); continue }
+              if (d.kind === 'text') { textBuf += d.text; continue }
+              // 工具调用之前先把已攒的文本吐出来,保持「先说后做」的事件顺序。
+              yield* flushText()
               // Stamp `server` from the REAL owning MCP server (never assume
               // `wechat` for every MCP tool) — see McpToolBridge.serverOf doc
               // and isReplyToolCall, which keys reply-detection on this field.
               const mcpServer = bridge.serverOf(d.name)
               yield { kind: 'tool_call', tool: d.name, ...(mcpServer !== undefined ? { server: mcpServer } : {}) }
             }
+            yield* flushText()
             const { messages: assistantMsgs, toolCalls } = await turn.finished
             messages.push(...assistantMsgs)
             if (toolCalls.length === 0) break

@@ -14,10 +14,11 @@
  * job, since the registry isn't always loaded when the store is read
  * (e.g. by CLI tools that just inspect state).
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { renameMigrated, type Db } from '../lib/db'
 import type { Mode, PersistedConversation, ProviderId } from './conversation'
 import { log } from '../lib/log'
+import { readJsonFile } from '../lib/read-json-file'
 
 export interface ConversationIdentity {
   user_id: string | null
@@ -259,7 +260,7 @@ function maybeBackfillUserNames(db: Db, file: string): void {
   if (!existsSync(file)) return
   let parsed: Record<string, unknown> | null = null
   try {
-    parsed = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+    parsed = readJsonFile(file) as Record<string, unknown>
   } catch {
     return  // preserve corrupt file for forensic debugging
   }
@@ -288,7 +289,7 @@ function maybeImportLegacy(db: Db, file: string): void {
   if (!existsSync(file)) return
   let parsed: LegacyShape | null = null
   try {
-    parsed = JSON.parse(readFileSync(file, 'utf8')) as LegacyShape
+    parsed = readJsonFile(file) as LegacyShape
   } catch {
     return  // preserve corrupt file for forensic debugging
   }

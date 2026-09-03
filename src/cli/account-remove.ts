@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { readJsonFile } from '../lib/read-json-file'
 
 // Strict botId shape: hex prefix + "-im-bot". setup-flow.ts produces
 // `<ilink_bot_id>` then strips non-[a-zA-Z0-9_-], so anything fancier than
@@ -86,7 +87,7 @@ export function removeAccount(deps: RemoveAccountDeps, botId: string): RemoveAcc
 
 function readUserIdFromAccount(accountDir: string): string | null {
   try {
-    const parsed = JSON.parse(readFileSync(join(accountDir, 'account.json'), 'utf8')) as { userId?: unknown }
+    const parsed = readJsonFile(join(accountDir, 'account.json')) as { userId?: unknown }
     return typeof parsed.userId === 'string' && parsed.userId.length > 0 ? parsed.userId : null
   } catch {
     return null
@@ -97,7 +98,7 @@ function dropJsonKey(file: string, key: string): boolean {
   if (!existsSync(file)) return false
   let parsed: Record<string, unknown>
   try {
-    parsed = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+    parsed = readJsonFile(file) as Record<string, unknown>
   } catch { return false }
   if (!(key in parsed)) return false
   delete parsed[key]
@@ -109,7 +110,7 @@ function dropSessionStateBot(file: string, botId: string): boolean {
   if (!existsSync(file)) return false
   let parsed: { version?: number; bots?: Record<string, unknown> }
   try {
-    parsed = JSON.parse(readFileSync(file, 'utf8'))
+    parsed = readJsonFile(file)
   } catch { return false }
   if (!parsed.bots || !(botId in parsed.bots)) return false
   delete parsed.bots[botId]

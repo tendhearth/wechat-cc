@@ -12,6 +12,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PairStartResult, PairResult } from '../core/pairing'
+import { readJsonFile } from '../lib/read-json-file'
 
 interface PairDeps {
   fetch?: typeof fetch
@@ -26,7 +27,7 @@ function resolve(stateDir: string, deps: PairDeps) {
     const p = join(stateDir, 'internal-api-info.json')
     if (!existsSync(p)) return null
     try {
-      const j = JSON.parse(readFileSync(p, 'utf8')) as { baseUrl?: string; tokenFilePath?: string }
+      const j = readJsonFile(p) as { baseUrl?: string; tokenFilePath?: string }
       return j.baseUrl && j.tokenFilePath ? { baseUrl: j.baseUrl, tokenFilePath: j.tokenFilePath } : null
     } catch { return null }
   })

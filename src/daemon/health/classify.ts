@@ -7,6 +7,8 @@
  * 判定全部是确定性规则 —— LLM 不参与检测,它必须比被监控对象更可靠。
  * 认不出来时一律当"不可操作",宁可晚说,不要用猜测去打扰。
  */
+import { isConnectFailure } from '../../lib/net-errors'
+import { looksLikeAuthFailure } from '../../lib/auth-failure'
 
 export type FailureKind = 'login_taken_over' | 'llm_auth' | 'network' | 'unknown'
 
@@ -18,8 +20,16 @@ export interface FailureClass {
   body: string
 }
 
-const NETWORK_RE = /certificate|tls|ssl|ENOTFOUND|ECONNRESET|ECONNREFUSED|EHOSTUNREACH|ENETDOWN|timed out|timeout|Unable to connect|fetch failed|socket hang up/i
-const LLM_AUTH_RE = /\b401\b|\b403\b|unauthorized|forbidden|invalid api key|authentication/i
+// 连接层的措辞收敛在 lib/net-errors(Node 与 Bun 两套);这里只补 TLS/超时
+// 这类**不属于「连不上」**的网络症状。此前这条正则漏了 Bun 的
+// 「typo in the url or port」,于是一次 Bun 连接失败会被判成「非网络问题」。
+const NETWORK_EXTRA_RE = /certificate|tls|ssl|timed out|timeout/i
+const isNetworkish = (t: string): boolean => isConnectFailure(t) || NETWORK_EXTRA_RE.test(t)
+// 词汇来自 lib/auth-failure(共享词汇表)。此前这里手写的正则**不含
+// `auth_failed`** —— 本仓库自己的规范错误码 —— 于是 claude 登录真死时,
+// 这个「决定要不要通知主人」的判定给出 unknown/actionable:false。
+// 顺序仍然是网络优先:歧义一律归瞬时(owner 2026-09-02 的通则),
+// 误报「去重新登录」比多等一轮重试贵得多。
 
 function messageOf(err: unknown): string {
   try {
@@ -42,7 +52,7 @@ export function classifyFailure(err: unknown): FailureClass {
       body: '这个微信账号在别处被重新绑定了。打开 wechat-cc 桌面端重新扫码即可恢复。',
     }
   }
-  if (NETWORK_RE.test(msg)) {
+  if (isNetworkish(msg)) {
     return {
       kind: 'network',
       actionable: false,
@@ -50,7 +60,7 @@ export function classifyFailure(err: unknown): FailureClass {
       body: '暂时连不上服务器,通常会自行恢复,你不需要做什么。',
     }
   }
-  if (LLM_AUTH_RE.test(msg)) {
+  if (looksLikeAuthFailure(msg)) {
     return {
       kind: 'llm_auth',
       actionable: true,

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { makeAdminCommands, friendlyDelegateReason, formatOverviewForDisplay, isDelegateName, type AdminCommandsDeps } from './admin-commands'
+import { makeAdminCommands, matchDelegate, matchHandJoin, friendlyDelegateReason, formatOverviewForDisplay, isDelegateName, type AdminCommandsDeps } from './admin-commands'
 import { makeSessionStateStore } from '../core/session-state'
 import { openTestDb, type Db } from '../lib/db'
 import type { InboundMsg } from '../core/prompt-format'
@@ -518,7 +518,10 @@ describe('admin-commands', () => {
 
     it('parses hand + task, calls delegateToHand, replies the result', async () => {
       const delegateToHand = vi.fn().mockResolvedValue({ ok: true, response: '家里 README: 项目X' })
-      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'] })
+      const cmds = make({
+        delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+        knownHandNames: () => ['家里'],
+      })
       expect(await cmds.handle(msg('让家里执行 看下README'))).toBe(true)
       await flush()
       expect(delegateToHand).toHaveBeenCalledWith('家里', '看下README')
@@ -527,7 +530,7 @@ describe('admin-commands', () => {
 
     it('does NOT hijack casual pronoun phrases ("让我执行一下X" → normal chat)', async () => {
       const delegateToHand = vi.fn()
-      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'] })
+      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'], knownHandNames: () => ['家里', '公司'] })
       // Not consumed as a command → falls through to the normal conversation path.
       expect(await cmds.handle(msg('让我执行一下这个脚本'))).toBe(false)
       expect(await cmds.handle(msg('让它跑起来再说'))).toBe(false)
@@ -537,7 +540,10 @@ describe('admin-commands', () => {
 
     it('also matches 派…跑 form and a colon', async () => {
       const delegateToHand = vi.fn().mockResolvedValue({ ok: true, response: 'r' })
-      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'] })
+      const cmds = make({
+        delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+        knownHandNames: () => ['公司'],
+      })
       expect(await cmds.handle(msg('派公司跑：跑下测试'))).toBe(true)
       await flush()
       expect(delegateToHand).toHaveBeenCalledWith('公司', '跑下测试')
@@ -545,7 +551,13 @@ describe('admin-commands', () => {
 
     it('unknown hand → replies the known list (discovery)', async () => {
       const delegateToHand = vi.fn().mockResolvedValue({ ok: false, reason: 'unknown_hand', knownHands: ['家里', '公司'] })
-      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'] })
+      // 手名在触发时就已经命中过一次,能走到 unknown_hand 说明**这中间手被
+      // 摘掉了**(移除/暂停)—— 这条分支因此仍然是活的,而且是唯一会报它的
+      // 场景。触发器本身不再拿未知名字去猜(见 matchDelegate 的取舍说明)。
+      const cmds = make({
+        delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+        knownHandNames: () => ['火星'],
+      })
       await cmds.handle(msg('让火星执行 X'))
       await flush()
       expect(sentBody(1)).toContain('已注册的')
@@ -554,7 +566,10 @@ describe('admin-commands', () => {
 
     it('unknown hand with NO hands registered → guides to pair one', async () => {
       const delegateToHand = vi.fn().mockResolvedValue({ ok: false, reason: 'unknown_hand', knownHands: [] })
-      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'] })
+      const cmds = make({
+        delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+        knownHandNames: () => ['家里'],
+      })
       await cmds.handle(msg('让家里执行 X'))
       await flush()
       expect(sentBody(1)).toContain('hand invite')
@@ -563,14 +578,16 @@ describe('admin-commands', () => {
 
     it('a failure reason is shown in friendly form, not a raw code', async () => {
       const delegateToHand = vi.fn().mockResolvedValue({ ok: false, reason: 'http_401' })
-      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'] })
+      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'], knownHandNames: () => ['家里', '公司'] })
       await cmds.handle(msg('让家里执行 X'))
       await flush()
       expect(sentBody(1)).toContain('重新配对')
     })
 
-    it('not wired → tells the operator it is off', async () => {
-      const cmds = make()  // no delegateToHand
+    it('认得出手名、但派活能力没接上 → 明说没启用', async () => {
+      // 接线不一致才会走到这里(有手名、没有 delegateToHand)。触发器现在
+      // 按名字认,所以这条分支只在这种不一致下可达 —— 保留它是防御性的。
+      const cmds = make({ knownHandNames: () => ['家里'] })  // no delegateToHand
       expect(await cmds.handle(msg('让家里执行 X'))).toBe(true)
       await flush()
       expect(sentBody(0)).toContain('派活功能未启用')
@@ -589,6 +606,7 @@ describe('admin-commands', () => {
       const holdBusy = vi.fn((label: string) => { expect(label).toBe('admin-delegate'); return releaseBusy })
       const cmds = make({
         delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+        knownHandNames: () => ['家里'],
         holdBusy,
       })
       expect(await cmds.handle(msg('让家里执行 看下README'))).toBe(true)
@@ -606,6 +624,7 @@ describe('admin-commands', () => {
       const holdBusy = vi.fn(() => releaseBusy)
       const cmds = make({
         delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+        knownHandNames: () => ['家里'],
         holdBusy,
       })
       await cmds.handle(msg('让家里执行 X'))
@@ -616,7 +635,7 @@ describe('admin-commands', () => {
     it('non-admin is consumed but does NOT delegate', async () => {
       isAdmin.mockReturnValue(false)
       const delegateToHand = vi.fn()
-      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'] })
+      const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'], knownHandNames: () => ['家里', '公司'] })
       expect(await cmds.handle(msg('让家里执行 X'))).toBe(true)
       await flush()
       expect(delegateToHand).not.toHaveBeenCalled()
@@ -754,6 +773,74 @@ describe('admin-commands', () => {
       expect(sendMessage).not.toHaveBeenCalled()
     })
   })
+
+  describe('粘码加手 —— 端到端行为', () => {
+    const flush = () => new Promise(r => setTimeout(r, 0))
+
+    it('配对成功 → 显出 url,然后当场试一次派活', async () => {
+      const joinHandByCode = vi.fn().mockResolvedValue({ ok: true, id: 'win', name: 'win-test', url: 'http://10.0.0.5:8717/a2a' })
+      const delegateToHand = vi.fn().mockResolvedValue({ ok: true, response: '收到' })
+      const cmds = make({
+        joinHandByCode: joinHandByCode as unknown as AdminCommandsDeps['joinHandByCode'],
+        delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+      })
+      expect(await cmds.handle(msg('WCCP1abcdef'))).toBe(true)
+      await flush()
+      expect(joinHandByCode).toHaveBeenCalledWith('WCCP1abcdef')
+      // url 必须出现 —— 粘错别人给的码,这是唯一能一眼看见的地方
+      expect(sentBody(1)).toContain('http://10.0.0.5:8717/a2a')
+      expect(delegateToHand).toHaveBeenCalled()
+      expect(sentBody(2)).toContain('通了')
+    })
+
+    it('配上了但派活不通 → **分开说**,不让半成功冒充成功', async () => {
+      // 这正是 owner 今天撞到的形态:配对成功、第一次派活才发现连不上。
+      const joinHandByCode = vi.fn().mockResolvedValue({ ok: true, id: 'win', name: 'win', url: 'http://10.0.0.5:8717/a2a' })
+      const delegateToHand = vi.fn().mockResolvedValue({ ok: false, reason: 'Was there a typo in the url or port?' })
+      const cmds = make({
+        joinHandByCode: joinHandByCode as unknown as AdminCommandsDeps['joinHandByCode'],
+        delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'],
+      })
+      await cmds.handle(msg('WCCP1abcdef'))
+      await flush()
+      expect(sentBody(2)).toContain('配上了,但派活没通')
+      expect(sentBody(2)).toContain('连不上')      // 走 friendlyDelegateReason,不透传 Bun 原文
+    })
+
+    it('配对失败 → 友好原因,不透传裸错误', async () => {
+      const joinHandByCode = vi.fn().mockResolvedValue({ ok: false, error: 'invalid_or_expired_invite' })
+      const cmds = make({ joinHandByCode: joinHandByCode as unknown as AdminCommandsDeps['joinHandByCode'] })
+      await cmds.handle(msg('WCCP1abcdef'))
+      await flush()
+      expect(sentBody(1)).toContain('配对失败')
+    })
+
+    it('非 admin 粘码 → 消费掉但绝不配对', async () => {
+      const joinHandByCode = vi.fn()
+      const cmds = make({
+        isAdmin: () => false,
+        joinHandByCode: joinHandByCode as unknown as AdminCommandsDeps['joinHandByCode'],
+      })
+      expect(await cmds.handle(msg('WCCP1abcdef'))).toBe(true)
+      await flush()
+      expect(joinHandByCode).not.toHaveBeenCalled()
+    })
+
+    it('/hands 列出已配对的手(补回上一轮为精确性删掉的发现性)', async () => {
+      const cmds = make({ listHands: () => [{ id: 'win', name: 'win-test', url: 'http://10.0.0.5:8717/a2a' }] })
+      expect(await cmds.handle(msg('/hands'))).toBe(true)
+      await flush()
+      expect(sentBody(0)).toContain('win-test')
+      expect(sentBody(0)).toContain('让win-test')
+    })
+
+    it('一台手都没有 → 告诉他怎么加,而不是一句「没有」', async () => {
+      const cmds = make({ listHands: () => [] })
+      await cmds.handle(msg('有哪些手'))
+      await flush()
+      expect(sentBody(0)).toContain('hand invite')
+    })
+  })
 })
 
 describe('friendlyDelegateReason', () => {
@@ -792,5 +879,173 @@ describe('isDelegateName', () => {
   })
   it('rejects pronouns (so casual speech is not a delegate command)', () => {
     for (const n of ['我', '你', '他', '她', '它', '我们', '大家', '自己']) expect(isDelegateName(n)).toBe(false)
+  })
+})
+
+// 2026-09-02,真机:owner 在微信里发「让win执行1+1=？」,收到
+//
+//   派活失败:Was there a typo in the url or port?
+//
+// 那台手当时瞬时掉线(它走 WLAN,会掉 —— 见 win-test 备忘)。真实原因是
+// 「对方现在连不上」,而 owner 看到的是「你 URL 是不是打错了」——他的
+// 合理反应是去查 URL,白费功夫。
+//
+// 根因不是没人管:friendlyDelegateReason **本来就有**「连不上」那条分支,
+// 但它是照着 **Node 的错误词汇**写的(fetch failed / ECONNREFUSED /
+// ENOTFOUND)。**这个 daemon 跑在 Bun 上,Bun 说的是另一套话。** 于是分支
+// 形同虚设,原始串直通用户。
+//
+// 下面两条是这一轮真机日志里**实际出现过**的 Bun 措辞,不是想象出来的。
+describe('friendlyDelegateReason —— 必须认识 Bun 的连接错误措辞,不只是 Node 的', () => {
+  const BUN_CONNECT_ERRORS = [
+    'Was there a typo in the url or port?',              // Bun: 连接被拒
+    'Unable to connect. Is the computer able to access the url?',  // Bun: 连不上
+    'ConnectionRefused',
+  ]
+
+  it.each(BUN_CONNECT_ERRORS)('%s → 说成「连不上」,不是原样透传', (raw) => {
+    const out = friendlyDelegateReason(raw)
+    expect(out).toContain('连不上')
+    expect(out).not.toBe(raw)
+  })
+
+  it('Node 的老措辞继续认识(没有为了新的把旧的弄丢)', () => {
+    for (const raw of ['fetch failed', 'ECONNREFUSED', 'ENOTFOUND host']) {
+      expect(friendlyDelegateReason(raw)).toContain('连不上')
+    }
+  })
+
+  // 兜底刻意保持原样透传:我们自己产出的 reason 本来就是给人看的中文
+  // (如「unknown_peer: claude —— 这台机器可用的是 [openai]」),包一层
+  // 「我看不懂的错误」只会把好消息弄糟。见同文件已有的 passthrough 用例。
+  it('我们自己产出的、已经能读的原因照旧原样透传', () => {
+    const own = 'unknown_peer: claude —— 这台机器可用的是 [openai]'
+    expect(friendlyDelegateReason(own)).toBe(own)
+  })
+
+  it('已经认识的原因不受影响', () => {
+    expect(friendlyDelegateReason('paused')).toContain('暂停')
+    expect(friendlyDelegateReason('http_401')).toContain('配对密钥')
+    expect(friendlyDelegateReason('timeout')).toContain('超时')
+  })
+})
+
+// 2026-09-02。owner 在微信里发「让win想一想1+1=？」—— 没触发派活,本机答了。
+// 因为触发器卡的是**动词**:
+//
+//   /^\s*(?:让|派)\s*(\S+?)\s*(?:执行|跑)\s*.../
+//
+// 注释解释得很好(「让/派 + 执行/跑 才能挡住日常语句」),但**判别维度选错
+// 了**:按动词卡是打地鼠 —— 想一想、看看、查一下、帮我、试试……补不完。
+//
+// 天然的判别器是**名字**:手名是 owner 亲手注册的,一共就那么几个。命中
+// 已注册的手名才算派活,没命中就落回正常聊天 —— 反而比动词表更严,因为
+// 动词表要跟整个汉语日常表达竞争,而名字集合小且由人指定。
+//
+// 中文没有词间空格,所以不能靠分隔符切「名字|任务」,只能拿已知的手名去
+// 前缀匹配。
+describe('matchDelegate —— 按已注册的手名认,不按动词认', () => {
+  const hands = ['win', '家里', '公司那台']
+
+  it('owner 撞到的那句:让win想一想1+1=？', () => {
+    expect(matchDelegate('让win想一想1+1=？', hands)).toEqual({ hand: 'win', task: '想一想1+1=？' })
+  })
+
+  it.each([
+    ['让win看看日志', 'win', '看看日志'],
+    ['派家里查一下磁盘', '家里', '查一下磁盘'],
+    ['让公司那台帮我跑测试', '公司那台', '帮我跑测试'],
+    ['让win：git status', 'win', 'git status'],
+    ['让win, 重启一下', 'win', '重启一下'],
+  ])('%s', (text, hand, task) => {
+    expect(matchDelegate(text, hands)).toEqual({ hand, task })
+  })
+
+  it('名字后紧跟的「执行/跑」当语气词剥掉,不混进任务', () => {
+    expect(matchDelegate('让win执行1+1=？', hands)).toEqual({ hand: 'win', task: '1+1=？' })
+    expect(matchDelegate('派家里跑一下测试', hands)).toEqual({ hand: '家里', task: '一下测试' })
+  })
+
+  it('句中的「跑」不会把名字吃掉(中文没有词间空格,这正是旧触发器的坑)', () => {
+    // 旧版 `让(\S+?)\s*(?:执行|跑)` 会把这句切成 名字=公司那台帮我 / 任务=测试。
+    expect(matchDelegate('让公司那台帮我跑测试', hands)).toEqual({ hand: '公司那台', task: '帮我跑测试' })
+  })
+
+  it('大小写不敏感,但回的是注册时的原名(下游要按它查)', () => {
+    expect(matchDelegate('让Win看看日志', hands)).toEqual({ hand: 'win', task: '看看日志' })
+    expect(matchDelegate('让WIN看看日志', hands)).toEqual({ hand: 'win', task: '看看日志' })
+    // 边界检查也要跟着不区分大小写,别从更长的词里匹出来
+    expect(matchDelegate('让WINNER去吧', hands)).toBeNull()
+  })
+
+  it('长名字优先 —— 别被短名字抢先匹配', () => {
+    expect(matchDelegate('让win-office看看', ['win', 'win-office']))
+      .toEqual({ hand: 'win-office', task: '看看' })
+  })
+
+  it('没命中任何手名 → null,落回正常聊天(不再回「没找到叫X的手」的噪音)', () => {
+    expect(matchDelegate('让张三跑一趟', hands)).toBeNull()
+    expect(matchDelegate('让我看看这个', hands)).toBeNull()
+    expect(matchDelegate('让它跑起来', hands)).toBeNull()
+  })
+
+  it('代词永远不算手名,哪怕真有人把手起名叫「我」', () => {
+    expect(matchDelegate('让我执行一下X', ['我'])).toBeNull()
+  })
+
+  it('只有名字没有任务 → null(「让win」不是一条指令)', () => {
+    expect(matchDelegate('让win', hands)).toBeNull()
+    expect(matchDelegate('让win  ', hands)).toBeNull()
+  })
+
+  it('不以让/派开头 → null', () => {
+    expect(matchDelegate('win 你在吗', hands)).toBeNull()
+    expect(matchDelegate('我让win去做了', hands)).toBeNull()
+  })
+
+  it('一个手都没注册 → 永远 null(不会把日常语句吃掉)', () => {
+    expect(matchDelegate('让win想一想', [])).toBeNull()
+  })
+
+  it('手名打错 → null,落回正常聊天', () => {
+    // **刻意的取舍**:旧版在这里会回「没找到叫「winn」的手,已注册的:…」,
+    // 是个发现性入口。但要保住它就得让「未知名字 + 动词」也算触发,而中文
+    // 句中的动词到处都是 —— 「让张三跑一趟」会被同一条规则劫走并回一句
+    // 噪音。精确性比发现性值钱:名字从 `hand join` 的输出里就能看到。
+    expect(matchDelegate('让winn执行ls', hands)).toBeNull()
+    expect(matchDelegate('让winner去吧', hands)).toBeNull()   // 不能从更长的英文词里匹出来
+  })
+})
+
+// 2026-09-02 C:把 `hand join` 搬进微信 —— 大脑那台是**绑了微信的那台**,
+// 让 owner 为了粘一串码去开终端是没道理的。配完流程变成:
+//   手那台跑一条 `wechat-cc hand invite`,微信里粘一次码。
+describe('粘配对码进微信 = 加一台手', () => {
+  it('裸码直接触发(不用记命令前缀 —— 你刚从终端复制完,别再要求你想一个)', () => {
+    expect(matchHandJoin('WCCP1eyJoYW5kVXJsIjoieCJ9')).toBe('WCCP1eyJoYW5kVXJsIjoieCJ9')
+  })
+
+  it('前后有空白照样认(复制粘贴常带)', () => {
+    expect(matchHandJoin('  WCCP1abc  \n')).toBe('WCCP1abc')
+  })
+
+  it('/hand <码> 作为显式别名', () => {
+    expect(matchHandJoin('/hand WCCP1abc')).toBe('WCCP1abc')
+    expect(matchHandJoin('/配对 WCCP1abc')).toBe('WCCP1abc')
+  })
+
+  it('普通聊天不会误撞 —— WCCP1 前缀在真实对话里不存在', () => {
+    for (const t of ['今天天气不错', 'WCC 是什么', 'wccp1abc（小写不算）', '帮我看看 WCCP 这个缩写']) {
+      expect(matchHandJoin(t)).toBeNull()
+    }
+  })
+
+  it('码中间有换行(微信长文本会折行)→ 拼回去', () => {
+    expect(matchHandJoin('WCCP1abc\ndef')).toBe('WCCP1abcdef')
+  })
+
+  it('空的 /hand → null(当普通消息处理,别回一个语法错误)', () => {
+    expect(matchHandJoin('/hand')).toBeNull()
+    expect(matchHandJoin('/hand   ')).toBeNull()
   })
 })

@@ -3235,6 +3235,7 @@ describe('internal-api request validation', () => {
 
       const registry: A2ARegistry = {
         list: () => agentsList.map(a => ({
+          may_exec: false,
           id: a.id,
           name: a.id,
           url: a.url,
@@ -3247,7 +3248,7 @@ describe('internal-api request validation', () => {
         get: (id) => {
           const a = agentsList.find(x => x.id === id)
           if (!a) return null
-          return { id: a.id, name: a.id, url: a.url, outbound_api_key: a.outbound_api_key, inbound_api_key: 'unused-inbound', capabilities: [] as string[], paused: a.paused ?? false, transport: 'push' as const }
+          return { id: a.id, name: a.id, url: a.url, outbound_api_key: a.outbound_api_key, inbound_api_key: 'unused-inbound', capabilities: [] as string[], paused: a.paused ?? false, transport: 'push' as const, may_exec: false }
         },
         verifyBearer: () => null,
         add: () => { /* send tests don't exercise add */ },
@@ -3255,7 +3256,7 @@ describe('internal-api request validation', () => {
         setPaused: () => {},
         update: (id, _patch) => ({
           id, name: id, url: '', inbound_api_key: 'unused-inbound', outbound_api_key: '',
-          capabilities: [] as string[], paused: false, transport: 'push' as const,
+          capabilities: [] as string[], paused: false, may_exec: false, transport: 'push' as const,
         }),
       }
 
@@ -3462,11 +3463,11 @@ describe('internal-api request validation', () => {
       serverEnabled?: boolean
       baseUrl?: string | null
     } = {}) {
-      type AgentEntry = { id: string; name: string; url?: string; outbound_api_key: string; inbound_api_key: string; capabilities: string[]; paused: boolean; transport: 'push' | 'ws' | 'mailbox' }
+      type AgentEntry = { id: string; name: string; url?: string; outbound_api_key: string; inbound_api_key: string; capabilities: string[]; paused: boolean; transport: 'push' | 'ws' | 'mailbox'; may_exec: boolean }
       const agentsList: AgentEntry[] = (opts.agents ?? []).map(a => ({
         id: a.id, name: a.name ?? a.id, url: a.url,
         outbound_api_key: a.outbound_api_key, inbound_api_key: 'unused-inbound',
-        capabilities: [], paused: a.paused ?? false, transport: 'push',
+        capabilities: [], paused: a.paused ?? false, transport: 'push', may_exec: false,
       }))
       const eventRows: EventRow[] = []
 
@@ -3483,6 +3484,7 @@ describe('internal-api request validation', () => {
             capabilities: rec.capabilities ?? [],
             paused: rec.paused ?? false,
             transport: rec.transport ?? 'push',
+            may_exec: rec.may_exec ?? false,
           })
         },
         remove: (id) => {

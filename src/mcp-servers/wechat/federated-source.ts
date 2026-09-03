@@ -6,11 +6,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js' // match mai
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createInternalApiClient, type InternalApiClient } from './client'
 import { registerFederatedQueryTool } from './tools-federated'
+import { readJsonFile } from '../../lib/read-json-file'
 
 export interface ApiInfo { baseUrl: string; tokenFilePath: string; operatorTokenFilePath: string }
 
 export function readApiInfo(infoPath: string): ApiInfo {
-  const j = JSON.parse(readFileSync(infoPath, 'utf8')) as Partial<ApiInfo>
+  const j = readJsonFile(infoPath) as Partial<ApiInfo>
   if (!j.baseUrl || !j.tokenFilePath || !j.operatorTokenFilePath) {
     throw new Error(`internal-api-info.json missing fields at ${infoPath}`)
   }

@@ -14,12 +14,13 @@
  * to files touched since — the first run imports everything, later runs only
  * re-parse new / appended sessions. INSERT OR IGNORE makes any overlap a no-op.
  */
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { readdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Db } from '../lib/db'
 import { backfillFromClaudeJsonl, backfillFromCodexJsonl } from '../lib/dialogue'
 import { loadCompanionConfig } from './companion/config'
+import { readJsonFile } from '../lib/read-json-file'
 
 export const LOCAL_CLAUDE_CHAT = 'local:claude'
 export const LOCAL_CODEX_CHAT = 'local:codex'
@@ -37,7 +38,7 @@ export function makeFileWatermark(path: string): { get: () => number | null; set
   return {
     get() {
       try {
-        const n = Number((JSON.parse(readFileSync(path, 'utf8')) as { watermark?: unknown }).watermark)
+        const n = Number((readJsonFile(path) as { watermark?: unknown }).watermark)
         return Number.isFinite(n) ? n : null
       } catch { return null }
     },

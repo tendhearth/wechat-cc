@@ -10,7 +10,7 @@ import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import type { Ref } from '../../lib/lifecycle'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
@@ -48,6 +48,7 @@ import { DEFAULT_DELEGATE_TIMEOUT_MS } from '../../core/a2a-delegate'
 import type { YiHub, YiDispatch } from '../../core/yi-hub'
 import type { ExecResult } from '../../core/a2a-server'
 import type { Mode, ProviderId } from '../../core/conversation'
+import { readJsonFile } from '../../lib/read-json-file'
 
 export interface DelegateDeps {
   listHands: () => readonly A2AAgentRecord[]
@@ -99,7 +100,11 @@ export function makeDelegateToHand(deps: DelegateDeps) {
     const hands = deps.listHands().filter(a => a.capabilities?.includes('exec'))
     const hand = hands.find(a => a.id === handName || a.name === handName)
     if (!hand) return { ok: false, reason: 'unknown_hand', knownHands: hands.map(a => a.name || a.id) }
-    const dispatch: YiDispatch = { peer: 'claude', prompt: task }
+    // **不指定 peer**:哪个 agent 跑在那台机器上,只有那台机器知道。
+    // 2026-09-02 真机实验:一台只跑 openai-compatible(Kimi)、没装 claude
+    // CLI 的机器配成 hand 之后,委派永远失败,因为这里替它选了 claude ——
+    // 而回来的错误是「Claude Code process exited with code 1」,看不出因果。
+    const dispatch: YiDispatch = { prompt: task }
     if (hand.transport === 'ws') return deps.hub.dispatchTask(hand.id, dispatch, deps.timeoutMs)
     return deps.pushDelegate(hand, dispatch, deps.selfId, deps.timeoutMs)
   }
@@ -314,6 +319,41 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       try { return await readFile(join(stateDir, 'memory', adminChatId, OVERVIEW_FILENAME), 'utf8') }
       catch { return null }
     },
+    // 粘一串配对码进微信 = 加一台手。大脑那台**就是绑了微信的那台**,
+    // 让 owner 为了粘一串码去开终端没道理。内部就是 CLI 的 `hand join`。
+    joinHandByCode: async (code: string) => {
+      const { joinHand } = await import('../../cli/hand-pairing')
+      try {
+        const r = await joinHand(stateDir, { code, selfId: boot.selfId })
+        if (!r.ok) return { ok: false as const, error: r.error ?? 'pair_failed' }
+        const rec = boot.a2aDeps?.registry.get(r.id)
+        return { ok: true as const, id: r.id, name: rec?.name ?? r.id, url: r.url }
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+    // 列出已配对的手 —— 把「名字打错就列出来」那点发现性还回去
+    // (触发器改成按名字认之后,它在那条路上被拿掉了,见 matchDelegate)。
+    listHands: () => {
+      const a2a = boot.a2aDeps
+      if (!a2a) return []
+      try {
+        return a2a.registry.list()
+          .filter(h => h.capabilities?.includes('exec'))
+          .map(h => ({ id: h.id, name: h.name || h.id, ...(h.url ? { url: h.url } : {}) }))
+      } catch { return [] }
+    },
+    // 触发器按**已注册的手名**认派活(不按动词)—— 见 admin-commands 的
+    // matchDelegate。id 和 name 都给,两种叫法都能触发。
+    knownHandNames: () => {
+      const a2a = boot.a2aDeps
+      if (!a2a) return []
+      try {
+        return a2a.registry.list()
+          .filter(h => h.capabilities?.includes('exec'))
+          .flatMap(h => (h.name && h.name !== h.id ? [h.id, h.name] : [h.id]))
+      } catch { return [] }
+    },
     // Delegate a task to a registered "hand" (another machine running wechat-cc
     // with A2A exec). Resolves the hand by id or name, routes ws hands through
     // the hub and push hands via HTTP /a2a/exec (one-brain-many-hands).
@@ -374,7 +414,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   if (remoteCfg.remote_tunnel === true) {
     const idPath = join(stateDir, 'tunnel-id.json')
     let did: string
-    try { did = (JSON.parse(readFileSync(idPath, 'utf8')) as { id: string }).id }
+    try { did = (readJsonFile(idPath) as { id: string }).id }
     catch { did = 't' + randomBytes(18).toString('hex'); try { writeFileSync(idPath, JSON.stringify({ id: did }), { mode: 0o600 }) } catch { /* best effort */ } }
     remoteTunnel = { id: did, relay: remoteCfg.remote_relay_url ?? 'wss://cc.tendhearth.com/tunnel/phone' }
   }
@@ -431,7 +471,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         daemonId,
         handleRequest: (req) => settingsPanel.handleRequest(req),
         knownDeviceTokens: () => {
-          try { return Object.keys(JSON.parse(readFileSync(join(stateDir, 'settings-devices.json'), 'utf8'))) } catch { return [] }
+          try { return Object.keys(readJsonFile(join(stateDir, 'settings-devices.json'))) } catch { return [] }
         },
         relayUrl: daemonRelay,
         log: (tag, line) => log(tag, line),

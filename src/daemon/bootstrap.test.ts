@@ -1462,7 +1462,7 @@ describe('bootstrap agent-social M1 wiring', () => {
       boot.a2aDeps!.registry.add({
         id: 'ccs', name: '小S', url: 'http://127.0.0.1:1/a2a',
         inbound_api_key: senderKey, outbound_api_key: 'unused',
-        capabilities: [], paused: false, transport: 'push',
+        capabilities: [], paused: false, transport: 'push', may_exec: false,
       })
       // A downstream peer W COULD forward to — present so the terminal assertion
       // isolates the hop cap (not merely an empty target list). Unreachable url;
@@ -1470,7 +1470,7 @@ describe('bootstrap agent-social M1 wiring', () => {
       boot.a2aDeps!.registry.add({
         id: 'ccq', name: '小Q', url: 'http://127.0.0.1:1/a2a',
         inbound_api_key: 'downstream-inbound-key-xyz', outbound_api_key: 'unused-q',
-        capabilities: [], paused: false, transport: 'push',
+        capabilities: [], paused: false, transport: 'push', may_exec: false,
       })
 
       // (b) hop:2 card → terminal: the receipt has no `forwarded`.
@@ -1553,7 +1553,7 @@ describe('bootstrap agent-social M1 wiring', () => {
       boot.a2aDeps!.registry.add({
         id: 'ccb', name: '小B', url: 'http://127.0.0.1:1/a2a',
         inbound_api_key: peerKey, outbound_api_key: 'unused',
-        capabilities: [], paused: false, transport: 'push',
+        capabilities: [], paused: false, transport: 'push', may_exec: false,
       })
       // Seed the seeker-side state: a seek + an echo whose owner ALREADY
       // revealed (self_revealed), still masked, holding the peer's agent_id.
@@ -1785,7 +1785,7 @@ describe('bootstrap agent-social M1 wiring', () => {
         a2a_agents: [{
           id: 'ccb', name: '小B', url: `http://127.0.0.1:${peerMock.port}/a2a`,
           inbound_api_key: 'peer-inbound-key-abc123', outbound_api_key: 'peer-outbound-key-xyz',
-          capabilities: [], paused: false, transport: 'push',
+          capabilities: [], paused: false, transport: 'push', may_exec: false,
         }],
       }),
     )
@@ -1893,7 +1893,7 @@ describe('bootstrap agent-social M1 wiring', () => {
         a2a_agents: [{
           id: 'ccb', name: '小B', url: `http://127.0.0.1:${peerMock.port}/a2a`,
           inbound_api_key: 'peer-inbound-key-abc123', outbound_api_key: 'peer-outbound-key-xyz',
-          capabilities: [], paused: false, transport: 'push',
+          capabilities: [], paused: false, transport: 'push', may_exec: false,
         }],
       }),
     )
@@ -1970,7 +1970,7 @@ describe('bootstrap agent-social M1 wiring', () => {
         a2a_agents: [{
           id: 'ccb', name: '小B', url: `http://127.0.0.1:${peerMock.port}/a2a`,
           inbound_api_key: 'peer-inbound-key-abc123', outbound_api_key: 'peer-outbound-key-xyz',
-          capabilities: [], paused: false, transport: 'push',
+          capabilities: [], paused: false, transport: 'push', may_exec: false,
         }],
       }),
     )
@@ -2216,7 +2216,7 @@ describe('bootstrap agent-social M1 wiring', () => {
       boot.a2aDeps!.registry.add({
         id: 'ccb', name: '小B', url: 'http://127.0.0.1:1/a2a',
         inbound_api_key: peerKey, outbound_api_key: 'unused',
-        capabilities: [], paused: false, transport: 'push',
+        capabilities: [], paused: false, transport: 'push', may_exec: false,
       })
       // Open a real penpal_channel the same way the I1 reveal test does: seed
       // a self-revealed echo, then have the peer reveal back over the wire
@@ -2331,13 +2331,13 @@ describe('bootstrap agent-social M1 wiring', () => {
       boot.a2aDeps!.registry.add({
         id: 'ccs', name: '小S', url: 'http://127.0.0.1:1/a2a',
         inbound_api_key: senderKey, outbound_api_key: 'unused-s',
-        capabilities: [], paused: false, transport: 'push',
+        capabilities: [], paused: false, transport: 'push', may_exec: false,
       })
       // Q — the far endpoint W forwards to, registered with the stub's real url.
       boot.a2aDeps!.registry.add({
         id: 'ccq', name: '小Q', url: `http://127.0.0.1:${peerMock.port}/a2a`,
         inbound_api_key: 'unused-q-inbound-key123', outbound_api_key: 'w-to-q-outbound-key',
-        capabilities: [], paused: false, transport: 'push',
+        capabilities: [], paused: false, transport: 'push', may_exec: false,
       })
       // A relay leg W (this daemon) brokered earlier (Task 9): S's own inbox
       // is chan-s-relay, Q's own inbox is chan-q-relay. A letter is always
@@ -2395,7 +2395,7 @@ describe('bootstrap agent-social M1 wiring', () => {
 describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPORTANT-2)', () => {
   const mailboxPeer = {
     id: 'cc-aaaa1111', name: 'Alice', inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o',
-    capabilities: [], paused: false, transport: 'mailbox' as const,
+    capabilities: [], paused: false, may_exec: false, transport: 'mailbox' as const,
     // A REAL X25519 enc_pub (sealEnvelope's deriveSharedKey rejects a bogus
     // short string like 'E' before any network call is even attempted) —
     // only the addr/relay strings are arbitrary/unreachable placeholders.
@@ -2512,7 +2512,7 @@ describe('bootstrap agent-social M1 wiring — url-less mailbox peer guard (IMPO
       boot.a2aDeps!.registry.add({
         id: 'ccs', name: '小S', url: 'http://127.0.0.1:1/a2a',
         inbound_api_key: senderKey, outbound_api_key: 'unused',
-        capabilities: [], paused: false, transport: 'push',
+        capabilities: [], paused: false, transport: 'push', may_exec: false,
       })
       // The ONLY possible forward target is the url-less mailbox peer.
       boot.a2aDeps!.registry.add(mailboxPeer)

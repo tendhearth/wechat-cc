@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { cmpVersion } from './registry'
 import { userPluginsDir } from './paths'
+import { readJsonFile } from '../../lib/read-json-file'
 
 export interface CatalogEntry {
   name: string
@@ -137,7 +138,7 @@ export function installPlugin(entry: CatalogEntry, stateDir: string): { ok: true
 /** Read the installed plugin's manifest version (or null). */
 function installedVersion(dir: string): string | null {
   try {
-    const m = JSON.parse(readFileSync(join(dir, 'wechat-cc.plugin.json'), 'utf8'))
+    const m = readJsonFile<{ version?: unknown }>(join(dir, 'wechat-cc.plugin.json'))
     return typeof m?.version === 'string' ? m.version : null
   } catch { return null }
 }

@@ -21,6 +21,7 @@
  * returns the last user-initiated result and NEVER dials.
  */
 import type { ProviderId } from '../core/conversation'
+import { looksLikeAuthFailure } from '../lib/auth-failure'
 
 export interface LlmProbeResult {
   provider: string
@@ -80,7 +81,11 @@ export function unconfiguredHints(registered: string[]): Array<{ provider: strin
 const PROBE_PROMPT = '只回复两个字母:ok'
 const TIMEOUT_SENTINEL: unique symbol = Symbol('llm-probe-timeout')
 
-const AUTH_RE = /auth_failed|not logged in|login required|credential|unauthenticated|请.*登录/i
+/** 健康探针用**宽档**(码 + 厂商散文)—— 它只是报告,不直接惊动主人,
+ *  所以宁可多认一点。词汇来自 lib/auth-failure,不再自己写一份。
+ *  仍然导出:诊断采集要如实调用它本体(见 diagnostics/failure-shapes)。 */
+export const LLM_HEALTH_AUTH_RE = { test: (t: string) => looksLikeAuthFailure(t) }
+const AUTH_RE = LLM_HEALTH_AUTH_RE
 
 export function makeLlmHealth(deps: LlmHealthDeps): LlmHealth {
   const timeoutMs = deps.timeoutMs ?? 45_000

@@ -27,6 +27,7 @@ import { loadMailboxIdentity } from '../../core/mailbox-crypto'
 import { peerMailboxOf, chooseTransport, buildCrossedHandle } from './mailbox-dispatch-seam'
 import { makeSocialPost, type PostOutcome } from './social-post-seam'
 import { makeEchoRetry } from '../../core/social-echo-retry'
+import { makeRelayRetry } from '../../core/social-relay-retry'
 import { makeMailboxLetterHandler } from './mailbox-letter-handler'
 import { makeRoutePostLetter } from './postletter-route'
 import { buildSharedForwardBudget } from './forward-budget-seam'
@@ -83,7 +84,6 @@ export interface SocialDeps {
    *  wireSocial runs (it consumes onIntent/onReveal). Currently unused by the
    *  penpal-repointed wiring (reveal crosses pubkey handles, not URLs/names);
    *  kept on the interface for index.ts's existing wiring + any future use. */
-  getServerBaseUrl: () => string | null
   /**
    * busy-registry hold (spec 2026-08-11 §2, Task 4 step 4) — the broker's
    * forage() and the async responder's judge/echo/forward both run as
@@ -171,7 +171,7 @@ export interface SocialWiring {
   resumeForaging: () => void
   /** 补投:没送到的揭晓 + 没送到的明信片。信箱轮询每一拍调一次;社交未启用
    *  时为 undefined。见 social-reveal.ts / social-echo-retry.ts。 */
-  sweepUndelivered?: () => Promise<{ reveals: number; echoes: number }>
+  sweepUndelivered?: () => Promise<{ reveals: number; echoes: number; completions: number }>
 }
 
 export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
@@ -206,7 +206,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   let socialEchoStore: import('../../core/social-echo-store').EchoStore | undefined
   let socialPledgeStore: import('../../core/social-pledge-store').PledgeStore | undefined
   let socialRevealer: Revealer | undefined
-  let socialSweep: (() => Promise<{ reveals: number; echoes: number }>) | undefined
+  let socialSweep: (() => Promise<{ reveals: number; echoes: number; completions: number }>) | undefined
   let socialPenpal: {
     sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
     resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
@@ -486,32 +486,44 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // deps — posts to a peer's /a2a/reveal with arbitrary relay fields. Never
       // throws to the reconciler (fail-closed; the row is durable so a lost post
       // is recoverable by a later retry from either endpoint).
-      const postReveal = (agentId: string, body: { intent_id: string; relay_token?: string; peer_handle?: PenpalHandle }): void => {
+      // 2026-09-02:返回值从 void 改成 Promise<boolean>。原来它是纯 fire-and-
+      // forget,失败只留一行日志 —— 而 W 的 complete 回投掉了就是把一端永久
+      // 晾在 awaiting_peer(见 social-relay-reveal.ts)。要能补投,先得知道
+      // 到底送没送到。传输选择仍走 chooseTransport,与其它出站腿同一处判定。
+      const postReveal = async (agentId: string, body: { intent_id: string; relay_token?: string; peer_handle?: PenpalHandle }): Promise<boolean> => {
         const hand = a2aRegistry.get(agentId)
-        if (!hand) return
-        const peer = peerMailboxOf(hand)
-        if (peer) {
-          void mailboxSender.send({ path: '/a2a/reveal', bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } }, peer)
-            .catch(err => deps.log('SOCIAL_REC', `mailbox reveal drop failed intent=${body.intent_id} agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`))
-          return
+        if (!hand) return false
+        const route = chooseTransport(hand)
+        if (route.kind === 'unreachable') return false
+        const payload = { agent_id: SOCIAL_SELF_ID, ...body }
+        try {
+          if (route.kind === 'mailbox') {
+            return await mailboxSender.send({ path: '/a2a/reveal', bearer: hand.outbound_api_key, body: payload }, route.peer)
+          }
+          const r = await a2aClient.send({ url: revealUrl(route.url), bearer: hand.outbound_api_key, body: payload })
+          return r.ok
+        } catch (err) {
+          deps.log('SOCIAL_REC', `relay reveal post failed intent=${body.intent_id} agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`)
+          return false
         }
-        // peerMailboxOf(hand) returned null — normally this means push/ws
-        // (url guaranteed by schema), but a partially-configured mailbox
-        // record (missing one of mailbox_addr/enc_pub/relays) also lands
-        // here and may have no url either. Fail closed instead of throwing.
-        if (!hand.url) return
-        void a2aClient.send({ url: revealUrl(hand.url), bearer: hand.outbound_api_key, body: { agent_id: SOCIAL_SELF_ID, ...body } })
-          .catch(err => deps.log('SOCIAL_REC', `relay reveal post failed intent=${body.intent_id} agent=${agentId}: ${err instanceof Error ? err.message : String(err)}`))
       }
 
       const revealer = makeRevealer({ echoStore, pledgeStore, seekStore, postPeerReveal, channel, notify })
       socialRevealer = revealer
+      // 介绍人那一侧的欠账:转发明信片 + 互揭后的 complete 回投。
+      const relayRetry = makeRelayRetry({
+        relayStore,
+        postEcho: async (to, m) => (await postToPeer(to, '/a2a/echo', m)).delivered,
+        postReveal,
+        log: deps.log,
+      })
       // 一次扫描补两种欠账:没送到的揭晓 + 没送到的明信片。挂在信箱轮询
       // 同一拍上 —— 那一拍本来就是网络恢复后第一个动的东西。
       socialSweep = async () => {
         const reveals = await revealer.retryUndelivered()
         const echoes = await echoRetry.retryUndeliveredEchoes()
-        return { reveals, echoes }
+        const relay = await relayRetry.retryRelay()
+        return { reveals, echoes: echoes + relay.echoes, completions: relay.completions }
       }
 
       // spec #2: the intermediary's (介绍人 / W) reveal reconciler. Both endpoints
@@ -521,12 +533,20 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // presented. Row-driven → survives a W restart.
       const relayReconciler = makeRelayReconciler({
         relayStore,
-        completeUpstream: (upstreamId, intentId, relayToken, downstreamHandle) =>
-          postReveal(upstreamId, { intent_id: intentId, relay_token: relayToken, peer_handle: downstreamHandle }),
-        completeDownstream: (downstreamId, intentId, upstreamHandle) =>
-          postReveal(downstreamId, { intent_id: intentId, peer_handle: upstreamHandle }),
-        nudge: (agentId, intentId, relayToken) =>
-          postReveal(agentId, { intent_id: intentId, ...(relayToken ? { relay_token: relayToken } : {}) }),
+        // complete 是同步 handler 里发出的,所以仍然不 await;但**送达结果要
+        // 落到行上**,补投才有依据。nudge 刻意不记账:它只是催一句,掉了顶多
+        // 少一次提醒,对方仍可自己揭晓 —— 不值得为它多一列。
+        completeUpstream: (relayId, upstreamId, intentId, relayToken, downstreamHandle) => {
+          void postReveal(upstreamId, { intent_id: intentId, relay_token: relayToken, peer_handle: downstreamHandle })
+            .then(ok => { if (ok) relayStore.setUpstreamCompleted(relayId, new Date().toISOString()) })
+        },
+        completeDownstream: (relayId, downstreamId, intentId, upstreamHandle) => {
+          void postReveal(downstreamId, { intent_id: intentId, peer_handle: upstreamHandle })
+            .then(ok => { if (ok) relayStore.setDownstreamCompleted(relayId, new Date().toISOString()) })
+        },
+        nudge: (agentId, intentId, relayToken) => {
+          void postReveal(agentId, { intent_id: intentId, ...(relayToken ? { relay_token: relayToken } : {}) })
+        },
         notify3way: (_intentId, _upstream, _downstream) => {
           // 介绍人 warmth: only W's own owner is told, content-free — W never had
           // either endpoint's real identity, only their ephemeral handles. S/Q
@@ -624,6 +644,15 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         },
         // 回声要的是【真的送到了没有】—— 见 social-post-seam.ts。
         postEcho: async (to, m) => (await postToPeer(to, '/a2a/echo', m)).delivered,
+        // 欠账:W 转发明信片给 S,掉了就没人会再发一次(见 social-relay-retry)。
+        markEchoOwed: (relayId, blurb, degree) => {
+          try { relayStore.setOwedEcho(relayId, blurb, degree, new Date().toISOString()) }
+          catch (err) { deps.log('SOCIAL_REC', `中继明信片记账失败 relay=${relayId}: ${err instanceof Error ? err.message : String(err)}`) }
+        },
+        markEchoDelivered: (relayId) => {
+          try { relayStore.setEchoDelivered(relayId, new Date().toISOString()) }
+          catch { /* 记账失败最多多补一次,不影响正确性 */ }
+        },
         log: deps.log,
       })
       socialOnEcho = async ({ agent, msg }) => {

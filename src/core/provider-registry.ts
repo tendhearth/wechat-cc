@@ -13,6 +13,7 @@
  */
 import type { AgentProvider, CheapEval } from './agent-provider'
 import type { ProviderId } from './conversation'
+import { hasAuthCode } from '../lib/auth-failure'
 
 export interface ProviderRegistration {
   /** Human-readable name; used by mode-commands prompts and dashboard. */
@@ -80,8 +81,10 @@ const CHEAP_EVAL_COOLDOWN_MS = 10 * 60_000
 // owner 确认 agy 能登录,这条其实是网络/超时,和同期 getUpdates cert /
 // 隧道 churn 同源),那是瞬时错误,该走短冷却自愈,不能误判成登录过期。
 const CHEAP_EVAL_AUTH_COOLDOWN_MS = 60 * 60_000
-function isAuthError(err: unknown): boolean {
-  return err instanceof Error && /auth_failed\b/i.test(err.message)
+/** 冷却时长这类内部决策用**窄档** —— 只认结构化码,不让厂商散文带偏。
+ *  词汇来自 lib/auth-failure。导出还为了诊断采集如实调用它本体。 */
+export function isAuthError(err: unknown): boolean {
+  return err instanceof Error && hasAuthCode(err.message)
 }
 
 export function createProviderRegistry(opts?: {
@@ -104,6 +107,12 @@ export function createProviderRegistry(opts?: {
    * net-probe 的端点表包一个带 TTL 缓存的实现注入;core 保持纯净。
    */
   cheapEvalPreflight?: (id: string) => Promise<boolean>
+  /**
+   * 诊断采集(可选):一次 cheapEval 失败时,把**真实形状**交出去。
+   * 这条路是 agy 唯一真正跑的地方 —— turn_records 里 agy 是零行,不是埋点
+   * 坏了,是它根本不走会话轮次。不接就是完全不采(默认行为不变)。
+   */
+  onProviderFailure?: (info: { provider: string; op: 'cheap_eval'; errorCode: string | null; message: string }) => void
   log?: (line: string) => void
 }): ProviderRegistry {
   const now = opts?.now ?? Date.now
@@ -180,6 +189,12 @@ export function createProviderRegistry(opts?: {
             const cd = isAuthError(err) ? CHEAP_EVAL_AUTH_COOLDOWN_MS : CHEAP_EVAL_COOLDOWN_MS
             cheapEvalCooldownUntil.set(c.id, now() + cd)
             lastErr = err
+            // 只采集,不改判。绝不让采集影响冷却/失败转移。
+            try {
+              const msg = err instanceof Error ? err.message : String(err)
+              const m = /^([a-z_]+):/.exec(msg)
+              opts?.onProviderFailure?.({ provider: c.id, op: 'cheap_eval', errorCode: m ? m[1]! : null, message: msg })
+            } catch { /* 采集永不外泄 */ }
           }
         }
         if (attempted === 0) {

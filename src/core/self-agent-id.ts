@@ -24,10 +24,11 @@
  * writes; a full-object saveAgentConfig would wipe those peers off disk.
  */
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
+import { existsSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { loadMailboxIdentity } from './mailbox-crypto'
 import type { AgentConfig } from '../lib/agent-config'
+import { readJsonFile } from '../lib/read-json-file'
 
 export interface ResolveSelfAgentIdDeps {
   env?: Record<string, string | undefined>
@@ -42,7 +43,7 @@ function persistSelfAgentId(stateDir: string, selfAgentId: string): void {
   const path = join(stateDir, 'agent-config.json')
   let raw: Record<string, unknown> = {}
   if (existsSync(path)) {
-    try { raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown> } catch { raw = {} }
+    try { raw = readJsonFile(path) as Record<string, unknown> } catch { raw = {} }
   }
   raw.self_agent_id = selfAgentId
   mkdirSync(stateDir, { recursive: true, mode: 0o700 })

@@ -61,24 +61,34 @@ describe('makeRelayReconciler', () => {
     expect(nudge).toHaveBeenCalledWith('ccs', 'i1', 'T')       // S needs the token
   })
 
-  it('S-first then Q → mutual; Q learns S\'s STORED handle synchronously, S completed via post-back with Q\'s handle, 3-way fires once', () => {
+  // 2026-09-02:互揭达成时**两条腿都要 complete**,不是只补先揭晓的那一条。
+  //
+  // 原来的写法依赖「后揭晓的一方从同步返回值里学到 mutual」。信箱传输**没有
+  // 同步返回值** —— mailbox-dispatch 里是 `await deps.onReveal(...); return`,
+  // 返回值直接丢掉。而且 2 跳的两端并不像直连那样能从自己的两行推出互揭:
+  // W 只 nudge 过对方,后揭晓一方的 peer_revealed_at 永远是 null。
+  // 结果:**2 跳连接里后揭晓的那一方被永久晾在 awaiting_peer**。
+  //
+  // 补两条是安全的:重复的 complete 落到对端的 onInboundReveal 会走
+  // 「已 peer_revealed → 无写入、无通知」那条分支。
+  it('S-first then Q → mutual;两条腿都 complete(后揭晓的一方在信箱上没有同步返回值可用)', () => {
     const { rec, completeUpstream, completeDownstream, notify3way } = fixture()
     rec.onRelayReveal({ callerAgentId: 'ccs', intentId: 'i1', relayToken: 'T', peerHandle: S })   // S first
     const out = rec.onRelayReveal({ callerAgentId: 'ccq', intentId: 'i1', peerHandle: Q })        // Q second
     expect(out).toEqual({ mutual: true, handle: S })          // Q (caller) gets the OTHER party's STORED handle = S
-    expect(completeUpstream).toHaveBeenCalledWith('ccs', 'i1', 'T', Q)             // post back to S with Q's handle
-    expect(completeDownstream).not.toHaveBeenCalled()
+    expect(completeUpstream).toHaveBeenCalledWith('i1:T', 'ccs', 'i1', 'T', Q)     // 给 S:Q 的 handle
+    expect(completeDownstream).toHaveBeenCalledWith('i1:T', 'ccq', 'i1', S)        // 给 Q:S 的 handle ← 新增
     expect(notify3way).toHaveBeenCalledTimes(1)
     expect(notify3way).toHaveBeenCalledWith('i1', S, Q)
   })
 
-  it('Q-first then S → mutual; S learns Q\'s STORED handle synchronously, Q completed via post-back with S\'s handle', () => {
+  it('Q-first then S → mutual;同样两条腿都 complete', () => {
     const { rec, completeUpstream, completeDownstream, notify3way } = fixture()
     rec.onRelayReveal({ callerAgentId: 'ccq', intentId: 'i1', peerHandle: Q })                    // Q first
     const out = rec.onRelayReveal({ callerAgentId: 'ccs', intentId: 'i1', relayToken: 'T', peerHandle: S })  // S second
     expect(out).toEqual({ mutual: true, handle: Q })          // S (caller) gets the OTHER party's STORED handle = Q
-    expect(completeDownstream).toHaveBeenCalledWith('ccq', 'i1', S)                // post back to Q with S's handle
-    expect(completeUpstream).not.toHaveBeenCalled()
+    expect(completeDownstream).toHaveBeenCalledWith('i1:T', 'ccq', 'i1', S)
+    expect(completeUpstream).toHaveBeenCalledWith('i1:T', 'ccs', 'i1', 'T', S ? Q : Q)
     expect(notify3way).toHaveBeenCalledTimes(1)
     expect(notify3way).toHaveBeenCalledWith('i1', S, Q)
   })
@@ -136,8 +146,8 @@ describe('makeRelayReconciler', () => {
     const retried = rec.onRelayReveal({ callerAgentId: 'ccs', intentId: 'i1', relayToken: 'T', peerHandle: S })
     expect(retried).toEqual({ mutual: true, handle: Q })
     expect(relayStore.get('i1:T')!.upstream_revealed_at).not.toBeNull()
-    expect(completeDownstream).toHaveBeenCalledWith('ccq', 'i1', S)
-    expect(completeUpstream).not.toHaveBeenCalled()
+    expect(completeDownstream).toHaveBeenCalledWith('i1:T', 'ccq', 'i1', S)
+    expect(completeUpstream).toHaveBeenCalledWith('i1:T', 'ccs', 'i1', 'T', Q)   // 两条腿都补
     expect(notify3way).toHaveBeenCalledTimes(1)
     expect(notify3way).toHaveBeenCalledWith('i1', S, Q)
   })

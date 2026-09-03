@@ -44,7 +44,7 @@ import { formatInbound } from '../../core/prompt-format'
 import { makeMessagesStore } from '../../lib/messages-store'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import { findOnPath } from '../../lib/util'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { makeSessionStore } from '../../core/session-store'
@@ -78,6 +78,7 @@ import { runSourceAdapter } from '../../core/knowledge/source-adapter'
 import { runIndexer } from '../../core/knowledge/indexer'
 import { makeEmbedderService } from '../../core/knowledge/embedder-service'
 import { makeJsEmbedder, withEmbedderFallback } from '../../core/knowledge/js-embedder'
+import { readJsonFile } from '../../lib/read-json-file'
 import { rebuildGraphFromSource } from '../../core/knowledge/graph-build'
 import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
 import { makeFactsApi } from '../../core/knowledge/facts'
@@ -131,7 +132,7 @@ function hydrateClaudeAuthEnvFromUserSettings(log: BootstrapDeps['log']): void {
   if (!existsSync(settingsPath)) return
 
   try {
-    const parsed = JSON.parse(readFileSync(settingsPath, 'utf8')) as { env?: Record<string, unknown> }
+    const parsed = readJsonFile(settingsPath) as { env?: Record<string, unknown> }
     const env = parsed.env
     if (!env || typeof env !== 'object') return
 
@@ -924,7 +925,13 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // internal-api and survives the restart a hang/crash triggers — the
   // AI-legible answer to "why did this chat stop replying", post-mortem-safe.
   const recordTurn = (record: TurnRecord): void => {
-    deps.log('TURN', `chat=${record.chatId} provider=${record.provider} outcome=${record.outcome} dur=${record.durationMs}ms reply=${record.replyToolCalled} chunks=${record.textChunks}${record.error ? ` error=${JSON.stringify(record.error.slice(0, 160))}` : ''}`, {
+    // tools=… 只列**名字**,不含参数(参数里是搜索词、文件路径、消息正文)。
+    // 有了这一栏,回头看一条回答时能一眼分清「查来的」和「想出来的」——
+    // 2026-09-02 之前完全看不出:agy 联网搜了 3.7 秒,日志里只有 chunks=3。
+    const toolsPart = record.toolCalls?.length
+      ? ` tools=${[...new Set(record.toolCalls)].join(',')}`
+      : ''
+    deps.log('TURN', `chat=${record.chatId} provider=${record.provider} outcome=${record.outcome} dur=${record.durationMs}ms reply=${record.replyToolCalled} chunks=${record.textChunks}${toolsPart}${record.error ? ` error=${JSON.stringify(record.error.slice(0, 160))}` : ''}`, {
       event: 'turn_record',
       ...record,
     })
@@ -998,10 +1005,17 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     stateDir: deps.stateDir,
     log: deps.log,
     ...(claudeBin ? { claudeBin } : {}),
+    // 没有 claude 二进制就别把 claude 放进 delegate 名单 —— 与 codex/openai
+    // 同一个姿态。上面那条 WARNING 之前只是说说,名单照旧列着它。
+    claudeAvailable: !!claudeBin,
     ...(codexBinary && codexVersionCheck?.ok ? { codexPathOverride: codexBinary } : {}),
     // busy-registry hold (spec 2026-08-11 §2, Task 4 step 3 + Task 6) —
     // a delegate dispatch is a one-shot session outside SessionManager.
     holdBusy: busyRegistry.hold,
+    // 同上:one-shot delegate 失败也采一笔。
+    onProviderFailure: (info) => {
+      void import('../diagnostics/failure-shapes').then(m => m.recordFailureShape(deps.stateDir, info))
+    },
   })
 
   // ── A2A wiring ────────────────────────────────────────────────────────
@@ -1030,10 +1044,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     return cachedOperatorChatId
   }
 
-  // Single server holder — assigned once wireA2aServer builds it below. The
-  // getServerBaseUrl thunk passed to wireSocial closes over this variable, so
-  // it resolves the live server at runtime even though wireSocial runs first
-  // (it consumes onIntent/onReveal, which the a2a server construction needs).
+  // Single server holder — assigned once wireA2aServer builds it below.
+  // (曾经有一条注释说 wireSocial 的 getServerBaseUrl thunk 闭包在这上面、
+  // 所以顺序要紧。那个 dep 从头到尾没被 wireSocial 用过,注释比死代码更贵
+  // —— 它会让后来的人以为这里的顺序是有约束的。一并删掉。)
   let a2aServer: import('../../core/a2a-server').A2AServer | null = null
 
   // 降级兜底:social 抛错时的 inert wiring — 与 wireSocial 未配置时的内部
@@ -1060,7 +1074,6 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       a2aClient,
       eventsStore: a2aEventsStore,
       knowledge,
-      getServerBaseUrl: () => a2aServer ? a2aServer.baseUrl() : null,
       // busy-registry hold (spec 2026-08-11 §2, Task 4 step 4 + Task 6) —
       // broker.forage() + the async responder run as fire-and-forget
       // coroutines outside SessionManager.

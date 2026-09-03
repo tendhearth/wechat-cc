@@ -1,5 +1,6 @@
 import type { TTSProvider } from './types'
 import { Buffer } from 'node:buffer'
+import { isConnectFailure } from '../../lib/net-errors'
 
 export interface HttpTTSProviderOptions {
   /** Full endpoint URL, e.g. 'http://mac:8000/v1/audio/speech' or 'https://api.openai.com/v1/audio/speech' */
@@ -49,7 +50,7 @@ export function makeHttpTTSProvider(opts: HttpTTSProviderOptions): TTSProvider {
         : status === '404' ? 'endpoint not found (check base_url)'
         : status === '429' ? 'rate limited'
         : /^5\d\d/.test(status ?? '') ? 'tts service error'
-        : /ECONNREFUSED|fetch failed/i.test(detail) ? 'cannot connect (is vllm serve running?)'
+        : isConnectFailure(detail) ? 'cannot connect (is vllm serve running?)'
         : 'unknown'
       return { ok: false, reason, detail }
     }

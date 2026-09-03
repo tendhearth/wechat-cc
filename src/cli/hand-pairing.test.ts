@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { createA2ARegistry } from '../core/a2a-registry'
 import { createA2AServer } from '../core/a2a-server'
 import { mintInvite, verifyAndConsumeInvite } from '../lib/a2a-pairing'
-import { acceptBrain, addHand, joinHand, listPairings, pingHands } from './hand-pairing'
+import { acceptBrain, addHand, joinHand, listPairings, pingHands, planHandInvite } from './hand-pairing'
 
 let stateDir: string
 const TOKEN = 'shared-secret-0123456789'  // ≥16
@@ -38,7 +38,7 @@ describe('listPairings (role classification)', () => {
     createA2ARegistry({ stateDir }).add({
       id: 'pager', name: 'pager', url: 'https://pager/a2a',
       inbound_api_key: TOKEN, outbound_api_key: 'real-key', capabilities: ['notify'], paused: false,
-      transport: 'push',
+      transport: 'push', may_exec: false,
     })
     const p = listPairings(stateDir)
     expect(p.hands.map(h => h.id)).toEqual(['home'])
@@ -112,7 +112,7 @@ describe('smooth pairing (invite code) end-to-end', () => {
         else handRegistry.add({
           id: brainId, name: brainId, url: 'http://brain.local/a2a',
           inbound_api_key: execKey, outbound_api_key: 'unused', capabilities: [], paused: false,
-          transport: 'push',
+          transport: 'push', may_exec: false,
         })
         return { ok: true }
       },
@@ -204,5 +204,90 @@ describe('pingHands (reachability)', () => {
     addHand(brainDir, { id: 'office', url: 'http://127.0.0.1:1/a2a', name: '公司', token: 'shared-secret-0123456789' })
     const results = await pingHands(brainDir, { filter: '公司', timeoutMs: 800 })
     expect(results.map(r => r.id)).toEqual(['office'])
+  })
+})
+
+// 2026-09-02:`hand join <码>` 不再要求 --id/--name —— 手那台自己知道它叫
+// 什么,名字随邀请码带过来。用户少想一个 slug、少记两个参数。
+describe('joinHand —— id/name 从邀请码里推', () => {
+  it('不给 --id → 用机器名推出的 slug 注册', async () => {
+    const handDir = mkdtempSync(join(tmpdir(), 'hand-'))
+    const brainDir = mkdtempSync(join(tmpdir(), 'brain-'))
+    const { code } = mintInvite(handDir, { handUrl: 'http://10.0.0.5:8717/a2a', nowMs: Date.now(), handName: 'MacBook-Pro.local' })
+    const r = await joinHand(brainDir, { code, selfId: 'wechat-cc', timeoutMs: 50 })
+    // 网络必然失败(没有真的手在听),但 id 的推导在发请求之前就完成了
+    expect(r.id).toBe('macbook-pro')
+  })
+
+  it('显式 --id 覆盖推导结果', async () => {
+    const handDir = mkdtempSync(join(tmpdir(), 'hand-'))
+    const brainDir = mkdtempSync(join(tmpdir(), 'brain-'))
+    const { code } = mintInvite(handDir, { handUrl: 'http://10.0.0.5:8717/a2a', nowMs: Date.now(), handName: 'MacBook-Pro' })
+    const r = await joinHand(brainDir, { code, id: 'laptop', selfId: 'wechat-cc', timeoutMs: 50 })
+    expect(r.id).toBe('laptop')
+  })
+
+  it('机器名推不出合法 slug(纯中文)→ 明说要 --id,不替用户编一个', async () => {
+    const handDir = mkdtempSync(join(tmpdir(), 'hand-'))
+    const brainDir = mkdtempSync(join(tmpdir(), 'brain-'))
+    const { code } = mintInvite(handDir, { handUrl: 'http://10.0.0.5:8717/a2a', nowMs: Date.now(), handName: '我的旧电脑' })
+    await expect(joinHand(brainDir, { code, selfId: 'wechat-cc', timeoutMs: 50 }))
+      .rejects.toThrow(/--id/)
+  })
+
+  it('老版本的码(没带机器名)→ 同样明说要 --id', async () => {
+    const handDir = mkdtempSync(join(tmpdir(), 'hand-'))
+    const brainDir = mkdtempSync(join(tmpdir(), 'brain-'))
+    const { code } = mintInvite(handDir, { handUrl: 'http://10.0.0.5:8717/a2a', nowMs: Date.now() })
+    await expect(joinHand(brainDir, { code, selfId: 'wechat-cc', timeoutMs: 50 }))
+      .rejects.toThrow(/--id/)
+  })
+})
+
+// 2026-09-02:配一台手此前要 4 条命令,其中最贵的是第一步 ——
+// `daemon a2a enable --host <你得自己知道的IP>`,用户先得搞懂「为什么
+// 127.0.0.1 不行」。`hand invite` 现在自己把前三步做完;这里测的是**决策**
+// 部分(纯函数),I/O 留给 CLI。
+describe('planHandInvite —— 一条命令要不要先开监听/重启', () => {
+  const tail = { host: '100.101.102.103', why: 'tailscale' as const }
+  const lan = { host: '10.84.6.254', why: 'lan' as const }
+
+  it('已经开在可达地址上 → 直接出码,不重启', () => {
+    expect(planHandInvite({ info: { enabled: true, base_url: 'http://10.84.6.254:8717' }, pick: lan }))
+      .toEqual({ action: 'ready', handUrl: 'http://10.84.6.254:8717/a2a' })
+  })
+
+  it('没开 → 挑地址、开、重启', () => {
+    expect(planHandInvite({ info: null, pick: tail }))
+      .toEqual({ action: 'enable', host: '100.101.102.103', port: 8717, why: 'tailscale' })
+  })
+
+  it('开在回环上 = 等于没开(配对会成功、派活永远失败)→ 重开到可达地址', () => {
+    expect(planHandInvite({ info: { enabled: true, base_url: 'http://127.0.0.1:8717' }, pick: lan }))
+      .toEqual({ action: 'enable', host: '10.84.6.254', port: 8717, why: 'lan' })
+  })
+
+  it('开在 0.0.0.0 上也算不可达(对端拿到这个地址连不了)', () => {
+    expect(planHandInvite({ info: { enabled: true, base_url: 'http://0.0.0.0:8717' }, pick: lan }).action)
+      .toBe('enable')
+  })
+
+  it('挑不出地址 → no_address,**明说**,绝不悄悄用回环', () => {
+    expect(planHandInvite({ info: null, pick: null })).toEqual({ action: 'no_address' })
+  })
+
+  it('--host 覆盖:即使已经开着,也按用户给的重开', () => {
+    expect(planHandInvite({ info: { enabled: true, base_url: 'http://10.0.0.1:8717' }, pick: lan, host: '100.1.2.3' }))
+      .toEqual({ action: 'enable', host: '100.1.2.3', port: 8717, why: 'override' })
+  })
+
+  it('--host 跟当前已开的完全一致 → 不用白重启一次', () => {
+    expect(planHandInvite({ info: { enabled: true, base_url: 'http://100.1.2.3:8717' }, pick: lan, host: '100.1.2.3' }))
+      .toEqual({ action: 'ready', handUrl: 'http://100.1.2.3:8717/a2a' })
+  })
+
+  it('自定义端口', () => {
+    expect(planHandInvite({ info: null, pick: lan, port: 9001 }))
+      .toEqual({ action: 'enable', host: '10.84.6.254', port: 9001, why: 'lan' })
   })
 })

@@ -8,6 +8,7 @@ import { readFileSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { STATE_DIR, MAX_TEXT_CHUNK } from '../lib/config'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
+import { readJsonFile } from './read-json-file'
 
 export interface MinimalAccount {
   baseUrl: string
@@ -41,7 +42,7 @@ export function missingContextTokenError(chatId: string): string {
 }
 
 function readJson<T>(path: string): T | null {
-  try { return JSON.parse(readFileSync(path, 'utf8')) as T }
+  try { return readJsonFile(path) as T }
   catch { return null }
 }
 
@@ -54,7 +55,7 @@ function loadAccounts(stateDir: string): MinimalAccount[] {
     const dir = join(accountsDir, id)
     try {
       const token = readFileSync(join(dir, 'token'), 'utf8').trim()
-      const account = JSON.parse(readFileSync(join(dir, 'account.json'), 'utf8')) as { baseUrl?: string }
+      const account = readJsonFile(join(dir, 'account.json')) as { baseUrl?: string }
       if (token && account.baseUrl) {
         out.push({ id, token, baseUrl: account.baseUrl })
       }

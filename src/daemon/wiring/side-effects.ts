@@ -6,7 +6,7 @@
  * startup-sweeps (boot milestone sweep, introspect catch-up).
  */
 import { join } from 'node:path'
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import type { Db } from '../../lib/db'
 import type { AgentConfig } from '../../lib/agent-config'
 import type { Mode } from '../../core/conversation'
@@ -17,6 +17,7 @@ import { makeEventsStore } from '../events/store'
 import { makeActivityStore } from '../activity/store'
 import { makeObservationsStore } from '../observations/store'
 import { botName } from '../bot-name'
+import { readJsonFile } from '../../lib/read-json-file'
 
 export interface SideEffectDeps {
   stateDir: string
@@ -60,7 +61,7 @@ async function flushPendingNotify(deps: SideEffectDeps, chatId: string): Promise
   const pendingPath = join(deps.stateDir, 'pending-notify.json')
   if (!existsSync(pendingPath)) return
   try {
-    const pending = JSON.parse(readFileSync(pendingPath, 'utf8')) as { text?: string; recipients?: string[]; ts?: number }
+    const pending = readJsonFile(pendingPath) as { text?: string; recipients?: string[]; ts?: number }
     if (!pending.text || !Array.isArray(pending.recipients) || !pending.recipients.includes(chatId)) return
     // 24h 以上的旧通知不补 — 迟到太久的「我回来了」只会困惑。
     if (typeof pending.ts === 'number' && Date.now() - pending.ts > 24 * 3600_000) { rmSync(pendingPath, { force: true }); return }

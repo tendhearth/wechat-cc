@@ -57,3 +57,35 @@ describe('classifyFailure', () => {
     expect(classifyFailure(new Error('401 Unauthorized'))).toMatchObject({ kind: 'llm_auth', actionable: true })
   })
 })
+
+// 2026-09-02 采集第一遍就照出的真 bug。六处判定里五处说「这是登录失效」,
+// 而**唯一决定要不要通知主人**的这处说 unknown:
+//
+//   LLM_AUTH_RE = /401|403|unauthorized|forbidden|invalid api key|authentication/i
+//
+// 它不含 `auth_failed` —— 本仓库自己的规范错误码,assertNotAuthFailed 抛的
+// 那个、TurnSummary.errorCode 带的那个。于是 claude 登录真死时,主人收到的是
+// 「暂时无法正常工作,恢复后会再通知你」(actionable:false = 一句「你等着」),
+// 而真相是「只有你能修,它永远不会自己好」。
+describe('classifyFailure —— 必须认识本仓库自己的 auth_failed 码', () => {
+  it('auth_failed 码 → llm_auth + actionable(此前是 unknown + 不可操作)', () => {
+    const c = classifyFailure(new Error('auth_failed: credentials stale: Not logged in'))
+    expect(c.kind).toBe('llm_auth')
+    expect(c.actionable).toBe(true)
+  })
+
+  it('厂商散文继续认(没有为了新的把旧的弄丢)', () => {
+    for (const m of ['401 unauthorized', 'authentication failed', 'invalid api key']) {
+      expect(classifyFailure(new Error(m)).kind).toBe('llm_auth')
+    }
+  })
+
+  it('**歧义让位给瞬时**:agy 那句 authentication failed or timed out 仍判 network', () => {
+    // owner 的通则:误报「去重新登录」比多等一轮贵。这条不能因为上面的修复而破。
+    expect(classifyFailure(new Error('authentication failed or timed out')).kind).toBe('network')
+  })
+
+  it('连 auth_failed 码撞上连接失败也让位给 network(同一条通则)', () => {
+    expect(classifyFailure(new Error('auth_failed: connection refused')).kind).toBe('network')
+  })
+})

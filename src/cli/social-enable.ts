@@ -23,8 +23,9 @@
  *    否则用户被单向门锁住。关闭只翻 social_enabled,**保留**披露策略与中继,
  *    这样再开启时不用重填。
  */
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
+import { existsSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { readJsonFile } from '../lib/read-json-file'
 
 export const DEFAULT_SOCIAL_DISCLOSURE_POLICY =
   '可以说我的兴趣、想找的同好或资源;不可透露我的真实姓名、住址、电话或任何联系方式,也不提及除我和收件方以外的任何第三方。'
@@ -33,7 +34,7 @@ export const DEFAULT_MAILBOX_RELAYS = ['https://cc.tendhearth.com/mailbox']
 function readRawConfig(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {}
   try {
-    return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+    return readJsonFile(path) as Record<string, unknown>
   } catch {
     return {}
   }

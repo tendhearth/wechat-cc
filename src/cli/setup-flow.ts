@@ -1,8 +1,9 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
+import { existsSync, readdirSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { ILINK_APP_ID, ILINK_BASE_URL, ILINK_BOT_TYPE } from '../lib/config'
 import { dedupeAccountsByUserId } from '../lib/dedupe-accounts'
+import { readJsonFile } from '../lib/read-json-file'
 
 const ILINK_CLIENT_VERSION = '131335'
 const SETUP_QR_EXPIRES_MS = 480_000
@@ -267,7 +268,7 @@ export function persistConfirmedAccount(opts: {
 
   if (status.ilink_user_id) {
     let access: { dmPolicy: 'allowlist' | 'disabled'; allowFrom: string[]; admins?: string[] } = { dmPolicy: 'allowlist', allowFrom: [] }
-    try { access = JSON.parse(readFileSync(accessFile, 'utf8')) } catch {}
+    try { access = readJsonFile(accessFile) } catch {}
     if (!access.allowFrom) access.allowFrom = []
     let dirty = false
     if (!access.allowFrom.includes(status.ilink_user_id)) {
@@ -355,7 +356,7 @@ export function determineScenario(
     const metaPath = join(accountsDir, name, 'account.json')
     if (!existsSync(metaPath)) continue
     try {
-      const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as { userId?: string }
+      const meta = readJsonFile(metaPath) as { userId?: string }
       if (typeof meta.userId === 'string' && meta.userId) {
         others.push({ id: name, userId: meta.userId })
       }

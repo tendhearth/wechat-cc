@@ -12,12 +12,13 @@ import { loadPlugins, setPluginEnabled } from '../plugins/registry'
 import { bundledPluginsDir, pluginDataDir } from '../plugins/paths'
 import { fetchCatalog, installPlugin, upgradePlugin, updateAvailable } from '../plugins/catalog'
 import selfPkg from '../../../package.json' with { type: 'json' }
-import { readFileSync } from 'node:fs'
+
 import { join } from 'node:path'
+import { readJsonFile } from '../../lib/read-json-file'
 
 function syncStatus(stateDir: string, name: string): Record<string, unknown> | null {
   try {
-    const raw = JSON.parse(readFileSync(join(pluginDataDir(stateDir, name), 'sync-status.json'), 'utf8')) as unknown
+    const raw = readJsonFile(join(pluginDataDir(stateDir, name), 'sync-status.json')) as unknown
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
     const v = raw as Record<string, unknown>
     return {

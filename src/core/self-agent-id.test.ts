@@ -30,7 +30,7 @@ describe('resolveSelfAgentId', () => {
     const persist = vi.fn()
     const loadIdentity = vi.fn()
     const cfg: AgentConfig = { ...base, mailbox_relays: ['https://brain.example/mailbox'],
-      a2a_agents: [{ id: 'friend-1', name: 'F', url: 'https://f.example', inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o', capabilities: [], paused: false, transport: 'push' }] }
+      a2a_agents: [{ id: 'friend-1', name: 'F', url: 'https://f.example', inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o', capabilities: [], paused: false, may_exec: false, transport: 'push' }] }
     expect(resolveSelfAgentId(cfg, '/s', { env: {}, loadIdentity, persist })).toBe('wechat-cc')
     expect(loadIdentity).not.toHaveBeenCalled()       // never mints a new identity for a grandfathered daemon
     expect(persist).toHaveBeenCalledWith('/s', 'wechat-cc')
@@ -48,7 +48,7 @@ describe('resolveSelfAgentId', () => {
     writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
       provider: 'claude',
       mailbox_relays: ['https://brain.example/mailbox'],
-      a2a_agents: [{ id: 'cc-peer0001', name: 'peer', inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o', capabilities: [], transport: 'mailbox', mailbox_addr: 'A', mailbox_enc_pub: 'E', relays: ['https://brain.example/mailbox'] }],
+      a2a_agents: [{ id: 'cc-peer0001', name: 'peer', inbound_api_key: 'k'.repeat(16), outbound_api_key: 'o', capabilities: [], transport: 'mailbox', may_exec: false, mailbox_addr: 'A', mailbox_enc_pub: 'E', relays: ['https://brain.example/mailbox'] }],
       legacy_unmodeled_field: 'keep-me',
     }))
     // Grandfathered → persists 'wechat-cc' via the REAL merge helper (no persist stub).

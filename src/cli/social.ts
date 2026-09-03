@@ -23,6 +23,7 @@ import { makeSeekStore } from '../core/social-seek-store'
 import { makeEchoStore, toPublicEcho, type PublicEchoRow } from '../core/social-echo-store'
 import { makePledgeStore } from '../core/social-pledge-store'
 import type { ProposeOutcome, ConfirmOutcome, CancelOutcome } from '../core/social-broker'
+import { readJsonFile } from '../lib/read-json-file'
 
 export interface SocialReadOpts { limit: number; json: boolean }
 
@@ -95,7 +96,7 @@ export async function cmdSocialReveal(
     const p = join(stateDir, 'internal-api-info.json')
     if (!existsSync(p)) return null
     try {
-      const parsed = JSON.parse(readFileSync(p, 'utf8')) as { baseUrl?: string; tokenFilePath?: string }
+      const parsed = readJsonFile(p) as { baseUrl?: string; tokenFilePath?: string }
       return parsed.baseUrl && parsed.tokenFilePath ? { baseUrl: parsed.baseUrl, tokenFilePath: parsed.tokenFilePath } : null
     } catch { return null }
   })
@@ -165,7 +166,7 @@ function connectDaemon(stateDir: string, deps: SocialDaemonDeps, label: string):
     const p = join(stateDir, 'internal-api-info.json')
     if (!existsSync(p)) return null
     try {
-      const parsed = JSON.parse(readFileSync(p, 'utf8')) as { baseUrl?: string; tokenFilePath?: string }
+      const parsed = readJsonFile(p) as { baseUrl?: string; tokenFilePath?: string }
       return parsed.baseUrl && parsed.tokenFilePath ? { baseUrl: parsed.baseUrl, tokenFilePath: parsed.tokenFilePath } : null
     } catch { return null }
   })

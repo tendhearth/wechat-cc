@@ -170,6 +170,8 @@ export function makePairing(deps: PairingDeps): PairingEngine {
       capabilities: [],
       paused: false,
       transport: 'mailbox',
+      // 社交层的朋友 bot —— **绝不**授权在我这台机器上跑东西。
+      may_exec: false,
       mailbox_addr: card.mailbox_addr,
       mailbox_enc_pub: card.mailbox_enc_pub,
       relays: card.relays,

@@ -7,11 +7,12 @@
  * default DISABLED — discovery is not consent, because a manifest tells the
  * daemon to spawn a process. `plugins.json` records explicit operator choices.
  */
-import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync, renameSync } from 'node:fs'
+import { existsSync, readdirSync, statSync, mkdirSync, writeFileSync, renameSync } from 'node:fs'
 import { delimiter, dirname, join, sep } from 'node:path'
 import type { McpStdioSpec } from '../bootstrap/mcp-specs'
 import { MANIFEST_FILE, pluginsConfigPath, pluginDataDir } from './paths'
 import { parseManifest, type PluginManifest } from './manifest'
+import { readJsonFile } from '../../lib/read-json-file'
 
 export type PluginSource = 'bundled' | 'user'
 
@@ -65,7 +66,7 @@ function readEnabledMap(stateDir: string): Record<string, boolean> {
   const p = pluginsConfigPath(stateDir)
   if (!existsSync(p)) return {}
   try {
-    const parsed = JSON.parse(readFileSync(p, 'utf8')) as unknown
+    const parsed = readJsonFile(p) as unknown
     if (parsed && typeof parsed === 'object' && 'enabled' in parsed) {
       const e = (parsed as EnabledConfig).enabled
       if (e && typeof e === 'object') {
@@ -171,7 +172,7 @@ function scanDir(dir: string, source: PluginSource, log?: (m: string) => void): 
     const manifestPath = join(pluginDir, MANIFEST_FILE)
     if (!existsSync(manifestPath)) continue
     let raw: unknown
-    try { raw = JSON.parse(readFileSync(manifestPath, 'utf8')) } catch (e) {
+    try { raw = readJsonFile(manifestPath) } catch (e) {
       log?.(`skip ${source}/${entry}: unreadable ${MANIFEST_FILE} (${e instanceof Error ? e.message : String(e)})`)
       continue
     }

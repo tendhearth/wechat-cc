@@ -11,8 +11,9 @@
  *   - snooze_until: temporary hard stop (set via companion_snooze)
  *   - timezone: so the scheduler's jitter respects user locality
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
+import { writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
 import { companionDir, configPath } from './paths'
+import { readJsonFile } from '../../lib/read-json-file'
 
 export interface CompanionConfig {
   enabled: boolean
@@ -79,7 +80,7 @@ export function loadCompanionConfig(stateDir: string): CompanionConfig {
   const p = configPath(stateDir)
   if (!existsSync(p)) return defaultCompanionConfig()
   try {
-    const parsed = JSON.parse(readFileSync(p, 'utf8')) as unknown
+    const parsed = readJsonFile(p) as unknown
     if (!isObject(parsed)) return defaultCompanionConfig()
     const d = defaultCompanionConfig()
     return {

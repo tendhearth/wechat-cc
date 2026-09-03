@@ -5,11 +5,12 @@
  * chat-prefs store pattern: injectable store seam, corrupt-value handling
  * (skip, never throw).
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname, basename, extname, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { compiledRepoRoot, isCompiledBundle } from '../lib/runtime-info'
 import { makeStateStore, type StateStore } from './state-store'
+import { readJsonFile } from '../lib/read-json-file'
 
 const ALLOWED_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp'])
 
@@ -149,7 +150,6 @@ export function makeStickerLib(stateDir: string, deps?: { store?: StateStore; ra
   }
 }
 
-
 /**
  * 初始表情包 (2026-08-25, owner: 用户一开始不知道有表情包,给个初始) —
  * bundled starter pack at `<repo>/assets/starter-stickers/` (5 张手绘熊 +
@@ -169,7 +169,7 @@ export function starterStickersDir(): string | null {
 export function seedStarterStickers(lib: StickerLib, packDir: string, log?: (tag: string, line: string) => void): number {
   try {
     if (lib.list().length > 0) return 0
-    const manifest = JSON.parse(readFileSync(join(packDir, 'manifest.json'), 'utf8')) as unknown
+    const manifest = readJsonFile(join(packDir, 'manifest.json')) as unknown
     if (!Array.isArray(manifest)) return 0
     let seeded = 0
     for (const entry of manifest) {
