@@ -925,7 +925,13 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // internal-api and survives the restart a hang/crash triggers — the
   // AI-legible answer to "why did this chat stop replying", post-mortem-safe.
   const recordTurn = (record: TurnRecord): void => {
-    deps.log('TURN', `chat=${record.chatId} provider=${record.provider} outcome=${record.outcome} dur=${record.durationMs}ms reply=${record.replyToolCalled} chunks=${record.textChunks}${record.error ? ` error=${JSON.stringify(record.error.slice(0, 160))}` : ''}`, {
+    // tools=… 只列**名字**,不含参数(参数里是搜索词、文件路径、消息正文)。
+    // 有了这一栏,回头看一条回答时能一眼分清「查来的」和「想出来的」——
+    // 2026-09-02 之前完全看不出:agy 联网搜了 3.7 秒,日志里只有 chunks=3。
+    const toolsPart = record.toolCalls?.length
+      ? ` tools=${[...new Set(record.toolCalls)].join(',')}`
+      : ''
+    deps.log('TURN', `chat=${record.chatId} provider=${record.provider} outcome=${record.outcome} dur=${record.durationMs}ms reply=${record.replyToolCalled} chunks=${record.textChunks}${toolsPart}${record.error ? ` error=${JSON.stringify(record.error.slice(0, 160))}` : ''}`, {
       event: 'turn_record',
       ...record,
     })

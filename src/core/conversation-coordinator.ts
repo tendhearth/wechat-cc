@@ -65,6 +65,8 @@ export interface TurnRecord {
   durationMs: number
   outcome: 'completed' | 'timeout' | 'auth_failed' | 'error'
   replyToolCalled: boolean
+  /** 这一轮调过的工具名(只有名字,不含参数)。空数组 = 这条回答没查任何东西。 */
+  toolCalls?: string[]
   /** Count of assistant text chunks produced this turn. */
   textChunks: number
   /** Failure detail for `timeout` / `error` outcomes; undefined otherwise. */
@@ -625,6 +627,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         durationMs: endedAt - startedAt,
         outcome,
         replyToolCalled: summary?.replyToolCalled ?? false,
+        toolCalls: summary?.toolCalls ?? [],
         textChunks: summary?.assistantText.length ?? 0,
         error: summary?.error,
       })
@@ -889,6 +892,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         durationMs: endedAt - startedAt,
         outcome: recOutcome,
         replyToolCalled: recSummary?.replyToolCalled ?? false,
+        toolCalls: recSummary?.toolCalls ?? [],
         textChunks: recSummary?.assistantText.length ?? 0,
         error: recSummary?.error ?? (r.status === 'rejected' ? (r.reason instanceof Error ? r.reason.message : String(r.reason)) : undefined),
       })
@@ -987,6 +991,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         chatId: msg.chatId, provider: providerId, alias: proj.alias, mode: 'chatroom',
         startedAt, endedAt, durationMs: endedAt - startedAt, outcome,
         replyToolCalled: summary?.replyToolCalled ?? false,
+        toolCalls: summary?.toolCalls ?? [],
         textChunks: summary?.assistantText.length ?? 0,
         error: summary?.error ?? err,
       })

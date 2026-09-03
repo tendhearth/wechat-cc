@@ -314,6 +314,16 @@ export function isReplyToolName(name: string): boolean {
 export interface TurnSummary {
   assistantText: string[]
   replyToolCalled: boolean
+  /**
+   * 这一轮调过的工具名,按发生顺序。**只有名字,不含参数** —— 参数里是
+   * 搜索词、文件路径、消息正文这类隐私。
+   *
+   * WHY(2026-09-02):owner 问「今天有什么新闻」,bot 答得有名有姓,而
+   * channel.log 里只有 `chunks=3 dur=39190ms` —— **看不出这答案是查来的
+   * 还是模型编的**,而那恰恰是最该能判断的事。事件流里 `tool_call` 一直
+   * 在发(agy 的解析器解得好好的),只是没有任何人记它。
+   */
+  toolCalls: string[]
   result?: { sessionId: string; numTurns: number; durationMs: number }
   error?: string
   /** Provider-emitted error code (e.g. 'auth_failed') — lets the coordinator
@@ -348,12 +358,14 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
   let result: TurnSummary['result']
   let error: string | undefined
   let errorCode: string | undefined
+  const toolCalls: string[] = []
 
   const apply = (ev: AgentEvent): void => {
     if (ev.kind === 'text') {
       texts.push(ev.text)
-    } else if (ev.kind === 'tool_call' && isReplyToolCall(ev)) {
-      replyToolCalled = true
+    } else if (ev.kind === 'tool_call') {
+      toolCalls.push(ev.server ? `${ev.server}/${ev.tool}` : ev.tool)
+      if (isReplyToolCall(ev)) replyToolCalled = true
     } else if (ev.kind === 'result') {
       result = { sessionId: ev.sessionId, numTurns: ev.numTurns, durationMs: ev.durationMs }
     } else if (ev.kind === 'error') {
@@ -365,7 +377,7 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
   const timeoutMs = opts?.timeoutMs
   if (!timeoutMs || timeoutMs <= 0) {
     for await (const ev of events) apply(ev)
-    return { assistantText: texts, replyToolCalled, result, error, errorCode }
+    return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode }
   }
 
   // Watchdog path: race each `next()` against an idle timer that resets per
@@ -389,6 +401,7 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
         void Promise.resolve(it.return?.()).catch(() => {})
         return {
           assistantText: texts,
+          toolCalls,
           replyToolCalled,
           result,
           error: `turn timed out after ${timeoutMs}ms with no activity`,
@@ -401,5 +414,5 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
   } finally {
     if (timer) clearTimeout(timer)
   }
-  return { assistantText: texts, replyToolCalled, result, error, errorCode }
+  return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode }
 }

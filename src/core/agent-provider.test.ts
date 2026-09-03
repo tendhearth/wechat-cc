@@ -149,7 +149,9 @@ describe('collectTurn', () => {
 
   it('handles empty iterable', async () => {
     const summary = await collectTurn(events())
-    expect(summary).toEqual({ assistantText: [], replyToolCalled: false, result: undefined, error: undefined })
+    expect(summary).toEqual({
+      assistantText: [], replyToolCalled: false, toolCalls: [], result: undefined, error: undefined, errorCode: undefined,
+    })
   })
 
   it('returns a turn_timeout summary when the stream stalls past timeoutMs (does not hang)', async () => {
@@ -219,5 +221,40 @@ describe('AgentEvent text 的契约 —— 一个事件 = 一条完整消息', (
     expect(s.assistantText).toEqual(['第一条', '第二条'])
     // 消费者的拼法:两条消息之间换行是对的 —— 前提是每一项真的是一条消息。
     expect(s.assistantText.join('\n')).toBe('第一条\n第二条')
+  })
+})
+
+// 2026-09-02:owner 问「今天有什么新闻」,bot 答得有名有姓,而 channel.log 里
+// 只有 `chunks=3 dur=39190ms` —— **看不出这答案是查来的还是模型编的**。
+// 我当时差点据此断定「新闻是编的」,幸好去看了 agy 的原始流:它真的调了
+// search_web、跑了 3.75 秒。事件流里 tool_call 一直在发,只是没有任何人记它。
+describe('collectTurn 收集工具名 —— 「查来的」和「想出来的」要能分清', () => {
+  it('按顺序收集,MCP 工具带上 server 前缀', async () => {
+    const stream = (async function* () {
+      yield { kind: 'tool_call', tool: 'search_web' } as AgentEvent
+      yield { kind: 'text', text: '据检索…' } as AgentEvent
+      yield { kind: 'tool_call', tool: 'reply', server: 'wechat' } as AgentEvent
+      yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+    })()
+    const s = await collectTurn(stream)
+    expect(s.toolCalls).toEqual(['search_web', 'wechat/reply'])
+    expect(s.replyToolCalled).toBe(true)   // 没有把既有的 reply 检测弄坏
+  })
+
+  it('一个工具都没调 → 空数组(= 这条回答没查任何东西)', async () => {
+    const stream = (async function* () {
+      yield { kind: 'text', text: '我想是这样' } as AgentEvent
+      yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+    })()
+    expect((await collectTurn(stream)).toolCalls).toEqual([])
+  })
+
+  it('**只有名字,没有参数** —— 参数里是搜索词/文件路径/消息正文', async () => {
+    const stream = (async function* () {
+      yield { kind: 'tool_call', tool: 'search_web' } as AgentEvent
+      yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+    })()
+    const s = await collectTurn(stream)
+    expect(JSON.stringify(s.toolCalls)).toBe('["search_web"]')
   })
 })
