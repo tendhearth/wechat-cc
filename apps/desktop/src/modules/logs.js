@@ -59,7 +59,59 @@ function renderRows(entries) {
   }).join("")
 }
 
+/**
+ * 按关键字筛日志行。**纯函数,可测** —— 面板里 200~500 行滚过去,
+ * `tools=search_web` 混在里面等于没有;owner 要的「查一条回答是不是联网
+ * 查来的」,就是在这里筛。
+ *
+ * 续行(没有 tag/时间戳的堆栈行)**跟着它上面那条走**:单独匹配会筛出
+ * 没头没尾的半截堆栈,而它自己命中时反而该被丢掉(上下文没了)。
+ *
+ * @param {Array<{timestamp:number|null, tag:string|null, message:string}>} entries
+ * @param {string} query
+ */
+export function filterLogEntries(entries, query) {
+  const q = (query || "").trim().toLowerCase()
+  if (!q) return entries
+  const out = []
+  let keepingCont = false
+  for (const e of entries) {
+    const isCont = !e.tag && !e.timestamp
+    if (isCont) {
+      if (keepingCont) out.push(e)
+      continue
+    }
+    const hit = `${e.tag || ""} ${e.message || ""}`.toLowerCase().includes(q)
+    keepingCont = hit
+    if (hit) out.push(e)
+  }
+  return out
+}
+
 let logsState = { lastResult: null, busy: false, autoTimer: null }
+
+/** 按当前筛选词渲染一次(不重新读日志 —— 那要走 CLI,几百 KB)。 */
+function paintLogs(result) {
+  const body = document.getElementById("logs-body")
+  if (!body) return []
+  const raw = document.getElementById("logs-filter")?.value || ""
+  const q = raw.trim()
+  const shown = filterLogEntries(result.entries, raw)
+  body.innerHTML = renderRows(shown)
+  const meta = document.getElementById("logs-meta")
+  if (meta) {
+    // 筛过之后要把「筛掉了多少」说出来 —— 否则用户会以为日志只有这几行。
+    meta.textContent = q
+      ? `${shown.length}/${result.entries.length} 行(筛选「${q}」)· ${result.logFile.split("/").pop()}`
+      : `${result.entries.length}/${result.totalLines} 行 · ${result.logFile.split("/").pop()}`
+  }
+  return shown
+}
+
+/** 只重渲染已有结果 —— 输入框每敲一下都重读日志会很慢。 */
+export function rerenderLogs() {
+  if (logsState.lastResult) paintLogs(logsState.lastResult)
+}
 
 export async function loadLogsPane(deps) {
   if (logsState.busy) return
@@ -88,13 +140,13 @@ export async function loadLogsPane(deps) {
     return
   }
   logsState.lastResult = result
-  body.innerHTML = renderRows(result.entries)
+  const shown = paintLogs(result)
   // Scroll to bottom — user expects to see the most recent entry without
   // reaching for the scrollbar. Skip if user scrolled up manually within
   // the last refresh (we don't track that yet; revisit if it gets noisy).
   body.scrollTop = body.scrollHeight
   const meta = document.getElementById("logs-meta")
-  if (meta) meta.textContent = `${result.entries.length}/${result.totalLines} 行 · ${result.logFile.split("/").pop()}`
+
   const navCount = document.getElementById("logs-count")
   if (navCount) navCount.textContent = result.entries.length > 0 ? String(result.entries.length) : ""
 }

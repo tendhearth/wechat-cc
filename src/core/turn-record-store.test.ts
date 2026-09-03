@@ -91,3 +91,54 @@ describe('turn-record-store', () => {
     expect(r.error!.length).toBeLessThanOrEqual(8192)
   })
 })
+
+// 2026-09-02:owner 要「app 里也可以查询」某条回答是不是联网查来的。
+// 前提是它得落库 —— 日志会滚动,而且不能查。
+describe('tool_calls —— 一条回答是「查来的」还是「想出来的」', () => {
+  it('存下来、读回来,并且去重', () => {
+    const db = openDb({ path: ':memory:' })
+    const store = makeTurnRecordStore(db)
+    store.append({
+      chatId: 'c1', provider: 'agy', alias: 'a', mode: 'solo',
+      startedAt: 1, endedAt: 2, durationMs: 1, outcome: 'completed',
+      replyToolCalled: false, textChunks: 3,
+      toolCalls: ['search_web', 'search_web', 'wechat/reply'],
+    })
+    expect(store.recentForChat('c1', 10)[0]!.toolCalls).toEqual(['search_web', 'wechat/reply'])
+  })
+
+  it('没调工具 → 空数组', () => {
+    const db = openDb({ path: ':memory:' })
+    const store = makeTurnRecordStore(db)
+    store.append({
+      chatId: 'c1', provider: 'claude', alias: 'a', mode: 'solo',
+      startedAt: 1, endedAt: 2, durationMs: 1, outcome: 'completed',
+      replyToolCalled: true, textChunks: 1, toolCalls: [],
+    })
+    expect(store.recentForChat('c1', 10)[0]!.toolCalls).toEqual([])
+  })
+
+  it('v35 之前的老行读出来也是空数组(表示「不知道」,不是「没调」)', () => {
+    const db = openDb({ path: ':memory:' })
+    const store = makeTurnRecordStore(db)
+    store.append({
+      chatId: 'c1', provider: 'claude', alias: 'a', mode: 'solo',
+      startedAt: 1, endedAt: 2, durationMs: 1, outcome: 'completed',
+      replyToolCalled: true, textChunks: 1,
+    })
+    db.exec("UPDATE turn_records SET tool_calls = NULL")
+    expect(store.recentForChat('c1', 10)[0]!.toolCalls).toEqual([])
+  })
+
+  it('坏 JSON 不炸,退成空数组', () => {
+    const db = openDb({ path: ':memory:' })
+    const store = makeTurnRecordStore(db)
+    store.append({
+      chatId: 'c1', provider: 'claude', alias: 'a', mode: 'solo',
+      startedAt: 1, endedAt: 2, durationMs: 1, outcome: 'completed',
+      replyToolCalled: true, textChunks: 1, toolCalls: ['x'],
+    })
+    db.exec("UPDATE turn_records SET tool_calls = '{oops'")
+    expect(store.recentForChat('c1', 10)[0]!.toolCalls).toEqual([])
+  })
+})

@@ -61,7 +61,7 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  it('opens a fresh db with PRAGMA user_version = 34 and the 28 tables', () => {
+  it('opens a fresh db with PRAGMA user_version = 35 and the 28 tables', () => {
     const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
     // v14 (dialogue real data): messages / threads / thread_extract_state tables added;
     // events.kind widened with 'threads_extracted'.
@@ -92,7 +92,8 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // echo_queued_at / echo_delivered_at — no new tables.
     // v34 (介绍人欠账): social_relay 加 echo_* 四列 + upstream/downstream_completed_at
     // — no new tables.
-    expect(v).toBe(34)
+    // v35 (工具可见性): turn_records 加 tool_calls — no new tables.
+    expect(v).toBe(35)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
