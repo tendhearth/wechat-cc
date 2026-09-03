@@ -8,6 +8,8 @@ import type { Db } from '../lib/db'
 import { parseCatch } from './hunt-catch'
 
 export type CatchStatus = 'new' | 'tried' | 'using' | 'dropped'
+/** 'hunt' = 打猎带回的东西;'visit' = 串门带回的见闻(v37)。 */
+export type CatchKind = 'hunt' | 'visit'
 export const CATCH_STATUSES: readonly CatchStatus[] = ['new', 'tried', 'using', 'dropped']
 
 export interface CatchRow {
@@ -18,6 +20,7 @@ export interface CatchRow {
   url: string | null
   note: string
   status: CatchStatus
+  kind: CatchKind
 }
 
 export interface HuntStore {
@@ -29,6 +32,11 @@ export interface HuntStore {
    * 隔一周又被推同一个东西,这件事本身值得看见。
    */
   recordHunt(args: { chatId: string; text: string; nowIso?: string }): number
+  /**
+   * 记一段串门见闻(kind='visit')。一段一条,不拆:见闻是一段话,不是清单。
+   * 状态对见闻没意义(没有「试过没有」),但列上有,固定 'new'。
+   */
+  recordVisit(args: { chatId: string; text: string; peerLabel: string; nowIso?: string }): void
   list(limit?: number): CatchRow[]
   setStatus(id: string, status: CatchStatus): boolean
   remove(id: string): boolean
@@ -38,8 +46,12 @@ const PRUNE_KEEP = 500
 
 export function makeHuntStore(db: Db): HuntStore {
   const ins = db.query<unknown, [string, string, string, string, string | null, string]>(
-    `INSERT INTO hunt_catch(id, ts, chat_id, title, url, note, status)
-     VALUES (?, ?, ?, ?, ?, ?, 'new')`,
+    `INSERT INTO hunt_catch(id, ts, chat_id, title, url, note, status, kind)
+     VALUES (?, ?, ?, ?, ?, ?, 'new', 'hunt')`,
+  )
+  const insVisit = db.query<unknown, [string, string, string, string, string]>(
+    `INSERT INTO hunt_catch(id, ts, chat_id, title, url, note, status, kind)
+     VALUES (?, ?, ?, ?, NULL, ?, 'new', 'visit')`,
   )
   const selAll = db.query<CatchRow, [number]>('SELECT * FROM hunt_catch ORDER BY ts DESC, rowid DESC LIMIT ?')
   const selDupe = db.query<{ cnt: number }, [string, string]>(
@@ -64,6 +76,13 @@ export function makeHuntStore(db: Db): HuntStore {
       }
       if (n > 0) prune.run(PRUNE_KEEP)
       return n
+    },
+    recordVisit({ chatId, text, peerLabel, nowIso }) {
+      const ts = nowIso ?? new Date().toISOString()
+      const body = text.trim()
+      if (body === '') return
+      insVisit.run(`${ts}:visit:${Math.random().toString(36).slice(2, 8)}`, ts, chatId, `去${peerLabel}家串门`, body)
+      prune.run(PRUNE_KEEP)
     },
     list(limit = 200) { return selAll.all(limit) },
     setStatus(id, status) {

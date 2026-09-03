@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { makeJudge } from '../../core/social-judge'
 import { makeVisit } from './wire-visit'
+import { makeHuntStore } from '../../core/hunt-store'
 import { makeAnswerIntent } from '../../core/social-answer'
 import { makeBroker } from '../../core/social-broker'
 import { makeSeekStore } from '../../core/social-seek-store'
@@ -403,6 +404,11 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         myName: configuredAgent.bot_name?.trim() || '我',
         disclosurePolicy: socialPolicy,
         notifyOwner: (text) => { const op = resolveOperatorChatId(); if (op && sendAssistantText) void sendAssistantText(op, text) },
+        // 见闻进背包。HuntStore 无内存态,这里另起一个实例读同一张表没问题。
+        recordVisit: ({ text, peerLabel }) => {
+          const op = resolveOperatorChatId()
+          if (op) makeHuntStore(deps.db).recordVisit({ chatId: op, text, peerLabel })
+        },
         log: deps.log,
       })
       const letterRelay = makeLetterRelay({ relayStore, postLetter, withinBudget: withinForwardBudget })

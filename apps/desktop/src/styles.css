@@ -6534,3 +6534,8 @@ input { font: inherit; color: inherit; }
 .hb-dropped > summary { cursor:pointer; font-size:12.5px; color:var(--fd-ink-faint); padding:6px 2px; }
 .hb-dropped > summary:hover { color:var(--fd-ink-soft); }
 .hb-dropped .hb-card { opacity:.55; margin-top:8px; border-left-color:var(--fd-line); }
+/* 见闻卡:换成鼠尾草绿的左边(打猎是琥珀),正文当成一段话来排 —— 它不是清单项 */
+.hb-visit { border-left-color:var(--fd-sage-wash); }
+.hb-visit:hover { border-left-color:var(--fd-sage); }
+.hb-visit .hb-note { font-size:14px; line-height:1.7; color:var(--fd-ink); }
+.hb-foot-visit { justify-content:flex-end; padding-top:6px; border-top:none; margin-top:4px; }

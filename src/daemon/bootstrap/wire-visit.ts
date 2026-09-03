@@ -36,6 +36,8 @@ export interface VisitDeps {
   disclosurePolicy: string
   /** 给主人发一句话;没有主人 chat 时是 no-op。 */
   notifyOwner(text: string): void
+  /** 见闻进背包(hunt_catch kind='visit')。可选:没接就只发微信。 */
+  recordVisit?(args: { text: string; peerLabel: string }): void
   log(tag: string, line: string): void
 }
 
@@ -78,6 +80,9 @@ export function makeVisit(deps: VisitDeps): Visit {
     const text = cleanSpeech(await deps.evalText(buildVisitNarrationPrompt({ ...persona(), transcript, peerLabel: peerLabel(channelRowId) })))
     if (!text) { deps.log('VISIT', `narration empty visit=${visitId}`); return }
     deps.notifyOwner(`🚶 ${text}`)
+    // 发到微信就没了 —— 跟打猎一开始的洞一模一样。记录失败不影响已发出的话。
+    try { deps.recordVisit?.({ text, peerLabel: peerLabel(channelRowId) }) }
+    catch (err) { deps.log('VISIT', `见闻入库失败(话已发出): ${err instanceof Error ? err.message : String(err)}`) }
     deps.log('VISIT', `visit=${visitId} 讲给主人了 turns=${transcript.length}`)
   }
 

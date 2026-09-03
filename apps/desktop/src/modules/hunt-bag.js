@@ -44,6 +44,19 @@ export function dayLabel(iso, now = new Date()) {
 }
 
 /**
+ * 「3 件 · 2 段见闻」—— 东西和见闻分开数:它们不是同一种计量单位。
+ * @param {Array<any>} kept
+ */
+export function countLabel(kept) {
+  const things = kept.filter(i => i.kind !== 'visit').length
+  const visits = kept.length - things
+  const parts = []
+  if (things) parts.push(`${things} 件`)
+  if (visits) parts.push(`${visits} 段见闻`)
+  return parts.join(' · ')
+}
+
+/**
  * 分成「在背包里」和「不要了」两摞。
  *
  * 丢弃的不删除(主人可能改主意,而且「我上次为什么丢了这个」本身是信息),
@@ -57,8 +70,27 @@ export function splitByStatus(items) {
   return { kept, dropped }
 }
 
+/**
+ * 见闻卡(kind='visit'):串门回来讲的那段话。没有链接,也没有「试过没有」——
+ * 一段见闻不是一件要处理的东西。只留日期和删除。
+ * @param {any} it
+ */
+function renderVisitCard(it) {
+  return `<article class="hb-card hb-visit" data-hb-id="${escapeHtml(it.id)}">
+    <div class="hb-head">
+      <h3 class="hb-title">🚶 ${escapeHtml(it.title || '串门')}</h3>
+      <span class="hb-day">${escapeHtml(dayLabel(it.ts))}</span>
+    </div>
+    <p class="hb-note">${escapeHtml(it.note || '')}</p>
+    <div class="hb-foot hb-foot-visit">
+      <button class="hb-del" data-hb-action="remove" data-hb-id="${escapeHtml(it.id)}" type="button" title="从背包里删掉">×</button>
+    </div>
+  </article>`
+}
+
 /** @param {any} it */
 function renderCard(it) {
+  if (it.kind === 'visit') return renderVisitCard(it)
   const url = it.url ? String(it.url) : ''
   const chips = STATUSES.map(s =>
     `<button class="hb-chip${it.status === s.key ? ' on' : ''}" data-hb-action="status"`
@@ -97,10 +129,10 @@ export function renderHuntBag(data) {
     return
   }
   const { kept, dropped } = splitByStatus(data.items)
-  if (count) count.textContent = kept.length ? `${kept.length} 件` : ''
+  if (count) count.textContent = countLabel(kept)
 
   if (kept.length === 0 && dropped.length === 0) {
-    host.innerHTML = '<div class="fd-empty">背包还是空的 —— CC 每天会上网替你找一两样东西，找到就记在这儿。</div>'
+    host.innerHTML = '<div class="fd-empty">背包还是空的 —— CC 每天会上网替你找一两样东西、也会去朋友家串门，带回来的都记在这儿。</div>'
     return
   }
   host.innerHTML =

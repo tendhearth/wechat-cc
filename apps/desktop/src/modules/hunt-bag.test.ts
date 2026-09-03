@@ -10,11 +10,11 @@ const mkEl = () => ({ innerHTML: '', textContent: '', addEventListener: () => {}
 // @ts-expect-error minimal DOM stub before import (same shape as todos.test.ts)
 globalThis.document = { getElementById: (id: string) => els.get(id) ?? null }
 
-const { renderHuntBag, splitByStatus, dayLabel, statusLabel, onHuntBagClick } = await import('./hunt-bag.js')
+const { renderHuntBag, splitByStatus, dayLabel, statusLabel, onHuntBagClick, countLabel } = await import('./hunt-bag.js')
 
 const item = (o: Partial<Record<string, unknown>> = {}) => ({
   id: 'i1', ts: new Date().toISOString(), chat_id: 'c', title: 'Continue.dev',
-  url: 'https://github.com/continuedev/continue', note: '能改多文件', status: 'new', ...o,
+  url: 'https://github.com/continuedev/continue', note: '能改多文件', status: 'new', kind: 'hunt', ...o,
 })
 
 beforeEach(() => {
@@ -61,6 +61,34 @@ describe('renderHuntBag', () => {
     renderHuntBag({ items: [item({ status: 'dropped' })] })
     expect(host().innerHTML).not.toContain('背包还是空的')
     expect(host().innerHTML).toContain('都处理完了')
+  })
+})
+
+describe('见闻卡(kind=visit)', () => {
+  const visit = (o: Partial<Record<string, unknown>> = {}) => item({ id: 'v1', kind: 'visit', url: null, title: '去第 1 度的朋友家串门', note: '他们家猫叫豆包。', ...o })
+
+  it('没有状态档、没有链接行 —— 一段见闻不是一件要处理的东西', () => {
+    renderHuntBag({ items: [visit()] })
+    expect(host().innerHTML).toContain('hb-visit')
+    expect(host().innerHTML).toContain('豆包')
+    expect(host().innerHTML).not.toContain('hb-chip')
+    expect(host().innerHTML).not.toContain('hb-link')
+    // 但能删
+    expect(host().innerHTML).toContain('data-hb-action="remove"')
+  })
+
+  it('东西和见闻分开数', () => {
+    expect(countLabel([item(), item({ id: 'i2' }), visit()])).toBe('2 件 · 1 段见闻')
+    expect(countLabel([visit()])).toBe('1 段见闻')
+    expect(countLabel([item()])).toBe('1 件')
+    expect(countLabel([])).toBe('')
+  })
+
+  it('没有 kind 的老行(v37 之前写的)当成东西', () => {
+    const legacy = item(); delete (legacy as Record<string, unknown>).kind
+    renderHuntBag({ items: [legacy] })
+    expect(host().innerHTML).toContain('hb-chip')
+    expect(count().textContent).toBe('1 件')
   })
 })
 
