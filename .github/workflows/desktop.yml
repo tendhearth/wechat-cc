@@ -348,7 +348,13 @@ jobs:
       - name: Flatten bundles for upload
         run: |
           mkdir -p release-files
-          find bundles -type f \( -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' -o -name '*.exe' -o -name '*.msi' -o -name '*.nsis.zip' \) -exec cp -v {} release-files/ \;
+          # `.sig` 必须在列。上面「Upload bundle artefacts」那一步 2026-08-31
+          # 专门修过一次「macOS 的 .sig 被漏掉」,注释就在那儿 —— 但那只保住了
+          # CI artifact,**这一步的扩展名白名单又把它过滤掉了**,于是 release
+          # 里一个签名都没有,自动更新的 latest.json 无从引用(2026-09-03
+          # desktop-v1.6.6 出包时发现)。同一个东西被两层各过滤一次,修了上游
+          # 没看下游。
+          find bundles -type f \( -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' -o -name '*.exe' -o -name '*.msi' -o -name '*.nsis.zip' -o -name '*.sig' \) -exec cp -v {} release-files/ \;
           ls -la release-files
 
       - name: Create draft release
