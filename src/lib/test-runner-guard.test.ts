@@ -119,11 +119,22 @@ it('finds the test files it is supposed to be scanning (guards against a silentl
  */
 function stripComments(src: string): string {
   return src
+    // **先归一化行尾**。JS 正则里 `.` 不匹配 `\r`(它是行终止符),所以
+    // CRLF 下 `//.*$` 够不到行尾、注释根本剥不掉 —— 于是这个修复本身
+    // 在 Windows 上失效,dev 又红了一轮。修守卫的补丁自己是平台相关的,
+    // 这就是为什么下面那条 CRLF 用例必须存在。
+    .replace(/\r\n?/g, '\n')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')
     .map(l => l.replace(/(^|\s)\/\/.*$/, '$1'))
     .join('\n')
 }
+
+it('stripComments 在 CRLF 下也要真的剥掉注释 —— Windows 的 checkout 是 CRLF', () => {
+  const lf = '  // 提到 mode & 0o777 只是解释,不该被守卫抓\nconst x = 1\n'
+  expect(MODE_ASSERTION.test(stripComments(lf))).toBe(false)
+  expect(MODE_ASSERTION.test(stripComments(lf.replace(/\n/g, '\r\n')))).toBe(false)
+})
 
 const MODE_ASSERTION = /mode\s*&\s*0o777|toBe\(0o[67]00\)/
 const PLATFORM_GUARD = /win32/
