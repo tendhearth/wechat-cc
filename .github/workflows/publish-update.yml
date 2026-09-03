@@ -1,0 +1,89 @@
+name: Publish Update Channel
+
+# 把 GitHub Release 的产物推到自动更新源(R2 latest.json)。
+#
+# WHY(2026-09-03):此前发一版要做两次互不相干的动作 ——
+#   ① GitHub Release:给**新用户**下载(打 tag → CI 构建 → 人点 Publish)
+#   ② R2 latest.json:给**已装用户**自动更新(人在自己机器上本地构建后
+#      跑 scripts/publish-update.ts,而且一次只发跑脚本那台机器的平台)
+# 于是「装机包已经发了、老用户却还在旧版」是常态,Windows 用户尤其 ——
+# 补上他们那条得再去 Windows 机器上构建一次。
+#
+# 现在这两件事合成一件:**你点 Publish,自动更新就跟着走**。CI 用的正是
+# release 自己的资产(和新用户下载的是同一批字节、同一套签名),不再有
+# 「本地构建的包和 release 里的包不是同一个」的可能。
+#
+# 手动触发(workflow_dispatch)用于补发:例如某次 publish 时 R2 令牌过期。
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag(如 desktop-v1.6.6)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: R2 latest.json
+    runs-on: ubuntu-latest
+    # R2 令牌 = 决定「所有已安装的 app 该装哪个版本」的权限。和更新签名
+    # 私钥一样挂在带审批的环境上,理由见 desktop.yml 里那段。
+    environment: release-signing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Resolve tag and version
+        id: v
+        env:
+          # 经环境变量传,不做模板内插 —— release 标题/tag 是人写的自由文本,
+          # 直接插进 shell 就是一条注入路径。
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          case "$TAG" in
+            desktop-v*) VERSION="${TAG#desktop-v}" ;;
+            *)
+              # 只认 desktop-v* —— CLI 的 v* tag 不带桌面产物,静默发一个
+              # 空 latest.json 会让所有客户端以为有新版。
+              echo "::notice::$TAG 不是 desktop-v* tag,跳过自动更新发布"
+              echo "skip=1" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          echo "tag=$TAG"        >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download release assets
+        if: steps.v.outputs.skip != '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          mkdir -p release-assets
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" --dir release-assets --clobber
+          ls -la release-assets
+
+      - name: Publish to R2
+        if: steps.v.outputs.skip != '1'
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          NOTES: ${{ github.event.release.name || steps.v.outputs.tag }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          if [ -z "$CF_API_TOKEN" ]; then
+            echo "::error::CF_API_TOKEN 未配置 —— 自动更新源没有更新,已装用户还在旧版"
+            exit 1
+          fi
+          # --no-github:release 已经存在,资产就是从它下载来的,不必回传。
+          bun scripts/publish-update.ts \
+            --from-dir release-assets \
+            --version "$VERSION" \
+            --notes "$NOTES" \
+            --no-github
