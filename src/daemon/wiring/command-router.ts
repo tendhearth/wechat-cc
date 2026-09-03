@@ -19,6 +19,7 @@ import { randomBytes } from 'node:crypto'
 import type { InboundMsg } from '../../core/prompt-format'
 import { parseRevealCommand } from '../../core/reveal-command'
 import { parseLetterCommand } from '../../core/penpal-letter-command'
+import { parseVisitCommand } from '../../core/visit-command'
 import { parsePairCommand } from '../../core/pair-command'
 import { parseSeekCommand, resolveSeekRef } from '../../core/seek-command'
 import { parseGuestCommand } from '../../core/guest-command'
@@ -42,6 +43,7 @@ export interface CommandRouterDeps {
     revealer: Pick<Revealer, 'revealEcho' | 'revealPledge'>
     seekStore: Pick<SeekStore, 'list'>
     broker: { confirmSeek(id: string): ConfirmOutcome; cancelSeek(id: string): CancelOutcome }
+    penpal: { startVisit(channel?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }> }
   }
   /** 回信 — present only when the pen-pal channel is wired. */
   penpal?: { sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }> }
@@ -70,6 +72,21 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
 
   return {
     async tryHandle(msg: InboundMsg): Promise<boolean> {
+      // 串门(2026-09-03 实验)—— 主人说「串门」,伙伴挑一个开着的笔友信道过去
+      // 聊几句,回来讲给主人听。见 core/visit.ts 顶部的 WHY。
+      if (deps.social && deps.isAdmin(msg.chatId)) {
+        const v = parseVisitCommand(msg.text)
+        if (v) {
+          say(msg.chatId, '🚶 出门了,聊完回来跟你说。')
+          const r = await deps.social.penpal.startVisit(v.channel)
+          if (!r.ok) {
+            say(msg.chatId, r.reason === 'no_open_channel'
+              ? '还没有能串门的地方 —— 得先有一条开着的笔友通道(揭晓牵线之后就有了)。'
+              : `没出得了门:${r.reason}`)
+          }
+          return true
+        }
+      }
       if (deps.social && deps.isAdmin(msg.chatId)) {
         const cmd = parseRevealCommand(msg.text)
         if (cmd) {

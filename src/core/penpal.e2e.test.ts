@@ -182,7 +182,7 @@ describe('penpal channel e2e — direct (1-hop)', () => {
     expect(bInRows).toHaveLength(1)
     expect(bInRows[0]!.direction).toBe('in')
     expect(bInRows[0]!.plaintext).toBe('你好')                 // B decrypts the EXACT plaintext
-    expect(notifyB).toHaveBeenCalledWith(pledgeId, '你好')      // B's owner notified
+    expect(notifyB).toHaveBeenCalledWith(pledgeId, '你好', expect.any(String))      // B's owner notified
 
     // 6) The reverse direction: B -> A.
     const backResult = await correspondentB.sendLetter(pledgeId, '见字如面')
@@ -197,7 +197,7 @@ describe('penpal channel e2e — direct (1-hop)', () => {
     const aInRows = aLetterStore.listForChannel(echoId).filter(r => r.direction === 'in')
     expect(aInRows).toHaveLength(1)
     expect(aInRows[0]!.plaintext).toBe('见字如面')
-    expect(notifyA).toHaveBeenCalledWith(echoId, '见字如面')
+    expect(notifyA).toHaveBeenCalledWith(echoId, '见字如面', expect.any(String))
   })
 })
 
@@ -352,7 +352,7 @@ describe('penpal channel e2e — relay (2-hop, content-blind)', () => {
     expect(qInRows).toHaveLength(1)
     expect(qInRows[0]!.direction).toBe('in')
     expect(qInRows[0]!.plaintext).toBe('你好,愿闻其详')
-    expect(notifyQ).toHaveBeenCalledWith(qPledgeId, '你好,愿闻其详')
+    expect(notifyQ).toHaveBeenCalledWith(qPledgeId, '你好,愿闻其详', expect.any(String))
 
     // Privacy invariant: W never has the key and never decrypts — W's own db
     // never accumulates a penpal_letter row, and W never even constructed a
@@ -379,7 +379,7 @@ describe('penpal channel e2e — relay (2-hop, content-blind)', () => {
     const sInRows = sLetterStore.listForChannel(sEchoId).filter(r => r.direction === 'in')
     expect(sInRows).toHaveLength(1)
     expect(sInRows[0]!.plaintext).toBe('摄影师朋友,幸会')
-    expect(notifyS).toHaveBeenCalledWith(sEchoId, '摄影师朋友,幸会')
+    expect(notifyS).toHaveBeenCalledWith(sEchoId, '摄影师朋友,幸会', expect.any(String))
 
     const wLetterCountAfter = wDb.query<{ c: number }, []>('SELECT COUNT(*) as c FROM penpal_letter').get()!
     expect(wLetterCountAfter.c).toBe(0)   // still zero after both directions

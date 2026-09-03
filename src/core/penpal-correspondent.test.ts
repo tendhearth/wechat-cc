@@ -71,7 +71,7 @@ describe('makeCorrespondent', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]!.direction).toBe('in')
     expect(rows[0]!.plaintext).toBe('你好')
-    expect(notifyInbound).toHaveBeenCalledWith('b:chan', '你好'.slice(0, 40))
+    expect(notifyInbound).toHaveBeenCalledWith('b:chan', '你好', expect.any(String)) // 全文 + 信件 id(2026-09-03)
   })
 
   it('rejects a tampered ciphertext without persisting anything', async () => {

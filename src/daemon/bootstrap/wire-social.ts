@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { makeJudge } from '../../core/social-judge'
+import { makeVisit } from './wire-visit'
 import { makeAnswerIntent } from '../../core/social-answer'
 import { makeBroker } from '../../core/social-broker'
 import { makeSeekStore } from '../../core/social-seek-store'
@@ -166,6 +167,8 @@ export interface SocialWiring {
       resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       channelStore: import('../../core/penpal-channel-store').ChannelStore
       letterStore: import('../../core/penpal-letter-store').LetterStore
+      /** 串门(2026-09-03 实验):伙伴主动去一个开着的信道那头聊几句。 */
+      startVisit: import('./wire-visit').Visit['startVisit']
     }
   }
   resumeForaging: () => void
@@ -212,6 +215,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
     resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
     channelStore: import('../../core/penpal-channel-store').ChannelStore
     letterStore: import('../../core/penpal-letter-store').LetterStore
+    startVisit: import('./wire-visit').Visit['startVisit']
   } | undefined
 
   if (configuredAgent.social_enabled && configuredAgent.social_disclosure_policy) {
@@ -375,14 +379,32 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // consume points below (letterRelay + the seek forwarder further down) —
       // see forward-budget-seam.ts for why this must be a single instance.
       const withinForwardBudget = buildSharedForwardBudget(configuredAgent, deps.log)
-      const notifyInbound = (rowId: string, preview: string): void => {
+      // 串门(wire-visit.ts):两只伙伴之间的对话走同一条信道。先让它认领 ——
+      // 是串门信就由它接着聊/收尾,**不**当成主人的来信 ping 主人。
+      // sendLetter 经 correspondent,但 correspondent 又要 notifyInbound —— 用
+      // 一个 late-bound 引用解开这个环。
+      let visit: import('./wire-visit').Visit | undefined
+      const notifyInbound = (rowId: string, plaintext: string, letterId: string): void => {
+        if (visit?.onInboundLetter(rowId, plaintext, letterId)) return
         const op = resolveOperatorChatId()
         if (!op || !sendAssistantText) return
         const ch = channelStore.get(rowId)
         const mask = ch ? `第 ${ch.degree} 度的某人` : '某人'
-        void sendAssistantText(op, `📬 ${mask}给你写信了:${preview}\n(回信 ${rowId} <你的话>)`)
+        void sendAssistantText(op, `📬 ${mask}给你写信了:${plaintext.slice(0, 40)}\n(回信 ${rowId} <你的话>)`)
       }
       const correspondent = makeCorrespondent({ channelStore, letterStore, postLetter, notifyInbound })
+      visit = makeVisit({
+        stateDir: deps.stateDir,
+        channelStore, letterStore,
+        sendLetter: (c, t) => correspondent.sendLetter(c, t),
+        // 串门要有性格,不是分类任务:strongEval 优先,没有再退到 cheapEval。
+        // (typeof 守卫:好几处测试夹具的 registry 只有 cheapEval 那两个方法。)
+        evalText: (typeof registry.getStrongEval === 'function' ? registry.getStrongEval(deps.defaultProviderId) : null) ?? socialCheapEval,
+        myName: configuredAgent.bot_name?.trim() || '我',
+        disclosurePolicy: socialPolicy,
+        notifyOwner: (text) => { const op = resolveOperatorChatId(); if (op && sendAssistantText) void sendAssistantText(op, text) },
+        log: deps.log,
+      })
       const letterRelay = makeLetterRelay({ relayStore, postLetter, withinBudget: withinForwardBudget })
       // Dispatch order matters (Task 9 review flag): try OUR OWN endpoint
       // first (getByMyChannelId / receiveLetter) — only when that channel_id
@@ -402,7 +424,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         getByMyChannelId: (c) => channelStore.getByMyChannelId(c),
         receiveLetter: (ev) => correspondent.receiveLetter(ev),
       })
-      socialPenpal = { sendLetter: (channel, text) => correspondent.sendLetter(channel, text), resendLetter: (id) => correspondent.resendLetter(id), channelStore, letterStore }
+      socialPenpal = { sendLetter: (channel, text) => correspondent.sendLetter(channel, text), resendLetter: (id) => correspondent.resendLetter(id), channelStore, letterStore, startVisit: (c) => visit!.startVisit(c) }
 
       // Notification beats (克制三拍). Content-free by design — reveal crosses
       // pubkey handles, never a real name or url, so no beat text may carry one.

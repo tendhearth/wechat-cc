@@ -21,7 +21,13 @@ export interface CorrespondentDeps {
    *  PEER's inbound address. Returns ok. */
   postLetter(target: { agentId: string; relayVia: string | null; mailbox?: PeerMailbox }, body: { channel_id: string; nonce: string; ct: string; tag: string }): Promise<boolean>
   /** Owner notification on an inbound letter (preview of the decrypted text). */
-  notifyInbound(channelRowId: string, preview: string): void
+  /**
+   * 收到一封新信。`plaintext` 是**全文**(2026-09-03 之前是 40 字预览):串门
+   * (visit.ts)要读头部决定这封信是不是两只伙伴之间的对话;是的话就不该
+   * ping 主人。给主人看的预览由调用方自己切。`letterId` 让串门能把这封信
+   * 直接标已读 —— 伙伴之间的话不该算进主人的未读数。
+   */
+  notifyInbound(channelRowId: string, plaintext: string, letterId: string): void
 }
 
 export interface Correspondent {
@@ -84,8 +90,9 @@ export function makeCorrespondent(deps: CorrespondentDeps): Correspondent {
       if (deps.letterStore.hasInbound(ch.id, ev.nonce)) return { ok: true }
       try {
         const pt = openLetter(deriveSharedKey(ch.my_privkey, ch.peer_pubkey), { nonce: ev.nonce, ct: ev.ct, tag: ev.tag })
-        deps.letterStore.create({ id: randomUUID(), channelId: ch.id, direction: 'in', sealedCiphertext: ev.ct, nonce: ev.nonce, tag: ev.tag, plaintext: pt })
-        deps.notifyInbound(ch.id, pt.slice(0, 40))
+        const letterId = randomUUID()
+        deps.letterStore.create({ id: letterId, channelId: ch.id, direction: 'in', sealedCiphertext: ev.ct, nonce: ev.nonce, tag: ev.tag, plaintext: pt })
+        deps.notifyInbound(ch.id, pt, letterId)
         return { ok: true }
       } catch { return { ok: false, error: 'open_failed' } }
     },
