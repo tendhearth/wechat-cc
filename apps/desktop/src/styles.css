@@ -6491,3 +6491,46 @@ input { font: inherit; color: inherit; }
 }
 #app-update-banner .au-primary { background: #8a5a36; border-color: #8a5a36; color: #fffdf8; }
 #app-update-banner .au-btn:disabled { opacity: .5; cursor: default; }
+
+/* ── 🎒 打猎背包(觅食台区块,2026-09-03)─────────────────────────────
+   复用觅食台的 --fd-* 调色板,不新增全局 token。卡片密度刻意比明信片高:
+   背包是**清单**,一屏能扫过多少条比每条多好看重要。
+
+   两处按「这是个要动手的清单」来设计:
+   1) 卡片左侧留一道琥珀边(hover 加深)+ 页脚一条虚线分隔 —— 每张卡片里
+      有标题/正文/链接/按钮四层,没有分隔时四层会读成一段。
+   2) 状态按钮做成有底色的胶囊、选中态填实 —— 「点状态记下你试过没有」
+      是这个区块唯一的动作,它必须一眼看出来能点、且当前停在哪一档。
+
+   排查提示:--fd-* 全部**限定在 [data-pane="a2a-agents"] 之下**。我第一次
+   做静态预览时容器上少了这个属性,于是所有颜色变量都没解析,页面看起来
+   像是 CSS 写坏了 —— 实际是预览壳的问题。要单独预览这些卡片,外层必须
+   带 data-pane="a2a-agents"。 */
+.hb-list { display:flex; flex-direction:column; gap:10px; }
+.hb-card { background:var(--fd-card); border:1px solid var(--fd-line); border-left:3px solid var(--fd-amber-wash);
+           border-radius:12px; padding:13px 15px; box-shadow:var(--fd-shadow); transition:border-left-color .15s; }
+.hb-card:hover { border-left-color:var(--fd-amber); }
+.hb-head { display:flex; align-items:baseline; gap:10px; }
+.hb-title { font-size:15px; font-weight:700; margin:0; color:var(--fd-ink); flex:1; min-width:0; overflow-wrap:anywhere; }
+.hb-day { font-size:12px; color:var(--fd-ink-faint); white-space:nowrap; }
+.hb-note { margin:6px 0 0; font-size:13.5px; line-height:1.6; color:var(--fd-ink-soft); white-space:pre-wrap; overflow-wrap:anywhere; }
+.hb-link { display:flex; align-items:center; gap:8px; margin-top:8px; font-size:12.5px; }
+.hb-link a { color:var(--fd-clay-deep); text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+.hb-link a:hover { text-decoration:underline; }
+.hb-copy { border:1px solid var(--fd-line); background:var(--fd-ground-2); color:var(--fd-ink-soft); border-radius:7px; padding:2px 8px; font-size:11.5px; cursor:pointer; white-space:nowrap; }
+.hb-copy:hover { background:var(--fd-amber-wash); color:var(--fd-amber-deep); border-color:var(--fd-amber); }
+.hb-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:11px;
+           padding-top:10px; border-top:1px dashed var(--fd-line-soft); }
+.hb-chips { display:flex; gap:6px; flex-wrap:wrap; }
+.hb-chip { border:1px solid var(--fd-line); background:var(--fd-ground-2); color:var(--fd-ink-soft);
+           border-radius:999px; padding:3.5px 12px; font-size:12px; cursor:pointer; transition:all .12s; }
+.hb-chip:hover { border-color:var(--fd-amber); background:var(--fd-amber-wash); color:var(--fd-amber-deep); }
+.hb-chip.on { background:var(--fd-sage); border-color:var(--fd-sage); color:#fff; font-weight:600;
+              box-shadow:0 1px 6px -2px var(--fd-sage); }
+.hb-chip.on:hover { background:var(--fd-sage); border-color:var(--fd-sage); color:#fff; }
+.hb-del { border:none; background:transparent; color:var(--fd-ink-faint); font-size:17px; line-height:1; cursor:pointer; padding:1px 6px; border-radius:6px; }
+.hb-del:hover { color:var(--fd-clay-deep); background:var(--fd-clay-wash); }
+.hb-dropped { margin-top:12px; }
+.hb-dropped > summary { cursor:pointer; font-size:12.5px; color:var(--fd-ink-faint); padding:6px 2px; }
+.hb-dropped > summary:hover { color:var(--fd-ink-soft); }
+.hb-dropped .hb-card { opacity:.55; margin-top:8px; border-left-color:var(--fd-line); }

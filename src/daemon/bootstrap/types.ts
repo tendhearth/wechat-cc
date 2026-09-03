@@ -212,6 +212,8 @@ export interface BootstrapDeps {
    * byte-identical to before this feature existed).
    */
   replySinks?: { capture: (chatId: string, text: string) => boolean }
+  /** 旁听(不改道)—— 让 sendAssistantText 的 fallback 路径也进战利品清单。 */
+  outboundTaps?: { observe: (chatId: string, text: string) => void }
   /**
    * self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
    * graceful-shutdown-then-exit(0) so launchd's KeepAlive respawns a fresh

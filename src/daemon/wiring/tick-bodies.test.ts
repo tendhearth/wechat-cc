@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { makeOutboundTaps } from '../outbound-taps'
 import { buildTickBodies, buildPushTickText, buildGapCheckinText, buildHuntText, distillAndPushOwnerKnowledge, type TickDeps } from './tick-bodies'
 import { TIER_PROFILES } from '../../core/user-tier'
 import type { Access } from '../../lib/access'
@@ -680,6 +681,57 @@ describe('buildTickBodies / pushTick — daily hunt branch (Task 3)', () => {
     // the interrupted-dispatch proof); here we assert both the ledger
     // write and the dispatch happened.
     expect(s.careLedgerEntries['chat-1']?.lastHuntAtIso).toBe('2026-05-13T10:00:00.000Z')
+  })
+
+  // ── 战利品入库(2026-09-03,用户反馈「桌面端没有记录」)────────────
+  //
+  // 这条链最容易「静默不记」:tap 没开、tap 和发送不是同一个实例、或者
+  // 记录抛异常把整拍带崩 —— 三种都不会有任何报错,只是清单永远空着。
+
+  it('打猎发出去的东西进战利品清单', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const recorded: Array<{ chatId: string; text: string }> = []
+    const taps = makeOutboundTaps()
+    // dispatch 期间模拟 reply 路由往 tap 里写(真实链路上是 internal-api)。
+    s.dispatch.mockImplementation(async function* () { taps.observe('chat-1', '看这个 https://a.com') })
+    const { pushTick } = buildTickBodies({
+      ...s.deps,
+      outboundTaps: taps,
+      huntStore: { recordHunt: (a) => { recorded.push({ chatId: a.chatId, text: a.text }); return 1 } },
+    })
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(recorded).toEqual([{ chatId: 'chat-1', text: '看这个 https://a.com' }])
+  })
+
+  it('**这一拍什么都没发时不记空条目** —— 打猎允许「今天没猎到」', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const recordHunt = vi.fn(() => 0)
+    await buildTickBodies({ ...s.deps, outboundTaps: makeOutboundTaps(), huntStore: { recordHunt } })
+      .pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(recordHunt).not.toHaveBeenCalled()
+  })
+
+  it('**入库抛异常不能让这一拍看起来失败** —— 消息已经发出去了', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const taps = makeOutboundTaps()
+    s.dispatch.mockImplementation(async function* () { taps.observe('chat-1', '看这个 https://a.com') })
+    const { pushTick } = buildTickBodies({
+      ...s.deps,
+      outboundTaps: taps,
+      huntStore: { recordHunt: () => { throw new Error('db locked') } },
+    })
+    await expect(pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })).resolves.toBeUndefined()
+    expect(s.logs.some(l => l.includes('入库失败'))).toBe(true)
+  })
+
+  it('没接 store 时是旧行为(发了不记),不报错', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    await expect(buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })).resolves.toBeUndefined()
+    expect(s.dispatch).toHaveBeenCalledOnce()
   })
 
   it('(b) lastHuntAtIso 1h ago ⇒ hunt skipped (hunt_cooldown), falls through to gap evaluation', async () => {

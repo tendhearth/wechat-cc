@@ -81,6 +81,12 @@ export interface TickDeps {
    */
   chatPrefs: { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean }; list(): string[] }
   /**
+   * 打猎战利品(2026-09-03)。`outboundTaps` 旁听打猎那一拍发出去的文本,
+   * `huntStore` 把它拆成条目落库。两者都可选:没接就是旧行为(发了不记)。
+   */
+  outboundTaps?: { tap(chatId: string): { close(): string[] } }
+  huntStore?: { recordHunt(a: { chatId: string; text: string; nowIso?: string }): number }
+  /**
    * Task 6 — the calibration gate's learning signal (last claimed proactive
    * send + no-reply streak per chat). shouldSpeak() reads it; pushTick
    * claims it BEFORE dispatch, mirroring the agenda at-most-once contract.
@@ -481,10 +487,25 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       const huntLevel = deps.chatPrefs.get(chatId).hunt !== false ? 'low' as const : 'off' as const
       const huntDecision = shouldSpeak({ kind: 'hunt', level: huntLevel, nowIso, ledger, lastInboundAtIso })
       if (huntDecision.ok) {
-        await dispatchToChat(chatId, {
-          claim: () => { deps.careLedger.claimHunt(chatId, nowIso) },
-          buildText: () => buildHuntText({ nowIso }),
-        })
+        // 旁听这一拍发出去的东西 —— 打猎的产出此前只存在于微信聊天记录里,
+        // 主人想回头找上周那条链接只能翻聊天。记的是**真发出去的文本**,
+        // 不是要求模型额外调一个登记工具(漏调一次就少一条,且无人知晓)。
+        const tap = deps.outboundTaps?.tap(chatId)
+        try {
+          await dispatchToChat(chatId, {
+            claim: () => { deps.careLedger.claimHunt(chatId, nowIso) },
+            buildText: () => buildHuntText({ nowIso }),
+          })
+        } finally {
+          const shared = tap?.close() ?? []
+          if (shared.length > 0 && deps.huntStore) {
+            // 记录失败绝不能让这一拍看起来失败 —— 消息已经发出去了。
+            try {
+              const n = deps.huntStore.recordHunt({ chatId, text: shared.join('\n\n'), nowIso })
+              deps.log('HUNT', `chat=${chatId} 入库 ${n} 条`)
+            } catch (err) { deps.log('HUNT', `入库失败(消息已发出): ${errMsg(err)}`) }
+          }
+        }
         return
       }
       deps.log('CARE', `skip chat=${chatId} kind=hunt reason=${huntDecision.reason}`)

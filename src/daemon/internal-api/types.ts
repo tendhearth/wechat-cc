@@ -9,6 +9,7 @@
 import type { MemoryFS } from '../memory/fs-api'
 import type { Db } from '../../lib/db'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
+import type { HuntStore } from '../../core/hunt-store'
 import type { ReplySinks } from '../reply-sinks'
 import type { ConversationStore } from '../../core/conversation-store'
 import type { ProviderId } from '../../core/conversation'
@@ -132,6 +133,18 @@ export interface InternalApiDeps {
    * output back from the sink. Absent ⇒ WeChat reply path unchanged.
    */
   replySinks?: ReplySinks
+  /**
+   * Optional outbound tap (打猎战利品, 2026-09-03). Unlike replySinks this
+   * does NOT divert — it observes a copy of what goes out so the hunt tick
+   * can record what it shared. Absent ⇒ nothing observed, send unchanged.
+   */
+  outboundTaps?: { observe(chatId: string, text: string): void }
+  /**
+   * 打猎战利品读写(GET/POST /v1/hunt*)。缺失 ⇒ 路由 503,桌面端显示
+   * 「这个 daemon 还没有战利品记录」而不是空清单 —— 空清单会被读成
+   * 「CC 什么都没打到」。
+   */
+  hunt?: HuntStore
   /**
    * Optional mode-aware reply prefixing (RFC 03 P3). When wired, the
    * `reply` route consults `conversationStore` for the chat's mode and

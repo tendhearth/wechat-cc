@@ -1049,3 +1049,66 @@ describe('粘配对码进微信 = 加一台手', () => {
     expect(matchHandJoin('/hand   ')).toBeNull()
   })
 })
+
+describe('🎒 背包(微信侧只读入口)', () => {
+  const bag = (rows: Array<{ title: string; url: string | null; ts: string; status: string }>) => {
+    const sent: string[] = []
+    const deps = {
+      isAdmin: () => true,
+      sendMessage: async (_c: string, t: string) => { sent.push(t); return { msgId: '1' } },
+      huntBag: () => rows,
+    } as unknown as AdminCommandsDeps
+    return { deps, sent }
+  }
+  const row = (o: Partial<{ title: string; url: string | null; ts: string; status: string }> = {}) =>
+    ({ title: 'Continue.dev', url: 'https://a.com', ts: '2026-09-03T00:00:00Z', status: 'new', ...o })
+
+  const ask = async (deps: AdminCommandsDeps, text: string) =>
+    makeAdminCommands(deps).handle({ chatId: 'owner', text } as never)
+
+  it('多种说法都认:背包 / 猎物 / 战利品 / 打到了什么 / /bag', async () => {
+    for (const q of ['背包', '猎物', '战利品', '打到了什么', '/bag', '打猎背包']) {
+      const { deps, sent } = bag([row()])
+      expect(await ask(deps, q)).toBe(true)
+      expect(sent[0]).toContain('Continue.dev')
+    }
+  })
+
+  it('列出状态和链接', async () => {
+    const { deps, sent } = bag([row({ status: 'using' })])
+    await ask(deps, '背包')
+    expect(sent[0]).toContain('[在用]')
+    expect(sent[0]).toContain('https://a.com')
+  })
+
+  it('丢掉的不出现在微信速览里', async () => {
+    const { deps, sent } = bag([row(), row({ title: '不要的', status: 'dropped' })])
+    await ask(deps, '背包')
+    expect(sent[0]).toContain('1 件')
+    expect(sent[0]).not.toContain('不要的')
+  })
+
+  it('超过 10 件时截断,并指路桌面端', async () => {
+    const { deps, sent } = bag(Array.from({ length: 14 }, (_, i) => row({ title: `第${i}件` })))
+    await ask(deps, '背包')
+    expect(sent[0]).toContain('还有 4 件')
+    expect(sent[0]).toContain('打猎背包')
+  })
+
+  it('**「空背包」和「没接这功能」说法不同** —— 前者是 CC 没打到,后者是版本老了', async () => {
+    const { deps: empty, sent: s1 } = bag([])
+    await ask(empty, '背包')
+    expect(s1[0]).toContain('每天会上网替你找')
+
+    const sent: string[] = []
+    const noDep = { isAdmin: () => true, sendMessage: async (_c: string, t: string) => { sent.push(t); return { msgId: '1' } } } as unknown as AdminCommandsDeps
+    await ask(noDep, '背包')
+    expect(sent[0]).toContain('还没接战利品记录')
+  })
+
+  it('全被丢弃 ≠ 空背包', async () => {
+    const { deps, sent } = bag([row({ status: 'dropped' })])
+    await ask(deps, '背包')
+    expect(sent[0]).toContain('都处理完了')
+  })
+})

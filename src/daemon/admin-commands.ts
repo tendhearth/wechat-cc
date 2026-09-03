@@ -83,6 +83,8 @@ export interface AdminCommandsDeps {
   >
   /** 列出已注册的手(名字 + 地址),给发现性用。 */
   listHands?: () => readonly { id: string; name: string; url?: string }[]
+  /** 打猎战利品(v36 hunt_catch)。缺失 ⇒ 「背包」命令说功能没接,而不是说空。 */
+  huntBag?: () => readonly { title: string; url: string | null; ts: string; status: string }[]
   /**
    * Starts an external updater process. The updater must live outside this
    * daemon process because a real update can stop/restart the service that is
@@ -125,6 +127,9 @@ const RESET_RE = /^\s*\/(?:reset|重置)\s*$/
 const HAND_JOIN_RE = /^\s*(?:\/(?:hand|配对)\s+)?(WCCP1[A-Za-z0-9_\-\s]+)$/
 /** 列出已注册的手。补回上一轮为了精确性删掉的发现性(见 matchDelegate)。 */
 const HANDS_LIST_RE = /^\s*(?:\/hands|有哪些手|手列表|看看有哪些手)\s*[?？]?\s*$/
+// 打猎战利品的微信入口(2026-09-03)。打猎的消息本来就发在微信里,能在同一
+// 个地方回头翻是最自然的;桌面端那个「🎒 打猎背包」是同一份数据的可编辑版。
+const BAG_RE = /^\s*(?:\/(?:bag|背包)|背包|打猎背包|猎物|战利品|打到了什么|打到什么了)\s*[?？]?\s*$/
 
 /** 认出一串配对码(裸码或 /hand <码>)。返回去掉空白的码,或 null。 */
 export function matchHandJoin(text: string): string | null {
@@ -227,6 +232,28 @@ const BOTNAME_SKIP_WORDS = new Set(['跳过', '不用', '没有', 'skip', 'clear
 const BOTNAME_VALID_RE = NICKNAME_RE
 const BOTNAME_MAX_LEN = NICKNAME_MAX_LEN
 
+
+/** 微信里的背包速览。只读:改状态去桌面端(在微信里做单选按钮不划算)。 */
+async function sendHuntBag(deps: AdminCommandsDeps, chatId: string): Promise<void> {
+  if (!deps.huntBag) {
+    await deps.sendMessage(chatId, '这台还没接战利品记录 —— 升级到 1.6.7 以后打猎才会入库。').catch(() => {})
+    return
+  }
+  const all = deps.huntBag()
+  const kept = all.filter(r => r.status !== 'dropped')
+  if (kept.length === 0) {
+    await deps.sendMessage(chatId, all.length === 0
+      ? '背包还是空的。我每天会上网替你找一两样东西,找到就记进来。'
+      : '背包里的都处理完了(丢掉的那些还在桌面端折着)。').catch(() => {})
+    return
+  }
+  const LABEL: Record<string, string> = { new: '没试', tried: '跑过', using: '在用' }
+  const lines = kept.slice(0, 10).map(r =>
+    `· [${LABEL[r.status] ?? '没试'}] ${r.title}${r.url ? `\n  ${r.url}` : ''}`)
+  const more = kept.length > lines.length ? `\n\n还有 ${kept.length - lines.length} 件,桌面端「觅食台 → 打猎背包」看全部。` : ''
+  await deps.sendMessage(chatId, `🎒 背包里有 ${kept.length} 件:\n\n${lines.join('\n')}${more}`).catch(() => {})
+}
+
 export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
   return {
     async handle(msg) {
@@ -239,7 +266,7 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
       const delegateMatch = matchDelegate(text, handNames)
       const isDelegate = !!delegateMatch
       const handCode = matchHandJoin(text)
-      const isCmd = !!handCode || HANDS_LIST_RE.test(text) || text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || isDelegate || RESET_RE.test(text) || UPDATE_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
+      const isCmd = !!handCode || HANDS_LIST_RE.test(text) || BAG_RE.test(text) || text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || isDelegate || RESET_RE.test(text) || UPDATE_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
       if (!isCmd) return false
 
       if (!deps.isAdmin(msg.chatId)) {
@@ -257,6 +284,11 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
         await deps.sendMessage(msg.chatId, hands.length
           ? `已配对的手:\n${hands.map(h => `· ${h.name}${h.name === h.id ? '' : `(${h.id})`} → ${h.url ?? '没有地址'}`).join('\n')}\n\n说「让${hands[0]!.name} 看看…」就派给它。`
           : '还没配对任何手。在那台机器上跑 `wechat-cc hand invite`,把它给出的码粘到这里。').catch(() => {})
+        return true
+      }
+
+      if (BAG_RE.test(text)) {
+        await sendHuntBag(deps, msg.chatId)
         return true
       }
 

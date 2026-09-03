@@ -19,6 +19,7 @@ import type { Mode } from '../../core/conversation'
 import type { UserTier } from '../../core/user-tier'
 import { makeEventsStore } from '../events/store'
 import { a2aRoutes } from './routes-a2a'
+import { huntRoutes } from './routes-hunt'
 import { socialRoutes } from './routes-social'
 import { knowledgeRoutes } from './routes-knowledge'
 import { configRoutes } from './routes-config'
@@ -427,6 +428,10 @@ const onlineStickerCursor = new Map<string, number>()
       if (deps.replySinks?.capture(chat_id, text)) {
         return { status: 200, body: { ok: true, captured: true } }
       }
+      // 旁听(不改道):打猎那一拍开着 tap,发出去的东西同时进战利品清单。
+      // 放在 sink 检查**之后** —— 被 app 通道截走的回复从没到过微信,记进
+      // 「CC 给你带回来的东西」会是假的。放在分片之前:记原文,不记分片。
+      deps.outboundTaps?.observe(chat_id, text)
       // RFC 03 P3 — mode-aware prefixing. Only applies when the chat is
       // in a multi-participant mode AND the caller supplied its tag.
       // Solo mode (and absent prefix deps) → text passes through unchanged.
@@ -892,6 +897,7 @@ const onlineStickerCursor = new Map<string, number>()
     //    / restart / turns) live in sibling files — spread in here. ──────────
     ...a2aRoutes(deps),
     ...socialRoutes(deps),
+    ...huntRoutes(deps),
     ...knowledgeRoutes(deps),
     ...configRoutes(deps),
     ...pairRoutes(deps),

@@ -68,6 +68,18 @@ export interface WireMainOpts {
    * SAME registry the reply route captures into.
    */
   replySinks: ReplySinks
+  /**
+   * 打猎战利品(2026-09-03)。和 replySinks 一样必须是 main.ts 里那个**同
+   * 一个实例**:开 tap 的是打猎那一拍,往里写的是发送路径。经 `...opts`
+   * 透传进 buildTickBodies。
+   */
+  outboundTaps?: { tap(chatId: string): { close(): string[] } }
+  // 两条用途:tick-bodies 只用 recordHunt(打猎入库),pipeline-deps 只用
+  // list(微信「背包」命令)。这里给全,下游各取所需。
+  huntStore?: {
+    recordHunt(a: { chatId: string; text: string; nowIso?: string }): number
+    list(limit?: number): readonly { title: string; url: string | null; ts: string; status: string }[]
+  }
 }
 
 export interface WiredDeps {

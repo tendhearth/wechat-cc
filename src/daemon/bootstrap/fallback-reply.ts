@@ -46,6 +46,12 @@ export interface FallbackReplyDeps {
    * don't wire replySinks stay byte-identical to before this feature).
    */
   capture?: (chatId: string, text: string) => boolean
+  /**
+   * 旁听(不改道)—— 见 outbound-taps.ts。这条 fallback 路径也要接:模型
+   * 不调 reply 而直接输出正文时,这里是那段文字唯一的出口,漏接就等于
+   * 「这次打猎没记上」,而且没有任何迹象。
+   */
+  observe?: (chatId: string, text: string) => void
 }
 
 export type SendAssistantText = (chatId: string, text: string) => Promise<void>
@@ -55,6 +61,7 @@ export function makeSendAssistantText(deps: FallbackReplyDeps): SendAssistantTex
   const send = deps.sendMessage
   return async (chatId, text) => {
     if (deps.capture?.(chatId, text)) return
+    deps.observe?.(chatId, text)
     let result: SendMessageResult
     try {
       result = await send(chatId, text)

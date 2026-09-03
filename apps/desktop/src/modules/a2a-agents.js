@@ -11,6 +11,7 @@ import { showToast } from "../view.js"
  */
 
 import { invokeApi } from '../api.js'
+import { initHuntBag, renderHuntBag } from './hunt-bag.js'
 
 // ── module-level state ────────────────────────────────────────────────────
 /** @type {Record<string, unknown> | null} */
@@ -123,18 +124,20 @@ export async function initA2AAgentsTab() {
   document.getElementById('fd-compose')?.addEventListener('click', onSeekAction)
   document.getElementById('fd-wishes')?.addEventListener('click', onSeekAction)
   document.getElementById('fd-mailbox')?.addEventListener('click', onMailboxAction)
+  initHuntBag()
 }
 
 export async function refresh() {
   const wishes = document.getElementById('fd-wishes')
   if (wishes && !wishes.innerHTML) wishes.innerHTML = '<div class="fd-empty">加载中…</div>'
 
-  const [listResp, seeksResp, echoesResp, inbound, mailResp] = await Promise.all([
+  const [listResp, seeksResp, echoesResp, inbound, mailResp, huntResp] = await Promise.all([
     /** @type {Promise<{agents?:Array<any>}|null>}   */ (invokeApi('GET', '/v1/a2a/list').catch(() => null)),
     /** @type {Promise<{seeks?:Array<any>}|null>}    */ (invokeApi('GET', '/v1/social/seeks').catch(() => null)),
     /** @type {Promise<{echoes?:Array<any>}|null>}   */ (invokeApi('GET', '/v1/social/echoes').catch(() => null)),
     /** @type {Promise<any>}                          */ (invokeApi('GET', '/v1/social/inbound').catch(() => null)),
     /** @type {Promise<{channels?:Array<any>}|null>} */ (invokeApi('GET', '/v1/penpal/channels').catch(() => null)),
+    /** @type {Promise<{items?:Array<any>}|null>}    */ (invokeApi('GET', '/v1/hunt').catch(() => null)),
   ])
 
   // keep the server-status banner (best-effort, as before)
@@ -151,6 +154,9 @@ export async function refresh() {
     inbound,
     mailbox: mailResp ? (mailResp.channels ?? []) : null,
   })
+  // 背包自己渲染 —— 打猎和社交觅食是两条独立的链路,社交没启用时背包
+  // 照样有东西(它不依赖任何 peer)。
+  renderHuntBag({ items: huntResp ? (huntResp.items ?? []) : null })
 }
 
 /**

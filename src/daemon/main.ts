@@ -34,6 +34,8 @@ import { makeChatPrefs } from './chat-prefs'
 import { makeStickerLib, seedStarterStickers, starterStickersDir } from './stickers'
 import { makeGiphyRelaySource, makeGiphySource } from './sticker-source'
 import { makeStickerFeedback } from './sticker-feedback'
+import { makeOutboundTaps } from './outbound-taps'
+import { makeHuntStore } from '../core/hunt-store'
 import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
@@ -238,6 +240,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // (Task 2). Both MUST share this one instance — a second instance would
     // never see the capture (same posture as chatPrefs/careLedger above).
     const replySinks = makeReplySinks()
+    // 打猎战利品(2026-09-03):旁听而非改道,见 outbound-taps.ts。同样必须是
+    // **同一个实例** —— 开 tap 的是打猎那一拍(tick-bodies),往里写的是发送
+    // 路径(internal-api reply 路由 / bootstrap 的 fallback);两个实例等于
+    // 永远收不到东西,而且不会报任何错。
+    const outboundTaps = makeOutboundTaps()
+    const huntStore = makeHuntStore(db)
     // 1. internal-api FIRST — bootstrap needs its baseUrl/token for MCP wiring
     const internalApi = await registerInternalApi({
       stateDir, daemonPid: process.pid, memory: memoryFS, db, projects: ilink.projects,
@@ -247,6 +255,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       stickerFeedback,
       stickerSource,
       replySinks,
+      outboundTaps,
+      hunt: huntStore,
       // chat_history 工具后端(provider-handoff 的逃生口)
       messages: (() => { const ms = makeMessagesStore(db); return { listRange: (c: string, o: { limit: number; beforeTs?: string }) => ms.listRange(c, o), search: (c: string, q: string, l: number) => ms.search(c, q, l) } })(),
       setUserName: (chatId, name) => ilink.setUserName(chatId, name),
@@ -304,6 +314,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // passed to internal-api and wireMain below; makes the coordinator's
       // sendAssistantText fallback sink-aware.
       replySinks,
+      outboundTaps,
       onTurnRecord: (r) => turnRecordStore.append(r),
       mintSessionToken: internalApi.mintSessionToken,
       invalidateSession: internalApi.invalidateSession,
@@ -485,6 +496,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       stickers: stickerLib,
       requestRestart: (reason) => requestRestart(reason),
       stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,
+      outboundTaps, huntStore,
       // Task 11 — tick-bodies pass this to resolveTier() when computing
       // the companion's tierProfile. Same singleton import the bootstrap
       // coordinator uses; 5s TTL cache inside `loadAccess` keeps the
