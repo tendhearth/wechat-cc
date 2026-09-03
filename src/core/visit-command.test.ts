@@ -5,9 +5,11 @@ describe('parseVisitCommand', () => {
   it('裸「串门」和几个口语变体', () => {
     for (const t of ['串门', '去串门', '出去串个门', '串门!', '/visit']) expect(parseVisitCommand(t)).toEqual({})
   })
-  it('带通道前缀', () => {
+  it('带通道前缀 / 邻居名', () => {
     expect(parseVisitCommand('串门 seek-1')).toEqual({ channel: 'seek-1' })
     expect(parseVisitCommand('/visit ab12')).toEqual({ channel: 'ab12' })
+    expect(parseVisitCommand('串门 邻居')).toEqual({ channel: '邻居' })
+    expect(parseVisitCommand('串门 阿柚')).toEqual({ channel: '阿柚' })
   })
   it('普通话里提到串门不触发 —— 「我明天去我妈家串门」是聊天,不是命令', () => {
     expect(parseVisitCommand('我明天去我妈家串门')).toBeNull()

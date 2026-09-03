@@ -521,16 +521,13 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         const visitLevel = deps.chatPrefs.get(chatId).visit !== false ? 'low' as const : 'off' as const
         const visitDecision = shouldSpeak({ kind: 'visit', level: visitLevel, nowIso, ledger, lastInboundAtIso })
         if (visitDecision.ok) {
-          const hasOpen = visit.channelStore.list().some(c => c.status === 'open')
-          if (hasOpen) {
-            // 先登记再出门(at-most-once,同打猎):出门一半 daemon 重启,不该
-            // 下一拍再出一次门 —— 两趟串门比一趟没出门的观感差得多。
-            deps.careLedger.claimVisit(chatId, nowIso)
-            const r = await visit.startVisit()
-            deps.log('VISIT', r.ok ? `tick: 出门了 visit=${r.id}` : `tick: 没出得了门 reason=${r.reason}`)
-            return
-          }
-          // 没有开着的信道 → 不登记(不烧掉今天的名额),也不每拍刷日志。
+          // 先登记再出门(at-most-once,同打猎):出门一半 daemon 重启,不该
+          // 下一拍再出一次门 —— 两趟串门比一趟没出门的观感差得多。
+          // 总有地方可去:没有真信道就去邻居家(core/neighbors.ts)。
+          deps.careLedger.claimVisit(chatId, nowIso)
+          const r = await visit.startVisit()
+          deps.log('VISIT', r.ok ? `tick: 出门了 visit=${r.id} → ${r.channel}` : `tick: 没出得了门 reason=${r.reason}`)
+          return
         } else {
           deps.log('CARE', `skip chat=${chatId} kind=visit reason=${visitDecision.reason}`)
         }

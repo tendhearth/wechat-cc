@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeVisit, cleanSpeech, type VisitDeps } from './wire-visit'
+import { makeVisit, cleanSpeech, readNeighborMemory, type VisitDeps } from './wire-visit'
 import { parseVisitLetter } from '../../core/visit'
 
 /**
@@ -80,15 +80,7 @@ describe('串门:两只伙伴对着聊', () => {
     expect(A.owner).toEqual([])
   })
 
-  it('没有开着的信道 → 说清楚,而不是抛', async () => {
-    const lonely = makeVisit({
-      stateDir: '/tmp', channelStore: { get: () => null, list: () => [] } as never,
-      letterStore: { listForChannel: () => [], markRead: () => {} } as never,
-      sendLetter: async () => ({ ok: true }), evalText: async () => 'x', myName: 'a', disclosurePolicy: 'p',
-      notifyOwner: () => {}, log: () => {},
-    })
-    expect(await lonely.startVisit()).toEqual({ ok: false, reason: 'no_open_channel' })
-  })
+  // 「没有开着的信道」不再是错误 —— 去邻居家。见下面的 describe。
 
   it('模型抽风回空串 → 不发空信、记日志、不打扰主人', async () => {
     const A = side('阿一', async () => '   ')
@@ -115,4 +107,102 @@ describe('cleanSpeech —— 剥掉模型爱加的引号和「我:」前缀', ()
     expect(cleanSpeech('主人最近在做一个东西:微信 AI 助手')).toBe('主人最近在做一个东西:微信 AI 助手')
   })
   it('空 → 空', () => { expect(cleanSpeech('  ')).toBe('') })
+})
+
+describe('去邻居家串门 —— 没有真对端时也有地方可去', () => {
+  const lonely = (evalText: (p: string) => Promise<string>, extra: Partial<VisitDeps> = {}) => {
+    const owner: string[] = []; const recorded: Array<{ text: string; peerLabel: string }> = []
+    const stateDir = mkdtempSync(join(tmpdir(), 'visit-nb-'))
+    const visit = makeVisit({
+      stateDir, channelStore: { get: () => null, list: () => [] } as never,
+      letterStore: { listForChannel: () => [], markRead: () => {} } as never,
+      sendLetter: async () => ({ ok: true }), evalText, myName: '煞笔', disclosurePolicy: '不说住址',
+      notifyOwner: (t) => owner.push(t), recordVisit: (a) => recorded.push(a), log: () => {}, ...extra,
+    })
+    return { visit, owner, recorded, stateDir }
+  }
+  const evalCounting = () => { const calls: string[] = []; return { calls, fn: async (p: string) => { calls.push(p); return p.includes('串门回来') ? '今天去阿柚家,豆包很可爱。' : `第${calls.length}句` } } }
+
+  it('没有开着的真信道 → 去邻居家:6 句 + 1 段叙述 = 7 次 eval,不发信', async () => {
+    const e = evalCounting()
+    const { visit, owner, recorded } = lonely(e.fn)
+    const r = await visit.startVisit()
+    expect(r.ok).toBe(true)
+    expect((r as { channel: string }).channel).toMatch(/^neighbor:/)
+    expect(e.calls).toHaveLength(7)
+    // 叙述发给主人 + 进背包,标题带「邻居」
+    expect(owner.some(t => t.startsWith('🚶 今天去阿柚家'))).toBe(true)
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0]!.peerLabel).toMatch(/^邻居「/)
+  })
+
+  it('**第一次去邻居家要跟主人说清楚邻居是什么**;第二次不再说', async () => {
+    const e = evalCounting()
+    const { visit, owner } = lonely(e.fn)
+    await visit.startVisit()
+    expect(owner.filter(t => t.startsWith('🏘')).length).toBe(1)
+    expect(owner[0]!.startsWith('🏘')).toBe(true) // 说明在叙述之前
+    owner.length = 0
+    await visit.startVisit()
+    expect(owner.filter(t => t.startsWith('🏘')).length).toBe(0)
+  })
+
+  it('两边视角对调:邻居那一轮的 prompt 里,「对方」是煞笔', async () => {
+    const e = evalCounting()
+    const { visit } = lonely(e.fn)
+    await visit.startVisit()
+    // 第 2 句是邻居说的:它的 prompt 里应把煞笔的第 1 句标成「对方:」
+    expect(e.calls[1]).toMatch(/对方:第1句/)
+    // 第 3 句是煞笔说的:它的 prompt 里邻居的话是「对方:」,自己的话带自己名字
+    expect(e.calls[2]).toMatch(/煞笔:第1句/)
+    expect(e.calls[2]).toMatch(/对方:第2句/)
+  })
+
+  it('邻居记得上次:第二次去同一家,双方 prompt 里都带「上次」', async () => {
+    const e = evalCounting()
+    const { visit, stateDir } = lonely(e.fn)
+    const first = await visit.startVisit()
+    const nbId = (first as { channel: string }).channel.slice('neighbor:'.length)
+    e.calls.length = 0
+    await visit.startVisit(nbId)  // 指定再去同一家
+    expect(e.calls[0]).toContain('上次去')         // 煞笔那边
+    expect(e.calls[1]).toContain('上次这位来串门时') // 邻居那边
+    expect(readNeighborMemory(stateDir).notes[nbId]).toBeTruthy()
+  })
+
+  it('轮着去:连着两天不去同一家', async () => {
+    const e = evalCounting()
+    const { visit } = lonely(e.fn)
+    const a = (await visit.startVisit() as { channel: string }).channel
+    const b = (await visit.startVisit() as { channel: string }).channel
+    expect(a).not.toBe(b)
+  })
+
+  it('「串门 邻居」/「串门 阿柚」 指定去', async () => {
+    const e = evalCounting()
+    const { visit } = lonely(e.fn)
+    expect(((await visit.startVisit('邻居')) as { channel: string }).channel).toMatch(/^neighbor:/)
+    expect(((await visit.startVisit('阿柚')) as { channel: string }).channel).toBe('neighbor:ayou')
+    expect(((await visit.startVisit('ayou')) as { channel: string }).channel).toBe('neighbor:ayou')
+  })
+
+  it('有开着的真信道时默认去真的,不去邻居家', async () => {
+    const e = evalCounting()
+    const sent: string[] = []
+    const { visit } = lonely(e.fn, {
+      channelStore: { get: () => ({ id: 'ch', status: 'open', degree: 1 }), list: () => [{ id: 'ch', status: 'open', degree: 1 }] } as never,
+      sendLetter: async (_c, t) => { sent.push(t); return { ok: true } },
+    })
+    const r = await visit.startVisit()
+    expect((r as { channel: string }).channel).toBe('ch')
+    expect(sent).toHaveLength(1)
+  })
+
+  it('模型中途抽风回空 → ok:false,不给主人发半截', async () => {
+    let n = 0
+    const { visit, owner } = lonely(async () => (++n === 3 ? '' : 'x'))
+    const r = await visit.startVisit()
+    expect(r).toEqual({ ok: false, reason: 'empty_round_3' })
+    expect(owner).toEqual([])
+  })
 })

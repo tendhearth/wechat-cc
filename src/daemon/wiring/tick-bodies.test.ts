@@ -781,16 +781,16 @@ describe('buildTickBodies / pushTick — daily hunt branch (Task 3)', () => {
     expect(s.logs.some(l => l.includes('kind=visit') && l.includes('visit_cooldown'))).toBe(true)
   })
 
-  it('**没有开着的信道 ⇒ 不出门也不登记**(不烧今天的名额)', async () => {
+  it('没有开着的真信道也出门 —— 总有邻居家可去(startVisit 自己挑)', async () => {
     const s = setupDeps({
       defaultChatId: 'chat-1', inFlight: false,
       careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
     })
     cleanup.push(s.stateDir)
-    const startVisit = withVisit(s, { hasOpen: false })
+    const startVisit = withVisit(s, { hasOpen: false, result: { ok: true, id: 'v1', channel: 'neighbor:ayou' } })
     await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
-    expect(startVisit).not.toHaveBeenCalled()
-    expect(s.careLedgerEntries['chat-1']?.lastVisitAtIso).toBeUndefined()
+    expect(startVisit).toHaveBeenCalledOnce()
+    expect(s.careLedgerEntries['chat-1']?.lastVisitAtIso).toBe('2026-05-13T10:00:00.000Z')
   })
 
   it('/set visit off ⇒ 不出门', async () => {

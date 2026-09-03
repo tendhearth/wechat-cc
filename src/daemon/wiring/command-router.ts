@@ -80,8 +80,8 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
           say(msg.chatId, '🚶 出门了,聊完回来跟你说。')
           const r = await deps.social.penpal.startVisit(v.channel)
           if (!r.ok) {
-            say(msg.chatId, r.reason === 'no_open_channel'
-              ? '还没有能串门的地方 —— 得先有一条开着的笔友通道(揭晓牵线之后就有了)。'
+            say(msg.chatId, r.reason === 'unknown_channel'
+              ? '没找到这一家。说「串门」我自己挑,或者「串门 邻居」去邻居家。'
               : `没出得了门:${r.reason}`)
           }
           return true
