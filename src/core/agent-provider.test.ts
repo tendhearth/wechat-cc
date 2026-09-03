@@ -258,3 +258,28 @@ describe('collectTurn 收集工具名 —— 「查来的」和「想出来的�
     expect(JSON.stringify(s.toolCalls)).toBe('["search_web"]')
   })
 })
+
+// 2026-09-03:agy 的解析器曾经把「没有 text_delta 的 agent_response step」
+// 吐成 `{kind:'text', text:''}`,真机日志里就是 `chunks=3 preview=""`。
+// 源头修了,但**任何 provider 都可能吐空文本**,而 collectTurn 是所有路径
+// 的共用收口 —— 在这里也挡一道,让 assistantText 里的每一项都是真消息。
+describe('collectTurn 丢掉空文本事件 —— 空的不是一条消息', () => {
+  it('空串与纯空白都不进 assistantText', async () => {
+    const stream = (async function* () {
+      yield { kind: 'text', text: '' } as AgentEvent
+      yield { kind: 'text', text: '   \n' } as AgentEvent
+      yield { kind: 'text', text: '真正的回复' } as AgentEvent
+      yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+    })()
+    const s = await collectTurn(stream)
+    expect(s.assistantText).toEqual(['真正的回复'])
+  })
+
+  it('内容原样保留(不 trim —— 缩进/代码块的空白是有意义的)', async () => {
+    const stream = (async function* () {
+      yield { kind: 'text', text: '  缩进要留着\n' } as AgentEvent
+      yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+    })()
+    expect((await collectTurn(stream)).assistantText).toEqual(['  缩进要留着\n'])
+  })
+})

@@ -362,7 +362,11 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
 
   const apply = (ev: AgentEvent): void => {
     if (ev.kind === 'text') {
-      texts.push(ev.text)
+      // **空的不是一条消息。** 这里是所有路径的共用收口:solo 会为每个
+      // chunk 发一次(空的注定失败)、chatroom/parallel 会 join,而
+      // `chunks=`/`preview=` 也是从这里数出来的。内容**不 trim** ——
+      // 缩进和代码块里的空白是有意义的,只丢「整条都是空白」的那种。
+      if (ev.text.trim() !== '') texts.push(ev.text)
     } else if (ev.kind === 'tool_call') {
       toolCalls.push(ev.server ? `${ev.server}/${ev.tool}` : ev.tool)
       if (isReplyToolCall(ev)) replyToolCalled = true

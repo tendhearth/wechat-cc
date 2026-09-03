@@ -162,3 +162,41 @@ describe('makeAgyStreamParser', () => {
     ])
   })
 })
+
+// 2026-09-03:真机日志里看到 `chunks=3 preview=""` —— 第一个 chunk 是空串。
+// 根因:一个没有 text_delta 的 agent_response step(纯状态变化)也会建出
+// pending,flush 时照样吐一个 `{kind:'text', text:''}`。
+//
+// 后果不只是 preview 难看:solo 路径 `for (const t of assistantTexts)` 会为
+// 每个空 chunk 发一次消息(最底层的 `if (!text)` 兜住了,但那是一次注定失败
+// 的发送),`chunks=` 的计数也是虚的。
+describe('空文本不该被当成一条消息', () => {
+  it('agent_response step 没有 text_delta → 不产 text 事件', () => {
+    const p = makeAgyStreamParser()
+    const out = [
+      ...p.feed(JSON.stringify({ event: 'step_update', step_update: { step_index: 1, state: 'ACTIVE', step_type: 'agent_response' } })),
+      ...p.feed(JSON.stringify({ event: 'step_update', step_update: { step_index: 1, state: 'DONE', step_type: 'agent_response' } })),
+      ...p.flush(),
+    ]
+    expect(out.filter(e => e.kind === 'text')).toEqual([])
+  })
+
+  it('有内容的照常聚合成一条', () => {
+    const p = makeAgyStreamParser()
+    const out = [
+      ...p.feed(JSON.stringify({ event: 'step_update', step_update: { step_index: 1, state: 'ACTIVE', step_type: 'agent_response', text_delta: '你' } })),
+      ...p.feed(JSON.stringify({ event: 'step_update', step_update: { step_index: 1, state: 'DONE', step_type: 'agent_response', text_delta: '好' } })),
+      ...p.flush(),
+    ]
+    expect(out.filter(e => e.kind === 'text')).toEqual([{ kind: 'text', text: '你好' }])
+  })
+
+  it('纯空白也算空(发出去只会是一条空消息)', () => {
+    const p = makeAgyStreamParser()
+    const out = [
+      ...p.feed(JSON.stringify({ event: 'step_update', step_update: { step_index: 1, state: 'DONE', step_type: 'agent_response', text_delta: '   \n' } })),
+      ...p.flush(),
+    ]
+    expect(out.filter(e => e.kind === 'text')).toEqual([])
+  })
+})
