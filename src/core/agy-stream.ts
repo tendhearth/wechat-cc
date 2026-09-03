@@ -43,9 +43,14 @@ export function makeAgyStreamParser(): AgyStreamParser {
 
   function flushPending(): AgyStreamEvent[] {
     if (pending === null) return []
-    const ev: AgyStreamEvent = { kind: 'text', text: pending.text }
+    const text = pending.text
     pending = null
-    return [ev]
+    // **空的聚合不是一条消息。** 一个没有 text_delta 的 agent_response step
+    // (纯状态变化)照样会建出 pending,此前 flush 时会吐 `{text:''}`:
+    // 真机日志里就是 `chunks=3 preview=""`。后果不只是难看 —— solo 路径会
+    // 为每个空 chunk 发一次注定失败的消息,chunks 计数也是虚的。
+    if (text.trim() === '') return []
+    return [{ kind: 'text', text }]
   }
 
   function handleStepUpdate(su: Record<string, unknown>): AgyStreamEvent[] {
