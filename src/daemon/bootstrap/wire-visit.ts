@@ -185,29 +185,43 @@ export function makeVisit(deps: VisitDeps): Visit {
 
     async startVisit(target) {
       const open = deps.channelStore.list().filter(c => c.status === 'open')
-      // 邻居:指定去、或者没有真信道可去
-      if (target === 'neighbor' || target === '邻居' || (!target && open.length === 0)) {
+      // 自动出门(没指定目标)只去**以前串门成功过**的真信道:对端曾回过串门信,
+      // 说明它认得这个协议。旧版对端认不出头部,会把开场白当成主人来信原样
+      // 推给它主人(「📬 某人给你写信了:⟪visit id=…⟫」)—— 这没法用握手绕开,
+      // 因为握手本身就是那封信。所以第一次真串门由主人手动指定信道发。
+      const proven = open.filter(c => deps.letterStore.listForChannel(c.id)
+        .some(l => l.direction === 'in' && l.plaintext && parseVisitLetter(l.plaintext)))
+      if (target === 'neighbor' || target === '邻居' || (!target && proven.length === 0)) {
         const mem = readNeighborMemory(deps.stateDir)
         return visitNeighbor(pickNeighbor(Math.floor(Date.now() / DAY_MS), mem.lastId))
+      }
+      if (!target) {
+        // 轮着去认识的朋友家:按天挑
+        const ch = proven[Math.floor(Date.now() / DAY_MS) % proven.length]!
+        return startRealVisit(ch.id)
       }
       if (target && neighborById(target)) return visitNeighbor(neighborById(target)!)
       if (target && NEIGHBORS.some(n => n.name === target)) return visitNeighbor(NEIGHBORS.find(n => n.name === target)!)
 
-      const ch = target ? open.find(c => c.id === target || c.id.startsWith(target)) : open[0]
+      const ch = open.find(c => c.id === target || c.id.startsWith(target))
       if (!ch) return { ok: false, reason: 'unknown_channel' }
-      const id = randomUUID()
-      const header = { id, round: 1, max: VISIT_MAX_ROUNDS }
-      let speech: string
-      try {
-        speech = cleanSpeech(await deps.evalText(buildVisitReplyPrompt({
-          ...persona(), transcript: [], round: 1, max: VISIT_MAX_ROUNDS, opening: true,
-        })))
-      } catch (err) { return { ok: false, reason: `eval_failed: ${err instanceof Error ? err.message : String(err)}` } }
-      if (!speech) return { ok: false, reason: 'empty_opening' }
-      const r = await deps.sendLetter(ch.id, formatVisitLetter(header, speech))
-      if (!r.ok) return { ok: false, reason: r.error ?? 'send_failed' }
-      deps.log('VISIT', `visit=${id} 出门了 → ${ch.id}`)
-      return { ok: true, id, channel: ch.id }
+      return startRealVisit(ch.id)
     },
+  }
+
+  async function startRealVisit(channelId: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }> {
+    const id = randomUUID()
+    const header = { id, round: 1, max: VISIT_MAX_ROUNDS }
+    let speech: string
+    try {
+      speech = cleanSpeech(await deps.evalText(buildVisitReplyPrompt({
+        ...persona(), transcript: [], round: 1, max: VISIT_MAX_ROUNDS, opening: true,
+      })))
+    } catch (err) { return { ok: false, reason: `eval_failed: ${err instanceof Error ? err.message : String(err)}` } }
+    if (!speech) return { ok: false, reason: 'empty_opening' }
+    const r = await deps.sendLetter(channelId, formatVisitLetter(header, speech))
+    if (!r.ok) return { ok: false, reason: r.error ?? 'send_failed' }
+    deps.log('VISIT', `visit=${id} 出门了 → ${channelId}`)
+    return { ok: true, id, channel: channelId }
   }
 }

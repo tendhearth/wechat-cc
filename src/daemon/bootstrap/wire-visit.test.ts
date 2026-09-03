@@ -54,7 +54,8 @@ describe('串门:两只伙伴对着聊', () => {
     const B = side('阿二', fakeEval('阿二'))
     A.setPeer(B); B.setPeer(A)
 
-    const r = await A.visit.startVisit()
+    // 第一次真串门由主人手动指定信道(对端还没证明认得协议)
+    const r = await A.visit.startVisit('ch')
     expect(r.ok).toBe(true)
     await flush()
 
@@ -86,7 +87,7 @@ describe('串门:两只伙伴对着聊', () => {
     const A = side('阿一', async () => '   ')
     const B = side('阿二', async () => '嗨')
     A.setPeer(B); B.setPeer(A)
-    expect(await A.visit.startVisit()).toEqual({ ok: false, reason: 'empty_opening' })
+    expect(await A.visit.startVisit('ch')).toEqual({ ok: false, reason: 'empty_opening' })
     expect(A.letters).toEqual([])
     expect(A.owner).toEqual([])
   })
@@ -94,7 +95,7 @@ describe('串门:两只伙伴对着聊', () => {
   it('eval 抛异常 → startVisit 返回 ok:false 带原因,不向上抛', async () => {
     const A = side('阿一', async () => { throw new Error('provider down') })
     const B = side('阿二', async () => 'x'); A.setPeer(B); B.setPeer(A)
-    const r = await A.visit.startVisit()
+    const r = await A.visit.startVisit('ch')
     expect(r.ok).toBe(false)
     expect((r as { reason: string }).reason).toContain('provider down')
   })
@@ -186,14 +187,33 @@ describe('去邻居家串门 —— 没有真对端时也有地方可去', () =>
     expect(((await visit.startVisit('ayou')) as { channel: string }).channel).toBe('neighbor:ayou')
   })
 
-  it('有开着的真信道时默认去真的,不去邻居家', async () => {
-    const e = evalCounting()
-    const sent: string[] = []
+  const openCh = { get: () => ({ id: 'ch', status: 'open', degree: 1 }), list: () => [{ id: 'ch', status: 'open', degree: 1 }] } as never
+
+  it('**真信道上对端从没回过串门信 → 自动出门不去那儿,去邻居家**(旧版对端会把开场白当主人来信推出去)', async () => {
+    const e = evalCounting(); const sent: string[] = []
+    const { visit } = lonely(e.fn, { channelStore: openCh, sendLetter: async (_c, t) => { sent.push(t); return { ok: true } } })
+    const r = await visit.startVisit()
+    expect((r as { channel: string }).channel).toMatch(/^neighbor:/)
+    expect(sent).toEqual([])
+  })
+
+  it('对端曾回过串门信 → 自动出门去真的', async () => {
+    const e = evalCounting(); const sent: string[] = []
+    const inbound = { direction: 'in', plaintext: '⟪visit id=old round=2 max=6⟫\n嗨', read_at: null, id: 'l' }
     const { visit } = lonely(e.fn, {
-      channelStore: { get: () => ({ id: 'ch', status: 'open', degree: 1 }), list: () => [{ id: 'ch', status: 'open', degree: 1 }] } as never,
+      channelStore: openCh,
+      letterStore: { listForChannel: () => [inbound], markRead: () => {} } as never,
       sendLetter: async (_c, t) => { sent.push(t); return { ok: true } },
     })
     const r = await visit.startVisit()
+    expect((r as { channel: string }).channel).toBe('ch')
+    expect(sent).toHaveLength(1)
+  })
+
+  it('主人手动指定真信道 → 照发(第一次真串门就是这么开始的)', async () => {
+    const e = evalCounting(); const sent: string[] = []
+    const { visit } = lonely(e.fn, { channelStore: openCh, sendLetter: async (_c, t) => { sent.push(t); return { ok: true } } })
+    const r = await visit.startVisit('ch')
     expect((r as { channel: string }).channel).toBe('ch')
     expect(sent).toHaveLength(1)
   })
