@@ -11,13 +11,15 @@
 
 export type CareLevel = 'off' | 'low' | 'high'
 
-export type CareKind = 'agenda' | 'gap' | 'hunt'
+export type CareKind = 'agenda' | 'gap' | 'hunt' | 'visit'
 
 export interface CareLedgerEntry {
   /** ISO timestamp of the last proactive send claimed for this chat. */
   lastProactiveAtIso?: string
   /** ISO timestamp of the last hunt claimed for this chat. */
   lastHuntAtIso?: string
+  /** 上次串门(visit)的时间。2026-09-03,见 core/visit.ts。 */
+  lastVisitAtIso?: string
   /** Consecutive proactive sends with no user reply since. */
   noReplyCount: number
 }
@@ -30,6 +32,9 @@ const AGENDA_COOLDOWN_MS = 20 * HOUR
 
 /** Max ~1 hunt per chat per day. */
 const HUNT_COOLDOWN_MS = 20 * HOUR
+
+/** 串门也一天最多一次。伙伴的社交是日常,不是刷屏。 */
+const VISIT_COOLDOWN_MS = 20 * HOUR
 
 /** Gap check-in requires this many quiet days, by care level. */
 const GAP_DAYS: Record<'low' | 'high', number> = { low: 7, high: 2 }
@@ -96,6 +101,16 @@ export function shouldSpeak(args: {
       const sinceProactiveMs = nowMs - lastProactiveMs
       if (sinceProactiveMs < AGENDA_COOLDOWN_MS) return { ok: false, reason: 'agenda_cooldown' }
     }
+    return { ok: true }
+  }
+
+  if (kind === 'visit') {
+    // 串门和打猎同一套姿态:不看 lastInbound;主人两次不回就暂停(别在人
+    // 不想理你的时候还讲今天串门的事)。
+    if (ledger.noReplyCount >= PAUSE_AFTER_NO_REPLIES) return { ok: false, reason: 'paused_no_reply' }
+    const lastVisitMs = ledger.lastVisitAtIso !== undefined ? Date.parse(ledger.lastVisitAtIso) : undefined
+    if (lastVisitMs !== undefined && Number.isNaN(lastVisitMs)) return { ok: false, reason: 'invalid_timestamp' }
+    if (lastVisitMs !== undefined && nowMs - lastVisitMs < VISIT_COOLDOWN_MS) return { ok: false, reason: 'visit_cooldown' }
     return { ok: true }
   }
 

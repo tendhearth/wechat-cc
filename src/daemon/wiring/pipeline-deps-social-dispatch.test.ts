@@ -100,7 +100,7 @@ describe('pipeline-deps social dispatch seam (揭晓 reveal)', () => {
 
     const ilink = {} as unknown as IlinkAdapter
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
-    const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), resetNoReply: vi.fn() }
+    const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), resetNoReply: vi.fn() }
     const replySinks = makeReplySinks()
     const { pipelineDeps } = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
@@ -217,7 +217,7 @@ describe('pipeline-deps social dispatch seam (回信 letter reply)', () => {
 
     const ilink = {} as unknown as IlinkAdapter
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
-    const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), resetNoReply: vi.fn() }
+    const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), resetNoReply: vi.fn() }
     const replySinks = makeReplySinks()
     const { pipelineDeps } = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
@@ -334,7 +334,7 @@ describe('pipeline-deps social dispatch seam (派/取消 confirm/cancel wish)', 
 
     const ilink = {} as unknown as IlinkAdapter
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
-    const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), resetNoReply: vi.fn() }
+    const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), resetNoReply: vi.fn() }
     const replySinks = makeReplySinks()
     const { pipelineDeps } = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },

@@ -79,7 +79,7 @@ export interface TickDeps {
    * chat. Typed as a structural subset of ChatPrefsStore so tests can fake
    * it without a full store.
    */
-  chatPrefs: { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean }; list(): string[] }
+  chatPrefs: { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean }; list(): string[] }
   /**
    * 打猎战利品(2026-09-03)。`outboundTaps` 旁听打猎那一拍发出去的文本,
    * `huntStore` 把它拆成条目落库。两者都可选:没接就是旧行为(发了不记)。
@@ -509,6 +509,32 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         return
       }
       deps.log('CARE', `skip chat=${chatId} kind=hunt reason=${huntDecision.reason}`)
+
+      // 串门(2026-09-03,core/visit.ts):伙伴自己的社交,一天一次。排在打猎
+      // 之后 —— 打猎这一拍发了就 return,串门只会在同一天稍后的某一拍出门,
+      // 于是两件事自然错开,主人不会一分钟内收到两条。
+      //
+      // 不走 dispatchToChat:串门不是一次 agent turn(不带工具、不进会话),它
+      // 有自己的 eval 链;这里只做「今天该不该出门」的判定 + 登记。
+      const visit = deps.boot.social?.penpal
+      if (visit) {
+        const visitLevel = deps.chatPrefs.get(chatId).visit !== false ? 'low' as const : 'off' as const
+        const visitDecision = shouldSpeak({ kind: 'visit', level: visitLevel, nowIso, ledger, lastInboundAtIso })
+        if (visitDecision.ok) {
+          const hasOpen = visit.channelStore.list().some(c => c.status === 'open')
+          if (hasOpen) {
+            // 先登记再出门(at-most-once,同打猎):出门一半 daemon 重启,不该
+            // 下一拍再出一次门 —— 两趟串门比一趟没出门的观感差得多。
+            deps.careLedger.claimVisit(chatId, nowIso)
+            const r = await visit.startVisit()
+            deps.log('VISIT', r.ok ? `tick: 出门了 visit=${r.id}` : `tick: 没出得了门 reason=${r.reason}`)
+            return
+          }
+          // 没有开着的信道 → 不登记(不烧掉今天的名额),也不每拍刷日志。
+        } else {
+          deps.log('CARE', `skip chat=${chatId} kind=visit reason=${visitDecision.reason}`)
+        }
+      }
     }
 
     // No due item → gap branch: has it been quiet long enough (by care

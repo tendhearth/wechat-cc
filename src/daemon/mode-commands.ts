@@ -53,8 +53,8 @@ export interface ModeCommandsDeps {
   pinModel(providerId: ProviderId, model: string): void | Promise<void>
   /** Per-chat prefs (chat-prefs store). /set reads+writes THIS chat's entry. */
   chatPrefs: {
-    get(chatId: string): { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean }
-    set(chatId: string, patch: { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean }): { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean }
+    get(chatId: string): { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean; visit?: boolean }
+    set(chatId: string, patch: { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean; visit?: boolean }): { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean; visit?: boolean }
   }
   log: (tag: string, line: string) => void
   /** Returns true when userId belongs to an admin. Used by /help to gate the admin section. */
@@ -379,13 +379,14 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
 
       // /set — per-chat preferences (the settings layer's dials: split, care).
       if (slashWord.toLowerCase() === 'set') {
-        const SET_USAGE = '❓ 不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)\n· /set hunt on|off (别名: 打猎 开|关)'
+        const SET_USAGE = '❓ 不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)\n· /set hunt on|off (别名: 打猎 开|关)\n· /set visit on|off (别名: 串门 开|关)'
         const p = deps.chatPrefs.get(msg.chatId)
         if (tail === '') {
           const splitState = p.split === false ? 'off' : 'on'
           const careState = p.care ?? '未设置'
           const stickersState = p.stickers === undefined ? '未设置' : (p.stickers ? 'on' : 'off')
           const huntState = p.hunt === undefined ? '未设置' : (p.hunt ? 'on' : 'off')
+          const visitState = p.visit === undefined ? '未设置' : (p.visit ? 'on' : 'off')
           // Concise overview (owner feedback 2026-08-25: 回复应该更简洁,具体
           // 修改到页面里) — values only; the panel link is where changes
           // happen. The verbose per-key usage only appears when NO panel
@@ -397,12 +398,12 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
               if (url) panelLine = `\n\n📱 点开修改(10 分钟内有效):\n${url}`
             } catch { /* fall through to usage lines */ }
           }
-          const values = `本对话设置:\n· 拆分回复: ${splitState}\n· 主动关心: ${careState}\n· 表情包: ${stickersState}\n· 每日打猎: ${huntState}`
-          const usage = panelLine ? '' : `\n\n改法: /set split|care|stickers|hunt <值>(别名: 拆分/关心/表情/打猎 开|关)`
+          const values = `本对话设置:\n· 拆分回复: ${splitState}\n· 主动关心: ${careState}\n· 表情包: ${stickersState}\n· 每日打猎: ${huntState}\n· 每日串门: ${visitState}`
+          const usage = panelLine ? '' : `\n\n改法: /set split|care|stickers|hunt|visit <值>(别名: 拆分/关心/表情/打猎/串门 开|关)`
           await reply(msg.chatId, values + panelLine + usage)
           return true
         }
-        const m2 = /^(split|拆分|care|关心|stickers|表情|hunt|打猎)\s+(\S+)$/i.exec(tail)
+        const m2 = /^(split|拆分|care|关心|stickers|表情|hunt|打猎|visit|串门)\s+(\S+)$/i.exec(tail)
         if (!m2) {
           await reply(msg.chatId, SET_USAGE)
           return true
@@ -449,6 +450,18 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
             ? '✅ 每日打猎已开启。'
             : '✅ 每日打猎已关闭。')
           deps.log('MODE_CMD', `chat=${msg.chatId} /set hunt=${on}`)
+          return true
+        }
+
+        if (key === 'visit' || key === '串门') {
+          if (!/^(on|off|开|关)$/i.test(rawValue)) {
+            await reply(msg.chatId, SET_USAGE)
+            return true
+          }
+          const on = /^(on|开)$/i.test(rawValue)
+          deps.chatPrefs.set(msg.chatId, { visit: on })
+          await reply(msg.chatId, on ? '✅ 每日串门已开启。' : '✅ 每日串门已关闭。')
+          deps.log('MODE_CMD', `chat=${msg.chatId} /set visit=${on}`)
           return true
         }
 

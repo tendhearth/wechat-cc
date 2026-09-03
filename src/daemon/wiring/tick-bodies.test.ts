@@ -14,8 +14,8 @@ import { makeChatMutex, type ChatMutex } from '../../core/async-mutex'
 
 /** Minimal in-memory fake of the structural chatPrefs subset TickDeps needs. */
 function makeFakeChatPrefs(
-  entries: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean }> = {},
-): { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean }; list(): string[] } {
+  entries: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean }> = {},
+): { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean }; list(): string[] } {
   return {
     get: (chatId) => entries[chatId] ?? {},
     list: () => Object.keys(entries),
@@ -35,6 +35,10 @@ function makeFakeCareLedger(entries: Record<string, CareLedgerEntry> = {}): Care
     claimHunt: (chatId, nowIso) => {
       const cur = entries[chatId] ?? { noReplyCount: 0 }
       entries[chatId] = { ...cur, lastHuntAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
+    },
+    claimVisit: (chatId, nowIso) => {
+      const cur = entries[chatId] ?? { noReplyCount: 0 }
+      entries[chatId] = { ...cur, lastVisitAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
     },
     resetNoReply: (chatId) => {
       const cur = entries[chatId]
@@ -104,7 +108,7 @@ interface Setup {
   logs: string[]
   deps: TickDeps
   db: Db
-  chatPrefsEntries: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean }>
+  chatPrefsEntries: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean }>
   careLedgerEntries: Record<string, CareLedgerEntry>
   /** Task 3 (session-serialization) — the fake coordinator's `runExclusive`
    * spy, backed by a REAL per-chatId async mutex (the same implementation
@@ -136,7 +140,7 @@ function setupDeps(opts: {
   db?: Db
   /** Task 6 — chat-prefs entries. Keys double as chatPrefs.list() — i.e.
    * every chat that has ever set a preference (not just non-default ones). */
-  chatPrefsEntries?: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean }>
+  chatPrefsEntries?: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean }>
   /** Task 6 — care-ledger entries, keyed by chatId. */
   careLedgerEntries?: Record<string, CareLedgerEntry>
 }): Setup {
@@ -732,6 +736,93 @@ describe('buildTickBodies / pushTick — daily hunt branch (Task 3)', () => {
     cleanup.push(s.stateDir)
     await expect(buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })).resolves.toBeUndefined()
     expect(s.dispatch).toHaveBeenCalledOnce()
+  })
+
+  // ── 串门 tick(2026-09-03)──────────────────────────────────────────
+  const withVisit = (s: Setup, opts: { hasOpen: boolean; result?: { ok: true; id: string; channel: string } | { ok: false; reason: string } }) => {
+    const startVisit = vi.fn(async () => opts.result ?? { ok: true as const, id: 'v1', channel: 'ch' })
+    ;(s.deps.boot as unknown as { social: unknown }).social = {
+      penpal: { startVisit, channelStore: { list: () => (opts.hasOpen ? [{ id: 'ch', status: 'open' }] : []) } },
+    }
+    return startVisit
+  }
+
+  it('打猎刚出过门(冷却中)、有开着的信道 ⇒ 这一拍去串门,并登记 lastVisitAtIso', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1', inFlight: false,
+      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
+    })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(startVisit).toHaveBeenCalledOnce()
+    expect(s.careLedgerEntries['chat-1']?.lastVisitAtIso).toBe('2026-05-13T10:00:00.000Z')
+    expect(s.dispatch).not.toHaveBeenCalled() // 串门不是 agent turn
+  })
+
+  it('**打猎和串门不在同一拍**:打猎能出门时先打猎并 return,串门等下一拍', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).toHaveBeenCalledOnce()       // 打猎
+    expect(startVisit).not.toHaveBeenCalled()        // 串门没出
+  })
+
+  it('串门冷却中 ⇒ 不出门,记 visit_cooldown', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1', inFlight: false,
+      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', lastVisitAtIso: '2026-05-13T09:30:00.000Z', noReplyCount: 0 } },
+    })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(startVisit).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.includes('kind=visit') && l.includes('visit_cooldown'))).toBe(true)
+  })
+
+  it('**没有开着的信道 ⇒ 不出门也不登记**(不烧今天的名额)', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1', inFlight: false,
+      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
+    })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: false })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(startVisit).not.toHaveBeenCalled()
+    expect(s.careLedgerEntries['chat-1']?.lastVisitAtIso).toBeUndefined()
+  })
+
+  it('/set visit off ⇒ 不出门', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1', inFlight: false,
+      chatPrefsEntries: { 'chat-1': { visit: false } },
+      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
+    })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(startVisit).not.toHaveBeenCalled()
+  })
+
+  it('主人两次不回 ⇒ 串门也暂停(别在人不想理你时讲今天的事)', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1', inFlight: false,
+      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 2 } },
+    })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(startVisit).not.toHaveBeenCalled()
+  })
+
+  it('社交未接线(boot.social 缺失)⇒ 旧行为,什么都不发生', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1', inFlight: false,
+      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
+    })
+    cleanup.push(s.stateDir)
+    await expect(buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })).resolves.toBeUndefined()
   })
 
   it('(b) lastHuntAtIso 1h ago ⇒ hunt skipped (hunt_cooldown), falls through to gap evaluation', async () => {
