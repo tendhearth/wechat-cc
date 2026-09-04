@@ -18,7 +18,9 @@ import type { A2AServerOpts } from '../../core/a2a-server'
 export interface MailboxPollerDeps {
   stateDir: string
   a2aRegistry: A2ARegistry
-  onReveal: A2AServerOpts['onReveal']
+  /** 揭晓的入站腿。心愿改写(2026-09-04)之后 bootstrap 不再接它 —— handler
+   *  本体在 Task 8 删掉,这里先放成可选。 */
+  onReveal?: A2AServerOpts['onReveal']
   /** I1 — MUST be the own-channel-only handler (`SocialWiring.onMailboxLetter`),
    *  NEVER the HTTP `socialOnLetter` (which falls through to
    *  letterRelay.routeLetter for non-own channels). */

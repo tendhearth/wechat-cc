@@ -25,7 +25,9 @@ export interface EnvelopeDispatch { dispatch(inner: EnvelopeInner): Promise<void
 
 export function makeEnvelopeDispatch(deps: {
   registry: A2ARegistry
-  onReveal: A2AServerOpts['onReveal']
+  /** 揭晓的入站腿。心愿改写(2026-09-04)之后 bootstrap 不再接它 —— handler
+   *  本体在 Task 8 删掉,这里先放成可选,好让接线先走。 */
+  onReveal?: A2AServerOpts['onReveal']
   /** MUST be an own-channel-only handler (getByMyChannelId → receiveLetter,
    *  else DROP). NEVER pass the HTTP socialOnLetter here — see file header. */
   onLetter: A2AServerOpts['onLetter']

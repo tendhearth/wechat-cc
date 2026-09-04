@@ -2796,31 +2796,6 @@ describe('internal-api', () => {
         stateDir, daemonPid: 1,
         ...(opts ? {
           social: {
-            // command-router.ts (WeChat 派/取消/揭晓 chat commands) still
-            // reads these — unrelated to these HTTP-route tests, but
-            // InternalApiDeps.social keeps them required. Unused stubs.
-            broker: {
-              propose: async () => ({ ok: true as const, intent_id: 'x', redacted: 'x' }),
-              confirmSeek: () => ({ ok: true as const, intent_id: 'x' }),
-              cancelSeek: () => ({ ok: true as const }),
-            },
-            seekStore: { create: () => {}, propose: () => {}, update: () => {}, list: () => [], get: () => null },
-            echoStore: {
-              create: () => {}, setStatus: () => {}, setSelfRevealed: () => {}, setPeerRevealed: () => {}, setRevealedIdentity: () => {}, listForSeek: () => [],
-              listAll: () => [], get: () => null, setSelfDelivered: () => {}, listUndelivered: () => [],
-            },
-            pledgeStore: {
-              create: () => {}, get: () => null, list: () => [],
-              setSelfRevealed: () => {}, setPeerRevealed: () => {},
-              setSelfDelivered: () => {}, listUndelivered: () => [],
-              setPendingEcho: () => {}, setEchoDelivered: () => {}, listUndeliveredEchoes: () => [],
-            },
-            revealer: {
-              revealEcho: async () => ({ state: 'awaiting_peer' as const }),
-              revealPledge: async () => ({ state: 'awaiting_peer' as const }),
-              onInboundReveal: () => ({ mutual: false }),
-              retryUndelivered: async () => 0,
-            },
             wish: {
               propose: opts.propose ?? (async (t: string) => ({ ok: true as const, id: 'new-id', preview: t })),
               send: opts.send ?? (async () => ({ ok: true as const, sentTo: 0 })),

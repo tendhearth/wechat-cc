@@ -13,7 +13,7 @@
  * sessions (sessionStore + registerProviders) →
  * sendAssistantText / recordTurn / coordinator → dispatchDelegate → A2A
  * infra (registry/client/eventsStore + resolveOperatorChatId) → wireSocial
- * → wireA2aServer → resumeForaging() → 乙 v2 (yiHub/yiClient) → return.
+ * → wireA2aServer → 乙 v2 (yiHub/yiClient) → return.
  *
  * Helpers extracted for readability:
  *   - ./types.ts       — BootstrapDeps / Bootstrap interfaces
@@ -21,7 +21,7 @@
  *   - ./session-paths.ts — per-provider jsonl path resolvers (canResume probes)
  *   - ./delegate.ts    — bare delegate providers + dispatchDelegate
  *   - ./providers.ts   — provider registrations (claude/codex/cursor/openai/gemini)
- *   - ./wire-social.ts — agent-social wiring (seeks/echoes) + boot-resume
+ *   - ./wire-social.ts — 社交接线(笔友信道 / 串门 / 心愿)
  *   - ./wire-a2a-server.ts — A2A HTTP server + routeA2ANotify + a2a-info.json
  *   - ./wire-health.ts — connection-health runtime (onFailure/onSuccess)
  *
@@ -1053,8 +1053,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // 降级兜底:social 抛错时的 inert wiring — 与 wireSocial 未配置时的内部
   // 状态同形(全 handler undefined),下游 a2a/mailbox/return 的门原样生效。
   const inertSocialWiring: import('./wire-social').SocialWiring = {
-    onIntent: undefined, onEcho: undefined, onReveal: undefined, onLetter: undefined,
-    resumeForaging: () => {},
+    onLetter: undefined,
   }
   const socialWiring = (await sup.start('social', async () => {
     const w = await wireSocial({
@@ -1073,12 +1072,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       sendAssistantText,
       a2aRegistry,
       a2aClient,
-      eventsStore: a2aEventsStore,
       knowledge,
-      // busy-registry hold (spec 2026-08-11 §2, Task 4 step 4 + Task 6) —
-      // broker.forage() + the async responder run as fire-and-forget
-      // coroutines outside SessionManager.
-      holdBusy: busyRegistry.hold,
     })
     // 未配置 / 无 cheapEval ⇒ wireSocial 返回 inert 对象(social 字段缺席)
     // ⇒ 映射为 null ⇒ supervisor 记 off。
@@ -1095,9 +1089,6 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     dispatchDelegate,
     resolveOperatorChatId,
     sendAssistantText,
-    onIntent: socialWiring.onIntent,
-    onEcho: socialWiring.onEcho,
-    onReveal: socialWiring.onReveal,
     onLetter: socialWiring.onLetter,
   }))
   const a2aDeps = a2aWiring?.a2aDeps
@@ -1122,42 +1113,20 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     log: deps.log,
   }))
 
-  // Restart-resume: a seek still in `foraging` means its background leg never
-  // finished (a completed leg moves the row to echoed/closed). Re-forage them.
-  // Idempotent via the echo PK (intent_id:peer_agent_id): a duplicate send does
-  // not double-insert. Fire-and-forget; one bad row never blocks boot.
-  // (Runs after wireA2aServer's a2a-info.json write — a behavior-neutral
-  // cross-block reorder: both are independent fire-and-forget side effects.)
-  socialWiring.resumeForaging()
-
   // Content-blind mailbox transport (sub-project B, Task 8) — the poller's
   // deps, constructed only when social wiring is live AND at least one relay
   // is configured. main.ts mounts `registerMailboxPoller(mailboxPollerDeps)`
   // on the companion scheduler iff this is present; otherwise the feature
   // stays fully inert (no poll timer, no relay traffic). I1: `onMailboxLetter`
-  // is `socialWiring.onMailboxLetter` (own-channel-only) — NEVER
-  // `socialWiring.onLetter` (which falls through to letterRelay.routeLetter).
+  // is `socialWiring.onMailboxLetter` (own-channel-only) — the only inbound
+  // arm a bearer-less mailbox drop may reach.
   const mailboxRelays = configuredAgent.mailbox_relays ?? []
   const mailboxPollerDeps = (configuredAgent.social_enabled && mailboxRelays.length > 0 && socialWiring.onMailboxLetter)
     ? {
         stateDir: deps.stateDir,
         a2aRegistry,
-        onReveal: socialWiring.onReveal,
         onMailboxLetter: socialWiring.onMailboxLetter,
-        // v2 (Task 8): the mailbox transport is now a first-class dispatch arm
-        // for intent/echo too (see wire-social.ts's postToHand + broker.discover
-        // opening to mailbox peers) — a mailbox-dropped /a2a/intent or /a2a/echo
-        // envelope must reach the SAME onIntent/onEcho the HTTP routes use, or
-        // a mailbox-only peer's seek/echo traffic silently vanishes at the
-        // poller. Same undefined-gate posture as onReveal/onMailboxLetter above.
-        onIntent: socialWiring.onIntent,
-        onEcho: socialWiring.onEcho,
         relays: mailboxRelays,
-        // 补投:每一拍取件之后,把「我做了、但从没送到对端」的行重投一遍
-        // (揭晓 + 明信片)。2026-09-01 真机上就是这里断的 —— 投递失败之后
-        // 没有任何人会再试一次,而 owner 看到的是「已连接」/「回过了」。
-        // 见 social-reveal.ts / social-echo-retry.ts。
-        sweepUndelivered: socialWiring.sweepUndelivered,
         // Re-checked at every tick (mtime-cached read) so a `/set` toggle of
         // social_enabled takes effect without a daemon restart, same posture
         // as the companion schedulers' shouldRun gates.

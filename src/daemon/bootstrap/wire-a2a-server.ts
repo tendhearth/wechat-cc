@@ -21,9 +21,11 @@ export interface A2aServerDeps {
   dispatchDelegate: DelegateDispatch
   resolveOperatorChatId: () => string | null
   sendAssistantText: SendAssistantText | undefined
-  onIntent: A2AServerOpts['onIntent']
-  onEcho: A2AServerOpts['onEcho']
-  onReveal: A2AServerOpts['onReveal']
+  /** 心愿 / 回声 / 揭晓的入站腿。心愿改写(2026-09-04)之后 bootstrap 不再接
+   *  它们 —— handler 本体在 Task 8 删掉,这里先放成可选。 */
+  onIntent?: A2AServerOpts['onIntent']
+  onEcho?: A2AServerOpts['onEcho']
+  onReveal?: A2AServerOpts['onReveal']
   onLetter: A2AServerOpts['onLetter']
 }
 

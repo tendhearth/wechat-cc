@@ -218,25 +218,13 @@ export interface InternalApiDeps {
     baseUrl: string | null
   }
   /**
-   * Agent-social M1 (T7b-core) — undefined when `social_enabled` +
-   * `social_disclosure_policy` aren't both configured (or bootstrap hasn't
-   * late-bound it yet). POST /v1/social/seek/{propose,confirm,cancel} return
-   * 503 until this is set. Late-bound by main.ts from `bootstrap.social`
-   * (mirrors the `a2a` dep above / `setA2A`).
-   *
-   * P4 派心愿: `propose`/`confirmSeek`/`cancelSeek` back the propose→confirm
-   * routes.
+   * 社交 — undefined when `social_enabled` + `social_disclosure_policy`
+   * aren't both configured (or bootstrap hasn't late-bound it yet).
+   * /v1/social/wish* and /v1/penpal/* return 503 until this is set.
+   * Late-bound by main.ts from `bootstrap.social` (mirrors the `a2a` dep
+   * above / `setA2A`).
    */
   social?: {
-    broker: {
-      propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
-      confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
-      cancelSeek(id: string): import('../../core/social-broker').CancelOutcome
-    }
-    seekStore: import('../../core/social-seek-store').SeekStore
-    echoStore: import('../../core/social-echo-store').EchoStore
-    pledgeStore: import('../../core/social-pledge-store').PledgeStore
-    revealer: import('../../core/social-reveal').Revealer
     /** 笔友信箱(spec 2026-07-22-penpal-mailbox-desktop)— boot.social.penpal
      *  原样带入。可选:老 fixture/未接线时 undefined ⇒ /v1/penpal/* 503。 */
     penpal?: {

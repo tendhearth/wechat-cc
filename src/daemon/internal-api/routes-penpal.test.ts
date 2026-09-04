@@ -22,7 +22,6 @@ function makeDeps(over: Record<string, unknown> = {}) {
   const deps = {
     social: {
       penpal: { sendLetter, resendLetter, channelStore, letterStore },
-      seekStore: { get: vi.fn((id: string) => id === 's1' ? { id: 's1', topic: '找修相机师傅' } : null) },
     },
     a2a: { registry: { get: vi.fn((id: string) => id === 'buddy' ? { id: 'buddy', name: '老王的CC' } : null) } },
     ...over,
@@ -37,13 +36,13 @@ describe('GET /v1/penpal/channels', () => {
     expect(r.status).toBe(503)
     expect((r.body as any).error).toBe('penpal_not_wired')
   })
-  it('只列 open 信道;直连查 registry 名、中转标第N度;带 unread/title/last_preview', async () => {
+  it('只列 open 信道;直连查 registry 名、中转标第N度;带 unread/last_preview', async () => {
     const { deps } = makeDeps()
     const r = await penpalRoutes(deps)['GET /v1/penpal/channels']!(q(), undefined)
     expect(r.status).toBe(200)
     const chans = (r.body as any).channels
     expect(chans.map((c: any) => c.id)).toEqual(['ch1', 'ch2'])     // pending 不列
-    expect(chans[0]).toMatchObject({ title: '找修相机师傅', peer_label: '老王的CC', unread: 1, last_preview: '你好呀' })
+    expect(chans[0]).toMatchObject({ title: '', peer_label: '老王的CC', unread: 1, last_preview: '你好呀' })
     expect(chans[1]).toMatchObject({ title: '', peer_label: '第2度笔友', unread: 0 })
   })
 })

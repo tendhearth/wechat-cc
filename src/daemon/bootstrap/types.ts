@@ -13,7 +13,6 @@ import type { AppendInput } from '../../core/a2a-events-store'
 import type { YiHub } from '../../core/yi-hub'
 import type { DelegateDispatch } from './delegate'
 import type { SendAssistantText } from './fallback-reply'
-import type { Revealer } from '../../core/social-reveal'
 import type { HealthRuntime } from '../health'
 
 export interface BootstrapDeps {
@@ -299,30 +298,16 @@ export interface Bootstrap {
    */
   sendAssistantText?: SendAssistantText
   /**
-   * Agent-social M1 (T7b-core) — present only when `social_enabled` +
-   * `social_disclosure_policy` are both configured (and at least one
-   * registered provider offers a cheapEval). Undefined otherwise — the
-   * feature stays fully inert (no /a2a/intent, no /v1/social/seek/*).
+   * 社交(spec 2026-09-04-wish-postcard 之后的形状)— present only when
+   * `social_enabled` + `social_disclosure_policy` are both configured (and at
+   * least one registered provider offers a cheapEval). Undefined otherwise —
+   * the feature stays fully inert (no /a2a/letter handler, no /v1/social/*).
    *
-   * `broker.propose`/`confirmSeek`/`cancelSeek` (P4 派心愿) back
-   * POST /v1/social/seek/{propose,confirm,cancel} — late-bound into
-   * internal-api by main.ts (mirrors `a2aDeps`/`setA2A`).
-   *
-   * `revealer` drives the row-driven mutual reveal (both the outbound
-   * revealEcho/revealPledge legs the internal-api calls and the inbound
-   * onInboundReveal wired into the a2a-server's /a2a/reveal). `pledgeStore`
-   * is exposed so the answer-side reveal surface can list/read pledges.
+   * 两块,一块信道一块心愿:`penpal` 是笔友信道本身(写信 / 串门),`wish`
+   * 是派心愿 / 收明信片,late-bound 进 internal-api by main.ts(mirrors
+   * `a2aDeps`/`setA2A`)。
    */
   social?: {
-    broker: {
-      propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
-      confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
-      cancelSeek(id: string): import('../../core/social-broker').CancelOutcome
-    }
-    seekStore: import('../../core/social-seek-store').SeekStore
-    echoStore: import('../../core/social-echo-store').EchoStore
-    pledgeStore: import('../../core/social-pledge-store').PledgeStore
-    revealer: Revealer
     penpal: {
       sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>

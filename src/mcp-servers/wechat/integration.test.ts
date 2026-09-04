@@ -669,34 +669,6 @@ describe('wechat-mcp stdio integration', () => {
     api = createInternalApi({
       stateDir, daemonPid: 7777,
       social: {
-        // command-router.ts (WeChat 派/取消/揭晓 chat commands) still reads
-        // these — unrelated to this test, but InternalApiDeps.social keeps
-        // them required. Unused stubs, mirroring internal-api.test.ts's shape.
-        broker: {
-          propose: async () => ({ ok: true as const, intent_id: 'unused', redacted: '' }),
-          confirmSeek: () => ({ ok: true as const, intent_id: 'unused' }),
-          cancelSeek: () => ({ ok: true as const }),
-        },
-        seekStore: {
-          create: () => {}, propose: () => {}, update: () => {},
-          list: () => [], get: () => null,
-        },
-        echoStore: {
-          create: () => {}, setStatus: () => {}, setSelfRevealed: () => {}, setPeerRevealed: () => {}, setRevealedIdentity: () => {}, listForSeek: () => [],
-          listAll: () => [], get: () => null, setSelfDelivered: () => {}, listUndelivered: () => [],
-        },
-        pledgeStore: {
-          create: () => {}, get: () => null, list: () => [],
-          setSelfRevealed: () => {}, setPeerRevealed: () => {},
-          setSelfDelivered: () => {}, listUndelivered: () => [],
-          setPendingEcho: () => {}, setEchoDelivered: () => {}, listUndeliveredEchoes: () => [],
-        },
-        revealer: {
-          revealEcho: async () => ({ state: 'awaiting_peer' as const }),
-          revealPledge: async () => ({ state: 'awaiting_peer' as const }),
-          onInboundReveal: () => ({ mutual: false }),
-          retryUndelivered: async () => 0,
-        },
         wish: {
           propose: async (text: string) => {
             proposeCalls.push(text)

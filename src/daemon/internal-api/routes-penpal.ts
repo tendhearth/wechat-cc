@@ -19,13 +19,14 @@ export function penpalRoutes(deps: InternalApiDeps): RouteTable {
         .filter(c => c.status === 'open')
         .map(c => {
           const last = p.letterStore.listForChannel(c.id)[0] ?? null
-          const seek = deps.social?.seekStore.get(c.seek_id) ?? null
           const peerLabel = c.peer_agent_id
             ? (deps.a2a?.registry.get(c.peer_agent_id)?.name ?? c.peer_agent_id)
             : `第${c.degree}度笔友`
           return {
             id: c.id,
-            title: seek?.topic ?? '',
+            // 信道的标题曾经是那条心愿的 topic(seek 行)。心愿改写之后信道
+            // 从配对来,没有对应的话题行 —— 桌面端拿 peer_label 就够了。
+            title: '',
             peer_label: peerLabel,
             degree: c.degree,
             unread: unread.get(c.id) ?? 0,
