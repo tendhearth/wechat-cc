@@ -13,9 +13,6 @@ import { loadAgentConfig, saveAgentConfig } from '../lib/agent-config'
 import type { A2ARegistry } from '../core/a2a-registry'
 import type { A2AClient, SendResult, AgentCard } from '../core/a2a-client'
 import type { A2AEventsStore, EventRow, AppendInput } from '../core/a2a-events-store'
-import type { SeekRow } from '../core/social-seek-store'
-import type { EchoRow } from '../core/social-echo-store'
-import type { PledgeRow } from '../core/social-pledge-store'
 import { openKnowledge } from '../core/knowledge/store'
 import { semanticSearch } from '../core/knowledge/search'
 
@@ -2775,56 +2772,61 @@ describe('internal-api', () => {
     })
   })
 
-  // ─── GET /v1/social/seeks + GET /v1/social/echoes (觅食台 P2) ─────────
+  // ─── POST /v1/social/wish(/send|/cancel) + GET /v1/social/wishes
+  // (spec 2026-09-04-wish-postcard §4) — replaces the deleted P4-era
+  // seek/propose|confirm|cancel, seeks/echoes/pledges reads, and
+  // echoes/reveal|pledges/reveal routes. ─────────────────────────────────
 
-  describe('social read routes (GET /v1/social/seeks, GET /v1/social/echoes)', () => {
-    const seekRow: SeekRow = {
-      id: 'k1', kind: 'seek', topic: '找个会修老相机的',
-      status: 'foraging', redacted_topic: null, redacted_city: null,
-      hop: 1, peers_asked: 0, created_at: 't', updated_at: 't',
-    }
-    const echoRow: EchoRow = {
-      id: 'e1', seek_id: 'k1', peer_masked: 'p***', degree: 1,
-      content: 'hi there', status: 'pending', created_at: 't',
-      peer_agent_id: 'ccb', self_revealed_at: null, peer_revealed_at: null,
-      relay_via: null, relay_token: null, self_reveal_delivered_at: null,
+  describe('wish routes (POST /v1/social/wish(/send|/cancel), GET /v1/social/wishes)', () => {
+    const wishRow = {
+      id: 'abcd1234', text: '原文', redacted: '找个会修老相机的',
+      status: 'open' as const, effective: 'open' as const,
+      createdAt: 't', sentAt: 't', expiresAt: 'e', sentTo: 2, replies: 1,
     }
 
     async function startWithSocial(
       opts: {
-        seeks?: SeekRow[]; echoes?: EchoRow[]; pledges?: PledgeRow[]
-        revealEcho?: (id: string) => any; revealPledge?: (id: string) => any
+        wishes?: (typeof wishRow)[]
+        propose?: (text: string) => any
+        send?: (id: string) => any
+        cancel?: (id: string) => any
       } | null = null,
     ): Promise<{ port: number; token: string }> {
       api = createInternalApi({
         stateDir, daemonPid: 1,
         ...(opts ? {
           social: {
+            // command-router.ts (WeChat 派/取消/揭晓 chat commands) still
+            // reads these — unrelated to these HTTP-route tests, but
+            // InternalApiDeps.social keeps them required. Unused stubs.
             broker: {
               propose: async () => ({ ok: true as const, intent_id: 'x', redacted: 'x' }),
               confirmSeek: () => ({ ok: true as const, intent_id: 'x' }),
               cancelSeek: () => ({ ok: true as const }),
             },
-            seekStore: {
-              create: () => {}, propose: () => {}, update: () => {},
-              list: () => opts.seeks ?? [], get: () => null,
-            },
+            seekStore: { create: () => {}, propose: () => {}, update: () => {}, list: () => [], get: () => null },
             echoStore: {
               create: () => {}, setStatus: () => {}, setSelfRevealed: () => {}, setPeerRevealed: () => {}, setRevealedIdentity: () => {}, listForSeek: () => [],
-              listAll: () => opts.echoes ?? [], get: () => null,
-              setSelfDelivered: () => {}, listUndelivered: () => [],
+              listAll: () => [], get: () => null, setSelfDelivered: () => {}, listUndelivered: () => [],
             },
             pledgeStore: {
-              create: () => {}, get: () => null, list: () => opts.pledges ?? [],
+              create: () => {}, get: () => null, list: () => [],
               setSelfRevealed: () => {}, setPeerRevealed: () => {},
               setSelfDelivered: () => {}, listUndelivered: () => [],
               setPendingEcho: () => {}, setEchoDelivered: () => {}, listUndeliveredEchoes: () => [],
             },
             revealer: {
-              revealEcho: async (id: string) => opts.revealEcho ? opts.revealEcho(id) : { state: 'awaiting_peer' as const },
-              revealPledge: async (id: string) => opts.revealPledge ? opts.revealPledge(id) : { state: 'awaiting_peer' as const },
+              revealEcho: async () => ({ state: 'awaiting_peer' as const }),
+              revealPledge: async () => ({ state: 'awaiting_peer' as const }),
               onInboundReveal: () => ({ mutual: false }),
               retryUndelivered: async () => 0,
+            },
+            wish: {
+              propose: opts.propose ?? (async (t: string) => ({ ok: true as const, id: 'new-id', preview: t })),
+              send: opts.send ?? (async () => ({ ok: true as const, sentTo: 0 })),
+              cancel: opts.cancel ?? (() => ({ ok: true as const, status: 'cancelled' as const })),
+              list: () => opts.wishes ?? [],
+              resolveRef: () => ({ ok: false as const, reason: 'not_found' as const }),
             },
           },
         } : {}),
@@ -2834,190 +2836,107 @@ describe('internal-api', () => {
       return { port, token }
     }
 
-    it('GET /v1/social/seeks returns the stored seeks', async () => {
-      const { port, token } = await startWithSocial({ seeks: [seekRow] })
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/seeks`, {
+    it('GET /v1/social/wishes returns the stored wishes, redacted text + effective status, snake_case', async () => {
+      const { port, token } = await startWithSocial({ wishes: [wishRow] })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/wishes`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(resp.status).toBe(200)
-      expect(await resp.json()).toEqual({ seeks: [seekRow] })
+      expect(await resp.json()).toEqual({
+        wishes: [{ id: 'abcd1234', text: '找个会修老相机的', status: 'open', created_at: 't', expires_at: 'e', sent_to: 2, replies: 1 }],
+      })
     })
 
-    it('GET /v1/social/seeks returns 503 when deps.social is not wired', async () => {
+    it('GET /v1/social/wishes returns 503 when deps.social is not wired', async () => {
       const { port, token } = await startWithSocial()
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/seeks`, {
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/wishes`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(resp.status).toBe(503)
       expect(await resp.json()).toEqual({ error: 'social_not_wired' })
     })
 
-    it('GET /v1/social/echoes returns the stored echoes masked (no peer_agent_id/relay_via/relay_token)', async () => {
-      const { port, token } = await startWithSocial({ echoes: [echoRow] })
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes`, {
-        headers: { Authorization: `Bearer ${token}` },
+    it('POST /v1/social/wish drives propose(text) and returns the outcome verbatim', async () => {
+      const { port, token } = await startWithSocial({ propose: async (t: string) => ({ ok: true as const, id: 'new-id', preview: t }) })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/wish`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '找摄影搭子' }),
       })
       expect(resp.status).toBe(200)
-      const json = await resp.json()
-      expect(json).toEqual({
-        echoes: [{
-          id: 'e1', seek_id: 'k1', peer_masked: 'p***', degree: 1,
-          content: 'hi there', status: 'pending', created_at: 't',
-          self_revealed_at: null, peer_revealed_at: null,
-        }],
-      })
-      // echoRow has a set peer_agent_id — assert it (and the other
-      // server-side-only relay fields) never made it into the response.
-      expect(echoRow.peer_agent_id).toBe('ccb')
-      expect(json.echoes[0]).not.toHaveProperty('peer_agent_id')
-      expect(json.echoes[0]).not.toHaveProperty('relay_via')
-      expect(json.echoes[0]).not.toHaveProperty('relay_token')
+      expect(await resp.json()).toEqual({ ok: true, id: 'new-id', preview: '找摄影搭子' })
     })
 
-    it('GET /v1/social/echoes returns 503 when deps.social is not wired', async () => {
+    it('POST /v1/social/wish → 503 when social not wired', async () => {
       const { port, token } = await startWithSocial()
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/wish`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'x' }),
       })
       expect(resp.status).toBe(503)
-      expect(await resp.json()).toEqual({ error: 'social_not_wired' })
     })
 
-    // 2026-07-22 demotion (route-tiers.ts): the desktop/CLI file token is
-    // trusted, so the 觅食台 read surface is trusted-gated now — trusted
-    // passes, guest still 403s.
-    it('tier gate: a trusted session token passes GET /v1/social/seeks; guest still 403', async () => {
-      const { port } = await startWithSocial({ seeks: [seekRow] })
+    it('POST /v1/social/wish → 400 on empty/missing text (empty-body guard)', async () => {
+      const { port, token } = await startWithSocial({})
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/wish`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: '',
+      })
+      expect(resp.status).toBe(400)
+      expect(await resp.json()).toEqual({ error: 'missing_text' })
+    })
+
+    it('POST /v1/social/wish/send drives send(id) and returns sent_to', async () => {
+      const { port, token } = await startWithSocial({ send: async () => ({ ok: true as const, sentTo: 2 }) })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/wish/send`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'abcd1234' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true, sent_to: 2 })
+    })
+
+    it('POST /v1/social/wish/cancel drives cancel(id) and returns the outcome verbatim', async () => {
+      const { port, token } = await startWithSocial({ cancel: () => ({ ok: true as const, status: 'closed' as const }) })
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/wish/cancel`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'abcd1234' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true, status: 'closed' })
+    })
+
+    // 2026-07-22 demotion (route-tiers.ts) carried into 心愿: the desktop/CLI
+    // file token is trusted, so all four wish routes are trusted-gated —
+    // trusted passes, guest still 403s.
+    it('tier gate: a trusted session token passes GET /v1/social/wishes; guest still 403', async () => {
+      const { port } = await startWithSocial({ wishes: [wishRow] })
       const tok = api!.mintSessionToken('trusted', 'test')
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/seeks`, {
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/wishes`, {
         headers: { Authorization: `Bearer ${tok}` },
       })
       expect(resp.status).toBe(200)
       const guest = api!.mintSessionToken('guest', 'test')
-      const g = await fetch(`http://127.0.0.1:${port}/v1/social/seeks`, {
+      const g = await fetch(`http://127.0.0.1:${port}/v1/social/wishes`, {
         headers: { Authorization: `Bearer ${guest}` },
       })
       expect(g.status).toBe(403)
       expect(await g.json()).toMatchObject({ error: 'forbidden', required: 'trusted' })
     })
 
-    it('tier gate: a trusted session token passes GET /v1/social/echoes; guest still 403', async () => {
-      const { port } = await startWithSocial({ echoes: [echoRow] })
+    it('tier gate: a trusted session token reaches POST /v1/social/wish/send (not 403) — the CLI file token is trusted, not admin; guest still 403', async () => {
+      const { port } = await startWithSocial({ send: async () => ({ ok: true as const, sentTo: 1 }) })
       const tok = api!.mintSessionToken('trusted', 'test')
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes`, {
-        headers: { Authorization: `Bearer ${tok}` },
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/social/wish/send`, {
+        method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'x' }),
       })
       expect(resp.status).toBe(200)
       const guest = api!.mintSessionToken('guest', 'test')
-      const g = await fetch(`http://127.0.0.1:${port}/v1/social/echoes`, {
-        headers: { Authorization: `Bearer ${guest}` },
+      const g = await fetch(`http://127.0.0.1:${port}/v1/social/wish/send`, {
+        method: 'POST', headers: { Authorization: `Bearer ${guest}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'x' }),
       })
       expect(g.status).toBe(403)
-    })
-
-    // ─── reveal + pledge routes (async foraging spine) — nested here to
-    // reuse startWithSocial (scoped to this describe block). ─────────────
-
-    describe('reveal + pledge routes (async foraging spine)', () => {
-      const pledgeRow: PledgeRow = {
-        id: 'i1:cca', intent_id: 'i1', seeker_agent_id: 'cca', topic: 't',
-        self_revealed_at: null, peer_revealed_at: null, created_at: 't',
-        self_reveal_delivered_at: null,
-        echo_blurb: null, echo_degree: null, echo_queued_at: null, echo_delivered_at: null,
-      }
-
-      it('GET /v1/social/pledges returns the stored pledges', async () => {
-        const { port, token } = await startWithSocial({ pledges: [pledgeRow] })
-        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/pledges`, { headers: { Authorization: `Bearer ${token}` } })
-        expect(resp.status).toBe(200)
-        expect(await resp.json()).toEqual({ pledges: [pledgeRow] })
-      })
-
-      it('GET /v1/social/pledges → 503 when social is not wired', async () => {
-        const { port, token } = await startWithSocial()
-        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/pledges`, { headers: { Authorization: `Bearer ${token}` } })
-        expect(resp.status).toBe(503)
-        expect(await resp.json()).toEqual({ error: 'social_not_wired' })
-      })
-
-      it('POST /v1/social/echoes/reveal drives revealEcho(id) and returns the outcome', async () => {
-        const { port, token } = await startWithSocial({ revealEcho: () => ({ state: 'connected' }) })
-        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes/reveal`, {
-          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ id: 'i1:ccb' }),
-        })
-        expect(resp.status).toBe(200)
-        expect(await resp.json()).toEqual({ outcome: { state: 'connected' } })
-      })
-
-      it('POST /v1/social/echoes/reveal → 404 when the echo id is unknown (revealer returns null)', async () => {
-        const { port, token } = await startWithSocial({ revealEcho: () => null })
-        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes/reveal`, {
-          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ id: 'nope' }),
-        })
-        expect(resp.status).toBe(404)
-        expect(await resp.json()).toEqual({ error: 'not_found' })
-      })
-
-      it('POST /v1/social/echoes/reveal → 503 when social not wired', async () => {
-        const { port, token } = await startWithSocial()
-        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes/reveal`, {
-          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ id: 'x' }),
-        })
-        expect(resp.status).toBe(503)
-      })
-
-      it('POST /v1/social/echoes/reveal → 400 on empty/missing id (empty-body guard)', async () => {
-        const { port, token } = await startWithSocial({ revealEcho: () => ({ state: 'connected' }) })
-        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes/reveal`, {
-          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-          body: '',
-        })
-        expect(resp.status).toBe(400)
-        expect(await resp.json()).toEqual({ error: 'missing_id' })
-      })
-
-      it('POST /v1/social/pledges/reveal drives revealPledge(id)', async () => {
-        const { port, token } = await startWithSocial({ revealPledge: () => ({ state: 'awaiting_peer' }) })
-        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/pledges/reveal`, {
-          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ id: 'i1:cca' }),
-        })
-        expect(resp.status).toBe(200)
-        expect(await resp.json()).toEqual({ outcome: { state: 'awaiting_peer' } })
-      })
-
-      it('tier gate: a trusted token reaches POST /v1/social/echoes/reveal (not 403) — the CLI file token is trusted, not admin', async () => {
-        const { port } = await startWithSocial({ revealEcho: () => ({ state: 'connected' }) })
-        const tok = api!.mintSessionToken('trusted', 'test')
-        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes/reveal`, {
-          method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ id: 'x' }),
-        })
-        expect(resp.status).toBe(200)
-      })
-
-      it('tier gate: a guest token gets 403 on POST /v1/social/echoes/reveal', async () => {
-        const { port } = await startWithSocial({ revealEcho: () => ({ state: 'connected' }) })
-        const tok = api!.mintSessionToken('guest', 'test')
-        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/echoes/reveal`, {
-          method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ id: 'x' }),
-        })
-        expect(resp.status).toBe(403)
-      })
-
-      it('tier gate: a guest token gets 403 on POST /v1/social/pledges/reveal', async () => {
-        const { port } = await startWithSocial({ revealPledge: () => ({ state: 'awaiting_peer' }) })
-        const tok = api!.mintSessionToken('guest', 'test')
-        const resp = await fetch(`http://127.0.0.1:${port}/v1/social/pledges/reveal`, {
-          method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ id: 'x' }),
-        })
-        expect(resp.status).toBe(403)
-      })
     })
   })
 
