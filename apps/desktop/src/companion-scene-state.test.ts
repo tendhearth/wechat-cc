@@ -59,3 +59,24 @@ describe('sceneStateFrom — 道具', () => {
     expect(sceneStateFrom(P('down', 'idle', '', news('hunt', 3)))).toMatchObject({ prop: null, badge: 0 })
   })
 })
+
+describe('sceneStateFrom — 残缺输入', () => {
+  it('无 activity 无 news → idle 全空', () => {
+    const s = sceneStateFrom({ presence: 'ok' } as never)
+    expect(s).toEqual({ bearPresent: true, bearPose: 'idle', tint: 'normal', sign: null, prop: null, badge: 0, bubble: null })
+  })
+  it('unread 异常值(NaN、负数、浮点)→ badge = 0,prop = null', () => {
+    expect(sceneStateFrom({ presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: NaN, latest_kind: 'hunt', latest_title: 't' } } as never))
+      .toMatchObject({ prop: null, badge: 0 })
+    expect(sceneStateFrom({ presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: -3, latest_kind: 'hunt', latest_title: 't' } } as never))
+      .toMatchObject({ prop: null, badge: 0 })
+  })
+  it('unread 浮点截断 → badge 向下取整', () => {
+    expect(sceneStateFrom({ presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 2.7, latest_kind: 'hunt', latest_title: 't' } } as never))
+      .toMatchObject({ prop: 'bag', badge: 2 })
+  })
+  it('无 activity 但有 news → 正常读 news', () => {
+    expect(sceneStateFrom({ presence: 'ok', news: { unread: 1, latest_kind: 'hunt', latest_title: 't' } } as never))
+      .toMatchObject({ bearPose: 'idle', prop: 'bag', badge: 1 })
+  })
+})

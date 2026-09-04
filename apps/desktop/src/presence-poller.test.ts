@@ -55,4 +55,14 @@ describe('createPresencePoller', () => {
     expect(invokeApi).toHaveBeenCalledTimes(3)
     vi.useRealTimers()
   })
+  it('坏响应(null、[]、{})→ 发布 down', async () => {
+    for (const badVal of [null, [], {}]) {
+      const invokeApi = vi.fn().mockResolvedValue(badVal)
+      const p = createPresencePoller({ invokeApi, intervalMs: 60_000 })
+      const sub = vi.fn(); p.subscribe(sub)
+      await p.refresh()
+      expect(sub).toHaveBeenCalledWith(DOWN_PRESENCE)
+      expect(p.current).toEqual(DOWN_PRESENCE)
+    }
+  })
 })
