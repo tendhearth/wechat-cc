@@ -20,7 +20,7 @@
 import type { A2ARegistry } from './a2a-registry'
 import type { A2AAgentRecord } from '../lib/agent-config'
 import type { ProviderId } from './conversation'
-import { A2A_PROTO_VERSION, IntentCardSchema, EchoMessageSchema, type IntentCard, type MatchReceipt, type EchoMessage } from './a2a-intent'
+import { A2A_PROTO_VERSION } from './a2a-intent'
 
 /**
  * How long the HAND holds an /a2a/exec connection open with no bytes flowing.
@@ -70,43 +70,6 @@ export interface PairEvent {
 }
 
 /**
- * A peer's "seek" Intent Card, delivered for THIS owner's agent to judge
- * against its owner's derived facts and answer with a policy-filtered
- * Match Receipt. Part of the agent-social M1 broker flow.
- */
-export interface IntentEvent {
-  agent: A2AAgentRecord
-  card: IntentCard
-}
-
-/**
- * v2 async echo return (spec §1): a responder (or a relay) posts the judged
- * result of an earlier "seek" intent back to the sender, out-of-band from
- * the original synchronous /a2a/intent call. `agent` is the verified Bearer
- * identity — body.agent_id is never trusted as the acting identity.
- */
-export interface EchoEvent {
-  agent: A2AAgentRecord
-  msg: EchoMessage
-}
-
-/**
- * A peer's "my owner revealed; wants to connect on this intent" event —
- * the inbound half of the mutual async reveal. Handler marks the local
- * echo/pledge row's peer_revealed_at and, if this side already revealed,
- * responds { mutual:true, handle } for a synchronous connect. `handle` is a
- * PenpalHandle (pubkey + channel_id) — real identity never crosses.
- */
-export interface RevealEvent {
-  agent_id: string
-  intent_id: string
-  /** spec #2: present when this reveal is a 2-hop relay leg addressed to an intermediary. */
-  relay_token?: string
-  /** spec #2: the OTHER endpoint's penpal handle, handed over by the intermediary on the mutual instant. */
-  peer_handle?: import('./penpal-crypto').PenpalHandle
-}
-
-/**
  * A sealed E2E letter delivered over the pen-pal channel. `agent_id` is the
  * verified Bearer id (routing metadata only, NOT the plaintext sender's real
  * identity). The payload itself carries only ciphertext + AEAD fields —
@@ -150,15 +113,6 @@ export interface A2AServerOpts {
    * /a2a/pair returns 501. Auth is the one-time secret, not a Bearer token.
    */
   onPair?: (event: PairEvent) => Promise<{ ok: boolean; error?: string }>
-  /** Optional. When wired, enables POST /a2a/intent — judge a peer's Intent
-   *  Card against the owner's derived facts and return a Match Receipt.
-   *  Undefined → /a2a/intent returns 501. */
-  onIntent?: (event: IntentEvent) => Promise<MatchReceipt>
-  /** v2 async echo return (spec §1). Undefined → /a2a/echo returns 501. */
-  onEcho?: (event: EchoEvent) => Promise<{ ok: boolean }>
-  /** Optional. When wired, enables POST /a2a/reveal — a peer signals its owner
-   *  revealed; mark my matching row + return { mutual, handle? }. Undefined → 501. */
-  onReveal?: (event: RevealEvent) => Promise<{ mutual: boolean; handle?: { pubkey: string; channel_id: string; mailbox?: { addr: string; enc_pub: string; relays: string[] } } }>
   /** Optional. When wired, enables POST /a2a/letter — a peer delivers a sealed
    *  E2E pen-pal letter (ciphertext only, never plaintext) addressed to a
    *  PenpalHandle channel on this machine. Undefined → /a2a/letter returns 501. */
@@ -220,31 +174,6 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
           peer: 'string (optional, \'claude\'|\'codex\'|…; 省略则由本机自己选)',
           cwd: 'string (optional, working directory on this machine)',
         },
-      }] : []),
-      // Advertised only when this machine is wired to broker intents (onIntent set).
-      ...(opts.onIntent ? [{
-        name: 'intent',
-        description: 'Broker a "seek" intent: judge a match against my owner and return a policy-filtered Match Receipt.',
-        endpoint: '/a2a/intent',
-        method: 'POST',
-        request_schema: { agent_id: 'string', card: 'IntentCard' },
-      }] : []),
-      // v2 async echo return — advertised only when this machine is wired
-      // to receive echo returns (onEcho set). Same shape/gate as `intent`.
-      ...(opts.onEcho ? [{
-        name: 'echo',
-        description: 'v2 async echo return: post the judged result of an earlier "seek" intent back to its sender (or relay it onward), out-of-band from the original synchronous /a2a/intent call.',
-        endpoint: '/a2a/echo',
-        method: 'POST',
-        request_schema: { agent_id: 'string', intent_id: 'string', echo: '{ blurb: string, degree: number, relay_token?: string }' },
-      }] : []),
-      // Advertised only when this machine is wired to receive inbound reveals.
-      ...(opts.onReveal ? [{
-        name: 'reveal',
-        description: 'Mutual async reveal: a peer whose owner revealed asks THIS owner\'s row to mark peer-revealed; returns { mutual, handle } when both sides have revealed.',
-        endpoint: '/a2a/reveal',
-        method: 'POST',
-        request_schema: { agent_id: 'string', intent_id: 'string' },
       }] : []),
       // Advertised only when this machine is wired to receive inbound letters.
       ...(opts.onLetter ? [{
@@ -374,62 +303,6 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         return new Response(JSON.stringify({ ok: false, reason: msg }), { status: 200 })
       }
     }
-    if (url.pathname === '/a2a/reveal') {
-      if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
-      if (!opts.onReveal) return new Response(JSON.stringify({ error: 'reveal_not_supported' }), { status: 501 })
-
-      let body: { agent_id?: unknown; intent_id?: unknown; relay_token?: unknown; peer_handle?: unknown }
-      try {
-        body = await req.json() as typeof body
-      } catch {
-        return new Response(JSON.stringify({ error: 'invalid_json' }), { status: 400 })
-      }
-      if (typeof body.agent_id !== 'string') return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
-      const claimedId = body.agent_id
-
-      const auth = req.headers.get('authorization')
-      if (!auth?.startsWith('Bearer ')) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'missing_bearer' })
-        return new Response(JSON.stringify({ error: 'missing_bearer' }), { status: 401 })
-      }
-      const agent = opts.registry.verifyBearer(claimedId, auth.slice('Bearer '.length).trim())
-      if (!agent) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'wrong_bearer' })
-        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
-      }
-      if (agent.id !== claimedId) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'agent_id_mismatch' })
-        return new Response(JSON.stringify({ error: 'agent_id_mismatch' }), { status: 403 })
-      }
-      if (agent.paused) return new Response(JSON.stringify({ ok: false, reason: 'paused' }), { status: 202 })
-
-      if (typeof body.intent_id !== 'string' || body.intent_id.length === 0) {
-        return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
-      }
-      try {
-        // `agent_id` stays the verified Bearer `agent.id` — client-supplied
-        // agent_id is never trusted as the acting identity. relay_token/peer_handle
-        // are routing/pen-pal metadata the intermediary provides. peer_handle
-        // is the PenpalHandle {pubkey, channel_id} — real identity never crosses.
-        const relayToken = typeof body.relay_token === 'string' && body.relay_token ? body.relay_token : undefined
-        const ph = body.peer_handle
-        const peerHandle = (ph && typeof ph === 'object'
-          && typeof (ph as any).pubkey === 'string' && (ph as any).pubkey
-          && typeof (ph as any).channel_id === 'string' && (ph as any).channel_id)
-          ? {
-              pubkey: (ph as any).pubkey, channel_id: (ph as any).channel_id,
-              ...((ph as any).mailbox && typeof (ph as any).mailbox === 'object'
-                && typeof (ph as any).mailbox.addr === 'string' && typeof (ph as any).mailbox.enc_pub === 'string' && Array.isArray((ph as any).mailbox.relays)
-                ? { mailbox: { addr: (ph as any).mailbox.addr, enc_pub: (ph as any).mailbox.enc_pub, relays: (ph as any).mailbox.relays } } : {}),
-            }
-          : undefined
-        const result = await opts.onReveal({ agent_id: agent.id, intent_id: body.intent_id, relay_token: relayToken, ...(peerHandle ? { peer_handle: peerHandle } : {}) })
-        return new Response(JSON.stringify(result), { status: 200 })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        return new Response(JSON.stringify({ error: 'reveal_failed', detail: msg }), { status: 500 })
-      }
-    }
     if (url.pathname === '/a2a/letter') {
       if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
       if (!opts.onLetter) return new Response(JSON.stringify({ error: 'letter_not_supported' }), { status: 501 })
@@ -476,86 +349,6 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         return new Response(JSON.stringify({ error: 'letter_failed', detail: msg }), { status: 500 })
-      }
-    }
-    if (url.pathname === '/a2a/intent') {
-      if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
-      if (!opts.onIntent) return new Response(JSON.stringify({ error: 'intent_not_supported' }), { status: 501 })
-
-      let body: { agent_id?: unknown; card?: unknown }
-      try {
-        body = await req.json() as typeof body
-      } catch {
-        return new Response(JSON.stringify({ error: 'invalid_json' }), { status: 400 })
-      }
-      if (typeof body.agent_id !== 'string') return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
-      const claimedId = body.agent_id
-
-      const auth = req.headers.get('authorization')
-      if (!auth?.startsWith('Bearer ')) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'missing_bearer' })
-        return new Response(JSON.stringify({ error: 'missing_bearer' }), { status: 401 })
-      }
-      const agent = opts.registry.verifyBearer(claimedId, auth.slice('Bearer '.length).trim())
-      if (!agent) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'wrong_bearer' })
-        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
-      }
-      if (agent.id !== claimedId) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'agent_id_mismatch' })
-        return new Response(JSON.stringify({ error: 'agent_id_mismatch' }), { status: 403 })
-      }
-      if (agent.paused) return new Response(JSON.stringify({ ok: false, reason: 'paused' }), { status: 202 })
-
-      const parsed = IntentCardSchema.safeParse(body.card)
-      if (!parsed.success) return new Response(JSON.stringify({ error: 'invalid_card' }), { status: 400 })
-      try {
-        const receipt = await opts.onIntent({ agent, card: parsed.data })
-        return new Response(JSON.stringify(receipt), { status: 200 })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        return new Response(JSON.stringify({ error: 'intent_failed', detail: msg }), { status: 500 })
-      }
-    }
-    if (url.pathname === '/a2a/echo') {
-      if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
-      if (!opts.onEcho) return new Response(JSON.stringify({ error: 'echo_not_supported' }), { status: 501 })
-
-      let body: { agent_id?: unknown; intent_id?: unknown; echo?: unknown }
-      try {
-        body = await req.json() as typeof body
-      } catch {
-        return new Response(JSON.stringify({ error: 'invalid_json' }), { status: 400 })
-      }
-      if (typeof body.agent_id !== 'string') return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
-      const claimedId = body.agent_id
-
-      const auth = req.headers.get('authorization')
-      if (!auth?.startsWith('Bearer ')) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'missing_bearer' })
-        return new Response(JSON.stringify({ error: 'missing_bearer' }), { status: 401 })
-      }
-      const agent = opts.registry.verifyBearer(claimedId, auth.slice('Bearer '.length).trim())
-      if (!agent) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'wrong_bearer' })
-        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
-      }
-      if (agent.id !== claimedId) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'agent_id_mismatch' })
-        return new Response(JSON.stringify({ error: 'agent_id_mismatch' }), { status: 403 })
-      }
-      if (agent.paused) return new Response(JSON.stringify({ ok: false, reason: 'paused' }), { status: 202 })
-
-      // /a2a/echo's body IS the EchoMessage at top level (agent_id lives on the
-      // schema itself) — unlike /a2a/intent's {agent_id, card} wrapper.
-      const parsed = EchoMessageSchema.safeParse(body)
-      if (!parsed.success) return new Response(JSON.stringify({ error: 'invalid_echo' }), { status: 400 })
-      try {
-        const result = await opts.onEcho({ agent, msg: parsed.data })
-        return new Response(JSON.stringify(result), { status: 200 })
-      } catch (err) {
-        const msg2 = err instanceof Error ? err.message : String(err)
-        return new Response(JSON.stringify({ error: 'echo_failed', detail: msg2 }), { status: 500 })
       }
     }
     if (url.pathname === '/a2a/pair') {

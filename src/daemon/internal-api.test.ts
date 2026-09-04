@@ -3555,7 +3555,7 @@ describe('internal-api request validation', () => {
     it('preview surfaces proto_version + proto_mismatch (missing field defaults to 1)', async () => {
       // Stub fetchAgentCard to return a card WITHOUT proto_version.
       // A missing field means a pre-versioning peer ⇒ defaults to 1, which
-      // no longer matches ours (A2A_PROTO_VERSION === 2) ⇒ mismatch.
+      // no longer matches ours (A2A_PROTO_VERSION === 3) ⇒ mismatch.
       const a2aDeps = buildA2ADeps({ cardResult: { name: 'x' } })
       const { port, token } = await startWithA2A(a2aDeps)
       const resp = await fetch(`http://127.0.0.1:${port}/v1/a2a/preview`, {

@@ -1,8 +1,6 @@
-import { randomUUID } from 'node:crypto'
 import { makeJudge } from '../../core/social-judge'
 import { makeVisit } from './wire-visit'
 import { makeWish } from './wire-wish'
-import { WISH_TTL_MS } from '../../core/wish'
 import { makeJournal } from '../../core/journal-store'
 import { safeSvg } from '../../lib/svg-sanitize'
 import { rasterizeSvgDarwin } from '../sticker-artist'
@@ -245,9 +243,9 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         sendEnvelope: (c, e) => correspondent.sendEnvelope(c, e),
         // 闸门超时用 provider 自己的预算,别再写死 12s(见上面那条 BOOT 日志)。
         gate: (text) => gateOutbound(text, { policy: socialPolicy, cheapEval: socialCheapEval, timeoutMs: socialGateTimeoutMs }),
-        // 判官吃的是一张 IntentCard(它只读 topic/city)—— 心愿没有 intent 行,
-        // 现造一张一次性的卡片喂给同一个判官,省得再养一条判定路径。
-        judge: (topic) => socialJudge({ intent_id: `wish:${randomUUID()}`, kind: 'seek', topic, expires_at: new Date(Date.now() + WISH_TTL_MS).toISOString(), hop: 1 }),
+        // 判官只读话题(social-judge.ts 的 JudgeInput)—— 心愿没有 city,
+        // 就只递 topic。
+        judge: (topic) => socialJudge({ topic }),
         // 明信片进背包(journal kind='postcard')—— 和串门见闻同一张表。
         recordPostcard: ({ text, peerLabel }) => {
           const op = resolveOperatorChatId()

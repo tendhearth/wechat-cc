@@ -1,20 +1,27 @@
 /**
- * social-judge — the answering-side judge seam (agent-social M1, T7b-core).
+ * social-judge — the answering-side judge seam.
  *
- * `makeJudge` builds the system/user prompts for judging a peer's "seek"
- * Intent Card against the owner's own derived facts, then defensively
- * parses whatever `runTurn` returns into `{ match, blurb? }`. The ACTUAL
- * agent spawn (which model, which MCP tools, what session lifecycle) is
- * kept behind the injected `runTurn` seam so this module is unit-testable
- * with no live model — the real `runTurn` (a one-shot plugin-grounded
- * openai-style spawn, or a cheapEval fallback) is constructed in
- * daemon/bootstrap/index.ts.
+ * `makeJudge` builds the system/user prompts for judging a peer's 心愿
+ * (a topic, optionally a city) against the owner's own derived facts, then
+ * defensively parses whatever `runTurn` returns into `{ match, blurb? }`.
+ * The ACTUAL agent spawn (which model, which MCP tools, what session
+ * lifecycle) is kept behind the injected `runTurn` seam so this module is
+ * unit-testable with no live model — the real `runTurn` is the provider
+ * registry's own cheapEval, wired in daemon/bootstrap/wire-social.ts.
  *
- * `social-answer.ts`'s `makeAnswerIntent` wraps the verdict this returns in
- * `gateOutbound` before anything crosses the wire — this module's ONLY job
- * is producing a best-effort verdict, never enforcing disclosure itself.
+ * 输入刻意只有 `{ topic, city? }`(2026-09-04):判官读的从来只有这两项,
+ * 早先喂给它的是一整张 IntentCard,那条掮客管道退役后连类型一起收窄了。
+ *
+ * The caller (wire-wish.ts) wraps the verdict this returns in `gateOutbound`
+ * before anything crosses the wire — this module's ONLY job is producing a
+ * best-effort verdict, never enforcing disclosure itself.
  */
-import type { IntentCard } from './a2a-intent'
+
+/** 判官要的全部输入 —— 一个话题,可选一个城市。 */
+export interface JudgeInput {
+  topic: string
+  city?: string
+}
 
 export interface JudgeDeps {
   /**
@@ -27,7 +34,7 @@ export interface JudgeDeps {
   runTurn: (systemPrompt: string, userPrompt: string) => Promise<string>
   /** Free-text disclosure policy, echoed into the system prompt so the
    *  judge composes an already policy-aware blurb (defence-in-depth #1 —
-   *  #2 is the mandatory `gateOutbound` pass in social-answer.ts). */
+   *  #2 is the mandatory `gateOutbound` pass in wire-wish.ts). */
   policy: string
   /**
    * Optional in-process grounding fetch: pre-fetched owner facts relevant to
@@ -37,7 +44,7 @@ export interface JudgeDeps {
    * swallowed to an empty string — grounding is best-effort, never a reason
    * to crash or block the (fail-closed) judge.
    */
-  ground?: (card: IntentCard) => Promise<string>
+  ground?: (card: JudgeInput) => Promise<string>
 }
 
 export interface JudgeVerdict {
@@ -46,10 +53,10 @@ export interface JudgeVerdict {
 }
 
 function systemPrompt(policy: string): string {
-  return `你替主人判断是否匹配好友的 seek 意图；根据以下提供的主人资料判断是否匹配；只输出 {"match":"yes|no","blurb":"..."}；遵守披露策略：${policy}；绝不含门牌/第三方`
+  return `你替主人判断是否匹配好友的心愿；根据以下提供的主人资料判断是否匹配；只输出 {"match":"yes|no","blurb":"..."}；遵守披露策略：${policy}；绝不含门牌/第三方`
 }
 
-function userPrompt(card: IntentCard): string {
+function userPrompt(card: JudgeInput): string {
   return `话题：${card.topic}${card.city ? `\n城市：${card.city}` : ''}`
 }
 
@@ -76,9 +83,9 @@ function parseVerdict(raw: string): JudgeVerdict {
   }
 }
 
-export function makeJudge(deps: JudgeDeps): (card: IntentCard) => Promise<JudgeVerdict> {
+export function makeJudge(deps: JudgeDeps): (card: JudgeInput) => Promise<JudgeVerdict> {
   const sys = systemPrompt(deps.policy)
-  return async (card: IntentCard): Promise<JudgeVerdict> => {
+  return async (card: JudgeInput): Promise<JudgeVerdict> => {
     const grounding = deps.ground
       ? await Promise.resolve().then(() => deps.ground!(card)).catch(() => '')
       : ''

@@ -1,19 +1,21 @@
 /**
- * mailbox-e2e.test.ts — the capstone: drive a REAL reveal (real makeRevealer,
- * real channel/echo/pledge/seek stores) across an in-process content-blind
- * relay (makeRelayServer, driven through fetchHandler — no socket) so that
- * BOTH channel rows cross a `peer_mailbox` (the C1 guard — Task 10), then
- * send a letter relay-direct (makeRoutePostLetter + makeMailboxSender,
- * Task 11) and receive it via the real poller/dispatch/own-channel-letter-
- * handler chain (makeMailboxPoller + makeEnvelopeDispatch +
- * makeMailboxLetterHandler, I1 / Task 8). Asserts:
- *   (a) the mailbox crossed onto BOTH channel rows (C1 end-to-end),
- *   (b) the letter is delivered relay-direct WITHOUT ever touching W's
- *       routeLetter/push (relay-direct — W is not in this path),
- *   (c) the relay only ever holds ciphertext (content-blind) and only Q's
- *       mailbox key can open it.
- * No production code changes — composition-only, mirroring
- * src/core/penpal.e2e.test.ts's idiom.
+ * mailbox-e2e.test.ts — the capstone for the store-and-forward leg: two
+ * daemons that share NOTHING but a relay (NAT-simulated — no direct HTTP
+ * between them) exchange a real sealed letter. S sends relay-direct
+ * (makeRoutePostLetter + makeMailboxSender), Q receives it through the real
+ * poller/dispatch/own-channel-letter-handler chain (makeMailboxPoller +
+ * makeEnvelopeDispatch + makeMailboxLetterHandler). Asserts:
+ *   (a) the letter is delivered relay-direct WITHOUT ever touching the push
+ *       leg (pushSend is never called),
+ *   (b) the relay only ever holds ciphertext (content-blind) and only Q's
+ *       mailbox key can open it,
+ *   (c) re-polling is idempotent (M3 — acked cursor, no duplicate row).
+ *
+ * 2026-09-04:两侧的信道行原先是**跑一遍真 reveal**(seek/echo/pledge 三张表
+ * + makeRevealer)建起来的。那条掮客管道退役之后,这里直接把配对完成后的
+ * 终态写进 channelStore —— 配对(pairing)本来就是这么写的。测的东西没变:
+ * 交叉过信箱坐标的两条信道行 → 一封信 → 只走 relay。
+ * No production code changes — composition-only.
  */
 import { describe, it, expect, vi } from 'vitest'
 import { Database } from 'bun:sqlite'
@@ -28,17 +30,13 @@ import { makeMailboxPoller } from './mailbox-poller'
 import { makeEnvelopeDispatch } from './mailbox-dispatch'
 import { makeCursorStore } from './mailbox-cursor-store'
 import { openDb } from '../lib/db'
-import { makeChannelStore } from './penpal-channel-store'
+import { makeChannelStore, type ChannelStore } from './penpal-channel-store'
 import { makeLetterStore } from './penpal-letter-store'
 import { makeCorrespondent } from './penpal-correspondent'
-import { makeEchoStore } from './social-echo-store'
-import { makePledgeStore } from './social-pledge-store'
-import { makeSeekStore } from './social-seek-store'
-import { makeRevealer } from './social-reveal'
 import { generateKeypair } from './penpal-crypto'
 import { makeRoutePostLetter } from '../daemon/bootstrap/postletter-route'
 import { makeMailboxLetterHandler } from '../daemon/bootstrap/mailbox-letter-handler'
-import { buildCrossedHandle } from '../daemon/bootstrap/mailbox-dispatch-seam'
+import type { PeerMailbox } from './mailbox-crypto'
 import type { MailboxClient } from './mailbox-client'
 
 function inProcClient(relay: ReturnType<typeof makeRelayServer>): MailboxClient {
@@ -49,63 +47,45 @@ function inProcClient(relay: ReturnType<typeof makeRelayServer>): MailboxClient 
     ack: async (_r, mailbox, up, ts, sig) => (await post('/ack', { mailbox, up_to_cursor: up, ts, sig })).ok,
   }
 }
-function port(store: ReturnType<typeof makeChannelStore>, mbx: { addr: string; enc_pub: string; relays: string[] }) {
-  return {
-    openLocal(rowId: string, ctx: any) {
-      const ex = store.get(rowId)
-      if (ex) return buildCrossedHandle({ my_pubkey: ex.my_pubkey, my_channel_id: ex.my_channel_id }, mbx)
-      const kp = generateKeypair(); const mcid = randomUUID()
-      store.create({ id: rowId, seekId: ctx.seekId, myPrivkey: kp.privateKey, myPubkey: kp.publicKey, myChannelId: mcid, degree: ctx.degree, relayVia: ctx.relayVia ?? null, peerAgentId: ctx.peerAgentId ?? null })
-      return buildCrossedHandle({ my_pubkey: kp.publicKey, my_channel_id: mcid }, mbx)
-    },
-    finalize(rowId: string, h?: any) { if (h) store.setPeerHandle(rowId, h); store.setStatus(rowId, 'open') },
-    stashPeer(rowId: string, h: any) { store.setPeerHandle(rowId, h) },
-  }
+
+/** 一条**配对完成**的信道行 —— 我方钥匙 + 信道号已生成,对端的手牌(含它的
+ *  信箱坐标)已交叉,状态 open。这正是 pairing 走完之后 DB 里的样子。 */
+function openChannel(store: ChannelStore, rowId: string, peerAgentId: string) {
+  const kp = generateKeypair()
+  const myChannelId = randomUUID()
+  store.create({ id: rowId, seekId: rowId, myPrivkey: kp.privateKey, myPubkey: kp.publicKey, myChannelId, degree: 1, peerAgentId })
+  return { rowId, pubkey: kp.publicKey, channelId: myChannelId }
+}
+function cross(store: ChannelStore, rowId: string, peer: { pubkey: string; channelId: string }, mailbox: PeerMailbox) {
+  store.setPeerHandle(rowId, { pubkey: peer.pubkey, channel_id: peer.channelId, mailbox })
+  store.setStatus(rowId, 'open')
 }
 
-describe('mailbox e2e — real reveal → relay-direct letter (NAT-simulated: only the relay is shared)', () => {
-  it('crosses the mailbox on both rows, then delivers a letter relay-direct without touching routeLetter; relay sees only ciphertext', async () => {
+describe('mailbox e2e — relay-direct letter (NAT-simulated: only the relay is shared)', () => {
+  it('delivers a letter relay-direct without touching the push leg; relay sees only ciphertext; re-poll is idempotent', async () => {
     const relayDb = new Database(':memory:')
     const relay = makeRelayServer({ db: relayDb })
     const client = inProcClient(relay)
     const sDir = mkdtempSync(join(tmpdir(), 's-')); const qDir = mkdtempSync(join(tmpdir(), 'q-'))
     const s = loadMailboxIdentity(sDir); const q = loadMailboxIdentity(qDir)
-    const S_MBX = { addr: s.addr, enc_pub: s.enc_pub, relays: ['https://relay/'] }
-    const Q_MBX = { addr: q.addr, enc_pub: q.enc_pub, relays: ['https://relay/'] }
-    const intentId = 'i1'
+    const S_MBX: PeerMailbox = { addr: s.addr, enc_pub: s.enc_pub, relays: ['https://relay/'] }
+    const Q_MBX: PeerMailbox = { addr: q.addr, enc_pub: q.enc_pub, relays: ['https://relay/'] }
 
-    // --- Q side (already self-revealed, awaiting S) ---
+    // --- 两侧各自的库 + 一条配对完成的信道行,互相交叉手牌 ---
     const qDb = openDb({ path: ':memory:' }); const qCh = makeChannelStore(qDb); const qLetters = makeLetterStore(qDb)
-    const qEch = makeEchoStore(qDb), qPld = makePledgeStore(qDb), qSk = makeSeekStore(qDb)
-    qSk.create({ id: intentId, kind: 'seek', topic: 't' })
-    qEch.create({ id: `${intentId}:s`, seekId: intentId, peerMasked: '某人', degree: 1, content: 'c', peerAgentId: 's' })
-    qEch.setSelfRevealed(`${intentId}:s`, new Date().toISOString())
-    const qPort = port(qCh, Q_MBX); qPort.openLocal(`${intentId}:s`, { seekId: intentId, degree: 1, peerAgentId: 's' })
-    const qRevealer = makeRevealer({ echoStore: qEch, pledgeStore: qPld, seekStore: qSk, channel: qPort as any, notify: () => {}, postPeerReveal: async () => null })
+    const sDb = openDb({ path: ':memory:' }); const sCh = makeChannelStore(sDb); const sLetters = makeLetterStore(sDb)
+    const qSide = openChannel(qCh, 'ch:q', 's')
+    const sSide = openChannel(sCh, 'ch:s', 'q')
+    cross(qCh, qSide.rowId, sSide, S_MBX)
+    cross(sCh, sSide.rowId, qSide, Q_MBX)
+    expect(JSON.parse(sCh.get(sSide.rowId)!.peer_mailbox!)).toEqual(Q_MBX)
+    expect(JSON.parse(qCh.get(qSide.rowId)!.peer_mailbox!)).toEqual(S_MBX)
+
     const qNotify = vi.fn()
     const qCorr = makeCorrespondent({ channelStore: qCh, letterStore: qLetters, postLetter: async () => true, onInbound: qNotify })
 
-    // --- S side (reveals second; crossing handle built from the row, the C1 path) ---
-    const sDb = openDb({ path: ':memory:' }); const sCh = makeChannelStore(sDb); const sLetters = makeLetterStore(sDb)
-    const sEch = makeEchoStore(sDb), sPld = makePledgeStore(sDb), sSk = makeSeekStore(sDb)
-    sSk.create({ id: intentId, kind: 'seek', topic: 't' })
-    sEch.create({ id: `${intentId}:q`, seekId: intentId, peerMasked: '某人', degree: 1, content: 'c', peerAgentId: 'q' })
-    const sPort = port(sCh, S_MBX)
-    const sRevealer = makeRevealer({
-      echoStore: sEch, pledgeStore: sPld, seekStore: sSk, channel: sPort as any, notify: () => {},
-      postPeerReveal: async (_a, iid) => {
-        const row = sCh.get(`${intentId}:q`)!
-        return qRevealer.onInboundReveal({ agentId: 's', intentId: iid, peerHandle: buildCrossedHandle({ my_pubkey: row.my_pubkey, my_channel_id: row.my_channel_id }, S_MBX) })
-      },
-    })
-
-    // (1) Drive the REAL reveal.
-    expect(await sRevealer.revealEcho(`${intentId}:q`)).toEqual({ state: 'connected' })
-    expect(JSON.parse(sCh.get(`${intentId}:q`)!.peer_mailbox!)).toEqual(Q_MBX)   // (a) crossed on S's row
-    expect(JSON.parse(qCh.get(`${intentId}:s`)!.peer_mailbox!)).toEqual(S_MBX)   // (a) crossed on Q's row
-
-    // (2) S sends a letter — routed relay-direct (target.mailbox set), NEVER over pushSend (the W-forward stand-in).
-    const pushSpy = vi.fn(async () => true)   // stands in for letterRelay.routeLetter / push
+    // (1) S 写信 —— target.mailbox 有值 ⇒ 走 relay,绝不落到 pushSend 那条腿。
+    const pushSpy = vi.fn(async () => true)
     const sSender = makeMailboxSender({ client })
     const sPostLetter = makeRoutePostLetter({ mailboxSend: sSender.send, pushSend: pushSpy, selfId: 's' })
     const sCorr = makeCorrespondent({
@@ -113,30 +93,29 @@ describe('mailbox e2e — real reveal → relay-direct letter (NAT-simulated: on
       postLetter: (target, body) => sPostLetter(target as any, body),   // sendLetter sets target.mailbox from peerMailboxOfRow
       onInbound: () => {},
     })
-    expect(await sCorr.sendLetter(`${intentId}:q`, 'hallo penpal')).toEqual({ ok: true })
-    expect(pushSpy).not.toHaveBeenCalled()   // (b) relay-direct — W's routeLetter/push untouched
+    expect(await sCorr.sendLetter(sSide.rowId, 'hallo penpal')).toEqual({ ok: true })
+    expect(pushSpy).not.toHaveBeenCalled()   // (a) relay-direct
 
-    // The relay row is opaque — no plaintext leaked.
+    // (b) relay 那行是不透明的 —— 没有明文泄露,只有 Q 的钥匙能拆。
     const raw = relayDb.query('SELECT envelope FROM mailbox_item').get() as { envelope: string }
     expect(raw.envelope).not.toContain('hallo penpal')
-    expect(openEnvelope(q.enc_priv, JSON.parse(raw.envelope))).toBeTruthy()   // only Q can open
+    expect(openEnvelope(q.enc_priv, JSON.parse(raw.envelope))).toBeTruthy()
 
-    // (3) Q polls → own-channel letter handler → receiveLetter opens it.
+    // (2) Q 取件 → own-channel letter handler → receiveLetter 拆开。
     const poller = makeMailboxPoller({
       identity: q, relays: ['https://relay/'], client, cursors: makeCursorStore(qDir),
       dispatch: makeEnvelopeDispatch({
         registry: { verifyBearer: () => null } as any,
-        onReveal: async () => ({ mutual: false }),
         onLetter: makeMailboxLetterHandler({ getByMyChannelId: (c) => qCh.getByMyChannelId(c), receiveLetter: (ev) => qCorr.receiveLetter(ev) }),
         log: () => {},
       }),
       log: () => {},
     })
     await poller.onTick()
-    const inbound = qLetters.listForChannel(`${intentId}:s`).filter(l => l.direction === 'in')
-    expect(inbound.map(l => l.plaintext)).toEqual(['hallo penpal'])   // delivered + decrypted, relay-direct, no W
+    const inbound = qLetters.listForChannel(qSide.rowId).filter(l => l.direction === 'in')
+    expect(inbound.map(l => l.plaintext)).toEqual(['hallo penpal'])
     expect(qNotify).toHaveBeenCalledTimes(1)
-    await poller.onTick()                                             // re-poll: acked → idempotent (M3)
-    expect(qLetters.listForChannel(`${intentId}:s`).filter(l => l.direction === 'in')).toHaveLength(1)
+    await poller.onTick()                                             // (c) 再取一次:已 ack ⇒ 幂等
+    expect(qLetters.listForChannel(qSide.rowId).filter(l => l.direction === 'in')).toHaveLength(1)
   })
 })
