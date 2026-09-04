@@ -501,3 +501,68 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
     expect(after).toBe(before)
   })
 })
+
+describe('migration v41 — reminders back-fills columns the old June schema lacked', () => {
+  it('adds last_attempt_at/last_error/attempts to a pre-v29 reminders table', () => {
+    // Reproduce the "no such column: last_attempt_at" boot error: a database
+    // that ran June's feat/reminders (a reminders table without the backoff
+    // columns) already has the table, so v29's CREATE TABLE IF NOT EXISTS
+    // skips it and the columns never arrive. user_version=29 marks v29 done.
+    const db = new Database(':memory:')
+    db.exec('PRAGMA foreign_keys = ON;')
+    db.exec(`
+      CREATE TABLE reminders (
+        id         TEXT PRIMARY KEY NOT NULL,
+        chat_id    TEXT NOT NULL,
+        due_at     TEXT NOT NULL,
+        text       TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        status     TEXT NOT NULL DEFAULT 'pending'
+      ) STRICT;
+      PRAGMA user_version = 29;
+    `)
+    db.exec(
+      "INSERT INTO reminders (id, chat_id, due_at, text, created_at) VALUES ('r1','c1','2026-08-20T10:00:00.000Z','hi','2026-08-20T09:00:00.000Z')",
+    )
+
+    expect(() => runMigrations(db)).not.toThrow()
+
+    const cols = new Set(
+      db.query<{ name: string }, []>('PRAGMA table_info(reminders)').all().map((r) => r.name),
+    )
+    expect(cols.has('last_attempt_at')).toBe(true)
+    expect(cols.has('last_error')).toBe(true)
+    expect(cols.has('attempts')).toBe(true)
+    // The healed column is writable — the sweeper's stamping UPDATE no longer throws.
+    expect(() =>
+      db.exec("UPDATE reminders SET attempts = attempts + 1, last_attempt_at = '2026-08-20T10:01:00.000Z' WHERE id = 'r1'"),
+    ).not.toThrow()
+    // The pre-existing row survived the migration.
+    const row = db.query<{ attempts: number }, []>("SELECT attempts FROM reminders WHERE id = 'r1'").get()
+    expect(row?.attempts).toBe(1)
+  })
+
+  it('is a no-op on a fresh database where v29 already created the columns', () => {
+    const db = openTestDb()
+    expect(() => runMigrations(db)).not.toThrow()
+    const cols = new Set(
+      db.query<{ name: string }, []>('PRAGMA table_info(reminders)').all().map((r) => r.name),
+    )
+    expect(cols.has('last_attempt_at')).toBe(true)
+  })
+})
+
+describe('migration v42 — heals the Atelier-branch v35 tool_calls collision', () => {
+  it('adds tool_calls when user_version advanced past the skipped official v35', () => {
+    const db = openTestDb()
+    db.exec('ALTER TABLE turn_records DROP COLUMN tool_calls; PRAGMA user_version = 41;')
+
+    expect(() => runMigrations(db)).not.toThrow()
+
+    const cols = db.query<{ name: string }, []>("PRAGMA table_info('turn_records')").all().map(c => c.name)
+    expect(cols).toContain('tool_calls')
+    const version = db.query<{ user_version: number }, []>('PRAGMA user_version').get()?.user_version
+    expect(version).toBe(migrations.length)
+    db.close()
+  })
+})

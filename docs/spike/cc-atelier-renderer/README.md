@@ -133,7 +133,33 @@ Implemented and unit-tested (Apple Silicon Phase 1):
 All 46 Atelier tests pass (25 prior + 21 new/changed); full repo suite green;
 typecheck clean. Still **not** wired into the daemon tick.
 
-**Not yet done (needs a Mac build):** bundling the real `sd-cli` binary as a
-Tauri `externalBin` sidecar, pinning the default model URL/SHA-256, and the
-manual real-spawn smoke (`scripts/atelier-sidecar-smoke.ts`). See Task 6 of
-`docs/superpowers/plans/2026-09-01-cc-atelier-local-renderer.md`.
+## Local real-spawn qualification (2026-09-01)
+
+The official `stable-diffusion.cpp` release `master-841-6b3edaa` was verified
+and a static Apple Silicon Metal build was produced from the same source
+commit. The resulting `sd-cli` is a single arm64 Mach-O executable (55 MB),
+with no third-party dynamic library dependency; its local build SHA-256 is
+`1a6de3ecf516c57866905ecd359ac7adb07aed652879fdfffdd4f3f97b3871b8`.
+Device probing outside the sandbox reports Apple M1 Pro / Metal.
+
+The official Stability AI SD-Turbo safetensors model was downloaded and
+verified locally (5.21 GB; SHA-256
+`3f067a1b943cf162f2b8f8588f6cf5824bd5b4c7d1d88d87164b9ca123616549`). With
+`cfg-scale=1` and four steps, one 512×512 render completes in roughly 10–14
+seconds on this Mac. A watercolor, pencil-sketch, and oil-pastel comparison
+produced visibly distinct material behavior: wash/bleed, graphite pressure and
+paper tooth, and opaque wax drag respectively. This is a qualification result,
+not a permanent CC house style.
+
+The TypeScript real-spawn smoke also passed and saved a validated PNG:
+`bun run smoke:atelier-sidecar` (with `SD_CLI` and `SD_MODEL` set), reporting
+`ok=true`, `bytes=543508`, and `elapsed_ms=13678`.
+
+The macOS-only Tauri platform config now registers `binaries/sd-cli`, and
+`build-sidecar.ts` accepts `WECHAT_CC_ATELIER_SD_CLI` to copy/sign the static
+artifact reproducibly. The local packaged copy has SHA-256
+`431bc28a8faab6d6f1193af605e79ea7eb65b040adfa5df3af4c457abeb97be8` after
+ad-hoc signing. The release CI now repeats the pinned static build on the
+macOS arm64 runner, exports `WECHAT_CC_ATELIER_SD_CLI`, and invokes the same
+copy/sign path. Remaining work is model provisioning UX and desktop artwork
+display; the private-mode daemon seam is mounted but remains default-off.

@@ -41,13 +41,17 @@ image is simpler and more robust than a long-lived HTTP server.
 
 ### 2.1 Model
 
-- Default model: **SD-Turbo** (confirmed supported, small, few-step, fast).
-  A single-file `safetensors`/`gguf`, roughly 2–3 GB.
+- Default candidate: **SD-Turbo** (confirmed supported, few-step, fast).
+  The official single-file safetensors artifact is 5.21 GB; this is a
+  qualification candidate until packaging and disk-UX are finalized.
 - SDXL-Turbo is listed by the repo overview but an older discussion reports it
   unsupported; treat SDXL-Turbo as an implementation-time quality upgrade to
   verify against the actual binary, not a launch requirement.
-- Sampling: few steps (turbo 1–4), 512×512, no negative prompt. The goal is a
-  quiet, expressive image, not a polished illustration.
+- Sampling: few steps (turbo 1–4), 512×512. The model and prompt path must be
+  tested across materially different choices—such as watercolor, pencil or
+  pen sketch, and oil/oil-pastel—not optimized around one permanent painterly
+  look. The goal is a quiet, expressive work whose marks truthfully belong to
+  the medium CC selected for that moment.
 
 ## 3. Architecture and component boundaries
 
@@ -197,4 +201,7 @@ one real image end-to-end, default-off, with no automatic trigger.
 - exact `sd-cli` flags and step count against the built binary;
 - final default model (SD-Turbo vs a verified SDXL-Turbo) and its download URL
   + SHA-256;
+- whether that model can keep watercolor, pencil/pen line, and oil/oil-pastel
+  materially distinct instead of collapsing them into photography or one
+  generic house style;
 - `sd-cli` build/fetch mechanism inside `build-sidecar` for the release arch.

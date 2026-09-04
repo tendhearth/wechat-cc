@@ -8,12 +8,17 @@
  */
 
 const FIELD_LIMIT = 240
+const ORIGIN_LIMIT = 400
+const APPROACH_LIMIT = 300
 const CONTINUITY_LIMIT = 4
 
 const IMPULSE_KEYS = new Set([
   'shouldPaint', 'feeling', 'whyNow', 'subject', 'surface', 'medium',
-  'gesture', 'composition', 'shareIntent',
+  'gesture', 'composition', 'shareIntent', 'title', 'origin', 'approach',
 ])
+
+/** Guest-visible creation-background notes, validated if the model supplies them. */
+const BACKGROUND_LIMITS = { title: FIELD_LIMIT, origin: ORIGIN_LIMIT, approach: APPROACH_LIMIT } as const
 
 const CONTROL_OR_PROMPT_TOKEN = /[\u0000-\u001f\u007f-\u009f]|```|<\|[^>]*\|>/u
 const URL_OR_EMAIL = /(?:https?:\/\/|www\.)\S+|\b[^\s@]+@[^\s@]+\.[^\s@]+\b/iu
@@ -33,6 +38,12 @@ export interface ArtImpulse {
   gesture?: string
   composition?: string
   shareIntent?: ArtworkShareIntent
+  /** CC-authored short work title (display only, never renderer input). */
+  title?: string
+  /** CC-authored first-person note on why this was painted; a feeling, not a fact. */
+  origin?: string
+  /** CC-authored note on why this medium/surface/gesture suited the work. */
+  approach?: string
 }
 
 export interface RenderBrief {
@@ -60,10 +71,10 @@ function parseJsonCandidate(input: unknown): unknown {
   try { return JSON.parse(trimmed) } catch { return undefined }
 }
 
-function validText(value: unknown): value is string {
+function validText(value: unknown, limit = FIELD_LIMIT): value is string {
   if (typeof value !== 'string') return false
   const trimmed = value.trim()
-  return trimmed.length > 0 && trimmed.length <= FIELD_LIMIT && !CONTROL_OR_PROMPT_TOKEN.test(trimmed)
+  return trimmed.length > 0 && trimmed.length <= limit && !CONTROL_OR_PROMPT_TOKEN.test(trimmed)
 }
 
 /** Parse strict planner output. Any ambiguity fails closed before rendering. */
@@ -96,6 +107,11 @@ export function parseArtImpulse(input: unknown): ArtImpulseParseResult {
   if (raw.shareIntent !== 'now' && raw.shareIntent !== 'later' && raw.shareIntent !== 'private') {
     return { ok: false, reason: 'shareIntent is invalid' }
   }
+  for (const [key, limit] of Object.entries(BACKGROUND_LIMITS)) {
+    if (raw[key] !== undefined && !validText(raw[key], limit)) {
+      return { ok: false, reason: `${key} is invalid` }
+    }
+  }
   const feeling = raw.feeling as string
   const subject = raw.subject as string
   const surface = raw.surface as string
@@ -114,6 +130,9 @@ export function parseArtImpulse(input: unknown): ArtImpulseParseResult {
       gesture: gesture.trim(),
       composition: composition.trim(),
       shareIntent: raw.shareIntent,
+      ...(typeof raw.title === 'string' ? { title: raw.title.trim() } : {}),
+      ...(typeof raw.origin === 'string' ? { origin: raw.origin.trim() } : {}),
+      ...(typeof raw.approach === 'string' ? { approach: raw.approach.trim() } : {}),
     },
   }
 }
@@ -162,6 +181,7 @@ export function buildRenderBrief(
         'no generated text or explanatory emotion labels',
         'no automatic mascot, white bear, face, heart, or sticker composition',
         'no polished generic AI illustration; preserve physical texture and imperfection',
+        'do not impose a fixed house style or substitute a different medium for the one selected',
       ],
     },
   }
@@ -177,6 +197,7 @@ export function renderBriefToPrompt(brief: RenderBrief): string {
     `Subject or mark: ${brief.subject}.`,
     `Surface: ${brief.surface}; it must be visibly present in the finished image.`,
     `Medium: ${brief.medium}; show its real texture, resistance, and imperfections.`,
+    'Faithfully use that selected medium and its own mark-making language; do not force every work into brushy paint, photorealism, or one recurring house style.',
     `Gesture: ${brief.gesture}.`,
     `Composition: ${brief.composition}.${continuity}`,
     `Avoid: ${brief.negativeConstraints.join('; ')}.`,

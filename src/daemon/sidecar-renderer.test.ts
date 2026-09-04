@@ -11,6 +11,7 @@ describe('buildSdCliArgs', () => {
       steps: 4,
       width: 512,
       height: 512,
+      cfgScale: 1,
     })
     expect(args).toEqual([
       '-m', '/m/sd-turbo.safetensors',
@@ -19,6 +20,7 @@ describe('buildSdCliArgs', () => {
       '--steps', '4',
       '--width', '512',
       '--height', '512',
+      '--cfg-scale', '1',
     ])
   })
 })
@@ -41,7 +43,7 @@ function fakeSpawn(behavior: 'exit0' | 'exit1' | 'hang' | 'error'): SpawnFn {
 function deps(spawn: SpawnFn, readFile: (p: string) => Promise<Uint8Array> = async () => PNG) {
   return {
     sdCliPath: '/bin/sd-cli', modelPath: '/m/sd-turbo.safetensors', workDir: '/work',
-    spawn, readFile, mkdtemp: async (p: string) => `${p}abc`,
+    spawn, readFile, mkdir: async () => {}, mkdtemp: async (p: string) => `${p}abc`,
     rm: async () => {}, timeoutMs: 50,
   }
 }
@@ -53,6 +55,13 @@ describe('makeSidecarRenderer', () => {
     expect(out.mime).toBe('image/png')
     expect(out.bytes).toEqual(PNG)
     expect(out.rendererId).toBe('local-sd:sd-turbo.safetensors')
+  })
+
+  it('creates the work directory before rendering so a first run cannot ENOENT', async () => {
+    const calls: string[] = []
+    const d = { ...deps(fakeSpawn('exit0')), workDir: '/fresh/work', mkdir: async (p: string) => { calls.push(p) } }
+    await makeSidecarRenderer(d).render({ prompt: 'x' })
+    expect(calls).toContain('/fresh/work')
   })
 
   it('maps non-zero exit to renderer_exec_error', async () => {

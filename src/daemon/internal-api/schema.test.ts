@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { REQUEST_SCHEMAS, RESPONSE_SCHEMAS } from './schema'
 import {
   HealthResponse,
+  AtelierShareRequest, AtelierShareResponse,
   MemoryReadRequest, MemoryReadResponse,
   MemoryWriteRequest, MemoryWriteResponse,
   MemoryListQuery, MemoryListResponse,
@@ -43,6 +44,22 @@ describe('HealthResponse', () => {
       state: 'degraded', consecutive_failures: 3, last_ok_at: null, last_error: 'errcode=-2: prepare failed',
     } }).success).toBe(true)
     expect(HealthResponse.safeParse({ ok: true, daemon_pid: 1, outbound: { state: 'weird' } }).success).toBe(false)
+  })
+})
+
+describe('AtelierShareRequest', () => {
+  it('accepts reviewed copy or an explicit image-only choice', () => {
+    expect(AtelierShareRequest.safeParse({ id: 'work-1', background: null }).success).toBe(true)
+    expect(AtelierShareRequest.safeParse({ id: 'work-1', background: {
+      title: '潮线', origin: '我想留住退潮后的安静。', approach: '用树枝画。',
+    } }).success).toBe(true)
+  })
+  it('rejects traversal ids and incomplete included background', () => {
+    expect(AtelierShareRequest.safeParse({ id: '../work', background: null }).success).toBe(false)
+    expect(AtelierShareRequest.safeParse({ id: 'work-1', background: { title: '潮线', origin: '', approach: '树枝' } }).success).toBe(false)
+  })
+  it('accepts success with a partial-send warning', () => {
+    expect(AtelierShareResponse.safeParse({ ok: true, shared_at: '2026-09-03T00:00:00Z', background_sent: false, warning: 'background_send_failed' }).success).toBe(true)
   })
 })
 
@@ -624,21 +641,22 @@ describe('ReminderScheduleRequest', () => {
 // ── schema lookup tables ─────────────────────────────────────────────────────
 
 describe('schema lookup tables', () => {
-  it('REQUEST_SCHEMAS has 41 entries', () => {
+  it('REQUEST_SCHEMAS has 42 entries', () => {
     // 19 original + 4 a2a dashboard routes (preview, install, remove, pause)
     // + 1 a2a server-side test route (Test button) + 1 memory/delete
     // + 1 companion/import-local + 3 plugins (toggle, install, upgrade)
     // + 1 license/activate + 8 customer-review routes
-    // + 3 reminders (schedule, cancel, list query)
+    // + 3 reminders (schedule, cancel, list query) + 1 atelier/share
     // (P4: social/seek's SocialSeekRequest was deleted — the propose/
     // confirm/cancel routes that replaced it are inline-validated, no
     // REQUEST_SCHEMAS entry, per the pair/inbound routes' precedent.)
-    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(41)
+    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(42)
   })
-  it('RESPONSE_SCHEMAS has 33 entries (one per route)', () => {
+  it('RESPONSE_SCHEMAS has 34 entries (one per route)', () => {
     // 25 original + 2 a2a dashboard response schemas (preview, install)
     // + 1 a2a server-side test response + 1 memory/delete
     // + 1 companion/import-local + 3 reminders (schedule, cancel, list)
-    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(33)
+    // + 1 atelier/share
+    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(34)
   })
 })

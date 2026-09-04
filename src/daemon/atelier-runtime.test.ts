@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runAtelierCycle, type AtelierContext, type AtelierRuntimeDeps } from './atelier-runtime'
+import { buildAtelierContext, runAtelierCycle, type AtelierContext, type AtelierRuntimeDeps } from './atelier-runtime'
 import { makeAtelierStore } from './atelier-store'
 import type { ArtworkRenderer, RenderedArtwork } from './artwork-renderer'
 
@@ -29,6 +29,36 @@ function deps(overrides: Record<string, unknown> = {}) {
     now: () => new Date('2026-09-01T12:00:00Z'), ...overrides,
   } as AtelierRuntimeDeps
 }
+
+describe('buildAtelierContext', () => {
+  it('feeds CC its own recent observations and persona as the impulse fuel', () => {
+    const ctx = buildAtelierContext({
+      observations: [
+        { id: 'o1', ts: '2026-09-01T09:00:00Z', body: '主人这几天很累', tone: 'concern', archived: false },
+        { id: 'o2', ts: '2026-09-01T10:00:00Z', body: '窗外的光很好', archived: false },
+      ],
+      persona: '温和、喜欢留白，偶尔调皮',
+      recentWorks: [],
+      nowLocal: '2026-09-02 08:00',
+    })
+    expect(ctx.recentObservations).toEqual(['[concern] 主人这几天很累', '窗外的光很好'])
+    expect(ctx.personaExcerpt).toBe('温和、喜欢留白，偶尔调皮')
+    expect(ctx.nowLocal).toBe('2026-09-02 08:00')
+  })
+
+  it('stays a safe no-op shape when there are no observations and no persona', () => {
+    const ctx = buildAtelierContext({ observations: [], persona: null, recentWorks: [], nowLocal: 'now' })
+    expect(ctx.recentObservations).toEqual([])
+    expect(ctx.personaExcerpt).toBe('')
+  })
+
+  it('keeps only the most recent handful of observations', () => {
+    const observations = Array.from({ length: 12 }, (_, i) => ({ id: `o${i}`, ts: `t${i}`, body: `obs ${i}`, archived: false }))
+    const ctx = buildAtelierContext({ observations, persona: null, recentWorks: [], nowLocal: 'now' })
+    expect(ctx.recentObservations).toHaveLength(6)
+    expect(ctx.recentObservations.at(-1)).toBe('obs 11')
+  })
+})
 
 describe('atelier runtime', () => {
   it('off mode makes zero planner or renderer calls', async () => {
@@ -61,6 +91,33 @@ describe('atelier runtime', () => {
     const record = d.store.load('work-1')!
     expect(record.impulse).not.toHaveProperty('whyNow')
     expect(record.privateCauseSummary).toBe(impulse.whyNow)
+  })
+
+  it('records CC-authored background text when the impulse provides an artist note', async () => {
+    const authored = {
+      ...impulse,
+      title: '退潮之后',
+      origin: '心里空落落的，想画点会自己流走的东西。',
+      approach: '让痕迹被浪擦掉一部分，不完整才更像真的。',
+    }
+    const d = deps({ planner: { plan: vi.fn(async () => authored) } })
+    expect((await runAtelierCycle(d)).status).toBe('created')
+    expect(d.store.load('work-1')!.background).toMatchObject({
+      title: '退潮之后',
+      origin: '心里空落落的，想画点会自己流走的东西。',
+      approach: '让痕迹被浪擦掉一部分，不完整才更像真的。',
+      kind: 'autonomous',
+    })
+  })
+
+  it('falls back to a template background when the impulse omits the artist note', async () => {
+    const d = deps() // impulse carries no title/origin/approach
+    expect((await runAtelierCycle(d)).status).toBe('created')
+    const bg = d.store.load('work-1')!.background!
+    expect(bg.title).toBe(impulse.subject)
+    expect(bg.origin).toContain(impulse.subject)
+    expect(bg.approach).toContain(impulse.medium)
+    expect(bg.kind).toBe('autonomous')
   })
 
   it('share mode sends only after save and keeps pending on notify failure', async () => {

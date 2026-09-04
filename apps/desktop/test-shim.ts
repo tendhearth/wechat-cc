@@ -29,6 +29,7 @@ import { spawn } from 'bun'
 import { join, resolve, relative, isAbsolute } from 'node:path'
 import { guardCliInvoke } from './dev-guard'
 import { makeLiveReload, injectReloadScript } from './dev-reload'
+import { makeAtelierStore } from '../../src/daemon/atelier-store'
 
 const ROOT = process.env.WECHAT_CC_ROOT ?? join(import.meta.dir, '..', '..')
 // Accepts both spellings: src/lib/config.ts and lib.rs read WECHAT_STATE_DIR,
@@ -404,6 +405,33 @@ Bun.serve({
           status: upstream.status,
           headers: { 'content-type': 'application/json' },
         })
+      } catch (err) {
+        return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 502 })
+      }
+    }
+
+    // CC Atelier gallery proxy: desktop development uses the shim as the
+    // frontend origin, while artwork records live in the real daemon state.
+    if (url.pathname === '/v1/atelier/works' && req.method === 'GET') {
+      if (isCrossSiteRequest(req)) return new Response('forbidden', { status: 403 })
+      if (dryRun) return Response.json({ works: [] })
+      try {
+        const info = JSON.parse(await Bun.file(join(STATE_DIR, 'internal-api-info.json')).text()) as { baseUrl?: string; operatorTokenFilePath?: string }
+        if (!info.baseUrl || !info.operatorTokenFilePath) return Response.json({ error: 'daemon info unavailable' }, { status: 503 })
+        const token = (await Bun.file(info.operatorTokenFilePath).text()).trim()
+        const upstream = await fetch(info.baseUrl + url.pathname + url.search, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) })
+        if (upstream.ok) return new Response(await upstream.text(), { status: upstream.status, headers: { 'content-type': 'application/json' } })
+        // The installed daemon may predate the Atelier route (or reject the
+        // newer route tier); development should still preview the current
+        // workspace's local works.
+        const store = makeAtelierStore(STATE_DIR)
+        const works = []
+        for (const { privateCauseSummary: _private, ...work } of store.list(24)) {
+          const path = store.imagePath(work)
+          const imageData = path ? `data:image/png;base64,${Buffer.from(await Bun.file(path).arrayBuffer()).toString('base64')}` : undefined
+          works.push({ ...work, ...(imageData ? { image_data: imageData } : {}) })
+        }
+        return Response.json({ works })
       } catch (err) {
         return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 502 })
       }

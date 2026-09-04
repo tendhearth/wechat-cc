@@ -61,7 +61,7 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  it('opens a fresh db with PRAGMA user_version = 40 and the 29 tables', () => {
+  it('opens a fresh db with PRAGMA user_version = 42 and the 29 tables', () => {
     const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
     // v14 (dialogue real data): messages / threads / thread_extract_state tables added;
     // events.kind widened with 'threads_extracted'.
@@ -98,7 +98,9 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v38 (明信片): hunt_catch 加 image_svg — no new tables.
     // v39 (社交信封): penpal_letter 加 kind / payload — no new tables.
     // v40 (伙伴日志): hunt_catch 改名 journal — table set changes, count doesn't.
-    expect(v).toBe(40)
+    // v41 (reminders 自愈): 补齐旧六月 schema 缺失的重试列 — no new tables.
+    // v42 (Atelier 分支碰撞自愈): 补齐被跳过的 turn_records.tool_calls — no new tables.
+    expect(v).toBe(42)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',

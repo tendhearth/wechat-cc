@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname, join } from 'node:path'
 import { buildRenderBrief, renderBriefToPrompt, parseArtImpulse, type ArtImpulse, type RenderBrief } from './art-impulse'
 import type { ArtworkRenderer, RenderedArtwork } from './artwork-renderer'
-import type { AtelierStore } from './atelier-store'
+import type { ArtworkBackground, AtelierStore } from './atelier-store'
+import type { ObservationRecord } from './observations/store'
 
 export type AtelierMode = 'off' | 'private' | 'share'
 
@@ -16,6 +17,30 @@ export interface AtelierContext {
 
 export interface ArtImpulsePlanner {
   plan(context: AtelierContext): Promise<ArtImpulse | unknown>
+}
+
+const ATELIER_MAX_OBSERVATIONS = 6
+
+/**
+ * Assemble the planner's context from CC's own derived signals — its recent
+ * tone-tagged observations and its persona — never raw chat. This is the fuel
+ * that lets a real creative impulse form instead of painting from nothing.
+ */
+export function buildAtelierContext(input: {
+  observations: ObservationRecord[]
+  persona: string | null
+  recentWorks: AtelierContext['recentWorks']
+  nowLocal: string
+}): AtelierContext {
+  return {
+    recentObservations: input.observations
+      .slice(-ATELIER_MAX_OBSERVATIONS)
+      .map(o => (o.tone ? `[${o.tone}] ${o.body}` : o.body)),
+    activeThreads: [],
+    personaExcerpt: input.persona ?? '',
+    recentWorks: input.recentWorks,
+    nowLocal: input.nowLocal,
+  }
 }
 
 export interface AtelierCadenceState {
@@ -49,6 +74,22 @@ const DEFAULT_EVALUATION_INTERVAL_MS = 24 * 3600_000
 const DEFAULT_MIN_SUCCESS_INTERVAL_MS = 30 * 3600_000
 const DEFAULT_ROLLING_WINDOW_MS = 7 * 24 * 3600_000
 const DEFAULT_MAX_SUCCESSES = 2
+
+/**
+ * Prefer CC's own first-person creation notes; when the impulse omits any of
+ * them, fall back to a template built only from the already-validated visual
+ * fields, so every work still carries a background without blocking creation.
+ */
+function buildBackground(impulse: ArtImpulse): ArtworkBackground {
+  return {
+    title: impulse.title ?? impulse.subject!,
+    origin: impulse.origin
+      ?? `那一刻，我想把${impulse.feeling}留在一幅画里。${impulse.subject}成了最接近它的形状。`,
+    approach: impulse.approach
+      ?? `我选择在${impulse.surface}上用${impulse.medium}表达，并用${impulse.gesture}组织痕迹；画面采用${impulse.composition}。`,
+    kind: 'autonomous',
+  }
+}
 
 function statePath(stateDir: string): string { return join(stateDir, 'atelier', 'atelier-state.json') }
 
@@ -140,6 +181,7 @@ export async function runAtelierCycle(d: AtelierRuntimeDeps): Promise<AtelierRun
       imageBytes: rendered.bytes,
       impulse: parsed.value,
       privateCauseSummary: parsed.value.whyNow,
+      background: buildBackground(parsed.value),
       rendererId: rendered.rendererId,
       shareState: pendingShare ? 'pending' : 'private',
     })

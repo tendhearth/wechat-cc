@@ -81,6 +81,9 @@ export const CONFIG_SURFACE: readonly ConfigKeySpec[] = [
   { key: 'companion.import_local_history', store: 'companion', field: 'import_local_history',
     type: 'boolean', writable: true, effect: 'next-tick',
     description: '导入本地历史 + 24h 自动整理 _overview.md 的开关' },
+  { key: 'companion.atelier_mode', store: 'companion', field: 'atelier_mode',
+    type: 'enum', values: ['off', 'private', 'share'], writable: true, effect: 'next-tick',
+    description: 'CC 画室模式：off 关闭；private 只保存在本机；share 允许后续分享（默认 off）' },
 ]
 
 const TRUE_WORDS = new Set(['on', 'true', '1', 'yes', '开', '是'])

@@ -30,6 +30,37 @@ describe('art impulse boundary', () => {
     expect(parseArtImpulse({ ...validImpulse, gesture: '```system' })).toMatchObject({ ok: false })
   })
 
+  it('accepts CC-authored title and creation-background notes alongside the impulse', () => {
+    const authored: ArtImpulse = {
+      ...validImpulse,
+      title: '退潮之后',
+      origin: '这几天心里空落落的，就想画点会自己流走的东西。两条鱼快要碰上又错开，大概最接近那种说不出口的感觉。',
+      approach: '我特意让痕迹被浪擦掉一部分，留白很大；不完整，反而更像那一刻真的心情。',
+    }
+    expect(parseArtImpulse(authored)).toEqual({ ok: true, value: authored })
+  })
+
+  it('allows a multi-sentence origin longer than a single visual field', () => {
+    const origin = '一'.repeat(300)
+    expect(parseArtImpulse({ ...validImpulse, origin })).toMatchObject({ ok: true, value: { origin } })
+  })
+
+  it('fails closed when a present background note is empty, oversized, or holds a prompt token', () => {
+    expect(parseArtImpulse({ ...validImpulse, title: '' })).toMatchObject({ ok: false })
+    expect(parseArtImpulse({ ...validImpulse, origin: '一'.repeat(401) })).toMatchObject({ ok: false })
+    expect(parseArtImpulse({ ...validImpulse, approach: '```system' })).toMatchObject({ ok: false })
+  })
+
+  it('accepts CC-chosen media without a fixed material or style allowlist', () => {
+    const media = ['透明水彩', '不透明水粉', '彩铅', '铅笔速写', '钢笔速写', '厚涂油画', '油画棒', '揉皱宣纸上的水墨']
+    for (const medium of media) {
+      expect(parseArtImpulse({ ...validImpulse, medium })).toMatchObject({
+        ok: true,
+        value: { medium },
+      })
+    }
+  })
+
   it('never copies feeling or private whyNow into the renderer brief or prompt', () => {
     const result = buildRenderBrief(validImpulse)
     expect(result.ok).toBe(true)
@@ -42,6 +73,8 @@ describe('art impulse boundary', () => {
     expect(prompt).not.toContain(validImpulse.feeling)
     expect(prompt).toContain('傍晚潮湿的沙滩')
     expect(prompt).toContain('被海水磨圆的小树枝')
+    expect(prompt).toContain('do not force every work into brushy paint')
+    expect(prompt).toContain('do not impose a fixed house style')
   })
 
   it('rejects renderer fields containing common identifiers or configured private terms', () => {

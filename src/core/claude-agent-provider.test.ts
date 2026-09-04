@@ -418,6 +418,24 @@ describe('claude-agent-provider', () => {
     expect(text).toBe('8')
   })
 
+  it('cheapEval falls back to result text when no assistant event is emitted', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const cheapPromise = provider.cheapEval?.('return JSON')
+    await new Promise(r => setTimeout(r, 0))
+    ;(sdk as unknown as { __test_yield: (m: unknown) => void }).__test_yield({
+      type: 'result', subtype: 'success', result: '{"shouldPaint":false}',
+      session_id: 'c-result-only', num_turns: 1, duration_ms: 50,
+    })
+    ;(sdk as unknown as { __test_end: () => void }).__test_end()
+    await expect(cheapPromise).resolves.toBe('{"shouldPaint":false}')
+    const options = (sdk as unknown as { __test_last_options: () => unknown }).__test_last_options() as {
+      settingSources?: string[]; tools?: string[]; persistSession?: boolean
+    }
+    expect(options.settingSources).toEqual([])
+    expect(options.tools).toEqual([])
+    expect(options.persistSession).toBe(false)
+  })
+
   it('cheapEval respects WECHAT_CLAUDE_CHEAP_MODEL env override (PR F)', async () => {
     const prior = process.env['WECHAT_CLAUDE_CHEAP_MODEL']
     process.env['WECHAT_CLAUDE_CHEAP_MODEL'] = 'claude-haiku-99-experimental'

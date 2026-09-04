@@ -9,9 +9,9 @@
 
 CC 画画不是为了补齐聊天素材，也不是把一种情绪翻译成一张可复用的
 表情包。画画是 CC 消化和表达自身感受的一种方式：它可能画在纸上、
-沙滩、墙面或玻璃上，也可能使用铅笔、炭笔、水彩、粉笔、树枝、手指等
-不同媒介。作品不必画 CC 自己，不必直译成笑脸或哭脸，也不必立即给
-主人看。
+沙滩、墙面或玻璃上，也可能使用水彩、水粉、彩铅、铅笔速写、钢笔速写、
+油画、油画棒、炭笔、粉笔、树枝或手指等不同媒介。作品不必画 CC 自己，
+不必直译成笑脸或哭脸，也不必立即给主人看。
 
 一句话定义：
 
@@ -31,7 +31,8 @@ CC 在连续的经历、记忆与人格中形成可追溯、前后一致的表�
 2. **创作冲动先于画面。** 系统先判断 CC 此刻有没有值得画的感受；没有
    就不画，不能为了日更或配额硬找主题。
 3. **材质与场所属于表达。** 纸张、墙、沙滩等不是随机背景换皮；画笔、
-   力度、覆盖、擦除和留白都应与当下感受相关。
+   力度、覆盖、擦除和留白都应与当下感受相关。媒介不是系统预先分配的
+   风格标签，而是 CC 根据当下状态作出的创作选择。
 4. **不要求画自己。** 作品可以是人物、物件、风景、抽象痕迹或反复出现
    的私人意象。CC 的身份主要由观察方式和逐渐形成的创作习惯体现。
 5. **不同聊天模型可以产生不同灵感，但不能决定基础画质。** Claude、
@@ -41,6 +42,10 @@ CC 在连续的经历、记忆与人格中形成可追溯、前后一致的表�
    避免 CC 的画风因 provider 能力不同而突然失真。
 7. **作品先成为生活，再成为内容。** 有些作品可以主动分享，有些只留在
    画室；分享失败不能导致作品丢失。
+8. **不锁定材质与画风。** 系统不规定 CC 必须长期画油画、水彩或任何一种
+   house style，也不把所有作品强制加上同一种颜料笔触。CC 可以在不同状态
+   下选择水彩、水粉、彩铅、铅笔/钢笔速写、油画、油画棒或其他媒介；长期
+   偏好只能从作品中自然长出来，不能反过来成为限制下一幅作品的模板。
 
 ## 3. What changes from the current feature
 
@@ -192,6 +197,11 @@ It excludes chat ids, user names, direct quotes, addresses, relationships,
 The code-side art director should enforce these stable principles:
 
 - the chosen surface and medium must be visibly present, not just named;
+- render the mark-making language of the selected medium: brushwork and paint
+  body for paint, paper grain and pressure for pencil, ink line/bleed for pen,
+  wax drag for oil pastel, and equivalent material truth for other choices;
+- never apply one global painterly, photorealistic, cute-illustration or other
+  house-style suffix to every work;
 - physical imperfection, texture, erasure and human-scale marks are allowed;
 - do not automatically depict a white bear or a face;
 - do not place explanatory emotion labels or generated text in the artwork;
@@ -502,7 +512,9 @@ The MVP is ready for owner testing when all are true:
 1. At least two configured chat providers can independently produce valid
    `ArtImpulse` output through the same planner contract.
 2. A fixed renderer produces locally saved images whose visible surface and
-   medium match the structured intention.
+   medium match the structured intention across materially different choices
+   (at minimum one wet medium, one dry drawing medium and one opaque/impasto
+   medium), without collapsing them into one house style.
 3. No raw chat, direct quote, user identifier or `whyNow` reaches the renderer
    in privacy fixtures and captured smoke requests.
 4. “No impulse” is a normal tested outcome and causes zero image cost.

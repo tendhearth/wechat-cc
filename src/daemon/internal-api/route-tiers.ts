@@ -185,6 +185,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // 桌面读故障记录以显示"上次故障"横幅。trusted:桌面/CLI 的唯一凭据是
   // 0600 文件 token;内容只有时间戳与分类,不含聊天数据。
   'GET /v1/health/incidents': 'trusted',
+  'GET /v1/atelier/works': 'trusted',
+  'GET /v1/atelier/model-status': 'trusted',
+  // Explicit desktop action; sends only to companion.default_chat_id and
+  // never accepts a caller-controlled recipient.
+  'POST /v1/atelier/share': 'trusted',
   // Knowledge Kernel (Phase 01, T3, docs/superpowers/specs/
   // 2026-07-12-knowledge-kernel-phase01-design.md "Knowledge API").
   // Ingest = admin/internal only: source/put and semantic/put are written

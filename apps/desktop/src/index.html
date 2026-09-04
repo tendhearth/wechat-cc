@@ -319,6 +319,10 @@
               <span class="ic" data-hg-icon="power" data-hg-size="16"></span>
               <span>此刻</span>
             </button>
+            <button class="dash-nav-link" data-pane="atelier">
+              <span class="ic" data-hg-icon="brush" data-hg-size="16"></span>
+              <span>画室</span>
+            </button>
             <button class="dash-nav-link" data-pane="memory">
               <span class="ic" data-hg-icon="archive" data-hg-size="16"></span>
               <span>记忆</span>
@@ -410,6 +414,7 @@
                 </div>
               </section>
 
+              <aside class="moment-side" aria-label="连接状态">
               <section class="moment-users" aria-label="用户连接状态">
                 <!-- 上次故障横幅(Task 8, spec 2026-08-03-connection-health §8):
                      桌面没开着时通知无处可去 —— 2026-08-02 那次断了 10.5 小时,
@@ -436,6 +441,7 @@
                 </div>
                 <div id="accounts-body" class="sub-user-grid"></div>
               </section>
+              </aside>
               <button id="companion-users-scrim" class="companion-users-scrim" type="button" aria-label="收起用户抽屉"></button>
               <div class="companion-immersive-tools" aria-label="陪伴模式工具">
                 <button id="companion-immersive-exit" type="button">退出陪伴</button>
@@ -459,6 +465,17 @@
                   <button id="update-apply-btn" hidden></button>
                 </div>
               </div>
+            </div>
+          </article>
+
+          <!-- ── pane: atelier ─────────────────────────────────────── -->
+          <article class="dash-pane atelier-pane" data-pane="atelier" hidden>
+            <div class="atelier-pane-head">
+              <div><h1>CC 画室</h1><p>只保存在这台 Mac。媒材和画风由 CC 按当下状态自由选择。</p></div>
+            </div>
+            <div id="atelier-model-status" class="atelier-model-status" role="status" hidden></div>
+            <div id="atelier-gallery" class="atelier-gallery atelier-gallery-page" aria-live="polite">
+              <p class="atelier-empty">正在查看近期作品…</p>
             </div>
           </article>
 

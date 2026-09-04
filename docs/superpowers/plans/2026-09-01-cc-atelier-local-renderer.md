@@ -645,12 +645,16 @@ export async function provisionAtelierModel(deps: ProvisionDeps): Promise<Provis
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `npx vitest run src/daemon/atelier-model-provision.test.ts`
 Expected: PASS (4 cases).
 
 - [ ] **Step 5: Typecheck and commit**
+
+Follow-up UX hardening: provisioning now retries transient fetch errors (bounded
+to three attempts by default), reports `checking/downloading/ready/failed`
+status events, and remains checksum-gated before writing the model.
 
 ```bash
 bun run typecheck
@@ -672,11 +676,11 @@ This task needs the **actual built `sd-cli` binary** and a **real model URL + SH
 **Interfaces:**
 - Consumes: `makeSidecarRenderer` (Task 3), `provisionAtelierModel` (Task 5).
 
-- [ ] **Step 1: Acquire the binary and model coordinates**
+- [x] **Step 1: Acquire the binary and model coordinates**
 
-Build `stable-diffusion.cpp` for `aarch64-apple-darwin` with the Metal backend (per its README), producing a single `sd-cli`. Choose the default model (SD-Turbo single-file `safetensors`/`gguf`), record its download URL and `sha256`. Fill these into the `ModelSpec` used by provisioning and into the smoke script below. Verify the exact `sd-cli` flags match `buildSdCliArgs` (Task 2); if they differ, update Task 2's builder and its test.
+Build `stable-diffusion.cpp` for `aarch64-apple-darwin` with the Metal backend (per its README), producing a single `sd-cli`. Choose the default model (SD-Turbo single-file `safetensors`/`gguf`), record its download URL and `sha256`. Before pinning it, render a small comparison set covering at least watercolor/gouache, pencil or pen sketch, and oil/oil-pastel; reject a model/prompt combination that collapses them into photography or one generic house style. Fill the chosen coordinates into the `ModelSpec` used by provisioning and into the smoke script below. Verify the exact `sd-cli` flags match `buildSdCliArgs` (Task 2); if they differ, update Task 2's builder and its test.
 
-- [ ] **Step 2: Register the sidecar binary**
+- [x] **Step 2: Register the sidecar binary**
 
 In `apps/desktop/src-tauri/tauri.conf.json`, add the sidecar to `externalBin` (Tauri requires the target-triple suffix on the on-disk file, e.g. `sd-cli-aarch64-apple-darwin`):
 
@@ -687,13 +691,13 @@ In `apps/desktop/src-tauri/tauri.conf.json`, add the sidecar to `externalBin` (T
 ]
 ```
 
-- [ ] **Step 3: Extend `build-sidecar.ts`**
+- [x] **Step 3: Extend `build-sidecar.ts`**
 
 In `apps/desktop/scripts/build-sidecar.ts`, add a step that places the built `sd-cli` at `apps/desktop/src-tauri/binaries/sd-cli-<target-triple>` (build-from-source or fetch a pinned release for the target arch), following the existing `wechat-cc-cli` handling in that file.
 
-- [ ] **Step 4: Write the manual smoke script**
+- [x] **Step 4: Write the manual smoke script**
 
-Create `scripts/atelier-sidecar-smoke.ts` (mirrors `scripts/atelier-renderer-spike.ts`): resolve the bundled `sd-cli` and provisioned model paths, build a real `makeSidecarRenderer` (real `child_process.spawn`, real fs), render the wet-sand-fish prompt once, write the PNG locally, and print `{ ok, output, renderer, bytes, elapsed_ms }`. It must refuse to run if the binary or model is missing (exit 2) and must never be invoked by the daemon or CI.
+Create `scripts/atelier-sidecar-smoke.ts` (mirrors `scripts/atelier-renderer-spike.ts`): resolve the bundled `sd-cli` and provisioned model paths, build a real `makeSidecarRenderer` (real `child_process.spawn`, real fs), render the selected smoke prompt, write the PNG locally, and print `{ ok, output, renderer, bytes, elapsed_ms }`. During model qualification, run the same path with contrasting watercolor/gouache, pencil/pen sketch, and oil/oil-pastel briefs so material fidelity—not one preferred house style—is the quality gate. It must refuse to run if the binary or model is missing (exit 2) and must never be invoked by the daemon or CI.
 
 Add to root `package.json` scripts:
 
@@ -701,12 +705,18 @@ Add to root `package.json` scripts:
 "smoke:atelier-sidecar": "bun scripts/atelier-sidecar-smoke.ts"
 ```
 
-- [ ] **Step 5: Run the smoke on an Apple Silicon Mac**
+- [x] **Step 5: Run the smoke on an Apple Silicon Mac**
 
 Run: `bun run smoke:atelier-sidecar`
 Expected: exits 2 with a clear message if the binary/model are absent; on a provisioned machine, writes one valid PNG and prints latency + byte size. Record the result.
 
 - [ ] **Step 6: Commit**
+
+Implementation follow-up (kept uncommitted with the current worktree):
+`CompanionConfig.atelier_mode` is now a persistent `off | private | share`
+setting exposed through `config_set`; `wireMain` mounts a throw-safe Atelier
+cycle after introspection only when the mode is enabled and local sidecar/model
+assets are present. Missing assets never trigger a download or renderer call.
 
 ```bash
 git add apps/desktop/src-tauri/tauri.conf.json apps/desktop/scripts/build-sidecar.ts scripts/atelier-sidecar-smoke.ts package.json
@@ -722,7 +732,7 @@ Confirm nothing regressed and the renderer/provisioner/resolver integrate with t
 **Files:**
 - Modify: `docs/spike/cc-atelier-renderer/README.md` (append a "local renderer implemented" note)
 
-- [ ] **Step 1: Run the Atelier suites**
+- [x] **Step 1: Run the Atelier suites**
 
 Run:
 ```bash
@@ -738,16 +748,21 @@ npx vitest run \
 ```
 Expected: all green (the prior 25 + the new renderer/resolver/provisioner cases).
 
-- [ ] **Step 2: Full typecheck + suite**
+- [x] **Step 2: Full typecheck + suite**
 
 Run: `bun run typecheck && bun --bun vitest run`
 Expected: typecheck clean; full suite green (existing sticker/search/feedback tests unaffected).
 
-- [ ] **Step 3: Update the spike README**
+- [x] **Step 3: Update the spike README**
 
 Append to `docs/spike/cc-atelier-renderer/README.md` a short note: the local `sd-cli` sidecar renderer, availability resolver, and model provisioner are implemented and unit-tested; a real-spawn smoke exists behind `bun run smoke:atelier-sidecar`; it is still not wired into the daemon tick.
 
 - [ ] **Step 4: Commit**
+
+Integration note (2026-09-01): targeted Atelier/config/desktop tests and
+typecheck pass. The full daemon Vitest run is not a valid gate in this
+restricted environment: unrelated suites fail on random-port binding,
+read-only `~/.claude/projects` fixtures, and Bun/Vitest mock-runner mismatch.
 
 ```bash
 git add docs/spike/cc-atelier-renderer/README.md

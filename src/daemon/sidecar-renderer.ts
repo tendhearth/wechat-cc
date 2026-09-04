@@ -16,6 +16,7 @@ export interface SdCliArgs {
   steps: number
   width: number
   height: number
+  cfgScale: number
 }
 
 /**
@@ -31,6 +32,7 @@ export function buildSdCliArgs(a: SdCliArgs): string[] {
     '--steps', String(a.steps),
     '--width', String(a.width),
     '--height', String(a.height),
+    '--cfg-scale', String(a.cfgScale),
   ]
 }
 
@@ -50,10 +52,14 @@ export interface SidecarRendererDeps {
   steps?: number
   width?: number
   height?: number
+  /** Distilled SD-Turbo-style models need cfg-scale=1 to follow prompts. */
+  cfgScale?: number
   timeoutMs?: number
   maxBytes?: number
   spawn: SpawnFn
   readFile: (p: string) => Promise<Uint8Array>
+  /** Ensure workDir exists (recursive); a fresh install has no atelier/tmp yet. */
+  mkdir: (p: string) => Promise<void>
   mkdtemp: (prefix: string) => Promise<string>
   rm: (p: string, opts: { recursive: boolean; force: boolean }) => Promise<void>
   now?: () => number
@@ -71,6 +77,7 @@ export function makeSidecarRenderer(deps: SidecarRendererDeps): ArtworkRenderer 
   const steps = deps.steps ?? 4
   const width = deps.width ?? 512
   const height = deps.height ?? 512
+  const cfgScale = deps.cfgScale ?? 1
   const id = `local-sd:${basename(deps.modelPath)}`
 
   return {
@@ -79,6 +86,7 @@ export function makeSidecarRenderer(deps: SidecarRendererDeps): ArtworkRenderer 
       const prompt = request.prompt.trim()
       if (!prompt) throw new ArtworkRendererError('renderer_bad_request', 'render prompt is empty')
       const startedAt = now()
+      await deps.mkdir(deps.workDir)
       const dir = await deps.mkdtemp(join(deps.workDir, 'sd-'))
       const outPath = join(dir, 'out.png')
       const controller = new AbortController()
@@ -91,7 +99,7 @@ export function makeSidecarRenderer(deps: SidecarRendererDeps): ArtworkRenderer 
             reject(new ArtworkRendererError('renderer_timeout', `sd-cli timed out after ${timeoutMs}ms`)))
           const child = deps.spawn(
             deps.sdCliPath,
-            buildSdCliArgs({ modelPath: deps.modelPath, prompt, outPath, steps, width, height }),
+            buildSdCliArgs({ modelPath: deps.modelPath, prompt, outPath, steps, width, height, cfgScale }),
             { signal: controller.signal },
           )
           child.on('error', () => reject(

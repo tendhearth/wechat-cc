@@ -12,6 +12,16 @@ const ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$/
 
 export type ArtworkShareState = 'private' | 'pending' | 'shared'
 
+export interface ArtworkBackground {
+  /** Human-facing work title; never the renderer prompt. */
+  title: string
+  /** 2–4 sentence local artist note: where the work came from. */
+  origin: string
+  /** Why this medium/surface/gesture suited the work. */
+  approach: string
+  kind: 'autonomous' | 'test'
+}
+
 export interface ArtworkRecord {
   id: string
   createdAt: string
@@ -23,6 +33,7 @@ export interface ArtworkRecord {
   /** Local-only; callers must not expose this on guest-readable surfaces. */
   privateCauseSummary?: string
   caption?: string
+  background?: ArtworkBackground
   rendererId: string
   shareState: ArtworkShareState
   sharedAt?: string
@@ -35,6 +46,7 @@ export interface SaveArtworkInput {
   impulse: ArtImpulse
   privateCauseSummary?: string
   caption?: string
+  background?: ArtworkBackground
   rendererId: string
   shareState?: ArtworkShareState
   sharedAt?: string
@@ -45,6 +57,8 @@ export interface AtelierStore {
   load(id: string): ArtworkRecord | null
   list(limit?: number): ArtworkRecord[]
   imagePath(recordOrId: ArtworkRecord | string): string | null
+  /** Atomic compare-and-swap used to claim/release/finish manual sharing. */
+  transitionShare(id: string, from: ArtworkShareState, to: ArtworkShareState, sharedAt?: string): ArtworkRecord | null
 }
 
 export interface AtelierStoreOptions {
@@ -82,6 +96,15 @@ function safeOptionalText(value: unknown, max = 500): value is string {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= max && !/[\u0000-\u001f\u007f-\u009f]/u.test(value)
 }
 
+function isBackground(value: unknown): value is ArtworkBackground {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const b = value as Partial<ArtworkBackground>
+  return safeOptionalText(b.title, 120)
+    && safeOptionalText(b.origin, 800)
+    && safeOptionalText(b.approach, 500)
+    && (b.kind === 'autonomous' || b.kind === 'test')
+}
+
 function publicImpulse(impulse: ArtImpulse): Omit<ArtImpulse, 'whyNow'> {
   const { whyNow: _privateCause, ...safe } = impulse
   return safe
@@ -98,6 +121,7 @@ function isRecord(value: unknown): value is ArtworkRecord {
   if (typeof record.rendererId !== 'string' || record.rendererId.length < 1 || record.rendererId.length > 200) return false
   if (record.shareState !== 'private' && record.shareState !== 'pending' && record.shareState !== 'shared') return false
   if (record.caption !== undefined && !safeOptionalText(record.caption)) return false
+  if (record.background !== undefined && !isBackground(record.background)) return false
   if (record.privateCauseSummary !== undefined && !safeOptionalText(record.privateCauseSummary)) return false
   if (record.sharedAt !== undefined && (typeof record.sharedAt !== 'string' || !Number.isFinite(Date.parse(record.sharedAt)))) return false
   const parsed = parseArtImpulse(record.impulse)
@@ -148,6 +172,9 @@ export function makeAtelierStore(stateDir: string, options: AtelierStoreOptions 
       if (input.caption !== undefined && !safeOptionalText(input.caption)) {
         throw new AtelierStoreError('invalid_record', 'caption is invalid')
       }
+      if (input.background !== undefined && !isBackground(input.background)) {
+        throw new AtelierStoreError('invalid_record', 'artwork background is invalid')
+      }
       if (input.privateCauseSummary !== undefined && !safeOptionalText(input.privateCauseSummary)) {
         throw new AtelierStoreError('invalid_record', 'private cause summary is invalid')
       }
@@ -179,6 +206,10 @@ export function makeAtelierStore(stateDir: string, options: AtelierStoreOptions 
         impulse: publicImpulse(parsed.value),
         ...(input.privateCauseSummary ? { privateCauseSummary: input.privateCauseSummary.trim() } : {}),
         ...(input.caption ? { caption: input.caption.trim() } : {}),
+        ...(input.background ? { background: {
+          title: input.background.title.trim(), origin: input.background.origin.trim(),
+          approach: input.background.approach.trim(), kind: input.background.kind,
+        } } : {}),
         rendererId: input.rendererId.trim(),
         shareState: input.shareState ?? 'private',
         ...(input.sharedAt ? { sharedAt: new Date(input.sharedAt).toISOString() } : {}),
@@ -223,6 +254,35 @@ export function makeAtelierStore(stateDir: string, options: AtelierStoreOptions 
       if (!target) return null
       const stored = load(id)
       return stored && stored.imageFile === `${id}.png` ? target.image : null
+    },
+
+    transitionShare(id, from, to, sharedAt) {
+      const target = paths(id)
+      const current = load(id)
+      if (!target || !current || current.shareState !== from) return null
+      let at: string | undefined
+      if (to === 'shared') {
+        const date = new Date(sharedAt ?? now())
+        if (!Number.isFinite(date.getTime())) {
+          throw new AtelierStoreError('invalid_record', 'sharedAt is invalid')
+        }
+        at = date.toISOString()
+      }
+      const next: ArtworkRecord = {
+        ...current,
+        shareState: to,
+        ...(at ? { sharedAt: at } : {}),
+      }
+      if (!at) delete next.sharedAt
+      const tmpMetadata = join(worksDir, `${id}.share-${process.pid}-${randomUUID().slice(0, 8)}.json`)
+      try {
+        writeFileSync(tmpMetadata, JSON.stringify(next, null, 2), { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+        renameSync(tmpMetadata, target.metadata)
+        return next
+      } catch {
+        rmSync(tmpMetadata, { force: true })
+        throw new AtelierStoreError('save_failed', 'failed to update artwork share state')
+      }
     },
   }
 }

@@ -7,7 +7,7 @@
  * same checkout. Keep the sidecar tied to the current `cli.ts` on every
  * production build.
  */
-import { chmodSync, mkdirSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
 type Target = { bunTarget: string; rustTriple: string; extension?: string }
@@ -86,6 +86,33 @@ if (process.platform === 'darwin') {
 }
 
 console.log(`desktop sidecar ready: ${output}`)
+
+// CC Atelier's first release target is Apple Silicon. The static sd-cli is
+// built separately because it is a large native artifact; allow the release
+// job/developer to provide it explicitly, and keep the checked-out local copy
+// when it is already present. The macOS platform config references this file;
+// Tauri will fail clearly if a macOS build is attempted without it.
+if (process.platform === 'darwin' && process.arch === 'arm64') {
+  const atelierOutput = join(
+    root,
+    'apps/desktop/src-tauri/binaries',
+    'sd-cli-aarch64-apple-darwin',
+  )
+  const supplied = process.env.WECHAT_CC_ATELIER_SD_CLI
+  if (supplied) {
+    if (!existsSync(supplied)) throw new Error(`CC Atelier sd-cli not found: ${supplied}`)
+    copyFileSync(supplied, atelierOutput)
+    chmodSync(atelierOutput, 0o755)
+    await Bun.spawn({ cmd: ['xattr', '-cr', atelierOutput], stdout: 'ignore', stderr: 'ignore' }).exited
+    const signed = Bun.spawn({
+      cmd: ['codesign', '--force', '--sign', '-', '--identifier=dev.wechat-cc.atelier.sd-cli', atelierOutput],
+      stdout: 'inherit', stderr: 'inherit',
+    })
+    if (await signed.exited !== 0) throw new Error('failed to ad-hoc sign the CC Atelier sd-cli sidecar')
+  }
+  if (existsSync(atelierOutput)) console.log(`atelier sidecar ready: ${atelierOutput}`)
+  else console.warn(`atelier sidecar missing: ${atelierOutput} (macOS Tauri build will be unavailable)`)
+}
 
 // ── 打包资源安全断言 (2026-08-26 数据泄露后加固) ──
 // beforeBuildCommand 每次构建必跑,是最早的关卡。核对 tauri.conf 声明的

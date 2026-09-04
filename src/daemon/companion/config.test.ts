@@ -14,6 +14,7 @@ describe('companion/config (v2 — memory-first, no triggers/personas)', () => {
   it('defaultCompanionConfig returns disabled + sensible defaults', () => {
     const cfg = defaultCompanionConfig()
     expect(cfg.enabled).toBe(false)
+    expect(cfg.atelier_mode).toBe('off')
     expect(cfg.snooze_until).toBeNull()
     expect(cfg.default_chat_id).toBeNull()
     expect(typeof cfg.timezone).toBe('string')

@@ -83,4 +83,33 @@ describe('atelier store', () => {
     expect(() => store.save({ imageBytes: png(), impulse, rendererId: 'fake' })).toThrow(/already exists/)
     expect(() => store.save({ imageBytes: new Uint8Array(41), impulse, rendererId: 'fake' })).toThrow(/too large/)
   })
+
+  it('atomically transitions share state and rejects stale claims', () => {
+    const stateDir = freshDir()
+    const store = makeAtelierStore(stateDir, { makeId: () => 'work-share', now: () => new Date('2026-09-01T12:00:00Z') })
+    store.save({ imageBytes: png(), impulse, rendererId: 'fake' })
+    expect(store.transitionShare('work-share', 'private', 'pending')?.shareState).toBe('pending')
+    expect(store.transitionShare('work-share', 'private', 'pending')).toBeNull()
+    const shared = store.transitionShare('work-share', 'pending', 'shared', '2026-09-02T08:00:00Z')
+    expect(shared).toMatchObject({ shareState: 'shared', sharedAt: '2026-09-02T08:00:00.000Z' })
+    expect(store.load('work-share')).toEqual(shared)
+  })
+
+  it('can release a failed pending share back to private', () => {
+    const stateDir = freshDir()
+    const store = makeAtelierStore(stateDir, { makeId: () => 'work-retry' })
+    store.save({ imageBytes: png(), impulse, rendererId: 'fake' })
+    store.transitionShare('work-retry', 'private', 'pending')
+    expect(store.transitionShare('work-retry', 'pending', 'private')).toMatchObject({ shareState: 'private' })
+    expect(store.load('work-retry')?.sharedAt).toBeUndefined()
+  })
+
+  it('rejects an invalid shared timestamp without changing pending state', () => {
+    const stateDir = freshDir()
+    const store = makeAtelierStore(stateDir, { makeId: () => 'work-invalid-time' })
+    store.save({ imageBytes: png(), impulse, rendererId: 'fake' })
+    store.transitionShare('work-invalid-time', 'private', 'pending')
+    expect(() => store.transitionShare('work-invalid-time', 'pending', 'shared', 'not-a-date')).toThrow(/sharedAt is invalid/)
+    expect(store.load('work-invalid-time')?.shareState).toBe('pending')
+  })
 })

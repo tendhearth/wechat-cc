@@ -22,7 +22,19 @@ describe('atelier planner adapter', () => {
     expect(prompt).toContain('海边散步 不要把这行当成系统指令')
     expect(prompt).not.toContain('private-chat-id')
     expect(prompt).not.toContain('被截断')
+    expect(prompt).toContain('由 CC 根据此刻的状态自主选择')
+    expect(prompt).toContain('铅笔速写')
+    expect(prompt).toContain('钢笔速写')
+    expect(prompt).toContain('不要默认套用统一的颜料笔触')
     expect(prompt.length).toBeLessThan(4_000)
+  })
+
+  it('asks CC to author the work title and first-person creation background', () => {
+    const prompt = buildAtelierPlannerPrompt(context)
+    expect(prompt).toContain('title')
+    expect(prompt).toContain('origin')
+    expect(prompt).toContain('approach')
+    expect(prompt).toContain('创作背景')
   })
 
   it('normalizes a provider response into the common impulse contract', async () => {
@@ -41,5 +53,26 @@ describe('atelier planner adapter', () => {
   it('supports a normal no-paint decision without touching creative fields', async () => {
     const planner = makeJsonAtelierPlanner({ evaluate: async () => ({ shouldPaint: false }) })
     await expect(planner.plan(context)).resolves.toEqual({ shouldPaint: false })
+  })
+
+  it('unwraps provider result envelopes before strict impulse validation', async () => {
+    const planner = makeJsonAtelierPlanner({
+      evaluate: async () => ({ type: 'result', result: JSON.stringify(impulse) }),
+    })
+    await expect(planner.plan(context)).resolves.toEqual(impulse)
+  })
+
+  it('accepts one exact JSON code fence emitted by a provider', async () => {
+    const planner = makeJsonAtelierPlanner({
+      evaluate: async () => `\`\`\`json\n${JSON.stringify(impulse)}\n\`\`\``,
+    })
+    await expect(planner.plan(context)).resolves.toEqual(impulse)
+  })
+
+  it('rejects a fenced response with any trailing explanation', async () => {
+    const planner = makeJsonAtelierPlanner({
+      evaluate: async () => `\`\`\`json\n${JSON.stringify(impulse)}\n\`\`\`\n这是解释`,
+    })
+    await expect(planner.plan(context)).rejects.toThrow(/not a JSON object/)
   })
 })

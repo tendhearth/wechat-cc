@@ -51,6 +51,23 @@ export const HealthResponse = z.object({
   }).optional(),
 })
 
+// ── POST /v1/atelier/share ─────────────────────────────────────────────────
+
+const AtelierSharedBackground = z.object({
+  title: z.string().trim().min(1).max(120),
+  origin: z.string().trim().min(1).max(800),
+  approach: z.string().trim().min(1).max(500),
+})
+export const AtelierShareRequest = z.object({
+  id: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$/),
+  // null means image-only; an object is the user-reviewed copy sent beside it.
+  background: AtelierSharedBackground.nullable(),
+})
+export const AtelierShareResponse = z.union([
+  z.object({ ok: z.literal(true), shared_at: z.string(), background_sent: z.boolean(), warning: z.string().optional() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+
 // ── POST /v1/memory/read ─────────────────────────────────────────────────────
 
 export const MemoryReadRequest = z.object({
@@ -593,6 +610,9 @@ export type WechatEditMessageResponseT = z.infer<typeof WechatEditMessageRespons
 export type WechatBroadcastRequestT = z.infer<typeof WechatBroadcastRequest>
 export type WechatBroadcastResponseT = z.infer<typeof WechatBroadcastResponse>
 
+export type AtelierShareRequestT = z.infer<typeof AtelierShareRequest>
+export type AtelierShareResponseT = z.infer<typeof AtelierShareResponse>
+
 export type DelegateRequestT = z.infer<typeof DelegateRequest>
 export type DelegateResponseT = z.infer<typeof DelegateResponse>
 
@@ -611,6 +631,9 @@ export type A2ASendResponseT = z.infer<typeof A2ASendResponse>
 // assertion is a possible follow-up.
 
 export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  // atelier
+  'POST /v1/atelier/share': AtelierShareRequest,
+
   // memory
   'POST /v1/memory/read': MemoryReadRequest,
   'POST /v1/memory/write': MemoryWriteRequest,
@@ -679,6 +702,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/health': HealthResponse,
+  'POST /v1/atelier/share': AtelierShareResponse,
   'POST /v1/memory/read': MemoryReadResponse,
   'POST /v1/memory/write': MemoryWriteResponse,
   'GET /v1/memory/list': MemoryListResponse,
