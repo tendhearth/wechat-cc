@@ -22,7 +22,7 @@ import type { A2ARegistry } from './a2a-registry'
 import type { A2AAgentRecord } from '../lib/agent-config'
 
 export interface PairCard {
-  v: 1
+  v: 2
   role: 'initiator' | 'acceptor'
   nonce: string
   self_id: string
@@ -32,6 +32,10 @@ export interface PairCard {
   mailbox_enc_pub: string
   relays: string[]
   bearer: string
+  /** 我的收信地址 —— 配对完直接开 E2E 信道,不再靠揭晓。 */
+  channel_id: string
+  /** X25519 公钥 —— 配对完直接开 E2E 信道,不再靠揭晓。 */
+  channel_pub: string
 }
 
 export type PairResult =
@@ -70,6 +74,10 @@ export interface PairingDeps {
   pollIntervalMs?: number
   ttlMs?: number
   log?: (msg: string) => void
+  /** 配对即开信道(spec 2026-09-04-wish-postcard §2)。 */
+  channelStore: Pick<import('./penpal-channel-store').ChannelStore, 'create' | 'setPeerHandle' | 'setStatus' | 'list'>
+  /** 生成我方信道句柄:X25519 密钥对 + 收信地址。 */
+  genChannel: () => { channelId: string; pubkey: string; privkey: string }
 }
 
 export interface PairingEngine {
@@ -128,18 +136,20 @@ export function makePairing(deps: PairingDeps): PairingEngine {
   const rendezvousRelay = deps.self.relays[0]!
   let active: ActiveInitiator | null = null
 
-  function ownCard(role: PairCard['role'], nonce: string, bearer: string): PairCard {
+  function ownCard(role: PairCard['role'], nonce: string, bearer: string, chan: { channelId: string; pubkey: string }): PairCard {
     // 只广播对方**真的能拨到**的地址 —— 见 isAdvertisableUrl。
     const raw = deps.url?.()
     const u = raw && isAdvertisableUrl(raw) ? raw : undefined
     return {
-      v: 1, role, nonce,
+      v: 2, role, nonce,
       self_id: deps.selfId(), name: deps.name(),
       ...(u ? { url: u } : {}),
       mailbox_addr: deps.self.mailbox_addr,
       mailbox_enc_pub: deps.self.mailbox_enc_pub,
       relays: deps.self.relays,
       bearer,
+      channel_id: chan.channelId,
+      channel_pub: chan.pubkey,
     }
   }
 
@@ -181,6 +191,25 @@ export function makePairing(deps: PairingDeps): PairingEngine {
     return { ok: true }
   }
 
+  /**
+   * 配对完成即开信道:双方各建一条 open 的 penpal_channel,peer_agent_id 互指。
+   * 同一对端已有 open 信道就不重建 —— 重新配对是为了修注册表,不是为了多一条信道。
+   *
+   * `nonce` 必须是 initiator 的 nonce(不是「card 那一方自己的」nonce)—— 两边
+   * 各自持有的 openPairChannel 调用要落到*同一个* row id 上才有意义。initiator
+   * 一侧本地就知道(`cur.nonce`);acceptor 一侧读的是它验过的 initiator 名片
+   * 的 nonce(`initiator.nonce`,两者恰好是同一个字符串)。用 acceptor 自己那
+   * 张名片的 nonce 会让两边各建一个不同 id 的行 —— 这条信道的意义就没了。
+   */
+  function openPairChannel(card: PairCard, mine: { channelId: string; pubkey: string; privkey: string }, nonce: string): void {
+    const exists = deps.channelStore.list().some(r => r.status === 'open' && r.peer_agent_id === card.self_id)
+    if (exists) return
+    const rowId = `pair:${nonce}`
+    deps.channelStore.create({ id: rowId, seekId: rowId, myPrivkey: mine.privkey, myPubkey: mine.pubkey, myChannelId: mine.channelId, degree: 1, peerAgentId: card.self_id })
+    deps.channelStore.setPeerHandle(rowId, { pubkey: card.channel_pub, channel_id: card.channel_id, mailbox: { addr: card.mailbox_addr, enc_pub: card.mailbox_enc_pub, relays: card.relays } })
+    deps.channelStore.setStatus(rowId, 'open')
+  }
+
   const ID_CONFLICT_MSG = '对方 bot 使用旧版共享身份且与你已有的朋友撞名——请让对方升级出唯一身份后重试'
 
   // Cards come back in cursor-ASCENDING order (relay returns items ascending; no
@@ -209,7 +238,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
   function isValidCard(card: unknown): card is PairCard {
     if (!card || typeof card !== 'object') return false
     const c = card as Record<string, unknown>
-    if (c.v !== 1) return false
+    if (c.v !== 2) return false
     if (c.role !== 'initiator' && c.role !== 'acceptor') return false
     if (typeof c.self_id !== 'string' || !SELF_ID_RE.test(c.self_id)) return false
     if (typeof c.name !== 'string' || c.name.length === 0) return false
@@ -218,6 +247,8 @@ export function makePairing(deps: PairingDeps): PairingEngine {
     if (typeof c.mailbox_enc_pub !== 'string' || c.mailbox_enc_pub.length === 0) return false
     if (!Array.isArray(c.relays) || c.relays.length === 0) return false
     if (typeof c.nonce !== 'string' || c.nonce.length === 0) return false
+    if (typeof c.channel_id !== 'string' || c.channel_id.length === 0) return false
+    if (typeof c.channel_pub !== 'string' || c.channel_pub.length === 0) return false
     return true
   }
   function readCards(rvAddr: string, rvEncPriv: string, rvSign: (m: string) => string): Promise<PairCard[]> {
@@ -247,6 +278,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
     const rv = deriveRendezvous(code)
     const myKey = deps.mintKey()
     const nonce = deps.genNonce()
+    const mine = deps.genChannel()
     const expiresAt = deps.now() + ttlMs
 
     // Await + check the initiator card drop BEFORE arming the poller or
@@ -258,7 +290,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
     // and report `expired_or_wrong` with zero diagnostics on either side. A
     // code whose card never reached the relay can never be redeemed — fail
     // loudly here instead.
-    const env = sealEnvelope({ path: '/pair', bearer: '', body: ownCard('initiator', nonce, myKey) }, rv.enc_pub)
+    const env = sealEnvelope({ path: '/pair', bearer: '', body: ownCard('initiator', nonce, myKey, mine) }, rv.enc_pub)
     let dropped: boolean
     try {
       dropped = await deps.client.drop(rendezvousRelay, rv.addr, JSON.stringify(env))
@@ -289,6 +321,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
         const peer = cards.find(c => c.role === 'acceptor' && c.nonce !== cur.nonce && c.self_id !== deps.selfId())
         if (peer) {
           const write = writePeerFromCard(peer, cur.myKey)
+          if (write.ok) openPairChannel(peer, mine, cur.nonce)
           stop()
           deps.notify(write.ok ? `和 ${peer.name} 的 bot 连上了 ✓ 现在可以互相觅食/写信了` : ID_CONFLICT_MSG)
           return
@@ -317,6 +350,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
     if (conflicts(initiator)) return { ok: false, reason: 'id_conflict' }
 
     const myKey = deps.mintKey()
+    const mine = deps.genChannel()
 
     // Drop-first, THEN write locally. `MailboxClient.drop` resolves `false`
     // (not a throw) on any non-2xx — previously this awaited call's result
@@ -328,7 +362,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
     // rollback path needed. (Writing first and rolling back on drop failure
     // would need an explicit registry.remove() undo and risks a
     // half-committed peer if THAT itself fails.)
-    const env = sealEnvelope({ path: '/pair', bearer: '', body: ownCard('acceptor', deps.genNonce(), myKey) }, rv.enc_pub)
+    const env = sealEnvelope({ path: '/pair', bearer: '', body: ownCard('acceptor', deps.genNonce(), myKey, mine) }, rv.enc_pub)
     let dropped: boolean
     try {
       dropped = await deps.client.drop(rendezvousRelay, rv.addr, JSON.stringify(env))
@@ -344,6 +378,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
     const write = writePeerFromCard(initiator, myKey)
     // defensive: re-checked at write time too. Sync failure — caller renders its own reply.
     if (!write.ok) return { ok: false, reason: 'id_conflict' }
+    openPairChannel(initiator, mine, initiator.nonce)
 
     return { ok: true, peer: { self_id: initiator.self_id, name: initiator.name } }
   }

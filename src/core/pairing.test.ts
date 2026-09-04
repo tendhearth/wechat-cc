@@ -20,6 +20,18 @@ function makeFakeRelay() {
   return { client, boxes }
 }
 
+type FakeChan = { id: string; seekId: string; myPrivkey: string; myPubkey: string; myChannelId: string; degree: number; peerAgentId: string | null; status: 'pending' | 'open'; peer: unknown }
+function makeFakeChannelStore(): PairingDeps['channelStore'] & { rows: FakeChan[] } {
+  const rows: FakeChan[] = []
+  return {
+    rows,
+    create: (c) => { rows.push({ id: c.id, seekId: c.seekId, myPrivkey: c.myPrivkey, myPubkey: c.myPubkey, myChannelId: c.myChannelId, degree: c.degree, peerAgentId: c.peerAgentId ?? null, status: 'pending', peer: null }) },
+    setPeerHandle: (id, h) => { const r = rows.find(x => x.id === id); if (r) r.peer = h },
+    setStatus: (id, s) => { const r = rows.find(x => x.id === id); if (r) r.status = s },
+    list: () => rows.map(r => ({ id: r.id, seek_id: r.seekId, my_privkey: r.myPrivkey, my_pubkey: r.myPubkey, my_channel_id: r.myChannelId, peer_pubkey: null, peer_channel_id: null, peer_mailbox: null, degree: r.degree, relay_via: null, peer_agent_id: r.peerAgentId, status: r.status, created_at: '' })) as never,
+  }
+}
+
 function makeFakeRegistry(): A2ARegistry & { records: Map<string, A2AAgentRecord> } {
   const records = new Map<string, A2AAgentRecord>()
   return {
@@ -65,6 +77,8 @@ function baseDeps(over: Partial<PairingDeps>): PairingDeps {
     genNonce: () => 'nonceX',
     notify: () => {},
     schedule: () => ({ cancel() {} }),
+    channelStore: makeFakeChannelStore(),
+    genChannel: (() => { let n = 0; return () => { n++; return { channelId: `chan-${n}`, pubkey: `PUB${n}`, privkey: `PRIV${n}` } } })(),
     ...over,
   }
 }
@@ -381,4 +395,56 @@ describe('配对卡片不广播不可路由的 url', () => {
       expect(isAdvertisableUrl(url)).toBe(shouldAdvertise)
     })
   }
+})
+
+describe('配对即开信道(spec 2026-09-04-wish-postcard §2)', () => {
+  function pairBoth() {
+    const relay = makeFakeRelay()
+    const sA = makeManualScheduler(), sB = makeManualScheduler()
+    const chanA = makeFakeChannelStore(), chanB = makeFakeChannelStore()
+    const A = makePairing(baseDeps({ client: relay.client, selfId: () => 'cc-aaaa0001', name: () => 'A', self: { mailbox_addr: 'MA', mailbox_enc_pub: 'EA', relays: ['https://r/mailbox'] }, schedule: sA.schedule, channelStore: chanA, genNonce: () => 'n0nce' }))
+    const B = makePairing(baseDeps({ client: relay.client, selfId: () => 'cc-bbbb0002', name: () => 'B', self: { mailbox_addr: 'MB', mailbox_enc_pub: 'EB', relays: ['https://r/mailbox'] }, schedule: sB.schedule, channelStore: chanB }))
+    return { A, B, sA, chanA, chanB }
+  }
+
+  it('双方 card 带 channel 字段;完成后各一条 open 信道,peer_agent_id 互指,peer_mailbox 是对方的', async () => {
+    const { A, B, sA, chanA, chanB } = pairBoth()
+    const { code } = await mustStart(A)
+    const r = await B.accept(code)
+    expect(r.ok).toBe(true)
+    sA.tick()                       // initiator 轮询到 acceptor 的 card
+    await new Promise(r => setTimeout(r, 0))
+    expect(chanB.rows).toHaveLength(1)
+    expect(chanB.rows[0]).toMatchObject({ id: 'pair:n0nce', degree: 1, peerAgentId: 'cc-aaaa0001', status: 'open' })
+    expect(chanB.rows[0]!.peer).toMatchObject({ channel_id: 'chan-1', pubkey: 'PUB1', mailbox: { addr: 'MA', enc_pub: 'EA' } })
+    expect(chanA.rows).toHaveLength(1)
+    expect(chanA.rows[0]).toMatchObject({ id: 'pair:n0nce', peerAgentId: 'cc-bbbb0002', status: 'open' })
+    expect(chanA.rows[0]!.peer).toMatchObject({ mailbox: { addr: 'MB', enc_pub: 'EB' } })
+  })
+
+  it('同一对端已有 open 信道 → 重新配对不建第二条', async () => {
+    const { A, B, sA, chanB } = pairBoth()
+    chanB.rows.push({ id: 'pair:old', seekId: 'pair:old', myPrivkey: 'p', myPubkey: 'P', myChannelId: 'c', degree: 1, peerAgentId: 'cc-aaaa0001', status: 'open', peer: null })
+    const { code } = await mustStart(A)
+    expect((await B.accept(code)).ok).toBe(true)
+    sA.tick(); await new Promise(r => setTimeout(r, 0))
+    expect(chanB.rows).toHaveLength(1)
+  })
+
+  it('v1 旧 card(没有 channel 字段)不被认可', async () => {
+    const relay = makeFakeRelay()
+    const chanB = makeFakeChannelStore()
+    const B = makePairing(baseDeps({ client: relay.client, channelStore: chanB }))
+    // 手工往 rendezvous 信箱塞一张 v1 initiator card(没有 channel_id/channel_pub,
+    // v:1 而不是 2),绕过 ownCard() 的保证有效构造 —— 就像文件里已有的 malformed
+    // card 测试那样直接伪造对端在中继上会长成的样子。
+    const code = '123456'
+    const rv = deriveRendezvous(code)
+    const v1 = { v: 1, role: 'initiator', nonce: 'x', self_id: 'cc-old00001', name: 'old', mailbox_addr: 'MO', mailbox_enc_pub: 'EO', relays: ['https://r/mailbox'], bearer: 'bearer-key-00000000' }
+    const env = sealEnvelope({ path: '/pair', bearer: '', body: v1 }, rv.enc_pub)
+    await relay.client.drop('https://r/mailbox', rv.addr, JSON.stringify(env))
+    const r = await B.accept(code)
+    expect(r.ok).toBe(false)
+    expect(chanB.rows).toHaveLength(0)
+  })
 })

@@ -1115,6 +1115,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     stateDir: deps.stateDir,
     configuredAgent,
     a2aRegistry,
+    db: deps.db,
     selfId,
     url: a2aServer ? a2aServer.baseUrl() : undefined,
     notify: (msg) => { const op = resolveOperatorChatId(); if (op && sendAssistantText) void sendAssistantText(op, msg) },
