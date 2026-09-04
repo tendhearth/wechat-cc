@@ -141,7 +141,8 @@ describe('apps/desktop shim — HTML structure', () => {
       'memory-decisions-toggle', 'memory-decisions-body',
       // 觅食台 (forage-desk) pane — live regions renderForageDesk() targets,
       // plus the preserved agent-mgmt anchors folded into §③.
-      'fd-hero-status', 'fd-wishes', 'fd-postcards',
+      // Task 10 replaced 派心愿/回声 with 📮 心愿(wishes.js) — fd-wish* ids.
+      'fd-hero-status', 'fd-wish', 'fd-wish-count', 'fd-wish-form', 'fd-wish-list',
       'fd-inbound-toggle', 'fd-inbound-note', 'fd-peers', 'fd-net',
       'a2a-add-btn', 'a2a-server-banner', 'a2a-agents-list',
     ]

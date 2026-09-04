@@ -650,7 +650,6 @@
                       <path d="M11 20 q4 3 8 0" stroke="#3B3125" stroke-width="1.3" stroke-linecap="round"/>
                     </svg>
                     <span class="fd-status-line">加载中…</span>
-                    <button class="fd-btn fd-btn-primary fd-sow" id="fd-sow" type="button">＋ 撒一个新心愿</button>
                   </div>
                   <div class="fd-social-note" id="fd-social-note" hidden></div>
                 </header>
@@ -658,7 +657,8 @@
                 <div class="fd-wave" aria-hidden="true"><svg viewBox="0 0 920 12" preserveAspectRatio="none"><path d="M0 6 Q 23 0 46 6 T 92 6 T 138 6 T 184 6 T 230 6 T 276 6 T 322 6 T 368 6 T 414 6 T 460 6 T 506 6 T 552 6 T 598 6 T 644 6 T 690 6 T 736 6 T 782 6 T 828 6 T 874 6 T 920 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
 
                 <!-- 架构重构 §2.4:觅食台收成两块 —— 带回来的(journal)+ 认识的人(relationships)。
-                     派心愿 / 回声 / 信箱是「工具社交」的面,折叠起来留着;所有 id 不变(模块测试 + e2e 依赖)。 -->
+                     心愿(wishes.js)替掉了原来「派心愿 / 回声」两个折叠子块 —— 输入 → 预览 → 派,
+                     没有匿名觅食网、没有揭晓牵线仪式。信箱仍折叠留着;所有 id 不变(模块测试 + e2e 依赖)。 -->
 
                 <!-- 🎒 带回来的 -->
                 <section class="fd-section">
@@ -672,32 +672,22 @@
                   <div class="fd-people" id="fd-people"></div>
                 </section>
 
-                <!-- 派心愿 / 回声 / 信箱 —— 折叠 -->
+                <!-- 📮 心愿：伙伴替你去问认识的人,回信在「带回来的」里 -->
+                <section class="fd-section" id="fd-wish">
+                  <div class="fd-sec-head"><h2>📮 心愿</h2><span class="fd-count" id="fd-wish-count"></span><span class="fd-hint">伙伴替你去问认识的人 · 回信在「带回来的」里</span></div>
+                  <form class="wsh-compose" id="fd-wish-form">
+                    <input id="fd-wish-text" type="text" maxlength="140" placeholder="想让伙伴帮你打听什么？" autocomplete="off">
+                    <button id="fd-wish-submit" type="submit">先看看怎么问</button>
+                  </form>
+                  <div class="wsh-draft" id="fd-wish-draft" hidden></div>
+                  <div class="wsh-list" id="fd-wish-list"></div>
+                </section>
+
+                <!-- 信箱 —— 折叠(配对在下面 #fd-net 里,不在这个折叠块内) -->
                 <section class="fd-net fd-tools" id="fd-tools">
                   <details>
-                    <summary id="fd-tools-summary">派心愿 · 回声 · 笔友信箱<span class="fd-net-sub" id="fd-tools-sub"></span><span class="fd-chev">›</span></summary>
+                    <summary id="fd-tools-summary">信箱<span class="fd-net-sub" id="fd-tools-sub"></span><span class="fd-chev">›</span></summary>
                     <div class="fd-net-body">
-                      <!-- ① 我派出去的心愿 -->
-                      <div class="fd-sub">
-                        <div class="fd-sec-head"><h2>我派出去的心愿</h2><span class="fd-count" id="fd-wishes-count"></span><span class="fd-hint">出面的是 bot，不是你 · 成交前谁都不露脸</span></div>
-                        <div class="fd-compose" id="fd-compose" hidden>
-                          <form id="fd-compose-form">
-                            <input type="text" name="topic" id="fd-compose-topic" placeholder="想找什么？比如：找个会修老相机的师傅" maxlength="120" autocomplete="off">
-                            <input type="text" name="city" id="fd-compose-city" placeholder="城市（可选）" maxlength="20" autocomplete="off">
-                            <button class="fd-btn fd-btn-primary" type="submit" id="fd-compose-submit">派出去</button>
-                          </form>
-                          <div class="fd-compose-note" id="fd-compose-note" hidden></div>
-                          <div class="fd-preview" id="fd-preview" hidden></div>
-                        </div>
-                        <div class="fd-wishes" id="fd-wishes"></div>
-                      </div>
-
-                      <!-- ② 回声 -->
-                      <div class="fd-sub">
-                        <div class="fd-sec-head"><h2>回声</h2><span class="fd-count" id="fd-postcards-count"></span><span class="fd-hint">两边都点「揭晓」，才互相亮身份</span></div>
-                        <div class="fd-postcards" id="fd-postcards"></div>
-                      </div>
-
                       <!-- ✉️ 笔友信箱 -->
                       <div class="fd-sub">
                         <div class="fd-sec-head"><h2>✉️ 笔友信箱</h2><span class="fd-count" id="fd-mailbox-count"></span><span class="fd-hint">只有你们俩看得到 · 中间人碰不到内容</span></div>
