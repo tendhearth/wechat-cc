@@ -71,6 +71,25 @@ const fishTraits = [
   { curiosity: 1.42, speedScale: 1.08, warmup: 145, startleRadius: .78, burst: .9, sizeScale: 1.04 },
   { curiosity: .64, speedScale: .8, warmup: 360, startleRadius: 1.48, burst: 1.18, sizeScale: .94 },
 ]
+// ── 桌宠状态(spec 2026-09-03-companion-presence §3.3)────────────────────
+// 外面(companion-presence.js)算好 SceneState 喂进来;渲染循环只读它。
+// 默认值 = 什么都不知道时的样子:熊在、闲着、正常光、没牌子没道具。
+const sceneState = { bearPresent: true, bearPose: "idle", tint: "normal", sign: null, prop: null, badge: 0, bubble: null }
+window.__companionScene = {
+  setState(next) {
+    Object.assign(sceneState, next)
+    applySceneBubble()
+  },
+  getState() { return { ...sceneState } },
+  /** 点脚边道具时调;由 companion-presence.js 赋值。 */
+  onPropClick: null,
+}
+function applySceneBubble() {
+  if (sceneState.bubble) {
+    bearMessage.textContent = sceneState.bubble
+    bearMessage.classList.add("is-visible")
+  } else bearMessage.classList.remove("is-visible")
+}
 let calm = false
 let bearAwake = 0
 let bearWaveStartedAt = -Infinity
@@ -217,6 +236,7 @@ function bearLocalOffsetX() {
   return 20 * displayScale / canvas.width
 }
 function bearContains(x, y) {
+  if (!sceneState.bearPresent) return false
   const offsetX = bearLocalOffsetX()
   const anchorX = bearRig.anchorX + offsetX
   const scale = bearRig.baseScale
@@ -885,7 +905,9 @@ function drawBearArm(time, lift, scale) {
   const progress = waving ? elapsed / bearWaveDuration : 0
   // The source arm already points from its lower-left shoulder joint to the
   // upper-right fish. Keep that direction intact: no horizontal mirroring.
-  const liftAmount = waving ? Math.sin(progress * Math.PI) : 0
+  // 钓鱼(觅食中):手臂持续微抬、慢慢上下 —— 复用现成的钓鱼手臂,不加素材。
+  const fishing = sceneState.bearPose === "fishing"
+  const liftAmount = waving ? Math.sin(progress * Math.PI) : fishing ? .55 + Math.sin(time * .003) * .1 : 0
   const wave = waving ? Math.sin(progress * Math.PI * 7) * .16 * liftAmount : 0
   // Keep the fish visibly held up, but lower the relaxed pose so it rests
   // closer to the cheek/chest instead of appearing raised beside the ear.
@@ -935,6 +957,71 @@ function drawBearPuppet(time) {
 
   drawBearBody(box, pivot, attention, lift, scale)
   drawBearArm(time, lift, scale)
+}
+
+// ── 桌宠状态的三样新东西:牌子、道具、遮罩(spec §3.3:唯一新画的素材)──
+
+/** 沙地上的牌子:熊不在时立在熊的位置;熊在时立在它脚边。文字来自 activity.label / 「离线」。 */
+function drawSceneSign() {
+  if (!sceneState.sign) return
+  const w = canvas.width, h = canvas.height
+  const x = (bearRig.anchorX + bearLocalOffsetX() + (sceneState.bearPresent ? .17 : 0)) * w
+  const y = .80 * h
+  const fontPx = Math.max(11, Math.round(w * .026))
+  ctx.save()
+  ctx.font = `${fontPx}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"
+  const padX = fontPx * .7, padY = fontPx * .45
+  const textW = ctx.measureText(sceneState.sign).width
+  const bw = textW + padX * 2, bh = fontPx + padY * 2
+  // 木牌 + 小桩
+  ctx.fillStyle = "rgba(120, 84, 52, .9)"
+  ctx.fillRect(x - 2, y + bh / 2, 4, h * .05)
+  ctx.fillStyle = "rgba(233, 214, 178, .95)"
+  ctx.strokeStyle = "rgba(120, 84, 52, .9)"; ctx.lineWidth = 2
+  ctx.beginPath(); ctx.roundRect(x - bw / 2, y - bh / 2, bw, bh, fontPx * .4); ctx.fill(); ctx.stroke()
+  ctx.fillStyle = "rgba(78, 54, 34, 1)"
+  ctx.fillText(sceneState.sign, x, y)
+  ctx.restore()
+}
+
+/** 道具区(归一化坐标),点击命中用。 */
+const propBox = { x: .30, y: .80, w: .07, h: .10 }
+function propContains(x, y) {
+  return !!sceneState.prop && x > propBox.x && x < propBox.x + propBox.w && y > propBox.y && y < propBox.y + propBox.h
+}
+
+/** 熊脚边的道具:包袱 / 明信片 / 信,带未看数字。emoji 直接画,不加素材。 */
+function drawSceneProp(time) {
+  if (!sceneState.prop) return
+  const w = canvas.width, h = canvas.height
+  const glyph = sceneState.prop === "postcard" ? "🖼️" : sceneState.prop === "letter" ? "✉️" : "🎒"
+  const size = Math.round(w * .05)
+  const cx = (propBox.x + propBox.w / 2) * w
+  const cy = (propBox.y + propBox.h / 2) * h + Math.sin(time * .002) * h * .004   // 轻微浮动,提示可点
+  ctx.save()
+  ctx.font = `${size}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"
+  ctx.fillText(glyph, cx, cy)
+  if (sceneState.badge > 0) {
+    const r = Math.max(7, size * .22)
+    const bx = cx + size * .38, by = cy - size * .38
+    ctx.fillStyle = "rgba(226, 84, 84, .95)"
+    ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill()
+    ctx.fillStyle = "#fff"
+    ctx.font = `bold ${Math.round(r * 1.3)}px -apple-system, sans-serif`
+    ctx.fillText(sceneState.badge > 9 ? "9+" : String(sceneState.badge), bx, by + .5)
+  }
+  ctx.restore()
+}
+
+/** 整缸的明暗:degraded 略暗,down / offline 灯灭。最后一层画。 */
+function drawSceneTint() {
+  if (sceneState.tint === "normal") return
+  ctx.save()
+  ctx.fillStyle = sceneState.tint === "dark" ? "rgba(12, 20, 38, .58)" : "rgba(20, 30, 50, .22)"
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.restore()
 }
 
 function drawFish(f, time) {
@@ -1039,8 +1126,9 @@ function frame(time) {
   const dt = Math.min(32, time - lastTime); lastTime = time
   // When nobody is visiting the bear, let it make a small periodic greeting.
   // Each wave uses the same rotating spoken line as hover/leave gestures.
-  if (!bearHovering && time >= nextBearIdleGreetingAt) startBearWave(time)
-  if (time >= bearMessageUntil) bearMessage.classList.remove("is-visible")
+  // 有真实状态的 bubble 时停掉固定问候的轮播 —— 两套文案打架会很怪。
+  if (!bearHovering && !sceneState.bubble && sceneState.bearPresent && time >= nextBearIdleGreetingAt) startBearWave(time)
+  if (!sceneState.bubble && time >= bearMessageUntil) bearMessage.classList.remove("is-visible")
   if (!lotusHovering && time >= nextLotusAutoCycleAt) {
     lotusAutoCycleStartedAt = time
     nextLotusAutoCycleAt = time + lotusAutoCycleInterval
@@ -1058,14 +1146,17 @@ function frame(time) {
   triggerFishEscape(time, school)
   for (const f of school) { update(f, dt, time, school); drawFish(f, time) }
   drawCrab(time, false)
-  drawBearPuppet(time)
+  if (sceneState.bearPresent) drawBearPuppet(time)
+  drawSceneSign()
+  drawSceneProp(time)
   updateCrabEscapeOverlay(time)
-  if (bearAwake > 0) {
+  if (sceneState.bearPresent && bearAwake > 0) {
     bearAwake = Math.max(0, bearAwake - dt / 1100)
     const pulse = Math.sin(time * .012) * 5 + 16
     ctx.strokeStyle = `rgba(238,176,106,${bearAwake * .35})`; ctx.lineWidth = 2
     ctx.beginPath(); ctx.arc(canvas.width * (.285 + bearLocalOffsetX()), canvas.height * .54, pulse, 0, Math.PI * 2); ctx.stroke()
   }
+  drawSceneTint()
   requestAnimationFrame(frame)
 }
 
@@ -1101,6 +1192,7 @@ function startBearWave(time = performance.now()) {
 }
 
 function showNextBearGreeting(time = performance.now()) {
+  if (sceneState.bubble) return
   bearGreetingIndex = (bearGreetingIndex + 1) % bearGreetings.length
   bearMessage.textContent = bearGreetings[bearGreetingIndex]
   bearMessage.classList.add("is-visible")
@@ -1116,7 +1208,8 @@ canvas.addEventListener("pointermove", event => {
   const inTank = waterContains(pointer.x, pointer.y) && !overLotus
   if (!inTank) releaseFish()
   const overBear = bearContains(pointer.x, pointer.y)
-  canvas.style.cursor = overBear || overLotus || overCrab ? "pointer" : waterContains(pointer.x, pointer.y) ? "crosshair" : "default"
+  const overProp = propContains(pointer.x, pointer.y)
+  canvas.style.cursor = overBear || overLotus || overCrab || overProp ? "pointer" : waterContains(pointer.x, pointer.y) ? "crosshair" : "default"
   if (overBear) {
     bearAwake = 1
     // Entering the bear zone starts one complete wave. Moving around inside
@@ -1150,6 +1243,10 @@ canvas.addEventListener("pointerleave", () => {
 })
 canvas.addEventListener("click", event => {
   const p = positionFromEvent(event)
+  if (propContains(p.x, p.y)) {
+    try { window.__companionScene.onPropClick?.() } catch (err) { console.warn("prop click handler failed", err) }
+    return
+  }
   const showClickFeedback = shouldShowInteractionHints()
   if (crabContains(p.x, p.y)) {
     const action = startCrabInteraction(performance.now())
