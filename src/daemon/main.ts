@@ -35,7 +35,7 @@ import { makeStickerLib, seedStarterStickers, starterStickersDir } from './stick
 import { makeGiphyRelaySource, makeGiphySource } from './sticker-source'
 import { makeStickerFeedback } from './sticker-feedback'
 import { makeOutboundTaps } from './outbound-taps'
-import { makeHuntStore } from '../core/hunt-store'
+import { makeJournal } from '../core/journal-store'
 import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
@@ -245,7 +245,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 路径(internal-api reply 路由 / bootstrap 的 fallback);两个实例等于
     // 永远收不到东西,而且不会报任何错。
     const outboundTaps = makeOutboundTaps()
-    const huntStore = makeHuntStore(db)
+    const huntStore = makeJournal(db)
     // 1. internal-api FIRST — bootstrap needs its baseUrl/token for MCP wiring
     const internalApi = await registerInternalApi({
       stateDir, daemonPid: process.pid, memory: memoryFS, db, projects: ilink.projects,

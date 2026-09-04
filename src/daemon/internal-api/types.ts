@@ -9,7 +9,7 @@
 import type { MemoryFS } from '../memory/fs-api'
 import type { Db } from '../../lib/db'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
-import type { HuntStore } from '../../core/hunt-store'
+import type { Journal } from '../../core/journal-store'
 import type { ReplySinks } from '../reply-sinks'
 import type { ConversationStore } from '../../core/conversation-store'
 import type { ProviderId } from '../../core/conversation'
@@ -140,11 +140,11 @@ export interface InternalApiDeps {
    */
   outboundTaps?: { observe(chatId: string, text: string): void }
   /**
-   * 打猎战利品读写(GET/POST /v1/hunt*)。缺失 ⇒ 路由 503,桌面端显示
+   * 伙伴日志读写(GET/POST /v1/journal*)。缺失 ⇒ 路由 503,桌面端显示
    * 「这个 daemon 还没有战利品记录」而不是空清单 —— 空清单会被读成
    * 「CC 什么都没打到」。
    */
-  hunt?: HuntStore
+  hunt?: Journal
   /**
    * Optional mode-aware reply prefixing (RFC 03 P3). When wired, the
    * `reply` route consults `conversationStore` for the chat's mode and

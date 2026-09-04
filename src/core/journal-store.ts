@@ -1,8 +1,9 @@
 /**
- * hunt-store.ts — 打猎战利品的落库层(v36 `hunt_catch`)。
+ * journal-store.ts — 伙伴的日志(v36 建为 journal,v40 改名 journal)。
  *
- * 见 hunt-catch.ts 顶部的 WHY:打猎每天在发,发完就没了。这里存的是**真
- * 发出去的那条文本**拆出来的条目,不依赖模型额外登记。
+ * 架构重构 §2.4:主人看到的是一条时间线 —— 今天干了什么、遇到了谁、带回了
+ * 什么。kind 决定每条是什么:hunt(打猎带回的东西,见 hunt-catch.ts)|
+ * visit(串门/来客的见闻,可带明信片)。背包是它的一个视图。
  */
 import type { Db } from '../lib/db'
 import { parseCatch } from './hunt-catch'
@@ -25,7 +26,7 @@ export interface CatchRow {
   image_svg: string | null
 }
 
-export interface HuntStore {
+export interface Journal {
   /**
    * 记下一次打猎发出去的整段文本。返回入库条数。
    *
@@ -48,25 +49,25 @@ export interface HuntStore {
 
 const PRUNE_KEEP = 500
 
-export function makeHuntStore(db: Db): HuntStore {
+export function makeJournal(db: Db): Journal {
   const ins = db.query<unknown, [string, string, string, string, string | null, string]>(
-    `INSERT INTO hunt_catch(id, ts, chat_id, title, url, note, status, kind)
+    `INSERT INTO journal(id, ts, chat_id, title, url, note, status, kind)
      VALUES (?, ?, ?, ?, ?, ?, 'new', 'hunt')`,
   )
   const insVisit = db.query<unknown, [string, string, string, string, string, string | null]>(
-    `INSERT INTO hunt_catch(id, ts, chat_id, title, url, note, status, kind, image_svg)
+    `INSERT INTO journal(id, ts, chat_id, title, url, note, status, kind, image_svg)
      VALUES (?, ?, ?, ?, NULL, ?, 'new', 'visit', ?)`,
   )
-  const setImage = db.query<unknown, [string, string]>('UPDATE hunt_catch SET image_svg = ? WHERE id = ?')
-  const selAll = db.query<CatchRow, [number]>('SELECT * FROM hunt_catch ORDER BY ts DESC, rowid DESC LIMIT ?')
+  const setImage = db.query<unknown, [string, string]>('UPDATE journal SET image_svg = ? WHERE id = ?')
+  const selAll = db.query<CatchRow, [number]>('SELECT * FROM journal ORDER BY ts DESC, rowid DESC LIMIT ?')
   const selDupe = db.query<{ cnt: number }, [string, string]>(
-    "SELECT COUNT(*) AS cnt FROM hunt_catch WHERE url = ? AND substr(ts, 1, 10) = ?",
+    "SELECT COUNT(*) AS cnt FROM journal WHERE url = ? AND substr(ts, 1, 10) = ?",
   )
-  const upd = db.query<unknown, [string, string]>('UPDATE hunt_catch SET status = ? WHERE id = ?')
-  const del = db.query<unknown, [string]>('DELETE FROM hunt_catch WHERE id = ?')
-  const exists = db.query<{ cnt: number }, [string]>('SELECT COUNT(*) AS cnt FROM hunt_catch WHERE id = ?')
+  const upd = db.query<unknown, [string, string]>('UPDATE journal SET status = ? WHERE id = ?')
+  const del = db.query<unknown, [string]>('DELETE FROM journal WHERE id = ?')
+  const exists = db.query<{ cnt: number }, [string]>('SELECT COUNT(*) AS cnt FROM journal WHERE id = ?')
   const prune = db.query<unknown, [number]>(
-    'DELETE FROM hunt_catch WHERE id NOT IN (SELECT id FROM hunt_catch ORDER BY ts DESC, rowid DESC LIMIT ?)',
+    'DELETE FROM journal WHERE id NOT IN (SELECT id FROM journal ORDER BY ts DESC, rowid DESC LIMIT ?)',
   )
 
   return {

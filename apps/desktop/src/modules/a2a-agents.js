@@ -11,7 +11,7 @@ import { showToast } from "../view.js"
  */
 
 import { invokeApi } from '../api.js'
-import { initHuntBag, renderHuntBag } from './hunt-bag.js'
+import { initHuntBag, renderHuntBag } from './journal.js'
 
 // ── module-level state ────────────────────────────────────────────────────
 /** @type {Record<string, unknown> | null} */
@@ -137,7 +137,7 @@ export async function refresh() {
     /** @type {Promise<{echoes?:Array<any>}|null>}   */ (invokeApi('GET', '/v1/social/echoes').catch(() => null)),
     /** @type {Promise<any>}                          */ (invokeApi('GET', '/v1/social/inbound').catch(() => null)),
     /** @type {Promise<{channels?:Array<any>}|null>} */ (invokeApi('GET', '/v1/penpal/channels').catch(() => null)),
-    /** @type {Promise<{items?:Array<any>}|null>}    */ (invokeApi('GET', '/v1/hunt').catch(() => null)),
+    /** @type {Promise<{items?:Array<any>}|null>}    */ (invokeApi('GET', '/v1/journal').catch(() => null)),
   ])
 
   // keep the server-status banner (best-effort, as before)

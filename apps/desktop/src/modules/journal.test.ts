@@ -10,7 +10,7 @@ const mkEl = () => ({ innerHTML: '', textContent: '', addEventListener: () => {}
 // @ts-expect-error minimal DOM stub before import (same shape as todos.test.ts)
 globalThis.document = { getElementById: (id: string) => els.get(id) ?? null }
 
-const { renderHuntBag, splitByStatus, dayLabel, statusLabel, onHuntBagClick, countLabel } = await import('./hunt-bag.js')
+const { renderHuntBag, splitByStatus, dayLabel, statusLabel, onHuntBagClick, countLabel } = await import('./journal.js')
 
 const item = (o: Partial<Record<string, unknown>> = {}) => ({
   id: 'i1', ts: new Date().toISOString(), chat_id: 'c', title: 'Continue.dev',
@@ -133,8 +133,8 @@ describe('onHuntBagClick', () => {
   it('点状态 → POST 后刷新', async () => {
     invokeApi.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({ items: [] })
     await onHuntBagClick(ev({ 'data-hb-action': 'status', 'data-hb-id': 'i1', 'data-hb-status': 'using' }))
-    expect(invokeApi).toHaveBeenNthCalledWith(1, 'POST', '/v1/hunt/status', { id: 'i1', status: 'using' })
-    expect(invokeApi).toHaveBeenNthCalledWith(2, 'GET', '/v1/hunt')
+    expect(invokeApi).toHaveBeenNthCalledWith(1, 'POST', '/v1/journal/status', { id: 'i1', status: 'using' })
+    expect(invokeApi).toHaveBeenNthCalledWith(2, 'GET', '/v1/journal')
   })
 
   it('**ok:false 要说出来** —— 否则界面显示一个改不动的状态,主人只觉得点了没反应', async () => {
@@ -146,7 +146,7 @@ describe('onHuntBagClick', () => {
   it('删除走 remove 路由', async () => {
     invokeApi.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({ items: [] })
     await onHuntBagClick(ev({ 'data-hb-action': 'remove', 'data-hb-id': 'i1' }))
-    expect(invokeApi).toHaveBeenNthCalledWith(1, 'POST', '/v1/hunt/remove', { id: 'i1' })
+    expect(invokeApi).toHaveBeenNthCalledWith(1, 'POST', '/v1/journal/remove', { id: 'i1' })
   })
 
   it('点空白处什么都不做', async () => {

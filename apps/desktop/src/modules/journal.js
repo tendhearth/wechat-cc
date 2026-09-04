@@ -147,7 +147,7 @@ export function renderHuntBag(data) {
 
 export async function refreshHuntBag() {
   const resp = /** @type {{items?:Array<any>}|null} */ (
-    await invokeApi('GET', '/v1/hunt').catch(() => null))
+    await invokeApi('GET', '/v1/journal').catch(() => null))
   renderHuntBag({ items: resp ? (resp.items ?? []) : null })
 }
 
@@ -173,7 +173,7 @@ export async function onHuntBagClick(ev) {
   if (action === 'status') {
     const status = btn.getAttribute('data-hb-status')
     const r = /** @type {{ok?:boolean}|null} */ (
-      await invokeApi('POST', '/v1/hunt/status', { id, status }).catch(() => null))
+      await invokeApi('POST', '/v1/journal/status', { id, status }).catch(() => null))
     // ok:false = 这条已经不在了(另一个窗口删过)。**不能装作成功** ——
     // 界面会显示一个改不动的状态,主人只会觉得点了没反应。
     if (!r?.ok) showToast('这条已经不在背包里了')
@@ -183,7 +183,7 @@ export async function onHuntBagClick(ev) {
 
   if (action === 'remove') {
     const r = /** @type {{ok?:boolean}|null} */ (
-      await invokeApi('POST', '/v1/hunt/remove', { id }).catch(() => null))
+      await invokeApi('POST', '/v1/journal/remove', { id }).catch(() => null))
     if (!r?.ok) showToast('这条已经不在背包里了')
     await refreshHuntBag()
   }

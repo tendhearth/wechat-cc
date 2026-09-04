@@ -345,7 +345,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
           .map(h => ({ id: h.id, name: h.name || h.id, ...(h.url ? { url: h.url } : {}) }))
       } catch { return [] }
     },
-    // 微信里的「背包」速览。读同一张 hunt_catch —— 桌面端那个区块是它的
+    // 微信里的「背包」速览。读同一张 journal —— 桌面端那个区块是它的
     // 可编辑版。读失败返回空数组而不是抛:一次查询挂掉不该让整条 admin
     // 命令链断在这里。
     huntBag: () => {

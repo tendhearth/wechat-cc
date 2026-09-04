@@ -61,7 +61,7 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  it('opens a fresh db with PRAGMA user_version = 39 and the 29 tables', () => {
+  it('opens a fresh db with PRAGMA user_version = 40 and the 29 tables', () => {
     const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
     // v14 (dialogue real data): messages / threads / thread_extract_state tables added;
     // events.kind widened with 'threads_extracted'.
@@ -97,11 +97,12 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v37 (串门见闻): hunt_catch 加 kind — no new tables.
     // v38 (明信片): hunt_catch 加 image_svg — no new tables.
     // v39 (社交信封): penpal_letter 加 kind / payload — no new tables.
-    expect(v).toBe(39)
+    // v40 (伙伴日志): hunt_catch 改名 journal — table set changes, count doesn't.
+    expect(v).toBe(40)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
-      'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'hunt_catch', 'message_attempts', 'messages',
+      'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'journal', 'message_attempts', 'messages',
       'milestones', 'observations', 'penpal_channel', 'penpal_letter', 'reminders', 'session_fts_state', 'session_state',
       'session_turns_fts', 'session_turns_fts_config', 'session_turns_fts_content', 'session_turns_fts_data',
       'session_turns_fts_docsize', 'session_turns_fts_idx',

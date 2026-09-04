@@ -83,7 +83,7 @@ export interface AdminCommandsDeps {
   >
   /** 列出已注册的手(名字 + 地址),给发现性用。 */
   listHands?: () => readonly { id: string; name: string; url?: string }[]
-  /** 打猎战利品(v36 hunt_catch)。缺失 ⇒ 「背包」命令说功能没接,而不是说空。 */
+  /** 伙伴日志(journal,v40)。缺失 ⇒ 「背包」命令说功能没接,而不是说空。 */
   huntBag?: () => readonly { title: string; url: string | null; ts: string; status: string }[]
   /**
    * Starts an external updater process. The updater must live outside this

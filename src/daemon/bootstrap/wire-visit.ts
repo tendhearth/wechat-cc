@@ -42,7 +42,7 @@ export interface VisitDeps {
   disclosurePolicy: string
   /** 给主人发一句话;没有主人 chat 时是 no-op。 */
   notifyOwner(text: string): void
-  /** 见闻进背包(hunt_catch kind='visit')。可选:没接就只发微信。返回行 id 以便补明信片。 */
+  /** 见闻进日志(journal kind='visit')。可选:没接就只发微信。返回行 id 以便补明信片。 */
   recordVisit?(args: { text: string; peerLabel: string }): string | null
   /**
    * 明信片(可选)。draw = 模型出 SVG → 调用方 safeSvg;send = 栅格化后发给主人

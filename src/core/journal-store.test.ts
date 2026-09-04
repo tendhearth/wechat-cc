@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { openDb, type Db } from '../lib/db'
-import { makeHuntStore, type HuntStore } from './hunt-store'
+import { makeJournal, type Journal } from './journal-store'
 
 let db: Db
-let store: HuntStore
-beforeEach(() => { db = openDb({ path: ':memory:' }); store = makeHuntStore(db) })
+let store: Journal
+beforeEach(() => { db = openDb({ path: ':memory:' }); store = makeJournal(db) })
 
 const HUNT = `今天两条：
 

@@ -1,28 +1,28 @@
 /**
- * routes-hunt.ts — 打猎战利品的读写面(2026-09-03)。
+ * routes-journal.ts — 打猎战利品的读写面(2026-09-03)。
  *
  * 用户反馈:「虽然你的 cc 有自动打猎的功能,但是桌面端没有记录」。打猎
  * 每天在发,发完只剩微信聊天记录。这三个路由是桌面端「战利品」区块的
- * 后端,读 v36 `hunt_catch`。
+ * 后端,读 `journal`(v36 建为 hunt_catch,v40 改名)。
  *
  * 分级 trusted:桌面端拿到的是 daemon 级 FILE token(= trusted,`daemon
  * api-info`),admin 会让每一次真实的桌面读 403 —— 觅食台的读路由 2026-07-22
  * 正是这么静默坏了一个多月。
  */
-import { CATCH_STATUSES, type CatchStatus } from '../../core/hunt-store'
+import { CATCH_STATUSES, type CatchStatus } from '../../core/journal-store'
 import type { InternalApiDeps, RouteTable } from './types'
 
-export function huntRoutes(deps: InternalApiDeps): RouteTable {
+export function journalRoutes(deps: InternalApiDeps): RouteTable {
   return {
-    'GET /v1/hunt': async (q) => {
-      if (!deps.hunt) return { status: 503, body: { error: 'hunt_not_wired' } }
+    'GET /v1/journal': async (q) => {
+      if (!deps.hunt) return { status: 503, body: { error: 'journal_not_wired' } }
       const raw = Number(q.get('limit'))
       const limit = Number.isFinite(raw) && raw > 0 ? Math.min(Math.trunc(raw), 500) : 200
       return { status: 200, body: { items: deps.hunt.list(limit) } }
     },
 
-    'POST /v1/hunt/status': async (_q, body) => {
-      if (!deps.hunt) return { status: 503, body: { error: 'hunt_not_wired' } }
+    'POST /v1/journal/status': async (_q, body) => {
+      if (!deps.hunt) return { status: 503, body: { error: 'journal_not_wired' } }
       const { id, status } = (body ?? {}) as { id?: unknown; status?: unknown }
       if (typeof id !== 'string' || id === '') return { status: 400, body: { error: 'missing_id' } }
       if (typeof status !== 'string' || !CATCH_STATUSES.includes(status as CatchStatus)) {
@@ -33,8 +33,8 @@ export function huntRoutes(deps: InternalApiDeps): RouteTable {
       return { status: 200, body: { ok: deps.hunt.setStatus(id, status as CatchStatus) } }
     },
 
-    'POST /v1/hunt/remove': async (_q, body) => {
-      if (!deps.hunt) return { status: 503, body: { error: 'hunt_not_wired' } }
+    'POST /v1/journal/remove': async (_q, body) => {
+      if (!deps.hunt) return { status: 503, body: { error: 'journal_not_wired' } }
       const id = ((body ?? {}) as { id?: unknown }).id
       if (typeof id !== 'string' || id === '') return { status: 400, body: { error: 'missing_id' } }
       return { status: 200, body: { ok: deps.hunt.remove(id) } }

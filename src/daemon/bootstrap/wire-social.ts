@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { makeJudge } from '../../core/social-judge'
 import { makeVisit } from './wire-visit'
-import { makeHuntStore } from '../../core/hunt-store'
+import { makeJournal } from '../../core/journal-store'
 import { safeSvg } from '../../lib/svg-sanitize'
 import { rasterizeSvgDarwin } from '../sticker-artist'
 import { join } from 'node:path'
@@ -421,16 +421,16 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         myName: configuredAgent.bot_name?.trim() || '我',
         disclosurePolicy: socialPolicy,
         notifyOwner: (text) => { const op = resolveOperatorChatId(); if (op && sendAssistantText) void sendAssistantText(op, text) },
-        // 见闻进背包。HuntStore 无内存态,这里另起一个实例读同一张表没问题。
+        // 见闻进背包。Journal 无内存态,这里另起一个实例读同一张表没问题。
         recordVisit: ({ text, peerLabel }) => {
           const op = resolveOperatorChatId()
-          return op ? makeHuntStore(deps.db).recordVisit({ chatId: op, text, peerLabel }) : null
+          return op ? makeJournal(deps.db).recordVisit({ chatId: op, text, peerLabel }) : null
         },
         // 明信片:模型出 SVG → safeSvg → 存背包(桌面内联渲染)→ 栅格化发微信。
         // 栅格化只有 macOS(qlmanage);别的平台桌面端照样看得到,微信收不到图。
         postcard: {
           sanitize: (svg) => safeSvg(svg),
-          attach: (rowId, svg) => makeHuntStore(deps.db).attachImage(rowId, svg),
+          attach: (rowId, svg) => makeJournal(deps.db).attachImage(rowId, svg),
           send: async (svg) => {
             const op = resolveOperatorChatId()
             if (!op || !deps.sendFile) return
