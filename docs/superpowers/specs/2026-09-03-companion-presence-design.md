@@ -77,9 +77,11 @@ export interface Presence {
 | 6 | `working` | busyLabels 含任何**其它**非 `api:` 前缀的 label | 在忙一件事(委派、客户回顾、整理记忆、帮别人答题、未知 label) |
 | 7 | `idle` | 以上都不 | 闲着 |
 
-`api:*` label 是 internal-api 分发器给每个非 GET 请求持的 token,不是伙伴的活动,
-**必须过滤**,否则桌面自己的 POST 会让熊「在忙」。未知 label 归 `working` 而不是
-忽略:它确实在干活,只是我们不知道叫什么。
+两类 label **必须过滤**,它们不是伙伴的活动:`api:*` 是 internal-api 分发器给每个非 GET
+请求持的 token(否则桌面自己的 POST 会让熊「在忙」);`companion-*` 是三个调度器
+(push / introspect / ingest)每一拍都持的例行 token(否则熊每分钟都「在忙」)。打猎
+在 push 那一拍里,所以要有自己的 `hunt` 名字(§2.2)。其余未知 label 归 `working`
+而不是忽略:它确实在干活,只是我们不知道叫什么。
 
 `label` 是给人看的一句话:`chatting` →「在跟你聊」;`visiting` →「去 X 家串门了」;
 `hosting_peer` →「X 来串门了」;`hosting_human` →「家里有客人」;`foraging` →「觅食中」;
@@ -106,7 +108,8 @@ export interface Presence {
 `journal.status` 的 `new` 在桌面日志页是「没试」筛选项(`modules/journal.js`),语义是
 「这条战利品主人还没试过」,和「主人还没看过」是两回事,借用会把两个概念缠死。
 
-改为独立水位:`<stateDir>/journal-seen.json` = `{ "seenUntil": "<ISO>" }`。
+改为独立水位:`<stateDir>/companion/journal-seen.json` = `{ "seenUntil": "<ISO>" }`
+(和 `companion/neighbors.json` 一个目录)。
 
 - `Journal.summary(seenUntil)` → `{ unread: count(ts > seenUntil), latest: 最新一条 {kind,title,ts} | null }`
   (一条 SQL,`hunt_catch_ts` 索引已在)。
@@ -135,8 +138,9 @@ export interface Presence {
 `createPresencePoller({ invokeApi, intervalMs = 20_000 })`。拉不到(daemon 没起 / 网络错)
 → 发布 `{ presence: 'down' }`,不保留上一次的好状态 —— 灯该灭就灭。
 
-主界面(`main.js`)和浮窗(`companion-window.js`)各起一个;浮窗现在是非 module
-脚本,改成 `type="module"` 以便 `import { invokeApi } from './api.js'`。
+主界面(`main.js`)和浮窗各起一个,共用 `companion-presence.js` 里的
+`startCompanionPresence()`;浮窗现在的脚本是非 module,不改它,另加一个
+`type="module"` 的小脚本 `companion-window-presence.js` 做接线。
 
 ### 3.2 `sceneStateFrom(presence)` — `apps/desktop/src/companion-scene-state.js`(纯函数)
 
@@ -183,10 +187,11 @@ interface SceneState {
 
 ### 3.4 闭环:点道具进日志
 
-道具是 canvas 上的一块命中区。点中 → 浮窗 `invoke('show_main_window', { page: 'journal' })`
-(新 tauri 命令:显示并聚焦主窗口,`emit('wechat-cc:navigate', { page })`);主界面监听该事件
-切到日志页;日志页打开时调 `POST /v1/journal/seen`(§2.3);下一次轮询 `unread=0`,道具消失。
-主界面首页鱼缸里点道具直接切页,不经 tauri。
+「日志页」= 觅食台里的「带回来的」区块,pane 名是 `a2a-agents`。道具是 canvas 上的
+一块命中区。点中 → 浮窗 `invoke('show_main_window', { page: 'a2a-agents' })`(新 tauri
+命令:显示并聚焦主窗口,`emit('wechat-cc:navigate', { page })`);主界面监听该事件
+(只认白名单里的 pane)切到觅食台;`switchPane('a2a-agents')` 时调 `POST /v1/journal/seen`
+(§2.3)并立刻刷一次轮询,道具消失。主界面首页鱼缸里点道具直接 `switchPane`,不经 tauri。
 
 ## 4. 明确不做
 
