@@ -1591,14 +1591,19 @@ describe('bootstrap 社交接线', () => {
       expect(letterRow!.direction).toBe('in')
       expect(letterRow!.plaintext).toBe('下次约拍风景怎么样?')
 
-      // The owner was notified with a decrypted preview; content-free of the
-      // peer's real identity — only the masked degree placeholder rides along.
+      // The owner was notified with a decrypted preview, and the sender is
+      // named the way 心愿 / 明信片 name it (wire-social.ts's single peerLabel):
+      // a channel whose peer_agent_id is in MY OWN registry is my friend — call
+      // them by the name I gave them. 「第 N 度的某人」 is for the channels where
+      // I genuinely don't know who's on the other end (no peer_agent_id). The
+      // name never crosses the wire; it only ever renders into my own chat.
       const sendMessage = ilink.sendMessage as unknown as ReturnType<typeof vi.fn>
       const letterSends = sendMessage.mock.calls.filter((c: unknown[]) => String(c[1]).includes('给你写信了'))
       expect(letterSends).toHaveLength(1)
       expect(String(letterSends[0]?.[1])).toContain('下次约拍风景怎么样')
       expect(String(letterSends[0]?.[1])).toContain(channel.id)
-      expect(String(letterSends[0]?.[1])).not.toContain('小B')
+      expect(String(letterSends[0]?.[1])).toContain('小B')
+      expect(String(letterSends[0]?.[1])).not.toContain('第 1 度的某人')
 
       // boot.penpal.sendLetter is present and callable end to end (Task 10's
       // dispatch seam calls exactly this). Exercise it against a channel id
