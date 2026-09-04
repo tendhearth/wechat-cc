@@ -19,10 +19,20 @@ export function presenceRoutes(deps: InternalApiDeps): RouteTable {
       if (!deps.hunt) return { status: 503, body: { error: 'journal_not_wired' } }
       let ownerChatId: string | null = null
       try { ownerChatId = loadCompanionConfig(deps.stateDir).default_chat_id } catch { ownerChatId = null }
+      // 「在聊」看的是**入站**时间,不是会话的 lastUsedAt —— 打猎 / 关心推送 /
+      // 提醒这些伙伴自己的外发也会 bump lastUsedAt,拿它当证据熊就会在主人
+      // 一言未发时说「在跟你聊」(spec 2026-09-03 §2.1)。没接 latestInboundTs
+      // 就一律当 null:没有入站证据,就不算在聊。
+      const sessions = await Promise.all((deps.listSessions?.() ?? []).map(async s => {
+        let iso: string | null = null
+        try { iso = (await deps.latestInboundTs?.(s.chatId)) ?? null } catch { iso = null }
+        const ms = iso ? Date.parse(iso) : NaN
+        return { chatId: s.chatId, lastInboundAt: Number.isFinite(ms) ? ms : null }
+      }))
       const body = derivePresence({
         nowMs: Date.now(),
         ownerChatId,
-        sessions: (deps.listSessions?.() ?? []).map(s => ({ chatId: s.chatId, lastUsedAt: s.lastUsedAt })),
+        sessions,
         busyLabels: deps.busyLabels?.() ?? [],
         visit: deps.social?.penpal?.activeVisit?.() ?? null,
         outbound: deps.outbound?.().state ?? null,

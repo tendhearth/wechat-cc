@@ -34,14 +34,14 @@ describe('derivePresence — activity 轴:每种一条', () => {
     const a = derivePresence(base()).activity
     expect(a).toEqual({ kind: 'idle', label: '', since: null })
   })
-  it('主人会话在窗口内 → chatting,since = lastUsedAt', () => {
-    const a = derivePresence(base({ sessions: [{ chatId: 'owner', lastUsedAt: NOW - 1000 }] })).activity
+  it('主人最近一条入站消息在窗口内 → chatting,since = lastInboundAt', () => {
+    const a = derivePresence(base({ sessions: [{ chatId: 'owner', lastInboundAt: NOW - 1000 }] })).activity
     expect(a.kind).toBe('chatting')
     expect(a.label).toBe('在跟你聊')
     expect(a.since).toBe(new Date(NOW - 1000).toISOString())
   })
-  it('非主人会话在窗口内 → hosting_human', () => {
-    const a = derivePresence(base({ sessions: [{ chatId: 'friend', lastUsedAt: NOW - 1000 }] })).activity
+  it('非主人会话的入站消息在窗口内 → hosting_human', () => {
+    const a = derivePresence(base({ sessions: [{ chatId: 'friend', lastInboundAt: NOW - 1000 }] })).activity
     expect(a.kind).toBe('hosting_human')
     expect(a.label).toBe('家里有客人')
   })
@@ -71,16 +71,26 @@ describe('derivePresence — 过滤与窗口', () => {
     const a = derivePresence(base({ busyLabels: ['api:POST /v1/journal/seen', 'companion-push', 'companion-introspect'] })).activity
     expect(a.kind).toBe('idle')
   })
-  it('会话超过 ACTIVE_WINDOW_MS → 不算在聊', () => {
-    const a = derivePresence(base({ sessions: [{ chatId: 'owner', lastUsedAt: NOW - ACTIVE_WINDOW_MS - 1 }] })).activity
+  it('入站消息超过 ACTIVE_WINDOW_MS → 不算在聊', () => {
+    const a = derivePresence(base({ sessions: [{ chatId: 'owner', lastInboundAt: NOW - ACTIVE_WINDOW_MS - 1 }] })).activity
     expect(a.kind).toBe('idle')
   })
   it('刚好在窗口边界内 → 算', () => {
-    const a = derivePresence(base({ sessions: [{ chatId: 'owner', lastUsedAt: NOW - ACTIVE_WINDOW_MS }] })).activity
+    const a = derivePresence(base({ sessions: [{ chatId: 'owner', lastInboundAt: NOW - ACTIVE_WINDOW_MS }] })).activity
     expect(a.kind).toBe('chatting')
   })
+  it('伙伴自己刚发过消息(会话活跃)但主人没说话 → 不算 chatting', () => {
+    // 打猎 / 关心推送会 bump SessionManager 的 lastUsedAt,但入站时间不动。
+    // 收集侧只喂入站时间,所以这里表现为「入站在窗口外」→ idle,而不是 chatting。
+    const a = derivePresence(base({ sessions: [{ chatId: 'owner', lastInboundAt: NOW - 30 * 60_000 }] })).activity
+    expect(a.kind).toBe('idle')
+  })
+  it('从没收到过入站消息(lastInboundAt = null)→ 不算在聊', () => {
+    const a = derivePresence(base({ sessions: [{ chatId: 'owner', lastInboundAt: null }] })).activity
+    expect(a.kind).toBe('idle')
+  })
   it('没有 ownerChatId 时所有活跃会话都算客人', () => {
-    const a = derivePresence(base({ ownerChatId: null, sessions: [{ chatId: 'x', lastUsedAt: NOW }] })).activity
+    const a = derivePresence(base({ ownerChatId: null, sessions: [{ chatId: 'x', lastInboundAt: NOW }] })).activity
     expect(a.kind).toBe('hosting_human')
   })
 })
@@ -88,11 +98,11 @@ describe('derivePresence — 过滤与窗口', () => {
 describe('derivePresence — 优先级', () => {
   const visiting = { id: 'v', peerLabel: 'P', hosting: false, sinceMs: NOW }
   it('chatting 压 visiting:串门途中回你消息,画面回到玻璃前', () => {
-    const a = derivePresence(base({ sessions: [{ chatId: 'owner', lastUsedAt: NOW }], visit: visiting })).activity
+    const a = derivePresence(base({ sessions: [{ chatId: 'owner', lastInboundAt: NOW }], visit: visiting })).activity
     expect(a.kind).toBe('chatting')
   })
   it('hosting_human 压 visiting', () => {
-    const a = derivePresence(base({ sessions: [{ chatId: 'f', lastUsedAt: NOW }], visit: visiting })).activity
+    const a = derivePresence(base({ sessions: [{ chatId: 'f', lastInboundAt: NOW }], visit: visiting })).activity
     expect(a.kind).toBe('hosting_human')
   })
   it('visiting 压 foraging', () => {

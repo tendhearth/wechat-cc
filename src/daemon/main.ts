@@ -246,6 +246,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 永远收不到东西,而且不会报任何错。
     const outboundTaps = makeOutboundTaps()
     const huntStore = makeJournal(db)
+    // 一个消息库实例喂两个 dep(messages / latestInboundTs),下面 registerInternalApi 用。
+    const messagesStore = makeMessagesStore(db)
     // 1. internal-api FIRST — bootstrap needs its baseUrl/token for MCP wiring
     const internalApi = await registerInternalApi({
       stateDir, daemonPid: process.pid, memory: memoryFS, db, projects: ilink.projects,
@@ -258,7 +260,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       outboundTaps,
       hunt: huntStore,
       // chat_history 工具后端(provider-handoff 的逃生口)
-      messages: (() => { const ms = makeMessagesStore(db); return { listRange: (c: string, o: { limit: number; beforeTs?: string }) => ms.listRange(c, o), search: (c: string, q: string, l: number) => ms.search(c, q, l) } })(),
+      messages: { listRange: (c: string, o: { limit: number; beforeTs?: string }) => messagesStore.listRange(c, o), search: (c: string, q: string, l: number) => messagesStore.search(c, q, l) },
+      // 桌宠状态的「主人真在跟我说话吗」证据(spec 2026-09-03 §2.1/§2.2)——
+      // 同一个 store 实例,只认入站:伙伴自己的外发(打猎 / 关心推送 / 提醒)
+      // 会 bump 会话的 lastUsedAt,但不该让熊说「在跟你聊」。
+      latestInboundTs: (c: string) => messagesStore.latestInboundTs(c),
       setUserName: (chatId, name) => ilink.setUserName(chatId, name),
       voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus(), synthesizeSpeech: (t) => ilink.voice.synthesizeSpeech(t), transcribe: (a, m) => ilink.voice.transcribe!(a, m), saveSTTConfig: (i) => ilink.voice.saveSTTConfig!(i), sttStatus: () => ilink.voice.sttStatus!() },
       sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),

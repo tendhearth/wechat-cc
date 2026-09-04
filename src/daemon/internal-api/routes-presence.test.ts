@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDb } from '../../lib/db'
@@ -12,6 +12,15 @@ import type { InternalApiDeps } from './types'
 
 const qs = () => new URLSearchParams()
 const NOW = Date.now()
+const iso = (ms: number) => new Date(ms).toISOString()
+
+/** 把 default_chat_id 写进 companion 配置(loadCompanionConfig 读 <stateDir>/companion/config.json)。 */
+function writeOwnerChat(stateDir: string, chatId: string): void {
+  mkdirSync(join(stateDir, 'companion'), { recursive: true })
+  writeFileSync(join(stateDir, 'companion', 'config.json'), JSON.stringify({ default_chat_id: chatId }), 'utf8')
+}
+
+const session = (chatId: string) => ({ alias: 'a', path: '/p', providerId: 'claude', chatId, lastUsedAt: NOW })
 
 function deps(over: Partial<InternalApiDeps> = {}): InternalApiDeps {
   const stateDir = mkdtempSync(join(tmpdir(), 'presence-'))
@@ -60,10 +69,31 @@ describe('GET /v1/companion/presence', () => {
     expect((await presenceRoutes(d2)['GET /v1/companion/presence']!(qs(), undefined)).body).toMatchObject({ presence: 'degraded' })
   })
 
-  it('主人会话活跃 → chatting(ownerChatId 从 companion 配置读;没配置时活跃会话算客人)', async () => {
-    const d = deps({ listSessions: () => [{ alias: 'a', path: '/p', providerId: 'claude', chatId: 'someone', lastUsedAt: NOW }] })
+  it('没配 default_chat_id 时,有入站的活跃会话算客人', async () => {
+    const d = deps({ listSessions: () => [session('someone')], latestInboundTs: async () => iso(NOW - 1000) })
     const r = await presenceRoutes(d)['GET /v1/companion/presence']!(qs(), undefined)
     expect((r.body as { activity: { kind: string } }).activity.kind).toBe('hosting_human')
+  })
+
+  it('default_chat_id 的会话刚收到主人消息 → chatting', async () => {
+    const d = deps({ listSessions: () => [session('owner-chat')], latestInboundTs: async () => iso(NOW - 1000) })
+    writeOwnerChat(d.stateDir, 'owner-chat')
+    const r = await presenceRoutes(d)['GET /v1/companion/presence']!(qs(), undefined)
+    expect((r.body as { activity: { kind: string } }).activity.kind).toBe('chatting')
+  })
+
+  it('同一个会话,主人 10 分钟没说话 → idle(伙伴自己的外发 bump 了 lastUsedAt 也不算在聊)', async () => {
+    const d = deps({ listSessions: () => [session('owner-chat')], latestInboundTs: async () => iso(NOW - 10 * 60_000) })
+    writeOwnerChat(d.stateDir, 'owner-chat')
+    const r = await presenceRoutes(d)['GET /v1/companion/presence']!(qs(), undefined)
+    expect((r.body as { activity: { kind: string } }).activity.kind).toBe('idle')
+  })
+
+  it('没接 latestInboundTs → 没有入站证据,不算在聊', async () => {
+    const d = deps({ listSessions: () => [session('owner-chat')] })
+    writeOwnerChat(d.stateDir, 'owner-chat')
+    const r = await presenceRoutes(d)['GET /v1/companion/presence']!(qs(), undefined)
+    expect((r.body as { activity: { kind: string } }).activity.kind).toBe('idle')
   })
 
   it('没接 journal → 503(和 /v1/journal 同姿势:空不是 0)', async () => {

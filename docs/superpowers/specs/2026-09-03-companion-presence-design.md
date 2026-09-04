@@ -45,7 +45,7 @@ daemon 侧的「真实活动」信号已经存在但没人消费:
 export interface PresenceInputs {
   nowMs: number
   ownerChatId: string | null
-  sessions: ReadonlyArray<{ chatId: string; lastUsedAt: number }>
+  sessions: ReadonlyArray<{ chatId: string; lastInboundAt: number | null }>
   busyLabels: ReadonlyArray<string>
   visit: { id: string; peerLabel: string; hosting: boolean; sinceMs: number } | null
   outbound: 'unknown' | 'ok' | 'degraded' | null
@@ -69,13 +69,19 @@ export interface Presence {
 
 | 优先 | kind | 来源 | 为什么这个优先级 |
 |---|---|---|---|
-| 1 | `chatting` | owner chatId 的会话 `lastUsedAt` 在 `ACTIVE_WINDOW_MS`(3 分钟)内 | 「正在跟你说话」永远比「出门了」更真:伙伴串门途中回你消息,画面就该回到玻璃前 |
-| 2 | `hosting_human` | 非 owner chatId 的会话在窗口内 | 人类朋友在跟伙伴聊 |
+| 1 | `chatting` | owner chatId 那个 chat 最近一条**入站**消息(主人真发来的)在 `ACTIVE_WINDOW_MS`(3 分钟)内 | 「正在跟你说话」永远比「出门了」更真:伙伴串门途中回你消息,画面就该回到玻璃前 |
+| 2 | `hosting_human` | 非 owner chatId 那个 chat 最近一条**入站**消息(客人真发来的)在窗口内 | 人类朋友在跟伙伴聊 |
 | 3 | `visiting` | `visit && !visit.hosting` | 我去别人家 |
 | 4 | `hosting_peer` | `visit && visit.hosting` | 别的伙伴来我家 |
 | 5 | `foraging` | busyLabels 含 `hunt` 或 `social-forage` | 出门找东西(打猎 / 派心愿) |
 | 6 | `working` | busyLabels 含任何**其它**非 `api:` 前缀的 label | 在忙一件事(委派、客户回顾、整理记忆、帮别人答题、未知 label) |
 | 7 | `idle` | 以上都不 | 闲着 |
+
+**为什么是入站时间而不是会话的 `lastUsedAt`:** `SessionManager.acquire()/dispatch()`
+在伙伴**自己**的外发轮次(打猎、关心推送、提醒)上一样会 bump `lastUsedAt`。拿它
+当「在聊」的证据,打猎那一拍主人会话就是「活跃」的 —— 熊说「在跟你聊」,而主人
+一个字都没说,直接踩红线。只有主人 / 客人真发来的消息才算「在聊」;没有入站证据
+(会话没接上消息库、这个 chat 从没收到过东西)一律当 `null`,即不算在聊。
 
 两类 label **必须过滤**,它们不是伙伴的活动:`api:*` 是 internal-api 分发器给每个非 GET
 请求持的 token(否则桌面自己的 POST 会让熊「在忙」);`companion-*` 是三个调度器
@@ -86,7 +92,7 @@ export interface Presence {
 `label` 是给人看的一句话:`chatting` →「在跟你聊」;`visiting` →「去 X 家串门了」;
 `hosting_peer` →「X 来串门了」;`hosting_human` →「家里有客人」;`foraging` →「觅食中」;
 `working` →「在忙一件事」;`idle` → `''`。`since` 是该活动开始的 ISO 时间
-(会话用 `lastUsedAt`,串门用 `sinceMs`,busy 没有开始时间给 `null`)。
+(会话用 `lastInboundAt`,串门用 `sinceMs`,busy 没有开始时间给 `null`)。
 
 **news 推导:** 原样透传输入(计数在存储层做,§2.3)。
 
@@ -99,7 +105,10 @@ export interface Presence {
   熊不能永远不在家,那也是撒谎。
 - **hunt tick** 现在**不持** busy token(查证:`tick-bodies.ts` 里没有)。加
   `holdBusy('hunt')` 包住整个打猎轮次,这是它本来就该做的(spec 2026-08-11 的漏网)。
-- **sessions / outbound / subsystems**:`InternalApiDeps` 里现成的 thunk。
+- **sessions / outbound / subsystems**:`InternalApiDeps` 里现成的 thunk。会话只提供
+  `chatId`,「最近一条入站」另走一个窄 dep `latestInboundTs(chatId)`(main.ts 从
+  `messages` 那同一个 `makeMessagesStore(db)` 实例注入,`Promise<string | null>`);
+  未接线 ⇒ 每个会话都当 `null`。
 - **ownerChatId**:`loadCompanionConfig(stateDir).default_chat_id`。
 - **journal**:§2.3。
 
@@ -158,7 +167,7 @@ interface SceneState {
 
 | 输入 | bearPresent | pose | tint | sign | 备注 |
 |---|---|---|---|---|---|
-| `down` / `offline` | false | – | dark | 「离线」 | 不是故事,是事实;不写「出门了」 |
+| `down` / `offline` | false | – | dark | 「离线」 | 不是故事,是事实;不写「出门了」。`offline` 仍保留道具/角标(见下) |
 | `degraded` | true | 按 activity | dim | 按 activity | |
 | `chatting` | true | wave | | null | bubble「在跟你聊」;**不显示内容** |
 | `hosting_human` | true | wave | | 「家里有客人」 | |
@@ -170,6 +179,8 @@ interface SceneState {
 
 `prop` 按 `news.latest_kind`:`hunt` → bag;`visit` / `postcard` → postcard;`letter` → letter;
 其它 → bag;`unread === 0` → null。`badge = unread`。
+**道具在 `offline` 时保留**:微信链路断了但 daemon 还在,journal 计数依然可信,
+东西确实在那儿等着看;只有 `down` / `null`(daemon 都没起,数字不可信)才不画。
 
 ### 3.3 animation-lab 的改动面
 

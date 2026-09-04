@@ -273,6 +273,15 @@ export interface InternalApiDeps {
     listRange(chatId: string, opts: { limit: number; beforeTs?: string }): Promise<Array<{ ts: string; direction: string; kind: string; text: string }>>
     search(chatId: string, query: string, limit: number): Promise<Array<{ ts: string; direction: string; kind: string; text: string }>>
   }
+  /**
+   * 某个 chat 最近一条**入站**消息的时间(ISO),没有则 null —— 桌宠状态
+   * (`GET /v1/companion/presence`)判断「主人/客人真的在跟我说话」的唯一依据。
+   * 不能拿 `listSessions()` 的 `lastUsedAt`:打猎、关心推送、提醒这些伙伴自己的
+   * 外发也会 bump 它,于是打猎那一拍熊就说「在跟你聊」,而主人一个字都没说。
+   * main.ts 注入的是与 `messages` 同一个 `makeMessagesStore(db)` 实例的方法;
+   * 未接线 ⇒ 每个会话都当 null(没有入站证据就不算在聊)。
+   */
+  latestInboundTs?: (chatId: string) => Promise<string | null>
   knowledge?: {
     store: import('../../core/knowledge/store').KnowledgeStore
     search: typeof import('../../core/knowledge/search').semanticSearch

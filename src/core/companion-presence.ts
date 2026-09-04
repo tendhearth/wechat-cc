@@ -17,7 +17,13 @@ export interface ActiveVisit { id: string; peerLabel: string; hosting: boolean; 
 export interface PresenceInputs {
   nowMs: number
   ownerChatId: string | null
-  sessions: ReadonlyArray<{ chatId: string; lastUsedAt: number }>
+  /**
+   * 每个活着的会话最近一条**入站**消息的时间(ms epoch),`null` = 从没收到过。
+   * 必须是入站而不是 `SessionManager` 的 `lastUsedAt`:打猎、关心推送、提醒这些
+   * 伙伴自己的外发也会 bump `lastUsedAt`,于是打猎那一拍主人会话看着「活跃」,
+   * 熊就说「在跟你聊」——主人一个字都没说。只有主人/客人真发来的消息才算「在聊」。
+   */
+  sessions: ReadonlyArray<{ chatId: string; lastInboundAt: number | null }>
   busyLabels: ReadonlyArray<string>
   visit: ActiveVisit | null
   outbound: 'unknown' | 'ok' | 'degraded' | null
@@ -31,7 +37,7 @@ export interface Presence {
   news: { unread: number; latest_kind: string | null; latest_title: string | null }
 }
 
-/** 会话多久之内算「正在聊」。 */
+/** 最近一条入站消息多久之内算「正在聊」。 */
 export const ACTIVE_WINDOW_MS = 3 * 60_000
 
 /** 这些 label 是「出门找东西」:打猎、派心愿。 */
@@ -56,15 +62,18 @@ export function derivePresence(i: PresenceInputs): Presence {
     : 'ok'
 
   // ── activity(按优先级,第一个命中的赢)──
-  const active = i.sessions.filter(s => i.nowMs - s.lastUsedAt <= ACTIVE_WINDOW_MS)
+  const active = i.sessions.filter(
+    (s): s is { chatId: string; lastInboundAt: number } =>
+      s.lastInboundAt !== null && i.nowMs - s.lastInboundAt <= ACTIVE_WINDOW_MS,
+  )
   const owner = i.ownerChatId ? active.find(s => s.chatId === i.ownerChatId) : undefined
   const guest = active.find(s => s.chatId !== i.ownerChatId)
   const work = i.busyLabels.filter(l => !isHousekeeping(l))
   const foraging = work.some(l => FORAGING_LABELS.has(l))
 
   let activity: Presence['activity']
-  if (owner) activity = { kind: 'chatting', label: '在跟你聊', since: iso(owner.lastUsedAt) }
-  else if (guest) activity = { kind: 'hosting_human', label: '家里有客人', since: iso(guest.lastUsedAt) }
+  if (owner) activity = { kind: 'chatting', label: '在跟你聊', since: iso(owner.lastInboundAt) }
+  else if (guest) activity = { kind: 'hosting_human', label: '家里有客人', since: iso(guest.lastInboundAt) }
   else if (i.visit && !i.visit.hosting) activity = { kind: 'visiting', label: `去${i.visit.peerLabel}家串门了`, since: iso(i.visit.sinceMs) }
   else if (i.visit && i.visit.hosting) activity = { kind: 'hosting_peer', label: `${i.visit.peerLabel}来串门了`, since: iso(i.visit.sinceMs) }
   else if (foraging) activity = { kind: 'foraging', label: '觅食中', since: null }
