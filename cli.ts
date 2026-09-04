@@ -2725,7 +2725,7 @@ const socialCmd = defineCommand({
 // wechat-cc pair          → mint + print a 6-digit code (share with a friend)
 // wechat-cc pair <code>   → redeem a friend's code and connect
 // Both need the RUNNING daemon (internal-api, tier trusted) — same idiom as
-// `social reveal`. NOT to be confused with `hand invite`/`hand join`, which
+// `social wishes`. NOT to be confused with `hand invite`/`hand join`, which
 // pair two WORKER hands (delegated-agent capacity), not two people's bots.
 const pairCmd = defineCommand({
   meta: {

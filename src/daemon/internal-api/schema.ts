@@ -479,10 +479,9 @@ export const A2ASendResponse = z.union([
 ])
 export type A2ASendRequestT = z.infer<typeof A2ASendRequest>
 
-// P4 派心愿: the old POST /v1/social/seek one-shot (SocialSeekRequest) was
-// deleted here — propose/confirm/cancel (routes-social.ts) are
-// inline-validated per the pair/inbound routes' precedent, so they get no
-// REQUEST_SCHEMAS entry.
+// 心愿 (2026-09-04) has no entry here on purpose: the wish routes
+// (routes-social.ts) are inline-validated per the pair/inbound routes'
+// precedent, so they get no REQUEST_SCHEMAS entry.
 
 // ── POST /v1/a2a/test ────────────────────────────────────────────────────────
 // Server-side smoke test for the dashboard's Test button. With outbound=false

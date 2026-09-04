@@ -2,9 +2,12 @@
  * A2A server — inbound HTTP listener that lets registered external
  * A2A agents push notify(...) calls into wechat-cc.
  *
- * Two endpoints:
+ * Endpoints:
  *   GET  /.well-known/agent.json — daemon's Agent Card (unauthenticated)
  *   POST /a2a/notify — push a message to the operator
+ *   POST /a2a/exec   — delegated work (only for may_exec peers)
+ *   POST /a2a/letter — a sealed pen-pal envelope for one of my channels
+ *   POST /a2a/pair   — the 6-digit pairing rendezvous
  *
  * The server itself is dumb: it verifies Bearer auth, validates the
  * body shape, and hands off to an injected `onNotify` callback. The

@@ -1,11 +1,10 @@
 /**
- * internal-api social route — agent-social M1 (T7b-core). Mirrors
- * routes-a2a.ts's `/v1/a2a/send` shape: 503 when the broker isn't wired
- * (social_enabled + social_disclosure_policy not both configured), else
- * delegate straight to the broker. Split into its own file (rather than
- * appended to routes-a2a.ts) since agent-social is a distinct
- * capability/trust surface from the bare a2a exec/notify/pair routes — see
- * docs/superpowers/specs/2026-07-12-agent-social-m1-intent-brokering-design.md.
+ * internal-api social routes — 笔友信道 / 关系 / 心愿. Mirrors routes-a2a.ts's
+ * `/v1/a2a/send` shape: 503 when social wiring is absent (social_enabled +
+ * social_disclosure_policy not both configured), else delegate straight to it.
+ * Split into its own file (rather than appended to routes-a2a.ts) since the
+ * social surface is a distinct capability/trust surface from the bare a2a
+ * exec/notify/pair routes.
  *
  * 心愿 (spec 2026-09-04-wish-postcard §4) replaced the P4 propose→confirm/
  * cancel seek/seeks/echoes/pledges/*reveal routes with four wish routes:

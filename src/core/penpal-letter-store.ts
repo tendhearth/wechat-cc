@@ -1,7 +1,8 @@
 /**
  * penpal-letter-store.ts — the LOCAL correspondence thread for a channel. The
  * wire only ever carries sealed_ciphertext + nonce + tag; the decrypted
- * plaintext is kept here for the owner (spec §5). Mirrors social-pledge-store.ts.
+ * plaintext is kept here for the owner (spec §5), together with the envelope
+ * kind/payload every non-letter interaction (串门 / 心愿 / 明信片) rides on.
  */
 import type { Db } from '../lib/db'
 

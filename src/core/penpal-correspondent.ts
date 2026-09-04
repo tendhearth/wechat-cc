@@ -47,9 +47,8 @@ export interface Correspondent {
 
 /** Relay (degree-2) letters post to the intermediary (relay_via) so the 2-hop
  *  path stays content-blind; direct letters post straight to peer_agent_id.
- *  Mirrors social-reveal.ts's `echo.relay_via ?? echo.peer_agent_id`. A peer
- *  that crossed a mailbox at reveal (Task 10) additionally carries `mailbox`
- *  (relay-direct, Task 11) — W is never consulted for that leg. */
+ *  A peer that crossed a mailbox at 配对 additionally carries `mailbox`
+ *  (relay-direct) — the intermediary is never consulted for that leg. */
 function routeOf(ch: NonNullable<ReturnType<ChannelStore['get']>>): { agentId: string; relayVia: string | null; mailbox?: PeerMailbox } | null {
   const agentId = ch.relay_via ?? ch.peer_agent_id
   if (!agentId) return null

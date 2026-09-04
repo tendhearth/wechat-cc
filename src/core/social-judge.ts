@@ -26,10 +26,10 @@ export interface JudgeInput {
 export interface JudgeDeps {
   /**
    * Run one agent turn with the given system + user prompt and return the
-   * assistant's final text. Real impl (bootstrap) spawns a one-shot session
-   * with ONLY the plugin MCP tools (no wechat/delegate) so the judge can
-   * read the owner's derived facts (wxfacts/wxperson/…) without being able
-   * to send-as-owner or recurse. Test impl is a plain fake.
+   * assistant's final text. Real impl (wire-social.ts) is the provider
+   * registry's own cheapEval — no child session, no MCP tools; the owner's
+   * derived facts reach the judge through `ground` below instead. Test impl
+   * is a plain fake.
    */
   runTurn: (systemPrompt: string, userPrompt: string) => Promise<string>
   /** Free-text disclosure policy, echoed into the system prompt so the

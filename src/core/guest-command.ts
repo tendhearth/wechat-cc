@@ -1,7 +1,7 @@
 /**
  * guest-command.ts — the WeChat guest-path owner triggers (spec §3).
  * Deterministic pipeline-layer parse, mirroring pair-command.ts /
- * reveal-command.ts / penpal-letter-command.ts (never relies on the model
+ * penpal-letter-command.ts (never relies on the model
  * noticing). "允许 <6 digits>" / "拒绝 <6 digits>" / bare "邀请码" /
  * bare "待批准" — anything else, including extra surrounding text, is
  * null (deterministic commands don't do fuzzy matching).

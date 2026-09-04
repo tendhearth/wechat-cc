@@ -21,7 +21,6 @@ import type { ProviderRegistry } from '../../core/provider-registry'
 import type { ProviderId } from '../../core/conversation'
 import type { AgentConfig } from '../../lib/agent-config'
 import type { Db } from '../../lib/db'
-import type { McpStdioSpec } from './mcp-specs'
 import type { SendAssistantText } from './fallback-reply'
 import type { BootstrapDeps } from './types'
 
@@ -40,9 +39,6 @@ export interface SocialDeps {
   selfId: string
   registry: ProviderRegistry
   defaultProviderId: ProviderId
-  pluginMcp: Record<string, McpStdioSpec>
-  currentClaudeModel: () => string
-  claudeBin: string | undefined
   /**
    * In-process Knowledge Kernel accessors (facts/search/store/embedQuery/
    * embedder), assembled once in bootstrap/index.ts and threaded straight

@@ -105,7 +105,6 @@ describe('mailbox e2e — relay-direct letter (NAT-simulated: only the relay is 
     const poller = makeMailboxPoller({
       identity: q, relays: ['https://relay/'], client, cursors: makeCursorStore(qDir),
       dispatch: makeEnvelopeDispatch({
-        registry: { verifyBearer: () => null } as any,
         onLetter: makeMailboxLetterHandler({ getByMyChannelId: (c) => qCh.getByMyChannelId(c), receiveLetter: (ev) => qCorr.receiveLetter(ev) }),
         log: () => {},
       }),

@@ -511,8 +511,8 @@ export interface InternalApi {
    */
   setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
   /**
-   * Late-bind the agent-social M1 broker (T7b-core) after bootstrap has
-   * constructed it. POST /v1/social/seek/{propose,confirm,cancel} return 503
+   * Late-bind the social surface (笔友信道 + 心愿) after bootstrap has
+   * constructed it. POST /v1/social/wish{,/send,/cancel} return 503
    * until this is called (only happens when social_enabled +
    * social_disclosure_policy are both configured).
    */

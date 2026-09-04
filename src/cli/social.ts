@@ -23,7 +23,7 @@ export interface SocialDaemonDeps {
 
 interface DaemonConn { baseUrl: string; token: string; doFetch: typeof fetch; fail: (msg: string) => never }
 
-/** Shared readInfo/readToken/fail scaffold — mirrors cmdSocialReveal's inline version (P4-era). */
+/** Shared readInfo/readToken/fail scaffold — every social CLI subcommand talks to the running daemon's internal-api the same way. */
 function connectDaemon(stateDir: string, deps: SocialDaemonDeps, label: string): DaemonConn {
   const doFetch = deps.fetch ?? fetch
   const fail = deps.fail ?? ((msg: string): never => { console.error(`${label}: ${msg}`); throw new Error(msg) })

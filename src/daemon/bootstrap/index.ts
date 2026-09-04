@@ -1065,9 +1065,6 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       selfId,
       registry,
       defaultProviderId,
-      pluginMcp,
-      currentClaudeModel,
-      claudeBin,
       resolveOperatorChatId,
       sendAssistantText,
       a2aRegistry,
@@ -1200,10 +1197,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      */
     selfId,
     /**
-     * Agent-social M1 (T7b-core) — late-bound into internal-api by main.ts
+     * 社交面(笔友信道 + 心愿)— late-bound into internal-api by main.ts
      * (mirrors a2aDeps/setA2A). Undefined when social_enabled +
      * social_disclosure_policy aren't both configured — POST
-     * /v1/social/seek then 503s.
+     * /v1/social/wish then 503s.
      */
     ...(socialWiring.social ? { social: socialWiring.social } : {}),
     /**

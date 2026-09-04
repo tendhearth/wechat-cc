@@ -438,9 +438,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // stays unwired and POST /v1/a2a/send keeps 503ing, same posture as any
     // other never-configured subsystem.
     if (boot.a2aDeps) internalApi.setA2A(boot.a2aDeps)
-    // Wire the agent-social M1 broker (T7b-core) — only present when
+    // Wire the social surface (笔友信道 + 心愿) — only present when
     // social_enabled + social_disclosure_policy are both configured. So
-    // POST /v1/social/seek/{propose,confirm,cancel} work when the feature is on.
+    // POST /v1/social/wish{,/send,/cancel} work when the feature is on.
     if (boot.social) internalApi.setSocial(boot.social)
     // Wire the Knowledge Kernel store + semanticSearch (Phase 01 T5) — only
     // present when knowledge_enabled is configured. Without this, every

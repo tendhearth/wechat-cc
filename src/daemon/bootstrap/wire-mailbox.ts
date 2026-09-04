@@ -35,7 +35,7 @@ export function registerMailboxPoller(deps: MailboxPollerDeps): Lifecycle {
     // 失败原因直接进日志:超时 / HTTP 状态码 / 网络错误原文。混成一句
     // 「取件失败」在真机上就是查不下去 —— 见 mailbox-client.ts 的 onError。
     client: makeMailboxClient({ onError: (op, reason) => deps.log('MAILBOX', `${op} 失败: ${reason}`) }),
-    dispatch: makeEnvelopeDispatch({ registry: deps.a2aRegistry, onLetter: deps.onMailboxLetter, log: deps.log }),
+    dispatch: makeEnvelopeDispatch({ onLetter: deps.onMailboxLetter, log: deps.log }),
     cursors: makeCursorStore(deps.stateDir), log: deps.log,
   })
   const scheduler = startCompanionScheduler({

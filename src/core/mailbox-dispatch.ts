@@ -14,14 +14,12 @@
  * shape/routing only; the own-channel guarantee lives in the handler wired
  * at the call site (Task 8).
  */
-import type { A2ARegistry } from './a2a-registry'
 import type { A2AServerOpts } from './a2a-server'
 import type { EnvelopeInner } from './mailbox-crypto'
 
 export interface EnvelopeDispatch { dispatch(inner: EnvelopeInner): Promise<void> }
 
 export function makeEnvelopeDispatch(deps: {
-  registry: A2ARegistry
   /** MUST be an own-channel-only handler (getByMyChannelId → receiveLetter,
    *  else DROP). NEVER pass the HTTP socialOnLetter here — see file header. */
   onLetter: A2AServerOpts['onLetter']

@@ -1,9 +1,10 @@
 /**
- * penpal-channel-store.ts — the per-connection pen-pal channel. Mirrors the
- * social store idiom (social-echo-store.ts). Holds this side's LOCAL X25519
- * keypair + channel id, plus the peer's crossed handle (pubkey + channel id),
- * nullable until the mutual reveal opens the channel. NO real identity is ever
- * stored — the peer is only ever a pubkey + an opaque channel address.
+ * penpal-channel-store.ts — the per-connection pen-pal channel. Holds this
+ * side's LOCAL X25519 keypair + channel id, plus the peer's crossed handle
+ * (pubkey + channel id), nullable until both sides have consented and the row
+ * flips to `open` (配对 does that in one go — pairing.ts's openPairChannel).
+ * NO real identity is ever stored — the peer is only ever a pubkey + an opaque
+ * channel address.
  */
 import type { Db } from '../lib/db'
 import type { PenpalHandle } from './penpal-crypto'
