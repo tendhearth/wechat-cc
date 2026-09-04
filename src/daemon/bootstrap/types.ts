@@ -329,6 +329,8 @@ export interface Bootstrap {
       channelStore: import('../../core/penpal-channel-store').ChannelStore
       letterStore: import('../../core/penpal-letter-store').LetterStore
       startVisit(channelRowId?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }>
+      /** 进行中的串门(spec 2026-09-03-companion-presence)。 */
+      activeVisit(): import('../../core/companion-presence').ActiveVisit | null
     }
   }
   /**

@@ -31,11 +31,15 @@ import {
 import type { Envelope } from '../../core/envelope'
 import type { ChannelStore } from '../../core/penpal-channel-store'
 import type { LetterStore } from '../../core/penpal-letter-store'
+import type { ActiveVisit } from '../../core/companion-presence'
 import { loadCompanionConfig } from '../companion/config'
 import { makeMemoryFS } from '../memory/fs-api'
 import { NEIGHBORS, pickNeighbor, neighborById, neighborPersona, type Neighbor } from '../../core/neighbors'
 
 const OVERVIEW_MAX = 1500
+
+/** 远程对端永远不回信时,登记多久后放弃 —— 熊不能永远不在家,那也是撒谎。 */
+export const VISIT_STALE_MS = 6 * 60 * 60_000
 
 export interface VisitDeps {
   stateDir: string
@@ -61,6 +65,8 @@ export interface VisitDeps {
     send(svg: string): Promise<void>
   }
   log(tag: string, line: string): void
+  /** 时钟(测试注入)。缺省 Date.now。 */
+  now?: () => number
 }
 
 export interface Visit {
@@ -71,6 +77,11 @@ export interface Visit {
    * 'neighbor' = 指定去邻居家;其它 = 信道 id(前缀)。
    */
   startVisit(target?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }>
+  /**
+   * 进行中的串门(spec 2026-09-03-companion-presence §2.2)。桌宠靠它显示
+   * 「去 X 家串门了」/「X 来串门了」。超过 VISIT_STALE_MS 视为夭折返回 null。
+   */
+  activeVisit(): ActiveVisit | null
 }
 
 import { readNeighborMemory, writeNeighborMemory } from '../companion/neighbor-memory'
@@ -99,6 +110,19 @@ export function makeVisit(deps: VisitDeps): Visit {
       }
     } catch { /* 读不到就当白纸 —— 串门不该因为记忆目录出问题而失败 */ }
     return { myName: deps.myName, persona: personaMd, ownerOverview: overview, disclosurePolicy: deps.disclosurePolicy }
+  }
+
+  // ── 进行中登记(内存;远程会话本身不驻留,只留这一条给桌宠看)──
+  const now = deps.now ?? Date.now
+  let current: ActiveVisit | null = null
+  const register = (s: Session, hosting: boolean): void => {
+    if (current?.id === s.id) return
+    current = { id: s.id, peerLabel: s.peerLabel, hosting, sinceMs: now() }
+  }
+  const clear = (id: string): void => { if (current?.id === id) current = null }
+  const activeVisit = (): ActiveVisit | null => {
+    if (current && now() - current.sinceMs > VISIT_STALE_MS) current = null
+    return current
   }
 
   // ── 状态机 ──────────────────────────────────────────────────────────
@@ -154,6 +178,9 @@ export function makeVisit(deps: VisitDeps): Visit {
 
   /** 对方说了第 p.round 句:记下;到头了收尾,否则轮到我。 */
   const onPeerTurn = async (s: Session, p: VisitPayload): Promise<void> => {
+    // 对方说的第 p.round 句:奇数轮是对方开的头(来客),偶数轮是回我的(我去的)。
+    // 重启后内存登记丢了也能从轮次恢复 —— 轮次才是权威。
+    register(s, p.round % 2 === 1)
     s.record({ who: 'peer', round: p.round, text: p.text })
     const next = nextRound(p)
     if (!next) { await finish(s); return }
@@ -166,7 +193,7 @@ export function makeVisit(deps: VisitDeps): Visit {
    */
   const finish = async (s: Session): Promise<void> => {
     const transcript = s.transcript()
-    if (transcript.length === 0) return
+    if (transcript.length === 0) { clear(s.id); return }
     // 第 1 句是谁说的,决定这趟是我去的还是对方来的。
     const hosting = transcript[0]!.who === 'peer'
     const me = myPersona(s)
@@ -180,6 +207,7 @@ export function makeVisit(deps: VisitDeps): Visit {
     catch (err) { deps.log('VISIT', `见闻入库失败(话已发出): ${err instanceof Error ? err.message : String(err)}`) }
     deps.log('VISIT', `visit=${s.id} 讲给主人了 turns=${transcript.length} hosting=${hosting}`)
     try { s.afterFinish?.(transcript) } catch (err) { deps.log('VISIT', `afterFinish failed: ${err instanceof Error ? err.message : String(err)}`) }
+    clear(s.id)
     // 明信片只在**我去了对方家**时画 —— 来客没有「我去过那儿」可画。
     if (deps.postcard && !hosting) {
       try {
@@ -266,8 +294,10 @@ export function makeVisit(deps: VisitDeps): Visit {
 
   const visitNeighbor = async (nb: Neighbor): Promise<StartResult> => {
     const { s } = neighborSession(nb)
+    register(s, false)
     try { await sayMine(s, 1) }
     catch (err) {
+      clear(s.id)
       if (err instanceof VisitAbort) return { ok: false, reason: err.reason }
       return { ok: false, reason: `eval_failed: ${err instanceof Error ? err.message : String(err)}` }
     }
@@ -277,8 +307,10 @@ export function makeVisit(deps: VisitDeps): Visit {
 
   const startRemote = async (channelId: string): Promise<StartResult> => {
     const s = remoteSession(channelId, randomUUID())
+    register(s, false)
     try { await sayMine(s, 1) }
     catch (err) {
+      clear(s.id)
       if (err instanceof VisitAbort) return { ok: false, reason: err.reason }
       return { ok: false, reason: `eval_failed: ${err instanceof Error ? err.message : String(err)}` }
     }
@@ -291,8 +323,9 @@ export function makeVisit(deps: VisitDeps): Visit {
       const p = parseVisitPayload(env)
       if (!p) return false
       try { deps.letterStore.markRead(letterId, new Date().toISOString()) } catch { /* 标不上就算了 */ }
-      void onPeerTurn(remoteSession(channelRowId, p.id), p)
-        .catch(err => deps.log('VISIT', `continue failed: ${err instanceof VisitAbort ? err.reason : err instanceof Error ? err.message : String(err)}`))
+      const s = remoteSession(channelRowId, p.id)
+      void onPeerTurn(s, p)
+        .catch(err => { clear(s.id); deps.log('VISIT', `continue failed: ${err instanceof VisitAbort ? err.reason : err instanceof Error ? err.message : String(err)}`) })
       return true
     },
 
@@ -321,5 +354,7 @@ export function makeVisit(deps: VisitDeps): Visit {
       if (!ch) return { ok: false, reason: 'unknown_channel' }
       return startRemote(ch.id)
     },
+
+    activeVisit,
   }
 }

@@ -175,6 +175,7 @@ export interface SocialWiring {
       letterStore: import('../../core/penpal-letter-store').LetterStore
       /** 串门(2026-09-03 实验):伙伴主动去一个开着的信道那头聊几句。 */
       startVisit: import('./wire-visit').Visit['startVisit']
+      activeVisit: import('./wire-visit').Visit['activeVisit']
     }
   }
   resumeForaging: () => void
@@ -222,6 +223,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
     channelStore: import('../../core/penpal-channel-store').ChannelStore
     letterStore: import('../../core/penpal-letter-store').LetterStore
     startVisit: import('./wire-visit').Visit['startVisit']
+    activeVisit: import('./wire-visit').Visit['activeVisit']
   } | undefined
 
   if (configuredAgent.social_enabled && configuredAgent.social_disclosure_policy) {
@@ -459,7 +461,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         getByMyChannelId: (c) => channelStore.getByMyChannelId(c),
         receiveLetter: (ev) => correspondent.receiveLetter(ev),
       })
-      socialPenpal = { sendLetter: (channel, text) => correspondent.sendLetter(channel, text), resendLetter: (id) => correspondent.resendLetter(id), channelStore, letterStore, startVisit: (c) => visit!.startVisit(c) }
+      socialPenpal = { sendLetter: (channel, text) => correspondent.sendLetter(channel, text), resendLetter: (id) => correspondent.resendLetter(id), channelStore, letterStore, startVisit: (c) => visit!.startVisit(c), activeVisit: () => visit!.activeVisit() }
 
       // Notification beats (克制三拍). Content-free by design — reveal crosses
       // pubkey handles, never a real name or url, so no beat text may carry one.

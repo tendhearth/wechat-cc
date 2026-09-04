@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeVisit, cleanSpeech, readNeighborMemory, type VisitDeps } from './wire-visit'
+import { makeVisit, cleanSpeech, readNeighborMemory, VISIT_STALE_MS, type VisitDeps } from './wire-visit'
 import { parseVisitPayload } from '../../core/visit'
 import type { Envelope } from '../../core/envelope'
 
@@ -265,5 +265,82 @@ describe('明信片', () => {
     const { visit, owner } = mk(evalFor, { sanitize: () => { throw new Error('boom') }, attach: () => {}, send: async () => {} })
     expect((await visit.startVisit('邻居')).ok).toBe(true)
     expect(owner.some(t => t.startsWith('🚶'))).toBe(true)
+  })
+})
+
+describe('activeVisit —— 桌宠要知道熊在不在家(spec 2026-09-03-companion-presence)', () => {
+  /** 没有真信道的伙伴(只能去邻居家)。evalText 拿到 visit 自己,方便在串门中途偷看登记。 */
+  const lonelyVisit = (evalText: (p: string, v: ReturnType<typeof makeVisit>) => Promise<string>, extra: Partial<VisitDeps> = {}) => {
+    let self: ReturnType<typeof makeVisit>
+    self = makeVisit({
+      stateDir: mkdtempSync(join(tmpdir(), 'visit-av-')),
+      channelStore: { get: () => null, list: () => [] } as never,
+      letterStore: { listForChannel: () => [], markRead: () => {} } as never,
+      sendEnvelope: async () => ({ ok: true }),
+      evalText: (p) => evalText(p, self),
+      myName: '我', disclosurePolicy: '不说住址', notifyOwner: () => {}, recordVisit: () => 'row-1', log: () => {},
+      ...extra,
+    })
+    return self
+  }
+
+  it('去邻居家:串门期间登记 hosting=false,讲完给主人后清除', async () => {
+    let seenDuring: ReturnType<ReturnType<typeof makeVisit>['activeVisit']> = null
+    const visit = lonelyVisit(async (p, v) => {
+      if (!seenDuring) seenDuring = v.activeVisit()   // 第一次 eval 时登记应已存在
+      return p.includes('串门回来') ? '今天去阿柚家坐了会儿。' : '嗨'
+    })
+    expect(visit.activeVisit()).toBe(null)
+    const r = await visit.startVisit()
+    expect(r.ok).toBe(true)
+    expect(seenDuring).toMatchObject({ hosting: false })
+    expect(seenDuring!.peerLabel).toMatch(/^邻居「.+」$/)
+    expect(visit.activeVisit()).toBe(null)
+  })
+
+  it('远程:我出门 → 我这边 visiting,对方那边 hosting;对方一直不回 → 双方都挂着', async () => {
+    const A = side('阿一', async () => '阿一的话')
+    const B = side('阿二', () => new Promise<string>(() => {}))   // 永远不回
+    A.setPeer(B); B.setPeer(A)
+    const r = await A.visit.startVisit('ch')
+    expect(r.ok).toBe(true)
+    await flush()
+    expect(A.visit.activeVisit()).toMatchObject({ id: (r as { id: string }).id, hosting: false })
+    expect(B.visit.activeVisit()).toMatchObject({ id: (r as { id: string }).id, hosting: true })
+  })
+
+  it('远程:六句聊完两边都清除', async () => {
+    const fakeEval = (who: string) => async (p: string) => (p.includes('串门回来') || p.includes('坐了会儿')) ? `${who}回来说:聊得挺好` : `${who}的第几句`
+    const A = side('阿一', fakeEval('阿一')); const B = side('阿二', fakeEval('阿二'))
+    A.setPeer(B); B.setPeer(A)
+    await A.visit.startVisit('ch'); await flush()
+    expect(A.visit.activeVisit()).toBe(null)
+    expect(B.visit.activeVisit()).toBe(null)
+  })
+
+  it('开场就失败(空话)→ 不留登记', async () => {
+    const visit = lonelyVisit(async () => '   ')
+    expect((await visit.startVisit()).ok).toBe(false)
+    expect(visit.activeVisit()).toBe(null)
+  })
+
+  it('超过 VISIT_STALE_MS 视为夭折 → null(对端永远不回时熊不能永远不在家)', async () => {
+    let now = 1_000_000
+    // side() 不暴露 deps,所以直接 makeVisit:一条开着的远程信道,对方永远不回,时钟可控
+    const letters: Array<{ id: string; direction: 'in' | 'out'; plaintext: string | null; read_at: string | null; kind: string; payload: string | null }> = []
+    const visit = makeVisit({
+      stateDir: mkdtempSync(join(tmpdir(), 'visit-stale-')),
+      channelStore: { get: () => ({ id: 'ch', status: 'open', degree: 1 }), list: () => [{ id: 'ch', status: 'open', degree: 1 }] } as never,
+      letterStore: { listForChannel: () => letters, markRead: () => {} } as never,
+      sendEnvelope: async (_c, env) => { letters.push({ id: `o${letters.length}`, direction: 'out', plaintext: '', read_at: null, kind: env.kind, payload: JSON.stringify(env.payload) }); return { ok: true } },
+      evalText: async () => '开场白', myName: '我', disclosurePolicy: '不说住址', notifyOwner: () => {}, log: () => {},
+      now: () => now,
+    })
+    expect((await visit.startVisit('ch')).ok).toBe(true)
+    expect(visit.activeVisit()).not.toBe(null)
+    now += VISIT_STALE_MS - 1
+    expect(visit.activeVisit()).not.toBe(null)
+    now += 2
+    expect(visit.activeVisit()).toBe(null)
   })
 })
