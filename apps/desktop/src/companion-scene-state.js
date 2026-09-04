@@ -17,13 +17,18 @@ function propFor(kind) {
  * @returns {SceneState}
  */
 export function sceneStateFrom(p) {
-  // 不在线:不是故事,是事实。不画熊、不画道具、不讲活动。
-  if (!p || p.presence === 'down' || p.presence === 'offline') {
+  // daemon 都没起(down / 拉不到):连计数都不可信,什么都不画。
+  if (!p || p.presence === 'down') {
     return { bearPresent: false, bearPose: 'idle', tint: 'dark', sign: '离线', prop: null, badge: 0, bubble: null }
   }
-  const tint = p.presence === 'degraded' ? 'dim' : 'normal'
   const unread = Math.max(0, Math.trunc(Number(p.news?.unread) || 0))
   const prop = unread > 0 ? propFor(p.news?.latest_kind ?? null) : null
+  // 微信断了(offline):不是故事,是事实 —— 不画熊、不讲活动。但 daemon 还在,
+  // journal 计数依然可信,带回来的东西确实在那儿等着看,所以道具/角标保留。
+  if (p.presence === 'offline') {
+    return { bearPresent: false, bearPose: 'idle', tint: 'dark', sign: '离线', prop, badge: unread, bubble: null }
+  }
+  const tint = p.presence === 'degraded' ? 'dim' : 'normal'
   const a = p.activity ?? { kind: 'idle', label: '', since: null }
   /** @type {SceneState} */
   const base = { bearPresent: true, bearPose: 'idle', tint, sign: null, prop, badge: unread, bubble: null }

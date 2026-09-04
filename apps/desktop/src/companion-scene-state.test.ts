@@ -5,7 +5,7 @@ const P = (presence: string, kind = 'idle', label = '', news = { unread: 0, late
   ({ presence, activity: { kind, label, since: null }, news })
 
 describe('sceneStateFrom — spec §3.2 逐行', () => {
-  it('null / down / offline → 熊不在,dark,牌子「离线」(事实,不是故事)', () => {
+  it('null / down / offline → 熊不在,dark,牌子「离线」(事实,不是故事;道具另说,见下)', () => {
     for (const p of [null, P('down'), P('offline')]) {
       const s = sceneStateFrom(p as never)
       expect(s).toMatchObject({ bearPresent: false, tint: 'dark', sign: '离线', bubble: null })
@@ -57,6 +57,10 @@ describe('sceneStateFrom — 道具', () => {
   })
   it('down 时不画道具(daemon 都没起,数字不可信)', () => {
     expect(sceneStateFrom(P('down', 'idle', '', news('hunt', 3)))).toMatchObject({ prop: null, badge: 0 })
+  })
+  it('offline 时道具照留(微信断了但 daemon 在,journal 计数可信)', () => {
+    expect(sceneStateFrom(P('offline', 'idle', '', news('hunt', 2))))
+      .toMatchObject({ prop: 'bag', badge: 2, bearPresent: false, sign: '离线', tint: 'dark', bubble: null })
   })
 })
 

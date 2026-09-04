@@ -1127,7 +1127,9 @@ function frame(time) {
   // When nobody is visiting the bear, let it make a small periodic greeting.
   // Each wave uses the same rotating spoken line as hover/leave gestures.
   // 有真实状态的 bubble 时停掉固定问候的轮播 —— 两套文案打架会很怪。
-  if (!bearHovering && !sceneState.bubble && sceneState.bearPresent && time >= nextBearIdleGreetingAt) startBearWave(time)
+  // 例外:bearPose='wave'(chatting)本来就带 bubble,若一并挡掉,挥手这个姿势
+  // 就永远画不出来。showNextBearGreeting 有 bubble 时自己会 no-op,不会抢文案。
+  if (!bearHovering && sceneState.bearPresent && (!sceneState.bubble || sceneState.bearPose === "wave") && time >= nextBearIdleGreetingAt) startBearWave(time)
   if (!sceneState.bubble && time >= bearMessageUntil) bearMessage.classList.remove("is-visible")
   if (!lotusHovering && time >= nextLotusAutoCycleAt) {
     lotusAutoCycleStartedAt = time
