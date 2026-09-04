@@ -73,6 +73,8 @@ export function splitByStatus(items) {
 /**
  * 见闻卡(kind='visit'):串门回来讲的那段话。没有链接,也没有「试过没有」——
  * 一段见闻不是一件要处理的东西。只留日期和删除。
+ * 明信片(image_svg)内联渲染 —— 和记忆页的小像同一做法:daemon 存之前已经
+ * 过了 safeSvg,这里不再过滤(也没有 DOM 之外的净化器可用)。
  * @param {any} it
  */
 function renderVisitCard(it) {
@@ -81,6 +83,7 @@ function renderVisitCard(it) {
       <h3 class="hb-title">🚶 ${escapeHtml(it.title || '串门')}</h3>
       <span class="hb-day">${escapeHtml(dayLabel(it.ts))}</span>
     </div>
+    ${it.image_svg ? `<div class="hb-postcard">${it.image_svg}</div>` : ''}
     <p class="hb-note">${escapeHtml(it.note || '')}</p>
     <div class="hb-foot hb-foot-visit">
       <button class="hb-del" data-hb-action="remove" data-hb-id="${escapeHtml(it.id)}" type="button" title="从背包里删掉">×</button>

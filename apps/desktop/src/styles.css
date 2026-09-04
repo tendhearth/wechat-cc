@@ -6539,3 +6539,6 @@ input { font: inherit; color: inherit; }
 .hb-visit:hover { border-left-color:var(--fd-sage); }
 .hb-visit .hb-note { font-size:14px; line-height:1.7; color:var(--fd-ink); }
 .hb-foot-visit { justify-content:flex-end; padding-top:6px; border-top:none; margin-top:4px; }
+/* 明信片:横向 3:2,圆角,像贴在卡片上的一张纸 */
+.hb-postcard { margin:10px 0 4px; border-radius:10px; overflow:hidden; border:1px solid var(--fd-line); background:var(--fd-ground-2); max-width:420px; }
+.hb-postcard svg { display:block; width:100%; height:auto; }

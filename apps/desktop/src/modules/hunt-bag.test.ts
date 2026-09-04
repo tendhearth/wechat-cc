@@ -77,6 +77,14 @@ describe('见闻卡(kind=visit)', () => {
     expect(host().innerHTML).toContain('data-hb-action="remove"')
   })
 
+  it('有明信片就内联渲染;没有就不留空框', () => {
+    renderHuntBag({ items: [visit({ image_svg: '<svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>' })] })
+    expect(host().innerHTML).toContain('hb-postcard')
+    expect(host().innerHTML).toContain('<circle r="1"/>')
+    renderHuntBag({ items: [visit({ image_svg: null })] })
+    expect(host().innerHTML).not.toContain('hb-postcard')
+  })
+
   it('东西和见闻分开数', () => {
     expect(countLabel([item(), item({ id: 'i2' }), visit()])).toBe('2 件 · 1 段见闻')
     expect(countLabel([visit()])).toBe('1 段见闻')

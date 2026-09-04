@@ -1189,3 +1189,72 @@ describe('buildTickBodies / introspectTick — memory gardener mount', () => {
     expect(readFileSync(join(memDir, 'profile.md'), 'utf8')).toBe(curated)
   })
 })
+
+describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => { for (const d of cleanup) { try { rmSync(d, { recursive: true, force: true }) } catch { /* */ } } })
+
+  const seedGuest = async (s: Setup, chatId: string, base: string, n = 2) => {
+    const ms = makeMessagesStore(s.db)
+    for (let i = 0; i < n; i++) {
+      await ms.append({ id: `${chatId}:${i}`, chatId, ts: new Date(Date.parse(base) + i * 60_000).toISOString(), direction: 'in', kind: 'text', text: `客人第${i + 1}句`, source: 'live' })
+      await ms.append({ id: `${chatId}:o${i}`, chatId, ts: new Date(Date.parse(base) + i * 60_000 + 1000).toISOString(), direction: 'out', kind: 'text', text: '好的', source: 'live' })
+    }
+  }
+  const armEval = (s: Setup, out = '刚才小王来过,问了工具的事。') => {
+    const evalFn = vi.fn(async (_p: string) => out)
+    ;(s.deps.boot as unknown as { registry: unknown }).registry = { getCheapEval: () => evalFn, getStrongEval: () => null }
+    ;(s.deps.boot as unknown as { conversationStore: unknown }).conversationStore = { getIdentity: () => ({ last_user_name: '小王' }) }
+    const sent: string[] = []
+    ;(s.deps.ilink as unknown as { sendMessage: unknown }).sendMessage = async (_c: string, t: string) => { sent.push(t); return { msgId: '1' } }
+    return { evalFn, sent }
+  }
+  // 打猎/串门那些分支要在这些测试里安静:打猎冷却中、无社交接线
+  const quiet = (chatId: string) => ({ careLedgerEntries: { [chatId]: { lastHuntAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } } })
+
+  it('客人 40 分钟前聊了两句,走了 → 讲给主人,进背包(标题「小王来过」),记水位', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:15:00.000Z')
+    const { evalFn, sent } = armEval(s)
+    const recorded: Array<{ peerLabel: string }> = []
+    const ticks = buildTickBodies({ ...s.deps, huntStore: { recordHunt: () => 0, recordVisit: (a) => { recorded.push(a); return 'r' } } })
+    await ticks.pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(evalFn).toHaveBeenCalledOnce()
+    expect(evalFn.mock.calls[0]![0]).toContain('小王')
+    expect(evalFn.mock.calls[0]![0]).toContain('别复述原话')
+    expect(sent).toEqual(['🛎 刚才小王来过,问了工具的事。'])
+    expect(recorded[0]!.peerLabel).toBe('小王来过')
+    // 再跑一拍:水位挡住,不重复讲
+    await ticks.pushTick({ nowIso: '2026-05-13T10:05:00.000Z' })
+    expect(evalFn).toHaveBeenCalledOnce()
+  })
+
+  it('**客人还在聊(最后一句 5 分钟前)→ 不讲**', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:54:00.000Z')
+    const { evalFn } = armEval(s)
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(evalFn).not.toHaveBeenCalled()
+  })
+
+  it('**主人自己(admin)的对话不算做客**', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'owner', '2026-05-13T09:00:00.000Z')
+    const { evalFn } = armEval(s)
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(evalFn).not.toHaveBeenCalled()
+  })
+
+  it('只说了一句「在吗」→ 不算做客', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:00:00.000Z', 1)
+    const { evalFn } = armEval(s)
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(evalFn).not.toHaveBeenCalled()
+  })
+})

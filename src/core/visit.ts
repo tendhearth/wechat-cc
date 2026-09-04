@@ -121,16 +121,73 @@ export function buildVisitReplyPrompt(a: VisitPersonaArgs & {
 export function buildVisitNarrationPrompt(a: VisitPersonaArgs & {
   transcript: VisitTurn[]
   peerLabel: string
+  /** true = 是对方来我这儿(来客);false/缺省 = 我去的对方家(串门)。 */
+  hosting?: boolean
 }): string {
   const dialogue = a.transcript.map(t => `${t.who === 'me' ? a.myName : '对方'}:${t.text}`).join('\n')
   return [
     personaBlock(a),
     '',
-    `你刚从 ${a.peerLabel} 家串门回来。这是你们的对话:`,
+    a.hosting
+      ? `${a.peerLabel}刚来你这儿坐了会儿,聊完走了。这是你们的对话:`
+      : `你刚从 ${a.peerLabel} 家串门回来。这是你们的对话:`,
     dialogue,
     '',
-    `现在跟主人讲讲今天这趟。像跟朋友讲自己白天的事那样 —— 第一人称,2-4 句话,`,
+    a.hosting
+      ? `现在跟主人讲讲刚才来的这位。像跟家里人说「刚才谁来过」那样 —— 第一人称,2-4 句话,`
+      : `现在跟主人讲讲今天这趟。像跟朋友讲自己白天的事那样 —— 第一人称,2-4 句话,`,
     `讲一件具体的、你从对方那儿听到的事,以及你自己的一点感受。别汇报、别总结、别用「今天我进行了」这种话。`,
     `不要透露任何你在对话里没说的关于主人的事。**直接输出你要跟主人说的话**,不要前缀。`,
+  ].join('\n')
+}
+
+/**
+ * 明信片:串门回来画一张。和表情包同一套手绘约束(sticker-artist.ts),
+ * 画面是**对方家**的一个瞬间 —— 不是自画像,是「我去过那儿」的证据。
+ * 返回 SVG 文本;调用方负责 safeSvg 与栅格化。
+ */
+export function buildPostcardPrompt(a: { myName: string; peerLabel: string; scene: string }): string {
+  return (
+    `你是「${a.myName}」,一只圆滚滚的白色小熊。你刚去${a.peerLabel}家串了门,画一张明信片寄给主人。\n` +
+    `画面:${a.scene}\n` +
+    `硬性要求:\n` +
+    `- 输出一个 SVG:根元素 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320">\n` +
+    `- 只允许这些元素:g/path/circle/ellipse/rect/line/polyline/polygon/title\n` +
+    `- 属性一律双引号;禁止 style/class/id/href/text/image/use/script/动画\n` +
+    `- 手绘感:stroke-width 3~6 的松弛线条;颜色只用 #5a3f2d(主线)、#b0563a(点缀)、#8a5a36、#f5ead8(奶白)、#f7b8b8(腮红)、#8aa36f(绿)、#dda23f(暖黄)、none\n` +
+    `- 构图:横向明信片,一个场景 + 你自己(小白熊)在画面一角;别画文字\n` +
+    `**只输出 SVG,不要任何解释,不要代码围栏。**`
+  )
+}
+
+/**
+ * 从对话里挑出画面要点 —— 不另花一次模型调用:对方说过的话里挑最具体的
+ * 两句,够画了。画错细节最多难看,多一次 15 秒的调用却是每天都付。
+ */
+export function sceneFromTranscript(transcript: VisitTurn[], fallback: string): string {
+  const theirs = transcript.filter(t => t.who === 'peer').map(t => t.text)
+  const picked = theirs.sort((a, b) => b.length - a.length).slice(0, 2)
+  return picked.length ? picked.join(' ') : fallback
+}
+
+/**
+ * 人类做客:主人的朋友本人来跟伙伴聊了一会儿(guest path)。伙伴回头跟主人
+ * 讲一句「刚才谁来过」。**讲个大概,别复述原话** —— 来的是主人的朋友,它
+ * 跟伙伴说的话不该被逐字转给第三个人。
+ */
+export function buildGuestVisitNarrationPrompt(a: VisitPersonaArgs & {
+  guestName: string
+  lines: Array<{ who: 'guest' | 'me'; text: string }>
+}): string {
+  const dialogue = a.lines.map(l => `${l.who === 'me' ? a.myName : a.guestName}:${l.text}`).join('\n')
+  return [
+    personaBlock(a),
+    '',
+    `主人的朋友「${a.guestName}」刚才来找你聊了会儿,现在走了。这是你们聊的:`,
+    dialogue,
+    '',
+    `跟主人说一声「刚才谁来过」。第一人称,1-3 句话,像家里人顺口一提。讲个大概(来干嘛、聊了什么方向、`,
+    `你的一点感受),**别复述原话、别转述任何具体的私事** —— 那是朋友跟你说的,不是跟主人说的。`,
+    `**直接输出你要跟主人说的话**,不要前缀。`,
   ].join('\n')
 }

@@ -21,6 +21,8 @@ export interface CatchRow {
   note: string
   status: CatchStatus
   kind: CatchKind
+  /** 明信片(v38):已 safeSvg 的 SVG 文本;没有就 null。 */
+  image_svg: string | null
 }
 
 export interface HuntStore {
@@ -36,7 +38,9 @@ export interface HuntStore {
    * 记一段串门见闻(kind='visit')。一段一条,不拆:见闻是一段话,不是清单。
    * 状态对见闻没意义(没有「试过没有」),但列上有,固定 'new'。
    */
-  recordVisit(args: { chatId: string; text: string; peerLabel: string; nowIso?: string }): void
+  recordVisit(args: { chatId: string; text: string; peerLabel: string; nowIso?: string; imageSvg?: string | null }): string | null
+  /** 明信片画得慢(又一次模型调用 + 栅格化),先记见闻再补图。 */
+  attachImage(id: string, svg: string): void
   list(limit?: number): CatchRow[]
   setStatus(id: string, status: CatchStatus): boolean
   remove(id: string): boolean
@@ -49,10 +53,11 @@ export function makeHuntStore(db: Db): HuntStore {
     `INSERT INTO hunt_catch(id, ts, chat_id, title, url, note, status, kind)
      VALUES (?, ?, ?, ?, ?, ?, 'new', 'hunt')`,
   )
-  const insVisit = db.query<unknown, [string, string, string, string, string]>(
-    `INSERT INTO hunt_catch(id, ts, chat_id, title, url, note, status, kind)
-     VALUES (?, ?, ?, ?, NULL, ?, 'new', 'visit')`,
+  const insVisit = db.query<unknown, [string, string, string, string, string, string | null]>(
+    `INSERT INTO hunt_catch(id, ts, chat_id, title, url, note, status, kind, image_svg)
+     VALUES (?, ?, ?, ?, NULL, ?, 'new', 'visit', ?)`,
   )
+  const setImage = db.query<unknown, [string, string]>('UPDATE hunt_catch SET image_svg = ? WHERE id = ?')
   const selAll = db.query<CatchRow, [number]>('SELECT * FROM hunt_catch ORDER BY ts DESC, rowid DESC LIMIT ?')
   const selDupe = db.query<{ cnt: number }, [string, string]>(
     "SELECT COUNT(*) AS cnt FROM hunt_catch WHERE url = ? AND substr(ts, 1, 10) = ?",
@@ -77,13 +82,16 @@ export function makeHuntStore(db: Db): HuntStore {
       if (n > 0) prune.run(PRUNE_KEEP)
       return n
     },
-    recordVisit({ chatId, text, peerLabel, nowIso }) {
+    recordVisit({ chatId, text, peerLabel, nowIso, imageSvg }) {
       const ts = nowIso ?? new Date().toISOString()
       const body = text.trim()
-      if (body === '') return
-      insVisit.run(`${ts}:visit:${Math.random().toString(36).slice(2, 8)}`, ts, chatId, `去${peerLabel}家串门`, body)
+      if (body === '') return null
+      const id = `${ts}:visit:${Math.random().toString(36).slice(2, 8)}`
+      insVisit.run(id, ts, chatId, peerLabel, body, imageSvg ?? null)
       prune.run(PRUNE_KEEP)
+      return id
     },
+    attachImage(id, svg) { setImage.run(svg, id) },
     list(limit = 200) { return selAll.all(limit) },
     setStatus(id, status) {
       if ((exists.get(id)?.cnt ?? 0) === 0) return false

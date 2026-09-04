@@ -16,13 +16,15 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import {
   VISIT_MAX_ROUNDS, formatVisitLetter, parseVisitLetter, nextRound, transcriptFromLetters,
-  buildVisitReplyPrompt, buildVisitNarrationPrompt, type VisitPersonaArgs,
+  buildVisitReplyPrompt, buildVisitNarrationPrompt, buildPostcardPrompt, sceneFromTranscript,
+  type VisitPersonaArgs, type VisitTurn,
 } from '../../core/visit'
 import type { ChannelStore } from '../../core/penpal-channel-store'
 import type { LetterStore } from '../../core/penpal-letter-store'
 import { loadCompanionConfig } from '../companion/config'
 import { makeMemoryFS } from '../memory/fs-api'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { readJsonFile } from '../../lib/read-json-file'
 import { NEIGHBORS, pickNeighbor, neighborById, neighborPersona, type Neighbor } from '../../core/neighbors'
 
 const OVERVIEW_MAX = 1500
@@ -38,8 +40,17 @@ export interface VisitDeps {
   disclosurePolicy: string
   /** 给主人发一句话;没有主人 chat 时是 no-op。 */
   notifyOwner(text: string): void
-  /** 见闻进背包(hunt_catch kind='visit')。可选:没接就只发微信。 */
-  recordVisit?(args: { text: string; peerLabel: string }): void
+  /** 见闻进背包(hunt_catch kind='visit')。可选:没接就只发微信。返回行 id 以便补明信片。 */
+  recordVisit?(args: { text: string; peerLabel: string }): string | null
+  /**
+   * 明信片(可选)。draw = 模型出 SVG → 调用方 safeSvg;send = 栅格化后发给主人
+   * (macOS 才有栅格化,别的平台 send 可以是 no-op —— 桌面端照样能看内联 SVG)。
+   */
+  postcard?: {
+    sanitize(svg: string): string | null
+    attach(rowId: string, svg: string): void
+    send(svg: string): Promise<void>
+  }
   log(tag: string, line: string): void
 }
 
@@ -61,8 +72,7 @@ const EMPTY_MEMORY: NeighborMemory = { lastId: null, notes: {}, introduced: fals
 
 export function readNeighborMemory(stateDir: string): NeighborMemory {
   try {
-    const raw = readFileSync(join(stateDir, 'companion', 'neighbors.json'), 'utf8').replace(/^\uFEFF/, '')
-    const j = JSON.parse(raw) as Partial<NeighborMemory>
+    const j = readJsonFile<Partial<NeighborMemory>>(join(stateDir, 'companion', 'neighbors.json'))
     return { lastId: j.lastId ?? null, notes: j.notes ?? {}, introduced: j.introduced === true }
   } catch { return { ...EMPTY_MEMORY, notes: {} } }
 }
@@ -102,16 +112,41 @@ export function makeVisit(deps: VisitDeps): Visit {
     return ch ? `第 ${ch.degree} 度的朋友` : '一位朋友'
   }
 
+  /**
+   * 讲给主人 + 进背包 + 明信片。串门和来客、真对端和邻居都走这一个出口。
+   * 明信片在最后,而且每一步失败都只记日志:话已经发出去了。
+   */
+  const tellOwner = async (a: { transcript: VisitTurn[]; peerLabel: string; hosting: boolean; visitId: string; scene: string }): Promise<boolean> => {
+    const me = persona()
+    const text = cleanSpeech(await deps.evalText(buildVisitNarrationPrompt({ ...me, transcript: a.transcript, peerLabel: a.peerLabel, hosting: a.hosting })))
+    if (!text) { deps.log('VISIT', `narration empty visit=${a.visitId}`); return false }
+    deps.notifyOwner(`${a.hosting ? '🛎' : '🚶'} ${text}`)
+    const title = a.hosting ? `${a.peerLabel}来过` : `去${a.peerLabel}家串门`
+    let rowId: string | null = null
+    try { rowId = deps.recordVisit?.({ text, peerLabel: title }) ?? null }
+    catch (err) { deps.log('VISIT', `见闻入库失败(话已发出): ${err instanceof Error ? err.message : String(err)}`) }
+    deps.log('VISIT', `visit=${a.visitId} 讲给主人了 turns=${a.transcript.length} hosting=${a.hosting}`)
+    // 明信片只在**我去了对方家**时画 —— 来客没有「我去过那儿」可画。
+    if (deps.postcard && !a.hosting) {
+      try {
+        const raw = await deps.evalText(buildPostcardPrompt({ myName: me.myName, peerLabel: a.peerLabel, scene: a.scene }))
+        const svg = deps.postcard.sanitize(raw.replace(/^```(?:svg|xml)?\s*/i, '').replace(/```\s*$/, '').trim())
+        if (!svg) { deps.log('VISIT', `postcard rejected by safeSvg visit=${a.visitId}`); return true }
+        if (rowId) deps.postcard.attach(rowId, svg)
+        await deps.postcard.send(svg)
+        deps.log('VISIT', `visit=${a.visitId} 明信片寄出`)
+      } catch (err) { deps.log('VISIT', `明信片失败(见闻已发出): ${err instanceof Error ? err.message : String(err)}`) }
+    }
+    return true
+  }
+
   const narrate = async (channelRowId: string, visitId: string): Promise<void> => {
     const transcript = transcriptFromLetters(deps.letterStore.listForChannel(channelRowId), visitId)
     if (transcript.length === 0) return
-    const text = cleanSpeech(await deps.evalText(buildVisitNarrationPrompt({ ...persona(), transcript, peerLabel: peerLabel(channelRowId) })))
-    if (!text) { deps.log('VISIT', `narration empty visit=${visitId}`); return }
-    deps.notifyOwner(`🚶 ${text}`)
-    // 发到微信就没了 —— 跟打猎一开始的洞一模一样。记录失败不影响已发出的话。
-    try { deps.recordVisit?.({ text, peerLabel: peerLabel(channelRowId) }) }
-    catch (err) { deps.log('VISIT', `见闻入库失败(话已发出): ${err instanceof Error ? err.message : String(err)}`) }
-    deps.log('VISIT', `visit=${visitId} 讲给主人了 turns=${transcript.length}`)
+    // 第 1 句是谁说的,决定这趟是我去的还是对方来的。
+    const hosting = transcript[0]!.who === 'peer'
+    const label = peerLabel(channelRowId)
+    await tellOwner({ transcript, peerLabel: label, hosting, visitId, scene: sceneFromTranscript(transcript, `${label}家`) })
   }
 
   const continueVisit = async (channelRowId: string, plaintext: string, letterId: string): Promise<void> => {
@@ -159,15 +194,12 @@ export function makeVisit(deps: VisitDeps): Visit {
     } catch (err) { return { ok: false, reason: `eval_failed: ${err instanceof Error ? err.message : String(err)}` } }
 
     const label = `邻居「${nb.name}」`
-    const text = cleanSpeech(await deps.evalText(buildVisitNarrationPrompt({ ...me, transcript, peerLabel: label })))
-    if (!text) return { ok: false, reason: 'narration_empty' }
     // 第一次去邻居家,顺手跟主人说清楚邻居是什么 —— 规则是明的,才不是骗。
     if (!mem.introduced) {
       deps.notifyOwner(`🏘 附近有几户「邻居」—— 是 tendhearth 放在这儿的公共伙伴,让我没朋友的时候也有地方串门。等你有朋友配对了,我会优先去他们家。`)
     }
-    deps.notifyOwner(`🚶 ${text}`)
-    try { deps.recordVisit?.({ text, peerLabel: label }) }
-    catch (err) { deps.log('VISIT', `见闻入库失败(话已发出): ${err instanceof Error ? err.message : String(err)}`) }
+    const told = await tellOwner({ transcript, peerLabel: label, hosting: false, visitId: id, scene: sceneFromTranscript(transcript, nb.world) })
+    if (!told) return { ok: false, reason: 'narration_empty' }
     // 邻居这边记住这趟:最后两句,够下次接话
     const tail = transcript.slice(-2).map(t => `${t.who === 'me' ? me.myName : nb.name}:${t.text}`).join(' / ')
     writeNeighborMemory(deps.stateDir, { lastId: nb.id, introduced: true, notes: { ...mem.notes, [nb.id]: { at: new Date().toISOString(), note: tail } } })

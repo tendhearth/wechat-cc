@@ -68,10 +68,13 @@ describe('setStatus / remove', () => {
 
 describe('recordVisit —— 串门见闻和打猎东西在同一个背包里', () => {
   it('一段一条,kind=visit,没有链接', () => {
-    store.recordVisit({ chatId: 'c', text: '今天去杭州那家转了转,他们家猫叫豆包。', peerLabel: '第 1 度的朋友' })
+    const id = store.recordVisit({ chatId: 'c', text: '今天去杭州那家转了转,他们家猫叫豆包。', peerLabel: '去第 1 度的朋友家串门' })
     const r = store.list()[0]!
     expect(r.kind).toBe('visit')
     expect(r.title).toBe('去第 1 度的朋友家串门')
+    expect(r.image_svg).toBeNull()
+    store.attachImage(id!, '<svg/>')
+    expect(store.list()[0]!.image_svg).toBe('<svg/>')
     expect(r.url).toBeNull()
     expect(r.note).toContain('豆包')
   })
@@ -80,7 +83,7 @@ describe('recordVisit —— 串门见闻和打猎东西在同一个背包里', 
     expect(store.list()[0]!.kind).toBe('hunt')
   })
   it('空叙述不入库', () => {
-    store.recordVisit({ chatId: 'c', text: '  ', peerLabel: 'x' })
+    expect(store.recordVisit({ chatId: 'c', text: '  ', peerLabel: 'x' })).toBeNull()
     expect(store.list()).toEqual([])
   })
 })

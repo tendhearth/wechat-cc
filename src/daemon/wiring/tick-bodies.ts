@@ -5,6 +5,8 @@
  * so they earn their own file vs side-effects.ts which is pure helper factories.
  */
 import { join } from 'node:path'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { loadAgentConfig } from '../../lib/agent-config'
 import type { Db } from '../../lib/db'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
@@ -15,6 +17,8 @@ import { makeObservationsStore } from '../observations/store'
 import { runIntrospectTick } from '../companion/introspect'
 import { resolveIntrospectChatId, makeIntrospectAgent } from '../companion/introspect-runtime'
 import { resolveEffectiveTier, TIER_PROFILES } from '../../core/user-tier'
+import { dueGuestVisit, guestLabel, type GuestVisitState } from '../companion/guest-visits'
+import { buildGuestVisitNarrationPrompt } from '../../core/visit'
 import type { Access } from '../../lib/access'
 import type { PermissionMode } from '../../core/capability-matrix'
 import { makeMemoryFS } from '../memory/fs-api'
@@ -85,7 +89,10 @@ export interface TickDeps {
    * `huntStore` 把它拆成条目落库。两者都可选:没接就是旧行为(发了不记)。
    */
   outboundTaps?: { tap(chatId: string): { close(): string[] } }
-  huntStore?: { recordHunt(a: { chatId: string; text: string; nowIso?: string }): number }
+  huntStore?: {
+    recordHunt(a: { chatId: string; text: string; nowIso?: string }): number
+    recordVisit?(a: { chatId: string; text: string; peerLabel: string; nowIso?: string }): string | null
+  }
   /**
    * Task 6 — the calibration gate's learning signal (last claimed proactive
    * send + no-reply streak per chat). shouldSpeak() reads it; pushTick
@@ -573,6 +580,65 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       } catch (err) {
         deps.log('SCHED', `companion tick failed for chat=${chatId}: ${errMsg(err)}`)
       }
+    }
+
+    // 人类做客(2026-09-03,companion/guest-visits.ts):主人的朋友来聊过、
+    // 走了 30 分钟 → 伙伴跟主人顺口提一句。每拍都看,自己有水位,不会重复。
+    if (cfg.default_chat_id) {
+      try { await guestVisitPass(cfg.default_chat_id, nowIso, messagesStore) }
+      catch (err) { deps.log('VISIT', `guest pass failed: ${errMsg(err)}`) }
+    }
+  }
+
+  /**
+   * 挑出「不是主人的」chat 里刚聊完的,讲给主人。只讲个大概 —— 来的是主人的
+   * 朋友,它跟伙伴说的话不该被逐字转给第三个人(prompt 里明写)。
+   */
+  async function guestVisitPass(ownerChat: string, nowIso: string, messagesStore: MessagesStore): Promise<void> {
+    const statePath = join(deps.stateDir, 'companion', 'guest-visits.json')
+    const state: GuestVisitState = (() => {
+      try { const j = readJsonFile<Partial<GuestVisitState>>(statePath); return { narrated: j.narrated ?? {} } }
+      catch { return { narrated: {} } }
+    })()
+    const access = deps.loadAccess()
+    const nowMs = Date.parse(nowIso)
+    let changed = false
+    for (const chatId of await messagesStore.listChatIds()) {
+      if (chatId === ownerChat) continue
+      if (resolveEffectiveTier(chatId, access, deps.permissionMode) === 'admin') continue
+      const latestInboundTs = await messagesStore.latestInboundTs(chatId)
+      if (!latestInboundTs) continue
+      const mark = state.narrated[chatId]
+      if (mark && latestInboundTs <= mark) continue
+      const rows = await messagesStore.listSince(chatId, mark ?? '', 40)
+      const due = dueGuestVisit({
+        chatId, latestInboundTs,
+        since: rows.map(r => ({ direction: r.direction, text: r.text, ts: r.ts })),
+      }, state, nowMs)
+      if (!due) continue
+      // 先记水位再讲:讲到一半 daemon 重启,不该下一拍再讲一遍。
+      state.narrated[chatId] = latestInboundTs
+      changed = true
+      const evalText = deps.boot.registry.getStrongEval?.(deps.boot.defaultProviderId) ?? deps.boot.registry.getCheapEval()
+      if (!evalText) continue
+      const name = guestLabel(deps.boot.conversationStore?.getIdentity(chatId)?.last_user_name, chatId)
+      const cfgAgent = loadAgentConfig(deps.stateDir)
+      const text = (await evalText(buildGuestVisitNarrationPrompt({
+        myName: cfgAgent.bot_name?.trim() || '我',
+        persona: null, ownerOverview: null,
+        disclosurePolicy: cfgAgent.social_disclosure_policy ?? '别转述朋友的私事。',
+        guestName: name,
+        lines: due.map(m => ({ who: m.direction === 'in' ? 'guest' as const : 'me' as const, text: m.text })),
+      }))).trim().replace(/^[「『"“]+|[」』"”]+$/g, '')
+      if (!text) continue
+      await deps.ilink.sendMessage(ownerChat, `🛎 ${text}`)
+      try { deps.huntStore?.recordVisit?.({ chatId: ownerChat, text, peerLabel: `${name}来过`, nowIso }) }
+      catch (err) { deps.log('VISIT', `guest 见闻入库失败: ${errMsg(err)}`) }
+      deps.log('VISIT', `guest visit told: chat=${chatId} name=${name} lines=${due.length}`)
+    }
+    if (changed) {
+      try { mkdirSync(join(deps.stateDir, 'companion'), { recursive: true }); writeFileSync(statePath, JSON.stringify(state, null, 2)) }
+      catch (err) { deps.log('VISIT', `guest state write failed: ${errMsg(err)}`) }
     }
   }
 
