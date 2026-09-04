@@ -31,6 +31,17 @@ import { join } from 'node:path'
 
 export function socialRoutes(deps: InternalApiDeps): RouteTable {
   return {
+    // 串门(桌面「认识的人」里的按钮)。整趟要跑两三分钟(6-7 次模型调用),
+    // 不等 —— 起跑就回,结果经微信 + 日志(journal)到主人手里。
+    'POST /v1/social/visit': async (_q, body) => {
+      const penpal = deps.social?.penpal
+      if (!penpal?.startVisit) return { status: 503, body: { error: 'social_not_wired' } }
+      const target = ((body ?? {}) as { target?: unknown }).target
+      if (target !== undefined && (typeof target !== 'string' || target === '')) return { status: 400, body: { error: 'bad_target' } }
+      void penpal.startVisit!(target as string | undefined).catch(() => { /* 失败已在 wire-visit 记日志 */ })
+      return { status: 200, body: { ok: true, started: true } }
+    },
+
     // 关系视图(架构重构 §2.2):四种对方,一张表。派生,不落表。
     // trusted:桌面端的凭证是 FILE token(=trusted)。
     'GET /v1/social/relationships': async () => {

@@ -12,6 +12,7 @@ import { showToast } from "../view.js"
 
 import { invokeApi } from '../api.js'
 import { initHuntBag, renderHuntBag } from './journal.js'
+import { initPeople, renderPeople } from './people.js'
 
 // ── module-level state ────────────────────────────────────────────────────
 /** @type {Record<string, unknown> | null} */
@@ -125,19 +126,21 @@ export async function initA2AAgentsTab() {
   document.getElementById('fd-wishes')?.addEventListener('click', onSeekAction)
   document.getElementById('fd-mailbox')?.addEventListener('click', onMailboxAction)
   initHuntBag()
+  initPeople()
 }
 
 export async function refresh() {
   const wishes = document.getElementById('fd-wishes')
   if (wishes && !wishes.innerHTML) wishes.innerHTML = '<div class="fd-empty">加载中…</div>'
 
-  const [listResp, seeksResp, echoesResp, inbound, mailResp, huntResp] = await Promise.all([
+  const [listResp, seeksResp, echoesResp, inbound, mailResp, huntResp, peopleResp] = await Promise.all([
     /** @type {Promise<{agents?:Array<any>}|null>}   */ (invokeApi('GET', '/v1/a2a/list').catch(() => null)),
     /** @type {Promise<{seeks?:Array<any>}|null>}    */ (invokeApi('GET', '/v1/social/seeks').catch(() => null)),
     /** @type {Promise<{echoes?:Array<any>}|null>}   */ (invokeApi('GET', '/v1/social/echoes').catch(() => null)),
     /** @type {Promise<any>}                          */ (invokeApi('GET', '/v1/social/inbound').catch(() => null)),
     /** @type {Promise<{channels?:Array<any>}|null>} */ (invokeApi('GET', '/v1/penpal/channels').catch(() => null)),
     /** @type {Promise<{items?:Array<any>}|null>}    */ (invokeApi('GET', '/v1/journal').catch(() => null)),
+    /** @type {Promise<{relationships?:Array<any>}|null>} */ (invokeApi('GET', '/v1/social/relationships').catch(() => null)),
   ])
 
   // keep the server-status banner (best-effort, as before)
@@ -157,6 +160,18 @@ export async function refresh() {
   // 背包自己渲染 —— 打猎和社交觅食是两条独立的链路,社交没启用时背包
   // 照样有东西(它不依赖任何 peer)。
   renderHuntBag({ items: huntResp ? (huntResp.items ?? []) : null })
+  renderPeople({ relationships: peopleResp ? (peopleResp.relationships ?? []) : null })
+  // 折叠区的小字:有几条心愿在外面、几封未读 —— 让折着的东西不至于被忘掉
+  const sub = document.getElementById('fd-tools-sub')
+  if (sub) {
+    const seeks = seeksResp ? (seeksResp.seeks ?? []) : []
+    const foraging = seeks.filter(/** @param {any} x */ x => x.status === 'foraging' || x.status === 'echoed').length
+    const unread = (mailResp ? (mailResp.channels ?? []) : []).reduce(/** @param {number} a @param {any} c */ (a, c) => a + (Number(c.unread) || 0), 0)
+    const bits = []
+    if (foraging) bits.push(`${foraging} 条心愿在外面`)
+    if (unread) bits.push(`${unread} 封未读`)
+    sub.textContent = bits.join(' · ')
+  }
 }
 
 /**

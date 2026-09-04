@@ -130,6 +130,7 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/social/inbound': 'trusted',
   'GET /v1/social/pledges': 'trusted',
   'GET /v1/social/relationships': 'trusted',
+  'POST /v1/social/visit': 'trusted',
   // 打猎战利品(2026-09-03)。trusted 而非 admin:桌面端的凭证是 daemon 级
   // FILE token(=trusted),admin 会让每一次真实的桌面读 403 —— 觅食台的读
   // 路由 2026-07-22 正是这么静默坏了一个多月。写的两个也是 trusted:它们

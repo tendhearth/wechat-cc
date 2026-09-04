@@ -242,6 +242,8 @@ export interface InternalApiDeps {
       resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       channelStore: import('../../core/penpal-channel-store').ChannelStore
       letterStore: import('../../core/penpal-letter-store').LetterStore
+      /** 串门(架构重构 §2.3)。可选:老 fixture 没有。 */
+      startVisit?(target?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }>
     }
   }
   /**

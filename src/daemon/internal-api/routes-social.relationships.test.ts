@@ -60,9 +60,23 @@ describe('GET /v1/social/relationships —— 四种对方一张表', () => {
     expect(rels.every(x => x.kind === 'neighbor')).toBe(true)
   })
 
+  it('POST /v1/social/visit 起跑就回,不等两三分钟', async () => {
+    let called: string | undefined = 'unset'
+    const deps = { stateDir: '/tmp', social: { penpal: { startVisit: async (t?: string) => { called = t; await new Promise(r => setTimeout(r, 50)); return { ok: true, id: 'v', channel: 'c' } } } } } as unknown as InternalApiDeps
+    const t0 = Date.now()
+    const r = await socialRoutes(deps)['POST /v1/social/visit']!(qs(), { target: '阿柚' })
+    expect(Date.now() - t0).toBeLessThan(40)
+    expect(r.body).toEqual({ ok: true, started: true })
+    expect(called).toBe('阿柚')
+    expect((await socialRoutes(deps)['POST /v1/social/visit']!(qs(), { target: 42 })).status).toBe(400)
+    expect((await socialRoutes({ stateDir: '/tmp' } as unknown as InternalApiDeps)['POST /v1/social/visit']!(qs(), {})).status).toBe(503)
+  })
+
   it('接线 + 分级 trusted', () => {
     const table = makeRoutes({ deps: { stateDir: '/tmp', daemonPid: 1 } as unknown as InternalApiDeps, getDelegate: () => null, maybePrefix: (_c: string, t: string) => t })
     expect(Object.keys(table)).toContain('GET /v1/social/relationships')
+    expect(Object.keys(table)).toContain('POST /v1/social/visit')
     expect(minTierFor('GET /v1/social/relationships')).toBe('trusted')
+    expect(minTierFor('POST /v1/social/visit')).toBe('trusted')
   })
 })

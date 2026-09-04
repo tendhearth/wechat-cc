@@ -634,37 +634,54 @@
 
                 <div class="fd-wave" aria-hidden="true"><svg viewBox="0 0 920 12" preserveAspectRatio="none"><path d="M0 6 Q 23 0 46 6 T 92 6 T 138 6 T 184 6 T 230 6 T 276 6 T 322 6 T 368 6 T 414 6 T 460 6 T 506 6 T 552 6 T 598 6 T 644 6 T 690 6 T 736 6 T 782 6 T 828 6 T 874 6 T 920 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
 
-                <!-- 🎒 打猎背包 —— CC 每天上网带回来的东西 -->
+                <!-- 架构重构 §2.4:觅食台收成两块 —— 带回来的(journal)+ 认识的人(relationships)。
+                     派心愿 / 回声 / 信箱是「工具社交」的面,折叠起来留着;所有 id 不变(模块测试 + e2e 依赖)。 -->
+
+                <!-- 🎒 带回来的 -->
                 <section class="fd-section">
-                  <div class="fd-sec-head"><h2>🎒 打猎背包</h2><span class="fd-count" id="fd-catch-count"></span><span class="fd-hint">CC 出门带回来的:上网找的东西、串门听来的见闻</span></div>
+                  <div class="fd-sec-head"><h2>🎒 带回来的</h2><span class="fd-count" id="fd-catch-count"></span><span class="fd-hint">上网找的东西 · 串门听来的见闻 · 明信片</span></div>
                   <div class="hb-list" id="fd-catch"></div>
                 </section>
 
-                <!-- ① 我派出去的心愿 -->
+                <!-- 👥 认识的人 -->
                 <section class="fd-section">
-                  <div class="fd-sec-head"><h2>我派出去的心愿</h2><span class="fd-count" id="fd-wishes-count"></span><span class="fd-hint">出面的是 bot，不是你 · 成交前谁都不露脸</span></div>
-                  <div class="fd-compose" id="fd-compose" hidden>
-                    <form id="fd-compose-form">
-                      <input type="text" name="topic" id="fd-compose-topic" placeholder="想找什么？比如：找个会修老相机的师傅" maxlength="120" autocomplete="off">
-                      <input type="text" name="city" id="fd-compose-city" placeholder="城市（可选）" maxlength="20" autocomplete="off">
-                      <button class="fd-btn fd-btn-primary" type="submit" id="fd-compose-submit">派出去</button>
-                    </form>
-                    <div class="fd-compose-note" id="fd-compose-note" hidden></div>
-                    <div class="fd-preview" id="fd-preview" hidden></div>
-                  </div>
-                  <div class="fd-wishes" id="fd-wishes"></div>
+                  <div class="fd-sec-head"><h2>👥 认识的人</h2><span class="fd-count" id="fd-people-count"></span><span class="fd-hint">朋友的伙伴 · 邻居 · 来找过我的人</span></div>
+                  <div class="fd-people" id="fd-people"></div>
                 </section>
 
-                <!-- ② 带回来的明信片 -->
-                <section class="fd-section">
-                  <div class="fd-sec-head"><h2>带回来的明信片</h2><span class="fd-count" id="fd-postcards-count"></span><span class="fd-hint">两边都点「揭晓」，才互相亮身份</span></div>
-                  <div class="fd-postcards" id="fd-postcards"></div>
-                </section>
+                <!-- 派心愿 / 回声 / 信箱 —— 折叠 -->
+                <section class="fd-net fd-tools" id="fd-tools">
+                  <details>
+                    <summary id="fd-tools-summary">派心愿 · 回声 · 笔友信箱<span class="fd-net-sub" id="fd-tools-sub"></span><span class="fd-chev">›</span></summary>
+                    <div class="fd-net-body">
+                      <!-- ① 我派出去的心愿 -->
+                      <div class="fd-sub">
+                        <div class="fd-sec-head"><h2>我派出去的心愿</h2><span class="fd-count" id="fd-wishes-count"></span><span class="fd-hint">出面的是 bot，不是你 · 成交前谁都不露脸</span></div>
+                        <div class="fd-compose" id="fd-compose" hidden>
+                          <form id="fd-compose-form">
+                            <input type="text" name="topic" id="fd-compose-topic" placeholder="想找什么？比如：找个会修老相机的师傅" maxlength="120" autocomplete="off">
+                            <input type="text" name="city" id="fd-compose-city" placeholder="城市（可选）" maxlength="20" autocomplete="off">
+                            <button class="fd-btn fd-btn-primary" type="submit" id="fd-compose-submit">派出去</button>
+                          </form>
+                          <div class="fd-compose-note" id="fd-compose-note" hidden></div>
+                          <div class="fd-preview" id="fd-preview" hidden></div>
+                        </div>
+                        <div class="fd-wishes" id="fd-wishes"></div>
+                      </div>
 
-                <!-- ✉️ 笔友信箱 -->
-                <section class="fd-section">
-                  <div class="fd-sec-head"><h2>✉️ 笔友信箱</h2><span class="fd-count" id="fd-mailbox-count"></span><span class="fd-hint">只有你们俩看得到 · 中间人碰不到内容</span></div>
-                  <div class="fd-mailbox" id="fd-mailbox"></div>
+                      <!-- ② 回声 -->
+                      <div class="fd-sub">
+                        <div class="fd-sec-head"><h2>回声</h2><span class="fd-count" id="fd-postcards-count"></span><span class="fd-hint">两边都点「揭晓」，才互相亮身份</span></div>
+                        <div class="fd-postcards" id="fd-postcards"></div>
+                      </div>
+
+                      <!-- ✉️ 笔友信箱 -->
+                      <div class="fd-sub">
+                        <div class="fd-sec-head"><h2>✉️ 笔友信箱</h2><span class="fd-count" id="fd-mailbox-count"></span><span class="fd-hint">只有你们俩看得到 · 中间人碰不到内容</span></div>
+                        <div class="fd-mailbox" id="fd-mailbox"></div>
+                      </div>
+                    </div>
+                  </details>
                 </section>
 
                 <!-- ③ 你的觅食网（折叠底座）— agent-management folded here -->
