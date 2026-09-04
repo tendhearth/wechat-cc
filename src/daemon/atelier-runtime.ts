@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { readJsonFile } from '../lib/read-json-file'
 import { dirname, join } from 'node:path'
 import { buildRenderBrief, renderBriefToPrompt, parseArtImpulse, type ArtImpulse, type RenderBrief } from './art-impulse'
 import type { ArtworkRenderer, RenderedArtwork } from './artwork-renderer'
@@ -95,7 +96,7 @@ function statePath(stateDir: string): string { return join(stateDir, 'atelier', 
 
 export function readAtelierCadence(stateDir: string): AtelierCadenceState {
   try {
-    const parsed = JSON.parse(readFileSync(statePath(stateDir), 'utf8')) as Partial<AtelierCadenceState>
+    const parsed = readJsonFile<Partial<AtelierCadenceState>>(statePath(stateDir))
     if (!Array.isArray(parsed.successfulAt)) return { successfulAt: [] }
     return {
       ...(typeof parsed.lastEvaluatedAt === 'string' ? { lastEvaluatedAt: parsed.lastEvaluatedAt } : {}),

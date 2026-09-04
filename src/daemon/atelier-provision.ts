@@ -9,7 +9,8 @@
  * a wrong URL fails closed rather than installing bad bytes.
  */
 import { createHash } from 'node:crypto'
-import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { readJsonFile } from '../lib/read-json-file'
 import { open, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
@@ -47,7 +48,7 @@ export function modelStatusPath(stateDir: string): string {
 
 export function readModelStatus(stateDir: string): ModelProvisionStatus | null {
   try {
-    return JSON.parse(readFileSync(modelStatusPath(stateDir), 'utf8')) as ModelProvisionStatus
+    return readJsonFile<ModelProvisionStatus>(modelStatusPath(stateDir))
   } catch {
     return null
   }

@@ -1,6 +1,7 @@
 import {
   existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync,
 } from 'node:fs'
+import { readJsonFile } from '../lib/read-json-file'
 import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { parseArtImpulse, type ArtImpulse } from './art-impulse'
@@ -148,7 +149,7 @@ export function makeAtelierStore(stateDir: string, options: AtelierStoreOptions 
     const target = paths(id)
     if (!target || !existsSync(target.image) || !existsSync(target.metadata)) return null
     try {
-      const value = JSON.parse(readFileSync(target.metadata, 'utf8')) as unknown
+      const value = readJsonFile<unknown>(target.metadata)
       if (!isRecord(value)) return null
       const bytes = readFileSync(target.image)
       if (bytes.length > maxBytes) return null
