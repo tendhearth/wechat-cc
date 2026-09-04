@@ -1269,6 +1269,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      * self-restart itself is enabled).
      */
     holdBusy: busyRegistry.hold,
+    /** busy-registry label 快照(spec 2026-09-03-companion-presence)。 */
+    busyLabels: busyRegistry.labels,
     /**
      * self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
      * undefined when deps.requestRestart wasn't provided (mechanism fully

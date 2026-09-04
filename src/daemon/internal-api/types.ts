@@ -244,6 +244,8 @@ export interface InternalApiDeps {
       letterStore: import('../../core/penpal-letter-store').LetterStore
       /** 串门(架构重构 §2.3)。可选:老 fixture 没有。 */
       startVisit?(target?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }>
+      /** 进行中的串门(spec 2026-09-03-companion-presence §2.2)。可选:老 fixture 没有。 */
+      activeVisit?(): import('../../core/companion-presence').ActiveVisit | null
     }
   }
   /**
@@ -444,6 +446,11 @@ export interface InternalApiDeps {
    * markInboundActivity (the dashboard polls GET every 5s forever).
    */
   holdBusy?: (label: string) => () => void
+  /**
+   * busy-registry 的 label 快照(spec 2026-09-03-companion-presence §2.2)——
+   * 桌宠状态推导用。thunk-over-bootRef,同 holdBusy;bootstrap 之前返回 []。
+   */
+  busyLabels?: () => string[]
   /**
    * Mint an env-only per-session token — mirrors `InternalApi.mintSessionToken`
    * below (see there for the full contract). Set INTERNALLY by

@@ -294,6 +294,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // non-GET request hold (index.ts) and customer-review's task-launch
       // hold (routes-customer-review.ts) — they share this one field.
       holdBusy: (l) => bootRef?.holdBusy?.(l) ?? (() => {}),
+      busyLabels: () => bootRef?.busyLabels?.() ?? [],
       log: (t, l) => log(t, l),
       // LLM memory routes' chat_id default (spec 2026-07-23-daemon-owns-llm-
       // memory-ops): access.json's single admin. Wired eagerly (not late-

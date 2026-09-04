@@ -445,6 +445,8 @@ export interface Bootstrap {
    * long task mid-flight.
    */
   holdBusy: (label: string) => () => void
+  /** busy-registry label 快照(spec 2026-09-03-companion-presence)。 */
+  busyLabels: () => string[]
   /**
    * self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) — mark
    * "inbound activity happened now". Wired by main.ts's wireMain (via

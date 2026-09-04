@@ -231,6 +231,21 @@ export const CompanionStatusResponse = z.object({
   import_local_history: z.boolean(),
 })
 
+// ── GET /v1/companion/presence(spec 2026-09-03-companion-presence)───────────
+export const PresenceResponse = z.object({
+  presence: z.enum(['ok', 'degraded', 'offline']),
+  activity: z.object({
+    kind: z.enum(['idle', 'chatting', 'hosting_human', 'visiting', 'hosting_peer', 'foraging', 'working']),
+    label: z.string(),
+    since: z.string().nullable(),
+  }),
+  news: z.object({
+    unread: z.number().int().nonnegative(),
+    latest_kind: z.string().nullable(),
+    latest_title: z.string().nullable(),
+  }),
+})
+
 // ── POST /v1/companion/enable ────────────────────────────────────────────────
 // Pinned to WechatCompanionDep.enable() return shape (two ok=true variants).
 // Union includes forward-compat ok=false branch.
@@ -693,6 +708,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/voice/status': VoiceStatusResponse,
   'POST /v1/voice/save_config': VoiceSaveConfigResponse,
   'GET /v1/companion/status': CompanionStatusResponse,
+  'GET /v1/companion/presence': PresenceResponse,
   'POST /v1/companion/enable': CompanionEnableResponse,
   'POST /v1/companion/disable': CompanionDisableResponse,
   'POST /v1/companion/snooze': CompanionSnoozeResponse,

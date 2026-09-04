@@ -21,6 +21,7 @@ import { makeEventsStore } from '../events/store'
 import { a2aRoutes } from './routes-a2a'
 import { probeFsAccess, describeFsAccess } from '../health/fs-access'
 import { journalRoutes } from './routes-journal'
+import { presenceRoutes } from './routes-presence'
 import { socialRoutes } from './routes-social'
 import { knowledgeRoutes } from './routes-knowledge'
 import { configRoutes } from './routes-config'
@@ -905,6 +906,7 @@ const onlineStickerCursor = new Map<string, number>()
     ...a2aRoutes(deps),
     ...socialRoutes(deps),
     ...journalRoutes(deps),
+    ...presenceRoutes(deps),
     ...knowledgeRoutes(deps),
     ...configRoutes(deps),
     ...pairRoutes(deps),
