@@ -3,13 +3,14 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeVisit, cleanSpeech, readNeighborMemory, type VisitDeps } from './wire-visit'
-import { parseVisitLetter } from '../../core/visit'
+import { parseVisitPayload } from '../../core/visit'
+import type { Envelope } from '../../core/envelope'
 
 /**
  * 两个 daemon 在同一个进程里对着聊。信道/信件 store 用内存假货:这里测的是
  * 轮次怎么走、谁在什么时候收尾、主人什么时候被打扰 —— 加密与传输另有测试。
  */
-type Row = { id: string; direction: 'in' | 'out'; plaintext: string | null; read_at: string | null }
+type Row = { id: string; direction: 'in' | 'out'; plaintext: string | null; read_at: string | null; kind: string; payload: string | null }
 interface Side { name: string; letters: Row[]; owner: string[]; logs: string[]; visit: ReturnType<typeof makeVisit>; setPeer(p: Side): void }
 
 function side(name: string, evalText: (p: string) => Promise<string>): Side {
@@ -24,13 +25,14 @@ function side(name: string, evalText: (p: string) => Promise<string>): Side {
       listForChannel: () => letters,
       markRead: (id: string, at: string) => { const r = letters.find(l => l.id === id); if (r) r.read_at = at },
     } as never,
-    sendLetter: async (_c, plaintext) => {
-      letters.push({ id: `${name}-out-${letters.length}`, direction: 'out', plaintext, read_at: null })
-      // 对端收到:存一封 in,再交给对端的串门处理器(模拟 correspondent → notifyInbound)
+    sendEnvelope: async (_c, env) => {
+      const payload = JSON.stringify(env.payload)
+      letters.push({ id: `${name}-out-${letters.length}`, direction: 'out', plaintext: '', read_at: null, kind: env.kind, payload })
+      // 对端收到:存一封 in,再交给对端的串门处理器(模拟 correspondent → onInbound 按 kind 分发)
       const inId = `${peer!.name}-in-${peer!.letters.length}`
-      peer!.letters.push({ id: inId, direction: 'in', plaintext, read_at: null })
-      const handled = peer!.visit.onInboundLetter('ch', plaintext, inId)
-      if (!handled) peer!.owner.push(`📬 ${plaintext.slice(0, 40)}`)
+      peer!.letters.push({ id: inId, direction: 'in', plaintext: '', read_at: null, kind: env.kind, payload })
+      const handled = peer!.visit.onInbound('ch', env, inId)
+      if (!handled) peer!.owner.push(`📬 ${env.kind}`)
       return { ok: true }
     },
     evalText,
@@ -60,7 +62,7 @@ describe('串门:两只伙伴对着聊', () => {
     await flush()
 
     // 信件:A 出 3 进 3,B 进 3 出 3,轮次 1..6 各一封
-    const rounds = (rows: Row[]) => rows.map(l => parseVisitLetter(l.plaintext!)!.header.round).sort((a, b) => a - b)
+    const rounds = (rows: Row[]) => rows.map(l => parseVisitPayload({ kind: l.kind, payload: JSON.parse(l.payload!) })!.round).sort((a, b) => a - b)
     expect(rounds(A.letters)).toEqual([1, 2, 3, 4, 5, 6])
     expect(rounds(B.letters)).toEqual([1, 2, 3, 4, 5, 6])
     expect(A.letters.filter(l => l.direction === 'out')).toHaveLength(3)
@@ -75,9 +77,10 @@ describe('串门:两只伙伴对着聊', () => {
     expect(B.letters.filter(l => l.direction === 'in').every(l => l.read_at !== null)).toBe(true)
   })
 
-  it('普通信不是串门 → 返回 false,照常给主人', () => {
+  it('不是串门信封 → 返回 false(分发点会把它交给别的 case)', () => {
     const A = side('阿一', async () => 'x')
-    expect(A.visit.onInboundLetter('ch', '主人写的普通信', 'l1')).toBe(false)
+    expect(A.visit.onInbound('ch', { kind: 'letter', payload: { text: '主人写的普通信' } }, 'l1')).toBe(false)
+    expect(A.visit.onInbound('ch', { kind: 'gift', payload: {} }, 'l2')).toBe(false)
     expect(A.owner).toEqual([])
   })
 
@@ -117,7 +120,7 @@ describe('去邻居家串门 —— 没有真对端时也有地方可去', () =>
     const visit = makeVisit({
       stateDir, channelStore: { get: () => null, list: () => [] } as never,
       letterStore: { listForChannel: () => [], markRead: () => {} } as never,
-      sendLetter: async () => ({ ok: true }), evalText, myName: '煞笔', disclosurePolicy: '不说住址',
+      sendEnvelope: async () => ({ ok: true }), evalText, myName: '煞笔', disclosurePolicy: '不说住址',
       notifyOwner: (t) => owner.push(t), recordVisit: (a) => { recorded.push(a); return `row-${recorded.length}` }, log: () => {}, ...extra,
     })
     return { visit, owner, recorded, stateDir }
@@ -191,7 +194,7 @@ describe('去邻居家串门 —— 没有真对端时也有地方可去', () =>
 
   it('**真信道上对端从没回过串门信 → 自动出门不去那儿,去邻居家**(旧版对端会把开场白当主人来信推出去)', async () => {
     const e = evalCounting(); const sent: string[] = []
-    const { visit } = lonely(e.fn, { channelStore: openCh, sendLetter: async (_c, t) => { sent.push(t); return { ok: true } } })
+    const { visit } = lonely(e.fn, { channelStore: openCh, sendEnvelope: async (_c: string, env: Envelope) => { sent.push(env.kind); return { ok: true } } })
     const r = await visit.startVisit()
     expect((r as { channel: string }).channel).toMatch(/^neighbor:/)
     expect(sent).toEqual([])
@@ -199,23 +202,23 @@ describe('去邻居家串门 —— 没有真对端时也有地方可去', () =>
 
   it('对端曾回过串门信 → 自动出门去真的', async () => {
     const e = evalCounting(); const sent: string[] = []
-    const inbound = { direction: 'in', plaintext: '⟪visit id=old round=2 max=6⟫\n嗨', read_at: null, id: 'l' }
+    const inbound = { direction: 'in', plaintext: '', kind: 'visit', payload: JSON.stringify({ id: 'old', round: 2, max: 6, text: '嗨' }), read_at: null, id: 'l' }
     const { visit } = lonely(e.fn, {
       channelStore: openCh,
       letterStore: { listForChannel: () => [inbound], markRead: () => {} } as never,
-      sendLetter: async (_c, t) => { sent.push(t); return { ok: true } },
+      sendEnvelope: async (_c: string, env: Envelope) => { sent.push(env.kind); return { ok: true } },
     })
     const r = await visit.startVisit()
     expect((r as { channel: string }).channel).toBe('ch')
-    expect(sent).toHaveLength(1)
+    expect(sent).toEqual(['visit'])
   })
 
   it('主人手动指定真信道 → 照发(第一次真串门就是这么开始的)', async () => {
     const e = evalCounting(); const sent: string[] = []
-    const { visit } = lonely(e.fn, { channelStore: openCh, sendLetter: async (_c, t) => { sent.push(t); return { ok: true } } })
+    const { visit } = lonely(e.fn, { channelStore: openCh, sendEnvelope: async (_c: string, env: Envelope) => { sent.push(env.kind); return { ok: true } } })
     const r = await visit.startVisit('ch')
     expect((r as { channel: string }).channel).toBe('ch')
-    expect(sent).toHaveLength(1)
+    expect(sent).toEqual(['visit'])
   })
 
   it('模型中途抽风回空 → ok:false,不给主人发半截', async () => {
@@ -234,7 +237,7 @@ describe('明信片', () => {
     const visit = makeVisit({
       stateDir: mkdtempSync(join(tmpdir(), 'visit-pc-')), channelStore: { get: () => null, list: () => [] } as never,
       letterStore: { listForChannel: () => [], markRead: () => {} } as never,
-      sendLetter: async () => ({ ok: true }), evalText, myName: '煞笔', disclosurePolicy: 'p',
+      sendEnvelope: async () => ({ ok: true }), evalText, myName: '煞笔', disclosurePolicy: 'p',
       notifyOwner: (t) => owner.push(t), recordVisit: (a) => { recorded.push(a); return 'row-1' }, postcard, log: () => {},
     })
     return { visit, owner, recorded }

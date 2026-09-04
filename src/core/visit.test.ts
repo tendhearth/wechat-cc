@@ -1,25 +1,27 @@
 import { describe, it, expect } from 'vitest'
 import {
-  VISIT_MAX_ROUNDS, formatVisitLetter, parseVisitLetter, nextRound,
+  VISIT_MAX_ROUNDS, visitEnvelope, parseVisitPayload, nextRound,
   transcriptFromLetters, buildVisitReplyPrompt, buildVisitNarrationPrompt,
 } from './visit'
+import { openEnvelope, sealEnvelope } from './envelope'
 
 const H = { id: 'v-1', round: 1, max: 6 }
 
-describe('串门信件头部', () => {
-  it('format ↔ parse 往返', () => {
-    const p = parseVisitLetter(formatVisitLetter(H, '你好呀'))
-    expect(p).toEqual({ header: H, body: '你好呀' })
+describe('串门信封', () => {
+  it('visitEnvelope ↔ parseVisitPayload 往返(经 seal/open)', () => {
+    const p = parseVisitPayload(openEnvelope(sealEnvelope(visitEnvelope(H, '你好呀'))))
+    expect(p).toEqual({ ...H, text: '你好呀' })
   })
 
-  it('普通信件不是串门(主人写的信绝不能被当成伙伴对话)', () => {
-    expect(parseVisitLetter('你好,我是你的笔友')).toBeNull()
-    expect(parseVisitLetter('visit id=x round=1 max=6\n没有括号')).toBeNull()
+  it('普通信不是串门(主人写的信绝不能被当成伙伴对话)', () => {
+    expect(parseVisitPayload(openEnvelope('你好,我是你的笔友'))).toBeNull()
+    expect(parseVisitPayload({ kind: 'gift', payload: { id: 'x', round: 1, max: 6, text: 'x' } })).toBeNull()
   })
 
-  it('坏轮次拒收:round>max、0、非整数', () => {
-    expect(parseVisitLetter('⟪visit id=a round=7 max=6⟫\nx')).toBeNull()
-    expect(parseVisitLetter('⟪visit id=a round=0 max=6⟫\nx')).toBeNull()
+  it('坏轮次拒收:round>max、0、缺字段', () => {
+    expect(parseVisitPayload({ kind: 'visit', payload: { id: 'a', round: 7, max: 6, text: 'x' } })).toBeNull()
+    expect(parseVisitPayload({ kind: 'visit', payload: { id: 'a', round: 0, max: 6, text: 'x' } })).toBeNull()
+    expect(parseVisitPayload({ kind: 'visit', payload: { id: 'a', round: 1, max: 6 } })).toBeNull()
   })
 
   it('nextRound 到 max 停', () => {
@@ -32,7 +34,7 @@ describe('串门信件头部', () => {
 
 describe('transcriptFromLetters', () => {
   const L = (dir: 'in' | 'out', round: number, text: string, id = 'v-1') =>
-    ({ direction: dir, plaintext: formatVisitLetter({ id, round, max: 6 }, text) })
+    ({ direction: dir, kind: 'visit', payload: JSON.stringify({ id, round, max: 6, text }) })
 
   it('按轮次排,不按到达顺序 —— 信箱是 at-least-once,顺序不可信', () => {
     const t = transcriptFromLetters([L('in', 2, '嗨'), L('out', 1, '你好'), L('out', 3, '在忙啥')], 'v-1')
@@ -43,7 +45,7 @@ describe('transcriptFromLetters', () => {
   it('只认自己这次串门的 id;普通信件和别的串门都不混进来', () => {
     const t = transcriptFromLetters([
       L('out', 1, 'a'), L('in', 1, '别的串门', 'v-2'),
-      { direction: 'in', plaintext: '主人写的普通信' },
+      { direction: 'in' as const, kind: 'letter', payload: null },
     ], 'v-1')
     expect(t).toHaveLength(1)
   })

@@ -83,7 +83,7 @@ describe('mailbox e2e — real reveal → relay-direct letter (NAT-simulated: on
     const qPort = port(qCh, Q_MBX); qPort.openLocal(`${intentId}:s`, { seekId: intentId, degree: 1, peerAgentId: 's' })
     const qRevealer = makeRevealer({ echoStore: qEch, pledgeStore: qPld, seekStore: qSk, channel: qPort as any, notify: () => {}, postPeerReveal: async () => null })
     const qNotify = vi.fn()
-    const qCorr = makeCorrespondent({ channelStore: qCh, letterStore: qLetters, postLetter: async () => true, notifyInbound: qNotify })
+    const qCorr = makeCorrespondent({ channelStore: qCh, letterStore: qLetters, postLetter: async () => true, onInbound: qNotify })
 
     // --- S side (reveals second; crossing handle built from the row, the C1 path) ---
     const sDb = openDb({ path: ':memory:' }); const sCh = makeChannelStore(sDb); const sLetters = makeLetterStore(sDb)
@@ -111,7 +111,7 @@ describe('mailbox e2e — real reveal → relay-direct letter (NAT-simulated: on
     const sCorr = makeCorrespondent({
       channelStore: sCh, letterStore: sLetters,
       postLetter: (target, body) => sPostLetter(target as any, body),   // sendLetter sets target.mailbox from peerMailboxOfRow
-      notifyInbound: () => {},
+      onInbound: () => {},
     })
     expect(await sCorr.sendLetter(`${intentId}:q`, 'hallo penpal')).toEqual({ ok: true })
     expect(pushSpy).not.toHaveBeenCalled()   // (b) relay-direct — W's routeLetter/push untouched

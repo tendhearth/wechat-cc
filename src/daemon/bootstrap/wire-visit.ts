@@ -15,10 +15,11 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import {
-  VISIT_MAX_ROUNDS, formatVisitLetter, parseVisitLetter, nextRound, transcriptFromLetters,
+  VISIT_MAX_ROUNDS, visitEnvelope, parseVisitPayload, nextRound, transcriptFromLetters,
   buildVisitReplyPrompt, buildVisitNarrationPrompt, buildPostcardPrompt, sceneFromTranscript,
   type VisitPersonaArgs, type VisitTurn,
 } from '../../core/visit'
+import type { Envelope } from '../../core/envelope'
 import type { ChannelStore } from '../../core/penpal-channel-store'
 import type { LetterStore } from '../../core/penpal-letter-store'
 import { loadCompanionConfig } from '../companion/config'
@@ -33,7 +34,8 @@ export interface VisitDeps {
   stateDir: string
   channelStore: ChannelStore
   letterStore: LetterStore
-  sendLetter(channelRowId: string, plaintext: string): Promise<{ ok: boolean; error?: string }>
+  /** 发一个信封到信道(correspondent.sendEnvelope)。 */
+  sendEnvelope(channelRowId: string, env: Envelope): Promise<{ ok: boolean; error?: string }>
   /** 生成伙伴的话。strongEval 优先(串门是要有性格的,不是分类任务)。 */
   evalText(prompt: string): Promise<string>
   myName: string
@@ -55,7 +57,8 @@ export interface VisitDeps {
 }
 
 export interface Visit {
-  onInboundLetter(channelRowId: string, plaintext: string, letterId: string): boolean
+  /** 收到一个 kind='visit' 的信封。由 wire-social 按 kind 分发到这里。 */
+  onInbound(channelRowId: string, env: Envelope, letterId: string): boolean
   /**
    * 出门。`target` 缺省 = 有开着的真信道就去真的,没有就去邻居家;
    * 'neighbor' = 指定去邻居家;其它 = 信道 id(前缀)。
@@ -149,22 +152,21 @@ export function makeVisit(deps: VisitDeps): Visit {
     await tellOwner({ transcript, peerLabel: label, hosting, visitId, scene: sceneFromTranscript(transcript, `${label}家`) })
   }
 
-  const continueVisit = async (channelRowId: string, plaintext: string, letterId: string): Promise<void> => {
-    const parsed = parseVisitLetter(plaintext)!
+  const continueVisit = async (channelRowId: string, p: import('../../core/visit').VisitPayload, letterId: string): Promise<void> => {
     try { deps.letterStore.markRead(letterId, new Date().toISOString()) } catch { /* 标不上就算了 */ }
-    const next = nextRound(parsed.header)
-    if (!next) { await narrate(channelRowId, parsed.header.id); return }
+    const next = nextRound(p)
+    if (!next) { await narrate(channelRowId, p.id); return }
 
-    const transcript = transcriptFromLetters(deps.letterStore.listForChannel(channelRowId), parsed.header.id)
+    const transcript = transcriptFromLetters(deps.letterStore.listForChannel(channelRowId), p.id)
     const speech = cleanSpeech(await deps.evalText(buildVisitReplyPrompt({
       ...persona(), transcript, round: next.round, max: next.max, opening: false,
     })))
-    if (!speech) { deps.log('VISIT', `reply empty visit=${parsed.header.id} round=${next.round}`); return }
-    const r = await deps.sendLetter(channelRowId, formatVisitLetter(next, speech))
-    if (!r.ok) { deps.log('VISIT', `send failed visit=${parsed.header.id} round=${next.round} err=${r.error ?? '?'}`); return }
-    deps.log('VISIT', `visit=${parsed.header.id} 说了第 ${next.round}/${next.max} 句`)
+    if (!speech) { deps.log('VISIT', `reply empty visit=${p.id} round=${next.round}`); return }
+    const r = await deps.sendEnvelope(channelRowId, visitEnvelope(next, speech))
+    if (!r.ok) { deps.log('VISIT', `send failed visit=${p.id} round=${next.round} err=${r.error ?? '?'}`); return }
+    deps.log('VISIT', `visit=${p.id} 说了第 ${next.round}/${next.max} 句`)
     // 我说的是最后一句 → 我这边也收尾。对方收到后自己收尾。
-    if (next.round >= next.max) await narrate(channelRowId, parsed.header.id)
+    if (next.round >= next.max) await narrate(channelRowId, p.id)
   }
 
   /**
@@ -208,9 +210,10 @@ export function makeVisit(deps: VisitDeps): Visit {
   }
 
   return {
-    onInboundLetter(channelRowId, plaintext, letterId) {
-      if (!parseVisitLetter(plaintext)) return false
-      void continueVisit(channelRowId, plaintext, letterId)
+    onInbound(channelRowId, env, letterId) {
+      const p = parseVisitPayload(env)
+      if (!p) return false
+      void continueVisit(channelRowId, p, letterId)
         .catch(err => deps.log('VISIT', `continue failed: ${err instanceof Error ? err.message : String(err)}`))
       return true
     },
@@ -222,7 +225,7 @@ export function makeVisit(deps: VisitDeps): Visit {
       // 推给它主人(「📬 某人给你写信了:⟪visit id=…⟫」)—— 这没法用握手绕开,
       // 因为握手本身就是那封信。所以第一次真串门由主人手动指定信道发。
       const proven = open.filter(c => deps.letterStore.listForChannel(c.id)
-        .some(l => l.direction === 'in' && l.plaintext && parseVisitLetter(l.plaintext)))
+        .some(l => l.direction === 'in' && l.kind === 'visit'))
       if (target === 'neighbor' || target === '邻居' || (!target && proven.length === 0)) {
         const mem = readNeighborMemory(deps.stateDir)
         return visitNeighbor(pickNeighbor(Math.floor(Date.now() / DAY_MS), mem.lastId))
@@ -251,7 +254,7 @@ export function makeVisit(deps: VisitDeps): Visit {
       })))
     } catch (err) { return { ok: false, reason: `eval_failed: ${err instanceof Error ? err.message : String(err)}` } }
     if (!speech) return { ok: false, reason: 'empty_opening' }
-    const r = await deps.sendLetter(channelId, formatVisitLetter(header, speech))
+    const r = await deps.sendEnvelope(channelId, visitEnvelope(header, speech))
     if (!r.ok) return { ok: false, reason: r.error ?? 'send_failed' }
     deps.log('VISIT', `visit=${id} 出门了 → ${channelId}`)
     return { ok: true, id, channel: channelId }

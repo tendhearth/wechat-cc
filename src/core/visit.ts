@@ -15,24 +15,27 @@
  * 说的。如果那段话没意思,再多的管道也白搭。
  */
 
+import type { Envelope } from './envelope'
+
 /** 每次串门总共几封信(两边各 3 句)。 */
 export const VISIT_MAX_ROUNDS = 6
 
 export interface VisitHeader { id: string; round: number; max: number }
+export interface VisitPayload extends VisitHeader { text: string }
 
-const HEADER_RE = /^⟪visit id=([A-Za-z0-9\-]+) round=(\d+) max=(\d+)⟫\n?/
-
-/** 串门信件 = 一行机器可读头部 + 正文。头部用「⟪⟫」是为了不撞任何正常中文/英文信。 */
-export function formatVisitLetter(h: VisitHeader, body: string): string {
-  return `⟪visit id=${h.id} round=${h.round} max=${h.max}⟫\n${body.trim()}`
+/** 串门信封(架构重构 §2.1):kind='visit',payload = 轮次 + 这一句。 */
+export function visitEnvelope(h: VisitHeader, text: string): Envelope<VisitPayload> {
+  return { kind: 'visit', payload: { id: h.id, round: h.round, max: h.max, text: text.trim() } }
 }
 
-export function parseVisitLetter(plaintext: string): { header: VisitHeader; body: string } | null {
-  const m = HEADER_RE.exec(plaintext)
-  if (!m) return null
-  const round = Number(m[2]), max = Number(m[3])
+/** 信封 → 串门 payload;不是串门、或轮次不合法 ⇒ null。 */
+export function parseVisitPayload(env: Envelope): VisitPayload | null {
+  if (env.kind !== 'visit') return null
+  const p = env.payload as Partial<VisitPayload> | null
+  if (!p || typeof p.id !== 'string' || typeof p.text !== 'string') return null
+  const round = Number(p.round), max = Number(p.max)
   if (!Number.isInteger(round) || !Number.isInteger(max) || round < 1 || max < 1 || round > max) return null
-  return { header: { id: m[1]!, round, max }, body: plaintext.slice(m[0].length).trim() }
+  return { id: p.id, round, max, text: p.text }
 }
 
 /** 收到第 round 封之后,我该回第几封;到头了返回 null。 */
@@ -43,21 +46,22 @@ export function nextRound(h: VisitHeader): VisitHeader | null {
 export interface VisitTurn { who: 'me' | 'peer'; round: number; text: string }
 
 /**
- * 从信道里的信件重建一次串门的对话。只认头部 id 匹配的;按轮次排,不按
- * 时间排 —— 信箱是 at-least-once,到达顺序不可信,轮次才是权威。
+ * 从信道里的信封重建一次串门的对话。只认 kind='visit' 且 id 匹配的;按轮次排,
+ * 不按时间排 —— 信箱是 at-least-once,到达顺序不可信,轮次才是权威。
  */
 export function transcriptFromLetters(
-  letters: ReadonlyArray<{ direction: 'in' | 'out'; plaintext: string | null }>,
+  letters: ReadonlyArray<{ direction: 'in' | 'out'; kind?: string; payload?: string | null }>,
   visitId: string,
 ): VisitTurn[] {
   const turns: VisitTurn[] = []
   const seen = new Set<number>()
   for (const l of letters) {
-    if (!l.plaintext) continue
-    const p = parseVisitLetter(l.plaintext)
-    if (!p || p.header.id !== visitId || seen.has(p.header.round)) continue
-    seen.add(p.header.round)
-    turns.push({ who: l.direction === 'out' ? 'me' : 'peer', round: p.header.round, text: p.body })
+    if (l.kind !== 'visit' || !l.payload) continue
+    let p: VisitPayload | null
+    try { p = parseVisitPayload({ kind: 'visit', payload: JSON.parse(l.payload) }) } catch { continue }
+    if (!p || p.id !== visitId || seen.has(p.round)) continue
+    seen.add(p.round)
+    turns.push({ who: l.direction === 'out' ? 'me' : 'peer', round: p.round, text: p.text })
   }
   return turns.sort((a, b) => a.round - b.round)
 }

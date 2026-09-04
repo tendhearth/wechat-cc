@@ -390,19 +390,31 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // sendLetter 经 correspondent,但 correspondent 又要 notifyInbound —— 用
       // 一个 late-bound 引用解开这个环。
       let visit: import('./wire-visit').Visit | undefined
-      const notifyInbound = (rowId: string, plaintext: string, letterId: string): void => {
-        if (visit?.onInboundLetter(rowId, plaintext, letterId)) return
-        const op = resolveOperatorChatId()
-        if (!op || !sendAssistantText) return
-        const ch = channelStore.get(rowId)
-        const mask = ch ? `第 ${ch.degree} 度的某人` : '某人'
-        void sendAssistantText(op, `📬 ${mask}给你写信了:${plaintext.slice(0, 40)}\n(回信 ${rowId} <你的话>)`)
+      // 信封分发点(架构重构 §2.1)—— correspondent 已解开信封,这里**只按 kind
+      // 分发**。新交互 = 加一个 case,不是加一条路由。不认识的 kind 记日志
+      // 忽略:新版本发的类型老版本不炸。
+      const onInbound: import('../../core/penpal-correspondent').CorrespondentDeps['onInbound'] = ({ channelRowId, letterId, plaintext, env }) => {
+        switch (env.kind) {
+          case 'letter': {
+            const op = resolveOperatorChatId()
+            if (!op || !sendAssistantText) return
+            const ch = channelStore.get(channelRowId)
+            const mask = ch ? `第 ${ch.degree} 度的某人` : '某人'
+            void sendAssistantText(op, `📬 ${mask}给你写信了:${plaintext.slice(0, 40)}\n(回信 ${channelRowId} <你的话>)`)
+            return
+          }
+          case 'visit':
+            if (!visit?.onInbound(channelRowId, env, letterId)) deps.log('SOCIAL', `visit envelope rejected channel=${channelRowId}`)
+            return
+          default:
+            deps.log('SOCIAL', `unknown envelope kind=${env.kind} channel=${channelRowId} — ignored`)
+        }
       }
-      const correspondent = makeCorrespondent({ channelStore, letterStore, postLetter, notifyInbound })
+      const correspondent = makeCorrespondent({ channelStore, letterStore, postLetter, onInbound })
       visit = makeVisit({
         stateDir: deps.stateDir,
         channelStore, letterStore,
-        sendLetter: (c, t) => correspondent.sendLetter(c, t),
+        sendEnvelope: (c, e) => correspondent.sendEnvelope(c, e),
         // 串门要有性格,不是分类任务:strongEval 优先,没有再退到 cheapEval。
         // (typeof 守卫:好几处测试夹具的 registry 只有 cheapEval 那两个方法。)
         evalText: (typeof registry.getStrongEval === 'function' ? registry.getStrongEval(deps.defaultProviderId) : null) ?? socialCheapEval,

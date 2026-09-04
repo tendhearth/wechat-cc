@@ -41,7 +41,9 @@ export function penpalRoutes(deps: InternalApiDeps): RouteTable {
       const channelId = q.get('channel_id') ?? ''
       if (!channelId) return { status: 400, body: { error: 'missing_channel_id' } }
       if (!p.channelStore.get(channelId)) return { status: 404, body: { error: 'unknown_channel' } }
+      // 只列真信(kind='letter'):伙伴之间的信封(串门等)不是主人的信箱内容。
       const letters = p.letterStore.listForChannel(channelId)
+        .filter(l => (l.kind ?? 'letter') === 'letter')
         .map(l => ({ id: l.id, direction: l.direction, plaintext: l.plaintext, created_at: l.created_at, read_at: l.read_at }))
       return { status: 200, body: { letters } }
     },

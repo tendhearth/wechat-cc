@@ -164,8 +164,8 @@ describe('penpal channel e2e — direct (1-hop)', () => {
     const notifyB = vi.fn()
     const postLetterFromA = vi.fn(async (_target: unknown, body: { channel_id: string; nonce: string; ct: string; tag: string }) => correspondentB.receiveLetter(body).ok)
     const postLetterFromB = vi.fn(async (_target: unknown, body: { channel_id: string; nonce: string; ct: string; tag: string }) => correspondentA.receiveLetter(body).ok)
-    correspondentA = makeCorrespondent({ channelStore: aChannelStore, letterStore: aLetterStore, postLetter: postLetterFromA, notifyInbound: notifyA })
-    correspondentB = makeCorrespondent({ channelStore: bChannelStore, letterStore: bLetterStore, postLetter: postLetterFromB, notifyInbound: notifyB })
+    correspondentA = makeCorrespondent({ channelStore: aChannelStore, letterStore: aLetterStore, postLetter: postLetterFromA, onInbound: notifyA })
+    correspondentB = makeCorrespondent({ channelStore: bChannelStore, letterStore: bLetterStore, postLetter: postLetterFromB, onInbound: notifyB })
 
     // 5) A -> B: seal, route, decrypt.
     const outResult = await correspondentA.sendLetter(echoId, '你好')
@@ -182,7 +182,7 @@ describe('penpal channel e2e — direct (1-hop)', () => {
     expect(bInRows).toHaveLength(1)
     expect(bInRows[0]!.direction).toBe('in')
     expect(bInRows[0]!.plaintext).toBe('你好')                 // B decrypts the EXACT plaintext
-    expect(notifyB).toHaveBeenCalledWith(pledgeId, '你好', expect.any(String))      // B's owner notified
+    expect(notifyB).toHaveBeenCalledWith(expect.objectContaining({ channelRowId: pledgeId, plaintext: '你好', env: { kind: 'letter', payload: { text: '你好' } } }))      // B's owner notified
 
     // 6) The reverse direction: B -> A.
     const backResult = await correspondentB.sendLetter(pledgeId, '见字如面')
@@ -197,7 +197,7 @@ describe('penpal channel e2e — direct (1-hop)', () => {
     const aInRows = aLetterStore.listForChannel(echoId).filter(r => r.direction === 'in')
     expect(aInRows).toHaveLength(1)
     expect(aInRows[0]!.plaintext).toBe('见字如面')
-    expect(notifyA).toHaveBeenCalledWith(echoId, '见字如面', expect.any(String))
+    expect(notifyA).toHaveBeenCalledWith(expect.objectContaining({ channelRowId: echoId, plaintext: '见字如面', env: { kind: 'letter', payload: { text: '见字如面' } } }))
   })
 })
 
@@ -328,8 +328,8 @@ describe('penpal channel e2e — relay (2-hop, content-blind)', () => {
     const postLetterFromQ = vi.fn(async (_target: unknown, body: { channel_id: string; nonce: string; ct: string; tag: string }) => (await letterRelay.routeLetter({ agent_id: Q_ID, ...body })).ok)
     const notifyS = vi.fn()
     const notifyQ = vi.fn()
-    correspondentS = makeCorrespondent({ channelStore: sChannelStore, letterStore: sLetterStore, postLetter: postLetterFromS, notifyInbound: notifyS })
-    correspondentQ = makeCorrespondent({ channelStore: qChannelStore, letterStore: qLetterStore, postLetter: postLetterFromQ, notifyInbound: notifyQ })
+    correspondentS = makeCorrespondent({ channelStore: sChannelStore, letterStore: sLetterStore, postLetter: postLetterFromS, onInbound: notifyS })
+    correspondentQ = makeCorrespondent({ channelStore: qChannelStore, letterStore: qLetterStore, postLetter: postLetterFromQ, onInbound: notifyQ })
 
     // 5) S -> W -> Q: content-blind forward, byte-identical ciphertext.
     const sendResult = await correspondentS.sendLetter(sEchoId, '你好,愿闻其详')
@@ -352,7 +352,7 @@ describe('penpal channel e2e — relay (2-hop, content-blind)', () => {
     expect(qInRows).toHaveLength(1)
     expect(qInRows[0]!.direction).toBe('in')
     expect(qInRows[0]!.plaintext).toBe('你好,愿闻其详')
-    expect(notifyQ).toHaveBeenCalledWith(qPledgeId, '你好,愿闻其详', expect.any(String))
+    expect(notifyQ).toHaveBeenCalledWith(expect.objectContaining({ channelRowId: qPledgeId, plaintext: '你好,愿闻其详', env: { kind: 'letter', payload: { text: '你好,愿闻其详' } } }))
 
     // Privacy invariant: W never has the key and never decrypts — W's own db
     // never accumulates a penpal_letter row, and W never even constructed a
@@ -379,7 +379,7 @@ describe('penpal channel e2e — relay (2-hop, content-blind)', () => {
     const sInRows = sLetterStore.listForChannel(sEchoId).filter(r => r.direction === 'in')
     expect(sInRows).toHaveLength(1)
     expect(sInRows[0]!.plaintext).toBe('摄影师朋友,幸会')
-    expect(notifyS).toHaveBeenCalledWith(sEchoId, '摄影师朋友,幸会', expect.any(String))
+    expect(notifyS).toHaveBeenCalledWith(expect.objectContaining({ channelRowId: sEchoId, plaintext: '摄影师朋友,幸会', env: { kind: 'letter', payload: { text: '摄影师朋友,幸会' } } }))
 
     const wLetterCountAfter = wDb.query<{ c: number }, []>('SELECT COUNT(*) as c FROM penpal_letter').get()!
     expect(wLetterCountAfter.c).toBe(0)   // still zero after both directions
