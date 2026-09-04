@@ -125,7 +125,7 @@ cancelled     closed
 | `wish.ts` 纯函数 | draft/open/closed/expired 迁移;3 条上限;过期判定;去重键;replies 计数 |
 | `wishes.json` 存取 | 空 / 坏文件 → 空;读写往返;`readJsonFile` |
 | 两个 daemon 同进程(照 `wire-visit.test.ts` 的 `side()` 夹具) | A 派 → B 假判官「能」→ postcard 回 A → A journal 多一条 kind=postcard、A 主人一句话、B 主人一句话;B 假判官「不能」→ A 无变化、B 主人一句话;过期 wish 被 B 丢;同 wish 重投被 B 去重;A 收到不认识的 wishId 丢 |
-| 配对握手 | 双方 card 带 channel 字段;完成后双方各一条 open 信道,`peer_agent_id` 互指,`peer_mailbox` 正确;重复配对不建第二条;v1 旧 card 被拒 |
+| 配对握手 | 双方 card 带 channel 字段;完成后双方各一条 open 信道,`peer_agent_id` 互指,`peer_mailbox` 正确;重复配对仍建对称的 pair: 行(两侧行 id 一致),`primaryChannels` 取最新 open;v1 旧 card 被拒 |
 | 迁移(v43) | 四张表消失;`user_version` 计数正确(memory: migration-position-contract);已有 penpal_* 数据不动;`migration-order.test.ts` 的位置锁与 `state-migration.test.ts` 期望同步 |
 | 路由 | 四条路由形状 + tier trusted;未接线 503 |
 | 桌面 | 心愿区渲染 / 派 / 取消;a2a-agents 删块后现有测试收敛 |
