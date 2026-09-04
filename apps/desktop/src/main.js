@@ -1353,14 +1353,19 @@ async function boot() {
   // is deferred until the user actually switches to that pane).
   initA2AAgentsTab().catch(err => console.error("a2a-agents init failed", err))
   // 浮窗点道具 → Rust show_main_window 发来的导航事件(spec 2026-09-03 §3.4)。
-  // 只认白名单里的 pane,事件 payload 不可信。
+  // 只认白名单里的 pane,事件 payload / 命令返回值一律不可信。
+  /** @param {unknown} page */
+  const navigateTo = (page) => { if (page === "a2a-agents") switchPane(page) }
   const tauriEvent = /** @type {any} */ (window).__TAURI__?.event
   if (tauriEvent?.listen) {
     tauriEvent.listen("wechat-cc:navigate", (/** @type {{ payload?: { page?: string } }} */ ev) => {
-      const page = ev?.payload?.page
-      if (page === "a2a-agents") switchPane(page)
+      navigateTo(ev?.payload?.page)
     }).catch((/** @type {unknown} */ err) => console.warn("navigate listener failed", err))
   }
+  // 主窗口被关掉之后点包袱:Rust 那边是**重建**了窗口,事件早在本监听器存在
+  // 之前就发过了(发出去也没人接)。目的地存在 Rust 侧,这里主动来取一次。
+  // 浏览器 / mock shim 没有这个命令,拒绝就当没有待办。
+  invoke("take_pending_navigate", {}).then(navigateTo).catch(() => {})
   initPluginsTab({ invoke }).catch(err => console.error("plugins init failed", err))
   initLicense().catch(err => console.error("license init failed", err))
   let report = await doctorPoller.refresh()

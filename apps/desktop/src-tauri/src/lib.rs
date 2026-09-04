@@ -11,7 +11,8 @@ pub mod daemon_mode;
 
 use serde_json::Value;
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder};
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
@@ -135,22 +136,61 @@ async fn open_companion_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// 关掉主窗口 = 销毁它(全程没有 hide-on-close),而常驻置顶的浮窗还吊着进程 ——
+// 「关了主窗口只留桌宠」正是这个功能的主场景。这时点包袱得先把窗口重建回来,
+// 再导航;但新窗口的前端还没 listen,事件发出去就丢了,所以目的地先存这儿,
+// 由前端 boot 完成后调 take_pending_navigate 主动来取。
+struct PendingNavigate(Mutex<Option<String>>);
+
 // 浮窗点脚边的道具 → 主窗口露面并切到觅食台(spec 2026-09-03-companion-presence §3.4)。
 // 页面名只是转发,白名单在 JS 侧;这里不解释它。async 与 open_companion_window
-// 同理(Windows 上窗口操作别占主线程)。
+// 同理(Windows 上窗口操作别占主线程 —— 重建窗口时这条更要紧)。
 #[tauri::command]
-async fn show_main_window(app: AppHandle, page: Option<String>) -> Result<(), String> {
-    let main = app
-        .get_webview_window("main")
-        .ok_or_else(|| "main window is not open".to_string())?;
-    main.show().map_err(|err| format!("show main window: {err}"))?;
-    main.unminimize().map_err(|err| format!("unminimize main window: {err}"))?;
-    main.set_focus().map_err(|err| format!("focus main window: {err}"))?;
-    if let Some(page) = page {
-        main.emit("wechat-cc:navigate", serde_json::json!({ "page": page }))
-            .map_err(|err| format!("emit navigate: {err}"))?;
+async fn show_main_window(
+    app: AppHandle,
+    page: Option<String>,
+    pending: State<'_, PendingNavigate>,
+) -> Result<(), String> {
+    if let Some(main) = app.get_webview_window("main") {
+        main.show().map_err(|err| format!("show main window: {err}"))?;
+        main.unminimize().map_err(|err| format!("unminimize main window: {err}"))?;
+        main.set_focus().map_err(|err| format!("focus main window: {err}"))?;
+        if let Some(page) = page {
+            // 定向发给 main,不广播:浮窗自己也监听不到才对。
+            app.emit_to("main", "wechat-cc:navigate", serde_json::json!({ "page": page }))
+                .map_err(|err| format!("emit navigate: {err}"))?;
+        }
+        return Ok(());
     }
+
+    if let Some(page) = page {
+        let mut slot = pending
+            .0
+            .lock()
+            .map_err(|err| format!("pending navigate lock: {err}"))?;
+        *slot = Some(page);
+    }
+    // 照 tauri.conf.json 里 main 的原始配置重建(尺寸、标题、装饰一律不另写一份)。
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == "main")
+        .cloned()
+        .ok_or_else(|| "no main window in tauri.conf.json".to_string())?;
+    WebviewWindowBuilder::from_config(&app, &config)
+        .map_err(|err| format!("main window config: {err}"))?
+        .build()
+        .map_err(|err| format!("create main window: {err}"))?;
     Ok(())
+}
+
+// 前端 boot 完成后来取「重建主窗口之前记下的目的地」,取走即清空。
+// 没有待办时返回 null —— 正常启动就是这条路。
+#[tauri::command]
+fn take_pending_navigate(pending: State<'_, PendingNavigate>) -> Option<String> {
+    pending.0.lock().ok().and_then(|mut slot| slot.take())
 }
 
 // Keep companion controls on the Rust side. Dynamic windows have a more
@@ -921,6 +961,7 @@ fn open_url(url: String) -> Result<(), String> {
 
 pub fn run() {
     tauri::Builder::default()
+        .manage(PendingNavigate(Mutex::new(None)))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -936,6 +977,7 @@ pub fn run() {
             start_companion_drag,
             resize_companion_window,
             show_main_window,
+            take_pending_navigate,
             wechat_daemon_pid,
             notify_user,
             wechat_health_ping,
