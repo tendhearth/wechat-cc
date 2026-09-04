@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Database } from 'bun:sqlite'
 import { migrations, openTestDb, openDb, renameMigrated, runMigrations, withLockRetry } from './db'
+import type { Db } from './db'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -387,8 +388,12 @@ describe('migration v11 — participants column', () => {
 })
 
 describe('migration v24 — social_seek redacted columns', () => {
-  it('adds nullable redacted_topic / redacted_city columns to social_seek', () => {
-    const db = openTestDb()
+  it('adds nullable redacted_topic / redacted_city columns to social_seek (before v43 retirement)', () => {
+    // Build a db at exactly v23 (before v24, before v43 drops the tables)
+    const db = new Database(':memory:')
+    db.exec('PRAGMA foreign_keys = ON;')
+    for (let i = 0; i < 24; i++) migrations[i]!(db)
+    db.exec('PRAGMA user_version = 24;')
     const cols = db.query<{ name: string }, []>("PRAGMA table_info('social_seek')").all()
     const names = cols.map(c => c.name)
     expect(names).toContain('redacted_topic')
@@ -444,14 +449,20 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
     expect(() => runMigrations(db)).not.toThrow()
   })
 
-  it('restores every missing social/penpal table', () => {
+  it('restores every missing social/penpal table (though v43 later drops social ones)', () => {
     const db = branchBuildDb()
     runMigrations(db)
     const present = db
       .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'")
       .all()
       .map(r => r.name)
-    for (const t of SOCIAL_TABLES) expect(present).toContain(t)
+    // v19-v25 restore the social tables, but v43 drops them. So we check that
+    // penpal tables (which survive v43) are present, and social tables are gone.
+    expect(present).toContain('penpal_channel')
+    expect(present).toContain('penpal_letter')
+    for (const t of ['social_seek', 'social_echo', 'social_pledge', 'social_relay', 'social_seen_intent']) {
+      expect(present).not.toContain(t)
+    }
   })
 
   it('keeps the customer-review rows the branch build had already written', () => {
@@ -487,10 +498,12 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
     expect(() => runMigrations(db)).not.toThrow()
 
     const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
-    expect(v).toBeGreaterThanOrEqual(28)
-    // v22 ran for real rather than being skipped by a spurious repair.
-    const cols = db.query<{ name: string }, []>("PRAGMA table_info('social_relay')").all().map(c => c.name)
-    expect(cols).toContain('upstream_handle')
+    expect(v).toBe(migrations.length)
+    // v22 ran for real: penpal_channel and penpal_letter tables exist.
+    // (v43 later drops social_relay, so we can't check that anymore.)
+    const tables = db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'").all().map(t => t.name)
+    expect(tables).toContain('penpal_channel')
+    expect(tables).toContain('penpal_letter')
   })
 
   it('leaves an already-healthy fully-migrated database alone', () => {
@@ -564,5 +577,19 @@ describe('migration v42 — heals the Atelier-branch v35 tool_calls collision', 
     const version = db.query<{ user_version: number }, []>('PRAGMA user_version').get()?.user_version
     expect(version).toBe(migrations.length)
     db.close()
+  })
+})
+
+describe('旧社交表退役(spec 2026-09-04-wish-postcard §3)', () => {
+  const tables = (db: Db) => new Set(db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name))
+  it('全迁移库里没有四张社交表和 seen_intent;penpal/journal 还在', () => {
+    const db = openDb({ path: ':memory:' })
+    const t = tables(db)
+    for (const n of ['social_seek', 'social_echo', 'social_pledge', 'social_relay', 'social_seen_intent']) expect(t.has(n), n).toBe(false)
+    for (const n of ['penpal_channel', 'penpal_letter', 'journal', 'a2a_events']) expect(t.has(n), n).toBe(true)
+  })
+  it('迁移条数与 user_version 一致(位置契约)', () => {
+    const db = openDb({ path: ':memory:' })
+    expect((db.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(migrations.length)
   })
 })
