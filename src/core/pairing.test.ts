@@ -21,14 +21,18 @@ function makeFakeRelay() {
 }
 
 type FakeChan = { id: string; seekId: string; myPrivkey: string; myPubkey: string; myChannelId: string; degree: number; peerAgentId: string | null; status: 'pending' | 'open'; peer: unknown }
+function rowToChannelRow(r: FakeChan) {
+  return { id: r.id, seek_id: r.seekId, my_privkey: r.myPrivkey, my_pubkey: r.myPubkey, my_channel_id: r.myChannelId, peer_pubkey: null, peer_channel_id: null, peer_mailbox: null, degree: r.degree, relay_via: null, peer_agent_id: r.peerAgentId, status: r.status, created_at: '' }
+}
 function makeFakeChannelStore(): PairingDeps['channelStore'] & { rows: FakeChan[] } {
   const rows: FakeChan[] = []
   return {
     rows,
+    get: (id) => { const r = rows.find(x => x.id === id); return r ? rowToChannelRow(r) as never : null },
     create: (c) => { rows.push({ id: c.id, seekId: c.seekId, myPrivkey: c.myPrivkey, myPubkey: c.myPubkey, myChannelId: c.myChannelId, degree: c.degree, peerAgentId: c.peerAgentId ?? null, status: 'pending', peer: null }) },
     setPeerHandle: (id, h) => { const r = rows.find(x => x.id === id); if (r) r.peer = h },
     setStatus: (id, s) => { const r = rows.find(x => x.id === id); if (r) r.status = s },
-    list: () => rows.map(r => ({ id: r.id, seek_id: r.seekId, my_privkey: r.myPrivkey, my_pubkey: r.myPubkey, my_channel_id: r.myChannelId, peer_pubkey: null, peer_channel_id: null, peer_mailbox: null, degree: r.degree, relay_via: null, peer_agent_id: r.peerAgentId, status: r.status, created_at: '' })) as never,
+    list: () => rows.map(rowToChannelRow) as never,
   }
 }
 
@@ -446,5 +450,42 @@ describe('配对即开信道(spec 2026-09-04-wish-postcard §2)', () => {
     const r = await B.accept(code)
     expect(r.ok).toBe(false)
     expect(chanB.rows).toHaveLength(0)
+  })
+
+  it('信道开通(create/setPeerHandle/setStatus)半途抛错不拖累配对结果 —— 只记日志', async () => {
+    const relay = makeFakeRelay()
+    const chanB = makeFakeChannelStore()
+    const originalSetStatus = chanB.setStatus
+    let thrown = false
+    // 模拟 create 成功、setPeerHandle 成功之后,setStatus 那一步抛了一次 ——
+    // 三步不是原子的,行会停在 pending。之后正常工作(不是永久坏掉)。
+    chanB.setStatus = (id, s) => {
+      if (!thrown) { thrown = true; throw new Error('boom') }
+      originalSetStatus(id, s)
+    }
+    const logs: string[] = []
+    const A = makePairing(baseDeps({ client: relay.client, selfId: () => 'cc-aaaa0001', name: () => 'A', self: { mailbox_addr: 'MA', mailbox_enc_pub: 'EA', relays: ['https://r/mailbox'] }, genNonce: () => 'n0nce' }))
+    const B = makePairing(baseDeps({ client: relay.client, selfId: () => 'cc-bbbb0002', name: () => 'B', channelStore: chanB, log: (m) => logs.push(m) }))
+    const { code } = await mustStart(A)
+    const r = await B.accept(code)
+    // 注册表已经写好了 —— accept() 仍然报配对成功,信道开失败只是记日志。
+    expect(r.ok).toBe(true)
+    expect(logs.some(m => m.includes('channel open failed'))).toBe(true)
+    // 行留在 pending(setStatus 那一步没跑完),但没有崩、没有 unhandled rejection。
+    expect(chanB.rows).toHaveLength(1)
+    expect(chanB.rows[0]!.status).toBe('pending')
+  })
+
+  it('信道行已存在(比如上次 create 成功但后面失败留下的 pending 行)→ 幂等补完,不建第二条', async () => {
+    const { A, B, sA, chanB } = pairBoth()
+    // 预先塞一条同 id 的 pending 行(peer 句柄还没写),模拟上一次 openPairChannel
+    // 半途失败后的状态。
+    chanB.rows.push({ id: 'pair:n0nce', seekId: 'pair:n0nce', myPrivkey: 'PRIV1', myPubkey: 'PUB1', myChannelId: 'chan-1', degree: 1, peerAgentId: 'cc-aaaa0001', status: 'pending', peer: null })
+    const { code } = await mustStart(A)
+    expect((await B.accept(code)).ok).toBe(true)
+    sA.tick(); await new Promise(r => setTimeout(r, 0))
+    expect(chanB.rows).toHaveLength(1) // 没有 create 第二条(会撞主键)
+    expect(chanB.rows[0]).toMatchObject({ id: 'pair:n0nce', status: 'open', peerAgentId: 'cc-aaaa0001' })
+    expect(chanB.rows[0]!.peer).toMatchObject({ mailbox: { addr: 'MA', enc_pub: 'EA' } })
   })
 })

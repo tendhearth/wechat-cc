@@ -50,11 +50,13 @@ function memRegistry() {
 // these tests assert on the a2a registry, not the penpal channel.
 function makeFakeChannelStore(): PairingDeps['channelStore'] {
   const rows: Array<{ id: string; peer_agent_id: string | null; status: 'pending' | 'open' }> = []
+  const toRow = (r: { id: string; peer_agent_id: string | null; status: 'pending' | 'open' }) => ({ ...r, seek_id: r.id, my_privkey: '', my_pubkey: '', my_channel_id: '', peer_pubkey: null, peer_channel_id: null, peer_mailbox: null, degree: 1, relay_via: null, created_at: '' })
   return {
+    get: (id) => { const r = rows.find(x => x.id === id); return r ? toRow(r) as never : null },
     create: (c) => { rows.push({ id: c.id, peer_agent_id: c.peerAgentId ?? null, status: 'pending' }) },
     setPeerHandle: () => {},
     setStatus: (id, s) => { const r = rows.find(x => x.id === id); if (r) r.status = s },
-    list: () => rows.map(r => ({ ...r, seek_id: r.id, my_privkey: '', my_pubkey: '', my_channel_id: '', peer_pubkey: null, peer_channel_id: null, peer_mailbox: null, degree: 1, relay_via: null, created_at: '' })) as never,
+    list: () => rows.map(toRow) as never,
   }
 }
 function makeGenChannel(): PairingDeps['genChannel'] {

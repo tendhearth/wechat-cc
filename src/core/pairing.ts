@@ -75,7 +75,7 @@ export interface PairingDeps {
   ttlMs?: number
   log?: (msg: string) => void
   /** 配对即开信道(spec 2026-09-04-wish-postcard §2)。 */
-  channelStore: Pick<import('./penpal-channel-store').ChannelStore, 'create' | 'setPeerHandle' | 'setStatus' | 'list'>
+  channelStore: Pick<import('./penpal-channel-store').ChannelStore, 'create' | 'setPeerHandle' | 'setStatus' | 'list' | 'get'>
   /** 生成我方信道句柄:X25519 密钥对 + 收信地址。 */
   genChannel: () => { channelId: string; pubkey: string; privkey: string }
 }
@@ -200,12 +200,20 @@ export function makePairing(deps: PairingDeps): PairingEngine {
    * 一侧本地就知道(`cur.nonce`);acceptor 一侧读的是它验过的 initiator 名片
    * 的 nonce(`initiator.nonce`,两者恰好是同一个字符串)。用 acceptor 自己那
    * 张名片的 nonce 会让两边各建一个不同 id 的行 —— 这条信道的意义就没了。
+   *
+   * 幂等,仿 wire-social.ts 的 `channel.openLocal`:`rowId` 已存在(比如上次
+   * `create` 成功但后面的调用抛了,行还停在 `pending`)就直接补 setPeerHandle
+   * + setStatus,不重新 create(会撞主键)。`create → setPeerHandle →
+   * setStatus` 这三步本身不是原子的 —— 调用方(start()/accept())要用
+   * try/catch 包一层,防中间失败半途而废。
    */
   function openPairChannel(card: PairCard, mine: { channelId: string; pubkey: string; privkey: string }, nonce: string): void {
     const exists = deps.channelStore.list().some(r => r.status === 'open' && r.peer_agent_id === card.self_id)
     if (exists) return
     const rowId = `pair:${nonce}`
-    deps.channelStore.create({ id: rowId, seekId: rowId, myPrivkey: mine.privkey, myPubkey: mine.pubkey, myChannelId: mine.channelId, degree: 1, peerAgentId: card.self_id })
+    if (!deps.channelStore.get(rowId)) {
+      deps.channelStore.create({ id: rowId, seekId: rowId, myPrivkey: mine.privkey, myPubkey: mine.pubkey, myChannelId: mine.channelId, degree: 1, peerAgentId: card.self_id })
+    }
     deps.channelStore.setPeerHandle(rowId, { pubkey: card.channel_pub, channel_id: card.channel_id, mailbox: { addr: card.mailbox_addr, enc_pub: card.mailbox_enc_pub, relays: card.relays } })
     deps.channelStore.setStatus(rowId, 'open')
   }
@@ -321,7 +329,14 @@ export function makePairing(deps: PairingDeps): PairingEngine {
         const peer = cards.find(c => c.role === 'acceptor' && c.nonce !== cur.nonce && c.self_id !== deps.selfId())
         if (peer) {
           const write = writePeerFromCard(peer, cur.myKey)
-          if (write.ok) openPairChannel(peer, mine, cur.nonce)
+          if (write.ok) {
+            // 注册表已经写好了 —— 信道开不开不该拖累"配对成功"这个事实。失败
+            // 就记日志,停轮询、照常报"连上了"(不要在同一个失败上重试到 TTL,
+            // 那样注册表明明写好了却告诉用户"过期了")。
+            try { openPairChannel(peer, mine, cur.nonce) } catch (e) {
+              deps.log?.(`pair: registry written but channel open failed for ${peer.self_id}: ${String(e)}`)
+            }
+          }
           stop()
           deps.notify(write.ok ? `和 ${peer.name} 的 bot 连上了 ✓ 现在可以互相觅食/写信了` : ID_CONFLICT_MSG)
           return
@@ -378,7 +393,12 @@ export function makePairing(deps: PairingDeps): PairingEngine {
     const write = writePeerFromCard(initiator, myKey)
     // defensive: re-checked at write time too. Sync failure — caller renders its own reply.
     if (!write.ok) return { ok: false, reason: 'id_conflict' }
-    openPairChannel(initiator, mine, initiator.nonce)
+    // 注册表已经写好了 —— 配对本身算成功,信道开不开是另一回事(可以靠重新
+    // 配对补救)。失败只记日志,绝不让这里的抛出变成未捕获的 rejection、把
+    // 已经成立的配对结果吞掉。
+    try { openPairChannel(initiator, mine, initiator.nonce) } catch (e) {
+      deps.log?.(`pair: registry written but channel open failed for ${initiator.self_id}: ${String(e)}`)
+    }
 
     return { ok: true, peer: { self_id: initiator.self_id, name: initiator.name } }
   }
