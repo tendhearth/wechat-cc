@@ -31,6 +31,8 @@
     "test": "bun --bun vitest run",
     "test:e2e": "bun --bun vitest run -c vitest.e2e.config.ts",
     "eval:companion": "bun eval/companion/run.ts",
+    "spike:atelier-renderer": "bun scripts/atelier-renderer-spike.ts",
+    "smoke:atelier-sidecar": "bun scripts/atelier-sidecar-smoke.ts",
     "typecheck": "tsc --noEmit",
     "depcheck": "depcruise --config .dependency-cruiser.cjs src cli.ts setup.ts docs.ts log-viewer.ts"
   },

@@ -1029,6 +1029,43 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS hunt_catch_ts ON journal(ts DESC);
     `)
   },
+  // v41 — reminders 表少列的自愈。v29 用 `CREATE TABLE IF NOT EXISTS reminders`
+  // 建表,但六月的 feat/reminders(当时编号 v15)先建过一版**没有**
+  // last_attempt_at 的 reminders 表。跑过那条老分支的库里表已存在,v29 的
+  // IF NOT EXISTS 直接跳过,列就永远补不上 —— sweeper 每次 SELECT/UPDATE
+  // last_attempt_at 都抛 "no such column: last_attempt_at",reminders 子系统
+  // 每次启动都 degraded。和 v32/v33/v34 同一个形状:表在、列缺。
+  // 区别是这几列在**全新装**的库里(v29 建的)本就存在,ALTER ADD 已存在的列会
+  // 报 duplicate,所以不能像 v32 那样无脑 ALTER —— 先用 table_info 探缺哪列、
+  // 只补缺的。Nullable-TEXT / 带 DEFAULT 的 INTEGER ADD COLUMN 在 STRICT 表安全。
+  (db) => {
+    const found = db
+      .query<{ cnt: number }, []>("SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type='table' AND name='reminders'")
+      .get()
+    if (!found || found.cnt === 0) return
+    const cols = new Set(
+      db.query<{ name: string }, []>('PRAGMA table_info(reminders)').all().map((r) => r.name),
+    )
+    if (!cols.has('attempts')) db.exec('ALTER TABLE reminders ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;')
+    if (!cols.has('last_error')) db.exec('ALTER TABLE reminders ADD COLUMN last_error TEXT;')
+    if (!cols.has('last_attempt_at')) db.exec('ALTER TABLE reminders ADD COLUMN last_attempt_at TEXT;')
+  },
+  // v42 — turn_records.tool_calls 的分支编号碰撞自愈。
+  //
+  // 2026-09-03 的 Atelier 工作树曾把 reminders 自愈作为自己的 v35 跑在本机；
+  // 随后 origin/dev 的正式 v35 用来新增 tool_calls。PRAGMA user_version 只记
+  // 数量，所以那台机器升级时会跳过正式 v35，却继续跑 v36+，最终在启动
+  // turn-record store 时因缺列崩溃。不能改写已发布 v35；在数组尾部再做一次
+  // 列存在守卫，既修复受影响数据库，也对正常数据库保持无操作。
+  (db) => {
+    const found = db
+      .query<{ cnt: number }, []>("SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type='table' AND name='turn_records'")
+      .get()
+    if (!found || found.cnt === 0) return
+    const cols = db.query<{ name: string }, []>("PRAGMA table_info('turn_records')").all()
+    if (cols.some(c => c.name === 'tool_calls')) return
+    db.exec('ALTER TABLE turn_records ADD COLUMN tool_calls TEXT;')
+  },
 ]
 
 export interface OpenDbOpts {

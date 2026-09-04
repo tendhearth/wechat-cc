@@ -46,6 +46,7 @@ import { wireSettingsDrawer, openSettingsDrawer } from "./modules/settings-drawe
 import { mountHugeicons } from "./modules/icons.js"
 import { pingHealth } from "./health-probe.js"
 import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
+import { loadAtelierGallery } from "./modules/atelier-gallery.js"
 
 const state = {
   setup: /** @type {SetupQrJson | null} */ (null),
@@ -348,6 +349,7 @@ function renderDashboardIfActive(report) {
   if (state.mode !== "dashboard") return
   const displayReport = dashboardDisplayReport(report)
   renderDashboard(displayReport)
+  loadAtelierGallery({ invokeApi }).catch(() => {})
 }
 
 /** @param {any} report */

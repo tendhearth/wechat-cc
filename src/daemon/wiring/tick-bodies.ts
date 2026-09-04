@@ -114,6 +114,12 @@ export interface TickDeps {
    */
   hearthConnect?: typeof connectHearth
   hearthBuildPlan?: typeof buildHearthPlan
+  /**
+   * Optional CC Atelier mount. Kept absent by default until a hosted brush is
+   * provisioned; when present it runs after the normal introspection work and
+   * must remain throw-safe so art can never starve memory maintenance.
+   */
+  runAtelierTick?: (opts?: { nowIso?: string }) => Promise<void>
 }
 
 /**
@@ -838,6 +844,17 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       }
     } catch (err) {
       deps.log('GARDEN', `tick failed: ${err instanceof Error ? err.message : err}`)
+    }
+
+    // CC Atelier is an optional, default-off extension point. The callback is
+    // deliberately after introspection/gardening and isolated: no renderer or
+    // planner failure may break the existing 24h maintenance tick.
+    if (deps.runAtelierTick) {
+      try {
+        await deps.runAtelierTick({ nowIso })
+      } catch (err) {
+        deps.log('ATELIER', `tick failed: ${errMsg(err)}`)
+      }
     }
   }
 

@@ -1157,6 +1157,36 @@ describe('buildTickBodies / introspectTick — provider-agnostic cheap eval (PR 
   })
 })
 
+describe('buildTickBodies / introspectTick — optional Atelier mount', () => {
+  it('runs an injected Atelier callback after the existing introspect work', async () => {
+    const s = setupDeps({ defaultChatId: 'atelier-chat', inFlight: false })
+    const order: string[] = []
+    const sdkEval = vi.fn(async () => {
+      order.push('introspect')
+      return JSON.stringify({ write: false })
+    })
+    s.deps.boot = {
+      ...s.deps.boot,
+      registry: { getCheapEval: () => sdkEval } as never,
+    } as never
+    s.deps.runAtelierTick = vi.fn(async () => { order.push('atelier') })
+    const { introspectTick } = buildTickBodies(s.deps)
+    await introspectTick({ nowIso: '2026-09-01T12:00:00.000Z' })
+    expect(s.deps.runAtelierTick).toHaveBeenCalledWith({ nowIso: '2026-09-01T12:00:00.000Z' })
+    expect(order.at(-1)).toBe('atelier')
+  })
+
+  it('contains an Atelier failure and keeps the tick resolved', async () => {
+    const s = setupDeps({ defaultChatId: 'atelier-chat', inFlight: false })
+    const sdkEval = vi.fn(async () => JSON.stringify({ write: false }))
+    s.deps.boot = { ...s.deps.boot, registry: { getCheapEval: () => sdkEval } as never } as never
+    s.deps.runAtelierTick = async () => { throw new Error('no hosted brush') }
+    const { introspectTick } = buildTickBodies(s.deps)
+    await expect(introspectTick({ nowIso: '2026-09-01T12:00:00.000Z' })).resolves.toBeUndefined()
+    expect(s.logs.some(line => line.includes('ATELIER|tick failed: no hosted brush'))).toBe(true)
+  })
+})
+
 describe('buildTickBodies / introspectTick — memory gardener mount', () => {
   let cleanup: string[]
   beforeEach(() => { cleanup = [] })

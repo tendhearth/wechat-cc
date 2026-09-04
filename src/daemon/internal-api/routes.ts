@@ -9,7 +9,7 @@
  * so blame survives the split.
  */
 import { basename, join } from 'node:path'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
 import { splitReply, paceMs } from '../reply-split'
@@ -18,6 +18,8 @@ import { normalizeUserName } from '../../lib/user-name'
 import type { Mode } from '../../core/conversation'
 import type { UserTier } from '../../core/user-tier'
 import { makeEventsStore } from '../events/store'
+import { readModelStatus } from '../atelier-provision'
+import { loadCompanionConfig } from '../companion/config'
 import { a2aRoutes } from './routes-a2a'
 import { probeFsAccess, describeFsAccess } from '../health/fs-access'
 import { journalRoutes } from './routes-journal'
@@ -50,6 +52,7 @@ import type {
   WechatEditMessageRequestT, WechatBroadcastRequestT,
   DelegateRequestT,
   ConversationSetModeRequestT,
+  AtelierShareRequestT,
 } from './schema'
 
 export interface MakeRoutesContext {
@@ -116,6 +119,82 @@ const onlineStickerCursor = new Map<string, number>()
         })(),
       },
     }),
+
+    'GET /v1/atelier/works': async (q) => {
+      if (!deps.atelier) return { status: 503, body: { error: 'atelier_not_wired' } }
+      const limitRaw = Number(q.get('limit') ?? 12)
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(24, Math.floor(limitRaw))) : 12
+      const works = deps.atelier.list(limit).map((work) => {
+        const imagePath = deps.atelier!.imagePath(work)
+        let imageData: string | undefined
+        try {
+          if (imagePath) {
+            const bytes = readFileSync(imagePath)
+            if (bytes.byteLength <= 2 * 1024 * 1024) imageData = `data:image/png;base64,${bytes.toString('base64')}`
+          }
+        } catch { /* corrupt/missing image stays metadata-only */ }
+        const { privateCauseSummary: _privateCause, ...publicWork } = work
+        return { ...publicWork, ...(imageData ? { image_data: imageData } : {}) }
+      })
+      return { status: 200, body: { works } }
+    },
+
+    // First-enable paint-set download progress (checking/downloading/ready/
+    // failed). null means the atelier has never been turned on yet.
+    'GET /v1/atelier/model-status': () => {
+      return { status: 200, body: { status: readModelStatus(deps.stateDir) } }
+    },
+
+    // Explicit owner-initiated share from the desktop atelier. The target is
+    // always the configured owner chat; callers cannot supply another chat id.
+    // Edited background copy is send-only and never overwrites CC's original
+    // local artist note. `background:null` sends the image by itself.
+    'POST /v1/atelier/share': async (_q, body) => {
+      if (!deps.atelier) return { status: 503, body: { ok: false, error: 'atelier_not_wired' } }
+      if (!deps.ilink) return { status: 503, body: { ok: false, error: 'ilink_not_wired' } }
+      const { id, background } = body as AtelierShareRequestT
+      const work = deps.atelier.load(id)
+      const imagePath = work ? deps.atelier.imagePath(work) : null
+      if (!work || !imagePath) return { status: 200, body: { ok: false, error: 'artwork_not_found' } }
+      if (work.shareState === 'shared') return { status: 200, body: { ok: false, error: 'already_shared' } }
+      if (work.shareState === 'pending') return { status: 200, body: { ok: false, error: 'share_in_progress' } }
+      const ownerChatId = loadCompanionConfig(deps.stateDir).default_chat_id
+      if (!ownerChatId) return { status: 200, body: { ok: false, error: 'owner_chat_not_configured' } }
+      const claimed = deps.atelier.transitionShare(id, 'private', 'pending')
+      if (!claimed) return { status: 200, body: { ok: false, error: 'share_in_progress' } }
+      try {
+        await deps.ilink.sendFile(ownerChatId, imagePath)
+      } catch (err) {
+        try { deps.atelier.transitionShare(id, 'pending', 'private') } catch { /* next load exposes pending for diagnosis */ }
+        return { status: 200, body: { ok: false, error: errMsg(err) } }
+      }
+
+      const sharedAt = new Date().toISOString()
+      let warning: string | undefined
+      try {
+        if (!deps.atelier.transitionShare(id, 'pending', 'shared', sharedAt)) warning = 'share_state_update_failed'
+      } catch {
+        warning = 'share_state_update_failed'
+      }
+      let backgroundSent = false
+      if (background) {
+        const note = `《${background.title}》\n\n${background.origin}\n\n${background.approach}`
+        try {
+          const sent = await deps.ilink.sendReply(ownerChatId, note)
+          if (sent.error) warning = warning ?? 'background_send_failed'
+          else backgroundSent = true
+        } catch {
+          warning = warning ?? 'background_send_failed'
+        }
+      }
+      return {
+        status: 200,
+        body: {
+          ok: true, shared_at: sharedAt, background_sent: backgroundSent,
+          ...(warning ? { warning } : {}),
+        },
+      }
+    },
 
     // ── memory (RFC 03 P1.B B2) ─────────────────────────────────────────
     'POST /v1/memory/read': (_q, body, caller) => {

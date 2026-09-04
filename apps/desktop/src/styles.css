@@ -3056,12 +3056,22 @@ input { font: inherit; color: inherit; }
 }
 .dash-health-banner[hidden] { display: none; }
 
+.moment-side {
+  min-width: 0;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
 .moment-users {
   min-width: 0;
   width: 100%;
   max-width: 360px;
   justify-self: end;
 }
+.atelier-gallery-panel { align-self: stretch; margin-top: 42px; }
 .companion-users-scrim {
   display: none;
 }
@@ -3432,6 +3442,8 @@ input { font: inherit; color: inherit; }
     grid-template-columns: 1fr;
     align-items: start;
   }
+  .moment-side { grid-column: 1; grid-row: auto; }
+  .atelier-gallery-panel, .moment-users { justify-self: stretch; max-width: none; }
   .ai-orbit-visual {
     width: min(430px, 74vw);
   }
@@ -6491,7 +6503,6 @@ input { font: inherit; color: inherit; }
 }
 #app-update-banner .au-primary { background: #8a5a36; border-color: #8a5a36; color: #fffdf8; }
 #app-update-banner .au-btn:disabled { opacity: .5; cursor: default; }
-
 /* ── 🎒 打猎背包(觅食台区块,2026-09-03)─────────────────────────────
    复用觅食台的 --fd-* 调色板,不新增全局 token。卡片密度刻意比明信片高:
    背包是**清单**,一屏能扫过多少条比每条多好看重要。
@@ -6567,3 +6578,56 @@ input { font: inherit; color: inherit; }
   background:var(--warn-bg, #fff4e0); border:1px solid var(--warn-line, #f0c987); color:var(--text, #3B3125); font-size:13px; line-height:1.5; }
 .dash-fs-access > span { flex:1; }
 .dash-fs-access .btn { white-space:nowrap; }
+.atelier-gallery-panel { margin: 18px 0; padding: 18px; border: 1px solid rgba(122, 91, 65, .14); border-radius: 18px; background: rgba(255, 252, 246, .72); }
+.atelier-gallery-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 0; }
+.atelier-gallery-heading > div { min-width: 0; }
+.atelier-gallery-heading > div > span { display: block; margin-top: 4px; }
+.atelier-gallery-heading h2 { margin: 0; font-size: 18px; color: #6f4e31; }
+.atelier-gallery-heading span, .atelier-empty { color: rgba(111, 78, 49, .62); font-size: 12px; }
+.atelier-model-status { margin: 0 0 14px; padding: 9px 14px; border-radius: 999px; background: rgba(122, 91, 65, .1); color: #6f4e31; font-size: 12.5px; }
+.atelier-model-status.is-ready { background: rgba(96, 138, 88, .16); color: #3f6a3a; }
+.atelier-model-status.is-failed { background: rgba(176, 92, 74, .14); color: #a24a37; }
+.atelier-gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: 10px; }
+.atelier-work { margin: 0; overflow: hidden; border-radius: 12px; background: rgba(255, 255, 255, .8); box-shadow: 0 2px 8px rgba(90, 62, 38, .08); }
+.atelier-work > summary { display: block; cursor: pointer; list-style: none; }
+.atelier-work > summary::-webkit-details-marker { display: none; }
+.atelier-work img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.atelier-work-meta { display: flex; flex-direction: column; gap: 3px; padding: 10px 11px; color: #6f4e31; }
+.atelier-work-meta strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.atelier-work-meta > span { color: rgba(111, 78, 49, .58); font-size: 11px; }
+.atelier-story { padding: 0 12px 14px; border-top: 1px solid rgba(122, 91, 65, .1); color: #6f4e31; }
+.atelier-story h3 { margin: 12px 0 4px; font-size: 12px; }
+.atelier-story p { margin: 0; color: rgba(89, 63, 44, .72); font-size: 12px; line-height: 1.65; }
+.atelier-kind { display: inline-block; margin-top: 10px; color: rgba(111, 78, 49, .52); font-size: 10px; }
+.atelier-tech { margin-top: 10px; font-size: 11px; }
+.atelier-tech > summary { cursor: pointer; color: rgba(111, 78, 49, .58); }
+.atelier-tech p { margin-top: 5px; font-size: 10px; }
+.atelier-share-open { width: 100%; margin-top: 12px; padding: 7px 10px; border: 1px solid rgba(122, 91, 65, .22); border-radius: 9px; background: transparent; color: #6f4e31; font: inherit; font-size: 11.5px; cursor: pointer; }
+.atelier-share-open:hover:not(:disabled) { background: rgba(122, 91, 65, .07); }
+.atelier-share-open:disabled { border-color: transparent; color: rgba(89, 63, 44, .45); cursor: default; }
+.atelier-share-panel { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(122, 91, 65, .12); }
+.atelier-work:has(.atelier-share-panel:not([hidden])) { grid-column: span 2; }
+.atelier-share-panel[hidden] { display: none; }
+.atelier-share-head { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
+.atelier-share-head strong { color: #593f2c; font-size: 12.5px; }
+.atelier-share-head span { color: rgba(89, 63, 44, .58); font-size: 10.5px; line-height: 1.45; }
+.atelier-share-panel > label:not(.atelier-share-toggle) { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; color: rgba(89, 63, 44, .68); font-size: 10.5px; }
+.atelier-share-panel input[type="text"], .atelier-share-panel textarea { box-sizing: border-box; width: 100%; padding: 7px 8px; border: 1px solid rgba(122, 91, 65, .2); border-radius: 8px; outline: none; resize: vertical; background: rgba(255, 253, 248, .9); color: #593f2c; font: inherit; font-size: 11px; line-height: 1.5; }
+.atelier-share-panel input[type="text"]:focus, .atelier-share-panel textarea:focus { border-color: rgba(138, 90, 54, .6); box-shadow: 0 0 0 2px rgba(138, 90, 54, .08); }
+.atelier-share-panel input:disabled, .atelier-share-panel textarea:disabled { opacity: .42; }
+.atelier-share-toggle { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: #6f4e31; font-size: 11px; cursor: pointer; }
+.atelier-share-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 12px; }
+.atelier-share-actions button { padding: 6px 9px; border: 1px solid rgba(122, 91, 65, .22); border-radius: 8px; background: transparent; color: #6f4e31; font: inherit; font-size: 10.5px; cursor: pointer; }
+.atelier-share-actions button.is-primary { border-color: #8a5a36; background: #8a5a36; color: #fffdf8; }
+.atelier-share-actions button:disabled { opacity: .55; cursor: default; }
+.atelier-share-status { min-height: 1.45em; margin-top: 7px !important; color: rgba(89, 63, 44, .68) !important; font-size: 10.5px !important; }
+.atelier-share-panel.is-done .atelier-share-actions button:not(.is-primary), .atelier-share-panel.is-done > label { display: none; }
+.atelier-work time { color: rgba(111, 78, 49, .55); }
+.atelier-gallery-toggle { flex: 0 0 auto; padding: 7px 12px; border: 1px solid rgba(122, 91, 65, .25); border-radius: 999px; background: transparent; color: #6f4e31; font: inherit; font-size: 12px; cursor: pointer; }
+.atelier-gallery-toggle:hover { background: rgba(122, 91, 65, .08); }
+.atelier-gallery[hidden] { display: none; }
+.atelier-pane { padding: 44px clamp(30px, 4vw, 64px); overflow-y: auto; }
+.atelier-pane-head h1 { margin: 0; color: #593f2c; font-size: 30px; }
+.atelier-pane-head p { margin: 8px 0 26px; color: rgba(89, 63, 44, .62); }
+.atelier-gallery-page { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); max-width: 980px; }
+@media (max-width: 700px) { .atelier-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

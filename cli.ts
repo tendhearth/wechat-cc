@@ -1733,9 +1733,31 @@ const companionPushCmd = defineCommand({
   },
 })
 
+const companionIntrospectCmd = defineCommand({
+  meta: { name: 'introspect', description: 'Fire introspection + CC Atelier tick NOW (instead of waiting for the daily schedule)' },
+  args: { json: { type: 'boolean', description: 'JSON envelope' } },
+  async run({ args }) {
+    const { requestIntrospectTick } = await import('./src/cli/companion-introspect.ts')
+    const { existsSync, readFileSync } = await import('node:fs')
+    try {
+      const { pid } = requestIntrospectTick({
+        readPid: (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null),
+        kill: (pidNum, sig) => process.kill(pidNum, sig),
+      }, STATE_DIR)
+      if (args.json) { console.log(JSON.stringify({ ok: true, pid })); return }
+      console.log(`已通知本机 daemon (pid ${pid}) 立刻跑一次 introspect + Atelier tick。`)
+      console.log('查看结果：wechat-cc logs（或 tail channel.log 看 INTROSPECT / ATELIER）。')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (args.json) { console.log(JSON.stringify({ ok: false, error: msg })); return }
+      console.error(`companion introspect failed: ${msg}`); process.exit(1)
+    }
+  },
+})
+
 const companionCmd = defineCommand({
   meta: { name: 'companion', description: 'Companion (proactive contact) controls' },
-  subCommands: { push: companionPushCmd },
+  subCommands: { push: companionPushCmd, introspect: companionIntrospectCmd },
 })
 
 // ── connection probe — wechat-cc connection probe [--json] ─────────────────

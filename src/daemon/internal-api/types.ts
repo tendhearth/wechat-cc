@@ -83,6 +83,8 @@ export interface InternalApiIlinkDep {
 export interface InternalApiDeps {
   /** State directory; the token file is written under here. */
   stateDir: string
+  /** Local CC Atelier store; read-only artwork metadata/images for the desktop dashboard. */
+  atelier?: import('../atelier-store').AtelierStore
   /** Daemon process pid — exposed by /v1/health for smoke tests. */
   daemonPid: number
   /**

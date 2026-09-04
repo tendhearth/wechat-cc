@@ -25,6 +25,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { basename, join } from 'node:path'
 import { normalizeUserName } from '../lib/user-name'
 import { writeConfigKey, readConfigSurface } from './config-surface'
+import { kickAtelierModelProvision, readModelStatus, shouldProvisionOnConfigChange } from './atelier-provision'
 import { safeSvgFile, EXPIRED_HTML, SW_JS, M_BOOTSTRAP_HTML, pageHtml, phoneHtml } from './settings-panel-html'
 import { readJsonFile } from '../lib/read-json-file'
 
@@ -33,6 +34,7 @@ export const SETTINGS_LINK_TTL_MS = 10 * 60_000
 /** Config-surface keys the panel may show/write (surface whitelist ∩ panel). */
 export const PANEL_CONFIG_KEYS: readonly string[] = [
   'bot_name', 'model', 'knowledge_enabled', 'social_enabled', 'autoStart',
+  'companion.atelier_mode',
 ]
 
 const PREF_KEYS = new Set(['split', 'care', 'stickers', 'hunt'])
@@ -198,6 +200,9 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         remote: deps.remote
           ? { available: true, enabled: deps.remote.isEnabled(), devices: Object.keys(readDevices()).length }
           : { available: false, enabled: false, devices: 0 },
+        // Paint-set download progress so the phone can show "已开始 / 62%" right
+        // after the owner flips the switch; the download itself runs on the Mac.
+        atelier: { model_status: readModelStatus(deps.stateDir) },
       }
     },
 
@@ -253,6 +258,11 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           if (!PANEL_CONFIG_KEYS.includes(key)) return { ok: false, error: 'unknown_key' }
           const r = await writeConfigKey(deps.stateDir, key, b.value)
           if (!r.ok) return { ok: false, error: r.error }
+          // Turning the atelier on here (phone) kicks the same silent, deduped
+          // ~5GB paint-set download that /v1/config/set does. Never blocks.
+          if (shouldProvisionOnConfigChange(key, r.previous, b.value)) {
+            void kickAtelierModelProvision(deps.stateDir, { log: deps.log })
+          }
           deps.audit?.(`${key}: ${JSON.stringify(r.previous)} → ${JSON.stringify(b.value)} — 设置面板`)
           return { ok: true }
         }

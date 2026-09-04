@@ -184,13 +184,23 @@ jobs:
       - name: Compile sidecar (macOS)
         if: startsWith(matrix.os, 'macos')
         shell: bash
+        env:
+          SDCPP_REF: master-841-6b3edaa
         run: |
-          mkdir -p apps/desktop/src-tauri/binaries
-          OUT=apps/desktop/src-tauri/binaries/wechat-cc-cli-${{ matrix.rust_triple }}
-          bun build --compile --target=${{ matrix.bun_target }} cli.ts --outfile "$OUT"
-          xattr -cr "$OUT" || true
-          codesign --remove-signature "$OUT" || true
-          codesign --force --sign - --identifier=com.tendhearth.wechat-cc.cli "$OUT"
+          # Build the pinned static Metal renderer used by CC Atelier. Keeping
+          # this in the release job makes the native artifact reproducible and
+          # avoids shipping a dylib with an unresolved runtime search path.
+          git clone --depth 1 --branch "$SDCPP_REF" https://github.com/leejet/stable-diffusion.cpp.git /tmp/stable-diffusion.cpp
+          cmake -S /tmp/stable-diffusion.cpp -B /tmp/stable-diffusion.cpp/build \
+            -DSD_METAL=ON -DSD_BUILD_SHARED_LIBS=OFF -DSD_WEBP=OFF -DSD_WEBM=OFF \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64
+          cmake --build /tmp/stable-diffusion.cpp/build --config Release --target sd-cli -j 3
+          export WECHAT_CC_ATELIER_SD_CLI=/tmp/stable-diffusion.cpp/build/bin/sd-cli
+          echo "WECHAT_CC_ATELIER_SD_CLI=/tmp/stable-diffusion.cpp/build/bin/sd-cli" >> "$GITHUB_ENV"
+          # This helper compiles and ad-hoc signs the current CLI, then copies
+          # and signs the pinned renderer. It preserves the daemon-responsible
+          # main-binary hardening from the release branch.
+          (cd apps/desktop && bun run build-sidecar)
           ls -lh apps/desktop/src-tauri/binaries/
 
       - name: Compile sidecar (Windows)

@@ -79,6 +79,8 @@ export function pageHtml(token: string): string {
   <label class="row"><span><b>回复拆成小气泡</b><small>像真人一样分几条发</small></span><input type="checkbox" class="switch" id="f-split"></label>
   <label class="row"><span><b>表情包</b></span><input type="checkbox" class="switch" id="f-stickers"></label>
   <label class="row"><span><b>每日打猎</b><small>早上主动分享它发现的东西</small></span><input type="checkbox" class="switch" id="f-hunt"></label>
+  <label class="row"><span><b>让 CC 自己画画</b><small>CC 有感觉时用你的电脑画画,只存在本机。首次需下载约 5GB</small></span><input type="checkbox" class="switch" id="f-atelier"></label>
+  <div class="say" id="atelier-status" hidden></div>
   <div class="say">💬 也可以直接说:「别拆分回复了」「关心档位调低点」</div>
 </section>
 
@@ -131,6 +133,29 @@ function wireSwitch(id, kind, key) {
 function wireText(id, fn) {
   $(id).addEventListener("change", e => { const v = e.target.value.trim(); if (v) fn(v) })
 }
+// 画笔下载状态 → 人话(与 daemon 的 formatAtelierModelStatus 保持一致)。下载在
+// 电脑上跑,这里只是把电脑写下的进度显示出来。
+var atelierStatus = null, atelierPoll = null;
+function atelierLabel(st) {
+  if (!st) return { label: "", done: false, failed: false }
+  if (st.state === "checking") return { label: "正在检查画笔…", done: false, failed: false }
+  if (st.state === "downloading") { if (!(st.total > 0)) return { label: "正在下载画笔…", done: false, failed: false }; var pct = Math.min(100, Math.round(st.received / st.total * 100)); return { label: "正在下载画笔… " + pct + "%", done: false, failed: false } }
+  if (st.state === "ready") return { label: "画笔就绪 ✓", done: true, failed: false }
+  if (st.state === "failed") return { label: "准备失败,点此重试", done: false, failed: true }
+  return { label: "", done: false, failed: false }
+}
+function showAtelier(st) {
+  atelierStatus = st || null
+  var el = $("atelier-status"), r = atelierLabel(st)
+  if (!r.label) { el.hidden = true; return }
+  el.hidden = false; el.textContent = r.label; el.style.cursor = r.failed ? "pointer" : ""
+}
+async function pollAtelier() {
+  var s = await sapi("/set/api/state"); if (!s.ok) return
+  var st = s.atelier && s.atelier.model_status; showAtelier(st)
+  var r = atelierLabel(st); if ((r.done || r.failed) && atelierPoll) { clearInterval(atelierPoll); atelierPoll = null }
+}
+function startAtelierPoll() { if (atelierPoll) clearInterval(atelierPoll); atelierPoll = setInterval(pollAtelier, 2000) }
 async function load() {
   const s = await sapi("/set/api/state")
   if (!s.ok) { toast("读取失败"); return }
@@ -155,7 +180,23 @@ async function load() {
   }
   const care = s.prefs.care || "low"
   for (const b of $("f-care").querySelectorAll("button")) b.classList.toggle("on", b.dataset.v === care)
+  const am = s.config["companion.atelier_mode"]
+  $("f-atelier").checked = am === "private" || am === "share"
+  const ast = s.atelier && s.atelier.model_status; showAtelier(ast)
+  const ar = atelierLabel(ast); if ($("f-atelier").checked && !ar.done && !ar.failed) startAtelierPoll()
 }
+$("f-atelier").addEventListener("change", async e => {
+  const on = e.target.checked
+  const ok = await apply("set_config", { key: "companion.atelier_mode", value: on ? "private" : "off" }, on ? "开了,正在准备画笔… ✓" : "已关闭")
+  if (!ok) { e.target.checked = !on; return }
+  if (on) { showAtelier({ state: "checking" }); startAtelierPoll() }
+  else { if (atelierPoll) { clearInterval(atelierPoll); atelierPoll = null } showAtelier(null) }
+})
+$("atelier-status").addEventListener("click", async () => {
+  if (!atelierLabel(atelierStatus).failed) return
+  await apply("set_config", { key: "companion.atelier_mode", value: "off" })
+  if (await apply("set_config", { key: "companion.atelier_mode", value: "private" }, "重新开始准备画笔… ✓")) { showAtelier({ state: "checking" }); startAtelierPoll() }
+})
 $("f-care").addEventListener("click", async e => {
   const b = e.target.closest("button"); if (!b) return
   if (await apply("set_pref", { key: "care", value: b.dataset.v })) {

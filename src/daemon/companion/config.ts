@@ -56,6 +56,8 @@ export interface CompanionConfig {
    * Null → defaults to "hearth mcp serve" on PATH.
    */
   hearth_cmd: string | null
+  /** CC Atelier autonomous art mode. Default off; private keeps works local. */
+  atelier_mode: 'off' | 'private' | 'share'
 }
 
 export function defaultCompanionConfig(): CompanionConfig {
@@ -69,6 +71,7 @@ export function defaultCompanionConfig(): CompanionConfig {
     hearth_enabled: false,
     hearth_vault: null,
     hearth_cmd: null,
+    atelier_mode: 'off',
   }
 }
 
@@ -94,6 +97,7 @@ export function loadCompanionConfig(stateDir: string): CompanionConfig {
       hearth_enabled: typeof parsed.hearth_enabled === 'boolean' ? parsed.hearth_enabled : d.hearth_enabled,
       hearth_vault: typeof parsed.hearth_vault === 'string' ? parsed.hearth_vault : null,
       hearth_cmd: typeof parsed.hearth_cmd === 'string' ? parsed.hearth_cmd : null,
+      atelier_mode: parsed.atelier_mode === 'private' || parsed.atelier_mode === 'share' ? parsed.atelier_mode : d.atelier_mode,
     }
     // Legacy triggers/per_project_persona/triggers fields (if any) are
     // silently dropped on next save — migration path for v1.1 installs.

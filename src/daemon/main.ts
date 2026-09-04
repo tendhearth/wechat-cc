@@ -40,6 +40,7 @@ import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
+import { makeAtelierStore } from './atelier-store'
 import { companionOfferEligible } from './companion/offer-eligibility'
 import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
 import { startCustomerReviewRuntime } from './customer-review/runtime'
@@ -251,6 +252,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 1. internal-api FIRST — bootstrap needs its baseUrl/token for MCP wiring
     const internalApi = await registerInternalApi({
       stateDir, daemonPid: process.pid, memory: memoryFS, db, projects: ilink.projects,
+      atelier: makeAtelierStore(stateDir),
       getChatPrefs: (c) => chatPrefs.get(c),
       setChatPref: (c, p) => chatPrefs.set(c, p),
       stickers: stickerLib,
@@ -660,6 +662,12 @@ export async function main() {
   process.on('SIGUSR2', () => {
     log('SCHED', 'SIGUSR2 — manual push tick requested')
     handle.fireTick('push', new Date()).catch(err => log('SCHED', `SIGUSR2 push tick failed: ${err instanceof Error ? err.message : String(err)}`))
+  })
+  // SIGWINCH — fire the daily introspection + optional Atelier tick now. This
+  // is a local operator/testing control; the normal scheduler remains daily.
+  process.on('SIGWINCH', () => {
+    log('SCHED', 'SIGWINCH — manual introspect tick requested')
+    handle.fireTick('introspect', new Date()).catch(err => log('SCHED', `SIGWINCH introspect tick failed: ${err instanceof Error ? err.message : String(err)}`))
   })
 }
 

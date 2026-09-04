@@ -214,17 +214,30 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       options: {
         model,
         maxTurns: 1,
+        // Background evaluators must not inherit interactive Claude Code
+        // hooks, plugins, skills, MCP servers, or project instructions. Those
+        // can alter a strict JSON reply (and add a large cached-token bill).
+        settingSources: [],
+        tools: [],
+        persistSession: false,
         ...(opts.claudeBin ? { pathToClaudeCodeExecutable: opts.claudeBin } : {}),
       } as Options,
     })
     let text = ''
+    let resultText = ''
     for await (const raw of q as AsyncGenerator<SDKMessage>) {
       const msg = narrow(raw)
       if (msg?.type === 'assistant') {
         text += extractText(msg.message?.content)
+      } else if (msg?.type === 'result' && typeof msg.result === 'string') {
+        // Recent Claude CLI/SDK combinations can emit the final answer only
+        // on the result event for one-shot, maxTurns=1 calls. Prefer streamed
+        // assistant text when present, but retain this provider-level fallback
+        // so every CheapEval consumer receives the promised string.
+        resultText = msg.result
       }
     }
-    return text
+    return text.trim().length > 0 ? text : resultText
   }
   return {
     // One-shot haiku-class eval. Used by chatroom convergence check +
