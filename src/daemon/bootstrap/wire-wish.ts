@@ -23,8 +23,9 @@
 import {
   newWishId, draftWish, sendWish, cancelWish, acceptPostcard, resolveWishRef, recentWishes,
   effectiveStatus, wishEnvelope, parseWishPayload, postcardEnvelope, parsePostcardPayload, seenKey,
-  type WishRecord, type WishStatus,
+  WISH_TTL_MS, type WishRecord, type WishStatus,
 } from '../../core/wish'
+import { isCheckerFailure } from '../../core/a2a-disclosure'
 import { readWishes, writeWishes, markWishSeen } from '../companion/wish-memory'
 import type { Envelope } from '../../core/envelope'
 import type { ChannelStore } from '../../core/penpal-channel-store'
@@ -105,14 +106,30 @@ export function makeWish(deps: WishDeps): WishService {
       return
     }
     const gated = await deps.gate(blurb)
+    // 闸门自己没跑成(超时 / provider 挂了 / 回话读不懂)≠ 主人的话违规。
+    // 前者是「我想回但没回成」,后者才是「我决定不说」—— 主人听到的必须
+    // 是两句不同的话,不然一次模型故障会被记成一次「我说不知道」。
+    if (!gated.ok && isCheckerFailure(gated.violations)) {
+      log(`wish=${id} 回话时披露门不可用(${gated.violations.join(',')}) — 没回`)
+      deps.notifyOwner(`${asked},我想回但没寄出去(模型没响应)`)
+      return
+    }
     if (!gated.ok || gated.redacted.trim() === '') {
       log(`wish=${id} 回话没过披露门(${gated.violations.join(',') || 'empty_after_redaction'}) — 按不知道处理`)
       deps.notifyOwner(`${asked},我说不知道`)
       return
     }
     const reply = gated.redacted.trim()
-    const sent = await deps.sendEnvelope(channelRowId, postcardEnvelope(id, reply))
-    if (!sent.ok) { log(`wish=${id} 明信片没寄出去: ${sent.error ?? 'send_failed'}`); return }
+    // 寄不出去也要跟主人说 —— 他已经知道「有人来打听」了,再不说一句,这件事
+    // 在他那边就永远停在半空中(日志只有我看得见)。
+    let sent: { ok: boolean; error?: string }
+    try { sent = await deps.sendEnvelope(channelRowId, postcardEnvelope(id, reply)) }
+    catch (err) { sent = { ok: false, error: errText(err) } }
+    if (!sent.ok) {
+      log(`wish=${id} 明信片没寄出去: ${sent.error ?? 'send_failed'}`)
+      deps.notifyOwner(`${asked},我想回但没寄出去`)
+      return
+    }
     deps.notifyOwner(`${asked},我回了:${reply}`)
     log(`wish=${id} 回了一张明信片 → ${channelRowId}`)
   }
@@ -121,7 +138,14 @@ export function makeWish(deps: WishDeps): WishService {
   const handleWish = (channelRowId: string, env: Envelope): boolean => {
     const p = parseWishPayload(env)
     if (!p) { log(`收到一条读不懂的心愿 channel=${channelRowId} — 丢`); return true }
-    if (Date.parse(p.expiresAt) < now()) { log(`wish=${p.id} 已过期(${p.expiresAt}) — 丢`); return true }
+    // 有效期是**对方给的数**,不是我们算的:一条 expiresAt='3000-01-01' 的心愿
+    // 会比 wishes-seen 的 14 天幂等窗口活得还久 —— 窗口一过,同一条心愿再投一次
+    // 就会重新惊动判官和主人。按我们自己的 7 天上限夹一刀,超出的部分不认。
+    const cap = now() + WISH_TTL_MS
+    const peerExpiry = Date.parse(p.expiresAt)
+    const expiresAt = Math.min(peerExpiry, cap)
+    if (peerExpiry > cap) log(`wish=${p.id} 对方给的有效期 ${p.expiresAt} 超过 7 天上限 — 按 ${new Date(cap).toISOString()} 算`)
+    if (expiresAt < now()) { log(`wish=${p.id} 已过期(${p.expiresAt}) — 丢`); return true }
     if (!markWishSeen(deps.stateDir, seenKey(p.id, channelRowId), nowIso())) {
       log(`wish=${p.id} 这条信道上已经处理过 — 丢(信箱 at-least-once)`)
       return true
@@ -136,13 +160,16 @@ export function makeWish(deps: WishDeps): WishService {
   const handlePostcard = (channelRowId: string, env: Envelope): boolean => {
     const p = parsePostcardPayload(env)
     if (!p) { log(`收到一张读不懂的明信片 channel=${channelRowId} — 丢`); return true }
+    // 先看认不认这张明信片,**认了才记幂等键**。反过来的话,一张因为竞态
+    // (心愿还没落盘)被判成 unknown 的明信片会把键占掉 —— 对面重投的那一次
+    // 就被当成「已经收过」永远丢掉了。这里丢的只是这一次投递,不是这张片。
+    const r = acceptPostcard(readWishes(deps.stateDir), p.wishId, now())
+    if (!r.ok) { log(`postcard wish=${p.wishId} ${r.reason} — 丢`); return true }
     // 明信片的幂等键和心愿分开:同一个 id 在既发又收的那一边会撞车。
     if (!markWishSeen(deps.stateDir, seenKey(`pc:${p.wishId}`, channelRowId), nowIso())) {
       log(`postcard wish=${p.wishId} 这条信道上已经收过 — 丢`)
       return true
     }
-    const r = acceptPostcard(readWishes(deps.stateDir), p.wishId, now())
-    if (!r.ok) { log(`postcard wish=${p.wishId} ${r.reason} — 丢`); return true }
     writeWishes(deps.stateDir, r.list)
     const label = deps.peerLabel(channelRowId)
     try { deps.recordPostcard({ text: p.text, peerLabel: label }) }
@@ -159,6 +186,14 @@ export function makeWish(deps: WishDeps): WishService {
       let gated: { ok: boolean; redacted: string; violations: string[] }
       try { gated = await deps.gate(body) }
       catch (err) { log(`披露门不可用: ${errText(err)}`); return { ok: false, error: 'checker_unavailable' } }
+      // 闸门**不抛**:超时和 provider 故障是以 violations 的形式返回的
+      // (checker_timeout / checker_error: … / checker_unparseable)。只看 ok
+      // 的话,主人会看到「这句里有不能说的:checker_timeout」—— 把一次模型
+      // 抽风说成他的话有问题,还把草稿吞了。
+      if (!gated.ok && isCheckerFailure(gated.violations)) {
+        log(`披露门不可用(${gated.violations.join(',')})`)
+        return { ok: false, error: 'checker_unavailable' }
+      }
       if (!gated.ok) return { ok: false, error: 'gate_failed', violations: gated.violations }
       const redacted = gated.redacted.trim()
       if (redacted === '') return { ok: false, error: 'gate_failed', violations: gated.violations }
@@ -169,11 +204,16 @@ export function makeWish(deps: WishDeps): WishService {
 
     async send(id) {
       const iso = nowIso()
-      // 先验(草稿在不在、够不够额度),再投 —— 投不出去的心愿不该先扣掉名额。
+      // 先算一遍状态迁移(草稿在不在、够不够额度)。算不过就直接回,一个字
+      // 都不写;算得过就先落盘再广播(下面那段注释说的是为什么)。
       const pre = sendWish(readWishes(deps.stateDir), id, iso, 0)
       if (!pre.ok) return { ok: false, reason: pre.reason }
       const targets = deps.channelStore.list().filter(c => c.status === 'open')
       if (targets.length === 0) return { ok: false, reason: 'no_channels' }   // 草稿留着,有信道了再派
+      // **先落 open,再广播**。第一个对端可能在 sendEnvelope 还没返回时就把
+      // 明信片原路送回来了(同一进程里的两只伙伴就是这样),那时候心愿要是
+      // 还停在 draft,acceptPostcard 会以 unknown 把它丢掉 —— 答得越快越收不到。
+      writeWishes(deps.stateDir, pre.list)
       const env = wishEnvelope(pre.wish)
       let sentTo = 0
       for (const c of targets) {
@@ -183,10 +223,12 @@ export function makeWish(deps: WishDeps): WishService {
           else log(`wish=${id} 投 ${c.id} 失败: ${r.error ?? 'send_failed'}`)
         } catch (err) { log(`wish=${id} 投 ${c.id} 抛错: ${errText(err)}`) }
       }
-      // 重新读一遍再落状态:投递是 await,对面的明信片可能已经原路回来改过这张表。
-      const done = sendWish(readWishes(deps.stateDir), id, iso, sentTo)
-      if (!done.ok) return { ok: false, reason: done.reason }
-      writeWishes(deps.stateDir, done.list)
+      // 只改 sentTo 一列,而且是在**重新读过**的表上改:投递是 await,期间
+      // 回来的明信片已经把 replies 写进过这张表,整表覆盖会把它抹掉。
+      const after = readWishes(deps.stateDir)
+      if (after.some(w => w.id === id)) {
+        writeWishes(deps.stateDir, after.map(w => (w.id === id ? { ...w, sentTo } : w)))
+      }
       log(`wish=${id} 派出去了 sentTo=${sentTo}/${targets.length}`)
       return { ok: true, sentTo }
     },

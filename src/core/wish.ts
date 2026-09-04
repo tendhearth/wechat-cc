@@ -31,6 +31,12 @@ export interface WishRecord {
 
 export const WISH_TTL_MS = 7 * 24 * 60 * 60_000
 export const MAX_OPEN_WISHES = 3
+/**
+ * 一条心愿 / 一张明信片的正文上限。对面递过来的是**网络输入** —— 没有上限的话
+ * 一封信就能把 wishes.json 撑爆、把「来打听什么」那句话灌进主人的微信。超了
+ * 不截断,直接判读不懂(截断会把半句话当成对方的原话)。
+ */
+export const WISH_TEXT_MAX = 500
 
 export interface WishPayload { id: string; text: string; expiresAt: string }
 export interface PostcardPayload { wishId: string; text: string }
@@ -110,6 +116,7 @@ export function parseWishPayload(env: Envelope): WishPayload | null {
   const p = env.payload as Partial<WishPayload> | null
   if (!p || typeof p.id !== 'string' || typeof p.text !== 'string' || typeof p.expiresAt !== 'string') return null
   if (p.id === '' || p.text.trim() === '' || Number.isNaN(Date.parse(p.expiresAt))) return null
+  if (p.text.trim().length > WISH_TEXT_MAX) return null
   return { id: p.id, text: p.text.trim(), expiresAt: p.expiresAt }
 }
 
@@ -121,6 +128,7 @@ export function parsePostcardPayload(env: Envelope): PostcardPayload | null {
   if (env.kind !== 'postcard') return null
   const p = env.payload as Partial<PostcardPayload> | null
   if (!p || typeof p.wishId !== 'string' || typeof p.text !== 'string' || p.wishId === '' || p.text.trim() === '') return null
+  if (p.text.trim().length > WISH_TEXT_MAX) return null
   return { wishId: p.wishId, text: p.text.trim() }
 }
 

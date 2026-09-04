@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  WISH_TTL_MS, MAX_OPEN_WISHES, newWishId, draftWish, sendWish, cancelWish, acceptPostcard,
+  WISH_TTL_MS, MAX_OPEN_WISHES, WISH_TEXT_MAX, newWishId, draftWish, sendWish, cancelWish, acceptPostcard,
   resolveWishRef, recentWishes, effectiveStatus, isExpired, openCount,
   wishEnvelope, parseWishPayload, postcardEnvelope, parsePostcardPayload, seenKey, type WishRecord,
 } from './wish'
@@ -93,6 +93,16 @@ describe('信封载荷', () => {
   it('postcardEnvelope ↔ parsePostcardPayload;空 text → null', () => {
     expect(parsePostcardPayload(postcardEnvelope('abcd1234', '我朋友周末常去'))).toEqual({ wishId: 'abcd1234', text: '我朋友周末常去' })
     expect(parsePostcardPayload({ kind: 'postcard', payload: { wishId: 'a', text: '  ' } })).toBe(null)
+  })
+  it('正文超过 WISH_TEXT_MAX 的心愿 / 明信片一律读不懂 —— 网络输入不能没有上限', () => {
+    const long = 'x'.repeat(WISH_TEXT_MAX + 1)
+    const ok = 'x'.repeat(WISH_TEXT_MAX)
+    expect(parseWishPayload({ kind: 'wish', payload: { id: 'a', text: long, expiresAt: '2026-09-11T10:00:00.000Z' } })).toBe(null)
+    expect(parseWishPayload({ kind: 'wish', payload: { id: 'a', text: ok, expiresAt: '2026-09-11T10:00:00.000Z' } })!.text).toHaveLength(WISH_TEXT_MAX)
+    expect(parsePostcardPayload({ kind: 'postcard', payload: { wishId: 'a', text: long } })).toBe(null)
+    expect(parsePostcardPayload({ kind: 'postcard', payload: { wishId: 'a', text: ok } })!.text).toHaveLength(WISH_TEXT_MAX)
+    // 前后空白不算数:trim 完不超就收
+    expect(parsePostcardPayload({ kind: 'postcard', payload: { wishId: 'a', text: `  ${ok}  ` } })!.text).toHaveLength(WISH_TEXT_MAX)
   })
   it('seenKey', () => { expect(seenKey('w1', 'ch1')).toBe('w1:ch1') })
 })

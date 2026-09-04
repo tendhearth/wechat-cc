@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { gateOutbound, GATE_TIMEOUT_MS } from './a2a-disclosure'
+import { gateOutbound, GATE_TIMEOUT_MS, isCheckerFailure } from './a2a-disclosure'
 
 const policy = '可透露:兴趣爱好、大致意向、所在城市。不透露:住址、收入、健康、第三方好友。'
 
@@ -97,5 +97,21 @@ describe('gateOutbound —— 超时由调用方按 provider 的实际延迟给'
       await vi.advanceTimersByTimeAsync(0)
       expect(await p).toEqual({ ok: true, redacted: '上海', violations: [] })
     } finally { vi.useRealTimers() }
+  })
+})
+
+describe('isCheckerFailure —— 「审查器没跑成」和「你这句不能说」是两件事', () => {
+  it('gateOutbound 自己产生的每一种故障码都算故障', () => {
+    for (const v of ['checker_timeout', 'checker_unparseable', 'checker_malformed', 'checker_malformed_schema', 'checker_error: fetch failed']) {
+      expect(isCheckerFailure([v])).toBe(true)
+    }
+  })
+  it('真违规(策略原因 / policy_violation)不算故障', () => {
+    expect(isCheckerFailure(['住址', '第三方姓名'])).toBe(false)
+    expect(isCheckerFailure(['policy_violation'])).toBe(false)
+    expect(isCheckerFailure([])).toBe(false)
+  })
+  it('混在一起时按故障处理 —— 拿不准的时候不能把模型抽风报成主人违规', () => {
+    expect(isCheckerFailure(['住址', 'checker_timeout'])).toBe(true)
   })
 })
