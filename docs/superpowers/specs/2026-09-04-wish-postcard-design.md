@@ -44,7 +44,7 @@ cancelled     closed
 
 - **draft**:主人「派心愿 <text>」→ `gateOutbound(text, policy)`(现有披露门,唯一出口)→ 不过门就当场告诉主人哪里不能说;过门就存草稿,伙伴复述「我打算这么问朋友们:<redacted>(<id>)。派?」。
 - **open**:主人「派 <id>」→ 广播 `wish` 信封给**所有 status=open 的信道**(关系视图里的 peer / anon;不排序、不挑人、不分批)。每条信道投递结果记进 `sentTo`(信箱是 store-and-forward,「投出去」就算)。同时最多 **3** 条 open 心愿,超了拒绝并说明。
-- **closed**:主人「取消 <id>」。open → closed 后到达的 postcard 照常入日志(人家已经答了),只是不再算「开着」。
+- **closed**:主人「取消 <id>」。open → closed 后、**仍在 7 天答复窗口内**到达的 postcard 照常入日志(人家已经答了),只是不再算「开着」;窗口是从派出那一刻算的,关不关都一样 —— 收件方也按同一个 `expiresAt` 丢弃,窗口外来的只能是陈旧投递。
 - **expired**:`expiresAt` = 派出时 + 7 天;过期后到达的 postcard **丢弃 + 日志**(收件方也会用 `expiresAt` 自行丢弃过期心愿,双保险)。
 - 草稿和状态存 `<stateDir>/companion/wishes.json`(`{ wishes: WishRecord[] }`,同 `neighbors.json` 做法;`readJsonFile` 读)。「发出去过的」真相在 `penpal_letter`(direction=out, kind=wish);wishes.json 是它的索引 + 草稿。
 
