@@ -84,7 +84,7 @@ interface PeerDriver { deliver(env: Envelope): Promise<void> }
 3. Relationship 派生视图 + `GET /v1/social/relationships`
 4. VisitMachine + 两个驱动(wire-visit 重构)
 5. 觅食台 → 「带回来的」+「认识的人」+ 折叠的技术区(配对/入站/派心愿)
-6. 派心愿 / 揭晓改写成第 3 层交互(广播 + 关系迁移);2 跳中继保留为"介绍"—— **后续**
+6. 派心愿 / 揭晓改写成第 3 层交互 —— **1 跳已做**(2026-09-04-wish-postcard-design:wish / postcard 两种信封 + 配对即开信道;旧 intent/echo/reveal 管道与四张表已删);2 跳「介绍」(经介绍人认识新人、anon → peer)**待做**
 
 **不做**:③ 陌生人网络不再作为独立子系统;不再加任何 `/a2a/<功能>` 路由。
 

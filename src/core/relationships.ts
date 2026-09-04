@@ -56,6 +56,7 @@ export function buildRelationships(i: RelationshipInputs): Relationship[] {
       label: known ? peerName.get(ch.peer_agent_id!)! : `第 ${ch.degree} 度的某人`,
       channel: ch.id,
       familiarity: { visits: v.ids, lastAt: v.lastAt, note: null },
+      // 「派心愿牵线」只可能出现在旧揭晓流程留下的历史行上;2026-09-04 起配对即开信道,新行一律「配对」。
       origin: known ? '配对' : `派心愿牵线(${ch.degree} 度)`,
       autoVisit: v.peerReplied,
     })

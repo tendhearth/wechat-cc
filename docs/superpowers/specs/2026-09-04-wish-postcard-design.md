@@ -63,6 +63,7 @@ cancelled     closed
 - 判「能」:`gateOutbound(blurb)` → `sendEnvelope(同一条信道, { kind: 'postcard', payload: { wishId, text } })`;判「不能」:静默。
 - **无论能不能,都给自己主人一句话**:「🙋 <label> 的伙伴来打听「<text>」,我回了:<blurb>」/「…我说不知道」。被问的人有权知道自己被问了(MoltMatch 教训)。不进 journal(这不是带回来的东西)。
 - 处理记录:`<stateDir>/companion/wishes-seen.json`(`{ [wishId:channelId]: ISO }`,保留 14 天)—— 幂等键。
+- 后台判官 / 披露门 / 回信持 busy token(`wish-answer`),串门同理(`visit` / `visit-inbound`)—— 空闲自动重启不能杀掉进行中的模型工作。
 
 ### 1.4 邻居
 
@@ -75,11 +76,12 @@ cancelled     closed
 - `PairCard` 加两个字段:`channel_id: string`(我的收信地址)、`channel_pub: string`(我的 X25519 公钥,spki DER base64url)。`v` 升到 2;`isCard` 校验这两项非空。
 - 双方在 `writePeerFromCard` 成功后各自:
   ```ts
-  const rowId = `pair:${card.nonce}`
+  const rowId = `pair:${initiatorNonce}`
   channelStore.create({ id: rowId, seekId: rowId, myPrivkey, myPubkey, myChannelId, degree: 1, peerAgentId: card.self_id })
   channelStore.setPeerHandle(rowId, { pubkey: card.channel_pub, channel_id: card.channel_id, mailbox: { addr: card.mailbox_addr, enc_pub: card.mailbox_enc_pub, relays: card.relays } })
   channelStore.setStatus(rowId, 'open')
   ```
+  两边都用 initiator 的 nonce 作行 id,否则两侧行 id 不一致。开信道那三步不是原子的,两处调用点都包了 try/catch;信道已存在则幂等补完。
   `seek_id` 列 NOT NULL,填 rowId 即可(它的语义从「哪个心愿开的」变成「怎么开的」;列不改名)。
 - 我方的 X25519 密钥对在 `start()` / `accept()` 里生成,随 card 发出;`PairingDeps` 加 `channelStore`。
 - 重复配对同一对端(同 self_id 同 mailbox_addr):已有 open 信道则不再建第二条(按 `peer_agent_id` 查)。
@@ -90,12 +92,12 @@ cancelled     closed
 
 | 层 | 删 |
 |---|---|
-| core | `social-broker` `social-seek-store` `social-echo-store` `social-echo-intake` `social-echo-relay` `social-echo-retry` `social-pledge-store` `social-relay-store` `social-relay-retry` `social-reveal` `social-relay-reveal` `reveal-command` `forward-budget` `penpal-relay-letter`;`a2a-intent.ts` 里 IntentCard / ForwardedEcho / MatchReceipt / Echo schema(留 `A2A_PROTO_VERSION`,升到 3);`seek-command.ts` 保留解析(`派 <id>` / `取消 <id>`)但 `resolveSeekRef` 改查 wishes.json |
-| daemon | `a2a-server.ts` 的 `/a2a/intent` `/a2a/echo` `/a2a/reveal` handler;`mailbox-dispatch.ts` 三条孪生路;`wire-social.ts` 里 responder / answer / forward / echo-intake / reveal / relay 的全部接线与 `postToPeer`/`postToHand` 扇出(只剩 correspondent、串门、心愿);`social-finish-seek` `forward-budget-seam` `social-async-responder` `social-answer`;`command-router` 的「揭晓」块 |
-| internal-api | `routes-social.ts` 的 seek propose/confirm/cancel、seeks、echoes、echoes/reveal、inbound 路由 + schema + tier;`Bootstrap.social` 里 broker / seekStore / echoStore / pledgeStore / revealer |
+| core | `social-broker` `social-seek-store` `social-echo-store` `social-echo-intake` `social-echo-relay` `social-echo-retry` `social-pledge-store` `social-relay-store` `social-relay-retry` `social-reveal` `social-relay-reveal` `reveal-command` `penpal-relay-letter`;`a2a-intent.ts` 里 IntentCard / ForwardedEcho / MatchReceipt / Echo schema(留 `A2A_PROTO_VERSION`,升到 3);`seek-command.ts` 保留解析(`派 <id>` / `取消 <id>`)但 `resolveSeekRef` 改查 wishes.json (`forward-budget.ts` 保留:访客路径的限流在用它) |
+| daemon | `a2a-server.ts` 的 `/a2a/intent` `/a2a/echo` `/a2a/reveal` handler;`mailbox-dispatch.ts` 三条孪生路;`wire-social.ts` 里 responder / answer / forward / echo-intake / reveal / relay 的全部接线与 `postToPeer`/`postToHand` 扇出(只剩 correspondent、串门、心愿);`social-finish-seek` `forward-budget-seam` `social-async-responder` `social-answer`;`command-router` 的「揭晓」块;`mailbox-dispatch-seam` 整个删除(无生产引用) |
+| internal-api | `routes-social.ts` 的 seek propose/confirm/cancel、seeks、echoes、echoes/reveal、inbound 路由 + schema + tier、GET /v1/social/pledges、POST /v1/social/pledges/reveal;`Bootstrap.social` 里 broker / seekStore / echoStore / pledgeStore / revealer |
 | CLI | `src/cli/social.ts` 对应子命令 |
-| DB | 迁移 v41:`DROP TABLE` social_seek / social_echo / social_pledge / social_relay / social_seen_intent。真机全 0 行。journal 的 `CatchKind` 放开 `'postcard'`(表无 CHECK 约束,只改类型和 `record*`) |
-| 桌面 | `a2a-agents.js` 的「我派出去的心愿」「回声」「入站」三块及其测试;换成 §5 的心愿区 |
+| DB | 迁移(追加在末尾,落地时为 v43):`DROP TABLE` social_seek / social_echo / social_pledge / social_relay / social_seen_intent。真机全 0 行。journal 的 `CatchKind` 放开 `'postcard'`(表无 CHECK 约束,只改类型和 `record*`) |
+| 桌面 | `a2a-agents.js` 的「我派出去的心愿」「回声」两块及其测试;「入站」开关(a2a_listen)和「笔友信箱」保留;换成 §5 的心愿区 |
 
 **保留**:`social-judge`(输入收窄)、`a2a-disclosure.gateOutbound`、注册表、两套配对、信箱全套、correspondent、`wire-visit`、journal、relationships、`a2a_events`(社交往来落痕的现有写点跟着删,表和读点留)。
 
@@ -114,7 +116,7 @@ cancelled     closed
 
 ## 5. 桌面
 
-觅食台技术区(`#fd-tools`)只剩「配对」。新增一个小区块「📮 心愿」:一个输入框(→ `POST /v1/social/wish`,显示 preview + 「派」「算了」两个按钮)+ 开着的心愿列表(每条:文字、派给了几个人、几张回信、「取消」)。回信本身在「🎒 带回来的」里看(kind=postcard 卡片,已有明信片卡样式)。`people.js` 不动。
+觅食台技术区(`#fd-tools`)只剩「配对」。新增一个小区块「📮 心愿」:一个输入框(→ `POST /v1/social/wish`,显示 preview + 「派」「算了」两个按钮)+ 开着的心愿列表(每条:文字、派给了几个人、几张回信、「取消」)。回信本身在「🎒 带回来的」里看(kind=postcard 卡片,已有明信片卡样式)。技术区标题改为「信箱」(配对在下面独立的「你的觅食网」块里)。`people.js` 不动。
 
 ## 6. 测试
 
@@ -124,7 +126,7 @@ cancelled     closed
 | `wishes.json` 存取 | 空 / 坏文件 → 空;读写往返;`readJsonFile` |
 | 两个 daemon 同进程(照 `wire-visit.test.ts` 的 `side()` 夹具) | A 派 → B 假判官「能」→ postcard 回 A → A journal 多一条 kind=postcard、A 主人一句话、B 主人一句话;B 假判官「不能」→ A 无变化、B 主人一句话;过期 wish 被 B 丢;同 wish 重投被 B 去重;A 收到不认识的 wishId 丢 |
 | 配对握手 | 双方 card 带 channel 字段;完成后双方各一条 open 信道,`peer_agent_id` 互指,`peer_mailbox` 正确;重复配对不建第二条;v1 旧 card 被拒 |
-| 迁移 v41 | 四张表消失;`user_version` 计数正确(memory: migration-position-contract);已有 penpal_* 数据不动 |
+| 迁移(v43) | 四张表消失;`user_version` 计数正确(memory: migration-position-contract);已有 penpal_* 数据不动;`migration-order.test.ts` 的位置锁与 `state-migration.test.ts` 期望同步 |
 | 路由 | 四条路由形状 + tier trusted;未接线 503 |
 | 桌面 | 心愿区渲染 / 派 / 取消;a2a-agents 删块后现有测试收敛 |
 
