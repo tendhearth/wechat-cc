@@ -249,6 +249,8 @@ export interface InternalApiDeps {
       /** 进行中的串门(spec 2026-09-03-companion-presence §2.2)。可选:老 fixture 没有。 */
       activeVisit?(): import('../../core/companion-presence').ActiveVisit | null
     }
+    /** 派心愿(spec 2026-09-04-wish-postcard)。可选:老 fixture / 未接线时 undefined。 */
+    wish?: Omit<import('../bootstrap/wire-wish').WishService, 'onInbound'>
   }
   /**
    * Knowledge Kernel (Phase 01, T3) — the daemon-owned KnowledgeStore +

@@ -332,6 +332,9 @@ export interface Bootstrap {
       /** 进行中的串门(spec 2026-09-03-companion-presence)。 */
       activeVisit(): import('../../core/companion-presence').ActiveVisit | null
     }
+    /** 派心愿 / 收明信片(spec 2026-09-04-wish-postcard)。onInbound 留在
+     *  wire-social 内部 —— 信封只从 correspondent 一个口进来。 */
+    wish: Omit<import('./wire-wish').WishService, 'onInbound'>
   }
   /**
    * Anonymous pen-pal channel (Task 8/10/11) — present only once a channel

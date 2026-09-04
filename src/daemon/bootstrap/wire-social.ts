@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { makeJudge } from '../../core/social-judge'
 import { makeVisit } from './wire-visit'
+import { makeWish } from './wire-wish'
+import { WISH_TTL_MS } from '../../core/wish'
 import { makeJournal } from '../../core/journal-store'
 import { safeSvg } from '../../lib/svg-sanitize'
 import { rasterizeSvgDarwin } from '../sticker-artist'
@@ -177,6 +179,9 @@ export interface SocialWiring {
       startVisit: import('./wire-visit').Visit['startVisit']
       activeVisit: import('./wire-visit').Visit['activeVisit']
     }
+    /** 心愿 / 明信片(spec 2026-09-04-wish-postcard)。onInbound 不露出去 ——
+     *  信封只从 correspondent 那一个口进来。 */
+    wish: Omit<import('./wire-wish').WishService, 'onInbound'>
   }
   resumeForaging: () => void
   /** 补投:没送到的揭晓 + 没送到的明信片。信箱轮询每一拍调一次;社交未启用
@@ -225,6 +230,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
     startVisit: import('./wire-visit').Visit['startVisit']
     activeVisit: import('./wire-visit').Visit['activeVisit']
   } | undefined
+  let socialWish: Omit<import('./wire-wish').WishService, 'onInbound'> | undefined
 
   if (configuredAgent.social_enabled && configuredAgent.social_disclosure_policy) {
     const socialPolicy = configuredAgent.social_disclosure_policy
@@ -392,6 +398,8 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // sendLetter 经 correspondent,但 correspondent 又要 notifyInbound —— 用
       // 一个 late-bound 引用解开这个环。
       let visit: import('./wire-visit').Visit | undefined
+      // 心愿 / 明信片同理:分发点先声明,构造在 correspondent 之后。
+      let wish: import('./wire-wish').WishService | undefined
       // 信封分发点(架构重构 §2.1)—— correspondent 已解开信封,这里**只按 kind
       // 分发**。新交互 = 加一个 case,不是加一条路由。不认识的 kind 记日志
       // 忽略:新版本发的类型老版本不炸。
@@ -407,6 +415,10 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           }
           case 'visit':
             if (!visit?.onInbound(channelRowId, env, letterId)) deps.log('SOCIAL', `visit envelope rejected channel=${channelRowId}`)
+            return
+          case 'wish':
+          case 'postcard':
+            if (!wish?.onInbound(channelRowId, env, letterId)) deps.log('SOCIAL', `${env.kind} envelope rejected channel=${channelRowId}`)
             return
           default:
             deps.log('SOCIAL', `unknown envelope kind=${env.kind} channel=${channelRowId} — ignored`)
@@ -442,6 +454,31 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         },
         log: deps.log,
       })
+      // 心愿(wire-wish.ts):和串门共用这条信道 —— 问的那边把 kind='wish' 投出去,
+      // 答的那边拿同一个判官(socialJudge)和同一道披露门(gateOutbound)决定回不回。
+      wish = makeWish({
+        stateDir: deps.stateDir,
+        channelStore,
+        sendEnvelope: (c, e) => correspondent.sendEnvelope(c, e),
+        // 闸门超时用 provider 自己的预算,别再写死 12s(见上面那条 BOOT 日志)。
+        gate: (text) => gateOutbound(text, { policy: socialPolicy, cheapEval: socialCheapEval, timeoutMs: socialGateTimeoutMs }),
+        // 判官吃的是一张 IntentCard(它只读 topic/city)—— 心愿没有 intent 行,
+        // 现造一张一次性的卡片喂给同一个判官,省得再养一条判定路径。
+        judge: (topic) => socialJudge({ intent_id: `wish:${randomUUID()}`, kind: 'seek', topic, expires_at: new Date(Date.now() + WISH_TTL_MS).toISOString(), hop: 1 }),
+        // 明信片进背包(journal kind='postcard')—— 和串门见闻同一张表。
+        recordPostcard: ({ text, peerLabel }) => {
+          const op = resolveOperatorChatId()
+          return op ? makeJournal(deps.db).recordPostcard({ chatId: op, text, peerLabel }) : null
+        },
+        notifyOwner: (text) => { const op = resolveOperatorChatId(); if (op && sendAssistantText) void sendAssistantText(op, text) },
+        // 认识的人就叫名字,不认识就说第几度 —— 主人得知道这话是谁回的。
+        peerLabel: (channelRowId) => {
+          const ch = channelStore.get(channelRowId)
+          const name = ch?.peer_agent_id ? a2aRegistry.get(ch.peer_agent_id)?.name : undefined
+          return name || (ch ? `第 ${ch.degree} 度的某人` : '某人')
+        },
+        log: deps.log,
+      })
       const letterRelay = makeLetterRelay({ relayStore, postLetter, withinBudget: withinForwardBudget })
       // Dispatch order matters (Task 9 review flag): try OUR OWN endpoint
       // first (getByMyChannelId / receiveLetter) — only when that channel_id
@@ -462,6 +499,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         receiveLetter: (ev) => correspondent.receiveLetter(ev),
       })
       socialPenpal = { sendLetter: (channel, text) => correspondent.sendLetter(channel, text), resendLetter: (id) => correspondent.resendLetter(id), channelStore, letterStore, startVisit: (c) => visit!.startVisit(c), activeVisit: () => visit!.activeVisit() }
+      socialWish = { propose: (t) => wish!.propose(t), send: (id) => wish!.send(id), cancel: (id) => wish!.cancel(id), list: () => wish!.list(), resolveRef: (r, a) => wish!.resolveRef(r, a) }
 
       // Notification beats (克制三拍). Content-free by design — reveal crosses
       // pubkey handles, never a real name or url, so no beat text may carry one.
@@ -898,7 +936,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
     onLetter: socialOnLetter,
     onMailboxLetter: socialOnMailboxLetter,
     ...(socialBroker
-      ? { social: { broker: socialBroker, seekStore: socialSeekStore!, echoStore: socialEchoStore!, pledgeStore: socialPledgeStore!, revealer: socialRevealer!, penpal: socialPenpal! } }
+      ? { social: { broker: socialBroker, seekStore: socialSeekStore!, echoStore: socialEchoStore!, pledgeStore: socialPledgeStore!, revealer: socialRevealer!, penpal: socialPenpal!, wish: socialWish! } }
       : {}),
     resumeForaging,
     ...(socialSweep ? { sweepUndelivered: socialSweep } : {}),
