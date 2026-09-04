@@ -31,7 +31,10 @@ describe('buildRelationships —— 四种对方,一张表', () => {
   it('registry 有、没开信道 → peer 但 channel=null,说明还去不了', () => {
     const r = buildRelationships({ ...base, channels: [], visitsByChannel: {} })
     const p = r.find(x => x.id === 'peer:cc-b')!
-    expect(p.channel).toBeNull(); expect(p.origin).toContain('还没开信道')
+    expect(p.channel).toBeNull()
+    // 只说「还没开信道」等于把死胡同摆给主人:2026-09-04 起配对即开信道,
+    // 这一类只剩历史遗留行,顺手告诉他怎么修。
+    expect(p.origin).toBe('配对(还没开信道 · 重新配对一次即可)')
   })
 
   it('邻居永远 autoVisit,带上次的笔记和次数', () => {

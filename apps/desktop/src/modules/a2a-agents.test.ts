@@ -399,3 +399,13 @@ describe('peerReach — 伙伴卡片的可达性一行', () => {
     expect(line.length).toBeGreaterThan(0)
   })
 })
+
+describe('refresh 的级联', () => {
+  it('刷觅食台时把心愿也刷了 —— 回信是别人什么时候回就什么时候到,不刷就永远停在 0 张', async () => {
+    installDom({ 'fd-wish-list': fakeEl(), 'fd-wish-count': fakeEl() })
+    ;(invokeApi as any).mockResolvedValue({})
+    const { refresh } = await import('./a2a-agents.js')
+    await refresh()
+    expect(invokeApi).toHaveBeenCalledWith('GET', '/v1/social/wishes')
+  })
+})

@@ -59,11 +59,14 @@ export function renderWishes(data) {
     list.innerHTML = '<div class="fd-empty">社交没开 —— 打开后就能让伙伴帮你去问认识的人。</div>'
     return
   }
-  if (wishes.length === 0) {
+  // spec §5 说的是「**开着的**心愿列表」:草稿(还没派)和等回音的。关掉的、
+  // 作废的、过期的都是往事 —— 回信本身在「🎒 带回来的」里,列表不做归档视图。
+  const openish = wishes.filter(w => w.status === 'draft' || w.status === 'open')
+  if (openish.length === 0) {
     list.innerHTML = '<div class="fd-empty">还没有心愿 —— 想问点什么就在上面写一句。</div>'
     return
   }
-  list.innerHTML = wishes.map(renderWishRow).join('')
+  list.innerHTML = openish.map(renderWishRow).join('')
 }
 
 /**

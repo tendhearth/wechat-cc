@@ -190,14 +190,20 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       // 信封分发点(架构重构 §2.1)—— correspondent 已解开信封,这里**只按 kind
       // 分发**。新交互 = 加一个 case,不是加一条路由。不认识的 kind 记日志
       // 忽略:新版本发的类型老版本不炸。
+      // 「这条信道那头是谁」只有一个说法:注册表里认识就叫名字,不认识就说
+      // 第几度。信件、心愿、明信片共用它 —— 同一个朋友在主人眼里不能一处是
+      // 「老王的 bot」、另一处是「第 1 度的某人」。
+      const peerLabel = (channelRowId: string): string => {
+        const ch = channelStore.get(channelRowId)
+        const name = ch?.peer_agent_id ? a2aRegistry.get(ch.peer_agent_id)?.name : undefined
+        return name || (ch ? `第 ${ch.degree} 度的某人` : '某人')
+      }
       const onInbound: import('../../core/penpal-correspondent').CorrespondentDeps['onInbound'] = ({ channelRowId, letterId, plaintext, env }) => {
         switch (env.kind) {
           case 'letter': {
             const op = resolveOperatorChatId()
             if (!op || !sendAssistantText) return
-            const ch = channelStore.get(channelRowId)
-            const mask = ch ? `第 ${ch.degree} 度的某人` : '某人'
-            void sendAssistantText(op, `📬 ${mask}给你写信了:${plaintext.slice(0, 40)}\n(回信 ${channelRowId} <你的话>)`)
+            void sendAssistantText(op, `📬 ${peerLabel(channelRowId)}给你写信了:${plaintext.slice(0, 40)}\n(回信 ${channelRowId} <你的话>)`)
             return
           }
           case 'visit':
@@ -263,11 +269,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         },
         notifyOwner: (text) => { const op = resolveOperatorChatId(); if (op && sendAssistantText) void sendAssistantText(op, text) },
         // 认识的人就叫名字,不认识就说第几度 —— 主人得知道这话是谁回的。
-        peerLabel: (channelRowId) => {
-          const ch = channelStore.get(channelRowId)
-          const name = ch?.peer_agent_id ? a2aRegistry.get(ch.peer_agent_id)?.name : undefined
-          return name || (ch ? `第 ${ch.degree} 度的某人` : '某人')
-        },
+        peerLabel,
         log: deps.log,
       })
       // 只认自己的信道。别人的 channel_id 曾经会走 letterRelay 的 2 跳转发

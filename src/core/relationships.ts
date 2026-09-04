@@ -70,7 +70,9 @@ export function buildRelationships(i: RelationshipInputs): Relationship[] {
     out.push({
       id: `peer:${p.id}`, kind: 'peer', label: p.name, channel: null,
       familiarity: { visits: 0, lastAt: null, note: null },
-      origin: p.paused ? '配对(已暂停)' : '配对(还没开信道)',
+      // 「还没开信道」现在只可能是历史遗留行(2026-09-04 起配对即开信道),
+      // 所以顺手说清楚怎么修:重新配对一次就有了。
+      origin: p.paused ? '配对(已暂停)' : '配对(还没开信道 · 重新配对一次即可)',
       autoVisit: false,
     })
   }

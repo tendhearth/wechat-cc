@@ -15,17 +15,26 @@ const { renderWishes, onWishCompose, onWishAction } = await import('./wishes.js'
 describe('心愿区块', () => {
   beforeEach(() => { for (const id of ['fd-wish-count', 'fd-wish-draft', 'fd-wish-list', 'fd-wish-text']) els.set(id, mkEl()); invokeApi.mockReset() })
 
-  it('renderWishes:每条有状态字、派给几人、几张回信;计数 = open 条数;null → 不可用文案', () => {
+  it('renderWishes:只列开着的(草稿 / 等回音),往事不上榜;计数 = open 条数;null → 不可用文案', () => {
     renderWishes({ wishes: [
       { id: 'a1', text: '找搭子', status: 'open', created_at: 'c', expires_at: 'e', sent_to: 2, replies: 1 },
+      { id: 'c3', text: '还没派的', status: 'draft', created_at: 'c', expires_at: null, sent_to: 0, replies: 0 },
       { id: 'b2', text: '旧的', status: 'expired', created_at: 'c', expires_at: 'e', sent_to: 1, replies: 0 },
     ] })
     const html = els.get('fd-wish-list')!.innerHTML
-    expect(html).toContain('找搭子'); expect(html).toContain('等回音'); expect(html).toContain('派给 2 人 · 1 张回信'); expect(html).toContain('过期')
-    expect(html).toContain('data-wsh-action="cancel" data-wsh-id="a1"'); expect(html).not.toContain('data-wsh-id="b2"')
+    expect(html).toContain('找搭子'); expect(html).toContain('等回音'); expect(html).toContain('派给 2 人 · 1 张回信')
+    expect(html).toContain('data-wsh-action="cancel" data-wsh-id="a1"')
+    expect(html).toContain('data-wsh-id="c3"')       // 草稿也算开着的
+    expect(html).not.toContain('旧的'); expect(html).not.toContain('过期')   // 过期的不再渲染
     expect(els.get('fd-wish-count')!.textContent).toBe('1')
     renderWishes({ wishes: null })
     expect(els.get('fd-wish-list')!.innerHTML).toContain('社交没开')
+  })
+
+  it('全是往事(没有草稿也没有等回音)→ 和一条没有一样,给「写一句」的空文案', () => {
+    renderWishes({ wishes: [{ id: 'b2', text: '旧的', status: 'closed', created_at: 'c', expires_at: 'e', sent_to: 1, replies: 1 }] })
+    expect(els.get('fd-wish-list')!.innerHTML).toContain('还没有心愿')
+    expect(els.get('fd-wish-count')!.textContent).toBe('0')
   })
 
   it('compose:过门 → 草稿显示 preview + 派/算了;不过门 → 显示不能说的', async () => {

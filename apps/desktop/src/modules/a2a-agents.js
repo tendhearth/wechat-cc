@@ -13,7 +13,7 @@ import { showToast } from "../view.js"
 import { invokeApi } from '../api.js'
 import { initHuntBag, renderHuntBag } from './journal.js'
 import { initPeople, renderPeople } from './people.js'
-import { initWishes } from './wishes.js'
+import { initWishes, refreshWishes } from './wishes.js'
 
 // ── module-level state ────────────────────────────────────────────────────
 /** @type {Record<string, unknown> | null} */
@@ -142,6 +142,9 @@ export async function refresh() {
   // 照样有东西(它不依赖任何 peer)。
   renderHuntBag({ items: huntResp ? (huntResp.items ?? []) : null })
   renderPeople({ relationships: peopleResp ? (peopleResp.relationships ?? []) : null })
+  // 心愿自己拉自己的:回信是**别人**什么时候回就什么时候到,不刷这一块的话,
+  // 「几张回信」会一直停在派出去那一刻的 0。
+  await refreshWishes()
   // 折叠区的小字:几封未读 —— 让折着的东西不至于被忘掉
   const sub = document.getElementById('fd-tools-sub')
   if (sub) {
