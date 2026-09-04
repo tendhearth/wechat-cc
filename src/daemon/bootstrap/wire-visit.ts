@@ -24,8 +24,6 @@ import type { ChannelStore } from '../../core/penpal-channel-store'
 import type { LetterStore } from '../../core/penpal-letter-store'
 import { loadCompanionConfig } from '../companion/config'
 import { makeMemoryFS } from '../memory/fs-api'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { readJsonFile } from '../../lib/read-json-file'
 import { NEIGHBORS, pickNeighbor, neighborById, neighborPersona, type Neighbor } from '../../core/neighbors'
 
 const OVERVIEW_MAX = 1500
@@ -66,24 +64,8 @@ export interface Visit {
   startVisit(target?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }>
 }
 
-/**
- * 邻居的记忆:上次去谁家、聊了什么。存在 companion/neighbors.json。
- * 让下次串门能接上话(「上次你说豆子烘深了,后来呢」),邻居才像个活人。
- */
-interface NeighborMemory { lastId: string | null; notes: Record<string, { at: string; note: string }>; introduced: boolean }
-const EMPTY_MEMORY: NeighborMemory = { lastId: null, notes: {}, introduced: false }
-
-export function readNeighborMemory(stateDir: string): NeighborMemory {
-  try {
-    const j = readJsonFile<Partial<NeighborMemory>>(join(stateDir, 'companion', 'neighbors.json'))
-    return { lastId: j.lastId ?? null, notes: j.notes ?? {}, introduced: j.introduced === true }
-  } catch { return { ...EMPTY_MEMORY, notes: {} } }
-}
-export function writeNeighborMemory(stateDir: string, m: NeighborMemory): void {
-  const dir = join(stateDir, 'companion')
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'neighbors.json'), JSON.stringify(m, null, 2))
-}
+import { readNeighborMemory, writeNeighborMemory } from '../companion/neighbor-memory'
+export { readNeighborMemory, writeNeighborMemory }
 
 const DAY_MS = 86_400_000
 
@@ -204,7 +186,7 @@ export function makeVisit(deps: VisitDeps): Visit {
     if (!told) return { ok: false, reason: 'narration_empty' }
     // 邻居这边记住这趟:最后两句,够下次接话
     const tail = transcript.slice(-2).map(t => `${t.who === 'me' ? me.myName : nb.name}:${t.text}`).join(' / ')
-    writeNeighborMemory(deps.stateDir, { lastId: nb.id, introduced: true, notes: { ...mem.notes, [nb.id]: { at: new Date().toISOString(), note: tail } } })
+    writeNeighborMemory(deps.stateDir, { lastId: nb.id, introduced: true, notes: { ...mem.notes, [nb.id]: { at: new Date().toISOString(), note: tail, visits: (mem.notes[nb.id]?.visits ?? 0) + 1 } } })
     deps.log('VISIT', `visit=${id} 去了${label}家,讲给主人了 turns=${transcript.length}`)
     return { ok: true, id, channel: `neighbor:${nb.id}` }
   }

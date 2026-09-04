@@ -18,6 +18,8 @@ export const GUEST_MIN_INBOUND = 2
 export interface GuestVisitState {
   /** chatId → 上次讲过的水位(那次做客最后一条消息的 ts)。 */
   narrated: Record<string, string>
+  /** chatId → 来过几次(讲过几次)。关系视图用。 */
+  visits?: Record<string, number>
 }
 
 export interface GuestChatSnapshot {

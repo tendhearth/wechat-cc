@@ -597,8 +597,8 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
   async function guestVisitPass(ownerChat: string, nowIso: string, messagesStore: MessagesStore): Promise<void> {
     const statePath = join(deps.stateDir, 'companion', 'guest-visits.json')
     const state: GuestVisitState = (() => {
-      try { const j = readJsonFile<Partial<GuestVisitState>>(statePath); return { narrated: j.narrated ?? {} } }
-      catch { return { narrated: {} } }
+      try { const j = readJsonFile<Partial<GuestVisitState>>(statePath); return { narrated: j.narrated ?? {}, visits: j.visits ?? {} } }
+      catch { return { narrated: {}, visits: {} } }
     })()
     const access = deps.loadAccess()
     const nowMs = Date.parse(nowIso)
@@ -618,6 +618,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       if (!due) continue
       // 先记水位再讲:讲到一半 daemon 重启,不该下一拍再讲一遍。
       state.narrated[chatId] = latestInboundTs
+      state.visits = { ...(state.visits ?? {}), [chatId]: ((state.visits ?? {})[chatId] ?? 0) + 1 }
       changed = true
       const evalText = deps.boot.registry.getStrongEval?.(deps.boot.defaultProviderId) ?? deps.boot.registry.getCheapEval()
       if (!evalText) continue

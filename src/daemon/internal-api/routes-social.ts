@@ -18,9 +18,67 @@ import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
 import { toPublicEcho } from '../../core/social-echo-store'
 import type { InternalApiDeps, RouteTable } from './types'
 import { applySocialSwitch } from '../../cli/social-enable'
+import { buildRelationships, type RelationshipInputs } from '../../core/relationships'
+import { NEIGHBORS } from '../../core/neighbors'
+import { readNeighborMemory } from '../companion/neighbor-memory'
+import { makeMessagesStore } from '../../lib/messages-store'
+import { makeConversationStore } from '../../core/conversation-store'
+import { loadAccess } from '../../lib/access'
+import { loadCompanionConfig } from '../companion/config'
+import { resolveEffectiveTier } from '../../core/user-tier'
+import { readJsonFile } from '../../lib/read-json-file'
+import { join } from 'node:path'
 
 export function socialRoutes(deps: InternalApiDeps): RouteTable {
   return {
+    // 关系视图(架构重构 §2.2):四种对方,一张表。派生,不落表。
+    // trusted:桌面端的凭证是 FILE token(=trusted)。
+    'GET /v1/social/relationships': async () => {
+      const penpal = deps.social?.penpal
+      const channels = penpal ? penpal.channelStore.list() : []
+      const visitsByChannel: Record<string, { ids: number; lastAt: string | null; peerReplied: boolean }> = {}
+      if (penpal) {
+        for (const ch of channels) {
+          const rows = penpal.letterStore.listForChannel(ch.id).filter(l => l.kind === 'visit')
+          const ids = new Set<string>()
+          let lastAt: string | null = null
+          for (const r of rows) {
+            try { ids.add(String((JSON.parse(r.payload ?? '{}') as { id?: string }).id ?? '')) } catch { /* 坏 payload 不计 */ }
+            if (!lastAt || r.created_at > lastAt) lastAt = r.created_at
+          }
+          ids.delete('')
+          visitsByChannel[ch.id] = { ids: ids.size, lastAt, peerReplied: rows.some(r => r.direction === 'in') }
+        }
+      }
+      const peers = (deps.a2a?.registry.list() ?? [])
+        .filter(a => !(a.capabilities ?? []).includes('exec'))   // 手是设备,不是关系
+        .map(a => ({ id: a.id, name: a.name, transport: a.transport ?? 'push', paused: a.paused === true }))
+      const humans: Array<RelationshipInputs['humans'][number]> = []
+      if (deps.db) {
+        const ms = makeMessagesStore(deps.db)
+        const conv = makeConversationStore(deps.db)
+        const access = loadAccess()
+        const owner = loadCompanionConfig(deps.stateDir).default_chat_id
+        let guestState: { visits?: Record<string, number> } = {}
+        try { guestState = readJsonFile(join(deps.stateDir, 'companion', 'guest-visits.json')) } catch { /* 还没人来过 */ }
+        for (const chatId of await ms.listChatIds()) {
+          if (chatId === owner) continue
+          // permissionMode 挂在 prefix deps 上(它是唯一带这个字段的地方);没接时按 strict。
+          if (resolveEffectiveTier(chatId, access, deps.prefix?.permissionMode ?? 'strict') === 'admin') continue
+          const lastAt = await ms.latestInboundTs(chatId)
+          if (!lastAt) continue
+          humans.push({ chatId, name: conv.getIdentity(chatId)?.last_user_name ?? null, visits: guestState.visits?.[chatId] ?? 0, lastAt })
+        }
+      }
+      const relationships = buildRelationships({
+        peers, channels, visitsByChannel,
+        neighbors: NEIGHBORS.map(n => ({ id: n.id, name: n.name })),
+        neighborMemory: readNeighborMemory(deps.stateDir),
+        humans,
+      })
+      return { status: 200, body: { relationships } }
+    },
+
     // P4 派心愿 — propose→confirm split (replaces the deleted one-shot
     // POST /v1/social/seek). All three are inline-validated (no
     // REQUEST_SCHEMAS entry), mirroring the pair/inbound routes' precedent;
