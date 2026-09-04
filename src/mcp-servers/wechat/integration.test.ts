@@ -657,24 +657,23 @@ describe('wechat-mcp stdio integration', () => {
     await nonAdmin.client.close()
   })
 
-  it('social_seek hits POST /v1/social/seek/propose and returns {intent_id, redacted, hint} (P4 repoint)', async () => {
+  it('social_seek hits POST /v1/social/wish and returns {ok, id, preview, hint} (心愿 repoint)', async () => {
     // Proves the tool repoint through the REAL internal-api router
-    // (routes-social.ts), not just code review: only
-    // POST /v1/social/seek/propose is wired to deps.social.broker.propose —
-    // any other path either 404s (no route registered) before ever reaching
-    // this stub, so the propose spy firing with the right args + the tool
-    // returning this stub's exact response is direct proof the stdio→HTTP
-    // chain hit exactly that endpoint. Store/revealer stubs mirror the
-    // shape internal-api.test.ts already uses for `deps.social`.
-    const proposeCalls: Array<{ topic: string; opts?: { city?: string } }> = []
+    // (routes-social.ts), not just code review: only POST /v1/social/wish
+    // is wired to deps.social.wish.propose — any other path either 404s (no
+    // route registered) before ever reaching this stub, so the propose spy
+    // firing with the right args + the tool returning this stub's exact
+    // response is direct proof the stdio→HTTP chain hit exactly that
+    // endpoint.
+    const proposeCalls: string[] = []
     api = createInternalApi({
       stateDir, daemonPid: 7777,
       social: {
+        // command-router.ts (WeChat 派/取消/揭晓 chat commands) still reads
+        // these — unrelated to this test, but InternalApiDeps.social keeps
+        // them required. Unused stubs, mirroring internal-api.test.ts's shape.
         broker: {
-          propose: async (topic: string, opts?: { city?: string }) => {
-            proposeCalls.push({ topic, opts })
-            return { ok: true as const, intent_id: 'seek-abc123', redacted: '找摄影搭子(已脱敏)' }
-          },
+          propose: async () => ({ ok: true as const, intent_id: 'unused', redacted: '' }),
           confirmSeek: () => ({ ok: true as const, intent_id: 'unused' }),
           cancelSeek: () => ({ ok: true as const }),
         },
@@ -698,6 +697,16 @@ describe('wechat-mcp stdio integration', () => {
           onInboundReveal: () => ({ mutual: false }),
           retryUndelivered: async () => 0,
         },
+        wish: {
+          propose: async (text: string) => {
+            proposeCalls.push(text)
+            return { ok: true as const, id: 'wish-abc123', preview: '找摄影搭子(深圳)(已脱敏)' }
+          },
+          send: async () => ({ ok: true as const, sentTo: 0 }),
+          cancel: () => ({ ok: true as const, status: 'cancelled' as const }),
+          list: () => [],
+          resolveRef: () => ({ ok: false as const, reason: 'not_found' as const }),
+        },
       },
     })
     const { port, tokenFilePath } = await api.start()
@@ -711,7 +720,7 @@ describe('wechat-mcp stdio integration', () => {
         // (main.ts's SESSION_IS_ADMIN gate). Deliberately no
         // WECHAT_SESSION_TOKEN: the client then authenticates HTTP calls
         // with the daemon-wide FILE token (trusted) — sufficient, since
-        // POST /v1/social/seek/propose is trusted-tier (route-tiers.ts, P4),
+        // POST /v1/social/wish is trusted-tier (route-tiers.ts, 心愿),
         // same as how the real CLI/session-token holders reach it.
         WECHAT_SESSION_TIER: 'admin',
       },
@@ -726,12 +735,13 @@ describe('wechat-mcp stdio integration', () => {
     const content = result.content as Array<{ type: string; text?: string }>
     const textBlock = content.find(b => b.type === 'text')
     expect(textBlock).toBeDefined()
-    const body = JSON.parse(textBlock!.text!) as { intent_id?: string; redacted?: string; hint?: string }
-    expect(body.intent_id).toBe('seek-abc123')
-    expect(body.redacted).toBe('找摄影搭子(已脱敏)')
-    expect(body.hint).toContain('派 seek-abc123')
-    expect(body.hint).toContain('取消 seek-abc123')
-    expect(proposeCalls).toEqual([{ topic: '找摄影搭子', opts: { city: '深圳' } }])
+    const body = JSON.parse(textBlock!.text!) as { ok?: boolean; id?: string; preview?: string; hint?: string }
+    expect(body.ok).toBe(true)
+    expect(body.id).toBe('wish-abc123')
+    expect(body.preview).toBe('找摄影搭子(深圳)(已脱敏)')
+    expect(body.hint).toContain('派 wish-abc123')
+    expect(body.hint).toContain('取消 wish-abc123')
+    expect(proposeCalls).toEqual(['找摄影搭子(深圳)'])
   })
 
   it('ping tool returns isError=true when internal-api is unreachable', async () => {

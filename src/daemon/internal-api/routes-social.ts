@@ -7,15 +7,14 @@
  * capability/trust surface from the bare a2a exec/notify/pair routes — see
  * docs/superpowers/specs/2026-07-12-agent-social-m1-intent-brokering-design.md.
  *
- * P4 派心愿 (docs/superpowers/specs/2026-07-20-p4-seek-confirm-design.md)
- * replaced the one-shot POST /v1/social/seek with propose→confirm/cancel:
- * propose gates + persists a redacted preview WITHOUT broadcasting; confirm
- * flips it to foraging (broadcasts the stored redacted wording verbatim,
- * WYSIWYG); cancel voids a still-`proposed` row. The deprecated `seek()`
- * bridge lives on in the broker for other pre-split callers until Task 7.
+ * 心愿 (spec 2026-09-04-wish-postcard §4) replaced the P4 propose→confirm/
+ * cancel seek/seeks/echoes/pledges/*reveal routes with four wish routes:
+ * propose gates + stashes a draft WITHOUT sending; send broadcasts the
+ * stored redacted wording verbatim to every open channel; cancel voids a
+ * draft/open row; the GET list gives the redacted text + effective status
+ * (never the raw text or a stale `open` past expiry).
  */
 import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
-import { toPublicEcho } from '../../core/social-echo-store'
 import type { InternalApiDeps, RouteTable } from './types'
 import { applySocialSwitch } from '../../cli/social-enable'
 import { buildRelationships, type RelationshipInputs } from '../../core/relationships'
@@ -90,42 +89,29 @@ export function socialRoutes(deps: InternalApiDeps): RouteTable {
       return { status: 200, body: { relationships } }
     },
 
-    // P4 派心愿 — propose→confirm split (replaces the deleted one-shot
-    // POST /v1/social/seek). All three are inline-validated (no
-    // REQUEST_SCHEMAS entry), mirroring the pair/inbound routes' precedent;
-    // results are passed through verbatim — no notify here (that lives in
-    // the broker/wire-social layer).
-    'POST /v1/social/seek/propose': async (_q, body) => {
-      if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
-      const { topic, city } = (body ?? {}) as { topic?: string; city?: string }
-      if (typeof topic !== 'string' || topic.length === 0) return { status: 400, body: { error: 'missing_topic' } }
-      const r = await deps.social.broker.propose(topic, city ? { city } : undefined)
-      return { status: 200, body: r }
+    // 心愿(spec 2026-09-04-wish-postcard §4)。propose 只存草稿 —— 发出必须是主人的动作。
+    'POST /v1/social/wish': async (_q, body) => {
+      if (!deps.social?.wish) return { status: 503, body: { error: 'social_not_wired' } }
+      const text = ((body ?? {}) as { text?: unknown }).text
+      if (typeof text !== 'string' || text.trim() === '') return { status: 400, body: { error: 'missing_text' } }
+      return { status: 200, body: await deps.social.wish.propose(text.trim()) }
     },
-    'POST /v1/social/seek/confirm': async (_q, body) => {
-      if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
+    'POST /v1/social/wish/send': async (_q, body) => {
+      if (!deps.social?.wish) return { status: 503, body: { error: 'social_not_wired' } }
       const id = ((body ?? {}) as { id?: unknown }).id
-      if (typeof id !== 'string' || id.length === 0) return { status: 400, body: { error: 'missing_id' } }
-      return { status: 200, body: await deps.social.broker.confirmSeek(id) }
+      if (typeof id !== 'string' || id === '') return { status: 400, body: { error: 'missing_id' } }
+      const r = await deps.social.wish.send(id)
+      return { status: 200, body: r.ok ? { ok: true, sent_to: r.sentTo } : r }
     },
-    'POST /v1/social/seek/cancel': async (_q, body) => {
-      if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
+    'POST /v1/social/wish/cancel': async (_q, body) => {
+      if (!deps.social?.wish) return { status: 503, body: { error: 'social_not_wired' } }
       const id = ((body ?? {}) as { id?: unknown }).id
-      if (typeof id !== 'string' || id.length === 0) return { status: 400, body: { error: 'missing_id' } }
-      return { status: 200, body: await deps.social.broker.cancelSeek(id) }
+      if (typeof id !== 'string' || id === '') return { status: 400, body: { error: 'missing_id' } }
+      return { status: 200, body: deps.social.wish.cancel(id) }
     },
-    // 觅食台 P2 — read routes over P1's stored rows (dashboard/CLI listing).
-    'GET /v1/social/seeks': async () => {
-      if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
-      return { status: 200, body: { seeks: deps.social.seekStore.list() } }
-    },
-    // peer_agent_id / relay_via / relay_token are server-side only pre-reveal
-    // (spine spec) — project through toPublicEcho's allowlist so the real
-    // identity behind peer_masked can't leak to the frontend before the
-    // owner's friend double-opt-in reveals it.
-    'GET /v1/social/echoes': async () => {
-      if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
-      return { status: 200, body: { echoes: deps.social.echoStore.listAll().map(toPublicEcho) } }
+    'GET /v1/social/wishes': async () => {
+      if (!deps.social?.wish) return { status: 503, body: { error: 'social_not_wired' } }
+      return { status: 200, body: { wishes: deps.social.wish.list().map(w => ({ id: w.id, text: w.redacted, status: w.effective, created_at: w.createdAt, expires_at: w.expiresAt, sent_to: w.sentTo, replies: w.replies })) } }
     },
     // 觅食台 P2 Task 3 — inbound on/off toggle over a2a_listen, replacing the
     // "hand-edit agent-config.json" instruction. restart_required: true
@@ -159,29 +145,6 @@ export function socialRoutes(deps: InternalApiDeps): RouteTable {
         : (() => { const { a2a_listen, ...rest } = cfg; return rest })()
       saveAgentConfig(deps.stateDir, updated)
       return { status: 200, body: { enabled, restart_required: true } }
-    },
-    // async foraging spine — the answerer's pledge rows (mirrors GET echoes).
-    'GET /v1/social/pledges': async () => {
-      if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
-      return { status: 200, body: { pledges: deps.social.pledgeStore.list() } }
-    },
-    // 揭晓 — desktop reveal buttons. id comes in the BODY (router is exact-match,
-    // no :id path params). null outcome ⇒ no such row ⇒ 404.
-    'POST /v1/social/echoes/reveal': async (_q, body) => {
-      if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
-      const id = ((body ?? {}) as { id?: unknown }).id
-      if (typeof id !== 'string' || id.length === 0) return { status: 400, body: { error: 'missing_id' } }
-      const outcome = await deps.social.revealer.revealEcho(id)
-      if (outcome === null) return { status: 404, body: { error: 'not_found' } }
-      return { status: 200, body: { outcome } }
-    },
-    'POST /v1/social/pledges/reveal': async (_q, body) => {
-      if (!deps.social) return { status: 503, body: { error: 'social_not_wired' } }
-      const id = ((body ?? {}) as { id?: unknown }).id
-      if (typeof id !== 'string' || id.length === 0) return { status: 400, body: { error: 'missing_id' } }
-      const outcome = await deps.social.revealer.revealPledge(id)
-      if (outcome === null) return { status: 404, body: { error: 'not_found' } }
-      return { status: 200, body: { outcome } }
     },
   }
 }

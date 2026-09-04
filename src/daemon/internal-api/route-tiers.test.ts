@@ -38,13 +38,15 @@ describe('route-tiers', () => {
     expect(minTierFor('POST /v1/pair/accept')).toBe('trusted')
   })
 
-  it('P4 seek propose/confirm/cancel require trusted (CLI-reachable, flagged for release review)', () => {
-    expect(minTierFor('POST /v1/social/seek/propose')).toBe('trusted')
-    expect(minTierFor('POST /v1/social/seek/confirm')).toBe('trusted')
-    expect(minTierFor('POST /v1/social/seek/cancel')).toBe('trusted')
+  it('心愿 wish/wish-send/wish-cancel/wishes require trusted (CLI-reachable, flagged for release review)', () => {
+    expect(minTierFor('POST /v1/social/wish')).toBe('trusted')
+    expect(minTierFor('POST /v1/social/wish/send')).toBe('trusted')
+    expect(minTierFor('POST /v1/social/wish/cancel')).toBe('trusted')
+    expect(minTierFor('GET /v1/social/wishes')).toBe('trusted')
   })
 
-  it('the deleted one-shot POST /v1/social/seek has no explicit tier (falls to the admin default)', () => {
+  it('the deleted P4 seek/propose route has no explicit tier (falls to the admin default)', () => {
+    expect(ROUTE_MIN_TIER['POST /v1/social/seek/propose']).toBeUndefined()
     expect(ROUTE_MIN_TIER['POST /v1/social/seek']).toBeUndefined()
   })
 
@@ -64,10 +66,7 @@ describe('route-tiers', () => {
     expect(minTierFor('POST /v1/atelier/share')).toBe('trusted')
   })
 
-  it('觅食台读面 + inbound toggle 是 trusted(同上:桌面/CLI 的唯一凭据是文件 token)', () => {
-    expect(minTierFor('GET /v1/social/seeks')).toBe('trusted')
-    expect(minTierFor('GET /v1/social/echoes')).toBe('trusted')
-    expect(minTierFor('GET /v1/social/pledges')).toBe('trusted')
+  it('觅食台 inbound toggle 是 trusted(同上:桌面/CLI 的唯一凭据是文件 token)', () => {
     expect(minTierFor('GET /v1/social/inbound')).toBe('trusted')
     expect(minTierFor('POST /v1/social/inbound')).toBe('trusted')
   })

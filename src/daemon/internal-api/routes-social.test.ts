@@ -1,104 +1,46 @@
 // src/daemon/internal-api/routes-social.test.ts
 //
-// P4 派心愿 — the propose/confirm/cancel routes replacing the old one-shot
-// POST /v1/social/seek (deleted in this pass). Mirrors routes-pair.test.ts's
+// 心愿 (spec 2026-09-04-wish-postcard §4) — POST /v1/social/wish(/send|/cancel)
+// + GET /v1/social/wishes replace the old propose/confirm/cancel/seeks/echoes/
+// pledges/reveal routes (deleted in this pass). Mirrors routes-pair.test.ts's
 // deps-stub shape: a bare `{ social }` object cast through, no real broker.
 import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { socialRoutes } from './routes-social'
+import { minTierFor } from './route-tiers'
 import type { InternalApiDeps } from './types'
 
-function deps(social?: any): InternalApiDeps {
-  return { social } as unknown as InternalApiDeps
-}
+const qs = () => new URLSearchParams()
 
-describe('socialRoutes — propose/confirm/cancel', () => {
-  it('the old one-shot route is gone', () => {
-    const routes = socialRoutes(deps())
-    expect(routes['POST /v1/social/seek']).toBeUndefined()
+describe('/v1/social/wish*', () => {
+  const wish = {
+    propose: vi.fn(async (t: string) => (t === 'bad' ? { ok: false as const, error: 'gate_failed' as const, violations: ['住址'] } : { ok: true as const, id: 'abcd1234', preview: t })),
+    send: vi.fn(async (id: string) => (id === 'abcd1234' ? { ok: true as const, sentTo: 2 } : { ok: false as const, reason: 'not_found' as const })),
+    cancel: vi.fn((id: string) => (id === 'abcd1234' ? { ok: true as const, status: 'closed' as const } : { ok: false as const, reason: 'not_found' as const })),
+    list: vi.fn(() => [{ id: 'abcd1234', text: '原文', redacted: '脱敏', status: 'open' as const, effective: 'open' as const, createdAt: 'c', sentAt: 's', expiresAt: 'e', sentTo: 2, replies: 1 }]),
+    resolveRef: vi.fn(),
+  }
+  const deps = { social: { wish } } as unknown as InternalApiDeps
+  const r = socialRoutes(deps)
+  it('propose 过门 → id + preview;不过门 → ok:false + violations;缺 text → 400', async () => {
+    expect((await r['POST /v1/social/wish']!(qs(), { text: '找搭子' })).body).toEqual({ ok: true, id: 'abcd1234', preview: '找搭子' })
+    expect((await r['POST /v1/social/wish']!(qs(), { text: 'bad' })).body).toMatchObject({ ok: false, error: 'gate_failed', violations: ['住址'] })
+    expect((await r['POST /v1/social/wish']!(qs(), {})).status).toBe(400)
   })
-
-  describe('POST /v1/social/seek/propose', () => {
-    it('calls broker.propose(topic, { city }) and returns 200 with the result verbatim', async () => {
-      const propose = vi.fn(async () => ({ ok: true, intent_id: 'i1', redacted: '找摄影搭子' }))
-      const routes = socialRoutes(deps({ broker: { propose } }))
-      const r = await routes['POST /v1/social/seek/propose']!({} as any, { topic: '找摄影搭子', city: '深圳' })
-      expect(propose).toHaveBeenCalledWith('找摄影搭子', { city: '深圳' })
-      expect(r.status).toBe(200)
-      expect(r.body).toEqual({ ok: true, intent_id: 'i1', redacted: '找摄影搭子' })
-    })
-
-    it('omits opts when no city given', async () => {
-      const propose = vi.fn(async () => ({ ok: true, intent_id: 'i1', redacted: 'x' }))
-      const routes = socialRoutes(deps({ broker: { propose } }))
-      await routes['POST /v1/social/seek/propose']!({} as any, { topic: 'x' })
-      expect(propose).toHaveBeenCalledWith('x', undefined)
-    })
-
-    it('503 when deps.social is undefined', async () => {
-      const routes = socialRoutes(deps(undefined))
-      const r = await routes['POST /v1/social/seek/propose']!({} as any, { topic: 'x' })
-      expect(r.status).toBe(503)
-      expect(r.body).toEqual({ error: 'social_not_wired' })
-    })
+  it('send / cancel', async () => {
+    expect((await r['POST /v1/social/wish/send']!(qs(), { id: 'abcd1234' })).body).toEqual({ ok: true, sent_to: 2 })
+    expect((await r['POST /v1/social/wish/cancel']!(qs(), { id: 'abcd1234' })).body).toEqual({ ok: true, status: 'closed' })
+    expect((await r['POST /v1/social/wish/send']!(qs(), {})).status).toBe(400)
   })
-
-  describe('POST /v1/social/seek/confirm', () => {
-    it('calls broker.confirmSeek(id) and returns 200 with the result verbatim', async () => {
-      const confirmSeek = vi.fn(async () => ({ ok: true, intent_id: 'i1' }))
-      const routes = socialRoutes(deps({ broker: { confirmSeek } }))
-      const r = await routes['POST /v1/social/seek/confirm']!({} as any, { id: 'i1' })
-      expect(confirmSeek).toHaveBeenCalledWith('i1')
-      expect(r.status).toBe(200)
-      expect(r.body).toEqual({ ok: true, intent_id: 'i1' })
-    })
-
-    it('400 missing_id on a missing/empty id', async () => {
-      const confirmSeek = vi.fn()
-      const routes = socialRoutes(deps({ broker: { confirmSeek } }))
-      const missing = await routes['POST /v1/social/seek/confirm']!({} as any, {})
-      expect(missing.status).toBe(400)
-      expect(missing.body).toEqual({ error: 'missing_id' })
-      const empty = await routes['POST /v1/social/seek/confirm']!({} as any, { id: '' })
-      expect(empty.status).toBe(400)
-      expect(confirmSeek).not.toHaveBeenCalled()
-    })
-
-    it('503 when deps.social is undefined', async () => {
-      const routes = socialRoutes(deps(undefined))
-      const r = await routes['POST /v1/social/seek/confirm']!({} as any, { id: 'i1' })
-      expect(r.status).toBe(503)
-      expect(r.body).toEqual({ error: 'social_not_wired' })
-    })
+  it('list 给脱敏文本和 effective 状态,字段 snake_case', async () => {
+    expect((await r['GET /v1/social/wishes']!(qs(), undefined)).body).toEqual({ wishes: [{ id: 'abcd1234', text: '脱敏', status: 'open', created_at: 'c', expires_at: 'e', sent_to: 2, replies: 1 }] })
   })
-
-  describe('POST /v1/social/seek/cancel', () => {
-    it('calls broker.cancelSeek(id) and returns 200 with the result verbatim', async () => {
-      const cancelSeek = vi.fn(async () => ({ ok: true }))
-      const routes = socialRoutes(deps({ broker: { cancelSeek } }))
-      const r = await routes['POST /v1/social/seek/cancel']!({} as any, { id: 'i1' })
-      expect(cancelSeek).toHaveBeenCalledWith('i1')
-      expect(r.status).toBe(200)
-      expect(r.body).toEqual({ ok: true })
-    })
-
-    it('400 missing_id on a missing id', async () => {
-      const cancelSeek = vi.fn()
-      const routes = socialRoutes(deps({ broker: { cancelSeek } }))
-      const r = await routes['POST /v1/social/seek/cancel']!({} as any, {})
-      expect(r.status).toBe(400)
-      expect(r.body).toEqual({ error: 'missing_id' })
-      expect(cancelSeek).not.toHaveBeenCalled()
-    })
-
-    it('503 when deps.social is undefined', async () => {
-      const routes = socialRoutes(deps(undefined))
-      const r = await routes['POST /v1/social/seek/cancel']!({} as any, { id: 'i1' })
-      expect(r.status).toBe(503)
-      expect(r.body).toEqual({ error: 'social_not_wired' })
-    })
+  it('social 没接 → 503;四条 tier 是 trusted;旧路由不存在', () => {
+    expect(socialRoutes({} as InternalApiDeps)['POST /v1/social/wish']).toBeDefined()
+    for (const k of ['POST /v1/social/wish', 'POST /v1/social/wish/send', 'POST /v1/social/wish/cancel', 'GET /v1/social/wishes']) expect(minTierFor(k)).toBe('trusted')
+    for (const k of ['POST /v1/social/seek/propose', 'GET /v1/social/seeks', 'GET /v1/social/echoes', 'POST /v1/social/echoes/reveal', 'GET /v1/social/pledges']) expect(r[k]).toBeUndefined()
   })
 })
 
