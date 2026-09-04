@@ -9,8 +9,11 @@ import type { Db } from '../lib/db'
 import { parseCatch } from './hunt-catch'
 
 export type CatchStatus = 'new' | 'tried' | 'using' | 'dropped'
-/** 'hunt' = 打猎带回的东西;'visit' = 串门带回的见闻(v37)。 */
-export type CatchKind = 'hunt' | 'visit'
+/**
+ * 'hunt' = 打猎带回的东西;'visit' = 串门带回的见闻(v37);
+ * 'postcard' = 别人回心愿的明信片(spec 2026-09-04-wish-postcard)。
+ */
+export type CatchKind = 'hunt' | 'visit' | 'postcard'
 export const CATCH_STATUSES: readonly CatchStatus[] = ['new', 'tried', 'using', 'dropped']
 
 export interface CatchRow {
@@ -40,6 +43,11 @@ export interface Journal {
    * 状态对见闻没意义(没有「试过没有」),但列上有,固定 'new'。
    */
   recordVisit(args: { chatId: string; text: string; peerLabel: string; nowIso?: string; imageSvg?: string | null }): string | null
+  /**
+   * 记一张明信片(kind='postcard'):别人的伙伴回了主人的心愿。一张一条,
+   * title = `${peerLabel} 回了你的心愿`;没有链接、没有状态档意义(固定 'new')。
+   */
+  recordPostcard(args: { chatId: string; text: string; peerLabel: string; nowIso?: string }): string | null
   /** 明信片画得慢(又一次模型调用 + 栅格化),先记见闻再补图。 */
   attachImage(id: string, svg: string): void
   list(limit?: number): CatchRow[]
@@ -62,6 +70,10 @@ export function makeJournal(db: Db): Journal {
   const insVisit = db.query<unknown, [string, string, string, string, string, string | null]>(
     `INSERT INTO journal(id, ts, chat_id, title, url, note, status, kind, image_svg)
      VALUES (?, ?, ?, ?, NULL, ?, 'new', 'visit', ?)`,
+  )
+  const insPostcard = db.query<unknown, [string, string, string, string, string]>(
+    `INSERT INTO journal(id, ts, chat_id, title, url, note, status, kind, image_svg)
+     VALUES (?, ?, ?, ?, NULL, ?, 'new', 'postcard', NULL)`,
   )
   const setImage = db.query<unknown, [string, string]>('UPDATE journal SET image_svg = ? WHERE id = ?')
   const selAll = db.query<CatchRow, [number]>('SELECT * FROM journal ORDER BY ts DESC, rowid DESC LIMIT ?')
@@ -99,6 +111,15 @@ export function makeJournal(db: Db): Journal {
       if (body === '') return null
       const id = `${ts}:visit:${Math.random().toString(36).slice(2, 8)}`
       insVisit.run(id, ts, chatId, peerLabel, body, imageSvg ?? null)
+      prune.run(PRUNE_KEEP)
+      return id
+    },
+    recordPostcard({ chatId, text, peerLabel, nowIso }) {
+      const ts = nowIso ?? new Date().toISOString()
+      const body = text.trim()
+      if (body === '') return null
+      const id = `${ts}:postcard:${Math.random().toString(36).slice(2, 8)}`
+      insPostcard.run(id, ts, chatId, `${peerLabel} 回了你的心愿`, body)
       prune.run(PRUNE_KEEP)
       return id
     },

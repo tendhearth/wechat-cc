@@ -118,3 +118,15 @@ describe('journal-seen 水位文件', () => {
     expect(readJournalSeen(dir)).toBe(null)
   })
 })
+
+describe('recordPostcard —— 别人回心愿的明信片', () => {
+  it('一张一条,kind=postcard,标题带对方;空文本不记;summary 的 latest 认得它', () => {
+    const j = makeJournal(openDb({ path: ':memory:' }))
+    expect(j.recordPostcard({ chatId: 'o', text: '   ', peerLabel: '阿一' })).toBe(null)
+    const id = j.recordPostcard({ chatId: 'o', text: '我朋友周末常去', peerLabel: '阿一', nowIso: '2026-09-04T10:00:00.000Z' })
+    expect(id).toMatch(/:postcard:/)
+    const row = j.list()[0]!
+    expect(row).toMatchObject({ kind: 'postcard', title: '阿一 回了你的心愿', note: '我朋友周末常去', status: 'new', url: null })
+    expect(j.summary(null).latest?.kind).toBe('postcard')
+  })
+})

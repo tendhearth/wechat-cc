@@ -44,15 +44,17 @@ export function dayLabel(iso, now = new Date()) {
 }
 
 /**
- * 「3 件 · 2 段见闻」—— 东西和见闻分开数:它们不是同一种计量单位。
+ * 「3 件 · 2 段见闻 · 1 张明信片」—— 东西、见闻、明信片分开数:它们不是同一种计量单位。
  * @param {Array<any>} kept
  */
 export function countLabel(kept) {
-  const things = kept.filter(i => i.kind !== 'visit').length
-  const visits = kept.length - things
+  const things = kept.filter(i => i.kind !== 'visit' && i.kind !== 'postcard').length
+  const visits = kept.filter(i => i.kind === 'visit').length
+  const cards = kept.filter(i => i.kind === 'postcard').length
   const parts = []
   if (things) parts.push(`${things} 件`)
   if (visits) parts.push(`${visits} 段见闻`)
+  if (cards) parts.push(`${cards} 张明信片`)
   return parts.join(' · ')
 }
 
@@ -91,9 +93,27 @@ function renderVisitCard(it) {
   </article>`
 }
 
+/**
+ * 明信片卡(kind='postcard'):别人的伙伴回了你的心愿。没有链接,也没有状态档。
+ * @param {any} it
+ */
+function renderPostcardCard(it) {
+  return `<article class="hb-card hb-postcard-card" data-hb-id="${escapeHtml(it.id)}">
+    <div class="hb-head">
+      <h3 class="hb-title">📮 ${escapeHtml(it.title || '明信片')}</h3>
+      <span class="hb-day">${escapeHtml(dayLabel(it.ts))}</span>
+    </div>
+    <p class="hb-note">${escapeHtml(it.note || '')}</p>
+    <div class="hb-foot hb-foot-visit">
+      <button class="hb-del" data-hb-action="remove" data-hb-id="${escapeHtml(it.id)}" type="button" title="从背包里删掉">×</button>
+    </div>
+  </article>`
+}
+
 /** @param {any} it */
 function renderCard(it) {
   if (it.kind === 'visit') return renderVisitCard(it)
+  if (it.kind === 'postcard') return renderPostcardCard(it)
   const url = it.url ? String(it.url) : ''
   const chips = STATUSES.map(s =>
     `<button class="hb-chip${it.status === s.key ? ' on' : ''}" data-hb-action="status"`
