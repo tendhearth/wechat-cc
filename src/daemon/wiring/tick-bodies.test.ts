@@ -687,6 +687,23 @@ describe('buildTickBodies / pushTick — daily hunt branch (Task 3)', () => {
     expect(s.careLedgerEntries['chat-1']?.lastHuntAtIso).toBe('2026-05-13T10:00:00.000Z')
   })
 
+  it('打猎轮次持 busy token(label=hunt),发完释放 —— 桌宠靠它显示「觅食中」', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const held: string[] = []
+    let released = 0
+    let heldDuringDispatch = false
+    s.deps.boot = { ...s.deps.boot, holdBusy: (label: string) => { held.push(label); return () => { released++ } } } as never
+    s.dispatch.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() { heldDuringDispatch = held.includes('hunt') && released === 0 },
+    }))
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(held).toEqual(['hunt'])
+    expect(heldDuringDispatch).toBe(true)
+    expect(released).toBe(1)
+  })
+
   // ── 战利品入库(2026-09-03,用户反馈「桌面端没有记录」)────────────
   //
   // 这条链最容易「静默不记」:tap 没开、tap 和发送不是同一个实例、或者

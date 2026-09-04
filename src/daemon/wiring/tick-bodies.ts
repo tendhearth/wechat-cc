@@ -498,12 +498,19 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         // 主人想回头找上周那条链接只能翻聊天。记的是**真发出去的文本**,
         // 不是要求模型额外调一个登记工具(漏调一次就少一条,且无人知晓)。
         const tap = deps.outboundTaps?.tap(chatId)
+        // busy token(spec 2026-09-03-companion-presence §2.2):调度器持的是
+        // companion-push(每拍都有,桌宠推导会忽略);打猎要有自己的名字,
+        // 桌宠才知道这一拍是「出门觅食」而不是例行公事。silent-safe:
+        // 测试夹具的 boot 没有 holdBusy。
+        let releaseHunt: (() => void) | undefined
+        try { releaseHunt = (deps.boot as { holdBusy?: (l: string) => () => void }).holdBusy?.('hunt') } catch { releaseHunt = undefined }
         try {
           await dispatchToChat(chatId, {
             claim: () => { deps.careLedger.claimHunt(chatId, nowIso) },
             buildText: () => buildHuntText({ nowIso }),
           })
         } finally {
+          try { releaseHunt?.() } catch { /* release 永不抛 */ }
           const shared = tap?.close() ?? []
           if (shared.length > 0 && deps.huntStore) {
             // 记录失败绝不能让这一拍看起来失败 —— 消息已经发出去了。
