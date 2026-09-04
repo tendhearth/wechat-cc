@@ -5655,6 +5655,10 @@ input { font: inherit; color: inherit; }
 .wsh-draft { margin:8px 0; padding:8px 10px; border:1px dashed var(--fd-line,#ccc); border-radius:8px; }
 .wsh-list .wsh-row { display:flex; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px solid var(--fd-line,#eee); }
 .wsh-meta { opacity:.7; font-size:.9em; }
+.wsh-btn-discard { background:transparent; color:var(--fd-ink-soft); border:1.5px solid var(--fd-line); }
+.wsh-btn-discard:hover { border-color:var(--fd-ink-faint); }
+
+@media (max-width:680px) { .fd-wrap { padding:28px 18px 60px; } }
 
 /* ③ foraging network (folded) */
 .fd-net { background:var(--fd-ground-2); border:1px solid var(--fd-line); border-radius:var(--fd-radius); padding:6px 20px; }

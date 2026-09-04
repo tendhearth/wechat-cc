@@ -80,7 +80,7 @@ export function renderWishDraft(preview) {
   draft.innerHTML = `<div class="wsh-draft-text">${escapeHtml(String(preview.preview ?? ''))}</div>` +
     `<div class="wsh-draft-actions">` +
     `<button class="fd-btn fd-btn-primary" data-wsh-action="send" data-wsh-id="${id}" type="button">派</button>` +
-    `<button class="fd-btn fd-btn-wait" data-wsh-action="discard" data-wsh-id="${id}" type="button">算了</button>` +
+    `<button class="fd-btn wsh-btn-discard" data-wsh-action="discard" data-wsh-id="${id}" type="button">算了</button>` +
     `</div>`
 }
 
