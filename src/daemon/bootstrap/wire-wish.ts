@@ -28,7 +28,7 @@ import {
 import { isCheckerFailure } from '../../core/a2a-disclosure'
 import { readWishes, writeWishes, markWishSeen } from '../companion/wish-memory'
 import type { Envelope } from '../../core/envelope'
-import type { ChannelStore } from '../../core/penpal-channel-store'
+import { primaryChannels, type ChannelStore } from '../../core/penpal-channel-store'
 
 export interface WishDeps {
   stateDir: string
@@ -208,7 +208,9 @@ export function makeWish(deps: WishDeps): WishService {
       // 都不写;算得过就先落盘再广播(下面那段注释说的是为什么)。
       const pre = sendWish(readWishes(deps.stateDir), id, iso, 0)
       if (!pre.ok) return { ok: false, reason: pre.reason }
-      const targets = deps.channelStore.list().filter(c => c.status === 'open')
+      // 一个对方只投一次:重新配对会留下同一个 peer_agent_id 的旧 open 行,
+      // 挨条投等于把同一个人的主人打扰两遍。
+      const targets = primaryChannels(deps.channelStore.list())
       if (targets.length === 0) return { ok: false, reason: 'no_channels' }   // 草稿留着,有信道了再派
       // **先落 open,再广播**。第一个对端可能在 sendEnvelope 还没返回时就把
       // 明信片原路送回来了(同一进程里的两只伙伴就是这样),那时候心愿要是

@@ -126,6 +126,18 @@ describe('心愿:两只伙伴对着问', () => {
     expect(await A.wish.send(p.id)).toEqual({ ok: false, reason: 'no_channels' })
     expect(readWishes(A.stateDir)[0]!.status).toBe('draft')
   })
+  it('send:同一个对端有两条 open 信道(重新配对留下的)→ 只投最新那条,主人不被打扰两遍', async () => {
+    const DUP: Chan[] = [
+      { id: 'ch', status: 'open', degree: 1, peer_agent_id: 'cc-b', created_at: '2026-09-04T00:00:00Z' },
+      { id: 'ch-old', status: 'open', degree: 1, peer_agent_id: 'cc-b', created_at: '2026-09-01T00:00:00Z' },
+    ]
+    const A = side('A', { match: 'no' }, true, DUP), B = side('B', { match: 'no' })
+    A.setPeer(B); B.setPeer(A)
+    const p = await A.wish.propose('x'); if (!p.ok) throw new Error()
+    expect(await A.wish.send(p.id)).toEqual({ ok: true, sentTo: 1 })
+    await flush()
+    expect(B.owner).toHaveLength(1)
+  })
   it('send:已有 3 条 open → 第 4 条 too_many_open', async () => {
     const A = side('A'), B = side('B'); A.setPeer(B); B.setPeer(A)
     for (let i = 0; i < 3; i++) { const p = await A.wish.propose(`w${i}`); if (!p.ok) throw new Error(); expect((await A.wish.send(p.id)).ok).toBe(true) }

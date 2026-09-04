@@ -9,6 +9,8 @@
  * 手(capabilities 含 exec)不在这里 —— 它是设备。
  */
 
+import { primaryChannels } from './penpal-channel-store'
+
 export type RelationshipKind = 'peer' | 'anon' | 'neighbor' | 'human'
 
 export interface Relationship {
@@ -45,8 +47,9 @@ export function buildRelationships(i: RelationshipInputs): Relationship[] {
   const seenPeer = new Set<string>()
 
   // 1) 有信道的:知道对端 id → peer;不知道(经介绍人)→ anon
-  for (const ch of i.channels) {
-    if (ch.status !== 'open') continue
+  //    同一个对端可能有好几条 open 行(每次重新配对都按 nonce 建新行),
+  //    只认最新的那条 —— 一个朋友一行,「串门」也去最新的那条。
+  for (const ch of primaryChannels(i.channels)) {
     const v = i.visitsByChannel[ch.id] ?? { ids: 0, lastAt: null, peerReplied: false }
     const known = ch.peer_agent_id && peerName.has(ch.peer_agent_id)
     if (known) seenPeer.add(ch.peer_agent_id!)

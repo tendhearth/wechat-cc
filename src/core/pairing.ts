@@ -193,7 +193,13 @@ export function makePairing(deps: PairingDeps): PairingEngine {
 
   /**
    * 配对完成即开信道:双方各建一条 open 的 penpal_channel,peer_agent_id 互指。
-   * 同一对端已有 open 信道就不重建 —— 重新配对是为了修注册表,不是为了多一条信道。
+   *
+   * **同一对端已经有 open 行也照建**(2026-09-04 改)。原来是「已有就跳过」,
+   * 看着省事,实际上两边是**各自**判断的:一侧留着上次配对的旧行、另一侧没有
+   * (数据库重建过、行被删过),于是这一侧跳过、那一侧新建 —— 开出一条只有
+   * 一头存在的信道,谁都不知道,信却再也送不到。按 nonce 建行则两侧永远对称。
+   * 旧的 open 行保留(它可能还有没读完的信);「往哪投」的收敛交给
+   * `primaryChannels`(penpal-channel-store.ts):按 peer_agent_id 取最新的一条。
    *
    * `nonce` 必须是 initiator 的 nonce(不是「card 那一方自己的」nonce)—— 两边
    * 各自持有的 openPairChannel 调用要落到*同一个* row id 上才有意义。initiator
@@ -208,9 +214,9 @@ export function makePairing(deps: PairingDeps): PairingEngine {
    * try/catch 包一层,防中间失败半途而废。
    */
   function openPairChannel(card: PairCard, mine: { channelId: string; pubkey: string; privkey: string }, nonce: string): void {
-    const exists = deps.channelStore.list().some(r => r.status === 'open' && r.peer_agent_id === card.self_id)
-    if (exists) return
     const rowId = `pair:${nonce}`
+    const older = deps.channelStore.list().find(r => r.status === 'open' && r.peer_agent_id === card.self_id && r.id !== rowId)
+    if (older) deps.log?.(`pair: peer ${card.self_id} already had an open channel ${older.id}; new pair channel ${rowId} created alongside`)
     if (!deps.channelStore.get(rowId)) {
       deps.channelStore.create({ id: rowId, seekId: rowId, myPrivkey: mine.privkey, myPubkey: mine.pubkey, myChannelId: mine.channelId, degree: 1, peerAgentId: card.self_id })
     }
@@ -243,21 +249,27 @@ export function makePairing(deps: PairingDeps): PairingEngine {
   // pass registry.add() only to be safeParse-dropped by loadAgentConfig on
   // the next read (registry/config divergence).
   const SELF_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
-  function isValidCard(card: unknown): card is PairCard {
-    if (!card || typeof card !== 'object') return false
+  /**
+   * `null` = 合规;`'pre_v2'` = 别的都对,只差 `v === 2` 或那两个信道字段 ——
+   * 一台还没升级的对端(v1 名片);`'invalid'` = 别的任何毛病(垃圾/敌意)。
+   * 分开是为了能对 pre-v2 说一句人话:静默丢弃时,两边的主人都以为是「配对码
+   * 过期了」,谁也不会想到去升级对面那台。
+   */
+  function cardProblem(card: unknown): 'pre_v2' | 'invalid' | null {
+    if (!card || typeof card !== 'object') return 'invalid'
     const c = card as Record<string, unknown>
-    if (c.v !== 2) return false
-    if (c.role !== 'initiator' && c.role !== 'acceptor') return false
-    if (typeof c.self_id !== 'string' || !SELF_ID_RE.test(c.self_id)) return false
-    if (typeof c.name !== 'string' || c.name.length === 0) return false
-    if (typeof c.bearer !== 'string' || c.bearer.length === 0) return false
-    if (typeof c.mailbox_addr !== 'string' || c.mailbox_addr.length === 0) return false
-    if (typeof c.mailbox_enc_pub !== 'string' || c.mailbox_enc_pub.length === 0) return false
-    if (!Array.isArray(c.relays) || c.relays.length === 0) return false
-    if (typeof c.nonce !== 'string' || c.nonce.length === 0) return false
-    if (typeof c.channel_id !== 'string' || c.channel_id.length === 0) return false
-    if (typeof c.channel_pub !== 'string' || c.channel_pub.length === 0) return false
-    return true
+    if (c.role !== 'initiator' && c.role !== 'acceptor') return 'invalid'
+    if (typeof c.self_id !== 'string' || !SELF_ID_RE.test(c.self_id)) return 'invalid'
+    if (typeof c.name !== 'string' || c.name.length === 0) return 'invalid'
+    if (typeof c.bearer !== 'string' || c.bearer.length === 0) return 'invalid'
+    if (typeof c.mailbox_addr !== 'string' || c.mailbox_addr.length === 0) return 'invalid'
+    if (typeof c.mailbox_enc_pub !== 'string' || c.mailbox_enc_pub.length === 0) return 'invalid'
+    if (!Array.isArray(c.relays) || c.relays.length === 0) return 'invalid'
+    if (typeof c.nonce !== 'string' || c.nonce.length === 0) return 'invalid'
+    const hasChannel = typeof c.channel_id === 'string' && c.channel_id.length > 0
+      && typeof c.channel_pub === 'string' && c.channel_pub.length > 0
+    if (c.v !== 2 || !hasChannel) return 'pre_v2'
+    return null
   }
   function readCards(rvAddr: string, rvEncPriv: string, rvSign: (m: string) => string): Promise<PairCard[]> {
     const ts = deps.now()
@@ -269,7 +281,12 @@ export function makePairing(deps: PairingDeps): PairingEngine {
         try { env = JSON.parse(item.envelope) as Envelope } catch { continue }
         const inner = openEnvelope(rvEncPriv, env)
         if (!inner) continue
-        if (isValidCard(inner.body)) cards.push(inner.body)
+        const problem = cardProblem(inner.body)
+        if (problem === null) cards.push(inner.body as PairCard)
+        else if (problem === 'pre_v2') {
+          const who = (inner.body as { self_id?: unknown }).self_id
+          deps.log?.(`PAIR: ignoring pre-v2 card from ${String(who)} — peer needs to upgrade`)
+        }
       }
       return cards
     })

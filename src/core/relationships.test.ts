@@ -48,6 +48,19 @@ describe('buildRelationships —— 四种对方,一张表', () => {
     expect(buildRelationships(base)[0]!.id).toBe('human:w@im.wechat') // 9/4 最近
   })
 
+  it('同一对端两条 open 信道(重新配对留下的)→ 只出一条,认最新的那条', () => {
+    const r = buildRelationships({
+      ...base,
+      channels: [
+        { id: 'ch-old', peer_agent_id: 'cc-b', degree: 1, status: 'open', created_at: '2026-09-01T00:00:00Z' },
+        { id: 'ch-new', peer_agent_id: 'cc-b', degree: 1, status: 'open', created_at: '2026-09-04T00:00:00Z' },
+      ],
+      visitsByChannel: {},
+    })
+    expect(r.filter(x => x.id === 'peer:cc-b')).toHaveLength(1)
+    expect(r.find(x => x.id === 'peer:cc-b')!.channel).toBe('ch-new')   // 「串门」去的就是这条
+  })
+
   it('关闭的信道不算', () => {
     const r = buildRelationships({ ...base, channels: [{ ...base.channels[0]!, status: 'pending' }] })
     expect(r.find(x => x.id === 'peer:cc-b')!.channel).toBeNull()

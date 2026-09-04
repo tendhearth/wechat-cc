@@ -84,7 +84,7 @@ cancelled     closed
   两边都用 initiator 的 nonce 作行 id,否则两侧行 id 不一致。开信道那三步不是原子的,两处调用点都包了 try/catch;信道已存在则幂等补完。
   `seek_id` 列 NOT NULL,填 rowId 即可(它的语义从「哪个心愿开的」变成「怎么开的」;列不改名)。
 - 我方的 X25519 密钥对在 `start()` / `accept()` 里生成,随 card 发出;`PairingDeps` 加 `channelStore`。
-- 重复配对同一对端(同 self_id 同 mailbox_addr):已有 open 信道则不再建第二条(按 `peer_agent_id` 查)。
+- 重复配对同一对端:仍按 initiator nonce 建行(两侧总是对称),旧 open 行保留;心愿广播和关系视图按 `peer_agent_id` 取最新的 open 信道(`primaryChannels`)。原因:"已有就跳过"两边各自判断,一侧有旧行一侧没有时会开出单向信道且无人知晓。
 - 关系视图:配对完的对端直接以「peer + channel」出现,`origin: '配对'`;「配对(还没开信道)」这一类只剩历史遗留行。
 - **旧对端**:已配对但没信道的,重新配对一次。Mac↔Windows 现有那条信道(揭晓建的)保留,行为不变。
 

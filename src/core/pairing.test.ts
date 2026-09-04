@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makePairing, type PairingDeps, type PairCard, type PairScheduleHandle, isAdvertisableUrl } from './pairing'
+import { primaryChannels } from './penpal-channel-store'
 import { deriveRendezvous } from './pairing-crypto'
 import { sealEnvelope } from './mailbox-crypto'
 import type { MailboxClient } from './mailbox-client'
@@ -20,16 +21,18 @@ function makeFakeRelay() {
   return { client, boxes }
 }
 
-type FakeChan = { id: string; seekId: string; myPrivkey: string; myPubkey: string; myChannelId: string; degree: number; peerAgentId: string | null; status: 'pending' | 'open'; peer: unknown }
+// createdAt 缺省 = ''(手工塞进来的「上一次配对留下的旧行」);create() 出来的
+// 行带真时间戳,于是「谁更新」这件事在假货上也成立(primaryChannels 要用)。
+type FakeChan = { id: string; seekId: string; myPrivkey: string; myPubkey: string; myChannelId: string; degree: number; peerAgentId: string | null; status: 'pending' | 'open'; peer: unknown; createdAt?: string }
 function rowToChannelRow(r: FakeChan) {
-  return { id: r.id, seek_id: r.seekId, my_privkey: r.myPrivkey, my_pubkey: r.myPubkey, my_channel_id: r.myChannelId, peer_pubkey: null, peer_channel_id: null, peer_mailbox: null, degree: r.degree, relay_via: null, peer_agent_id: r.peerAgentId, status: r.status, created_at: '' }
+  return { id: r.id, seek_id: r.seekId, my_privkey: r.myPrivkey, my_pubkey: r.myPubkey, my_channel_id: r.myChannelId, peer_pubkey: null, peer_channel_id: null, peer_mailbox: null, degree: r.degree, relay_via: null, peer_agent_id: r.peerAgentId, status: r.status, created_at: r.createdAt ?? '' }
 }
 function makeFakeChannelStore(): PairingDeps['channelStore'] & { rows: FakeChan[] } {
   const rows: FakeChan[] = []
   return {
     rows,
     get: (id) => { const r = rows.find(x => x.id === id); return r ? rowToChannelRow(r) as never : null },
-    create: (c) => { rows.push({ id: c.id, seekId: c.seekId, myPrivkey: c.myPrivkey, myPubkey: c.myPubkey, myChannelId: c.myChannelId, degree: c.degree, peerAgentId: c.peerAgentId ?? null, status: 'pending', peer: null }) },
+    create: (c) => { rows.push({ id: c.id, seekId: c.seekId, myPrivkey: c.myPrivkey, myPubkey: c.myPubkey, myChannelId: c.myChannelId, degree: c.degree, peerAgentId: c.peerAgentId ?? null, status: 'pending', peer: null, createdAt: new Date().toISOString() }) },
     setPeerHandle: (id, h) => { const r = rows.find(x => x.id === id); if (r) r.peer = h },
     setStatus: (id, s) => { const r = rows.find(x => x.id === id); if (r) r.status = s },
     list: () => rows.map(rowToChannelRow) as never,
@@ -402,12 +405,12 @@ describe('配对卡片不广播不可路由的 url', () => {
 })
 
 describe('配对即开信道(spec 2026-09-04-wish-postcard §2)', () => {
-  function pairBoth() {
+  function pairBoth(over: { logB?: (m: string) => void } = {}) {
     const relay = makeFakeRelay()
     const sA = makeManualScheduler(), sB = makeManualScheduler()
     const chanA = makeFakeChannelStore(), chanB = makeFakeChannelStore()
     const A = makePairing(baseDeps({ client: relay.client, selfId: () => 'cc-aaaa0001', name: () => 'A', self: { mailbox_addr: 'MA', mailbox_enc_pub: 'EA', relays: ['https://r/mailbox'] }, schedule: sA.schedule, channelStore: chanA, genNonce: () => 'n0nce' }))
-    const B = makePairing(baseDeps({ client: relay.client, selfId: () => 'cc-bbbb0002', name: () => 'B', self: { mailbox_addr: 'MB', mailbox_enc_pub: 'EB', relays: ['https://r/mailbox'] }, schedule: sB.schedule, channelStore: chanB }))
+    const B = makePairing(baseDeps({ client: relay.client, selfId: () => 'cc-bbbb0002', name: () => 'B', self: { mailbox_addr: 'MB', mailbox_enc_pub: 'EB', relays: ['https://r/mailbox'] }, schedule: sB.schedule, channelStore: chanB, ...(over.logB ? { log: over.logB } : {}) }))
     return { A, B, sA, chanA, chanB }
   }
 
@@ -426,19 +429,28 @@ describe('配对即开信道(spec 2026-09-04-wish-postcard §2)', () => {
     expect(chanA.rows[0]!.peer).toMatchObject({ mailbox: { addr: 'MB', enc_pub: 'EB' } })
   })
 
-  it('同一对端已有 open 信道 → 重新配对不建第二条', async () => {
-    const { A, B, sA, chanB } = pairBoth()
+  it('同一对端已有 open 信道 → 照样按 nonce 建新行(两侧才对称),旧行留着 + 记一条日志', async () => {
+    // 「已有就跳过」是两边**各自**判断的:一侧留着旧行、另一侧没有(库重建过),
+    // 于是一侧跳过、一侧新建 —— 开出一条只有一头存在的信道,谁都不知道。
+    // 收敛交给 primaryChannels(按 peer_agent_id 取最新的 open 行)。
+    const logs: string[] = []
+    const { A, B, sA, chanB } = pairBoth({ logB: (m) => logs.push(m) })
     chanB.rows.push({ id: 'pair:old', seekId: 'pair:old', myPrivkey: 'p', myPubkey: 'P', myChannelId: 'c', degree: 1, peerAgentId: 'cc-aaaa0001', status: 'open', peer: null })
     const { code } = await mustStart(A)
     expect((await B.accept(code)).ok).toBe(true)
     sA.tick(); await new Promise(r => setTimeout(r, 0))
-    expect(chanB.rows).toHaveLength(1)
+    expect(chanB.rows.map(r => r.id)).toEqual(['pair:old', 'pair:n0nce'])
+    expect(chanB.rows.find(r => r.id === 'pair:n0nce')).toMatchObject({ status: 'open', peerAgentId: 'cc-aaaa0001' })
+    expect(logs.some(m => m.includes('pair:old') && m.includes('pair:n0nce'))).toBe(true)
+    // 投递面上仍然只有一条:同一个对端只认最新的那条 open 行。
+    expect(primaryChannels(chanB.list()).map(r => r.id)).toEqual(['pair:n0nce'])
   })
 
   it('v1 旧 card(没有 channel 字段)不被认可', async () => {
     const relay = makeFakeRelay()
     const chanB = makeFakeChannelStore()
-    const B = makePairing(baseDeps({ client: relay.client, channelStore: chanB }))
+    const logs: string[] = []
+    const B = makePairing(baseDeps({ client: relay.client, channelStore: chanB, log: (m) => logs.push(m) }))
     // 手工往 rendezvous 信箱塞一张 v1 initiator card(没有 channel_id/channel_pub,
     // v:1 而不是 2),绕过 ownCard() 的保证有效构造 —— 就像文件里已有的 malformed
     // card 测试那样直接伪造对端在中继上会长成的样子。
@@ -450,6 +462,9 @@ describe('配对即开信道(spec 2026-09-04-wish-postcard §2)', () => {
     const r = await B.accept(code)
     expect(r.ok).toBe(false)
     expect(chanB.rows).toHaveLength(0)
+    // 静默丢弃的话,两边的主人都只会看到「配对码过期了」,谁也想不到该去升级
+    // 对面那台 —— 老名片和垃圾名片要分开说。
+    expect(logs).toContain('PAIR: ignoring pre-v2 card from cc-old00001 — peer needs to upgrade')
   })
 
   it('信道开通(create/setPeerHandle/setStatus)半途抛错不拖累配对结果 —— 只记日志', async () => {
