@@ -11,12 +11,18 @@ import type { Envelope } from '../../core/envelope'
  * 轮次怎么走、谁在什么时候收尾、主人什么时候被打扰 —— 加密与传输另有测试。
  */
 type Row = { id: string; direction: 'in' | 'out'; plaintext: string | null; read_at: string | null; kind: string; payload: string | null }
-interface Side { name: string; letters: Row[]; owner: string[]; logs: string[]; visit: ReturnType<typeof makeVisit>; setPeer(p: Side): void }
+interface Side {
+  name: string; letters: Row[]; owner: string[]; logs: string[]
+  /** 每次 holdBusy(label) 记一行,release 了就翻成 released:true。 */
+  busy: Array<{ label: string; released: boolean }>
+  visit: ReturnType<typeof makeVisit>; setPeer(p: Side): void
+}
 
 function side(name: string, evalText: (p: string) => Promise<string>): Side {
   const letters: Row[] = []
   const owner: string[] = []
   const logs: string[] = []
+  const busy: Side['busy'] = []
   let peer: Side | null = null
   const deps: VisitDeps = {
     stateDir: mkdtempSync(join(tmpdir(), 'visit-')),
@@ -39,10 +45,11 @@ function side(name: string, evalText: (p: string) => Promise<string>): Side {
     myName: name,
     disclosurePolicy: '不说住址',
     notifyOwner: (t) => owner.push(t),
+    holdBusy: (label) => { const e = { label, released: false }; busy.push(e); return () => { e.released = true } },
     log: (tag, line) => logs.push(`${tag} ${line}`),
   }
   const visit = makeVisit(deps)
-  return { name, letters, owner, logs, visit, setPeer: (p) => { peer = p } }
+  return { name, letters, owner, logs, busy, visit, setPeer: (p) => { peer = p } }
 }
 
 const flush = () => new Promise(r => setTimeout(r, 20))
@@ -75,6 +82,24 @@ describe('串门:两只伙伴对着聊', () => {
     // 收到的串门信全部立刻标已读 —— 伙伴之间的话不算主人的未读
     expect(A.letters.filter(l => l.direction === 'in').every(l => l.read_at !== null)).toBe(true)
     expect(B.letters.filter(l => l.direction === 'in').every(l => l.read_at !== null)).toBe(true)
+  })
+
+  it('两条脱离会话的后台路径都持 busy token —— 空闲自动重启不能在串门中途掐掉它', async () => {
+    const fakeEval = (who: string) => async (p: string) =>
+      (p.includes('串门回来') || p.includes('坐了会儿')) ? `${who}回来说:聊得挺好` : `${who}的第几句`
+    const A = side('阿一', fakeEval('阿一'))
+    const B = side('阿二', fakeEval('阿二'))
+    A.setPeer(B); B.setPeer(A)
+
+    await A.visit.startVisit('ch')
+    // 出门的那一下自己是一段(startVisit 的整个 body)。
+    expect(A.busy[0]).toEqual({ label: 'visit', released: true })
+    await flush()
+    // 回程的每一轮也各占一段;两边最后**全都放开了** —— 漏一个就永远重启不了。
+    expect(A.busy.some(b => b.label === 'visit-inbound')).toBe(true)
+    expect(B.busy.map(b => b.label)).toEqual(Array(B.busy.length).fill('visit-inbound'))
+    expect(B.busy.length).toBeGreaterThan(0)
+    expect([...A.busy, ...B.busy].every(b => b.released)).toBe(true)
   })
 
   it('不是串门信封 → 返回 false(分发点会把它交给别的 case)', () => {

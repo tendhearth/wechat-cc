@@ -1073,6 +1073,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       a2aRegistry,
       a2aClient,
       knowledge,
+      // 串门 / 答心愿是脱离会话的后台模型活 —— 登记进 busy,空闲自动重启
+      // 才不会掐在半程(和 delegate 的 'a2a-delegate' 同一个理由)。
+      holdBusy: busyRegistry.hold,
     })
     // 未配置 / 无 cheapEval ⇒ wireSocial 返回 inert 对象(social 字段缺席)
     // ⇒ 映射为 null ⇒ supervisor 记 off。

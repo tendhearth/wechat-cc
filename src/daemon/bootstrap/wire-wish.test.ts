@@ -13,15 +13,17 @@ import type { Envelope } from '../../core/envelope'
 type Row = { id: string; direction: 'in' | 'out'; kind: string; payload: string | null }
 interface Side {
   name: string; stateDir: string; letters: Row[]; owner: string[]; logs: string[]; journal: Array<{ text: string; peerLabel: string }>
+  /** 每次 holdBusy(label) 记一行,release 了就翻成 released:true。 */
+  busy: Array<{ label: string; released: boolean }>
   wish: ReturnType<typeof makeWish>; setPeer(p: Side): void; judgeSays: { match: 'yes' | 'no'; blurb?: string } | Error
 }
 const NOW = { ms: Date.parse('2026-09-04T10:00:00.000Z') }
 
 const ONE_CHANNEL = [{ id: 'ch', status: 'open', degree: 1 }]
 function side(name: string, judgeSays: Side['judgeSays'] = { match: 'no' }, gateOk = true, channels: Array<{ id: string; status: string; degree: number }> = ONE_CHANNEL): Side {
-  const letters: Row[] = [], owner: string[] = [], logs: string[] = [], journal: Side['journal'] = []
+  const letters: Row[] = [], owner: string[] = [], logs: string[] = [], journal: Side['journal'] = [], busy: Side['busy'] = []
   let peer: Side | null = null
-  const self: Side = { name, stateDir: mkdtempSync(join(tmpdir(), 'wish-')), letters, owner, logs, journal, wish: null as never, setPeer: p => { peer = p }, judgeSays }
+  const self: Side = { name, stateDir: mkdtempSync(join(tmpdir(), 'wish-')), letters, owner, logs, journal, busy, wish: null as never, setPeer: p => { peer = p }, judgeSays }
   // 时钟每次读走 1ms:两条先后派的心愿得有先后,list() 才有「新的在前」可言。
   let clock = NOW.ms
   const deps: WishDeps = {
@@ -38,6 +40,7 @@ function side(name: string, judgeSays: Side['judgeSays'] = { match: 'no' }, gate
     judge: async () => { if (self.judgeSays instanceof Error) throw self.judgeSays; return self.judgeSays },
     recordPostcard: (a) => { journal.push(a); return `row-${journal.length}` },
     notifyOwner: (t) => owner.push(t),
+    holdBusy: (label) => { const e = { label, released: false }; busy.push(e); return () => { e.released = true } },
     peerLabel: () => (name === 'A' ? '阿二' : '阿一'),
     now: () => (clock += 1),
     newId: (() => { let n = 0; return () => `${name.toLowerCase()}${String(++n).padStart(7, '0')}` })(),
@@ -62,6 +65,14 @@ describe('心愿:两只伙伴对着问', () => {
     expect(A.owner).toEqual(['📮 阿二 回了你的心愿「找周末爬山搭子」:我朋友周末常去,'])
     expect(readWishes(A.stateDir)[0]).toMatchObject({ status: 'open', sentTo: 1, replies: 1 })
     expect(A.letters.filter(l => l.direction === 'in').map(l => l.kind)).toEqual(['postcard'])
+  })
+  it('答心愿的那一段持 busy token —— 空闲自动重启不能在判官/闸门跑到一半时掐掉它', async () => {
+    const A = side('A'), B = side('B', { match: 'yes', blurb: '我知道一个地方' })
+    A.setPeer(B); B.setPeer(A)
+    const p = await A.wish.propose('找周末爬山搭子'); if (!p.ok) throw new Error()
+    await A.wish.send(p.id); await flush()
+    // 判的那边(B)登记了一次,并且**回完就放开**(不放开 = 永远重启不了)。
+    expect(B.busy).toEqual([{ label: 'wish-answer', released: true }])
   })
   it('B 判「不能」→ 静默不回,B 主人仍被告知;A 无变化', async () => {
     const A = side('A'), B = side('B', { match: 'no' }); A.setPeer(B); B.setPeer(A)

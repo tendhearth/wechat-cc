@@ -56,6 +56,12 @@ export interface SocialDeps {
   sendAssistantText: SendAssistantText | undefined
   a2aRegistry: A2ARegistry
   a2aClient: A2AClient
+  /**
+   * busy 登记处(`Bootstrap['holdBusy']`,bootstrap/index.ts 的 busyRegistry)。
+   * 串门和答心愿都是**脱离用户会话**跑模型的后台活 —— 不登记的话空闲自动
+   * 重启会在半程把 daemon 掐了。往下透给 makeVisit / makeWish。
+   */
+  holdBusy?: (label: string) => () => void
 }
 
 export interface SocialWiring {
@@ -209,6 +215,8 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       visit = makeVisit({
         stateDir: deps.stateDir,
         channelStore, letterStore,
+        // 出门 / 回程都持 busy token(空闲重启不能掐在半句话中间)。
+        holdBusy: deps.holdBusy,
         sendEnvelope: (c, e) => correspondent.sendEnvelope(c, e),
         // 串门要有性格,不是分类任务:strongEval 优先,没有再退到 cheapEval。
         // (typeof 守卫:好几处测试夹具的 registry 只有 cheapEval 那两个方法。)
@@ -240,6 +248,8 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       wish = makeWish({
         stateDir: deps.stateDir,
         channelStore,
+        // 答一条心愿要跑判官 + 闸门,同样持 busy token。
+        holdBusy: deps.holdBusy,
         sendEnvelope: (c, e) => correspondent.sendEnvelope(c, e),
         // 闸门超时用 provider 自己的预算,别再写死 12s(见上面那条 BOOT 日志)。
         gate: (text) => gateOutbound(text, { policy: socialPolicy, cheapEval: socialCheapEval, timeoutMs: socialGateTimeoutMs }),

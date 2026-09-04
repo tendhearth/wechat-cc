@@ -53,6 +53,14 @@ export interface VisitDeps {
   disclosurePolicy: string
   /** 给主人发一句话;没有主人 chat 时是 no-op。 */
   notifyOwner(text: string): void
+  /**
+   * busy 登记处(Bootstrap['holdBusy'])。串门的两条腿都**脱离用户会话**跑
+   * 模型:出门(startVisit)和每一轮回程(onInbound → onPeerTurn)。不登记
+   * 的话空闲自动重启会在半句话中间把 daemon 掐了,对面等的是一个永远不接的
+   * 下一轮。没接 = 不登记(测试/老调用方),不是错误。
+   * 见 bootstrap/delegate.ts 的 'a2a-delegate'。
+   */
+  holdBusy?: (label: string) => () => void
   /** 见闻进日志(journal kind='visit')。可选:没接就只发微信。返回行 id 以便补明信片。 */
   recordVisit?(args: { text: string; peerLabel: string }): string | null
   /**
@@ -98,6 +106,13 @@ export function cleanSpeech(raw: string): string {
 }
 
 export function makeVisit(deps: VisitDeps): Visit {
+  /** 登记一段后台活。登记失败、放开失败都只当没登记 —— busy 记账绝不能把
+   *  异常冒进它包着的流程里(和 delegate.ts 同一个姿势)。 */
+  const holdBusy = (label: string): (() => void) => {
+    let release: (() => void) | undefined
+    try { release = deps.holdBusy?.(label) } catch { release = undefined }
+    return () => { try { release?.() } catch { /* 放开失败:下一次重启窗口再说 */ } }
+  }
   const persona = (): VisitPersonaArgs => {
     let personaMd: string | null = null
     let overview: string | null = null
@@ -318,41 +333,50 @@ export function makeVisit(deps: VisitDeps): Visit {
     return { ok: true, id: s.id, channel: channelId }
   }
 
+  const startVisitInner = async (target?: string): Promise<StartResult> => {
+    const open = deps.channelStore.list().filter(c => c.status === 'open')
+    // 自动出门(没指定目标)只去**以前串门成功过**的真信道:对端曾回过串门信,
+    // 说明它认得这个协议。旧版对端认不出信封,会把开场白当成主人来信原样
+    // 推给它主人 —— 这没法用握手绕开,因为握手本身就是那封信。所以第一次
+    // 真串门由主人手动指定信道发。
+    const proven = open.filter(c => deps.letterStore.listForChannel(c.id)
+      .some(l => l.direction === 'in' && l.kind === 'visit'))
+    if (target === 'neighbor' || target === '邻居' || (!target && proven.length === 0)) {
+      const mem = readNeighborMemory(deps.stateDir)
+      return visitNeighbor(pickNeighbor(Math.floor(Date.now() / DAY_MS), mem.lastId))
+    }
+    if (!target) {
+      // 轮着去认识的朋友家:按天挑
+      const ch = proven[Math.floor(Date.now() / DAY_MS) % proven.length]!
+      return startRemote(ch.id)
+    }
+    if (neighborById(target)) return visitNeighbor(neighborById(target)!)
+    const byName = NEIGHBORS.find(n => n.name === target)
+    if (byName) return visitNeighbor(byName)
+
+    const ch = open.find(c => c.id === target || c.id.startsWith(target))
+    if (!ch) return { ok: false, reason: 'unknown_channel' }
+    return startRemote(ch.id)
+  }
+
   return {
     onInbound(channelRowId, env, letterId) {
       const p = parseVisitPayload(env)
       if (!p) return false
       try { deps.letterStore.markRead(letterId, new Date().toISOString()) } catch { /* 标不上就算了 */ }
       const s = remoteSession(channelRowId, p.id)
+      // 回程也是一段脱离会话的模型活 —— 和出门一样登记,否则重启会掐在
+      // 「对方说完了、我还没回」那一格上。
+      const release = holdBusy('visit-inbound')
       void onPeerTurn(s, p)
         .catch(err => { clear(s.id); deps.log('VISIT', `continue failed: ${err instanceof VisitAbort ? err.reason : err instanceof Error ? err.message : String(err)}`) })
+        .finally(release)
       return true
     },
 
     async startVisit(target) {
-      const open = deps.channelStore.list().filter(c => c.status === 'open')
-      // 自动出门(没指定目标)只去**以前串门成功过**的真信道:对端曾回过串门信,
-      // 说明它认得这个协议。旧版对端认不出信封,会把开场白当成主人来信原样
-      // 推给它主人 —— 这没法用握手绕开,因为握手本身就是那封信。所以第一次
-      // 真串门由主人手动指定信道发。
-      const proven = open.filter(c => deps.letterStore.listForChannel(c.id)
-        .some(l => l.direction === 'in' && l.kind === 'visit'))
-      if (target === 'neighbor' || target === '邻居' || (!target && proven.length === 0)) {
-        const mem = readNeighborMemory(deps.stateDir)
-        return visitNeighbor(pickNeighbor(Math.floor(Date.now() / DAY_MS), mem.lastId))
-      }
-      if (!target) {
-        // 轮着去认识的朋友家:按天挑
-        const ch = proven[Math.floor(Date.now() / DAY_MS) % proven.length]!
-        return startRemote(ch.id)
-      }
-      if (neighborById(target)) return visitNeighbor(neighborById(target)!)
-      const byName = NEIGHBORS.find(n => n.name === target)
-      if (byName) return visitNeighbor(byName)
-
-      const ch = open.find(c => c.id === target || c.id.startsWith(target))
-      if (!ch) return { ok: false, reason: 'unknown_channel' }
-      return startRemote(ch.id)
+      const release = holdBusy('visit')
+      try { return await startVisitInner(target) } finally { release() }
     },
 
     activeVisit,

@@ -41,6 +41,13 @@ export interface WishDeps {
   /** 见闻进日志(seeker 侧)。 */
   recordPostcard(a: { text: string; peerLabel: string }): string | null
   notifyOwner(text: string): void
+  /**
+   * busy 登记处(Bootstrap['holdBusy'])。答一条心愿要跑判官 + 披露门,是
+   * **脱离用户会话**的后台模型活 —— 不登记的话空闲自动重启会在判官跑到一半
+   * 时把 daemon 掐了,对面等到的是永远不来的明信片。没接 = 不登记(测试/
+   * 老调用方),不是错误。见 bootstrap/delegate.ts 的 'a2a-delegate'。
+   */
+  holdBusy?: (label: string) => () => void
   /** 怎么称呼这条信道那头的人(注册表名字 / 第 N 度的某人)。 */
   peerLabel(channelRowId: string): string
   now?: () => number
@@ -68,6 +75,13 @@ export function makeWish(deps: WishDeps): WishService {
   const newId = deps.newId ?? newWishId
   const nowIso = (): string => new Date(now()).toISOString()
   const log = (line: string): void => deps.log('WISH', line)
+  /** 登记一段后台活。登记失败、放开失败都只当没登记 —— busy 记账绝不能
+   *  把异常冒进它包着的流程里(和 delegate.ts 同一个姿势)。 */
+  const holdBusy = (label: string): (() => void) => {
+    let release: (() => void) | undefined
+    try { release = deps.holdBusy?.(label) } catch { release = undefined }
+    return () => { try { release?.() } catch { /* 放开失败:下一次重启窗口再说 */ } }
+  }
 
   // ── 答的那边:有人来打听 ────────────────────────────────────────────────
 
@@ -76,6 +90,11 @@ export function makeWish(deps: WishDeps): WishService {
    * (答不上来不必让对面知道我拒了什么),对内跟主人说一句「我说不知道」。
    */
   const answerWish = async (channelRowId: string, id: string, text: string): Promise<void> => {
+    const release = holdBusy('wish-answer')
+    try { await answerWishInner(channelRowId, id, text) } finally { release() }
+  }
+
+  const answerWishInner = async (channelRowId: string, id: string, text: string): Promise<void> => {
     const label = deps.peerLabel(channelRowId)
     const asked = `🙋 ${label} 的伙伴来打听「${text}」`
     const verdict = await deps.judge(text)
