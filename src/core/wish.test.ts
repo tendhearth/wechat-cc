@@ -54,11 +54,17 @@ describe('wish 状态机', () => {
     expect(acceptPostcard([open], 'abcd1234', ms('2026-09-12T00:00:00.000Z'))).toEqual({ ok: false, reason: 'expired' })
     expect(acceptPostcard([open], 'zzzz', ms(T0))).toEqual({ ok: false, reason: 'unknown' })
   })
+  it('closed 也受 7 天答复窗口约束:窗口内收,窗口外 expired', () => {
+    const closed = mk({ status: 'closed', sentAt: T0, expiresAt: '2026-09-11T10:00:00.000Z' })
+    expect(acceptPostcard([closed], 'abcd1234', ms('2026-09-05T00:00:00.000Z')).ok).toBe(true)
+    expect(acceptPostcard([closed], 'abcd1234', ms('2026-09-12T00:00:00.000Z'))).toEqual({ ok: false, reason: 'expired' })
+  })
   it('resolveWishRef:前缀匹配,限定状态;多条 → ambiguous', () => {
     const list = [mk({ id: 'abcd1234' }), mk({ id: 'abcd9999', status: 'open' }), mk({ id: 'ffff0000' })]
     expect(resolveWishRef(list, 'abcd', ['draft'])).toEqual({ ok: true, id: 'abcd1234' })
     expect(resolveWishRef(list, 'abcd', ['draft', 'open'])).toEqual({ ok: false, reason: 'ambiguous' })
     expect(resolveWishRef(list, 'ff', ['open'])).toEqual({ ok: false, reason: 'not_found' })
+    expect(resolveWishRef(list, '  ', ['draft'])).toEqual({ ok: false, reason: 'not_found' })
   })
   it('recentWishes:30 天内,按 createdAt 降序', () => {
     const list = [mk({ id: 'old', createdAt: '2026-07-01T00:00:00.000Z' }), mk({ id: 'a', createdAt: '2026-09-01T00:00:00.000Z' }), mk({ id: 'b', createdAt: '2026-09-03T00:00:00.000Z' })]
@@ -78,6 +84,7 @@ describe('信封载荷', () => {
     expect(parseWishPayload(env)).toEqual({ id: 'abcd1234', text: '找周末爬山搭子', expiresAt: '2026-09-11T10:00:00.000Z' })
     expect(parseWishPayload({ kind: 'letter', payload: {} })).toBe(null)
     expect(parseWishPayload({ kind: 'wish', payload: { id: 'x' } })).toBe(null)
+    expect(parseWishPayload({ kind: 'wish', payload: { id: 'x', text: '  hello  ', expiresAt: '2026-09-11T10:00:00.000Z' } })!.text).toBe('hello')
   })
   it('wishEnvelope 发的是 redacted,不是原文', () => {
     const w = mk({ text: '找爬山搭子,我住XX路', redacted: '找爬山搭子', status: 'open', sentAt: T0, expiresAt: T0 })

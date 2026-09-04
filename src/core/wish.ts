@@ -89,6 +89,7 @@ export function acceptPostcard(list: readonly WishRecord[], wishId: string, nowM
 /** 主人只会打编号开头。限定状态,免得「取消」打到草稿、「派」打到已开的。 */
 export function resolveWishRef(list: readonly WishRecord[], ref: string, among: readonly WishStatus[]):
   { ok: true; id: string } | { ok: false; reason: 'not_found' | 'ambiguous' } {
+  if (ref.trim() === '') return { ok: false, reason: 'not_found' }
   const hits = list.filter(w => among.includes(w.status) && w.id.startsWith(ref.toLowerCase()))
   if (hits.length === 0) return { ok: false, reason: 'not_found' }
   if (hits.length > 1) return { ok: false, reason: 'ambiguous' }
@@ -109,7 +110,7 @@ export function parseWishPayload(env: Envelope): WishPayload | null {
   const p = env.payload as Partial<WishPayload> | null
   if (!p || typeof p.id !== 'string' || typeof p.text !== 'string' || typeof p.expiresAt !== 'string') return null
   if (p.id === '' || p.text.trim() === '' || Number.isNaN(Date.parse(p.expiresAt))) return null
-  return { id: p.id, text: p.text, expiresAt: p.expiresAt }
+  return { id: p.id, text: p.text.trim(), expiresAt: p.expiresAt }
 }
 
 export function postcardEnvelope(wishId: string, text: string): Envelope<PostcardPayload> {
