@@ -28,4 +28,16 @@ describe('makeBusyRegistry', () => {
     b()
     expect(r.busy()).toBe(false)
   })
+  it('labels():返回当前持有者的 label 快照;release 后消失;快照不受后续变化影响', () => {
+    const r = makeBusyRegistry()
+    expect(r.labels()).toEqual([])
+    const a = r.hold('hunt'); const b = r.hold('api:POST /v1/x')
+    const snap = r.labels()
+    expect(snap.sort()).toEqual(['api:POST /v1/x', 'hunt'])
+    a()
+    expect(r.labels()).toEqual(['api:POST /v1/x'])
+    expect(snap.sort()).toEqual(['api:POST /v1/x', 'hunt'])  // 快照独立
+    b()
+    expect(r.labels()).toEqual([])
+  })
 })
