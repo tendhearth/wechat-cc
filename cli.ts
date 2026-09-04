@@ -6,9 +6,9 @@ import { defineCommand, runMain } from 'citty'
 import selfPkg from './package.json' with { type: 'json' }
 import { STATE_DIR } from './src/lib/config'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider, activeModel, type AgentConfig, type AgentProviderKind } from './src/lib/agent-config'
-import { analyzeDoctor, defaultDoctorDeps, printDoctor, probeOutboundWarning, serviceStatus, setupStatus } from './src/cli/doctor'
+import { analyzeDoctor, defaultDoctorDeps, printDoctor, probeFsAccessWarning, probeOutboundWarning, serviceStatus, setupStatus } from './src/cli/doctor'
 import { buildServicePlan, installService, startService, stopService, uninstallService } from './src/cli/service-manager'
-import { compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from './src/lib/runtime-info'
+import { appMainBinaryPath, compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from './src/lib/runtime-info'
 import { delegateMemoryOp, type CliApiInfo } from './src/lib/cli-llm-eval'
 import {
   DoctorOutput, SetupPollOutput, SetupStatusOutput, SetupQrJsonOutput,
@@ -258,6 +258,8 @@ const doctorCmd = defineCommand({
       printDoctor(report)
       const warn = await probeOutboundWarning(report.checks.daemon)
       if (warn) console.log(warn)
+      const fsWarn = await probeFsAccessWarning(report.checks.daemon)
+      if (fsWarn) console.log(fsWarn)
     }
   },
 })
@@ -2131,12 +2133,14 @@ const serviceCmd = defineCommand({
     // `bunPath cli.ts run` ExecStart. compiledBinaryPath/compiledRepoRoot
     // both return non-null only in compiled mode — see runtime-info.ts.
     const binaryPath = compiledBinaryPath() ?? undefined
+    const appBinaryPath = appMainBinaryPath() ?? undefined
     const planCwd = compiledRepoRoot() ?? dirname(fileURLToPath(import.meta.url))
     const plan = buildServicePlan({
       cwd: planCwd,
       dangerouslySkipPermissions: config.dangerouslySkipPermissions,
       autoStart: config.autoStart,
       ...(binaryPath ? { binaryPath } : {}),
+      ...(appBinaryPath ? { appBinaryPath } : {}),
     })
     const json = Boolean(args.json)
     if (action === 'status') {

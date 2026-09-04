@@ -32,6 +32,14 @@ export const HealthResponse = z.object({
   heartbeat_fresh: z.boolean().nullable().optional(),
   // Subsystem degraded-boot (spec 2026-08-17) — 启动降级状态表。
   subsystems: z.array(SubsystemStatusSchema).optional(),
+  // 文件访问(macOS TCC,2026-09-04)—— daemon 进程自己能不能读主人的文件夹。
+  // 权限缺失此前是静默的;这里让它进 health / doctor / 桌面。
+  fs_access: z.object({
+    any_denied: z.boolean(),
+    folders: z.array(z.object({ folder: z.string(), path: z.string(), state: z.enum(['ok', 'denied', 'missing', 'unknown']) })),
+    settings_url: z.string(),
+    hint: z.string(),
+  }).optional(),
   // Passive outbound link health (spec 2026-08-22-outbound-health) — sibling
   // of subsystems by design: subsystems is the supervisor's BOOT-time list,
   // outbound is a RUNTIME link signal. Optional for older daemons.

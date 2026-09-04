@@ -19,6 +19,7 @@ import type { Mode } from '../../core/conversation'
 import type { UserTier } from '../../core/user-tier'
 import { makeEventsStore } from '../events/store'
 import { a2aRoutes } from './routes-a2a'
+import { probeFsAccess, describeFsAccess } from '../health/fs-access'
 import { journalRoutes } from './routes-journal'
 import { socialRoutes } from './routes-social'
 import { knowledgeRoutes } from './routes-knowledge'
@@ -106,6 +107,12 @@ const onlineStickerCursor = new Map<string, number>()
         heartbeat_fresh: deps.heartbeatFresh?.() ?? null,
         subsystems: deps.subsystems?.() ?? [],
         ...(deps.outbound ? { outbound: toWireOutbound(deps.outbound()) } : {}),
+        // 在 daemon 进程里探(权限记在责任进程上,CLI 能读不代表 daemon 能读)。
+        // 三次 readdir,便宜;每次 health 都重探,这样勾完权限刷新就变绿。
+        fs_access: (() => {
+          const r = probeFsAccess()
+          return { any_denied: r.anyDenied, folders: r.folders.map(f => ({ folder: f.folder, path: f.path, state: f.state })), settings_url: r.settingsUrl, hint: describeFsAccess(r) }
+        })(),
       },
     }),
 

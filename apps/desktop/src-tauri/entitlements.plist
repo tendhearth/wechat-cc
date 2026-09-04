@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Developer ID 签名要求 hardened runtime;bun 编译出的 sidecar 是 JIT 运行时,
+    没有下面三条会在启动时被内核拒掉(SIGKILL,什么日志都没有)。
+    这三条是 Electron / bun / node 打包 app 的标准配方。
+  -->
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+  <!-- sidecar 要 spawn claude / codex / agy(用户自己装的、没签名的二进制) -->
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key><true/>
+  <key>com.apple.security.automation.apple-events</key><true/>
+</dict>
+</plist>

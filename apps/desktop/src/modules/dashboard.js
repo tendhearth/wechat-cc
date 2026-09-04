@@ -1286,6 +1286,41 @@ export function checkBrainHealthOnPoll(deps) {
   return loadBrainHealth(deps, false).catch(err => console.warn("[brain] health render failed:", err))
 }
 
+/**
+ * 文件访问(macOS TCC,2026-09-04)。问 /v1/health 里 daemon **自己**的探针结果:
+ * 权限记在责任进程上,app 能读不代表 daemon 能读。any_denied 才显示;按钮走
+ * Rust 的 open_url 打开系统设置的「完全磁盘访问」面板。
+ * @param {{ invokeApi: Function, ipcInvoke?: Function }} deps
+ */
+export async function loadFsAccess(deps) {
+  const card = document.getElementById("dash-fs-access")
+  const text = document.getElementById("dash-fs-access-text")
+  const btn = document.getElementById("dash-fs-access-open")
+  if (!card || !text) return
+  const h = await deps.invokeApi("GET", "/v1/health").catch(() => null)
+  const fs = h && h.fs_access
+  if (!fs || !fs.any_denied) { card.hidden = true; return }
+  text.textContent = String(fs.hint ?? "系统没给 wechat-cc 读文件夹的权限")
+  card.hidden = false
+  if (btn && !btn.dataset.wired) {
+    btn.dataset.wired = "1"
+    btn.addEventListener("click", () => {
+      const url = String(fs.settings_url ?? "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
+      if (deps.ipcInvoke) deps.ipcInvoke("open_url", { url }).catch(() => {})
+    })
+  }
+}
+
+let _lastFsCheckAt = 0
+const FS_POLL_INTERVAL_MS = 60_000
+/** 每分钟看一次:主人勾完权限回来,卡片要自己消失。 @param {any} deps */
+export function checkFsAccessOnPoll(deps) {
+  const now = Date.now()
+  if (_lastFsCheckAt !== 0 && now - _lastFsCheckAt < FS_POLL_INTERVAL_MS) return Promise.resolve()
+  _lastFsCheckAt = now
+  return loadFsAccess(deps).catch(err => console.warn("[fs-access] check failed:", err))
+}
+
 export function checkIncidentsOnPoll(deps) {
   const now = Date.now()
   if (_lastIncidentsCheckAt !== 0 && now - _lastIncidentsCheckAt < INCIDENTS_POLL_INTERVAL_MS) return Promise.resolve()

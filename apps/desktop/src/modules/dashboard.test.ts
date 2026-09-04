@@ -1571,3 +1571,31 @@ describe('checkIncidentsOnPoll', () => {
     }
   })
 })
+
+describe('loadFsAccess —— daemon 自己读不到主人的文件夹时要说出来', async () => {
+  const { loadFsAccess } = await import('./dashboard.js')
+  const mk = () => {
+    const els: Record<string, { hidden: boolean; textContent: string; dataset: Record<string, string>; addEventListener: (e: string, f: () => void) => void; _click?: () => void }> = {}
+    for (const id of ['dash-fs-access', 'dash-fs-access-text', 'dash-fs-access-open']) {
+      els[id] = { hidden: true, textContent: '', dataset: {}, addEventListener(_e, f) { this._click = f } }
+    }
+    // @ts-expect-error stub
+    globalThis.document = { getElementById: (id: string) => els[id] ?? null }
+    return els
+  }
+  it('any_denied → 显示提示 + 按钮打开系统设置(经 Rust open_url,白名单 scheme)', async () => {
+    const els = mk()
+    const ipc = vi.fn(async () => undefined)
+    await loadFsAccess({ invokeApi: async () => ({ fs_access: { any_denied: true, hint: '系统没给…', settings_url: 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles' } }), ipcInvoke: ipc })
+    expect(els['dash-fs-access']!.hidden).toBe(false)
+    expect(els['dash-fs-access-text']!.textContent).toBe('系统没给…')
+    els['dash-fs-access-open']!._click!()
+    expect(ipc).toHaveBeenCalledWith('open_url', { url: expect.stringContaining('Privacy_AllFiles') })
+  })
+  it('权限正常 / 老 daemon 没这个字段 / 读不到 → 都不显示(不制造假警报)', async () => {
+    const els = mk()
+    await loadFsAccess({ invokeApi: async () => ({ fs_access: { any_denied: false } }) }); expect(els['dash-fs-access']!.hidden).toBe(true)
+    await loadFsAccess({ invokeApi: async () => ({}) }); expect(els['dash-fs-access']!.hidden).toBe(true)
+    await loadFsAccess({ invokeApi: async () => { throw new Error('down') } }); expect(els['dash-fs-access']!.hidden).toBe(true)
+  })
+})

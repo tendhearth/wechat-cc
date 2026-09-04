@@ -420,6 +420,12 @@
                      visible, shoving .moment-users to a second row and
                      pushing 添加用户 below the fold. -->
                 <p id="dash-health-banner" class="dash-health-banner" hidden></p>
+                <!-- 文件访问(macOS TCC,2026-09-04):daemon 自己读不到主人的文件夹时在这儿说,
+                     并带去系统设置。权限缺失此前是静默的 —— 主人只会觉得 bot 变笨了。 -->
+                <div id="dash-fs-access" class="dash-fs-access" hidden>
+                  <span id="dash-fs-access-text"></span>
+                  <button id="dash-fs-access-open" class="btn" type="button">打开系统设置</button>
+                </div>
                 <h2>当前连接中的用户</h2>
                 <div id="accounts-current" class="current-user-card"></div>
                 <div id="brain-health" class="brain-health" hidden></div>

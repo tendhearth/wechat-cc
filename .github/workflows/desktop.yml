@@ -190,7 +190,7 @@ jobs:
           bun build --compile --target=${{ matrix.bun_target }} cli.ts --outfile "$OUT"
           xattr -cr "$OUT" || true
           codesign --remove-signature "$OUT" || true
-          codesign --force --sign - --identifier=dev.wechat-cc.cli "$OUT"
+          codesign --force --sign - --identifier=com.tendhearth.wechat-cc.cli "$OUT"
           ls -lh apps/desktop/src-tauri/binaries/
 
       - name: Compile sidecar (Windows)
@@ -259,17 +259,49 @@ jobs:
           }
           Write-Output "PE subsystem flipped: $before -> $after (now GUI/hidden)"
 
+      # Developer ID 签名 + 公证(2026-09-04)—— 有证书才做,没有就照旧 ad-hoc。
+      #
+      # 为什么必须:macOS 把隐私权限(TCC)记在责任进程的**签名身份**上。ad-hoc
+      # 签名每次构建都不一样,于是用户给 wechat-cc 的授权在每次更新后失效;
+      # 系统设置里显示的还是一个裸进程名。签了 Developer ID 之后身份稳定,
+      # LaunchAgent 起的是 app 主二进制(--daemon),授权只给一次、跟着 app 走,
+      # claude / codex / agy 换谁都不碰它。
+      #
+      # 需要的 secrets(全部挂在 release-signing 环境):
+      #   APPLE_CERTIFICATE              .p12 的 base64
+      #   APPLE_CERTIFICATE_PASSWORD     .p12 密码
+      #   APPLE_SIGNING_IDENTITY         "Developer ID Application: <name> (<TEAMID>)"
+      #   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID   公证(APPLE_PASSWORD 是 app 专用密码)
+      - name: Import Developer ID certificate (macOS, only when provisioned)
+        if: matrix.os == 'macos-latest' && secrets.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PW="$(openssl rand -hex 16)"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN"
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain
+          rm -f "$RUNNER_TEMP/cert.p12"
+          echo "DEVELOPER_ID_READY=1" >> "$GITHUB_ENV"
+
       - name: Tauri build
         working-directory: apps/desktop
         run: bun run tauri build
         env:
-          # Use ad-hoc signing on macOS ("-" tells codesign to sign with an
-          # ephemeral identity instead of looking for a Developer ID in the
-          # keychain). This produces a runnable .app/.dmg without requiring
-          # Apple Developer credentials in CI. Setting this to '' makes Tauri
-          # fall through to default signing which fails when no identity is
-          # provisioned.
-          APPLE_SIGNING_IDENTITY: '-'
+          # 有 Developer ID 就用它(上一步 import 过);否则 "-" = ad-hoc(可运行但
+          # 身份不稳,见上面的说明)。Setting this to '' makes Tauri fall through
+          # to default signing which fails when no identity is provisioned.
+          APPLE_SIGNING_IDENTITY: ${{ env.DEVELOPER_ID_READY == '1' && secrets.APPLE_SIGNING_IDENTITY || '-' }}
+          # 公证:三个都在时 Tauri 自动 notarize + staple;缺任何一个就跳过(不报错)。
+          APPLE_ID: ${{ env.DEVELOPER_ID_READY == '1' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ env.DEVELOPER_ID_READY == '1' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ env.DEVELOPER_ID_READY == '1' && secrets.APPLE_TEAM_ID || '' }}
           # tauri-bundler passes `--skip-jenkins` to bundle_dmg.sh whenever
           # CI=true (its guard for tauri-apps/tauri#592, where osascript hangs
           # on headless builders). That flag skips the entire Finder/AppleScript

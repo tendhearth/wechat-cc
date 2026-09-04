@@ -76,7 +76,7 @@ if (process.platform === 'darwin') {
   await Bun.spawn({ cmd: ['xattr', '-cr', output], stdout: 'ignore', stderr: 'ignore' }).exited
   await Bun.spawn({ cmd: ['codesign', '--remove-signature', output], stdout: 'ignore', stderr: 'ignore' }).exited
   const signed = Bun.spawn({
-    cmd: ['codesign', '--force', '--sign', '-', '--identifier=dev.wechat-cc.cli', output],
+    cmd: ['codesign', '--force', '--sign', '-', '--identifier=com.tendhearth.wechat-cc.cli', output],
     stdout: 'inherit',
     stderr: 'inherit',
   })

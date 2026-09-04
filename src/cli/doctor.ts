@@ -8,7 +8,8 @@ import { STATE_DIR } from '../lib/config'
 import { findOnPath, probeBinaryVersion } from '../lib/util'
 import { loadAgentConfig, type AgentConfig } from '../lib/agent-config'
 import { buildServicePlan, isServiceInstalled, type ServiceKind } from './service-manager'
-import { compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from '../lib/runtime-info'
+import { appMainBinaryPath, compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from '../lib/runtime-info'
+import { probeFsAccess, describeFsAccess } from '../daemon/health/fs-access'
 import { openWechatDb } from '../lib/db'
 import { makeConversationStore } from '../core/conversation-store'
 import { makeSessionStateStore } from '../core/session-state'
@@ -514,12 +515,14 @@ export function defaultDoctorDeps(stateDir = STATE_DIR): DoctorDeps {
 export function defaultServiceSnapshot(stateDir: string): ServiceSnapshot {
   const repoRoot = compiledRepoRoot() ?? dirname(fileURLToPath(import.meta.url))
   const binaryPath = compiledBinaryPath() ?? undefined
+  const appBinaryPath = appMainBinaryPath() ?? undefined
   const config = loadAgentConfig(stateDir)
   const plan = buildServicePlan({
     cwd: repoRoot,
     dangerouslySkipPermissions: config.dangerouslySkipPermissions,
     autoStart: config.autoStart,
     ...(binaryPath ? { binaryPath } : {}),
+    ...(appBinaryPath ? { appBinaryPath } : {}),
   })
   return { installed: isServiceInstalled(plan), kind: plan.kind }
 }
@@ -707,6 +710,35 @@ export async function probeOutboundWarning(
   } catch {
     return null
   }
+}
+
+/**
+ * 文件访问(macOS TCC,2026-09-04)。问的是 **daemon 进程**的视角 —— 权限记在
+ * 责任进程上,终端里的 CLI 能读不代表 daemon 能读;daemon 没跑就在本进程探一次,
+ * 并标明这只是 CLI 的视角。只在有问题时开口,和 outbound 一样。
+ */
+export async function probeFsAccessWarning(
+  daemon: DaemonSnapshot,
+  fetchFn: typeof fetch = fetch,
+  readToken: (path: string) => string | null = (p) => { try { return readFileSync(p, 'utf8').trim() } catch { return null } },
+  localProbe: () => { anyDenied: boolean; hint: string } = () => { const r = probeFsAccess(); return { anyDenied: r.anyDenied, hint: describeFsAccess(r) } },
+): Promise<string | null> {
+  if (daemon.alive && daemon.internal_api) {
+    const token = readToken(daemon.internal_api.token_file_path)
+    if (token) {
+      try {
+        const res = await fetchFn(`http://127.0.0.1:${daemon.internal_api.port}/v1/health`, {
+          headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(3000),
+        })
+        if (res.ok) {
+          const body = await res.json() as { fs_access?: { any_denied?: boolean; hint?: string } }
+          if (body.fs_access) return body.fs_access.any_denied ? `⚠️ ${body.fs_access.hint}` : null
+        }
+      } catch { /* 落到本地探 */ }
+    }
+  }
+  const local = localProbe()
+  return local.anyDenied ? `⚠️ ${local.hint}(这是终端里 CLI 的视角;daemon 没在跑,它自己的权限要等它起来再看)` : null
 }
 
 function safeReaddir(path: string): string[] {

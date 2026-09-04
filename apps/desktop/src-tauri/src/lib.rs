@@ -7,6 +7,8 @@
 // wechat-cc source tree, and no PATH lookup — the sidecar lives inside
 // the .app/.exe/.deb bundle and is resolved by tauri-plugin-shell.
 
+pub mod daemon_mode;
+
 use serde_json::Value;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -873,6 +875,32 @@ async fn customer_review_api(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Open a URL with the system handler. Used for the macOS System Settings
+/// deep link when the daemon reports it cannot read the owner's folders
+/// (TCC). Allow-list the schemes: this is reachable from the webview.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    let ok = url.starts_with("https://") || url.starts_with("x-apple.systempreferences:");
+    if !ok {
+        return Err(format!("refusing to open url with scheme: {url}"));
+    }
+    // `open` via the OS launcher rather than the shell plugin's deprecated
+    // `open` (which wants a new opener plugin + capability for one call).
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .status()
+            .map_err(|e| format!("open failed: {e}"))
+            .and_then(|st| if st.success() { Ok(()) } else { Err(format!("open exited {st}")) })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = url;
+        Err("open_url is macOS-only".to_string())
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -892,6 +920,7 @@ pub fn run() {
             wechat_daemon_pid,
             notify_user,
             wechat_health_ping,
+            open_url,
             agent_converse,
             agent_speak,
             agent_transcribe,

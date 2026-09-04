@@ -6561,3 +6561,9 @@ input { font: inherit; color: inherit; }
 .fd-tools .fd-sub { padding:14px 0; }
 .fd-tools .fd-sub + .fd-sub { border-top:1px dashed var(--fd-line-soft); }
 .fd-tools .fd-sub .fd-sec-head h2 { font-size:15px; }
+
+/* 文件访问告警(此刻页,macOS TCC) */
+.dash-fs-access { display:flex; align-items:center; gap:12px; margin:8px 0 12px; padding:10px 12px; border-radius:10px;
+  background:var(--warn-bg, #fff4e0); border:1px solid var(--warn-line, #f0c987); color:var(--text, #3B3125); font-size:13px; line-height:1.5; }
+.dash-fs-access > span { flex:1; }
+.dash-fs-access .btn { white-space:nowrap; }
