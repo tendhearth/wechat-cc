@@ -145,6 +145,18 @@ export function renderHuntBag(data) {
       : '')
 }
 
+/**
+ * 主人打开了觅食台 = 带回来的都看过了(spec 2026-09-03-companion-presence §2.3)。
+ * 推 daemon 侧水位;桌宠脚边的包袱在下一次轮询消失。失败无所谓 —— 下次打开再推。
+ * @returns {Promise<boolean>}
+ */
+export async function markJournalSeen() {
+  try {
+    const r = /** @type {{ ok?: boolean } | null} */ (await invokeApi('POST', '/v1/journal/seen'))
+    return !!r?.ok
+  } catch { return false }
+}
+
 export async function refreshHuntBag() {
   const resp = /** @type {{items?:Array<any>}|null} */ (
     await invokeApi('GET', '/v1/journal').catch(() => null))

@@ -135,6 +135,24 @@ async fn open_companion_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// 浮窗点脚边的道具 → 主窗口露面并切到觅食台(spec 2026-09-03-companion-presence §3.4)。
+// 页面名只是转发,白名单在 JS 侧;这里不解释它。async 与 open_companion_window
+// 同理(Windows 上窗口操作别占主线程)。
+#[tauri::command]
+async fn show_main_window(app: AppHandle, page: Option<String>) -> Result<(), String> {
+    let main = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window is not open".to_string())?;
+    main.show().map_err(|err| format!("show main window: {err}"))?;
+    main.unminimize().map_err(|err| format!("unminimize main window: {err}"))?;
+    main.set_focus().map_err(|err| format!("focus main window: {err}"))?;
+    if let Some(page) = page {
+        main.emit("wechat-cc:navigate", serde_json::json!({ "page": page }))
+            .map_err(|err| format!("emit navigate: {err}"))?;
+    }
+    Ok(())
+}
+
 // Keep companion controls on the Rust side. Dynamic windows have a more
 // restrictive capability surface than the main webview, whereas these
 // commands always target the one trusted companion window by label.
@@ -917,6 +935,7 @@ pub fn run() {
             close_companion_window,
             start_companion_drag,
             resize_companion_window,
+            show_main_window,
             wechat_daemon_pid,
             notify_user,
             wechat_health_ping,

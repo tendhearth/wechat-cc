@@ -38,6 +38,7 @@ import { initTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
 import { initConversePage } from "./modules/converse.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
+import { markJournalSeen } from "./modules/journal.js"
 import { initPluginsTab, refresh as refreshPlugins } from "./modules/plugins.js"
 import { initLicense, refreshLicense } from "./modules/license.js"
 import { loadUpdateProbe, applyUpdate } from "./modules/update.js"
@@ -471,6 +472,8 @@ function switchPane(name) {
   }
   if (name === "a2a-agents") {
     refreshA2AAgents().catch(err => console.error("a2a-agents refresh failed", err))
+    // 打开觅食台 = 看过了:推水位,再立刻刷一次桌宠状态让包袱消失。
+    markJournalSeen().then(() => presencePoller.refresh()).catch(() => {})
   }
   if (name === "plugins") {
     refreshPlugins().catch(err => console.error("plugins refresh failed", err))
@@ -1349,6 +1352,15 @@ async function boot() {
   // Wire the A2A agents tab (event listeners attached once; first list load
   // is deferred until the user actually switches to that pane).
   initA2AAgentsTab().catch(err => console.error("a2a-agents init failed", err))
+  // 浮窗点道具 → Rust show_main_window 发来的导航事件(spec 2026-09-03 §3.4)。
+  // 只认白名单里的 pane,事件 payload 不可信。
+  const tauriEvent = /** @type {any} */ (window).__TAURI__?.event
+  if (tauriEvent?.listen) {
+    tauriEvent.listen("wechat-cc:navigate", (/** @type {{ payload?: { page?: string } }} */ ev) => {
+      const page = ev?.payload?.page
+      if (page === "a2a-agents") switchPane(page)
+    }).catch((/** @type {unknown} */ err) => console.warn("navigate listener failed", err))
+  }
   initPluginsTab({ invoke }).catch(err => console.error("plugins init failed", err))
   initLicense().catch(err => console.error("license init failed", err))
   let report = await doctorPoller.refresh()

@@ -10,7 +10,7 @@ const mkEl = () => ({ innerHTML: '', textContent: '', addEventListener: () => {}
 // @ts-expect-error minimal DOM stub before import (same shape as todos.test.ts)
 globalThis.document = { getElementById: (id: string) => els.get(id) ?? null }
 
-const { renderHuntBag, splitByStatus, dayLabel, statusLabel, onHuntBagClick, countLabel } = await import('./journal.js')
+const { renderHuntBag, splitByStatus, dayLabel, statusLabel, onHuntBagClick, countLabel, markJournalSeen } = await import('./journal.js')
 
 const item = (o: Partial<Record<string, unknown>> = {}) => ({
   id: 'i1', ts: new Date().toISOString(), chat_id: 'c', title: 'Continue.dev',
@@ -160,5 +160,15 @@ describe('onHuntBagClick', () => {
     await onHuntBagClick(ev({ 'data-hb-action': 'copy', 'data-hb-url': 'https://a.com' }))
     expect(showToast).toHaveBeenCalledWith('复制不了 —— 手动选中那行链接吧')
     expect(invokeApi).not.toHaveBeenCalled()
+  })
+})
+
+describe('markJournalSeen —— 打开觅食台 = 看过了', () => {
+  it('打 POST /v1/journal/seen;失败吞掉返回 false', async () => {
+    invokeApi.mockResolvedValueOnce({ ok: true, seen_until: 'x' })
+    await expect(markJournalSeen()).resolves.toBe(true)
+    expect(invokeApi).toHaveBeenCalledWith('POST', '/v1/journal/seen')
+    invokeApi.mockRejectedValueOnce(new Error('down'))
+    await expect(markJournalSeen()).resolves.toBe(false)
   })
 })
