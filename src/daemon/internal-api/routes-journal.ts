@@ -10,6 +10,7 @@
  * 正是这么静默坏了一个多月。
  */
 import { CATCH_STATUSES, type CatchStatus } from '../../core/journal-store'
+import { writeJournalSeen } from '../../core/journal-seen'
 import type { InternalApiDeps, RouteTable } from './types'
 
 export function journalRoutes(deps: InternalApiDeps): RouteTable {
@@ -38,6 +39,15 @@ export function journalRoutes(deps: InternalApiDeps): RouteTable {
       const id = ((body ?? {}) as { id?: unknown }).id
       if (typeof id !== 'string' || id === '') return { status: 400, body: { error: 'missing_id' } }
       return { status: 200, body: { ok: deps.hunt.remove(id) } }
+    },
+
+    // 主人看到哪了(spec 2026-09-03-companion-presence §2.3):觅食台每次打开
+    // 推一次;桌宠脚边的包袱在下一次轮询消失。不动 journal.status —— 那是「没试过」。
+    'POST /v1/journal/seen': async () => {
+      if (!deps.hunt) return { status: 503, body: { error: 'journal_not_wired' } }
+      const seenUntil = new Date().toISOString()
+      writeJournalSeen(deps.stateDir, seenUntil)
+      return { status: 200, body: { ok: true, seen_until: seenUntil } }
     },
   }
 }

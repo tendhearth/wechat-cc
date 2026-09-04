@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { openDb, type Db } from '../lib/db'
 import { makeJournal, type Journal } from './journal-store'
+import { readJournalSeen, writeJournalSeen } from './journal-seen'
 
 let db: Db
 let store: Journal
@@ -85,5 +89,32 @@ describe('recordVisit —— 串门见闻和打猎东西在同一个背包里', 
   it('空叙述不入库', () => {
     expect(store.recordVisit({ chatId: 'c', text: '  ', peerLabel: 'x' })).toBeNull()
     expect(store.list()).toEqual([])
+  })
+})
+
+describe('Journal.summary —— 桌宠的包袱:水位之后有几条、最新一条是什么', () => {
+  it('空表 → 0 / null', () => {
+    const j = makeJournal(openDb({ path: ':memory:' }))
+    expect(j.summary(null)).toEqual({ unread: 0, latest: null })
+  })
+  it('没看过 → 全算;水位之后只算新的;latest 永远是最新那条', () => {
+    const j = makeJournal(openDb({ path: ':memory:' }))
+    j.recordHunt({ chatId: 'o', text: '看这个 https://a.com/1', nowIso: '2026-09-01T00:00:00.000Z' })
+    j.recordVisit({ chatId: 'o', text: '去阿柚家坐了会儿', peerLabel: '去邻居「阿柚」家串门', nowIso: '2026-09-02T00:00:00.000Z' })
+    expect(j.summary(null)).toEqual({ unread: 2, latest: { kind: 'visit', title: '去邻居「阿柚」家串门', ts: '2026-09-02T00:00:00.000Z' } })
+    expect(j.summary('2026-09-01T12:00:00.000Z').unread).toBe(1)
+    expect(j.summary('2026-09-02T00:00:00.000Z').unread).toBe(0)   // ts > 水位才算,等于不算
+    expect(j.summary('2026-09-02T00:00:00.000Z').latest?.kind).toBe('visit')
+  })
+})
+
+describe('journal-seen 水位文件', () => {
+  it('没文件 → null;写了再读回来;文件坏了 → null 不抛', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jseen-'))
+    expect(readJournalSeen(dir)).toBe(null)
+    writeJournalSeen(dir, '2026-09-03T10:00:00.000Z')
+    expect(readJournalSeen(dir)).toBe('2026-09-03T10:00:00.000Z')
+    writeFileSync(join(dir, 'companion', 'journal-seen.json'), '{not json')
+    expect(readJournalSeen(dir)).toBe(null)
   })
 })

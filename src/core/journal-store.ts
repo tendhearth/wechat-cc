@@ -45,6 +45,11 @@ export interface Journal {
   list(limit?: number): CatchRow[]
   setStatus(id: string, status: CatchStatus): boolean
   remove(id: string): boolean
+  /**
+   * 桌宠的包袱(spec 2026-09-03-companion-presence §2.3):水位之后有几条、
+   * 最新一条是什么。seenUntil = null ⇒ 从没看过,全算。
+   */
+  summary(seenUntil: string | null): { unread: number; latest: { kind: string; title: string; ts: string } | null }
 }
 
 const PRUNE_KEEP = 500
@@ -68,6 +73,11 @@ export function makeJournal(db: Db): Journal {
   const exists = db.query<{ cnt: number }, [string]>('SELECT COUNT(*) AS cnt FROM journal WHERE id = ?')
   const prune = db.query<unknown, [number]>(
     'DELETE FROM journal WHERE id NOT IN (SELECT id FROM journal ORDER BY ts DESC, rowid DESC LIMIT ?)',
+  )
+  const cntAll = db.query<{ cnt: number }, []>('SELECT COUNT(*) AS cnt FROM journal')
+  const cntAfter = db.query<{ cnt: number }, [string]>('SELECT COUNT(*) AS cnt FROM journal WHERE ts > ?')
+  const selLatest = db.query<{ kind: string; title: string; ts: string }, []>(
+    'SELECT kind, title, ts FROM journal ORDER BY ts DESC, rowid DESC LIMIT 1',
   )
 
   return {
@@ -103,6 +113,10 @@ export function makeJournal(db: Db): Journal {
       if ((exists.get(id)?.cnt ?? 0) === 0) return false
       del.run(id)
       return true
+    },
+    summary(seenUntil) {
+      const unread = seenUntil === null ? (cntAll.get()?.cnt ?? 0) : (cntAfter.get(seenUntil)?.cnt ?? 0)
+      return { unread, latest: selLatest.get() ?? null }
     },
   }
 }

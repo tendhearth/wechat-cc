@@ -137,6 +137,7 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // 只改主人自己那份清单的状态,不外发、不触网。
   'GET /v1/journal': 'trusted',
   'POST /v1/journal/status': 'trusted',
+  'POST /v1/journal/seen': 'trusted',
   'POST /v1/journal/remove': 'trusted',
   // trusted, not admin — despite living in the same "async foraging spine"
   // batch as the admin-tiered routes above. Reveal acts on an ALREADY

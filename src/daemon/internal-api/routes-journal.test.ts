@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { openDb } from '../../lib/db'
 import { makeJournal } from '../../core/journal-store'
+import { readJournalSeen } from '../../core/journal-seen'
 import { journalRoutes } from './routes-journal'
 import { minTierFor } from './route-tiers'
 import { makeRoutes } from './routes'
@@ -94,5 +98,23 @@ describe('分级', () => {
     for (const r of ['GET /v1/journal', 'POST /v1/journal/status', 'POST /v1/journal/remove']) {
       expect(minTierFor(r)).toBe('trusted')
     }
+  })
+})
+
+describe('POST /v1/journal/seen —— 主人打开觅食台,水位推到现在', () => {
+  it('写水位文件并返回 seen_until;之后 summary 归零', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'jroute-'))
+    const db = openDb({ path: ':memory:' })
+    const hunt = makeJournal(db)
+    hunt.recordHunt({ chatId: 'owner', text: '看这个 https://a.com/x' })
+    const r = await journalRoutes({ hunt, stateDir } as unknown as InternalApiDeps)['POST /v1/journal/seen']!(qs(), undefined)
+    expect(r.status).toBe(200)
+    const body = r.body as { ok: boolean; seen_until: string }
+    expect(body.ok).toBe(true)
+    expect(readJournalSeen(stateDir)).toBe(body.seen_until)
+    expect(hunt.summary(body.seen_until).unread).toBe(0)
+  })
+  it('tier 是 trusted(桌面 FILE token 能打;admin 会让桌面 403)', () => {
+    expect(minTierFor('POST /v1/journal/seen')).toBe('trusted')
   })
 })
