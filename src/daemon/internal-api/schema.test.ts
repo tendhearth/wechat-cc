@@ -635,10 +635,11 @@ describe('schema lookup tables', () => {
     // REQUEST_SCHEMAS entry, per the pair/inbound routes' precedent.)
     expect(Object.keys(REQUEST_SCHEMAS).length).toBe(41)
   })
-  it('RESPONSE_SCHEMAS has 33 entries (one per route)', () => {
+  it('RESPONSE_SCHEMAS has 34 entries (one per route)', () => {
     // 25 original + 2 a2a dashboard response schemas (preview, install)
     // + 1 a2a server-side test response + 1 memory/delete
     // + 1 companion/import-local + 3 reminders (schedule, cancel, list)
-    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(33)
+    // + 1 companion/presence (spec 2026-09-03-companion-presence)
+    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(34)
   })
 })
