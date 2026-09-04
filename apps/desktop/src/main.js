@@ -18,6 +18,7 @@ import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
 import { invokeApi } from "./api.js"
 import { initialMode, restartButtonState, afterScanTarget , showToast } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
+import { startCompanionPresence } from "./companion-presence.js"
 import { createConversationsPoller } from "./conversations-poller.js"
 import {
   renderDoctorWizard,
@@ -111,6 +112,9 @@ async function withRefreshFeedback(button, fn) {
 const invoke = (cmd, args) => ipcInvoke(cmd, args, state)
 
 const doctorPoller = createDoctorPoller({ invoke, intervalMs: 5000 })
+// 桌宠状态(spec 2026-09-03-companion-presence):首页鱼缸跟浮窗共用一套推导。
+// 点脚边道具 → 切到觅食台(带回来的在那儿)。switchPane 是函数声明,提升可用。
+const presencePoller = startCompanionPresence({ onOpenJournal: () => switchPane("a2a-agents") })
 const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 10000 })
 
 // Bag passed to module functions instead of imported singletons. Keeps each
