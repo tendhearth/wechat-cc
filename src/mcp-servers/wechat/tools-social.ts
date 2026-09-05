@@ -3,12 +3,14 @@
  * MCP 工具。全是 internal API 的薄壳 —— 打 trusted 路由,把路由 JSON 原样
  * 交给模型,**不拼任何中文文案**;回话怎么说是模型的活(spec §1 规则)。
  * 权限:main.ts 只在 admin 会话注册;user-tier.ts 把它们归到 `social_act`
- * (admin-only);路由层再拒一次非 admin token。
+ * (admin-only);路由层按 trusted 门拒 guest;trusted 会话由注册门
+ * (SESSION_IS_ADMIN)+ classify 门(social_act ∈ ADMIN_ONLY)挡住。
  *
  * `social_seek` 是老工具(agent-social M1 → 心愿 §4 repoint),名字与行为
  * 都不动:只出脱敏预览存草稿,主人点头后模型再调 `wish_send`。
  */
-import * as z from 'zod'
+// 默认导入:zod v4 的具名 { z } 在 vitest 进程内加载时会解析成 undefined(见 tools-federated.ts)
+import z from 'zod'
 import type { ZodRawShape } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'

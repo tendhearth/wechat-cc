@@ -13,7 +13,7 @@ owner 拍板(2026-09-05):
 
 ## 1. 工具面
 
-全部加在现有的 `wechat` MCP server(`src/mcp-servers/wechat/`),内部打 internal API(trusted 路由),因此所有 provider 自动拿到(claude / codex / cursor / gemini / agy 走各自的 MCP 接法,openai 自建 loop 走 `openai-mcp-bridge`)。
+全部加在现有的 `wechat` MCP server(`src/mcp-servers/wechat/`),内部打 internal API(trusted 路由)。claude / codex / gemini / openai(自建 loop 走 `openai-mcp-bridge`)按会话逐次给 tier,主人会话能拿到这十个工具;**cursor 和 agy 不会** —— 它们的 MCP 子进程用的是静态配置(`agy-mcp-config.ts` / `cursor-mcp-config.ts` 把 `WECHAT_SESSION_TIER` 钉死成 `'trusted'`,不分会话),`registerSocialTools` 需要 `SESSION_IS_ADMIN` 才注册,永远不满足;因此系统提示里的社交能力段在这两个 provider 上也不出现(`socialAvailable` 按 provider 关掉)。
 
 | 工具 | 输入 | 打的路由 | 返回(JSON 原样) |
 |---|---|---|---|
@@ -58,7 +58,7 @@ owner 拍板(2026-09-05):
 
 `user-tier.ts`:
 - 新增 `ToolKind` `'social_act'`,加入 `ADMIN_ONLY`;`classifyToolUse` 把 `wish_list / wish_send / wish_cancel / intro_request / intro_accept / intro_decline / intro_offers / relationships / visit` 映射到 `social_act`;`social_seek` 保持原 kind 不动。
-- `main.ts` 里这十个工具只在 `SESSION_IS_ADMIN` 分支注册(和 `registerSocialSeekTool` 同一处),非 admin 会话看不到;路由层再拒一次非 admin token。三层:注册、classify、路由。
+- `main.ts` 里这十个工具只在 `SESSION_IS_ADMIN` 分支注册(和 `registerSocialSeekTool` 同一处),非 admin 会话看不到;路由层按 trusted 门拒 guest;trusted 会话由注册门(SESSION_IS_ADMIN)+ classify 门(social_act ∈ ADMIN_ONLY)挡住。
 
 ## 5. 改动清单
 

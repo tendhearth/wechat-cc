@@ -184,7 +184,9 @@ if (SESSION_IS_ADMIN) {
   registerFileTools(server, client)
   // 社交工具面(spec 2026-09-05-social-tools):social_seek + 九个读 / 动
   // 主人社交层的工具。admin-only(user-tier.ts 的 social_seek / social_act
-  // 都在 ADMIN_ONLY);非 admin 会话根本看不到,路由层再拒一次。
+  // 都在 ADMIN_ONLY);非 admin 会话根本看不到。路由层按 trusted 门拒
+  // guest;trusted 会话由注册门(SESSION_IS_ADMIN)+ classify 门
+  // (social_act ∈ ADMIN_ONLY)挡住。
   registerSocialTools(server, client)
   // agent-facing search (AS T4): knowledge_search runs a semantic query
   // over the owner's WeChat message history — same private-data trust

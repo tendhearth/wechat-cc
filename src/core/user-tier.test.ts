@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveTier, resolveEffectiveTier, TIER_PROFILES, type UserTier, type ToolKind } from './user-tier'
+import { resolveTier, resolveEffectiveTier, TIER_PROFILES, ALL_KINDS, type UserTier, type ToolKind } from './user-tier'
 import type { Access } from '../lib/access'
 
 const baseAccess: Access = {
@@ -55,13 +55,6 @@ describe('resolveEffectiveTier — --dangerously override', () => {
 })
 
 describe('TIER_PROFILES', () => {
-  const ALL_KINDS: ToolKind[] = [
-    'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
-    'observations_read', 'observations_write',
-    'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
-    'a2a_send', 'plugin_tool', 'knowledge_search', 'federated_query', 'graph_query', 'facts_query', 'person_query',
-  ]
-
   for (const tier of ['admin', 'trusted', 'guest'] as UserTier[]) {
     it(`tier=${tier}: allow ∪ relay ∪ deny covers every ToolKind exactly once`, () => {
       const p = TIER_PROFILES[tier]

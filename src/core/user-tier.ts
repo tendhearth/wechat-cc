@@ -45,7 +45,7 @@ export type ToolKind =
   | 'person_query'       // admin-only: assemble a per-contact unified brief (person_brief, Knowledge Facts/Person inproc) — same private-data trust class as facts_query/graph_query.
   | 'config_admin'       // admin-only: read/write the owner's daemon configuration through the whitelist-bounded config surface (config_get/config_set, src/daemon/config-surface.ts) — a config write steers the daemon itself, so fail closed to admin.
 
-const ALL_KINDS: ReadonlySet<ToolKind> = new Set([
+export const ALL_KINDS: ReadonlySet<ToolKind> = new Set([
   'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
   'observations_read', 'observations_write',
   'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
