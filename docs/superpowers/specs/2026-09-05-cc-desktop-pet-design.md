@@ -83,7 +83,7 @@ Fallback 链(`animation-resolver.js`,纯,输入 form + behavior + manifest,输�
 |---|---|
 | daemon 没起(拉不到) | form unlit、`sleep`、无道具,一行提示「daemon 没起」 |
 | `presence: offline`(微信断) | form unlit、`sleep`;journal 道具与 badge 保留(计数仍可信) |
-| `presence: degraded` | 进入时播一次 `error`,之后 `idle` + `exclamation` 道具,直到恢复 |
+| `presence: degraded` | 进入时播一次 `error`,之后保持当前活动(idle / working / companion)+ `exclamation` 道具,直到恢复 |
 | `activity: hosting_human / visiting / hosting_peer` | `companion` |
 | `activity: foraging / working`(busy token) | `working` + `laptop`(仅当 turn 端点说 idle;turn 优先) |
 | `activity: chatting / idle` | 交给 turn 端点 |

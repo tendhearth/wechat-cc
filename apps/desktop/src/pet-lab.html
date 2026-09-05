@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CC Lab</title>
+    <link rel="stylesheet" href="./companion-window.css" />
+    <style>
+      body { background: #e9e4dc; overflow: auto; }
+      .lab { display: grid; grid-template-columns: 260px 1fr; gap: 16px; padding: 16px; }
+      .lab .pet-shell { width: 260px; height: 320px; background: rgba(255,255,255,.35); border-radius: 12px; }
+      .lab-panel { font-size: 13px; }
+      .lab-panel h3 { margin: 10px 0 4px; font-size: 12px; color: #7b6b5c; text-transform: uppercase; letter-spacing: .06em; }
+      .lab-row { display: flex; flex-wrap: wrap; gap: 6px; }
+      .lab-row button, .lab-row label { padding: 4px 8px; border: 1px solid #c9bfb2; border-radius: 6px; background: #fffdf8; cursor: pointer; }
+      .lab-state, .lab-warn { margin-top: 8px; padding: 8px; background: #fffdf8; border-radius: 6px; font-family: ui-monospace, monospace; font-size: 11px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <div class="lab">
+      <main class="pet-shell">
+        <section class="pet-stage" id="pet-stage" aria-label="CC">
+          <img class="pet-sprite" id="pet-sprite" alt="" draggable="false" />
+          <div class="pet-props" id="pet-props" aria-hidden="true"></div>
+        </section>
+        <p class="pet-hint" id="pet-hint" hidden></p>
+      </main>
+      <aside class="lab-panel">
+        <h3>形态</h3><div class="lab-row" id="lab-forms"></div>
+        <h3>行为(13)</h3><div class="lab-row" id="lab-behaviors"></div>
+        <h3>道具</h3><div class="lab-row" id="lab-props"></div>
+        <h3>假 presence</h3><div class="lab-row" id="lab-presence"></div>
+        <h3>选项</h3><div class="lab-row"><label><input type="checkbox" id="lab-reduced" /> reduced motion(需刷新)</label><button id="lab-drag">drag 1 秒</button></div>
+        <h3>状态</h3><div class="lab-state" id="lab-state"></div>
+        <h3>warnings</h3><div class="lab-warn" id="lab-warn">(无)</div>
+      </aside>
+    </div>
+    <script type="module" src="./pet-lab.js"></script>
+  </body>
+</html>
