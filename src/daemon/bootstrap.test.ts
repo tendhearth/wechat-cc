@@ -1636,6 +1636,78 @@ describe('bootstrap 社交接线', () => {
   })
 })
 
+// ── social-tools socialAvailable gate (final-review Findings #2 + #5) ────
+// registerSocialTools only ever runs where the provider's MCP child threads
+// WECHAT_SESSION_TIER per session (ProviderCapabilities.adminMcpTools) —
+// agy/cursor pin it to a static 'trusted' token in their MCP config
+// (agy-mcp-config.ts / cursor-mcp-config.ts), so SESSION_IS_ADMIN never
+// fires there and the social tools never register, even for the owner.
+// The prompt's 「替主人交朋友」 section (socialAvailable) must track that,
+// on top of the pre-existing socialToolsWired / tier gates.
+describe('bootstrap socialAvailable gate', () => {
+  it('替主人交朋友 appears for claude admin when social is wired, not for agy/cursor (adminMcpTools=false), and not for trusted tier', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-available-'))
+    const port = 19920
+    writeFileSync(
+      join(stateDir, 'agent-config.json'),
+      JSON.stringify({
+        provider: 'claude',
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+        a2a_listen: { host: '127.0.0.1', port },
+        social_enabled: true,
+        social_disclosure_policy: '兴趣可说；住址不可',
+      }),
+    )
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(boot.social).toBeDefined() // sanity: social actually wired
+
+      expect(boot.buildInstructions('claude', TIER_PROFILES.admin, '_test')).toContain('替主人交朋友')
+      // agy/cursor pin WECHAT_SESSION_TIER to 'trusted' in their MCP config —
+      // registerSocialTools never runs there, so the prompt must not promise it.
+      expect(boot.buildInstructions('agy', TIER_PROFILES.admin, '_test')).not.toContain('替主人交朋友')
+      expect(boot.buildInstructions('cursor', TIER_PROFILES.admin, '_test')).not.toContain('替主人交朋友')
+      // trusted tier can't reach social_act (ADMIN_ONLY) regardless of provider.
+      expect(boot.buildInstructions('claude', TIER_PROFILES.trusted, '_test')).not.toContain('替主人交朋友')
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('替主人交朋友 does not appear when social is not wired at all (default fixture, admin tier)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-unavailable-'))
+    let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+    try {
+      boot = await buildBootstrap({
+        supervisor: new SubsystemSupervisor(() => {}),
+        db: openTestDb(),
+        stateDir,
+        ilink: makeIlinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }),
+        lastActiveChatId: () => null,
+        log: () => {},
+      })
+      expect(boot.social).toBeUndefined() // sanity: social not wired (no social_enabled)
+      expect(boot.buildInstructions('claude', TIER_PROFILES.admin, '_test')).not.toContain('替主人交朋友')
+    } finally {
+      await boot?.a2aServer?.stop()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+})
+
 // ── Pairing-code (spec §7) — boot.pairing wiring ──────────────────────────
 // Gated ONLY on mailbox_relays?.length (the rendezvous relay), independent
 // of social_enabled — a daemon that hasn't turned social on can still pair.

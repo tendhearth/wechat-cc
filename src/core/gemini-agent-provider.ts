@@ -23,6 +23,8 @@ import { makeTurnEmitter } from './turn-emitter'
  *  like Claude). Delegation + resume deferred to a follow-up. */
 export const GEMINI_CAPABILITIES: ProviderCapabilities = {
   perToolCallback: true,
+  // mcpEnv threads WECHAT_SESSION_TIER per session.
+  adminMcpTools: true,
   sandboxLevels: new Set(),
   supportsDelegation: false,
   supportsResume: false,

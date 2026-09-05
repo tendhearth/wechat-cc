@@ -18,6 +18,8 @@ import { makeTurnEmitter } from './turn-emitter'
 export const OPENAI_CAPABILITIES: ProviderCapabilities = {
   // We own the loop, so per-tool gating IS realisable.
   perToolCallback: true,
+  // openai-mcp-bridge threads WECHAT_SESSION_TIER per session.
+  adminMcpTools: true,
   // No SDK/OS sandbox in v1 — the tier gate is the only barrier.
   sandboxLevels: new Set(),
   supportsDelegation: true,

@@ -24,6 +24,11 @@ import { makeTurnEmitter } from './turn-emitter'
  */
 export const AGY_CAPABILITIES: ProviderCapabilities = {
   perToolCallback: false,
+  // agy-mcp-config.ts pins WECHAT_SESSION_TIER to 'trusted' for its MCP
+  // child (one static token, not per-session) — SESSION_IS_ADMIN is always
+  // false, so admin-only tools (incl. the social-tools family) never
+  // register for agy even when the owner is chatting.
+  adminMcpTools: false,
   sandboxLevels: new Set(),
   supportsDelegation: false,
   supportsResume: true,

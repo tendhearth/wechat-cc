@@ -14,6 +14,7 @@ import { log } from '../lib/log'
  */
 export const CODEX_CAPABILITIES: ProviderCapabilities = {
   perToolCallback: false,
+  adminMcpTools: true,
   sandboxLevels: new Set(['read-only', 'workspace-write', 'full']),
   supportsDelegation: true,
   supportsResume: true,

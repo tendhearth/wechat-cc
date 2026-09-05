@@ -25,6 +25,9 @@ import { drainCappedStderr } from './agy-agent-provider'
 
 export const CURSOR_CLI_CAPABILITIES: ProviderCapabilities = {
   perToolCallback: false,
+  // Same static-token MCP config as the SDK path (cursor-mcp-config.ts pins
+  // WECHAT_SESSION_TIER to 'trusted') — admin-only tools never register.
+  adminMcpTools: false,
   sandboxLevels: new Set(),
   supportsDelegation: false,
   supportsResume: true,

@@ -93,6 +93,7 @@ describe('ghost-gemini — extensibility check (RFC 05 Phase 2)', () => {
     const { deriveCapability } = await import('./capability-matrix')
     const GEMINI_CAPABILITIES = {
       perToolCallback: true,
+      adminMcpTools: true,
       sandboxLevels: new Set<'none' | 'read-only' | 'workspace-write' | 'full'>(),
       supportsDelegation: false,
       supportsResume: false,

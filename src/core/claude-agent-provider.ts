@@ -12,6 +12,7 @@ import { isAuthFail } from './auth-fail'
  */
 export const CLAUDE_CAPABILITIES: ProviderCapabilities = {
   perToolCallback: true,
+  adminMcpTools: true,
   sandboxLevels: new Set(),
   supportsDelegation: true,
   supportsResume: true,

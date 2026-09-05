@@ -28,6 +28,11 @@ import { log } from '../lib/log'
  */
 export const CURSOR_CAPABILITIES: ProviderCapabilities = {
   perToolCallback: false,
+  // cursor-mcp-config.ts pins WECHAT_SESSION_TIER to 'trusted' for the
+  // global MCP upsert (one static token, not per-session) — SESSION_IS_ADMIN
+  // is always false, so admin-only tools (incl. the social-tools family)
+  // never register for cursor even when the owner is chatting.
+  adminMcpTools: false,
   sandboxLevels: new Set(['workspace-write', 'full']),
   supportsDelegation: false,
   supportsResume: true,

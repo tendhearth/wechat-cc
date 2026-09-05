@@ -750,7 +750,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // `social_act` is ADMIN_ONLY (user-tier.ts), matching wechat-mcp/main.ts's
       // SESSION_IS_ADMIN gate on registerSocialTools; `socialToolsWired` says
       // the daemon's social layer actually came up (otherwise every tool 503s).
-      socialAvailable: socialToolsWired && tierProfile.allow.has('social_act'),
+      // `adminMcpTools` (ProviderCapabilities) additionally gates out agy/cursor:
+      // their MCP child's WECHAT_SESSION_TIER is pinned to 'trusted' in a static
+      // config (agy-mcp-config.ts / cursor-mcp-config.ts), so SESSION_IS_ADMIN
+      // is never true there and registerSocialTools never runs — advertising the
+      // section anyway would send the model to call tools that don't exist.
+      socialAvailable: socialToolsWired && tierProfile.allow.has('social_act') && capabilitiesFor(providerId).adminMcpTools,
       careEnabled: (deps.careLevelFor?.(chatId) ?? 'off') !== 'off' && tierProfile.allow.has('memory_write'),
       // Tri-state (owner-onboarding design §C2) — absent thunk defaults to
       // `null` (pref-off shape), NOT `[]`, so an unwired bootstrap stays

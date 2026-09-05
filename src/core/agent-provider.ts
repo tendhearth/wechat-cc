@@ -207,6 +207,19 @@ export interface ProviderCapabilities {
    */
   perToolCallback: boolean
   /**
+   * Can this provider's MCP child session ever be granted admin tier, so
+   * that `SESSION_IS_ADMIN`-gated tool registration (daemon self-diag,
+   * file_locate, knowledge_search, the social-tools family, …) actually
+   * runs? False ⇒ the provider's MCP config pins `WECHAT_SESSION_TIER`
+   * to a static value (agy/cursor: `'trusted'`, one token for every
+   * session — see `agy-mcp-config.ts` / `cursor-mcp-config.ts`), so
+   * `SESSION_IS_ADMIN` is always false there regardless of who is
+   * chatting, and admin-only tools never register for this provider.
+   * True ⇒ the MCP env is threaded per-session (claude/codex/gemini/
+   * openai), so an owner/admin chat does reach admin tier.
+   */
+  adminMcpTools: boolean
+  /**
    * Sandbox levels the SDK exposes. Decides which tier→sandbox
    * translations are realisable. Empty set ⇒ no SDK sandbox (Claude).
    */
