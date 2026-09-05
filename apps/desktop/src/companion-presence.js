@@ -1,6 +1,6 @@
 // @ts-check
 // companion-presence.js — 把桌宠状态接到鱼缸(spec 2026-09-03-companion-presence §3)。
-// 主界面首页和浮窗各调一次;它们挂的是同一个 animation-lab,所以两处自动一致。
+// 只剩主界面首页在用(浮窗 2026-09-05 换成了 CC 桌宠,见 companion-window.js)。
 import { invokeApi as defaultInvokeApi } from './api.js'
 import { createPresencePoller } from './presence-poller.js'
 import { sceneStateFrom } from './companion-scene-state.js'

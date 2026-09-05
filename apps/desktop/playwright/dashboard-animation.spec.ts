@@ -57,7 +57,7 @@ test('inline companion animation replaces the overview illustration', async ({ p
   await page.locator('#companion-desktop-start').click()
   const desktopPage = await desktopPagePromise
   await desktopPage.waitForLoadState()
-  await expect(desktopPage.locator('#companion-stage')).toBeVisible()
+  await expect(desktopPage.locator('#pet-stage')).toBeVisible()
   await expect(desktopPage.locator('#companion-window-close')).toBeVisible()
   await desktopPage.close()
 })

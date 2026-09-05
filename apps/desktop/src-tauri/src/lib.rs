@@ -112,12 +112,12 @@ async fn open_companion_window(app: AppHandle) -> Result<(), String> {
         "companion",
         WebviewUrl::App("companion-window.html".into()),
     )
-    .title("陪伴小世界")
+    .title("CC")
     // Desktop mode begins at the compact size, so it behaves like a quiet
     // companion rather than competing with the main workspace. The user can
     // expand it at any time with the in-window + control.
-    .inner_size(280.0, 210.0)
-    .min_inner_size(280.0, 210.0)
+    .inner_size(240.0, 300.0)
+    .min_inner_size(200.0, 250.0)
     .transparent(true)
     .decorations(false)
     .always_on_top(true)
@@ -233,8 +233,8 @@ fn resize_companion_window(app: AppHandle, direction: String) -> Result<(), Stri
         .inner_size()
         .map_err(|err| format!("read companion size: {err}"))?
         .to_logical::<f64>(scale_factor);
-    let width = (current.width * factor).clamp(280.0, 1100.0);
-    let height = (current.height * factor).clamp(210.0, 780.0);
+    let width = (current.width * factor).clamp(200.0, 600.0);
+    let height = (current.height * factor).clamp(250.0, 750.0);
     window
         .set_size(LogicalSize::new(width, height))
         .map_err(|err| format!("resize companion window: {err}"))

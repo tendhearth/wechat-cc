@@ -1019,7 +1019,7 @@ function wireEvents() {
     // The browser/dev shim cannot spawn a native Tauri window. Open the same
     // isolated scene in a popup there so visual work remains previewable.
     if (mock || /** @type {any} */ (window).__WECHAT_CC_SHIM__) {
-      window.open("./companion-window.html", "wechat-cc-companion", "popup,width=600,height=430")
+      window.open("./companion-window.html", "wechat-cc-companion", "popup,width=260,height=330")
       return
     }
     companionDesktopStart.disabled = true

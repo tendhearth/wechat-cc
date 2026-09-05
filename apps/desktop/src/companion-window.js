@@ -1,37 +1,46 @@
-const invoke = /** @type {any} */ window.__TAURI__?.core?.invoke
-const closeButton = document.getElementById("companion-window-close")
-const dragRegions = document.querySelectorAll("[data-tauri-drag-region]")
-const zoomOutButton = document.getElementById("companion-window-zoom-out")
-const zoomInButton = document.getElementById("companion-window-zoom-in")
-const stage = document.querySelector(".companion-window-stage")
+// @ts-check
+// companion-window.js — CC 桌宠窗的胶水:组装 pet,接 presence 轮询,窗口拖动 / 缩放 / 关闭。
+// 只调 pet 的语义接口;这里不出现任何帧文件名。
+import { createPet } from './pet/pet.js'
+import { presenceToPet } from './pet/bridge/presence-map.js'
+import { createPresencePoller } from './presence-poller.js'
+import { invokeApi } from './api.js'
+import { invoke } from './ipc.js'
 
-function fitStage() {
-  const shell = stage?.parentElement
-  if (!stage || !shell) return
-  const width = Math.max(1, Math.min(shell.clientWidth - 24, (shell.clientHeight - 24) * 1.5))
-  stage.style.width = `${width}px`
-  stage.style.height = `${width / 1.5}px`
-}
+const $ = (/** @type {string} */ id) => document.getElementById(id)
+// 浏览器预览(没有 Tauri 运行时)里窗口命令无处可去 —— 用它决定要不要发。
+const mock = !(/** @type {any} */ (window).__TAURI__?.core?.invoke)
+const stage = $('pet-stage'), img = $('pet-sprite'), props = $('pet-props'), hint = $('pet-hint')
+const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
-fitStage()
-if (typeof ResizeObserver !== "undefined" && stage?.parentElement) {
-  new ResizeObserver(fitStage).observe(stage.parentElement)
-}
+const pet = await createPet({ stage, img, props, hint }, { manifestUrl: './assets/pet/manifest.json', reducedMotion })
+if (new URLSearchParams(location.search).has('lab')) /** @type {any} */ (window).__pet = pet
 
-closeButton?.addEventListener("click", () => {
-  if (invoke) invoke("close_companion_window").catch(console.warn)
-  else window.close()
-})
+// presence(处境)→ 意图。Phase B 在这里再叠 turn 端点。
+/** @type {import('./presence-poller.js').Presence | null} */
+let prev = null
+const poller = createPresencePoller({ invokeApi, intervalMs: 20_000 })
+poller.subscribe(p => { pet.applyIntent(presenceToPet(p, prev)); prev = p })
+poller.start()
+document.addEventListener('visibilitychange', () => { if (document.hidden) poller.stop(); else { poller.start(); poller.refresh() } })
 
-dragRegions.forEach(region => region.addEventListener("mousedown", event => {
-  if (!(event instanceof MouseEvent) || event.button !== 0 || !invoke) return
+// 拖动:整只 CC 是 drag-region;按下进 drag,松开回落。系统拖动结束后不会有事件回来,
+// 所以回落靠 mouseup / blur / focus 兜底。
+stage?.addEventListener('mousedown', (event) => {
+  if (!(event instanceof MouseEvent) || event.button !== 0) return
   event.preventDefault()
-  invoke("start_companion_drag").catch(console.warn)
-}))
-
-zoomOutButton?.addEventListener("click", () => invoke?.("resize_companion_window", { direction: "out" }).catch(console.warn))
-zoomInButton?.addEventListener("click", () => invoke?.("resize_companion_window", { direction: "in" }).catch(console.warn))
-
-window.addEventListener("keydown", event => {
-  if (event.key === "Escape") closeButton?.click()
+  pet.beginDrag()
+  if (!mock) invoke('start_companion_drag').catch(console.warn)
 })
+const endDrag = () => pet.endDrag()
+window.addEventListener('mouseup', endDrag)
+window.addEventListener('blur', endDrag)
+window.addEventListener('focus', endDrag)
+
+$('companion-window-close')?.addEventListener('click', () => {
+  if (mock) { window.close(); return }
+  invoke('close_companion_window').catch(() => window.close())
+})
+$('pet-zoom-out')?.addEventListener('click', () => { if (!mock) invoke('resize_companion_window', { direction: 'out' }).catch(console.warn) })
+$('pet-zoom-in')?.addEventListener('click', () => { if (!mock) invoke('resize_companion_window', { direction: 'in' }).catch(console.warn) })
+window.addEventListener('keydown', (event) => { if (event.key === 'Escape') $('companion-window-close')?.click() })
