@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 1,
+  "name": "CC Desktop Pet Assets",
+  "version": "1.0.0",
+  "canvas": {
+    "width": 512,
+    "height": 512,
+    "anchor": [
+      0.5,
+      0.91796875
+    ],
+    "baselinePx": 470
+  },
+  "canonical": {
+    "unlit": "reference/master-unlit.png",
+    "lit": "reference/master-lit.png",
+    "rule": "Same character and silhouette; different light."
+  },
+  "states": {
+    "idle": {
+      "frames": [
+        "reference/master-lit.png"
+      ],
+      "fps": 4,
+      "loop": true
+    },
+    "blink": {
+      "frames": [
+        "reference/master-lit.png",
+        "states/blink-half/000.png",
+        "states/blink-closed/000.png",
+        "states/blink-half/000.png",
+        "reference/master-lit.png"
+      ],
+      "fps": 8,
+      "loop": false,
+      "next": "idle"
+    },
+    "look": {
+      "frames": [
+        "states/look-left/000.png"
+      ],
+      "fps": 4,
+      "loop": false,
+      "next": "idle"
+    },
+    "receive": {
+      "frames": [
+        "states/receive/000.png"
+      ],
+      "fps": 4,
+      "loop": false,
+      "next": "idle"
+    },
+    "working": {
+      "frames": [
+        "states/working/000.png"
+      ],
+      "fps": 4,
+      "loop": true,
+      "next": null
+    },
+    "thinking": {
+      "frames": [
+        "states/thinking/000.png"
+      ],
+      "fps": 4,
+      "loop": true,
+      "next": null
+    },
+    "permission": {
+      "frames": [
+        "states/permission/000.png"
+      ],
+      "fps": 4,
+      "loop": true,
+      "next": null
+    },
+    "done": {
+      "frames": [
+        "states/done/000.png"
+      ],
+      "fps": 4,
+      "loop": false,
+      "next": "idle"
+    },
+    "companion": {
+      "frames": [
+        "states/companion/000.png"
+      ],
+      "fps": 4,
+      "loop": true,
+      "next": null
+    },
+    "sleep": {
+      "frames": [
+        "states/sleep/000.png"
+      ],
+      "fps": 4,
+      "loop": true,
+      "next": null
+    },
+    "drag": {
+      "frames": [
+        "states/drag/000.png"
+      ],
+      "fps": 4,
+      "loop": false,
+      "next": "idle"
+    },
+    "wake": {
+      "frames": [
+        "states/wake/000.png"
+      ],
+      "fps": 4,
+      "loop": false,
+      "next": "idle"
+    },
+    "error": {
+      "frames": [
+        "states/error/000.png"
+      ],
+      "fps": 4,
+      "loop": false,
+      "next": "idle"
+    }
+  },
+  "transitions": {
+    "unlit-to-lit": {
+      "frames": [
+        "transitions/unlit-to-lit/000.png",
+        "transitions/unlit-to-lit/001.png",
+        "transitions/unlit-to-lit/002.png",
+        "transitions/unlit-to-lit/003.png",
+        "transitions/unlit-to-lit/004.png",
+        "transitions/unlit-to-lit/005.png",
+        "transitions/unlit-to-lit/006.png",
+        "transitions/unlit-to-lit/007.png"
+      ],
+      "fps": 8,
+      "loop": false,
+      "next": "idle"
+    }
+  },
+  "props": {
+    "micro-light": "props/micro-light.png",
+    "sprout": "props/sprout.png",
+    "laptop": "props/laptop.png",
+    "envelope": "props/envelope.png",
+    "speech-bubble": "props/speech-bubble.png",
+    "thought-bubble": "props/thought-bubble.png",
+    "exclamation": "props/exclamation.png",
+    "mug": "props/mug.png"
+  },
+  "notes": [
+    "PNG RGBA assets",
+    "Props are separately composable",
+    "All character frames share a 512x512 canvas and bottom anchor"
+  ]
+}
