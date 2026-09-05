@@ -962,6 +962,106 @@ fn open_url(url: String) -> Result<(), String> {
     }
 }
 
+// Desktop pet permission card (spec 2026-09-05 §6): the companion window
+// resolves a pending tool permission the same way the WeChat "允许 <hash>"
+// reply does — one shared `consume(hash, decision)` on the daemon side.
+// POST /v1/permissions/resolve is **admin** tier (it IS the permission), so
+// like agent_converse this reads the SEPARATE operatorTokenFilePath from
+// <stateDir>/internal-api-info.json — see agent_converse's doc comment for
+// the full security rationale. Doing it in Rust keeps that token out of the
+// webview entirely; the page only ever names a hash and a decision.
+#[tauri::command]
+async fn pet_permission_resolve(hash: String, decision: String) -> Result<bool, String> {
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    // Reject anything that isn't one of the two decisions before touching the
+    // network: a typo must not reach the daemon as an unknown verb.
+    if decision != "allow" && decision != "deny" {
+        return Err(format!("invalid decision: {decision}"));
+    }
+    if hash.trim().is_empty() {
+        return Err("missing permission hash".to_string());
+    }
+
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|e| format!("cannot resolve home dir: {e}"))?;
+    let state_dir = std::env::var("WECHAT_STATE_DIR").unwrap_or_else(|_| {
+        PathBuf::from(home)
+            .join(".claude")
+            .join("channels")
+            .join("wechat")
+            .to_string_lossy()
+            .to_string()
+    });
+    let info_path = PathBuf::from(&state_dir).join("internal-api-info.json");
+
+    let info_raw = std::fs::read_to_string(&info_path)
+        .map_err(|e| format!("read {}: {e}", info_path.display()))?;
+    let info: Value = serde_json::from_str(&info_raw)
+        .map_err(|e| format!("invalid JSON in {}: {e}", info_path.display()))?;
+
+    let base_url = info
+        .get("baseUrl")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("missing baseUrl in {}", info_path.display()))?;
+    // operatorTokenFilePath, not tokenFilePath — see agent_converse's doc
+    // comment (the daemon-wide token is trusted tier and would just 403).
+    let operator_token_file_path = info
+        .get("operatorTokenFilePath")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "operator token unavailable — daemon too old".to_string())?;
+
+    let token = std::fs::read_to_string(operator_token_file_path)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| format!("token read error: {e}"))?;
+
+    let url = format!("{base_url}/v1/permissions/resolve");
+    // reqwest's `json` feature is off in this crate (Cargo.toml) — serialize
+    // by hand, same as the other commands here.
+    let payload = serde_json::to_string(&serde_json::json!({ "hash": hash, "decision": decision }))
+        .map_err(|e| format!("failed to serialize request body: {e}"))?;
+
+    // The route only flips an in-memory pending entry and returns; 10s is
+    // generous. A person is watching a button — fail fast and let them retry.
+    let result = timeout(Duration::from_secs(10), async {
+        reqwest::Client::new()
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(payload)
+            .send()
+            .await
+    })
+    .await;
+
+    let resp = match result {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => return Err(format!("request error: {e}")),
+        Err(_) => return Err("request timed out".to_string()),
+    };
+
+    let status = resp.status();
+    let body_text = resp
+        .text()
+        .await
+        .map_err(|e| format!("failed to read response body ({status}): {e}"))?;
+    let body: Value = serde_json::from_str(&body_text)
+        .map_err(|e| format!("invalid JSON response ({status}): {e}\n{body_text}"))?;
+    if !status.is_success() {
+        let err_msg = body
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("HTTP {status}"));
+        return Err(err_msg);
+    }
+    // `ok:false` is a real answer, not an error: the hash was already consumed
+    // (WeChat got there first) or expired. The card re-syncs from the next poll.
+    Ok(body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(PendingNavigate(Mutex::new(None)))
@@ -985,6 +1085,7 @@ pub fn run() {
             notify_user,
             wechat_health_ping,
             open_url,
+            pet_permission_resolve,
             agent_converse,
             agent_speak,
             agent_transcribe,
