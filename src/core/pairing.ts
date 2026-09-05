@@ -97,6 +97,17 @@ interface ActiveInitiator {
   handle: PairScheduleHandle | null
 }
 
+/** 结构校验(v2 名片):Task 4 会让 makePairing 内部的 cardProblem 复用它。 */
+export function isValidPairCard(card: unknown): card is PairCard {
+  if (!card || typeof card !== 'object') return false
+  const c = card as Record<string, unknown>
+  const s = (k: string) => typeof c[k] === 'string' && (c[k] as string).length > 0
+  return c.v === 2 && (c.role === 'initiator' || c.role === 'acceptor')
+    && s('nonce') && s('self_id') && /^[a-z0-9][a-z0-9-]{0,63}$/.test(c.self_id as string) && s('name') && s('bearer')
+    && s('mailbox_addr') && s('mailbox_enc_pub') && Array.isArray(c.relays) && (c.relays as unknown[]).length > 0
+    && s('channel_id') && s('channel_pub')
+}
+
 /**
  * 这个 url 值不值得写进配对卡片交给**对方**?
  *
