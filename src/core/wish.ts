@@ -27,6 +27,8 @@ export interface WishRecord {
   /** 派给了几条信道(投出去就算,信箱是 store-and-forward)。 */
   sentTo: number
   replies: number
+  /** hop 2 的明信片留下的引用(介绍用);hop 1 的不记 —— 那些人本来就认识。 */
+  postcards?: PostcardRef[]
 }
 
 export const WISH_TTL_MS = 7 * 24 * 60 * 60_000
@@ -38,8 +40,16 @@ export const MAX_OPEN_WISHES = 3
  */
 export const WISH_TEXT_MAX = 500
 
-export interface WishPayload { id: string; text: string; expiresAt: string }
-export interface PostcardPayload { wishId: string; text: string }
+export type Hop = 1 | 2
+export interface WishPayload { id: string; text: string; expiresAt: string; hop: Hop }
+export interface PostcardPayload { wishId: string; text: string; hop: Hop; replyId?: string }
+export interface PostcardRef {
+  replyId: string
+  via: string
+  at: string
+  preview: string
+  myIntro?: { channelId: string; pubkey: string; privkey: string; bearer: string; at: string }
+}
 
 export function newWishId(): string {
   return randomBytes(4).toString('hex')
@@ -107,8 +117,15 @@ export function recentWishes(list: readonly WishRecord[], nowMs: number, days = 
   return list.filter(w => Date.parse(w.createdAt) >= since).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
-export function wishEnvelope(w: WishRecord): Envelope<WishPayload> {
-  return { kind: 'wish', payload: { id: w.id, text: w.redacted, expiresAt: w.expiresAt ?? '' } }
+const parseHop = (v: unknown): Hop | null => (v === undefined ? 1 : v === 1 || v === 2 ? v : null)
+
+export function wishEnvelope(w: WishRecord, hop: Hop = 1): Envelope<WishPayload> {
+  return { kind: 'wish', payload: { id: w.id, text: w.redacted, expiresAt: w.expiresAt ?? '', hop } }
+}
+
+/** 介绍人转问:同一条心愿(id / text / expiresAt 原样),只把 hop 记成 2。 */
+export function forwardedWishEnvelope(p: WishPayload): Envelope<WishPayload> {
+  return { kind: 'wish', payload: { id: p.id, text: p.text, expiresAt: p.expiresAt, hop: 2 } }
 }
 
 export function parseWishPayload(env: Envelope): WishPayload | null {
@@ -117,11 +134,14 @@ export function parseWishPayload(env: Envelope): WishPayload | null {
   if (!p || typeof p.id !== 'string' || typeof p.text !== 'string' || typeof p.expiresAt !== 'string') return null
   if (p.id === '' || p.text.trim() === '' || Number.isNaN(Date.parse(p.expiresAt))) return null
   if (p.text.trim().length > WISH_TEXT_MAX) return null
-  return { id: p.id, text: p.text.trim(), expiresAt: p.expiresAt }
+  const hop = parseHop((p as { hop?: unknown }).hop)
+  if (hop === null) return null
+  return { id: p.id, text: p.text.trim(), expiresAt: p.expiresAt, hop }
 }
 
-export function postcardEnvelope(wishId: string, text: string): Envelope<PostcardPayload> {
-  return { kind: 'postcard', payload: { wishId, text: text.trim() } }
+export function postcardEnvelope(wishId: string, text: string, opts: { hop?: Hop; replyId?: string } = {}): Envelope<PostcardPayload> {
+  const hop = opts.hop ?? 1
+  return { kind: 'postcard', payload: { wishId, text: text.trim(), hop, ...(opts.replyId ? { replyId: opts.replyId } : {}) } }
 }
 
 export function parsePostcardPayload(env: Envelope): PostcardPayload | null {
@@ -129,9 +149,46 @@ export function parsePostcardPayload(env: Envelope): PostcardPayload | null {
   const p = env.payload as Partial<PostcardPayload> | null
   if (!p || typeof p.wishId !== 'string' || typeof p.text !== 'string' || p.wishId === '' || p.text.trim() === '') return null
   if (p.text.trim().length > WISH_TEXT_MAX) return null
-  return { wishId: p.wishId, text: p.text.trim() }
+  const hop = parseHop((p as { hop?: unknown }).hop)
+  if (hop === null) return null
+  const replyId = typeof p.replyId === 'string' && p.replyId !== '' ? p.replyId : undefined
+  if (hop === 2 && !replyId) return null   // hop 2 一定是介绍人转回来的,没有 replyId 就没法「认识」
+  return { wishId: p.wishId, text: p.text.trim(), hop, ...(replyId ? { replyId } : {}) }
 }
 
 export function seenKey(wishId: string, channelRowId: string): string {
   return `${wishId}:${channelRowId}`
+}
+
+const withRefs = (w: WishRecord, refs: PostcardRef[]): WishRecord => ({ ...w, postcards: refs })
+
+export function recordPostcardRef(list: readonly WishRecord[], wishId: string, ref: PostcardRef): WishRecord[] {
+  return list.map(w => {
+    if (w.id !== wishId) return w
+    const refs = w.postcards ?? []
+    return refs.some(r => r.replyId === ref.replyId) ? w : withRefs(w, [...refs, ref])
+  })
+}
+
+export function findPostcardRef(list: readonly WishRecord[], ref: string):
+  { ok: true; wishId: string; ref: PostcardRef } | { ok: false; reason: 'not_found' | 'ambiguous' } {
+  const q = ref.trim().toLowerCase()
+  if (q === '') return { ok: false, reason: 'not_found' }
+  const hits: Array<{ wishId: string; ref: PostcardRef }> = []
+  for (const w of list) for (const r of w.postcards ?? []) if (r.replyId.startsWith(q)) hits.push({ wishId: w.id, ref: r })
+  if (hits.length === 0) return { ok: false, reason: 'not_found' }
+  if (hits.length > 1) return { ok: false, reason: 'ambiguous' }
+  return { ok: true, ...hits[0]! }
+}
+
+export function attachMyIntro(list: readonly WishRecord[], replyId: string, myIntro: NonNullable<PostcardRef['myIntro']>): WishRecord[] {
+  return list.map(w => (w.postcards?.some(r => r.replyId === replyId)
+    ? withRefs(w, w.postcards!.map(r => (r.replyId === replyId ? { ...r, myIntro } : r)))
+    : w))
+}
+
+export function clearMyIntro(list: readonly WishRecord[], replyId: string): WishRecord[] {
+  return list.map(w => (w.postcards?.some(r => r.replyId === replyId)
+    ? withRefs(w, w.postcards!.map(r => { if (r.replyId !== replyId) return r; const { myIntro: _m, ...rest } = r; return rest }))
+    : w))
 }

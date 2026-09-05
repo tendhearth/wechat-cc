@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   WISH_TTL_MS, MAX_OPEN_WISHES, WISH_TEXT_MAX, newWishId, draftWish, sendWish, cancelWish, acceptPostcard,
   resolveWishRef, recentWishes, effectiveStatus, isExpired, openCount,
-  wishEnvelope, parseWishPayload, postcardEnvelope, parsePostcardPayload, seenKey, type WishRecord,
+  wishEnvelope, forwardedWishEnvelope, parseWishPayload, postcardEnvelope, parsePostcardPayload, seenKey,
+  recordPostcardRef, findPostcardRef, attachMyIntro, clearMyIntro, type WishRecord, type PostcardRef,
 } from './wish'
 
 const T0 = '2026-09-04T10:00:00.000Z'
@@ -81,7 +82,7 @@ describe('信封载荷', () => {
     const w = mk({ status: 'open', sentAt: T0, expiresAt: '2026-09-11T10:00:00.000Z' })
     const env = wishEnvelope(w)
     expect(env.kind).toBe('wish')
-    expect(parseWishPayload(env)).toEqual({ id: 'abcd1234', text: '找周末爬山搭子', expiresAt: '2026-09-11T10:00:00.000Z' })
+    expect(parseWishPayload(env)).toEqual({ id: 'abcd1234', text: '找周末爬山搭子', expiresAt: '2026-09-11T10:00:00.000Z', hop: 1 })
     expect(parseWishPayload({ kind: 'letter', payload: {} })).toBe(null)
     expect(parseWishPayload({ kind: 'wish', payload: { id: 'x' } })).toBe(null)
     expect(parseWishPayload({ kind: 'wish', payload: { id: 'x', text: '  hello  ', expiresAt: '2026-09-11T10:00:00.000Z' } })!.text).toBe('hello')
@@ -91,7 +92,7 @@ describe('信封载荷', () => {
     expect(parseWishPayload(wishEnvelope(w))!.text).toBe('找爬山搭子')
   })
   it('postcardEnvelope ↔ parsePostcardPayload;空 text → null', () => {
-    expect(parsePostcardPayload(postcardEnvelope('abcd1234', '我朋友周末常去'))).toEqual({ wishId: 'abcd1234', text: '我朋友周末常去' })
+    expect(parsePostcardPayload(postcardEnvelope('abcd1234', '我朋友周末常去'))).toEqual({ wishId: 'abcd1234', text: '我朋友周末常去', hop: 1 })
     expect(parsePostcardPayload({ kind: 'postcard', payload: { wishId: 'a', text: '  ' } })).toBe(null)
   })
   it('正文超过 WISH_TEXT_MAX 的心愿 / 明信片一律读不懂 —— 网络输入不能没有上限', () => {
@@ -105,4 +106,43 @@ describe('信封载荷', () => {
     expect(parsePostcardPayload({ kind: 'postcard', payload: { wishId: 'a', text: `  ${ok}  ` } })!.text).toHaveLength(WISH_TEXT_MAX)
   })
   it('seenKey', () => { expect(seenKey('w1', 'ch1')).toBe('w1:ch1') })
+})
+
+describe('hop / replyId / 明信片引用(介绍)', () => {
+  const open = (): WishRecord => mk({ status: 'open', sentAt: T0, expiresAt: '2026-09-11T10:00:00.000Z' })
+  it('wishEnvelope 默认 hop 1;forwardedWishEnvelope 原样带 id/text/expiresAt 且 hop 2', () => {
+    const w = open()
+    expect(parseWishPayload(wishEnvelope(w))).toEqual({ id: 'abcd1234', text: '找周末爬山搭子', expiresAt: '2026-09-11T10:00:00.000Z', hop: 1 })
+    const p1 = parseWishPayload(wishEnvelope(w))!
+    expect(parseWishPayload(forwardedWishEnvelope(p1))).toEqual({ ...p1, hop: 2 })
+  })
+  it('parseWishPayload:hop 缺省 1;3 / "2" / -1 → null', () => {
+    const base = { id: 'a', text: 't', expiresAt: T0 }
+    expect(parseWishPayload({ kind: 'wish', payload: base })!.hop).toBe(1)
+    expect(parseWishPayload({ kind: 'wish', payload: { ...base, hop: 2 } })!.hop).toBe(2)
+    for (const hop of [3, '2', -1, 0]) expect(parseWishPayload({ kind: 'wish', payload: { ...base, hop } })).toBe(null)
+  })
+  it('postcardEnvelope 可带 hop 2 + replyId;hop 2 缺 replyId → null', () => {
+    expect(parsePostcardPayload(postcardEnvelope('w1', 'hi'))).toEqual({ wishId: 'w1', text: 'hi', hop: 1 })
+    expect(parsePostcardPayload(postcardEnvelope('w1', 'hi', { hop: 2, replyId: 'r1' }))).toEqual({ wishId: 'w1', text: 'hi', hop: 2, replyId: 'r1' })
+    expect(parsePostcardPayload({ kind: 'postcard', payload: { wishId: 'w1', text: 'hi', hop: 2 } })).toBe(null)
+    expect(parsePostcardPayload({ kind: 'postcard', payload: { wishId: 'w1', text: 'hi', hop: 2, replyId: '' } })).toBe(null)
+  })
+  it('recordPostcardRef 幂等;findPostcardRef 前缀匹配、限定有 via 的;attach/clearMyIntro', () => {
+    const ref = { replyId: 'r1r1r1r1', via: 'chA', at: T0, preview: '我朋友常去' }
+    let list = recordPostcardRef([open()], 'abcd1234', ref)
+    list = recordPostcardRef(list, 'abcd1234', ref)
+    expect(list[0]!.postcards).toEqual([ref])
+    expect(findPostcardRef(list, 'r1r1')).toEqual({ ok: true, wishId: 'abcd1234', ref })
+    expect(findPostcardRef(list, 'zz')).toEqual({ ok: false, reason: 'not_found' })
+    expect(findPostcardRef(list, '')).toEqual({ ok: false, reason: 'not_found' })
+    list = recordPostcardRef(list, 'abcd1234', { ...ref, replyId: 'r1r1zzzz' })
+    expect(findPostcardRef(list, 'r1r1')).toEqual({ ok: false, reason: 'ambiguous' })
+    const mine = { channelId: 'c', pubkey: 'P', privkey: 'K', bearer: 'B', at: T0 }
+    list = attachMyIntro(list, 'r1r1r1r1', mine)
+    expect(findPostcardRef(list, 'r1r1r1r1')).toMatchObject({ ok: true, ref: { myIntro: mine } })
+    list = clearMyIntro(list, 'r1r1r1r1')
+    expect(findPostcardRef(list, 'r1r1r1r1')).toMatchObject({ ok: true, ref: { replyId: 'r1r1r1r1' } })
+    expect((findPostcardRef(list, 'r1r1r1r1') as { ref: PostcardRef }).ref.myIntro).toBeUndefined()
+  })
 })
