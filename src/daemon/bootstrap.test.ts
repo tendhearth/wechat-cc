@@ -1321,15 +1321,19 @@ describe('bootstrap 社交接线', () => {
       expect(card.capabilities.some(c => c.name === 'intent')).toBe(false)
       expect(card.capabilities.some(c => c.name === 'echo')).toBe(false)
       expect(card.capabilities.some(c => c.name === 'reveal')).toBe(false)
-      // boot.social 只剩两块:信道(写信 / 串门)和心愿。
+      // boot.social 三块:信道(写信 / 串门)、心愿、介绍。
       expect(boot.social).toBeDefined()
-      expect(Object.keys(boot.social!).sort()).toEqual(['penpal', 'wish'])
+      expect(Object.keys(boot.social!).sort()).toEqual(['intro', 'penpal', 'wish'])
       expect(typeof boot.social!.penpal.sendLetter).toBe('function')
       expect(typeof boot.social!.penpal.startVisit).toBe('function')
       expect(typeof boot.social!.wish.propose).toBe('function')
       expect(typeof boot.social!.wish.send).toBe('function')
       expect(typeof boot.social!.wish.cancel).toBe('function')
       expect(typeof boot.social!.wish.resolveRef).toBe('function')
+      expect(typeof boot.social!.intro.request).toBe('function')
+      expect(typeof boot.social!.intro.accept).toBe('function')
+      expect(typeof boot.social!.intro.decline).toBe('function')
+      expect(typeof boot.social!.intro.offers).toBe('function')
       // 退役的东西一件都不该还挂在上面(Task 8 会把 core 文件也删掉)。
       for (const gone of ['broker', 'seekStore', 'echoStore', 'pledgeStore', 'revealer']) {
         expect(gone in boot.social!).toBe(false)

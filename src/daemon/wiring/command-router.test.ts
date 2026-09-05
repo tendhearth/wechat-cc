@@ -162,3 +162,37 @@ describe('command-router', () => {
     expect(String(send.mock.calls[0]![1])).toContain('111111')
   })
 })
+
+describe('command-router — 认识 / 同意 / 不了', () => {
+  const mkIntro = () => ({ request: vi.fn(), accept: vi.fn(), decline: vi.fn() })
+  const run = async (text: string, intro: ReturnType<typeof mkIntro>) => {
+    const say = vi.fn()
+    const deps = baseDeps({ sendAssistantText: say, social: { wish: { resolveRef: vi.fn(), send: vi.fn(), cancel: vi.fn() }, penpal: { startVisit: vi.fn() }, intro } as never })
+    const handled = await makeCommandRouter(deps).tryHandle(msg(text))
+    return { handled, said: say.mock.calls.map(c => c[1]) }
+  }
+  it('认识:ok / not_found / ambiguous / already_requested / send_failed 各一句', async () => {
+    const intro = mkIntro()
+    intro.request.mockResolvedValueOnce({ ok: true, replyId: 'ab12cd34' })
+    expect((await run('认识 ab12', intro)).said).toEqual(['已经托朋友去问了,对方点头我就告诉你'])
+    for (const [reason, copy] of [['not_found', '没有这张明信片'], ['ambiguous', '有多张匹配,请给更长的编号'], ['already_requested', '已经在问了,等对方点头'], ['send_failed', '没送出去,稍后再试']] as const) {
+      intro.request.mockResolvedValueOnce({ ok: false, reason })
+      expect((await run('认识 ab12', intro)).said).toEqual([copy])
+    }
+  })
+  it('同意 / 不了', async () => {
+    const intro = mkIntro()
+    intro.accept.mockResolvedValueOnce({ ok: true, replyId: 'x' })
+    expect((await run('同意 ab', intro)).said).toEqual(['好,我把名片递过去了'])
+    intro.decline.mockResolvedValueOnce({ ok: true, replyId: 'x' })
+    expect((await run('不了 ab', intro)).said).toEqual(['好,我回了不了'])
+    intro.accept.mockResolvedValueOnce({ ok: false, reason: 'not_found' })
+    expect((await run('同意 ab', intro)).said).toEqual(['没有这条邀约(可能过期了)'])
+  })
+  it('非管理员 / social 没接 → 不处理(落回普通对话)', async () => {
+    const intro = mkIntro()
+    const deps = baseDeps({ social: undefined as never })
+    expect(await makeCommandRouter(deps).tryHandle(msg('认识 ab12'))).toBe(false)
+    expect(intro.request).not.toHaveBeenCalled()
+  })
+})

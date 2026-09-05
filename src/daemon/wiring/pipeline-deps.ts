@@ -242,7 +242,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     loadAccess: () => loadAccess(),
     appendAllowFrom: (c) => { appendAllowFrom(c) },
     ...(boot.sendAssistantText ? { sendAssistantText: (c, t) => boot.sendAssistantText!(c, t) } : {}),
-    ...(boot.social ? { social: { wish: boot.social.wish, penpal: { startVisit: (c) => boot.social!.penpal.startVisit(c) } } } : {}),
+    ...(boot.social ? { social: { wish: boot.social.wish, penpal: { startVisit: (c) => boot.social!.penpal.startVisit(c) }, intro: boot.social.intro } } : {}),
     ...(boot.penpal ? { penpal: boot.penpal } : {}),
     ...(boot.pairing ? { pairing: boot.pairing } : {}),
     guestRequests,

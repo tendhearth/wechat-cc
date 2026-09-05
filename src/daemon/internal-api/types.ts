@@ -239,6 +239,8 @@ export interface InternalApiDeps {
     }
     /** 派心愿(spec 2026-09-04-wish-postcard)。可选:老 fixture / 未接线时 undefined。 */
     wish?: Omit<import('../bootstrap/wire-wish').WishService, 'onInbound'>
+    /** 介绍(spec 2026-09-04-introduction)。可选:老 fixture / 未接线时 undefined。 */
+    intro?: Omit<import('../bootstrap/wire-intro').IntroService, 'onInbound'>
   }
   /**
    * Knowledge Kernel (Phase 01, T3) — the daemon-owned KnowledgeStore +

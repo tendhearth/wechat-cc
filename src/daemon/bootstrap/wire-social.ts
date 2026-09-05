@@ -1,6 +1,8 @@
+import { randomBytes, randomUUID } from 'node:crypto'
 import { makeJudge } from '../../core/social-judge'
 import { makeVisit } from './wire-visit'
 import { makeWish } from './wire-wish'
+import { makeIntro } from './wire-intro'
 import { makeJournal } from '../../core/journal-store'
 import { safeSvg } from '../../lib/svg-sanitize'
 import { rasterizeSvgDarwin } from '../sticker-artist'
@@ -12,6 +14,11 @@ import { letterUrl } from '../../core/a2a-delegate'
 import { gateOutbound } from '../../core/a2a-disclosure'
 import { makeMailboxSender } from '../../core/mailbox-sender'
 import { makeMailboxClient } from '../../core/mailbox-client'
+import { loadMailboxIdentity } from '../../core/mailbox-crypto'
+import { generateKeypair } from '../../core/penpal-crypto'
+import { buildOwnCard, adoptPeerCard } from '../../core/pairing'
+import { makeForwardBudget } from '../../core/forward-budget'
+import { FORWARD_PER_SENDER, FORWARD_WINDOW_MS } from '../../core/intro'
 import { makeMailboxLetterHandler } from './mailbox-letter-handler'
 import { makeRoutePostLetter } from './postletter-route'
 import type { A2AServerOpts } from '../../core/a2a-server'
@@ -83,6 +90,9 @@ export interface SocialWiring {
     /** 心愿 / 明信片(spec 2026-09-04-wish-postcard)。onInbound 不露出去 ——
      *  信封只从 correspondent 那一个口进来。 */
     wish: Omit<import('./wire-wish').WishService, 'onInbound'>
+    /** 介绍(spec 2026-09-04-introduction)。onInbound 不露出去 —— 信封只从
+     *  correspondent 那一个口进来。 */
+    intro: Omit<import('./wire-intro').IntroService, 'onInbound'>
   }
 }
 
@@ -110,6 +120,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
     activeVisit: import('./wire-visit').Visit['activeVisit']
   } | undefined
   let socialWish: Omit<import('./wire-wish').WishService, 'onInbound'> | undefined
+  let socialIntro: Omit<import('./wire-intro').IntroService, 'onInbound'> | undefined
 
   if (configuredAgent.social_enabled && configuredAgent.social_disclosure_policy) {
     const socialPolicy = configuredAgent.social_disclosure_policy
@@ -183,6 +194,9 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       let visit: import('./wire-visit').Visit | undefined
       // 心愿 / 明信片同理:分发点先声明,构造在 correspondent 之后。
       let wish: import('./wire-wish').WishService | undefined
+      // 介绍同理:分发点先声明,构造在 wish 之后(makeIntro 复用 correspondent
+      // 和 peerLabel,和串门/心愿一样)。
+      let intro: import('./wire-intro').IntroService | undefined
       // 信封分发点(架构重构 §2.1)—— correspondent 已解开信封,这里**只按 kind
       // 分发**。新交互 = 加一个 case,不是加一条路由。不认识的 kind 记日志
       // 忽略:新版本发的类型老版本不炸。
@@ -208,6 +222,9 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           case 'wish':
           case 'postcard':
             if (!wish?.onInbound(channelRowId, env, letterId)) deps.log('SOCIAL', `${env.kind} envelope rejected channel=${channelRowId}`)
+            return
+          case 'intro':
+            if (!intro?.onInbound(channelRowId, env, letterId)) deps.log('SOCIAL', `intro envelope rejected channel=${channelRowId}`)
             return
           default:
             deps.log('SOCIAL', `unknown envelope kind=${env.kind} channel=${channelRowId} — ignored`)
@@ -266,8 +283,40 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         notifyOwner: (text) => { const op = resolveOperatorChatId(); if (op && sendAssistantText) void sendAssistantText(op, text) },
         // 认识的人就叫名字,不认识就说第几度 —— 主人得知道这话是谁回的。
         peerLabel,
+        // 转问节流(sub-project C):一条信道 24 小时内最多转问 FORWARD_PER_SENDER
+        // 次——防止任何一个配过对的人无限地借我的手去问别人。
+        forwardBudget: makeForwardBudget({ perSender: FORWARD_PER_SENDER, windowMs: FORWARD_WINDOW_MS }),
         log: deps.log,
       })
+      // 介绍(wire-intro.ts):和心愿/串门共用同一批底子 —— correspondent 发信、
+      // peerLabel 叫人、holdBusy 登记后台活。名片用 core/pairing.ts 的
+      // buildOwnCard/adoptPeerCard 现造(和配对码同一套,rowPrefix='intro'
+      // 把信道行和配对码那条分开)。
+      const myMailbox = loadMailboxIdentity(deps.stateDir)
+      const cardDeps = {
+        selfId: () => SOCIAL_SELF_ID,
+        name: () => configuredAgent.bot_name?.trim() || 'wechat-cc',
+        self: { mailbox_addr: myMailbox.addr, mailbox_enc_pub: myMailbox.enc_pub, relays: configuredAgent.mailbox_relays ?? [] },
+      }
+      // mailbox_relays 为空时名片的 relays 也是空 —— 对方的 isValidPairCard
+      // 会拒绝这张名片,交叉不成。这种机器本来也配不了对(见 wire-pairing.ts
+      // 的同款门槛),可接受,记一行日志留痕。
+      if (!configuredAgent.mailbox_relays?.length) deps.log('BOOT', 'intro: mailbox_relays 未配置 — 名片的 relays 会是空,对方会拒绝交叉(配对本来也需要它)')
+      const adoptDeps = { registry: a2aRegistry, channelStore, log: (m: string) => deps.log('INTRO', m) }
+      intro = makeIntro({
+        stateDir: deps.stateDir, channelStore, holdBusy: deps.holdBusy,
+        sendEnvelope: (c, e) => correspondent.sendEnvelope(c, e),
+        buildCard: (role, nonce, bearer, chan) => buildOwnCard(cardDeps, role, nonce, bearer, chan),
+        adopt: (card, mine, myKey, nonce) => {
+          const r = adoptPeerCard(adoptDeps, card, mine, myKey, nonce, 'intro')
+          return r.ok ? { ok: true, channelOpened: r.channelOpened } : r
+        },
+        mintKey: () => randomBytes(24).toString('hex'),
+        genChannel: () => { const kp = generateKeypair(); return { channelId: randomUUID(), pubkey: kp.publicKey, privkey: kp.privateKey } },
+        notifyOwner: (text) => { const op = resolveOperatorChatId(); if (op && sendAssistantText) void sendAssistantText(op, text) },
+        peerLabel, log: deps.log,
+      })
+      socialIntro = { request: (r) => intro!.request(r), accept: (r) => intro!.accept(r), decline: (r) => intro!.decline(r), offers: () => intro!.offers() }
       // 只认自己的信道。别人的 channel_id 曾经会走 letterRelay 的 2 跳转发
       // (介绍人那条腿),那条路和 seek/echo/reveal 一起退役了 —— 现在认不出
       // 来就是丢,返回值和当年 routeLetter 找不到中继行时一模一样。
@@ -293,6 +342,6 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   return {
     onLetter: socialOnLetter,
     onMailboxLetter: socialOnMailboxLetter,
-    ...(socialPenpal && socialWish ? { social: { penpal: socialPenpal, wish: socialWish } } : {}),
+    ...(socialPenpal && socialWish && socialIntro ? { social: { penpal: socialPenpal, wish: socialWish, intro: socialIntro } } : {}),
   }
 }

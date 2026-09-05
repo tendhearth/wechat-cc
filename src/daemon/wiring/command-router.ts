@@ -22,11 +22,13 @@ import { parseVisitCommand } from '../../core/visit-command'
 import { parsePairCommand } from '../../core/pair-command'
 import { parseSeekCommand } from '../../core/seek-command'
 import { parseGuestCommand } from '../../core/guest-command'
+import { parseIntroCommand } from '../../core/intro-command'
 import { previewText } from '../inbound/mw-access'
 import { GUEST_REQUEST_TTL_MS } from '../guest-requests'
 import type { GuestRequestStore } from '../guest-requests'
 import type { PairingEngine } from '../../core/pairing'
 import type { WishService } from '../bootstrap/wire-wish'
+import type { IntroService } from '../bootstrap/wire-intro'
 
 export interface CommandRouterDeps {
   isAdmin: (chatId: string) => boolean
@@ -40,6 +42,9 @@ export interface CommandRouterDeps {
   social?: {
     wish: Pick<WishService, 'send' | 'cancel' | 'resolveRef'>
     penpal: { startVisit(channel?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }> }
+    /** 「认识 / 同意 / 不了」(spec 2026-09-04-introduction) — present only
+     *  when social is wired; undefined ⇒ inert (message falls through). */
+    intro: Pick<IntroService, 'request' | 'accept' | 'decline'>
   }
   /** 回信 — present only when the pen-pal channel is wired. */
   penpal?: { sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }> }
@@ -167,6 +172,35 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
             say(msg.chatId, r.ok
               ? (r.status === 'cancelled' ? '已作废' : '已关掉,之后的回音还会进背包')
               : '这条心愿不存在或已处理')
+          }
+          return true
+        }
+      }
+      // 认识 / 同意 / 不了 (spec 2026-09-04-introduction) — admin-gated,
+      // deterministic parse, same posture as 派/取消 above: the router
+      // renders EVERY outcome itself. `认识` asks the introducer to forward
+      // a request on a postcard's replyId (from `wish.list()`'s postcards);
+      // `同意`/`不了` answer an incoming offer (from `intro.offers()`).
+      // Inert (falls through) until boot.social is wired.
+      if (deps.social && deps.isAdmin(msg.chatId)) {
+        const cmd = parseIntroCommand(msg.text)
+        if (cmd) {
+          if (cmd.kind === 'request') {
+            const r = await deps.social.intro.request(cmd.ref)
+            say(msg.chatId, r.ok
+              ? '已经托朋友去问了,对方点头我就告诉你'
+              : r.reason === 'not_found' ? '没有这张明信片'
+                : r.reason === 'ambiguous' ? '有多张匹配,请给更长的编号'
+                  : r.reason === 'already_requested' ? '已经在问了,等对方点头'
+                    : '没送出去,稍后再试')
+          } else {
+            const fn = cmd.kind === 'accept' ? deps.social.intro.accept : deps.social.intro.decline
+            const r = await fn(cmd.ref)
+            say(msg.chatId, r.ok
+              ? (cmd.kind === 'accept' ? '好,我把名片递过去了' : '好,我回了不了')
+              : r.reason === 'not_found' ? '没有这条邀约(可能过期了)'
+                : r.reason === 'ambiguous' ? '有多张匹配,请给更长的编号'
+                  : '没送出去,稍后再试')
           }
           return true
         }
