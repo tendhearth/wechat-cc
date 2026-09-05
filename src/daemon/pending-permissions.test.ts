@@ -100,3 +100,26 @@ describe('parsePermissionReply', () => {
     expect(parsePermissionReply('y abc12')).not.toBeNull()
   })
 })
+
+describe('PendingPermissions.list (CC 桌宠 Phase B)', () => {
+  it('register 带 meta → list 返回 hash / chatId / prompt / since / expires_at,按 since 升序;consume 后消失', () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-05T10:00:00.000Z'))
+    try {
+      const p = new PendingPermissions()
+      void p.register('bbbbb', 60_000, { chatId: 'owner', prompt: 'Bash: rm -rf ./tmp' })
+      vi.setSystemTime(new Date('2026-09-05T10:00:01.000Z'))
+      void p.register('aaaaa', 30_000, { chatId: 'owner', prompt: 'Write: notes.md' })
+      expect(p.list()).toEqual([
+        { hash: 'bbbbb', chatId: 'owner', prompt: 'Bash: rm -rf ./tmp', since: '2026-09-05T10:00:00.000Z', expires_at: '2026-09-05T10:01:00.000Z' },
+        { hash: 'aaaaa', chatId: 'owner', prompt: 'Write: notes.md', since: '2026-09-05T10:00:01.000Z', expires_at: '2026-09-05T10:00:31.000Z' },
+      ])
+      expect(p.consume('bbbbb', 'allow')).toBe(true)
+      expect(p.list().map(x => x.hash)).toEqual(['aaaaa'])
+    } finally { vi.useRealTimers() }
+  })
+  it('没传 meta 的老调用方:list 仍有这一条,prompt 与 chatId 为空串', () => {
+    const p = new PendingPermissions()
+    void p.register('ccccc', 1000)
+    expect(p.list()).toMatchObject([{ hash: 'ccccc', chatId: '', prompt: '' }])
+  })
+})

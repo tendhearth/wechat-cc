@@ -11,7 +11,7 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from './wechat-tool-deps'
-import { parsePermissionReply } from './pending-permissions'
+import { parsePermissionReply, type PendingPermissionView } from './pending-permissions'
 import { buildMediaItemFromFile, assertSendable } from './media'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
 import type { SessionStateStore } from '../core/session-state'
@@ -95,6 +95,10 @@ export interface IlinkAdapter {
     timed_out?: boolean
   }>
   handlePermissionReply(text: string): boolean
+  /** Desktop pet permission queue (CC 桌宠 Phase B) — same registry as WeChat. */
+  listPendingPermissions(): PendingPermissionView[]
+  /** Resolve a pending permission from the desktop. = pending.consume(hash, decision). */
+  resolvePermission(hash: string, decision: 'allow' | 'deny'): boolean
   /** Session state accessor for admin commands (/health, cleanup). */
   sessionState: SessionStateStore
   flush(): Promise<void>
@@ -316,7 +320,7 @@ export function makeIlinkAdapter(opts: {
 
     async askUser(chatId, prompt, hash, timeoutMs) {
       // Register pending entry first so timeout can fire even if send fails.
-      const resultPromise = pending.register(hash, timeoutMs)
+      const resultPromise = pending.register(hash, timeoutMs, { chatId, prompt })
       // Schedule a sweep at the timeout boundary so the promise resolves
       // with 'timeout' even when the global 30s sweep interval hasn't fired.
       // Using setTimeout so fake-timer tests can advance past the timeout.
@@ -382,6 +386,9 @@ export function makeIlinkAdapter(opts: {
       if (!parsed) return false
       return pending.consume(parsed.hash, parsed.decision)
     },
+
+    listPendingPermissions() { return pending.list() },
+    resolvePermission(hash, decision) { return pending.consume(hash, decision) },
 
     async flush() {
       clearInterval(sweepTimer)

@@ -1,20 +1,42 @@
 export type PermissionDecision = 'allow' | 'deny' | 'timeout' | 'undelivered'
 
+/** Desktop-facing description of a pending permission ask (CC 桌宠 Phase B). */
+export interface PendingPermissionMeta { chatId: string; prompt: string }
+
+/** Row shape returned by PendingPermissions.list(). */
+export interface PendingPermissionView { hash: string; chatId: string; prompt: string; since: string; expires_at: string }
+
 interface Entry {
   resolve: (d: PermissionDecision) => void
   expiresAt: number
+  registeredAt: number
+  meta: PendingPermissionMeta | null
 }
 
 export class PendingPermissions {
   private readonly entries = new Map<string, Entry>()
 
-  register(hash: string, timeoutMs: number): Promise<PermissionDecision> {
+  register(hash: string, timeoutMs: number, meta?: PendingPermissionMeta): Promise<PermissionDecision> {
     return new Promise<PermissionDecision>((resolve) => {
       this.entries.set(hash, {
         resolve,
         expiresAt: Date.now() + timeoutMs,
+        registeredAt: Date.now(),
+        meta: meta ?? null,
       })
     })
+  }
+
+  /**
+   * Snapshot of all pending asks, for the desktop pet to display the same
+   * approval queue that WeChat sees. Sorted by since ascending (oldest
+   * first). Entries registered before this Phase B meta param existed carry
+   * no meta — chatId/prompt read as '' rather than throwing.
+   */
+  list(): PendingPermissionView[] {
+    return Array.from(this.entries.entries())
+      .map(([hash, e]) => ({ hash, chatId: e.meta?.chatId ?? '', prompt: e.meta?.prompt ?? '', since: new Date(e.registeredAt).toISOString(), expires_at: new Date(e.expiresAt).toISOString() }))
+      .sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0))
   }
 
   consume(hash: string, decision: 'allow' | 'deny'): boolean {

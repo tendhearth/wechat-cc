@@ -368,4 +368,16 @@ describe('makeIlinkAdapter (composed)', () => {
     expect(until).toBeGreaterThan(before + 59 * 60_000)
     expect(until).toBeLessThan(before + 61 * 60_000)
   })
+
+  describe('permission surface for the desktop (CC 桌宠 Phase B)', () => {
+    it('askUser 注册后 listPendingPermissions 能看到 prompt;resolvePermission 走同一个 consume', async () => {
+      const adapter = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+      const p = adapter.askUser('owner', 'Bash: ls', 'abcde', 60_000)
+      expect(adapter.listPendingPermissions()).toMatchObject([{ hash: 'abcde', chatId: 'owner', prompt: 'Bash: ls' }])
+      expect(adapter.resolvePermission('abcde', 'deny')).toBe(true)
+      expect(await p).toBe('deny')
+      expect(adapter.listPendingPermissions()).toEqual([])
+      expect(adapter.resolvePermission('abcde', 'allow')).toBe(false)   // 已经没了
+    })
+  })
 })
