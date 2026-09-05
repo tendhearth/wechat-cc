@@ -7,13 +7,21 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Envelope } from '../../core/envelope'
 import { makeWish, type WishDeps, type WishService } from './wire-wish'
+import { makeIntro, type IntroService } from './wire-intro'
 
 export interface Peer {
   name: string; stateDir: string; owner: string[]; logs: string[]; journal: Array<{ text: string; peerLabel: string }>
   letters: Array<{ dir: 'in' | 'out'; channel: string; kind: string; payload: unknown }>
+  /** 每次 holdBusy(label) 记一行,release 了就翻成 released:true(照 wire-wish.test.ts)。 */
+  busy: Array<{ label: string; released: boolean }>
+  /** adopt 的假注册表:self_id → 记录。介绍成了才会有人进来。 */
+  registry: Map<string, { id: string; name: string; mailbox_addr: string }>
+  /** adopt 开出来的信道行(和 wish 用的 `mine` 分开 —— 那是配对时就有的老信道)。 */
+  channels: Array<{ id: string; peerAgentId: string | null; status: string }>
+  /** 翻成 false = adopt 写得进注册表但开信道那三步炸了(真货里是 sqlite 抛错)。 */
+  adoptOpensChannel: boolean
   wish: WishService
-  /** Task 6 挂上去;这里先留空位。 */
-  intro?: { onInbound(channelRowId: string, env: Envelope, letterId: string): boolean }
+  intro?: IntroService
   judgeSays: { match: 'yes' | 'no'; blurb?: string } | Error
   clock: { ms: number }
 }
@@ -43,7 +51,7 @@ export function makeTrio(opts: TrioOpts = {}): { me: Peer; A: Peer; B: Peer; del
     return true
   }
   const mk = (name: string): Peer => {
-    const p: Peer = { name, stateDir: mkdtempSync(join(tmpdir(), `trio-${name}-`)), owner: [], logs: [], journal: [], letters: [], wish: null as never, judgeSays: { match: 'no' }, clock }
+    const p: Peer = { name, stateDir: mkdtempSync(join(tmpdir(), `trio-${name}-`)), owner: [], logs: [], journal: [], letters: [], busy: [], registry: new Map(), channels: [], adoptOpensChannel: true, wish: null as never, judgeSays: { match: 'no' }, clock }
     const mine = links.filter(l => l.owner === name).map(l => ({ id: l.id, status: 'open', degree: 1, peer_agent_id: `cc-${l.peer.toLowerCase()}00000001`, created_at: '2026-09-01T00:00:00.000Z' }))
     const deps: WishDeps = {
       stateDir: p.stateDir,
@@ -55,12 +63,38 @@ export function makeTrio(opts: TrioOpts = {}): { me: Peer; A: Peer; B: Peer; del
       notifyOwner: (t) => p.owner.push(t),
       peerLabel: (c) => names[name]?.[c] ?? '某人',
       forwardBudget: { withinBudget: (s) => opts.budgetOk?.(s) ?? true },
+      holdBusy: (label) => { const e = { label, released: false }; p.busy.push(e); return () => { e.released = true } },
       now: () => (clock.ms += 1),
       newId: (() => { let n = 0; return () => `${name}${String(++n).padStart(6, '0')}`.toLowerCase().replace(/[^a-z0-9]/g, '0').slice(0, 8) })(),
       newReplyId: (() => { let n = 0; return () => `r${name}${String(++n).padStart(6, '0')}`.toLowerCase().slice(0, 8) })(),
       log: (tag, line) => p.logs.push(`${tag} ${line}`),
     }
     p.wish = makeWish(deps)
+    p.intro = makeIntro({
+      stateDir: p.stateDir,
+      channelStore: deps.channelStore,
+      sendEnvelope: deps.sendEnvelope,
+      buildCard: (role, nonce, bearer, chan) => ({
+        v: 2, role, nonce, self_id: `cc-${name.toLowerCase()}00000001`, name,
+        mailbox_addr: `M${name}`, mailbox_enc_pub: `E${name}`, relays: ['https://r/mailbox'],
+        bearer, channel_id: chan.channelId, channel_pub: chan.pubkey,
+      }),
+      // 真货是 core/pairing.ts 的 adoptPeerCard:同 self_id 不同信箱 = 撞在别人身上,拒写。
+      adopt: (card, _mine, _myKey, nonce) => {
+        if ([...p.registry.values()].some(r => r.id === card.self_id && r.mailbox_addr !== card.mailbox_addr)) return { ok: false, reason: 'id_conflict' }
+        p.registry.set(card.self_id, { id: card.self_id, name: card.name, mailbox_addr: card.mailbox_addr })
+        if (!p.adoptOpensChannel) return { ok: true, channelOpened: false }
+        p.channels.push({ id: `intro:${nonce}`, peerAgentId: card.self_id, status: 'open' })
+        return { ok: true, channelOpened: true }
+      },
+      mintKey: () => 'k'.repeat(16),
+      genChannel: () => ({ channelId: `${name}-c`, pubkey: `${name}-P`, privkey: `${name}-K` }),
+      notifyOwner: deps.notifyOwner,
+      peerLabel: deps.peerLabel,
+      holdBusy: deps.holdBusy,
+      now: deps.now,
+      log: deps.log,
+    })
     peers.set(name, p)
     return p
   }
