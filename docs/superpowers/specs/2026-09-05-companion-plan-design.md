@@ -19,11 +19,12 @@ owner 拍板(2026-09-05):
 
 1. **算候选集**(纯代码):对 `hunt`(仅主人会话、`prefs.hunt !== false`)、`visit`(仅主人会话、`prefs.visit !== false`、`boot.social?.penpal` 存在)、`gap` 各跑一次现有的 `shouldSpeak`。通过的进候选,没通过的把 `reason` 记下来(照旧 `CARE skip … reason=` 日志,一条不少)。
 2. **候选为空** → 这一拍结束(和现在完全一样)。
-3. **候选非空**:
-   - 先看退避(§3):上一次判断是「不做」且不到 `PLAN_REASK_MS` → 记 `PLAN skip reason=backoff`,结束。
+3. **预判闸**:问模型之前先跑一遍 `dispatchToChat` 真发前会用的同一套闸(`resolveDispatch`:WeChat degraded / 会话 in-flight)——发不出去就别先烧模型(memory: no-retry-storm-when-disconnected)。拦住且候选里没有 `visit` → 记 `PLAN skip reason=<wechat_degraded|session_in_flight>`,结束;拦住但候选里有 `visit` → 候选收窄成只剩 `visit`(串门走笔友信道,不是一条微信,链路断了照样能出门),往下继续问。这道闸自己抛了也不能掀翻这一拍——当作没堵,真发前 `dispatchToChat` 还会再判一次。
+4. **候选非空(过了预判闸)**:
    - `evaluate = deps.planEval ?? boot.registry.getCheapEval()`;没有 → **回退到今天的固定顺序**(候选里按 hunt → visit → gap 取第一个执行),记 `PLAN fallback reason=no_evaluator`。
-   - 有 → 组 prompt(§2),调一次,`PLAN_EVAL_TIMEOUT_MS` 超时;解析(§2);超时 / 抛错 / 解析失败 → 同样回退到固定顺序,记 `PLAN fallback reason=<timeout|error|parse>`。
-   - 解析成功:`action` 不在候选里(含模型编造的)→ 视为 `none`,记 `PLAN downgraded action=<x>`;`none` → 记日志 + 写 plan-log,结束;否则执行选中的那一个,登记方式和现在逐字相同(`claimHunt` / `claimVisit` / `claim` 先于动作,at-most-once)。
+   - 有 → 先看退避(§3):上一次判断是「不做」且不到 `PLAN_REASK_MS` → 记 `PLAN skip reason=backoff`,结束。
+   - 没被退避拦住 → 组 prompt(§2),调一次,`PLAN_EVAL_TIMEOUT_MS` 超时;解析(§2);超时 / 抛错 / 解析失败 → 同样回退到固定顺序,记 `PLAN fallback reason=<timeout|error|parse>`。
+   - 解析成功:`action` 不在候选里(含模型编造的)→ 视为 `none` 且 `source:'downgraded'`,记 `PLAN downgraded action=<x>`;`none` → 记日志 + 写 plan-log,结束;否则执行选中的那一个,登记方式和现在逐字相同(`claimHunt` / `claimVisit` / `claim` 先于动作,at-most-once)。
 
 执行段(打猎的 `dispatchToChat` + 旁听入库 + `hunt` busy token;串门的 `claimVisit` + `startVisit`;问候的 `buildGapCheckinText`)**原样搬进各自的执行函数,一行逻辑不改**。`visit` 选中且带 `target` 时,`startVisit(target)`;`target` 必须是 `social.provenChannels` 里某一项的 **id**(§2),否则忽略 target 走 `startVisit()`。
 
@@ -65,17 +66,18 @@ earlierToday 里你之前怎么想的,别每拍都翻来覆去。
 
 `<stateDir>/companion/plan-log.json`:`{ day: 'YYYY-MM-DD', entries: [{ at, chatId, candidates, decision, why, source: 'model'|'fallback'|'downgraded' }] }`。读到的 `day` 不是今天就整个丢掉(每天清零)。写用 `readJsonFile`(BOM 容忍)+ 同目录其它 JSON 同款写法。用途:喂回 prompt 的 `earlierToday`;实现退避。
 
-- `PLAN_REASK_MS = 90 分钟`:同一 chat 上一条 `decision === 'none'` 且 `source === 'model'` 的 entry 距今不到 90 分钟 → 不问、不做。回退和降级不计入退避(它们没「想过」)。
+- `PLAN_REASK_MS = 90 分钟`:模型回 `none`,或答了候选外的动作(降级)都算「想过了不做」,90 分钟内不再问;回退不算(它没「想过」)。
 - `PLAN_EVAL_TIMEOUT_MS = 20 秒`:超时视为 evaluator 失败 → 回退固定顺序。
 - 每次真调用记 `PLAN ask chat=… candidates=[…]`,结果记 `PLAN → <action> (why)`,一行一拍,真机看日志就够。
 - 理由**只进日志和 plan-log**:不进 journal,不改桌宠状态,不发给主人(红线:桌宠只报真实动作)。
+- **先做,做完才记**:plan-log 写的是「做过了」,不是「打算做」——真发那一步(`dispatchToChat`)还有自己的闸(断线 / 会话在忙),记在动作之前会把没发出去的一拍记成发过了。跑抛异常 → `why` 前缀 `(failed) `,照抛给上层每 chat 的 catch;跑成功但预判闸和真发闸之间状态变了、送时被跳过 → 前缀 `(skipped) `,同样不算「做过了」。
 
 ## 4. 改动清单
 
 | 文件 | 改动 |
 |---|---|
 | `src/core/companion-plan.ts`(新,纯) | `PlanAction`、`PlanContext`、`Candidate`、`computeCandidates(...)`(把三次 `shouldSpeak` 的调用集中到一处,输入是 chat 的 prefs / ledger / lastInbound / social 存在与否)、`buildPlanPrompt(ctx)`、`parsePlan(raw)`、`pickFallback(candidates)`(hunt → visit → gap)、`shouldReask(log, chatId, nowMs)`、常量 `PLAN_REASK_MS` / `PLAN_EVAL_TIMEOUT_MS` / 各字段上限 |
-| `src/daemon/companion/plan-memory.ts`(新) | `readPlanLog(stateDir, today)` / `appendPlanLog(stateDir, entry)`(跨天自动清零) |
+| `src/daemon/companion/plan-memory.ts`(新) | `readPlanLog(stateDir, today)` / `appendPlanLog(stateDir, today, entry)`(跨天自动清零) |
 | `src/daemon/wiring/tick-bodies.ts` | hunt / visit / gap 三段收成 `runHunt` / `runVisit` / `runGap` 三个执行函数(逻辑逐字搬);中间插 §1 的判断;`TickDeps` 加 `planEval?: CheapEval`(测试注入,缺省取 registry) |
 | `src/daemon/bootstrap/wire-visit.ts` + `types.ts` | `penpal.provenChannels(): Array<{ id: string; label: string }>`(复用 `startVisitInner` 里已有的 `proven` 计算,不复制);`startVisit(target)` 已接受 label / 信道 id,不改 |
 | 测试 | `companion-plan.test.ts`(新)、`plan-memory.test.ts`(新)、`tick-bodies.test.ts`(追加)、`wire-visit.test.ts`(一条) |
