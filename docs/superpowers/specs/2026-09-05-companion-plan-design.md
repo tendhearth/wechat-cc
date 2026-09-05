@@ -40,7 +40,7 @@ owner 拍板(2026-09-05):
 | `today`:`lastHuntAt / lastVisitAt / lastProactiveAt`(几小时前,或「今天还没」) | `careLedger.get(chatId)` | — |
 | `candidates`:`[{ action, why_allowed }]` + `rejected`:`[{ action, reason }]` | §1 第 1 步 | — |
 | `journal`:`{ unread, latest:[{kind,title,ts}] }` | `huntStore.summary(readJournalSeen(stateDir))` + `huntStore.list(3)` | 3 条,title 各 ≤ 40 字 |
-| `social`:`{ openWishes, pendingOffers, provenChannels:[label] }` | `boot.social.wish.list()` 里 `effective === 'open'` 的条数、`boot.social.intro.offers().length`、`boot.social.penpal.provenChannelLabels()`(新增,§4);社交层没接线时整段为 `null` | label ≤ 5 个 |
+| `social`:`{ openWishes, pendingOffers, provenChannels:[{ id, label }] }` | `boot.social.wish.list()` 里 `effective === 'open'` 的条数、`boot.social.intro.offers().length`、`boot.social.penpal.provenChannels()`(新增,§4);社交层没接线时整段为 `null` | label ≤ 5 个 |
 | `observations`:`[{ tone, body }]` | `makeObservationsStore(db, chatId).listActive()` 最近 3 条 | body 各 ≤ 80 字 |
 | `personaExcerpt` | `memory/<chatId>/persona.md` | ≤ 300 字 |
 | `earlierToday`:`[{ at, decision, why }]` | plan-log(§3) | 最近 5 条 |
@@ -55,7 +55,7 @@ prompt 骨架(中文,严格 JSON 输出,照 atelier-planner 的口吻):
 判断时想想:主人是不是正在跟你聊(几分钟内有入站就别打扰);今天已经做过什么;
 包袱里是不是已经堆了主人没看的东西(堆着就别再往里塞);现在这个时间点合不合适;
 earlierToday 里你之前怎么想的,别每拍都翻来覆去。
-只输出 JSON:{"action":"hunt"|"visit"|"gap"|"none","why":"…","target":"可选,只能是 social.provenChannels 里的一个"}
+只输出 JSON:{"action":"hunt"|"visit"|"gap"|"none","why":"…","target":"可选,只能是 social.provenChannels 里某一项的 id"}
 【当前】…【今天】…【候选】…【被拒的】…【包袱】…【社交】…【最近观察】…【我的表达倾向】…【今天之前的判断】…
 ```
 
@@ -77,7 +77,7 @@ earlierToday 里你之前怎么想的,别每拍都翻来覆去。
 | `src/core/companion-plan.ts`(新,纯) | `PlanAction`、`PlanContext`、`Candidate`、`computeCandidates(...)`(把三次 `shouldSpeak` 的调用集中到一处,输入是 chat 的 prefs / ledger / lastInbound / social 存在与否)、`buildPlanPrompt(ctx)`、`parsePlan(raw)`、`pickFallback(candidates)`(hunt → visit → gap)、`shouldReask(log, chatId, nowMs)`、常量 `PLAN_REASK_MS` / `PLAN_EVAL_TIMEOUT_MS` / 各字段上限 |
 | `src/daemon/companion/plan-memory.ts`(新) | `readPlanLog(stateDir, today)` / `appendPlanLog(stateDir, entry)`(跨天自动清零) |
 | `src/daemon/wiring/tick-bodies.ts` | hunt / visit / gap 三段收成 `runHunt` / `runVisit` / `runGap` 三个执行函数(逻辑逐字搬);中间插 §1 的判断;`TickDeps` 加 `planEval?: CheapEval`(测试注入,缺省取 registry) |
-| `src/daemon/bootstrap/wire-visit.ts` + `types.ts` | `penpal.provenChannelLabels(): string[]`(复用 `startVisitInner` 里已有的 `proven` 计算,不复制);`startVisit(target)` 已接受 label / 信道 id,不改 |
+| `src/daemon/bootstrap/wire-visit.ts` + `types.ts` | `penpal.provenChannels(): Array<{ id: string; label: string }>`(复用 `startVisitInner` 里已有的 `proven` 计算,不复制);`startVisit(target)` 已接受 label / 信道 id,不改 |
 | 测试 | `companion-plan.test.ts`(新)、`plan-memory.test.ts`(新)、`tick-bodies.test.ts`(追加)、`wire-visit.test.ts`(一条) |
 
 不动:`calibration.ts`(三个冷却和所有 reason)、`care-ledger.ts`、agenda 段、`buildHuntText` / `buildGapCheckinText`、桌面、路由、command-router。

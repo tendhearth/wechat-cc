@@ -86,6 +86,7 @@ export interface SocialWiring {
       /** 串门(2026-09-03 实验):伙伴主动去一个开着的信道那头聊几句。 */
       startVisit: import('./wire-visit').Visit['startVisit']
       activeVisit: import('./wire-visit').Visit['activeVisit']
+      provenChannels: import('./wire-visit').Visit['provenChannels']
     }
     /** 心愿 / 明信片(spec 2026-09-04-wish-postcard)。onInbound 不露出去 ——
      *  信封只从 correspondent 那一个口进来。 */
@@ -118,6 +119,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
     letterStore: import('../../core/penpal-letter-store').LetterStore
     startVisit: import('./wire-visit').Visit['startVisit']
     activeVisit: import('./wire-visit').Visit['activeVisit']
+    provenChannels: import('./wire-visit').Visit['provenChannels']
   } | undefined
   let socialWish: Omit<import('./wire-wish').WishService, 'onInbound'> | undefined
   let socialIntro: Omit<import('./wire-intro').IntroService, 'onInbound'> | undefined
@@ -334,7 +336,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         getByMyChannelId: (c) => channelStore.getByMyChannelId(c),
         receiveLetter: (ev) => correspondent.receiveLetter(ev),
       })
-      socialPenpal = { sendLetter: (channel, text) => correspondent.sendLetter(channel, text), resendLetter: (id) => correspondent.resendLetter(id), channelStore, letterStore, startVisit: (c) => visit!.startVisit(c), activeVisit: () => visit!.activeVisit() }
+      socialPenpal = { sendLetter: (channel, text) => correspondent.sendLetter(channel, text), resendLetter: (id) => correspondent.resendLetter(id), channelStore, letterStore, startVisit: (c) => visit!.startVisit(c), activeVisit: () => visit!.activeVisit(), provenChannels: () => visit!.provenChannels() }
       socialWish = { propose: (t) => wish!.propose(t), send: (id) => wish!.send(id), cancel: (id) => wish!.cancel(id), list: () => wish!.list(), resolveRef: (r, a) => wish!.resolveRef(r, a) }
     }
   }

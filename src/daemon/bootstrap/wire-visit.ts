@@ -90,6 +90,8 @@ export interface Visit {
    * 「去 X 家串门了」/「X 来串门了」。超过 VISIT_STALE_MS 视为夭折返回 null。
    */
   activeVisit(): ActiveVisit | null
+  /** 可以自动去串门的真信道(open 且对方回过串门信),给日程判断当候选目标(spec 2026-09-05-companion-plan)。 */
+  provenChannels(): Array<{ id: string; label: string }>
 }
 
 import { readNeighborMemory, writeNeighborMemory } from '../companion/neighbor-memory'
@@ -333,14 +335,18 @@ export function makeVisit(deps: VisitDeps): Visit {
     return { ok: true, id: s.id, channel: channelId }
   }
 
+  /** open 且**以前串门成功过**(对方回过 kind='visit' 的信)的真信道 —— 见 startVisitInner 里的注释。 */
+  const provenRows = () => deps.channelStore.list().filter(c => c.status === 'open')
+    .filter(c => deps.letterStore.listForChannel(c.id).some(l => l.direction === 'in' && l.kind === 'visit'))
+  const provenChannels = (): Array<{ id: string; label: string }> => provenRows().map(c => ({ id: c.id, label: peerLabelOf(c.id) }))
+
   const startVisitInner = async (target?: string): Promise<StartResult> => {
     const open = deps.channelStore.list().filter(c => c.status === 'open')
     // 自动出门(没指定目标)只去**以前串门成功过**的真信道:对端曾回过串门信,
     // 说明它认得这个协议。旧版对端认不出信封,会把开场白当成主人来信原样
     // 推给它主人 —— 这没法用握手绕开,因为握手本身就是那封信。所以第一次
     // 真串门由主人手动指定信道发。
-    const proven = open.filter(c => deps.letterStore.listForChannel(c.id)
-      .some(l => l.direction === 'in' && l.kind === 'visit'))
+    const proven = provenRows()
     if (target === 'neighbor' || target === '邻居' || (!target && proven.length === 0)) {
       const mem = readNeighborMemory(deps.stateDir)
       return visitNeighbor(pickNeighbor(Math.floor(Date.now() / DAY_MS), mem.lastId))
@@ -380,5 +386,6 @@ export function makeVisit(deps: VisitDeps): Visit {
     },
 
     activeVisit,
+    provenChannels,
   }
 }

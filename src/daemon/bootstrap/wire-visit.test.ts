@@ -127,6 +127,21 @@ describe('串门:两只伙伴对着聊', () => {
     expect(r.ok).toBe(false)
     expect((r as { reason: string }).reason).toContain('provider down')
   })
+
+  it('provenChannels:只列 open 且收到过串门信的信道,带「第 N 度的朋友」label', async () => {
+    const fakeEval = (who: string) => async (p: string) =>
+      (p.includes('串门回来') || p.includes('坐了会儿')) ? `${who}回来说:聊得挺好` : `${who}的第几句`
+    const A = side('阿一', fakeEval('阿一'))
+    const B = side('阿二', fakeEval('阿二'))
+    A.setPeer(B); B.setPeer(A)
+    // 还没人来过 → 两边都空
+    expect(A.visit.provenChannels()).toEqual([])
+    expect(B.visit.provenChannels()).toEqual([])
+    // A 去 B 家串门 → B 的 letters 里有 in/visit,B 这边 'ch' 就算 proven;A 收到回话后同样 proven
+    await A.visit.startVisit('ch'); await flush()
+    expect(B.visit.provenChannels()).toEqual([{ id: 'ch', label: '第 1 度的朋友' }])
+    expect(A.visit.provenChannels()).toEqual([{ id: 'ch', label: '第 1 度的朋友' }])
+  })
 })
 
 describe('cleanSpeech —— 剥掉模型爱加的引号和「我:」前缀', () => {

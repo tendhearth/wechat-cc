@@ -316,6 +316,8 @@ export interface Bootstrap {
       startVisit(channelRowId?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }>
       /** 进行中的串门(spec 2026-09-03-companion-presence)。 */
       activeVisit(): import('../../core/companion-presence').ActiveVisit | null
+      /** 可自动串门的真信道(spec 2026-09-05-companion-plan)。 */
+      provenChannels(): Array<{ id: string; label: string }>
     }
     /** 派心愿 / 收明信片(spec 2026-09-04-wish-postcard)。onInbound 留在
      *  wire-social 内部 —— 信封只从 correspondent 一个口进来。 */
