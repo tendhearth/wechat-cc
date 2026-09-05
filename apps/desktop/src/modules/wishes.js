@@ -141,11 +141,23 @@ export function renderOffers(data) {
   box.innerHTML = offers.map(renderOfferRow).join('')
 }
 
+/**
+ * 「社交没开」不是故障。两条路由都是 503 `social_not_wired`(api.js 把响应
+ * body 的 error 抛成 message,读不到 body 时退成 `HTTP 503`)—— 这台机器没开
+ * 这个功能而已,不该每次刷新都往控制台冒一条红字。别的错(daemon 没在跑、
+ * 超时、500)照报。
+ * @param {unknown} err
+ */
+function isSocialOff(err) {
+  const msg = err instanceof Error ? err.message : String(err)
+  return msg === 'social_not_wired' || msg === 'HTTP 503'
+}
+
 export async function refreshWishes() {
   const [wr, or] = await Promise.all([
     /** @type {Promise<{wishes?:Array<any>}|null>} */ (Promise.resolve(invokeApi('GET', '/v1/social/wishes')).catch(() => null)),
     /** @type {Promise<{offers?:Array<any>}|null>} */ (Promise.resolve(invokeApi('GET', '/v1/social/intro/offers')).catch(err => {
-      console.error('[wishes] 待你点头拉取失败', err)
+      if (!isSocialOff(err)) console.error('[wishes] 待你点头拉取失败', err)
       return null
     })),
   ])

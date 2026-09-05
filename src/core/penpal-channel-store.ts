@@ -2,7 +2,8 @@
  * penpal-channel-store.ts — the per-connection pen-pal channel. Holds this
  * side's LOCAL X25519 keypair + channel id, plus the peer's crossed handle
  * (pubkey + channel id), nullable until both sides have consented and the row
- * flips to `open` (配对 does that in one go — pairing.ts's openPairChannel).
+ * flips to `open` (pairing.ts's adoptPeerCard does that in one go, for both the
+ * 配对 `pair:` rows and 介绍's `intro:` rows).
  * NO real identity is ever stored — the peer is only ever a pubkey + an opaque
  * channel address.
  */

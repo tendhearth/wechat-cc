@@ -8,8 +8,11 @@
  * accept() — acceptor: derive the same identity, fetch the box, find the
  *            initiator card, reject self-pair, write the peer record, drop its
  *            own card back.
- * writePeerFromCard — shared: overwrite-by-self_id, bearer crossing (spec §5):
- *            outbound_api_key = card.bearer, inbound_api_key = the key WE minted.
+ * adoptPeerCard — shared with 介绍 (wire-intro.ts): overwrite-by-self_id, bearer
+ *            crossing (spec §5) — outbound_api_key = card.bearer,
+ *            inbound_api_key = the key WE minted — then opens the pen-pal
+ *            channel row (`pair:` here, `intro:` there). buildOwnCard mints the
+ *            v2 card both paths hand to the peer.
  *
  * NO ack (shared box; ack is a global delete — §4). Cards carry role + nonce so
  * each side ignores its own. Only one active initiator code at a time (a new
@@ -97,7 +100,8 @@ interface ActiveInitiator {
   handle: PairScheduleHandle | null
 }
 
-/** 结构校验(v2 名片):Task 4 会让 makePairing 内部的 cardProblem 复用它。 */
+/** 结构校验(v2 名片)。makePairing 内部的 cardProblem 和 intro.ts 的
+ *  parseIntroPayload 共用这一份 —— 配对来的名片和介绍来的名片同一把尺子。 */
 export function isValidPairCard(card: unknown): card is PairCard {
   if (!card || typeof card !== 'object') return false
   const c = card as Record<string, unknown>

@@ -10,7 +10,7 @@ const mkEl = () => ({ innerHTML: '', textContent: '', value: '', hidden: false, 
 // @ts-expect-error minimal DOM stub before import (same shape as journal.test.ts)
 globalThis.document = { getElementById: (id: string) => els.get(id) ?? null }
 
-const { renderWishes, renderOffers, onWishCompose, onWishAction } = await import('./wishes.js')
+const { renderWishes, renderOffers, onWishCompose, onWishAction, refreshWishes } = await import('./wishes.js')
 
 describe('心愿区块', () => {
   beforeEach(() => { for (const id of ['fd-wish-count', 'fd-wish-draft', 'fd-wish-list', 'fd-wish-text']) els.set(id, mkEl()); invokeApi.mockReset() })
@@ -83,6 +83,25 @@ describe('介绍:想认识 TA / 待你点头', () => {
     expect(box.innerHTML).toContain('data-wsh-action="decline" data-wsh-reply="ab12cd34"')
     renderOffers({ offers: [] })
     expect(box.hidden).toBe(true)
+  })
+  it('社交没开:offers 的 503 不冒红字(每次刷新一条),别的错照报;两种情况都收起区块', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const offersThrows = (e: Error) => async (_m: string, path: string) => {
+      if (path === '/v1/social/intro/offers') throw e
+      return { wishes: [] }
+    }
+    invokeApi.mockImplementation(offersThrows(new Error('social_not_wired')))
+    await refreshWishes()
+    expect(spy).not.toHaveBeenCalled()
+    expect(els.get('fd-wish-offers')!.hidden).toBe(true)
+    invokeApi.mockImplementation(offersThrows(new Error('HTTP 503')))
+    await refreshWishes()
+    expect(spy).not.toHaveBeenCalled()
+    invokeApi.mockImplementation(offersThrows(new Error('daemon 没在跑')))
+    await refreshWishes()
+    expect(spy).toHaveBeenCalledWith('[wishes] 待你点头拉取失败', expect.any(Error))
+    expect(els.get('fd-wish-offers')!.hidden).toBe(true)
+    spy.mockRestore()
   })
   it('三个动作打对路由并 toast', async () => {
     const click = (action: string) => onWishAction({ target: { closest: () => ({ getAttribute: (k: string) => (k === 'data-wsh-action' ? action : k === 'data-wsh-reply' ? 'ab12cd34' : null) }) } })
