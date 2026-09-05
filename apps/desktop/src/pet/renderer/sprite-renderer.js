@@ -3,7 +3,7 @@
 // DOM 与计时器都是注入的,所以能在没有 jsdom 的测试里跑。不认识 behavior,不认识文件名的含义。
 
 /** @typedef {import('../assets/manifest-loader.js').Animation} Animation */
-/** @typedef {{ style: Record<string, string>, classList: { add(c: string): void, remove(c: string): void, contains(c: string): boolean }, setAttribute(k: string, v: string): void, getAttribute(k: string): string | null, src?: string }} ElLike */
+/** @typedef {{ style: Record<string, string>, classList: { add(c: string): void, remove(c: string): void, contains(c: string): boolean }, setAttribute(k: string, v: string): void, getAttribute(k: string): string | null, src?: string, addEventListener?: (type: string, fn: () => void) => void }} ElLike */
 
 const DEFAULT_FADE_MS = 240
 
@@ -12,6 +12,7 @@ const DEFAULT_FADE_MS = 240
  *   img: ElLike, stage: ElLike,
  *   schedule?: (fn: () => void, ms: number) => unknown, cancel?: (h: unknown) => void,
  *   reducedMotion?: boolean, fadeMs?: number, preload?: (url: string) => void,
+ *   onFrameError?: (url: string) => void,
  * }} deps
  */
 export function createSpriteRenderer(deps) {
@@ -26,6 +27,11 @@ export function createSpriteRenderer(deps) {
   /** @type {unknown} */ let fadeIn = null      // 淡入结束的计时器,与帧计时器分开持有
   /** @type {string | null} */ let frame = null
   let generation = 0
+
+  /** 某一帧加载不出来:renderer 不认识文件名的含义,只把 url 报上去,由 pet.js 决定怎么摘。 */
+  const reportFrameError = (/** @type {string} */ url) => { if (url) deps.onFrameError?.(url) }
+  // 真浏览器里坏帧走 img 的 error 事件;测试桩没有 addEventListener,就手动调 reportFrameError。
+  deps.img.addEventListener?.('error', () => { reportFrameError(deps.img.src ?? '') })
 
   const clear = () => { if (timer !== null) { cancel(timer); timer = null } if (fadeIn !== null) { cancel(fadeIn); fadeIn = null } deps.img.classList.remove('pet-fading') }
   /** @param {string} url */
@@ -87,6 +93,8 @@ export function createSpriteRenderer(deps) {
       if (on && !reduced) deps.stage.classList.add('pet-breathing')
       else deps.stage.classList.remove('pet-breathing')
     },
+    /** @param {string} url */
+    reportFrameError(url) { reportFrameError(url) },
     stop() { generation += 1; clear() },
     currentFrame() { return frame },
   }

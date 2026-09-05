@@ -91,10 +91,8 @@ describe('createSpriteRenderer', () => {
   })
   it('reducedMotion:setBreathing 永远不加 class;正常时加/去 pet-breathing', () => {
     const c = clock()
-    const a = createSpriteRenderer({ img: el(), stage: el(), schedule: c.schedule, cancel: c.cancel, preload: () => {}, reducedMotion: true })
     const stageA = el(); const ra = createSpriteRenderer({ img: el(), stage: stageA, schedule: c.schedule, cancel: c.cancel, preload: () => {}, reducedMotion: true })
     ra.setBreathing(true); expect(stageA.classList.contains('pet-breathing')).toBe(false)
-    void a
     const stageB = el(); const rb = createSpriteRenderer({ img: el(), stage: stageB, schedule: c.schedule, cancel: c.cancel, preload: () => {} })
     rb.setBreathing(true); expect(stageB.classList.contains('pet-breathing')).toBe(true)
     rb.setBreathing(false); expect(stageB.classList.contains('pet-breathing')).toBe(false)
@@ -107,6 +105,17 @@ describe('createSpriteRenderer', () => {
     expect(img.src).toBe('a.png')
     c.tick(500)                                   // 4 帧 @8fps = 500ms
     expect(img.src).toBe('d.png'); expect(onEnd).toHaveBeenCalledTimes(1)
+  })
+  it('帧加载失败:reportFrameError 与 img 的 error 事件都把 url 报给 onFrameError', () => {
+    const c = clock(); const onFrameError = vi.fn()
+    const listeners: Record<string, () => void> = {}
+    const img = { ...el(), addEventListener: (t: string, fn: () => void) => { listeners[t] = fn } }
+    const r = createSpriteRenderer({ img, stage: el(), schedule: c.schedule, cancel: c.cancel, preload: () => {}, onFrameError })
+    r.reportFrameError('bad.png')
+    expect(onFrameError).toHaveBeenCalledWith('bad.png')
+    r.play(anim(['x.png'], 4, true))
+    listeners.error!()
+    expect(onFrameError).toHaveBeenLastCalledWith('x.png')
   })
   it('preload 对每个不重复的帧 url 调一次', () => {
     const preload = vi.fn(); const c = clock()

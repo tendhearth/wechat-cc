@@ -21,7 +21,8 @@ function clock() {
 }
 const boot = async (fetchImpl = fetchReal, reducedMotion = false) => {
   const c = clock(); const root = { stage: el(), img: el('img'), props: el(), hint: el('p') }
-  const pet = await createPet(root, { manifestUrl: './assets/pet/manifest.json', fetchImpl, reducedMotion, makeEl: el, schedule: c.schedule, cancel: c.cancel, preload: () => {} })
+  // random: () => 0 —— 随机小动作取区间下界,时间线就是确定的(blink 6000ms、look 25000ms)。
+  const pet = await createPet(root, { manifestUrl: './assets/pet/manifest.json', fetchImpl, reducedMotion, makeEl: el, schedule: c.schedule, cancel: c.cancel, preload: () => {}, random: () => 0 })
   return { c, root, pet }
 }
 
@@ -94,6 +95,65 @@ describe('createPet(组装)', () => {
     c.tick(1005)
     expect(root.img.src).toBe('./assets/pet/states/error/000.png')
     c.tick(260)
+    expect(pet.machine.snapshot().behavior).toBe('idle')
+    expect(root.img.src).toBe('./assets/pet/reference/master-lit.png')
+  })
+  it('某帧加载失败:把坏帧从 manifest 摘掉,回退到同形态 idle,warning 一条(逻辑状态不变)', async () => {
+    const { c, root, pet } = await boot()
+    pet.setForm('lit'); c.tick(1100)
+    pet.setState('working')
+    expect(root.img.src).toBe('./assets/pet/states/working/000.png')
+    pet.reportFrameError('./assets/pet/states/working/000.png')
+    expect(root.img.src).toBe('./assets/pet/reference/master-lit.png')
+    expect(pet.warnings).toContain('frame_missing:./assets/pet/states/working/000.png')
+    expect(pet.warnings).toContain('fallback:lit/working→lit/idle')
+    expect(pet.machine.snapshot().behavior).toBe('working')
+  })
+  it('转场丢一帧:剩下 7 帧照播完,不崩', async () => {
+    const { c, root, pet } = await boot()
+    pet.setForm('lit')
+    c.tick(125)
+    expect(root.img.src).toBe('./assets/pet/transitions/unlit-to-lit/001.png')
+    pet.reportFrameError('./assets/pet/transitions/unlit-to-lit/003.png')
+    expect(root.img.src).toBe('./assets/pet/transitions/unlit-to-lit/000.png')   // 重播,少了那一帧
+    c.tick(125 * 7 + 5)
+    expect(pet.machine.snapshot()).toMatchObject({ form: 'lit', transition: null })
+    expect(root.img.src).toBe('./assets/pet/reference/master-lit.png')
+  })
+  it('被更高优先级挡下的一次性行为也不丢:error 播完补播 receive', async () => {
+    const { c, root, pet } = await boot()
+    pet.setForm('lit'); c.tick(1100)
+    pet.applyIntent({ form: 'lit', behavior: 'idle', props: [], badge: 0, hint: null, oneShots: ['error', 'receive'] })
+    expect(root.img.src).toBe('./assets/pet/states/error/000.png')
+    c.tick(250)
+    expect(root.img.src).toBe('./assets/pet/states/receive/000.png')
+    c.tick(250)
+    expect(pet.machine.snapshot().behavior).toBe('idle')
+    expect(root.img.src).toBe('./assets/pet/reference/master-lit.png')
+  })
+  it('空闲小动作(spec §4):lit idle 里 6s 后眨一次眼,播完回 idle', async () => {
+    const { c, root, pet } = await boot()
+    pet.setForm('lit'); c.tick(1100)
+    c.tick(6000)
+    expect(pet.machine.snapshot().behavior).toBe('blink')
+    c.tick(125)
+    expect(root.img.src).toBe('./assets/pet/states/blink-half/000.png')
+    c.tick(625)
+    expect(pet.machine.snapshot().behavior).toBe('idle')
+    expect(root.img.src).toBe('./assets/pet/reference/master-lit.png')
+  })
+  it('working 不排空闲小动作:12 秒里一动不动', async () => {
+    const { c, root, pet } = await boot()
+    pet.setForm('lit'); c.tick(1100)
+    pet.setState('working')
+    c.tick(12_000)
+    expect(pet.machine.snapshot().behavior).toBe('working')
+    expect(root.img.src).toBe('./assets/pet/states/working/000.png')
+  })
+  it('reducedMotion:一个空闲小动作都不排', async () => {
+    const { c, root, pet } = await boot(fetchReal, true)
+    pet.setForm('lit'); c.tick(1100)
+    c.tick(20_000)
     expect(pet.machine.snapshot().behavior).toBe('idle')
     expect(root.img.src).toBe('./assets/pet/reference/master-lit.png')
   })
