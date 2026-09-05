@@ -363,6 +363,14 @@ export interface CollectTurnOpts {
    * only a genuinely silent stall is.
    */
   timeoutMs?: number
+  /**
+   * Per-event observer, called once per event just before it is folded
+   * into the summary — on BOTH consumption paths (plain drain and the
+   * watchdog loop). Purely for outside-the-turn bookkeeping (the desktop
+   * pet's "what is it doing right now" signals); a throw is swallowed, so
+   * an observer can never break or alter a turn.
+   */
+  onEvent?: (ev: AgentEvent) => void
 }
 
 export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: CollectTurnOpts): Promise<TurnSummary> {
@@ -391,9 +399,14 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
     }
   }
 
+  /** 观察者不许影响回合:抛错就地吞掉。 */
+  const observe = (ev: AgentEvent): void => {
+    try { opts?.onEvent?.(ev) } catch { /* ignore */ }
+  }
+
   const timeoutMs = opts?.timeoutMs
   if (!timeoutMs || timeoutMs <= 0) {
-    for await (const ev of events) apply(ev)
+    for await (const ev of events) { observe(ev); apply(ev) }
     return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode }
   }
 
@@ -426,6 +439,7 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
         }
       }
       if (step.done) break
+      observe(step.value)
       apply(step.value)
     }
   } finally {

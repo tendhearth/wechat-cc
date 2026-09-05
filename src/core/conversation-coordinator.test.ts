@@ -2662,3 +2662,44 @@ describe('submitTurn (D3 — single entrypoint)', () => {
     await Promise.all([p1, p2])
   })
 })
+
+describe('onTurnEvent (CC 桌宠 Phase B)', () => {
+  it('solo 回合里每个 provider 事件都转给 onTurnEvent(chatId, ev),tool_call 在内;钩子抛错不影响回合', async () => {
+    const seen: Array<[string, string]> = []
+    const session = makeFakeSession({
+      events: [
+        { kind: 'init', sessionId: 's' },
+        { kind: 'tool_call', tool: 'Bash' },
+        { kind: 'text', text: 'ok' },
+        { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 5 },
+      ],
+    })
+    const acquire = vi.fn(async (_req: AcquireRequest) => makeHandle('claude', session))
+    const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      sendAssistantText,
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+      onTurnEvent: (chatId, ev) => {
+        seen.push([chatId, ev.kind])
+        // 观察者抛错不许弄坏回合。
+        if (ev.kind === 'text') throw new Error('boom')
+      },
+    })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(seen).toEqual([
+      ['chat-1', 'init'], ['chat-1', 'tool_call'], ['chat-1', 'text'], ['chat-1', 'result'],
+    ])
+    // 回合本身照常收口:文本仍然发出去了。
+    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', 'ok')
+  })
+})

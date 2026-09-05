@@ -28,7 +28,7 @@ import {
   type Opening, type Contention, type RankedSpeaker,
 } from './chatroom-conductor'
 import { assertSupported, capabilitiesFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
-import { collectTurn, TURN_TIMEOUT_CODE, type TurnSummary } from './agent-provider'
+import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from './agent-provider'
 import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile } from './user-tier'
 import type { Access } from '../lib/access'
 import { makeChatMutex } from './async-mutex'
@@ -111,6 +111,14 @@ export interface ConversationCoordinatorDeps {
    * stalled SDK subprocess. See [[TURN_TIMEOUT_CODE]].
    */
   turnTimeoutMs?: number
+  /**
+   * Per-event observer for every provider event of every turn (solo,
+   * parallel, chatroom), tagged with the inbound chat id. Feeds the
+   * desktop pet's live "what is it doing" signals — bookkeeping only:
+   * `collectTurn` swallows anything it throws, so it can never affect
+   * the turn.
+   */
+  onTurnEvent?: (chatId: string, ev: AgentEvent) => void
   /**
    * Sink for the per-turn structured record (see [[TurnRecord]]). Optional —
    * tests and minimal embeddings can omit it. Bootstrap wires it to a daemon
@@ -568,7 +576,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         text = `${buildHandoffBlock(handoff.from, handoff.to, recent)}\n\n${text}`
         deps.log?.('HANDOFF', `chat=${msg.chatId} ${handoff.from}→${handoff.to} recent=${recent.length}`)
       }
-      summary = await collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs })
+      summary = await collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) })
       const assistantTexts = summary.assistantText
       const replyToolCalled = summary.replyToolCalled
 
@@ -857,7 +865,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     try {
       settled = await Promise.allSettled(acquired.map(a =>
         a.status === 'fulfilled'
-          ? collectTurn(a.value.dispatch(text), { timeoutMs: deps.turnTimeoutMs })
+          ? collectTurn(a.value.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) })
           : Promise.reject(a.reason),
       ))
     } finally {
@@ -976,7 +984,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           alias: proj.alias, path: proj.path, providerId,
           chatId: msg.chatId, tierProfile, permissionMode: deps.permissionMode,
         })
-        summary = await collectTurn(handle.dispatch(promptFor(providerId)), { timeoutMs: Math.min(deps.turnTimeoutMs ?? CHATROOM_BEAT_TIMEOUT_MS, CHATROOM_BEAT_TIMEOUT_MS) })
+        summary = await collectTurn(handle.dispatch(promptFor(providerId)), { timeoutMs: Math.min(deps.turnTimeoutMs ?? CHATROOM_BEAT_TIMEOUT_MS, CHATROOM_BEAT_TIMEOUT_MS), onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) })
       } catch (e) {
         err = e instanceof Error ? e.message : String(e)
       }
