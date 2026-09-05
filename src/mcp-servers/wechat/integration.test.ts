@@ -712,7 +712,7 @@ describe('wechat-mcp stdio integration', () => {
     expect(body.id).toBe('wish-abc123')
     expect(body.preview).toBe('找摄影搭子(深圳)(已脱敏)')
     expect(body.hint).toContain('派 wish-abc123')
-    expect(body.hint).toContain('取消 wish-abc123')
+    expect(body.hint).toContain('wish_cancel')
     expect(proposeCalls).toEqual(['找摄影搭子(深圳)'])
   })
 
