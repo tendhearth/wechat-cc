@@ -59,8 +59,10 @@ export function buildRelationships(i: RelationshipInputs): Relationship[] {
       label: known ? peerName.get(ch.peer_agent_id!)! : `第 ${ch.degree} 度的某人`,
       channel: ch.id,
       familiarity: { visits: v.ids, lastAt: v.lastAt, note: null },
-      // 「派心愿牵线」只可能出现在旧揭晓流程留下的历史行上;2026-09-04 起配对即开信道,新行一律「配对」。
-      origin: known ? '配对' : `派心愿牵线(${ch.degree} 度)`,
+      // 「派心愿牵线」只可能出现在旧揭晓流程留下的历史行上;2026-09-04 起配对即开信道,新行一律「配对」或「经朋友介绍」。
+      // 信道行 id 的前缀就是判据:pairing.ts 的 adoptPeerCard 按 rowPrefix 建 pair:<nonce> / intro:<nonce>;
+      // 其它(旧行、无前缀)一律按「配对」处理。
+      origin: known ? (ch.id.startsWith('intro:') ? '经朋友介绍' : '配对') : `派心愿牵线(${ch.degree} 度)`,
       autoVisit: v.peerReplied,
     })
   }

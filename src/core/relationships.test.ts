@@ -68,4 +68,13 @@ describe('buildRelationships —— 四种对方,一张表', () => {
     const r = buildRelationships({ ...base, channels: [{ ...base.channels[0]!, status: 'pending' }] })
     expect(r.find(x => x.id === 'peer:cc-b')!.channel).toBeNull()
   })
+
+  it('信道行 id 是 intro:<nonce>(经介绍开的) → origin「经朋友介绍」', () => {
+    const r = buildRelationships({
+      ...base,
+      channels: [{ id: 'intro:abc123', peer_agent_id: 'cc-b', degree: 1, status: 'open', created_at: '2026-09-04T00:00:00Z' }],
+      visitsByChannel: {},
+    })
+    expect(r.find(x => x.id === 'peer:cc-b')!.origin).toBe('经朋友介绍')
+  })
 })

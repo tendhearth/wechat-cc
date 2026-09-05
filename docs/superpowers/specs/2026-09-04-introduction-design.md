@@ -53,12 +53,14 @@ interface IntroPayload {
 
 流程(每一步都是一封信封,都走已有信道):
 
-1. **我 → A `request`**:主人微信「认识 <replyId 前缀>」或桌面明信片卡上「想认识 TA」→ 我的伙伴查 `wishes.json` 找到那张 hop 2 明信片的 `via` 信道和 `replyId`,发 `{ stage:'request', replyId, wishId, card: 我的名片 }` 给 A。名片就是配对用的 `PairCard` v2(self_id、name、信箱地址与公钥、信道句柄、bearer)。A 是我朋友,早就认识我;A **先收着**,不转。
+1. **我 → A `request`**:主人微信「认识 <replyId 前缀>」或桌面心愿区里那张心愿下 hop 2 明信片旁的「想认识 TA」按钮(不在 journal 的明信片卡上,只在心愿列表这一份,只对 draft/open 状态的心愿可见,已关闭的心愿只能走微信「认识 <ref>」)→ 我的伙伴查 `wishes.json` 找到那张 hop 2 明信片的 `via` 信道和 `replyId`,发 `{ stage:'request', replyId, wishId, card: 我的名片 }` 给 A。名片就是配对用的 `PairCard` v2(self_id、name、信箱地址与公钥、信道句柄、bearer)。A 是我朋友,早就认识我;A **先收着**,不转。
 2. **A → B `forward`**:A 查 `replies[replyId]` 找到 B 的信道,发 `{ stage:'forward', replyId, wishId, hint }`。**不带我的名片。** A 在索引里记 `pending: { [replyId]: { requesterChannel, requesterCard, targetChannel, at } }`。
 3. **B 的主人点头**:B 的伙伴收到 `forward`,存 `<stateDir>/companion/introductions.json` 的 `offers: { [replyId]: { viaChannel, hint, at } }`,微信一句:「🤝 <A 的 label> 的朋友(就是问「<hint>」那位)想认识你。回「同意 <replyId 前缀>」或「不了 <replyId 前缀>」」。桌面心愿区多一个「待你点头」小列表(同一份数据)。这是**唯一一处人点头**。
 4. **B → A `accept`**(带 B 的名片)或 **`decline`**。7 天没回 = decline(A 侧索引过期即视为拒绝,给我一句话)。
 5. **A 交叉转发 `card`**:收到 accept 后,A 把 B 的名片发给我、把我的名片发给 B(两封 `{ stage:'card', replyId, wishId, card }`),然后清掉 `pending[replyId]`,并告诉自己主人一句「🤝 我把 X 介绍给了 Y」。收到 decline → 只给我转一句「A 的朋友这次不想认识新朋友」,清 pending。
 6. **双方各自 `adoptPeerCard(card, mine, nonce = replyId)`**:和 6 位码配对完全相同的动作——写注册表(transport mailbox,bearer 交叉)+ 开 `intro:<replyId>` 的信道行(两侧行 id 一致)+ 关系视图立刻是 peer。之后信件、串门、心愿全部直连,不再经 A。双方主人各一句:「🤝 你和 <名字> 成了朋友(经 <A> 介绍)」。
+
+`card` 字段的 `role`(`initiator` / `acceptor`)只是沿用配对码的名片格式:request 那边发 `initiator`、accept 那边发 `acceptor`,介绍流程里不认它、不靠它分支。
 
 **我方名片什么时候生成:** 发 `request` 时生成密钥对和 channel_id,存进 `wishes.json` 该 postcard 的 `myIntro: { channelId, pubkey, privkey, at }`;收到 `card` 时用它开信道。B 方同理存在 `offers[replyId].myIntro`。私钥永远不出机器。
 
@@ -73,6 +75,8 @@ interface IntroPayload {
 - `relationships.ts` 的 `anon` kind 保留类型和渲染(旧揭晓流程可能留下历史行),不再有新的产生;注释说明。
 - 上游 spec 里「anon → peer 迁移」「内容盲中继」两项:以这轮的形状**关闭**,不实现。
 
+另一处预算(和 §1 的转问配额是两回事):被介绍方一条来源信道(A → B 那条)同时最多压 `FORWARD_PER_SENDER`(3)笔还没点头的 `offers`;超了的 `forward` 直接丢,**不打扰主人**,等其中一笔被点头(同意/不了)腾出名额再说。
+
 ## 5. 改动清单
 
 | 层 | 改 |
@@ -82,12 +86,12 @@ interface IntroPayload {
 | `src/daemon/companion/intro-memory.ts`(新) | `introductions.json` 读写(`readJsonFile`) |
 | `src/core/pairing.ts` | 抽出 `export function adoptPeerCard(deps, card, mine, nonce, rowPrefix: 'pair'\|'intro')`(= 现有 `writePeerFromCard` + `openPairChannel`),`makePairing` 内部改为调用它;`ownCard` 同样抽成 `buildOwnCard(deps, role, nonce, bearer, chan)` 导出 |
 | `src/daemon/bootstrap/wire-wish.ts` | `handleWish`:判「不能」且 hop 1 → 转问(预算、索引、A 主人一句话);`handlePostcard`:先查转问索引,是则原路转回并记 reply,否则照旧,hop 2 时 label = 「<A> 的朋友」+ 记 `postcards[]` |
-| `src/daemon/bootstrap/wire-intro.ts`(新,照 wire-visit 的形状) | `makeIntro(deps)`:`request(replyRef)`、`accept(replyRef)`、`decline(replyRef)`、`onInbound(channelRowId, env, letterId)`(五个 stage 的状态机)、`pendingOffers()`;deps 注入 `adoptPeerCard`、`buildOwnCard`、`genChannel`、`registry`、`channelStore`、`sendEnvelope`、`notifyOwner`、`peerLabel`、`holdBusy`、`now`、`log` |
+| `src/daemon/bootstrap/wire-intro.ts`(新,照 wire-visit 的形状) | `makeIntro(deps)`:`request(replyRef)`、`accept(replyRef)`、`decline(replyRef)`、`onInbound(channelRowId, env, letterId)`(五个 stage 的状态机)、`offers()`;deps 注入 `adopt`、`buildCard`(名片采纳/构造是 wire-social 拼好的闭包,包着 `adoptPeerCard`/`buildOwnCard`,这里不认识 `registry`)、`genChannel`、`channelStore`、`sendEnvelope`、`notifyOwner`、`peerLabel`、`holdBusy`、`now`、`log` |
 | `wire-social.ts` | `switch (env.kind)` 加 `case 'intro'`;构造 `intro`;`social.intro` 露出 |
 | `command-router.ts` | 「认识 <ref>」「同意 <ref>」「不了 <ref>」三条(admin 门,和 派/取消 同形) |
 | internal-api | `POST /v1/social/intro/request {reply_id}`、`/accept`、`/decline`、`GET /v1/social/intro/offers`(trusted) |
-| 桌面 | 明信片卡(hop 2 的)加「想认识 TA」按钮;心愿区加「待你点头」列表(同意 / 不了) |
-| relationships.ts | pair-/intro- 开的信道 origin 分别「配对」「经 <A> 介绍」(从 `seek_id` 前缀 + 索引里的 via 推) |
+| 桌面 | 「想认识 TA」按钮在心愿区、跟着 hop 2 明信片(心愿的 `postcards[]`,带 `reply_id`)一起渲染,不在 journal 的明信片卡上;「待你点头」列表同样在心愿区(同一份数据) |
+| relationships.ts | 有信道且 known 的 peer:信道行 id(`ch.id`)以 `intro:` 开头 → 「经朋友介绍」,`pair:` 开头(及其它旧行)→「配对」 |
 
 **不新建表**:所有状态在 `wishes.json` / `introductions.json` / `penpal_letter` / 注册表 / `penpal_channel`。
 
@@ -113,7 +117,7 @@ interface IntroPayload {
 | 三个 daemon 同进程(照 `wire-wish.test.ts` 的 `side()`,扩到三方) | 我派 → A 判「不能」→ 转给 B → B 判「能」→ postcard 经 A 回我(label「A 的朋友」,journal 一条,`postcards[]` 一条)→ 我「认识」→ A forward → B 主人一句 → B 同意 → A 交叉名片 → 我和 B 各一条 `intro:<replyId>` open 信道、注册表互有对方、两边主人各一句、A 主人一句 |
 | 分支 | B 拒绝 → 我一句话、无信道;A 预算耗尽 → 不转;hop 2 的 wish 到 B 后 B 不再转;A 判「能」→ 不转;同一 wishId 重投 A 只转一次;`request` 找不到 replyId → 主人一句「没有这张明信片」;pending 过期 → 视为拒绝 |
 | 路由 / 命令 | 四条路由形状 + tier;三条微信命令的解析与文案 |
-| 桌面 | hop 2 明信片卡有按钮、hop 1 没有;待点头列表渲染与两个动作 |
+| 桌面 | 心愿区里 hop 2 明信片旁有按钮、hop 1 没有(且只对 draft/open 心愿渲染);待点头列表渲染与两个动作 |
 
 真机:三台才能全走一遍(我 / A / B)。两台(Mac / Windows)只能验到「A 判不能就转」+ 预算 + 索引;完整链路先靠同进程三方测试,三台真机留待有第三台时。
 
