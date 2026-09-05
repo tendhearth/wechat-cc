@@ -607,7 +607,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     mode: { modeHandler },
     onboarding: { onboardingHandler },
     permissionReply: {
-      handlePermissionReply: (text: string) => ilink.handlePermissionReply(text),
+      handlePermissionReply: (text: string, fromChatId?: string) => ilink.handlePermissionReply(text, fromChatId),
       log,
     },
     guard: {
@@ -701,13 +701,20 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         // 管理员控制命令(揭晓/回信/配对/派/访客许可)由 command-router 处理;
         // 命中即止,否则落到正常 agent 分发。逻辑本体见 command-router.ts。
         dispatch: async (msg) => {
-          // 桌宠「起飞了」的时刻(spec §5.1)。记在进门处而不是 coordinator 里:
-          // 不是每个 provider 都发 init 事件,而每条入站都从这里过。多记一次
-          // (命令被 commandRouter 吃掉、消息被丢弃)无害 —— 相位由
-          // sessionManager.isInFlight 说了算,这个时间戳只在真在飞时被读。
-          opts.petSignals?.noteTurnStart(msg.chatId)
           if (await commandRouter.tryHandle(msg)) return
-          return boot.coordinator.dispatch(msg)
+          // 桌宠「起飞了」的时刻(spec §5.1)。定义:一个「回合」= 从入站分发
+          // 或 converse 进来的那一趟。所以记在命令路由**之后** —— 一句「待批准」
+          // 被路由自己答掉了,桌宠不该说它在想事情。记在这里而不是 coordinator
+          // 里,是因为不是每个 provider 都发 init 事件,而每条入站都从这儿过。
+          opts.petSignals?.noteTurnStart(msg.chatId)
+          try {
+            return await boot.coordinator.dispatch(msg)
+          } finally {
+            // 成对:dispatch 抛错 / 被中途丢弃时 recordTurn 可能根本不响,
+            // 起飞标记会永久挂着,桌宠就永远显示「在想」。noteTurnStop 只撤
+            // 起飞标记;「刚忙完」那一笔仍然归 recordTurn。
+            opts.petSignals?.noteTurnStop(msg.chatId)
+          }
         },
       },
     },
@@ -788,20 +795,24 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       accountId: ilink.resolveAccountId(ownerChatId),
     }
     // 起飞时刻:app 轮次不走入站管道(见上面的 dispatch),所以在这儿单独记一笔,
-    // 好让 start/end 成对 —— 结束那头在 bootstrap 的 recordTurn 里,两条路共用。
+    // 并且同样用 finally 配对 —— 两条进来的路,同一套 start/stop 语义。
     opts.petSignals?.noteTurnStart(ownerChatId)
-    return boot.coordinator.submitTurn(synthetic, {
-      within: async (dispatch) => {
-        const sink = replySinks.open(ownerChatId)
-        try {
-          await dispatch()
-          return { reply: sink.close() }
-        } catch (err) {
-          sink.close()
-          throw err
-        }
-      },
-    })
+    try {
+      return await boot.coordinator.submitTurn(synthetic, {
+        within: async (dispatch) => {
+          const sink = replySinks.open(ownerChatId)
+          try {
+            await dispatch()
+            return { reply: sink.close() }
+          } catch (err) {
+            sink.close()
+            throw err
+          }
+        },
+      })
+    } finally {
+      opts.petSignals?.noteTurnStop(ownerChatId)
+    }
   }
 
   // 桌宠的「在做什么」(spec 2026-09-05-cc-desktop-pet §5.1)。推导本身是
@@ -811,25 +822,34 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // pet-signals 的三个内存时间戳、待决权限(与微信「y/n」同一份清单)。
   const petTurn: PetTurnDep = async () => {
     const nowMs = Date.now()
-    const pending = opts.ilink.listPendingPermissions()
     let ownerChatId: string | null = null
     try { ownerChatId = loadCompanionConfig(stateDir).default_chat_id ?? null } catch { ownerChatId = null }
     if (!ownerChatId) {
-      // 还没配主人:没有会话可看,但「主人联系过我」这一笔是全局的(converse /
-      // 权限拍板都会写),照样如实报出去。
+      // 还没配主人:没有会话可看,也没有「谁能拍板」可言 —— 待决权限一律不外
+      // 泄(见下面的过滤)。但「主人联系过我」这一笔是全局的(converse / 权限
+      // 拍板都会写),照样如实报出去。
       return derivePetTurn({
         nowMs, inFlight: false, inFlightSinceMs: null, lastToolCallAtMs: null, lastResultAtMs: null,
         ownerLastContactAtMs: opts.petSignals?.snapshot('').lastContactMs ?? null,
-        pending,
+        pending: [],
       })
     }
+    // 只报**主人自己那些**待决权限。这张表是全 daemon 共享的:任何一个陌生人
+    // 的会话触发的权限询问也在里面,而 hash 一旦露出去就等于一张批准券
+    // (微信侧那条「y <hash>」)。桌宠是主人的面,只该看见主人自己的队列。
+    const pending = opts.ilink.listPendingPermissions().filter(p => p.chatId === ownerChatId)
     const key = resolveOwnerSessionKey(ownerChatId, {
       resolveProject: boot.resolve,
       getMode: (cid) => boot.coordinator.getMode(cid),
       defaultProviderId: boot.defaultProviderId,
     })
-    const inFlight = !!key && boot.sessionManager.isInFlight({ alias: key.alias, providerId: key.providerId, chatId: ownerChatId })
+    const sessionInFlight = !!key && boot.sessionManager.isInFlight({ alias: key.alias, providerId: key.providerId, chatId: ownerChatId })
     const sig = opts.petSignals?.snapshot(ownerChatId) ?? { inFlightSinceMs: null, lastToolCallAtMs: null, lastResultAtMs: null, lastContactMs: null }
+    // 两个条件都要:会话在飞(独立事实源)**且**这一趟是从入站/converse 进来的。
+    // 关心推送、打猎、提醒这些**自己发起**的 tick 轮次也会把 isInFlight 抬起来,
+    // 但它们不是「主人问了、我在想」—— 那属于「处境」(presence 那条线),不属于
+    // 桌宠的 turn 相位。没有起飞标记就没有 since 可报,硬报也只能报个 null。
+    const inFlight = sessionInFlight && sig.inFlightSinceMs !== null
     // 「主人上次联系我」取两边的**较晚者**:消息库只记微信入站,pet-signals 只记
     // app converse / 权限拍板。任何一边单独看都会把另一边的活动说成「没来过」。
     const inboundIso = await messagesStore.latestInboundTs(ownerChatId).catch(() => null)

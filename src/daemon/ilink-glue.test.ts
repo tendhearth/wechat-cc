@@ -173,8 +173,9 @@ describe('makeIlinkAdapter (composed)', () => {
     // We test the internal wiring: askUser registers + handlePermissionReply consumes.
     // Use askUser with very long timeout — manually consume via handlePermissionReply.
     const p = a.askUser('chat-1', 'test prompt', 'ab123', 60_000)
-    // Immediately consume it
-    const consumed = a.handlePermissionReply('y ab123')
+    // Immediately consume it — from the approver's OWN chat (see the
+    // cross-chat test below for why the second arg is now load-bearing).
+    const consumed = a.handlePermissionReply('y ab123', 'chat-1')
     expect(consumed).toBe(true)
     const decision = await p
     expect(decision).toBe('allow')
@@ -184,10 +185,24 @@ describe('makeIlinkAdapter (composed)', () => {
   it('handlePermissionReply handles deny decision', async () => {
     const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
     const p = a.askUser('chat-1', 'test prompt', 'zz999', 60_000)
-    const consumed = a.handlePermissionReply('n zz999')
+    const consumed = a.handlePermissionReply('n zz999', 'chat-1')
     expect(consumed).toBe(true)
     const decision = await p
     expect(decision).toBe('deny')
+    await a.flush()
+  })
+
+  it('拍板权归当初被问的那个 chat:别人发同一个 hash 不算数,条目还挂着(CC 桌宠 Phase B 安全修)', async () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    const p = a.askUser('chat-1', 'test prompt', 'qq111', 60_000)
+    // hash 现在经 GET /v1/companion/pet 对所有 trusted 调用方可见 —— 一个
+    // 别的 chat 读到它,不该能替 chat-1 批准。
+    expect(a.handlePermissionReply('y qq111', 'chat-2')).toBe(false)
+    // 不带来源的老调用姿势同样不算数(条目带 meta)。
+    expect(a.handlePermissionReply('y qq111')).toBe(false)
+    // 条目仍然挂着,主人自己还能拍。
+    expect(a.handlePermissionReply('n qq111', 'chat-1')).toBe(true)
+    expect(await p).toBe('deny')
     await a.flush()
   })
 

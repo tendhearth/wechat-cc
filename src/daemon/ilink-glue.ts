@@ -94,7 +94,13 @@ export interface IlinkAdapter {
     /** Client-side long-poll timeout — see GetUpdatesResp.timed_out. */
     timed_out?: boolean
   }>
-  handlePermissionReply(text: string): boolean
+  /**
+   * 微信侧的「y/n <hash>」。`fromChatId` 是发这句话的 chat —— 条目带 meta 时
+   * **只有当初被问的那个 chat** 能拍板(hash 现在经 /v1/companion/pet 对所有
+   * trusted 调用方可见,不校验来源等于谁看到 hash 谁就能替主人批准)。
+   * 老条目(无 meta)保持原行为。
+   */
+  handlePermissionReply(text: string, fromChatId?: string): boolean
   /** Desktop pet permission queue (CC 桌宠 Phase B) — same registry as WeChat. */
   listPendingPermissions(): PendingPermissionView[]
   /** Resolve a pending permission from the desktop. = pending.consume(hash, decision). */
@@ -381,9 +387,13 @@ export function makeIlinkAdapter(opts: {
 
     sessionState,
 
-    handlePermissionReply(text) {
+    handlePermissionReply(text, fromChatId) {
       const parsed = parsePermissionReply(text)
       if (!parsed) return false
+      // 拍板权归当初被问的那个 chat。approverOf 返回 null = 没 meta(老条目
+      // 或 hash 根本不存在)⇒ 走旧路径:不存在的 hash 由 consume 报 false。
+      const approver = pending.approverOf(parsed.hash)
+      if (approver !== null && approver !== fromChatId) return false
       return pending.consume(parsed.hash, parsed.decision)
     },
 

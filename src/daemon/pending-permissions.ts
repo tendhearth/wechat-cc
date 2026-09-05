@@ -39,6 +39,20 @@ export class PendingPermissions {
       .sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0))
   }
 
+  /**
+   * 谁有权拍这一条(= 当初被问的那个 chat)。返回 null 表示「没有 meta」——
+   * 要么 hash 不存在,要么是 Phase B 之前注册的老条目;两种情况调用方都按
+   * 旧行为处理(见 ilink-glue 的 handlePermissionReply)。
+   *
+   * 存在的理由:hash 现在经 GET /v1/companion/pet 对所有 trusted 调用方可见,
+   * 而微信侧的「y <hash>」以前不看是谁发的 —— 任何一个 trusted 联系人读到
+   * hash 就能替主人批准一条命令。ilink 不该伸手进 Entry 里掏 meta,所以在
+   * 这里开一个最窄的口子。
+   */
+  approverOf(hash: string): string | null {
+    return this.entries.get(hash)?.meta?.chatId ?? null
+  }
+
   consume(hash: string, decision: 'allow' | 'deny'): boolean {
     const entry = this.entries.get(hash)
     if (!entry) return false

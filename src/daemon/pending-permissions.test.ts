@@ -122,4 +122,15 @@ describe('PendingPermissions.list (CC 桌宠 Phase B)', () => {
     void p.register('ccccc', 1000)
     expect(p.list()).toMatchObject([{ hash: 'ccccc', chatId: '', prompt: '' }])
   })
+
+  it('approverOf:带 meta 返回当初被问的那个 chat;没 meta 与不存在的 hash 都是 null', () => {
+    const p = new PendingPermissions()
+    void p.register('ddddd', 60_000, { chatId: 'owner', prompt: 'Bash: ls' })
+    void p.register('eeeee', 60_000)
+    expect(p.approverOf('ddddd')).toBe('owner')
+    expect(p.approverOf('eeeee')).toBeNull()   // 老条目 ⇒ 调用方走旧行为
+    expect(p.approverOf('nope1')).toBeNull()
+    p.consume('ddddd', 'allow')
+    expect(p.approverOf('ddddd')).toBeNull()
+  })
 })
