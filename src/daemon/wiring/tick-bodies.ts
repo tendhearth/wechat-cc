@@ -382,32 +382,27 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
   }
 
   /**
-   * Resolves the chat's session (project/tier/provider), checks the
-   * in-flight guard, acquires the handle, runs `claim()` (write the
-   * at-most-once marker BEFORE dispatch — see the at-most-once note below),
-   * then dispatches `buildText()`. Shared by the agenda and gap branches so
-   * both get the same session-isolation + claim-before-dispatch contract.
+   * 主动外发的两道闸,连同它们要用的会话解析(project / tier / provider)。
+   * 一份逻辑两处用:真发之前(dispatchToChat)和**日程判断之前**
+   * —— 断线时不该先烧一次判断模型再发现这条根本发不出去
+   * (memory: no-retry-storm-when-disconnected)。
+   *
+   * 只算不打日志:两个调用点要打的日志不一样(dispatchToChat 打
+   * COMPANION / SCHED 那两行原文,判断那边打一行 PLAN skip)。
    */
-  async function dispatchToChat(
-    chatId: string,
-    args: { claim: () => void; buildText: () => string },
-  ): Promise<void> {
+  type DispatchGate =
+    | { blocked: 'wechat_degraded' }
+    | { blocked: 'session_in_flight' | null; proj: { alias: string; path: string }; tier: ReturnType<typeof resolveEffectiveTier>; providerId: typeof deps.boot.defaultProviderId }
+  function resolveDispatch(chatId: string): DispatchGate {
     // 在 LLM 生成之前就拦下:degraded 时这条消息既发不出去,生成它也是白烧
     // token,而且等链路恢复后内容早已过时 —— 所以直接丢弃,不排队。
-    if (deps.health?.shouldSuspend('wechat')) {
-      deps.log('COMPANION', `chat=${chatId} skipped: wechat connection degraded`)
-      return
-    }
+    if (deps.health?.shouldSuspend('wechat')) return { blocked: 'wechat_degraded' }
     const snapshot = deps.ilink.loadProjects()
     const currentAlias = snapshot.current && snapshot.projects[snapshot.current] ? snapshot.current : null
     const proj = currentAlias
       ? { alias: currentAlias, path: snapshot.projects[currentAlias]!.path }
       : { alias: '_default', path: launchCwd }
     const tier = resolveEffectiveTier(chatId, deps.loadAccess(), deps.permissionMode)
-    if (tier !== 'admin') {
-      deps.log('COMPANION', `chat=${chatId} is non-admin tier (${tier}); push tick will run with reduced capabilities`)
-    }
-    const tierProfile = TIER_PROFILES[tier]
     // Dispatch on the chat's OWN mode provider (what its normal replies use),
     // not the daemon default. A codex-default install whose chat is solo-claude
     // would otherwise push via codex — a provider the chat never uses, which on
@@ -422,7 +417,35 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     // user session is obviously already busy. The runExclusive below closes
     // the residual race window this check alone can't — see the comment on
     // it just below.
-    if (deps.boot.sessionManager.isInFlight({ alias: proj.alias, providerId, chatId })) {
+    const inFlight = deps.boot.sessionManager.isInFlight({ alias: proj.alias, providerId, chatId })
+    return { blocked: inFlight ? 'session_in_flight' : null, proj, tier, providerId }
+  }
+
+  /** 判断这一步用的薄壳:能不能发?不能就给个理由。 */
+  const dispatchBlockedReason = (chatId: string): string | null => resolveDispatch(chatId).blocked
+
+  /**
+   * Resolves the chat's session (project/tier/provider), checks the
+   * in-flight guard, acquires the handle, runs `claim()` (write the
+   * at-most-once marker BEFORE dispatch — see the at-most-once note below),
+   * then dispatches `buildText()`. Shared by the agenda and gap branches so
+   * both get the same session-isolation + claim-before-dispatch contract.
+   */
+  async function dispatchToChat(
+    chatId: string,
+    args: { claim: () => void; buildText: () => string },
+  ): Promise<void> {
+    const gate = resolveDispatch(chatId)
+    if (gate.blocked === 'wechat_degraded') {
+      deps.log('COMPANION', `chat=${chatId} skipped: wechat connection degraded`)
+      return
+    }
+    const { proj, tier, providerId } = gate
+    if (tier !== 'admin') {
+      deps.log('COMPANION', `chat=${chatId} is non-admin tier (${tier}); push tick will run with reduced capabilities`)
+    }
+    const tierProfile = TIER_PROFILES[tier]
+    if (gate.blocked === 'session_in_flight') {
       deps.log('SCHED', `[companion] skipping push tick: user session in-flight (alias=${proj.alias} provider=${providerId} chat=${chatId})`)
       return // leave the item pending — retry next tick
     }
@@ -479,7 +502,9 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     ctx: { defaultChatId: string | undefined; nowIso: string; today: string; messagesStore: MessagesStore },
   ): Promise<void> {
     const { defaultChatId, nowIso, today, messagesStore } = ctx
-    const level = careLevel(chatId, deps.chatPrefs.get(chatId), defaultChatId)
+    // 一拍一次:care 档、打猎 / 串门开关都从同一份 prefs 读(store 可能是磁盘)。
+    const prefs = deps.chatPrefs.get(chatId)
+    const level = careLevel(chatId, prefs, defaultChatId)
     if (level === 'off') return // care off = master proactive kill-switch: no agenda/gap/hunt sends (別烦我 silences everything); hunt's own pref only gates hunt within a care-enabled chat
 
     const lastInboundAtIso = (await messagesStore.latestInboundTs(chatId)) ?? undefined
@@ -576,12 +601,22 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     // 候选由代码算(三次 shouldSpeak,冷却 / care 门 / 无回复暂停一律不变);
     // 模型只能在候选里选一个或选 none。没有模型 / 超时 / 解析失败 → 固定顺序。
     const socialWired = !!deps.boot.social?.penpal
-    const { candidates, rejected } = computeCandidates({
+    const { candidates: allCandidates, rejected } = computeCandidates({
       isOwnerChat: chatId === defaultChatId, level,
-      prefs: deps.chatPrefs.get(chatId), socialWired, nowIso, ledger, lastInboundAtIso,
+      prefs, socialWired, nowIso, ledger, lastInboundAtIso,
     }, shouldSpeak)
     for (const r of rejected) deps.log('CARE', `skip chat=${chatId} kind=${r.action} reason=${r.reason}`)
-    if (candidates.length === 0) return
+    if (allCandidates.length === 0) return
+
+    // 发不出去就别先烧模型:断线 / 会话在忙的时候,微信那三件事(打猎、问候)
+    // 反正到不了主人手里(memory: no-retry-storm-when-disconnected)。串门是
+    // 例外 —— 它走笔友信道,不是一条微信,链路断了照样能出门。
+    const blocked = dispatchBlockedReason(chatId)
+    let candidates = allCandidates
+    if (blocked) {
+      candidates = allCandidates.filter(c => c.action === 'visit')
+      if (candidates.length === 0) { deps.log('PLAN', `skip chat=${chatId} reason=${blocked}`); return }
+    }
 
     const today10 = formatLocal(nowIso).slice(0, 10)
     const nowMs = Date.parse(nowIso)
@@ -594,11 +629,20 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       try { appendPlanLog(deps.stateDir, today10, { at: nowIso, chatId, candidates: candidates.map(c => c.action), decision, why, source }) }
       catch (err) { deps.log('PLAN', `plan-log 写不进去(不影响这一拍): ${errMsg(err)}`) }
     }
+    /**
+     * 先做,做完才记 —— 台账写的是「做过了」,不是「打算做」。真发那一步还有
+     * 自己的闸(断线 / 会话在忙),记在前面就会把没发出去的一拍记成发过了,
+     * 下一拍的退避与 earlierToday 都跟着骗人。做砸了也要记(标 `(failed) `),
+     * 然后照抛 —— 上层每个 chat 各自 catch。
+     */
+    const runAndRecord = async (action: PlanAction, why: string, source: PlanLogEntry['source'], target?: string) => {
+      try { await run(action, target) } catch (err) { record(action, `(failed) ${why}`, source); throw err }
+      record(action, why, source)
+    }
     const fallback = async (reason: string) => {
       const pick = pickFallback(candidates)!
       deps.log('PLAN', `fallback chat=${chatId} reason=${reason} → ${pick}`)
-      record(pick, `fallback:${reason}`, 'fallback')
-      await run(pick)
+      await runAndRecord(pick, `fallback:${reason}`, 'fallback')
     }
 
     const evaluate = deps.planEval ?? deps.boot.registry.getCheapEval() ?? null
@@ -607,28 +651,36 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     const earlier = readPlanLog(deps.stateDir, today10)
     if (!shouldReask(earlier, chatId, nowMs)) { deps.log('PLAN', `skip chat=${chatId} reason=backoff`); return }
 
-    const proven = socialWired ? (deps.boot.social!.penpal.provenChannels?.() ?? []) : []
+    // `provenChannels?.()` 的可选调用是有用的:老的 penpal 接线和测试夹具
+    // 没有这个方法。整段再包一层 try —— 挑串门目标失败绝不能掀翻这一拍。
+    let proven: Array<{ id: string; label: string }> = []
+    try { proven = socialWired ? (deps.boot.social!.penpal.provenChannels?.() ?? []) : [] } catch { proven = [] }
     const planCtx = await buildContext()
     deps.log('PLAN', `ask chat=${chatId} candidates=[${candidates.map(c => c.action).join(',')}]`)
 
     let raw: string
+    let timer: ReturnType<typeof setTimeout> | undefined
     try {
       raw = await Promise.race([
         evaluate(buildPlanPrompt(planCtx)),
-        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), PLAN_EVAL_TIMEOUT_MS)),
+        // 超时也要收摊:问成功了还挂着一个 20 秒的定时器,会把事件循环
+        // (重启、测试拆台)按住不放。
+        new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), PLAN_EVAL_TIMEOUT_MS) }),
       ])
     } catch (err) {
       await fallback(err instanceof Error && err.message === 'timeout' ? 'timeout' : 'error')
       return
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
     }
     const parsed = parsePlan(raw)
     if (!parsed.ok) { await fallback(`parse:${parsed.reason}`); return }
     const { plan, downgraded } = constrainPlan(parsed.plan, candidates, proven.map(p => p.id))
     if (downgraded) deps.log('PLAN', `downgraded chat=${chatId} action=${parsed.plan.action} → none`)
     deps.log('PLAN', `→ ${plan.action}${plan.target ? ` target=${plan.target}` : ''} (${plan.why})`)
-    record(plan.action, plan.why, downgraded ? 'downgraded' : 'model')
-    if (plan.action === 'none') return
-    await run(plan.action, plan.target)
+    // none / 降级:什么都不会跑,当场记。
+    if (plan.action === 'none') { record('none', plan.why, downgraded ? 'downgraded' : 'model'); return }
+    await runAndRecord(plan.action, plan.why, 'model', plan.target)
 
     /**
      * 给伙伴看的处境。只读,每个来源各自 try/catch —— 判断这一步永远不该
@@ -643,15 +695,16 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
           journal = { unread: sum.unread, latest: deps.huntStore.list(PLAN_JOURNAL_ITEMS).map(x => ({ kind: x.kind, title: x.title, ts: x.ts })) }
         }
       } catch { journal = null }
+      // 一格一个 try:某个子服务抛了,不该把另外两格也抹成「没接线」。
       let social: PlanContext['social'] = null
-      try {
-        const so = deps.boot.social
-        if (so) social = {
-          openWishes: so.wish.list().filter(w => w.effective === 'open').length,
-          pendingOffers: so.intro.offers().length,
-          provenChannels: proven,
-        }
-      } catch { social = null }
+      const so = deps.boot.social
+      if (so) {
+        let openWishes = 0
+        try { openWishes = so.wish.list().filter(w => w.effective === 'open').length } catch { openWishes = 0 }
+        let pendingOffers = 0
+        try { pendingOffers = so.intro.offers().length } catch { pendingOffers = 0 }
+        social = { openWishes, pendingOffers, provenChannels: proven }
+      }
       let observations: PlanContext['observations'] = []
       try {
         const rows = await makeObservationsStore(deps.db, chatId, { migrateFromFile: join(deps.stateDir, 'memory', chatId, 'observations.jsonl') }).listActive()
