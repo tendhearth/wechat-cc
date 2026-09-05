@@ -96,6 +96,13 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/social/wish/send': 'trusted',
   'POST /v1/social/wish/cancel': 'trusted',
   'GET /v1/social/wishes': 'trusted',
+  // 介绍 (spec 2026-09-04-introduction) — same trust class as the wish
+  // routes above: CLI/desktop's only credential is the daemon-wide FILE
+  // token (trusted); an admin-tiered route here would 403 every real call.
+  'POST /v1/social/intro/request': 'trusted',
+  'POST /v1/social/intro/accept': 'trusted',
+  'POST /v1/social/intro/decline': 'trusted',
+  'GET /v1/social/intro/offers': 'trusted',
   // admin — owner-only same-session power: drives a real turn on the
   // owner's own chat session and returns the reply to the caller (app
   // conversation channel, voice arc Stage 0). Same trust class as the

@@ -15,6 +15,7 @@
  */
 import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
 import type { InternalApiDeps, RouteTable } from './types'
+import type { PostcardRef } from '../../core/wish'
 import { applySocialSwitch } from '../../cli/social-enable'
 import { buildRelationships, type RelationshipInputs } from '../../core/relationships'
 import { NEIGHBORS } from '../../core/neighbors'
@@ -110,7 +111,46 @@ export function socialRoutes(deps: InternalApiDeps): RouteTable {
     },
     'GET /v1/social/wishes': async () => {
       if (!deps.social?.wish) return { status: 503, body: { error: 'social_not_wired' } }
-      return { status: 200, body: { wishes: deps.social.wish.list().map(w => ({ id: w.id, text: w.redacted, status: w.effective, created_at: w.createdAt, expires_at: w.expiresAt, sent_to: w.sentTo, replies: w.replies })) } }
+      return {
+        status: 200,
+        body: {
+          wishes: deps.social.wish.list().map(w => {
+            const base = { id: w.id, text: w.redacted, status: w.effective, created_at: w.createdAt, expires_at: w.expiresAt, sent_to: w.sentTo, replies: w.replies }
+            const postcards = w.postcards as Array<PostcardRef & { viaLabel: string }> | undefined
+            return postcards
+              ? { ...base, postcards: postcards.map(p => ({ reply_id: p.replyId, via_label: p.viaLabel, preview: p.preview, at: p.at, requested: !!p.myIntro })) }
+              : base
+          }),
+        },
+      }
+    },
+    // 介绍(spec 2026-09-04-introduction)。handler 形状照上面的 wish/* 三兄弟:
+    // 缺线 → 503;body 里的 reply_id 非空字符串校验 → 400;service 已经把结果
+    // 归一成 {ok:true, replyId} | {ok:false, reason},这里只是转成 snake_case。
+    'POST /v1/social/intro/request': async (_q, body) => {
+      if (!deps.social?.intro) return { status: 503, body: { error: 'social_not_wired' } }
+      const replyId = ((body ?? {}) as { reply_id?: unknown }).reply_id
+      if (typeof replyId !== 'string' || replyId === '') return { status: 400, body: { error: 'missing_reply_id' } }
+      const r = await deps.social.intro.request(replyId)
+      return { status: 200, body: r.ok ? { ok: true, reply_id: r.replyId } : r }
+    },
+    'POST /v1/social/intro/accept': async (_q, body) => {
+      if (!deps.social?.intro) return { status: 503, body: { error: 'social_not_wired' } }
+      const replyId = ((body ?? {}) as { reply_id?: unknown }).reply_id
+      if (typeof replyId !== 'string' || replyId === '') return { status: 400, body: { error: 'missing_reply_id' } }
+      const r = await deps.social.intro.accept(replyId)
+      return { status: 200, body: r.ok ? { ok: true, reply_id: r.replyId } : r }
+    },
+    'POST /v1/social/intro/decline': async (_q, body) => {
+      if (!deps.social?.intro) return { status: 503, body: { error: 'social_not_wired' } }
+      const replyId = ((body ?? {}) as { reply_id?: unknown }).reply_id
+      if (typeof replyId !== 'string' || replyId === '') return { status: 400, body: { error: 'missing_reply_id' } }
+      const r = await deps.social.intro.decline(replyId)
+      return { status: 200, body: r.ok ? { ok: true, reply_id: r.replyId } : r }
+    },
+    'GET /v1/social/intro/offers': async () => {
+      if (!deps.social?.intro) return { status: 503, body: { error: 'social_not_wired' } }
+      return { status: 200, body: { offers: deps.social.intro.offers().map(o => ({ reply_id: o.replyId, hint: o.hint, via_label: o.viaLabel, at: o.at })) } }
     },
     // 觅食台 P2 Task 3 — inbound on/off toggle over a2a_listen, replacing the
     // "hand-edit agent-config.json" instruction. restart_required: true

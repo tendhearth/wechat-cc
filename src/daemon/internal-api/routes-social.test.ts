@@ -92,3 +92,31 @@ describe('POST /v1/social/enable —— 桌面端的社交总开关', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })
+
+describe('/v1/social/intro/*', () => {
+  const intro = {
+    request: vi.fn(async (r: string) => (r === 'ab' ? { ok: true as const, replyId: 'ab12cd34' } : { ok: false as const, reason: 'not_found' as const })),
+    accept: vi.fn(async () => ({ ok: true as const, replyId: 'ab12cd34' })),
+    decline: vi.fn(async () => ({ ok: true as const, replyId: 'ab12cd34' })),
+    offers: vi.fn(() => [{ replyId: 'ab12cd34', hint: '找搭子', viaLabel: '阿A', at: 't' }]),
+  }
+  const wish = { list: vi.fn(() => [{ id: 'w1', text: 'x', redacted: 'x', status: 'open' as const, effective: 'open' as const, createdAt: 'c', sentAt: 's', expiresAt: 'e', sentTo: 1, replies: 1,
+    postcards: [{ replyId: 'ab12cd34', via: 'me>A', viaLabel: '阿A', at: 't', preview: 'p', myIntro: { channelId: 'c', pubkey: 'P', privkey: 'K', bearer: 'B', at: 't' } }] }]), propose: vi.fn(), send: vi.fn(), cancel: vi.fn(), resolveRef: vi.fn() }
+  const r = socialRoutes({ social: { wish, intro } } as unknown as InternalApiDeps)
+  it('request / accept / decline:body reply_id → snake_case 结果;缺 → 400', async () => {
+    expect((await r['POST /v1/social/intro/request']!(qs(), { reply_id: 'ab' })).body).toEqual({ ok: true, reply_id: 'ab12cd34' })
+    expect((await r['POST /v1/social/intro/request']!(qs(), { reply_id: 'zz' })).body).toEqual({ ok: false, reason: 'not_found' })
+    expect((await r['POST /v1/social/intro/accept']!(qs(), { reply_id: 'ab' })).body).toEqual({ ok: true, reply_id: 'ab12cd34' })
+    expect((await r['POST /v1/social/intro/decline']!(qs(), { reply_id: 'ab' })).body).toEqual({ ok: true, reply_id: 'ab12cd34' })
+    expect((await r['POST /v1/social/intro/request']!(qs(), {})).status).toBe(400)
+  })
+  it('offers 与 wishes 的 postcards 都是 snake_case;requested = 有 myIntro,且 myIntro 不外泄', async () => {
+    expect((await r['GET /v1/social/intro/offers']!(qs(), undefined)).body).toEqual({ offers: [{ reply_id: 'ab12cd34', hint: '找搭子', via_label: '阿A', at: 't' }] })
+    const w = (await r['GET /v1/social/wishes']!(qs(), undefined)).body as { wishes: Array<{ postcards: unknown[] }> }
+    expect(w.wishes[0]!.postcards).toEqual([{ reply_id: 'ab12cd34', via_label: '阿A', preview: 'p', at: 't', requested: true }])
+  })
+  it('没接 → 503;四条 tier trusted', async () => {
+    expect((await socialRoutes({ social: { wish } } as unknown as InternalApiDeps)['POST /v1/social/intro/request']!(qs(), { reply_id: 'ab' })).status).toBe(503)
+    for (const k of ['POST /v1/social/intro/request', 'POST /v1/social/intro/accept', 'POST /v1/social/intro/decline', 'GET /v1/social/intro/offers']) expect(minTierFor(k)).toBe('trusted')
+  })
+})
