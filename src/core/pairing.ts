@@ -135,6 +135,110 @@ export function isAdvertisableUrl(url: string): boolean {
   return true
 }
 
+export interface CardDeps {
+  selfId: () => string
+  name: () => string
+  url?: () => string | undefined
+  self: { mailbox_addr: string; mailbox_enc_pub: string; relays: string[] }
+}
+
+/** 造一张自己的名片(配对码和介绍共用)。 */
+export function buildOwnCard(deps: CardDeps, role: PairCard['role'], nonce: string, bearer: string, chan: { channelId: string; pubkey: string }): PairCard {
+  // 只广播对方**真的能拨到**的地址 —— 见 isAdvertisableUrl。
+  const raw = deps.url?.()
+  const u = raw && isAdvertisableUrl(raw) ? raw : undefined
+  return {
+    v: 2, role, nonce,
+    self_id: deps.selfId(), name: deps.name(),
+    ...(u ? { url: u } : {}),
+    mailbox_addr: deps.self.mailbox_addr,
+    mailbox_enc_pub: deps.self.mailbox_enc_pub,
+    relays: deps.self.relays,
+    bearer,
+    channel_id: chan.channelId,
+    channel_pub: chan.pubkey,
+  }
+}
+
+export interface AdoptDeps {
+  registry: A2ARegistry
+  channelStore: Pick<import('./penpal-channel-store').ChannelStore, 'create' | 'setPeerHandle' | 'setStatus' | 'list' | 'get'>
+  log?: (msg: string) => void
+}
+
+/**
+ * 采纳一张对方的名片 = 写注册表(transport mailbox,bearer 交叉)+ 开/补
+ * `<rowPrefix>:<nonce>` 的 open 信道。配对码和介绍共用。
+ *
+ * spec §5/§6: outbound_api_key = card.bearer(对方给我们的钥匙),inbound_api_key
+ * = 我们自己铸的那把(对方存成它的 outbound)。按 self_id 覆盖重写,但**仅当**
+ * 真是重新配对(同 self_id 且同 mailbox_addr)。同 id + 不同/缺 mailbox_addr
+ * 是撞在旧版共享 'wechat-cc' id 上的无关对端(祖父规则,spec §2)——覆盖会
+ * 误伤它,所以拒绝写入(id_conflict)。
+ *
+ * `nonce` 必须是 INITIATOR 的 nonce(不是「card 那一方自己的」nonce)—— 两边
+ * 各自的调用要落到*同一个* row id 上才有意义。initiator 一侧本地就知道;
+ * acceptor 一侧读的是它验过的 initiator 名片的 nonce,两者恰好是同一个字符串。
+ * 用 acceptor 自己那张名片的 nonce 会让两边各建一个不同 id 的行 —— 这条信道
+ * 的意义就没了。
+ *
+ * **同一对端已经有 open 行也照建**(不因为「已有」就跳过)—— 两边是各自判断
+ * 的,一侧留着旧行、另一侧没有(数据库重建过、行被删过),按「已有就跳过」
+ * 会开出一条只有一头存在的信道。按 nonce 建行则两侧永远对称;「往哪投」的
+ * 收敛交给 `primaryChannels`(penpal-channel-store.ts):按 peer_agent_id 取
+ * 最新的一条 open。
+ *
+ * 开信道的三步(`create → setPeerHandle → setStatus`)不是原子的:内部
+ * try/catch 包一层,失败只记日志——注册表已经写好了,信道开不开不该拖累
+ * 「配对/介绍成功」这个事实。幂等:`rowId` 已存在(比如上次 `create` 成功
+ * 但后面的调用抛了,行还停在 `pending`)就直接补 setPeerHandle + setStatus,
+ * 不重新 create(会撞主键)。
+ */
+export function adoptPeerCard(
+  deps: AdoptDeps,
+  card: PairCard,
+  mine: { channelId: string; pubkey: string; privkey: string },
+  myMintedKey: string,
+  nonce: string,
+  rowPrefix: 'pair' | 'intro',
+): { ok: true; rowId: string; channelOpened: boolean } | { ok: false; reason: 'id_conflict' } {
+  const existing = deps.registry.get(card.self_id)
+  if (existing && existing.mailbox_addr !== card.mailbox_addr) return { ok: false, reason: 'id_conflict' }
+  const rec: A2AAgentRecord = {
+    id: card.self_id,
+    name: card.name,
+    ...(card.url ? { url: card.url } : {}),
+    inbound_api_key: myMintedKey,
+    outbound_api_key: card.bearer,
+    capabilities: [],
+    paused: false,
+    transport: 'mailbox',
+    // 社交层的朋友 bot —— **绝不**授权在我这台机器上跑东西。
+    may_exec: false,
+    mailbox_addr: card.mailbox_addr,
+    mailbox_enc_pub: card.mailbox_enc_pub,
+    relays: card.relays,
+  }
+  if (existing) deps.registry.remove(rec.id) // full overwrite of the true re-pair (§6)
+  deps.registry.add(rec)
+
+  const rowId = `${rowPrefix}:${nonce}`
+  let channelOpened = false
+  try {
+    const older = deps.channelStore.list().find(r => r.status === 'open' && r.peer_agent_id === card.self_id && r.id !== rowId)
+    if (older) deps.log?.(`${rowPrefix}: peer ${card.self_id} already had an open channel ${older.id}; new ${rowPrefix} channel ${rowId} created alongside`)
+    if (!deps.channelStore.get(rowId)) {
+      deps.channelStore.create({ id: rowId, seekId: rowId, myPrivkey: mine.privkey, myPubkey: mine.pubkey, myChannelId: mine.channelId, degree: 1, peerAgentId: card.self_id })
+    }
+    deps.channelStore.setPeerHandle(rowId, { pubkey: card.channel_pub, channel_id: card.channel_id, mailbox: { addr: card.mailbox_addr, enc_pub: card.mailbox_enc_pub, relays: card.relays } })
+    deps.channelStore.setStatus(rowId, 'open')
+    channelOpened = true
+  } catch (e) {
+    deps.log?.(`${rowPrefix}: registry written but channel open failed for ${card.self_id}: ${String(e)}`)
+  }
+  return { ok: true, rowId, channelOpened }
+}
+
 export function makePairing(deps: PairingDeps): PairingEngine {
   // Fail fast at construction, not with a silent `relays[0]!` non-null
   // assertion that would only blow up (as `undefined` in a URL string) the
@@ -146,23 +250,6 @@ export function makePairing(deps: PairingDeps): PairingEngine {
   const ttlMs = deps.ttlMs ?? 600_000
   const rendezvousRelay = deps.self.relays[0]!
   let active: ActiveInitiator | null = null
-
-  function ownCard(role: PairCard['role'], nonce: string, bearer: string, chan: { channelId: string; pubkey: string }): PairCard {
-    // 只广播对方**真的能拨到**的地址 —— 见 isAdvertisableUrl。
-    const raw = deps.url?.()
-    const u = raw && isAdvertisableUrl(raw) ? raw : undefined
-    return {
-      v: 2, role, nonce,
-      self_id: deps.selfId(), name: deps.name(),
-      ...(u ? { url: u } : {}),
-      mailbox_addr: deps.self.mailbox_addr,
-      mailbox_enc_pub: deps.self.mailbox_enc_pub,
-      relays: deps.self.relays,
-      bearer,
-      channel_id: chan.channelId,
-      channel_pub: chan.pubkey,
-    }
-  }
 
   // spec §5/§6: outbound_api_key = card.bearer (peer's key for us), inbound_api_key
   // = the key WE minted (peer stores it as THEIR outbound). Overwrite-by-self_id,
@@ -179,62 +266,6 @@ export function makePairing(deps: PairingDeps): PairingEngine {
     return !!existing && existing.mailbox_addr !== card.mailbox_addr
   }
 
-  function writePeerFromCard(card: PairCard, myMintedKey: string): { ok: true } | { ok: false; reason: 'id_conflict' } {
-    const existing = deps.registry.get(card.self_id)
-    if (existing && existing.mailbox_addr !== card.mailbox_addr) return { ok: false, reason: 'id_conflict' }
-    const rec: A2AAgentRecord = {
-      id: card.self_id,
-      name: card.name,
-      ...(card.url ? { url: card.url } : {}),
-      inbound_api_key: myMintedKey,
-      outbound_api_key: card.bearer,
-      capabilities: [],
-      paused: false,
-      transport: 'mailbox',
-      // 社交层的朋友 bot —— **绝不**授权在我这台机器上跑东西。
-      may_exec: false,
-      mailbox_addr: card.mailbox_addr,
-      mailbox_enc_pub: card.mailbox_enc_pub,
-      relays: card.relays,
-    }
-    if (existing) deps.registry.remove(rec.id) // full overwrite of the true re-pair (§6)
-    deps.registry.add(rec)
-    return { ok: true }
-  }
-
-  /**
-   * 配对完成即开信道:双方各建一条 open 的 penpal_channel,peer_agent_id 互指。
-   *
-   * **同一对端已经有 open 行也照建**(2026-09-04 改)。原来是「已有就跳过」,
-   * 看着省事,实际上两边是**各自**判断的:一侧留着上次配对的旧行、另一侧没有
-   * (数据库重建过、行被删过),于是这一侧跳过、那一侧新建 —— 开出一条只有
-   * 一头存在的信道,谁都不知道,信却再也送不到。按 nonce 建行则两侧永远对称。
-   * 旧的 open 行保留(它可能还有没读完的信);「往哪投」的收敛交给
-   * `primaryChannels`(penpal-channel-store.ts):按 peer_agent_id 取最新的一条。
-   *
-   * `nonce` 必须是 initiator 的 nonce(不是「card 那一方自己的」nonce)—— 两边
-   * 各自持有的 openPairChannel 调用要落到*同一个* row id 上才有意义。initiator
-   * 一侧本地就知道(`cur.nonce`);acceptor 一侧读的是它验过的 initiator 名片
-   * 的 nonce(`initiator.nonce`,两者恰好是同一个字符串)。用 acceptor 自己那
-   * 张名片的 nonce 会让两边各建一个不同 id 的行 —— 这条信道的意义就没了。
-   *
-   * 幂等,仿 wire-social.ts 的 `channel.openLocal`:`rowId` 已存在(比如上次
-   * `create` 成功但后面的调用抛了,行还停在 `pending`)就直接补 setPeerHandle
-   * + setStatus,不重新 create(会撞主键)。`create → setPeerHandle →
-   * setStatus` 这三步本身不是原子的 —— 调用方(start()/accept())要用
-   * try/catch 包一层,防中间失败半途而废。
-   */
-  function openPairChannel(card: PairCard, mine: { channelId: string; pubkey: string; privkey: string }, nonce: string): void {
-    const rowId = `pair:${nonce}`
-    const older = deps.channelStore.list().find(r => r.status === 'open' && r.peer_agent_id === card.self_id && r.id !== rowId)
-    if (older) deps.log?.(`pair: peer ${card.self_id} already had an open channel ${older.id}; new pair channel ${rowId} created alongside`)
-    if (!deps.channelStore.get(rowId)) {
-      deps.channelStore.create({ id: rowId, seekId: rowId, myPrivkey: mine.privkey, myPubkey: mine.pubkey, myChannelId: mine.channelId, degree: 1, peerAgentId: card.self_id })
-    }
-    deps.channelStore.setPeerHandle(rowId, { pubkey: card.channel_pub, channel_id: card.channel_id, mailbox: { addr: card.mailbox_addr, enc_pub: card.mailbox_enc_pub, relays: card.relays } })
-    deps.channelStore.setStatus(rowId, 'open')
-  }
-
   const ID_CONFLICT_MSG = '对方 bot 使用旧版共享身份且与你已有的朋友撞名——请让对方升级出唯一身份后重试'
 
   // Cards come back in cursor-ASCENDING order (relay returns items ascending; no
@@ -246,7 +277,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
   // This is the SINGLE admission point for anything claiming to be a
   // PairCard — every field the rest of the engine trusts without further
   // checking (mailbox_addr for the id_conflict guard in conflicts()/
-  // writePeerFromCard, self_id as the registry key, relays/mailbox_enc_pub
+  // adoptPeerCard, self_id as the registry key, relays/mailbox_enc_pub
   // as what gets written into the peer record) must be validated here, not
   // trusted from a bare `as PairCard` cast. A hostile or malformed card can
   // omit mailbox_addr at runtime despite the compile-time type saying it's
@@ -258,27 +289,25 @@ export function makePairing(deps: PairingDeps): PairingEngine {
   // at all. self_id is additionally checked against the registry's own slug
   // regex (agent-config.ts's A2AAgentRecord.id) so a non-slug id can never
   // pass registry.add() only to be safeParse-dropped by loadAgentConfig on
-  // the next read (registry/config divergence).
-  const SELF_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
+  // the next read (registry/config divergence) — this is the SAME regex
+  // isValidPairCard() checks module-level, so patching v/channel below and
+  // delegating to it keeps that guarantee.
   /**
    * `null` = 合规;`'pre_v2'` = 别的都对,只差 `v === 2` 或那两个信道字段 ——
    * 一台还没升级的对端(v1 名片);`'invalid'` = 别的任何毛病(垃圾/敌意)。
    * 分开是为了能对 pre-v2 说一句人话:静默丢弃时,两边的主人都以为是「配对码
    * 过期了」,谁也不会想到去升级对面那台。
+   *
+   * 判断「别的都对」时把 v/信道字段 patch 成合规占位值再丢给 isValidPairCard —
+   * 这样两处校验对「别的」字段的要求永远是同一份代码,不会跑偏。
    */
   function cardProblem(card: unknown): 'pre_v2' | 'invalid' | null {
     if (!card || typeof card !== 'object') return 'invalid'
     const c = card as Record<string, unknown>
-    if (c.role !== 'initiator' && c.role !== 'acceptor') return 'invalid'
-    if (typeof c.self_id !== 'string' || !SELF_ID_RE.test(c.self_id)) return 'invalid'
-    if (typeof c.name !== 'string' || c.name.length === 0) return 'invalid'
-    if (typeof c.bearer !== 'string' || c.bearer.length === 0) return 'invalid'
-    if (typeof c.mailbox_addr !== 'string' || c.mailbox_addr.length === 0) return 'invalid'
-    if (typeof c.mailbox_enc_pub !== 'string' || c.mailbox_enc_pub.length === 0) return 'invalid'
-    if (!Array.isArray(c.relays) || c.relays.length === 0) return 'invalid'
-    if (typeof c.nonce !== 'string' || c.nonce.length === 0) return 'invalid'
     const hasChannel = typeof c.channel_id === 'string' && c.channel_id.length > 0
       && typeof c.channel_pub === 'string' && c.channel_pub.length > 0
+    const patched = { ...c, v: 2, channel_id: hasChannel ? c.channel_id : 'x', channel_pub: hasChannel ? c.channel_pub : 'x' }
+    if (!isValidPairCard(patched)) return 'invalid'
     if (c.v !== 2 || !hasChannel) return 'pre_v2'
     return null
   }
@@ -326,7 +355,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
     // and report `expired_or_wrong` with zero diagnostics on either side. A
     // code whose card never reached the relay can never be redeemed — fail
     // loudly here instead.
-    const env = sealEnvelope({ path: '/pair', bearer: '', body: ownCard('initiator', nonce, myKey, mine) }, rv.enc_pub)
+    const env = sealEnvelope({ path: '/pair', bearer: '', body: buildOwnCard(deps, 'initiator', nonce, myKey, mine) }, rv.enc_pub)
     let dropped: boolean
     try {
       dropped = await deps.client.drop(rendezvousRelay, rv.addr, JSON.stringify(env))
@@ -356,15 +385,10 @@ export function makePairing(deps: PairingDeps): PairingEngine {
         // self-pair reject), not just by nonce.
         const peer = cards.find(c => c.role === 'acceptor' && c.nonce !== cur.nonce && c.self_id !== deps.selfId())
         if (peer) {
-          const write = writePeerFromCard(peer, cur.myKey)
-          if (write.ok) {
-            // 注册表已经写好了 —— 信道开不开不该拖累"配对成功"这个事实。失败
-            // 就记日志,停轮询、照常报"连上了"(不要在同一个失败上重试到 TTL,
-            // 那样注册表明明写好了却告诉用户"过期了")。
-            try { openPairChannel(peer, mine, cur.nonce) } catch (e) {
-              deps.log?.(`pair: registry written but channel open failed for ${peer.self_id}: ${String(e)}`)
-            }
-          }
+          // 注册表已经写好了 —— 信道开不开不该拖累"配对成功"这个事实,
+          // adoptPeerCard 内部已经把失败降级成 channelOpened:false + log(不要
+          // 在同一个失败上重试到 TTL,那样注册表明明写好了却告诉用户"过期了")。
+          const write = adoptPeerCard(deps, peer, mine, cur.myKey, cur.nonce, 'pair')
           stop()
           deps.notify(write.ok ? `和 ${peer.name} 的 bot 连上了 ✓ 现在可以互相觅食/写信了` : ID_CONFLICT_MSG)
           return
@@ -405,7 +429,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
     // rollback path needed. (Writing first and rolling back on drop failure
     // would need an explicit registry.remove() undo and risks a
     // half-committed peer if THAT itself fails.)
-    const env = sealEnvelope({ path: '/pair', bearer: '', body: ownCard('acceptor', deps.genNonce(), myKey, mine) }, rv.enc_pub)
+    const env = sealEnvelope({ path: '/pair', bearer: '', body: buildOwnCard(deps, 'acceptor', deps.genNonce(), myKey, mine) }, rv.enc_pub)
     let dropped: boolean
     try {
       dropped = await deps.client.drop(rendezvousRelay, rv.addr, JSON.stringify(env))
@@ -418,15 +442,13 @@ export function makePairing(deps: PairingDeps): PairingEngine {
       return { ok: false, reason: 'relay_drop_failed' }
     }
 
-    const write = writePeerFromCard(initiator, myKey)
-    // defensive: re-checked at write time too. Sync failure — caller renders its own reply.
+    // defensive: re-checked at write time too (adoptPeerCard does its own
+    // id_conflict check on the registry). 注册表已经写好了就算配对本身成功,
+    // 信道开不开是另一回事(可以靠重新配对补救)—— adoptPeerCard 内部把那
+    // 失败降级成 channelOpened:false + log,绝不让它变成把已经成立的配对
+    // 结果吞掉的未捕获 rejection。
+    const write = adoptPeerCard(deps, initiator, mine, myKey, initiator.nonce, 'pair')
     if (!write.ok) return { ok: false, reason: 'id_conflict' }
-    // 注册表已经写好了 —— 配对本身算成功,信道开不开是另一回事(可以靠重新
-    // 配对补救)。失败只记日志,绝不让这里的抛出变成未捕获的 rejection、把
-    // 已经成立的配对结果吞掉。
-    try { openPairChannel(initiator, mine, initiator.nonce) } catch (e) {
-      deps.log?.(`pair: registry written but channel open failed for ${initiator.self_id}: ${String(e)}`)
-    }
 
     return { ok: true, peer: { self_id: initiator.self_id, name: initiator.name } }
   }

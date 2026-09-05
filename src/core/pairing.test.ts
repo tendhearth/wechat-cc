@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makePairing, type PairingDeps, type PairCard, type PairScheduleHandle, isAdvertisableUrl } from './pairing'
+import { makePairing, type PairingDeps, type PairCard, type PairScheduleHandle, isAdvertisableUrl, adoptPeerCard, buildOwnCard } from './pairing'
 import { primaryChannels } from './penpal-channel-store'
 import { deriveRendezvous } from './pairing-crypto'
 import { sealEnvelope } from './mailbox-crypto'
@@ -502,5 +502,37 @@ describe('配对即开信道(spec 2026-09-04-wish-postcard §2)', () => {
     expect(chanB.rows).toHaveLength(1) // 没有 create 第二条(会撞主键)
     expect(chanB.rows[0]).toMatchObject({ id: 'pair:n0nce', status: 'open', peerAgentId: 'cc-aaaa0001' })
     expect(chanB.rows[0]!.peer).toMatchObject({ mailbox: { addr: 'MA', enc_pub: 'EA' } })
+  })
+})
+
+describe('adoptPeerCard / buildOwnCard —— 配对码和介绍共用的原语', () => {
+  const card = { v: 2 as const, role: 'acceptor' as const, nonce: 'nn', self_id: 'cc-peer00001', name: 'Peer', mailbox_addr: 'MP', mailbox_enc_pub: 'EP', relays: ['https://r/mailbox'], bearer: 'p'.repeat(16), channel_id: 'pc', channel_pub: 'PPUB' }
+  const mine = { channelId: 'mc', pubkey: 'MPUB', privkey: 'MPRIV' }
+  it('intro 前缀:写注册表 + 开 intro:<nonce> 的 open 行,句柄是对方的', () => {
+    const registry = makeFakeRegistry(); const chan = makeFakeChannelStore()
+    const r = adoptPeerCard({ registry, channelStore: chan }, card, mine, 'k'.repeat(16), 'reply777', 'intro')
+    expect(r).toEqual({ ok: true, rowId: 'intro:reply777', channelOpened: true })
+    expect(registry.get('cc-peer00001')).toMatchObject({ transport: 'mailbox', outbound_api_key: 'p'.repeat(16), inbound_api_key: 'k'.repeat(16), may_exec: false })
+    expect(chan.rows[0]).toMatchObject({ id: 'intro:reply777', peerAgentId: 'cc-peer00001', status: 'open', myChannelId: 'mc' })
+    expect(chan.rows[0]!.peer).toMatchObject({ channel_id: 'pc', pubkey: 'PPUB', mailbox: { addr: 'MP' } })
+  })
+  it('id_conflict(同 id 不同信箱)→ 不写任何东西', () => {
+    const registry = makeFakeRegistry(); const chan = makeFakeChannelStore()
+    registry.records.set('cc-peer00001', { id: 'cc-peer00001', mailbox_addr: 'OTHER' } as never)
+    expect(adoptPeerCard({ registry, channelStore: chan }, card, mine, 'k', 'n', 'intro')).toEqual({ ok: false, reason: 'id_conflict' })
+    expect(chan.rows).toHaveLength(0)
+  })
+  it('信道开失败 → 注册表仍写成,返回 channelOpened:false 并 log', () => {
+    const registry = makeFakeRegistry(); const chan = makeFakeChannelStore(); const logs: string[] = []
+    chan.setStatus = () => { throw new Error('disk full') }
+    const r = adoptPeerCard({ registry, channelStore: chan, log: (m) => logs.push(m) }, card, mine, 'k', 'n', 'pair')
+    expect(r).toMatchObject({ ok: true, channelOpened: false })
+    expect(registry.get('cc-peer00001')).not.toBe(null)
+    expect(logs.join('\n')).toContain('channel open failed')
+  })
+  it('buildOwnCard:v2、带信道字段、不带不可达 url', () => {
+    const c = buildOwnCard({ selfId: () => 'cc-me00000001', name: () => 'Me', url: () => 'http://127.0.0.1:1', self: { mailbox_addr: 'MM', mailbox_enc_pub: 'EM', relays: ['https://r/mailbox'] } }, 'initiator', 'n1', 'b'.repeat(16), { channelId: 'c1', pubkey: 'P1' })
+    expect(c).toMatchObject({ v: 2, role: 'initiator', nonce: 'n1', self_id: 'cc-me00000001', channel_id: 'c1', channel_pub: 'P1', bearer: 'b'.repeat(16) })
+    expect(c.url).toBeUndefined()
   })
 })
