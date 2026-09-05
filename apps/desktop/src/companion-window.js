@@ -2,9 +2,8 @@
 // companion-window.js — CC 桌宠窗的胶水:组装 pet,接 presence / pet 两个轮询与权限卡片,窗口拖动 / 缩放 / 关闭。
 // 只调 pet 的语义接口;这里不出现任何帧文件名。
 import { createPet } from './pet/pet.js'
-import { presenceToPet } from './pet/bridge/presence-map.js'
 import { createPetPoller } from './pet/bridge/pet-poller.js'
-import { initialBridgeState, mergeIntent } from './pet/bridge/runtime-events.js'
+import { createPetBridge } from './pet/bridge/pet-bridge.js'
 import { createPermissionCard } from './pet/permission/permission-card.js'
 import { createPresencePoller } from './presence-poller.js'
 import { invokeApi } from './api.js'
@@ -20,9 +19,7 @@ const pet = await createPet({ stage, img, props, hint }, { manifestUrl: './asset
 if (new URLSearchParams(location.search).has('lab')) /** @type {any} */ (window).__pet = pet
 
 // presence(处境)+ pet 端点(在做什么)→ 一个意图(spec §5)。两个轮询各拉各的,
-// 谁回来都重算一次 —— 合并逻辑在 mergeIntent 里,这里只做接线。
-/** @type {import('./presence-poller.js').Presence | null} */
-let prev = null
+// 谁回来都重算一次 —— 有状态的合并在 pet-bridge.js 里(那儿有测试),这里只做接线。
 const poller = createPresencePoller({ invokeApi, intervalMs: 20_000 })
 const petPoller = createPetPoller({ invokeApi })
 // 权限卡片:能不能真的按下去,看的是**有没有 Tauri 运行时**(operator token 只有它拿得到),
@@ -39,19 +36,14 @@ const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {strin
   },
 })
 
-let bridge = initialBridgeState()
-let lastPresenceIntent = presenceToPet(null, null)
+const bridge = createPetBridge()
 const apply = () => {
-  const turn = petPoller.current()
-  const r = mergeIntent({ presence: lastPresenceIntent, turn, state: bridge, nowMs: Date.now() })
-  bridge = r.state
+  const r = bridge.tick(petPoller.current())
   pet.applyIntent(r.intent)
   if (r.permission) card.show(r.permission, r.permissionCount); else card.hide()
-  petPoller.setFast(bridge.form === 'lit' || (turn?.turn?.phase ?? 'idle') !== 'idle' || r.permissionCount > 0)
+  petPoller.setFast(r.fast)
 }
-// prev 只记**拉到过的真状态**:拉不到时 poller 发 DOWN_PRESENCE(unread 0),
-// 拿它当基准会让下一次拉通时凭空播一次「收到信」。
-poller.subscribe(p => { lastPresenceIntent = presenceToPet(p, prev); if (p.presence !== 'down') prev = p; apply() })
+poller.subscribe(p => { bridge.notePresence(p); apply() })
 petPoller.subscribe(() => apply())
 poller.start()
 petPoller.start()

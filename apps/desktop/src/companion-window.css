@@ -4,6 +4,9 @@
 html, body { width: 100%; height: 100%; margin: 0; background: transparent; overflow: hidden; }
 body { color: var(--ink); font-family: Geist, "PingFang SC", sans-serif; }
 button { font: inherit; }
+/* [hidden] 必须赢过任何带 display 的类(.pet-card-host 是 flex)—— 同 styles.css 的那条,
+   否则空卡片会一直占着一行画在 CC 底下。 */
+[hidden] { display: none !important; }
 
 /* minmax(0, 1fr):默认的 auto 最小值会让方形舞台自己撑住行高 —— 权限卡片一出来就把 shell 顶出窗口。 */
 .pet-shell { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); width: 100%; height: 100%; padding: 8px; }
@@ -20,12 +23,13 @@ button { font: inherit; }
 .pet-prop img { width: 100%; height: 100%; object-fit: contain; }
 .pet-badge { position: absolute; right: 4%; top: 4%; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #d9773b; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
 .pet-hint { margin: 4px 0 0; padding: 4px 8px; border-radius: 999px; background: rgba(255, 253, 247, .86); color: #7b6b5c; font-size: 11px; text-align: center; justify-self: center; }
-/* 权限卡片(spec §6)。max-height + 内部滚动:prompt 再长也只在卡片里滚,不把舞台挤出窗口。 */
-.pet-card-host { display: flex; flex-direction: column; max-height: 46%; overflow: hidden; margin-top: 6px; padding: 8px 10px; border-radius: 12px; background: rgba(255, 253, 247, .94); box-shadow: 0 6px 20px rgba(72, 51, 32, .14); font-size: 12px; }
+/* 权限卡片(spec §6)。限高必须是确定长度:百分比对着 auto 的网格行解不出来,prompt 会被压成一条缝。
+   52vh 是在最小窗口(240×300)量出来的:卡片 156 px → prompt 84 px 可滚、CC 还剩 94 px。 */
+.pet-card-host { display: flex; flex-direction: column; max-height: 52vh; overflow: hidden; margin-top: 6px; padding: 8px 10px; border-radius: 12px; background: rgba(255, 253, 247, .94); box-shadow: 0 6px 20px rgba(72, 51, 32, .14); font-size: 12px; }
 .pet-card { display: flex; flex-direction: column; min-height: 0; }
 .pet-card-title { margin: 0 0 6px; font-weight: 600; }
 .pet-card-count { opacity: .6; margin-left: 4px; }
-.pet-card-prompt { margin: 0 0 6px; max-height: 120px; overflow: auto; padding: 6px; border-radius: 6px; background: #f3efe7; font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+.pet-card-prompt { flex: 1 1 auto; min-height: 0; margin: 0 0 6px; overflow: auto; padding: 6px; border-radius: 6px; background: #f3efe7; font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
 .pet-card-actions { display: flex; gap: 6px; }
 .pet-card-actions button { flex: 1; padding: 5px 0; border: 0; border-radius: 8px; cursor: pointer; }
 .pet-card-allow { background: #d9773b; color: #fff; }
