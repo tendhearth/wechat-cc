@@ -4,6 +4,7 @@ import {
   PLAN_REASK_MS, PLAN_OBSERVATION_CHARS, PLAN_PERSONA_CHARS, PLAN_TITLE_CHARS,
   type PlanContext, type PlanLogEntry,
 } from './companion-plan'
+import { shouldSpeak } from '../daemon/companion/calibration'
 
 const NOW = '2026-05-13T02:00:00.000Z'   // 北京 10:00 周三
 const base = { isOwnerChat: true, level: 'low' as const, prefs: {}, socialWired: true, nowIso: NOW, ledger: { noReplyCount: 0 }, lastInboundAtIso: '2026-05-01T00:00:00.000Z' }
@@ -21,22 +22,22 @@ const ctx = (over: Partial<PlanContext> = {}): PlanContext => ({
 
 describe('computeCandidates', () => {
   it('主人会话、无冷却、安静不够久 → hunt 与 visit 是候选,gap 被拒并带 reason', () => {
-    const r = computeCandidates({ ...base, lastInboundAtIso: '2026-05-13T01:00:00.000Z' })
+    const r = computeCandidates({ ...base, lastInboundAtIso: '2026-05-13T01:00:00.000Z' }, shouldSpeak)
     expect(r.candidates.map(c => c.action)).toEqual(['hunt', 'visit'])
     expect(r.rejected).toEqual([{ action: 'gap', reason: 'gap_inbound_recent' }])
   })
   it('打猎冷却中 → hunt 进 rejected(hunt_cooldown),visit 仍是候选', () => {
-    const r = computeCandidates({ ...base, ledger: { noReplyCount: 0, lastHuntAtIso: '2026-05-13T00:00:00.000Z' }, lastInboundAtIso: '2026-05-13T01:00:00.000Z' })
+    const r = computeCandidates({ ...base, ledger: { noReplyCount: 0, lastHuntAtIso: '2026-05-13T00:00:00.000Z' }, lastInboundAtIso: '2026-05-13T01:00:00.000Z' }, shouldSpeak)
     expect(r.candidates.map(c => c.action)).toEqual(['visit'])
     expect(r.rejected.find(x => x.action === 'hunt')?.reason).toBe('hunt_cooldown')
   })
   it('非主人会话只可能有 gap;pref hunt=false / 社交没接线 分别拿掉 hunt / visit', () => {
-    expect(computeCandidates({ ...base, isOwnerChat: false }).candidates.map(c => c.action)).toEqual(['gap'])
-    expect(computeCandidates({ ...base, prefs: { hunt: false } }).candidates.map(c => c.action)).not.toContain('hunt')
-    expect(computeCandidates({ ...base, socialWired: false }).candidates.map(c => c.action)).not.toContain('visit')
+    expect(computeCandidates({ ...base, isOwnerChat: false }, shouldSpeak).candidates.map(c => c.action)).toEqual(['gap'])
+    expect(computeCandidates({ ...base, prefs: { hunt: false } }, shouldSpeak).candidates.map(c => c.action)).not.toContain('hunt')
+    expect(computeCandidates({ ...base, socialWired: false }, shouldSpeak).candidates.map(c => c.action)).not.toContain('visit')
   })
   it('care off → 全部被拒 care_off,候选为空', () => {
-    const r = computeCandidates({ ...base, level: 'off' })
+    const r = computeCandidates({ ...base, level: 'off' }, shouldSpeak)
     expect(r.candidates).toEqual([])
     expect(r.rejected.every(x => x.reason === 'care_off')).toBe(true)
   })

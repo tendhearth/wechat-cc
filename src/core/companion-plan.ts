@@ -5,8 +5,26 @@
  *
  * 红线:模型只能在通过了 shouldSpeak 的候选里选,或选 none;候选外一律降级。
  * 冷却 / care 档 / 无回复暂停只在 calibration.ts,这里不复制一行。
+ *
+ * 纯:不引 daemon;shouldSpeak 由调用方注入(tick-bodies 传 calibration.shouldSpeak)。
  */
-import { shouldSpeak, type CareLedgerEntry, type CareLevel } from '../daemon/companion/calibration'
+
+// 与 calibration.ts 结构一致,故意在此镜像一份,让 core 不引 daemon。
+export type CareLevel = 'off' | 'low' | 'high'
+export interface CareLedgerEntry {
+  lastProactiveAtIso?: string
+  lastHuntAtIso?: string
+  lastVisitAtIso?: string
+  noReplyCount: number
+}
+
+export type SpeakGate = (args: {
+  kind: 'hunt' | 'visit' | 'gap'
+  level: CareLevel
+  nowIso: string
+  ledger: CareLedgerEntry
+  lastInboundAtIso?: string
+}) => { ok: true } | { ok: false; reason: string }
 
 export type PlanAction = 'hunt' | 'visit' | 'gap' | 'none'
 export const PLAN_REASK_MS = 90 * 60_000
@@ -35,11 +53,11 @@ export interface CandidateInput {
   lastInboundAtIso?: string
 }
 
-export function computeCandidates(i: CandidateInput): { candidates: Candidate[]; rejected: Rejected[] } {
+export function computeCandidates(i: CandidateInput, decide: SpeakGate): { candidates: Candidate[]; rejected: Rejected[] } {
   const candidates: Candidate[] = []
   const rejected: Rejected[] = []
   const consider = (action: Exclude<PlanAction, 'none'>, level: CareLevel) => {
-    const d = shouldSpeak({ kind: action, level, nowIso: i.nowIso, ledger: i.ledger, lastInboundAtIso: i.lastInboundAtIso })
+    const d = decide({ kind: action, level, nowIso: i.nowIso, ledger: i.ledger, lastInboundAtIso: i.lastInboundAtIso })
     if (d.ok) candidates.push({ action })
     else rejected.push({ action, reason: d.reason })
   }
