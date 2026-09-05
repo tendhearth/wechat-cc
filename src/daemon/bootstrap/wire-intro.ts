@@ -34,7 +34,7 @@
  * `intro` —— 空闲自动重启不能在交叉名片发到一半时把 daemon 掐了。
  */
 import {
-  introEnvelope, parseIntroPayload, pruneIntroIndex, resolveIntroRef,
+  introEnvelope, parseIntroPayload, pruneIntroIndex, resolveIntroRef, FORWARD_PER_SENDER,
   type IntroIndex, type IntroPayload,
 } from '../../core/intro'
 import { readIntroIndex, writeIntroIndex } from '../companion/intro-memory'
@@ -96,6 +96,15 @@ export function makeIntro(deps: IntroDeps): IntroService {
     const release = holdBusy('intro')
     void fn().catch(err => log(`${what} 出错: ${errText(err)}`)).finally(release)
   }
+  /**
+   * 主人动作里那段「发信 + 落盘」。这一段也是**脱离用户会话**的活(主人在微信
+   * 里敲完「认识」就走了),空闲自动重启不能在信发出去、claim 还没写回的中间
+   * 把 daemon 掐了 —— 那会留下一个两边对不上的介绍。
+   */
+  const withBusy = async <T>(fn: () => Promise<T>): Promise<T> => {
+    const release = holdBusy('intro')
+    try { return await fn() } finally { release() }
+  }
   const send = async (chan: string, env: Envelope, what: string): Promise<boolean> => {
     try {
       const r = await deps.sendEnvelope(chan, env)
@@ -144,6 +153,9 @@ export function makeIntro(deps: IntroDeps): IntroService {
     if (!rep || !fwd) { log(`request replyId=${p.replyId} 我没转问过这条(replies/forwards 缺一)— 丢`); return true }
     if (fwd.from !== channelRowId) { log(`request replyId=${p.replyId} 不是发心愿的那条信道来的(${channelRowId} ≠ ${fwd.from})— 丢`); return true }
     if (rep.wishId !== p.wishId) { log(`request replyId=${p.replyId} 和心愿对不上(${rep.wishId} ≠ ${p.wishId})— 丢`); return true }
+    // 已经在牵这一笔了。重投一次不该把扣在手里的名片换掉(换了的话,对方点头
+    // 之后转出去的会是第二封信里那张 —— 谁都能拿这个覆盖别人的身份)。
+    if (idx.pending[p.replyId]) { log(`request replyId=${p.replyId} 已经在牵了 — 丢(不覆盖手里的名片)`); return true }
     save({ ...idx, pending: { ...idx.pending, [p.replyId]: { wishId: p.wishId, requesterChannel: channelRowId, requesterCard: p.card, targetChannel: rep.fromChannel, at: nowIso() } } })
     bg('forward', async () => {
       await send(rep.fromChannel, introEnvelope({ stage: 'forward', replyId: p.replyId, wishId: p.wishId, hint: fwd.preview }), `forward replyId=${p.replyId}`)
@@ -161,6 +173,12 @@ export function makeIntro(deps: IntroDeps): IntroService {
     if (idx.offers[p.replyId]) { log(`forward replyId=${p.replyId} 已经在台账上了 — 丢(不重复打扰主人)`); return true }
     const hint = (p.hint ?? '').trim()
     if (hint === '') { log(`forward replyId=${p.replyId} 没有 hint — 丢`); return true }
+    // 配额:一条信道同时最多压着 FORWARD_PER_SENDER 笔「等主人回话」的邀约。
+    // 没有这道闸,任何一个配过对的人都能无限地写我的台账、无限地敲我主人 ——
+    // 介绍是人情,人情有额度。答过的(点头/摇头)不占额,所以主人一回话就腾
+    // 出一个位子。
+    const waiting = Object.values(idx.offers).filter(o => o.viaChannel === channelRowId && !o.myIntro).length
+    if (waiting >= FORWARD_PER_SENDER) { log(`forward replyId=${p.replyId} ${channelRowId} 压着 ${waiting} 笔没回话的邀约 — 丢(不再打扰主人)`); return true }
     save({ ...idx, offers: { ...idx.offers, [p.replyId]: { wishId: p.wishId, viaChannel: channelRowId, hint, at: nowIso() } } })
     const short = p.replyId.slice(0, 6)
     deps.notifyOwner(`🤝 ${deps.peerLabel(channelRowId)} 的朋友(就是问「${hint}」那位)想认识你。回「同意 ${short}」或「不了 ${short}」`)
@@ -275,18 +293,20 @@ export function makeIntro(deps: IntroDeps): IntroService {
       const chan = deps.genChannel()
       const bearer = deps.mintKey()
       const card = deps.buildCard('initiator', ref.replyId, bearer, chan)
-      // **先落 myIntro 再发信**:同进程的两只伙伴之间,card 可能在 sendEnvelope
-      // 还没返回时就绕一圈回来了,那时候 claim 要是还没写,最后一跳会被丢掉。
-      writeWishes(deps.stateDir, attachMyIntro(list, ref.replyId, { ...chan, bearer, at: nowIso() }))
-      const ok = await send(ref.via, introEnvelope({ stage: 'request', replyId: ref.replyId, wishId, card }), `request replyId=${ref.replyId}`)
-      if (!ok) {
-        // 发不出去就把 claim 擦掉 —— 不然 already_requested 会把这张明信片
-        // 永远钉死在「问过了」上。重读一遍再擦:上面 await 期间别人也在写。
-        writeWishes(deps.stateDir, clearMyIntro(readWishes(deps.stateDir), ref.replyId))
-        return { ok: false, reason: 'send_failed' }
-      }
-      log(`request replyId=${ref.replyId} 发出去了 → ${ref.via}`)
-      return { ok: true, replyId: ref.replyId }
+      return withBusy(async () => {
+        // **先落 myIntro 再发信**:同进程的两只伙伴之间,card 可能在 sendEnvelope
+        // 还没返回时就绕一圈回来了,那时候 claim 要是还没写,最后一跳会被丢掉。
+        writeWishes(deps.stateDir, attachMyIntro(list, ref.replyId, { ...chan, bearer, at: nowIso() }))
+        const ok = await send(ref.via, introEnvelope({ stage: 'request', replyId: ref.replyId, wishId, card }), `request replyId=${ref.replyId}`)
+        if (!ok) {
+          // 发不出去就把 claim 擦掉 —— 不然 already_requested 会把这张明信片
+          // 永远钉死在「问过了」上。重读一遍再擦:上面 await 期间别人也在写。
+          writeWishes(deps.stateDir, clearMyIntro(readWishes(deps.stateDir), ref.replyId))
+          return { ok: false, reason: 'send_failed' }
+        }
+        log(`request replyId=${ref.replyId} 发出去了 → ${ref.via}`)
+        return { ok: true, replyId: ref.replyId }
+      })
     },
 
     async accept(offerRef) {
@@ -297,13 +317,25 @@ export function makeIntro(deps: IntroDeps): IntroService {
       const chan = deps.genChannel()
       const bearer = deps.mintKey()
       const card = deps.buildCard('acceptor', r.id, bearer, chan)
-      // 同上:claim 先落盘,card 回来才认得。发失败也不擦 —— offer 还在,
-      // 主人再点一次头会重铸一副新的盖上去。
-      save({ ...idx, offers: { ...idx.offers, [r.id]: { ...offer, myIntro: { ...chan, bearer, at: nowIso() } } } })
-      const ok = await send(offer.viaChannel, introEnvelope({ stage: 'accept', replyId: r.id, wishId: offer.wishId, card }), `accept replyId=${r.id}`)
-      if (!ok) return { ok: false, reason: 'send_failed' }
-      log(`accept replyId=${r.id} 发出去了 → ${offer.viaChannel}`)
-      return { ok: true, replyId: r.id }
+      return withBusy(async () => {
+        // 同上:claim 先落盘,card 回来才认得。
+        save({ ...idx, offers: { ...idx.offers, [r.id]: { ...offer, myIntro: { ...chan, bearer, at: nowIso() } } } })
+        const ok = await send(offer.viaChannel, introEnvelope({ stage: 'accept', replyId: r.id, wishId: offer.wishId, card }), `accept replyId=${r.id}`)
+        if (!ok) {
+          // 发不出去就把 myIntro 擦掉。`offers()` 不列有 myIntro 的(那是「在等
+          // 名片」),不擦的话这笔邀约从主人眼里消失了,他连再点一次头的机会都
+          // 没有。重读一遍再擦 —— await 期间别的信也在写这张表。
+          const cur = load()
+          const stale = cur.offers[r.id]
+          if (stale) {
+            const { myIntro: _drop, ...bare } = stale
+            save({ ...cur, offers: { ...cur.offers, [r.id]: bare } })
+          }
+          return { ok: false, reason: 'send_failed' }
+        }
+        log(`accept replyId=${r.id} 发出去了 → ${offer.viaChannel}`)
+        return { ok: true, replyId: r.id }
+      })
     },
 
     async decline(offerRef) {
@@ -311,11 +343,15 @@ export function makeIntro(deps: IntroDeps): IntroService {
       const r = resolveIntroRef(Object.keys(idx.offers), offerRef)
       if (!r.ok) return { ok: false, reason: r.reason }
       const offer = idx.offers[r.id]!
-      // 主人说了不,台账上就不该再留着(发不发得出去是另一回事)。
-      save({ ...idx, offers: without(idx.offers, r.id) })
-      const ok = await send(offer.viaChannel, introEnvelope({ stage: 'decline', replyId: r.id, wishId: offer.wishId }), `decline replyId=${r.id}`)
-      if (!ok) return { ok: false, reason: 'send_failed' }
-      return { ok: true, replyId: r.id }
+      return withBusy(async () => {
+        // **发成了才删**。先删的话,一次信道抖动就把这笔邀约从主人眼里抹掉了,
+        // 而对面还在等回话 —— 主人以为自己回绝了,人家永远收不到。
+        const ok = await send(offer.viaChannel, introEnvelope({ stage: 'decline', replyId: r.id, wishId: offer.wishId }), `decline replyId=${r.id}`)
+        if (!ok) return { ok: false, reason: 'send_failed' }
+        const cur = load()
+        save({ ...cur, offers: without(cur.offers, r.id) })
+        return { ok: true, replyId: r.id }
+      })
     },
 
     offers() {

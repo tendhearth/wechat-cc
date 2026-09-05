@@ -17,6 +17,13 @@ async function throughPostcard() {
   return { ...t, wishId: p.id, replyId: ref.replyId }
 }
 
+/** 把一笔邀约的来路改成不存在的信道 —— 演「主人回话的时候信道断了」。 */
+function breakOfferChannel(stateDir: string, replyId: string): void {
+  const idx = readIntroIndex(stateDir)
+  idx.offers[replyId]!.viaChannel = 'B>ZZ'
+  writeIntroIndex(stateDir, idx)
+}
+
 describe('介绍:两边点头就成朋友(spec 2026-09-04-introduction §3)', () => {
   it('我「认识」→ A forward(不带名片)→ B 主人一句 → B 同意 → A 交叉名片 → 双方注册表互有对方、intro:<replyId> 信道各一条、三边主人各一句', async () => {
     const t = await throughPostcard()
@@ -159,6 +166,46 @@ describe('介绍:两边点头就成朋友(spec 2026-09-04-introduction §3)', ()
     expect(await t.me.intro!.request(t.replyId)).toEqual({ ok: false, reason: 'send_failed' })
     expect(readWishes(t.me.stateDir).flatMap(w => w.postcards ?? [])[0]!.myIntro).toBeUndefined()
   })
+  it('accept 寄不出去 → myIntro 擦掉,邀约还留在 offers() 里(主人能再点一次头)', async () => {
+    const t = await throughPostcard()
+    await t.me.intro!.request(t.replyId); await flush()
+    breakOfferChannel(t.B.stateDir, t.replyId)
+    expect(await t.B.intro!.accept(t.replyId)).toEqual({ ok: false, reason: 'send_failed' })
+    expect(t.B.intro!.offers()).toMatchObject([{ replyId: t.replyId }])
+    expect(readIntroIndex(t.B.stateDir).offers[t.replyId]!.myIntro).toBeUndefined()
+  })
+  it('decline 寄不出去 → 邀约留着(不能让主人以为回绝了、对面却永远在等)', async () => {
+    const t = await throughPostcard()
+    await t.me.intro!.request(t.replyId); await flush()
+    breakOfferChannel(t.B.stateDir, t.replyId)
+    expect(await t.B.intro!.decline(t.replyId)).toEqual({ ok: false, reason: 'send_failed' })
+    expect(t.B.intro!.offers()).toMatchObject([{ replyId: t.replyId }])
+  })
+  it('一条信道最多压着 3 笔没回话的邀约;主人回了一笔就腾出一个位子', async () => {
+    const t = await throughPostcard()
+    const fwd = (replyId: string) => t.deliver(t.A, 'A>B', { kind: 'intro', payload: { stage: 'forward', replyId, wishId: t.wishId, hint: '找周末爬山搭子' } })
+    const n = t.B.owner.length
+    for (const id of ['aaaa0001', 'aaaa0002', 'aaaa0003', 'aaaa0004']) fwd(id)
+    await flush()
+    expect(t.B.intro!.offers().map(o => o.replyId).sort()).toEqual(['aaaa0001', 'aaaa0002', 'aaaa0003'])
+    expect(t.B.owner).toHaveLength(n + 3)   // 第 4 笔一个字都没惊动主人
+    expect(t.B.logs.some(l => /forward.*压着 3 笔/.test(l))).toBe(true)
+    // 点过头的那笔也不占额度(它在等名片,不在等主人回话)
+    expect(await t.B.intro!.accept('aaaa0001')).toMatchObject({ ok: true })
+    fwd('aaaa0005'); await flush()
+    expect(t.B.intro!.offers().map(o => o.replyId).sort()).toEqual(['aaaa0002', 'aaaa0003', 'aaaa0005'])
+  })
+  it('同一个 replyId 的 request 到两次 → 扣在手里的名片不被换掉', async () => {
+    const t = await throughPostcard()
+    await t.me.intro!.request(t.replyId); await flush()
+    const evil = { v: 2, role: 'initiator', nonce: 'x', self_id: 'cc-evil0000001', name: 'E', mailbox_addr: 'ME', mailbox_enc_pub: 'EE', relays: ['https://r/mailbox'], bearer: 'e'.repeat(16), channel_id: 'ec', channel_pub: 'EP' }
+    t.deliver(t.me, 'me>A', { kind: 'intro', payload: { stage: 'request', replyId: t.replyId, wishId: t.wishId, card: evil } })
+    await flush()
+    expect(t.A.logs.some(l => /request.*已经在牵了/.test(l))).toBe(true)
+    await t.B.intro!.accept(t.replyId); await flush()
+    expect(t.B.registry.get('cc-me00000001')).toMatchObject({ name: 'me' })   // 交出去的还是第一封那张
+    expect(t.B.registry.get('cc-evil0000001')).toBeUndefined()
+  })
   it('身份冲突:我这边已有同 id 不同信箱的联系人 → 介绍失败一句话,无信道', async () => {
     const t = await throughPostcard()
     t.me.registry.set('cc-b00000001', { id: 'cc-b00000001', name: 'Other', mailbox_addr: 'DIFFERENT' })
@@ -182,15 +229,15 @@ describe('介绍:两边点头就成朋友(spec 2026-09-04-introduction §3)', ()
     const t = await throughPostcard()
     await t.me.intro!.request(t.replyId); await flush()
     t.me.clock.ms += 7 * 24 * 60 * 60_000 + 1000    // 三方共用一个时钟
-    await t.me.intro!.request('nothing')            // 任何一次读索引都会触发 prune;这里用 A 自己的一次读
-    await t.A.intro!.decline('nothing')             // A 侧读一次索引 → prune → 发 decline
+    await t.A.intro!.decline('nothing')             // A 侧读一次索引 → prune → 替对方发 decline
     await flush()
     expect(t.me.owner.at(-1)).toBe('阿A 的朋友这次不想认识新朋友')
   })
   it('intro 信封持 busy token 且放开;非 intro kind → false', async () => {
     const t = await throughPostcard()
     await t.me.intro!.request(t.replyId); await flush()
-    expect(t.A.busy.some(b => b.label === 'intro' && b.released)).toBe(true)
+    expect(t.A.busy.some(b => b.label === 'intro' && b.released)).toBe(true)      // 收信那段
+    expect(t.me.busy.some(b => b.label === 'intro' && b.released)).toBe(true)     // 主人动作那段
     expect(t.me.intro!.onInbound('me>A', { kind: 'letter', payload: {} }, 'x')).toBe(false)
   })
 })
