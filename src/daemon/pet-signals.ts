@@ -13,6 +13,24 @@
  */
 export const MAX_TRACKED_CHATS = 256
 
+/**
+ * recordTurn 里那条 `TurnRecord` 该不该算作「这一趟回合结束了」(spec §5.1 的
+ * last_done_at + 起飞标记落地)。抽出来是为了能单测,判据两条:
+ *
+ *  1. `outcome === 'completed'` —— 「刚忙完」是一次庆祝(spec §5.1 把它定义为
+ *     provider 的 result 事件)。timeout / error / auth_failed 的回合是死掉的,
+ *     不该让桌宠比个耶;起飞标记那边有 dispatch 的 finally 里的 noteTurnStop
+ *     兜底,不靠这里撤。
+ *  2. `mode !== 'chatroom'` —— chatroom 每个参与者每一拍都吐一条 TurnRecord
+ *     (见 conversation-coordinator 的 TurnRecord 注释)。照单全收的话:第一拍
+ *     就把起飞标记删了(辩论还在跑,桌宠却显示闲着),之后每一拍都把
+ *     last_done_at 往前推一次,一个主人回合能放 N×轮数 次「刚忙完」。
+ *     chatroom 的配对由入站分发 finally 里的 noteTurnStop 保证,不缺这一笔。
+ */
+export function shouldNoteTurnEnd(record: { mode: string; outcome: string }): boolean {
+  return record.outcome === 'completed' && record.mode !== 'chatroom'
+}
+
 export interface PetSignals {
   noteToolCall(chatId: string, nowMs?: number): void
   noteTurnStart(chatId: string, nowMs?: number): void

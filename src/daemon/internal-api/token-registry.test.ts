@@ -46,10 +46,22 @@ describe('token-registry', () => {
       'POST /v1/knowledge/facts/set_fact_status',
       'POST /v1/knowledge/graph/top_contacts',
       'POST /v1/reminders/schedule',
+      'POST /v1/permissions/resolve',
       'POST /v1/federation/mint',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
+  })
+
+  // 桌宠卡片上的「允许 / 拒绝」只有这一个 admin 档凭据够得着(Tauri 的
+  // pet_permission_resolve)。少了这条路由,按钮按下去就是 403 route_not_allowed。
+  it('operator token 够得着桌宠权限卡片的 resolve 路由,但够不着待决列表', () => {
+    const r = makeTokenRegistry()
+    r.registerOperatorToken('dd'.repeat(32))
+    const allow = r.resolve('dd'.repeat(32))?.routeAllow
+    expect(allow?.has('POST /v1/permissions/resolve')).toBe(true)
+    // 待决列表桌面走 GET /v1/companion/pet 读,operator 不需要这一条。
+    expect(allow?.has('GET /v1/permissions/pending')).toBe(false)
   })
 
   it('file and session tokens carry no routeAllow (unrestricted by route, tier gate only)', () => {

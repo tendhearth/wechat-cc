@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { makePetSignals, MAX_TRACKED_CHATS } from './pet-signals'
+import { makePetSignals, MAX_TRACKED_CHATS, shouldNoteTurnEnd } from './pet-signals'
 
 describe('makePetSignals', () => {
   it('按 chat 记 tool_call / 起飞 / 结束;contact 全局;snapshot 缺省 null', () => {
@@ -43,5 +43,26 @@ describe('makePetSignals', () => {
     expect(s.snapshot('s0').inFlightSinceMs).toBeNull()
     expect(s.snapshot('e0').lastResultAtMs).toBeNull()
     expect(s.snapshot(`s${MAX_TRACKED_CHATS}`).inFlightSinceMs).toBe(1)
+  })
+})
+
+describe('shouldNoteTurnEnd', () => {
+  const rec = (mode: string, outcome: string) => ({ mode, outcome })
+
+  it('只有跑完的 solo / parallel 回合算一次「刚忙完」', () => {
+    expect(shouldNoteTurnEnd(rec('solo', 'completed'))).toBe(true)
+    expect(shouldNoteTurnEnd(rec('parallel', 'completed'))).toBe(true)
+  })
+
+  it('死掉的回合不庆祝', () => {
+    for (const o of ['timeout', 'error', 'auth_failed']) {
+      expect(shouldNoteTurnEnd(rec('solo', o))).toBe(false)
+    }
+  })
+
+  it('chatroom 每一拍都吐一条记录 —— 一条都不算', () => {
+    // 两个参与者的两拍:全都不该动起飞标记,也不该推 last_done_at。
+    expect(shouldNoteTurnEnd(rec('chatroom', 'completed'))).toBe(false)
+    expect(shouldNoteTurnEnd(rec('chatroom', 'error'))).toBe(false)
   })
 })

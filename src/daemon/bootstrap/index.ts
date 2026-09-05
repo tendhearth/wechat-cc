@@ -79,6 +79,7 @@ import { runIndexer } from '../../core/knowledge/indexer'
 import { makeEmbedderService } from '../../core/knowledge/embedder-service'
 import { makeJsEmbedder, withEmbedderFallback } from '../../core/knowledge/js-embedder'
 import { readJsonFile } from '../../lib/read-json-file'
+import { shouldNoteTurnEnd } from '../pet-signals'
 import { rebuildGraphFromSource } from '../../core/knowledge/graph-build'
 import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
 import { makeFactsApi } from '../../core/knowledge/facts'
@@ -966,9 +967,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // health runtime without constructing a full Bootstrap.
     reportLlmTurnOutcome(health, record.outcome, record.error)
     // 桌宠(spec 2026-09-05-cc-desktop-pet §5.1)—— 回合结束的那一刻。recordTurn
-    // 是唯一一处**每种结局都会经过**的窄点(completed / timeout / auth_failed /
-    // error),所以「刚忙完」用它的 endedAt,而不是任何一条成功路径上的时间。
-    deps.petSignals?.noteTurnEnd(record.chatId, record.endedAt)
+    // 是唯一一处**每种结局都会经过**的窄点,所以「刚忙完」用它的 endedAt,而不是
+    // 任何一条成功路径上的时间。但不是每条记录都算一次「忙完」:哪些算,判据写在
+    // shouldNoteTurnEnd 里(只认 completed;chatroom 每participant每拍一条,得排除)。
+    if (shouldNoteTurnEnd(record)) deps.petSignals?.noteTurnEnd(record.chatId, record.endedAt)
   }
 
   const handoffMessages = makeMessagesStore(deps.db)

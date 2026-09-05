@@ -57,7 +57,8 @@ import type { UserTier } from '../../core/user-tier'
  *     its tier; the dispatcher enforces this as a second gate after the
  *     tier check (see index.ts). registerOperatorToken sets
  *     to the desktop application's owner-only surfaces: companion converse /
- *     voice plus Customer Review. It still cannot restart the daemon, list
+ *     voice, Customer Review, 待办, plus the pet window's permission
+ *     resolve. It still cannot restart the daemon, list
  *     sessions, or locate arbitrary files. That residual owner-surface access
  *     is accepted and documented: closing it
  *     fully needs real local-auth (peer-cred / agent-sandboxing) before
@@ -154,6 +155,15 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           'POST /v1/knowledge/facts/set_fact_status',
           'POST /v1/knowledge/graph/top_contacts',
           'POST /v1/reminders/schedule',
+          // 桌宠权限卡片(spec 2026-09-05-cc-desktop-pet §6)—— 主人在陪伴窗上
+          // 点「允许 / 拒绝」,经 Tauri 的 pet_permission_resolve 命令走这一条。
+          // 路由本身是 admin 档(route-tiers),所以只有这个 operator 凭据够得着;
+          // 少了这一行,按钮按下去必然 403 route_not_allowed(2026-09-05 终审
+          // Critical #1)。**只加 resolve,不加 GET /v1/permissions/pending**:
+          // 这个集合的口径是「桌面 app 真会调的那几条」,而待决列表桌面是从
+          // GET /v1/companion/pet(trusted 档)读的,operator 凭据永远不会去
+          // 调 /v1/permissions/pending —— 不调的就不给。
+          'POST /v1/permissions/resolve',
           // hearth federation mint (grant-gated, see routes-federation.ts) —
           // the operator token alone is not enough; readGrant(stateDir) must
           // also be non-null (explicit owner authorization, design option B).
