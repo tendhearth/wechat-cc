@@ -20,6 +20,8 @@ import type { InboundPipelineDeps } from '../inbound/build'
 import type { PipelineRun } from '../inbound/types'
 import { isAdmin, loadAccess, appendAllowFrom } from '../../lib/access'
 import { resolveTier } from '../../core/user-tier'
+import { derivePetTurn } from '../../core/pet-turn'
+import type { PetTurnDep } from '../internal-api/types'
 import { makeAdminCommands } from '../admin-commands'
 import { makeModeCommands } from '../mode-commands'
 import type { ChatPrefsStore } from '../chat-prefs'
@@ -136,6 +138,13 @@ export interface PipelineDepsOpts {
    * A second instance would never see the capture.
    */
   replySinks: ReplySinks
+  /**
+   * 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1)—— main.ts 里造的**同一个**
+   * 实例(也传给 buildBootstrap)。这里写两笔:入站分发进门时的 noteTurnStart,
+   * 和 companionConverse 的 noteContact / noteTurnStart。读的那一头是下面
+   * 组装出来的 petTurn 闭包。
+   */
+  petSignals?: import('../pet-signals').PetSignals
   /** 打猎战利品(v36)。缺失 ⇒ 微信「背包」命令说功能没接。 */
   huntStore?: { list(limit?: number): readonly { title: string; url: string | null; ts: string; status: string }[] }
   /** Sticker library — 随身 CC 手机页展示 + 图片服务(main.ts 传入)。 */
@@ -171,6 +180,13 @@ export interface BuildPipelineDepsResult {
    * then bootstrap, then this wiring pass).
    */
   companionConverse: (text: string) => Promise<{ reply: string }>
+  /**
+   * 桌宠 turn 的组装闭包(CC 桌宠 Phase B)。和 companionConverse 挨着造,因为
+   * 需要同一批东西:ownerChatId(companion 配置)、resolveOwnerSessionKey +
+   * boot.sessionManager(在飞判断)、opts.petSignals(三个时间戳)、消息库
+   * (主人最近一次入站)。main.ts 经 setPetTurn late-bind 到 internal-api。
+   */
+  petTurn: PetTurnDep
 }
 
 export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): BuildPipelineDepsResult {
@@ -685,6 +701,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         // 管理员控制命令(揭晓/回信/配对/派/访客许可)由 command-router 处理;
         // 命中即止,否则落到正常 agent 分发。逻辑本体见 command-router.ts。
         dispatch: async (msg) => {
+          // 桌宠「起飞了」的时刻(spec §5.1)。记在进门处而不是 coordinator 里:
+          // 不是每个 provider 都发 init 事件,而每条入站都从这里过。多记一次
+          // (命令被 commandRouter 吃掉、消息被丢弃)无害 —— 相位由
+          // sessionManager.isInFlight 说了算,这个时间戳只在真在飞时被读。
+          opts.petSignals?.noteTurnStart(msg.chatId)
           if (await commandRouter.tryHandle(msg)) return
           return boot.coordinator.dispatch(msg)
         },
@@ -711,6 +732,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // Same posture as mw-messages: optional, wrapped so a throw here can
     // never break the app turn it's marking.
     try { boot.markInboundActivity?.() } catch { /* 绝不能因为记一笔就打断 app 轮次 */ }
+    // 桌宠(spec §5.1):app 里说话也是「主人联系过我」。和上面一样,记一笔
+    // 绝不能打断轮次 —— 但这里只是一次 Math.max 赋值,不会抛。
+    opts.petSignals?.noteContact()
     const ownerChatId = loadCompanionConfig(stateDir).default_chat_id
     if (!ownerChatId) throw new Error('companion_owner_chat_not_configured')
     // D3 review follow-up: app-converse captures the reply through a sink, but a
@@ -763,6 +787,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       createTimeMs: Date.now(),
       accountId: ilink.resolveAccountId(ownerChatId),
     }
+    // 起飞时刻:app 轮次不走入站管道(见上面的 dispatch),所以在这儿单独记一笔,
+    // 好让 start/end 成对 —— 结束那头在 bootstrap 的 recordTurn 里,两条路共用。
+    opts.petSignals?.noteTurnStart(ownerChatId)
     return boot.coordinator.submitTurn(synthetic, {
       within: async (dispatch) => {
         const sink = replySinks.open(ownerChatId)
@@ -777,5 +804,47 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
   }
 
-  return { pipelineDeps, companionConverse, settingsPanelLink: () => settingsPanel.linkUrl() }
+  // 桌宠的「在做什么」(spec 2026-09-05-cc-desktop-pet §5.1)。推导本身是
+  // core/pet-turn.ts 的纯函数;这里只负责把 daemon 里**已经存在**的信号收齐:
+  // 主人是谁(companion 配置,与 converse 同源)、他的会话在不在飞
+  // (sessionManager.isInFlight,与 converse 的前置守卫同一个判断)、
+  // pet-signals 的三个内存时间戳、待决权限(与微信「y/n」同一份清单)。
+  const petTurn: PetTurnDep = async () => {
+    const nowMs = Date.now()
+    const pending = opts.ilink.listPendingPermissions()
+    let ownerChatId: string | null = null
+    try { ownerChatId = loadCompanionConfig(stateDir).default_chat_id ?? null } catch { ownerChatId = null }
+    if (!ownerChatId) {
+      // 还没配主人:没有会话可看,但「主人联系过我」这一笔是全局的(converse /
+      // 权限拍板都会写),照样如实报出去。
+      return derivePetTurn({
+        nowMs, inFlight: false, inFlightSinceMs: null, lastToolCallAtMs: null, lastResultAtMs: null,
+        ownerLastContactAtMs: opts.petSignals?.snapshot('').lastContactMs ?? null,
+        pending,
+      })
+    }
+    const key = resolveOwnerSessionKey(ownerChatId, {
+      resolveProject: boot.resolve,
+      getMode: (cid) => boot.coordinator.getMode(cid),
+      defaultProviderId: boot.defaultProviderId,
+    })
+    const inFlight = !!key && boot.sessionManager.isInFlight({ alias: key.alias, providerId: key.providerId, chatId: ownerChatId })
+    const sig = opts.petSignals?.snapshot(ownerChatId) ?? { inFlightSinceMs: null, lastToolCallAtMs: null, lastResultAtMs: null, lastContactMs: null }
+    // 「主人上次联系我」取两边的**较晚者**:消息库只记微信入站,pet-signals 只记
+    // app converse / 权限拍板。任何一边单独看都会把另一边的活动说成「没来过」。
+    const inboundIso = await messagesStore.latestInboundTs(ownerChatId).catch(() => null)
+    const inboundMs = inboundIso ? Date.parse(inboundIso) : NaN
+    const contact = Math.max(Number.isFinite(inboundMs) ? inboundMs : -1, sig.lastContactMs ?? -1)
+    return derivePetTurn({
+      nowMs,
+      inFlight,
+      inFlightSinceMs: sig.inFlightSinceMs,
+      lastToolCallAtMs: sig.lastToolCallAtMs,
+      lastResultAtMs: sig.lastResultAtMs,
+      ownerLastContactAtMs: contact >= 0 ? contact : null,
+      pending,
+    })
+  }
+
+  return { pipelineDeps, companionConverse, petTurn, settingsPanelLink: () => settingsPanel.linkUrl() }
 }

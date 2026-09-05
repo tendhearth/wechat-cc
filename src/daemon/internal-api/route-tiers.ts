@@ -56,6 +56,10 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/companion/snooze': 'trusted',
   'POST /v1/companion/import-local': 'trusted',
   'GET /v1/companion/presence': 'trusted',
+  // CC 桌宠的「在做什么」(spec 2026-09-05-cc-desktop-pet §5.1)。trusted,和
+  // presence 同一类:桌面的唯一凭据是 daemon 级 0600 FILE token(=trusted),
+  // admin 会让每一次真机轮询 403 —— 觅食台 2026-07-22 就是这么静默坏的。
+  'GET /v1/companion/pet': 'trusted',
   'POST /v1/conversation/set-mode': 'trusted',
   'GET /v1/projects/list': 'trusted',
   'POST /v1/projects/add': 'trusted',
@@ -107,6 +111,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // owner's own chat session and returns the reply to the caller (app
   // conversation channel, voice arc Stage 0). Same trust class as the
   // other admin daemon-control routes below.
+  // admin — 待决权限的桌面面(spec §6)。读出来的是 agent 想动的手(命令原文),
+  // 拍板等于替主人说「可以」—— 和 converse 同一个信任等级:主人本人的事,不是
+  // 任何 trusted 联系人的事。微信侧的对应面是「y/n <hash>」,只认 admin 主人。
+  'GET /v1/permissions/pending': 'admin',
+  'POST /v1/permissions/resolve': 'admin',
   'POST /v1/companion/converse': 'admin',
   // admin — same trust class as converse above (voice arc Stage 1): synths
   // reply audio for the owner's app-conversation-channel session.

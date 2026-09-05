@@ -85,6 +85,13 @@ export interface WireMainOpts {
   // 三条用途:tick-bodies 用 recordHunt(打猎入库)与 list/summary(日程判断
   // 要看包袱里堆了什么),pipeline-deps 用 list(微信「背包」命令)。这里给
   // 全,下游各取所需 —— main.ts 传的是完整 Journal。
+  /**
+   * 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1)。和 replySinks/outboundTaps
+   * 一样必须是 main.ts 那个**同一个实例**:写的一头在 bootstrap(tool_call /
+   * 回合结束)与 pipeline-deps(起飞 / 主人联系),读的一头是 pipeline-deps
+   * 组装出的 petTurn。两个实例 = 桌宠永远看不到动静,而且不会报任何错。
+   */
+  petSignals?: import('../pet-signals').PetSignals
   huntStore?: {
     recordHunt(a: { chatId: string; text: string; nowIso?: string }): number
     list(limit?: number): readonly { kind: string; title: string; url: string | null; ts: string; status: string }[]
@@ -101,6 +108,11 @@ export interface WiredDeps {
    * once wireMain returns (bootstrap must be ready first).
    */
   companionConverse: (text: string) => Promise<{ reply: string }>
+  /**
+   * 桌宠 turn 闭包(CC 桌宠 Phase B)。main.ts 在 setCompanionConverse 旁边
+   * setPetTurn 到 internal-api —— 同样要等 bootstrap 就绪。
+   */
+  petTurn: import('../internal-api/types').PetTurnDep
   /** Mint a fresh graphical-settings-panel URL (10-min token). Null when no
    *  LAN/owner. Wired to GET /v1/settings/link for the desktop QR entry. */
   settingsPanelLink: () => Promise<string | null>
@@ -207,11 +219,12 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     health: opts.boot.health.health,
     runAtelierTick,
   })
-  const { pipelineDeps, companionConverse, settingsPanelLink } = buildPipelineDeps(opts, refs)
+  const { pipelineDeps, companionConverse, petTurn, settingsPanelLink } = buildPipelineDeps(opts, refs)
   const lifecycleDeps = buildLifecycleDeps(opts, ticks)
   return {
     pipelineDeps,
     companionConverse,
+    petTurn,
     settingsPanelLink,
     ...lifecycleDeps,
     ticks,

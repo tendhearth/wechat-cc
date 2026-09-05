@@ -965,6 +965,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // (./wire-health.ts) — extracted so it's unit-testable against a real
     // health runtime without constructing a full Bootstrap.
     reportLlmTurnOutcome(health, record.outcome, record.error)
+    // 桌宠(spec 2026-09-05-cc-desktop-pet §5.1)—— 回合结束的那一刻。recordTurn
+    // 是唯一一处**每种结局都会经过**的窄点(completed / timeout / auth_failed /
+    // error),所以「刚忙完」用它的 endedAt,而不是任何一条成功路径上的时间。
+    deps.petSignals?.noteTurnEnd(record.chatId, record.endedAt)
   }
 
   const handoffMessages = makeMessagesStore(deps.db)
@@ -984,6 +988,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     permissionMode,
     turnTimeoutMs,
     recordTurn,
+    // 桌宠「在干活」的证据(spec §5.1):只认 tool_call —— 起飞由
+    // sessionManager.isInFlight 判定,起飞时刻由 pipeline-deps 的入站分发处
+    // noteTurnStart 记(见 pet-signals.ts 的头注释)。钩子抛错不影响回合:
+    // collectTurn 的 onEvent 已经把它围起来了,这里也只做一次 Map.set。
+    onTurnEvent: (chatId, ev) => { if (ev.kind === 'tool_call') deps.petSignals?.noteToolCall(chatId) },
     // sendAssistantText fallback path: same fall-through the legacy
     // routeInbound used to take when the agent didn't call a reply tool.
     // main.ts injects a real ilink.sendMessage closure; bootstrap.ts only

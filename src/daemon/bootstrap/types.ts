@@ -214,6 +214,13 @@ export interface BootstrapDeps {
   /** 旁听(不改道)—— 让 sendAssistantText 的 fallback 路径也进战利品清单。 */
   outboundTaps?: { observe: (chatId: string, text: string) => void }
   /**
+   * 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1)—— main.ts 里造的**同一个**
+   * 实例,也传给 wireMain/pipeline-deps(读的那一头在 GET /v1/companion/pet)。
+   * bootstrap 只写两笔:coordinator 的 onTurnEvent 里的 tool_call,和 recordTurn
+   * 末尾的回合结束。可选:不接就整套不写不读,老 fixture 逐字节不变。
+   */
+  petSignals?: import('../pet-signals').PetSignals
+  /**
    * self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
    * graceful-shutdown-then-exit(0) so launchd's KeepAlive respawns a fresh
    * process with fresh code. main.ts wires this to the SAME closure it

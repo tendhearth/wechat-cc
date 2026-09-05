@@ -9,6 +9,7 @@ export interface InternalApiLifecycle extends Lifecycle {
   setDelegate(d: InternalApiDelegateDep): void
   setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
   setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
+  setPetTurn(fn: NonNullable<InternalApiDeps['petTurn']>): void
   setCustomerReview(service: NonNullable<InternalApiDeps['customerReview']>): void
   setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
   setSocial(social: NonNullable<InternalApiDeps['social']>): void
@@ -51,6 +52,7 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     setDelegate: (d) => api.setDelegate(d),
     setConversation: (c) => api.setConversation(c),
     setCompanionConverse: (fn) => api.setCompanionConverse(fn),
+    setPetTurn: (fn) => api.setPetTurn(fn),
     setCustomerReview: (service) => api.setCustomerReview(service),
     setA2A: (a2a) => api.setA2A(a2a),
     setSocial: (social) => api.setSocial(social),

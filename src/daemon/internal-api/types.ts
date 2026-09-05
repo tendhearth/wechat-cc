@@ -80,6 +80,13 @@ export interface InternalApiIlinkDep {
   broadcast(text: string, accountId?: string): Promise<{ ok: number; failed: number }>
 }
 
+/**
+ * 桌宠 turn 的组装闭包(CC 桌宠 Phase B)。返回 core/pet-turn.ts 的纯推导结果;
+ * 输入的采集在 wiring/pipeline-deps.ts(那里才有 ownerChatId / sessionManager /
+ * petSignals / 消息库)。命名成型是为了 routes-pet.test.ts 能不 cast 就构造 deps。
+ */
+export type PetTurnDep = () => Promise<import('../../core/pet-turn').PetTurnPayload>
+
 export interface InternalApiDeps {
   /** State directory; the token file is written under here. */
   stateDir: string
@@ -188,6 +195,26 @@ export interface InternalApiDeps {
    * to 500.
    */
   companionConverse?: (text: string) => Promise<{ reply: string }>
+  /**
+   * CC 桌宠的「在做什么」(spec 2026-09-05-cc-desktop-pet §5.1)。整段推导 +
+   * 输入采集在 wiring/pipeline-deps.ts 的闭包里(主人 chatId、会话在飞、
+   * pet-signals 的三个时间戳、待决权限),这里只留一个函数位。
+   *
+   * Late-bound:和 companionConverse 一样,要等 bootstrap 造出 coordinator /
+   * sessionManager 之后 main.ts 才 setPetTurn。没设之前 GET /v1/companion/pet
+   * 返回 503 pet_not_wired。
+   */
+  petTurn?: PetTurnDep
+  /**
+   * 待决权限的两个面(spec §6)。list/resolve 都直接落到 ilink-glue 的
+   * PendingPermissions —— 和微信「y/n <hash>」是同一个 consume(),所以桌面
+   * 拍板之后微信那条提示也随之失效。main.ts 直接接线(不需要 late-bind:
+   * PendingPermissions 在 ilink adapter 里,早于 bootstrap)。
+   */
+  permissions?: {
+    list(): import('../pending-permissions').PendingPermissionView[]
+    resolve(hash: string, decision: 'allow' | 'deny'): boolean
+  }
   /**
    * Owner-only Customer Review application service. Late-bound after
    * bootstrap because it needs the active provider registry and wxvault MCP.
@@ -504,6 +531,12 @@ export interface InternalApi {
    * until this is called.
    */
   setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
+  /**
+   * Late-bind 桌宠 turn 的组装闭包(CC 桌宠 Phase B),同 setCompanionConverse:
+   * 它闭包了 boot.sessionManager / boot.coordinator,只有 wireMain 返回之后
+   * 才存在。GET /v1/companion/pet 在此之前返回 503。
+   */
+  setPetTurn(fn: NonNullable<InternalApiDeps['petTurn']>): void
   /** Late-bind Customer Review after wxvault + an eval provider are ready. */
   setCustomerReview(service: NonNullable<InternalApiDeps['customerReview']>): void
   /**

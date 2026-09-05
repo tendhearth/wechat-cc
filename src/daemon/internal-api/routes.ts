@@ -24,6 +24,8 @@ import { a2aRoutes } from './routes-a2a'
 import { probeFsAccess, describeFsAccess } from '../../lib/fs-access'
 import { journalRoutes } from './routes-journal'
 import { presenceRoutes } from './routes-presence'
+import { petRoutes } from './routes-pet'
+import { permissionRoutes } from './routes-permissions'
 import { socialRoutes } from './routes-social'
 import { knowledgeRoutes } from './routes-knowledge'
 import { configRoutes } from './routes-config'
@@ -986,6 +988,8 @@ const onlineStickerCursor = new Map<string, number>()
     ...socialRoutes(deps),
     ...journalRoutes(deps),
     ...presenceRoutes(deps),
+    ...petRoutes(deps),
+    ...permissionRoutes(deps),
     ...knowledgeRoutes(deps),
     ...configRoutes(deps),
     ...pairRoutes(deps),

@@ -35,6 +35,7 @@ import { makeStickerLib, seedStarterStickers, starterStickersDir } from './stick
 import { makeGiphyRelaySource, makeGiphySource } from './sticker-source'
 import { makeStickerFeedback } from './sticker-feedback'
 import { makeOutboundTaps } from './outbound-taps'
+import { makePetSignals } from './pet-signals'
 import { makeJournal } from '../core/journal-store'
 import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
@@ -246,6 +247,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 路径(internal-api reply 路由 / bootstrap 的 fallback);两个实例等于
     // 永远收不到东西,而且不会报任何错。
     const outboundTaps = makeOutboundTaps()
+    // 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1)。和 replySinks/outboundTaps
+    // 同样的理由必须是**同一个实例**:写的三处分别在 bootstrap(tool_call、
+    // 回合结束)、pipeline-deps(起飞、app 联系)与下面的权限 resolve;读的
+    // 只有 GET /v1/companion/pet。纯内存,重启就忘 —— 描述的本来就只是当下。
+    const petSignals = makePetSignals()
     const huntStore = makeJournal(db)
     // 一个消息库实例喂两个 dep(messages / latestInboundTs),下面 registerInternalApi 用。
     const messagesStore = makeMessagesStore(db)
@@ -261,6 +267,13 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       replySinks,
       outboundTaps,
       hunt: huntStore,
+      // 待决权限的桌面面(spec §6)。和微信「y/n <hash>」共用 ilink 里那一份
+      // PendingPermissions —— 从哪边拍板都算数,另一边随之失效。拍板本身也是
+      // 「主人刚跟我说过话」的证据,所以成功时记一笔 contact。
+      permissions: {
+        list: () => ilink.listPendingPermissions(),
+        resolve: (h, d) => { const ok = ilink.resolvePermission(h, d); if (ok) petSignals.noteContact(); return ok },
+      },
       // chat_history 工具后端(provider-handoff 的逃生口)
       messages: { listRange: (c: string, o: { limit: number; beforeTs?: string }) => messagesStore.listRange(c, o), search: (c: string, q: string, l: number) => messagesStore.search(c, q, l) },
       // 桌宠状态的「主人真在跟我说话吗」证据(spec 2026-09-03 §2.1/§2.2)——
@@ -324,6 +337,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // sendAssistantText fallback sink-aware.
       replySinks,
       outboundTaps,
+      petSignals,
       onTurnRecord: (r) => turnRecordStore.append(r),
       mintSessionToken: internalApi.mintSessionToken,
       invalidateSession: internalApi.invalidateSession,
@@ -505,7 +519,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       stickers: stickerLib,
       requestRestart: (reason) => requestRestart(reason),
       stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,
-      outboundTaps, huntStore,
+      outboundTaps, huntStore, petSignals,
       // Task 11 — tick-bodies pass this to resolveTier() when computing
       // the companion's tierProfile. Same singleton import the bootstrap
       // coordinator uses; 5s TTL cache inside `loadAccess` keeps the
@@ -518,6 +532,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // the pipeline wiring are available. Routes access deps.companionConverse
     // at request time, so this late assignment is safe (mirrors setConversation).
     internalApi.setCompanionConverse(wired.companionConverse)
+    // 同上,桌宠的「在做什么」—— 组装闭包在 pipeline-deps(那里才有 boot)。
+    internalApi.setPetTurn(wired.petTurn)
     ticksRef = wired.ticks
     internalApi.setSettingsLink(wired.settingsPanelLink)
     const pipeline = buildInboundPipeline(wired.pipelineDeps)

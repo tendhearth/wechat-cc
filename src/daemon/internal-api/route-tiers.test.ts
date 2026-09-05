@@ -82,6 +82,12 @@ describe('route-tiers', () => {
     expect(minTierFor('GET /v1/reminders/list')).toBe('guest')
   })
 
+  it('桌宠 turn 是 trusted;权限拍板两条是 admin(CC 桌宠 Phase B)', () => {
+    expect(minTierFor('GET /v1/companion/pet')).toBe('trusted')
+    expect(minTierFor('GET /v1/permissions/pending')).toBe('admin')
+    expect(minTierFor('POST /v1/permissions/resolve')).toBe('admin')
+  })
+
   it('every registered route has an explicit min tier (no accidental default-deny)', () => {
     const deps = { stateDir: '/tmp', daemonPid: 1 } as unknown as InternalApiDeps
     const routes = makeRoutes({ deps, getDelegate: () => null, maybePrefix: (_c, t) => t })

@@ -353,6 +353,10 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       deps.companionConverse = fn
     },
 
+    setPetTurn(fn) {
+      deps.petTurn = fn
+    },
+
     setCustomerReview(service) {
       deps.customerReview = service
     },
