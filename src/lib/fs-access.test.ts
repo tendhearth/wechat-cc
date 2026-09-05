@@ -35,7 +35,7 @@ describe('probeFsAccess —— daemon 自己能不能读主人的文件夹', () 
 })
 
 describe('doctor 的文件访问告警 —— 问 daemon 的视角', async () => {
-  const { probeFsAccessWarning } = await import('../../cli/doctor')
+  const { probeFsAccessWarning } = await import('../cli/doctor')
   const daemon = { alive: true, pid: 1, internal_api: { port: 1, token_file_path: '/t' } } as never
   it('daemon 说 denied → 原样带出它的提示', async () => {
     const fetchFn = (async () => ({ ok: true, json: async () => ({ fs_access: { any_denied: true, hint: '系统没给…' } }) })) as unknown as typeof fetch

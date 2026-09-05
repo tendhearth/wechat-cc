@@ -57,6 +57,10 @@ jobs:
             bun_target: bun-windows-x64
             rust_triple: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
+    env:
+      # 有没有 Developer ID 证书(release-signing 环境的 secret)。step 的 if
+      # 不能直接读 secrets,只能读这里算好的 'true' / 'false'。
+      HAS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE != '' }}
 
     steps:
       - name: Checkout
@@ -283,7 +287,9 @@ jobs:
       #   APPLE_SIGNING_IDENTITY         "Developer ID Application: <name> (<TEAMID>)"
       #   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID   公证(APPLE_PASSWORD 是 app 专用密码)
       - name: Import Developer ID certificate (macOS, only when provisioned)
-        if: matrix.os == 'macos-latest' && secrets.APPLE_CERTIFICATE != ''
+        # `secrets` 不能出现在 step 的 if 里(GitHub 会把整个工作流判成无效,
+        # 每次 push 都 0 秒失败);先在 job 级 env 里算成布尔字符串再判。
+        if: matrix.os == 'macos-latest' && env.HAS_APPLE_CERTIFICATE == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
