@@ -20,6 +20,8 @@ const BLINK_MIN_MS = 6_000, BLINK_SPAN_MS = 6_000
 const LOOK_MIN_MS = 25_000, LOOK_SPAN_MS = 35_000
 /** 只有「什么也没在发生」的画面才排空闲小动作。 */
 const CALM_BEHAVIORS = new Set(['idle', 'companion'])
+/** 空闲小动作自己:它们离开 idle 不算「有事发生」,不该把对方的倒计时清零。 */
+const IDLE_MOVES = new Set(['blink', 'look'])
 
 /**
  * @param {{ stage: any, img: any, props: any, hint?: any }} root
@@ -132,8 +134,14 @@ export async function createPet(root, opts) {
   }
   const armIdleMoves = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
     if (opts.reducedMotion) return
-    if (s.transition !== null || !CALM_BEHAVIORS.has(s.behavior)) { cancelIdleMoves(); return }
+    if (s.transition !== null || !CALM_BEHAVIORS.has(s.behavior)) {
+      // 正在播的是我们自己排的 blink / look:另一个的倒计时照走。否则 6–12 s 的眨眼
+      // 每次都把 25–60 s 的张望清零,look 永远轮不到(实测 10 分钟 62 次眨眼、0 次张望)。
+      if (s.transition === null && IDLE_MOVES.has(s.behavior)) return
+      cancelIdleMoves(); return
+    }
     const states = manifest.forms[s.form]?.states ?? {}
+    // 只补还没排上的那个:眨完眼回到 idle 时,原来那条 look 的倒计时得原样留着。
     if (blinkTimer === null && states.blink) blinkTimer = schedule(() => { blinkTimer = null; machine.setState('blink') }, BLINK_MIN_MS + random() * BLINK_SPAN_MS)
     if (lookTimer === null && states.look) lookTimer = schedule(() => { lookTimer = null; machine.setState('look') }, LOOK_MIN_MS + random() * LOOK_SPAN_MS)
   }

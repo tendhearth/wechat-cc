@@ -17,7 +17,8 @@ function clock() {
   let now = 0; let seq = 0; const q: Array<{ at: number, id: number, fn: () => void }> = []
   return { schedule: (fn: () => void, ms: number) => { const id = ++seq; q.push({ at: now + ms, id, fn }); return id },
     cancel: (id: unknown) => { const i = q.findIndex(x => x.id === id); if (i >= 0) q.splice(i, 1) },
-    tick(ms: number) { const until = now + ms; while (true) { q.sort((a, b) => a.at - b.at); const n = q[0]; if (!n || n.at > until) break; q.shift(); now = n.at; n.fn() } now = until } }
+    tick(ms: number) { const until = now + ms; while (true) { q.sort((a, b) => a.at - b.at); const n = q[0]; if (!n || n.at > until) break; q.shift(); now = n.at; n.fn() } now = until },
+    pending: () => q.length }
 }
 const boot = async (fetchImpl = fetchReal, reducedMotion = false) => {
   const c = clock(); const root = { stage: el(), img: el('img'), props: el(), hint: el('p') }
@@ -141,6 +142,18 @@ describe('createPet(组装)', () => {
     c.tick(625)
     expect(pet.machine.snapshot().behavior).toBe('idle')
     expect(root.img.src).toBe('./assets/pet/reference/master-lit.png')
+  })
+  it('眨眼不会把张望一路推后:进 idle 满 25s 就 look 一次,working 后两个计时器都撤掉', async () => {
+    const { c, root, pet } = await boot()
+    pet.setForm('lit'); c.tick(1100)          // t=1000 进 lit idle:blink 排在 +6s,look 排在 +25s
+    c.tick(24_900)                            // 中间眨了几次眼,look 的倒计时不该被清零
+    expect(pet.machine.snapshot().behavior).toBe('look')
+    expect(root.img.src).toBe('./assets/pet/states/look-left/000.png')
+    c.tick(250)
+    expect(pet.machine.snapshot().behavior).toBe('idle')
+    expect(root.img.src).toBe('./assets/pet/reference/master-lit.png')
+    pet.setState('working')
+    expect(c.pending()).toBe(0)               // 忙起来就没有待发的 blink / look 了
   })
   it('working 不排空闲小动作:12 秒里一动不动', async () => {
     const { c, root, pet } = await boot()
