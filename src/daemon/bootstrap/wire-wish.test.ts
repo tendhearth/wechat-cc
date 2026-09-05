@@ -238,7 +238,7 @@ describe('介绍:转问与回声原路返回(spec 2026-09-04-introduction §1/§
     expect(B.owner).toEqual([`🙋 阿A 的伙伴来打听「找周末爬山搭子」,我回了:我朋友周末常去`])
     expect(A.journal).toEqual([])
     expect(me.journal).toEqual([{ text: '我朋友周末常去', peerLabel: '阿A 的朋友' }])
-    expect(me.owner[0]).toMatch(/^📮 阿A 的朋友 回了你的心愿「找周末爬山搭子」:我朋友周末常去(想认识就回「认识 [0-9a-z]{6}」)$/)
+    expect(me.owner[0]).toMatch(/^📮 阿A 的朋友 回了你的心愿「找周末爬山搭子」:我朋友周末常去（想认识就回「认识 [0-9a-z]{6}」）$/)
     const refs = me.wish.list().find(w => w.id === id)!.postcards!
     expect(refs).toHaveLength(1); expect(refs[0]).toMatchObject({ via: 'me>A', preview: '我朋友周末常去' })
   })

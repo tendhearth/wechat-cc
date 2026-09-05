@@ -275,7 +275,7 @@ export function makeWish(deps: WishDeps): WishService {
     writeWishes(deps.stateDir, list)
     try { deps.recordPostcard({ text: p.text, peerLabel: label }) }
     catch (err) { log(`明信片入库失败(还是会跟主人说): ${errText(err)}`) }
-    const tail = isRelayed ? `想认识就回「认识 ${p.replyId!.slice(0, 6)}」` : ''
+    const tail = isRelayed ? `（想认识就回「认识 ${p.replyId!.slice(0, 6)}」）` : ''
     deps.notifyOwner(`📮 ${label} 回了你的心愿「${r.wish.redacted.slice(0, 20)}」:${p.text}${tail}`)
     log(`postcard wish=${p.wishId} 收下了 replies=${r.wish.replies}`)
     return true
@@ -347,8 +347,11 @@ export function makeWish(deps: WishDeps): WishService {
     list() {
       const t = now()
       return recentWishes(readWishes(deps.stateDir), t).map(w => {
-        const postcards = w.postcards?.map(r => ({ ...r, viaLabel: deps.peerLabel(r.via) }))
-        return { ...w, effective: effectiveStatus(w, t), postcards }
+        const { postcards, ...rest } = w
+        const withEffective = { ...rest, effective: effectiveStatus(w, t) }
+        return postcards
+          ? { ...withEffective, postcards: postcards.map(r => ({ ...r, viaLabel: deps.peerLabel(r.via) })) }
+          : withEffective
       })
     },
 
