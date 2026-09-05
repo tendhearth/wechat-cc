@@ -102,6 +102,10 @@ Fallback 链(`animation-resolver.js`,纯,输入 form + behavior + manifest,输�
 
 推导(只看主人会话):有待决权限 → `permission`;会话在飞且最近 `WORKING_WINDOW_MS = 5_000` 内有 `tool_call` 事件 → `working`;会话在飞 → `thinking`;否则 `idle`。这需要 daemon 记两个时间戳:主人会话最近一次 `tool_call` 与最近一次 `result`(在会话事件流经过的地方各记一次,不新增表)。
 
+**「在飞」的口径**:turn 只算**从入站分发或 `/v1/companion/converse` 进来的回合** —— 起飞时刻由那两处显式记一笔(`inFlightSinceMs`),没有这一笔就不算。tick 驱动的主人回合(定时任务、心跳里跑起来的那些)不记,它们由 presence 的 `activity` 描述(`working` / `foraging`);不然桌宠会替一件主人根本没开口的事显示「在想」。
+
+**「刚忙完」的口径**:`last_done_at` 只认**跑完的**回合(`outcome === 'completed'`),死于超时 / 报错 / 认证失败的不算 —— 那不值得庆祝。`chatroom` 模式下每个参与者每一拍都会吐一条回合记录,一条都不算(否则一个主人回合会放 N×轮数 次 `done`,而且第一拍就把起飞标记撤了);那种模式的配对由入站分发的 `finally` 兜底。
+
 桌面映射:`phase` 变化即 `setState`;`last_done_at` **前进** → 播一次 `done`(边沿触发,播完回落;后台 job 完成走 journal 的 `receive`,不重复);`permission` 时同步显示权限卡(§6)。turn 端点的状态**优先于** presence 推出的 `working/companion`。
 
 ### 5.2 微光与两态
@@ -113,7 +117,9 @@ Fallback 链(`animation-resolver.js`,纯,输入 form + behavior + manifest,输�
 - form=lit 且 `now − owner_last_contact_at > LIT_DIM_MS`(常量,默认 20 分钟,v1 不锁死)且 turn idle 且无待决权限 → `setForm('unlit')`(淡出淡入)。
 - offline / daemon down 不改 form 的「事实」但画面走 §5.1 的 unlit;恢复后按上面规则重算。
 
-首次出现:窗口打开时按 `owner_last_contact_at` 直接算出 form,**不播转场**(转场只给「变化」)。
+首次出现:窗口打开时按 `owner_last_contact_at` 直接算出 form,**不播转场**(转场只给「变化」)。实现上:桥的第一拍(第一次真拿到 pet 端点的回答)会报 `first`,窗口那边照常 `applyIntent` 之后立刻判转场播完,状态机直接落到算出来的 form。
+
+daemon 重启后,converse / resolve 那两笔联系时间是纯内存的,会丢;`owner_last_contact_at` 于是退回更旧的微信入站时间(`latestInboundTs`),CC 可能因此**提前**退潮(不足真实的 20 分钟就淡回 unlit)。这是诚实的 —— daemon 确实只知道这么多,不为此建表。桌面侧的高水位只保证不倒退着**误播** `receive`,不会替 daemon 记住已经忘掉的事。
 
 ### 5.3 轮询节奏
 
@@ -127,7 +133,9 @@ Fallback 链(`animation-resolver.js`,纯,输入 form + behavior + manifest,输�
 
 daemon:
 - `PendingPermissions.register(hash, timeoutMs)` 改为 `register(hash, timeoutMs, meta: { chatId, prompt })`,内部保存 `{ registeredAt, timeoutAt, meta }`;新增 `list(): Array<{ hash, chatId, prompt, since, expires_at }>`。`consume / fail / sweep` 不变。
-- 路由(**admin** 档,不是 trusted:这是权限本身):`GET /v1/permissions/pending` → `{ items }`;`POST /v1/permissions/resolve { hash, decision: 'allow' | 'deny' }` → `{ ok: consume(hash, decision) }`。微信那条「允许 <hash>」照旧走同一个 `consume`。`GET /v1/companion/pet` 里的 `pending_permissions` 就是 `list()` 过滤到主人会话。
+- 路由(**admin** 档,不是 trusted:这是权限本身):`GET /v1/permissions/pending` → `{ items }`;`POST /v1/permissions/resolve { hash, decision: 'allow' | 'deny' }` → `{ ok: consume(hash, decision) }`。微信那条「允许 <hash>」照旧走同一个 `consume`,但**只认发起这条权限的那个会话**:回复的 chatId 与登记时记下的审批人会话不一致就直接忽略(不回执、不消费),别的聊天里抄到 hash 也按不动。
+
+`GET /v1/companion/pet` 是 trusted 档,`pending_permissions` 里的 `prompt` 因此对任何 trusted 凭据可见(与微信呈给审批人的是同一段文本,通常含命令行)。真正的拍板仍是 admin 档 + 路由白名单(`POST /v1/permissions/resolve`),读得到不等于按得动。
 
 桌面(`pet/permission/permission-card.js`):
 ```
@@ -161,7 +169,7 @@ daemon:
 
 | 文件 | 职责 |
 |---|---|
-| `src/core/pet-turn.ts` + test | 纯推导:`derivePetTurn({ nowMs, inFlight, lastToolCallAt, lastResultAt, pendingForOwner, ownerLastContactAt })` |
+| `src/core/pet-turn.ts` + test | 纯推导:`derivePetTurn({ nowMs, inFlightSinceMs, lastToolCallAtMs, lastResultAtMs, ownerLastContactAtMs, pending })`(`PetTurnInputs`) |
 | `src/daemon/pending-permissions.ts` + test | `register(hash, timeoutMs, meta)`、`list()` |
 | `src/daemon/internal-api/routes-pet.ts`、`routes-permissions.ts`、`route-tiers.ts`、`types.ts` | `GET /v1/companion/pet`(trusted)、`GET /v1/permissions/pending`、`POST /v1/permissions/resolve`(admin) |
 | 会话事件经过处(`conversation-coordinator` / session manager 的事件分发点)+ `ilink-glue.askUser` + converse 路由 | 记 `lastToolCallAt / lastResultAt`、`register` 传 meta、记 converse / consume 时间 |
@@ -188,6 +196,7 @@ daemon:
 **Phase B(两台真机):**
 - 微信给主人的伙伴发一句 → 2 秒内 CC 从 unlit 亮起(8 帧)→ thinking → 回复发出后 done 一次 → idle;20 分钟不理它 → 淡回 unlit。
 - 触发一次需要权限的工具调用 → CC `permission` + 卡片;在微信回「允许」→ 卡片消失、CC 回 working;反过来在卡片点「拒绝」→ 微信侧那条提示随后收到 resolved,turn 按 deny 走。
+- 换一个聊天(不是审批人那条)去回「允许 <hash>」→ 没有回执、权限仍待决,原会话点了才算。
 - 打猎带回东西 → envelope + badge,receive 一次;主窗看过(seen 水位前进)→ badge 消失。
 - 断网(offline)→ unlit sleep,道具仍在;恢复 → 按 contact 时间重算 form,不多播转场。
 

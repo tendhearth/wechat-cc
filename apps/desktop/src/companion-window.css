@@ -24,7 +24,9 @@ button { font: inherit; }
 .pet-badge { position: absolute; right: 4%; top: 4%; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #d9773b; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
 .pet-hint { margin: 4px 0 0; padding: 4px 8px; border-radius: 999px; background: rgba(255, 253, 247, .86); color: #7b6b5c; font-size: 11px; text-align: center; justify-self: center; }
 /* 权限卡片(spec §6)。限高必须是确定长度:百分比对着 auto 的网格行解不出来,prompt 会被压成一条缝。
-   52vh 是在最小窗口(240×300)量出来的:卡片 156 px → prompt 84 px 可滚、CC 还剩 94 px。 */
+   52vh 是在 300 px 高的窗口上量的:卡片 156 px → prompt 84 px 可滚、CC 还剩 94 px。
+   真正的下限比这更矮 —— min_inner_size 与缩放 clamp 都是 250 px(见 src-tauri/src/lib.rs):
+   那里卡片 130 px → prompt ≈ 48 px(约 3 行,仍可滚)、CC ≈ 70 px。挤,但两样都还在。 */
 .pet-card-host { display: flex; flex-direction: column; max-height: 52vh; overflow: hidden; margin-top: 6px; padding: 8px 10px; border-radius: 12px; background: rgba(255, 253, 247, .94); box-shadow: 0 6px 20px rgba(72, 51, 32, .14); font-size: 12px; }
 .pet-card { display: flex; flex-direction: column; min-height: 0; }
 .pet-card-title { margin: 0 0 6px; font-weight: 600; }
