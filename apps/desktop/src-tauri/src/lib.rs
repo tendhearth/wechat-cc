@@ -122,7 +122,10 @@ async fn open_companion_window(app: AppHandle) -> Result<(), String> {
     .decorations(false)
     .always_on_top(true)
     .skip_taskbar(true)
-    .resizable(true);
+    .resizable(true)
+    // No drag region and no maximize: a still double-click on CC must never
+    // zoom this transparent always-on-top window to the whole display.
+    .maximizable(false);
 
     // Windows: an undecorated window keeps its DWM shadow by default, which
     // paints an opaque halo/flicker around a TRANSPARENT window. Drop it.

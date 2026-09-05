@@ -16,10 +16,10 @@ describe('presenceToPet(Phase A:只有处境)', () => {
     const again = presenceToPet(P({ presence: 'degraded' }), P({ presence: 'degraded' }))
     expect(again.oneShots).toEqual([])
   })
-  it('chatting → lit;其它 → unlit;companion / working 的映射;laptop 只在 working', () => {
+  it('chatting → lit;其它 → unlit;companion / working 的映射;working 不叠 laptop(帧自带)', () => {
     expect(presenceToPet(P({ activity: { kind: 'chatting', label: '在跟你聊', since: null } }), null)).toMatchObject({ form: 'lit', behavior: 'idle' })
     for (const k of ['hosting_human', 'visiting', 'hosting_peer']) expect(presenceToPet(P({ activity: { kind: k, label: '', since: null } }), null).behavior).toBe('companion')
-    for (const k of ['foraging', 'working']) expect(presenceToPet(P({ activity: { kind: k, label: '', since: null } }), null)).toMatchObject({ form: 'unlit', behavior: 'working', props: ['laptop'] })
+    for (const k of ['foraging', 'working']) expect(presenceToPet(P({ activity: { kind: k, label: '', since: null } }), null)).toMatchObject({ form: 'unlit', behavior: 'working', props: [] })
     expect(presenceToPet(P(), null)).toMatchObject({ form: 'unlit', behavior: 'idle', props: [], hint: null })
   })
   it('unread 增加 → oneShots 含 receive;不变 / 减少不含;envelope 带 badge', () => {

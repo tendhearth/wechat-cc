@@ -5,7 +5,8 @@ html, body { width: 100%; height: 100%; margin: 0; background: transparent; over
 body { color: var(--ink); font-family: Geist, "PingFang SC", sans-serif; }
 button { font: inherit; }
 
-.pet-shell { position: relative; display: grid; grid-template-rows: 1fr auto; width: 100%; height: 100%; padding: 8px; }
+/* minmax(0, 1fr):默认的 auto 最小值会把 .pet-stage 的 100vh 宽度当内容尺寸顶出去(舞台会溢出列)。 */
+.pet-shell { position: relative; display: grid; grid-template-rows: 1fr auto; grid-template-columns: minmax(0, 1fr); width: 100%; height: 100%; padding: 8px; }
 /* 舞台正方形,anchor 用 manifest 给的比例(--pet-anchor-x/y)。主体 img 的底部中线对齐 anchor 点。 */
 .pet-stage { position: relative; width: min(100%, calc(100vh - 60px)); aspect-ratio: 1 / 1; margin: 0 auto; cursor: grab; }
 .pet-stage:active { cursor: grabbing; }

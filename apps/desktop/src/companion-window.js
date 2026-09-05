@@ -26,8 +26,8 @@ poller.subscribe(p => { pet.applyIntent(presenceToPet(p, prev)); if (p.presence 
 poller.start()
 document.addEventListener('visibilitychange', () => { if (document.hidden) poller.stop(); else { poller.start(); poller.refresh() } })
 
-// 拖动:整只 CC 是 drag-region;按下进 drag,松开回落。系统拖动结束后不会有事件回来,
-// 所以回落靠 mouseup / blur / focus 兜底。
+// 拖动:按下进 drag,交给系统拖窗口。系统拖动结束后不一定有事件回来,所以回落靠
+// mouseup / blur 兜底,再加一条 mousemove(按键已松开)的事件型安全网 —— 不用计时器。
 stage?.addEventListener('mousedown', (event) => {
   if (!(event instanceof MouseEvent) || event.button !== 0) return
   event.preventDefault()
@@ -37,7 +37,7 @@ stage?.addEventListener('mousedown', (event) => {
 const endDrag = () => pet.endDrag()
 window.addEventListener('mouseup', endDrag)
 window.addEventListener('blur', endDrag)
-window.addEventListener('focus', endDrag)
+window.addEventListener('mousemove', (event) => { if (event instanceof MouseEvent && event.buttons === 0) endDrag() })
 
 $('companion-window-close')?.addEventListener('click', () => {
   if (mock) { window.close(); return }

@@ -40,7 +40,8 @@ export function presenceToPet(p, prev) {
   /** @type {PetBehavior} */
   let behavior = 'idle'
   if (COMPANION_KINDS.has(kind)) behavior = 'companion'
-  else if (WORKING_KINDS.has(kind)) { behavior = 'working'; props.push('laptop') }
+  // working 的帧自带笔记本,再叠一个 laptop 道具就是两台(见 final-review 8)。
+  else if (WORKING_KINDS.has(kind)) behavior = 'working'
   props.push(...envelope)
   if (received) oneShots.push('receive')
   return { form, behavior, props, badge, hint: null, oneShots }
