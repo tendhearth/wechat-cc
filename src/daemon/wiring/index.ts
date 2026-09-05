@@ -82,11 +82,14 @@ export interface WireMainOpts {
    * 透传进 buildTickBodies。
    */
   outboundTaps?: { tap(chatId: string): { close(): string[] } }
-  // 两条用途:tick-bodies 只用 recordHunt(打猎入库),pipeline-deps 只用
-  // list(微信「背包」命令)。这里给全,下游各取所需。
+  // 三条用途:tick-bodies 用 recordHunt(打猎入库)与 list/summary(日程判断
+  // 要看包袱里堆了什么),pipeline-deps 用 list(微信「背包」命令)。这里给
+  // 全,下游各取所需 —— main.ts 传的是完整 Journal。
   huntStore?: {
     recordHunt(a: { chatId: string; text: string; nowIso?: string }): number
-    list(limit?: number): readonly { title: string; url: string | null; ts: string; status: string }[]
+    list(limit?: number): readonly { kind: string; title: string; url: string | null; ts: string; status: string }[]
+    /** 包袱水位(spec 2026-09-05-companion-plan):水位之后有几条、最新一条是什么。 */
+    summary(seenUntil: string | null): { unread: number; latest: { kind: string; title: string; ts: string } | null }
   }
 }
 

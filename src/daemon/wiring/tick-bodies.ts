@@ -5,7 +5,7 @@
  * so they earn their own file vs side-effects.ts which is pure helper factories.
  */
 import { join } from 'node:path'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { loadAgentConfig } from '../../lib/agent-config'
 import type { Db } from '../../lib/db'
 import type { IlinkAdapter } from '../ilink-glue'
@@ -47,6 +47,14 @@ export const INGEST_BATCH_CAP = 4
 export const INGEST_QUIET_MS = 3 * 60_000
 import { runGarden } from '../memory/gardener'
 import { readJsonFile } from '../../lib/read-json-file'
+import type { CheapEval } from '../../core/agent-provider'
+import {
+  computeCandidates, buildPlanPrompt, parsePlan, pickFallback, constrainPlan, shouldReask, formatLocal,
+  PLAN_EVAL_TIMEOUT_MS, PLAN_MAX_OBSERVATIONS, PLAN_JOURNAL_ITEMS,
+  type PlanAction, type PlanContext, type PlanLogEntry,
+} from '../../core/companion-plan'
+import { readPlanLog, appendPlanLog } from '../companion/plan-memory'
+import { readJournalSeen } from '../../core/journal-seen'
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
@@ -92,7 +100,15 @@ export interface TickDeps {
   huntStore?: {
     recordHunt(a: { chatId: string; text: string; nowIso?: string }): number
     recordVisit?(a: { chatId: string; text: string; peerLabel: string; nowIso?: string }): string | null
+    /** 日程判断用(spec 2026-09-05-companion-plan):包袱里最近几条 + 没看的数量。main.ts 传的是完整 Journal。 */
+    list?(limit?: number): readonly { kind: string; title: string; ts: string }[]
+    summary?(seenUntil: string | null): { unread: number; latest: { kind: string; title: string; ts: string } | null }
   }
+  /**
+   * 日程判断的便宜模型(spec 2026-09-05-companion-plan)。测试注入;缺省
+   * `boot.registry.getCheapEval()`。没有 → 回退到固定顺序 hunt → visit → gap。
+   */
+  planEval?: CheapEval
   /**
    * Task 6 — the calibration gate's learning signal (last claimed proactive
    * send + no-reply streak per chat). shouldSpeak() reads it; pushTick
@@ -452,9 +468,11 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
 
   /**
    * Per-chat body: agenda branch (due self-authored intention) takes
-   * priority; falls back to the gap check-in branch when nothing is due.
-   * Both branches route through calibration's shouldSpeak() — the single
-   * chokepoint every proactive send passes through.
+   * priority and returns on its own. Nothing due ⇒ 日程判断
+   * (spec 2026-09-05-companion-plan):候选由 computeCandidates 算(三次
+   * shouldSpeak —— 冷却 / care 档 / 无回复暂停一律不变),便宜模型只能在候选
+   * 里选一个或选 none;没有模型 / 超时 / 解析失败就按老顺序 hunt → visit → gap。
+   * calibration 的 shouldSpeak() 仍是每一次主动外发唯一经过的关口。
    */
   async function pushTickForChat(
     chatId: string,
@@ -492,82 +510,163 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       return
     }
 
-    // No due agenda item → hunt branch: only the owner's chat, once/day
-    // (calibration cooldown). A cooling hunt must not block a legitimate
-    // gap check-in, so a deny here falls through to the gap branch below
-    // rather than returning.
-    if (chatId === defaultChatId) {
-      const huntLevel = deps.chatPrefs.get(chatId).hunt !== false ? 'low' as const : 'off' as const
-      const huntDecision = shouldSpeak({ kind: 'hunt', level: huntLevel, nowIso, ledger, lastInboundAtIso })
-      if (huntDecision.ok) {
-        // 旁听这一拍发出去的东西 —— 打猎的产出此前只存在于微信聊天记录里,
-        // 主人想回头找上周那条链接只能翻聊天。记的是**真发出去的文本**,
-        // 不是要求模型额外调一个登记工具(漏调一次就少一条,且无人知晓)。
-        const tap = deps.outboundTaps?.tap(chatId)
-        // busy token(spec 2026-09-03-companion-presence §2.2):调度器持的是
-        // companion-push(每拍都有,桌宠推导会忽略);打猎要有自己的名字,
-        // 桌宠才知道这一拍是「出门觅食」而不是例行公事。silent-safe:
-        // 测试夹具的 boot 没有 holdBusy。
-        let releaseHunt: (() => void) | undefined
-        try { releaseHunt = (deps.boot as { holdBusy?: (l: string) => () => void }).holdBusy?.('hunt') } catch { releaseHunt = undefined }
-        try {
-          await dispatchToChat(chatId, {
-            claim: () => { deps.careLedger.claimHunt(chatId, nowIso) },
-            buildText: () => buildHuntText({ nowIso }),
-          })
-        } finally {
-          try { releaseHunt?.() } catch { /* release 永不抛 */ }
-          const shared = tap?.close() ?? []
-          if (shared.length > 0 && deps.huntStore) {
-            // 记录失败绝不能让这一拍看起来失败 —— 消息已经发出去了。
-            try {
-              const n = deps.huntStore.recordHunt({ chatId, text: shared.join('\n\n'), nowIso })
-              deps.log('HUNT', `chat=${chatId} 入库 ${n} 条`)
-            } catch (err) { deps.log('HUNT', `入库失败(消息已发出): ${errMsg(err)}`) }
-          }
-        }
-        return
-      }
-      deps.log('CARE', `skip chat=${chatId} kind=hunt reason=${huntDecision.reason}`)
+    // ── 三段收成的执行(spec 2026-09-05-companion-plan)─────────────────
+    // 判定(shouldSpeak / 冷却 / care 档 / 无回复暂停)已经在下面的
+    // computeCandidates 里做完了 —— 这三个函数只管「做」,内容与升级前逐字
+    // 一致(旁听入库、busy token、先登记再出门、daysSinceContact 的算法)。
 
-      // 串门(2026-09-03,core/visit.ts):伙伴自己的社交,一天一次。排在打猎
-      // 之后 —— 打猎这一拍发了就 return,串门只会在同一天稍后的某一拍出门,
-      // 于是两件事自然错开,主人不会一分钟内收到两条。
-      //
-      // 不走 dispatchToChat:串门不是一次 agent turn(不带工具、不进会话),它
-      // 有自己的 eval 链;这里只做「今天该不该出门」的判定 + 登记。
-      const visit = deps.boot.social?.penpal
-      if (visit) {
-        const visitLevel = deps.chatPrefs.get(chatId).visit !== false ? 'low' as const : 'off' as const
-        const visitDecision = shouldSpeak({ kind: 'visit', level: visitLevel, nowIso, ledger, lastInboundAtIso })
-        if (visitDecision.ok) {
-          // 先登记再出门(at-most-once,同打猎):出门一半 daemon 重启,不该
-          // 下一拍再出一次门 —— 两趟串门比一趟没出门的观感差得多。
-          // 总有地方可去:没有真信道就去邻居家(core/neighbors.ts)。
-          deps.careLedger.claimVisit(chatId, nowIso)
-          const r = await visit.startVisit()
-          deps.log('VISIT', r.ok ? `tick: 出门了 visit=${r.id} → ${r.channel}` : `tick: 没出得了门 reason=${r.reason}`)
-          return
-        } else {
-          deps.log('CARE', `skip chat=${chatId} kind=visit reason=${visitDecision.reason}`)
+    // 打猎:只有主人那个聊天会成为候选(computeCandidates 里的 isOwnerChat)。
+    async function runHunt(): Promise<void> {
+      // 旁听这一拍发出去的东西 —— 打猎的产出此前只存在于微信聊天记录里,
+      // 主人想回头找上周那条链接只能翻聊天。记的是**真发出去的文本**,
+      // 不是要求模型额外调一个登记工具(漏调一次就少一条,且无人知晓)。
+      const tap = deps.outboundTaps?.tap(chatId)
+      // busy token(spec 2026-09-03-companion-presence §2.2):调度器持的是
+      // companion-push(每拍都有,桌宠推导会忽略);打猎要有自己的名字,
+      // 桌宠才知道这一拍是「出门觅食」而不是例行公事。silent-safe:
+      // 测试夹具的 boot 没有 holdBusy。
+      let releaseHunt: (() => void) | undefined
+      try { releaseHunt = (deps.boot as { holdBusy?: (l: string) => () => void }).holdBusy?.('hunt') } catch { releaseHunt = undefined }
+      try {
+        await dispatchToChat(chatId, {
+          claim: () => { deps.careLedger.claimHunt(chatId, nowIso) },
+          buildText: () => buildHuntText({ nowIso }),
+        })
+      } finally {
+        try { releaseHunt?.() } catch { /* release 永不抛 */ }
+        const shared = tap?.close() ?? []
+        if (shared.length > 0 && deps.huntStore) {
+          // 记录失败绝不能让这一拍看起来失败 —— 消息已经发出去了。
+          try {
+            const n = deps.huntStore.recordHunt({ chatId, text: shared.join('\n\n'), nowIso })
+            deps.log('HUNT', `chat=${chatId} 入库 ${n} 条`)
+          } catch (err) { deps.log('HUNT', `入库失败(消息已发出): ${errMsg(err)}`) }
         }
       }
     }
 
-    // No due item → gap branch: has it been quiet long enough (by care
-    // level) to warrant a check-in with no concrete agenda reason?
-    const decision = shouldSpeak({ kind: 'gap', level, nowIso, ledger, lastInboundAtIso })
-    if (!decision.ok) {
-      deps.log('CARE', `skip chat=${chatId} kind=gap reason=${decision.reason}`)
+    // 串门(2026-09-03,core/visit.ts):伙伴自己的社交,一天一次。
+    //
+    // 不走 dispatchToChat:串门不是一次 agent turn(不带工具、不进会话),它
+    // 有自己的 eval 链;这里只做登记 + 出门。`target` 是模型从
+    // provenChannels 里挑的信道 id;没挑就还是 startVisit() 自己挑。
+    async function runVisit(target?: string): Promise<void> {
+      const visit = deps.boot.social?.penpal
+      if (!visit) return
+      // 先登记再出门(at-most-once,同打猎):出门一半 daemon 重启,不该
+      // 下一拍再出一次门 —— 两趟串门比一趟没出门的观感差得多。
+      // 总有地方可去:没有真信道就去邻居家(core/neighbors.ts)。
+      deps.careLedger.claimVisit(chatId, nowIso)
+      const r = target === undefined ? await visit.startVisit() : await visit.startVisit(target)
+      deps.log('VISIT', r.ok ? `tick: 出门了 visit=${r.id} → ${r.channel}` : `tick: 没出得了门 reason=${r.reason}`)
+    }
+
+    // 问候:安静够久了(按 care 档)、没有具体由头的一句。
+    async function runGap(): Promise<void> {
+      const daysSinceContact = lastInboundAtIso !== undefined
+        ? Math.floor((Date.parse(nowIso) - Date.parse(lastInboundAtIso)) / 86_400_000)
+        : 0
+      await dispatchToChat(chatId, {
+        claim: () => { deps.careLedger.claim(chatId, nowIso) },
+        buildText: () => buildGapCheckinText({ nowIso, chatId, daysSinceContact }),
+      })
+    }
+
+    // ── 日程判断(spec 2026-09-05-companion-plan)──────────────────────────
+    // 候选由代码算(三次 shouldSpeak,冷却 / care 门 / 无回复暂停一律不变);
+    // 模型只能在候选里选一个或选 none。没有模型 / 超时 / 解析失败 → 固定顺序。
+    const socialWired = !!deps.boot.social?.penpal
+    const { candidates, rejected } = computeCandidates({
+      isOwnerChat: chatId === defaultChatId, level,
+      prefs: deps.chatPrefs.get(chatId), socialWired, nowIso, ledger, lastInboundAtIso,
+    }, shouldSpeak)
+    for (const r of rejected) deps.log('CARE', `skip chat=${chatId} kind=${r.action} reason=${r.reason}`)
+    if (candidates.length === 0) return
+
+    const today10 = formatLocal(nowIso).slice(0, 10)
+    const nowMs = Date.parse(nowIso)
+    const run = async (action: PlanAction, target?: string) => {
+      if (action === 'hunt') await runHunt()
+      else if (action === 'visit') await runVisit(target)
+      else if (action === 'gap') await runGap()
+    }
+    const record = (decision: PlanAction, why: string, source: PlanLogEntry['source']) => {
+      try { appendPlanLog(deps.stateDir, today10, { at: nowIso, chatId, candidates: candidates.map(c => c.action), decision, why, source }) }
+      catch (err) { deps.log('PLAN', `plan-log 写不进去(不影响这一拍): ${errMsg(err)}`) }
+    }
+    const fallback = async (reason: string) => {
+      const pick = pickFallback(candidates)!
+      deps.log('PLAN', `fallback chat=${chatId} reason=${reason} → ${pick}`)
+      record(pick, `fallback:${reason}`, 'fallback')
+      await run(pick)
+    }
+
+    const evaluate = deps.planEval ?? deps.boot.registry.getCheapEval() ?? null
+    if (!evaluate) { await fallback('no_evaluator'); return }
+
+    const earlier = readPlanLog(deps.stateDir, today10)
+    if (!shouldReask(earlier, chatId, nowMs)) { deps.log('PLAN', `skip chat=${chatId} reason=backoff`); return }
+
+    const proven = socialWired ? (deps.boot.social!.penpal.provenChannels?.() ?? []) : []
+    const planCtx = await buildContext()
+    deps.log('PLAN', `ask chat=${chatId} candidates=[${candidates.map(c => c.action).join(',')}]`)
+
+    let raw: string
+    try {
+      raw = await Promise.race([
+        evaluate(buildPlanPrompt(planCtx)),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), PLAN_EVAL_TIMEOUT_MS)),
+      ])
+    } catch (err) {
+      await fallback(err instanceof Error && err.message === 'timeout' ? 'timeout' : 'error')
       return
     }
-    const daysSinceContact = lastInboundAtIso !== undefined
-      ? Math.floor((Date.parse(nowIso) - Date.parse(lastInboundAtIso)) / 86_400_000)
-      : 0
-    await dispatchToChat(chatId, {
-      claim: () => { deps.careLedger.claim(chatId, nowIso) },
-      buildText: () => buildGapCheckinText({ nowIso, chatId, daysSinceContact }),
-    })
+    const parsed = parsePlan(raw)
+    if (!parsed.ok) { await fallback(`parse:${parsed.reason}`); return }
+    const { plan, downgraded } = constrainPlan(parsed.plan, candidates, proven.map(p => p.id))
+    if (downgraded) deps.log('PLAN', `downgraded chat=${chatId} action=${parsed.plan.action} → none`)
+    deps.log('PLAN', `→ ${plan.action}${plan.target ? ` target=${plan.target}` : ''} (${plan.why})`)
+    record(plan.action, plan.why, downgraded ? 'downgraded' : 'model')
+    if (plan.action === 'none') return
+    await run(plan.action, plan.target)
+
+    /**
+     * 给伙伴看的处境。只读,每个来源各自 try/catch —— 判断这一步永远不该
+     * 因为某个子系统没接线 / 抛了而让整拍失败。
+     */
+    async function buildContext(): Promise<PlanContext> {
+      const hoursAgo = (iso?: string) => iso && !Number.isNaN(Date.parse(iso)) ? Math.round((nowMs - Date.parse(iso)) / 3_600_000) : null
+      let journal: PlanContext['journal'] = null
+      try {
+        if (deps.huntStore?.summary && deps.huntStore.list) {
+          const sum = deps.huntStore.summary(readJournalSeen(deps.stateDir))
+          journal = { unread: sum.unread, latest: deps.huntStore.list(PLAN_JOURNAL_ITEMS).map(x => ({ kind: x.kind, title: x.title, ts: x.ts })) }
+        }
+      } catch { journal = null }
+      let social: PlanContext['social'] = null
+      try {
+        const so = deps.boot.social
+        if (so) social = {
+          openWishes: so.wish.list().filter(w => w.effective === 'open').length,
+          pendingOffers: so.intro.offers().length,
+          provenChannels: proven,
+        }
+      } catch { social = null }
+      let observations: PlanContext['observations'] = []
+      try {
+        const rows = await makeObservationsStore(deps.db, chatId, { migrateFromFile: join(deps.stateDir, 'memory', chatId, 'observations.jsonl') }).listActive()
+        observations = rows.slice(-PLAN_MAX_OBSERVATIONS).map(o => ({ tone: o.tone ?? null, body: o.body }))
+      } catch { observations = [] }
+      let personaExcerpt = ''
+      try { personaExcerpt = readFileSync(join(deps.stateDir, 'memory', chatId, 'persona.md'), 'utf8') } catch { personaExcerpt = '' }
+      return {
+        nowLocal: formatLocal(nowIso),
+        ownerLastInboundMinutesAgo: lastInboundAtIso ? Math.round((nowMs - Date.parse(lastInboundAtIso)) / 60_000) : null,
+        today: { lastHuntHoursAgo: hoursAgo(ledger.lastHuntAtIso), lastVisitHoursAgo: hoursAgo(ledger.lastVisitAtIso), lastProactiveHoursAgo: hoursAgo(ledger.lastProactiveAtIso) },
+        candidates, rejected, journal, social, observations, personaExcerpt,
+        earlierToday: earlier.filter(e => e.chatId === chatId).map(e => ({ at: e.at, decision: e.decision, why: e.why })),
+      }
+    }
   }
 
   async function pushTick(opts?: { nowIso?: string }): Promise<void> {
