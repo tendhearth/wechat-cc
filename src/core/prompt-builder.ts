@@ -70,6 +70,18 @@ export interface BuildSystemPromptArgs {
    */
   fileLocateAvailable?: boolean
   /**
+   * When true, this session is admin-tier AND the daemon's social layer is
+   * wired, so the wechat-mcp social tools (social_seek / wish_* / intro_* /
+   * relationships / visit, spec 2026-09-05-social-tools) are registered and
+   * functional. Adds the 替主人交朋友 section so the agent queries before
+   * answering and acts on the owner's say-so instead of asking the owner
+   * to type `认识 ab12`. Caller passes
+   * `socialToolsWired && tierProfile.allow.has('social_act')`. Absent or
+   * false ⇒ output is byte-identical to before this field existed
+   * (mirrors `fileLocateAvailable`'s contract).
+   */
+  socialAvailable?: boolean
+  /**
    * When true, this chat's effective care level (per proactive-care design
    * §7) is not `off` — adds the care-authoring section so the agent knows
    * to write care intentions into `agenda.md` during normal conversation
@@ -298,6 +310,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     a2aSection(),
     args.daemonOpsAvailable ? daemonSelfHealSection() : '',
     args.fileLocateAvailable ? fileLocateSection() : '',
+    args.socialAvailable === true ? socialToolsSection() : '',
     args.careEnabled ? careSection() : '',
     args.newRelationship === true ? newRelationshipSection() : '',
     // Belt-and-braces `!companionEnabled` — see BuildSystemPromptArgs.companionOffer
@@ -427,6 +440,20 @@ export function fileLocateSection(): string {
 - 找到并确认后，用 \`Read\` 打开来回答，并用 \`memory_write\` 往 \`locations.md\` 追一行「这是什么 → 绝对路径」，下次直接命中。
 - 实在找不到，就在微信问主人一句「X 一般放哪？」（只问这一次），拿到答案把那个目录记进 \`locations.md\`。
 范围是用出来的，不是让主人配置出来的。`
+}
+
+export function socialToolsSection(): string {
+  return `## 替主人交朋友(管理员)
+
+伙伴的社交层开着,你手里有一组工具。主人问「谁回了心愿」「有人想认识我吗」「我都认识谁」——先查再答,别凭记忆:
+- \`wish_list\`:开着的心愿和每条的回音(reply_id、哪位朋友转来的、预览、是否已在问)。
+- \`intro_offers\`:等主人点头的邀约。\`relationships\`:认识的人。
+主人说「把 X 认识一下」「同意 / 不了」「去串门」——这句话本身就是指令,直接做,做完把结果说清楚,不要再问一遍「你确定吗」:
+- 「认识」:先 \`wish_list\`,在 postcards 的 preview 里对上那个人,拿 reply_id 调 \`intro_request\`;\`requested:true\` 的说「已经在问了」,别再点。对不上或对上多张,把候选列出来让主人挑。
+- 「同意 / 不了」:用 \`intro_offers\` 对上 reply_id,再 \`intro_accept\` / \`intro_decline\`。
+- 「去串门」:\`visit\`,可带对方名字。
+派心愿是唯一的例外:\`social_seek\` 只出脱敏预览并存草稿,把 preview 原样念给主人;主人点头(任何肯定的说法)再 \`wish_send\`,「算了」就 \`wish_cancel\`。
+工具回 \`ok:false\` 时把 reason 用人话说;\`error\` 里是 \`social_not_wired\` 表示社交层没开,连不上 daemon 是另一回事,两句别混。主人也可以直接回「派 w1」「认识 ab12」这类精确命令,那不经过你。`
 }
 
 /**

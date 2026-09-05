@@ -718,6 +718,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // §2). Unlike personaFor (owner chat via default_chat_id), coreMemoryFor
   // is called with THIS chat's own chatId, so each chat gets its own
   // profile.md excerpt.
+  // social-tools (2026-09-05): flipped to true right after `socialWiring`
+  // below resolves. A `let` read lazily by buildInstructions — NOT a direct
+  // reference to `socialWiring` from inside the closure, which is declared
+  // later with `const` and would be a TDZ hazard if any session's prompt
+  // were built before social wiring completes.
+  let socialToolsWired = false
   const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string): string => {
     const p = deps.personaFor?.(chatId)
     // owner-onboarding design §C2, fix round 2: the empty-library variant
@@ -740,6 +746,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       delegateAvailable: !!delegateStdioByProvider[providerId],
       daemonOpsAvailable: tierProfile.allow.has('daemon_introspect'),
       fileLocateAvailable: tierProfile.allow.has('file_locate'),
+      // Tracks tool registration exactly, same posture as fileLocateAvailable:
+      // `social_act` is ADMIN_ONLY (user-tier.ts), matching wechat-mcp/main.ts's
+      // SESSION_IS_ADMIN gate on registerSocialTools; `socialToolsWired` says
+      // the daemon's social layer actually came up (otherwise every tool 503s).
+      socialAvailable: socialToolsWired && tierProfile.allow.has('social_act'),
       careEnabled: (deps.careLevelFor?.(chatId) ?? 'off') !== 'off' && tierProfile.allow.has('memory_write'),
       // Tri-state (owner-onboarding design §C2) — absent thunk defaults to
       // `null` (pref-off shape), NOT `[]`, so an unwired bootstrap stays
@@ -1078,6 +1089,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // ⇒ 映射为 null ⇒ supervisor 记 off。
     return w.social ? w : null
   })) ?? inertSocialWiring
+  socialToolsWired = !!socialWiring.social
 
   const a2aWiring = await sup.start('a2a-server', () => wireA2aServer({
     log: deps.log,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSystemPrompt, bubbleRepliesSection, careSection, companionOfferSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, KNOWLEDGE_MEMORY_MAX_CHARS, knowledgeMemorySection, daemonSelfHealSection, knowledgeOrchestrationSection, newRelationshipSection, personaCultivationSection, personaSection, stickerEmptyLibrarySection, stickerSection } from './prompt-builder'
+import { buildSystemPrompt, bubbleRepliesSection, careSection, companionOfferSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, KNOWLEDGE_MEMORY_MAX_CHARS, knowledgeMemorySection, daemonSelfHealSection, knowledgeOrchestrationSection, newRelationshipSection, personaCultivationSection, personaSection, socialToolsSection, stickerEmptyLibrarySection, stickerSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
   function defaults() {
@@ -764,5 +764,32 @@ describe('knowledge-orchestration prompt section', () => {
     const multiModeIdxWithout = withoutKnowledge.indexOf('模式感知')
     const withoutKnowledgeSpliced = withKnowledge.slice(0, memoryIdx) + withKnowledge.slice(multiModeIdx)
     expect(withoutKnowledgeSpliced).toBe(withoutKnowledge.slice(0, memoryIdx) + withoutKnowledge.slice(multiModeIdxWithout))
+  })
+})
+
+describe('socialAvailable (social-tools 2026-09-05)', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+  const TOOLS = ['social_seek', 'wish_list', 'wish_send', 'wish_cancel', 'intro_request', 'intro_accept', 'intro_decline', 'intro_offers', 'relationships', 'visit']
+
+  it('buildSystemPrompt is byte-identical whether socialAvailable is absent or explicitly false', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withFalse = buildSystemPrompt({ ...base, socialAvailable: false })
+    expect(withFalse).toBe(withoutKey)
+    expect(withoutKey).not.toContain('替主人交朋友')
+    for (const t of TOOLS.filter(t => t !== 'social_seek')) expect(withoutKey).not.toContain(t)
+  })
+
+  it('renders the 替主人交朋友 section with all ten tool names when socialAvailable is true', () => {
+    const p = buildSystemPrompt({ ...base, socialAvailable: true })
+    expect(p).toContain('## 替主人交朋友(管理员)')
+    for (const t of TOOLS) expect(p).toContain(`\`${t}\``)
+  })
+
+  it('socialToolsSection() says: query before answering, act on say-so, wish keeps the preview nod', () => {
+    const s = socialToolsSection()
+    expect(s).toContain('先查再答')
+    expect(s).toContain('直接做')
+    expect(s).toContain('preview')
+    expect(s).toContain('social_not_wired')
   })
 })
