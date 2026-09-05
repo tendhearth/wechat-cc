@@ -43,9 +43,10 @@ const bridge = createPetBridge()
 const apply = () => {
   const r = bridge.tick(petPoller.current())
   pet.applyIntent(r.intent)
-  // 第一拍不播转场(spec §5.2):开窗时 CC 本来就亮着,那是既成事实,不是「主人
+  // 初次观察不播转场(spec §5.2):开窗时 CC 本来就亮着,那是既成事实,不是「主人
   // 刚到」。applyIntent 已经按事实把 form 设过去了,这里立刻把转场判为播完,
   // 状态机直接落到目标形态 —— 省掉那 8 帧点火,而不用改 Phase A 的接口。
+  // 哪一拍算「初次」由 bridge 说(开窗第一拍 + 第一次拿到端点回答那拍,见 pet-bridge.js)。
   if (r.first && pet.machine.snapshot().transition) pet.machine.notifyAnimationEnded()
   if (r.permission) card.show(r.permission, r.permissionCount); else card.hide()
   petPoller.setFast(r.fast)

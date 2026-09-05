@@ -40,15 +40,22 @@ describe('createPetBridge', () => {
     expect(b.tick(turnAt('idle', [], new Date(1_000).toISOString())).fast).toBe(true)
   })
 
-  it('第一拍报 first(拿到端点回答的那一拍),之后不再报', () => {
+  it('初次观察都报 first:开窗第一拍(哪怕只有 presence)与第一次拿到端点回答那拍', () => {
     const b = createPetBridge({ now: () => 1_000 })
     b.notePresence(presence(0))
-    // 端点还没拉通的那几拍不算「定下来」—— first 留给真正第一次拿到回答的那拍。
-    expect(b.tick(null).first).toBe(false)
+    // presence 先回来的那一拍也算「初次」——它自带 3 分钟近似,不挡会点到一半的火。
+    expect(b.tick(null).first).toBe(true)
     const lit = turnAt('idle', [], new Date(1_000).toISOString())
-    const first = b.tick(lit)
-    expect(first.first).toBe(true)
-    expect(first.intent.form).toBe('lit')
+    const firstReal = b.tick(lit)
+    expect(firstReal.first).toBe(true)      // 真答案落地又会 setForm 一次,同样不演转场
+    expect(firstReal.intent.form).toBe('lit')
+    expect(b.tick(lit).first).toBe(false)   // 之后的变化都是真变化
+  })
+  it('第一拍就拿到端点回答时也只报一次 first', () => {
+    const b = createPetBridge({ now: () => 1_000 })
+    b.notePresence(presence(0))
+    const lit = turnAt('idle', [], new Date(1_000).toISOString())
+    expect(b.tick(lit).first).toBe(true)
     expect(b.tick(lit).first).toBe(false)
   })
 
