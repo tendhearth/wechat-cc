@@ -37,6 +37,7 @@ export type ToolKind =
   | 'file_locate'        // admin-only: locate files on the owner's computer (lib/locate-files)
   | 'plugin_tool'        // admin-only by default: ANY third-party plugin MCP tool (mcp__<plugin>__*). A plugin spawns arbitrary code and can expose owner-private data (e.g. wxvault = the owner's WeChat history), so fail closed — trusted/guest can't reach it.
   | 'social_seek'        // admin-only: initiate outbound social contact with external A2A agents (agent-social M1) — unlike a2a_send (reply to an established peer), this actively broadcasts an intent to strangers.
+  | 'social_act'         // admin-only: act on the owner's social layer via the wechat MCP tools (wish_list/wish_send/wish_cancel/intro_request/intro_accept/intro_decline/intro_offers/relationships/visit, social-tools 2026-09-05) — same trust class as social_seek: reads the owner's social state or reaches out on their behalf.
   | 'knowledge_search'   // admin-only: semantic search over the owner's WeChat message history (agent-facing search) — same private-data trust class as file_locate/social_seek.
   | 'federated_query'    // admin-only: reshapes knowledge_search's retrieval into hearth-compatible cited hits for a federated memory layer (memory-infra Phase 2a HF W1) — same private-data trust class as knowledge_search.
   | 'graph_query'        // admin-only: read the owner's contact/relationship graph (contact_profile/top_contacts/relationship_subgraph/connectors/graph_status, Knowledge Graph inproc) — same private-data trust class as knowledge_search.
@@ -49,7 +50,7 @@ const ALL_KINDS: ReadonlySet<ToolKind> = new Set([
   'observations_read', 'observations_write',
   'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
   'a2a_send', 'daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool',
-  'social_seek', 'knowledge_search', 'federated_query', 'graph_query', 'facts_query', 'person_query',
+  'social_seek', 'social_act', 'knowledge_search', 'federated_query', 'graph_query', 'facts_query', 'person_query',
   'config_admin',
 ])
 
@@ -96,7 +97,7 @@ const GUEST_ALLOW = new Set<ToolKind>(['reply', 'share_page', 'memory_read', 'ob
 // they FAIL CLOSED — only the owner (admin) can call a plugin's tools by
 // default. A plugin that genuinely wants trusted/guest reach must opt in
 // explicitly (future: manifest `minTier`), not inherit it silently.
-const ADMIN_ONLY = new Set<ToolKind>(['daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool', 'social_seek', 'knowledge_search', 'federated_query', 'graph_query', 'facts_query', 'person_query', 'config_admin'])
+const ADMIN_ONLY = new Set<ToolKind>(['daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool', 'social_seek', 'social_act', 'knowledge_search', 'federated_query', 'graph_query', 'facts_query', 'person_query', 'config_admin'])
 
 export const TIER_PROFILES: Record<UserTier, TierProfile> = {
   admin: {
@@ -230,6 +231,11 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     if (sub === 'observations_write' || sub === 'observations_archive') return 'observations_write'
     if (sub === 'a2a_send') return 'a2a_send'
     if (sub === 'social_seek') return 'social_seek'
+    // social-tools (2026-09-05): the nine tools that read or act on the
+    // owner's social layer — admin-only, same posture as social_seek.
+    if (sub === 'wish_list' || sub === 'wish_send' || sub === 'wish_cancel'
+      || sub === 'intro_request' || sub === 'intro_accept' || sub === 'intro_decline' || sub === 'intro_offers'
+      || sub === 'relationships' || sub === 'visit') return 'social_act'
     if (sub === 'knowledge_search') return 'knowledge_search'
     // memory-infra Phase 2a (HF W1): federated_query reshapes the same
     // retrieval knowledge_search uses into hearth-compatible cited hits —

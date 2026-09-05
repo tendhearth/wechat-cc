@@ -45,6 +45,7 @@ const TOOL_KIND_TO_CLAUDE_BUILTINS: Record<ToolKind, ReadonlyArray<string>> = {
   file_locate: [],         // MCP-only (mcp__wechat__locate_file), gated by canUseTool
   plugin_tool: [],         // MCP-only (mcp__<plugin>__*), admin-only, gated by canUseTool
   social_seek: [],         // MCP-only (mcp__wechat__social_seek), admin-only, gated by canUseTool
+  social_act: [],          // MCP-only (mcp__wechat__wish_list / wish_send / wish_cancel / intro_request / intro_accept / intro_decline / intro_offers / relationships / visit), admin-only, gated by canUseTool
   knowledge_search: [],    // MCP-only (mcp__wechat__knowledge_search), admin-only, gated by canUseTool
   federated_query: [],     // MCP-only (mcp__wechat__federated_query), admin-only, gated by canUseTool
   graph_query: [],         // MCP-only (mcp__wechat__contact_profile / top_contacts / relationship_subgraph / connectors / graph_status), admin-only, gated by canUseTool
