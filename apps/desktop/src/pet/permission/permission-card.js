@@ -13,8 +13,15 @@ const TITLE = '这个要你看一下'
 const FAIL_NOTE = ' 没送出去,再试一次'
 
 /**
+ * onResolve 的三种结局(spec §6):
+ *  - 'resolved' 真的拍板了 → 收卡片;
+ *  - 'gone'     请求通了,但这条已经不在了(微信那端刚点过 / 过期)→ 也收卡片,
+ *               这不是失败,说「没送出去」是撒谎;下一拍列表自会同步;
+ *  - 'failed'   请求本身没成(没凭据 / 超时 / 403)→ 恢复按钮 + 提示重试。
+ * @typedef {'resolved' | 'gone' | 'failed'} ResolveOutcome
+ *
  * @param {{ el: any, makeEl: (tag: string) => any }} root
- * @param {{ canResolve: boolean, onResolve: (hash: string, decision: 'allow' | 'deny') => Promise<boolean> }} opts
+ * @param {{ canResolve: boolean, onResolve: (hash: string, decision: 'allow' | 'deny') => Promise<ResolveOutcome> }} opts
  */
 export function createPermissionCard(root, { canResolve, onResolve }) {
   const el = root.el
@@ -58,9 +65,11 @@ export function createPermissionCard(root, { canResolve, onResolve }) {
     const target = hash
     if (allow) allow.disabled = true
     if (deny) deny.disabled = true
-    let ok = false
-    try { ok = (await onResolve(target, decision)) === true } catch { ok = false }
-    if (ok) { hide(); return }
+    /** @type {ResolveOutcome} */
+    let outcome = 'failed'
+    try { outcome = await onResolve(target, decision) } catch { outcome = 'failed' }
+    // resolved 与 gone 都意味着「这条不用你再管了」——只有 failed 才留提示。
+    if (outcome !== 'failed') { hide(); return }
     // 等待期间卡片可能已经换了一条(另一端 resolve 掉了这条)—— 那就别去动新卡片。
     if (hash !== target) return
     if (allow) allow.disabled = false

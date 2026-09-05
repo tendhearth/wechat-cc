@@ -39,4 +39,27 @@ describe('createPetBridge', () => {
     // 刚说过话 → lit,端点闲着也保持快档(等着看它动起来)。
     expect(b.tick(turnAt('idle', [], new Date(1_000).toISOString())).fast).toBe(true)
   })
+
+  it('第一拍报 first(拿到端点回答的那一拍),之后不再报', () => {
+    const b = createPetBridge({ now: () => 1_000 })
+    b.notePresence(presence(0))
+    // 端点还没拉通的那几拍不算「定下来」—— first 留给真正第一次拿到回答的那拍。
+    expect(b.tick(null).first).toBe(false)
+    const lit = turnAt('idle', [], new Date(1_000).toISOString())
+    const first = b.tick(lit)
+    expect(first.first).toBe(true)
+    expect(first.intent.form).toBe('lit')
+    expect(b.tick(lit).first).toBe(false)
+  })
+
+  it('拉不到端点的那一拍不改形态:亮着就还是亮着(不演灭掉又点亮)', () => {
+    const b = createPetBridge({ now: () => 1_000 })
+    b.notePresence(presence(0))
+    expect(b.tick(turnAt('idle', [], new Date(1_000).toISOString())).intent.form).toBe('lit')
+    const degraded = b.tick(null)
+    expect(degraded.intent.form).toBe('lit')
+    expect(degraded.intent.oneShots).toEqual([])
+    // 下一拍又拉通了,也不该冒出一次转场以外的东西。
+    expect(b.tick(turnAt('idle', [], new Date(1_000).toISOString())).intent.form).toBe('lit')
+  })
 })

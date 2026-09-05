@@ -20,7 +20,7 @@ const item = { hash: 'abcde', prompt: 'Bash: rm -rf ./tmp', since: 's', expires_
 
 describe('createPermissionCard', () => {
   it('show 渲染标题、三个真实按钮、隐藏的 prompt;查看切换展开;count>1 显示 +n', () => {
-    const root = makeEl(); const card = createPermissionCard({ el: root, makeEl }, { canResolve: true, onResolve: vi.fn(async () => true) })
+    const root = makeEl(); const card = createPermissionCard({ el: root, makeEl }, { canResolve: true, onResolve: vi.fn(async () => 'resolved' as const) })
     card.show(item, 3)
     expect(root.hidden).toBe(false); expect(card.current()).toBe('abcde')
     expect(root.querySelector('.pet-card-count').textContent).toBe('+2'); expect(root.querySelector('.pet-card-count').hidden).toBe(false)
@@ -29,18 +29,36 @@ describe('createPermissionCard', () => {
     root.fire('keydown', { key: 'Escape' }); expect(pre.hidden).toBe(true)
   })
   it('允许 → onResolve(hash, allow) → 成功隐藏;失败恢复按钮并提示', async () => {
-    const root = makeEl(); const onResolve = vi.fn(async () => true)
+    const root = makeEl(); const onResolve = vi.fn(async () => 'resolved' as const)
     const card = createPermissionCard({ el: root, makeEl }, { canResolve: true, onResolve })
     card.show(item, 1)
     const allow = root.querySelector('.pet-card-allow'); allow.fire('click'); expect(allow.disabled).toBe(true)
     await Promise.resolve(); await Promise.resolve()
     expect(onResolve).toHaveBeenCalledWith('abcde', 'allow'); expect(root.hidden).toBe(true); expect(card.current()).toBeNull()
-    const root2 = makeEl(); const card2 = createPermissionCard({ el: root2, makeEl }, { canResolve: true, onResolve: vi.fn(async () => false) })
+    const root2 = makeEl(); const card2 = createPermissionCard({ el: root2, makeEl }, { canResolve: true, onResolve: vi.fn(async () => 'failed' as const) })
     card2.show(item, 1); root2.querySelector('.pet-card-deny').fire('click'); await Promise.resolve(); await Promise.resolve()
     expect(root2.hidden).toBe(false); expect(root2.querySelector('.pet-card-deny').disabled).toBe(false); expect(root2.querySelector('.pet-card-title').textContent).toContain('没送出去')
   })
+  it('gone(另一端已经拍过了)= 收卡片,不说「没送出去」', async () => {
+    const root = makeEl()
+    const card = createPermissionCard({ el: root, makeEl }, { canResolve: true, onResolve: vi.fn(async () => 'gone' as const) })
+    card.show(item, 1)
+    root.querySelector('.pet-card-allow').fire('click')
+    await Promise.resolve(); await Promise.resolve()
+    expect(root.hidden).toBe(true); expect(card.current()).toBeNull()
+  })
+  it('onResolve 抛错 = failed:恢复按钮 + 提示重试', async () => {
+    const root = makeEl()
+    const card = createPermissionCard({ el: root, makeEl }, { canResolve: true, onResolve: vi.fn(async () => { throw new Error('no operator token') }) })
+    card.show(item, 1)
+    root.querySelector('.pet-card-allow').fire('click')
+    await Promise.resolve(); await Promise.resolve()
+    expect(root.hidden).toBe(false)
+    expect(root.querySelector('.pet-card-allow').disabled).toBe(false)
+    expect(root.querySelector('.pet-card-title').textContent).toContain('没送出去')
+  })
   it('canResolve=false:只显示提示行,没有允许 / 拒绝按钮;同一 hash 重复 show 不重建', () => {
-    const root = makeEl(); const card = createPermissionCard({ el: root, makeEl }, { canResolve: false, onResolve: vi.fn(async () => true) })
+    const root = makeEl(); const card = createPermissionCard({ el: root, makeEl }, { canResolve: false, onResolve: vi.fn(async () => 'resolved' as const) })
     card.show(item, 1)
     expect(root.querySelector('.pet-card-allow')).toBeNull(); expect(root.querySelector('.pet-card-note').hidden).toBe(false)
     const before = root.children[0]; card.show(item, 1); expect(root.children[0]).toBe(before)

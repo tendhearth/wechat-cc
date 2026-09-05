@@ -63,4 +63,20 @@ describe('mergeIntent', () => {
     const r3 = mergeIntent({ presence: presenceIdle, turn: turn({ last_done_at: iso(T0 + 5000) }), state: r2.state, nowMs: T0 })
     expect(r3.intent.oneShots).toEqual([]); expect(r3.state.lastDoneMs).toBe(T0 + 5000)
   })
+
+  it('已经初始化过之后拉不到端点:form 守住事实,不跟着 presence 退回 unlit,也不播一次性', () => {
+    const s = { ...initialBridgeState(), form: 'lit' as const, lastContactMs: T0, lastDoneMs: T0, initialized: true }
+    const r = mergeIntent({ presence: presenceIdle, turn: null, state: s, nowMs: T0 + 2000 })
+    expect(r.intent.form).toBe('lit')          // presenceIdle 自己说 unlit —— 那是 Phase A 的近似,不作数
+    expect(r.intent.behavior).toBe('idle')     // behavior 仍照 presence(诚实的降级)
+    expect(r.intent.oneShots).toEqual([])
+    expect(r.state).toEqual(s)                 // 拉不到就什么都不记
+    expect(r.permission).toBeNull(); expect(r.permissionCount).toBe(0)
+  })
+  it('拉不到端点且 presence 说睡:画面照 presence 的 form(睡着了不装亮)', () => {
+    const s = { ...initialBridgeState(), form: 'lit' as const, lastContactMs: T0, initialized: true }
+    const sleeping = { ...presenceIdle, behavior: 'sleep' as const, form: 'unlit' as const }
+    const r = mergeIntent({ presence: sleeping, turn: null, state: s, nowMs: T0 })
+    expect(r.intent.form).toBe('unlit'); expect(r.intent.behavior).toBe('sleep'); expect(r.state.form).toBe('lit')
+  })
 })

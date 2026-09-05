@@ -26,7 +26,16 @@ const highWaterMark = (incoming, prevMark) => incoming === null ? prevMark : (pr
  * @returns {{ intent: PetIntent, state: BridgeState, permission: PetTurn['pending_permissions'][number] | null, permissionCount: number }}
  */
 export function mergeIntent({ presence, turn, state, nowMs }) {
-  if (!turn) return { intent: presence, state, permission: null, permissionCount: 0 }
+  // 这一拍没拉到 pet 端点(超时 / 500 / 启动中 503)。还没初始化过就只能照 presence
+  // 画(Phase A 的 3 分钟近似,除此之外无事可依);已经初始化过就**守住已知的事实**:
+  // form 保持上一拍的 form,不跟着 presence 的近似值退回 unlit —— 不然一次超时会
+  // 演一遍「灭掉又点亮」,而现实里什么都没发生(spec §5「不许撒谎」)。
+  // behavior 仍照 presence 走(睡着了就是睡着了,这是一次诚实的降级)。
+  if (!turn) {
+    if (!state.initialized) return { intent: presence, state, permission: null, permissionCount: 0 }
+    const kept = presence.behavior === 'sleep' ? presence.form : state.form
+    return { intent: { ...presence, form: kept }, state, permission: null, permissionCount: 0 }
+  }
   const contactMs = ms(turn.owner_last_contact_at)
   const doneMs = ms(turn.last_done_at)
   const pending = Array.isArray(turn.pending_permissions) ? turn.pending_permissions : []

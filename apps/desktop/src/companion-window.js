@@ -26,11 +26,14 @@ const petPoller = createPetPoller({ invokeApi })
 // 不能看 invoke 的返回 —— 浏览器预览的 mockInvoke 对任何未知命令都回 {}。
 const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {string} */ t) => document.createElement(t) }, {
   canResolve: !mock,
+  // 三种结局要分清楚(spec §6):真的拍板了 = resolved;请求通了但这条已经不在了
+  // (微信那端刚点过 / 过期)= gone —— 卡片直接收掉,别说「没送出去」;只有请求
+  // 本身挂了(没凭据、超时、403)才是 failed,那才该留下重试提示。
   onResolve: async (hash, decision) => {
     try {
       const r = /** @type {any} */ (await invoke('pet_permission_resolve', { hash, decision }))
-      return r === true
-    } catch (err) { console.warn('pet_permission_resolve failed', err); return false }
+      return r === true ? 'resolved' : 'gone'
+    } catch (err) { console.warn('pet_permission_resolve failed', err); return 'failed' }
     // 不管成没成:立刻重拉一次,让卡片的去留由 daemon 的列表说了算(微信那端也可能刚点过)。
     finally { petPoller.refresh() }
   },
@@ -40,6 +43,10 @@ const bridge = createPetBridge()
 const apply = () => {
   const r = bridge.tick(petPoller.current())
   pet.applyIntent(r.intent)
+  // 第一拍不播转场(spec §5.2):开窗时 CC 本来就亮着,那是既成事实,不是「主人
+  // 刚到」。applyIntent 已经按事实把 form 设过去了,这里立刻把转场判为播完,
+  // 状态机直接落到目标形态 —— 省掉那 8 帧点火,而不用改 Phase A 的接口。
+  if (r.first && pet.machine.snapshot().transition) pet.machine.notifyAnimationEnded()
   if (r.permission) card.show(r.permission, r.permissionCount); else card.hide()
   petPoller.setFast(r.fast)
 }

@@ -30,15 +30,22 @@ export function createPetBridge({ now = () => Date.now() } = {}) {
       if (p && p.presence !== 'down') prev = p
     },
     /**
+     * `first` = 这一拍**刚刚**把状态定下来(第一次拿到 pet 端点的回答)。调用方拿它
+     * 决定要不要跳过转场:开窗时 CC 已经亮着,那不是「主人刚到」,不该演点火
+     * (spec §5.2「第一拍不播转场」)。之后每一拍都是 false —— 那时候的变化是真变化。
      * @param {PetTurn | null} turn
-     * @returns {{ intent: PetIntent, permission: PetTurn['pending_permissions'][number] | null, permissionCount: number, fast: boolean }}
+     * @returns {{ intent: PetIntent, permission: PetTurn['pending_permissions'][number] | null, permissionCount: number, fast: boolean, first: boolean }}
      */
     tick(turn) {
+      const wasInitialized = state.initialized
       const r = mergeIntent({ presence: presenceIntent, turn, state, nowMs: now() })
       state = r.state
       presenceIntent = { ...presenceIntent, oneShots: [] }
       const fast = state.form === 'lit' || (turn?.turn?.phase ?? 'idle') !== 'idle' || r.permissionCount > 0
-      return { intent: r.intent, permission: r.permission, permissionCount: r.permissionCount, fast }
+      // 拉不到端点的那几拍不算「定下来」(mergeIntent 那时不动 state.initialized),
+      // 所以 first 会留到真正第一次拿到回答的那一拍。今天 bridge 不会重置 state,
+      // 若将来加了重置(reset),同样应当在重置后的第一拍再报一次 first。
+      return { intent: r.intent, permission: r.permission, permissionCount: r.permissionCount, fast, first: !wasInitialized && state.initialized }
     },
   }
 }
