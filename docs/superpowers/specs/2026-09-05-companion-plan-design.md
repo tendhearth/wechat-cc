@@ -25,7 +25,7 @@ owner 拍板(2026-09-05):
    - 有 → 组 prompt(§2),调一次,`PLAN_EVAL_TIMEOUT_MS` 超时;解析(§2);超时 / 抛错 / 解析失败 → 同样回退到固定顺序,记 `PLAN fallback reason=<timeout|error|parse>`。
    - 解析成功:`action` 不在候选里(含模型编造的)→ 视为 `none`,记 `PLAN downgraded action=<x>`;`none` → 记日志 + 写 plan-log,结束;否则执行选中的那一个,登记方式和现在逐字相同(`claimHunt` / `claimVisit` / `claim` 先于动作,at-most-once)。
 
-执行段(打猎的 `dispatchToChat` + 旁听入库 + `hunt` busy token;串门的 `claimVisit` + `startVisit`;问候的 `buildGapCheckinText`)**原样搬进各自的执行函数,一行逻辑不改**。`visit` 选中且带 `target` 时,`startVisit(target)`;`target` 必须是候选信道 label 之一(§2),否则忽略 target 走 `startVisit()`。
+执行段(打猎的 `dispatchToChat` + 旁听入库 + `hunt` busy token;串门的 `claimVisit` + `startVisit`;问候的 `buildGapCheckinText`)**原样搬进各自的执行函数,一行逻辑不改**。`visit` 选中且带 `target` 时,`startVisit(target)`;`target` 必须是 `social.provenChannels` 里某一项的 **id**(§2),否则忽略 target 走 `startVisit()`。
 
 非主人会话:候选集只可能有 `gap`,同样走这套(问一次「现在该不该问候」),没有 evaluator 就照旧发。
 
@@ -94,7 +94,7 @@ earlierToday 里你之前怎么想的,别每拍都翻来覆去。
   - 没有 `planEval` 且 registry 没有 cheapEval → 旧行为;
   - agenda 到期 → 直接发 agenda,`planEval` 从未被调;
   - 候选为空(全在冷却)→ `planEval` 从未被调。
-- `wire-visit.test.ts`:`provenChannelLabels()` 只列收到过 visit 回信的 open 信道。
+- `wire-visit.test.ts`:`provenChannels()` 只列收到过 visit 回信的 open 信道,返回 `{ id, label }`。
 
 真机:看 `PLAN` 日志。一天里应能看到「ask … → none(主人正在聊)」「ask … → hunt(上午,包袱是空的)」这类行;打猎和串门仍然各不超过一天一次。
 
