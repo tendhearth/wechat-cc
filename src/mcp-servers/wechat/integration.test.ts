@@ -93,6 +93,12 @@ describe('wechat-mcp stdio integration', () => {
     'session_release', 'model_get', 'model_set', 'daemon_restart',
   ]
 
+  const SOCIAL_TOOLS = [
+    'social_seek', 'wish_list', 'wish_send', 'wish_cancel',
+    'intro_request', 'intro_accept', 'intro_decline', 'intro_offers',
+    'relationships', 'visit',
+  ]
+
   it('lists the ping tool via tools/list', async () => {
     const { client } = await bootChain()
     const list = await client.listTools()
@@ -106,6 +112,7 @@ describe('wechat-mcp stdio integration', () => {
     const admin = await bootChain({ admin: true })
     const adminNames = (await admin.client.listTools()).tools.map(t => t.name)
     for (const t of DAEMON_TOOLS) expect(adminNames).toContain(t)
+    for (const t of SOCIAL_TOOLS) expect(adminNames).toContain(t)
     // ping (an ungated tool) is present regardless.
     expect(adminNames).toContain('ping')
     await admin.client.close()
@@ -114,6 +121,7 @@ describe('wechat-mcp stdio integration', () => {
     const nonAdmin = await bootChain() // no admin flag
     const nonAdminNames = (await nonAdmin.client.listTools()).tools.map(t => t.name)
     for (const t of DAEMON_TOOLS) expect(nonAdminNames).not.toContain(t)
+    for (const t of SOCIAL_TOOLS) expect(nonAdminNames).not.toContain(t)
     expect(nonAdminNames).toContain('ping') // ungated tools still present
   })
 
