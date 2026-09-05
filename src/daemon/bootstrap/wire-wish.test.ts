@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { makeWish, type WishDeps } from './wire-wish'
 import { readWishes } from '../companion/wish-memory'
 import type { Envelope } from '../../core/envelope'
+import { makeTrio, flush as flush3 } from './social-trio.fixture'
 
 /**
  * 两个 daemon 在同一个进程里对着派心愿。信道 store 用内存假货,sendEnvelope
@@ -218,5 +219,69 @@ describe('心愿:两只伙伴对着问', () => {
   })
   it('不是 wish / postcard 的信封 → false', () => {
     expect(side('A').wish.onInbound('ch', { kind: 'letter', payload: {} }, 'x')).toBe(false)
+  })
+})
+
+describe('介绍:转问与回声原路返回(spec 2026-09-04-introduction §1/§2)', () => {
+  const send = async (me: ReturnType<typeof makeTrio>['me'], text = '找周末爬山搭子') => {
+    const p = await me.wish.propose(text); if (!p.ok) throw new Error(p.error)
+    const s = await me.wish.send(p.id); if (!s.ok) throw new Error(s.reason)
+    return p.id
+  }
+  it('A 答不上 → 转给 B(hop 2)→ B 答 → A 原路转回(带 replyId,不入 A 日志)→ 我这边 label 是「阿A 的朋友」并记下引用', async () => {
+    const { me, A, B } = makeTrio()
+    B.judgeSays = { match: 'yes', blurb: '我朋友周末常去' }
+    const id = await send(me)
+    await flush3()
+    expect(A.owner).toEqual([`🙋 小我 的伙伴来打听「找周末爬山搭子」,我答不上,帮着问了 1 个朋友`])
+    expect(B.letters.filter(l => l.dir === 'in').map(l => (l.payload as { hop: number }).hop)).toEqual([2])
+    expect(B.owner).toEqual([`🙋 阿A 的伙伴来打听「找周末爬山搭子」,我回了:我朋友周末常去`])
+    expect(A.journal).toEqual([])
+    expect(me.journal).toEqual([{ text: '我朋友周末常去', peerLabel: '阿A 的朋友' }])
+    expect(me.owner[0]).toMatch(/^📮 阿A 的朋友 回了你的心愿「找周末爬山搭子」:我朋友周末常去(想认识就回「认识 [0-9a-z]{6}」)$/)
+    const refs = me.wish.list().find(w => w.id === id)!.postcards!
+    expect(refs).toHaveLength(1); expect(refs[0]).toMatchObject({ via: 'me>A', preview: '我朋友周末常去' })
+  })
+  it('B 收到 hop 2 后不再转(它自己判不能也只是说不知道)', async () => {
+    const { me, A, B } = makeTrio()
+    await send(me); await flush3()
+    expect(B.owner).toEqual([`🙋 阿A 的伙伴来打听「找周末爬山搭子」,我说不知道`])
+    expect(B.letters.filter(l => l.dir === 'out')).toHaveLength(0)
+    expect(A.owner[0]).toContain('帮着问了 1 个朋友')
+  })
+  it('A 自己能答 → 不转', async () => {
+    const { me, A, B } = makeTrio()
+    A.judgeSays = { match: 'yes', blurb: '我常去' }
+    await send(me); await flush3()
+    expect(B.letters).toHaveLength(0)
+    expect(me.journal).toEqual([{ text: '我常去', peerLabel: '阿A' }])
+  })
+  it('预算耗尽 → 不转,主人听到的是「我说不知道」', async () => {
+    const { me, A, B } = makeTrio({ budgetOk: () => false })
+    await send(me); await flush3()
+    expect(B.letters).toHaveLength(0)
+    expect(A.owner).toEqual([`🙋 小我 的伙伴来打听「找周末爬山搭子」,我说不知道`])
+  })
+  it('同一条心愿到 A 两次 → 只转一次;B 的明信片到 A 两次 → 只中继一次', async () => {
+    const { me, A, B, deliver } = makeTrio()
+    B.judgeSays = { match: 'yes', blurb: 'ok' }
+    await send(me); await flush3()
+    const wishEnv = me.letters.find(l => l.dir === 'out' && l.kind === 'wish')!
+    deliver(me, 'me>A', { kind: 'wish', payload: wishEnv.payload }); await flush3()
+    expect(B.letters.filter(l => l.dir === 'in' && l.kind === 'wish')).toHaveLength(1)
+    const pc = B.letters.find(l => l.dir === 'out' && l.kind === 'postcard')!
+    deliver(B, 'B>A', { kind: 'postcard', payload: pc.payload }); await flush3()
+    expect(me.letters.filter(l => l.dir === 'in' && l.kind === 'postcard')).toHaveLength(1)
+  })
+  it('没有 forwardBudget 依赖(老调用方)→ 永不转:用单信道夹具 side() 验证', async () => {
+    const S = side('A'); const T = side('B'); S.setPeer(T); T.setPeer(S)
+    const p = await S.wish.propose('x'); if (!p.ok) throw new Error(); await S.wish.send(p.id); await flush()
+    expect(T.owner).toEqual(['🙋 阿一 的伙伴来打听「x」,我说不知道'])
+  })
+  it('list() 的 postcards 带 viaLabel(桌面要显示「谁的朋友」)', async () => {
+    const { me, B } = makeTrio()
+    B.judgeSays = { match: 'yes', blurb: 'ok' }
+    const id = await send(me); await flush3()
+    expect(me.wish.list().find(w => w.id === id)!.postcards![0]).toMatchObject({ via: 'me>A', viaLabel: '阿A' })
   })
 })
