@@ -434,11 +434,11 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
   async function dispatchToChat(
     chatId: string,
     args: { claim: () => void; buildText: () => string },
-  ): Promise<void> {
+  ): Promise<boolean> {
     const gate = resolveDispatch(chatId)
     if (gate.blocked === 'wechat_degraded') {
       deps.log('COMPANION', `chat=${chatId} skipped: wechat connection degraded`)
-      return
+      return false
     }
     const { proj, tier, providerId } = gate
     if (tier !== 'admin') {
@@ -447,7 +447,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     const tierProfile = TIER_PROFILES[tier]
     if (gate.blocked === 'session_in_flight') {
       deps.log('SCHED', `[companion] skipping push tick: user session in-flight (alias=${proj.alias} provider=${providerId} chat=${chatId})`)
-      return // leave the item pending — retry next tick
+      return false // leave the item pending — retry next tick
     }
     // Session-serialization (Task 3) — serialize the tick's acquire+claim+
     // dispatch against the SAME per-chatId mutex app converse turns
@@ -487,6 +487,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         deps.log('SCHED', `companion tick dispatch failed: ${errMsg(err)}`)
       }
     })
+    return true
   }
 
   /**
@@ -541,7 +542,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     // 一致(旁听入库、busy token、先登记再出门、daysSinceContact 的算法)。
 
     // 打猎:只有主人那个聊天会成为候选(computeCandidates 里的 isOwnerChat)。
-    async function runHunt(): Promise<void> {
+    async function runHunt(): Promise<boolean> {
       // 旁听这一拍发出去的东西 —— 打猎的产出此前只存在于微信聊天记录里,
       // 主人想回头找上周那条链接只能翻聊天。记的是**真发出去的文本**,
       // 不是要求模型额外调一个登记工具(漏调一次就少一条,且无人知晓)。
@@ -553,7 +554,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       let releaseHunt: (() => void) | undefined
       try { releaseHunt = (deps.boot as { holdBusy?: (l: string) => () => void }).holdBusy?.('hunt') } catch { releaseHunt = undefined }
       try {
-        await dispatchToChat(chatId, {
+        return await dispatchToChat(chatId, {
           claim: () => { deps.careLedger.claimHunt(chatId, nowIso) },
           buildText: () => buildHuntText({ nowIso }),
         })
@@ -575,23 +576,24 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     // 不走 dispatchToChat:串门不是一次 agent turn(不带工具、不进会话),它
     // 有自己的 eval 链;这里只做登记 + 出门。`target` 是模型从
     // provenChannels 里挑的信道 id;没挑就还是 startVisit() 自己挑。
-    async function runVisit(target?: string): Promise<void> {
+    async function runVisit(target?: string): Promise<boolean> {
       const visit = deps.boot.social?.penpal
-      if (!visit) return
+      if (!visit) return false
       // 先登记再出门(at-most-once,同打猎):出门一半 daemon 重启,不该
       // 下一拍再出一次门 —— 两趟串门比一趟没出门的观感差得多。
       // 总有地方可去:没有真信道就去邻居家(core/neighbors.ts)。
       deps.careLedger.claimVisit(chatId, nowIso)
       const r = target === undefined ? await visit.startVisit() : await visit.startVisit(target)
       deps.log('VISIT', r.ok ? `tick: 出门了 visit=${r.id} → ${r.channel}` : `tick: 没出得了门 reason=${r.reason}`)
+      return r.ok
     }
 
     // 问候:安静够久了(按 care 档)、没有具体由头的一句。
-    async function runGap(): Promise<void> {
+    async function runGap(): Promise<boolean> {
       const daysSinceContact = lastInboundAtIso !== undefined
         ? Math.floor((Date.parse(nowIso) - Date.parse(lastInboundAtIso)) / 86_400_000)
         : 0
-      await dispatchToChat(chatId, {
+      return await dispatchToChat(chatId, {
         claim: () => { deps.careLedger.claim(chatId, nowIso) },
         buildText: () => buildGapCheckinText({ nowIso, chatId, daysSinceContact }),
       })
@@ -611,7 +613,12 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     // 发不出去就别先烧模型:断线 / 会话在忙的时候,微信那三件事(打猎、问候)
     // 反正到不了主人手里(memory: no-retry-storm-when-disconnected)。串门是
     // 例外 —— 它走笔友信道,不是一条微信,链路断了照样能出门。
-    const blocked = dispatchBlockedReason(chatId)
+    // 这道预判闸本身也可能抛(resolveDispatch 里 loadAccess / loadProjects /
+    // getMode / isInFlight 都是真调用):抛了不该把一拍能出的门(visit)也
+    // 一起掀翻 —— 当作没堵,真发那一步(dispatchToChat)还会再判一次。
+    let blocked: string | null
+    try { blocked = dispatchBlockedReason(chatId) }
+    catch (err) { deps.log('PLAN', `预判闸探测失败,当作没堵(真发前还会再判一次): ${errMsg(err)}`); blocked = null }
     let candidates = allCandidates
     if (blocked) {
       candidates = allCandidates.filter(c => c.action === 'visit')
@@ -620,10 +627,11 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
 
     const today10 = formatLocal(nowIso).slice(0, 10)
     const nowMs = Date.parse(nowIso)
-    const run = async (action: PlanAction, target?: string) => {
-      if (action === 'hunt') await runHunt()
-      else if (action === 'visit') await runVisit(target)
-      else if (action === 'gap') await runGap()
+    const run = async (action: PlanAction, target?: string): Promise<boolean> => {
+      if (action === 'hunt') return await runHunt()
+      else if (action === 'visit') return await runVisit(target)
+      else if (action === 'gap') return await runGap()
+      return false
     }
     const record = (decision: PlanAction, why: string, source: PlanLogEntry['source']) => {
       try { appendPlanLog(deps.stateDir, today10, { at: nowIso, chatId, candidates: candidates.map(c => c.action), decision, why, source }) }
@@ -633,11 +641,14 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
      * 先做,做完才记 —— 台账写的是「做过了」,不是「打算做」。真发那一步还有
      * 自己的闸(断线 / 会话在忙),记在前面就会把没发出去的一拍记成发过了,
      * 下一拍的退避与 earlierToday 都跟着骗人。做砸了也要记(标 `(failed) `),
-     * 然后照抛 —— 上层每个 chat 各自 catch。
+     * 然后照抛 —— 上层每个 chat 各自 catch。runner 自己判断「真发出去了
+     * 没有」:两道闸之间状态变了(比如预判过闸之后、真发之前微信掉线 /
+     * 会话又忙起来了)导致送时被跳过 → 标 `(skipped) `,不算「做过了」。
      */
     const runAndRecord = async (action: PlanAction, why: string, source: PlanLogEntry['source'], target?: string) => {
-      try { await run(action, target) } catch (err) { record(action, `(failed) ${why}`, source); throw err }
-      record(action, why, source)
+      let dispatched: boolean
+      try { dispatched = await run(action, target) } catch (err) { record(action, `(failed) ${why}`, source); throw err }
+      record(action, dispatched ? why : `(skipped) ${why}`, source)
     }
     const fallback = async (reason: string) => {
       const pick = pickFallback(candidates)!

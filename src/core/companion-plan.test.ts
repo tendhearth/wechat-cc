@@ -98,12 +98,15 @@ describe('shouldReask', () => {
     expect(shouldReask([e({ at: at(PLAN_REASK_MS - 1) })], 'c1', Date.parse(NOW))).toBe(false)
     expect(shouldReask([e({ at: at(PLAN_REASK_MS + 1) })], 'c1', Date.parse(NOW))).toBe(true)
   })
-  it('fallback / downgraded / 别的 chat / 上一条不是 none → 都问', () => {
+  it('fallback / 别的 chat / 上一条不是 none → 都问', () => {
     expect(shouldReask([e({ source: 'fallback' })], 'c1', Date.parse(NOW))).toBe(true)
-    expect(shouldReask([e({ source: 'downgraded' })], 'c1', Date.parse(NOW))).toBe(true)
     expect(shouldReask([e({ chatId: 'c2' })], 'c1', Date.parse(NOW))).toBe(true)
     expect(shouldReask([e({ decision: 'hunt' })], 'c1', Date.parse(NOW))).toBe(true)
     expect(shouldReask([], 'c1', Date.parse(NOW))).toBe(true)
+  })
+  it('downgraded → 和 model+none 一样算「想过了」,90 分钟内不问;超过要问(降级选了候选外的动作也是没选中任何候选)', () => {
+    expect(shouldReask([e({ source: 'downgraded', at: at(PLAN_REASK_MS - 1) })], 'c1', Date.parse(NOW))).toBe(false)
+    expect(shouldReask([e({ source: 'downgraded', at: at(PLAN_REASK_MS + 1) })], 'c1', Date.parse(NOW))).toBe(true)
   })
 })
 

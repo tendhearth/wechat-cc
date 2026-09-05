@@ -145,7 +145,9 @@ export interface PlanLogEntry { at: string; chatId: string; candidates: PlanActi
 
 export function shouldReask(entries: readonly PlanLogEntry[], chatId: string, nowMs: number): boolean {
   const last = [...entries].reverse().find(e => e.chatId === chatId)
-  if (!last || last.source !== 'model' || last.decision !== 'none') return true
+  // 降级(答了候选外的动作)等于「候选里的一个都没选」,和模型主动回 none
+  // 一样算「想过了不做」,同样退避;fallback 从没「想过」,不算。
+  if (!last || (last.source !== 'model' && last.source !== 'downgraded') || last.decision !== 'none') return true
   const at = Date.parse(last.at)
   if (Number.isNaN(at)) return true
   return nowMs - at >= PLAN_REASK_MS

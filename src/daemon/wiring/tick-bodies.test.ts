@@ -1355,6 +1355,18 @@ describe('日程判断(spec 2026-09-05-companion-plan)', () => {
     expect(s.logs.some(l => l.includes('downgraded'))).toBe(true)
   })
 
+  it('降级(答了候选外的动作)也退避 —— 10 分钟后再跑一拍不再问', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const planEval = planEvalOf('{"action":"gap","why":"想问候"}')   // gap 不在候选里(never_talked)→ 降级
+    const ticks = buildTickBodies({ ...s.deps, planEval })
+    await ticks.pushTick({ nowIso: NOW })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    await ticks.pushTick({ nowIso: '2026-05-13T10:10:00.000Z' })
+    expect(planEval).toHaveBeenCalledOnce()                         // 第二拍没问
+    expect(s.logs.some(l => l.includes('reason=backoff'))).toBe(true)
+  })
+
   it('模型抛错 / 回非 JSON → 回退旧顺序:先打猎', async () => {
     for (const bad of [new Error('boom'), 'not json']) {
       const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
@@ -1387,6 +1399,27 @@ describe('日程判断(spec 2026-09-05-companion-plan)', () => {
     await buildTickBodies(s.deps).pushTick({ nowIso: NOW })
     expect(s.dispatch).toHaveBeenCalledOnce()                       // 打猎(旧顺序第一)
     expect(s.logs.some(l => l.includes('reason=no_evaluator'))).toBe(true)
+  })
+
+  it('没有 evaluator 的 fallback 也照样写 plan-log,source=fallback', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    await buildTickBodies(s.deps).pushTick({ nowIso: NOW })
+    const log = readPlanLog(s.stateDir, formatLocal(NOW).slice(0, 10))
+    expect(log).toHaveLength(1)
+    expect(log[0]!.source).toBe('fallback')
+    expect(log[0]!.decision).toBe('hunt')
+  })
+
+  it('会话在忙(pre-gate,候选 [hunt])→ 一个模型都不问,PLAN skip reason=session_in_flight', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: true })
+    cleanup.push(s.stateDir)
+    const planEval = planEvalOf('{"action":"hunt","why":"x"}')
+    await buildTickBodies({ ...s.deps, planEval }).pushTick({ nowIso: NOW })
+    expect(planEval).not.toHaveBeenCalled()
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.acquire).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.startsWith('PLAN|skip') && l.includes('session_in_flight'))).toBe(true)
   })
 
   it('agenda 到期 → 直接发 agenda,planEval 从未被调', async () => {
@@ -1473,6 +1506,19 @@ describe('日程判断(spec 2026-09-05-companion-plan)', () => {
     await buildTickBodies({ ...s.deps, planEval: planEvalOf('{"action":"visit","why":"w"}') }).pushTick({ nowIso: NOW })
     expect(startVisit).toHaveBeenCalledOnce()
     expect(s.logs.some(l => l.startsWith('PLAN|') && l.includes('→ visit'))).toBe(true)
+  })
+
+  it('预判过闸之后、真发之前会话忙起来了(送时被跳过)→ 台账记 (skipped),不记成做过了', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    s.isInFlight.mockReturnValueOnce(false).mockReturnValueOnce(true) // 预判闸放行,送时闸挡住
+    const planEval = planEvalOf('{"action":"hunt","why":"x"}')
+    await buildTickBodies({ ...s.deps, planEval }).pushTick({ nowIso: NOW })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    const log = readPlanLog(s.stateDir, formatLocal(NOW).slice(0, 10))
+    expect(log).toHaveLength(1)
+    expect(log[0]!.decision).toBe('hunt')
+    expect(log[0]!.why).toBe('(skipped) x')
   })
 
   it('做砸了台账记 (failed),不记成做过了', async () => {
