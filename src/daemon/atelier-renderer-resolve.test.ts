@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { join } from 'node:path'
 import { locateAtelierSdCli, resolveAtelierRenderer } from './atelier-renderer-resolve'
 
 const base = {
@@ -27,11 +28,14 @@ describe('resolveAtelierRenderer', () => {
 
 describe('locateAtelierSdCli', () => {
   it('uses the sd-cli shipped beside the compiled desktop CLI', () => {
+    // 期望值用 join 拼:源码按平台分隔符找,Windows CI 上是反斜杠。
+    const macos = join('/Applications', 'wechat-cc.app', 'Contents', 'MacOS')
+    const bundled = join(macos, 'sd-cli')
     expect(locateAtelierSdCli({
-      execPath: '/Applications/wechat-cc.app/Contents/MacOS/wechat-cc-cli',
+      execPath: join(macos, 'wechat-cc-cli'),
       stateDir: '/state',
-      existsSync: (p) => p === '/Applications/wechat-cc.app/Contents/MacOS/sd-cli',
-    })).toBe('/Applications/wechat-cc.app/Contents/MacOS/sd-cli')
+      existsSync: (p) => p === bundled,
+    })).toBe(bundled)
   })
 
   it('keeps an explicit override authoritative', () => {
@@ -48,6 +52,6 @@ describe('locateAtelierSdCli', () => {
       execPath: '/opt/homebrew/bin/bun',
       stateDir: '/state',
       existsSync: () => false,
-    })).toBe('/state/atelier/bin/sd-cli')
+    })).toBe(join('/state', 'atelier', 'bin', 'sd-cli'))
   })
 })

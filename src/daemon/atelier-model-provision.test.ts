@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
+import { join } from 'node:path'
 import { provisionAtelierModel, type ProvisionDeps } from './atelier-model-provision'
+
+// 路径断言用 join 拼:源码用平台分隔符,Windows 上是反斜杠(CI 三平台都跑这套测试)。
+const MODEL = join('/models', 'sd-turbo.safetensors')
+const PARTIAL = `${MODEL}.partial`
 
 const spec = { fileName: 'sd-turbo.safetensors', url: 'https://x/sd-turbo.safetensors', sha256: 'GOOD' }
 const bytes = new Uint8Array([1, 2, 3])
@@ -26,15 +31,15 @@ describe('provisionAtelierModel', () => {
     const d = deps()
     const res = await provisionAtelierModel(d)
     expect(res.downloaded).toBe(true)
-    expect(res.modelPath).toBe('/models/sd-turbo.safetensors')
+    expect(res.modelPath).toBe(MODEL)
     expect(d.writeResponseFile).toHaveBeenCalledWith(
-      '/models/sd-turbo.safetensors.partial',
+      PARTIAL,
       expect.any(Response),
       expect.any(Function),
     )
     expect(d.rename).toHaveBeenCalledWith(
-      '/models/sd-turbo.safetensors.partial',
-      '/models/sd-turbo.safetensors',
+      PARTIAL,
+      MODEL,
     )
   })
 
@@ -56,7 +61,7 @@ describe('provisionAtelierModel', () => {
     const d = deps({ hashFile: async () => 'BAD' })
     await expect(provisionAtelierModel(d)).rejects.toThrow('model_checksum_mismatch')
     expect(d.rename).not.toHaveBeenCalled()
-    expect(d.remove).toHaveBeenCalledWith('/models/sd-turbo.safetensors.partial')
+    expect(d.remove).toHaveBeenCalledWith(PARTIAL)
   })
 
   it('streams progress while writing instead of buffering response.arrayBuffer in the provisioner', async () => {
