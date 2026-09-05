@@ -15,6 +15,12 @@ export const initialBridgeState = () => ({ form: 'unlit', lastContactMs: null, l
 /** @param {string | null | undefined} iso */
 const ms = (iso) => { if (!iso) return null; const v = Date.parse(iso); return Number.isFinite(v) ? v : null }
 
+// 单调高水位:daemon 重启会丢内存里的联系时间,只剩更旧的 latestInboundTs,
+// 端点可能因此吐出一个比我们已经见过的更早的时间戳。high-water mark 不跟着
+// 倒退,不然「变旧又变新」的假象会在下一拍被当成一次新联系触发 receive。
+/** @param {number | null} incoming @param {number | null} prevMark */
+const highWaterMark = (incoming, prevMark) => incoming === null ? prevMark : (prevMark === null || incoming > prevMark ? incoming : prevMark)
+
 /**
  * @param {{ presence: PetIntent, turn: PetTurn | null, state: BridgeState, nowMs: number }} a
  * @returns {{ intent: PetIntent, state: BridgeState, permission: PetTurn['pending_permissions'][number] | null, permissionCount: number }}
@@ -38,7 +44,7 @@ export function mergeIntent({ presence, turn, state, nowMs }) {
       else { oneShots.push('receive'); if (!props.includes('micro-light')) props.push('micro-light') }
     }
     if (form === 'lit' && contactMs !== null && nowMs - contactMs > LIT_DIM_MS && phase === 'idle' && pending.length === 0) form = 'unlit'
-    if (state.initialized && state.lastDoneMs !== null && doneMs !== null && doneMs > state.lastDoneMs) oneShots.push('done')
+    if (state.lastDoneMs !== null && doneMs !== null && doneMs > state.lastDoneMs) oneShots.push('done')
   }
 
   // presence 说睡(down / offline)→ 画面照 presence;事实 form 仍按上面维护
@@ -47,5 +53,5 @@ export function mergeIntent({ presence, turn, state, nowMs }) {
   let behavior = presence.behavior
   if (!asleep && phase !== 'idle') behavior = phase
   const intent = { form: asleep ? presence.form : form, behavior, props, badge: presence.badge, hint: presence.hint, oneShots }
-  return { intent, state: { form, lastContactMs: contactMs ?? state.lastContactMs, lastDoneMs: doneMs ?? state.lastDoneMs, initialized: true }, permission: pending[0] ?? null, permissionCount: pending.length }
+  return { intent, state: { form, lastContactMs: highWaterMark(contactMs, state.lastContactMs), lastDoneMs: highWaterMark(doneMs, state.lastDoneMs), initialized: true }, permission: pending[0] ?? null, permissionCount: pending.length }
 }
