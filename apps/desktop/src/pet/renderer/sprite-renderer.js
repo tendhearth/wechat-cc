@@ -27,7 +27,7 @@ export function createSpriteRenderer(deps) {
   /** @type {string | null} */ let frame = null
   let generation = 0
 
-  const clear = () => { if (timer !== null) { cancel(timer); timer = null } if (fadeIn !== null) { cancel(fadeIn); fadeIn = null } }
+  const clear = () => { if (timer !== null) { cancel(timer); timer = null } if (fadeIn !== null) { cancel(fadeIn); fadeIn = null } deps.img.classList.remove('pet-fading') }
   /** @param {string} url */
   const show = (url) => { frame = url; deps.img.src = url }
 

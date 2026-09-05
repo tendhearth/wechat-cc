@@ -66,6 +66,29 @@ describe('createSpriteRenderer', () => {
     c.tick(240); expect(img.src).toBe('new.png'); expect(img.classList.contains('pet-fading')).toBe(false); expect(onEnd).not.toHaveBeenCalled()
     c.tick(240); expect(onEnd).toHaveBeenCalledTimes(1)
   })
+  it('fadeTo 淡出期间被 play 打断:立刻去掉 pet-fading,新动画立即显示第 0 帧,旧 fadeTo 的 onEnd 永不触发', () => {
+    const img = el(), stage = el(), c = clock()
+    const r = createSpriteRenderer({ img, stage, schedule: c.schedule, cancel: c.cancel, preload: () => {}, fadeMs: 240 })
+    r.play(anim(['old.png'], 1, true))
+    const onEnd = vi.fn()
+    r.fadeTo(anim(['new.png'], 1, true), { onEnd })
+    c.tick(100)                                    // 仍在 fadeMs(240) 之内
+    r.play(anim(['other.png'], 1, true))
+    expect(img.classList.contains('pet-fading')).toBe(false)
+    expect(img.src).toBe('other.png')
+    c.tick(1000)
+    expect(onEnd).not.toHaveBeenCalled()
+  })
+  it('fadeTo 淡出期间被 stop 打断:立刻去掉 pet-fading,且没有残留计时器', () => {
+    const img = el(), stage = el(), c = clock()
+    const r = createSpriteRenderer({ img, stage, schedule: c.schedule, cancel: c.cancel, preload: () => {}, fadeMs: 240 })
+    r.play(anim(['old.png'], 1, true))
+    r.fadeTo(anim(['new.png'], 1, true), { onEnd: vi.fn() })
+    c.tick(100)                                    // 仍在 fadeMs(240) 之内
+    r.stop()
+    expect(img.classList.contains('pet-fading')).toBe(false)
+    expect(c.pending()).toBe(0)
+  })
   it('reducedMotion:setBreathing 永远不加 class;正常时加/去 pet-breathing', () => {
     const c = clock()
     const a = createSpriteRenderer({ img: el(), stage: el(), schedule: c.schedule, cancel: c.cancel, preload: () => {}, reducedMotion: true })
