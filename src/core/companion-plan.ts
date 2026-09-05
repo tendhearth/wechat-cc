@@ -88,7 +88,7 @@ export function buildPlanPrompt(ctx: PlanContext): string {
     '【包袱】', JSON.stringify(journal),
     '【社交】', JSON.stringify(social),
     '【最近观察】', JSON.stringify(observations),
-    '【我的表达倾向】', cut(ctx.personaExcerpt, PLAN_PERSONA_CHARS),
+    '【我的表达倾向】', JSON.stringify(cut(ctx.personaExcerpt, PLAN_PERSONA_CHARS)),
     '【今天之前的判断】', JSON.stringify(earlier),
   ].join('\n')
 }

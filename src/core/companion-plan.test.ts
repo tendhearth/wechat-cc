@@ -48,12 +48,16 @@ describe('buildPlanPrompt', () => {
     for (const s of ['"hunt"', '"visit"', 'gap_inbound_recent', '太早了', '"unread":2', '"openWishes":1', 'pair:abc', '只输出 JSON', '"none"']) expect(p).toContain(s)
   })
   it('observations / persona / 标题按上限截断', () => {
-    const long = 'x'.repeat(500)
-    const p = buildPlanPrompt(ctx({ observations: [{ tone: null, body: long }], personaExcerpt: long, journal: { unread: 1, latest: [{ kind: 'hunt', title: long, ts: NOW }] } }))
-    expect(p).not.toContain('x'.repeat(PLAN_OBSERVATION_CHARS + 1) + '"')   // body 截到上限
-    expect(p).toContain('x'.repeat(PLAN_OBSERVATION_CHARS))
-    expect(p.match(/x{301,}/)).toBeNull()                                   // persona ≤ 300
-    expect(p).toContain('x'.repeat(PLAN_TITLE_CHARS))
+    const obs = 'o'.repeat(500)
+    const persona = 'p'.repeat(500)
+    const title = 't'.repeat(500)
+    const p = buildPlanPrompt(ctx({ observations: [{ tone: null, body: obs }], personaExcerpt: persona, journal: { unread: 1, latest: [{ kind: 'hunt', title, ts: NOW }] } }))
+    expect(p).toContain('o'.repeat(PLAN_OBSERVATION_CHARS))
+    expect(p.match(/o{81,}/)).toBeNull()
+    expect(p).toContain('p'.repeat(PLAN_PERSONA_CHARS))
+    expect(p.match(/p{301,}/)).toBeNull()
+    expect(p).toContain('t'.repeat(PLAN_TITLE_CHARS))
+    expect(p.match(/t{41,}/)).toBeNull()
   })
   it('social / journal 为 null 时写「没接线」,不抛', () => {
     const p = buildPlanPrompt(ctx({ social: null, journal: null }))
