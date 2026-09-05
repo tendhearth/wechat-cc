@@ -10,7 +10,7 @@ const mkEl = () => ({ innerHTML: '', textContent: '', value: '', hidden: false, 
 // @ts-expect-error minimal DOM stub before import (same shape as journal.test.ts)
 globalThis.document = { getElementById: (id: string) => els.get(id) ?? null }
 
-const { renderWishes, onWishCompose, onWishAction } = await import('./wishes.js')
+const { renderWishes, renderOffers, onWishCompose, onWishAction } = await import('./wishes.js')
 
 describe('心愿区块', () => {
   beforeEach(() => { for (const id of ['fd-wish-count', 'fd-wish-draft', 'fd-wish-list', 'fd-wish-text']) els.set(id, mkEl()); invokeApi.mockReset() })
@@ -58,5 +58,43 @@ describe('心愿区块', () => {
     invokeApi.mockResolvedValueOnce({ ok: true, status: 'cancelled' }).mockResolvedValueOnce({ wishes: [] })
     await onWishAction({ target: { closest: () => ({ getAttribute: (k: string) => (k === 'data-wsh-action' ? 'cancel' : 'a1') }) } })
     expect(invokeApi).toHaveBeenCalledWith('POST', '/v1/social/wish/cancel', { id: 'a1' })
+  })
+})
+
+describe('介绍:想认识 TA / 待你点头', () => {
+  beforeEach(() => { for (const id of ['fd-wish-count', 'fd-wish-draft', 'fd-wish-list', 'fd-wish-text', 'fd-wish-offers']) els.set(id, mkEl()); invokeApi.mockReset() })
+  const wishWithPostcards = (requested = false) => ({ wishes: [{ id: 'w1', text: '找搭子', status: 'open', created_at: 'c', expires_at: 'e', sent_to: 1, replies: 1,
+    postcards: [{ reply_id: 'ab12cd34', via_label: '阿A', preview: '我朋友常去', at: 't', requested }] }] })
+  it('心愿下列出 hop 2 明信片:「阿A 的朋友」+ 预览 + 想认识按钮;requested 时显示「已在问」且没有按钮', () => {
+    renderWishes(wishWithPostcards())
+    const html = els.get('fd-wish-list')!.innerHTML
+    expect(html).toContain('阿A 的朋友'); expect(html).toContain('我朋友常去')
+    expect(html).toContain('data-wsh-action="intro" data-wsh-reply="ab12cd34"')
+    renderWishes(wishWithPostcards(true))
+    const html2 = els.get('fd-wish-list')!.innerHTML
+    expect(html2).toContain('已在问'); expect(html2).not.toContain('data-wsh-action="intro"')
+  })
+  it('renderOffers:每条邀约有 同意 / 不了;空 → 区块隐藏', () => {
+    renderOffers({ offers: [{ reply_id: 'ab12cd34', hint: '找搭子', via_label: '阿A', at: 't' }] })
+    const box = els.get('fd-wish-offers')!
+    expect(box.hidden).toBe(false)
+    expect(box.innerHTML).toContain('阿A 的朋友'); expect(box.innerHTML).toContain('找搭子')
+    expect(box.innerHTML).toContain('data-wsh-action="accept" data-wsh-reply="ab12cd34"')
+    expect(box.innerHTML).toContain('data-wsh-action="decline" data-wsh-reply="ab12cd34"')
+    renderOffers({ offers: [] })
+    expect(box.hidden).toBe(true)
+  })
+  it('三个动作打对路由并 toast', async () => {
+    const click = (action: string) => onWishAction({ target: { closest: () => ({ getAttribute: (k: string) => (k === 'data-wsh-action' ? action : k === 'data-wsh-reply' ? 'ab12cd34' : null) }) } })
+    invokeApi.mockResolvedValueOnce({ ok: true, reply_id: 'ab12cd34' }).mockResolvedValue({ wishes: [], offers: [] })
+    await click('intro')
+    expect(invokeApi).toHaveBeenCalledWith('POST', '/v1/social/intro/request', { reply_id: 'ab12cd34' })
+    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('托'))
+    invokeApi.mockReset(); invokeApi.mockResolvedValueOnce({ ok: false, reason: 'already_requested' }).mockResolvedValue({ wishes: [], offers: [] })
+    await click('intro'); expect(showToast).toHaveBeenLastCalledWith(expect.stringContaining('已经在问'))
+    invokeApi.mockReset(); invokeApi.mockResolvedValueOnce({ ok: true, reply_id: 'ab12cd34' }).mockResolvedValue({ wishes: [], offers: [] })
+    await click('accept'); expect(invokeApi).toHaveBeenCalledWith('POST', '/v1/social/intro/accept', { reply_id: 'ab12cd34' })
+    invokeApi.mockReset(); invokeApi.mockResolvedValueOnce({ ok: true, reply_id: 'ab12cd34' }).mockResolvedValue({ wishes: [], offers: [] })
+    await click('decline'); expect(invokeApi).toHaveBeenCalledWith('POST', '/v1/social/intro/decline', { reply_id: 'ab12cd34' })
   })
 })

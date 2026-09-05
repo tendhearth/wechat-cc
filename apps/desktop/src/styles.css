@@ -5656,6 +5656,8 @@ input { font: inherit; color: inherit; }
 .wsh-meta { opacity:.7; font-size:.9em; }
 .wsh-btn-discard { background:transparent; color:var(--fd-ink-soft); border:1.5px solid var(--fd-line); }
 .wsh-btn-discard:hover { border-color:var(--fd-ink-faint); }
+.wsh-pc-row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:4px 0 4px 14px; font-size:.9em; color:var(--fd-ink-soft); }
+.wsh-offers { margin:8px 0; padding:8px 10px; border:1px dashed var(--fd-line,#ccc); border-radius:8px; display:flex; flex-direction:column; gap:8px; }
 
 @media (max-width:680px) { .fd-wrap { padding:28px 18px 60px; } }
 

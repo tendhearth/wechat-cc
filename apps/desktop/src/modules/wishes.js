@@ -20,6 +20,11 @@ const SEND_FAIL_COPY = /** @type {Record<string, string>} */ ({
   too_many_open: '同时最多 3 条',
 })
 
+const INTRO_REQUEST_FAIL_COPY = /** @type {Record<string, string>} */ ({
+  already_requested: '已经在问了',
+  not_found: '这张明信片过期了',
+})
+
 /** @param {any} r */
 function wishGateErrText(r) {
   if (r?.error === 'gate_failed') {
@@ -30,16 +35,33 @@ function wishGateErrText(r) {
   return `没发出去:${String(r?.error ?? '未知错误')}`
 }
 
+/**
+ * hop-2 明信片行 —— 「认识的人的朋友」带回来的一条,人还没接进来,先问要不要
+ * 让伙伴去牵线。`requested` = 已经点过「想认识 TA」,不能再点第二次。
+ * @param {any} pc
+ */
+function renderPostcardRow(pc) {
+  const via = escapeHtml(String(pc.via_label ?? ''))
+  const preview = escapeHtml(String(pc.preview ?? ''))
+  const replyId = escapeHtml(String(pc.reply_id ?? ''))
+  const action = pc.requested
+    ? `<span class="wsh-pc-requested">已在问</span>`
+    : `<button class="wsh-pc-intro" data-wsh-action="intro" data-wsh-reply="${replyId}" type="button">想认识 TA</button>`
+  return `<div class="wsh-pc-row"><span class="wsh-pc-text">「${via} 的朋友」${preview}</span>${action}</div>`
+}
+
 /** @param {any} w */
 function renderWishRow(w) {
   const label = STATUS_LABEL[w.status] ?? String(w.status ?? '')
   const sentTo = Number(w.sent_to) || 0
   const replies = Number(w.replies) || 0
   const canCancel = w.status === 'open' || w.status === 'draft'
+  const postcards = Array.isArray(w.postcards) ? w.postcards : []
   return `<div class="wsh-row">
     <div class="wsh-body">
       <div class="wsh-text">${escapeHtml(String(w.text ?? ''))}</div>
       <div class="wsh-meta"><span>${escapeHtml(label)}</span><span class="wsh-dot">·</span><span>派给 ${sentTo} 人 · ${replies} 张回信</span></div>
+      ${postcards.map(renderPostcardRow).join('')}
     </div>
     ${canCancel ? `<button class="wsh-cancel" data-wsh-action="cancel" data-wsh-id="${escapeHtml(String(w.id ?? ''))}" type="button">取消</button>` : ''}
   </div>`
@@ -87,10 +109,48 @@ export function renderWishDraft(preview) {
     `</div>`
 }
 
+/** @param {any} o */
+function renderOfferRow(o) {
+  const via = escapeHtml(String(o.via_label ?? ''))
+  const hint = escapeHtml(String(o.hint ?? ''))
+  const replyId = escapeHtml(String(o.reply_id ?? ''))
+  return `<div class="wsh-offer-row">
+    <span class="wsh-offer-text">「${via} 的朋友(问「${hint}」)想认识你」</span>
+    <span class="wsh-offer-actions">
+      <button class="fd-btn fd-btn-primary" data-wsh-action="accept" data-wsh-reply="${replyId}" type="button">同意</button>
+      <button class="fd-btn wsh-btn-discard" data-wsh-action="decline" data-wsh-reply="${replyId}" type="button">不了</button>
+    </span>
+  </div>`
+}
+
+/**
+ * 「待你点头」区块 —— 别人的伙伴托我的伙伴来问「能不能认识你」。空 → 整块收起,
+ * 不占地方(不是每个人天天都有人想认识)。
+ * @param {{ offers: Array<any> } | null | undefined} data
+ */
+export function renderOffers(data) {
+  const box = document.getElementById('fd-wish-offers')
+  if (!box) return
+  const offers = data && Array.isArray(data.offers) ? data.offers : []
+  if (offers.length === 0) {
+    box.hidden = true
+    box.innerHTML = ''
+    return
+  }
+  box.hidden = false
+  box.innerHTML = offers.map(renderOfferRow).join('')
+}
+
 export async function refreshWishes() {
-  const r = /** @type {{wishes?:Array<any>}|null} */ (
-    await invokeApi('GET', '/v1/social/wishes').catch(() => null))
-  renderWishes({ wishes: r ? (r.wishes ?? []) : null })
+  const [wr, or] = await Promise.all([
+    /** @type {Promise<{wishes?:Array<any>}|null>} */ (Promise.resolve(invokeApi('GET', '/v1/social/wishes')).catch(() => null)),
+    /** @type {Promise<{offers?:Array<any>}|null>} */ (Promise.resolve(invokeApi('GET', '/v1/social/intro/offers')).catch(err => {
+      console.error('[wishes] 待你点头拉取失败', err)
+      return null
+    })),
+  ])
+  renderWishes({ wishes: wr ? (wr.wishes ?? []) : null })
+  renderOffers({ offers: or ? (or.offers ?? []) : [] })
 }
 
 /** @param {{ preventDefault(): void }} ev */
@@ -121,14 +181,36 @@ export async function onWishCompose(ev) {
 }
 
 /**
- * 委托点击:草稿卡(#fd-wish-draft)的 派/算了,以及列表(#fd-wish-list)里
- * open/draft 行的 取消。三者都落在 data-wsh-action 上。
+ * 委托点击:草稿卡(#fd-wish-draft)的 派/算了,列表(#fd-wish-list)里
+ * open/draft 行的 取消,心愿下 hop-2 明信片的 想认识 TA,以及「待你点头」
+ * (#fd-wish-offers)的 同意/不了。前三个落在 data-wsh-id 上,后三个(想认识 TA
+ * / 同意 / 不了)落在 data-wsh-reply 上 —— 它们操作的是回信而不是心愿本身。
  * @param {any} ev
  */
 export async function onWishAction(ev) {
   const btn = ev.target?.closest?.('[data-wsh-action]')
   if (!btn) return
   const action = btn.getAttribute('data-wsh-action')
+
+  if (action === 'intro' || action === 'accept' || action === 'decline') {
+    const replyId = btn.getAttribute('data-wsh-reply')
+    if (!replyId) return
+    const route = action === 'intro' ? '/v1/social/intro/request'
+      : action === 'accept' ? '/v1/social/intro/accept'
+      : '/v1/social/intro/decline'
+    const r = /** @type {{ok?:boolean, reply_id?:string, reason?:string}|null} */ (
+      await invokeApi('POST', route, { reply_id: replyId }).catch(() => null))
+    if (action === 'intro') {
+      showToast(r?.ok ? '已经托 TA 去问了' : (INTRO_REQUEST_FAIL_COPY[String(r?.reason)] ?? `没问成:${String(r?.reason ?? '未知错误')}`))
+    } else if (action === 'accept') {
+      showToast(r?.ok ? '名片递过去了' : `没弄成:${String(r?.reason ?? '未知错误')}`)
+    } else {
+      showToast(r?.ok ? '回了不了' : `没弄成:${String(r?.reason ?? '未知错误')}`)
+    }
+    await refreshWishes()
+    return
+  }
+
   const id = btn.getAttribute('data-wsh-id')
   if (!id) return
 
@@ -159,5 +241,6 @@ export function initWishes() {
   document.getElementById('fd-wish-form')?.addEventListener('submit', onWishCompose)
   document.getElementById('fd-wish-draft')?.addEventListener('click', onWishAction)
   document.getElementById('fd-wish-list')?.addEventListener('click', onWishAction)
+  document.getElementById('fd-wish-offers')?.addEventListener('click', onWishAction)
   refreshWishes()
 }
