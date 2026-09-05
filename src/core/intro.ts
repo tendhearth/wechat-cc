@@ -75,6 +75,25 @@ export function pruneIntroIndex(idx: IntroIndex, nowMs: number): { index: IntroI
   }
 }
 
+/**
+ * 请求方手里那笔「我已经在问了」(`PostcardRef['myIntro']` / `offers[].myIntro`)
+ * 还算数吗 —— 和介绍人的 `pending`、被介绍方的 `offers` 同一把 7 天尺子。
+ *
+ * WHY:claim 是**本机单方面**记的一句「等对方点头」,没有它过期,一封没送到的
+ * `card` 就把这张明信片永远钉死在「已在问」上:桌面按钮消失、微信答「已经在问
+ * 了」,主人除了手改 wishes.json 没有别的出路。而对面那条 pending 早在同一个
+ * 时刻过期了,重问一次本来就该重新起一笔。
+ *
+ * `at` 缺失或读不懂(升级前落盘的老数据)一律**当新鲜**:宁可少放一次「再问」,
+ * 也不能因为没有时间戳就把所有老 claim 一次性判死。
+ */
+export function isIntroClaimLive(claim: { at?: string } | undefined | null, nowMs: number): boolean {
+  if (!claim) return false
+  const t = Date.parse(claim.at ?? '')
+  if (Number.isNaN(t)) return true
+  return nowMs - t <= INTRO_PENDING_TTL_MS
+}
+
 export function resolveIntroRef(keys: readonly string[], ref: string): { ok: true; id: string } | { ok: false; reason: 'not_found' | 'ambiguous' } {
   const q = ref.trim().toLowerCase()
   if (q === '') return { ok: false, reason: 'not_found' }

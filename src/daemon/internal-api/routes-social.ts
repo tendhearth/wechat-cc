@@ -25,6 +25,7 @@ import { makeConversationStore } from '../../core/conversation-store'
 import { loadAccess } from '../../lib/access'
 import { loadCompanionConfig } from '../companion/config'
 import { resolveEffectiveTier } from '../../core/user-tier'
+import { isIntroClaimLive } from '../../core/intro'
 import { readJsonFile } from '../../lib/read-json-file'
 import { join } from 'node:path'
 
@@ -117,8 +118,12 @@ export function socialRoutes(deps: InternalApiDeps): RouteTable {
           wishes: deps.social.wish.list().map(w => {
             const base = { id: w.id, text: w.redacted, status: w.effective, created_at: w.createdAt, expires_at: w.expiresAt, sent_to: w.sentTo, replies: w.replies }
             const postcards = w.postcards as Array<PostcardRef & { viaLabel: string }> | undefined
+            // `requested` = 「已在问」这四个字要不要顶掉「想认识 TA」按钮。
+            // 光看 myIntro 在不在不行:claim 和介绍人那条 pending 同一把 7 天
+            // 尺子(isIntroClaimLive),过了就该重新露出按钮,不然一封丢掉的
+            // card 会把这张明信片永远钉死在「已在问」上。
             return postcards
-              ? { ...base, postcards: postcards.map(p => ({ reply_id: p.replyId, via_label: p.viaLabel, preview: p.preview, at: p.at, requested: !!p.myIntro })) }
+              ? { ...base, postcards: postcards.map(p => ({ reply_id: p.replyId, via_label: p.viaLabel, preview: p.preview, at: p.at, requested: isIntroClaimLive(p.myIntro, Date.now()) })) }
               : base
           }),
         },

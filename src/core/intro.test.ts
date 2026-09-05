@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  introEnvelope, parseIntroPayload, newReplyId, emptyIntroIndex, pruneIntroIndex, resolveIntroRef,
+  introEnvelope, parseIntroPayload, newReplyId, emptyIntroIndex, pruneIntroIndex, resolveIntroRef, isIntroClaimLive,
   INTRO_INDEX_TTL_MS, INTRO_PENDING_TTL_MS, HINT_MAX, type IntroIndex,
 } from './intro'
 
@@ -38,6 +38,14 @@ describe('intro 索引', () => {
     expect(Object.keys(r.index.pending)).toEqual(['r2'])
     expect(Object.keys(r.index.offers)).toEqual(['o2'])
     expect(r.expiredPending).toEqual([{ replyId: 'r1', requesterChannel: 'c0' }])
+  })
+  it('isIntroClaimLive:和 pending 同一把 7 天尺子;没有 / 读不懂 at 的老数据当新鲜;没有 claim = 没在问', () => {
+    const now = Date.parse(T0)
+    expect(isIntroClaimLive({ at: new Date(now - INTRO_PENDING_TTL_MS + 1000).toISOString() }, now)).toBe(true)
+    expect(isIntroClaimLive({ at: new Date(now - INTRO_PENDING_TTL_MS - 1000).toISOString() }, now)).toBe(false)
+    expect(isIntroClaimLive({}, now)).toBe(true)
+    expect(isIntroClaimLive({ at: '不是时间' }, now)).toBe(true)
+    expect(isIntroClaimLive(undefined, now)).toBe(false)
   })
   it('emptyIntroIndex 四张空表;resolveIntroRef 前缀匹配', () => {
     expect(emptyIntroIndex()).toEqual({ forwards: {}, replies: {}, pending: {}, offers: {} })

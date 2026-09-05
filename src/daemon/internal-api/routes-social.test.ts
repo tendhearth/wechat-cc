@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { socialRoutes } from './routes-social'
 import { minTierFor } from './route-tiers'
 import type { InternalApiDeps } from './types'
+import { INTRO_PENDING_TTL_MS } from '../../core/intro'
 
 const qs = () => new URLSearchParams()
 
@@ -114,6 +115,13 @@ describe('/v1/social/intro/*', () => {
     expect((await r['GET /v1/social/intro/offers']!(qs(), undefined)).body).toEqual({ offers: [{ reply_id: 'ab12cd34', hint: '找搭子', via_label: '阿A', at: 't' }] })
     const w = (await r['GET /v1/social/wishes']!(qs(), undefined)).body as { wishes: Array<{ postcards: unknown[] }> }
     expect(w.wishes[0]!.postcards).toEqual([{ reply_id: 'ab12cd34', via_label: '阿A', preview: 'p', at: 't', requested: true }])
+  })
+  it('claim 过了 7 天(card 丢了)→ requested 翻回 false,桌面重新露出「想认识 TA」', async () => {
+    const stale = new Date(Date.now() - INTRO_PENDING_TTL_MS - 1000).toISOString()
+    const wishStale = { ...wish, list: vi.fn(() => [{ ...wish.list()[0]!, postcards: [{ ...wish.list()[0]!.postcards[0]!, myIntro: { channelId: 'c', pubkey: 'P', privkey: 'K', bearer: 'B', at: stale } }] }]) }
+    const rs = socialRoutes({ social: { wish: wishStale, intro } } as unknown as InternalApiDeps)
+    const w = (await rs['GET /v1/social/wishes']!(qs(), undefined)).body as { wishes: Array<{ postcards: Array<{ requested: boolean }> }> }
+    expect(w.wishes[0]!.postcards[0]!.requested).toBe(false)
   })
   it('没接 → 503;四条 tier trusted', async () => {
     expect((await socialRoutes({ social: { wish } } as unknown as InternalApiDeps)['POST /v1/social/intro/request']!(qs(), { reply_id: 'ab' })).status).toBe(503)

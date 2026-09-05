@@ -34,7 +34,7 @@
  * `intro` —— 空闲自动重启不能在交叉名片发到一半时把 daemon 掐了。
  */
 import {
-  introEnvelope, parseIntroPayload, pruneIntroIndex, resolveIntroRef, FORWARD_PER_SENDER,
+  introEnvelope, parseIntroPayload, pruneIntroIndex, resolveIntroRef, isIntroClaimLive, FORWARD_PER_SENDER,
   type IntroIndex, type IntroPayload,
 } from '../../core/intro'
 import { readIntroIndex, writeIntroIndex } from '../companion/intro-memory'
@@ -105,6 +105,24 @@ export function makeIntro(deps: IntroDeps): IntroService {
     const release = holdBusy('intro')
     try { return await fn() } finally { release() }
   }
+  /**
+   * 这张名片说自己是谁,和这条信道那头**实际**是谁,对得上吗?
+   *
+   * 信道行里的 `peer_agent_id` 是配对(或上一笔介绍)那一刻从对方名片上落下来
+   * 的,是这条线上唯一一份不由这封信自证的身份。不对账的话:任何一个配过对的
+   * 人都能递一张 `self_id` 写着别人 slug 的名片过来,我 `adoptPeerCard` 一写,
+   * 那个 slug 就连到了他的信箱上;等真正的那个人来跟我配对,`adoptPeerCard`
+   * 只会回一句 `id_conflict` —— 冒名者把这个 id 占死了。spec 的「不防介绍人」
+   * 说的是 A 可以在 hint 上做手脚,不是「谁都能自称是别人」。
+   */
+  const cardIsFromPeer = (channelRowId: string, card: PairCard, what: string): boolean => {
+    const row = deps.channelStore.get(channelRowId)
+    if (!row || row.peer_agent_id !== card.self_id) {
+      log(`${what} 名片的 self_id(${card.self_id})不是这条信道的对端(${row?.peer_agent_id ?? '无此信道'})— 丢`)
+      return false
+    }
+    return true
+  }
   const send = async (chan: string, env: Envelope, what: string): Promise<boolean> => {
     try {
       const r = await deps.sendEnvelope(chan, env)
@@ -156,6 +174,8 @@ export function makeIntro(deps: IntroDeps): IntroService {
     // 已经在牵这一笔了。重投一次不该把扣在手里的名片换掉(换了的话,对方点头
     // 之后转出去的会是第二封信里那张 —— 谁都能拿这个覆盖别人的身份)。
     if (idx.pending[p.replyId]) { log(`request replyId=${p.replyId} 已经在牵了 — 丢(不覆盖手里的名片)`); return true }
+    // 第四道闸:名片上的身份得是这条信道那头的人本人(见 cardIsFromPeer)。
+    if (!cardIsFromPeer(channelRowId, p.card, `request replyId=${p.replyId}`)) return true
     save({ ...idx, pending: { ...idx.pending, [p.replyId]: { wishId: p.wishId, requesterChannel: channelRowId, requesterCard: p.card, targetChannel: rep.fromChannel, at: nowIso() } } })
     bg('forward', async () => {
       await send(rep.fromChannel, introEnvelope({ stage: 'forward', replyId: p.replyId, wishId: p.wishId, hint: fwd.preview }), `forward replyId=${p.replyId}`)
@@ -196,6 +216,9 @@ export function makeIntro(deps: IntroDeps): IntroService {
     const pd = idx.pending[p.replyId]
     if (!pd) { log(`accept replyId=${p.replyId} 没有对应的 pending — 丢`); return true }
     if (pd.targetChannel !== channelRowId) { log(`accept replyId=${p.replyId} 不是被介绍方那条信道来的(${channelRowId} ≠ ${pd.targetChannel})— 丢`); return true }
+    // 名片上的身份得是这条信道那头的人本人 —— 这张会被我原样转给最初问的人,
+    // 他没有第二个渠道能核对(见 cardIsFromPeer)。
+    if (!cardIsFromPeer(channelRowId, p.card, `accept replyId=${p.replyId}`)) return true
     const theirCard = p.card
     save({ ...idx, pending: without(idx.pending, p.replyId) })
     bg('交叉名片', async () => {
@@ -289,7 +312,10 @@ export function makeIntro(deps: IntroDeps): IntroService {
       if (!found.ok) return { ok: false, reason: found.reason }
       const { wishId, ref } = found
       // 已经问过一次了。再问一次不会更快,只会让 A 那边多一条 pending。
-      if (ref.myIntro) return { ok: false, reason: 'already_requested' }
+      // 但这句「已经在问」只压 7 天(isIntroClaimLive)—— 过了这个点,A 那边
+      // 的 pending 早已在同一把尺子上过期,card 也确定不会再来了,主人有权
+      // 重新问一次(下面的 attachMyIntro 会把那把过期的钥匙原地换掉)。
+      if (isIntroClaimLive(ref.myIntro, now())) return { ok: false, reason: 'already_requested' }
       const chan = deps.genChannel()
       const bearer = deps.mintKey()
       const card = deps.buildCard('initiator', ref.replyId, bearer, chan)

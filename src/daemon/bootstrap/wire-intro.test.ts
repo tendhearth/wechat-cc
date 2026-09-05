@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { makeTrio, flush } from './social-trio.fixture'
 import { readWishes, writeWishes } from '../companion/wish-memory'
 import { readIntroIndex, writeIntroIndex } from '../companion/intro-memory'
+import { INTRO_PENDING_TTL_MS } from '../../core/intro'
+import { attachMyIntro } from '../../core/wish'
 
 /**
  * 三只伙伴同进程对跑(me ─ A ─ B):me 派心愿 → A 答不上转给 B → B 答 →
@@ -114,6 +116,46 @@ describe('介绍:两边点头就成朋友(spec 2026-09-04-introduction §3)', ()
     expect(t.A.letters.filter(l => l.dir === 'out' && (l.payload as { stage?: string }).stage === 'card')).toHaveLength(0)
     expect(t.me.registry.size).toBe(0); expect(t.B.registry.size).toBe(0)
     expect(t.A.logs.some(l => /accept.*不是被介绍方/.test(l))).toBe(true)
+  })
+  it('request 的名片自称是别人(self_id ≠ 这条信道的对端)→ 丢,不扣名片也不转', async () => {
+    const t = await throughPostcard()
+    // 我确实是发心愿那条信道上的人,但递过来的名片写着别人的 slug —— 采纳了的话
+    // 那个 slug 就连到我的信箱上,真身以后来配对只会撞 id_conflict。
+    const forged = { v: 2, role: 'initiator', nonce: 'x', self_id: 'cc-victim00001', name: '别人', mailbox_addr: 'Mme', mailbox_enc_pub: 'Eme', relays: ['https://r/mailbox'], bearer: 'm'.repeat(16), channel_id: 'mc', channel_pub: 'MP' }
+    const before = t.B.letters.filter(l => l.dir === 'in' && l.kind === 'intro').length
+    t.deliver(t.me, 'me>A', { kind: 'intro', payload: { stage: 'request', replyId: t.replyId, wishId: t.wishId, card: forged } })
+    await flush()
+    expect(t.B.letters.filter(l => l.dir === 'in' && l.kind === 'intro')).toHaveLength(before)   // 一句 hint 都没转出去
+    expect(readIntroIndex(t.A.stateDir).pending).toEqual({})                                    // 手里什么都没扣
+    expect(t.A.logs.some(l => /request.*cc-victim00001.*不是这条信道的对端/.test(l))).toBe(true)
+  })
+  it('accept 的名片自称是别人 → 丢,名片不交叉(A 转出去的那张没人能核对)', async () => {
+    const t = await throughPostcard()
+    await t.me.intro!.request(t.replyId); await flush()
+    const forged = { v: 2, role: 'acceptor', nonce: 'x', self_id: 'cc-victim00001', name: '别人', mailbox_addr: 'MB', mailbox_enc_pub: 'EB', relays: ['https://r/mailbox'], bearer: 'b'.repeat(16), channel_id: 'bc', channel_pub: 'BP' }
+    t.deliver(t.B, 'B>A', { kind: 'intro', payload: { stage: 'accept', replyId: t.replyId, wishId: t.wishId, card: forged } })
+    await flush()
+    expect(t.A.letters.filter(l => l.dir === 'out' && (l.payload as { stage?: string }).stage === 'card')).toHaveLength(0)
+    expect(t.me.registry.size).toBe(0); expect(t.B.registry.size).toBe(0)
+    expect(readIntroIndex(t.A.stateDir).pending[t.replyId]).toBeTruthy()   // pending 没被这封信动过
+    expect(t.A.logs.some(l => /accept.*cc-victim00001.*不是这条信道的对端/.test(l))).toBe(true)
+  })
+  it('claim 过了 7 天(card 丢了)→ 不再算「已在问」,可以重新问一次', async () => {
+    const t = await throughPostcard()
+    const stale = new Date(t.me.clock.ms - INTRO_PENDING_TTL_MS - 1000).toISOString()
+    writeWishes(t.me.stateDir, attachMyIntro(readWishes(t.me.stateDir), t.replyId, { channelId: 'old-c', pubkey: 'old-P', privkey: 'old-K', bearer: 'o'.repeat(16), at: stale }))
+    expect(await t.me.intro!.request(t.replyId)).toEqual({ ok: true, replyId: t.replyId })
+    await flush()
+    // 重新铸了一把钥匙(不是那把过期的),而且这一趟真的走到了 B 的主人跟前
+    const mine = readWishes(t.me.stateDir).flatMap(w => w.postcards ?? [])[0]!.myIntro!
+    expect(mine.at).not.toBe(stale); expect(mine.channelId).not.toBe('old-c')
+    expect(t.B.owner.at(-1)).toContain('想认识你')
+  })
+  it('claim 还新鲜(7 天内)→ 照旧 already_requested', async () => {
+    const t = await throughPostcard()
+    const fresh = new Date(t.me.clock.ms - INTRO_PENDING_TTL_MS + 60_000).toISOString()
+    writeWishes(t.me.stateDir, attachMyIntro(readWishes(t.me.stateDir), t.replyId, { channelId: 'c', pubkey: 'P', privkey: 'K', bearer: 'f'.repeat(16), at: fresh }))
+    expect(await t.me.intro!.request(t.replyId)).toEqual({ ok: false, reason: 'already_requested' })
   })
   it('card 没有对应的 claim(被介绍方还没点头)→ 丢,不写注册表', async () => {
     const t = await throughPostcard()
