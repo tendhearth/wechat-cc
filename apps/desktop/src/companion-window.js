@@ -24,7 +24,8 @@ const poller = createPresencePoller({ invokeApi, intervalMs: 20_000 })
 // 拿它当基准会让下一次拉通时凭空播一次「收到信」。
 poller.subscribe(p => { pet.applyIntent(presenceToPet(p, prev)); if (p.presence !== 'down') prev = p })
 poller.start()
-document.addEventListener('visibilitychange', () => { if (document.hidden) poller.stop(); else { poller.start(); poller.refresh() } })
+// start() 自己会先拉一次,这里不用再补 refresh()。
+document.addEventListener('visibilitychange', () => { if (document.hidden) poller.stop(); else poller.start() })
 
 // 拖动:按下进 drag,交给系统拖窗口。系统拖动结束后不一定有事件回来,所以回落靠
 // mouseup / blur 兜底,再加一条 mousemove(按键已松开)的事件型安全网 —— 不用计时器。

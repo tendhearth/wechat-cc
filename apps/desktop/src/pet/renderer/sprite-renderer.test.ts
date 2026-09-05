@@ -97,7 +97,7 @@ describe('createSpriteRenderer', () => {
     rb.setBreathing(true); expect(stageB.classList.contains('pet-breathing')).toBe(true)
     rb.setBreathing(false); expect(stageB.classList.contains('pet-breathing')).toBe(false)
   })
-  it('reducedMotion 下多帧一次性动画只显示首帧与末帧(cross-fade 由 CSS 做),onEnd 仍只调一次', () => {
+  it('reducedMotion 下多帧一次性动画只显示首末两帧(硬切),onEnd 仍只调一次', () => {
     const img = el(), stage = el(), c = clock()
     const r = createSpriteRenderer({ img, stage, schedule: c.schedule, cancel: c.cancel, preload: () => {}, reducedMotion: true })
     const onEnd = vi.fn()

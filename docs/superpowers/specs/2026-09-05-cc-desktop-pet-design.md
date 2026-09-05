@@ -68,7 +68,7 @@ Fallback 链(`animation-resolver.js`,纯,输入 form + behavior + manifest,输�
 ## 4. 渲染
 
 - **舞台**:`companion-window.html` 里一个 `.pet-stage`(正方形,尺寸随窗口),内含主体 `<img class="pet-sprite">` 与道具层 `<div class="pet-props">`。逐帧 = 换 `src`(帧图预加载);anchor 用 manifest 的比例值定位到舞台底部中线,和 `transform-origin` 一致。不用 canvas。
-- **克制的运动**(README:keyframes 不是动画库,小动作由 renderer 做):持续状态上叠一层呼吸 `scale 1.00→1.02`、周期 2.8 s;`blink` 每 6–12 s 随机一次,`look` 每 25–60 s 随机一次,两者都只在 `idle/companion` 下发生且可关;转场按 manifest 的 8 fps 逐帧;`prefers-reduced-motion` 下关掉呼吸与随机动作,转场改为首末帧 cross-fade。
+- **克制的运动**(README:keyframes 不是动画库,小动作由 renderer 做):持续状态上叠一层呼吸 `scale 1.00→1.02`、周期 2.8 s;`blink` 每 6–12 s 随机一次,`look` 每 25–60 s 随机一次,两者都只在 `idle/companion` 下发生且可关;转场按 manifest 的 8 fps 逐帧;`prefers-reduced-motion` 下关掉呼吸与随机动作,转场只显示首末两帧(硬切,v1 不做 cross-fade)。
 - **道具层**:道具图 384×384,manifest 没有偏移信息 → 用一张**集中的槽位表** `PROP_SLOTS`(相对 anchor 的比例偏移与缩放:`above-head`、`beside-right`、`in-front`),道具名 → 槽位在 `prop-layer.js` 一处定义。这是槽位而不是逐帧 offset,允许。`envelope` 带 badge 数字。
 - **窗口**(Rust 侧复用现有 `companion` 窗与命令 `open/close/start_companion_drag/resize`):transparent、no decorations、always-on-top、skip-taskbar 保持;内尺寸改为 240 × 300(上半 CC,下半留给权限卡与提示,平时透明);整只 CC 是 drag-region,拖动时状态机进 `drag`,松手回落;位置不持久化(现状也不,列 future);缩放 ± 保留。
 - **文字**:CC 不说话。唯一的文本是权限卡与「daemon 没起」的一行提示;`bear-message` 气泡、鱼缸提示全部删除。
@@ -85,7 +85,7 @@ Fallback 链(`animation-resolver.js`,纯,输入 form + behavior + manifest,输�
 | `presence: offline`(微信断) | form unlit、`sleep`;journal 道具与 badge 保留(计数仍可信) |
 | `presence: degraded` | 进入时播一次 `error`,之后保持当前活动(idle / working / companion)+ `exclamation` 道具,直到恢复 |
 | `activity: hosting_human / visiting / hosting_peer` | `companion` |
-| `activity: foraging / working`(busy token) | `working` + `laptop`(仅当 turn 端点说 idle;turn 优先) |
+| `activity: foraging / working`(busy token) | `working`(v1 的 working 帧自带笔记本,不叠 `laptop` 道具;仅当 turn 端点说 idle,turn 优先) |
 | `activity: chatting / idle` | 交给 turn 端点 |
 | `news.unread > 0` | `envelope` 道具 + badge;unread **增加**时播一次 `receive` |
 

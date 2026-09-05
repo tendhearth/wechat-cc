@@ -50,7 +50,7 @@ export function createSpriteRenderer(deps) {
     let i = 0
     show(/** @type {string} */ (frames[0]))
     if (frames.length === 1 && a.loop) return
-    // reduced motion:一次性多帧动画只显示首末帧,时长不变(给 CSS cross-fade 留时间)
+    // reduced motion:一次性多帧动画只显示首末两帧(硬切,不做 cross-fade),时长不变
     if (reduced && !a.loop && frames.length > 1) {
       timer = schedule(() => { if (gen !== generation) return; timer = null; show(/** @type {string} */ (frames[frames.length - 1])); onEnd?.() }, stepMs * frames.length)
       return

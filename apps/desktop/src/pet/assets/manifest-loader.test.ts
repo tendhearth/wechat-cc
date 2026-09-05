@@ -32,8 +32,8 @@ describe('normalizeManifest — v1 扁平形状(资产包现状)', () => {
     for (const a of Object.values(r.manifest.transitions)) a.frames.forEach(x => all.add(x))
     Object.values(r.manifest.props).forEach(x => all.add(x))
     for (const p of all) expect(() => readFileSync(p)).not.toThrow()
-    // 资产包实际只有 33 张 png(reference/canonical-reference-{1,2}.png 未被 manifest 引用),
-    // 故 manifest 引用到的去重文件数是 31,不是任务书里假设的 36(见 task-1-report.md 的偏差记录)。
+    // 资产包里就 31 张 png,全被 manifest 引用(两张没人引用的 reference/canonical-reference-*.png
+    // 已经删掉,原图仍在外部资产包里);不是任务书里假设的 36(见 task-1-report.md 的偏差记录)。
     expect(all.size).toBe(31)
   })
 })
