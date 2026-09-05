@@ -26,7 +26,11 @@ export function presenceToPet(p, prev) {
   /** @type {PetBehavior[]} */
   const oneShots = []
   const envelope = unread > 0 ? ['envelope'] : []
-  if (p.presence === 'offline') return { form: 'unlit', behavior: 'sleep', props: envelope, badge, hint: null, oneShots }
+  // 收信的沿:拿上一次**拉到过的真状态**比。拉不到时 poller 发的是 DOWN_PRESENCE(unread 0),
+  // 拿它当基准会让下一次拉通时凭空「收到」一堆信 —— 所以 down 不作数(窗口那边也不更新 prev)。
+  // offline 一样会收到信(明信片、串门都还在落库),所以这条沿在离线时也算。
+  const received = !!prev && prev.presence !== 'down' && unread > unreadOf(prev)
+  if (p.presence === 'offline') return { form: 'unlit', behavior: 'sleep', props: envelope, badge, hint: null, oneShots: received ? ['receive'] : [] }
 
   const degraded = p.presence === 'degraded'
   if (degraded) { props.push('exclamation'); if (!prev || prev.presence !== 'degraded') oneShots.push('error') }
@@ -38,6 +42,6 @@ export function presenceToPet(p, prev) {
   if (COMPANION_KINDS.has(kind)) behavior = 'companion'
   else if (WORKING_KINDS.has(kind)) { behavior = 'working'; props.push('laptop') }
   props.push(...envelope)
-  if (prev && unread > unreadOf(prev)) oneShots.push('receive')
+  if (received) oneShots.push('receive')
   return { form, behavior, props, badge, hint: null, oneShots }
 }

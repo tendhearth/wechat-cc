@@ -19,6 +19,7 @@
     "**/*.ts",
     "src/**/*.ts",
     "types/**/*.d.ts",
+    "apps/desktop/src/companion-window.js",
     "apps/desktop/src/conversations-poller.js",
     "apps/desktop/src/doctor-poller.js",
     "apps/desktop/src/main.js",

@@ -30,4 +30,16 @@ describe('presenceToPet(Phase A:只有处境)', () => {
     const both = presenceToPet(P({ presence: 'degraded', news: { unread: 1, latest_kind: 'hunt', latest_title: 't' } }), P())
     expect(both.props).toEqual(['exclamation', 'envelope']); expect(both.oneShots).toEqual(['error', 'receive'])
   })
+  it('离线也会收到信:offline 下 unread 涨了照样播 receive', () => {
+    const off = presenceToPet(
+      P({ presence: 'offline', news: { unread: 3, latest_kind: 'postcard', latest_title: 'x' } }),
+      P({ presence: 'offline', news: { unread: 2, latest_kind: 'hunt', latest_title: 'y' } }),
+    )
+    expect(off).toMatchObject({ form: 'unlit', behavior: 'sleep', props: ['envelope'], badge: 3, oneShots: ['receive'] })
+  })
+  it('拉不到(prev 是 down)不算基准:恢复后不凭空播 receive', () => {
+    const down = P({ presence: 'down', news: { unread: 0, latest_kind: null, latest_title: null } })
+    expect(presenceToPet(P({ news: { unread: 3, latest_kind: 'postcard', latest_title: 'x' } }), down).oneShots).toEqual([])
+    expect(presenceToPet(P({ presence: 'offline', news: { unread: 3, latest_kind: 'postcard', latest_title: 'x' } }), down).oneShots).toEqual([])
+  })
 })

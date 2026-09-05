@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createPet } from './pet.js'
@@ -86,6 +86,16 @@ describe('createPet(组装)', () => {
     expect(root.hint.hidden).toBe(true)
     pet.setHint('daemon 没起')
     expect(root.hint.hidden).toBe(false); expect(root.hint.textContent).toBe('daemon 没起')
+  })
+  it('转场里被挡下的一次性行为不会丢:转场落地后补播 error', async () => {
+    const { c, root, pet } = await boot()
+    pet.applyIntent({ form: 'lit', behavior: 'idle', props: [], badge: 0, hint: null, oneShots: ['error'] })
+    expect(root.img.src).toBe('./assets/pet/transitions/unlit-to-lit/000.png')
+    c.tick(1005)
+    expect(root.img.src).toBe('./assets/pet/states/error/000.png')
+    c.tick(260)
+    expect(pet.machine.snapshot().behavior).toBe('idle')
+    expect(root.img.src).toBe('./assets/pet/reference/master-lit.png')
   })
   it('manifest 加载失败:不抛,显示提示,setState 不崩,warnings 含原因', async () => {
     const fetch404 = (async () => new Response('x', { status: 404 })) as unknown as typeof fetch

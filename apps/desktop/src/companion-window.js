@@ -20,7 +20,9 @@ if (new URLSearchParams(location.search).has('lab')) /** @type {any} */ (window)
 /** @type {import('./presence-poller.js').Presence | null} */
 let prev = null
 const poller = createPresencePoller({ invokeApi, intervalMs: 20_000 })
-poller.subscribe(p => { pet.applyIntent(presenceToPet(p, prev)); prev = p })
+// prev 只记**拉到过的真状态**:拉不到时 poller 发 DOWN_PRESENCE(unread 0),
+// 拿它当基准会让下一次拉通时凭空播一次「收到信」。
+poller.subscribe(p => { pet.applyIntent(presenceToPet(p, prev)); if (p.presence !== 'down') prev = p })
 poller.start()
 document.addEventListener('visibilitychange', () => { if (document.hidden) poller.stop(); else { poller.start(); poller.refresh() } })
 
