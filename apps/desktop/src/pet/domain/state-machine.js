@@ -20,6 +20,7 @@ export function createPetStateMachine(opts = {}) {
   /** @type {string[]} */ let props = []
   let badge = 0
   let dragging = false
+  /** @type {PetForm | null} */ let pendingForm = null
   /** @type {Set<(s: PetSnapshot) => void>} */
   const subs = new Set()
 
@@ -39,6 +40,11 @@ export function createPetStateMachine(opts = {}) {
     /** @param {PetForm} f */
     setForm(f) {
       if (!isForm(f)) return false
+      if (dragging) {
+        // drag 压过转场:转场推迟到 endDrag,只记 pendingForm(要求回当前 form 就清空)
+        pendingForm = f === form ? null : f
+        return false
+      }
       if (transition) {
         if (targetForm === f) return false
         // 转到一半要求回去:结束当前转场留在原态,不再转
@@ -54,6 +60,7 @@ export function createPetStateMachine(opts = {}) {
     /** @param {string} b @returns {'applied' | 'queued' | 'ignored'} */
     setState(b) {
       if (!isBehavior(b)) return 'ignored'
+      if (b === 'drag') return 'ignored' // drag 只经 beginDrag/endDrag 进出
       const oneShot = ONE_SHOT.has(b)
       if (dragging) {
         if (oneShot) return 'ignored'
@@ -88,8 +95,8 @@ export function createPetStateMachine(opts = {}) {
     },
 
     notifyAnimationEnded() {
-      if (transition) { finishTransitionNow(); behavior = resting; notify(); return }
       if (dragging) return
+      if (transition) { finishTransitionNow(); behavior = resting; notify(); return }
       if (playingOneShot()) { behavior = resting; notify() }
     },
 
@@ -104,6 +111,11 @@ export function createPetStateMachine(opts = {}) {
       if (!dragging) return
       dragging = false
       behavior = resting
+      if (pendingForm !== null && pendingForm !== form) {
+        transition = pendingForm === 'lit' ? 'unlit-to-lit' : 'lit-to-unlit'
+        targetForm = pendingForm
+      }
+      pendingForm = null
       notify()
     },
   }
