@@ -1,6 +1,10 @@
 /**
  * 三只伙伴同进程对跑:me ─ A ─ B。A 同时开着两条信道(去 me 的、去 B 的);
  * sendEnvelope 按信道 id 找到对端,直接塞进对端的 onInbound(先 wish 再 intro)。
+ *
+ * `withC: true` 再往 A 身上挂一只 C(me ─ A ─ B/C):一条心愿转给**两个**朋友,
+ * 两张答卷都从同一条(me ← A)信道回来。「帮着问了 N 个朋友」的 N ≥ 2 才是常态,
+ * 而 hop 2 的幂等键分不分得开这两张,只有这个拓扑测得出来。
  */
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -28,16 +32,17 @@ export interface Peer {
 /** 信道拓扑:channelId → [持有方, 对端, 对端看这条信道的 id]。 */
 export interface Link { id: string; owner: string; peer: string; peerSideId: string }
 
-export interface TrioOpts { budgetOk?: (sender: string) => boolean }
+export interface TrioOpts { budgetOk?: (sender: string) => boolean; withC?: boolean }
 
-export function makeTrio(opts: TrioOpts = {}): { me: Peer; A: Peer; B: Peer; deliver: (from: Peer, channel: string, env: Envelope) => boolean } {
+export function makeTrio(opts: TrioOpts = {}): { me: Peer; A: Peer; B: Peer; C?: Peer; deliver: (from: Peer, channel: string, env: Envelope) => boolean } {
   const links: Link[] = [
     { id: 'me>A', owner: 'me', peer: 'A', peerSideId: 'A>me' }, { id: 'A>me', owner: 'A', peer: 'me', peerSideId: 'me>A' },
     { id: 'A>B', owner: 'A', peer: 'B', peerSideId: 'B>A' }, { id: 'B>A', owner: 'B', peer: 'A', peerSideId: 'A>B' },
+    ...(opts.withC ? [{ id: 'A>C', owner: 'A', peer: 'C', peerSideId: 'C>A' }, { id: 'C>A', owner: 'C', peer: 'A', peerSideId: 'A>C' }] : []),
   ]
   const peers = new Map<string, Peer>()
   const clock = { ms: Date.parse('2026-09-04T10:00:00.000Z') }
-  const names: Record<string, Record<string, string>> = { me: { 'me>A': '阿A' }, A: { 'A>me': '小我', 'A>B': '阿B' }, B: { 'B>A': '阿A' } }
+  const names: Record<string, Record<string, string>> = { me: { 'me>A': '阿A' }, A: { 'A>me': '小我', 'A>B': '阿B', 'A>C': '阿C' }, B: { 'B>A': '阿A' }, C: { 'C>A': '阿A' } }
   const deliver = (from: Peer, channel: string, env: Envelope): boolean => {
     const link = links.find(l => l.id === channel && l.owner === from.name)
     if (!link) return false
@@ -99,6 +104,7 @@ export function makeTrio(opts: TrioOpts = {}): { me: Peer; A: Peer; B: Peer; del
     return p
   }
   const me = mk('me'), A = mk('A'), B = mk('B')
-  return { me, A, B, deliver }
+  const C = opts.withC ? mk('C') : undefined
+  return { me, A, B, ...(C ? { C } : {}), deliver }
 }
 export const flush = (): Promise<void> => new Promise(r => setTimeout(r, 30))

@@ -90,6 +90,10 @@ export interface WishService {
 }
 
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err))
+const without = <T>(rec: Record<string, T>, key: string): Record<string, T> => {
+  const { [key]: _drop, ...rest } = rec
+  return rest
+}
 
 export function makeWish(deps: WishDeps): WishService {
   const now = deps.now ?? Date.now
@@ -107,6 +111,13 @@ export function makeWish(deps: WishDeps): WishService {
 
   // ── 答的那边:有人来打听 ────────────────────────────────────────────────
 
+  /** 只改 forwards 这一列,而且是在**重新读过**的索引上改。 */
+  const writeForwards = (mut: (f: IntroIndex['forwards']) => IntroIndex['forwards']): void => {
+    const fresh = readIntroIndex(deps.stateDir)
+    const { index } = pruneIntroIndex({ ...fresh, forwards: mut(fresh.forwards) }, now())
+    writeIntroIndex(deps.stateDir, index)
+  }
+
   /**
    * 转问:把一条自己答不上的心愿转给自己开着的其他信道(排除来源信道)。
    * 已经转过(forwards[id] 存在)、预算用完、没有别的信道 —— 都只返回 0,
@@ -115,12 +126,21 @@ export function makeWish(deps: WishDeps): WishService {
   const forwardWish = async (channelRowId: string, p: WishPayload): Promise<number> => {
     const idx = readIntroIndex(deps.stateDir)
     if (idx.forwards[p.id]) return 0
+    // **先看有没有人可转,再花预算**。反过来的话,一个只认识一个人的伙伴收到
+    // 三条转不出去的心愿,就把 24 小时的转问额度白烧光了。
+    const targets = primaryChannels(deps.channelStore.list()).filter(c => c.id !== channelRowId)
+    if (targets.length === 0) return 0
     if (!deps.forwardBudget?.withinBudget(channelRowId)) {
       log(`wish=${p.id} 转问预算用完(来自 ${channelRowId})— 不转`)
       return 0
     }
-    const targets = primaryChannels(deps.channelStore.list()).filter(c => c.id !== channelRowId)
-    if (targets.length === 0) return 0
+    // **先落台账,再转投** —— 和 send() 的「先落 open 再广播」同一个道理。
+    // 转给两个朋友就是两次 await:第一个朋友完全可能在我还在投第二封的时候就
+    // 把答卷送回来了(同进程的两只伙伴必然如此,真信箱只是窗口小一点)。那时
+    // 台账要是还没写,handlePostcard 查不到 forwards[wishId],这张答卷会被当成
+    // 「不认识的心愿」丢掉 —— 转问的人越多,丢得越准。
+    const entry = { from: channelRowId, to: targets.map(c => c.id), preview: p.text.slice(0, HINT_MAX), at: nowIso() }
+    writeForwards(f => ({ ...f, [p.id]: entry }))
     const to: string[] = []
     for (const c of targets) {
       try {
@@ -129,10 +149,12 @@ export function makeWish(deps: WishDeps): WishService {
         else log(`wish=${p.id} 转问 ${c.id} 失败: ${r.error ?? 'send_failed'}`)
       } catch (err) { log(`wish=${p.id} 转问 ${c.id} 抛错: ${errText(err)}`) }
     }
+    // 收敛成真投出去的那几条。整表覆盖不行:上面每一封都是 await,期间信箱
+    // 轮询完全可能已经把一条 replies(朋友答回来的中继)或一条 pending/offers
+    // 写进过这张表,一覆盖就抹掉了 —— 那条 replyId 一丢,主人回「认识」时就
+    // 成了「我没转问过这条」。一封都没投出去 = 这次根本没转问过,连台账都撤。
+    writeForwards(f => (to.length === 0 ? without(f, p.id) : { ...f, [p.id]: { ...entry, to } }))
     if (to.length === 0) return 0
-    const merged: IntroIndex = { ...idx, forwards: { ...idx.forwards, [p.id]: { from: channelRowId, to, preview: p.text.slice(0, HINT_MAX), at: nowIso() } } }
-    const { index } = pruneIntroIndex(merged, now())
-    writeIntroIndex(deps.stateDir, index)
     log(`wish=${p.id} 转问给了 ${to.length} 个朋友: ${to.join(',')}`)
     return to.length
   }
@@ -260,7 +282,13 @@ export function makeWish(deps: WishDeps): WishService {
     const r = acceptPostcard(readWishes(deps.stateDir), p.wishId, now())
     if (!r.ok) { log(`postcard wish=${p.wishId} ${r.reason} — 丢`); return true }
     // 明信片的幂等键和心愿分开:同一个 id 在既发又收的那一边会撞车。
-    if (!markWishSeen(deps.stateDir, seenKey(`pc:${p.wishId}`, channelRowId), nowIso())) {
+    //
+    // hop 2 还得再带上 replyId:介绍人**帮着问了 N 个朋友**,那 N 张答卷全从
+    // 同一条(我 → 介绍人)信道回来 —— 只按信道记的话,第一张之后的每一张都
+    // 会被判成「已经收过」丢掉,主人永远只看得见一个朋友的回音,而且另一张
+    // 连日志都不冒(介绍人那边记的是一次成功的中继)。
+    const pcKey = p.hop === 2 ? seenKey(`pc:${p.wishId}:${p.replyId!}`, channelRowId) : seenKey(`pc:${p.wishId}`, channelRowId)
+    if (!markWishSeen(deps.stateDir, pcKey, nowIso())) {
       log(`postcard wish=${p.wishId} 这条信道上已经收过 — 丢`)
       return true
     }
@@ -275,7 +303,7 @@ export function makeWish(deps: WishDeps): WishService {
     writeWishes(deps.stateDir, list)
     try { deps.recordPostcard({ text: p.text, peerLabel: label }) }
     catch (err) { log(`明信片入库失败(还是会跟主人说): ${errText(err)}`) }
-    const tail = isRelayed ? `（想认识就回「认识 ${p.replyId!.slice(0, 6)}」）` : ''
+    const tail = isRelayed ? `(想认识就回「认识 ${p.replyId!.slice(0, 6)}」)` : ''
     deps.notifyOwner(`📮 ${label} 回了你的心愿「${r.wish.redacted.slice(0, 20)}」:${p.text}${tail}`)
     log(`postcard wish=${p.wishId} 收下了 replies=${r.wish.replies}`)
     return true

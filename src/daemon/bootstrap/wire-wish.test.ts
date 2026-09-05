@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeWish, type WishDeps } from './wire-wish'
 import { readWishes } from '../companion/wish-memory'
+import { readIntroIndex, writeIntroIndex } from '../companion/intro-memory'
 import type { Envelope } from '../../core/envelope'
 import { makeTrio, flush as flush3 } from './social-trio.fixture'
 
@@ -238,9 +239,57 @@ describe('介绍:转问与回声原路返回(spec 2026-09-04-introduction §1/§
     expect(B.owner).toEqual([`🙋 阿A 的伙伴来打听「找周末爬山搭子」,我回了:我朋友周末常去`])
     expect(A.journal).toEqual([])
     expect(me.journal).toEqual([{ text: '我朋友周末常去', peerLabel: '阿A 的朋友' }])
-    expect(me.owner[0]).toMatch(/^📮 阿A 的朋友 回了你的心愿「找周末爬山搭子」:我朋友周末常去（想认识就回「认识 [0-9a-z]{6}」）$/)
+    expect(me.owner[0]).toMatch(/^📮 阿A 的朋友 回了你的心愿「找周末爬山搭子」:我朋友周末常去\(想认识就回「认识 [0-9a-z]{6}」\)$/)
     const refs = me.wish.list().find(w => w.id === id)!.postcards!
     expect(refs).toHaveLength(1); expect(refs[0]).toMatchObject({ via: 'me>A', preview: '我朋友周末常去' })
+  })
+  it('A 帮着问了 2 个朋友 → 两张答卷都从同一条信道回来,一张都不能丢', async () => {
+    const { me, A, B, C } = makeTrio({ withC: true })
+    B.judgeSays = { match: 'yes', blurb: '阿B 知道一个' }
+    C!.judgeSays = { match: 'yes', blurb: '阿C 也知道一个' }
+    const id = await send(me)
+    await flush3()
+    expect(A.owner).toEqual([`🙋 小我 的伙伴来打听「找周末爬山搭子」,我答不上,帮着问了 2 个朋友`])
+    // 两张 hop 2 都走 me>A 这一条信道 —— 幂等键只按信道记的话,第二张会被吞掉
+    expect(me.letters.filter(l => l.dir === 'in' && l.kind === 'postcard')).toHaveLength(2)
+    expect(me.journal.map(j => j.text).sort()).toEqual(['阿B 知道一个', '阿C 也知道一个'])
+    expect(me.owner.filter(o => o.startsWith('📮'))).toHaveLength(2)
+    const w = me.wish.list().find(x => x.id === id)!
+    expect(w.replies).toBe(2)
+    expect(w.postcards).toHaveLength(2)
+    expect(new Set(w.postcards!.map(r => r.replyId)).size).toBe(2)   // 两条各有自己的 replyId,认识哪个是哪个
+    expect(me.logs.some(l => l.includes('已经收过'))).toBe(false)
+  })
+  it('转问期间信箱写进来的 replies 不被覆盖(转问台账要在重新读过的索引上改)', async () => {
+    // 真货里这是信箱轮询:forwardWish 每投一封都是 await,期间 handlePostcard
+    // 会把一条中继 replies 写进同一张 introductions.json。
+    const stateDir = mkdtempSync(join(tmpdir(), 'wish-fwd-'))
+    const at = new Date(NOW.ms).toISOString()
+    const chans: Chan[] = [{ id: 'src', status: 'open', degree: 1, peer_agent_id: 'cc-src' }, { id: 'f1', status: 'open', degree: 1, peer_agent_id: 'cc-f1' }]
+    const w = makeWish({
+      stateDir,
+      channelStore: { get: (id: string) => chans.find(c => c.id === id) ?? null, list: () => chans } as never,
+      sendEnvelope: async () => {
+        const idx = readIntroIndex(stateDir)
+        idx.replies['rmid0001'] = { wishId: 'other000', fromChannel: 'f1', at }
+        writeIntroIndex(stateDir, idx)
+        return { ok: true }
+      },
+      gate: async (t) => ({ ok: true, redacted: t, violations: [] }),
+      judge: async () => ({ match: 'no' }),
+      recordPostcard: () => null,
+      notifyOwner: () => { /* 主人那句话这条用例不关心 */ },
+      peerLabel: () => '阿一',
+      forwardBudget: { withinBudget: () => true },
+      now: () => NOW.ms,
+      log: () => { /* 同上 */ },
+    })
+    const env: Envelope = { kind: 'wish', payload: { id: 'w0000001', text: 'x', expiresAt: new Date(NOW.ms + 60_000).toISOString() } }
+    expect(w.onInbound('src', env, 'l1')).toBe(true)
+    await flush()
+    const idx = readIntroIndex(stateDir)
+    expect(idx.forwards['w0000001']!.to).toEqual(['f1'])          // 转问照记
+    expect(idx.replies['rmid0001']).toMatchObject({ wishId: 'other000' })   // 中途写进来的那条还在
   })
   it('B 收到 hop 2 后不再转(它自己判不能也只是说不知道)', async () => {
     const { me, A, B } = makeTrio()
