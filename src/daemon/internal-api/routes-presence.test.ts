@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { openDb } from '../../lib/db'
 import { makeJournal } from '../../core/journal-store'
 import { writeJournalSeen } from '../../core/journal-seen'
-import { presenceRoutes } from './routes-presence'
+import { presenceRoutes, computePresence } from './routes-presence'
 import { minTierFor } from './route-tiers'
 import { PresenceResponse } from './schema'
 import type { InternalApiDeps } from './types'
@@ -103,5 +103,15 @@ describe('GET /v1/companion/presence', () => {
 
   it('tier 是 trusted', () => {
     expect(minTierFor('GET /v1/companion/presence')).toBe('trusted')
+  })
+})
+
+describe('computePresence(共用)', () => {
+  it('和路由吐一样的东西;journal 没接 → null', async () => {
+    const d = deps()
+    const viaRoute = await presenceRoutes(d)['GET /v1/companion/presence']!(qs(), undefined)
+    const direct = await computePresence(d)
+    expect(direct).toEqual(viaRoute.body)
+    expect(await computePresence(deps({ hunt: undefined }))).toBeNull()
   })
 })

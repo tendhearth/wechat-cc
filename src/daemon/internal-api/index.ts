@@ -36,6 +36,7 @@ import {
   type InternalApiDelegateDep,
 } from './types'
 import { makeMaybePrefix, makeRoutes } from './routes'
+import { computePresence } from './routes-presence'
 import { REQUEST_SCHEMAS } from './schema'
 
 export type {
@@ -355,6 +356,10 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
 
     setPetTurn(fn) {
       deps.petTurn = fn
+    },
+
+    getPresence() {
+      return computePresence(deps)
     },
 
     setCustomerReview(service) {
