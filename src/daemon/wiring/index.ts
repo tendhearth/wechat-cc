@@ -94,10 +94,14 @@ export interface WireMainOpts {
   petSignals?: import('../pet-signals').PetSignals
   huntStore?: {
     recordHunt(a: { chatId: string; text: string; nowIso?: string }): number
-    list(limit?: number): readonly { kind: string; title: string; url: string | null; ts: string; status: string }[]
+    list(limit?: number): readonly import('../../core/journal-store').CatchRow[]
     /** 包袱水位(spec 2026-09-05-companion-plan):水位之后有几条、最新一条是什么。 */
     summary(seenUntil: string | null): { unread: number; latest: { kind: string; title: string; ts: string } | null }
   }
+  /** 对话回合(turn_records)—— 随身 CC 首屏的「聊天日摘要」来源。main.ts 传 turnRecordStore。 */
+  turns?: { recent(limit: number): readonly { chatId: string; endedAt: number; outcome: string }[] }
+  /** 三轴 presence 共用入口(internal-api lifecycle.getPresence)。main.ts 传入。 */
+  presence?: () => Promise<import('../../core/companion-presence').Presence | null>
 }
 
 export interface WiredDeps {

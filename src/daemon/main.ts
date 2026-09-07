@@ -520,6 +520,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       requestRestart: (reason) => requestRestart(reason),
       stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,
       outboundTaps, huntStore, petSignals,
+      // 随身 CC 首屏:聊天日摘要读 turn_records;presence 走 internal-api 的共用入口。
+      turns: turnRecordStore,
+      presence: () => internalApi.getPresence(),
       // Task 11 — tick-bodies pass this to resolveTier() when computing
       // the companion's tierProfile. Same singleton import the bootstrap
       // coordinator uses; 5s TTL cache inside `loadAccess` keeps the

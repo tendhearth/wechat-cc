@@ -28,6 +28,8 @@ import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
 import type { ReplySinks } from '../reply-sinks'
 import { loadCompanionConfig } from '../companion/config'
+import { readPlanLogDays } from '../companion/plan-memory'
+import { readJournalSeen, writeJournalSeen } from '../../core/journal-seen'
 import { resolveAdminChatId } from '../companion/resolve-admin'
 import { makeSettingsPanel } from '../settings-panel'
 import { makeCommandRouter } from './command-router'
@@ -146,11 +148,15 @@ export interface PipelineDepsOpts {
    */
   petSignals?: import('../pet-signals').PetSignals
   /** 打猎战利品(v36)。缺失 ⇒ 微信「背包」命令说功能没接。 */
-  huntStore?: { list(limit?: number): readonly { title: string; url: string | null; ts: string; status: string }[] }
+  huntStore?: { list(limit?: number): readonly import('../../core/journal-store').CatchRow[] }
   /** Sticker library — 随身 CC 手机页展示 + 图片服务(main.ts 传入)。 */
   stickers?: import('../stickers').StickerLib
   /** 触发 daemon 重启(远程访问开关切换后套用新隧道接线)。main.ts 传入。 */
   requestRestart?: (reason: string) => void
+  /** 对话回合(turn_records)—— 随身 CC 首屏的「聊天日摘要」来源。main.ts 传 turnRecordStore。 */
+  turns?: { recent(limit: number): readonly { chatId: string; endedAt: number; outcome: string }[] }
+  /** 三轴 presence 共用入口(internal-api lifecycle.getPresence)。main.ts 传入。 */
+  presence?: () => Promise<import('../../core/companion-presence').Presence | null>
 }
 
 export interface PipelineDepsRefs {
@@ -471,6 +477,18 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       },
     } : {}),
     ...(opts.stickers ? { stickers: { list: () => opts.stickers!.list(), dir: join(stateDir, 'stickers') } } : {}),
+    // 随身 CC 首屏「伙伴的一天」三源(spec 2026-09-06-mobile-home-feed §5.4)。
+    // journal 缺 ⇒ 整个 feed 不接(三项 degraded),不半接。
+    ...(opts.huntStore ? {
+      feed: {
+        journal: { list: (n?: number) => opts.huntStore!.list(n) },
+        planLogDays: (d: number) => readPlanLogDays(stateDir, d),
+        turnsRecent: (n: number) => opts.turns?.recent(n) ?? [],
+        timezone: () => loadCompanionConfig(stateDir).timezone,
+      },
+    } : {}),
+    ...(opts.presence ? { presence: opts.presence } : {}),
+    seen: { read: () => readJournalSeen(stateDir), write: (iso: string) => writeJournalSeen(stateDir, iso) },
     chatPrefs: {
       get: (c) => ({ ...chatPrefs.get(c) }),
       set: (c, patch) => ({ ...chatPrefs.set(c, patch as Parameters<typeof chatPrefs.set>[1]) }),
