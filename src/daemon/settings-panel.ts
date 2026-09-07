@@ -28,6 +28,10 @@ import { writeConfigKey, readConfigSurface } from './config-surface'
 import { kickAtelierModelProvision, readModelStatus, shouldProvisionOnConfigChange } from './atelier-provision'
 import { safeSvgFile, EXPIRED_HTML, SW_JS, M_BOOTSTRAP_HTML, pageHtml, phoneHtml } from './settings-panel-html'
 import { readJsonFile } from '../lib/read-json-file'
+import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
+import type { Presence } from '../core/companion-presence'
+import type { CatchRow } from '../core/journal-store'
+import type { PlanLogEntry } from '../core/companion-plan'
 
 export const SETTINGS_LINK_TTL_MS = 10 * 60_000
 
@@ -59,6 +63,20 @@ export interface SettingsPanelDeps {
   }
   /** 表情库(只读展示 + 图片文件服务)。 */
   stickers?: { list(): Array<{ file: string; tags: string[]; desc?: string }>; dir: string }
+  /**
+   * 随身 CC 首屏「伙伴的一天」的三个来源(spec 2026-09-06-mobile-home-feed §5.4)。
+   * 缺省 ⇒ /m/api/home 三项 sources_degraded。IO 全在这里,mobile-feed.ts 是纯函数。
+   */
+  feed?: {
+    journal: { list(limit?: number): readonly CatchRow[] }
+    planLogDays: (days: number) => readonly PlanLogEntry[]
+    turnsRecent: (limit: number) => readonly TurnLite[]
+    timezone: () => string
+  }
+  /** 三轴 presence,经 internal-api lifecycle.getPresence 共用。缺省/抛 ⇒ 手机页显示「不知道」。 */
+  presence?: () => Promise<Presence | null>
+  /** 主人「看到哪了」的水位,与桌面觅食台同一个文件(一个主人一个水位)。缺省 ⇒ POST /m/api/seen 503。 */
+  seen?: { read: () => string | null; write: (iso: string) => void }
   /** 远程隧道信息(启用时):relay wss + 本机 daemon id。手机页出门时用它
    *  经中继访问。缺省 ⇒ 手机页只能在同一 Wi-Fi 直连。 */
   remoteInfo?: () => { relay: string; id: string } | null
@@ -126,6 +144,30 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     const owner = deps.ownerChatId()
     if (!owner || owner.includes('..') || owner.includes('/') || owner.includes('\\')) return null
     return join(deps.stateDir, 'memory', owner, 'persona.md')
+  }
+
+  const FEED_WINDOW_DAYS = 14
+  const FEED_JOURNAL_LIMIT = 200
+  const FEED_TURNS_LIMIT = 2000
+
+  /** 三源各自 try;哪个抛就记 null(buildFeed 会翻译成 sources_degraded)。 */
+  const collectSources = (): FeedSources => {
+    const f = deps.feed
+    if (!f) return { journal: null, thoughts: null, turns: null }
+    const since = now() - FEED_WINDOW_DAYS * 86_400_000
+    let journal: FeedSources['journal'] = null
+    let thoughts: FeedSources['thoughts'] = null
+    let turns: FeedSources['turns'] = null
+    try { journal = f.journal.list(FEED_JOURNAL_LIMIT) } catch (e) { deps.log('SETTINGS', `feed journal 读不到: ${e instanceof Error ? e.message : e}`) }
+    try { thoughts = f.planLogDays(FEED_WINDOW_DAYS) } catch (e) { deps.log('SETTINGS', `feed plan-log 读不到: ${e instanceof Error ? e.message : e}`) }
+    try { turns = f.turnsRecent(FEED_TURNS_LIMIT).filter(t => t.endedAt >= since) } catch (e) { deps.log('SETTINGS', `feed turns 读不到: ${e instanceof Error ? e.message : e}`) }
+    return { journal, thoughts, turns }
+  }
+  const feedTimezone = (): string => { try { return deps.feed?.timezone() || 'UTC' } catch { return 'UTC' } }
+  const readSeen = (): string | null => { try { return deps.seen?.read() ?? null } catch { return null } }
+  const parseLimit = (url: URL): number => {
+    const n = Number(url.searchParams.get('limit'))
+    return Number.isFinite(n) && n > 0 ? n : FEED_DEFAULT_LIMIT
   }
 
   // 随身 CC 首页数据:待办(活跃+最近了结,带显示名)、小像、表情库。
@@ -377,6 +419,46 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           }
           if (url.pathname === '/m/api/state' && req.method === 'GET') {
             return json(phoneState())
+          }
+          if (url.pathname === '/m/api/home' && req.method === 'GET') {
+            let presence: Presence | null = null
+            let presenceFailed = false
+            try { presence = (await deps.presence?.()) ?? null } catch { presenceFailed = true }
+            const tz = feedTimezone()
+            const seenUntil = readSeen()
+            const r = buildFeed(collectSources(), { ownerChatId: deps.ownerChatId(), timezone: tz, limit: parseLimit(url), seenUntil })
+            return json({
+              ok: true,
+              synced_at: new Date(now()).toISOString(),
+              today: dayKey(now(), tz),
+              presence,
+              ...(presenceFailed ? { presence_error: 'unavailable' } : {}),
+              unread: r.unread,
+              seen_until: seenUntil,
+              events: r.events,
+              next_cursor: r.next_cursor,
+              sources_degraded: r.sources_degraded,
+            })
+          }
+          if (url.pathname === '/m/api/feed' && req.method === 'GET') {
+            const cursor = url.searchParams.get('cursor')
+            if (cursor !== null && !decodeCursor(cursor)) return json({ ok: false, error: 'invalid_cursor' }, 400)
+            const r = buildFeed(collectSources(), { ownerChatId: deps.ownerChatId(), timezone: feedTimezone(), limit: parseLimit(url), cursor, seenUntil: readSeen() })
+            return json({ ok: true, events: r.events, next_cursor: r.next_cursor })
+          }
+          if (url.pathname === '/m/api/seen' && req.method === 'POST') {
+            if (!deps.seen) return json({ ok: false, error: 'seen_not_wired' }, 503)
+            let body: unknown
+            try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
+            const until = (body as { until?: unknown } | null)?.until
+            const ms = typeof until === 'string' ? Date.parse(until) : NaN
+            if (!Number.isFinite(ms)) return json({ ok: false, error: 'invalid_until' }, 400)
+            // 夹到 now(不许推到未来);单调(桌面与手机两边推,谁靠后算谁)。
+            const clamped = new Date(Math.min(ms, now())).toISOString()
+            const cur = readSeen()
+            if (cur !== null && clamped <= cur) return json({ ok: true, seen_until: cur })
+            deps.seen.write(clamped)
+            return json({ ok: true, seen_until: clamped })
           }
           if (url.pathname === '/m/api/todo' && req.method === 'POST') {
             let body: unknown

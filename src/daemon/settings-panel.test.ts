@@ -241,3 +241,124 @@ describe('随身 CC (phone PWA + device pairing)', () => {
     expect(icon.status).not.toBe(401)
   })
 })
+
+describe('随身 CC 首屏:伙伴的一天', () => {
+  const OWNER2 = 'owner2@im.wechat'
+  const NOW = Date.parse('2026-09-06T08:00:00.000Z')
+  let dir: string
+  let seenUntil: string | null
+  let presenceImpl: () => Promise<import('../core/companion-presence').Presence | null>
+  let planThrows: boolean
+  const rows = () => [
+    { id: 'j1', ts: '2026-09-06T02:43:36.412Z', chat_id: OWNER2, title: '好玩的东西', url: 'https://x', note: '', status: 'new', kind: 'hunt', image_svg: null },
+  ] as import('../core/journal-store').CatchRow[]
+  const plans = () => [
+    { at: '2026-09-06T03:03:55.347Z', chatId: OWNER2, candidates: ['visit'], decision: 'none', why: '没朋友,在家歇着。', source: 'model' },
+  ] as import('../core/companion-plan').PlanLogEntry[]
+  const mk = (over: Partial<Parameters<typeof makeSettingsPanel>[0]> = {}) => makeSettingsPanel({
+    stateDir: dir,
+    ownerChatId: () => OWNER2,
+    chatPrefs: { get: () => ({}), set: () => ({}) },
+    getUserName: () => '大人',
+    setUserName: async () => {},
+    feed: {
+      journal: { list: () => rows() },
+      planLogDays: () => { if (planThrows) throw new Error('boom'); return plans() },
+      turnsRecent: () => [{ chatId: OWNER2, endedAt: Date.parse('2026-09-05T01:00:00.000Z'), outcome: 'completed' }],
+      timezone: () => 'Asia/Shanghai',
+    },
+    presence: () => presenceImpl(),
+    seen: { read: () => seenUntil, write: (iso) => { seenUntil = iso } },
+    log: () => {},
+    now: () => NOW,
+    ...over,
+  })
+  const okPresence = async () => ({ presence: 'ok' as const, activity: { kind: 'idle' as const, label: '在家', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } })
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'sp-feed-'))
+    seenUntil = null
+    presenceImpl = okPresence
+    planThrows = false
+  })
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
+
+  async function withPanel(p: ReturnType<typeof makeSettingsPanel>, fn: (base: string, t: string) => Promise<void>) {
+    const { port } = await p.start(0)
+    try { await fn(`http://127.0.0.1:${port}`, p.issueToken()) } finally { await p.stop() }
+  }
+
+  it('home:三源合并、presence、unread、synced_at、today', async () => {
+    await withPanel(mk(), async (base, t) => {
+      const r = await (await fetch(`${base}/m/api/home?t=${t}`)).json() as Record<string, unknown>
+      expect(r.ok).toBe(true)
+      expect(r.synced_at).toBe('2026-09-06T08:00:00.000Z')
+      expect(r.today).toBe('2026-09-06')
+      expect(r.presence).toMatchObject({ presence: 'ok' })
+      expect(r.unread).toBe(3)
+      expect(r.seen_until).toBeNull()
+      expect((r.events as Array<{ id: string }>).map(e => e.id)).toEqual(['thought:2026-09-06T03:03:55.347Z', 'journal:j1', 'chat_day:2026-09-05'])
+      expect(r.sources_degraded).toEqual([])
+      expect(r.next_cursor).toBeNull()
+    })
+  })
+  it('home:presence 抛 → null + presence_error;单源抛 → degraded 仍 200', async () => {
+    presenceImpl = async () => { throw new Error('nope') }
+    planThrows = true
+    await withPanel(mk(), async (base, t) => {
+      const res = await fetch(`${base}/m/api/home?t=${t}`)
+      expect(res.status).toBe(200)
+      const r = await res.json() as Record<string, unknown>
+      expect(r.presence).toBeNull()
+      expect(r.presence_error).toBe('unavailable')
+      expect(r.sources_degraded).toEqual(['thought'])
+      expect((r.events as unknown[]).length).toBe(2)
+    })
+  })
+  it('home:feed dep 缺 → 三项 degraded、空 events,仍 200', async () => {
+    await withPanel(mk({ feed: undefined }), async (base, t) => {
+      const r = await (await fetch(`${base}/m/api/home?t=${t}`)).json() as Record<string, unknown>
+      expect(r.ok).toBe(true)
+      expect(r.sources_degraded).toEqual(['journal', 'thought', 'chat_day'])
+      expect(r.events).toEqual([])
+    })
+  })
+  it('feed:分页接得上;坏游标 400', async () => {
+    await withPanel(mk(), async (base, t) => {
+      const p1 = await (await fetch(`${base}/m/api/feed?limit=2&t=${t}`)).json() as { events: Array<{ id: string }>; next_cursor: string | null }
+      expect(p1.events).toHaveLength(2)
+      expect(p1.next_cursor).not.toBeNull()
+      const p2 = await (await fetch(`${base}/m/api/feed?limit=2&cursor=${encodeURIComponent(p1.next_cursor!)}&t=${t}`)).json() as { events: Array<{ id: string }>; next_cursor: string | null }
+      expect(p2.events.map(e => e.id)).toEqual(['chat_day:2026-09-05'])
+      expect(p2.next_cursor).toBeNull()
+      const bad = await fetch(`${base}/m/api/feed?cursor=%25%25&t=${t}`)
+      expect(bad.status).toBe(400)
+      expect(await bad.json()).toEqual({ ok: false, error: 'invalid_cursor' })
+    })
+  })
+  it('seen:写入、夹到 now、单调不后退、非法 400、没接 503', async () => {
+    await withPanel(mk(), async (base, t) => {
+      const post = (until: unknown) => fetch(`${base}/m/api/seen?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ until }) })
+      expect(await (await post('2026-09-06T07:00:00.000Z')).json()).toEqual({ ok: true, seen_until: '2026-09-06T07:00:00.000Z' })
+      expect(await (await post('2099-01-01T00:00:00.000Z')).json()).toEqual({ ok: true, seen_until: '2026-09-06T08:00:00.000Z' })
+      expect(await (await post('2026-09-06T06:00:00.000Z')).json()).toEqual({ ok: true, seen_until: '2026-09-06T08:00:00.000Z' })
+      const bad = await post('yesterday')
+      expect(bad.status).toBe(400)
+      expect(await bad.json()).toEqual({ ok: false, error: 'invalid_until' })
+      const home = await (await fetch(`${base}/m/api/home?t=${t}`)).json() as { unread: number; seen_until: string }
+      expect(home.unread).toBe(0)
+      expect(home.seen_until).toBe('2026-09-06T08:00:00.000Z')
+    })
+    await withPanel(mk({ seen: undefined }), async (base, t) => {
+      const r = await fetch(`${base}/m/api/seen?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ until: '2026-09-06T07:00:00.000Z' }) })
+      expect(r.status).toBe(503)
+    })
+  })
+  it('三个路由都要令牌', async () => {
+    await withPanel(mk(), async (base) => {
+      expect((await fetch(`${base}/m/api/home`)).status).toBe(401)
+      expect((await fetch(`${base}/m/api/feed`)).status).toBe(401)
+      expect((await fetch(`${base}/m/api/seen`, { method: 'POST' })).status).toBe(401)
+    })
+  })
+})
