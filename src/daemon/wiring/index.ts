@@ -99,7 +99,7 @@ export interface WireMainOpts {
     summary(seenUntil: string | null): { unread: number; latest: { kind: string; title: string; ts: string } | null }
   }
   /** 对话回合(turn_records)—— 随身 CC 首屏的「聊天日摘要」来源。main.ts 传 turnRecordStore。 */
-  turns?: { recent(limit: number): readonly { chatId: string; endedAt: number; outcome: string }[] }
+  turns?: { recent(limit: number): readonly { chatId: string; endedAt: number; outcome: string; mode: string; startedAt: number }[] }
   /** 三轴 presence 共用入口(internal-api lifecycle.getPresence)。main.ts 传入。 */
   presence?: () => Promise<import('../../core/companion-presence').Presence | null>
 }

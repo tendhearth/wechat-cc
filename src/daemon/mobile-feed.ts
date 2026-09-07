@@ -11,6 +11,7 @@
  */
 import type { CatchRow } from '../core/journal-store'
 import type { PlanLogEntry } from '../core/companion-plan'
+import { safeSvg } from '../lib/svg-sanitize'
 
 export type FeedKind = 'hunt' | 'visit' | 'postcard' | 'thought' | 'chat_day'
 export type FeedSource = 'journal' | 'thought' | 'chat_day'
@@ -23,10 +24,12 @@ export interface FeedEvent {
   note: string | null
   /** 伙伴时区下的 YYYY-MM-DD,页面按它分组(不让页面自己算时区)。 */
   day: string
+  /** 伙伴时区下的 HH:mm(同 day 用一个 Intl 时区算——不让页面用手机的时区拼时间)。 */
+  hhmm: string
   ref?: { url: string | null; image_svg: string | null; status: string }
 }
 
-export interface TurnLite { chatId: string; endedAt: number; outcome: string }
+export interface TurnLite { chatId: string; endedAt: number; outcome: string; mode: string; startedAt: number }
 
 export interface FeedSources {
   journal: readonly CatchRow[] | null
@@ -68,26 +71,63 @@ export function dayKey(ms: number, timezone: string): string {
   return dayFmt(timezone).format(new Date(ms))
 }
 
+const hhmmFmtCache = new Map<string, Intl.DateTimeFormat>()
+function hhmmFmt(timezone: string): Intl.DateTimeFormat {
+  let f = hhmmFmtCache.get(timezone)
+  if (!f) {
+    try { f = new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hour12: false }) }
+    catch { f = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', hour12: false }) }
+    hhmmFmtCache.set(timezone, f)
+  }
+  return f
+}
+
+/**
+ * 伙伴时区下的 HH:mm ——跟 dayKey 用同一个 Intl timeZone,不让页面用手机的
+ * 时区拼时间(I3:两地相隔一个时区,「今天 08:00」在页面本地重算会变天)。
+ */
+export function hhmmOf(ms: number, timezone: string): string {
+  return hhmmFmt(timezone).format(new Date(ms))
+}
+
 const THOUGHT_TITLE: Record<string, string> = { hunt: '出门打猎去了', visit: '去串门了', none: '在家待着' }
 
 export function thoughtEvent(e: PlanLogEntry, timezone: string): FeedEvent {
-  const aborted = e.why.startsWith('(failed) ') || e.why.startsWith('(skipped) ')
+  // 手改坏的 plan-log 条目可能有 at/chatId 却没有 why(或不是字符串)——
+  // M1:这里绝不能抛,抛出会在 collectSources 的 try/catch 之外(buildFeed
+  // 里),把整个请求 500 掉,而不是把这一源记成 degraded。
+  const why = typeof e.why === 'string' ? e.why : ''
+  const aborted = why.startsWith('(failed) ') || why.startsWith('(skipped) ')
+  const atMs = Date.parse(e.at)
   return {
-    id: `thought:${e.at}`,
+    // M2:id 带上 chatId —— 光用 at(毫秒)会在两个聊天同一毫秒决策时撞车,
+    // 撞车又恰好落在分页边界上会被游标去重悄悄吞掉一条。
+    id: `thought:${e.chatId}:${e.at}`,
     ts: e.at,
     kind: 'thought',
     title: aborted ? '想出门,没走成' : (THOUGHT_TITLE[e.decision] ?? e.decision),
     // 只有模型自己说的话才是想法;fallback 的 why 是机器原因,downgraded 的
     // why 说的是另一件事(想做的没在候选里)。都不给它编理由。
-    note: !aborted && e.source === 'model' ? e.why : null,
-    day: dayKey(Date.parse(e.at), timezone),
+    note: !aborted && e.source === 'model' && why ? why : null,
+    day: dayKey(atMs, timezone),
+    hhmm: hhmmOf(atMs, timezone),
   }
 }
 
 export function chatDayEvents(turns: readonly TurnLite[], ownerChatId: string | null, timezone: string): FeedEvent[] {
   const byDay = new Map<string, { owner: number; guestTurns: number; guests: Set<string>; lastMs: number }>()
+  // I1:parallel 模式一条 inbound 会按 provider 各写一行,同一 (chatId,
+  // startedAt) 折叠成一次;chatroom 模式一条 inbound 按「发言人 × 轮数」
+  // 写多行,直接整段跳过 —— 这两种都不是「主人又聊了一回」。
+  const seenParallel = new Set<string>()
   for (const t of turns) {
     if (t.outcome !== 'completed') continue
+    if (t.mode === 'chatroom') continue
+    if (t.mode === 'parallel') {
+      const key = `${t.chatId}|${t.startedAt}`
+      if (seenParallel.has(key)) continue
+      seenParallel.add(key)
+    }
     const day = dayKey(t.endedAt, timezone)
     let b = byDay.get(day)
     if (!b) { b = { owner: 0, guestTurns: 0, guests: new Set(), lastMs: 0 }; byDay.set(day, b) }
@@ -101,16 +141,20 @@ export function chatDayEvents(turns: readonly TurnLite[], ownerChatId: string | 
     const title = b.owner > 0
       ? (guest ? `和主人聊了 ${b.owner} 回,还${guest}` : `和主人聊了 ${b.owner} 回`)
       : guest
-    out.push({ id: `chat_day:${day}`, ts: new Date(b.lastMs).toISOString(), kind: 'chat_day', title, note: null, day })
+    out.push({ id: `chat_day:${day}`, ts: new Date(b.lastMs).toISOString(), kind: 'chat_day', title, note: null, day, hhmm: hhmmOf(b.lastMs, timezone) })
   }
   return out
 }
 
 function journalEvent(r: CatchRow, timezone: string): FeedEvent {
+  const ms = Date.parse(r.ts)
   return {
     id: `journal:${r.id}`, ts: r.ts, kind: r.kind, title: r.title, note: r.note || null,
-    day: dayKey(Date.parse(r.ts), timezone),
-    ref: { url: r.url, image_svg: r.image_svg, status: r.status },
+    day: dayKey(ms, timezone),
+    hhmm: hhmmOf(ms, timezone),
+    // I6:写路径已经 gate 过(wire-visit → safeSvg),这里是读侧防御性再消毒
+    // ——跟 internal-api/routes-memory.ts 对小像的做法一致(手改文件兜底)。
+    ref: { url: r.url, image_svg: r.image_svg ? safeSvg(r.image_svg) : null, status: r.status },
   }
 }
 

@@ -506,6 +506,12 @@ document.getElementById("todos").addEventListener("click", function(ev) {
 var HOME_KEY = "cc.home.v1"
 var KIND_ICON = { hunt: "🎯", visit: "🏡", postcard: "💌", thought: "💭", chat_day: "💬" }
 var homeState = null
+// I5:presence 没有独立的过期机制 —— 页面一直开着,只有 load/visibilitychange/
+// 手动刷新才会重拉。这里给它记一个「拉到的时间」,过 TTL 就自己塌成「不知道」,
+// 而不是让一条越来越旧的「现在」一直挂在屏幕上。TTL 跟 companion-presence.ts
+// 的 ACTIVE_WINDOW_MS 对齐(3 分钟)。
+var PRESENCE_TTL_MS = 3 * 60 * 1000
+var presenceAt = null
 function ago(iso) {
   var d = Math.max(0, Date.now() - Date.parse(iso)) / 1000
   if (d < 60) return "刚刚"
@@ -513,39 +519,66 @@ function ago(iso) {
   if (d < 86400) return Math.floor(d / 3600) + " 小时前"
   return Math.floor(d / 86400) + " 天前"
 }
-function hm(iso) { var t = new Date(iso); return String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0") }
 function readCache() { try { var s = localStorage.getItem(HOME_KEY); return s ? JSON.parse(s) : null } catch (e) { return null } }
 function writeCache(s) { try { localStorage.setItem(HOME_KEY, JSON.stringify(s)) } catch (e) {} }
 function evHtml(e) {
   var h = '<div class="card ev"><div class="k">' + (KIND_ICON[e.kind] || "•") + '</div><div class="tx"><b>' + esc(e.title) + '</b>'
   if (e.note) h += '<p>' + esc(e.note) + '</p>'
-  if (e.ref && e.ref.url) h += '<p><a href="' + esc(e.ref.url) + '" target="_blank" rel="noopener">打开链接</a></p>'
+  // M3:esc() 只挡得住 HTML 特殊字符,挡不住 javascript: 这种协议头 —— href
+  // 的安全性只靠三个文件外的 hunt-catch.ts URL_RE(只收 http(s)://)撑着,
+  // 这里再本地兜一道,只在确实是 http(s) 链接时才输出 <a>。
+  if (e.ref && e.ref.url && (e.ref.url.indexOf("https://") === 0 || e.ref.url.indexOf("http://") === 0)) {
+    h += '<p><a href="' + esc(e.ref.url) + '" target="_blank" rel="noopener">打开链接</a></p>'
+  }
   if (e.ref && e.ref.image_svg) h += '<div class="pc">' + e.ref.image_svg + '</div>'
-  h += '<small>' + hm(e.ts) + '</small></div></div>'
+  // I3:后端已经用伙伴时区把 hhmm 拼好了 —— 页面不再用 new Date(iso).getHours()
+  // 自己按手机时区算一遍(隧道出门时两地隔一个时区,算出来的钟点会串到另一天)。
+  h += '<small>' + esc(e.hhmm) + '</small></div></div>'
   return h
+}
+function presenceTtlCheck() {
+  if (presenceAt !== null && Date.now() - presenceAt > PRESENCE_TTL_MS) {
+    presenceAt = null
+    document.getElementById("pres-txt").textContent = "不知道"
+  }
 }
 function renderFeed(s, stale) {
   var f = document.getElementById("feed")
   // presence:只有这次真拉到的才显示;缓存里的永远不渲染 —— 它说的是「现在」。
   var pt = document.getElementById("pres-txt")
-  if (!stale && s.presence) pt.textContent = s.presence.activity.label + (s.presence.presence === "ok" ? "" : "(" + (s.presence.presence === "offline" ? "断线" : "有点不对劲") + ")")
-  else pt.textContent = "不知道"
+  if (!stale && s.presence) {
+    presenceAt = Date.now()
+    // C1:kind === "idle" 时 label 是空串(桌宠那边靠 kind 自己表达闲着,熊
+    // 本身就是信号);手机页把 label 当作现成的一句话直接拼,空串会显示成
+    // 光秃秃的「现在:」,比「不知道」还糟——分不清是真没数据还是渲染坏了。
+    pt.textContent = (s.presence.activity.label || "在家待着") + (s.presence.presence === "ok" ? "" : "(" + (s.presence.presence === "offline" ? "断线" : "有点不对劲") + ")")
+  } else {
+    presenceAt = null
+    pt.textContent = "不知道"
+  }
   var h = ""
   var evs = s.events || []
   var degradedAll = s.sources_degraded && s.sources_degraded.length === 3
-  if (degradedAll) h = '<div class="empty">今天读不到它的日记</div>'
-  else if (!evs.length) h = '<div class="empty">还什么都没发生——它刚醒</div>'
+  // I2:collectSources 本来就是为「一两个源挂了,剩下的照常显示」写的 ——
+  // 只在三个全挂时才提示,等于把这套设计的价值扔了。挂一两个也要说一声。
+  var degradedSome = !degradedAll && s.sources_degraded && s.sources_degraded.length > 0
+  if (degradedSome) h += '<div class="empty" style="padding:8px 4px">有一部分没读到</div>'
+  if (degradedAll) h += '<div class="empty">今天读不到它的日记</div>'
+  else if (!evs.length) h += '<div class="empty">还什么都没发生——它刚醒</div>'
   else {
     var day = null
-    if (s.today && evs[0].day !== s.today) { h += '<div class="grp">今天</div><div class="empty" style="padding:14px">它今天还没出门</div>' }
+    // I4:stale(缓存)渲染时 s.today 是缓存写入那一刻的「今天」,出门一天再
+    // 打开会把昨天的分组标成「今天」—— stale 时绝不把日期换成「今天」。
+    if (!stale && s.today && evs[0].day !== s.today) { h += '<div class="grp">今天</div><div class="empty" style="padding:14px">它今天还没出门</div>' }
     evs.forEach(function(e) {
-      if (e.day !== day) { day = e.day; h += '<div class="grp">' + (day === s.today ? "今天" : esc(day)) + '</div>' }
+      if (e.day !== day) { day = e.day; h += '<div class="grp">' + (!stale && day === s.today ? "今天" : esc(day)) + '</div>' }
       h += evHtml(e)
     })
     if (s.next_cursor) h += '<button class="more" data-cursor="' + esc(s.next_cursor) + '">再往前</button>'
   }
   f.innerHTML = h
 }
+setInterval(presenceTtlCheck, 30000)
 function showBanner(txt) { var b = document.getElementById("banner"); b.hidden = !txt; b.textContent = txt || "" }
 function loadHome() {
   var cached = readCache()
@@ -571,6 +604,7 @@ document.getElementById("feed").addEventListener("click", function(ev) {
   api("/m/api/feed?cursor=" + encodeURIComponent(b.dataset.cursor)).then(function(r){ return r.json() }).then(function(r) {
     if (!r || !r.ok) { b.disabled = false; return }
     homeState.events = homeState.events.concat(r.events); homeState.next_cursor = r.next_cursor
+    if (r.sources_degraded) homeState.sources_degraded = r.sources_degraded
     renderFeed(homeState, !!document.getElementById("banner").textContent)
   }).catch(function(){ b.disabled = false; toast("网络不通") })
 })

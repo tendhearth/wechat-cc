@@ -275,7 +275,7 @@ describe('随身 CC 首屏:伙伴的一天', () => {
     feed: {
       journal: { list: () => rows() },
       planLogDays: () => { if (planThrows) throw new Error('boom'); return plans() },
-      turnsRecent: () => [{ chatId: OWNER2, endedAt: Date.parse('2026-09-05T01:00:00.000Z'), outcome: 'completed' }],
+      turnsRecent: () => [{ chatId: OWNER2, endedAt: Date.parse('2026-09-05T01:00:00.000Z'), outcome: 'completed', mode: 'solo', startedAt: Date.parse('2026-09-05T01:00:00.000Z') }],
       timezone: () => 'Asia/Shanghai',
     },
     presence: () => presenceImpl(),
@@ -284,7 +284,10 @@ describe('随身 CC 首屏:伙伴的一天', () => {
     now: () => NOW,
     ...over,
   })
-  const okPresence = async () => ({ presence: 'ok' as const, activity: { kind: 'idle' as const, label: '在家', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } })
+  // derivePresence 从不给 kind:'idle' 配非空 label(桌宠靠 kind 本身表达闲着)——
+  // 之前这里造的 { kind:'idle', label:'在家' } 是 derivePresence 永远不会产出的
+  // 组合,掩盖了手机页把空 label 拼成裸「现在:」的 C1 bug。
+  const okPresence = async () => ({ presence: 'ok' as const, activity: { kind: 'idle' as const, label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } })
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'sp-feed-'))
@@ -308,7 +311,7 @@ describe('随身 CC 首屏:伙伴的一天', () => {
       expect(r.presence).toMatchObject({ presence: 'ok' })
       expect(r.unread).toBe(3)
       expect(r.seen_until).toBeNull()
-      expect((r.events as Array<{ id: string }>).map(e => e.id)).toEqual(['thought:2026-09-06T03:03:55.347Z', 'journal:j1', 'chat_day:2026-09-05'])
+      expect((r.events as Array<{ id: string }>).map(e => e.id)).toEqual([`thought:${OWNER2}:2026-09-06T03:03:55.347Z`, 'journal:j1', 'chat_day:2026-09-05'])
       expect(r.sources_degraded).toEqual([])
       expect(r.next_cursor).toBeNull()
     })
@@ -334,17 +337,42 @@ describe('随身 CC 首屏:伙伴的一天', () => {
       expect(r.events).toEqual([])
     })
   })
+  it('home:turnsRecent 没接线时抛 → chat_day 读成 degraded,不是「接了但没聊天」(M4)', async () => {
+    // 镜像 wiring/pipeline-deps.ts 里 feed.turnsRecent 在 opts.turns 缺失时的
+    // 真实实现(抛,而不是回退成 [])—— rule 4 要求的「一个源该说读不到,不能
+    // 悄悄说成健康的空」,这里锁的就是 collectSources 接住这个抛之后的行为。
+    const feedTurnsThrows = {
+      journal: { list: () => rows() },
+      planLogDays: () => plans(),
+      turnsRecent: () => { throw new Error('turns 未接线') },
+      timezone: () => 'Asia/Shanghai',
+    }
+    await withPanel(mk({ feed: feedTurnsThrows }), async (base, t) => {
+      const r = await (await fetch(`${base}/m/api/home?t=${t}`)).json() as Record<string, unknown>
+      expect(r.ok).toBe(true)
+      expect(r.sources_degraded).toEqual(['chat_day'])
+      expect((r.events as unknown[]).length).toBe(2)
+    })
+  })
   it('feed:分页接得上;坏游标 400', async () => {
     await withPanel(mk(), async (base, t) => {
-      const p1 = await (await fetch(`${base}/m/api/feed?limit=2&t=${t}`)).json() as { events: Array<{ id: string }>; next_cursor: string | null }
+      const p1 = await (await fetch(`${base}/m/api/feed?limit=2&t=${t}`)).json() as { events: Array<{ id: string }>; next_cursor: string | null; sources_degraded: string[] }
       expect(p1.events).toHaveLength(2)
       expect(p1.next_cursor).not.toBeNull()
+      expect(p1.sources_degraded).toEqual([])
       const p2 = await (await fetch(`${base}/m/api/feed?limit=2&cursor=${encodeURIComponent(p1.next_cursor!)}&t=${t}`)).json() as { events: Array<{ id: string }>; next_cursor: string | null }
       expect(p2.events.map(e => e.id)).toEqual(['chat_day:2026-09-05'])
       expect(p2.next_cursor).toBeNull()
       const bad = await fetch(`${base}/m/api/feed?cursor=%25%25&t=${t}`)
       expect(bad.status).toBe(400)
       expect(await bad.json()).toEqual({ ok: false, error: 'invalid_cursor' })
+    })
+  })
+  it('feed:单源挂 → sources_degraded 也在这个响应里 (I2)', async () => {
+    planThrows = true
+    await withPanel(mk(), async (base, t) => {
+      const r = await (await fetch(`${base}/m/api/feed?t=${t}`)).json() as { sources_degraded: string[] }
+      expect(r.sources_degraded).toEqual(['thought'])
     })
   })
   it('seen:写入、夹到 now、单调不后退、非法 400、没接 503', async () => {

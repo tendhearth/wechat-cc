@@ -444,7 +444,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             const cursor = url.searchParams.get('cursor')
             if (cursor !== null && !decodeCursor(cursor)) return json({ ok: false, error: 'invalid_cursor' }, 400)
             const r = buildFeed(collectSources(), { ownerChatId: deps.ownerChatId(), timezone: feedTimezone(), limit: parseLimit(url), cursor, seenUntil: readSeen() })
-            return json({ ok: true, events: r.events, next_cursor: r.next_cursor })
+            return json({ ok: true, events: r.events, next_cursor: r.next_cursor, sources_degraded: r.sources_degraded })
           }
           if (url.pathname === '/m/api/seen' && req.method === 'POST') {
             if (!deps.seen) return json({ ok: false, error: 'seen_not_wired' }, 503)

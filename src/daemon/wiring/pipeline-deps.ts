@@ -154,7 +154,7 @@ export interface PipelineDepsOpts {
   /** 触发 daemon 重启(远程访问开关切换后套用新隧道接线)。main.ts 传入。 */
   requestRestart?: (reason: string) => void
   /** 对话回合(turn_records)—— 随身 CC 首屏的「聊天日摘要」来源。main.ts 传 turnRecordStore。 */
-  turns?: { recent(limit: number): readonly { chatId: string; endedAt: number; outcome: string }[] }
+  turns?: { recent(limit: number): readonly { chatId: string; endedAt: number; outcome: string; mode: string; startedAt: number }[] }
   /** 三轴 presence 共用入口(internal-api lifecycle.getPresence)。main.ts 传入。 */
   presence?: () => Promise<import('../../core/companion-presence').Presence | null>
 }
@@ -483,7 +483,13 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       feed: {
         journal: { list: (n?: number) => opts.huntStore!.list(n) },
         planLogDays: (d: number) => readPlanLogDays(stateDir, d),
-        turnsRecent: (n: number) => opts.turns?.recent(n) ?? [],
+        // M4:不接线时抛(collectSources 的 try/catch 把它记成
+        // sources_degraded),而不是悄悄给 [] —— [] 会被读成「接了,今天没
+        // 聊天」而不是「这一源读不到」,rule 4 的区分就在这一步丢了。
+        turnsRecent: (n: number) => {
+          if (!opts.turns) throw new Error('turns 未接线')
+          return opts.turns.recent(n)
+        },
         timezone: () => loadCompanionConfig(stateDir).timezone,
       },
     } : {}),
