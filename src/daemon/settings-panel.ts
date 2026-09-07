@@ -423,7 +423,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           if (url.pathname === '/m/api/home' && req.method === 'GET') {
             let presence: Presence | null = null
             let presenceFailed = false
-            try { presence = (await deps.presence?.()) ?? null } catch { presenceFailed = true }
+            try { presence = (await deps.presence?.()) ?? null } catch (e) { presenceFailed = true; deps.log('SETTINGS', `presence 读不到: ${e instanceof Error ? e.message : e}`) }
             const tz = feedTimezone()
             const seenUntil = readSeen()
             const r = buildFeed(collectSources(), { ownerChatId: deps.ownerChatId(), timezone: tz, limit: parseLimit(url), seenUntil })
