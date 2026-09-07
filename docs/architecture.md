@@ -173,6 +173,14 @@ data*; the agent fuses them at prompt time (`brief.py:1` "DATA ONLY, does NOT re
 - **Voice**: STT is now **local** (`wxmedia/stt_server.py` on 127.0.0.1:8001, faster-whisper,
   OpenAI-shaped); TTS is **remote** (VoxCPM2 on a VPS, `brain.youdamaster.cc/voice`). Both configured
   at runtime via `stt-config.json`/`voice-config.json`; no defaults, no host in code.
+- **随身 CC / `/m` phone page** (`settings-panel.ts`): a page served inside the daemon, reachable at
+  home over the LAN directly or away over an end-to-end-encrypted relay tunnel (`tunnel-client.ts`)
+  — X25519 handshake per stream, AES-GCM frames, the relay itself content-blind, the device token
+  authenticated by whether its derived key opens the first frame. 首屏「今天」是伙伴的一天:`GET
+  /m/api/home` 把 journal(背包)、plan-log(想法)、turn_records(聊天日摘要)读时合并成一条事件流,
+  外加 presence;`/m/api/feed` 翻页、`/m/api/seen` 推水位(与桌面觅食台共用
+  `companion/journal-seen.json`)。事件可在手机缓存并标注同步时间,presence 永不缓存。见
+  `docs/superpowers/specs/2026-09-06-mobile-home-feed-design.md`。
 - **Repos**: `wechat-cc` (daemon+app) · `wechat-cc-plugins` (knowledge) · `wxvault` (decrypt). Bound
   only by symlink + `minWechatCcVersion` — no submodule, no pinned SHA, versions drift.
 

@@ -112,6 +112,49 @@ describe('tunnel-client (daemon side)', () => {
     expect(JSON.parse(opened.body)).toEqual({ ok: true, echo: 'hello' })
   })
 
+  it('/m/api/home 经隧道往返:真 settings-panel 处理,设备 token 生效', async () => {
+    const { makeSettingsPanel } = await import('./settings-panel')
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const { tmpdir } = await import('node:os')
+    const stateDir = mkdtempSync(join(tmpdir(), 'tunnel-home-'))
+    // 隧道用 knownDeviceTokens 认证流;panel 用 settings-devices.json 认 ?d= —— 两边写同一枚。
+    writeFileSync(join(stateDir, 'settings-devices.json'), JSON.stringify({ [DTOK]: { created_at: '2026-09-06T00:00:00.000Z' } }))
+    const panel = makeSettingsPanel({
+      stateDir, ownerChatId: () => 'o', chatPrefs: { get: () => ({}), set: () => ({}) },
+      getUserName: () => null, setUserName: async () => {},
+      feed: { journal: { list: () => [] }, planLogDays: () => [], turnsRecent: () => [], timezone: () => 'UTC' },
+      seen: { read: () => null, write: () => {} },
+      log: () => {},
+    })
+    try {
+      const phone = await generateTunnelKeypair()
+      const sock = fakeSocket()
+      const client = makeTunnelClient({
+        daemonId: 'cc-1', knownDeviceTokens: () => [DTOK],
+        handleRequest: (req) => panel.handleRequest(req),
+        connect: () => sock.ws as never, log: () => {},
+      })
+      client.start()
+      sock.emitMessage(JSON.stringify({ stream: 'sH', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
+      for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
+      const daemonPub = handshakePlaintext(JSON.parse(sock.sent.at(-1)!).frame)
+      const key = await deriveSharedKey(phone.privateKey, await importDaemonPub(daemonPub!), new TextEncoder().encode(DTOK))
+      const reqBytes = new TextEncoder().encode(JSON.stringify({ path: `/m/api/home?d=${DTOK}`, method: 'GET' }))
+      sock.emitMessage(JSON.stringify({ stream: 'sH', frame: await sealFrame(key, reqBytes) }))
+      for (let i = 0; i < 20 && sock.sent.length < 2; i++) await new Promise(r => setTimeout(r, 5))
+      const opened = JSON.parse(new TextDecoder().decode(await openFrame(key, JSON.parse(sock.sent.at(-1)!).frame)))
+      expect(opened.status).toBe(200)
+      const body = JSON.parse(opened.body)
+      expect(body.ok).toBe(true)
+      expect(body.events).toEqual([])
+      expect(body.sources_degraded).toEqual([])
+      expect(body.presence).toBeNull()
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
   it('畸形路径被干净丢弃 —— 不路由、不 unhandled reject(边界测试)', async () => {
     // '%' / ' /x' 会让 new URL 抛(onStreamFrame 是 void 调用 → 未捕获 rejection);
     // 'set/api' 会把 host 污染成 127.0.0.1set → 误路由到 /api。都该被丢弃。
