@@ -389,16 +389,34 @@ export function phoneHtml(token: string, remote: { relay: string; id: string } |
   #pairbar button { font:inherit; font-size:12.5px; margin-left:8px; padding:4px 12px; border:1.5px solid var(--accent); border-radius:999px; background:var(--accent); color:#fff }
   #toast { position:fixed; left:50%; bottom:76px; transform:translateX(-50%); background:var(--ink); color:#fff; padding:7px 16px; border-radius:16px; font-size:12.5px; opacity:0; transition:.25s; pointer-events:none }
   #toast.show { opacity:1 }
+  .pres { display:flex; align-items:center; gap:8px; padding:0 16px 6px; color:var(--soft); font-size:13px }
+  .pres b { color:var(--ink); font-weight:600 }
+  .pres button { margin-left:auto; font:inherit; font-size:12px; padding:3px 10px; border:1.5px solid var(--line); border-radius:999px; background:var(--card); color:var(--soft) }
+  #banner { margin:6px 14px; padding:8px 12px; background:rgba(176,86,58,.10); border-radius:10px; font-size:12.5px; color:var(--accent) }
+  .ev { display:flex; gap:10px } .ev .k { font-size:18px; width:26px; text-align:center; flex:none }
+  .ev .tx { flex:1; min-width:0 } .ev .tx b { display:block; font-size:14px; font-weight:600 }
+  .ev .tx p { margin:3px 0 0; font-size:13px; color:var(--soft); white-space:pre-wrap; word-break:break-word }
+  .ev .tx small { color:var(--soft); font-size:11.5px }
+  .ev .tx a { color:var(--accent) }
+  .ev .pc { margin-top:6px } .ev .pc svg { width:100%; height:auto; border:1.5px solid var(--line); border-radius:10px }
+  .more { display:block; margin:6px auto 0; font:inherit; font-size:13px; padding:7px 18px; border:1.5px solid var(--line); border-radius:999px; background:var(--card); color:var(--soft) }
+  .sec { margin-top:18px }
 </style></head><body>
 <header><h1>🐻 CC</h1><div class="sub" id="sub">随身小窗 · 数据都在你自己电脑上</div></header>
 <div id="pairbar" hidden>这个链接 10 分钟就过期<button id="pairbtn">把 CC 带在身上</button></div>
-<div class="pane on" id="p-todos"><div id="todos"></div></div>
-<div class="pane" id="p-portrait"><div class="portrait" id="portrait"></div></div>
-<div class="pane" id="p-stickers"><div class="stgrid" id="stickers"></div></div>
+<div class="pane on" id="p-today">
+  <div class="pres" id="pres"><span>现在:</span><b id="pres-txt">不知道</b><button id="refresh">刷新</button></div>
+  <div id="banner" hidden></div>
+  <div id="feed"></div>
+</div>
+<div class="pane" id="p-pocket">
+  <div class="grp">待办</div><div id="todos"></div>
+  <div class="sec"><div class="grp">CC 画的你</div><div class="portrait" id="portrait"></div></div>
+  <div class="sec"><div class="grp">表情</div><div class="stgrid" id="stickers"></div></div>
+</div>
 <nav>
-  <button data-p="todos" class="on"><span class="i">📋</span>待办</button>
-  <button data-p="portrait"><span class="i">🖼</span>CC画的你</button>
-  <button data-p="stickers"><span class="i">🐻</span>表情</button>
+  <button data-p="today" class="on"><span class="i">🌤</span>今天</button>
+  <button data-p="pocket"><span class="i">🎒</span>口袋</button>
   <button id="nav-set"><span class="i">⚙️</span>设置</button>
 </nav>
 <div id="toast"></div>
@@ -485,12 +503,86 @@ document.getElementById("todos").addEventListener("click", function(ev) {
     .then(function(r){ return r.json() }).then(function(r) { if (r.ok) { toast(b.dataset.st === "active" ? "捞回来了" : "划掉了 ✓"); load() } else toast("没改成") })
     .catch(function(){ toast("网络不通") })
 })
+var HOME_KEY = "cc.home.v1"
+var KIND_ICON = { hunt: "🎯", visit: "🏡", postcard: "💌", thought: "💭", chat_day: "💬" }
+var homeState = null
+function ago(iso) {
+  var d = Math.max(0, Date.now() - Date.parse(iso)) / 1000
+  if (d < 60) return "刚刚"
+  if (d < 3600) return Math.floor(d / 60) + " 分钟前"
+  if (d < 86400) return Math.floor(d / 3600) + " 小时前"
+  return Math.floor(d / 86400) + " 天前"
+}
+function hm(iso) { var t = new Date(iso); return String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0") }
+function readCache() { try { var s = localStorage.getItem(HOME_KEY); return s ? JSON.parse(s) : null } catch (e) { return null } }
+function writeCache(s) { try { localStorage.setItem(HOME_KEY, JSON.stringify(s)) } catch (e) {} }
+function evHtml(e) {
+  var h = '<div class="card ev"><div class="k">' + (KIND_ICON[e.kind] || "•") + '</div><div class="tx"><b>' + esc(e.title) + '</b>'
+  if (e.note) h += '<p>' + esc(e.note) + '</p>'
+  if (e.ref && e.ref.url) h += '<p><a href="' + esc(e.ref.url) + '" target="_blank" rel="noopener">打开链接</a></p>'
+  if (e.ref && e.ref.image_svg) h += '<div class="pc">' + e.ref.image_svg + '</div>'
+  h += '<small>' + hm(e.ts) + '</small></div></div>'
+  return h
+}
+function renderFeed(s, stale) {
+  var f = document.getElementById("feed")
+  // presence:只有这次真拉到的才显示;缓存里的永远不渲染 —— 它说的是「现在」。
+  var pt = document.getElementById("pres-txt")
+  if (!stale && s.presence) pt.textContent = s.presence.activity.label + (s.presence.presence === "ok" ? "" : "(" + (s.presence.presence === "offline" ? "断线" : "有点不对劲") + ")")
+  else pt.textContent = "不知道"
+  var h = ""
+  var evs = s.events || []
+  var degradedAll = s.sources_degraded && s.sources_degraded.length === 3
+  if (degradedAll) h = '<div class="empty">今天读不到它的日记</div>'
+  else if (!evs.length) h = '<div class="empty">还什么都没发生——它刚醒</div>'
+  else {
+    var day = null
+    if (s.today && evs[0].day !== s.today) { h += '<div class="grp">今天</div><div class="empty" style="padding:14px">它今天还没出门</div>' }
+    evs.forEach(function(e) {
+      if (e.day !== day) { day = e.day; h += '<div class="grp">' + (day === s.today ? "今天" : esc(day)) + '</div>' }
+      h += evHtml(e)
+    })
+    if (s.next_cursor) h += '<button class="more" data-cursor="' + esc(s.next_cursor) + '">再往前</button>'
+  }
+  f.innerHTML = h
+}
+function showBanner(txt) { var b = document.getElementById("banner"); b.hidden = !txt; b.textContent = txt || "" }
+function loadHome() {
+  var cached = readCache()
+  if (cached) { homeState = cached; renderFeed(cached, true); showBanner("上次同步 " + ago(cached.synced_at)) }
+  api("/m/api/home").then(function(r) {
+    if (r.status === 401) { try { localStorage.removeItem("deviceToken") } catch (e) {}; location.replace("/m"); return null }
+    return r.json()
+  }).then(function(s) {
+    if (!s || !s.ok) return
+    homeState = s; renderFeed(s, false); showBanner(""); writeCache(s)
+    if (document.visibilityState === "visible") {
+      api("/m/api/seen", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ until: s.synced_at }) }).catch(function(){})
+    }
+  }).catch(function() {
+    if (cached) showBanner("连不上家里的 CC · 显示的是 " + ago(cached.synced_at) + "的")
+    else { document.getElementById("feed").innerHTML = '<div class="empty">连不上家里的 CC<br><small>看看电脑开着没</small></div>'; document.getElementById("pres-txt").textContent = "不知道" }
+  })
+}
+document.getElementById("feed").addEventListener("click", function(ev) {
+  var b = ev.target.closest("button.more")
+  if (!b || !homeState) return
+  b.disabled = true
+  api("/m/api/feed?cursor=" + encodeURIComponent(b.dataset.cursor)).then(function(r){ return r.json() }).then(function(r) {
+    if (!r || !r.ok) { b.disabled = false; return }
+    homeState.events = homeState.events.concat(r.events); homeState.next_cursor = r.next_cursor
+    renderFeed(homeState, !!document.getElementById("banner").textContent)
+  }).catch(function(){ b.disabled = false; toast("网络不通") })
+})
+document.getElementById("refresh").addEventListener("click", loadHome)
+document.addEventListener("visibilitychange", function(){ if (document.visibilityState === "visible") loadHome() })
 function load() {
   api("/m/api/state").then(function(r) {
     if (r.status === 401) { try { localStorage.removeItem("deviceToken") } catch (e) {}; location.replace("/m"); return null }
     return r.json()
   }).then(function(s){ if (s && s.ok) render(s) }).catch(function(){ toast("连不上家里的电脑 — 看看它开着没") })
 }
+loadHome()
 load()
 </script></body></html>`
 }

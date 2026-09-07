@@ -240,6 +240,17 @@ describe('随身 CC (phone PWA + device pairing)', () => {
     expect([200, 404]).toContain(icon.status)   // bundled art may be absent in test env — must not 401
     expect(icon.status).not.toBe(401)
   })
+
+  it('/m 首屏是「今天」,口袋里还有原来三块', async () => {
+    const { port } = await panel.start(0)
+    const t = panel.issueToken()
+    const html = await (await fetch(`http://127.0.0.1:${port}/m?t=${t}`)).text()
+    expect(html).toContain('id="p-today"')
+    expect(html).toContain('id="p-pocket"')
+    expect(html).toContain('/m/api/home')
+    expect(html).toContain('cc.home.v1')
+    for (const id of ['id="todos"', 'id="portrait"', 'id="stickers"']) expect(html).toContain(id)
+  })
 })
 
 describe('随身 CC 首屏:伙伴的一天', () => {
