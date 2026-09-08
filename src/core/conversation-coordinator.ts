@@ -75,7 +75,7 @@ export interface TurnRecord {
 
 export interface ConversationCoordinatorDeps {
   resolveProject(chatId: string): { alias: string; path: string } | null
-  manager: Pick<SessionManager, 'acquire'> & Partial<Pick<SessionManager, 'release'>>
+  manager: Pick<SessionManager, 'acquire'> & Partial<Pick<SessionManager, 'release' | 'releaseFor'>>
   conversationStore: Pick<ConversationStore, 'get' | 'set' | 'setParticipants'>
   registry: Pick<ProviderRegistry, 'has' | 'list' | 'get'>
   /**
@@ -555,6 +555,9 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     let summary: TurnSummary | undefined
     let unregisterCancel: (() => void) | undefined
     try {
+      // Per-chat model pin lives on the solo mode row; only solo carries it.
+      const cur = getMode(msg.chatId)
+      const pinnedModel = cur.kind === 'solo' && cur.provider === providerId ? cur.model : undefined
       const handle = await deps.manager.acquire({
         alias: proj.alias,
         path: proj.path,
@@ -562,6 +565,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         chatId: msg.chatId,
         tierProfile,
         permissionMode: deps.permissionMode,
+        ...(pinnedModel !== undefined ? { model: pinnedModel } : {}),
       })
       // Registered before collectTurn starts draining so /stop can reach
       // this turn for its entire lifetime — cleared in the finally below,
@@ -1158,6 +1162,13 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // 模型不换会话线(session key 含 provider 不含 model),无需交接。
       if (oldMode.kind === 'solo' && mode.kind === 'solo' && oldMode.provider !== mode.provider) {
         handoffLedger.markSwitch(chatId, oldMode.provider, mode.provider)
+      }
+      // 同 provider 换钉模型:session 缓存键里没有 model,不放掉旧会话它就
+      // 一直在旧模型上答 ——「说了换、没换」。best-effort,失败只记日志。
+      if (oldMode.kind === 'solo' && mode.kind === 'solo' && oldMode.provider === mode.provider && oldMode.model !== mode.model) {
+        void deps.manager.releaseFor?.(mode.provider, chatId).catch(err => {
+          deps.log('COORDINATOR', `releaseFor after model pin change failed chat=${chatId}: ${err instanceof Error ? err.message : String(err)}`)
+        })
       }
     },
     cancel(chatId) {

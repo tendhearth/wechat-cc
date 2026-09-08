@@ -75,6 +75,11 @@ export interface AcquireRequest {
   chatId: string
   tierProfile: TierProfile
   /**
+   * Per-chat model pin (Mode.solo.model). When set it wins over the daemon's
+   * `currentModelFor(providerId)` global rule for this spawn only.
+   */
+  model?: string
+  /**
    * Daemon-wide permission mode. Forwarded into `provider.spawn`'s
    * SpawnContext so providers can honor `--dangerously` independently of
    * tier (see RFC 05 §2.1). When dangerously, every provider's
@@ -213,7 +218,7 @@ export class SessionManager {
     // Model first, then the prompt: the prompt states the model so the agent
     // can answer「你是哪个模型」truthfully instead of guessing (or calling an
     // admin-only tool a trusted user can't reach).
-    const model = this.opts.currentModelFor?.(req.providerId)
+    const model = req.model ?? this.opts.currentModelFor?.(req.providerId)
     const appendInstructions = this.opts.buildInstructions?.(req.providerId, req.tierProfile, req.chatId, model)
     let session: AgentSession
     try {
@@ -314,6 +319,21 @@ export class SessionManager {
   anyInFlight(): boolean {
     for (const n of this.inFlight.values()) if (n > 0) return true
     return false
+  }
+
+  /**
+   * Release every cached session for (providerId, chatId) across aliases.
+   * Used when a chat's pinned model changes: the cache key has no model in
+   * it, so without this the old session keeps answering on the old model.
+   */
+  async releaseFor(providerId: ProviderId, chatId: string): Promise<number> {
+    let n = 0
+    for (const s of Array.from(this.sessions.values())) {
+      if (s.handle.providerId !== providerId || s.chatId !== chatId) continue
+      await this.release({ alias: s.handle.alias, providerId, chatId })
+      n++
+    }
+    return n
   }
 
   list() {

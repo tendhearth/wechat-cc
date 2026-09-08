@@ -35,6 +35,7 @@ import { registerGraphTools } from './tools-graph'
 import { registerFactsTools } from './tools-facts'
 import { registerConfigTools } from './tools-config'
 import { registerPersonTools } from './tools-person'
+import { registerModeTools } from './tools-mode'
 
 const baseUrl = process.env.WECHAT_INTERNAL_API
 const tokenFilePath = process.env.WECHAT_INTERNAL_TOKEN_FILE
@@ -176,6 +177,11 @@ registerVoiceShareTools(server, client)
 registerMessagingTools(server, client)
 registerCompanionTools(server, client)
 registerA2ASendTool(server, client)
+// 换后端/换模型(按对话)—— 和 /cc /api /agy 斜杠命令同一条路。guest 会话
+// 不注册(classify 也会拒:mode_switch ∉ GUEST_ALLOW),trusted+ 可用。
+if (process.env.WECHAT_SESSION_TIER !== 'guest') {
+  registerModeTools(server, client)
+}
 
 // Daemon self-diagnosis + remediation — admin-tier sessions only (the
 // provider-agnostic gate; non-admin sessions never see these tools).

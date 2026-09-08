@@ -184,6 +184,31 @@ describe('ConversationCoordinator', () => {
     expect(store.set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'codex' })
   })
 
+  it('setMode with a changed model pin (same provider) releases that chat\'s sessions; a provider change does not', () => {
+    const store = makeMockStore()
+    const registry = createProviderRegistry()
+    registry.register('openai', dummyProvider, { displayName: 'API', canResume: () => true })
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const releaseFor = vi.fn(async () => 1)
+    const c = createConversationCoordinator({
+      resolveProject: () => null,
+      manager: { acquire: vi.fn(), releaseFor },
+      conversationStore: store,
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+    })
+    c.setMode('chat-1', { kind: 'solo', provider: 'openai', model: 'DeepSeek' })
+    expect(releaseFor).not.toHaveBeenCalled()          // provider changed (claude→openai): handoff path, not release
+    c.setMode('chat-1', { kind: 'solo', provider: 'openai', model: 'Qwen3.8' })
+    expect(releaseFor).toHaveBeenCalledWith('openai', 'chat-1')
+    c.setMode('chat-1', { kind: 'solo', provider: 'openai', model: 'Qwen3.8' })
+    expect(releaseFor).toHaveBeenCalledTimes(1)        // same pin → no churn
+  })
+
   it('dispatch drops when resolver returns null (no project)', async () => {
     const acquire = vi.fn()
     const registry = createProviderRegistry()

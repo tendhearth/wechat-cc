@@ -31,6 +31,16 @@ describe('ConversationStore', () => {
     expect(r?.mode).toEqual({ kind: 'solo', provider: 'codex' })
   })
 
+  it('solo mode round-trips a per-chat model pin, and a later pin-less set clears it', () => {
+    const s = makeConversationStore(db)
+    s.set('chat-1', { kind: 'solo', provider: 'openai', model: 'DeepSeek' })
+    expect(s.get('chat-1')?.mode).toEqual({ kind: 'solo', provider: 'openai', model: 'DeepSeek' })
+    expect(s.all()['chat-1']?.mode).toEqual({ kind: 'solo', provider: 'openai', model: 'DeepSeek' })
+    // `/api`(不带模型)= 回到全局默认 —— 清掉,不是 COALESCE 保留。
+    s.set('chat-1', { kind: 'solo', provider: 'openai' })
+    expect(s.get('chat-1')?.mode).toEqual({ kind: 'solo', provider: 'openai' })
+  })
+
   it('set replaces previous mode for the same chat', () => {
     const s = makeConversationStore(db)
     s.set('chat-1', { kind: 'solo', provider: 'claude' })

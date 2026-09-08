@@ -675,7 +675,7 @@ const onlineStickerCursor = new Map<string, number>()
       if (!deps.conversation) return { status: 503, body: { error: 'conversation_not_wired' } }
       // Body is pre-validated by index.ts via ConversationSetModeRequest schema.
       // Schema enforces chatId (string) and mode (discriminated union of known kinds).
-      const { chatId, mode } = body as ConversationSetModeRequestT
+      const { chatId, mode, quiet } = body as ConversationSetModeRequestT
       try {
         deps.conversation.setMode(chatId, mode as unknown as Mode)
       } catch (err) {
@@ -690,7 +690,9 @@ const onlineStickerCursor = new Map<string, number>()
       }
       const humanName = kindNames[mode.kind] ?? String(mode.kind)
       // Best-effort wechat reply — never fail the route if send fails.
-      if (deps.ilink) {
+      // `quiet`: an agent (wechat-mcp provider_switch) is the caller and will
+      // tell the user itself — a second「来自控制台」line would be noise.
+      if (deps.ilink && !quiet) {
         deps.ilink.sendReply(chatId, `🎛 已切换到 ${humanName}（来自控制台）`).catch(err => {
           deps.log?.('SET_MODE', `wechat reply failed: ${errMsg(err)}`)
         })

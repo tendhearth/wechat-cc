@@ -110,13 +110,21 @@ describe('makeModeCommands', () => {
 
   // ── /api <model> — switch + pin the openai-compatible model in one go ──
 
+  it('/mode shows the per-chat pinned model', async () => {
+    const { cmds, sentMessages } = setup({ registered: ['claude', 'openai'], initialMode: { kind: 'solo', provider: 'openai', model: 'DeepSeek' } })
+    await cmds.handle(inbound('/mode'))
+    expect(sentMessages[0]?.[1]).toContain('solo · openai · 模型 DeepSeek')
+  })
+
   it('/api deepseek-chat pins the model AND switches to solo+openai', async () => {
     const { cmds, set, sentMessages, pinModel } = setup({ registered: ['claude', 'codex', 'openai'] })
     const consumed = await cmds.handle(inbound('/api deepseek-chat'))
     expect(consumed).toBe(true)
-    expect(pinModel).toHaveBeenCalledWith('openai', 'deepseek-chat')
-    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'openai' })
+    // 按对话钉:写进 Mode.solo.model,不再动全局 agent-config(pinModel)。
+    expect(pinModel).not.toHaveBeenCalled()
+    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'openai', model: 'deepseek-chat' })
     expect(sentMessages[0]?.[1]).toContain('deepseek-chat')
+    expect(sentMessages[0]?.[1]).toContain('只对这个对话')
   })
 
   it('/api Kimi accepts a bare model name with no version digit', async () => {
@@ -126,8 +134,8 @@ describe('makeModeCommands', () => {
     const { cmds, set, pinModel, sentMessages } = setup({ registered: ['claude', 'codex', 'openai'] })
     const consumed = await cmds.handle(inbound('/api Kimi'))
     expect(consumed).toBe(true)
-    expect(pinModel).toHaveBeenCalledWith('openai', 'Kimi')
-    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'openai' })
+    expect(pinModel).not.toHaveBeenCalled()
+    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'openai', model: 'Kimi' })
     expect(sentMessages[0]?.[1]).toContain('Kimi')
   })
 
@@ -539,8 +547,8 @@ describe('makeModeCommands', () => {
     const { cmds, set, sentMessages, pinModel } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'trusted' })
     const consumed = await cmds.handle(inbound('/agy gemini-3.7-flash-high'))
     expect(consumed).toBe(true)
-    expect(pinModel).toHaveBeenCalledWith('agy', 'gemini-3.7-flash-high')
-    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'agy' })
+    expect(pinModel).not.toHaveBeenCalled()
+    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'agy', model: 'gemini-3.7-flash-high' })
     expect(sentMessages[0]?.[1]).toContain('gemini-3.7-flash-high')
   })
 

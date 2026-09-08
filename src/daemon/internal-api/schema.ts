@@ -511,7 +511,7 @@ export type A2ATestRequestT = z.infer<typeof A2ATestRequest>
 // mode to "use registry default" — visible to the user as their explicit
 // participant choice being ignored.
 const ModeSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('solo'), provider: z.string() }),
+  z.object({ kind: z.literal('solo'), provider: z.string(), model: z.string().min(1).max(100).optional() }),
   z.object({ kind: z.literal('parallel'), participants: z.array(z.string()).optional() }),
   z.object({ kind: z.literal('primary_tool'), primary: z.string() }),
   z.object({ kind: z.literal('chatroom'), participants: z.array(z.string()).optional() }),
@@ -520,6 +520,9 @@ const ModeSchema = z.discriminatedUnion('kind', [
 export const ConversationSetModeRequest = z.object({
   chatId: z.string(),
   mode: ModeSchema,
+  /** Skip the route's own「🎛 已切换到 …」wechat reply — the caller (wechat-mcp
+   *  provider_switch) is an agent that will tell the user itself. */
+  quiet: z.boolean().optional(),
 })
 export const ConversationSetModeResponse = z.union([
   z.object({ ok: z.literal(true) }),

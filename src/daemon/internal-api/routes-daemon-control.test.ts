@@ -97,3 +97,26 @@ describe('/v1/model — per-provider', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })
+
+describe('POST /v1/conversation/set-mode — provider_switch path', () => {
+  it('forwards solo+model to the coordinator and stays silent when quiet=true', async () => {
+    const setMode = vi.fn()
+    const sendReply = vi.fn(async () => ({}))
+    const r = routesWith({ conversation: { setMode }, ilink: { sendReply } })
+    const res = await r['POST /v1/conversation/set-mode']!(new URLSearchParams(), { chatId: 'c1', mode: { kind: 'solo', provider: 'openai', model: 'DeepSeek' }, quiet: true })
+    expect(res.status).toBe(200)
+    expect(setMode).toHaveBeenCalledWith('c1', { kind: 'solo', provider: 'openai', model: 'DeepSeek' })
+    expect(sendReply).not.toHaveBeenCalled()
+  })
+  it('still sends the console-style confirmation when not quiet', async () => {
+    const sendReply = vi.fn(async () => ({}))
+    const r = routesWith({ conversation: { setMode: vi.fn() }, ilink: { sendReply } })
+    await r['POST /v1/conversation/set-mode']!(new URLSearchParams(), { chatId: 'c1', mode: { kind: 'solo', provider: 'claude' } })
+    expect(sendReply).toHaveBeenCalledTimes(1)
+  })
+  it('surfaces the coordinator\'s unknown-provider rejection as 400', async () => {
+    const r = routesWith({ conversation: { setMode: () => { throw new Error('unknown provider: bogus') } } })
+    const res = await r['POST /v1/conversation/set-mode']!(new URLSearchParams(), { chatId: 'c1', mode: { kind: 'solo', provider: 'bogus' }, quiet: true })
+    expect(res.status).toBe(400)
+  })
+})

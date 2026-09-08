@@ -44,6 +44,7 @@ export type ToolKind =
   | 'facts_query'        // admin-only: read/write the owner's structured fact store (extraction_batch/record_facts/contact_facts/find_facts/set_fact_status/extraction_status, Knowledge Facts/Person inproc) — same private-data trust class as graph_query.
   | 'person_query'       // admin-only: assemble a per-contact unified brief (person_brief, Knowledge Facts/Person inproc) — same private-data trust class as facts_query/graph_query.
   | 'config_admin'       // admin-only: read/write the owner's daemon configuration through the whitelist-bounded config surface (config_get/config_set, src/daemon/config-surface.ts) — a config write steers the daemon itself, so fail closed to admin.
+  | 'mode_switch'        // trusted+: switch THIS chat's provider/model via provider_switch — same reach as the /cc /api /agy slash commands (per-chat, no global config touched); guest can't (matches the slash gate: guests aren't offered provider switching either).
 
 export const ALL_KINDS: ReadonlySet<ToolKind> = new Set([
   'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
@@ -51,7 +52,7 @@ export const ALL_KINDS: ReadonlySet<ToolKind> = new Set([
   'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
   'a2a_send', 'daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool',
   'social_seek', 'social_act', 'knowledge_search', 'federated_query', 'graph_query', 'facts_query', 'person_query',
-  'config_admin',
+  'config_admin', 'mode_switch',
 ])
 
 export interface TierProfile {
@@ -253,6 +254,8 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     // Config surface — admin-only read/write of the owner's daemon config
     // (whitelist-bounded in src/daemon/config-surface.ts).
     if (sub === 'config_get' || sub === 'config_set') return 'config_admin'
+    // Per-chat provider/model switch — trusted+ (mirrors the slash commands).
+    if (sub === 'provider_switch') return 'mode_switch'
     // Explicit write mapping — must NOT fall through to the fs_read default
     // below: set_chat_pref mutates chat_prefs.json (care level / split).
     if (sub === 'set_chat_pref') return 'memory_write'

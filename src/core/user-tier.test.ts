@@ -425,6 +425,13 @@ describe('facts_query / person_query tier kinds (Knowledge Facts/Person inproc F
     expect(TIER_PROFILES.guest.deny.has('config_admin')).toBe(true)
   })
 
+  it('classifies provider_switch as mode_switch — trusted+ (same reach as the /api /agy slash commands), guest denied', () => {
+    expect(classifyToolUse('mcp__wechat__provider_switch', { chat_id: 'c', provider: 'openai' })).toBe('mode_switch')
+    expect(TIER_PROFILES.admin.allow.has('mode_switch')).toBe(true)
+    expect(TIER_PROFILES.trusted.allow.has('mode_switch')).toBe(true)
+    expect(TIER_PROFILES.guest.deny.has('mode_switch')).toBe(true)
+  })
+
   it('classifies the person_brief MCP tool as ToolKind person_query', () => {
     expect(classifyToolUse('mcp__wechat__person_brief', { name: 'x' })).toBe('person_query')
   })

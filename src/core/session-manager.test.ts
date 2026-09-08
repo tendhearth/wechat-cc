@@ -196,6 +196,37 @@ describe('SessionManager', () => {
     await mgr.shutdown()
   })
 
+  it('a per-chat pin (req.model) wins over the daemon-wide currentModelFor', async () => {
+    let seen: string | undefined
+    const spawn = vi.fn(async (_p: unknown, ctx: { model?: string }) => {
+      seen = ctx.model
+      return makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] })
+    })
+    const mgr = new SessionManager({
+      maxConcurrent: 4, idleEvictMs: 60_000,
+      registry: registryWithProvider({ spawn } as unknown as AgentProvider),
+      currentModelFor: () => 'claude-opus-4-8',
+    })
+    await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'c', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', model: 'claude-opus-5' })
+    expect(seen).toBe('claude-opus-5')
+    await mgr.shutdown()
+  })
+
+  it('releaseFor(provider, chat) closes every alias of that pair and nothing else', async () => {
+    const spawn = vi.fn(async () => makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] }))
+    const registry = registryWithProvider({ spawn } as unknown as AgentProvider)
+    registry.register('openai', { spawn } as unknown as AgentProvider, { displayName: 'API', canResume: () => true })
+    const mgr = new SessionManager({ maxConcurrent: 8, idleEvictMs: 60_000, registry })
+    const base = { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' as const }
+    await mgr.acquire({ alias: 'a', path: '/p', providerId: 'openai', chatId: 'c1', ...base })
+    await mgr.acquire({ alias: 'b', path: '/q', providerId: 'openai', chatId: 'c1', ...base })
+    await mgr.acquire({ alias: 'a', path: '/p', providerId: 'openai', chatId: 'c2', ...base })
+    await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'c1', ...base })
+    expect(await mgr.releaseFor('openai', 'c1')).toBe(2)
+    expect(mgr.list().map(s => `${s.providerId}|${s.alias}|${s.chatId}`).sort()).toEqual(['claude|a|c1', 'openai|a|c2'])
+    await mgr.shutdown()
+  })
+
   it('omits model when currentModelFor returns undefined', async () => {
     let hadKey = true
     const spawn = vi.fn(async (_p: unknown, ctx: object) => {

@@ -173,7 +173,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
 
   function describeMode(m: Mode): string {
     switch (m.kind) {
-      case 'solo': return `solo · ${m.provider}`
+      case 'solo': return m.model ? `solo · ${m.provider} · 模型 ${m.model}` : `solo · ${m.provider}`
       case 'primary_tool': return `primary_tool · primary=${m.primary}`
       case 'parallel': return 'parallel'
       case 'chatroom': return 'chatroom'
@@ -366,10 +366,11 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
             await reply(msg.chatId, `❌ provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
             return true
           }
-          await deps.pinModel(providerId, tail)
-          deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: providerId })
+          // 按对话钉(Mode.solo.model),不再改全局 agent-config —— 这个群
+          // 钉 DeepSeek 不该把别的群也换了。全局默认走 /set / 设置面板。
+          deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: providerId, model: tail })
           const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
-          await reply(msg.chatId, `✅ 这个对话切到 ${dn} (solo)，模型 = ${tail}。下条消息开始生效。`)
+          await reply(msg.chatId, `✅ 这个对话切到 ${dn} (solo)，模型 = ${tail}（只对这个对话）。下条消息开始生效。`)
           deps.log('MODE_CMD', `chat=${msg.chatId} → solo+${providerId} model=${tail}`)
           return true
         }
