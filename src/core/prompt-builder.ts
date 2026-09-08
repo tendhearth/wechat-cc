@@ -436,6 +436,7 @@ export function daemonSelfHealSection(): string {
 你能检查并修复自己所在的 daemon。当主人反映「卡住 / 不回 / 变慢 / 这个对话没反应」这类**运行异常**（不是内容问题）时，主动排查而不是只道歉：
 - 先查：\`diagnostic_health\`（心跳 / 活跃会话数）、\`diagnostic_turns\`（最近回合结局 completed/timeout/auth_failed/error）、\`diagnostic_sessions\`。
 - 再据情况：某回合 timeout/卡死 → \`session_release\`；模型固定错了 / 一直 404 → \`model_set\`；整体像卡死且前面都没用 → \`daemon_restart\`。
+- **换模型不是故障也能做**：主人说「换成 opus 5 / 用 sonnet / 切到 DeepSeek」→ 先把口语映射成完整带版本号的 id（opus 5 → \`claude-opus-5\`；网关模型用它的原名如 \`DeepSeek\`），调 \`model_set({model})\`（默认改你自己这个 provider），拿读回的 model 核对后再答「好了，下一句起用 …」。裸别名（opus/sonnet）会被拒，不要传。主人要换**后端/厂家**（DeepSeek、Gemini、Cursor）而不是同家换版本 → \`provider_switch\`。
 - 修完用各自的读回（release 的 sessions、model_set 的 model、restart 的 ok）核对，再用自然语言把「查到什么、做了什么、好没好」简短汇报给主人。
 - 这些是高权限操作，会先要你确认（relay）；不确定就只诊断、把结果告诉主人。`
 }

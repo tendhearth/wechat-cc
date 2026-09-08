@@ -6,7 +6,13 @@
  * route-tiers.ts.
  */
 import { type InternalApiDeps, type RouteTable } from './types'
-import { loadAgentConfig, saveAgentConfig, activeModel, withActiveModel } from '../../lib/agent-config'
+import { loadAgentConfig, saveAgentConfig, activeModel, withActiveModel, modelForProvider, withModelForProvider } from '../../lib/agent-config'
+
+/** provider ids /v1/model accepts in its optional `provider` field. Mirrors
+ *  the switch inside modelForProvider/withModelForProvider — anything else
+ *  would silently land in `model` (claude/codex's shared field) with a
+ *  confirming read-back, which is exactly the lie this guard exists to stop. */
+const KNOWN_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'codex', 'cursor', 'openai', 'gemini', 'agy'])
 
 export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
   return {
@@ -39,8 +45,16 @@ export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
     },
 
     // Current pinned agent model (read-back companion to POST /v1/model).
-    'GET /v1/model': () => {
+    // `?provider=<id>` asks for THAT provider's model — the caller's own
+    // (wechat-mcp model_get passes WECHAT_PARTICIPANT_TAG), so an /api or
+    // /agy chat gets its own answer instead of the global default's.
+    'GET /v1/model': (q) => {
       const cfg = loadAgentConfig(deps.stateDir)
+      const provider = q.get('provider')
+      if (provider) {
+        if (!KNOWN_PROVIDERS.has(provider)) return { status: 400, body: { error: `unknown provider '${provider}'` } }
+        return { status: 200, body: { provider, model: modelForProvider(cfg, provider) ?? null } }
+      }
       // Report the field the configured provider actually uses (activeModel
       // owns the cursor-vs-claude/codex rule).
       return { status: 200, body: { provider: cfg.provider, model: activeModel(cfg) ?? null } }
@@ -50,12 +64,19 @@ export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
     // on the next session spawn per chat (mtime-cached reader); for codex/cursor
     // it persists but is applied at provider construction, so it needs a daemon
     // restart to take effect. Returns the persisted model as a read-back.
-    'POST /v1/model': (_q, body) => {
-      const b = (body ?? {}) as { model?: unknown }
+    'POST /v1/model': async (_q, body) => {
+      const b = (body ?? {}) as { model?: unknown; provider?: unknown }
       if (typeof b.model !== 'string' || b.model.trim() === '') {
         return { status: 400, body: { error: 'model required (non-empty string)' } }
       }
       const model = b.model.trim()
+      // Optional target provider. 主人在 /api 对话里说「换模型」,改的必须是
+      // openai 的字段,不是全局默认 provider 的 —— 老行为(无 provider)保留给
+      // 桌面/控制台那些本来就是在改全局默认的调用方。
+      const provider = typeof b.provider === 'string' && b.provider.trim() !== '' ? b.provider.trim() : undefined
+      if (provider !== undefined && !KNOWN_PROVIDERS.has(provider)) {
+        return { status: 400, body: { error: `unknown provider '${provider}'` } }
+      }
       // Reject obvious bare aliases — a model id with no version digit (e.g.
       // 'opus', 'sonnet') gets mis-resolved by the CLI and 404s EVERY turn (the
       // 2026-05-08 incident this guard exists to prevent). DELIBERATELY
@@ -71,13 +92,25 @@ export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
         }
       }
       const cfg = loadAgentConfig(deps.stateDir)
-      // Write the field the configured provider reads — writing `model` for a
+      // Write the field the target provider reads — writing `model` for a
       // cursor daemon would be a silent no-op with a falsely-confirming read-back.
-      const updated = withActiveModel(cfg, model)
+      const updated = provider !== undefined ? withModelForProvider(cfg, provider, model) : withActiveModel(cfg, model)
       saveAgentConfig(deps.stateDir, updated)
+      const effectiveProvider = provider ?? updated.provider
+      // 主人说「切到 opus5」,期待的是下一句就在 opus5 上。session 缓存键是
+      // (provider, alias, chat),不放掉旧 session 它就一直拿着旧模型 ——
+      // 「改了但没生效」比「没改」更糟。把该 provider 的活 session 全释放,
+      // 下一条入站重新 spawn(currentModelFor 的 mtime 缓存会读到新值)。
+      let released = 0
+      if (deps.listSessions && deps.releaseSession) {
+        for (const s of deps.listSessions() ?? []) {
+          if (s.providerId !== effectiveProvider) continue
+          try { await deps.releaseSession({ alias: s.alias, providerId: s.providerId, chatId: s.chatId }); released++ } catch { /* best effort */ }
+        }
+      }
       // Read back from the just-persisted value (saveAgentConfig throws on write
       // failure, so reaching here means it landed) — no second disk round-trip.
-      return { status: 200, body: { ok: true, provider: updated.provider, model: activeModel(updated) ?? null } }
+      return { status: 200, body: { ok: true, provider: effectiveProvider, model: (provider !== undefined ? modelForProvider(updated, provider) : activeModel(updated)) ?? null, released } }
     },
 
     // Admin remediation — graceful daemon restart. The trigger schedules the

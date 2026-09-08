@@ -10,6 +10,11 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'
 
+/** 本会话的 provider id —— daemon 在 spawn wechat-mcp 子进程时写进 env
+ *  (mcp-specs.ts participantTag)。model_get/model_set 默认作用于它,这样
+ *  /api /agy 对话里说「换模型」,改的是自己的,不是全局默认那家的。 */
+const OWN_PROVIDER = process.env.WECHAT_PARTICIPANT_TAG
+
 export function registerDaemonTools(server: McpServer, client: InternalApiClient): void {
   // These let the operator ask the bot "检查下为什么 X 不回消息了". Read-only.
 
@@ -79,12 +84,13 @@ export function registerDaemonTools(server: McpServer, client: InternalApiClient
     'model_get',
     {
       title: 'Current model',
-      description: '【管理员】读取当前固定的 agent 模型（provider + model）。改之前/之后用它核对。',
-      inputSchema: {},
+      description: '【管理员】读取固定的 agent 模型（provider + model）。默认查你自己这个 provider;传 provider 可查别家。改之前/之后用它核对。',
+      inputSchema: { provider: z.string().optional().describe('claude / codex / cursor / openai / gemini / agy;省略 = 你自己') },
     },
-    async () => {
+    async ({ provider }) => {
       try {
-        const r = await client.request<unknown>('GET', '/v1/model')
+        const target = provider ?? OWN_PROVIDER
+        const r = await client.request<unknown>('GET', target ? `/v1/model?provider=${encodeURIComponent(target)}` : '/v1/model')
         return { content: [{ type: 'text', text: JSON.stringify(r) }] }
       } catch (err) {
         return passthroughErrorResult(err, 'model_get')
@@ -96,12 +102,16 @@ export function registerDaemonTools(server: McpServer, client: InternalApiClient
     'model_set',
     {
       title: 'Switch model',
-      description: '【管理员】切换固定的 agent 模型（写入 agent-config.json，按当前 provider 写对应字段）。claude 下次 spawn 生效、不用重启；codex/cursor 会持久化但要重启 daemon 才生效。返回写入后的 model 作为核对。传完整带版本号的 id（如 claude-opus-4-8），不要传裸别名（opus/sonnet）。',
-      inputSchema: { model: z.string().min(1).describe('完整模型 id，如 claude-opus-4-8 / claude-sonnet-4-6') },
+      description: '【管理员】切换固定的 agent 模型（写入 agent-config.json）。默认改你自己这个 provider 的模型;传 provider 可改别家。写完会释放该 provider 的活会话,主人下一句就跑在新模型上(claude/agy/openai 不用重启;codex/cursor 要重启 daemon)。返回写入后的 model + 释放数作为核对。传完整带版本号的 id（如 claude-opus-5 / claude-opus-4-8），不要传裸别名（opus/sonnet）。',
+      inputSchema: {
+        model: z.string().min(1).describe('完整模型 id，如 claude-opus-5 / claude-sonnet-4-6 / DeepSeek'),
+        provider: z.string().optional().describe('claude / codex / cursor / openai / gemini / agy;省略 = 你自己'),
+      },
     },
-    async ({ model }) => {
+    async ({ model, provider }) => {
       try {
-        const r = await client.request<unknown>('POST', '/v1/model', { model })
+        const target = provider ?? OWN_PROVIDER
+        const r = await client.request<unknown>('POST', '/v1/model', target ? { model, provider: target } : { model })
         return { content: [{ type: 'text', text: JSON.stringify(r) }] }
       } catch (err) {
         return passthroughErrorResult(err, 'model_set')

@@ -1,0 +1,99 @@
+import { describe, it, expect, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { makeRoutes } from './routes'
+import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
+
+function routesWith(deps: unknown) {
+  return makeRoutes({ deps: deps as never, getDelegate: () => null, maybePrefix: (_c, t) => t })
+}
+
+function stateDirWith(config: Record<string, unknown>) {
+  const dir = mkdtempSync(join(tmpdir(), 'routes-model-'))
+  saveAgentConfig(dir, { ...loadAgentConfig(dir), ...config } as never)
+  return dir
+}
+
+// 「切到 opus 5」—— 主人在哪个对话里说,改的就得是那个对话所用 provider 的
+// 模型。老路由只认全局默认 provider:在 /api 对话里说「换模型」,改的是
+// claude 的字段,读回还理直气壮地说 ok。
+describe('/v1/model — per-provider', () => {
+  it('GET ?provider= reports THAT provider\'s model, not the global default\'s', async () => {
+    const dir = stateDirWith({ provider: 'claude', model: 'claude-opus-4-8', openaiModel: 'DeepSeek', agyModel: 'gemini-3.7-flash-high' })
+    try {
+      const r = routesWith({ stateDir: dir })
+      expect((await r['GET /v1/model']!(new URLSearchParams(), undefined)).body).toEqual({ provider: 'claude', model: 'claude-opus-4-8' })
+      expect((await r['GET /v1/model']!(new URLSearchParams('provider=openai'), undefined)).body).toEqual({ provider: 'openai', model: 'DeepSeek' })
+      expect((await r['GET /v1/model']!(new URLSearchParams('provider=agy'), undefined)).body).toEqual({ provider: 'agy', model: 'gemini-3.7-flash-high' })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('POST with provider writes that provider\'s own field and leaves the global default untouched', async () => {
+    const dir = stateDirWith({ provider: 'claude', model: 'claude-opus-4-8', openaiModel: 'DeepSeek' })
+    try {
+      const r = routesWith({ stateDir: dir })
+      const res = await r['POST /v1/model']!(new URLSearchParams(), { model: 'Qwen3.8-Instruct', provider: 'openai' })
+      expect(res.status).toBe(200)
+      expect(res.body).toMatchObject({ ok: true, provider: 'openai', model: 'Qwen3.8-Instruct' })
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.openaiModel).toBe('Qwen3.8-Instruct')
+      expect(cfg.model).toBe('claude-opus-4-8')
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('POST without provider keeps the legacy behavior (global default provider)', async () => {
+    const dir = stateDirWith({ provider: 'claude', model: 'claude-opus-4-8' })
+    try {
+      const r = routesWith({ stateDir: dir })
+      const res = await r['POST /v1/model']!(new URLSearchParams(), { model: 'claude-opus-5' })
+      expect(res.body).toMatchObject({ ok: true, provider: 'claude', model: 'claude-opus-5' })
+      expect(loadAgentConfig(dir).model).toBe('claude-opus-5')
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  // 主人说「切到 opus5」,期待的是**下一句**就跑在 opus5 上。但 session 缓存键
+  // 是 (provider, alias, chat),老 session 不释放就一直用旧模型 —— 「改了但
+  // 没生效」比「没改」更糟。写完顺手把该 provider 的活 session 全放掉。
+  it('POST releases every live session of that provider so the next turn respawns on the new model', async () => {
+    const dir = stateDirWith({ provider: 'claude', model: 'claude-opus-4-8' })
+    try {
+      const released: unknown[] = []
+      const sessions = [
+        { alias: '_default', providerId: 'claude', chatId: 'A', lastUsedAt: 0 },
+        { alias: '_default', providerId: 'claude', chatId: 'B', lastUsedAt: 0 },
+        { alias: '_default', providerId: 'agy', chatId: 'C', lastUsedAt: 0 },
+      ]
+      const r = routesWith({
+        stateDir: dir,
+        listSessions: () => sessions,
+        releaseSession: vi.fn(async (k: unknown) => { released.push(k) }),
+      })
+      const res = await r['POST /v1/model']!(new URLSearchParams(), { model: 'claude-opus-5', provider: 'claude' })
+      expect(res.body).toMatchObject({ ok: true, released: 2 })
+      expect(released).toEqual([
+        { alias: '_default', providerId: 'claude', chatId: 'A' },
+        { alias: '_default', providerId: 'claude', chatId: 'B' },
+      ])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('still rejects bare family aliases (no digit) — `opus` would 404 every turn', async () => {
+    const dir = stateDirWith({ provider: 'claude', model: 'claude-opus-4-8' })
+    try {
+      const r = routesWith({ stateDir: dir })
+      const res = await r['POST /v1/model']!(new URLSearchParams(), { model: 'opus', provider: 'claude' })
+      expect(res.status).toBe(400)
+      expect(loadAgentConfig(dir).model).toBe('claude-opus-4-8')
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('rejects an unknown provider id instead of silently writing `model`', async () => {
+    const dir = stateDirWith({ provider: 'claude', model: 'claude-opus-4-8' })
+    try {
+      const r = routesWith({ stateDir: dir })
+      const res = await r['POST /v1/model']!(new URLSearchParams(), { model: 'x-1', provider: 'bogus' })
+      expect(res.status).toBe(400)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})

@@ -806,3 +806,13 @@ describe('socialAvailable (social-tools 2026-09-05)', () => {
     expect(s).toContain('social_not_wired')
   })
 })
+
+describe('daemonSelfHealSection — 换模型是正常操作,不只是修故障', () => {
+  it('tells the agent model_set is the way to honor「换成 opus 5」and to pass its own provider', () => {
+    const t = daemonSelfHealSection()
+    expect(t).toContain('换模型')
+    expect(t).toContain('model_set')
+    expect(t).toContain('claude-opus-5')
+    expect(t).toContain('provider_switch')
+  })
+})
