@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { tmpdir } from 'node:os'
 import { CURSOR_CLI_CAPABILITIES, createCursorCliProvider } from './cursor-cli-provider'
 import { TIER_PROFILES } from './user-tier'
+import { isReplyToolCall } from './agent-provider'
 
 function fakeCursor(lines: string[], opts?: { exitCode?: number; stderr?: string; hang?: boolean }) {
   const calls: Array<{ args: string[]; cwd: string }> = []
@@ -23,6 +24,13 @@ const INIT = '{"type":"system","subtype":"init","session_id":"s1","model":"Auto"
 const TEXT = '{"type":"assistant","message":{"content":[{"type":"text","text":"收到"}]},"session_id":"s1"}'
 const RESULT = '{"type":"result","subtype":"success","is_error":false,"result":"收到","session_id":"s1"}'
 const AUTH_TEXT = '{"type":"assistant","message":{"content":[{"type":"text","text":"Not logged in"}]}}'
+// 真机形状:cursor 全局 mcp_config 里我们的键是 `wechat-cc:wechat`,
+// serverIdentifier 报的就是它。
+const MCP_REPLY = JSON.stringify({
+  type: 'tool_call', subtype: 'started',
+  tool_call: { mcpToolCall: { args: { name: 'wechat-cc:wechat-reply', toolName: 'reply', serverIdentifier: 'wechat-cc:wechat', args: { text: 'hi' } } } },
+  session_id: 's1',
+})
 
 const ctx = { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict' as const, chatId: 'chat1' }
 // NOT '/tmp': on Linux `tmpdir()` IS '/tmp', so a '/tmp' fixture path made
@@ -119,5 +127,22 @@ describe('createCursorCliProvider', () => {
     expect(CURSOR_CLI_CAPABILITIES.supportsResume).toBe(true)
     expect(CURSOR_CLI_CAPABILITIES.supportsDelegation).toBe(false)
     expect(CURSOR_CLI_CAPABILITIES.authFailHint).toContain('cursor-agent login')
+  })
+})
+
+describe('cursor CLI:wechat MCP 的回复要被认出来 —— 否则每轮双发', () => {
+  // 真机 2026-09-08:主人切到 /cursor 问天气,收到三条 —— 正文之后跟着
+  // 「查一下洛杉矶此刻天气,再用微信回复你。」和「已回你微信了。」。
+  // [TURN] provider=cursor reply=false chunks=2,而 tools= 是**空的**:
+  // 消息确实通过 reply 工具发出去了(所以主人收到了正文),但我们一个
+  // tool_call 事件都没解析出来,于是协调器以为 agent 还没说话。
+  it('把 mcpToolCall 认成 wechat/reply', async () => {
+    const { spawnFn } = fakeCursor([INIT, MCP_REPLY, TEXT, RESULT])
+    const provider = createCursorCliProvider({ bin: 'cursor-agent', model: 'auto', spawnFn, log: () => {} })
+    const s = await provider.spawn(project, ctx)
+    const evs = await drain(s.dispatch('今天天气怎么样')) as Array<{ kind: string; server?: string; tool?: string }>
+    const call = evs.find(e => e.kind === 'tool_call')
+    expect(call).toEqual({ kind: 'tool_call', server: 'wechat', tool: 'reply' })
+    expect(isReplyToolCall(call as never)).toBe(true)
   })
 })

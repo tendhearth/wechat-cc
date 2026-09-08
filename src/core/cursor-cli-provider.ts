@@ -18,7 +18,7 @@
  *   - stream shape is claude-code-flavored → cursor-cli-stream.ts
  */
 import { tmpdir } from 'node:os'
-import { assertNotAuthFailed, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type ProviderCapabilities, type SpawnContext } from './agent-provider'
+import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type ProviderCapabilities, type SpawnContext } from './agent-provider'
 import { makeCursorStreamParser } from './cursor-cli-stream'
 import { makeTurnEmitter } from './turn-emitter'
 import { drainCappedStderr } from './agy-agent-provider'
@@ -213,7 +213,10 @@ export function createCursorCliProvider(opts: CursorCliProviderOptions): AgentPr
                       continue
                     }
                     if (ev.kind === 'text') { yield em.text(ev.text); continue }
-                    if (ev.kind === 'tool_call') { yield em.toolCall(ev.tool); continue }
+                    // server 名是 cursor 全局 mcp_config 里的命名空间键
+                    // (`wechat-cc:wechat`),折回规范名 `wechat`,回复判定和
+                    // TURN 日志才认得出 —— 见 normalizeWechatMcpServer。
+                    if (ev.kind === 'tool_call') { yield em.toolCall(ev.tool, normalizeWechatMcpServer(ev.server)); continue }
                     if (ev.kind === 'result') {
                       sawResult = true
                       if (ev.sessionId) sessionId = ev.sessionId
