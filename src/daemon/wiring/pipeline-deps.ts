@@ -39,7 +39,9 @@ import { makeForwardBudget } from '../../core/forward-budget'
 import type { InboundMsg } from '../../core/prompt-format'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
-import { loadAgentConfig, saveAgentConfig, withModelForProvider } from '../../lib/agent-config'
+import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
+import { writeConfigKey } from '../config-surface'
+import { makeOpenaiModels } from '../openai-models'
 import { findOnPath } from '../../lib/util'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
@@ -537,19 +539,28 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     sendMessage: (cid, txt) => ilink.sendMessage(cid, txt),
     setUserName: (cid, name) => ilink.setUserName(cid, name),
     getUserName: (cid) => ilink.resolveUserName(cid) ?? null,
-    // `/api <model>` — read-modify-write agent-config.json via
-    // withModelForProvider/saveAgentConfig (per-provider field, unlike the
-    // POST /v1/model route which pins the GLOBAL default provider's model).
-    // The daemon's mtime-cached config reader (currentModelFor,
-    // bootstrap/index.ts) then delivers it to the next openai spawn, no restart.
-    pinModel: (providerId, model) => {
-      // Write the TARGET provider's own model field (openai→openaiModel), NOT
-      // the global default provider's — so `/api <model>` pins openai even when
-      // the global default is claude. Mirrors currentModelFor's per-provider
-      // resolution (bootstrap/index.ts). mtime-cached reader delivers it next spawn.
-      const current = loadAgentConfig(stateDir)
-      saveAgentConfig(stateDir, withModelForProvider(current, providerId, model))
+    // /api list · alias · /set cheap 的读写面 —— 全走 agent-config(mtime
+    // 缓存读)/ config-surface(写),和面板同一条路。
+    readConfig: () => {
+      const c = loadAgentConfig(stateDir)
+      return { openaiBaseUrl: c.openaiBaseUrl, openaiModel: c.openaiModel, openaiAliases: c.openaiAliases, cheapEvalProvider: c.cheapEvalProvider }
     },
+    setOpenaiAlias: (alias, model) => {
+      const c = loadAgentConfig(stateDir)
+      const next = { ...(c.openaiAliases ?? {}) }
+      if (model === null) delete next[alias]
+      else next[alias] = model
+      const { openaiAliases: _drop, ...rest } = c
+      saveAgentConfig(stateDir, Object.keys(next).length > 0 ? { ...rest, openaiAliases: next } : rest)
+    },
+    setConfig: async (key, value) => {
+      const r = await writeConfigKey(stateDir, key, value)
+      return r.ok ? { ok: true } : { ok: false, error: r.error, detail: r.detail }
+    },
+    openaiModels: makeOpenaiModels({
+      baseUrl: () => loadAgentConfig(stateDir).openaiBaseUrl,
+      apiKey: () => process.env.WECHAT_OPENAI_API_KEY,
+    }),
     chatPrefs,
     log,
     isAdmin,

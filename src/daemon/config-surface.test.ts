@@ -91,3 +91,19 @@ describe('config surface', () => {
     expect(r).toMatchObject({ ok: true, previous: 'a-model' })
   })
 })
+
+describe('cheap_eval_provider', () => {
+  it('stores a provider id, and `auto` removes the field (not a literal "auto")', async () => {
+    const { mkdtempSync, rmSync, readFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'cfg-cheap-'))
+    try {
+      expect((await writeConfigKey(dir, 'cheap_eval_provider', 'agy')).ok).toBe(true)
+      expect(JSON.parse(readFileSync(join(dir, 'agent-config.json'), 'utf8')).cheapEvalProvider).toBe('agy')
+      expect((await writeConfigKey(dir, 'cheap_eval_provider', 'auto')).ok).toBe(true)
+      expect(JSON.parse(readFileSync(join(dir, 'agent-config.json'), 'utf8'))).not.toHaveProperty('cheapEvalProvider')
+      expect((await writeConfigKey(dir, 'cheap_eval_provider', 'bogus')).ok).toBe(false)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})

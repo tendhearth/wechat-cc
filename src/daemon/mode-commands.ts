@@ -44,13 +44,16 @@ export interface ModeCommandsDeps {
   /** Lookup current nickname for this chat (null if none). Used by /whoami. */
   getUserName(chatId: string): string | null
   /**
-   * Persist a pinned model for `providerId`. Used by `/api <model>` to pin
-   * the openai-compatible provider's model in the same command that switches
-   * to it. Mirrors the `POST /v1/model` route (writes via
-   * `withActiveModel`/`saveAgentConfig`) — the mtime-cached config reader
-   * then delivers it to the next spawn via `currentModelFor`, no restart.
+   * 只读的全局配置视图(/api list 显示网关地址/全局默认模型/别名,/set 显示
+   * 后台评估用哪家)。缺省 ⇒ 这些行不显示。
    */
-  pinModel(providerId: ProviderId, model: string): void | Promise<void>
+  readConfig?: () => { openaiBaseUrl?: string; openaiModel?: string; openaiAliases?: Record<string, string>; cheapEvalProvider?: string }
+  /** `/api alias ds=DeepSeek` / `/api unalias ds`(model=null 删除)。缺省 ⇒ 别名子命令回「未接线」。 */
+  setOpenaiAlias?: (alias: string, model: string | null) => void | Promise<void>
+  /** `/set cheap <provider|auto>` 走 config-surface 的 writeConfigKey(管理员)。 */
+  setConfig?: (key: string, value: string) => Promise<{ ok: true } | { ok: false; error: string; detail?: string }>
+  /** `/api list` 的网关模型发现(daemon/openai-models.ts)。缺省 ⇒ 列表只有别名。 */
+  openaiModels?: { list(): Promise<{ models: string[]; error?: string; fromCache?: boolean }> }
   /** Per-chat prefs (chat-prefs store). /set reads+writes THIS chat's entry. */
   chatPrefs: {
     get(chatId: string): { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean; visit?: boolean }
@@ -180,6 +183,32 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     }
   }
 
+  /** `/api list`:本对话当前 · 全局默认 · 别名 · 网关现有(用户主动触发才拨)。 */
+  async function renderApiList(chatId: string): Promise<string> {
+    const cfg = deps.readConfig?.() ?? {}
+    const cur = deps.coordinator.getMode(chatId)
+    const pinned = cur.kind === 'solo' && cur.provider === 'openai' ? cur.model : undefined
+    const lines: string[] = []
+    lines.push(`📋 /api 模型${cfg.openaiBaseUrl ? `(网关 ${cfg.openaiBaseUrl})` : ''}`)
+    if (!deps.registry.has('openai')) {
+      lines.push('⚠️ openai provider 未注册 —— 要 WECHAT_OPENAI_API_KEY(daemon.env)+ openaiBaseUrl + openaiModel 三样,配好重启。')
+    }
+    lines.push(`本对话当前:${pinned ?? (cfg.openaiModel ? `${cfg.openaiModel}(全局默认)` : '未设置')}${pinned && cfg.openaiModel ? `(全局默认 ${cfg.openaiModel})` : ''}`)
+    const aliases = cfg.openaiAliases ?? {}
+    const aliasKeys = Object.keys(aliases).sort()
+    lines.push(`别名:${aliasKeys.length ? aliasKeys.map(a => `${a} → ${aliases[a]}`).join(' · ') : '无(/api alias ds=DeepSeek 起一个)'}`)
+    if (deps.openaiModels) {
+      const r = await deps.openaiModels.list()
+      if (r.error) lines.push(`网关列表拿不到:${r.error}`)
+      else {
+        const shown = r.models.slice(0, 40)
+        lines.push(`网关上有(${r.models.length}${r.fromCache ? ',缓存' : ''}):${shown.join(', ')}${r.models.length > shown.length ? ' …' : ''}`)
+      }
+    }
+    lines.push('用法:/api <别名或模型名>(只对本对话) · /api alias ds=DeepSeek · /api unalias ds · /api 回到全局默认')
+    return lines.join('\n')
+  }
+
   async function reply(chatId: string, text: string): Promise<void> {
     const r = await deps.sendMessage(chatId, text)
     if (r.error) {
@@ -223,11 +252,12 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           '**模式切换**',
           // Provider checklist: keep this list in sync with /mode's list below (~:434).
           '/cc /codex /cursor /api /gemini /agy — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)',
+          '/api list — 看网关上有哪些模型;/api <别名|模型> 切换(只对本对话);/api alias ds=DeepSeek 起短名',
           '/cc + codex — Claude 主答，Codex 当工具 (primary_tool)',
           '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
           '/chat [p1 p2 …] — 圆桌讨论',
           '/solo /stop /mode — 回到默认 / 退出 / 显示当前模式',
-          '/set — 本对话偏好(拆分回复、主动关心档位、表情包、每日打猎)',
+          '/set — 本对话偏好(拆分回复、主动关心档位、表情包、每日打猎);/set cheap 后台评估用哪家(管理员)',
           '改配置直接说就行 — 例如"换成 gemini flash"、"把知识内核打开"(管理员)',
           '',
           '**身份**',
@@ -350,6 +380,39 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         // DeepSeek`, `/agy gemini-3.7-flash-high`). Deliberately NOT
         // extended to claude/codex/cursor/gemini — their tail keeps meaning
         // "unsupported argument" below, unchanged.
+        // /api list · /api alias ds=DeepSeek · /api unalias ds — the openai
+        // provider fronts a whole gateway of models the owner can't be expected
+        // to memorise (their key sheet changes weekly); ask the gateway, and let
+        // them name the ones they use.
+        if (providerId === 'openai') {
+          const sub = /^(list|alias|unalias)(?:\s+(.*))?$/i.exec(tail)
+          if (sub) {
+            const verb = sub[1]!.toLowerCase()
+            const rest = sub[2]?.trim() ?? ''
+            if (verb === 'list') {
+              await reply(msg.chatId, await renderApiList(msg.chatId))
+              return true
+            }
+            if (!deps.setOpenaiAlias) { await reply(msg.chatId, '❌ 别名功能未接线。'); return true }
+            if (verb === 'unalias') {
+              const aliases = deps.readConfig?.().openaiAliases ?? {}
+              if (!rest || !(rest in aliases)) { await reply(msg.chatId, `❓ 没有叫 \`${rest || '(空)'}\` 的别名。现有:${Object.keys(aliases).join(', ') || '无'}`); return true }
+              await deps.setOpenaiAlias(rest, null)
+              await reply(msg.chatId, `✅ 别名 \`${rest}\` 已删。`)
+              deps.log('MODE_CMD', `chat=${msg.chatId} /api unalias ${rest}`)
+              return true
+            }
+            // alias  a=b | a = b | a b
+            const am = /^([A-Za-z0-9._-]{1,32})\s*(?:=|\s)\s*([A-Za-z0-9._/-]+)$/.exec(rest)
+            if (!am) { await reply(msg.chatId, '❓ 用法:/api alias <短名>=<网关模型名>,例如 /api alias ds=DeepSeek'); return true }
+            const [, alias, target] = am as unknown as [string, string, string]
+            if (/^(list|alias|unalias)$/i.test(alias)) { await reply(msg.chatId, `❌ \`${alias}\` 是子命令,不能当别名。`); return true }
+            await deps.setOpenaiAlias(alias, target)
+            await reply(msg.chatId, `✅ 别名 \`${alias}\` → \`${target}\`。以后 /api ${alias} 就行。`)
+            deps.log('MODE_CMD', `chat=${msg.chatId} /api alias ${alias}=${target}`)
+            return true
+          }
+        }
         if (providerId === 'openai' || providerId === 'agy') {
           // Liberal on charset (letters/digits/./_/-//), just no whitespace —
           // real model ids vary wildly across OpenAI-compatible backends
@@ -366,12 +429,17 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
             await reply(msg.chatId, `❌ provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
             return true
           }
+          // 别名先解(只对 openai):ds → DeepSeek。解不到就原样透传 —— 网关
+          // 上的原名本来就能直接用。
+          const aliased = providerId === 'openai' ? deps.readConfig?.().openaiAliases?.[tail] : undefined
+          const model = aliased ?? tail
           // 按对话钉(Mode.solo.model),不再改全局 agent-config —— 这个群
           // 钉 DeepSeek 不该把别的群也换了。全局默认走 /set / 设置面板。
-          deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: providerId, model: tail })
+          deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: providerId, model })
           const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
-          await reply(msg.chatId, `✅ 这个对话切到 ${dn} (solo)，模型 = ${tail}（只对这个对话）。下条消息开始生效。`)
-          deps.log('MODE_CMD', `chat=${msg.chatId} → solo+${providerId} model=${tail}`)
+          const shown = aliased ? `${model}(别名 ${tail})` : model
+          await reply(msg.chatId, `✅ 这个对话切到 ${dn} (solo)，模型 = ${shown}（只对这个对话）。下条消息开始生效。`)
+          deps.log('MODE_CMD', `chat=${msg.chatId} → solo+${providerId} model=${model}`)
           return true
         }
         await reply(msg.chatId, `❓ \`/${slashWord}\` 不支持参数 \`${tail}\`。试试 \`/${slashWord}\`、\`/${slashWord} + ${providerId === 'claude' ? 'codex' : 'cc'}\`、\`/solo\` 或 \`/mode\`。`)
@@ -380,7 +448,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
 
       // /set — per-chat preferences (the settings layer's dials: split, care).
       if (slashWord.toLowerCase() === 'set') {
-        const SET_USAGE = '❓ 不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)\n· /set hunt on|off (别名: 打猎 开|关)\n· /set visit on|off (别名: 串门 开|关)'
+        const SET_USAGE = '❓ 不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)\n· /set hunt on|off (别名: 打猎 开|关)\n· /set visit on|off (别名: 串门 开|关)\n· /set cheap auto|claude|agy|openai|… (管理员;后台评估用哪家)'
         const p = deps.chatPrefs.get(msg.chatId)
         if (tail === '') {
           const splitState = p.split === false ? 'off' : 'on'
@@ -399,18 +467,35 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
               if (url) panelLine = `\n\n📱 点开修改(10 分钟内有效):\n${url}`
             } catch { /* fall through to usage lines */ }
           }
-          const values = `本对话设置:\n· 拆分回复: ${splitState}\n· 主动关心: ${careState}\n· 表情包: ${stickersState}\n· 每日打猎: ${huntState}\n· 每日串门: ${visitState}`
+          const adminHere = deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false
+          const cheapLine = adminHere && deps.readConfig ? `\n· 后台评估(全局): ${deps.readConfig().cheapEvalProvider ?? 'auto'}` : ''
+          const values = `本对话设置:\n· 拆分回复: ${splitState}\n· 主动关心: ${careState}\n· 表情包: ${stickersState}\n· 每日打猎: ${huntState}\n· 每日串门: ${visitState}${cheapLine}`
           const usage = panelLine ? '' : `\n\n改法: /set split|care|stickers|hunt|visit <值>(别名: 拆分/关心/表情/打猎/串门 开|关)`
           await reply(msg.chatId, values + panelLine + usage)
           return true
         }
-        const m2 = /^(split|拆分|care|关心|stickers|表情|hunt|打猎|visit|串门)\s+(\S+)$/i.exec(tail)
+        const m2 = /^(split|拆分|care|关心|stickers|表情|hunt|打猎|visit|串门|cheap)\s+(\S+)$/i.exec(tail)
         if (!m2) {
           await reply(msg.chatId, SET_USAGE)
           return true
         }
         const key = m2[1]!.toLowerCase()
         const rawValue = m2[2]!
+
+        // /set cheap — global (agent-config), admin only: which provider runs
+        // the background one-shot evals. Not a chat pref; lives here because
+        // /set is where the owner already goes to「调档位」.
+        if (key === 'cheap') {
+          if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '❌ /set cheap 是全局设置,仅管理员可改。'); return true }
+          if (!deps.setConfig) { await reply(msg.chatId, '❌ 配置写入未接线。'); return true }
+          const r = await deps.setConfig('cheap_eval_provider', rawValue.toLowerCase())
+          if (!r.ok) { await reply(msg.chatId, `❌ 没改成:${r.detail ?? r.error}`); return true }
+          await reply(msg.chatId, rawValue.toLowerCase() === 'auto'
+            ? '✅ 后台评估回到偏好序(openai → agy → claude → codex → gemini,按已注册的来)。下一次评估生效。'
+            : `✅ 后台评估(记忆整理/辩论主持/introspect)改走 ${rawValue.toLowerCase()}。下一次评估生效,不用重启。`)
+          deps.log('MODE_CMD', `chat=${msg.chatId} /set cheap=${rawValue.toLowerCase()}`)
+          return true
+        }
 
         if (key === 'split' || key === '拆分') {
           if (!/^(on|off|开|关)$/i.test(rawValue)) {

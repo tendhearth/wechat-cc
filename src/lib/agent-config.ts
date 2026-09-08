@@ -20,6 +20,9 @@ export interface AgentConfig {
   // provider's pinned model/endpoint.
   openaiBaseUrl?: string
   openaiModel?: string
+  /** `/api` 的短名表:alias → 网关模型名(ds → DeepSeek)。主人自己起、自己
+   *  记得住的名字;网关上的原名照样能直接用。 */
+  openaiAliases?: Record<string, string>
   geminiModel?: string
   // agy provider fields (Antigravity CLI — subscription Gemini via Google AI
   // Pro OAuth). Mirrors `geminiModel?`'s optional-string shape: kept
@@ -235,6 +238,7 @@ const AgentConfigSchema = z.object({
   cursorModel: z.string().optional(),
   openaiBaseUrl: z.string().optional(),
   openaiModel: z.string().optional(),
+  openaiAliases: z.record(z.string(), z.string()).optional(),
   geminiModel: z.string().optional(),
   agyModel: z.string().optional(),
   agyBin: z.string().optional(),
@@ -329,6 +333,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.cursorModel === 'string' ? { cursorModel: parsed.cursorModel } : {}),
       ...(typeof parsed.openaiBaseUrl === 'string' ? { openaiBaseUrl: parsed.openaiBaseUrl } : {}),
       ...(typeof parsed.openaiModel === 'string' ? { openaiModel: parsed.openaiModel } : {}),
+      ...(parsed.openaiAliases && Object.keys(parsed.openaiAliases).length > 0 ? { openaiAliases: parsed.openaiAliases } : {}),
       ...(typeof parsed.geminiModel === 'string' ? { geminiModel: parsed.geminiModel } : {}),
       ...(typeof parsed.agyModel === 'string' ? { agyModel: parsed.agyModel } : {}),
       ...(typeof parsed.agyBin === 'string' ? { agyBin: parsed.agyBin } : {}),

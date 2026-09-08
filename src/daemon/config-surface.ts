@@ -58,6 +58,11 @@ export const CONFIG_SURFACE: readonly ConfigKeySpec[] = [
     effect: 'immediate', description: 'agy (Antigravity) 模型 id', validate: (v) => MODEL_RE.test(v) },
   { key: 'openaiBaseUrl', store: 'agent', field: 'openaiBaseUrl', type: 'string', writable: true,
     effect: 'immediate', description: 'OpenAI 兼容后端地址 (http(s) URL)', validate: (v) => URL_RE.test(v) },
+  // 后台一次性评估(记忆整理 / 辩论主持 / introspect)走哪家。留空 = 偏好序
+  // (openai 注册即第一 —— 端点若是慢模型/特化服务,这里指定别家)。
+  { key: 'cheap_eval_provider', store: 'agent', field: 'cheapEvalProvider', type: 'enum',
+    values: ['auto', 'claude', 'codex', 'cursor', 'openai', 'gemini', 'agy'], writable: true, effect: 'immediate',
+    description: '后台评估(记忆整理/辩论主持/introspect)用哪家;auto = 偏好序' },
   { key: 'day_tz_offset_minutes', store: 'agent', field: 'day_tz_offset_minutes', type: 'number', writable: true,
     nullable: true, effect: 'daemon-restart',
     description: '「连续 N 天」的时区偏移(相对 UTC 的分钟,东为正:UTC+8=480,PDT=-420)。留空 = 跟随系统时区(默认,推荐)',
@@ -152,7 +157,9 @@ export async function writeConfigKey(
     if (!spec.values!.includes(rawStr)) {
       return { ok: false, error: 'invalid_value', detail: `可选值: ${spec.values!.join(' | ')}` }
     }
-    coerced = rawStr
+    // cheap_eval_provider 的 auto = 不钉(清字段回到偏好序),不是存个 'auto'
+    // 让注册表去找一个叫 auto 的 provider。
+    coerced = spec.key === 'cheap_eval_provider' && rawStr === 'auto' ? null : rawStr
   } else {
     if (rawStr.length === 0) return { ok: false, error: 'invalid_value', detail: '不能为空' }
     if (spec.validate && !spec.validate(rawStr)) {
@@ -164,7 +171,12 @@ export async function writeConfigKey(
   if (spec.store === 'agent') {
     const cfg = loadAgentConfig(stateDir)
     const previous = (cfg as unknown as Record<string, unknown>)[spec.field as string]
-    saveAgentConfig(stateDir, { ...cfg, [spec.field]: coerced } as AgentConfig)
+    // null = 清回缺省:删掉字段而不是写 null(zod 里多数字段是 optional 不是
+    // nullable,写 null 下次 load 会被丢掉,但 JSON 里留个 null 只会误导人)。
+    const next = { ...cfg } as Record<string, unknown>
+    if (coerced === null) delete next[spec.field as string]
+    else next[spec.field as string] = coerced
+    saveAgentConfig(stateDir, next as unknown as AgentConfig)
     return { ok: true, key, effect: spec.effect, previous: normalizePrev(previous) }
   }
   const cfg = loadCompanionConfig(stateDir)

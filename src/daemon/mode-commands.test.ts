@@ -15,6 +15,8 @@ function setup(opts: {
   initialUserName?: string
   isAdmin?: (userId: string) => boolean
   tier?: UserTier
+  config?: { openaiBaseUrl?: string; openaiModel?: string; openaiAliases?: Record<string, string>; cheapEvalProvider?: string }
+  models?: { models: string[]; error?: string; fromCache?: boolean }
 } = {}) {
   const registered = opts.registered ?? ['claude', 'codex']
   const set = vi.fn<(chatId: string, mode: Mode) => void>()
@@ -25,7 +27,21 @@ function setup(opts: {
     sentMessages.push([chatId, text])
     return { msgId: 'm-1' }
   })
-  const pinModel = vi.fn<(providerId: ProviderId, model: string) => void>()
+  // /api list · alias · /set cheap 的读写面(内存版 agent-config)
+  const cfg: { openaiBaseUrl?: string; openaiModel?: string; openaiAliases?: Record<string, string>; cheapEvalProvider?: string } = { ...(opts.config ?? {}) }
+  const setOpenaiAlias = vi.fn((alias: string, model: string | null) => {
+    const next = { ...(cfg.openaiAliases ?? {}) }
+    if (model === null) delete next[alias]; else next[alias] = model
+    cfg.openaiAliases = next
+  })
+  const setConfig = vi.fn(async (key: string, value: string) => {
+    if (key === 'cheap_eval_provider') { if (value === 'auto') delete cfg.cheapEvalProvider; else cfg.cheapEvalProvider = value; return { ok: true as const } }
+    return { ok: false as const, error: 'unknown_key' }
+  })
+  const openaiModels = { list: vi.fn(async () => opts.models ?? { models: ['DeepSeek', 'KIMI', 'Qwen3.8'] }) }
+  // 旧的 pinModel 已删(/api <model> 现在按对话钉);留个永不该被调的哨兵,
+  // 老测试断言 not.toHaveBeenCalled 仍成立。
+  const pinModel = vi.fn()
   const prefsData = new Map<string, { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean }>()
   const chatPrefs = {
     get: (c: string) => prefsData.get(c) ?? {},
@@ -49,13 +65,16 @@ function setup(opts: {
     sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
     setUserName: vi.fn(async (chat: string, name: string) => { storedName = { chat, name } }),
     getUserName: vi.fn(() => opts.initialUserName ?? null),
-    pinModel,
+    readConfig: () => cfg,
+    setOpenaiAlias,
+    setConfig,
+    openaiModels,
     chatPrefs,
     log: () => {},
     isAdmin: opts.isAdmin,
     resolveTier: () => opts.tier ?? 'admin',
   })
-  return { cmds, set, sendMessage, sentMessages, pinModel, chatPrefs, prefsData, getStored: () => stored, getStoredName: () => storedName }
+  return { cmds, set, sendMessage, sentMessages, pinModel, chatPrefs, prefsData, cfg, setOpenaiAlias, setConfig, openaiModels, getStored: () => stored, getStoredName: () => storedName }
 }
 
 describe('makeModeCommands', () => {
@@ -243,7 +262,6 @@ describe('makeModeCommands', () => {
       sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
       setUserName: async () => {},
       getUserName: () => null,
-      pinModel: async () => {},
       chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
       resolveTier: () => 'admin' as const,
@@ -288,7 +306,6 @@ describe('makeModeCommands', () => {
       sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
       setUserName: async () => {},
       getUserName: () => null,
-      pinModel: async () => {},
       chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
       resolveTier: () => 'admin' as const,
@@ -334,7 +351,6 @@ describe('makeModeCommands', () => {
       sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
       setUserName: async () => {},
       getUserName: () => null,
-      pinModel: async () => {},
       chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
       resolveTier: () => 'admin' as const,
@@ -366,7 +382,6 @@ describe('makeModeCommands', () => {
       sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
       setUserName: async () => {},
       getUserName: () => null,
-      pinModel: async () => {},
       chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
       resolveTier: () => 'admin' as const,
@@ -453,7 +468,6 @@ describe('makeModeCommands', () => {
       sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
       setUserName: async () => {},
       getUserName: () => null,
-      pinModel: async () => {},
       chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
       log: () => {},
       resolveTier: () => 'admin' as const,
@@ -1117,5 +1131,95 @@ describe('makeModeCommands', () => {
     const { cmds, sentMessages } = setup()
     await cmds.handle(inbound('/help'))
     expect(sentMessages[0]?.[1]).toContain('每日打猎')
+  })
+})
+
+// ── /api list · alias · unalias — 网关一整面模型,让人记得住 ─────────────
+describe('/api list / alias / unalias', () => {
+  const reg = ['claude', 'openai']
+  it('/api list shows this chat\'s pin, the global default, aliases, and what the gateway has', async () => {
+    const { cmds, sentMessages } = setup({
+      registered: reg,
+      initialMode: { kind: 'solo', provider: 'openai', model: 'Qwen3.8' },
+      config: { openaiBaseUrl: 'https://llm.example/v1', openaiModel: 'DeepSeek', openaiAliases: { ds: 'DeepSeek', kimi: 'kimi-k2.7-code' } },
+    })
+    expect(await cmds.handle(inbound('/api list'))).toBe(true)
+    const t = sentMessages[0]![1]
+    expect(t).toContain('https://llm.example/v1')
+    expect(t).toContain('本对话当前:Qwen3.8')
+    expect(t).toContain('全局默认 DeepSeek')
+    expect(t).toContain('ds → DeepSeek')
+    expect(t).toContain('kimi → kimi-k2.7-code')
+    expect(t).toContain('网关上有(3):DeepSeek, KIMI, Qwen3.8')
+    expect(t).toContain('/api alias')
+  })
+  it('/api list degrades gracefully: gateway unreachable → says so, still lists aliases; provider unregistered → says what\'s missing', async () => {
+    const { cmds, sentMessages } = setup({ registered: ['claude'], config: { openaiAliases: { ds: 'DeepSeek' } }, models: { models: [], error: '连不上网关:ECONNREFUSED' } })
+    await cmds.handle(inbound('/api list'))
+    const t = sentMessages[0]![1]
+    expect(t).toContain('未注册')
+    expect(t).toContain('WECHAT_OPENAI_API_KEY')
+    expect(t).toContain('网关列表拿不到:连不上网关:ECONNREFUSED')
+    expect(t).toContain('ds → DeepSeek')
+  })
+  it('/api alias ds=DeepSeek persists; /api ds then resolves the alias into the per-chat pin', async () => {
+    const { cmds, set, sentMessages, cfg } = setup({ registered: reg })
+    await cmds.handle(inbound('/api alias ds=DeepSeek'))
+    expect(cfg.openaiAliases).toEqual({ ds: 'DeepSeek' })
+    expect(sentMessages[0]![1]).toContain('ds')
+    await cmds.handle(inbound('/api ds'))
+    expect(set).toHaveBeenLastCalledWith('chat-1', { kind: 'solo', provider: 'openai', model: 'DeepSeek' })
+    expect(sentMessages[1]![1]).toContain('DeepSeek(别名 ds)')
+  })
+  it('/api alias accepts `a = b` and `a b` spellings; rejects a subcommand name as alias', async () => {
+    const { cmds, cfg, sentMessages } = setup({ registered: reg })
+    await cmds.handle(inbound('/api alias qwen = Qwen3.8-Instruct'))
+    await cmds.handle(inbound('/api alias k kimi-k2.7-code'))
+    expect(cfg.openaiAliases).toEqual({ qwen: 'Qwen3.8-Instruct', k: 'kimi-k2.7-code' })
+    await cmds.handle(inbound('/api alias list=DeepSeek'))
+    expect(sentMessages[2]![1]).toContain('子命令')
+    expect(cfg.openaiAliases).not.toHaveProperty('list')
+  })
+  it('/api unalias removes; unknown alias is reported with the existing ones', async () => {
+    const { cmds, cfg, sentMessages } = setup({ registered: reg, config: { openaiAliases: { ds: 'DeepSeek', k: 'kimi' } } })
+    await cmds.handle(inbound('/api unalias ds'))
+    expect(cfg.openaiAliases).toEqual({ k: 'kimi' })
+    await cmds.handle(inbound('/api unalias nope'))
+    expect(sentMessages[1]![1]).toContain('没有叫')
+    expect(sentMessages[1]![1]).toContain('k')
+  })
+  it('an unaliased name still passes through verbatim (gateway原名照样能用)', async () => {
+    const { cmds, set } = setup({ registered: reg, config: { openaiAliases: { ds: 'DeepSeek' } } })
+    await cmds.handle(inbound('/api GLM-FLASH'))
+    expect(set).toHaveBeenLastCalledWith('chat-1', { kind: 'solo', provider: 'openai', model: 'GLM-FLASH' })
+  })
+})
+
+// ── /set cheap — 后台评估用哪家(全局,管理员) ─────────────────────────
+describe('/set cheap', () => {
+  it('admin: writes cheap_eval_provider through the config surface and confirms; auto clears it', async () => {
+    const { cmds, cfg, sentMessages, setConfig } = setup({ registered: ['claude', 'agy'], isAdmin: () => true })
+    await cmds.handle(inbound('/set cheap agy'))
+    expect(setConfig).toHaveBeenCalledWith('cheap_eval_provider', 'agy')
+    expect(cfg.cheapEvalProvider).toBe('agy')
+    expect(sentMessages[0]![1]).toContain('agy')
+    expect(sentMessages[0]![1]).toContain('不用重启')
+    await cmds.handle(inbound('/set cheap auto'))
+    expect(cfg.cheapEvalProvider).toBeUndefined()
+    expect(sentMessages[1]![1]).toContain('偏好序')
+  })
+  it('non-admin is refused (it is a global knob)', async () => {
+    const { cmds, setConfig, sentMessages } = setup({ isAdmin: () => false })
+    await cmds.handle(inbound('/set cheap agy'))
+    expect(setConfig).not.toHaveBeenCalled()
+    expect(sentMessages[0]![1]).toContain('仅管理员')
+  })
+  it('/set overview shows the global cheap line to admins only', async () => {
+    const a = setup({ isAdmin: () => true, config: { cheapEvalProvider: 'agy' } })
+    await a.cmds.handle(inbound('/set'))
+    expect(a.sentMessages[0]![1]).toContain('后台评估(全局): agy')
+    const g = setup({ isAdmin: () => false, config: { cheapEvalProvider: 'agy' } })
+    await g.cmds.handle(inbound('/set'))
+    expect(g.sentMessages[0]![1]).not.toContain('后台评估')
   })
 })

@@ -96,7 +96,7 @@ export function createProviderRegistry(opts?: {
    * base_url 指向特化本地服务时,内部评估要么得到无意义回答、要么把费用记
    * 到意外的账上。指定后只用它(不参与 failover 轮替);未指定保持原偏好序。
    */
-  cheapEvalProvider?: string
+  cheapEvalProvider?: string | (() => string | undefined)
   /**
    * 后台 cheapEval 的网络预检(2026-08-29):开机 0.2s 的 introspect 补跑
    * 曾在代理未就绪时 spawn agy → agy 刷 token 撞超时 → 弹浏览器 OAuth 页。
@@ -135,10 +135,13 @@ export function createProviderRegistry(opts?: {
     },
     getCheapEval() {
       // 显式指定优先 — 见 opts.cheapEvalProvider 文档。
-      if (opts?.cheapEvalProvider) {
-        const pinned = entries.get(opts.cheapEvalProvider as ProviderId)?.provider.cheapEval
+      // 可以是 getter(bootstrap 传 mtime 缓存的 config 读法),这样 /set cheap
+      // 改完下一次评估就生效,不用重启。
+      const pinnedId = typeof opts?.cheapEvalProvider === 'function' ? opts.cheapEvalProvider() : opts?.cheapEvalProvider
+      if (pinnedId) {
+        const pinned = entries.get(pinnedId as ProviderId)?.provider.cheapEval
         if (pinned) return pinned
-        opts.log?.(`cheap_eval_provider=${opts.cheapEvalProvider} 未注册或无 cheapEval — 回落偏好序`)
+        opts?.log?.(`cheap_eval_provider=${pinnedId} 未注册或无 cheapEval — 回落偏好序`)
       }
       // Preferred order first, then any other registered provider. The
       // implementations are arrow-like (close over `opts`, never `this`),

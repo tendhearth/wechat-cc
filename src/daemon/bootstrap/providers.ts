@@ -9,7 +9,7 @@ import type { ProviderId } from '../../core/conversation'
 import type { PermissionMode } from '../../core/capability-matrix'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { ConversationStore } from '../../core/conversation-store'
-import type { AgentConfig, AgentProviderKind } from '../../lib/agent-config'
+import { makeMtimeCachedConfigReader, type AgentConfig, type AgentProviderKind } from '../../lib/agent-config'
 import type { Access } from '../../lib/access'
 import type { CompanionConfig } from '../companion/config'
 import { loadAccess } from '../../lib/access'
@@ -121,6 +121,9 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     agyGeminiConfigDir,
   } = deps
   const HOME = homedir()
+  // mtime 缓存的 config 读法(一次 stat):给注册表的 cheap_eval_provider
+  // getter 用,/set cheap 改完不用重启。
+  const readAgentConfig = makeMtimeCachedConfigReader(deps.stateDir)
 
   const defaultProviderId: ProviderId = deps.agentProviderKind
     ?? (process.env.WECHAT_AGENT_PROVIDER === 'codex' ? 'codex' : configuredAgent.provider)
@@ -135,7 +138,9 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // provider; the user's `codex login` or OPENAI_API_KEY env are honored
   // transparently by the SDK.
   const registry = createProviderRegistry({
-    ...(configuredAgent.cheapEvalProvider ? { cheapEvalProvider: configuredAgent.cheapEvalProvider } : {}),
+    // getter:/set cheap / 面板改了 cheap_eval_provider,下一次后台评估就换家,
+    // 不用重启(mtime 缓存的读法,一次 stat)。
+    cheapEvalProvider: () => readAgentConfig().cheapEvalProvider,
     // 后台 cheapEval 网络预检(2026-08-29,弹 OAuth 浏览器页根治的最后一块):
     // failover 试某候选前 HEAD 探它的 API origin,不可达直接落到下一家,
     // 不再冷启动一个注定撞网络超时的 CLI。UNDER_TEST_RUNNER 下不接——单测

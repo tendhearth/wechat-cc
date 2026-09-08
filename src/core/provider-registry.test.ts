@@ -336,3 +336,19 @@ describe('getCheapEvalBudgetMs —— 延迟预算由 provider 声明', () => {
     expect(r.getCheapEvalBudgetMs()).toBe(DEFAULT_CHEAP_EVAL_BUDGET_MS)
   })
 })
+
+describe('cheapEvalProvider as a getter (hot-reload)', () => {
+  it('re-reads the pin on every getCheapEval() so /set cheap takes effect without a restart', () => {
+    let pin: string | undefined = 'a'
+    const r = createProviderRegistry({ cheapEvalProvider: () => pin })
+    const evA = async () => 'A'
+    const evB = async () => 'B'
+    r.register('a', { spawn: async () => { throw new Error('x') }, cheapEval: evA } as never, { displayName: 'A', canResume: () => false })
+    r.register('b', { spawn: async () => { throw new Error('x') }, cheapEval: evB } as never, { displayName: 'B', canResume: () => false })
+    expect(r.getCheapEval()).toBe(evA)
+    pin = 'b'
+    expect(r.getCheapEval()).toBe(evB)
+    pin = undefined
+    expect(r.getCheapEval()).not.toBeNull()   // 回落偏好序
+  })
+})
