@@ -47,6 +47,13 @@ export const KNOWN_KNOWLEDGE_PLUGINS = ['wxsearch', 'wxmedia'] as const
 export interface BuildSystemPromptArgs {
   /** Which provider this session is for. Used to compute peer + delegate tool name. */
   providerId: ProviderId
+  /**
+   * The model id this session actually runs on (session-manager resolves it
+   * per spawn and hands it here). Stated in the identity line so「你是哪个
+   * 模型」gets a truthful answer from any tier, no tool call. Undefined ⇒
+   * the provider's own construction default (rendered as such).
+   */
+  model?: string
   /** The OTHER provider id; the session's delegate-mcp child exposes delegate_<peer>. */
   peerProviderId: ProviderId
   /** Whether companion proactive-tick is enabled at boot. */
@@ -259,7 +266,7 @@ export interface BuildSystemPromptArgs {
  * sdkOptionsForProject.
  */
 export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
-  const { providerId, peerProviderId, companionEnabled, delegateAvailable } = args
+  const { providerId, peerProviderId, companionEnabled, delegateAvailable, model } = args
 
   // `knowledge_search` is a daemon-owned tool (agent-facing search design
   // Task 5), independent of whether any KNOWN_KNOWLEDGE_PLUGINS entry is
@@ -300,7 +307,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
       : stickerEmptyLibrarySection()
 
   const sections: string[] = [
-    baseChannelSection(providerId),
+    baseChannelSection(providerId, model),
     args.persona && args.persona.trim().length > 0 ? personaSection(args.persona) : '',
     args.coreMemory && args.coreMemory.trim().length > 0 ? coreMemorySection(args.coreMemory) : '',
     args.knowledgeMemory && args.knowledgeMemory.trim().length > 0 ? knowledgeMemorySection(args.knowledgeMemory) : '',
@@ -329,8 +336,10 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
 
 // ─── sections ──────────────────────────────────────────────────────────
 
-function baseChannelSection(providerId: ProviderId): string {
-  return `你是 ${providerId}。你在 wechat-cc 的消息通道里接收来自作者个人微信的消息。基础规则：
+function baseChannelSection(providerId: ProviderId, model?: string): string {
+  const modelTag = model !== undefined ? `当前模型 ${model}` : '当前模型:provider 默认,未单独固定'
+  return `你是 ${providerId}(${modelTag})。你在 wechat-cc 的消息通道里接收来自作者个人微信的消息。基础规则：
+- 用户问你是谁 / 哪个模型 / 用的谁家 → 按上面这行**如实回答**(provider + 模型 id),不要凭感觉猜自己的版本。
 - 每条入站消息用 \`<wechat chat_id="..." user="..." account="..." msg_type="..." ts="...">...</wechat>\` 包裹。chat_id 是路由键；多条连续对话可能来自同一个 chat_id。
 - 信封上的 \`ts\` 是这条消息（或 \`<companion_tick>\` 唤醒）的发生时间，也是你的「当前时间」基准。做任何日期/时间推理（"下周三"、"三天后"、判断某事是否已过期）都以 \`ts\` 为准——**不要用系统提示里的 "Today's date"**，它可能与真实对话时间不符。
 - 媒体附件以 \`[image:/abs/path]\` \`[file:/abs/path]\` \`[voice:/abs/path]\` 行内标注，用 Read/Bash 等工具打开或分析它们。

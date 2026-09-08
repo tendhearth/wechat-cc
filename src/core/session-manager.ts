@@ -50,7 +50,7 @@ export interface SessionManagerOptions {
    * Omitted in tests/embeddings → `appendInstructions` is left off the
    * SpawnContext entirely.
    */
-  buildInstructions?: (providerId: ProviderId, tierProfile: TierProfile, chatId: string) => string
+  buildInstructions?: (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string) => string
   /**
    * The pinned model id for a (provider) spawn, read per-spawn so a `/model`
    * switch applies without a daemon restart. Returns undefined when no pin
@@ -210,8 +210,11 @@ export class SessionManager {
     // mcpEnv: daemon-owned, computed once per spawn, forwarded for the provider
     // to inject. Conditionally spread so non-wired callers (tests/embeddings)
     // leave the field off entirely.
-    const appendInstructions = this.opts.buildInstructions?.(req.providerId, req.tierProfile, req.chatId)
+    // Model first, then the prompt: the prompt states the model so the agent
+    // can answer「你是哪个模型」truthfully instead of guessing (or calling an
+    // admin-only tool a trusted user can't reach).
     const model = this.opts.currentModelFor?.(req.providerId)
+    const appendInstructions = this.opts.buildInstructions?.(req.providerId, req.tierProfile, req.chatId, model)
     let session: AgentSession
     try {
       session = await provider.spawn(project, {

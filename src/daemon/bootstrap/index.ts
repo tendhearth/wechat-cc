@@ -572,8 +572,18 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // what lets `/api <model>` (which switches ONE chat to openai while the
   // global default may stay claude) hot-reload the openai model on the next
   // spawn with no restart. Read via the mtime-cached reader.
-  const currentModelFor = (providerId: ProviderId): string | undefined =>
-    modelForProvider(readAgentConfig(), providerId)
+  const currentModelFor = (providerId: ProviderId): string | undefined => {
+    const pinned = modelForProvider(readAgentConfig(), providerId)
+    if (pinned !== undefined) return pinned
+    // 没钉时报 provider 实际会用的默认值,而不是 undefined —— 这个值同时
+    // 进系统提示(「当前模型 …」),说「provider 默认」不如说出真名。
+    // claude 的默认在 currentClaudeModel();cursor/agy 与 providers.ts 里
+    // 注册时的字面量一致(改那边记得改这边)。
+    if (providerId === 'claude') return currentClaudeModel()
+    if (providerId === 'cursor') return 'auto'
+    if (providerId === 'agy') return 'gemini-3.7-flash-medium'
+    return undefined
+  }
 
   const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string): Options => {
     // The per-session system prompt is assembled by the daemon's
@@ -725,7 +735,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // later with `const` and would be a TDZ hazard if any session's prompt
   // were built before social wiring completes.
   let socialToolsWired = false
-  const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string): string => {
+  const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string): string => {
     const p = deps.personaFor?.(chatId)
     // owner-onboarding design §C2, fix round 2: the empty-library variant
     // nudges `save_sticker` — a memory_write-gated write, same posture as
@@ -741,6 +751,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       : rawStickerTags
     return buildSystemPrompt({
       providerId,
+      // 让 bot 知道自己此刻跑的是哪个模型(session-manager 按 spawn 解析后
+      // 传进来;claude 的解析见下面 currentModelFor 的 claude 分支)。
+      model,
       // Unused when delegateAvailable is false; fall back to the daemon default.
       peerProviderId: capabilitiesFor(providerId).defaultPeer ?? defaultProviderId,
       companionEnabled: deps.ilink.companion.status().enabled,

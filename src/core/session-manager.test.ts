@@ -181,6 +181,21 @@ describe('SessionManager', () => {
     await mgr.shutdown()
   })
 
+  it('hands the resolved model to buildInstructions so the prompt can state it (model self-awareness)', async () => {
+    const seen: Array<string | undefined> = []
+    const spawn = vi.fn(async () => makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] }))
+    const mgr = new SessionManager({
+      maxConcurrent: 4,
+      idleEvictMs: 60_000,
+      registry: registryWithProvider({ spawn } as unknown as AgentProvider),
+      buildInstructions: (_p, _t, _c, model) => { seen.push(model); return '' },
+      currentModelFor: () => 'claude-opus-5',
+    })
+    await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'c', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
+    expect(seen).toEqual(['claude-opus-5'])
+    await mgr.shutdown()
+  })
+
   it('omits model when currentModelFor returns undefined', async () => {
     let hadKey = true
     const spawn = vi.fn(async (_p: unknown, ctx: object) => {

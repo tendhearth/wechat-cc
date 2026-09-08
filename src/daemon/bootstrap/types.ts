@@ -255,7 +255,7 @@ export interface Bootstrap {
    * per-chat sections (currently: the care section, via `deps.careLevelFor`).
    * Exposed for tests.
    */
-  buildInstructions: (providerId: ProviderId, tierProfile: TierProfile, chatId: string) => string
+  buildInstructions: (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string) => string
   /** Daemon-default provider id — what new chats get until user runs `/cc` or `/codex`. */
   defaultProviderId: ProviderId
   /** Backward-compat alias for defaultProviderId. Pre-P2 callers expected this name. */

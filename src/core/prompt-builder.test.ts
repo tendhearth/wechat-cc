@@ -19,6 +19,19 @@ describe('buildSystemPrompt', () => {
     expect(p).toContain('<quote')
   })
 
+  // 主人问「你是哪个模型」—— bot 之前只知道自己是 claude,不知道模型 id,
+  // 要么瞎猜要么去调 admin-only 的 model_get(信任用户还被挡)。真相直接
+  // 写进提示,零工具零权限。
+  it('states the current model id next to the identity line when known', () => {
+    const p = buildSystemPrompt({ ...defaults(), model: 'claude-opus-5' })
+    expect(p).toContain('你是 claude(当前模型 claude-opus-5)')
+    expect(p).toContain('如实回答')
+  })
+  it('falls back to「provider 默认」wording when no model is pinned', () => {
+    const p = buildSystemPrompt({ ...defaults() })
+    expect(p).toContain('你是 claude(当前模型:provider 默认')
+  })
+
   it('opens with `你是 ${providerId}` so the agent knows its own identity (chatroom mode peer disambiguation)', () => {
     const pClaude = buildSystemPrompt({ ...defaults(), providerId: 'claude', peerProviderId: 'codex' })
     expect(pClaude).toContain('你是 claude')
