@@ -303,8 +303,47 @@ export function assertNotAuthFailed(text: string, log: (tag: string, line: strin
  */
 const REPLY_TOOLS = new Set(['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast', 'send_sticker', 'search_online_sticker', 'send_online_sticker_candidate', 'sticker_feedback'])
 
+/** 我们的 wechat MCP 服务器的规范名 —— 进程内 SDK(claude / codex /
+ *  cursor-SDK / gemini)都按这个键注册,工具名因此是 `mcp__wechat__reply`。 */
+export const WECHAT_MCP_SERVER = 'wechat'
+
+/**
+ * 外部 CLI(agy、cursor-agent)不吃我们传的 mcpServers:它们只读自己的
+ * **全局** 配置文件,我们的条目必须带命名空间前缀才不会撞上主人自己装的
+ * 服务器 —— 于是它们回报的 `ServerName` 是那个命名空间键,不是 `wechat`。
+ * 这两个常量是 bootstrap 的 agy-mcp-config / cursor-mcp-config 与这里
+ * 共用的唯一事实源(那两个文件从这里 re-export)。
+ *
+ * WHY 这条是承重的(真机 2026-09-08):`isReplyToolCall` 用 server 名判定
+ * 「这一轮 agent 自己发消息了吗」。agy 的 `wechat-cc-wechat` 没折回规范名,
+ * 于是每个 agy 回合都 replyToolCalled=false,协调器的 FALLBACK_REPLY 在
+ * agent 已经把正文发出去之后,又把模型的旁白(「已回复用户的问候。」)当
+ * 成回复发了一遍 —— 主人每问一句收到两条。
+ */
+export const AGY_WECHAT_MCP_NAMESPACE_ID = 'wechat-cc-wechat'
+export const CURSOR_WECHAT_MCP_NAMESPACE_ID = 'wechat-cc:wechat'
+
+const WECHAT_MCP_SERVER_ALIASES: ReadonlySet<string> = new Set([
+  WECHAT_MCP_SERVER,
+  AGY_WECHAT_MCP_NAMESPACE_ID,
+  CURSOR_WECHAT_MCP_NAMESPACE_ID,
+])
+
+/**
+ * 把外部 CLI 报上来的命名空间键折回规范名;其他服务器名原样返回。
+ * Provider 在 **发事件之前** 调用它(见 agy-agent-provider),这样下游
+ * 所有消费者(reply 判定、TURN 日志的 tools=、桌宠活动信号)看到的都是
+ * 同一个 `wechat`。`isReplyToolCall` 内部也过一道,是纵深防御:将来新加
+ * 的 provider 忘了折,回复判定也不会再静默失效。
+ */
+export function normalizeWechatMcpServer(server: string | undefined): string | undefined {
+  return server !== undefined && WECHAT_MCP_SERVER_ALIASES.has(server) ? WECHAT_MCP_SERVER : server
+}
+
 export function isReplyToolCall(ev: AgentEvent): boolean {
-  return ev.kind === 'tool_call' && ev.server === 'wechat' && REPLY_TOOLS.has(ev.tool)
+  return ev.kind === 'tool_call'
+    && normalizeWechatMcpServer(ev.server) === WECHAT_MCP_SERVER
+    && REPLY_TOOLS.has(ev.tool)
 }
 
 /**

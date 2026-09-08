@@ -11,7 +11,7 @@
  * source of the CONTROLLER RULINGS baked into arg assembly below).
  */
 import { tmpdir } from 'node:os'
-import { assertNotAuthFailed, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type ProviderCapabilities, type SpawnContext } from './agent-provider'
+import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type ProviderCapabilities, type SpawnContext } from './agent-provider'
 import { makeAgyStreamParser } from './agy-stream'
 import { makeTurnEmitter } from './turn-emitter'
 
@@ -413,7 +413,7 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
                       continue
                     }
                     if (ev.kind === 'tool_call') {
-                      yield em.toolCall(ev.tool, ev.server)
+                      yield em.toolCall(ev.tool, normalizeWechatMcpServer(ev.server))
                       continue
                     }
                     if (ev.kind === 'result') {

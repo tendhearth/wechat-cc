@@ -20,8 +20,9 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { McpStdioSpec } from '../../core/mcp-stdio-spec'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
+import { CURSOR_WECHAT_MCP_NAMESPACE_ID } from '../../core/agent-provider'
 
-export const CURSOR_WECHAT_MCP_NAMESPACE_ID = 'wechat-cc:wechat'
+export { CURSOR_WECHAT_MCP_NAMESPACE_ID }
 
 const CONFIG_FILE_NAME = 'mcp.json'
 const LOG_TAG = 'cursor-mcp'

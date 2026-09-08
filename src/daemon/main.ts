@@ -28,6 +28,7 @@ import { registerReminders } from './reminders/sweeper'
 import { makeRemindersStore } from './reminders/store'
 import { buildInboundPipeline } from './inbound/build'
 import { runStartupSweeps } from './startup-sweeps'
+import { markPlannedRestart } from './notify-startup'
 import { wireMain } from './wiring'
 import type { TickBodies } from './wiring/tick-bodies'
 import { makeChatPrefs } from './chat-prefs'
@@ -205,6 +206,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   // closure rather than two restart mechanisms.
   const requestRestart = (reason: string) => {
     log('DAEMON', `restart requested (${reason}) — shutting down for KeepAlive respawn`)
+    // 给下次开机留一张「这次是计划内的」纸条,notify-startup 据此决定
+    // 要不要在微信里播报 —— 自愈重启是主人 commit 触发的,不该打扰他。
+    markPlannedRestart(stateDir, reason)
     setTimeout(() => { void shutdown().finally(() => process.exit(0)) }, 500)
   }
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { isProactiveWindowClosed } from './ilink/outbound-health'
 import { readJsonFile } from '../lib/read-json-file'
@@ -15,6 +15,47 @@ export const WARM_FIRST_STARTUP_TEXT = '我上线啦 👋 直接跟我说话就�
 // re-launch within seconds. Don't notify the owner each loop — only the
 // first time and any future "real" restart (≥ this many ms since last).
 const RESTART_FLOOR_MS = 60_000
+
+/** 计划内重启的面包屑 —— 关机侧写,下次开机侧读一次就删。 */
+export const PLANNED_RESTART_FILE = 'planned-restart.json'
+
+/**
+ * 只有这一种重启对主人是「无事发生」:daemon 空闲时发现 git HEAD 动了,
+ * 自己重启去加载新代码(self-restart-stale-code)。**是主人自己 commit
+ * 触发的**,微信里再播报一次纯属噪声 —— dogfood 的日子里一天能撞好几回,
+ * 而且因为推送票据常常过期,它会攒成 pending-notify,在主人下次说话之后
+ * 才补发:读起来就像「我一说话它就重启了」(真机 2026-09-08)。
+ *
+ * 其余每一种都照旧通知:崩溃后 KeepAlive 拉起(根本没有面包屑)、
+ * 操作员 POST /v1/daemon/restart(是主人主动要的,回一句「我回来了」有用)。
+ */
+const SILENT_RESTART_REASONS: ReadonlySet<string> = new Set(['self-restart-stale-code'])
+
+/** 面包屑的有效期。正常路径是「写完 500ms 后退出、KeepAlive 秒级拉起」,
+ *  所以几分钟足够宽松。设上限是为了:万一某次开机在 notifyStartup 之前
+ *  就崩了、面包屑没被吃掉,它也不会一直静默后面真正的意外重启。 */
+const PLANNED_RESTART_TTL_MS = 5 * 60_000
+
+/** 关机侧调用(main.ts requestRestart):留下「这次是计划内的」。
+ *  best-effort —— 写不成最多是多发一条通知,不能因此挡住重启。 */
+export function markPlannedRestart(stateDir: string, reason: string): void {
+  try {
+    mkdirSync(stateDir, { recursive: true, mode: 0o700 })
+    writeFileSync(join(stateDir, PLANNED_RESTART_FILE), JSON.stringify({ reason, ts: Date.now() }) + '\n', { mode: 0o600 })
+  } catch { /* best effort */ }
+}
+
+/** 开机侧:读一次并**总是**删掉,返回是否该静默这次启动通知。 */
+function consumePlannedRestart(stateDir: string, now: number): { silent: boolean; reason?: string } {
+  const path = join(stateDir, PLANNED_RESTART_FILE)
+  if (!existsSync(path)) return { silent: false }
+  let parsed: { reason?: string; ts?: number } = {}
+  try { parsed = readJsonFile<{ reason?: string; ts?: number }>(path) } catch { /* 坏了就当没有 */ }
+  rmSync(path, { force: true })
+  const fresh = typeof parsed.ts === 'number' && now - parsed.ts >= 0 && now - parsed.ts <= PLANNED_RESTART_TTL_MS
+  const silent = fresh && typeof parsed.reason === 'string' && SILENT_RESTART_REASONS.has(parsed.reason)
+  return { silent, reason: parsed.reason }
+}
 
 export interface StartupContext {
   pid: number
@@ -34,7 +75,7 @@ export interface StartupNotifyDeps {
 
 export interface StartupNotifyResult {
   notified: boolean
-  reason?: 'too-soon' | 'no-recipients' | 'send-failed-all'
+  reason?: 'too-soon' | 'no-recipients' | 'send-failed-all' | 'planned-restart'
   recipients: string[]
   sinceLastMs: number | null
 }
@@ -66,6 +107,13 @@ export async function notifyStartup(
   if (sinceLast !== null && sinceLast < RESTART_FLOOR_MS) {
     deps.log('NOTIFY', `skip startup notify: restarted ${(sinceLast / 1000).toFixed(1)}s after previous (within ${RESTART_FLOOR_MS / 1000}s floor — likely KeepAlive crash-loop)`)
     return { notified: false, reason: 'too-soon', recipients: [], sinceLastMs: sinceLast }
+  }
+
+  // 计划内自愈重启:面包屑总要消费(读完即删),但只有它才让这次启动闭嘴。
+  const planned = consumePlannedRestart(deps.stateDir, now)
+  if (planned.silent) {
+    deps.log('NOTIFY', `skip startup notify: planned restart (${planned.reason}) — 主人自己 commit 触发的,不用播报`)
+    return { notified: false, reason: 'planned-restart', recipients: [], sinceLastMs: sinceLast }
   }
 
   const access = deps.loadAccess()
@@ -160,6 +208,28 @@ export async function notifyStartup(
   }
   deps.log('NOTIFY', `startup notify sent to ${okCount}/${recipients.length} recipient(s)`)
   return { notified: true, recipients, sinceLastMs: sinceLast }
+}
+
+/**
+ * 补发时给正文加一句「这是补发的」。
+ *
+ * WHY(真机 2026-09-08):启动通知发不出去时会存进 pending-notify.json,
+ * 等主人下次说话、ilink 票据刷新了再补发(见上面 send-failed-all 分支)。
+ * 但正文写的是「🔄 已重启 …… 上次启动 9 分钟前」—— 主人在自己发完一句话
+ * 之后收到它,读起来就是「我一说话它就重启了」。实测那次重启发生在 56
+ * 分钟前,和这条消息毫无因果。
+ *
+ * 状态可以迟到,但不能假装是刚发生的 —— 补发时把真实时差说出来。
+ * 5 分钟以内不加(pending 最快也要重试 ~105s 才落盘,这个区间里「刚重启」
+ * 本来就是真话,加了反而啰嗦)。
+ */
+export const LATE_NOTIFY_FLOOR_MS = 5 * 60_000
+
+export function lateNotifyText(text: string, ageMs: number): string {
+  if (!Number.isFinite(ageMs) || ageMs < LATE_NOTIFY_FLOOR_MS) return text
+  const m = Math.round(ageMs / 60_000)
+  const ago = m < 60 ? `${m} 分钟前` : `${(m / 60).toFixed(1)} 小时前`
+  return `${text}\n(这条是补发的:事情发生在${ago},当时推送通道没打开,你一说话才发得出来 —— 跟你刚才这句没关系。)`
 }
 
 export function renderStartupText(ctx: StartupContext, sinceLastMs: number | null): string {

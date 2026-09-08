@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { AGY_CAPABILITIES, createAgyAgentProvider, drainCappedStderr } from './agy-agent-provider'
 import { TIER_PROFILES } from './user-tier'
+import { isReplyToolCall } from './agent-provider'
 
 function fakeAgy(lines: string[], opts?: { exitCode?: number; stderr?: string; hang?: boolean }) {
   const calls: Array<{ args: string[]; cwd: string }> = []
@@ -32,7 +33,35 @@ const project = { alias: 'p', path: '/tmp' }
 
 async function drain(it: AsyncIterable<{ kind: string }>) { const out = []; for await (const e of it) out.push(e); return out }
 
+// agy 通过 call_mcp_tool 调我们的 wechat MCP 时,ServerName 是它全局
+// mcp_config 里的命名空间键(AGY_WECHAT_MCP_NAMESPACE_ID),不是 `wechat`。
+// provider 必须在出口处折回规范名,否则 isReplyToolCall 认不出来。
+const WECHAT_REPLY_STEP = JSON.stringify({
+  event: 'step_update',
+  step_update: {
+    conversation_id: 'c1',
+    step_index: 3,
+    state: 'ACTIVE',
+    step_type: 'tool',
+    tool_name: 'call_mcp_tool',
+    tool_info: { name: 'call_mcp_tool', parameters: { Arguments: { text: '挺好的' }, ServerName: 'wechat-cc-wechat', ToolName: 'reply' } },
+  },
+})
+
 describe('createAgyAgentProvider', () => {
+  // 真机回归 2026-09-08:agy 每个回合都 reply=false,协调器于是走
+  // FALLBACK_REPLY,把模型的旁白(「已回复用户的问候。」)追加到用户
+  // 已经收到的正文后面。根因就是这里没折回 server 名。
+  it('folds the agy wechat MCP namespace back to the canonical `wechat` server', async () => {
+    const { spawnFn } = fakeAgy([INIT, WECHAT_REPLY_STEP, TEXT_DONE, RESULT])
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
+    const s = await provider.spawn(project, ctx)
+    const evs = await drain(s.dispatch('你今天怎么样啊')) as Array<{ kind: string; server?: string; tool?: string }>
+    const call = evs.find(e => e.kind === 'tool_call')
+    expect(call).toEqual({ kind: 'tool_call', server: 'wechat', tool: 'reply' })
+    expect(isReplyToolCall(call as never)).toBe(true)
+  })
+
   it('happy turn: init+text+result; second dispatch carries --conversation', async () => {
     const { spawnFn, calls } = fakeAgy([INIT, TEXT_DONE, RESULT])
     const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
