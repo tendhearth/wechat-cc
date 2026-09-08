@@ -500,10 +500,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // dialing happens ONLY when the user clicks 测试连接 — unprompted
     // automated outbound calls on a flaky network are a risk-control (封号)
     // shape. GET /v1/llm/health without ?fresh=1 never dials.
+    let llmHealth: import('./llm-health').LlmHealth | undefined
     {
       const { makeLlmHealth } = await import('./llm-health')
       const { capabilitiesFor } = await import('../core/capability-matrix')
-      const llmHealth = makeLlmHealth({
+      llmHealth = makeLlmHealth({
         registry: boot.registry,
         defaultProviderId: boot.defaultProviderId,
         hintFor: (id) => capabilitiesFor(id).authFailHint,
@@ -522,6 +523,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const wired = wireMain({
       stickers: stickerLib,
       requestRestart: (reason) => requestRestart(reason),
+      llmHealth,
       stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,
       outboundTaps, huntStore, petSignals,
       // 随身 CC 首屏:聊天日摘要读 turn_records;presence 走 internal-api 的共用入口。

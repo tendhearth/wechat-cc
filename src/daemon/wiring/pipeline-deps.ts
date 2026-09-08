@@ -42,6 +42,7 @@ import { botName, botNameFromModeFallback } from '../bot-name'
 import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
 import { writeConfigKey } from '../config-surface'
 import { makeOpenaiModels } from '../openai-models'
+import { hasLlmKey } from '../llm-keys'
 import { findOnPath } from '../../lib/util'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
@@ -155,6 +156,8 @@ export interface PipelineDepsOpts {
   stickers?: import('../stickers').StickerLib
   /** 触发 daemon 重启(远程访问开关切换后套用新隧道接线)。main.ts 传入。 */
   requestRestart?: (reason: string) => void
+  /** LLM 体检只读缓存 —— 设置面板「模型与后端」的通/不通一列。main.ts 传入。 */
+  llmHealth?: { cached(): import('../llm-health').LlmHealthReport | null }
   /** 对话回合(turn_records)—— 随身 CC 首屏的「聊天日摘要」来源。main.ts 传 turnRecordStore。 */
   turns?: { recent(limit: number): readonly { chatId: string; endedAt: number; outcome: string; mode: string; startedAt: number }[] }
   /** 三轴 presence 共用入口(internal-api lifecycle.getPresence)。main.ts 传入。 */
@@ -497,6 +500,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     } : {}),
     ...(opts.presence ? { presence: opts.presence } : {}),
     seen: { read: () => readJournalSeen(stateDir), write: (iso: string) => writeJournalSeen(stateDir, iso) },
+    // 「模型与后端」:注册表 + 体检缓存 + key 有无(只回 boolean)。
+    llm: {
+      registered: () => boot.registry.list(),
+      cached: () => opts.llmHealth?.cached() ?? null,
+      hasKey: (p) => hasLlmKey(stateDir, p),
+    },
     chatPrefs: {
       get: (c) => ({ ...chatPrefs.get(c) }),
       set: (c, patch) => ({ ...chatPrefs.set(c, patch as Parameters<typeof chatPrefs.set>[1]) }),

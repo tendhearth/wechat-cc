@@ -92,9 +92,28 @@ export function pageHtml(token: string): string {
   <label class="row" id="row-devices" hidden><span><b>已配对设备</b><small id="devices-count"></small></span><button type="button" id="forget-devices" style="font:inherit;font-size:12.5px;padding:5px 12px;border:1.5px solid var(--line);border-radius:999px;background:var(--card);color:var(--accent);cursor:pointer">全部忘掉</button></label>
 </section>
 
+<section id="sec-models">
+  <h2>模型与后端</h2>
+  <p class="hint">CC 有哪些大脑、各自通不通。这里改的是全局默认;单个对话换脑子在微信里发 /api /agy /cc</p>
+  <div id="models-table"></div>
+  <div class="row" style="display:block;border-top:1px dashed var(--line);padding-top:10px">
+    <b>自配 API(/api)</b><small style="color:var(--soft)">OpenAI 兼容网关 —— DeepSeek / Kimi / Qwen 这类都从这扇门进</small>
+    <label class="row"><span><b>地址</b><small>以 /v1 结尾</small></span><input type="text" id="f-api-base" style="width:190px" placeholder="https://…/v1"></label>
+    <label class="row"><span><b>默认模型</b><small>没按对话钉时用它</small></span><input type="text" id="f-api-model" style="width:150px" placeholder="DeepSeek"></label>
+    <label class="row"><span><b>API Key</b><small id="api-key-hint"></small></span><input type="password" id="f-api-key" style="width:150px" placeholder="sk-…" autocomplete="off"></label>
+    <button class="save" id="save-api-key">保存 Key(之后重启一下 CC)</button>
+    <div style="border-top:1px dashed var(--line);padding-top:10px;margin-top:10px">
+      <b>短名</b><small style="color:var(--soft);display:block">起了短名,微信里 /api ds 就切;网关上的原名照样能用</small>
+      <div id="alias-list" style="margin:6px 0"></div>
+      <div style="display:flex;gap:6px;align-items:center"><input type="text" id="f-alias-name" style="width:70px" placeholder="ds"><span>→</span><input type="text" id="f-alias-model" style="width:120px" placeholder="DeepSeek"><button type="button" class="seg-btn" id="add-alias" style="font:inherit;font-size:13px;padding:6px 12px;border:1.5px solid var(--line);border-radius:8px;background:#fff;color:var(--accent)">加</button></div>
+    </div>
+  </div>
+  <label class="row"><span><b>后台评估用</b><small>记忆整理 / 辩论主持 / introspect 这些幕后活儿走哪家;auto = 偏好序</small></span><select id="f-cheap"></select></label>
+  <div class="say">💬 也可以直接跟 CC 说:「换成 DeepSeek」「用 opus 5」「你现在是哪个模型」</div>
+</section>
+
 <section>
   <details><summary>⚙️ 技术详情(好奇再点)</summary>
-    <label class="row"><span><b>模型</b><small>CC 用哪个大脑思考</small></span><input type="text" id="f-model" style="width:190px"></label>
     <label class="row"><span><b>知识库</b><small>长期记忆检索</small></span><input type="checkbox" class="switch" id="f-knowledge"></label>
     <label class="row"><span><b>社交能力</b><small>替你和别人的 CC 打交道</small></span><input type="checkbox" class="switch" id="f-social"></label>
     <label class="row"><span><b>开机自启</b></span><input type="checkbox" class="switch" id="f-autostart"></label>
@@ -156,16 +175,72 @@ async function pollAtelier() {
   var r = atelierLabel(st); if ((r.done || r.failed) && atelierPoll) { clearInterval(atelierPoll); atelierPoll = null }
 }
 function startAtelierPoll() { if (atelierPoll) clearInterval(atelierPoll); atelierPoll = setInterval(pollAtelier, 2000) }
+// ── 模型与后端 ─────────────────────────────────────────────────────────
+var MODEL_KEY = { claude: "model", agy: "agyModel", cursor: "cursorModel", openai: "openaiModel" };
+var PROVIDER_NAME = { claude: "Claude", agy: "Gemini(订阅,agy)", cursor: "Cursor", codex: "Codex", openai: "自配 API(/api)", gemini: "Gemini(API key)" };
+function esc(t) { return String(t == null ? "" : t).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] }) }
+function statusText(p) {
+  if (p.status === "ok") return "✓ 通" + (p.latency_ms != null ? "(" + p.latency_ms + "ms)" : "")
+  if (p.status === "broken") return "✗ 不通" + (p.error ? ":" + p.error : "")
+  if (p.status === "unknown") return "已接入,还没测过(桌面「大脑」卡可测)"
+  return "未接入" + (p.hint ? " · " + p.hint : "")
+}
+function renderModels(m) {
+  if (!m) return
+  var html = ""
+  for (var i = 0; i < m.providers.length; i++) {
+    var p = m.providers[i], key = MODEL_KEY[p.id]
+    var isDefault = p.id === m.default_provider
+    var input = key
+      ? '<input type="text" data-model-key="' + key + '" value="' + esc(p.model || "") + '" style="width:150px" placeholder="默认">'
+      : '<small style="color:var(--soft)">' + esc(p.model || (p.id === "codex" ? "同 Claude 那格" : "—")) + '</small>'
+    html += '<label class="row"><span><b>' + esc(PROVIDER_NAME[p.id] || p.id) + (isDefault ? ' <small style="display:inline;color:var(--accent)">默认</small>' : "") + '</b><small>' + esc(statusText(p)) + '</small></span>' + input + '</label>'
+  }
+  $("models-table").innerHTML = html
+  var inputs = $("models-table").querySelectorAll("input[data-model-key]")
+  for (var j = 0; j < inputs.length; j++) (function (el) {
+    el.addEventListener("change", function () { var v = el.value.trim(); if (v) apply("set_config", { key: el.dataset.modelKey, value: v }) })
+  })(inputs[j])
+  $("f-api-base").value = m.openai.base_url || ""
+  $("f-api-model").value = m.openai.model || ""
+  $("api-key-hint").textContent = m.openai.has_key ? "已配好(只能覆盖,不显示)" : "还没配 —— 配好才会接入"
+  var al = "", names = Object.keys(m.openai.aliases || {}).sort()
+  for (var k = 0; k < names.length; k++) al += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0"><span><b>' + esc(names[k]) + '</b> → ' + esc(m.openai.aliases[names[k]]) + '</span><button type="button" data-del-alias="' + esc(names[k]) + '" style="font:inherit;font-size:12px;padding:3px 10px;border:1.5px solid var(--line);border-radius:999px;background:var(--card);color:var(--soft)">删</button></div>'
+  $("alias-list").innerHTML = al || '<small style="color:var(--soft)">还没有短名</small>'
+  var dels = $("alias-list").querySelectorAll("button[data-del-alias]")
+  for (var d = 0; d < dels.length; d++) (function (b) {
+    b.addEventListener("click", async function () { if (await apply("del_alias", { alias: b.dataset.delAlias }, "短名已删 ✓")) reloadModels() })
+  })(dels[d])
+  var sel = $("f-cheap"), opts = ["auto"]
+  for (var r = 0; r < m.providers.length; r++) if (m.providers[r].registered) opts.push(m.providers[r].id)
+  if (opts.indexOf(m.cheap) < 0) opts.push(m.cheap)
+  sel.innerHTML = opts.map(function (o) { return '<option value="' + esc(o) + '"' + (o === m.cheap ? " selected" : "") + '>' + esc(o === "auto" ? "auto(偏好序)" : (PROVIDER_NAME[o] || o)) + '</option>' }).join("")
+}
+async function reloadModels() { var s = await sapi("/set/api/state"); if (s.ok) renderModels(s.models) }
+wireText("f-api-base", v => apply("set_config", { key: "openaiBaseUrl", value: v }))
+wireText("f-api-model", v => apply("set_config", { key: "openaiModel", value: v }))
+$("save-api-key").addEventListener("click", async function () {
+  var key = $("f-api-key").value.trim(); if (!key) { toast("先填 Key"); return }
+  var ok = await apply("set_llm_key", { provider: "openai", key: key, base_url: $("f-api-base").value.trim(), model: $("f-api-model").value.trim() }, "Key 已存好,重启 CC 后接入 ✓")
+  if (ok) { $("f-api-key").value = ""; reloadModels() }
+})
+$("add-alias").addEventListener("click", async function () {
+  var a = $("f-alias-name").value.trim(), mm = $("f-alias-model").value.trim()
+  if (!a || !mm) { toast("短名和模型名都要填"); return }
+  if (await apply("set_alias", { alias: a, model: mm }, "短名已加 ✓")) { $("f-alias-name").value = ""; $("f-alias-model").value = ""; reloadModels() }
+})
+$("f-cheap").addEventListener("change", function (e) { apply("set_config", { key: "cheap_eval_provider", value: e.target.value }, "后台评估改走 " + e.target.value + " ✓") })
+
 async function load() {
   const s = await sapi("/set/api/state")
   if (!s.ok) { toast("读取失败"); return }
+  renderModels(s.models)
   $("f-name").value = s.name || ""
   $("f-botname").value = s.config.bot_name || ""
   $("f-persona").value = s.persona || ""
   $("f-split").checked = s.prefs.split !== false
   $("f-stickers").checked = s.prefs.stickers !== false
   $("f-hunt").checked = s.prefs.hunt !== false
-  $("f-model").value = s.config.model || ""
   $("f-knowledge").checked = s.config.knowledge_enabled === true
   $("f-social").checked = s.config.social_enabled === true
   $("f-autostart").checked = s.config.autoStart === true
@@ -205,7 +280,6 @@ $("f-care").addEventListener("click", async e => {
 })
 wireText("f-name", v => apply("set_name", { name: v }, "以后就这么称呼你 ✓"))
 wireText("f-botname", v => apply("set_config", { key: "bot_name", value: v }))
-wireText("f-model", v => apply("set_config", { key: "model", value: v }))
 $("save-persona").addEventListener("click", () => apply("set_persona", { content: $("f-persona").value }, "性格已更新 ✓"))
 wireSwitch("f-split", "pref", "split")
 wireSwitch("f-stickers", "pref", "stickers")

@@ -28,6 +28,9 @@ import { writeConfigKey, readConfigSurface } from './config-surface'
 import { kickAtelierModelProvision, readModelStatus, shouldProvisionOnConfigChange } from './atelier-provision'
 import { safeSvgFile, EXPIRED_HTML, SW_JS, M_BOOTSTRAP_HTML, pageHtml, phoneHtml } from './settings-panel-html'
 import { readJsonFile } from '../lib/read-json-file'
+import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../lib/agent-config'
+import { saveLlmKey } from './llm-keys'
+import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from './llm-health'
 import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
 import type { Presence } from '../core/companion-presence'
 import type { CatchRow } from '../core/journal-store'
@@ -39,7 +42,14 @@ export const SETTINGS_LINK_TTL_MS = 10 * 60_000
 export const PANEL_CONFIG_KEYS: readonly string[] = [
   'bot_name', 'model', 'knowledge_enabled', 'social_enabled', 'autoStart',
   'companion.atelier_mode',
+  // 「模型与后端」一块(2026-09-08):各家模型、/api 地址、后台评估用哪家。
+  'openaiModel', 'openaiBaseUrl', 'agyModel', 'cursorModel', 'cheap_eval_provider',
 ]
+
+/** 面板「模型与后端」表格覆盖的六家,顺序即显示顺序。 */
+const PANEL_PROVIDERS = ['claude', 'agy', 'cursor', 'codex', 'openai', 'gemini'] as const
+const ALIAS_RE = /^[A-Za-z0-9._-]{1,32}$/
+const MODEL_NAME_RE = /^[A-Za-z0-9._/:-]{1,100}$/
 
 const PREF_KEYS = new Set(['split', 'care', 'stickers', 'hunt'])
 const PERSONA_MAX_CHARS = 8000
@@ -86,6 +96,15 @@ export interface SettingsPanelDeps {
     isEnabled: () => boolean
     setEnabled: (on: boolean) => void
     requestRestart: () => void
+  }
+  /**
+   * 「模型与后端」的数据源:哪些 provider 注册了、上次体检结果(只读缓存,
+   * 面板绝不主动外呼)、key 配了没(只回 boolean)。缺省 ⇒ 表格只显示模型字段。
+   */
+  llm?: {
+    registered: () => string[]
+    cached: () => LlmHealthReport | null
+    hasKey: (provider: 'openai' | 'gemini') => boolean
   }
   /** config_changed audit sink (events store append) — best-effort. */
   audit?: (reasoning: string) => void
@@ -144,6 +163,41 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     const owner = deps.ownerChatId()
     if (!owner || owner.includes('..') || owner.includes('/') || owner.includes('\\')) return null
     return join(deps.stateDir, 'memory', owner, 'persona.md')
+  }
+
+  /** 「模型与后端」:六家一行(注册/体检/模型),openai 的地址·key·别名,后台评估用谁。 */
+  const modelsState = () => {
+    const cfg = loadAgentConfig(deps.stateDir)
+    const registered = new Set(deps.llm?.registered() ?? [])
+    const report = deps.llm?.cached() ?? null
+    const probe = new Map((report?.results ?? []).map(r => [r.provider, r]))
+    const providers = PANEL_PROVIDERS.map(id => {
+      const isReg = registered.has(id)
+      const pr = probe.get(id)
+      const status = !isReg ? 'unconfigured' : pr == null ? 'unknown' : pr.ok === true ? 'ok' : pr.ok === false ? 'broken' : 'unknown'
+      return {
+        id,
+        registered: isReg,
+        model: modelForProvider(cfg, id) ?? null,
+        status,
+        ...(pr?.error ? { error: pr.error.slice(0, 160) } : {}),
+        ...(!isReg && PROVIDER_SETUP_HINTS[id] ? { hint: PROVIDER_SETUP_HINTS[id] } : {}),
+        ...(pr?.latency_ms != null ? { latency_ms: pr.latency_ms } : {}),
+      }
+    })
+    return {
+      default_provider: cfg.provider,
+      checked_at: report?.checked_at ?? null,
+      providers,
+      openai: {
+        base_url: cfg.openaiBaseUrl ?? '',
+        model: cfg.openaiModel ?? '',
+        has_key: deps.llm?.hasKey('openai') ?? false,
+        aliases: cfg.openaiAliases ?? {},
+      },
+      gemini: { has_key: deps.llm?.hasKey('gemini') ?? false },
+      cheap: cfg.cheapEvalProvider ?? 'auto',
+    }
   }
 
   const FEED_WINDOW_DAYS = 14
@@ -245,6 +299,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         // Paint-set download progress so the phone can show "已开始 / 62%" right
         // after the owner flips the switch; the download itself runs on the Mac.
         atelier: { model_status: readModelStatus(deps.stateDir) },
+        models: modelsState(),
       }
     },
 
@@ -293,6 +348,31 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           deps.audit?.(`remote_tunnel: → ${b.enabled} — 设置面板`)
           // Restart applies the new tunnel wiring (dials out / stops).
           deps.remote.requestRestart()
+          return { ok: true }
+        }
+        if (b.op === 'set_llm_key') {
+          // key 只进 daemon.env,不进日志、不进 audit 正文、不回显。
+          const r = await saveLlmKey(deps.stateDir, b, deps.log)
+          if (!r.ok) return { ok: false, error: r.error }
+          deps.audit?.(`llm key(${String(b.provider)}) 已保存 — 设置面板(值不记录);重启后生效`)
+          return { ok: true }
+        }
+        if (b.op === 'set_alias' || b.op === 'del_alias') {
+          const alias = typeof b.alias === 'string' ? b.alias.trim() : ''
+          if (!ALIAS_RE.test(alias) || /^(list|alias|unalias)$/i.test(alias)) return { ok: false, error: 'invalid_alias' }
+          const cfg = loadAgentConfig(deps.stateDir)
+          const next = { ...(cfg.openaiAliases ?? {}) }
+          if (b.op === 'del_alias') {
+            if (!(alias in next)) return { ok: false, error: 'unknown_alias' }
+            delete next[alias]
+          } else {
+            const model = typeof b.model === 'string' ? b.model.trim() : ''
+            if (!MODEL_NAME_RE.test(model)) return { ok: false, error: 'invalid_model' }
+            next[alias] = model
+          }
+          const { openaiAliases: _drop, ...rest } = cfg
+          saveAgentConfig(deps.stateDir, Object.keys(next).length > 0 ? { ...rest, openaiAliases: next } : rest)
+          deps.audit?.(`/api 别名 ${b.op === 'del_alias' ? `删除 ${alias}` : `${alias} → ${String(b.model).trim()}`} — 设置面板`)
           return { ok: true }
         }
         if (b.op === 'set_config') {

@@ -326,47 +326,12 @@ const onlineStickerCursor = new Map<string, number>()
     // admin 层(密钥),桌面走 owner-workspace 通道。值绝不进日志。
     'POST /v1/llm/keys': async (_q, body) => {
       const b = (body ?? {}) as { provider?: unknown; key?: unknown; base_url?: unknown; model?: unknown }
-      const provider = b.provider
-      if (provider !== 'openai' && provider !== 'gemini') {
-        return { status: 400, body: { error: 'unsupported_provider (openai | gemini)' } }
+      const { saveLlmKey } = await import('../llm-keys')
+      const r = await saveLlmKey(deps.stateDir, b, deps.log)
+      if (!r.ok) {
+        const msg = r.error === 'unsupported_provider' ? 'unsupported_provider (openai | gemini)' : r.error
+        return { status: 400, body: { error: msg } }
       }
-      const key = typeof b.key === 'string' ? b.key.trim() : ''
-      if (key === '' || key.length > 500 || /\s/.test(key)) {
-        return { status: 400, body: { error: 'invalid_key' } }
-      }
-      // openai 兼容接口:daemon 要 base_url + model 都在才注册(bootstrap/
-      // providers.ts)。只写 key 会「保存成功」却在重启后没接上 —— 假成功。
-      // 按「本次请求带的 或 之前已存的」算有效值,缺任一就拒,不写 key。
-      // (允许只更新 key 的场景:base_url/model 已在 config 里就放行。)
-      if (provider === 'openai') {
-        const reqBase = typeof b.base_url === 'string' ? b.base_url.trim() : ''
-        const reqModel = typeof b.model === 'string' ? b.model.trim() : ''
-        const { loadAgentConfig } = await import('../../lib/agent-config')
-        const existing = loadAgentConfig(deps.stateDir)
-        const effBase = reqBase || existing.openaiBaseUrl || ''
-        const effModel = reqModel || existing.openaiModel || ''
-        if (!effBase || !effModel) {
-          return { status: 400, body: { error: 'openai_needs_base_url_and_model' } }
-        }
-      }
-      const { existsSync: envExists, readFileSync: envRead, writeFileSync: envWrite, renameSync: envRename } = await import('node:fs')
-      const { join: envJoin } = await import('node:path')
-      const { upsertEnvFile } = await import('../../lib/env-file')
-      const { writeConfigKey } = await import('../config-surface')
-      const envName = provider === 'openai' ? 'WECHAT_OPENAI_API_KEY' : 'GEMINI_API_KEY'
-      const envPath = envJoin(deps.stateDir, 'daemon.env')
-      const current = envExists(envPath) ? envRead(envPath, 'utf8') : ''
-      const tmp = `${envPath}.tmp`
-      envWrite(tmp, upsertEnvFile(current, { [envName]: key }), { mode: 0o600 })
-      envRename(tmp, envPath)
-      // Companion config fields ride the validated config surface.
-      if (provider === 'openai') {
-        if (typeof b.base_url === 'string' && b.base_url.trim() !== '') await writeConfigKey(deps.stateDir, 'openaiBaseUrl', b.base_url.trim())
-        if (typeof b.model === 'string' && b.model.trim() !== '') await writeConfigKey(deps.stateDir, 'openaiModel', b.model.trim())
-      } else if (typeof b.model === 'string' && b.model.trim() !== '') {
-        await writeConfigKey(deps.stateDir, 'geminiModel', b.model.trim())
-      }
-      deps.log?.('LLM_HEALTH', `${envName} saved via desktop form (value not logged) — restart to register`)
       return { status: 200, body: { ok: true, restart_required: true } }
     },
 

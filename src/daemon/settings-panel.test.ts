@@ -401,3 +401,101 @@ describe('随身 CC 首屏:伙伴的一天', () => {
     })
   })
 })
+
+// ── 模型与后端(2026-09-08):一处看全、一处改全 ────────────────────────
+describe('settings panel — 模型与后端', () => {
+  function build(extra: { registered?: string[]; cached?: unknown; hasKey?: boolean; config?: Record<string, unknown> } = {}) {
+    const stateDir = mkdtempSync(join(tmpdir(), 'settings-models-'))
+    mkdirSync(join(stateDir, 'memory', OWNER), { recursive: true })
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude', model: 'claude-opus-5', openaiBaseUrl: 'https://llm.example/v1', openaiModel: 'DeepSeek', openaiAliases: { ds: 'DeepSeek' }, agyModel: 'gemini-3.7-flash-high', ...(extra.config ?? {}) }))
+    const audit = vi.fn()
+    const panel = makeSettingsPanel({
+      stateDir,
+      ownerChatId: () => OWNER,
+      chatPrefs: { get: () => ({}), set: (_c, p) => p },
+      getUserName: () => '大人',
+      setUserName: async () => {},
+      audit,
+      llm: {
+        registered: () => extra.registered ?? ['claude', 'agy', 'openai'],
+        cached: () => (extra.cached ?? { checked_at: 't', default_provider: 'claude', results: [
+          { provider: 'claude', ok: true, latency_ms: 120 },
+          { provider: 'agy', ok: false, latency_ms: 0, error: 'Not logged in' },
+        ] }) as never,
+        hasKey: () => extra.hasKey ?? true,
+      },
+      log: () => {},
+    })
+    return { panel, stateDir, audit, cleanup: () => rmSync(stateDir, { recursive: true, force: true }) }
+  }
+
+  it('state().models: six providers with registered/status/model, openai block (no key value), aliases, cheap', () => {
+    const { panel, cleanup } = build()
+    try {
+      const m = (panel.state() as { models: any }).models
+      expect(m.default_provider).toBe('claude')
+      const byId = Object.fromEntries(m.providers.map((p: any) => [p.id, p]))
+      expect(Object.keys(byId)).toEqual(['claude', 'agy', 'cursor', 'codex', 'openai', 'gemini'])
+      expect(byId.claude).toMatchObject({ registered: true, status: 'ok', model: 'claude-opus-5', latency_ms: 120 })
+      expect(byId.agy).toMatchObject({ registered: true, status: 'broken', error: 'Not logged in', model: 'gemini-3.7-flash-high' })
+      expect(byId.openai).toMatchObject({ registered: true, status: 'unknown', model: 'DeepSeek' })   // registered, never probed
+      expect(byId.cursor).toMatchObject({ registered: false, status: 'unconfigured' })
+      expect(byId.cursor.hint).toContain('cursor-agent')
+      expect(m.openai).toEqual({ base_url: 'https://llm.example/v1', model: 'DeepSeek', has_key: true, aliases: { ds: 'DeepSeek' } })
+      expect(JSON.stringify(m)).not.toContain('sk-')
+      expect(m.cheap).toBe('auto')
+    } finally { cleanup() }
+  })
+
+  it('state().models degrades without the llm dep: everything unconfigured/unknown, has_key false', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'settings-models-'))
+    mkdirSync(join(stateDir, 'memory', OWNER), { recursive: true })
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
+    try {
+      const panel = makeSettingsPanel({ stateDir, ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: (_c, p) => p }, getUserName: () => null, setUserName: async () => {}, log: () => {} })
+      const m = (panel.state() as { models: any }).models
+      expect(m.providers.every((p: any) => p.status === 'unconfigured')).toBe(true)
+      expect(m.openai.has_key).toBe(false)
+    } finally { rmSync(stateDir, { recursive: true, force: true }) }
+  })
+
+  it('apply set_llm_key: lands in daemon.env, key never reaches the audit line', async () => {
+    const { panel, stateDir, audit, cleanup } = build()
+    try {
+      const r = await panel.apply({ op: 'set_llm_key', provider: 'openai', key: 'sk-secret-123', base_url: 'https://llm.example/v1', model: 'DeepSeek' })
+      expect(r).toEqual({ ok: true })
+      expect(readFileSync(join(stateDir, 'daemon.env'), 'utf8')).toContain('WECHAT_OPENAI_API_KEY=sk-secret-123')
+      expect(audit).toHaveBeenCalled()
+      expect(JSON.stringify(audit.mock.calls)).not.toContain('sk-secret')
+      expect((await panel.apply({ op: 'set_llm_key', provider: 'claude', key: 'x' })).ok).toBe(false)
+    } finally { cleanup() }
+  })
+
+  it('apply set_alias / del_alias round-trip through agent-config; subcommand names and bad model ids are refused', async () => {
+    const { panel, stateDir, cleanup } = build()
+    try {
+      expect((await panel.apply({ op: 'set_alias', alias: 'kimi', model: 'kimi-k2.7-code' })).ok).toBe(true)
+      expect(JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8')).openaiAliases).toEqual({ ds: 'DeepSeek', kimi: 'kimi-k2.7-code' })
+      expect((await panel.apply({ op: 'set_alias', alias: 'list', model: 'DeepSeek' })).ok).toBe(false)
+      expect((await panel.apply({ op: 'set_alias', alias: 'x', model: 'has space' })).ok).toBe(false)
+      expect((await panel.apply({ op: 'del_alias', alias: 'ds' })).ok).toBe(true)
+      expect((await panel.apply({ op: 'del_alias', alias: 'ds' })).ok).toBe(false)
+      expect(JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8')).openaiAliases).toEqual({ kimi: 'kimi-k2.7-code' })
+      expect((await panel.apply({ op: 'del_alias', alias: 'kimi' })).ok).toBe(true)
+      expect(JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))).not.toHaveProperty('openaiAliases')
+    } finally { cleanup() }
+  })
+
+  it('the new config keys are panel-writable (openaiModel/openaiBaseUrl/agyModel/cursorModel/cheap_eval_provider)', async () => {
+    const { panel, stateDir, cleanup } = build()
+    try {
+      for (const [k, v] of [['openaiModel', 'Qwen3.8'], ['openaiBaseUrl', 'http://10.84.91.33:8088/v1'], ['agyModel', 'gemini-3.7-pro'], ['cursorModel', 'auto'], ['cheap_eval_provider', 'agy']] as const) {
+        expect((await panel.apply({ op: 'set_config', key: k, value: v })).ok).toBe(true)
+      }
+      const cfg = JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))
+      expect(cfg).toMatchObject({ openaiModel: 'Qwen3.8', openaiBaseUrl: 'http://10.84.91.33:8088/v1', agyModel: 'gemini-3.7-pro', cursorModel: 'auto', cheapEvalProvider: 'agy' })
+      expect((await panel.apply({ op: 'set_config', key: 'cheap_eval_provider', value: 'auto' })).ok).toBe(true)
+      expect(JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))).not.toHaveProperty('cheapEvalProvider')
+    } finally { cleanup() }
+  })
+})
