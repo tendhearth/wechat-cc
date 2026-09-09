@@ -297,6 +297,26 @@ describe('createGeminiAgentProvider', () => {
     return { provider, calls }
   }
 
+  // 五家里唯一漏掉的一家:gemini 一直用构造时那份静态提示(没 persona、没
+  // 记忆段、没模型行),忽略 session-manager 每次 spawn 算好的 appendInstructions。
+  it('uses the per-spawn appendInstructions as systemInstruction (falls back to the static one only when absent)', async () => {
+    const seen: string[] = []
+    const provider = createGeminiAgentProvider({
+      genai: { models: { async generateContent(req: { config?: { systemInstruction?: string } }) { seen.push(req.config?.systemInstruction ?? ''); return { text: 'ok' } } } } as any,
+      model: 'gemini-flash-latest',
+      systemInstruction: 'STATIC',
+      async mcpConnect() { return { listTools: async () => [], callTool: async () => ({ content: [] }), close: async () => {} } },
+      buildGate: () => (async () => ({ allow: true })) as any,
+    })
+    const withPrompt = await provider.spawn({ alias: 'P', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c', appendInstructions: '你是 gemini(当前模型 gemini-flash-latest)\n# 性格\n温柔' })
+    for await (const _ of withPrompt.dispatch('hi')) { /* drain */ }
+    const bare = await provider.spawn({ alias: 'P', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c2' })
+    for await (const _ of bare.dispatch('hi')) { /* drain */ }
+    expect(seen[0]).toContain('# 性格')
+    expect(seen[0]).toContain('当前模型 gemini-flash-latest')
+    expect(seen[1]).toBe('STATIC')
+  })
+
   it('spawn → dispatch streams text + result; uses listTools as functionDeclarations', async () => {
     const { provider } = deps([{ text: 'hi from gemini' }])
     const session = await provider.spawn({ alias: 'P', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c1' })
