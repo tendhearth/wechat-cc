@@ -413,3 +413,17 @@ describe('计划内自愈重启不打扰主人', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })
+
+describe('面包屑在 60s 地板之前就消费', () => {
+  it('a boot inside the crash-loop floor still eats planned-restart.json (it must not silence the NEXT real restart)', async () => {
+    const dir = makeStateDir()
+    try {
+      writeFileSync(join(dir, 'last-startup.json'), JSON.stringify({ ts: Date.now() - 10_000, pid: 9 }))
+      writeFileSync(join(dir, 'startup-notified.json'), JSON.stringify({ ts: Date.now() - 10_000 }))
+      markPlannedRestart(dir, 'self-restart-stale-code')
+      const r = await notifyStartup({ stateDir: dir, loadAccess: () => ({ allowFrom: ['o'], admins: ['o'] }), send: async () => ({}), log: () => {} }, { pid: 1, accounts: 1, dangerously: true })
+      expect(r.reason).toBe('too-soon')
+      expect(existsSync(join(dir, PLANNED_RESTART_FILE))).toBe(false)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})

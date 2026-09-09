@@ -2,10 +2,10 @@ import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
 import { withFirstUseProbe } from '../../core/first-use-probe'
+import { readJsonFile } from '../../lib/read-json-file'
 import { DEFAULT_CLAUDE_MODEL } from '../../core/claude-agent-provider'
 import { DEFAULT_AGY_MODEL } from '../../core/agy-agent-provider'
 import { DEFAULT_CURSOR_MODEL } from '../../core/cursor-cli-provider'
-import { readFileSync } from 'node:fs'
 import { createClaudeAgentProvider } from '../../core/claude-agent-provider'
 import { createCodexAgentProvider } from '../../core/codex-agent-provider'
 import { buildSystemPrompt } from '../../core/prompt-builder'
@@ -180,7 +180,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     try {
       const root = wechatCcRepoRoot()
       if (!root) return null
-      return (JSON.parse(readFileSync(`${root}/node_modules/@anthropic-ai/claude-agent-sdk/package.json`, 'utf8')) as { version?: string }).version ?? null
+      return readJsonFile<{ version?: string }>(`${root}/node_modules/@anthropic-ai/claude-agent-sdk/package.json`).version ?? null
     } catch { return null }
   })()
   const claudeVersionTag = `${claudeCliVersion ? `你的 CLI ${claudeCliVersion}` : 'CLI 版本未知'}${claudeSdkVersion ? `(SDK ${claudeSdkVersion})` : ''}`

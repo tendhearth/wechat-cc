@@ -104,13 +104,16 @@ export async function notifyStartup(
 
   const sinceLast = prevTs == null ? null : now - prevTs
 
+  // 面包屑先吃:哪怕这次因为 60s 地板不通知,也不能把它留给下一次真正的
+  // 意外重启去误静默(TTL 5 分钟只是兜底,不是设计)。
+  const planned = consumePlannedRestart(deps.stateDir, now)
+
   if (sinceLast !== null && sinceLast < RESTART_FLOOR_MS) {
     deps.log('NOTIFY', `skip startup notify: restarted ${(sinceLast / 1000).toFixed(1)}s after previous (within ${RESTART_FLOOR_MS / 1000}s floor — likely KeepAlive crash-loop)`)
     return { notified: false, reason: 'too-soon', recipients: [], sinceLastMs: sinceLast }
   }
 
-  // 计划内自愈重启:面包屑总要消费(读完即删),但只有它才让这次启动闭嘴。
-  const planned = consumePlannedRestart(deps.stateDir, now)
+  // 计划内自愈重启:只有它才让这次启动闭嘴(面包屑在上面已消费)。
   if (planned.silent) {
     deps.log('NOTIFY', `skip startup notify: planned restart (${planned.reason}) — 主人自己 commit 触发的,不用播报`)
     return { notified: false, reason: 'planned-restart', recipients: [], sinceLastMs: sinceLast }
