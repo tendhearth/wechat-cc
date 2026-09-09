@@ -402,11 +402,12 @@ it('renders two readable crescent/squint eyes, enlarged eyes and a shifted gaze'
   }
 })
 
-it('registers seven standalone prop candidates as padded 384px RGBA, without sprout', () => {
+it('registers seven owner-reviewed standalone props as padded 384px RGBA, without sprout', () => {
   expect(Object.keys(raw.props).sort()).toEqual(['envelope','exclamation','laptop','micro-light','mug','speech-bubble','thought-bubble'])
   for (const path of Object.values(raw.props) as string[]) {
     expect(raw.assets[path]?.kind).toBe('prop')
-    expect(raw.assets[path]?.artStatus).toBe('production-candidate')
+    expect(raw.assets[path]?.artStatus).toBe('reviewed-production')
+    expect(raw.assets[path]?.visualReview).toMatchObject({owner: 'ggshr9', reviewedAt: '2026-09-09', method: 'native transparent window on real wallpaper'})
     const { alpha, width, height } = readRGBA(readFileSync(join(root, path)), 384)
     expect([width, height]).toEqual([384,384])
     expect(alpha.some(a => a > 0)).toBe(true)
@@ -429,3 +430,12 @@ it('rejects standalone prop dimensions and missing registration independently of
     expect(validateAssetKit(target).errors).toContain(`prop_as_character:${path}`)
   })
 }, 30_000)
+
+it('records native owner acceptance without promoting SVG placeholders', () => {
+  expect(raw.artStatus).toBe('reviewed-production')
+  for (const form of Object.values(raw.forms) as any[]) for (const state of Object.values(form.states) as any[]) expect(state.artStatus).toBe('reviewed-production')
+  for (const [path, asset] of Object.entries(raw.assets) as [string, any][]) {
+    if (path.endsWith('.svg')) expect(asset.artStatus).toBe('normative-placeholder')
+    else expect(asset.artStatus).toBe('reviewed-production')
+  }
+})
