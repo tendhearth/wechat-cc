@@ -135,6 +135,13 @@ export interface ConversationCoordinatorDeps {
   /** agent-config `trusted_providers`(非管理员可用的 provider),缺省 = 全部。
    *  读法带 mtime 缓存,/set providers 改完下一条就生效。 */
   trustedProviders?: () => readonly ProviderId[] | undefined
+  /**
+   * 某 provider **连续**几轮走了 FALLBACK_REPLY(有文字、零 reply 工具)。
+   * 0 = 这轮正常调了 reply,连击清零。外部 CLI(agy/cursor)的流格式一变,
+   * tool_call 就解析不出来,双发旁白悄悄回来 —— 2026-09-08 靠主人截图才发现。
+   * 这个钩子把「静默」变「可见」:bootstrap 记进 /mode 并打 [PROVIDER_ANOMALY]。
+   */
+  onFallbackStreak?: (providerId: ProviderId, streak: number) => void
   sendAssistantText?: (chatId: string, text: string) => Promise<void>
   /**
    * Optional `fields` arg lands in the JSONL sidecar (channel.log.jsonl)
@@ -290,6 +297,8 @@ export interface ConversationCoordinator {
 export function createConversationCoordinator(deps: ConversationCoordinatorDeps): ConversationCoordinator {
   // 换 provider 不断片 — setMode 标记,下一次 solo dispatch 取用(取即清)。
   const handoffLedger = makeHandoffLedger()
+  // 每家 provider 连续走 fallback 的轮数(见 deps.onFallbackStreak)。
+  const fallbackStreak = new Map<ProviderId, number>()
   function defaultMode(): Mode {
     return { kind: 'solo', provider: deps.defaultProviderId }
   }
@@ -661,7 +670,16 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // tool this turn. Prevents the duplicate-message footgun while
       // protecting users from a forgetful agent that describes an image
       // in plain text without ever calling reply.
-      if (replyToolCalled || assistantTexts.length === 0) return
+      if (replyToolCalled) {
+        if ((fallbackStreak.get(providerId) ?? 0) > 0) { fallbackStreak.set(providerId, 0); deps.onFallbackStreak?.(providerId, 0) }
+        return
+      }
+      if (assistantTexts.length === 0) return
+      {
+        const n = (fallbackStreak.get(providerId) ?? 0) + 1
+        fallbackStreak.set(providerId, n)
+        deps.onFallbackStreak?.(providerId, n)
+      }
       deps.log('FALLBACK_REPLY', `chat=${msg.chatId} project=${proj.alias} provider=${providerId} chunks=${assistantTexts.length} preview=${JSON.stringify(assistantTexts[0]?.slice(0, 80) ?? '')}`)
       for (const t of assistantTexts) {
         await deps.sendAssistantText?.(msg.chatId, t)

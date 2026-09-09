@@ -7,12 +7,13 @@
  */
 import { type InternalApiDeps, type RouteTable } from './types'
 import { loadAgentConfig, saveAgentConfig, activeModel, withActiveModel, modelForProvider, withModelForProvider } from '../../lib/agent-config'
+import { PROVIDER_IDS } from '../../lib/provider-ids'
 
 /** provider ids /v1/model accepts in its optional `provider` field. Mirrors
  *  the switch inside modelForProvider/withModelForProvider — anything else
  *  would silently land in `model` (claude/codex's shared field) with a
  *  confirming read-back, which is exactly the lie this guard exists to stop. */
-const KNOWN_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'codex', 'cursor', 'openai', 'gemini', 'agy'])
+const KNOWN_PROVIDERS: ReadonlySet<string> = new Set(PROVIDER_IDS)
 
 export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
   return {

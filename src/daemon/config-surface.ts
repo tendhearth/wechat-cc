@@ -45,7 +45,7 @@ interface ConfigKeySpec {
   fromStored?: (v: unknown) => string
 }
 
-const PROVIDER_IDS = ['claude', 'codex', 'cursor', 'openai', 'gemini', 'agy']
+import { PROVIDER_IDS } from '../lib/provider-ids'
 const parseProviderList = (v: string): string[] => v.split(/[,\s，、]+/).map(x => x.trim().toLowerCase()).filter(Boolean)
 
 export const CONFIG_SURFACE: readonly ConfigKeySpec[] = [
@@ -72,11 +72,11 @@ export const CONFIG_SURFACE: readonly ConfigKeySpec[] = [
   // agy/cursor 这类共享钥匙的 provider 无论如何都拒 —— 见 core/provider-policy.ts。
   { key: 'trusted_providers', store: 'agent', field: 'trusted_providers', type: 'string', writable: true, effect: 'immediate',
     description: '非管理员对话可用的 provider(逗号分隔,如 claude,openai;留空 = 全部;all 也表示全部)',
-    validate: (v) => parseProviderList(v).every(id => PROVIDER_IDS.includes(id)),
+    validate: (v) => parseProviderList(v).every(id => (PROVIDER_IDS as readonly string[]).includes(id)),
     toStored: (v) => parseProviderList(v),
     fromStored: (v) => Array.isArray(v) ? v.join(',') : '' },
   { key: 'cheap_eval_provider', store: 'agent', field: 'cheapEvalProvider', type: 'enum',
-    values: ['auto', 'claude', 'codex', 'cursor', 'openai', 'gemini', 'agy'], writable: true, effect: 'immediate',
+    values: ['auto', ...PROVIDER_IDS], writable: true, effect: 'immediate',
     description: '后台评估(记忆整理/辩论主持/introspect)用哪家;auto = 偏好序' },
   { key: 'day_tz_offset_minutes', store: 'agent', field: 'day_tz_offset_minutes', type: 'number', writable: true,
     nullable: true, effect: 'daemon-restart',

@@ -22,6 +22,9 @@ import { makeTurnEmitter } from './turn-emitter'
  * `--conversation <id>`); delegation is explicitly out for v1 (spec §0
  * decision 2 — supportsDelegation:false keeps agy off primary_tool/parallel).
  */
+/** agyModel 没设时的兜底 —— 只此一处(见 claude-agent-provider 的 DEFAULT_CLAUDE_MODEL 注释)。 */
+export const DEFAULT_AGY_MODEL = 'gemini-3.7-flash-medium'
+
 export const AGY_CAPABILITIES: ProviderCapabilities = {
   perToolCallback: false,
   // agy-mcp-config.ts pins WECHAT_SESSION_TIER to 'trusted' for its MCP

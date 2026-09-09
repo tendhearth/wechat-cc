@@ -23,6 +23,9 @@ import { makeCursorStreamParser } from './cursor-cli-stream'
 import { makeTurnEmitter } from './turn-emitter'
 import { drainCappedStderr } from './agy-agent-provider'
 
+/** cursorModel 没设时的兜底('auto' = 让 Cursor 自己挑)。 */
+export const DEFAULT_CURSOR_MODEL = 'auto'
+
 export const CURSOR_CLI_CAPABILITIES: ProviderCapabilities = {
   perToolCallback: false,
   // Same static-token MCP config as the SDK path (cursor-mcp-config.ts pins

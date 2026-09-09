@@ -50,6 +50,9 @@ import { fileURLToPath } from 'node:url'
 import { makeSessionStore } from '../../core/session-store'
 import { homedir } from 'node:os'
 import { loadAgentConfig, makeMtimeCachedConfigReader, modelForProvider } from '../../lib/agent-config'
+import { DEFAULT_CLAUDE_MODEL } from '../../core/claude-agent-provider'
+import { DEFAULT_AGY_MODEL } from '../../core/agy-agent-provider'
+import { DEFAULT_CURSOR_MODEL } from '../../core/cursor-cli-provider'
 import { loadAccess, setSessionInvalidator } from '../../lib/access'
 import { loadCompanionConfig } from '../companion/config'
 import { resolveAdminChatId } from '../companion/resolve-admin'
@@ -563,7 +566,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const readAgentConfig = makeMtimeCachedConfigReader(deps.stateDir)
   const currentClaudeModel = (): string => {
     const c = readAgentConfig()
-    return c.provider === 'claude' && c.model ? c.model : 'claude-opus-4-8'
+    return c.provider === 'claude' && c.model ? c.model : DEFAULT_CLAUDE_MODEL
   }
   // Per-spawn pinned model, resolved PER provider id (not the global default).
   // `modelForProvider` owns the field rule: openai→openaiModel and
@@ -580,8 +583,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // claude 的默认在 currentClaudeModel();cursor/agy 与 providers.ts 里
     // 注册时的字面量一致(改那边记得改这边)。
     if (providerId === 'claude') return currentClaudeModel()
-    if (providerId === 'cursor') return 'auto'
-    if (providerId === 'agy') return 'gemini-3.7-flash-medium'
+    if (providerId === 'cursor') return DEFAULT_CURSOR_MODEL
+    if (providerId === 'agy') return DEFAULT_AGY_MODEL
     return undefined
   }
 
@@ -669,7 +672,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     return Number.isFinite(n) && n >= 0 ? n : 10 * 60_000
   })()
 
-  const { registry, defaultProviderId, codexBinary, codexVersionCheck, providerNotes } = await registerProviders({
+  // provider 异常备注(fallback 连击),与 providers.ts 的版本/探测备注合并进 /mode。
+  const anomalyNotes = new Map<ProviderId, string>()
+  const { registry, defaultProviderId, codexBinary, codexVersionCheck, providerNotes: baseProviderNotes } = await registerProviders({
     log: deps.log,
     stateDir: deps.stateDir,
     ilink: deps.ilink,
@@ -997,6 +1002,14 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // 换 provider 交接的近况原文 — 消息库最近 n 条(text 类为主,升序)。
     // 非管理员可用的 provider 允许表(core/provider-policy.ts),mtime 缓存读。
     trustedProviders: () => readAgentConfig().trusted_providers,
+    // 连续走 fallback 的 provider:≥3 轮就是「流格式变了」的形状,记进 /mode
+    // 并打一条 [PROVIDER_ANOMALY](每 10 轮再提醒一次,别刷屏)。
+    onFallbackStreak: (providerId, streak) => {
+      if (streak === 0) { anomalyNotes.delete(providerId); return }
+      if (streak < 3) return
+      anomalyNotes.set(providerId, `最近 ${streak} 轮连续走 fallback(有文字、零 reply 工具)—— 像是流格式变了,看 channel.log 的 tools=`)
+      if (streak === 3 || streak % 10 === 0) deps.log('PROVIDER_ANOMALY', `provider=${providerId} fallback streak=${streak}: 有文字、零 reply 工具,像是流格式变了(tool_call 解析不出来);见 TURN 行的 tools=`, { event: 'fallback_streak', provider: providerId, streak })
+    },
     recentTurns: async (chatId, n) => {
       const rows = await handoffMessages.listRange(chatId, { limit: n })
       return rows.filter(r => r.text.trim().length > 0)
@@ -1222,7 +1235,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     sdkOptionsForProject,
     buildInstructions,
     defaultProviderId,
-    providerNotes,
+    providerNotes: () => {
+      const out: Partial<Record<ProviderId, string>> = { ...baseProviderNotes() }
+      for (const [id, note] of anomalyNotes) out[id] = out[id] ? `${out[id]} · ⚠️ ${note}` : `⚠️ ${note}`
+      return out
+    },
     agentProviderKind: defaultProviderId,
     /**
      * RFC 03 P4 — late-bound into internal-api by main.ts after

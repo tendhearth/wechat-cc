@@ -846,3 +846,20 @@ describe('resolveForwardBudget', () => {
     expect(loadAgentConfig(dir).knowledge_embed_runtime).toBeUndefined()
   })
 })
+
+describe('provider enum follows lib/provider-ids', () => {
+  it('accepts provider:"agy" (was silently mapped to claude — 主人机器上跑了半个月)', async () => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { loadAgentConfig, parseAgentConfig } = await import('./agent-config')
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-agy-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ provider: 'agy' }))
+      expect(loadAgentConfig(dir).provider).toBe('agy')
+      expect(parseAgentConfig({ provider: 'agy' }).provider).toBe('agy')
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ provider: 'bogus' }))
+      expect(loadAgentConfig(dir).provider).toBe('claude')
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})

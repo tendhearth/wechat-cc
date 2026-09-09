@@ -32,6 +32,7 @@ import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../lib/agent
 import { saveLlmKey } from './llm-keys'
 import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from './llm-health'
 import { capabilitiesFor } from '../core/capability-matrix'
+import { PROVIDER_IDS } from '../lib/provider-ids'
 import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
 import type { Presence } from '../core/companion-presence'
 import type { CatchRow } from '../core/journal-store'
@@ -48,7 +49,7 @@ export const PANEL_CONFIG_KEYS: readonly string[] = [
 ]
 
 /** 面板「模型与后端」表格覆盖的六家,顺序即显示顺序。 */
-const PANEL_PROVIDERS = ['claude', 'agy', 'cursor', 'codex', 'openai', 'gemini'] as const
+const PANEL_PROVIDERS = PROVIDER_IDS
 const ALIAS_RE = /^[A-Za-z0-9._-]{1,32}$/
 const MODEL_NAME_RE = /^[A-Za-z0-9._/:-]{1,100}$/
 

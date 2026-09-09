@@ -25,6 +25,9 @@ export interface FirstUseProbeOpts {
   failureMessage: (detail: string) => string
   /** 失败后多久允许重探(默认 10 分钟)。 */
   retryAfterMs?: number
+  /** 'all'(默认):spawn 和 cheapEval/strongEval 都先过探测;'spawn':只拦聊天
+   *  回合 —— 给默认 provider 用,后台评估(开机就可能跑)不因探测多一次外呼。 */
+  gate?: 'spawn' | 'all'
   now?: () => number
 }
 
@@ -74,8 +77,8 @@ export function withFirstUseProbe(inner: AgentProvider, opts: FirstUseProbeOpts)
       await ensure()
       return inner.spawn(project, ctx)
     },
-    ...(inner.cheapEval ? { cheapEval: async (prompt: string) => { await ensure(); return inner.cheapEval!(prompt) } } : {}),
-    ...(inner.strongEval ? { strongEval: async (prompt: string) => { await ensure(); return inner.strongEval!(prompt) } } : {}),
+    ...(inner.cheapEval && (opts.gate ?? 'all') === 'all' ? { cheapEval: async (prompt: string) => { await ensure(); return inner.cheapEval!(prompt) } } : {}),
+    ...(inner.strongEval && (opts.gate ?? 'all') === 'all' ? { strongEval: async (prompt: string) => { await ensure(); return inner.strongEval!(prompt) } } : {}),
     probeStatus: () => status,
   }
   return wrapped

@@ -31,6 +31,7 @@ import { capabilitiesFor } from '../core/capability-matrix'
 import type { AgentConfig } from '../lib/agent-config'
 import type { UserTier } from '../core/user-tier'
 import { providerDenialFor, describeProviderDenial } from '../core/provider-policy'
+import { PROVIDER_IDS } from '../lib/provider-ids'
 
 export interface ModeCommandsDeps {
   coordinator: Pick<ConversationCoordinator, 'getMode' | 'setMode' | 'cancel'>
@@ -188,7 +189,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
 
   /** /help 用:六个斜杠词里当前真能用的(已注册)。 */
   function availableSlashes(): string {
-    const order: ProviderId[] = ['claude', 'codex', 'cursor', 'openai', 'gemini', 'agy']
+    const order: readonly ProviderId[] = PROVIDER_IDS
     const slash = (id: ProviderId) => id === 'claude' ? '/cc' : id === 'openai' ? '/api' : `/${id}`
     const have = order.filter(id => deps.registry.has(id)).map(slash)
     return have.length ? have.join(' ') : '(一个都没注册)'

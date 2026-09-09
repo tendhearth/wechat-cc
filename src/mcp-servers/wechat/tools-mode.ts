@@ -10,6 +10,7 @@ import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'
+import { PROVIDER_IDS } from '../../lib/provider-ids'
 
 export function registerModeTools(server: McpServer, client: InternalApiClient): void {
   server.registerTool(
@@ -22,7 +23,7 @@ export function registerModeTools(server: McpServer, client: InternalApiClient):
         + '同家换版本(opus 4.8 → opus 5)不用这个,用 model_set。切完由你自己告诉主人,不要再复述系统回执。',
       inputSchema: {
         chat_id: z.string(),
-        provider: z.enum(['claude', 'codex', 'cursor', 'openai', 'gemini', 'agy']),
+        provider: z.enum(PROVIDER_IDS),
         model: z.string().min(1).max(100).optional().describe('可选,钉这个对话的模型;省略 = 该 provider 的全局默认'),
       },
     },

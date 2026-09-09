@@ -5,7 +5,8 @@ import { join } from 'node:path'
 // runtime — this is a build-tool interop quirk, not a zod API difference).
 import z from 'zod'
 
-export type AgentProviderKind = 'claude' | 'codex' | 'cursor' | 'openai' | 'gemini'
+import { PROVIDER_IDS, isKnownProviderId, type KnownProviderId } from './provider-ids'
+export type AgentProviderKind = KnownProviderId
 
 export interface AgentConfig {
   provider: AgentProviderKind
@@ -236,7 +237,7 @@ export type YiBrain = z.infer<typeof YiBrain>
 export type ForwardBudgetConfig = z.infer<typeof ForwardBudgetConfig>
 
 const AgentConfigSchema = z.object({
-  provider: z.enum(['claude', 'codex', 'cursor', 'openai', 'gemini']).default('claude'),
+  provider: z.enum(PROVIDER_IDS).default('claude'),
   model: z.string().optional(),
   cursorModel: z.string().optional(),
   openaiBaseUrl: z.string().optional(),
@@ -300,12 +301,9 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
     const dangerouslySkipPermissions = parsed.dangerouslySkipPermissions ?? true
     const autoStart = parsed.autoStart ?? true
     const closeStopsDaemon = parsed.closeStopsDaemon ?? false
-    const provider: AgentProviderKind =
-      parsed.provider === 'codex' ? 'codex'
-      : parsed.provider === 'cursor' ? 'cursor'
-      : parsed.provider === 'openai' ? 'openai'
-      : parsed.provider === 'gemini' ? 'gemini'
-      : 'claude'
+    // 名单来自 lib/provider-ids(唯一事实源)。以前这里手写五家、漏了 agy,
+    // provider:"agy" 被静默映射成 claude —— 主人机器上就是这样跑了半个月。
+    const provider: AgentProviderKind = isKnownProviderId(parsed.provider) ? parsed.provider : 'claude'
     // Preserve `model` for both providers. Pre-2026-05-08 only codex
     // honored it; claude inherited the spawned CLI's default which read
     // `~/.claude/.claude.json` and broke daemons whenever the user's

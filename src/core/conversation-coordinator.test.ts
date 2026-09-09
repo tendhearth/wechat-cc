@@ -2817,3 +2817,40 @@ describe('spawn failure is told to the user (first-use probe / missing binary)',
     expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining('spawn failed'), expect.objectContaining({ event: 'spawn_failed' }))
   })
 })
+
+describe('fallback streak detector (onFallbackStreak)', () => {
+  function setupStreak() {
+    const registry = createProviderRegistry()
+    registry.register('agy', dummyProvider, { displayName: 'Agy', canResume: () => true })
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const store = makeMockStore(); store.set('chat-1', { kind: 'solo', provider: 'agy' })
+    let next: 'fallback' | 'reply' = 'fallback'
+    const acquire = vi.fn(async (req: AcquireRequest) => makeHandle(req.providerId, makeFakeSession({
+      events: next === 'fallback'
+        ? [{ kind: 'text', text: '已回复用户的问候。' }, { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }]
+        : [{ kind: 'tool_call', server: 'wechat', tool: 'reply' }, { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
+    })))
+    const streaks: Array<[string, number]> = []
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire, release: async () => {} },
+      conversationStore: store, registry, defaultProviderId: 'claude', format: m => m.text,
+      sendAssistantText: async () => {}, permissionMode: 'strict', loadAccess: adminAccess, log: () => {},
+      onFallbackStreak: (p, n) => streaks.push([p, n]),
+    })
+    return { c, streaks, setNext: (v: typeof next) => { next = v } }
+  }
+  it('counts consecutive fallback turns per provider and resets to 0 on the next reply-tool turn', async () => {
+    const { c, streaks, setNext } = setupStreak()
+    await c.dispatch(inbound('chat-1', 'a'))
+    await c.dispatch(inbound('chat-1', 'b'))
+    await c.dispatch(inbound('chat-1', 'c'))
+    expect(streaks).toEqual([['agy', 1], ['agy', 2], ['agy', 3]])
+    setNext('reply')
+    await c.dispatch(inbound('chat-1', 'd'))   // this turn calls reply → streak cleared, reported as 0
+    expect(streaks.at(-1)).toEqual(['agy', 0])
+    setNext('fallback')
+    await c.dispatch(inbound('chat-1', 'e'))   // starts a new streak from 1
+    expect(streaks.at(-1)).toEqual(['agy', 1])
+  })
+})

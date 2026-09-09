@@ -236,3 +236,11 @@ describe('capability-matrix — supportsDelegation conjunct (B2, spec §4)', () 
     }
   })
 })
+
+describe('provider id single source', () => {
+  it('CAPABILITIES_BY_PROVIDER keys == lib/provider-ids PROVIDER_IDS (adding a provider = one list, not seven)', async () => {
+    const { capabilityProviderIds } = await import('./capability-matrix')
+    const { PROVIDER_IDS } = await import('../lib/provider-ids')
+    expect([...capabilityProviderIds()].sort()).toEqual([...PROVIDER_IDS].sort())
+  })
+})

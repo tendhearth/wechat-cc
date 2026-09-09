@@ -2,6 +2,10 @@ import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
 import { withFirstUseProbe } from '../../core/first-use-probe'
+import { DEFAULT_CLAUDE_MODEL } from '../../core/claude-agent-provider'
+import { DEFAULT_AGY_MODEL } from '../../core/agy-agent-provider'
+import { DEFAULT_CURSOR_MODEL } from '../../core/cursor-cli-provider'
+import { readFileSync } from 'node:fs'
 import { createClaudeAgentProvider } from '../../core/claude-agent-provider'
 import { createCodexAgentProvider } from '../../core/codex-agent-provider'
 import { buildSystemPrompt } from '../../core/prompt-builder'
@@ -166,9 +170,26 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       void import('../diagnostics/failure-shapes').then(m => m.recordFailureShape(deps.stateDir, info))
     },
   })
-  registry.register(
-    'claude',
-    createClaudeAgentProvider({
+  // claude 和 codex 是同一个形状:SDK(node_modules 里那份)驱动用户全局装的
+  // `claude` CLI,两者版本之间没有任何检查 —— 一直能用是 Anthropic 协议宽容,
+  // 不是我们做了什么。同样套上首次使用探测(只拦聊天回合,gate:'spawn':
+  // 后台评估开机就可能跑,不让它多一次外呼)。探测失败的两个常见原因都写进
+  // 提示:CLI/SDK 不合、或写死的默认模型不可用了。
+  const claudeCliVersion = claudeBin ? (probeBinaryVersion(claudeBin)?.match(/(\d+\.\d+\.\d+)/)?.[1] ?? null) : null
+  const claudeSdkVersion = (() => {
+    try {
+      const root = wechatCcRepoRoot()
+      if (!root) return null
+      return (JSON.parse(readFileSync(`${root}/node_modules/@anthropic-ai/claude-agent-sdk/package.json`, 'utf8')) as { version?: string }).version ?? null
+    } catch { return null }
+  })()
+  const claudeVersionTag = `${claudeCliVersion ? `你的 CLI ${claudeCliVersion}` : 'CLI 版本未知'}${claudeSdkVersion ? `(SDK ${claudeSdkVersion})` : ''}`
+  const claudeModelTag = () => {
+    const c = readAgentConfig()
+    return c.provider === 'claude' && c.model ? `模型 ${c.model}` : `模型 ${DEFAULT_CLAUDE_MODEL}(配置里没设,内置兜底 —— /set model 或面板可改)`
+  }
+  let claudeProbeNote = '未探测'
+  const claudeInner = createClaudeAgentProvider({
       sdkOptionsForProject,
       // Threaded into cheapEval's query() call so the bun-compile
       // findClaudePath() trap doesn't bite the chatroom moderator path
@@ -177,7 +198,23 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       // strongEval (the /chat verdict) runs on the live default model, not
       // haiku — synthesis quality matters more than cost there.
       strongModel: currentClaudeModel,
-    }),
+    })
+  const claudeProvider = withFirstUseProbe(claudeInner, {
+    gate: 'spawn',
+    probe: () => claudeInner.cheapEval!('只回复两个字母:ok'),
+    failureMessage: (detail) =>
+      `claude 探测没通过:${detail.slice(0, 200)}\n` +
+      `可能是 ${claudeVersionTag} 和 SDK 不合,或者${claudeModelTag()}已不可用。` +
+      `先在终端跑一次 \`claude\` 确认能登录;模型不对就 model_set 换一个。`,
+    onResult: (r) => {
+      claudeProbeNote = r.ok ? `探测通过 ✓(${(r.ms / 1000).toFixed(1)}s)` : `探测失败 ✗:${r.detail.slice(0, 120)}`
+      deps.log('CLAUDE_PROBE', r.ok ? `ok in ${r.ms}ms (${claudeVersionTag})` : `FAILED in ${r.ms}ms: ${r.detail.slice(0, 300)}`)
+    },
+  })
+  const claudeNote = () => `${claudeVersionTag} · ${claudeModelTag()} · ${claudeProbeNote}`
+  registry.register(
+    'claude',
+    claudeProvider,
     {
       displayName: 'Claude',
       canResume: (cwd, sid) => existsSync(claudeSessionJsonlPath(HOME, cwd, sid)),
@@ -378,7 +415,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         'cursor',
         createCursorCliProvider({
           bin: cursorAgentBin,
-          model: configuredAgent.cursorModel ?? 'auto',
+          model: configuredAgent.cursorModel ?? DEFAULT_CURSOR_MODEL,
           log: deps.log,
         }),
         { displayName: 'Cursor', canResume: () => true },
@@ -618,7 +655,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         'agy',
         createAgyAgentProvider({
           bin: agyBin,
-          model: configuredAgent.agyModel ?? 'gemini-3.7-flash-medium',
+          model: configuredAgent.agyModel ?? DEFAULT_AGY_MODEL,
           turnTimeoutMs,
           log: deps.log,
         }),
@@ -638,5 +675,11 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // would silently slip past and only throw at first use in production.
   assertMatrixComplete(registry.list())
 
-  return { registry, defaultProviderId, codexBinary, codexVersionCheck, providerNotes: () => (codexNote ? { codex: codexNote } : {}) }
+  // 默认 provider 是共享钥匙的那种(agy/cursor):允许,但说清后果。
+  { let shared = false; try { shared = !capabilitiesFor(defaultProviderId).adminMcpTools } catch { /* unknown id → registry will complain */ }
+    if (shared) deps.log('BOOT', `默认 provider 是 ${defaultProviderId}(订阅 CLI,所有对话共用一把 trusted 钥匙):guest 对话会被拒,管理员/信任对话正常;主动关心等走主人会话不受影响`) }
+  return {
+    registry, defaultProviderId, codexBinary, codexVersionCheck,
+    providerNotes: () => ({ claude: claudeNote(), ...(codexNote ? { codex: codexNote } : {}) }),
+  }
 }

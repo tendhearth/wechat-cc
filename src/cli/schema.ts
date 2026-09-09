@@ -12,6 +12,7 @@
 // bundler; use the default export instead (both forms are equivalent at
 // runtime — this is a build-tool interop quirk, not a zod API difference).
 import z from 'zod'
+import { PROVIDER_IDS } from '../lib/provider-ids'
 
 // ── Shared building blocks ────────────────────────────────────────────────────
 
@@ -59,7 +60,7 @@ const ServiceSnapshot = z.object({
   kind: ServiceKind,
 })
 
-const AgentProviderKind = z.enum(['claude', 'codex', 'cursor', 'openai', 'gemini'])
+const AgentProviderKind = z.enum(PROVIDER_IDS)
 
 const DmPolicy = z.enum(['allowlist', 'disabled'])
 

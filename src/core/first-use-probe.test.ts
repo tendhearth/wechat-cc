@@ -44,3 +44,14 @@ describe('withFirstUseProbe', () => {
     expect(p.probeStatus()).toMatchObject({ state: 'failed', detail: expect.stringContaining('newer version') })
   })
 })
+
+describe('gate: spawn', () => {
+  it('leaves cheapEval ungated (default provider: background evals must not add a boot-time outbound call)', async () => {
+    const probe = vi.fn(async () => 'ok')
+    const p = withFirstUseProbe(inner(), { probe, gate: 'spawn', failureMessage: d => d })
+    await p.cheapEval!('x')
+    expect(probe).not.toHaveBeenCalled()
+    await p.spawn({ alias: 'a', path: '/p' }, ctx)
+    expect(probe).toHaveBeenCalledTimes(1)
+  })
+})

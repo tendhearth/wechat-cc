@@ -118,6 +118,14 @@ export interface ClaudeAgentProviderOptions {
   strongModel?: () => string
 }
 
+/**
+ * 配置里没设 model 时的兜底。写死的模型名会烂(Anthropic 下线它那天,新装
+ * 用户每一轮都报错)—— 所以只允许在这一处出现,/mode 会标出「用的是内置兜底」,
+ * 首次使用探测(bootstrap)会把它不可用这件事变成用户看得见的错误。
+ * 为什么不干脆不传 model 让 CLI 用自己的默认:2026-05-08 的事故 —— 用户
+ * 交互里的别名(`opus[1m]` 之类)在 SDK 子进程里解析不了,整天 404。
+ */
+export const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-8'
 const CLAUDE_CHEAP_MODEL_DEFAULT = 'claude-haiku-4-5'
 
 // Local mirror of the SDK message variants this provider actually reads.

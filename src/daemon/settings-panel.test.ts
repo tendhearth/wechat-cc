@@ -435,7 +435,7 @@ describe('settings panel — 模型与后端', () => {
       const m = (panel.state() as { models: any }).models
       expect(m.default_provider).toBe('claude')
       const byId = Object.fromEntries(m.providers.map((p: any) => [p.id, p]))
-      expect(Object.keys(byId)).toEqual(['claude', 'agy', 'cursor', 'codex', 'openai', 'gemini'])
+      expect(Object.keys(byId)).toEqual(['claude', 'codex', 'cursor', 'openai', 'gemini', 'agy'])   // lib/provider-ids order
       expect(byId.claude).toMatchObject({ registered: true, status: 'ok', model: 'claude-opus-5', latency_ms: 120 })
       expect(byId.agy).toMatchObject({ registered: true, status: 'broken', error: 'Not logged in', model: 'gemini-3.7-flash-high' })
       expect(byId.openai).toMatchObject({ registered: true, status: 'unknown', model: 'DeepSeek' })   // registered, never probed
@@ -491,7 +491,7 @@ describe('settings panel — 模型与后端', () => {
     try {
       const m = (panel.state() as { models: any }).models
       expect(m.trusted_providers).toEqual(['claude', 'openai'])
-      expect(m.shared_token).toEqual(['agy', 'cursor'])
+      expect([...m.shared_token].sort()).toEqual(['agy', 'cursor'])
     } finally { cleanup() }
   })
 
