@@ -2777,7 +2777,7 @@ describe('dispatch-time provider policy + cold-start block', () => {
     expect(dispatched[0]).toContain('你(openai)刚刚重新开了会话线程')
     expect(dispatched[0]).toContain('用户: 明天去看房')
     expect(dispatched[0]).toContain('你: 记得带身份证')
-    expect(dispatched[0].endsWith('几点合适?')).toBe(true)
+    expect(dispatched[0]?.endsWith('几点合适?')).toBe(true)
   })
   it('claude (resumes) and warm sessions and empty history get no cold-start block', async () => {
     const a = setupWith(adminAccess, { has: () => false, recent: [{ dir: 'in', text: 'x', ts: 't' }] })
@@ -2810,7 +2810,7 @@ describe('spawn failure is told to the user (first-use probe / missing binary)',
     })
     await c.dispatch(inbound('chat-1', 'hi'))
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
-    const text = (sendAssistantText.mock.calls[0] as unknown as [string, string])[1]
+    const text = (sendAssistantText.mock.calls[0] as unknown as [string, string] | undefined)?.[1] ?? ''
     expect(text).toContain('codex 这次没起来')
     expect(text).toContain('requires a newer version of Codex')
     expect(text).toContain('/cc')
