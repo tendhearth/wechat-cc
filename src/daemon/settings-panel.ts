@@ -46,6 +46,7 @@ export const PANEL_CONFIG_KEYS: readonly string[] = [
   'companion.atelier_mode',
   // 「模型与后端」一块(2026-09-08):各家模型、/api 地址、后台评估用哪家。
   'openaiModel', 'openaiBaseUrl', 'agyModel', 'cursorModel', 'geminiModel', 'cheap_eval_provider', 'trusted_providers',
+  'provider',
 ]
 
 /** 面板「模型与后端」表格覆盖的六家,顺序即显示顺序。 */
@@ -108,6 +109,8 @@ export interface SettingsPanelDeps {
     cached: () => LlmHealthReport | null
     hasKey: (provider: 'openai' | 'gemini') => boolean
   }
+  /** 改了要重启才生效的键(provider)写完后触发 daemon 重启。缺省 ⇒ 只写不重启,回复里说明。 */
+  requestRestart?: (reason: string) => void
   /** config_changed audit sink (events store append) — best-effort. */
   audit?: (reasoning: string) => void
   log: (tag: string, line: string) => void
@@ -118,7 +121,7 @@ export interface SettingsPanel {
   issueToken(): string
   validToken(t: string | null | undefined): boolean
   state(): object
-  apply(op: unknown): Promise<{ ok: boolean; error?: string }>
+  apply(op: unknown): Promise<{ ok: boolean; error?: string; restart?: 'requested' | 'required' }>
   /** Start the HTTP server (idempotent). port 0 = ephemeral. */
   start(port?: number): Promise<{ port: number }>
   stop(): Promise<void>
@@ -391,6 +394,12 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             void kickAtelierModelProvision(deps.stateDir, { log: deps.log })
           }
           deps.audit?.(`${key}: ${JSON.stringify(r.previous)} → ${JSON.stringify(b.value)} — 设置面板`)
+          // 默认 provider 是开机捕获的,改完自己重启(和 set_remote 同一条路);
+          // 没接 requestRestart 时告诉调用方要手动重启。
+          if (key === 'provider' && r.previous !== b.value) {
+            if (deps.requestRestart) { deps.requestRestart('provider-change'); return { ok: true, restart: 'requested' } }
+            return { ok: true, restart: 'required' }
+          }
           return { ok: true }
         }
         return { ok: false, error: 'unknown_op' }

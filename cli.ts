@@ -6,6 +6,7 @@ import { defineCommand, runMain } from 'citty'
 import selfPkg from './package.json' with { type: 'json' }
 import { STATE_DIR } from './src/lib/config'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider, activeModel, type AgentConfig, type AgentProviderKind } from './src/lib/agent-config'
+import { PROVIDER_IDS, isKnownProviderId } from './src/lib/provider-ids'
 import { analyzeDoctor, defaultDoctorDeps, printDoctor, probeFsAccessWarning, probeOutboundWarning, serviceStatus, setupStatus } from './src/cli/doctor'
 import { buildServicePlan, installService, startService, stopService, uninstallService } from './src/cli/service-manager'
 import { appMainBinaryPath, compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from './src/lib/runtime-info'
@@ -169,7 +170,7 @@ Usage:
                         一键开启觅食台社交(merge-persist,不覆盖已有设置);
                           --status 只打印当前三项设置,不写入
   wechat-cc provider show [--json]  Show selected agent provider
-  wechat-cc provider set <claude|codex|cursor|openai|gemini> [--model MODEL] [--unattended true|false]
+  wechat-cc provider set <claude|codex|cursor|openai|gemini|agy> [--model MODEL] [--unattended true|false]
                         --unattended: when true (default for new installs), the
                           installed daemon runs the daemon with --dangerously so
                           inbound WeChat messages don't hang waiting for human
@@ -862,10 +863,12 @@ export function computeProviderSetOutcome(
   existing: AgentConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): ProviderSetOutcome {
-  if (args.provider !== 'claude' && args.provider !== 'codex' && args.provider !== 'cursor' && args.provider !== 'openai' && args.provider !== 'gemini') {
-    return { ok: false, error: `provider must be 'claude', 'codex', 'cursor', 'openai', or 'gemini' (got: ${args.provider})` }
+  // 名单来自 lib/provider-ids(唯一事实源)。以前这里手写五家、漏了 agy:桌面
+  // 「大脑」菜单选 agy → `provider set agy` 被拒 →「切换 provider 失败」。
+  if (!isKnownProviderId(args.provider)) {
+    return { ok: false, error: `provider must be one of ${PROVIDER_IDS.join(' | ')} (got: ${args.provider})` }
   }
-  const provider = args.provider as AgentProviderKind
+  const provider: AgentProviderKind = args.provider
   const unattended = parseBoolValue(args.unattended)
   const autoStart = parseBoolValue(args.autoStart)
   const closeStopsDaemon = parseBoolValue(args.closeStopsDaemon)
@@ -919,9 +922,9 @@ export function computeProviderSetOutcome(
 }
 
 const providerSetCmd = defineCommand({
-  meta: { name: 'set', description: 'Switch agent provider (claude|codex|cursor|openai|gemini), optionally with --model + --base-url + --unattended + --auto-start + --close-stops-daemon' },
+  meta: { name: 'set', description: 'Switch agent provider (claude|codex|cursor|openai|gemini|agy), optionally with --model + --base-url + --unattended + --auto-start + --close-stops-daemon' },
   args: {
-    provider: { type: 'positional', required: true, description: 'claude | codex | cursor | openai | gemini', valueHint: 'claude|codex|cursor|openai|gemini' },
+    provider: { type: 'positional', required: true, description: 'claude | codex | cursor | openai | gemini | agy', valueHint: 'claude|codex|cursor|openai|gemini|agy' },
     model: { type: 'string', description: 'Override default model (openai: required the first time, unless already stored)' },
     'base-url': { type: 'string', description: 'OpenAI-compatible API base URL — openai only, e.g. https://api.deepseek.com/v1 (required the first time, unless already stored)', valueHint: 'https://api.deepseek.com/v1' },
     // String, not boolean: matches the legacy parseBoolFlag tri-state semantics
@@ -950,7 +953,7 @@ const providerSetCmd = defineCommand({
 })
 
 const providerCmd = defineCommand({
-  meta: { name: 'provider', description: 'Agent provider config (claude / codex / cursor / openai / gemini)' },
+  meta: { name: 'provider', description: 'Agent provider config (claude / codex / cursor / openai / gemini / agy)' },
   subCommands: {
     show: providerShowCmd,
     set: providerSetCmd,

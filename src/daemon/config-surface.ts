@@ -49,8 +49,10 @@ import { PROVIDER_IDS } from '../lib/provider-ids'
 const parseProviderList = (v: string): string[] => v.split(/[,\s，、]+/).map(x => x.trim().toLowerCase()).filter(Boolean)
 
 export const CONFIG_SURFACE: readonly ConfigKeySpec[] = [
-  { key: 'provider', store: 'agent', field: 'provider', type: 'string', writable: false,
-    effect: 'daemon-restart', description: '默认 provider（切换用 /cc /codex 等命令，不在这里改）' },
+  // 默认 provider(没 /cc /api 过的对话、主动关心等主人会话用谁)。改了要
+  // 重启才生效(bootstrap 开机捕获);面板 / /set provider 写完会自己触发重启。
+  { key: 'provider', store: 'agent', field: 'provider', type: 'enum', values: PROVIDER_IDS, writable: true,
+    effect: 'daemon-restart', description: '默认 provider(单个对话临时切换用 /cc /api /agy;这里改的是全局默认,改完需重启)' },
   { key: 'bot_name', store: 'agent', field: 'bot_name', type: 'string', writable: true,
     effect: 'immediate', description: '我的名字（1-24 字符，中英文/数字/空格/_-）',
     validate: (v) => v.length <= 24 && NICKNAME_RE.test(v) },

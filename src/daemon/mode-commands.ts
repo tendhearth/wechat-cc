@@ -54,6 +54,8 @@ export interface ModeCommandsDeps {
   setOpenaiAlias?: (alias: string, model: string | null) => void | Promise<void>
   /** `/set cheap <provider|auto>` 走 config-surface 的 writeConfigKey(管理员)。 */
   setConfig?: (key: string, value: string) => Promise<{ ok: true } | { ok: false; error: string; detail?: string }>
+  /** `/set provider <id>` 写完触发 daemon 重启(默认 provider 是开机捕获的)。缺省 ⇒ 回复里让主人手动重启。 */
+  requestRestart?: (reason: string) => void
   /** 各 provider 的一句话状态(bootstrap 填:codex「你的 CLI 0.153.4 · 首次使用时探测 / 探测通过」),/mode 显示。 */
   providerNotes?: () => Partial<Record<ProviderId, string>>
   /** `/api list` 的网关模型发现(daemon/openai-models.ts)。缺省 ⇒ 列表只有别名。 */
@@ -467,7 +469,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
 
       // /set — per-chat preferences (the settings layer's dials: split, care).
       if (slashWord.toLowerCase() === 'set') {
-        const SET_USAGE = '❓ 不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)\n· /set hunt on|off (别名: 打猎 开|关)\n· /set visit on|off (别名: 串门 开|关)\n· /set cheap auto|claude|agy|openai|… (管理员;后台评估用哪家)\n· /set providers claude,openai|all (管理员;非管理员对话能用哪些)'
+        const SET_USAGE = '❓ 不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)\n· /set hunt on|off (别名: 打猎 开|关)\n· /set visit on|off (别名: 串门 开|关)\n· /set cheap auto|claude|agy|openai|… (管理员;后台评估用哪家)\n· /set providers claude,openai|all (管理员;非管理员对话能用哪些)\n· /set provider cc|agy|api|… (管理员;全局默认大脑,改完自动重启)'
         const p = deps.chatPrefs.get(msg.chatId)
         if (tail === '') {
           const splitState = p.split === false ? 'off' : 'on'
@@ -487,13 +489,13 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
             } catch { /* fall through to usage lines */ }
           }
           const adminHere = deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false
-          const cheapLine = adminHere && deps.readConfig ? `\n· 后台评估(全局): ${deps.readConfig().cheapEvalProvider ?? 'auto'}\n· 非管理员可用 provider(全局): ${deps.readConfig().trusted_providers?.join(', ') ?? '全部'}` : ''
+          const cheapLine = adminHere && deps.readConfig ? `\n· 默认大脑(全局): ${deps.defaultProviderId}\n· 后台评估(全局): ${deps.readConfig().cheapEvalProvider ?? 'auto'}\n· 非管理员可用 provider(全局): ${deps.readConfig().trusted_providers?.join(', ') ?? '全部'}` : ''
           const values = `本对话设置:\n· 拆分回复: ${splitState}\n· 主动关心: ${careState}\n· 表情包: ${stickersState}\n· 每日打猎: ${huntState}\n· 每日串门: ${visitState}${cheapLine}`
           const usage = panelLine ? '' : `\n\n改法: /set split|care|stickers|hunt|visit <值>(别名: 拆分/关心/表情/打猎/串门 开|关)`
           await reply(msg.chatId, values + panelLine + usage)
           return true
         }
-        const m2 = /^(split|拆分|care|关心|stickers|表情|hunt|打猎|visit|串门|cheap|providers)\s+(\S+)$/i.exec(tail)
+        const m2 = /^(split|拆分|care|关心|stickers|表情|hunt|打猎|visit|串门|cheap|providers|provider|默认)\s+(\S+)$/i.exec(tail)
         if (!m2) {
           await reply(msg.chatId, SET_USAGE)
           return true
@@ -504,6 +506,26 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         // /set cheap — global (agent-config), admin only: which provider runs
         // the background one-shot evals. Not a chat pref; lives here because
         // /set is where the owner already goes to「调档位」.
+        // /set provider agy — 全局默认 provider(管理员)。开机捕获的,写完自己重启。
+        if (key === 'provider' || key === '默认') {
+          if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '❌ /set provider 是全局设置,仅管理员可改。'); return true }
+          if (!deps.setConfig) { await reply(msg.chatId, '❌ 配置写入未接线。'); return true }
+          const target = rawValue.toLowerCase() === 'cc' ? 'claude' : rawValue.toLowerCase() === 'api' ? 'openai' : rawValue.toLowerCase()
+          if (!deps.registry.has(target)) { await reply(msg.chatId, `❌ provider \`${target}\` 未注册。可用: ${deps.registry.list().join(', ')}`); return true }
+          if (target === deps.defaultProviderId) { await reply(msg.chatId, `默认已经是 ${target},不用改。`); return true }
+          const r = await deps.setConfig('provider', target)
+          if (!r.ok) { await reply(msg.chatId, `❌ 没改成:${r.detail ?? r.error}`); return true }
+          const dn = deps.registry.get(target)?.opts.displayName ?? target
+          if (deps.requestRestart) {
+            await reply(msg.chatId, `✅ 默认大脑改为 ${dn}。我重启一下(十几秒),回来就生效。单个对话临时切换还是 /cc /api /agy。`)
+            deps.log('MODE_CMD', `chat=${msg.chatId} /set provider=${target} → restart`)
+            deps.requestRestart('provider-change')
+          } else {
+            await reply(msg.chatId, `✅ 默认大脑改为 ${dn}(已写入配置)。要重启 daemon 才生效。`)
+          }
+          return true
+        }
+
         // /set providers claude,openai | all — 非管理员对话可用的 provider(全局,管理员)
         if (key === 'providers') {
           if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '❌ /set providers 是全局设置,仅管理员可改。'); return true }

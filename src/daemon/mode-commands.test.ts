@@ -18,6 +18,7 @@ function setup(opts: {
   config?: { openaiBaseUrl?: string; openaiModel?: string; openaiAliases?: Record<string, string>; cheapEvalProvider?: string; trusted_providers?: string[] }
   models?: { models: string[]; error?: string; fromCache?: boolean }
   notes?: Partial<Record<ProviderId, string>>
+  requestRestart?: (reason: string) => void
 } = {}) {
   const registered = opts.registered ?? ['claude', 'codex']
   const set = vi.fn<(chatId: string, mode: Mode) => void>()
@@ -38,6 +39,7 @@ function setup(opts: {
   const setConfig = vi.fn(async (key: string, value: string) => {
     if (key === 'cheap_eval_provider') { if (value === 'auto') delete cfg.cheapEvalProvider; else cfg.cheapEvalProvider = value; return { ok: true as const } }
     if (key === 'trusted_providers') { if (value === 'all' || value.trim() === '') delete cfg.trusted_providers; else cfg.trusted_providers = value.split(',').map(x => x.trim()).filter(Boolean); return { ok: true as const } }
+    if (key === 'provider') { (cfg as Record<string, unknown>).provider = value; return { ok: true as const } }
     return { ok: false as const, error: 'unknown_key' }
   })
   const openaiModels = { list: vi.fn(async () => opts.models ?? { models: ['DeepSeek', 'KIMI', 'Qwen3.8'] }) }
@@ -69,6 +71,7 @@ function setup(opts: {
     getUserName: vi.fn(() => opts.initialUserName ?? null),
     readConfig: () => cfg,
     providerNotes: () => opts.notes ?? {},
+    ...(opts.requestRestart ? { requestRestart: opts.requestRestart } : {}),
     setOpenaiAlias,
     setConfig,
     openaiModels,
@@ -1278,5 +1281,29 @@ describe('/mode provider notes', () => {
     await cmds.handle(inbound('/mode'))
     expect(sentMessages[0]![1]).toContain('codex: 你的 CLI 0.153.4')
     expect(sentMessages[0]![1]).toContain('未探测')
+  })
+})
+
+describe('/set provider — 全局默认大脑(管理员)', () => {
+  it('writes provider via config surface, tells the owner, and requests a restart; cc/api aliases resolve', async () => {
+    const requestRestart = vi.fn()
+    const { cmds, setConfig, sentMessages } = setup({ registered: ['claude', 'agy', 'openai'], isAdmin: () => true, requestRestart })
+    await cmds.handle(inbound('/set provider agy'))
+    expect(setConfig).toHaveBeenCalledWith('provider', 'agy')
+    expect(sentMessages[0]![1]).toContain('默认大脑改为')
+    expect(sentMessages[0]![1]).toContain('重启')
+    expect(requestRestart).toHaveBeenCalledWith('provider-change')
+    await cmds.handle(inbound('/set provider api'))
+    expect(setConfig).toHaveBeenLastCalledWith('provider', 'openai')
+  })
+  it('refuses unregistered / non-admin; no-op when already default', async () => {
+    const a = setup({ registered: ['claude', 'agy'], isAdmin: () => true })
+    await a.cmds.handle(inbound('/set provider cursor'))
+    expect(a.sentMessages[0]![1]).toContain('未注册')
+    await a.cmds.handle(inbound('/set provider cc'))
+    expect(a.sentMessages[1]![1]).toContain('默认已经是 claude')
+    const g = setup({ isAdmin: () => false })
+    await g.cmds.handle(inbound('/set provider agy'))
+    expect(g.sentMessages[0]![1]).toContain('仅管理员')
   })
 })

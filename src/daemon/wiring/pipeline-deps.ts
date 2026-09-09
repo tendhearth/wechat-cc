@@ -459,6 +459,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     stateDir,
     ownerChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
+    // 「默认大脑」改完自己重启(与远程开关同一条路)。
+    ...(opts.requestRestart ? { requestRestart: (reason: string) => opts.requestRestart!(reason) } : {}),
     ...(opts.requestRestart ? {
       remote: {
         isEnabled: () => (loadAgentConfig(stateDir) as { remote_tunnel?: boolean }).remote_tunnel === true,
@@ -571,6 +573,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       apiKey: () => process.env.WECHAT_OPENAI_API_KEY,
     }),
     providerNotes: () => boot.providerNotes?.() ?? {},
+    ...(opts.requestRestart ? { requestRestart: (reason: string) => opts.requestRestart!(reason) } : {}),
     chatPrefs,
     log,
     isAdmin,

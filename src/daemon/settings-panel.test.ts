@@ -104,7 +104,7 @@ describe('settings panel', () => {
     expect(s.prefs).toEqual({ split: false })
     expect(s.config['bot_name']).toBe('CC')
     expect(s.config['knowledge_enabled']).toBe(true)
-    expect(s.config['provider']).toBeUndefined()   // not a panel key
+    expect(s.config['provider']).toBe('claude')    // 默认大脑现在是面板键(2026-09-09)
   })
 
   it('apply: set_name normalizes 叫我-phrases; set_persona writes the file', async () => {
@@ -127,8 +127,8 @@ describe('settings panel', () => {
     expect(audit).toHaveBeenCalled()
     const cfg = JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))
     expect(cfg.bot_name).toBe('小柴')
-    // provider is config-surface-readable but NOT panel-writable
-    expect((await panel.apply({ op: 'set_config', key: 'provider', value: 'codex' })).ok).toBe(false)
+    // provider IS panel-writable now (默认大脑);a non-surface key is the refused example
+    expect((await panel.apply({ op: 'set_config', key: 'dangerouslySkipPermissions', value: 'true' })).ok).toBe(false)
     expect((await panel.apply({ op: 'nonsense' })).ok).toBe(false)
   })
 
@@ -517,5 +517,24 @@ describe('settings panel — 模型与后端', () => {
       expect((await panel.apply({ op: 'set_config', key: 'cheap_eval_provider', value: 'auto' })).ok).toBe(true)
       expect(JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))).not.toHaveProperty('cheapEvalProvider')
     } finally { cleanup() }
+  })
+})
+
+describe('settings panel — 默认大脑', () => {
+  it('set_config provider writes agent-config and asks the daemon to restart; unchanged value does not restart', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'settings-provider-'))
+    mkdirSync(join(stateDir, 'memory', OWNER), { recursive: true })
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
+    const requestRestart = vi.fn()
+    try {
+      const panel = makeSettingsPanel({ stateDir, ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: (_c, p) => p }, getUserName: () => null, setUserName: async () => {}, requestRestart, log: () => {} })
+      expect(await panel.apply({ op: 'set_config', key: 'provider', value: 'agy' })).toEqual({ ok: true, restart: 'requested' })
+      expect(requestRestart).toHaveBeenCalledWith('provider-change')
+      expect(JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8')).provider).toBe('agy')
+      expect(await panel.apply({ op: 'set_config', key: 'provider', value: 'agy' })).toEqual({ ok: true })
+      expect(requestRestart).toHaveBeenCalledTimes(1)
+      const noRestart = makeSettingsPanel({ stateDir, ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: (_c, p) => p }, getUserName: () => null, setUserName: async () => {}, log: () => {} })
+      expect(await noRestart.apply({ op: 'set_config', key: 'provider', value: 'claude' })).toEqual({ ok: true, restart: 'required' })
+    } finally { rmSync(stateDir, { recursive: true, force: true }) }
   })
 })

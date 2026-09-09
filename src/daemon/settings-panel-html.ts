@@ -96,6 +96,7 @@ export function pageHtml(token: string): string {
   <h2>模型与后端</h2>
   <p class="hint">CC 有哪些大脑、各自通不通。这里改的是全局默认;单个对话换脑子在微信里发 /api /agy /cc</p>
   <div id="models-table"></div>
+  <label class="row"><span><b>默认大脑</b><small>没在微信里单独切过的对话、还有 CC 主动找你时,用这家。改完 CC 会自己重启(十几秒)</small></span><select id="f-default-provider"></select></label>
   <div class="row" style="display:block;border-top:1px dashed var(--line);padding-top:10px">
     <b>自配 API(/api)</b><small style="color:var(--soft)">OpenAI 兼容网关 —— DeepSeek / Kimi / Qwen 这类都从这扇门进</small>
     <label class="row"><span><b>地址</b><small>以 /v1 结尾</small></span><input type="text" id="f-api-base" style="width:190px" placeholder="https://…/v1"></label>
@@ -230,6 +231,13 @@ function renderModels(m) {
   for (var d = 0; d < dels.length; d++) (function (b) {
     b.addEventListener("click", async function () { if (await apply("del_alias", { alias: b.dataset.delAlias }, "短名已删 ✓")) reloadModels() })
   })(dels[d])
+  var dsel = $("f-default-provider"), dopts = ""
+  for (var y = 0; y < m.providers.length; y++) {
+    var dp = m.providers[y]; if (!dp.registered && dp.id !== m.default_provider) continue
+    var dshared = (m.shared_token || []).indexOf(dp.id) >= 0
+    dopts += '<option value="' + esc(dp.id) + '"' + (dp.id === m.default_provider ? " selected" : "") + '>' + esc(PROVIDER_NAME[dp.id] || dp.id) + (dshared ? "(共享钥匙,访客不可用)" : "") + (dp.registered ? "" : "(未接入)") + '</option>'
+  }
+  dsel.innerHTML = dopts
   var sel = $("f-cheap"), opts = ["auto"]
   for (var r = 0; r < m.providers.length; r++) if (m.providers[r].registered) opts.push(m.providers[r].id)
   if (opts.indexOf(m.cheap) < 0) opts.push(m.cheap)
@@ -249,6 +257,11 @@ $("add-alias").addEventListener("click", async function () {
   if (await apply("set_alias", { alias: a, model: mm }, "短名已加 ✓")) { $("f-alias-name").value = ""; $("f-alias-model").value = ""; reloadModels() }
 })
 $("f-cheap").addEventListener("change", function (e) { apply("set_config", { key: "cheap_eval_provider", value: e.target.value }, "后台评估改走 " + e.target.value + " ✓") })
+$("f-default-provider").addEventListener("change", async function (e) {
+  var v = e.target.value
+  var ok = await apply("set_config", { key: "provider", value: v }, "默认大脑改为 " + (PROVIDER_NAME[v] || v) + ",CC 重启中(十几秒)…")
+  if (!ok) reloadModels()
+})
 
 async function load() {
   const s = await sapi("/set/api/state")

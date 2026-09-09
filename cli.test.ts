@@ -595,3 +595,16 @@ describe('connection probe CLI — integration (empty state dir)', () => {
     expect(out.accounts).toHaveLength(0)
   })
 })
+
+describe('computeProviderSetOutcome — 名单跟 lib/provider-ids 走', () => {
+  it('accepts agy (the desktop 大脑 menu lists it; `provider set agy` used to be refused)', async () => {
+    const { computeProviderSetOutcome } = await import('./cli')
+    const existing = { provider: 'claude' as const, dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }
+    const r = computeProviderSetOutcome({ provider: 'agy' }, existing as never)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.config.provider).toBe('agy')
+    const bad = computeProviderSetOutcome({ provider: 'bogus' }, existing as never)
+    expect(bad.ok).toBe(false)
+    if (!bad.ok) expect(bad.error).toContain('agy')
+  })
+})
