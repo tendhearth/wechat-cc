@@ -17,6 +17,7 @@ function setup(opts: {
   tier?: UserTier
   config?: { openaiBaseUrl?: string; openaiModel?: string; openaiAliases?: Record<string, string>; cheapEvalProvider?: string; trusted_providers?: string[] }
   models?: { models: string[]; error?: string; fromCache?: boolean }
+  notes?: Partial<Record<ProviderId, string>>
 } = {}) {
   const registered = opts.registered ?? ['claude', 'codex']
   const set = vi.fn<(chatId: string, mode: Mode) => void>()
@@ -67,6 +68,7 @@ function setup(opts: {
     setUserName: vi.fn(async (chat: string, name: string) => { storedName = { chat, name } }),
     getUserName: vi.fn(() => opts.initialUserName ?? null),
     readConfig: () => cfg,
+    providerNotes: () => opts.notes ?? {},
     setOpenaiAlias,
     setConfig,
     openaiModels,
@@ -1267,5 +1269,14 @@ describe('provider policy in slash commands', () => {
     await cmds.handle(inbound('/help'))
     expect(sentMessages[1]![1]).toContain('当前可用: /cc /agy')
     expect(sentMessages[1]![1]).toContain('订阅 CLI')
+  })
+})
+
+describe('/mode provider notes', () => {
+  it('shows per-provider status lines from bootstrap (codex version gap + probe result)', async () => {
+    const { cmds, sentMessages } = setup({ registered: ['claude', 'codex'], notes: { codex: '你的 CLI 0.153.4(与 SDK 0.144.4 不同版,首次使用时真跑一句探测) · 未探测' } })
+    await cmds.handle(inbound('/mode'))
+    expect(sentMessages[0]![1]).toContain('codex: 你的 CLI 0.153.4')
+    expect(sentMessages[0]![1]).toContain('未探测')
   })
 })

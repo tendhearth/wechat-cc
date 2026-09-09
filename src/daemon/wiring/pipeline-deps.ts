@@ -570,6 +570,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       baseUrl: () => loadAgentConfig(stateDir).openaiBaseUrl,
       apiKey: () => process.env.WECHAT_OPENAI_API_KEY,
     }),
+    providerNotes: () => boot.providerNotes?.() ?? {},
     chatPrefs,
     log,
     isAdmin,

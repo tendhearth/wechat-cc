@@ -2794,3 +2794,26 @@ describe('dispatch-time provider policy + cold-start block', () => {
     expect(d.dispatched[0]).toBe('hi')
   })
 })
+
+describe('spawn failure is told to the user (first-use probe / missing binary)', () => {
+  it('acquire throwing → one human notice with the provider\'s own detail, no silent drop', async () => {
+    const registry = createProviderRegistry()
+    registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const store = makeMockStore(); store.set('chat-1', { kind: 'solo', provider: 'codex' })
+    const sendAssistantText = vi.fn(async () => {})
+    const log = vi.fn()
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire: vi.fn(async () => { throw new Error('codex 探测没通过:400 requires a newer version of Codex') }) },
+      conversationStore: store, registry, defaultProviderId: 'claude', format: m => m.text, sendAssistantText, permissionMode: 'strict', loadAccess: adminAccess, log,
+    })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    const text = (sendAssistantText.mock.calls[0] as unknown as [string, string])[1]
+    expect(text).toContain('codex 这次没起来')
+    expect(text).toContain('requires a newer version of Codex')
+    expect(text).toContain('/cc')
+    expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining('spawn failed'), expect.objectContaining({ event: 'spawn_failed' }))
+  })
+})

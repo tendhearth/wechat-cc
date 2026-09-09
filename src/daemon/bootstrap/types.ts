@@ -258,6 +258,8 @@ export interface Bootstrap {
   buildInstructions: (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string) => string
   /** Daemon-default provider id — what new chats get until user runs `/cc` or `/codex`. */
   defaultProviderId: ProviderId
+  /** 各 provider 一句话状态(/mode 显示)。可选:测试里的假 boot 没有它。 */
+  providerNotes?: () => Partial<Record<ProviderId, string>>
   /** Backward-compat alias for defaultProviderId. Pre-P2 callers expected this name. */
   agentProviderKind: ProviderId
   /**

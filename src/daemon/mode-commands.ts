@@ -53,6 +53,8 @@ export interface ModeCommandsDeps {
   setOpenaiAlias?: (alias: string, model: string | null) => void | Promise<void>
   /** `/set cheap <provider|auto>` 走 config-surface 的 writeConfigKey(管理员)。 */
   setConfig?: (key: string, value: string) => Promise<{ ok: true } | { ok: false; error: string; detail?: string }>
+  /** 各 provider 的一句话状态(bootstrap 填:codex「你的 CLI 0.153.4 · 首次使用时探测 / 探测通过」),/mode 显示。 */
+  providerNotes?: () => Partial<Record<ProviderId, string>>
   /** `/api list` 的网关模型发现(daemon/openai-models.ts)。缺省 ⇒ 列表只有别名。 */
   openaiModels?: { list(): Promise<{ models: string[]; error?: string; fromCache?: boolean }> }
   /** Per-chat prefs (chat-prefs store). /set reads+writes THIS chat's entry. */
@@ -629,6 +631,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
             ? ['订阅 CLI(agy/cursor):所有对话共用一把 trusted 钥匙,不能按对话分权限;guest 不可用'] : []),
           ...(deps.readConfig?.().trusted_providers
             ? [`非管理员可用(管理员设定): ${deps.readConfig().trusted_providers!.join(', ') || '(无)'}`] : []),
+          ...Object.entries(deps.providerNotes?.() ?? {}).map(([id, note]) => `${id}: ${note}`),
           '',
           // Provider checklist: keep this list in sync with /help's mode-switch line above (~:174).
           '可用命令: /cc /codex /cursor /api /gemini /agy /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',

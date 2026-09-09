@@ -1,6 +1,7 @@
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
+import { withFirstUseProbe } from '../../core/first-use-probe'
 import { createClaudeAgentProvider } from '../../core/claude-agent-provider'
 import { createCodexAgentProvider } from '../../core/codex-agent-provider'
 import { buildSystemPrompt } from '../../core/prompt-builder'
@@ -107,6 +108,8 @@ export interface ProviderWiring {
   defaultProviderId: ProviderId
   codexBinary: string | null
   codexVersionCheck: ReturnType<typeof checkCodexVersion> | null
+  /** 各 provider 一句话状态(/mode 显示):codex 的版本差 + 首次使用探测结果。 */
+  providerNotes: () => Partial<Record<ProviderId, string>>
 }
 
 export async function registerProviders(deps: ProviderDeps): Promise<ProviderWiring> {
@@ -257,11 +260,19 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         expectedVersion: codexCliPkg.version,
       })
     : null
-  if (codexBinary && codexVersionCheck?.ok) {
-    deps.log('BOOT', `codex binary: ${codexBinary} (v${codexVersionCheck.actualSemver})`)
-    registry.register(
-      'codex',
-      createCodexAgentProvider({
+  // 2026-09-09 两次真机探测定案:SDK 0.144.4 驱动用户的 CLI 0.153.4 正常
+  // 拿到 agent_message;而 SDK 自带的 0.144.4 二进制被 OpenAI 服务端以
+  // 「这个模型需要更新的 Codex」400 拒掉。结论:(1) 版本号判不出能不能用,
+  // (2) 能跑新模型的只有用户那个更新的 CLI。于是版本不匹配只记日志、照常
+  // 注册,把「能不能用」交给首次使用时的真探测(core/first-use-probe.ts);
+  // 只有 --version 都打不出来(二进制坏了)才不注册。
+  let codexNote: string | null = null
+  if (codexBinary && codexVersionCheck && codexVersionCheck.reason !== 'version_probe_failed') {
+    const actual = codexVersionCheck.actualSemver ?? codexVersionCheck.rawVersion ?? '?'
+    const gap = codexVersionCheck.ok ? '' : `(与 SDK ${codexVersionCheck.expectedVersion} 不同版,首次使用时真跑一句探测)`
+    codexNote = `你的 CLI ${actual}${gap} · 未探测`
+    deps.log('BOOT', `codex binary: ${codexBinary} (v${actual}, SDK ${codexVersionCheck.expectedVersion}${codexVersionCheck.ok ? '' : ' — 版本不同,首次使用时探测'})`)
+    const codexInner = createCodexAgentProvider({
         codexPathOverride: codexBinary,
         // Construction-time model default ONLY from CODEX_MODEL. Do NOT fall back
         // to configuredAgent.model — that is the CONFIGURED provider's model, so
@@ -289,40 +300,32 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           ...(delegateStdioForCodex ? { delegate: delegateStdioForCodex } : {}),
           ...pluginMcp,
         },
-      }),
+      })
+    const codexProvider = withFirstUseProbe(codexInner, {
+      probe: () => codexInner.cheapEval!('只回复两个字母:ok'),
+      failureMessage: (detail) =>
+        `codex 探测没通过:${detail.slice(0, 200)}\n` +
+        `你的 codex CLI(${actual})和 wechat-cc 的 SDK(${codexVersionCheck!.expectedVersion})可能不合。` +
+        `试试 \`npm i -g @openai/codex@${codexVersionCheck!.expectedVersion}\`,或者等 wechat-cc 更新。`,
+      onResult: (r) => {
+        codexNote = r.ok
+          ? `你的 CLI ${actual} · 探测通过 ✓(${(r.ms / 1000).toFixed(1)}s)`
+          : `你的 CLI ${actual} · 探测失败 ✗:${r.detail.slice(0, 120)}`
+        deps.log('CODEX_PROBE', r.ok ? `ok in ${r.ms}ms (CLI ${actual}, SDK ${codexVersionCheck!.expectedVersion})` : `FAILED in ${r.ms}ms: ${r.detail.slice(0, 300)}`)
+      },
+    })
+    registry.register(
+      'codex',
+      codexProvider,
       {
         displayName: 'Codex',
         canResume: (_cwd, sid) => codexSessionJsonlPaths(HOME, sid).some(p => existsSync(p)),
       },
     )
-  } else if (codexBinary && codexVersionCheck && !codexVersionCheck.ok) {
-    // VERSION MISMATCH: user has codex installed, but its protocol version
-    // doesn't match our bundled SDK.
-    //
-    // codex-autofix (above) can only run when codexInstallDir is non-null —
-    // i.e. source-mode, where wechatCcRepoRoot() finds package.json next to
-    // this file. On a Bun-compiled desktop bundle codexInstallDir is null,
-    // autofix logs `[CODEX_AUTOFIX] skipped: no install dir resolved
-    // (compiled bundle?)` and never touches node_modules, so "wait for
-    // autofix" and "bun add ... in the install dir" are both unreachable
-    // advice there. `npm i -g` downgrade also doesn't fit the desktop
-    // install path (no npm/global install step in that flow). Branch the
-    // message so bundle users get advice that's actually actionable.
-    const resolution = codexInstallDir
-      ? `Resolution: (a) wait for the background auto-fix to realign SDK to your CLI version, then restart daemon; ` +
-        `or (b) downgrade global codex: \`npm i -g @openai/codex@${codexVersionCheck.expectedVersion}\`.`
-      : `Resolution: install a codex CLI within patch range of v${codexVersionCheck.expectedVersion} ` +
-        `(the version wechat-cc's bundled SDK expects), then restart daemon; ` +
-        `or ignore this if you don't use codex — the daemon runs fine without it.`
+  } else if (codexBinary && codexVersionCheck && codexVersionCheck.reason === 'version_probe_failed') {
     deps.log('BOOT',
-      `codex provider NOT registered — version mismatch. ` +
-      `Your codex CLI at ${codexBinary} is ` +
-      `v${codexVersionCheck.actualSemver ?? codexVersionCheck.rawVersion ?? '(unreadable)'}, ` +
-      `but wechat-cc's bundled SDK expects v${codexVersionCheck.expectedVersion}. ` +
-      `Patch-level differences are tolerated; this gap is not, and a mismatched ` +
-      `protocol fails silently (empty replies, no error). ` +
-      resolution,
-    )
+      `codex provider NOT registered — ${codexBinary} 连 --version 都打不出来(二进制损坏或权限问题)。` +
+      `重装:\`npm i -g @openai/codex\` 或用 codex 官方安装器,然后重启 daemon。`)
   } else {
     // NOT INSTALLED: no codex on PATH or in ~/.nvm. Tell the user the
     // exact one-time setup. We deliberately don't bundle codex (post
@@ -635,5 +638,5 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // would silently slip past and only throw at first use in production.
   assertMatrixComplete(registry.list())
 
-  return { registry, defaultProviderId, codexBinary, codexVersionCheck }
+  return { registry, defaultProviderId, codexBinary, codexVersionCheck, providerNotes: () => (codexNote ? { codex: codexNote } : {}) }
 }

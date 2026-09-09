@@ -200,6 +200,15 @@ export function authFailNotice(providerId: ProviderId): string {
  *  接入」— silence reads as being ignored). Two flavors: a spawn/missing-
  *  binary shape means the brain was never hooked up; anything else is a
  *  transient hiccup. Both point at the desktop 大脑 card, in CC's voice. */
+/** spawn 阶段的失败(不是回合中途):探测没过 / 二进制不在。把 provider 自己
+ *  给的人话原样带上 —— first-use-probe 的 failureMessage 就是写给用户看的。 */
+export function spawnFailedNotice(providerId: ProviderId, detail: string): string {
+  const head = `❌ ${providerId} 这次没起来,这条我没接住。`
+  const d = detail.trim()
+  if (/enoent|not found|no such file|not installed/i.test(d)) return `${head}它好像还没在电脑上接好 —— 主人在「此刻」页的大脑卡里帮我接上,或者 /cc 先用 Claude。`
+  return `${head}${d.length > 0 ? d.slice(0, 300) : ''}\n先 /cc 用 Claude 也行。`
+}
+
 export function turnErrorNotice(providerId: ProviderId, error: string | undefined): string {
   const e = (error ?? '').toLowerCase()
   if (/enoent|not found|no such file|spawn|not installed/.test(e)) {
@@ -567,15 +576,27 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       const pinnedModel = cur.kind === 'solo' && cur.provider === providerId ? cur.model : undefined
       // 冷启动判定要在 acquire 之前看:acquire 之后缓存里一定有了。
       const coldSpawn = deps.manager.has ? !deps.manager.has({ alias: proj.alias, providerId, chatId: msg.chatId }) : false
-      const handle = await deps.manager.acquire({
-        alias: proj.alias,
-        path: proj.path,
-        providerId,
-        chatId: msg.chatId,
-        tierProfile,
-        permissionMode: deps.permissionMode,
-        ...(pinnedModel !== undefined ? { model: pinnedModel } : {}),
-      })
+      let handle: Awaited<ReturnType<typeof deps.manager.acquire>>
+      try {
+        handle = await deps.manager.acquire({
+          alias: proj.alias,
+          path: proj.path,
+          providerId,
+          chatId: msg.chatId,
+          tierProfile,
+          permissionMode: deps.permissionMode,
+          ...(pinnedModel !== undefined ? { model: pinnedModel } : {}),
+        })
+      } catch (err) {
+        // spawn 阶段就挂了(二进制不在 / 首次使用探测没过 / SDK 起不来):
+        // 之前这个异常一路冒到 dispatch 外层只记日志,用户端一片沉默。
+        // 沉默 = 被无视;把原因用人话交给用户,并记一条 turn。
+        const detail = err instanceof Error ? err.message : String(err)
+        outcome = 'error'
+        deps.log('COORDINATOR', `chat=${msg.chatId} provider=${providerId} spawn failed: ${detail.slice(0, 300)}`, { event: 'spawn_failed', chat_id: msg.chatId, provider: providerId })
+        await deps.sendAssistantText?.(msg.chatId, spawnFailedNotice(providerId, detail))
+        return
+      }
       // Registered before collectTurn starts draining so /stop can reach
       // this turn for its entire lifetime — cleared in the finally below,
       // same lifecycle as chatroom's inFlightAborters.

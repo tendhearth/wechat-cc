@@ -669,7 +669,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     return Number.isFinite(n) && n >= 0 ? n : 10 * 60_000
   })()
 
-  const { registry, defaultProviderId, codexBinary, codexVersionCheck } = await registerProviders({
+  const { registry, defaultProviderId, codexBinary, codexVersionCheck, providerNotes } = await registerProviders({
     log: deps.log,
     stateDir: deps.stateDir,
     ilink: deps.ilink,
@@ -1050,7 +1050,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // 没有 claude 二进制就别把 claude 放进 delegate 名单 —— 与 codex/openai
     // 同一个姿态。上面那条 WARNING 之前只是说说,名单照旧列着它。
     claudeAvailable: !!claudeBin,
-    ...(codexBinary && codexVersionCheck?.ok ? { codexPathOverride: codexBinary } : {}),
+    // 版本不同不再拦(见 providers.ts 的 2026-09-09 定案);只有 --version 都打不出来才不给。
+    ...(codexBinary && codexVersionCheck && codexVersionCheck.reason !== 'version_probe_failed' ? { codexPathOverride: codexBinary } : {}),
     // busy-registry hold (spec 2026-08-11 §2, Task 4 step 3 + Task 6) —
     // a delegate dispatch is a one-shot session outside SessionManager.
     holdBusy: busyRegistry.hold,
@@ -1221,6 +1222,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     sdkOptionsForProject,
     buildInstructions,
     defaultProviderId,
+    providerNotes,
     agentProviderKind: defaultProviderId,
     /**
      * RFC 03 P4 — late-bound into internal-api by main.ts after
