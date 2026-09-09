@@ -5,19 +5,21 @@ import { isProp } from '../domain/types.js'
 
 /** @typedef {import('../assets/manifest-loader.js').PetManifest} PetManifest */
 /** @typedef {import('../domain/types.js').PetProp} PetProp */
-/** @typedef {'above-head' | 'beside-right' | 'in-front'} Slot */
+/** @typedef {'above-head' | 'above-left' | 'beside-right' | 'in-front'} Slot */
 
 /** 以舞台边长为 1;dx 向右为正,dy 向上为负(相对 anchor 点)。 */
 /** @type {Readonly<Record<Slot, { dx: number, dy: number, scale: number }>>} */
 export const SLOTS = Object.freeze({
-  'above-head': { dx: 0.22, dy: -0.66, scale: 0.34 },
-  'beside-right': { dx: 0.36, dy: -0.26, scale: 0.34 },
-  'in-front': { dx: 0.02, dy: -0.12, scale: 0.40 },
+  'above-head': { dx: 0.28, dy: -0.68, scale: 0.32 },
+  // Keep the luminous stars left of the taller C, separate from permission.
+  'above-left': { dx: -0.26, dy: -0.67, scale: 0.30 },
+  'beside-right': { dx: 0.30, dy: -0.24, scale: 0.32 },
+  'in-front': { dx: 0.01, dy: -0.04, scale: 0.34 },
 })
 
 /** @type {Readonly<Record<PetProp, Slot>>} */
 export const PROP_SLOTS = Object.freeze({
-  'micro-light': 'above-head',
+  'micro-light': 'above-left',
   sprout: 'above-head',
   'speech-bubble': 'above-head',
   'thought-bubble': 'above-head',

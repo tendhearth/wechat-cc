@@ -21,3 +21,13 @@ the earlier owner review cannot approve imagery that did not yet exist.
 Validator: 93 assets / zero errors. Directed tests: 14 files / 171 passed.
 `extinguish-review.png` shows both backgrounds. `extinguish-browser.json` records
 all eight frames in each direction and no warnings, then same-form idle.
+
+## 3. New-body prop slots
+
+Head signal moves right/up; micro-light has its own above-left slot. Side props
+move inward; the laptop is smaller/lower so its lid clears both eyes.
+Four pet-lab screenshots cover Light/Dark at 96px and 256px with stars, permission,
+laptop and envelope simultaneously. Temporary DevTools shell dimensions produced
+exact square stages (recorded in slots-browser.json); reload restored normal lab.
+No page source changes. Tests cover separated signal/star bounds at both sizes.
+Validator: 93 assets / zero errors. Directed tests: 14 files / 173 passed.
