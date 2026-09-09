@@ -376,6 +376,33 @@ daemon, so recipient resolution + session continuity are identical. State
 files are the source of truth; you never lose a thread because the daemon
 restarted.
 
+### 10 · Your own terminal sessions, on WeChat (hooks)
+
+The daemon's own agent sessions already relay permissions to WeChat. With
+hooks installed, the `claude` / `codex` sessions **you** run in a terminal get
+the same treatment:
+
+```bash
+wechat-cc hook install            # writes ~/.claude/settings.json + $CODEX_HOME/hooks.json (idempotent)
+wechat-cc hook status             # what's installed, which command line
+wechat-cc hook uninstall          # removes only wechat-cc's own entries
+```
+
+- **Long turn finished while you were away** → one WeChat message: which CLI,
+  which project, session short-id, last assistant line. Held 45 s and dropped
+  if you type again; quick turns (< 90 s) and repeated stops without a new
+  prompt from you never notify.
+- **Waiting for approval** → if you haven't typed in that session for 3 min,
+  the request goes to WeChat as a card: reply `y <code>` / `n <code>` and the
+  terminal proceeds (120 s window; then the terminal asks as usual). If you're
+  clearly at the keyboard, the terminal asks directly.
+- Sessions spawned by the daemon itself never loop back (`WECHAT_CC_DAEMON_CHILD=1`).
+  The hook never blocks the CLI: no daemon, no network → silent exit 0.
+
+Both CLIs speak the same hook contract (`Stop` / `UserPromptSubmit` /
+`SessionEnd` / `PermissionRequest`), so one implementation covers Claude Code
+and Codex. Design: `docs/superpowers/specs/2026-09-09-cli-hook-push-design.md`.
+
 ---
 
 ## How it works
