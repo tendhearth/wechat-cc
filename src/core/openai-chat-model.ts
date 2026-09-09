@@ -44,7 +44,7 @@ export interface ChatModelClient {
  * tools (no `execute`) => AI SDK surfaces tool-call parts but never runs them and
  * stops after one step — WE own the loop (openai-agent-provider, later task).
  */
-export function createChatModelFromLanguageModel(model: LanguageModel): ChatModelClient {
+export function createChatModelFromLanguageModel(model: LanguageModel, opts: { evalMaxOutputTokens?: number } = {}): ChatModelClient {
   const toAiTools = (specs: ToolSpec[]): Record<string, ReturnType<typeof tool>> =>
     Object.fromEntries(
       specs.map(s => [s.name, tool({ description: s.description, inputSchema: jsonSchema(s.parameters) })]),
@@ -116,7 +116,10 @@ export function createChatModelFromLanguageModel(model: LanguageModel): ChatMode
       // streaming) never satisfies. streamText's `.text` getter drains
       // fullStream internally and resolves once, so one code path serves
       // both one-shot and streamed calls.
-      const result = streamText({ model, messages })
+      // 显式给 max_tokens:思考型模型(KIMI/Kimi-Code/GLM 带思考)把思维链也算
+      // completion token,上游默认预算被思考吃光就回 content="" +
+      // finish_reason=length —— 看起来像模型不回话。主人的网关说明建议 ≥2000。
+      const result = streamText({ model, messages, maxOutputTokens: opts.evalMaxOutputTokens ?? DEFAULT_EVAL_MAX_OUTPUT_TOKENS })
       // Same error-part capture as streamTurn (a54ff96f): transport failures
       // (e.g. 401 APICallError) surface as fullStream error parts and then
       // reject `result.text` with a generic NoOutputGeneratedError — capture
@@ -157,11 +160,14 @@ export function createChatModelFromLanguageModel(model: LanguageModel): ChatMode
 }
 
 /** Production factory: an OpenAI-compatible provider (DeepSeek/Kimi/Qwen/...). */
-export function createAiSdkChatModel(opts: { baseURL: string; apiKey: string; model: string }): ChatModelClient {
+/** generate()(后台一次性评估)的输出上限;聊天回合不设(交给上游默认)。 */
+export const DEFAULT_EVAL_MAX_OUTPUT_TOKENS = 4000
+
+export function createAiSdkChatModel(opts: { baseURL: string; apiKey: string; model: string; evalMaxOutputTokens?: number }): ChatModelClient {
   const provider = createOpenAICompatible({
     name: 'wechat-openai',
     baseURL: opts.baseURL,
     apiKey: opts.apiKey,
   })
-  return createChatModelFromLanguageModel(provider.chatModel(opts.model))
+  return createChatModelFromLanguageModel(provider.chatModel(opts.model), { evalMaxOutputTokens: opts.evalMaxOutputTokens })
 }

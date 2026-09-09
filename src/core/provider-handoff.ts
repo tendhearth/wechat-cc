@@ -76,3 +76,24 @@ export function buildHandoffBlock(from: string, to: string, recent: HandoffTurn[
     `</handoff>`,
   ].join('\n')
 }
+
+/**
+ * 冷启动近况块 —— 给**不能续线程**的 provider(openai/gemini:supportsResume
+ * false)。daemon 一重启(自愈重启、更新、崩溃、开机)它们的会话历史就没了,
+ * claude 靠 SDK resume、agy 靠 --conversation 都接得上,DeepSeek 那条却从零
+ * 开始 —— 长期记忆还在,「刚才聊到哪」没了。换 provider 有交接块,重启时
+ * 没触发 handoff。同样的机制、同样的原文来源,换一句说明。
+ */
+export function buildColdStartBlock(provider: string, recent: HandoffTurn[]): string {
+  const lines = recent.slice(-BLOCK_NOTE_MAX).map(t => {
+    const text = t.text.length > PER_MSG_CAP ? `${t.text.slice(0, PER_MSG_CAP)}…` : t.text
+    return `${t.dir === 'in' ? '用户' : '你'}: ${text}`
+  })
+  return [
+    `<handoff hint="这是系统的续接说明,不是用户说的话">`,
+    `你(${provider})刚刚重新开了会话线程(这家后端不能续接上一条线程),但对话本身没有断。用户的长期记忆你已经有了;下面是最近的对话原文,请自然接续,不要重新自我介绍,也不要重复已给出的回答。`,
+    `你们最近的对话(原文,旧→新):\n${lines.join('\n')}`,
+    `更早的原文可用 chat_history 工具查询。`,
+    `</handoff>`,
+  ].join('\n')
+}

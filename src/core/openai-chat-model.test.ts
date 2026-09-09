@@ -103,3 +103,24 @@ describe('ChatModelClient adapter', () => {
     await expect(client.generate([client.userMessage('hi')])).rejects.toBe(cause)
   })
 })
+
+describe('generate() token budget', () => {
+  it('passes an explicit maxOutputTokens (thinking models burn the default budget and return empty content)', async () => {
+    const seen: number[] = []
+    const model = {
+      specificationVersion: 'v2', provider: 'fake', modelId: 'm', supportedUrls: {},
+      doGenerate: async () => { throw new Error('unused') },
+      doStream: async (opts: { maxOutputTokens?: number }) => {
+        seen.push(opts.maxOutputTokens ?? -1)
+        return { stream: new ReadableStream({ start(c) { c.enqueue({ type: 'text-start', id: '1' }); c.enqueue({ type: 'text-delta', id: '1', delta: 'ok' }); c.enqueue({ type: 'text-end', id: '1' }); c.enqueue({ type: 'finish', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }); c.close() } }) }
+      },
+    }
+    const { createChatModelFromLanguageModel, DEFAULT_EVAL_MAX_OUTPUT_TOKENS } = await import('./openai-chat-model')
+    const client = createChatModelFromLanguageModel(model as never)
+    expect(await client.generate([client.userMessage('hi')])).toBe('ok')
+    expect(seen).toEqual([DEFAULT_EVAL_MAX_OUTPUT_TOKENS])
+    const client2 = createChatModelFromLanguageModel(model as never, { evalMaxOutputTokens: 123 })
+    await client2.generate([client2.userMessage('hi')])
+    expect(seen.at(-1)).toBe(123)
+  })
+})

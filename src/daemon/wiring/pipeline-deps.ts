@@ -552,7 +552,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // 缓存读)/ config-surface(写),和面板同一条路。
     readConfig: () => {
       const c = loadAgentConfig(stateDir)
-      return { openaiBaseUrl: c.openaiBaseUrl, openaiModel: c.openaiModel, openaiAliases: c.openaiAliases, cheapEvalProvider: c.cheapEvalProvider }
+      return { openaiBaseUrl: c.openaiBaseUrl, openaiModel: c.openaiModel, openaiAliases: c.openaiAliases, cheapEvalProvider: c.cheapEvalProvider, trusted_providers: c.trusted_providers }
     },
     setOpenaiAlias: (alias, model) => {
       const c = loadAgentConfig(stateDir)

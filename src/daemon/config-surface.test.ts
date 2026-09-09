@@ -107,3 +107,24 @@ describe('cheap_eval_provider', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })
+
+describe('trusted_providers (list-shaped string key)', () => {
+  it('comma list → string[]; all/empty clears; none → []; unknown ids rejected; reads back as a comma string', async () => {
+    const { mkdtempSync, rmSync, readFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { readConfigSurface } = await import('./config-surface')
+    const dir = mkdtempSync(join(tmpdir(), 'cfg-tp-'))
+    const cfg = () => JSON.parse(readFileSync(join(dir, 'agent-config.json'), 'utf8'))
+    try {
+      expect((await writeConfigKey(dir, 'trusted_providers', 'claude, openai')).ok).toBe(true)
+      expect(cfg().trusted_providers).toEqual(['claude', 'openai'])
+      expect(readConfigSurface(dir).find(r => r.key === 'trusted_providers')?.value).toBe('claude,openai')
+      expect((await writeConfigKey(dir, 'trusted_providers', 'none')).ok).toBe(true)
+      expect(cfg().trusted_providers).toEqual([])
+      expect((await writeConfigKey(dir, 'trusted_providers', 'all')).ok).toBe(true)
+      expect(cfg()).not.toHaveProperty('trusted_providers')
+      expect((await writeConfigKey(dir, 'trusted_providers', 'claude,bogus')).ok).toBe(false)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})

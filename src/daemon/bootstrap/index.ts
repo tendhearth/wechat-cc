@@ -995,6 +995,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     defaultProviderId,
     format: formatInbound,
     // 换 provider 交接的近况原文 — 消息库最近 n 条(text 类为主,升序)。
+    // 非管理员可用的 provider 允许表(core/provider-policy.ts),mtime 缓存读。
+    trustedProviders: () => readAgentConfig().trusted_providers,
     recentTurns: async (chatId, n) => {
       const rows = await handoffMessages.listRange(chatId, { limit: n })
       return rows.filter(r => r.text.trim().length > 0)

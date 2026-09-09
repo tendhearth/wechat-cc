@@ -42,6 +42,9 @@ export interface AgentConfig {
   /** cheapEval 显式指定(外部集成反馈 #2):设定后内部一次性评估只走
    *  该 provider,openai 注册不再静默劫持。 */
   cheapEvalProvider?: string
+  /** 非管理员对话可以切到哪些 provider(core/provider-policy.ts)。缺省 =
+   *  全部已注册。guest 对共享钥匙的 provider(agy/cursor)无论如何都拒。 */
+  trusted_providers?: string[]
   /** openai delegate peer 开关(外部集成反馈 #3):默认 true(向后兼容,
    *  配齐即所有会话可 delegate_openai);false 则不构建该 peer —— 端点只
    *  服务特定会话的场景用它关掉这条"通往端点的路"。 */
@@ -246,6 +249,7 @@ const AgentConfigSchema = z.object({
   remote_tunnel: z.boolean().optional(),
   remote_relay_url: z.string().optional(),
   cheapEvalProvider: z.string().optional(),
+  trusted_providers: z.array(z.string()).optional(),
   delegateOpenai: z.boolean().optional(),
   dangerouslySkipPermissions: z.boolean().default(true),
   autoStart: z.boolean().default(true),
@@ -341,6 +345,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.remote_tunnel === 'boolean' ? { remote_tunnel: parsed.remote_tunnel } : {}),
       ...(typeof parsed.remote_relay_url === 'string' ? { remote_relay_url: parsed.remote_relay_url } : {}),
       ...(typeof parsed.cheapEvalProvider === 'string' ? { cheapEvalProvider: parsed.cheapEvalProvider } : {}),
+      ...(Array.isArray(parsed.trusted_providers) ? { trusted_providers: parsed.trusted_providers } : {}),
       ...(typeof parsed.delegateOpenai === 'boolean' ? { delegateOpenai: parsed.delegateOpenai } : {}),
       dangerouslySkipPermissions,
       autoStart,

@@ -321,6 +321,12 @@ export class SessionManager {
     return false
   }
 
+  /** Is there a cached (live) session for this key right now? Coordinator uses
+   *  it to know a dispatch is about to cold-spawn (→ cold-start context block). */
+  has(k: InFlightKey): boolean {
+    return this.sessions.has(sessionKey(k))
+  }
+
   /**
    * Release every cached session for (providerId, chatId) across aliases.
    * Used when a chat's pinned model changes: the cache key has no model in

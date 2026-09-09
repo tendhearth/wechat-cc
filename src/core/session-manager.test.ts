@@ -227,6 +227,18 @@ describe('SessionManager', () => {
     await mgr.shutdown()
   })
 
+  it('has(key) reflects the live cache (false before acquire, true after, false after release)', async () => {
+    const spawn = vi.fn(async () => makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] }))
+    const mgr = new SessionManager({ maxConcurrent: 4, idleEvictMs: 60_000, registry: registryWithProvider({ spawn } as unknown as AgentProvider) })
+    const k = { alias: 'a', providerId: 'claude', chatId: 'c' }
+    expect(mgr.has(k)).toBe(false)
+    await mgr.acquire({ ...k, path: '/p', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
+    expect(mgr.has(k)).toBe(true)
+    await mgr.release(k)
+    expect(mgr.has(k)).toBe(false)
+    await mgr.shutdown()
+  })
+
   it('omits model when currentModelFor returns undefined', async () => {
     let hadKey = true
     const spawn = vi.fn(async (_p: unknown, ctx: object) => {

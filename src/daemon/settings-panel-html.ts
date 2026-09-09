@@ -109,6 +109,10 @@ export function pageHtml(token: string): string {
     </div>
   </div>
   <label class="row"><span><b>后台评估用</b><small>记忆整理 / 辩论主持 / introspect 这些幕后活儿走哪家;auto = 偏好序</small></span><select id="f-cheap"></select></label>
+  <div class="row" style="display:block;border-top:1px dashed var(--line);padding-top:10px">
+    <b>非管理员能用哪些</b><small style="color:var(--soft);display:block">信任/访客对话只能切到勾选的;🔑共享钥匙的(agy/cursor)对访客永远不开放</small>
+    <div id="tp-list" style="margin-top:6px"></div>
+  </div>
   <div class="say">💬 也可以直接跟 CC 说:「换成 DeepSeek」「用 opus 5」「你现在是哪个模型」</div>
 </section>
 
@@ -176,8 +180,8 @@ async function pollAtelier() {
 }
 function startAtelierPoll() { if (atelierPoll) clearInterval(atelierPoll); atelierPoll = setInterval(pollAtelier, 2000) }
 // ── 模型与后端 ─────────────────────────────────────────────────────────
-var MODEL_KEY = { claude: "model", agy: "agyModel", cursor: "cursorModel", openai: "openaiModel" };
-var PROVIDER_NAME = { claude: "Claude", agy: "Gemini(订阅,agy)", cursor: "Cursor", codex: "Codex", openai: "自配 API(/api)", gemini: "Gemini(API key)" };
+var MODEL_KEY = { claude: "model", agy: "agyModel", cursor: "cursorModel", openai: "openaiModel", gemini: "geminiModel" };
+var PROVIDER_NAME = { claude: "Claude", agy: "Gemini(订阅 agy)", cursor: "Cursor(订阅)", codex: "Codex", openai: "自配 API(/api)", gemini: "Gemini(API key)" };
 function esc(t) { return String(t == null ? "" : t).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] }) }
 function statusText(p) {
   if (p.status === "ok") return "✓ 通" + (p.latency_ms != null ? "(" + p.latency_ms + "ms)" : "")
@@ -194,9 +198,24 @@ function renderModels(m) {
     var input = key
       ? '<input type="text" data-model-key="' + key + '" value="' + esc(p.model || "") + '" style="width:150px" placeholder="默认">'
       : '<small style="color:var(--soft)">' + esc(p.model || (p.id === "codex" ? "同 Claude 那格" : "—")) + '</small>'
-    html += '<label class="row"><span><b>' + esc(PROVIDER_NAME[p.id] || p.id) + (isDefault ? ' <small style="display:inline;color:var(--accent)">默认</small>' : "") + '</b><small>' + esc(statusText(p)) + '</small></span>' + input + '</label>'
+    var shared = (m.shared_token || []).indexOf(p.id) >= 0
+    html += '<label class="row"><span><b>' + esc(PROVIDER_NAME[p.id] || p.id) + (isDefault ? ' <small style="display:inline;color:var(--accent)">默认</small>' : "") + (shared ? ' <small style="display:inline" title="所有对话共用一把 trusted 钥匙,不能按对话分权限">🔑共享钥匙</small>' : "") + '</b><small>' + esc(statusText(p)) + '</small></span>' + input + '</label>'
   }
   $("models-table").innerHTML = html
+  // 非管理员能用哪些(勾选 = 允许;全勾 = 不限制)
+  var tp = m.trusted_providers, tpHtml = ""
+  for (var q = 0; q < m.providers.length; q++) {
+    var pp = m.providers[q]; if (!pp.registered) continue
+    var on = tp == null || tp.indexOf(pp.id) >= 0
+    tpHtml += '<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0"><input type="checkbox" data-tp="' + esc(pp.id) + '"' + (on ? " checked" : "") + '> ' + esc(PROVIDER_NAME[pp.id] || pp.id) + '</label>'
+  }
+  $("tp-list").innerHTML = tpHtml || '<small style="color:var(--soft)">没有已注册的 provider</small>'
+  var tps = $("tp-list").querySelectorAll("input[data-tp]")
+  for (var w = 0; w < tps.length; w++) tps[w].addEventListener("change", function () {
+    var picked = [], all = $("tp-list").querySelectorAll("input[data-tp]")
+    for (var x = 0; x < all.length; x++) if (all[x].checked) picked.push(all[x].dataset.tp)
+    apply("set_config", { key: "trusted_providers", value: picked.length === all.length ? "all" : (picked.join(",") || "none") }, "已更新非管理员可用范围 ✓")
+  })
   var inputs = $("models-table").querySelectorAll("input[data-model-key]")
   for (var j = 0; j < inputs.length; j++) (function (el) {
     el.addEventListener("change", function () { var v = el.value.trim(); if (v) apply("set_config", { key: el.dataset.modelKey, value: v }) })

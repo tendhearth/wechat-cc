@@ -486,6 +486,26 @@ describe('settings panel — 模型与后端', () => {
     } finally { cleanup() }
   })
 
+  it('state().models exposes trusted_providers (null = all) and which providers share one key', () => {
+    const { panel, cleanup } = build({ config: { trusted_providers: ['claude', 'openai'] } })
+    try {
+      const m = (panel.state() as { models: any }).models
+      expect(m.trusted_providers).toEqual(['claude', 'openai'])
+      expect(m.shared_token).toEqual(['agy', 'cursor'])
+    } finally { cleanup() }
+  })
+
+  it('geminiModel and trusted_providers are panel-writable too (owner: 不能我不用就不做)', async () => {
+    const { panel, stateDir, cleanup } = build()
+    try {
+      expect((await panel.apply({ op: 'set_config', key: 'geminiModel', value: 'gemini-3.7-flash' })).ok).toBe(true)
+      expect((await panel.apply({ op: 'set_config', key: 'trusted_providers', value: 'claude,agy' })).ok).toBe(true)
+      const cfg = JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8'))
+      expect(cfg.geminiModel).toBe('gemini-3.7-flash')
+      expect(cfg.trusted_providers).toEqual(['claude', 'agy'])
+    } finally { cleanup() }
+  })
+
   it('the new config keys are panel-writable (openaiModel/openaiBaseUrl/agyModel/cursorModel/cheap_eval_provider)', async () => {
     const { panel, stateDir, cleanup } = build()
     try {

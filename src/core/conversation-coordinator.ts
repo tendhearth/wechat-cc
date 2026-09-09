@@ -20,7 +20,8 @@ import type { ConversationStore } from './conversation-store'
 import type { ProviderRegistry } from './provider-registry'
 import type { Mode, ProviderId } from './conversation'
 import type { InboundMsg } from './prompt-format'
-import { makeHandoffLedger, buildHandoffBlock, type HandoffTurn } from './provider-handoff'
+import { makeHandoffLedger, buildHandoffBlock, buildColdStartBlock, type HandoffTurn } from './provider-handoff'
+import { providerDenialFor, describeProviderDenial, slashFor } from './provider-policy'
 import {
   buildOpeningPrompt, buildRebuttalPrompt, buildVerdictPrompt, buildConvergencePrompt, parseConvergence,
   labelOpenings, buildContentionPrompt, parseContention, lensFor,
@@ -75,7 +76,7 @@ export interface TurnRecord {
 
 export interface ConversationCoordinatorDeps {
   resolveProject(chatId: string): { alias: string; path: string } | null
-  manager: Pick<SessionManager, 'acquire'> & Partial<Pick<SessionManager, 'release' | 'releaseFor'>>
+  manager: Pick<SessionManager, 'acquire'> & Partial<Pick<SessionManager, 'release' | 'releaseFor' | 'has'>>
   conversationStore: Pick<ConversationStore, 'get' | 'set' | 'setParticipants'>
   registry: Pick<ProviderRegistry, 'has' | 'list' | 'get'>
   /**
@@ -131,6 +132,9 @@ export interface ConversationCoordinatorDeps {
    * 第一条 prompt。缺省 ⇒ 交接块只有提示语,没有近况原文。
    */
   recentTurns?: (chatId: string, n: number) => Promise<HandoffTurn[]>
+  /** agent-config `trusted_providers`(非管理员可用的 provider),缺省 = 全部。
+   *  读法带 mtime 缓存,/set providers 改完下一条就生效。 */
+  trustedProviders?: () => readonly ProviderId[] | undefined
   sendAssistantText?: (chatId: string, text: string) => Promise<void>
   /**
    * Optional `fields` arg lands in the JSONL sidecar (channel.log.jsonl)
@@ -516,26 +520,29 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     // 'solo' would mislabel those in GET /v1/turns and misdirect diagnosis.
     recordMode: TurnRecord['mode'] = 'solo',
   ): Promise<void> {
-    // agy final-review Important 2 — dispatch-time fail-closed gate.
-    // mode-commands.ts's `/agy` guest gate only guards the SLASH-COMMAND
-    // flip: POST /v1/conversation/set-mode (trusted-tier bearer token, no
-    // agy-aware check of its own) can set solo+agy directly, and a
-    // solo+agy row set validly while the chat WAS trusted survives a later
-    // demotion to guest in access.json with no re-validation. Both land
-    // here with providerId==='agy' for a chat that resolves to guest
-    // RIGHT NOW — refuse to spawn rather than trust the mode row's
-    // vintage. Raw resolveTier (NOT resolveEffectiveTier) on purpose:
-    // mirrors pipeline-deps.ts's /agy closure, which deliberately omits
-    // the --dangerously⇒admin shortcut for this exact shared-token hazard
-    // (agy's tier-C MCP config is one long-lived 'trusted' token shared by
-    // every conversation agy runs — see agy-mcp-config.ts).
-    if (providerId === 'agy' && resolveTier(msg.chatId, deps.loadAccess()) === 'guest') {
-      deps.log('COORDINATOR', `chat=${msg.chatId} refuse solo+agy dispatch: guest tier (dispatch-time gate)`, {
-        event: 'agy_guest_refused',
-        chat_id: msg.chatId,
-      })
-      await deps.sendAssistantText?.(msg.chatId, '❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
-      return
+    // Dispatch-time fail-closed provider gate (core/provider-policy.ts).
+    // mode-commands' slash gate only guards the SLASH flip: POST
+    // /v1/conversation/set-mode can set any solo row directly, and a row set
+    // validly while the chat WAS trusted survives a later demotion to guest in
+    // access.json with no re-validation. Both land here — refuse to spawn
+    // rather than trust the mode row's vintage. Raw resolveTier (NOT
+    // resolveEffectiveTier) on purpose: --dangerously⇒admin must not unlock
+    // a shared-token provider for a guest (agy/cursor: one long-lived
+    // 'trusted' token for every conversation — agy-mcp-config.ts /
+    // cursor-mcp-config.ts). Originally agy-only ("agy final-review Important
+    // 2"); cursor-CLI has the exact same shape and had no gate.
+    {
+      const rawTier = resolveTier(msg.chatId, deps.loadAccess())
+      const denial = providerDenialFor(providerId, rawTier, deps.trustedProviders?.())
+      if (denial) {
+        deps.log('COORDINATOR', `chat=${msg.chatId} refuse solo+${providerId} dispatch: ${denial.kind} tier=${rawTier} (dispatch-time gate)`, {
+          event: denial.kind === 'shared_token_guest' ? 'shared_token_guest_refused' : 'provider_not_allowed_refused',
+          chat_id: msg.chatId,
+          provider: providerId,
+        })
+        await deps.sendAssistantText?.(msg.chatId, describeProviderDenial(denial, slashFor(providerId)))
+        return
+      }
     }
     const tier = resolveEffectiveTier(msg.chatId, deps.loadAccess(), deps.permissionMode)
     const tierProfile = TIER_PROFILES[tier]
@@ -558,6 +565,8 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // Per-chat model pin lives on the solo mode row; only solo carries it.
       const cur = getMode(msg.chatId)
       const pinnedModel = cur.kind === 'solo' && cur.provider === providerId ? cur.model : undefined
+      // 冷启动判定要在 acquire 之前看:acquire 之后缓存里一定有了。
+      const coldSpawn = deps.manager.has ? !deps.manager.has({ alias: proj.alias, providerId, chatId: msg.chatId }) : false
       const handle = await deps.manager.acquire({
         alias: proj.alias,
         path: proj.path,
@@ -579,6 +588,16 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         try { recent = await deps.recentTurns?.(msg.chatId, 12) ?? [] } catch { /* 交接是增强,拿不到就只给提示语 */ }
         text = `${buildHandoffBlock(handoff.from, handoff.to, recent)}\n\n${text}`
         deps.log?.('HANDOFF', `chat=${msg.chatId} ${handoff.from}→${handoff.to} recent=${recent.length}`)
+      } else if (coldSpawn && !capabilitiesFor(providerId).supportsResume) {
+        // 不能续线程的 provider(openai/gemini)刚被冷 spawn:daemon 重启 /
+        // 空闲驱逐后它对「刚才聊到哪」一无所知,而 claude/agy 都接得上。
+        // 用交接块同样的原文源补一段近况;新对话(没记录)就什么都不加。
+        let recent: HandoffTurn[] = []
+        try { recent = await deps.recentTurns?.(msg.chatId, 12) ?? [] } catch { /* 增强,拿不到就算了 */ }
+        if (recent.length > 0) {
+          text = `${buildColdStartBlock(providerId, recent)}\n\n${text}`
+          deps.log?.('HANDOFF', `chat=${msg.chatId} cold-start ${providerId} recent=${recent.length}`)
+        }
       }
       summary = await collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) })
       const assistantTexts = summary.assistantText

@@ -30,6 +30,7 @@ import { validateNickname, NICKNAME_MAX_LEN } from './nickname'
 import { capabilitiesFor } from '../core/capability-matrix'
 import type { AgentConfig } from '../lib/agent-config'
 import type { UserTier } from '../core/user-tier'
+import { providerDenialFor, describeProviderDenial } from '../core/provider-policy'
 
 export interface ModeCommandsDeps {
   coordinator: Pick<ConversationCoordinator, 'getMode' | 'setMode' | 'cancel'>
@@ -47,7 +48,7 @@ export interface ModeCommandsDeps {
    * 只读的全局配置视图(/api list 显示网关地址/全局默认模型/别名,/set 显示
    * 后台评估用哪家)。缺省 ⇒ 这些行不显示。
    */
-  readConfig?: () => { openaiBaseUrl?: string; openaiModel?: string; openaiAliases?: Record<string, string>; cheapEvalProvider?: string }
+  readConfig?: () => { openaiBaseUrl?: string; openaiModel?: string; openaiAliases?: Record<string, string>; cheapEvalProvider?: string; trusted_providers?: string[] }
   /** `/api alias ds=DeepSeek` / `/api unalias ds`(model=null 删除)。缺省 ⇒ 别名子命令回「未接线」。 */
   setOpenaiAlias?: (alias: string, model: string | null) => void | Promise<void>
   /** `/set cheap <provider|auto>` 走 config-surface 的 writeConfigKey(管理员)。 */
@@ -183,6 +184,14 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     }
   }
 
+  /** /help 用:六个斜杠词里当前真能用的(已注册)。 */
+  function availableSlashes(): string {
+    const order: ProviderId[] = ['claude', 'codex', 'cursor', 'openai', 'gemini', 'agy']
+    const slash = (id: ProviderId) => id === 'claude' ? '/cc' : id === 'openai' ? '/api' : `/${id}`
+    const have = order.filter(id => deps.registry.has(id)).map(slash)
+    return have.length ? have.join(' ') : '(一个都没注册)'
+  }
+
   /** `/api list`:本对话当前 · 全局默认 · 别名 · 网关现有(用户主动触发才拨)。 */
   async function renderApiList(chatId: string): Promise<string> {
     const cfg = deps.readConfig?.() ?? {}
@@ -251,13 +260,14 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           '',
           '**模式切换**',
           // Provider checklist: keep this list in sync with /mode's list below (~:434).
-          '/cc /codex /cursor /api /gemini /agy — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)',
+          `/cc /codex /cursor /api /gemini /agy — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)。当前可用: ${availableSlashes()}`,
+          '/agy /cursor 是订阅 CLI:所有对话共用一把钥匙,不能按对话分权限(guest 不可用)',
           '/api list — 看网关上有哪些模型;/api <别名|模型> 切换(只对本对话);/api alias ds=DeepSeek 起短名',
           '/cc + codex — Claude 主答，Codex 当工具 (primary_tool)',
           '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
           '/chat [p1 p2 …] — 圆桌讨论',
           '/solo /stop /mode — 回到默认 / 退出 / 显示当前模式',
-          '/set — 本对话偏好(拆分回复、主动关心档位、表情包、每日打猎);/set cheap 后台评估用哪家(管理员)',
+          '/set — 本对话偏好(拆分回复、主动关心档位、表情包、每日打猎);/set cheap 后台评估用哪家、/set providers 非管理员能用哪些(管理员)',
           '改配置直接说就行 — 例如"换成 gemini flash"、"把知识内核打开"(管理员)',
           '',
           '**身份**',
@@ -314,9 +324,15 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         // or the model-pin tail below) since its whole failure mode is
         // over-privileged tool access, not a specific sub-command. See
         // ModeCommandsDeps.resolveTier's doc comment.
-        if (providerId === 'agy' && deps.resolveTier(msg.chatId) === 'guest') {
-          await reply(msg.chatId, '❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
-          return true
+        {
+          // core/provider-policy.ts:共享钥匙的 provider(agy/cursor)拒 guest;
+          // 管理员的 trusted_providers 允许表拒非管理员。coordinator 分发时再
+          // 判一次(防 set-mode 绕过 / 事后降级)。
+          const denial = providerDenialFor(providerId, deps.resolveTier(msg.chatId), deps.readConfig?.().trusted_providers)
+          if (denial) {
+            await reply(msg.chatId, describeProviderDenial(denial, slashWord.toLowerCase()))
+            return true
+          }
         }
         if (tail === '') {
           if (!deps.registry.has(providerId)) {
@@ -448,7 +464,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
 
       // /set — per-chat preferences (the settings layer's dials: split, care).
       if (slashWord.toLowerCase() === 'set') {
-        const SET_USAGE = '❓ 不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)\n· /set hunt on|off (别名: 打猎 开|关)\n· /set visit on|off (别名: 串门 开|关)\n· /set cheap auto|claude|agy|openai|… (管理员;后台评估用哪家)'
+        const SET_USAGE = '❓ 不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)\n· /set hunt on|off (别名: 打猎 开|关)\n· /set visit on|off (别名: 串门 开|关)\n· /set cheap auto|claude|agy|openai|… (管理员;后台评估用哪家)\n· /set providers claude,openai|all (管理员;非管理员对话能用哪些)'
         const p = deps.chatPrefs.get(msg.chatId)
         if (tail === '') {
           const splitState = p.split === false ? 'off' : 'on'
@@ -468,13 +484,13 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
             } catch { /* fall through to usage lines */ }
           }
           const adminHere = deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false
-          const cheapLine = adminHere && deps.readConfig ? `\n· 后台评估(全局): ${deps.readConfig().cheapEvalProvider ?? 'auto'}` : ''
+          const cheapLine = adminHere && deps.readConfig ? `\n· 后台评估(全局): ${deps.readConfig().cheapEvalProvider ?? 'auto'}\n· 非管理员可用 provider(全局): ${deps.readConfig().trusted_providers?.join(', ') ?? '全部'}` : ''
           const values = `本对话设置:\n· 拆分回复: ${splitState}\n· 主动关心: ${careState}\n· 表情包: ${stickersState}\n· 每日打猎: ${huntState}\n· 每日串门: ${visitState}${cheapLine}`
           const usage = panelLine ? '' : `\n\n改法: /set split|care|stickers|hunt|visit <值>(别名: 拆分/关心/表情/打猎/串门 开|关)`
           await reply(msg.chatId, values + panelLine + usage)
           return true
         }
-        const m2 = /^(split|拆分|care|关心|stickers|表情|hunt|打猎|visit|串门|cheap)\s+(\S+)$/i.exec(tail)
+        const m2 = /^(split|拆分|care|关心|stickers|表情|hunt|打猎|visit|串门|cheap|providers)\s+(\S+)$/i.exec(tail)
         if (!m2) {
           await reply(msg.chatId, SET_USAGE)
           return true
@@ -485,6 +501,20 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         // /set cheap — global (agent-config), admin only: which provider runs
         // the background one-shot evals. Not a chat pref; lives here because
         // /set is where the owner already goes to「调档位」.
+        // /set providers claude,openai | all — 非管理员对话可用的 provider(全局,管理员)
+        if (key === 'providers') {
+          if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '❌ /set providers 是全局设置,仅管理员可改。'); return true }
+          if (!deps.setConfig) { await reply(msg.chatId, '❌ 配置写入未接线。'); return true }
+          const r = await deps.setConfig('trusted_providers', rawValue)
+          if (!r.ok) { await reply(msg.chatId, `❌ 没改成:${r.detail ?? r.error}`); return true }
+          const now = deps.readConfig?.().trusted_providers
+          await reply(msg.chatId, now
+            ? `✅ 非管理员对话现在只能用: ${now.join(', ') || '(无)'}。立即生效;guest 对 agy/cursor 无论如何不开放。`
+            : '✅ 非管理员对话可用全部已注册 provider(guest 对 agy/cursor 仍不开放)。')
+          deps.log('MODE_CMD', `chat=${msg.chatId} /set providers=${rawValue}`)
+          return true
+        }
+
         if (key === 'cheap') {
           if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '❌ /set cheap 是全局设置,仅管理员可改。'); return true }
           if (!deps.setConfig) { await reply(msg.chatId, '❌ 配置写入未接线。'); return true }
@@ -595,6 +625,10 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           `📍 当前对话模式: ${describeMode(cur)}`,
           `已注册 provider: ${deps.registry.list().join(', ')}`,
           `默认: ${deps.defaultProviderId}`,
+          ...(deps.registry.list().some(id => id === 'agy' || id === 'cursor')
+            ? ['订阅 CLI(agy/cursor):所有对话共用一把 trusted 钥匙,不能按对话分权限;guest 不可用'] : []),
+          ...(deps.readConfig?.().trusted_providers
+            ? [`非管理员可用(管理员设定): ${deps.readConfig().trusted_providers!.join(', ') || '(无)'}`] : []),
           '',
           // Provider checklist: keep this list in sync with /help's mode-switch line above (~:174).
           '可用命令: /cc /codex /cursor /api /gemini /agy /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',

@@ -2728,3 +2728,69 @@ describe('onTurnEvent (CC 桌宠 Phase B)', () => {
     expect(sendAssistantText).toHaveBeenCalledWith('chat-1', 'ok')
   })
 })
+
+// ── provider policy at dispatch + cold-start context for non-resume providers ──
+describe('dispatch-time provider policy + cold-start block', () => {
+  function setupWith(access: () => Access, extra: { trustedProviders?: () => string[] | undefined; has?: () => boolean; recent?: Array<{ dir: 'in' | 'out'; text: string; ts: string }> } = {}) {
+    const store = makeMockStore()
+    const registry = createProviderRegistry()
+    for (const id of ['claude', 'cursor', 'agy', 'openai']) registry.register(id, dummyProvider, { displayName: id, canResume: () => true })
+    const dispatched: string[] = []
+    const acquire = vi.fn(async (req: AcquireRequest) =>
+      makeHandle(req.providerId, makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }], onDispatch: t => dispatched.push(t) })))
+    const sendAssistantText = vi.fn(async () => {})
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire, ...(extra.has ? { has: extra.has } : {}) },
+      conversationStore: store, registry, defaultProviderId: 'claude',
+      format: (m) => m.text, sendAssistantText, permissionMode: 'strict', loadAccess: access, log: () => {},
+      ...(extra.trustedProviders ? { trustedProviders: extra.trustedProviders } : {}),
+      ...(extra.recent ? { recentTurns: async () => extra.recent! } : {}),
+    })
+    return { c, store, acquire, sendAssistantText, dispatched }
+  }
+  const guest = (): Access => ({ dmPolicy: 'allowlist', allowFrom: [], admins: [], trusted: [] })
+  const trusted = (): Access => ({ dmPolicy: 'allowlist', allowFrom: [], admins: [], trusted: ['chat-1'] })
+
+  it('persisted solo+cursor + guest chat: refused at dispatch (cursor had no gate; same shared-token hazard as agy)', async () => {
+    const { c, store, acquire, sendAssistantText } = setupWith(guest)
+    store.set('chat-1', { kind: 'solo', provider: 'cursor' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', expect.stringContaining('/cursor 目前仅管理员/信任聊天可用'))
+  })
+  it('trusted chat on a provider outside the admin allowlist is refused; inside dispatches', async () => {
+    const { c, store, acquire, sendAssistantText } = setupWith(trusted, { trustedProviders: () => ['claude'] })
+    store.set('chat-1', { kind: 'solo', provider: 'agy' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', expect.stringContaining('没把 /agy 开放给非管理员'))
+    store.set('chat-1', { kind: 'solo', provider: 'claude' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).toHaveBeenCalledTimes(1)
+  })
+  it('openai (no resume) cold spawn with prior turns: the turn is prefixed with a cold-start context block', async () => {
+    const { c, store, dispatched } = setupWith(adminAccess, { has: () => false, recent: [{ dir: 'in', text: '明天去看房', ts: 't1' }, { dir: 'out', text: '记得带身份证', ts: 't2' }] })
+    store.set('chat-1', { kind: 'solo', provider: 'openai' })
+    await c.dispatch(inbound('chat-1', '几点合适?'))
+    expect(dispatched[0]).toContain('<handoff hint="这是系统的续接说明')
+    expect(dispatched[0]).toContain('你(openai)刚刚重新开了会话线程')
+    expect(dispatched[0]).toContain('用户: 明天去看房')
+    expect(dispatched[0]).toContain('你: 记得带身份证')
+    expect(dispatched[0].endsWith('几点合适?')).toBe(true)
+  })
+  it('claude (resumes) and warm sessions and empty history get no cold-start block', async () => {
+    const a = setupWith(adminAccess, { has: () => false, recent: [{ dir: 'in', text: 'x', ts: 't' }] })
+    a.store.set('chat-1', { kind: 'solo', provider: 'claude' })
+    await a.c.dispatch(inbound('chat-1', 'hi'))
+    expect(a.dispatched[0]).toBe('hi')
+    const b = setupWith(adminAccess, { has: () => true, recent: [{ dir: 'in', text: 'x', ts: 't' }] })
+    b.store.set('chat-1', { kind: 'solo', provider: 'openai' })
+    await b.c.dispatch(inbound('chat-1', 'hi'))
+    expect(b.dispatched[0]).toBe('hi')
+    const d = setupWith(adminAccess, { has: () => false, recent: [] })
+    d.store.set('chat-1', { kind: 'solo', provider: 'openai' })
+    await d.c.dispatch(inbound('chat-1', 'hi'))
+    expect(d.dispatched[0]).toBe('hi')
+  })
+})

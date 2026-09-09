@@ -15,7 +15,7 @@ function setup(opts: {
   initialUserName?: string
   isAdmin?: (userId: string) => boolean
   tier?: UserTier
-  config?: { openaiBaseUrl?: string; openaiModel?: string; openaiAliases?: Record<string, string>; cheapEvalProvider?: string }
+  config?: { openaiBaseUrl?: string; openaiModel?: string; openaiAliases?: Record<string, string>; cheapEvalProvider?: string; trusted_providers?: string[] }
   models?: { models: string[]; error?: string; fromCache?: boolean }
 } = {}) {
   const registered = opts.registered ?? ['claude', 'codex']
@@ -28,7 +28,7 @@ function setup(opts: {
     return { msgId: 'm-1' }
   })
   // /api list · alias · /set cheap 的读写面(内存版 agent-config)
-  const cfg: { openaiBaseUrl?: string; openaiModel?: string; openaiAliases?: Record<string, string>; cheapEvalProvider?: string } = { ...(opts.config ?? {}) }
+  const cfg: { openaiBaseUrl?: string; openaiModel?: string; openaiAliases?: Record<string, string>; cheapEvalProvider?: string; trusted_providers?: string[] } = { ...(opts.config ?? {}) }
   const setOpenaiAlias = vi.fn((alias: string, model: string | null) => {
     const next = { ...(cfg.openaiAliases ?? {}) }
     if (model === null) delete next[alias]; else next[alias] = model
@@ -36,6 +36,7 @@ function setup(opts: {
   })
   const setConfig = vi.fn(async (key: string, value: string) => {
     if (key === 'cheap_eval_provider') { if (value === 'auto') delete cfg.cheapEvalProvider; else cfg.cheapEvalProvider = value; return { ok: true as const } }
+    if (key === 'trusted_providers') { if (value === 'all' || value.trim() === '') delete cfg.trusted_providers; else cfg.trusted_providers = value.split(',').map(x => x.trim()).filter(Boolean); return { ok: true as const } }
     return { ok: false as const, error: 'unknown_key' }
   })
   const openaiModels = { list: vi.fn(async () => opts.models ?? { models: ['DeepSeek', 'KIMI', 'Qwen3.8'] }) }
@@ -1221,5 +1222,50 @@ describe('/set cheap', () => {
     const g = setup({ isAdmin: () => false, config: { cheapEvalProvider: 'agy' } })
     await g.cmds.handle(inbound('/set'))
     expect(g.sentMessages[0]![1]).not.toContain('后台评估')
+  })
+})
+
+// ── provider policy(core/provider-policy.ts)——共享钥匙拒 guest;管理员限定非管理员 ──
+describe('provider policy in slash commands', () => {
+  it('/cursor is rejected for a guest chat — same shared-token shape as /agy (this gate did not exist before)', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'cursor'], tier: 'guest' })
+    await cmds.handle(inbound('/cursor'))
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]![1]).toBe('❌ /cursor 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+  })
+  it('trusted chat: providers outside the admin allowlist are refused with the allowed list; inside is fine', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'agy', 'openai'], tier: 'trusted', config: { trusted_providers: ['claude', 'openai'] } })
+    await cmds.handle(inbound('/agy'))
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]![1]).toContain('没把 /agy 开放给非管理员')
+    expect(sentMessages[0]![1]).toContain('claude, openai')
+    await cmds.handle(inbound('/api'))
+    expect(set).toHaveBeenLastCalledWith('chat-1', { kind: 'solo', provider: 'openai' })
+  })
+  it('admin ignores the allowlist', async () => {
+    const { cmds, set } = setup({ registered: ['claude', 'agy'], tier: 'admin', config: { trusted_providers: ['claude'] } })
+    await cmds.handle(inbound('/agy'))
+    expect(set).toHaveBeenLastCalledWith('chat-1', { kind: 'solo', provider: 'agy' })
+  })
+  it('/set providers (admin) writes trusted_providers; all clears; non-admin refused', async () => {
+    const a = setup({ registered: ['claude', 'agy'], isAdmin: () => true })
+    await a.cmds.handle(inbound('/set providers claude,openai'))
+    expect(a.setConfig).toHaveBeenCalledWith('trusted_providers', 'claude,openai')
+    expect(a.sentMessages[0]![1]).toContain('非管理员对话现在只能用')
+    await a.cmds.handle(inbound('/set providers all'))
+    expect(a.sentMessages[1]![1]).toContain('全部已注册')
+    const g = setup({ isAdmin: () => false })
+    await g.cmds.handle(inbound('/set providers claude'))
+    expect(g.setConfig).not.toHaveBeenCalled()
+    expect(g.sentMessages[0]![1]).toContain('仅管理员')
+  })
+  it('/mode says which providers share one key and what non-admins may use; /help lists what is actually registered', async () => {
+    const { cmds, sentMessages } = setup({ registered: ['claude', 'agy'], config: { trusted_providers: ['claude'] } })
+    await cmds.handle(inbound('/mode'))
+    expect(sentMessages[0]![1]).toContain('共用一把 trusted 钥匙')
+    expect(sentMessages[0]![1]).toContain('非管理员可用(管理员设定): claude')
+    await cmds.handle(inbound('/help'))
+    expect(sentMessages[1]![1]).toContain('当前可用: /cc /agy')
+    expect(sentMessages[1]![1]).toContain('订阅 CLI')
   })
 })

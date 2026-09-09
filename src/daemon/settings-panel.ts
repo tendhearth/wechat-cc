@@ -31,6 +31,7 @@ import { readJsonFile } from '../lib/read-json-file'
 import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../lib/agent-config'
 import { saveLlmKey } from './llm-keys'
 import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from './llm-health'
+import { capabilitiesFor } from '../core/capability-matrix'
 import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
 import type { Presence } from '../core/companion-presence'
 import type { CatchRow } from '../core/journal-store'
@@ -43,7 +44,7 @@ export const PANEL_CONFIG_KEYS: readonly string[] = [
   'bot_name', 'model', 'knowledge_enabled', 'social_enabled', 'autoStart',
   'companion.atelier_mode',
   // 「模型与后端」一块(2026-09-08):各家模型、/api 地址、后台评估用哪家。
-  'openaiModel', 'openaiBaseUrl', 'agyModel', 'cursorModel', 'cheap_eval_provider',
+  'openaiModel', 'openaiBaseUrl', 'agyModel', 'cursorModel', 'geminiModel', 'cheap_eval_provider', 'trusted_providers',
 ]
 
 /** 面板「模型与后端」表格覆盖的六家,顺序即显示顺序。 */
@@ -197,6 +198,9 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       },
       gemini: { has_key: deps.llm?.hasKey('gemini') ?? false },
       cheap: cfg.cheapEvalProvider ?? 'auto',
+      // 非管理员可用哪些(null = 全部);shared_token = 共享钥匙、guest 永不开放
+      trusted_providers: cfg.trusted_providers ?? null,
+      shared_token: PANEL_PROVIDERS.filter(id => { try { return !capabilitiesFor(id).adminMcpTools } catch { return false } }),
     }
   }
 

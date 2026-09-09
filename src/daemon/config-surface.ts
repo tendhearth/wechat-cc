@@ -38,7 +38,15 @@ interface ConfigKeySpec {
   validate?: (v: string) => boolean
   /** number keys only: an empty value clears the field back to its default. */
   nullable?: boolean
+  /** string keys whose stored shape isn't a string (e.g. a list): how the
+   *  tool-layer string maps to the stored value and back. Empty string ⇒
+   *  field removed (回缺省), same as nullable. */
+  toStored?: (v: string) => unknown
+  fromStored?: (v: unknown) => string
 }
+
+const PROVIDER_IDS = ['claude', 'codex', 'cursor', 'openai', 'gemini', 'agy']
+const parseProviderList = (v: string): string[] => v.split(/[,\s，、]+/).map(x => x.trim().toLowerCase()).filter(Boolean)
 
 export const CONFIG_SURFACE: readonly ConfigKeySpec[] = [
   { key: 'provider', store: 'agent', field: 'provider', type: 'string', writable: false,
@@ -60,6 +68,13 @@ export const CONFIG_SURFACE: readonly ConfigKeySpec[] = [
     effect: 'immediate', description: 'OpenAI 兼容后端地址 (http(s) URL)', validate: (v) => URL_RE.test(v) },
   // 后台一次性评估(记忆整理 / 辩论主持 / introspect)走哪家。留空 = 偏好序
   // (openai 注册即第一 —— 端点若是慢模型/特化服务,这里指定别家)。
+  // 非管理员对话可切到哪些 provider(逗号分隔;空 = 全部已注册)。guest 对
+  // agy/cursor 这类共享钥匙的 provider 无论如何都拒 —— 见 core/provider-policy.ts。
+  { key: 'trusted_providers', store: 'agent', field: 'trusted_providers', type: 'string', writable: true, effect: 'immediate',
+    description: '非管理员对话可用的 provider(逗号分隔,如 claude,openai;留空 = 全部;all 也表示全部)',
+    validate: (v) => parseProviderList(v).every(id => PROVIDER_IDS.includes(id)),
+    toStored: (v) => parseProviderList(v),
+    fromStored: (v) => Array.isArray(v) ? v.join(',') : '' },
   { key: 'cheap_eval_provider', store: 'agent', field: 'cheapEvalProvider', type: 'enum',
     values: ['auto', 'claude', 'codex', 'cursor', 'openai', 'gemini', 'agy'], writable: true, effect: 'immediate',
     description: '后台评估(记忆整理/辩论主持/introspect)用哪家;auto = 偏好序' },
@@ -113,7 +128,7 @@ export function readConfigSurface(stateDir: string): ConfigSurfaceRow[] {
       : (companion as unknown as Record<string, unknown>)[s.field as string]
     const value = raw === undefined || raw === null
       ? null
-      : (typeof raw === 'boolean' ? raw : String(raw))
+      : s.fromStored ? s.fromStored(raw) : (typeof raw === 'boolean' ? raw : String(raw))
     return {
       key: s.key, value, type: s.type,
       ...(s.values ? { values: s.values } : {}),
@@ -160,6 +175,14 @@ export async function writeConfigKey(
     // cheap_eval_provider 的 auto = 不钉(清字段回到偏好序),不是存个 'auto'
     // 让注册表去找一个叫 auto 的 provider。
     coerced = spec.key === 'cheap_eval_provider' && rawStr === 'auto' ? null : rawStr
+  } else if (spec.toStored) {
+    // list-shaped string keys: empty / all ⇒ 回缺省(删字段)
+    if (rawStr.length === 0 || rawStr.toLowerCase() === 'all') coerced = null
+    else if (rawStr.toLowerCase() === 'none') coerced = [] as never
+    else {
+      if (spec.validate && !spec.validate(rawStr)) return { ok: false, error: 'invalid_value', detail: spec.description }
+      coerced = spec.toStored(rawStr) as never
+    }
   } else {
     if (rawStr.length === 0) return { ok: false, error: 'invalid_value', detail: '不能为空' }
     if (spec.validate && !spec.validate(rawStr)) {
@@ -177,7 +200,7 @@ export async function writeConfigKey(
     if (coerced === null) delete next[spec.field as string]
     else next[spec.field as string] = coerced
     saveAgentConfig(stateDir, next as unknown as AgentConfig)
-    return { ok: true, key, effect: spec.effect, previous: normalizePrev(previous) }
+    return { ok: true, key, effect: spec.effect, previous: spec.fromStored && previous != null ? spec.fromStored(previous) : normalizePrev(previous) }
   }
   const cfg = loadCompanionConfig(stateDir)
   const previous = (cfg as unknown as Record<string, unknown>)[spec.field as string]
