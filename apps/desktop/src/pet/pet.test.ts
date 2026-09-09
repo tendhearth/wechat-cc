@@ -1,14 +1,16 @@
+function fakeStyle() { const rec: Record<string, string> = {}; return Object.assign(rec, { setProperty(k: string, v: string) { rec[k] = v } }) }
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createPet } from './pet.js'
+import { fallbackFrame } from '../assets/pet/cc-v1/placeholder.js'
 
 const realRaw = readFileSync(join(__dirname, '../assets/pet/manifest.json'), 'utf8')
 const fetchReal = (async () => new Response(realRaw, { status: 200 })) as unknown as typeof fetch
 
 function el(tag = 'div') {
   const classes = new Set<string>(); const kids: any[] = []
-  return { tag, style: {} as Record<string, string>, src: '', textContent: '', hidden: false, attrs: {} as Record<string, string>,
+  return { tag, style: fakeStyle(), src: '', textContent: '', hidden: false, attrs: {} as Record<string, string>,
     classList: { add: (c: string) => { classes.add(c) }, remove: (c: string) => { classes.delete(c) }, contains: (c: string) => classes.has(c) },
     setAttribute(k: string, v: string) { this.attrs[k] = v }, getAttribute(k: string) { return this.attrs[k] ?? null },
     appendChild(c: any) { kids.push(c) }, replaceChildren(...c: any[]) { kids.splice(0, kids.length, ...c) }, children: kids }
@@ -20,10 +22,10 @@ function clock() {
     tick(ms: number) { const until = now + ms; while (true) { q.sort((a, b) => a.at - b.at); const n = q[0]; if (!n || n.at > until) break; q.shift(); now = n.at; n.fn() } now = until },
     pending: () => q.length }
 }
-const boot = async (fetchImpl = fetchReal, reducedMotion = false) => {
+const boot = async (fetchImpl = fetchReal, reducedMotion = false, manifestUrl = './assets/pet/manifest.json') => {
   const c = clock(); const root = { stage: el(), img: el('img'), props: el(), hint: el('p') }
   // random: () => 0 —— 随机小动作取区间下界,时间线就是确定的(blink 6000ms、look 25000ms)。
-  const pet = await createPet(root, { manifestUrl: './assets/pet/manifest.json', fetchImpl, reducedMotion, makeEl: el, schedule: c.schedule, cancel: c.cancel, preload: () => {}, random: () => 0 })
+  const pet = await createPet(root, { manifestUrl, fetchImpl, reducedMotion, makeEl: el, schedule: c.schedule, cancel: c.cancel, preload: () => {}, random: () => 0 })
   return { c, root, pet }
 }
 
@@ -31,7 +33,7 @@ describe('createPet(组装)', () => {
   it('加载真 manifest:初始 unlit idle 显示 master-unlit;anchor 写到舞台;呼吸开着', async () => {
     const { root, pet } = await boot()
     expect(root.img.src).toBe('./assets/pet/reference/master-unlit.png')
-    expect(root.stage.style['--pet-anchor-y']).toBe('91.796875%')
+    expect(root.stage.style['--pet-anchor-y']).toBe('0.91796875')
     expect(root.stage.classList.contains('pet-breathing')).toBe(true)
     expect(pet.warnings).toEqual([])
   })
@@ -180,5 +182,57 @@ describe('createPet(组装)', () => {
   it('reducedMotion:不呼吸', async () => {
     const { root } = await boot(fetchReal, true)
     expect(root.stage.classList.contains('pet-breathing')).toBe(false)
+  })
+})
+
+describe('CC v1 kit runtime and terminal fallback', () => {
+  const raw = readFileSync(join(__dirname, '../assets/pet/cc-v1/manifest.json'), 'utf8')
+  const kitFetch = (async () => new Response(raw)) as unknown as typeof fetch
+  const bootKit = () => boot(kitFetch, true, './assets/pet/cc-v1/manifest.json')
+  it('uses Dark working directly, transitions to Light and preserves real resting behavior', async () => {
+    const { c, root, pet } = await bootKit()
+    pet.setState('working')
+    expect(root.img.src).toBe('./assets/pet/cc-v1/sprites/unlit/working.png')
+    pet.setForm('lit'); c.tick(1001)
+    expect(root.img.src).toBe('./assets/pet/cc-v1/sprites/lit/working.png')
+    pet.setState('done'); c.tick(251)
+    expect(pet.machine.snapshot()).toMatchObject({ form: 'lit', behavior: 'working' })
+    pet.destroy(); expect(c.pending()).toBe(0)
+  })
+  it('broken working, idle and master reach same-form inline geometry without losing working', async () => {
+    const { root, pet, c } = await bootKit()
+    pet.setState('working')
+    pet.reportFrameError('https://example.test/assets/pet/cc-v1/sprites/unlit/working.png')
+    expect(root.img.src).toBe('./assets/pet/cc-v1/canonical/unlit/front.png')
+    pet.reportFrameError('https://example.test/assets/pet/cc-v1/canonical/unlit/front.png')
+    expect(root.img.src).toBe(fallbackFrame('unlit'))
+    expect(pet.machine.snapshot().behavior).toBe('working')
+    const count = pet.warnings.length
+    pet.reportFrameError('https://example.test/assets/pet/cc-v1/canonical/unlit/front.png')
+    expect(pet.warnings).toHaveLength(count)
+    pet.destroy(); expect(c.pending()).toBe(0)
+  })
+  it('entire missing transition falls back to fade and resolves form exactly once', async () => {
+    const { c, root, pet } = await bootKit()
+    pet.setForm('lit')
+    for (const p of JSON.parse(raw).transitions['unlit-to-lit'].frames) pet.reportFrameError('./assets/pet/cc-v1/' + p)
+    c.tick(481)
+    expect(pet.machine.snapshot()).toMatchObject({ form: 'lit', transition: null })
+    expect(root.img.src).toBe('./assets/pet/cc-v1/canonical/lit/front.png')
+    pet.destroy(); expect(c.pending()).toBe(0)
+  })
+  it.each(['404', 'invalid-json', 'invalid-anatomy'])('manifest %s still renders and consumes real intents', async (kind) => {
+    const bad = JSON.parse(raw); bad.character.feet = 3
+    const fetchImpl = (async () => kind === '404' ? new Response('missing', { status: 404 }) : new Response(kind === 'invalid-json' ? '{bad' : JSON.stringify(bad))) as unknown as typeof fetch
+    const { c, root, pet } = await boot(fetchImpl, true)
+    expect(root.img.src).toBe(fallbackFrame('unlit'))
+    pet.applyIntent({ form: 'lit', behavior: 'working', props: ['envelope'], badge: 3, hint: null, oneShots: [] })
+    c.tick(481)
+    expect(pet.machine.snapshot()).toMatchObject({ form: 'lit', behavior: 'working', props: ['envelope'], badge: 3 })
+    expect(root.img.src).toBe(fallbackFrame('lit'))
+    expect(root.hint.hidden).toBe(false)
+    pet.setState('permission')
+    expect(pet.machine.snapshot().behavior).toBe('permission')
+    pet.destroy(); expect(c.pending()).toBe(0)
   })
 })

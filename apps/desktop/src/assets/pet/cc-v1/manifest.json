@@ -1,0 +1,1176 @@
+{
+  "schemaVersion": 1,
+  "kitId": "cc-v1",
+  "name": "CC Asset Kit",
+  "version": "1.0.0-alpha",
+  "artStatus": "normative-placeholder",
+  "basedOnDevCommit": "7a0633368f1569b22f2b5637051c1154dfd73be0",
+  "reference": {
+    "path": "CC_MASTER_V1.png",
+    "sha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+    "role": "approved-design-reference-only",
+    "conversation": "6a9d19cc-8a14-83ea-8af8-330402ca67db",
+    "storage": "private-outside-repo"
+  },
+  "canvas": {
+    "width": 512,
+    "height": 512,
+    "anchor": [
+      0.5,
+      0.91796875
+    ],
+    "baselinePx": 470,
+    "safeBboxPx": [
+      80,
+      28,
+      432,
+      470
+    ]
+  },
+  "character": {
+    "feet": 2,
+    "eyes": 2,
+    "arms": 0,
+    "tails": 0,
+    "mouth": false,
+    "ears": 0,
+    "c_appendages": 1,
+    "sameGeometry": true
+  },
+  "forms": {
+    "lit": {
+      "displayName": "Light",
+      "geometryId": "cc-v1-blender-eight-c-poses-v3",
+      "master": "canonical/lit/front.png",
+      "material": {
+        "intrinsicGlow": true,
+        "body": "warm-ivory-soft-porcelain",
+        "eyes": "black"
+      },
+      "states": {
+        "idle": {
+          "frames": [
+            "canonical/lit/front.png"
+          ],
+          "fps": 4,
+          "loop": true,
+          "next": null,
+          "artStatus": "reviewed-production"
+        },
+        "blink": {
+          "frames": [
+            "canonical/lit/front.png",
+            "sprites/lit/blink-half.png",
+            "sprites/lit/blink-closed.png",
+            "sprites/lit/blink-half.png",
+            "canonical/lit/front.png"
+          ],
+          "fps": 8,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "reviewed-production"
+        },
+        "look": {
+          "frames": [
+            "sprites/lit/look.png"
+          ],
+          "fps": 4,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "reviewed-production"
+        },
+        "receive": {
+          "frames": [
+            "sprites/lit/receive.png"
+          ],
+          "fps": 4,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "reviewed-production"
+        },
+        "thinking": {
+          "frames": [
+            "sprites/lit/thinking.png"
+          ],
+          "fps": 4,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
+        },
+        "working": {
+          "frames": [
+            "sprites/lit/working.png"
+          ],
+          "fps": 4,
+          "loop": true,
+          "next": null,
+          "artStatus": "reviewed-production"
+        },
+        "done": {
+          "frames": [
+            "sprites/lit/done.png"
+          ],
+          "fps": 4,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "reviewed-production"
+        },
+        "sleep": {
+          "frames": [
+            "sprites/lit/sleep.png"
+          ],
+          "fps": 4,
+          "loop": true,
+          "next": null,
+          "artStatus": "reviewed-production"
+        },
+        "permission": {
+          "frames": [
+            "sprites/lit/permission.png"
+          ],
+          "fps": 4,
+          "loop": true,
+          "next": null,
+          "artStatus": "reviewed-production"
+        },
+        "error": {
+          "frames": [
+            "sprites/lit/error.png"
+          ],
+          "fps": 4,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "reviewed-production"
+        },
+        "companion": {
+          "frames": [
+            "canonical/lit/front.png"
+          ],
+          "fps": 4,
+          "loop": true,
+          "next": null,
+          "artStatus": "reviewed-production"
+        },
+        "drag": {
+          "frames": [
+            "sprites/lit/drag.png"
+          ],
+          "fps": 4,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "reviewed-production"
+        },
+        "wake": {
+          "frames": [
+            "sprites/lit/blink-half.png",
+            "canonical/lit/front.png"
+          ],
+          "fps": 4,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "reviewed-production"
+        }
+      }
+    },
+    "unlit": {
+      "displayName": "Dark",
+      "geometryId": "cc-v1-blender-eight-c-poses-v3",
+      "master": "canonical/unlit/front.png",
+      "material": {
+        "intrinsicGlow": false,
+        "body": "matte-charcoal",
+        "eyes": "display-white-camera-only-unlit"
+      },
+      "states": {
+        "idle": {
+          "frames": [
+            "canonical/unlit/front.png"
+          ],
+          "fps": 4,
+          "loop": true,
+          "next": null,
+          "artStatus": "reviewed-production"
+        },
+        "blink": {
+          "frames": [
+            "canonical/unlit/front.png",
+            "sprites/unlit/blink-half.png",
+            "sprites/unlit/blink-closed.png",
+            "sprites/unlit/blink-half.png",
+            "canonical/unlit/front.png"
+          ],
+          "fps": 8,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "reviewed-production"
+        },
+        "working": {
+          "frames": [
+            "sprites/unlit/working.png"
+          ],
+          "fps": 4,
+          "loop": true,
+          "next": null,
+          "artStatus": "reviewed-production"
+        },
+        "sleep": {
+          "frames": [
+            "sprites/unlit/sleep.png"
+          ],
+          "fps": 4,
+          "loop": true,
+          "next": null,
+          "artStatus": "reviewed-production"
+        },
+        "thinking": {
+          "frames": [
+            "sprites/unlit/thinking.png"
+          ],
+          "fps": 4,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
+        },
+        "done": {
+          "frames": [
+            "sprites/unlit/done.png"
+          ],
+          "fps": 4,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "reviewed-production"
+        },
+        "receive": {
+          "frames": [
+            "sprites/unlit/receive.png"
+          ],
+          "fps": 4,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "reviewed-production"
+        },
+        "permission": {
+          "frames": [
+            "sprites/unlit/permission.png"
+          ],
+          "fps": 4,
+          "loop": true,
+          "next": null,
+          "artStatus": "reviewed-production"
+        },
+        "error": {
+          "frames": [
+            "sprites/unlit/error.png"
+          ],
+          "fps": 4,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "reviewed-production"
+        },
+        "look": {
+          "frames": [
+            "sprites/unlit/look.png"
+          ],
+          "fps": 4,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "reviewed-production"
+        },
+        "drag": {
+          "frames": [
+            "sprites/unlit/drag.png"
+          ],
+          "fps": 4,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "reviewed-production"
+        },
+        "wake": {
+          "frames": [
+            "sprites/unlit/blink-half.png",
+            "canonical/unlit/front.png"
+          ],
+          "fps": 4,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "reviewed-production"
+        },
+        "companion": {
+          "frames": [
+            "canonical/unlit/front.png"
+          ],
+          "fps": 4,
+          "loop": true,
+          "next": null,
+          "artStatus": "reviewed-production"
+        }
+      }
+    }
+  },
+  "canonical": {
+    "lit": "canonical/lit/front.png",
+    "unlit": "canonical/unlit/front.png"
+  },
+  "turnarounds": {
+    "lit": {
+      "front": "canonical/lit/front.png",
+      "three-quarter": "canonical/lit/three-quarter.svg",
+      "side": "canonical/lit/side.svg",
+      "back": "canonical/lit/back.svg"
+    },
+    "unlit": {
+      "front": "canonical/unlit/front.png",
+      "three-quarter": "canonical/unlit/three-quarter.svg",
+      "side": "canonical/unlit/side.svg",
+      "back": "canonical/unlit/back.svg"
+    }
+  },
+  "transitions": {
+    "unlit-to-lit": {
+      "frames": [
+        "transitions/dark-to-light/000.png",
+        "transitions/dark-to-light/001.png",
+        "transitions/dark-to-light/002.png",
+        "transitions/dark-to-light/003.png",
+        "transitions/dark-to-light/004.png",
+        "transitions/dark-to-light/005.png",
+        "transitions/dark-to-light/006.png",
+        "transitions/dark-to-light/007.png"
+      ],
+      "fps": 8,
+      "loop": false,
+      "next": "idle",
+      "artStatus": "production-candidate"
+    }
+  },
+  "props": {
+    "micro-light": "../props/micro-light.png",
+    "laptop": "../props/laptop.png",
+    "envelope": "../props/envelope.png",
+    "speech-bubble": "../props/speech-bubble.png",
+    "thought-bubble": "../props/thought-bubble.png",
+    "exclamation": "../props/exclamation.png",
+    "mug": "../props/mug.png"
+  },
+  "assets": {
+    "canonical/lit/front.svg": {
+      "sha256": "941ba61d5d17c0c1fb8ef5b477dbce9e44edf3d3c1f2c689ccfa332cc7ab1c31",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "canonical/lit/three-quarter.svg": {
+      "sha256": "b6852dd7094e6824887be53badbfab3577a3f6f94b897088801956df7288b01f",
+      "geometrySha256": "e25b39a0437ab035d2ee0cda157981b9d88198d9df2e3b6ae7adf661e7f07c34",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "canonical/lit/side.svg": {
+      "sha256": "0bcb4c6ce7ae82a2fc0cc7ce1af8121074353fbc93b32820adfaf02bce463ad1",
+      "geometrySha256": "c10a65cacb7371c03a576e337c64b212dca21a5f91af500a11d9392347f1384f",
+      "view": "side",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "canonical/lit/back.svg": {
+      "sha256": "e309b1237a60e71321cb80f2aa15c5da36393d23dd2eedbd1d1ad29ff54fdadd",
+      "geometrySha256": "53d1b49f02cc31bb3ca5dda7b3b594850c226a8dff649bc90c145e58bd5e59f3",
+      "view": "back",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/lit/blink-half.svg": {
+      "sha256": "4e39ef7c2b31ca95389a1d6865b058bbf2dba7777cf76561712739dcbb1ef149",
+      "geometrySha256": "34587344f9c35ecb1df2f87d411a4bdd4dfd9a4e6dfc76b813b89c4665d7ed92",
+      "view": "front",
+      "expression": "blink-half",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/lit/blink-closed.svg": {
+      "sha256": "e75a6024eecc2f0857df1d73769a71c742504e13504721f04ab355f5078b4830",
+      "geometrySha256": "784d212077d56b563bd751097c80146aabc9cff2d69da4fda9e27bafd4966725",
+      "view": "front",
+      "expression": "blink-closed",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/lit/look.svg": {
+      "sha256": "76ca97181c96003acd7034de666e0fb325f99c2e4a136ed03803f23b8c752cb9",
+      "geometrySha256": "9df786ef969853b3e93c8e3da1d333027a3e9776b9f21e310b7d1125039b01a9",
+      "view": "front",
+      "expression": "look",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/lit/receive.svg": {
+      "sha256": "bac723889adcf2d9f46437945e266309417512edd73f462b2a53f6d772491479",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "receive",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/lit/thinking.svg": {
+      "sha256": "f2d3821ad48e07cc894508cb40388e145d286e576e0d60d6cbdf7ded20d51ad8",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "thinking",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/lit/working.svg": {
+      "sha256": "b493fc7d68b21b476d42d1183e9458676aac098507e62d752ec34a29a560d59c",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "working",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/lit/done.svg": {
+      "sha256": "4b85df8de1658fa2bac62f7a35b001df299fcc025f12d80428195b2b012a5ffb",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "done",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/lit/sleep.svg": {
+      "sha256": "d740bc8e0267ae8e1c2a20f04e9ee93ccb2cad768c57e43ade576aa875ce1a27",
+      "geometrySha256": "784d212077d56b563bd751097c80146aabc9cff2d69da4fda9e27bafd4966725",
+      "view": "front",
+      "expression": "sleep",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/lit/permission.svg": {
+      "sha256": "a36b428c84b91eee242cc9406c060c9b2436ee0a5dc401ba9c453a8d88f7e500",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "permission",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/lit/error.svg": {
+      "sha256": "cabce60baeee90349dd0d60a12a7630dd6ed6d4900f28923aefea9f4a271bb05",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "error",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/lit/companion.svg": {
+      "sha256": "c8e2436d4d8eef921abc5592fbff38b2acdbad72aaeda1ac75f9a5c90b72b1a7",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "companion",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/lit/drag.svg": {
+      "sha256": "842b9376eaf8843239991ae53f5a74f5b5db1bcfb78c1de3b735dfbe16414912",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "drag",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/lit/wake.svg": {
+      "sha256": "b62bc1eeb12ee28b62352ccc2bee6baa5504bda278b0fc42f75c808860b773e0",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "wake",
+      "artStatus": "normative-placeholder"
+    },
+    "canonical/unlit/front.svg": {
+      "sha256": "8d15bed0615cb73ab513ce246b79da950e3f9253cce0fc8f1385ddf98cf6841b",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "canonical/unlit/three-quarter.svg": {
+      "sha256": "5b1cdd363840837dd1ef56b22b9222e448814a5570f765a2bfa175f0dd90dc9a",
+      "geometrySha256": "e25b39a0437ab035d2ee0cda157981b9d88198d9df2e3b6ae7adf661e7f07c34",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "canonical/unlit/side.svg": {
+      "sha256": "30465d99b143341a71513e066818c12db270cb7ba8e9ad2ef643cb4f633cd13f",
+      "geometrySha256": "c10a65cacb7371c03a576e337c64b212dca21a5f91af500a11d9392347f1384f",
+      "view": "side",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "canonical/unlit/back.svg": {
+      "sha256": "ea880036041dc736063be18baa5e445e9b6256cc1a8931bf215c9b30b1cdd2c1",
+      "geometrySha256": "53d1b49f02cc31bb3ca5dda7b3b594850c226a8dff649bc90c145e58bd5e59f3",
+      "view": "back",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/unlit/blink-half.svg": {
+      "sha256": "5727da5879a321344f12851ad299bf0442c89ae4124ac62d4c26d1d9c244a780",
+      "geometrySha256": "34587344f9c35ecb1df2f87d411a4bdd4dfd9a4e6dfc76b813b89c4665d7ed92",
+      "view": "front",
+      "expression": "blink-half",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/unlit/blink-closed.svg": {
+      "sha256": "13362f0536f029ca68b770cf4fc6f213da778652139d6805b7134adca8f30910",
+      "geometrySha256": "784d212077d56b563bd751097c80146aabc9cff2d69da4fda9e27bafd4966725",
+      "view": "front",
+      "expression": "blink-closed",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/unlit/working.svg": {
+      "sha256": "2800142846f1026303a682fbe1ad03846205a89ef4ebed267d488f9d79d6dccf",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "working",
+      "artStatus": "normative-placeholder"
+    },
+    "sprites/unlit/sleep.svg": {
+      "sha256": "0dddf4154d511a030d41723de85b74726dcde387c18b326a4939db742d691653",
+      "geometrySha256": "784d212077d56b563bd751097c80146aabc9cff2d69da4fda9e27bafd4966725",
+      "view": "front",
+      "expression": "sleep",
+      "artStatus": "normative-placeholder"
+    },
+    "masks/front.svg": {
+      "sha256": "f80e7e6a2917c5464681f20ddd4fe13f418d8c3d0824faafd7340b9e69b5e202",
+      "geometrySha256": "0c5ada7d2521d54b7e08208cf142fe02b5235cfd1127ff692d2b17eb6621b9e4",
+      "view": "front",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "masks/three-quarter.svg": {
+      "sha256": "4c5d34c9d0fa6c677c3ee5acb64bcc9a99c9ac62dcff8cac7712c6979c546cda",
+      "geometrySha256": "0c5ada7d2521d54b7e08208cf142fe02b5235cfd1127ff692d2b17eb6621b9e4",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "masks/side.svg": {
+      "sha256": "d25c9a73f81dc576697b6bf1a2c6b1c107eed7b9e641306830e8286d5a07f33c",
+      "geometrySha256": "965a959666d5d111e6d586ae46ea5e4e3a034a104e2cd830c3b1851697dfc1bc",
+      "view": "side",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "masks/back.svg": {
+      "sha256": "35ed6f990b090e8c2b21a01b7cbf007a1b74e565c313fac79bc92d2390cf4d78",
+      "geometrySha256": "0c5ada7d2521d54b7e08208cf142fe02b5235cfd1127ff692d2b17eb6621b9e4",
+      "view": "back",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "transitions/dark-to-light/000.svg": {
+      "sha256": "7857ff0c4ac6431677e074553b93dfe19b11320e40ea38c1b15ea77c6f20a6cb",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "transitions/dark-to-light/001.svg": {
+      "sha256": "c84b70805a81874795361f7b3690191b0bbcd9f87b3aea845d3e12f9fec93d87",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "transitions/dark-to-light/002.svg": {
+      "sha256": "2ebc0f32f09485cc595280a93d0725478d859b828bd5c35bedbadc2e2fc9be7a",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "transitions/dark-to-light/003.svg": {
+      "sha256": "d4cc5cb7d61977a67849409fc6a6a0c040e02933740b4803965835b26d0a2fe4",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "transitions/dark-to-light/004.svg": {
+      "sha256": "467c728d5d9d2cf95c3bbb1fc322695f9277227bcdbd71627a6d420cca93d57e",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "transitions/dark-to-light/005.svg": {
+      "sha256": "46661f83b4bc2c2bfd214f6f0331c833a7981bd82d8775b190b245ab61a8b19e",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "transitions/dark-to-light/006.svg": {
+      "sha256": "fb86b582e36a00093c845bf8bc15244d4652a7684fe440583d001e477aa4e86a",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "transitions/dark-to-light/007.svg": {
+      "sha256": "941ba61d5d17c0c1fb8ef5b477dbce9e44edf3d3c1f2c689ccfa332cc7ab1c31",
+      "geometrySha256": "f8223f8983e127920ceae0369881eaed9ecfd51a163ae670df7e0ba65df1a13d",
+      "view": "front",
+      "expression": "idle",
+      "artStatus": "normative-placeholder"
+    },
+    "canonical/lit/front.png": {
+      "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "canonical/unlit/front.png": {
+      "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "masks/front.png": {
+      "sha256": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate"
+    },
+    "masks/sleep.png": {
+      "sha256": "0e77e4d1e266466e2ba955a8a59d1e4ec854390e9edf974f90b179992824e0e6",
+      "view": "three-quarter",
+      "expression": "sleep",
+      "artStatus": "production-candidate"
+    },
+    "sprites/lit/rest.png": {
+      "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewedAt": "2026-09-09T11:35:49.429353+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/lit/blink-half.png": {
+      "sha256": "381e33fb3c7aa4bbae041dc66b41594fc1a514e40bd15252b01cf94808cabc13",
+      "view": "three-quarter",
+      "expression": "blink-half",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/lit/blink-closed.png": {
+      "sha256": "fd7cdee38b27c2f79c86400016d3bc42233bc06459a1802fdce9bc6cdfc2e266",
+      "view": "three-quarter",
+      "expression": "blink-closed",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/lit/sleep.png": {
+      "sha256": "20d8ea6f1e4bba69a16e84b6413bd008c18598535c675e5e44ced3092114b892",
+      "view": "three-quarter",
+      "expression": "sleep",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/sleep.png",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/unlit/rest.png": {
+      "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewedAt": "2026-09-09T11:35:49.429602+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/unlit/blink-half.png": {
+      "sha256": "ea9aee190c73039c0147067a92c6b5e94d0e1906e4be0bc9556fda7dbf1790f9",
+      "view": "three-quarter",
+      "expression": "blink-half",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/unlit/blink-closed.png": {
+      "sha256": "90690eca79c052740dbcf5e7a5230a3382231074133cdb0218517156bbffedc6",
+      "view": "three-quarter",
+      "expression": "blink-closed",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/unlit/sleep.png": {
+      "sha256": "85e2f20bba94993a53d5541fbfdc7d82e4938d63f2c97d8bb44dd2e9af0abfee",
+      "view": "three-quarter",
+      "expression": "sleep",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/sleep.png",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "transitions/dark-to-light/000.png": {
+      "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewedAt": "2026-09-09T11:35:49.429824+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "transitions/dark-to-light/001.png": {
+      "sha256": "71052b103afe289560dca22a95ae40fdead00ee7baeaa3af04bc12af37c39daf",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewedAt": "2026-09-09T11:35:49.429880+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "transitions/dark-to-light/002.png": {
+      "sha256": "296fc220651b83f522bc384f99816cb1379e48df4b1bd67a136d02f8cd4cf914",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewedAt": "2026-09-09T11:35:49.429933+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "transitions/dark-to-light/003.png": {
+      "sha256": "47cb6bdf6db3e41eb1b4527076ebdaac3b50d2461c3c959a702368c7dfa1b78d",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewedAt": "2026-09-09T11:35:49.429988+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "transitions/dark-to-light/004.png": {
+      "sha256": "43dd5553f29d04ed731f3a95eb340ddd8ad141eeeaa3507dfeb6b5c761dc921e",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewedAt": "2026-09-09T11:35:49.430042+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "transitions/dark-to-light/005.png": {
+      "sha256": "7dd5abd662ec8a16c79f0bf30141b96f242fefaba5ef56055afff7f93f9aa491",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewedAt": "2026-09-09T11:35:49.430095+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "transitions/dark-to-light/006.png": {
+      "sha256": "520891a78d6b76d9bd3748dcfa249005bd9e10987860ee38c3986f44c4d7ae89",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewedAt": "2026-09-09T11:35:49.430149+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "transitions/dark-to-light/007.png": {
+      "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewedAt": "2026-09-09T11:35:49.430204+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "masks/thinking.png": {
+      "sha256": "c6980b399ce508a57539a85c5cdc0bc5fe0c4e9a65fcfc199f1897b90bfdb45d",
+      "view": "three-quarter",
+      "expression": "thinking",
+      "artStatus": "production-candidate"
+    },
+    "masks/listening.png": {
+      "sha256": "fa9929ef6c3d0a49c604be79690dd9630216d3dced62d14d2caf531fb8316449",
+      "view": "three-quarter",
+      "expression": "listening",
+      "artStatus": "production-candidate"
+    },
+    "masks/excited.png": {
+      "sha256": "4e9d645c85571c13427be72ad8f98fd09489aa7abeed21edd495c1776b98f5ae",
+      "view": "three-quarter",
+      "expression": "excited",
+      "artStatus": "production-candidate"
+    },
+    "masks/happy.png": {
+      "sha256": "51efbdeaae4b78acd09d1691aaf1d9a2b49ec85a4969c1dbaf1bd08233ddf2ab",
+      "view": "three-quarter",
+      "expression": "happy",
+      "artStatus": "production-candidate"
+    },
+    "masks/confused.png": {
+      "sha256": "01df6c8840b38659a8ba040bfb4fe4669d1a3c0b240ce50f514a40cdf7a22202",
+      "view": "three-quarter",
+      "expression": "confused",
+      "artStatus": "production-candidate"
+    },
+    "sprites/lit/thinking.png": {
+      "sha256": "7a399d4d87e9b830620d989c857ee935ef6c060996b198fa192011b14958fcfe",
+      "view": "three-quarter",
+      "expression": "thinking",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/listening.png",
+      "cPose": "listening",
+      "eyePose": "squint",
+      "visualReview": {
+        "reviewer": "Codex / raised forward C compared with sleep at 96px; owner correction review pending",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/lit/working.png": {
+      "sha256": "efa4c2114862d2c075992405efd8662c5a72aa639b00d23925cbe19f8a66f24a",
+      "view": "three-quarter",
+      "expression": "working",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/listening.png",
+      "cPose": "listening",
+      "eyePose": "default",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/lit/done.png": {
+      "sha256": "3da0359137ec0d1d806c288dc4ceee652bcf45aae0151727f87537837194fff8",
+      "view": "three-quarter",
+      "expression": "done",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/happy.png",
+      "cPose": "happy",
+      "eyePose": "crescent",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/lit/receive.png": {
+      "sha256": "fca183d019798e6c06ca00c416da9b55c10b12c19994f62d23ab225ab286c10c",
+      "view": "three-quarter",
+      "expression": "receive",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/happy.png",
+      "cPose": "happy",
+      "eyePose": "large",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/lit/permission.png": {
+      "sha256": "bbc8a8d2690c26a6fee64ba06e1f64b7131a06b5e2aa7d1d684f83a4035eba61",
+      "view": "three-quarter",
+      "expression": "permission",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/confused.png",
+      "cPose": "confused",
+      "eyePose": "default",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/lit/error.png": {
+      "sha256": "a713c4c6af97b2521692a6963e04a41152538d511885a19ffdf2c74a4e1e5620",
+      "view": "three-quarter",
+      "expression": "error",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/excited.png",
+      "cPose": "excited",
+      "eyePose": "large",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/lit/look.png": {
+      "sha256": "54ef8a169ff9f25b1a748c8624871009fc25878e6e6880d64905ebd0857a4e67",
+      "view": "three-quarter",
+      "expression": "look",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/front.png",
+      "cPose": "default",
+      "eyePose": "look-right",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/lit/drag.png": {
+      "sha256": "d6e508f65b29f11719001e68960914a48ea2580ee24e127dfcc61760ccd8f73a",
+      "view": "three-quarter",
+      "expression": "drag",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/excited.png",
+      "cPose": "excited",
+      "eyePose": "default",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/unlit/thinking.png": {
+      "sha256": "4f0058e269cb88bc7b84aab94750e76ff04947da298c1f3937ba3a0822cf6718",
+      "view": "three-quarter",
+      "expression": "thinking",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/listening.png",
+      "cPose": "listening",
+      "eyePose": "squint",
+      "visualReview": {
+        "reviewer": "Codex / raised forward C compared with sleep at 96px; owner correction review pending",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/unlit/working.png": {
+      "sha256": "df26d01e8eec0ed45ccc05d15ccced4fbae5d2b95a37a56ce7a7f04d3a9573ef",
+      "view": "three-quarter",
+      "expression": "working",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/listening.png",
+      "cPose": "listening",
+      "eyePose": "default",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/unlit/done.png": {
+      "sha256": "23e78795d4cb4b6a8799086eefdc392f98f9b66f9c42c67e93d3164007648835",
+      "view": "three-quarter",
+      "expression": "done",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/happy.png",
+      "cPose": "happy",
+      "eyePose": "crescent",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/unlit/receive.png": {
+      "sha256": "46b11724d62a34cb2f3b4d9c5ca4287cde633fb9934676f7e1f201f3a87db656",
+      "view": "three-quarter",
+      "expression": "receive",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/happy.png",
+      "cPose": "happy",
+      "eyePose": "large",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/unlit/permission.png": {
+      "sha256": "9cbb56d3bed5339635a824f2bc40d059410abf4d62a12b0a93528e8e5502b8df",
+      "view": "three-quarter",
+      "expression": "permission",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/confused.png",
+      "cPose": "confused",
+      "eyePose": "default",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/unlit/error.png": {
+      "sha256": "90cf92c1a4f8b08fe8fdd15597234b9b44b0c7352c6158ec9a74e7dfce1d4c37",
+      "view": "three-quarter",
+      "expression": "error",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/excited.png",
+      "cPose": "excited",
+      "eyePose": "large",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/unlit/look.png": {
+      "sha256": "842e3dc90cd08cbc2b5a097c5ea197428d51a66dfedbeca14fddf35baf18c986",
+      "view": "three-quarter",
+      "expression": "look",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/front.png",
+      "cPose": "default",
+      "eyePose": "look-right",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "sprites/unlit/drag.png": {
+      "sha256": "072ab6834e69f2123a2d22b84133fb86a83f5bbb74b224b161708fbaa14107c2",
+      "view": "three-quarter",
+      "expression": "drag",
+      "artStatus": "reviewed-production",
+      "geometryMask": "masks/excited.png",
+      "cPose": "excited",
+      "eyePose": "default",
+      "visualReview": {
+        "reviewer": "Owner / second expression batch accepted at 4a245d9c",
+        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "../props/micro-light.png": {
+      "sha256": "25bcc10287a275b1c492aa531a60ee6022b0ae82dcf56d2a2b228a90237a8613",
+      "kind": "prop",
+      "artStatus": "production-candidate",
+      "visualReview": {
+        "reviewer": "Codex / revised warm signal and HDR bloom on light/dark sheets; owner wallpaper review pending",
+        "reviewedAt": "2026-09-09T13:39:22.345536+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "../props/laptop.png": {
+      "sha256": "3f14632af1baba51f9278618d0a06ffcd6b14af08bbd585e1b0839db7bb87b14",
+      "kind": "prop",
+      "artStatus": "production-candidate",
+      "visualReview": {
+        "reviewer": "Codex / seven Blender props on light/dark review sheets; owner approval pending",
+        "reviewedAt": "2026-09-09T12:26:42.383544+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "../props/envelope.png": {
+      "sha256": "c7c22736c065bbdf2ec7710d67bb6eadea007908693041ad4846fb3e1a31f12b",
+      "kind": "prop",
+      "artStatus": "production-candidate",
+      "visualReview": {
+        "reviewer": "Codex / seven Blender props on light/dark review sheets; owner approval pending",
+        "reviewedAt": "2026-09-09T12:26:42.383544+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "../props/speech-bubble.png": {
+      "sha256": "56a0ca796a95638fb48f39cd76fe741e7d8e8e6ae30b6e4f154a3586d512474c",
+      "kind": "prop",
+      "artStatus": "production-candidate",
+      "visualReview": {
+        "reviewer": "Codex / seven Blender props on light/dark review sheets; owner approval pending",
+        "reviewedAt": "2026-09-09T12:26:42.383544+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "../props/thought-bubble.png": {
+      "sha256": "fb398d469aa1523b6d094497b3e827d7ab445ad5ba70b2f72664124f49500949",
+      "kind": "prop",
+      "artStatus": "production-candidate",
+      "visualReview": {
+        "reviewer": "Codex / seven Blender props on light/dark review sheets; owner approval pending",
+        "reviewedAt": "2026-09-09T12:26:42.383544+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "../props/exclamation.png": {
+      "sha256": "3a5fbc3a8907a910b031b9b147db2f1fc100526bfa27500ea6f7cc127afa1cb5",
+      "kind": "prop",
+      "artStatus": "production-candidate",
+      "visualReview": {
+        "reviewer": "Codex / revised warm signal and HDR bloom on light/dark sheets; owner wallpaper review pending",
+        "reviewedAt": "2026-09-09T13:39:22.346147+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "../props/mug.png": {
+      "sha256": "1146ef0c4240df7c894ac25cc610b973f1dedd0e4a70db3b9e0db899f9f22311",
+      "kind": "prop",
+      "artStatus": "production-candidate",
+      "visualReview": {
+        "reviewer": "Codex / seven Blender props on light/dark review sheets; owner approval pending",
+        "reviewedAt": "2026-09-09T12:26:42.383544+00:00",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    }
+  },
+  "designSheets": [
+    {
+      "path": "CC_DESIGN_SHEET_V1.png",
+      "sha256": "9e2ae0e80aa5c11803d4f9dd07a91f30751b0cf4c2be5474c39a5a23c1355bbf",
+      "role": "approved-design-reference-only",
+      "storage": "private-outside-repo"
+    }
+  ]
+}

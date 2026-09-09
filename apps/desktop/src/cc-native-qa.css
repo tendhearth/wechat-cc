@@ -1,0 +1,14 @@
+body { color: #344054; }
+#qa { width:100%; height:100%; }
+body.board { background:#fff; transition:none; }
+body.board.dark { background:#20242b; color:#edf0f5; }
+h1 { margin:28px 28px 8px; font-size:24px; }
+p, .controls { margin:14px 28px; }
+button { margin-right:8px; padding:7px 14px; border:1px solid #b7bec9; border-radius:7px; background:#f3f5f8; color:#263347; cursor:pointer; }
+#results { position:absolute; left:28px; top:440px; font:12px/1.8 ui-monospace,monospace; white-space:pre-wrap; }
+#status { position:absolute; left:28px; top:540px; }
+.pair { position:relative; width:100%; height:100%; }
+.pair .pet-stage { position:absolute; width:var(--size); height:var(--size); top:calc(260px - var(--size)*0.91796875); margin:0; max-width:none; }
+.pair .pet-stage:nth-child(2) { left:calc(var(--size) + 16px); }
+.pair .pet-breathing .pet-sprite { animation:none; } /* Static baseline measurement; frame timers stay enabled. */
+.size-label { position:absolute; top:272px; width:100%; text-align:center; font:12px ui-monospace,monospace; color:#6f7c90; }

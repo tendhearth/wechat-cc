@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" color="#fff7e6">
+<title>CC v1 normative placeholder — unlit/side/idle; NOT final art</title>
+<defs><linearGradient id="material" x2="0" y2="1"><stop stop-color="#272727"/><stop offset="1" stop-color="#1a1a1a"/></linearGradient></defs>
+
+<g id="geometry">
+<path data-part="c" d="M 230 224 C 194 203 190 164 208 125 C 226 85 257 65 294 78" fill="none" stroke="white" stroke-width="54" stroke-linecap="round"/>
+<ellipse data-part="body" cx="256" cy="327" rx="132" ry="129" fill="white"/>
+<ellipse data-part="foot-1" cx="185" cy="451" rx="31" ry="19" fill="white"/>
+<ellipse data-part="foot-2" cx="301" cy="451" rx="31" ry="19" fill="white"/>
+
+</g>
+
+</svg>

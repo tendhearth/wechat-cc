@@ -1,0 +1,3997 @@
+{
+  "normal": [
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/000.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/000.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/001.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/001.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/002.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/002.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/003.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/003.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/004.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/004.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/005.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/005.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/006.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/006.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/007.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/007.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/blink-closed.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/blink-closed.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/look.png",
+      "state": {
+        "badge": 0,
+        "behavior": "look",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/look.png",
+      "state": {
+        "badge": 0,
+        "behavior": "look",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/receive.png",
+      "state": {
+        "badge": 0,
+        "behavior": "receive",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/receive.png",
+      "state": {
+        "badge": 0,
+        "behavior": "receive",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/working.png",
+      "state": {
+        "badge": 0,
+        "behavior": "working",
+        "form": "lit",
+        "props": [],
+        "resting": "working",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/working.png",
+      "state": {
+        "badge": 0,
+        "behavior": "working",
+        "form": "lit",
+        "props": [],
+        "resting": "working",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/thinking.png",
+      "state": {
+        "badge": 0,
+        "behavior": "thinking",
+        "form": "lit",
+        "props": [],
+        "resting": "thinking",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/thinking.png",
+      "state": {
+        "badge": 0,
+        "behavior": "thinking",
+        "form": "lit",
+        "props": [],
+        "resting": "thinking",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/done.png",
+      "state": {
+        "badge": 0,
+        "behavior": "done",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/done.png",
+      "state": {
+        "badge": 0,
+        "behavior": "done",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "companion",
+        "form": "lit",
+        "props": [],
+        "resting": "companion",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "companion",
+        "form": "lit",
+        "props": [],
+        "resting": "companion",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/drag.png",
+      "state": {
+        "badge": 0,
+        "behavior": "drag",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/drag.png",
+      "state": {
+        "badge": 0,
+        "behavior": "drag",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/error.png",
+      "state": {
+        "badge": 0,
+        "behavior": "error",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/error.png",
+      "state": {
+        "badge": 0,
+        "behavior": "error",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "unlit",
+        "transition": "lit-to-unlit"
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "unlit",
+        "transition": "lit-to-unlit"
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/blink-closed.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/blink-closed.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/look.png",
+      "state": {
+        "badge": 0,
+        "behavior": "look",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/look.png",
+      "state": {
+        "badge": 0,
+        "behavior": "look",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/receive.png",
+      "state": {
+        "badge": 0,
+        "behavior": "receive",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/receive.png",
+      "state": {
+        "badge": 0,
+        "behavior": "receive",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/working.png",
+      "state": {
+        "badge": 0,
+        "behavior": "working",
+        "form": "unlit",
+        "props": [],
+        "resting": "working",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/working.png",
+      "state": {
+        "badge": 0,
+        "behavior": "working",
+        "form": "unlit",
+        "props": [],
+        "resting": "working",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/thinking.png",
+      "state": {
+        "badge": 0,
+        "behavior": "thinking",
+        "form": "unlit",
+        "props": [],
+        "resting": "thinking",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/thinking.png",
+      "state": {
+        "badge": 0,
+        "behavior": "thinking",
+        "form": "unlit",
+        "props": [],
+        "resting": "thinking",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/done.png",
+      "state": {
+        "badge": 0,
+        "behavior": "done",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/done.png",
+      "state": {
+        "badge": 0,
+        "behavior": "done",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "companion",
+        "form": "unlit",
+        "props": [],
+        "resting": "companion",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "companion",
+        "form": "unlit",
+        "props": [],
+        "resting": "companion",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/drag.png",
+      "state": {
+        "badge": 0,
+        "behavior": "drag",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/drag.png",
+      "state": {
+        "badge": 0,
+        "behavior": "drag",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/error.png",
+      "state": {
+        "badge": 0,
+        "behavior": "error",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/error.png",
+      "state": {
+        "badge": 0,
+        "behavior": "error",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    }
+  ],
+  "reduced": [
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/look.png",
+      "state": {
+        "badge": 0,
+        "behavior": "look",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/look.png",
+      "state": {
+        "badge": 0,
+        "behavior": "look",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/receive.png",
+      "state": {
+        "badge": 0,
+        "behavior": "receive",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/receive.png",
+      "state": {
+        "badge": 0,
+        "behavior": "receive",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/working.png",
+      "state": {
+        "badge": 0,
+        "behavior": "working",
+        "form": "unlit",
+        "props": [],
+        "resting": "working",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/working.png",
+      "state": {
+        "badge": 0,
+        "behavior": "working",
+        "form": "unlit",
+        "props": [],
+        "resting": "working",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/thinking.png",
+      "state": {
+        "badge": 0,
+        "behavior": "thinking",
+        "form": "unlit",
+        "props": [],
+        "resting": "thinking",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/thinking.png",
+      "state": {
+        "badge": 0,
+        "behavior": "thinking",
+        "form": "unlit",
+        "props": [],
+        "resting": "thinking",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/done.png",
+      "state": {
+        "badge": 0,
+        "behavior": "done",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/done.png",
+      "state": {
+        "badge": 0,
+        "behavior": "done",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "companion",
+        "form": "unlit",
+        "props": [],
+        "resting": "companion",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "companion",
+        "form": "unlit",
+        "props": [],
+        "resting": "companion",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/drag.png",
+      "state": {
+        "badge": 0,
+        "behavior": "drag",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/drag.png",
+      "state": {
+        "badge": 0,
+        "behavior": "drag",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/unlit/error.png",
+      "state": {
+        "badge": 0,
+        "behavior": "error",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/error.png",
+      "state": {
+        "badge": 0,
+        "behavior": "error",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/000.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/transitions/dark-to-light/000.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": "lit",
+        "transition": "unlit-to-lit"
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/look.png",
+      "state": {
+        "badge": 0,
+        "behavior": "look",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/look.png",
+      "state": {
+        "badge": 0,
+        "behavior": "look",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/receive.png",
+      "state": {
+        "badge": 0,
+        "behavior": "receive",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/receive.png",
+      "state": {
+        "badge": 0,
+        "behavior": "receive",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/working.png",
+      "state": {
+        "badge": 0,
+        "behavior": "working",
+        "form": "lit",
+        "props": [],
+        "resting": "working",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/working.png",
+      "state": {
+        "badge": 0,
+        "behavior": "working",
+        "form": "lit",
+        "props": [],
+        "resting": "working",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/thinking.png",
+      "state": {
+        "badge": 0,
+        "behavior": "thinking",
+        "form": "lit",
+        "props": [],
+        "resting": "thinking",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/thinking.png",
+      "state": {
+        "badge": 0,
+        "behavior": "thinking",
+        "form": "lit",
+        "props": [],
+        "resting": "thinking",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/done.png",
+      "state": {
+        "badge": 0,
+        "behavior": "done",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/done.png",
+      "state": {
+        "badge": 0,
+        "behavior": "done",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "companion",
+        "form": "lit",
+        "props": [],
+        "resting": "companion",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "companion",
+        "form": "lit",
+        "props": [],
+        "resting": "companion",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/drag.png",
+      "state": {
+        "badge": 0,
+        "behavior": "drag",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/drag.png",
+      "state": {
+        "badge": 0,
+        "behavior": "drag",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": false,
+      "src": "./assets/pet/cc-v1/sprites/lit/error.png",
+      "state": {
+        "badge": 0,
+        "behavior": "error",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/error.png",
+      "state": {
+        "badge": 0,
+        "behavior": "error",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    }
+  ],
+  "buttonChecks": [
+    {
+      "mode": "normal",
+      "form": "unlit",
+      "requested": "idle",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "unlit",
+      "requested": "blink",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "unlit",
+      "requested": "look",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/look.png",
+      "state": {
+        "badge": 0,
+        "behavior": "look",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "unlit",
+      "requested": "receive",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "unlit",
+      "requested": "working",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/working.png",
+      "state": {
+        "badge": 0,
+        "behavior": "working",
+        "form": "unlit",
+        "props": [],
+        "resting": "working",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "unlit",
+      "requested": "thinking",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/thinking.png",
+      "state": {
+        "badge": 0,
+        "behavior": "thinking",
+        "form": "unlit",
+        "props": [],
+        "resting": "thinking",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "unlit",
+      "requested": "permission",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "unlit",
+      "requested": "done",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "unlit",
+      "requested": "companion",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "companion",
+        "form": "unlit",
+        "props": [],
+        "resting": "companion",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "unlit",
+      "requested": "sleep",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "unlit",
+      "requested": "drag",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/drag.png",
+      "state": {
+        "badge": 0,
+        "behavior": "drag",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "unlit",
+      "requested": "wake",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "unlit",
+      "requested": "error",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/error.png",
+      "state": {
+        "badge": 0,
+        "behavior": "error",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "lit",
+      "requested": "idle",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "lit",
+      "requested": "blink",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/blink-closed.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "lit",
+      "requested": "look",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "lit",
+      "requested": "receive",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "lit",
+      "requested": "working",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/working.png",
+      "state": {
+        "badge": 0,
+        "behavior": "working",
+        "form": "lit",
+        "props": [],
+        "resting": "working",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "lit",
+      "requested": "thinking",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/thinking.png",
+      "state": {
+        "badge": 0,
+        "behavior": "thinking",
+        "form": "lit",
+        "props": [],
+        "resting": "thinking",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "lit",
+      "requested": "permission",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "lit",
+      "requested": "done",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "lit",
+      "requested": "companion",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "companion",
+        "form": "lit",
+        "props": [],
+        "resting": "companion",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "lit",
+      "requested": "sleep",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "lit",
+      "requested": "drag",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/drag.png",
+      "state": {
+        "badge": 0,
+        "behavior": "drag",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "lit",
+      "requested": "wake",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal",
+      "form": "lit",
+      "requested": "error",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "normal-observed",
+      "form": "unlit",
+      "requested": "idle",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "mode": "normal-observed",
+      "form": "unlit",
+      "requested": "blink",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/blink-closed.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "mode": "normal-observed",
+      "form": "unlit",
+      "requested": "look",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "mode": "normal-observed",
+      "form": "unlit",
+      "requested": "receive",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "mode": "normal-observed",
+      "form": "unlit",
+      "requested": "working",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/working.png",
+      "state": {
+        "badge": 0,
+        "behavior": "working",
+        "form": "unlit",
+        "props": [],
+        "resting": "working",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "mode": "normal-observed",
+      "form": "unlit",
+      "requested": "thinking",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/thinking.png",
+      "state": {
+        "badge": 0,
+        "behavior": "thinking",
+        "form": "unlit",
+        "props": [],
+        "resting": "thinking",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "mode": "normal-observed",
+      "form": "unlit",
+      "requested": "permission",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "mode": "normal-observed",
+      "form": "unlit",
+      "requested": "done",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "mode": "normal-observed",
+      "form": "unlit",
+      "requested": "companion",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "companion",
+        "form": "unlit",
+        "props": [],
+        "resting": "companion",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "mode": "normal-observed",
+      "form": "unlit",
+      "requested": "sleep",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "mode": "normal-observed",
+      "form": "unlit",
+      "requested": "drag",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/drag.png",
+      "state": {
+        "badge": 0,
+        "behavior": "drag",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "mode": "normal-observed",
+      "form": "unlit",
+      "requested": "wake",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "mode": "normal-observed",
+      "form": "unlit",
+      "requested": "error",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "fallback:transition/lit-to-unlit→fade"
+    },
+    {
+      "mode": "reduced",
+      "form": "unlit",
+      "requested": "idle",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "unlit",
+      "requested": "blink",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "unlit",
+      "requested": "look",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "unlit",
+      "requested": "receive",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "unlit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "unlit",
+      "requested": "working",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/working.png",
+      "state": {
+        "badge": 0,
+        "behavior": "working",
+        "form": "unlit",
+        "props": [],
+        "resting": "working",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "unlit",
+      "requested": "thinking",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/thinking.png",
+      "state": {
+        "badge": 0,
+        "behavior": "thinking",
+        "form": "unlit",
+        "props": [],
+        "resting": "thinking",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "unlit",
+      "requested": "permission",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "unlit",
+      "requested": "done",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "unlit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "unlit",
+      "requested": "companion",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "companion",
+        "form": "unlit",
+        "props": [],
+        "resting": "companion",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "unlit",
+      "requested": "sleep",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "unlit",
+      "requested": "drag",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/drag.png",
+      "state": {
+        "badge": 0,
+        "behavior": "drag",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "unlit",
+      "requested": "wake",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "unlit",
+      "requested": "error",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/unlit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "unlit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "lit",
+      "requested": "idle",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "lit",
+      "requested": "blink",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "blink",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "lit",
+      "requested": "look",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "lit",
+      "requested": "receive",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "idle",
+        "form": "lit",
+        "props": [],
+        "resting": "idle",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "lit",
+      "requested": "working",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/working.png",
+      "state": {
+        "badge": 0,
+        "behavior": "working",
+        "form": "lit",
+        "props": [],
+        "resting": "working",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "lit",
+      "requested": "thinking",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/thinking.png",
+      "state": {
+        "badge": 0,
+        "behavior": "thinking",
+        "form": "lit",
+        "props": [],
+        "resting": "thinking",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "lit",
+      "requested": "permission",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "lit",
+      "requested": "done",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/permission.png",
+      "state": {
+        "badge": 0,
+        "behavior": "permission",
+        "form": "lit",
+        "props": [],
+        "resting": "permission",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "lit",
+      "requested": "companion",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/canonical/lit/front.png",
+      "state": {
+        "badge": 0,
+        "behavior": "companion",
+        "form": "lit",
+        "props": [],
+        "resting": "companion",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "lit",
+      "requested": "sleep",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "lit",
+      "requested": "drag",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/drag.png",
+      "state": {
+        "badge": 0,
+        "behavior": "drag",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "lit",
+      "requested": "wake",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/blink-half.png",
+      "state": {
+        "badge": 0,
+        "behavior": "wake",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    },
+    {
+      "mode": "reduced",
+      "form": "lit",
+      "requested": "error",
+      "loaded": true,
+      "src": "./assets/pet/cc-v1/sprites/lit/sleep.png",
+      "state": {
+        "badge": 0,
+        "behavior": "sleep",
+        "form": "lit",
+        "props": [],
+        "resting": "sleep",
+        "targetForm": null,
+        "transition": null
+      },
+      "warnings": "(无)"
+    }
+  ]
+}

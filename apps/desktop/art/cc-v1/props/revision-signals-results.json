@@ -1,0 +1,23 @@
+{
+  "manifestSha256": "0a8fc602ad64f71e71cdd129ad16ec3303e00ce655d615e9ecf504443d099b43",
+  "changedProps": [
+    "exclamation",
+    "micro-light"
+  ],
+  "characterAndOtherPropBytes": "unchanged from e1ad4c16",
+  "validator": {
+    "errors": 0,
+    "assets": 85
+  },
+  "tests": {
+    "files": 14,
+    "passed": 169
+  },
+  "browser": "revision-signals-browser.json: two props × two forms, all loaded at 384px",
+  "reviewSheets": [
+    "review-light.png",
+    "review-dark.png"
+  ],
+  "native": "QA app rebuilt successfully; real wallpaper composition not reviewed",
+  "status": "production-candidate; no push or PR"
+}

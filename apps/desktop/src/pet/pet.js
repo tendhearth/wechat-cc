@@ -7,6 +7,7 @@ import { createPetStateMachine } from './domain/state-machine.js'
 import { ONE_SHOT } from './domain/types.js'
 import { createSpriteRenderer } from './renderer/sprite-renderer.js'
 import { renderProps } from './renderer/prop-layer.js'
+import { emergencyManifest, fallbackFrame } from '../assets/pet/cc-v1/placeholder.js'
 
 /** @typedef {import('./bridge/presence-map.js').PetIntent} PetIntent */
 /** @typedef {import('./domain/types.js').PetForm} PetForm */
@@ -46,23 +47,22 @@ export async function createPet(root, opts) {
   /** @type {string[]} */
   const warnings = []
   const warn = (/** @type {string[]} */ ...ws) => { for (const w of ws) if (!warnings.includes(w)) { warnings.push(w); console.warn('[pet]', w) } }
+  let assetHint = ''
 
   const setHint = (/** @type {string | null} */ text) => {
     if (!root.hint) return
-    root.hint.textContent = text ?? ''
-    root.hint.hidden = !text
+    root.hint.textContent = text || assetHint
+    root.hint.hidden = !root.hint.textContent
   }
 
   const loaded = await loadManifest(opts.manifestUrl, opts.fetchImpl)
   if (!loaded.ok) {
     warn(`manifest:${loaded.reason}`)
-    setHint('桌宠资产没加载出来')
-    // 没有 manifest:状态机照常工作(逻辑状态仍真实),只是画不出来
-    return { machine, warnings, setState: machine.setState, setForm: machine.setForm, setProps: machine.setProps, applyIntent: () => {}, setHint, beginDrag: machine.beginDrag, endDrag: machine.endDrag, reportFrameError: () => {}, destroy: () => { renderer.stop() } }
+    assetHint = '桌宠资产没加载出来，正在显示规范占位'
   }
   // 坏帧要就地从帧表里摘掉,所以拿一份深拷贝,不动 loader 的返回值。
-  const manifest = structuredClone(loaded.manifest)
-  warn(...loaded.manifest.warnings)
+  const manifest = structuredClone(loaded.ok ? loaded.manifest : emergencyManifest())
+  warn(...manifest.warnings)
   renderer.applyAnchor(manifest.canvas.anchor)
   setHint(null)
 
@@ -119,6 +119,11 @@ export async function createPet(root, opts) {
     dropFrame(manifest.forms.unlit.states, url)
     dropFrame(manifest.forms.lit.states, url)
     dropFrame(manifest.transitions, url)
+    // A broken master must never be selected again by the resolver. The terminal
+    // fallback shares the kit geometry and needs no successful image request.
+    for (const form of /** @type {const} */ (['unlit', 'lit'])) {
+      if (isFrame(manifest.forms[form].master, url)) manifest.forms[form].master = fallbackFrame(form)
+    }
     warn(`frame_missing:${url}`)
     lastKey = ''                        // 帧表变了,同一个状态也得重画
     render(machine.snapshot())

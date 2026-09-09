@@ -1,0 +1,37 @@
+{
+  "checkedAt": "2026-09-09T02:43:59.429630+00:00",
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "renderer": "real Tauri / WKWebView, compiled debug .app",
+  "sizesCssPx": [
+    48,
+    96,
+    128,
+    256
+  ],
+  "loadedFramesPerWindow": 16,
+  "imageLoadErrors": 0,
+  "observedLoop": 8,
+  "backdrops": [
+    "#ffffff",
+    "#20242b"
+  ],
+  "backdropMethod": "CSS QA backdrop in each actual transparent Tauri window; transparent reset available",
+  "physicalDesktopComposite": "not verified: CUA captures one window and flattens transparency; OS screenshot UI attempts did not yield a usable desktop-composite capture",
+  "limitations": [
+    "48px Dark silhouette has low contrast on charcoal",
+    "aesthetic owner approval pending"
+  ],
+  "manifestSha256": "eb79b9a64d41734980089a0f89f51e57fd2c74dcbe2c7217f07a4f310984db33",
+  "screenshots": {
+    "dark-128.png": "e5659ae876c2de646afa6b3bed93dd63578c4bab8b3a54901432edb83c549ae7",
+    "dark-256.png": "bdc51900ba99e7bc984d3ce46cb24ec4d33c97c15950d84c9e164f4ad66c6357",
+    "dark-48.png": "89938453346ebab31182454290fe03f8b51d30695a858b935003d32ccfa6e8a5",
+    "dark-96.png": "8dac1cedb8eec4abee76f29c696902f96ce2b72b025599219dbfc032c6a43b00",
+    "light-128.png": "1ee2ce221cfa27079e539da203d732680fab6ea2a9b2a23202359bd9887e85a3",
+    "light-256.png": "7bc2cc9680d9e9c8a934a6256fe5c42fb28adc1cb85aa13d5070b07c2f265be8",
+    "light-48.png": "a0714233d5f0e19226ca6a9bc1d922dea152e1382d16a2b28d7e7b199c337cb0",
+    "light-96.png": "1d9e4786d74aada0017439455c62b08e3eba3e59029e6c90af097497b131e051",
+    "native-review.png": "0aad498919d42db10190cf07e8c47f2cae13208ef14422f39f7ae241c15f8161"
+  },
+  "completedLoopsAtLeast": 7
+}

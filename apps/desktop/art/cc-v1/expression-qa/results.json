@@ -1,0 +1,72 @@
+{
+  "manifestSha256": "edf2545b6e02eeda0ff77dd58c2861f38eb97e4a5abdeda0eb307eaf728dd188",
+  "loadedBehaviors": {
+    "normal": {
+      "lit": [
+        "blink",
+        "companion",
+        "done",
+        "drag",
+        "error",
+        "idle",
+        "look",
+        "permission",
+        "receive",
+        "sleep",
+        "thinking",
+        "wake",
+        "working"
+      ],
+      "unlit": [
+        "blink",
+        "companion",
+        "done",
+        "drag",
+        "error",
+        "idle",
+        "look",
+        "permission",
+        "receive",
+        "sleep",
+        "thinking",
+        "wake",
+        "working"
+      ]
+    },
+    "reduced": {
+      "lit": [
+        "blink",
+        "companion",
+        "done",
+        "drag",
+        "error",
+        "idle",
+        "look",
+        "permission",
+        "receive",
+        "sleep",
+        "thinking",
+        "wake",
+        "working"
+      ],
+      "unlit": [
+        "blink",
+        "companion",
+        "done",
+        "drag",
+        "error",
+        "idle",
+        "look",
+        "permission",
+        "receive",
+        "sleep",
+        "thinking",
+        "wake",
+        "working"
+      ]
+    }
+  },
+  "reverseTransition": "Existing lit-to-unlit fade fallback; unchanged",
+  "blockedFrame": "Temporarily blocked sprites/unlit/working.png through browser network controls; observed canonical/unlit/front.png while behavior remained working; unblocked and restored successful working.png load",
+  "native": "QA app rebuilt; no new native desktop-composite evidence"
+}

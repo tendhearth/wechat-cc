@@ -15,7 +15,7 @@ const mock = !(/** @type {any} */ (window).__TAURI__?.core?.invoke)
 const stage = $('pet-stage'), img = $('pet-sprite'), props = $('pet-props'), hint = $('pet-hint')
 const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
-const pet = await createPet({ stage, img, props, hint }, { manifestUrl: './assets/pet/manifest.json', reducedMotion })
+const pet = await createPet({ stage, img, props, hint }, { manifestUrl: './assets/pet/cc-v1/manifest.json', reducedMotion })
 if (new URLSearchParams(location.search).has('lab')) /** @type {any} */ (window).__pet = pet
 
 // presence(处境)+ pet 端点(在做什么)→ 一个意图(spec §5)。两个轮询各拉各的,

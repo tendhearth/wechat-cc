@@ -10,16 +10,21 @@ button { font: inherit; }
 
 /* minmax(0, 1fr):默认的 auto 最小值会让方形舞台自己撑住行高 —— 权限卡片一出来就把 shell 顶出窗口。 */
 .pet-shell { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); width: 100%; height: 100%; padding: 8px; }
-/* 舞台正方形,anchor 用 manifest 给的比例(--pet-anchor-x/y)。主体 img 的底部中线对齐 anchor 点。 */
-.pet-stage { position: relative; height: 100%; width: auto; max-width: 100%; aspect-ratio: 1 / 1; margin: 0 auto; cursor: grab; }
+/* 舞台填满格子,不再靠 aspect-ratio 装正方形(height:100% + max-width 一冲突 aspect-ratio 就失效,
+   240×300 的窗口里舞台其实是 244×304,按舞台高度算的 anchor 比真实脚底低 26px)。
+   真正的正方形是 object-fit: contain 算出来的那块:边长 --pet-side = min(宽, 高),居中。
+   anchor 与道具槽位都相对这块正方形定位,--pet-anchor-x/y 是 manifest 给的无单位比例。 */
+.pet-stage { position: relative; width: 100%; height: 100%; container-type: size; cursor: grab;
+  --pet-side: min(100cqw, 100cqh); --pet-box-x: calc((100cqw - var(--pet-side)) / 2); --pet-box-y: calc((100cqh - var(--pet-side)) / 2);
+  --pet-origin-x: calc(var(--pet-box-x) + var(--pet-anchor-x, 0.5) * var(--pet-side)); --pet-origin-y: calc(var(--pet-box-y) + var(--pet-anchor-y, 0.92) * var(--pet-side)); }
 .pet-stage:active { cursor: grabbing; }
-.pet-sprite { position: absolute; left: 50%; top: 0; width: 100%; height: 100%; transform: translateX(-50%); transform-origin: var(--pet-anchor-x, 50%) var(--pet-anchor-y, 92%); object-fit: contain; pointer-events: none; user-select: none; transition: opacity 240ms ease; }
+.pet-sprite { position: absolute; left: 50%; top: 0; width: 100%; height: 100%; transform: translateX(-50%); transform-origin: var(--pet-origin-x) var(--pet-origin-y); object-fit: contain; pointer-events: none; user-select: none; transition: opacity 240ms ease; }
 .pet-sprite.pet-fading { opacity: 0; }
 .pet-breathing .pet-sprite { animation: pet-breathe 2.8s ease-in-out infinite; }
 @keyframes pet-breathe { 0%, 100% { transform: translateX(-50%) scale(1); } 50% { transform: translateX(-50%) scale(1.02); } }
 /* 道具:相对 anchor 点的比例偏移(prop-layer.js 的槽位表),以舞台边长为 1。 */
 .pet-props { position: absolute; inset: 0; pointer-events: none; }
-.pet-prop { position: absolute; left: calc(var(--pet-anchor-x, 50%) + var(--slot-dx, 0) * 100%); top: calc(var(--pet-anchor-y, 92%) + var(--slot-dy, 0) * 100%); width: calc(var(--slot-scale, .34) * 100%); aspect-ratio: 1 / 1; transform: translate(-50%, -50%); }
+.pet-prop { position: absolute; left: calc(var(--pet-origin-x) + var(--slot-dx, 0) * var(--pet-side)); top: calc(var(--pet-origin-y) + var(--slot-dy, 0) * var(--pet-side)); width: calc(var(--slot-scale, .34) * var(--pet-side)); aspect-ratio: 1 / 1; transform: translate(-50%, -50%); }
 .pet-prop img { width: 100%; height: 100%; object-fit: contain; }
 .pet-badge { position: absolute; right: 4%; top: 4%; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #d9773b; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
 .pet-hint { margin: 4px 0 0; padding: 4px 8px; border-radius: 999px; background: rgba(255, 253, 247, .86); color: #7b6b5c; font-size: 11px; text-align: center; justify-self: center; }

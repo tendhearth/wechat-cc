@@ -1019,4 +1019,4 @@ endorsed by, or sponsored by Tencent or WeChat.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT — see [LICENSE](./LICENSE). 代码是 MIT;**CC 角色形象与桌宠美术资产不是**,见 [ASSETS-LICENSE.md](./ASSETS-LICENSE.md)。

@@ -1,0 +1,136 @@
+{
+  "geometrySha256": "53349371a27d7e32358f015a1b14a41401bee55796dd1d779986976facab3dc6",
+  "orthoScale": 3.85,
+  "cameraLocation": [
+    -3.0038111209869385,
+    -10.012703895568848,
+    2.67958927154541
+  ],
+  "cameraRotation": [
+    1.46108877658844,
+    -2.1083572221414215e-08,
+    -0.29145678877830505
+  ],
+  "entityTargetBbox": [
+    104,
+    52,
+    408,
+    470
+  ],
+  "measurementScale": 6.0,
+  "measurementBounds": {
+    "default": [
+      160,
+      234,
+      352,
+      470
+    ],
+    "listening": [
+      160,
+      236,
+      352,
+      470
+    ],
+    "happy": [
+      160,
+      219,
+      352,
+      470
+    ],
+    "confused": [
+      160,
+      223,
+      352,
+      470
+    ],
+    "thinking": [
+      160,
+      262,
+      352,
+      470
+    ],
+    "low": [
+      160,
+      258,
+      352,
+      470
+    ],
+    "angry": [
+      160,
+      213,
+      352,
+      470
+    ],
+    "excited": [
+      160,
+      203,
+      352,
+      470
+    ]
+  },
+  "finalBounds": {
+    "default": [
+      108,
+      104,
+      404,
+      470
+    ],
+    "listening": [
+      108,
+      107,
+      404,
+      470
+    ],
+    "happy": [
+      108,
+      80,
+      404,
+      470
+    ],
+    "confused": [
+      108,
+      86,
+      404,
+      470
+    ],
+    "thinking": [
+      108,
+      147,
+      404,
+      470
+    ],
+    "low": [
+      108,
+      142,
+      404,
+      470
+    ],
+    "angry": [
+      108,
+      72,
+      404,
+      470
+    ],
+    "excited": [
+      108,
+      55,
+      404,
+      470
+    ]
+  },
+  "samples": 96,
+  "referenceSha256": {
+    "CC_MASTER_V1.png": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+    "CC_DESIGN_SHEET_V1.png": "9e2ae0e80aa5c11803d4f9dd07a91f30751b0cf4c2be5474c39a5a23c1355bbf"
+  },
+  "poseLabels": {
+    "default": "默认",
+    "listening": "倾听",
+    "happy": "开心",
+    "confused": "疑惑",
+    "thinking": "思考",
+    "low": "低落",
+    "angry": "生气",
+    "excited": "兴奋"
+  }
+}

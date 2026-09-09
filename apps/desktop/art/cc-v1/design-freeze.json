@@ -1,0 +1,26 @@
+{
+  "acceptedCommit": "a6b28e2a",
+  "scope": [
+    "base geometry",
+    "camera",
+    "Light material",
+    "Dark material",
+    "lighting"
+  ],
+  "sha256": {
+    "apps/desktop/art/cc-v1/cc-v1.blend": "cd163cc60570f911dfb904ef336e713eae833160c8bfe352617f2f3226a33937",
+    "apps/desktop/art/cc-v1/camera-fit.json": "d725cbf38ceac6205693b52681b9f047e2d034dd82f09e9acab182e5d7d6eb7c",
+    "apps/desktop/src/assets/pet/cc-v1/canonical/lit/front.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+    "apps/desktop/src/assets/pet/cc-v1/canonical/unlit/front.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/000.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/001.png": "71052b103afe289560dca22a95ae40fdead00ee7baeaa3af04bc12af37c39daf",
+    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/002.png": "296fc220651b83f522bc384f99816cb1379e48df4b1bd67a136d02f8cd4cf914",
+    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/003.png": "47cb6bdf6db3e41eb1b4527076ebdaac3b50d2461c3c959a702368c7dfa1b78d",
+    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/004.png": "43dd5553f29d04ed731f3a95eb340ddd8ad141eeeaa3507dfeb6b5c761dc921e",
+    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/005.png": "7dd5abd662ec8a16c79f0bf30141b96f242fefaba5ef56055afff7f93f9aa491",
+    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/006.png": "520891a78d6b76d9bd3748dcfa249005bd9e10987860ee38c3986f44c4d7ae89",
+    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/007.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+    "apps/desktop/src/assets/pet/cc-v1/masks/front.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
+    "apps/desktop/src/assets/pet/cc-v1/masks/sleep.png": "0e77e4d1e266466e2ba955a8a59d1e4ec854390e9edf974f90b179992824e0e6"
+  }
+}

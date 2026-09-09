@@ -3,7 +3,7 @@
 // DOM 与计时器都是注入的,所以能在没有 jsdom 的测试里跑。不认识 behavior,不认识文件名的含义。
 
 /** @typedef {import('../assets/manifest-loader.js').Animation} Animation */
-/** @typedef {{ style: Record<string, string>, classList: { add(c: string): void, remove(c: string): void, contains(c: string): boolean }, setAttribute(k: string, v: string): void, getAttribute(k: string): string | null, src?: string, addEventListener?: (type: string, fn: () => void) => void }} ElLike */
+/** @typedef {{ style: { setProperty(name: string, value: string): void, [k: string]: unknown }, classList: { add(c: string): void, remove(c: string): void, contains(c: string): boolean }, setAttribute(k: string, v: string): void, getAttribute(k: string): string | null, src?: string, addEventListener?: (type: string, fn: () => void) => void }} ElLike */
 
 const DEFAULT_FADE_MS = 240
 
@@ -70,8 +70,10 @@ export function createSpriteRenderer(deps) {
   return {
     /** @param {[number, number]} anchor */
     applyAnchor(anchor) {
-      deps.stage.style['--pet-anchor-x'] = `${anchor[0] * 100}%`
-      deps.stage.style['--pet-anchor-y'] = `${anchor[1] * 100}%`
+      // 自定义属性只能走 setProperty:style['--x'] = v 在真实 CSSStyleDeclaration 上是静默 no-op,
+      // 之前所有道具因此全部落在默认值(anchor 点 = 脚底)。写成无单位比例,CSS 里再乘舞台边长。
+      deps.stage.style.setProperty('--pet-anchor-x', String(anchor[0]))
+      deps.stage.style.setProperty('--pet-anchor-y', String(anchor[1]))
     },
     /** @param {Animation} a @param {{ onEnd?: () => void }} [opts] */
     play(a, opts = {}) { run(a, opts.onEnd) },

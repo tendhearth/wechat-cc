@@ -3,6 +3,7 @@
 // 接受两种形状:v1 扁平(states 全是 lit,canonical 两张 master)与 forms 嵌套。
 // 归一后业务层只认 forms[form].states[behavior] / transitions / props。
 // 两级校验:无法解析 → ok:false;可降级缺失 → 丢掉那一项 + warning。纯函数,不碰 DOM。
+import { validateCCMetadata } from './cc-contract.js'
 
 /** @typedef {{ frames: string[], fps: number, loop: boolean, next: string | null }} Animation */
 /** @typedef {{ master: string, states: Record<string, Animation> }} FormAssets */
@@ -29,7 +30,11 @@ function resolvePath(baseUrl, p) {
 function normalizeAnimation(raw, baseUrl, warnings, label) {
   if (!isObj(raw)) { warnings.push(`state_invalid:${label}`); return null }
   const o = /** @type {Record<string, unknown>} */ (raw)
-  const frames = Array.isArray(o.frames) ? o.frames.filter((f) => typeof f === 'string' && f.length > 0).map((f) => resolvePath(baseUrl, /** @type {string} */ (f))) : []
+  const frames = Array.isArray(o.frames) ? o.frames.filter((f) => {
+    const valid = typeof f === 'string' && f.trim().length > 0 && !/[\x00-\x1f]/.test(f) && !/^(javascript:|file:|blob:)/i.test(f)
+    if (!valid) warnings.push(`frame_path_invalid:${label}`)
+    return valid
+  }).map((f) => resolvePath(baseUrl, /** @type {string} */ (f))) : []
   if (frames.length === 0) { warnings.push(`state_empty:${label}`); return null }
   const fps = typeof o.fps === 'number' && Number.isFinite(o.fps) && o.fps > 0 ? o.fps : DEFAULT_FPS
   const loop = o.loop === true
@@ -58,8 +63,8 @@ function normalizeStates(rawStates, baseUrl, warnings, form) {
 function normalizeCanvas(rawCanvas) {
   if (!isObj(rawCanvas)) return null
   const c = /** @type {Record<string, unknown>} */ (rawCanvas)
-  const width = typeof c.width === 'number' && c.width > 0 ? c.width : 0
-  const height = typeof c.height === 'number' && c.height > 0 ? c.height : 0
+  const width = typeof c.width === 'number' && Number.isFinite(c.width) && c.width > 0 ? c.width : 0
+  const height = typeof c.height === 'number' && Number.isFinite(c.height) && c.height > 0 ? c.height : 0
   if (!width || !height) return null
   /** @type {[number, number]} */
   let anchor = [0.5, 0.9]
@@ -71,6 +76,7 @@ function normalizeCanvas(rawCanvas) {
     const o = /** @type {{ x?: unknown, y?: unknown }} */ (a)
     if (typeof o.x === 'number' && typeof o.y === 'number') anchor = o.x > 1 || o.y > 1 ? [o.x / width, o.y / height] : [o.x, o.y]
   }
+  if (anchor.some((n) => !Number.isFinite(n) || n < 0 || n > 1)) return null
   return { width, height, anchor }
 }
 
@@ -82,6 +88,10 @@ function normalizeCanvas(rawCanvas) {
 export function normalizeManifest(raw, baseUrl = '') {
   if (!isObj(raw)) return { ok: false, reason: 'not_object' }
   const r = /** @type {Record<string, unknown>} */ (raw)
+  if (r.kitId === 'cc-v1') {
+    const errors = validateCCMetadata(r)
+    if (errors.length) return { ok: false, reason: `cc_contract:${errors.join(',')}` }
+  }
   const canvas = normalizeCanvas(r.canvas)
   if (!canvas) return { ok: false, reason: 'no_canvas' }
   /** @type {string[]} */

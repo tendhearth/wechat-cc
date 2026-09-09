@@ -1,0 +1,14 @@
+{
+  "loaded": true,
+  "src": "./assets/pet/cc-v1/canonical/unlit/front.png",
+  "state": {
+    "badge": 0,
+    "behavior": "working",
+    "form": "unlit",
+    "props": [],
+    "resting": "working",
+    "targetForm": null,
+    "transition": null
+  },
+  "warnings": "(无)"
+}

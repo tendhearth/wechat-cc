@@ -1,10 +1,12 @@
+// 真实 CSSStyleDeclaration 只认 setProperty 写自定义属性;fake 也只开这一条路,防止回到 style['--x'] 的静默 no-op。
+function fakeStyle() { const rec: Record<string, string> = {}; return Object.assign(rec, { setProperty(k: string, v: string) { rec[k] = v } }) }
 import { describe, it, expect, vi } from 'vitest'
 import { createSpriteRenderer } from './sprite-renderer.js'
 
 function el() {
   const classes = new Set<string>()
   return {
-    style: {} as Record<string, string>,
+    style: fakeStyle(),
     classList: { add: (c: string) => { classes.add(c) }, remove: (c: string) => { classes.delete(c) }, contains: (c: string) => classes.has(c) },
     attrs: {} as Record<string, string>,
     setAttribute(k: string, v: string) { this.attrs[k] = v }, getAttribute(k: string) { return this.attrs[k] ?? null },
@@ -29,7 +31,7 @@ describe('createSpriteRenderer', () => {
     const img = el(), stage = el(), c = clock()
     const r = createSpriteRenderer({ img, stage, schedule: c.schedule, cancel: c.cancel, preload: () => {} })
     r.applyAnchor([0.5, 0.91796875])
-    expect(stage.style['--pet-anchor-x']).toBe('50%'); expect(stage.style['--pet-anchor-y']).toBe('91.796875%')
+    expect(stage.style['--pet-anchor-x']).toBe('0.5'); expect(stage.style['--pet-anchor-y']).toBe('0.91796875')
     r.play(anim(['a.png', 'b.png'], 4, true))
     expect(img.src).toBe('a.png')
     c.tick(250); expect(img.src).toBe('b.png')
