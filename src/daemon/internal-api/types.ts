@@ -216,6 +216,12 @@ export interface InternalApiDeps {
     resolve(hash: string, decision: 'allow' | 'deny'): boolean
   }
   /**
+   * 终端 claude / codex 会话的 hook 事件入口(spec 2026-09-09-cli-hook-push)。
+   * main.ts 在 bootstrap 之后 setCliEvents —— hub 要 boot.sendAssistantText。
+   * 没设之前 POST /v1/cli/event 503。
+   */
+  cliEvents?: Pick<import('../../core/cli-events').CliEventHub, 'ingest'>
+  /**
    * Owner-only Customer Review application service. Late-bound after
    * bootstrap because it needs the active provider registry and wxvault MCP.
    */
@@ -537,6 +543,7 @@ export interface InternalApi {
    * 才存在。GET /v1/companion/pet 在此之前返回 503。
    */
   setPetTurn(fn: NonNullable<InternalApiDeps['petTurn']>): void
+  setCliEvents(hub: NonNullable<InternalApiDeps['cliEvents']>): void
   /** 三轴 presence 的共用入口(随身 CC 手机页经此读,不自己拼输入)。null = journal 没接。 */
   getPresence(): Promise<import('../../core/companion-presence').Presence | null>
   /** Late-bind Customer Review after wxvault + an eval provider are ready. */

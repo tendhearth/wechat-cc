@@ -60,6 +60,11 @@ Usage:
                         --dangerously: skip permission prompts
                         (matches claude --dangerously-skip-permissions)
   wechat-cc install [--user]   Register the MCP plugin entry for claude
+  wechat-cc hook install [--claude] [--codex] [--json]
+                        终端里的 claude / codex 跑完一个回合、或停下来等批准时
+                        推到主人微信(写 ~/.claude/settings.json 与 $CODEX_HOME/
+                        hooks.json 的 hooks;幂等;只动自己的条目)。
+  wechat-cc hook uninstall | status
   wechat-cc status      Show daemon status + accounts
   wechat-cc list        List bound accounts
   wechat-cc doctor [--json]        Diagnose install/setup state
@@ -1725,6 +1730,121 @@ const companionPushCmd = defineCommand({
       console.error(`companion push failed: ${msg}`); process.exit(1)
     }
   },
+})
+
+// ── hook — 终端 claude / codex 会话的事件推到微信(spec 2026-09-09-cli-hook-push)──
+// 两家的 hooks 各拉起一个 `wechat-cc hook <source>` 子进程,stdin 是 hook JSON。
+// 永远 exit 0、永远不阻塞 CLI:daemon 没跑 / 网络不通 / 400 一律静默
+// (WECHAT_CC_HOOK_DEBUG=1 时把结果打到 stderr)。
+function hookRelayCmd(source: 'claude' | 'codex') {
+  return defineCommand({
+    meta: { name: source, description: `${source} 的 hook 出口(stdin 收 hook JSON,转给本机 daemon)` },
+    async run() {
+      const { shouldSkipHook, normalizeHookPayload, postCliEvent } = await import('./src/cli/hook.ts')
+      const debug = process.env['WECHAT_CC_HOOK_DEBUG'] === '1'
+      try {
+        // 回环守卫:daemon 自己拉起的 claude / codex 也会触发同一份 hooks。
+        if (shouldSkipHook(process.env)) { if (debug) console.error('hook: skipped (daemon child)'); return }
+        const raw = await readStdin()
+        let parsed: unknown = null
+        try { parsed = JSON.parse(raw) } catch { if (debug) console.error('hook: stdin is not JSON'); return }
+        const ev = normalizeHookPayload(source, parsed)
+        if (!ev) { if (debug) console.error('hook: event ignored'); return }
+        const r = await postCliEvent(STATE_DIR, ev)
+        if (debug) console.error(`hook: ${JSON.stringify(r)}`)
+      } catch (err) {
+        if (debug) console.error(`hook: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    },
+  })
+}
+
+function hookTargets(args: { claude?: boolean; codex?: boolean }): ('claude' | 'codex')[] {
+  const both = !args.claude && !args.codex
+  return [...(both || args.claude ? ['claude' as const] : []), ...(both || args.codex ? ['codex' as const] : [])]
+}
+
+async function hookFileFor(source: 'claude' | 'codex'): Promise<string> {
+  const { claudeSettingsPath, codexHooksPath } = await import('./src/cli/hook.ts')
+  const { homedir } = await import('node:os')
+  return source === 'claude' ? claudeSettingsPath(homedir()) : codexHooksPath(homedir(), process.env)
+}
+
+const hookInstallCmd = defineCommand({
+  meta: { name: 'install', description: '把 wechat-cc 的 hooks 写进 ~/.claude/settings.json 与 $CODEX_HOME/hooks.json(幂等;缺省两家都装)' },
+  args: {
+    claude: { type: 'boolean', description: '只装 Claude Code' },
+    codex: { type: 'boolean', description: '只装 Codex CLI' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { installHooks, hookCommandLine } = await import('./src/cli/hook.ts')
+    const cliEntry = fileURLToPath(import.meta.url)
+    const out: Record<string, unknown> = {}
+    for (const source of hookTargets(args)) {
+      const file = await hookFileFor(source)
+      const command = hookCommandLine({ execPath: process.execPath, compiled: isCompiledBundle(), cliEntry, source })
+      try {
+        const { changed } = installHooks(file, source, command)
+        out[source] = { ok: true, file, changed, command }
+        if (!args.json) console.log(`${changed ? '✅' : '✔'} ${source}: ${changed ? '已写入' : '已是最新'} ${file}`)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        out[source] = { ok: false, file, error: msg }
+        if (!args.json) console.error(`❌ ${source}: ${msg}`)
+      }
+    }
+    if (args.json) { console.log(JSON.stringify(out)); return }
+    console.log('之后终端里的 claude / codex 跑完一个回合、或停下来等批准,主人微信会收到一条(压 45s / 20s 去重;期间你再敲一句就不发)。')
+    console.log('daemon 自己拉起的会话不会推(回环守卫)。查看:wechat-cc hook status;撤掉:wechat-cc hook uninstall。')
+  },
+})
+
+const hookUninstallCmd = defineCommand({
+  meta: { name: 'uninstall', description: '只删 wechat-cc 自己的 hook 条目,别人的原样保留' },
+  args: {
+    claude: { type: 'boolean', description: '只删 Claude Code 的' },
+    codex: { type: 'boolean', description: '只删 Codex CLI 的' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { uninstallHooks } = await import('./src/cli/hook.ts')
+    const out: Record<string, unknown> = {}
+    for (const source of hookTargets(args)) {
+      const file = await hookFileFor(source)
+      try {
+        const r = uninstallHooks(file, source)
+        out[source] = { ok: true, file, ...r }
+        if (!args.json) console.log(`${r.changed ? '✅' : '✔'} ${source}: ${r.changed ? `删了 ${r.removed} 条` : '本来就没装'}(${file})`)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        out[source] = { ok: false, file, error: msg }
+        if (!args.json) console.error(`❌ ${source}: ${msg}`)
+      }
+    }
+    if (args.json) console.log(JSON.stringify(out))
+  },
+})
+
+const hookStatusCmd = defineCommand({
+  meta: { name: 'status', description: '两家的 hook 装没装、命令行是什么' },
+  args: { json: { type: 'boolean', description: 'JSON envelope' } },
+  async run({ args }) {
+    const { hookStatus } = await import('./src/cli/hook.ts')
+    const out: Record<string, unknown> = {}
+    for (const source of ['claude', 'codex'] as const) {
+      const file = await hookFileFor(source)
+      const st = hookStatus(file, source)
+      out[source] = { file, ...st }
+      if (!args.json) console.log(`${st.installed ? '✅' : '—'} ${source}: ${st.installed ? st.command : '未安装'}(${file})`)
+    }
+    if (args.json) console.log(JSON.stringify(out))
+  },
+})
+
+const hookCmd = defineCommand({
+  meta: { name: 'hook', description: '终端 claude / codex 会话的事件推到微信(hooks 出口):install / uninstall / status;claude / codex 由 hooks 自己调' },
+  subCommands: { claude: hookRelayCmd('claude'), codex: hookRelayCmd('codex'), install: hookInstallCmd, uninstall: hookUninstallCmd, status: hookStatusCmd },
 })
 
 const companionIntrospectCmd = defineCommand({
@@ -3600,6 +3720,8 @@ const SUBCOMMANDS = {
   dialogue: dialogueCmd,
   // hearth federated source — authorize/deauthorize/status + run mode.
   'federated-source': federatedSourceCmd,
+  // 终端 claude / codex 的 hooks 出口(spec 2026-09-09-cli-hook-push)。
+  hook: hookCmd,
 } as const
 
 export const cittyRoot = defineCommand({

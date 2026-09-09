@@ -358,6 +358,10 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       deps.petTurn = fn
     },
 
+    setCliEvents(hub) {
+      deps.cliEvents = hub
+    },
+
     getPresence() {
       return computePresence(deps)
     },

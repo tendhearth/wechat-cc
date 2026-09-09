@@ -1,5 +1,9 @@
 #!/usr/bin/env bun
 if (!process.env.CLAUDE_CODE_ENTRYPOINT) { process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts' }
+// 回环守卫(spec 2026-09-09-cli-hook-push §3):daemon 经 SDK 拉起的 claude / codex
+// 继承这个环境,主人装的 hooks 在它们身上也会触发;`wechat-cc hook` 看到这个变量
+// 就直接退出,不然 daemon 自己的每个回合都会被推回微信。
+process.env.WECHAT_CC_DAEMON_CHILD = '1'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { acquireInstanceLock, releaseInstanceLock, isHeartbeatFresh, writeHeartbeat, startHeartbeatTicker, HEARTBEAT_FILE, HEARTBEAT_STALE_MS } from './single-instance'
@@ -42,6 +46,7 @@ import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
+import { makeCliEventHub, makeProjectNamer } from '../core/cli-events'
 import { makeAtelierStore } from './atelier-store'
 import { companionOfferEligible } from './companion/offer-eligibility'
 import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
@@ -543,6 +548,21 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setCompanionConverse(wired.companionConverse)
     // 同上,桌宠的「在做什么」—— 组装闭包在 pipeline-deps(那里才有 boot)。
     internalApi.setPetTurn(wired.petTurn)
+    // 终端 claude / codex 会话的 hook 事件(spec 2026-09-09-cli-hook-push):压一段
+    // 再推给主人,同会话再敲一句就撤。发到哪:与权限卡、A2A notify 同一个主人
+    // chat;怎么发:boot.sendAssistantText(同一条外发,断线时它自己退避、这里不重试)。
+    const cliEvents = makeCliEventHub({
+      send: async (text) => {
+        const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+        if (!owner || !boot.sendAssistantText) return false
+        await boot.sendAssistantText(owner, text)
+        return true
+      },
+      projectName: makeProjectNamer(() => ilink.projects.list()),
+      log: (t, l) => log(t, l),
+    })
+    internalApi.setCliEvents(cliEvents)
+    lc.register({ name: 'cli-events', stop: async () => cliEvents.dispose() })
     ticksRef = wired.ticks
     internalApi.setSettingsLink(wired.settingsPanelLink)
     const pipeline = buildInboundPipeline(wired.pipelineDeps)

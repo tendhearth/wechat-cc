@@ -83,6 +83,9 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/license/activate': 'trusted',
   'POST /v1/license/deactivate': 'trusted',
   'POST /v1/delegate': 'trusted',
+  // 终端 claude / codex 的 hook 事件(spec 2026-09-09-cli-hook-push):hook 子命令
+  // 拿的是 FILE token(= trusted)。
+  'POST /v1/cli/event': 'trusted',
   'POST /v1/chat-prefs': 'trusted',
   // POST /v1/stickers writes an arbitrary sourcePath into the lib — same
   // trust class as send_file, so it's trusted not guest.

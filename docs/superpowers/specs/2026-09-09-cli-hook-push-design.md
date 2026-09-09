@@ -1,0 +1,115 @@
+# 终端 CLI 事件推送到微信(CLI hook push)— Design
+
+**Date**: 2026-09-09
+**Status**: Implemented on `feat/cli-hook-push` 2026-09-09(单测 + CLI 冒烟过;真机 §8 待跑)
+**Builds on**: A2A notify → 主人私聊(2026-05-24)、CC 桌宠 Phase B 权限卡(2026-09-05)、internal-api tier authz(2026-06-21)
+
+## 1. 要解决什么
+
+主人在终端 / 桌面里自己开的 `claude` 或 `codex` 会话,跑完一个长任务、或者停下来等批准时,
+主人不在电脑前就不知道。wechat-cc 已经是主人随身的那条微信,所以这些事应该推到那里。
+
+现状:daemon 自己拉起的 SDK 会话已经有权限卡(微信 y/n + 桌面卡片),但**主人自己开的终端
+会话完全不在这条线上**。它们不是 daemon 的孩子,daemon 看不见。
+
+## 2. 业内对照(决定「照抄什么」)
+
+- Claude Code:Remote Control + Claude 手机 App 推送;hooks(Stop / Notification / UserPromptSubmit);
+  channels(Telegram / Discord,研究预览)。
+- Codex CLI(源码 2026-09-09 main):hooks 正式功能,默认开,12 个事件,含 Stop(带
+  `last_assistant_message`)、PermissionRequest、UserPromptSubmit、SessionEnd;配置在
+  `$CODEX_HOME/hooks.json`,形状与 Claude 的 settings.json `hooks` 相同(`{"hooks": {事件: [{matcher, hooks: [{type: "command", command, timeout, async}]}]}}`)。
+  PermissionRequest hook 不回 decision ⇒ 走正常审批提示(core 测试 `assert_eq!(decision, None)`)。
+- 社区通用:Stop hook → ntfy / Telegram。
+
+结论:**两家都用 hooks 做出口**,消息进 daemon,daemon 决定发不发、怎么措辞,再走现有外发。
+
+## 3. 架构
+
+```
+终端 claude ──Stop / Notification(permission_prompt) / UserPromptSubmit / SessionEnd──┐
+                                                                                        │ 子进程:wechat-cc hook claude
+终端 codex  ──Stop / PermissionRequest / UserPromptSubmit / SessionEnd─────────────────┤ 子进程:wechat-cc hook codex
+                                                                                        ▼
+                                                            POST /v1/cli/event(trusted,FILE token)
+                                                                                        ▼
+                                                     daemon: CliEventHub(core/cli-events.ts,纯逻辑)
+                                                       · stop → 压 45 s 再发;同会话来 prompt 就撤
+                                                       · permission → 压 20 s 再发;同会话任何后续事件都撤
+                                                       · session_end → 清掉该会话的待发
+                                                       · 措辞:来源 · 项目名 · 会话短码 · 事由 · 摘要
+                                                                                        ▼
+                                                     boot.sendAssistantText(主人 chat)—— 与 A2A notify 同一条外发
+```
+
+三条硬约束:
+
+1. **hook 子命令永远 exit 0、永远不阻塞 CLI**:daemon 没跑 / 网络不通 / 400,一律静默;fetch 3 s 超时;
+   两家的 hook 都配 `async: true`,CLI 不等我们。
+2. **不回环**:daemon 自己经 SDK 拉起的 claude / codex 会继承 daemon 的环境,daemon 启动时置
+   `WECHAT_CC_DAEMON_CHILD=1`;hook 子命令看到这个变量直接退出。否则 daemon 自己每个回合都会推回微信。
+3. **断线不重试**:发送失败只记日志、丢弃(沿用「断线不要重试风暴」的规则);积压在 hub 里的只有定时器,
+   没有队列。
+
+## 4. 推送措辞(主人要一眼知道:哪个、哪个项目、要我干什么)
+
+```
+🔔 claude 完成了 · wechat-cc · 会话 a1b2c3
+把 hook 子命令和安装器都接好了,测试 41 个全绿。
+
+✋ codex 等你批准 · tendhearth · 会话 9f0e1d
+Bash: rm -rf ./tmp
+(回终端处理;这一类微信里暂时答不了)
+```
+
+- 项目名:`cwd` 对 `projects.list()` 里 path 的最长前缀命中 ⇒ alias;没命中 ⇒ cwd 末段目录名。
+- 会话短码:`session_id` 前 6 位。
+- 摘要:Stop 用 `last_assistant_message`(两家都有;Claude 文档明说别读 transcript,它会滞后),
+  压成一行、最多 120 字;权限用 `工具名: 参数摘要`(codex 的 tool_input / claude 的 notification message)。
+
+## 5. 去重(hook 不知道主人是否正坐在终端前)
+
+- Stop 压 45 s:主人在场时 45 s 内多半会再输入 ⇒ UserPromptSubmit 撤销。
+- 权限压 20 s:主人在场会马上答;答完通常紧接着工具执行与后续事件,任何同会话事件都撤。
+  已知局限:主人在场答了、但工具跑超过 20 s 且没有后续 hook 事件 ⇒ 会多推一条。v1 接受。
+- 每会话只留一个待发定时器;新事件替换旧的。最多跟踪 64 个会话,超过丢最旧的。
+
+## 6. 接口
+
+### 6.1 事件(hook → daemon)
+
+```ts
+interface CliEvent {
+  source: 'claude' | 'codex'
+  kind: 'stop' | 'prompt' | 'permission' | 'session_end'
+  session_id: string        // 1..200
+  cwd: string               // 1..1000
+  text?: string             // ≤ 4000;stop 的最后一句 / permission 的工具摘要
+}
+```
+
+`POST /v1/cli/event`,tier `trusted`(hook 读 `internal-api-info.json` 的 FILE token,与 `wechat-cc agent` 同源)。
+响应 `{ ok: true, action: 'scheduled' | 'cancelled' | 'cleared' | 'noop' }`;hub 没接线 ⇒ 503。
+
+### 6.2 CLI
+
+- `wechat-cc hook claude` / `wechat-cc hook codex`:从 stdin 读 hook JSON,归一化后 POST;永远 exit 0。
+- `wechat-cc hook install [--claude] [--codex]`(缺省两家都装):幂等写入
+  `~/.claude/settings.json` 的 `hooks` 与 `$CODEX_HOME/hooks.json`(缺省 `~/.codex/hooks.json`)。
+  只动带 `wechat-cc` 标记的条目,别人的 hook 原样保留。命令行用当前可执行文件的绝对路径
+  (源码模式 `bun cli.ts hook claude`,编译包 `wechat-cc-cli hook claude`),与 MCP stdio spec 同一套判断。
+- `wechat-cc hook uninstall`:只删自己的条目。
+- `wechat-cc hook status`:两家各自装没装、命令行是什么。
+
+## 7. 非目标(本轮不做)
+
+- 微信里回答终端会话的权限(要 PreToolUse 阻塞 + PendingPermissions 登记,是下一轮)。
+- 微信消息进终端会话(Claude channels / Codex app-server steer)。
+- 桌宠对终端会话的感知(PetSignals 加 hook 入口)。
+- 参与者能力矩阵的抽象升级(见对话 2026-09-09 的「统一架构」讨论)。
+
+## 8. 验收
+
+- 单测:hub 的压/撤/清/替换/上限;措辞;项目名解析;两家 payload 归一化;安装器幂等与不动他人条目;路由 tier + schema。
+- 真机:本机 `wechat-cc hook install` 后,在终端跑 `claude -p "说一句话"`,45 s 后微信收到一条;期间再敲一句则不收。
+  daemon 自己的回合不推(回环守卫)。
