@@ -391,7 +391,8 @@ wechat-cc hook uninstall          # removes only wechat-cc's own entries
 - **Long turn finished while you were away** → one WeChat message: which CLI,
   which project, session short-id, last assistant line. Held 45 s and dropped
   if you type again; quick turns (< 90 s) and repeated stops without a new
-  prompt from you never notify.
+  prompt from you never notify (harness-generated prompts such as `/loop`
+  wake-ups or task notifications don't count as you typing).
 - **Waiting for approval** → if you haven't typed in that session for 3 min,
   the request goes to WeChat as a card: reply `y <code>` / `n <code>` and the
   terminal proceeds (120 s window; then the terminal asks as usual). If you're

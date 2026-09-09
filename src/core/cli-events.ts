@@ -19,6 +19,12 @@ export interface CliEvent {
   cwd: string
   /** stop 的最后一句 / permission 的工具摘要。 */
   text?: string
+  /**
+   * prompt 不是主人敲的,是 harness 自己塞的(/loop 唤醒、后台任务通知……)。
+   * 这种 prompt 不算「主人回来了」:不撤待发、不刷在场、不重置「已推过」。
+   * 不然一个自跑的循环每个 tick 都会推一条(2026-09-09 真机就是这么刷的)。
+   */
+  automated?: boolean
 }
 
 export type CliEventAction = 'scheduled' | 'cancelled' | 'cleared' | 'noop'
@@ -149,6 +155,7 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
           return schedule(ev, permissionHold)
         }
         case 'prompt': {
+          if (ev.automated) { deps.log('CLI_PUSH', `ignore automated prompt ${short(ev.session_id)}`); return 'noop' }
           const st = state(ev.session_id)
           st.lastPromptAt = t
           st.pushedSincePrompt = false

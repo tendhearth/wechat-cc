@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import {
   normalizeHookPayload, shouldSkipHook, postCliEvent, hookCommandLine,
   installHooks, uninstallHooks, hookStatus, claudeSettingsPath, codexHooksPath, summarizeToolInput,
-  parsePermissionRequest, relayPermission, permissionDecisionOutput,
+  parsePermissionRequest, relayPermission, permissionDecisionOutput, isAutomatedPrompt,
 } from './hook'
 
 const tmpDirs: string[] = []
@@ -24,8 +24,14 @@ describe('normalizeHookPayload — claude', () => {
     expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'x' })).toBeNull()
     expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: {} })).toBeNull()
   })
-  it('UserPromptSubmit → prompt;SessionEnd → session_end;其他事件 → null', () => {
-    expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'UserPromptSubmit', prompt: 'hi' })?.kind).toBe('prompt')
+  it('UserPromptSubmit → prompt;harness 塞的 prompt 标 automated;SessionEnd → session_end;其他事件 → null', () => {
+    expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'UserPromptSubmit', prompt: 'hi' })).toEqual({ source: 'claude', kind: 'prompt', session_id: 'abc-123', cwd: '/w/p' })
+    expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'UserPromptSubmit', prompt: '/loop 完善这部分' })?.automated).toBe(true)
+    expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'UserPromptSubmit', prompt: '<task-notification>\n<task-id>x</task-id>' })?.automated).toBe(true)
+    expect(isAutomatedPrompt('  <system-reminder>x')).toBe(true)
+    expect(isAutomatedPrompt('<command-message>loop</command-message>\n<command-name>/loop</command-name>')).toBe(true)
+    expect(isAutomatedPrompt('<command-message>commit</command-message>')).toBe(false)
+    expect(isAutomatedPrompt('帮我看看 loop 这个函数')).toBe(false)
     expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'SessionEnd', reason: 'exit' })?.kind).toBe('session_end')
     expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'PreToolUse', tool_name: 'Bash' })).toBeNull()
   })

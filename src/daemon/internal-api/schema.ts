@@ -646,6 +646,7 @@ export const CliEventRequest = z.object({
   session_id: z.string().min(1).max(200),
   cwd: z.string().min(1).max(1000),
   text: z.string().max(4000).optional(),
+  automated: z.boolean().optional(),
 })
 export type CliEventRequestT = z.infer<typeof CliEventRequest>
 

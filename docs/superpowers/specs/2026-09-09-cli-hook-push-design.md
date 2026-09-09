@@ -73,6 +73,9 @@ Bash: rm -rf ./tmp
 - **快问快答不推**:从 UserPromptSubmit 到 Stop 不足 90 s(`MIN_TURN_MS`)⇒ 主人多半还在屏幕前。
 - **一次敲字最多推一条「完成了」**:推过之后、主人没再敲字,后面再多的 Stop(自动续跑、循环 tick、
   `ScheduleWakeup` 之类)都不是新消息,不推;主人敲一句就重新算。
+- **harness 塞的 prompt 不算主人敲字**:`/loop …` 唤醒、`<task-notification>`、`<system-reminder>`
+  也会触发 UserPromptSubmit,但主人并没回到键盘前 —— hook 侧标 `automated: true`,hub 对它不撤待发、
+  不刷在场、不重置「已推过」。真机教训:2026-09-09 一个自跑的循环每个 tick 都推了一条。
 - 权限提醒压 20 s;刚在微信里发过权限卡片(§6.3)的会话,60 s 内的提醒不重复推(卡片就是通知)。
   已知局限:主人在场答了、但工具跑超过 20 s 且没有后续 hook 事件 ⇒ 会多推一条。接受。
 - 每会话只留一个待发定时器;新事件替换旧的。最多跟踪 64 个会话,超过丢最旧的。

@@ -214,3 +214,19 @@ describe('CliEventHub 在场判断与「一次敲字最多推一条」(spec §5 
     expect(sent).toHaveLength(1)
   })
 })
+
+describe('automated prompt(harness 自己塞的,不算主人回来)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+  it('不撤待发、不刷在场、不重置「已推过」', async () => {
+    const { hub, sent } = harness()
+    hub.ingest(ev())
+    expect(hub.ingest(ev({ kind: 'prompt', automated: true }))).toBe('noop')
+    expect(hub.pending()).toHaveLength(1)
+    expect(hub.presence(ev().session_id)).toBe('unknown')
+    await vi.advanceTimersByTimeAsync(STOP_HOLD_MS)
+    expect(sent).toHaveLength(1)
+    hub.ingest(ev({ kind: 'prompt', automated: true }))
+    expect(hub.ingest(ev({ text: '循环 tick 又停了' }))).toBe('noop')
+  })
+})

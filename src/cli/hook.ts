@@ -38,6 +38,20 @@ function str(v: unknown): string | undefined {
   return typeof v === 'string' && v.length > 0 ? v : undefined
 }
 
+/**
+ * harness 自己塞进会话的 prompt:/loop 唤醒(ScheduleWakeup 原样回灌 `/loop …`,或展开成
+ * `<command-message>loop</command-message>`)、后台任务 / 监视器通知、system-reminder。
+ * 它们会触发 UserPromptSubmit,但主人并没有回到键盘前 —— 2026-09-09 真机上一个自跑的
+ * 循环每个 tick 都推了一条,就是因为把它们当成了主人的 prompt。
+ */
+export function isAutomatedPrompt(prompt: string): boolean {
+  const p = prompt.trimStart()
+  return /^\/loop\b/.test(p)
+    || p.startsWith('<task-notification>')
+    || p.startsWith('<system-reminder>')
+    || /^<command-message>loop<\/command-message>/.test(p)
+}
+
 /** 工具参数摘要:有 command 就用 command(数组拼空格),否则 JSON 截断。 */
 export function summarizeToolInput(input: unknown): string {
   if (input === null || input === undefined) return ''
@@ -72,7 +86,7 @@ export function normalizeHookPayload(source: HookSource, raw: unknown): CliEvent
     case 'Stop':
       return withText('stop', str(r['last_assistant_message']))
     case 'UserPromptSubmit':
-      return { ...base, kind: 'prompt' }
+      return isAutomatedPrompt(str(r['prompt']) ?? '') ? { ...base, kind: 'prompt', automated: true } : { ...base, kind: 'prompt' }
     case 'SessionEnd':
       return { ...base, kind: 'session_end' }
     // PermissionRequest 不是「事件」,是要答复的问题 —— 走 parsePermissionRequest。

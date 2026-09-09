@@ -22,6 +22,7 @@ describe('POST /v1/cli/event(spec 2026-09-09-cli-hook-push §6.1)', () => {
     const s = REQUEST_SCHEMAS['POST /v1/cli/event']!
     expect(s.safeParse(body).success).toBe(true)
     expect(s.safeParse({ ...body, text: undefined }).success).toBe(true)
+    expect(s.safeParse({ ...body, kind: 'prompt', automated: true }).success).toBe(true)
     expect(s.safeParse({ ...body, source: 'cursor' }).success).toBe(false)
     expect(s.safeParse({ ...body, kind: 'idle' }).success).toBe(false)
     expect(s.safeParse({ ...body, session_id: '' }).success).toBe(false)
