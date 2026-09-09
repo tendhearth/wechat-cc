@@ -31,3 +31,17 @@ laptop and envelope simultaneously. Temporary DevTools shell dimensions produced
 exact square stages (recorded in slots-browser.json); reload restored normal lab.
 No page source changes. Tests cover separated signal/star bounds at both sizes.
 Validator: 93 assets / zero errors. Directed tests: 14 files / 173 passed.
+
+## 4. QA frontend isolation
+
+Moved the three cc-native-qa files from src into art/cc-v1/native-qa. The QA-only
+beforeBuildCommand stages runtime dependencies into ignored native-qa/dist;
+production frontendDist remains src, with no QA page files. Pet-lab is untouched.
+The staging filter explicitly excludes the two private design boards.
+Regression test checks separate frontend paths, staged byte-identical runtime and
+assets, absence of QA files from src, and preservation of pet-lab.
+Validator: 93 assets / zero errors. Directed tests: 15 files / 174 passed.
+Full-repository `bun run typecheck`: exit 0. Native QA Tauri app build: exit 0;
+launched successfully and the 256px native window exposes both Light/Dark images
+through tauri://localhost/cc-native-qa.html?size=256. This is a loading smoke check,
+not a new owner wallpaper approval of the extinguish performance.
