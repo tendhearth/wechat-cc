@@ -47,6 +47,7 @@ import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
 import { makeCliEventHub, makeProjectNamer } from '../core/cli-events'
+import { makeCliPermissionRelay } from '../core/cli-permission-relay'
 import { makeAtelierStore } from './atelier-store'
 import { companionOfferEligible } from './companion/offer-eligibility'
 import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
@@ -563,6 +564,21 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     })
     internalApi.setCliEvents(cliEvents)
     lc.register({ name: 'cli-events', stop: async () => cliEvents.dispose() })
+    // 终端会话的权限 → 微信 y/n(同 spec §6.3)。复用 ilink.askUser,所以微信「y 码」、
+    // 桌宠权限卡都能拍板 —— 一个权限,几个呈现面。主人在场(3 分钟内敲过字)就不问。
+    const cliPermissions = makeCliPermissionRelay({
+      ask: (prompt, hash, ms) => {
+        const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+        if (!owner) return Promise.resolve('undelivered' as const)
+        return ilink.askUser(owner, prompt, hash, ms)
+      },
+      presence: (s) => cliEvents.presence(s),
+      projectName: makeProjectNamer(() => ilink.projects.list()),
+      onRelayed: (s) => cliEvents.notePermissionRelay(s),
+      log: (t, l) => log(t, l),
+    })
+    internalApi.setCliPermissions(cliPermissions)
+    lc.register({ name: 'cli-permissions', stop: async () => cliPermissions.dispose() })
     ticksRef = wired.ticks
     internalApi.setSettingsLink(wired.settingsPanelLink)
     const pipeline = buildInboundPipeline(wired.pipelineDeps)

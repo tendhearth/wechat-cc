@@ -10,6 +10,10 @@
  */
 import type { InternalApiDeps, RouteTable } from './types'
 import type { CliEvent } from '../../core/cli-events'
+import type { CliPermissionRequest } from '../../core/cli-permission-relay'
+
+/** 一次 GET 最多等这么久再回;hook 那头自己循环。 */
+export const CLI_PERMISSION_POLL_CAP_MS = 25_000
 
 export function cliEventRoutes(deps: InternalApiDeps): RouteTable {
   return {
@@ -17,6 +21,20 @@ export function cliEventRoutes(deps: InternalApiDeps): RouteTable {
       if (!deps.cliEvents) return { status: 503, body: { error: 'cli_events_not_wired' } }
       const action = deps.cliEvents.ingest(body as CliEvent)
       return { status: 200, body: { ok: true, action } }
+    },
+    // 权限中继(§6.3):PermissionRequest hook 先 POST 登记(主人在场就直接回
+    // owner_present,终端自己问),再 GET 轮询到 y/n 或过期。
+    'POST /v1/cli/permission': async (_q, body) => {
+      if (!deps.cliPermissions) return { status: 503, body: { error: 'cli_permissions_not_wired' } }
+      return { status: 200, body: deps.cliPermissions.open(body as CliPermissionRequest) }
+    },
+    'GET /v1/cli/permission': async (q) => {
+      if (!deps.cliPermissions) return { status: 503, body: { error: 'cli_permissions_not_wired' } }
+      const hash = q.get('hash') ?? ''
+      const waitRaw = Number(q.get('wait_ms') ?? '0')
+      const waitMs = Math.max(0, Math.min(Number.isFinite(waitRaw) ? waitRaw : 0, CLI_PERMISSION_POLL_CAP_MS))
+      const status = waitMs > 0 ? await deps.cliPermissions.wait(hash, waitMs) : deps.cliPermissions.status(hash)
+      return { status: 200, body: { hash, status } }
     },
   }
 }

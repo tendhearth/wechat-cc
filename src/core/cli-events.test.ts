@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   makeCliEventHub, formatCliPush, makeProjectNamer, summarizeOneLine,
-  STOP_HOLD_MS, PERMISSION_HOLD_MS, MAX_TRACKED_SESSIONS, type CliEvent,
+  STOP_HOLD_MS, PERMISSION_HOLD_MS, MAX_TRACKED_SESSIONS, MIN_TURN_MS, PRESENT_WINDOW_MS, RELAY_SUPPRESS_MS, type CliEvent,
 } from './cli-events'
 
 const ev = (over: Partial<CliEvent> = {}): CliEvent => ({
@@ -157,5 +157,60 @@ describe('makeProjectNamer', () => {
     const name = makeProjectNamer(() => { throw new Error('db busy') })
     expect(name('/tmp/scratch')).toBe('scratch')
     expect(name('C:\\Users\\u\\proj\\')).toBe('proj')
+  })
+})
+
+describe('CliEventHub 在场判断与「一次敲字最多推一条」(spec §5 补)', () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-09T10:00:00Z')) })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('prompt 后不到 MIN_TURN_MS 就 Stop → 快问快答,不推;超过才推', async () => {
+    const { hub, sent } = harness()
+    hub.ingest(ev({ kind: 'prompt' }))
+    await vi.advanceTimersByTimeAsync(MIN_TURN_MS - 1000)
+    expect(hub.ingest(ev())).toBe('noop')
+    await vi.advanceTimersByTimeAsync(STOP_HOLD_MS)
+    expect(sent).toEqual([])
+    hub.ingest(ev({ kind: 'prompt' }))
+    await vi.advanceTimersByTimeAsync(MIN_TURN_MS)
+    expect(hub.ingest(ev())).toBe('scheduled')
+    await vi.advanceTimersByTimeAsync(STOP_HOLD_MS)
+    expect(sent).toHaveLength(1)
+  })
+
+  it('推过一次「完成了」之后,主人没再敲字 → 后续 Stop 都不推;敲一句就重新算', async () => {
+    const { hub, sent } = harness()
+    expect(hub.ingest(ev())).toBe('scheduled')          // 没见过 prompt:按长任务推
+    await vi.advanceTimersByTimeAsync(STOP_HOLD_MS)
+    expect(sent).toHaveLength(1)
+    expect(hub.ingest(ev({ text: '又停了一次' }))).toBe('noop')
+    await vi.advanceTimersByTimeAsync(STOP_HOLD_MS)
+    expect(sent).toHaveLength(1)
+    hub.ingest(ev({ kind: 'prompt' }))
+    await vi.advanceTimersByTimeAsync(MIN_TURN_MS)
+    expect(hub.ingest(ev({ text: '这回是新的' }))).toBe('scheduled')
+    await vi.advanceTimersByTimeAsync(STOP_HOLD_MS)
+    expect(sent).toHaveLength(2)
+  })
+
+  it('presence:没见过 prompt → unknown;PRESENT_WINDOW_MS 内 → present;之后 → away;session_end 清掉', async () => {
+    const { hub } = harness()
+    expect(hub.presence('s')).toBe('unknown')
+    hub.ingest(ev({ session_id: 's', kind: 'prompt' }))
+    expect(hub.presence('s')).toBe('present')
+    await vi.advanceTimersByTimeAsync(PRESENT_WINDOW_MS)
+    expect(hub.presence('s')).toBe('away')
+    hub.ingest(ev({ session_id: 's', kind: 'session_end' }))
+    expect(hub.presence('s')).toBe('unknown')
+  })
+
+  it('notePermissionRelay 之后 RELAY_SUPPRESS_MS 内的 permission 提醒 → noop;过了照推', async () => {
+    const { hub, sent } = harness()
+    hub.notePermissionRelay('s')
+    expect(hub.ingest(ev({ session_id: 's', kind: 'permission', text: 'Bash: x' }))).toBe('noop')
+    await vi.advanceTimersByTimeAsync(RELAY_SUPPRESS_MS)
+    expect(hub.ingest(ev({ session_id: 's', kind: 'permission', text: 'Bash: x' }))).toBe('scheduled')
+    await vi.advanceTimersByTimeAsync(PERMISSION_HOLD_MS)
+    expect(sent).toHaveLength(1)
   })
 })

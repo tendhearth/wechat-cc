@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   normalizeHookPayload, shouldSkipHook, postCliEvent, hookCommandLine,
   installHooks, uninstallHooks, hookStatus, claudeSettingsPath, codexHooksPath, summarizeToolInput,
+  parsePermissionRequest, relayPermission, permissionDecisionOutput,
 } from './hook'
 
 const tmpDirs: string[] = []
@@ -19,10 +20,9 @@ describe('normalizeHookPayload — claude', () => {
     expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: '搞定' }))
       .toEqual({ source: 'claude', kind: 'stop', session_id: 'abc-123', cwd: '/w/p', text: '搞定' })
   })
-  it('Notification 只认 permission_prompt;别的通知 → null', () => {
-    expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }))
-      .toEqual({ source: 'claude', kind: 'permission', session_id: 'abc-123', cwd: '/w/p', text: 'Claude needs your permission to use Bash' })
-    expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'Notification', notification_type: 'auth_success', message: 'ok' })).toBeNull()
+  it('Notification / PermissionRequest 不是事件 → null(PermissionRequest 走 parsePermissionRequest)', () => {
+    expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'x' })).toBeNull()
+    expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: {} })).toBeNull()
   })
   it('UserPromptSubmit → prompt;SessionEnd → session_end;其他事件 → null', () => {
     expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'UserPromptSubmit', prompt: 'hi' })?.kind).toBe('prompt')
@@ -43,13 +43,66 @@ describe('normalizeHookPayload — codex', () => {
     expect(normalizeHookPayload('codex', { ...cx, hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: null }))
       .toEqual({ source: 'codex', kind: 'stop', session_id: 'abc-123', cwd: '/w/p' })
   })
-  it('PermissionRequest → permission,摘要 = 工具名: 参数摘要', () => {
-    expect(normalizeHookPayload('codex', { ...cx, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'rm -rf ./tmp' }, tool_use_id: 'x' }))
-      .toEqual({ source: 'codex', kind: 'permission', session_id: 'abc-123', cwd: '/w/p', text: 'Bash: rm -rf ./tmp' })
+  it('PermissionRequest 不进 normalize', () => {
+    expect(normalizeHookPayload('codex', { ...cx, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'rm -rf ./tmp' } })).toBeNull()
   })
   it('UserPromptSubmit / SessionEnd 同 claude', () => {
     expect(normalizeHookPayload('codex', { ...cx, hook_event_name: 'UserPromptSubmit', prompt: 'x' })?.kind).toBe('prompt')
     expect(normalizeHookPayload('codex', { ...cx, hook_event_name: 'SessionEnd' })?.kind).toBe('session_end')
+  })
+})
+
+describe('parsePermissionRequest', () => {
+  it('两家形状相同:tool_name + tool_input 摘要;子代理 / 别的事件 / 缺字段 → null', () => {
+    expect(parsePermissionRequest('claude', { ...common, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'rm -rf ./tmp' }, permission_suggestions: [] }))
+      .toEqual({ source: 'claude', session_id: 'abc-123', cwd: '/w/p', tool_name: 'Bash', summary: 'rm -rf ./tmp' })
+    expect(parsePermissionRequest('codex', { ...common, turn_id: 't', hook_event_name: 'PermissionRequest', tool_name: 'apply_patch', tool_input: null }))
+      .toEqual({ source: 'codex', session_id: 'abc-123', cwd: '/w/p', tool_name: 'apply_patch' })
+    expect(parsePermissionRequest('claude', { ...common, hook_event_name: 'PermissionRequest', tool_name: 'Bash', agent_id: 'sub' })).toBeNull()
+    expect(parsePermissionRequest('claude', { ...common, hook_event_name: 'Stop' })).toBeNull()
+    expect(parsePermissionRequest('claude', { ...common, hook_event_name: 'PermissionRequest' })).toBeNull()
+  })
+})
+
+describe('relayPermission — 登记 + 轮询', () => {
+  const preq = { source: 'claude' as const, session_id: 's', cwd: '/w', tool_name: 'Bash', summary: 'ls' }
+  function api(dir: string) {
+    const tokenFile = join(dir, 'tok'); writeFileSync(tokenFile, 'secret')
+    writeFileSync(join(dir, 'internal-api-info.json'), JSON.stringify({ baseUrl: 'http://127.0.0.1:1', tokenFilePath: tokenFile }))
+  }
+  it('daemon 没跑 → decision null', async () => {
+    expect(await relayPermission(dir, preq)).toEqual({ decision: null, status: 'daemon_not_running' })
+  })
+  it('POST 回 owner_present → null,不轮询', async () => {
+    api(dir)
+    const f = vi.fn(async () => new Response(JSON.stringify({ status: 'owner_present' }), { status: 200 }))
+    expect(await relayPermission(dir, preq, { fetchImpl: f as unknown as typeof fetch })).toEqual({ decision: null, status: 'owner_present' })
+    expect(f).toHaveBeenCalledTimes(1)
+  })
+  it('pending → 轮询到 allow;GET 带 hash 与 wait_ms', async () => {
+    api(dir)
+    const urls: string[] = []
+    const answers = ['pending', 'allow']
+    const f = vi.fn(async (url: string, init: RequestInit) => {
+      urls.push(url)
+      if (init.method === 'POST') return new Response(JSON.stringify({ status: 'pending', hash: 'k3x9z' }), { status: 200 })
+      return new Response(JSON.stringify({ hash: 'k3x9z', status: answers.shift() }), { status: 200 })
+    })
+    expect(await relayPermission(dir, preq, { fetchImpl: f as unknown as typeof fetch, pollMs: 100 })).toEqual({ decision: 'allow', status: 'allow' })
+    expect(urls[1]).toContain('/v1/cli/permission?hash=k3x9z&wait_ms=100')
+    expect(f).toHaveBeenCalledTimes(3)
+  })
+  it('轮询到 timeout / undelivered → null 带原因;总时限到 → deadline', async () => {
+    api(dir)
+    const f1 = vi.fn(async (_u: string, init: RequestInit) => new Response(JSON.stringify(init.method === 'POST' ? { status: 'pending', hash: 'h' } : { hash: 'h', status: 'undelivered' }), { status: 200 }))
+    expect(await relayPermission(dir, preq, { fetchImpl: f1 as unknown as typeof fetch })).toEqual({ decision: null, status: 'undelivered' })
+    let t = 0
+    const f2 = vi.fn(async (_u: string, init: RequestInit) => { t += 60; return new Response(JSON.stringify(init.method === 'POST' ? { status: 'pending', hash: 'h' } : { hash: 'h', status: 'pending' }), { status: 200 }) })
+    expect(await relayPermission(dir, preq, { fetchImpl: f2 as unknown as typeof fetch, totalMs: 200, pollMs: 50, now: () => t })).toEqual({ decision: null, status: 'deadline' })
+  })
+  it('permissionDecisionOutput:两家同一形状', () => {
+    expect(JSON.parse(permissionDecisionOutput('allow'))).toEqual({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } })
+    expect(JSON.parse(permissionDecisionOutput('deny')).hookSpecificOutput.decision.behavior).toBe('deny')
   })
 })
 
@@ -101,12 +154,12 @@ describe('hookCommandLine', () => {
 
 describe('installHooks / uninstallHooks / hookStatus', () => {
   const cmd = '"/opt/bun" "/r/cli.ts" hook claude'
-  it('claude:文件不存在 → 建;四个事件各一组;Notification 带 permission_prompt matcher;async + timeout', () => {
+  it('claude:文件不存在 → 建;四个事件各一组;PermissionRequest 同步 + 150s,其余 async + 5s', () => {
     const file = join(dir, 'settings.json')
     expect(installHooks(file, 'claude', cmd)).toEqual({ changed: true })
     const cfg = JSON.parse(readFileSync(file, 'utf8'))
-    expect(Object.keys(cfg.hooks).sort()).toEqual(['Notification', 'SessionEnd', 'Stop', 'UserPromptSubmit'])
-    expect(cfg.hooks.Notification[0].matcher).toBe('permission_prompt')
+    expect(Object.keys(cfg.hooks).sort()).toEqual(['PermissionRequest', 'SessionEnd', 'Stop', 'UserPromptSubmit'])
+    expect(cfg.hooks.PermissionRequest[0].hooks[0]).toMatchObject({ type: 'command', command: cmd, async: false, timeout: 150 })
     expect(cfg.hooks.Stop[0].matcher).toBeUndefined()
     expect(cfg.hooks.Stop[0].hooks[0]).toMatchObject({ type: 'command', command: cmd, async: true, timeout: 5 })
     expect(hookStatus(file, 'claude')).toEqual({ installed: true, command: cmd })

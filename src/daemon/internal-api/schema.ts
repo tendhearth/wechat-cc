@@ -649,6 +649,18 @@ export const CliEventRequest = z.object({
 })
 export type CliEventRequestT = z.infer<typeof CliEventRequest>
 
+export const CliPermissionRequest = z.object({
+  source: z.enum(['claude', 'codex']),
+  session_id: z.string().min(1).max(200),
+  cwd: z.string().min(1).max(1000),
+  tool_name: z.string().min(1).max(200),
+  summary: z.string().max(2000).optional(),
+})
+export const CliPermissionQuery = z.object({
+  hash: z.string().min(1).max(16),
+  wait_ms: z.coerce.number().int().min(0).max(60_000).optional(),
+})
+
 // ── Lookup tables ───────────────────────────────────────────────────────
 // REQUEST_SCHEMAS includes both POST body schemas (most routes) and GET
 // query schemas (e.g. /v1/memory/list?dir=...). The validation step in
@@ -709,6 +721,8 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 
   // cli hook events
   'POST /v1/cli/event': CliEventRequest,
+  'POST /v1/cli/permission': CliPermissionRequest,
+  'GET /v1/cli/permission': CliPermissionQuery,
 
   // conversation
   'POST /v1/conversation/set-mode': ConversationSetModeRequest,

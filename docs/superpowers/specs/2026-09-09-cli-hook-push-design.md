@@ -70,8 +70,11 @@ Bash: rm -rf ./tmp
 ## 5. 去重(hook 不知道主人是否正坐在终端前)
 
 - Stop 压 45 s:主人在场时 45 s 内多半会再输入 ⇒ UserPromptSubmit 撤销。
-- 权限压 20 s:主人在场会马上答;答完通常紧接着工具执行与后续事件,任何同会话事件都撤。
-  已知局限:主人在场答了、但工具跑超过 20 s 且没有后续 hook 事件 ⇒ 会多推一条。v1 接受。
+- **快问快答不推**:从 UserPromptSubmit 到 Stop 不足 90 s(`MIN_TURN_MS`)⇒ 主人多半还在屏幕前。
+- **一次敲字最多推一条「完成了」**:推过之后、主人没再敲字,后面再多的 Stop(自动续跑、循环 tick、
+  `ScheduleWakeup` 之类)都不是新消息,不推;主人敲一句就重新算。
+- 权限提醒压 20 s;刚在微信里发过权限卡片(§6.3)的会话,60 s 内的提醒不重复推(卡片就是通知)。
+  已知局限:主人在场答了、但工具跑超过 20 s 且没有后续 hook 事件 ⇒ 会多推一条。接受。
 - 每会话只留一个待发定时器;新事件替换旧的。最多跟踪 64 个会话,超过丢最旧的。
 
 ## 6. 接口
@@ -91,6 +94,25 @@ interface CliEvent {
 `POST /v1/cli/event`,tier `trusted`(hook 读 `internal-api-info.json` 的 FILE token,与 `wechat-cc agent` 同源)。
 响应 `{ ok: true, action: 'scheduled' | 'cancelled' | 'cleared' | 'noop' }`;hub 没接线 ⇒ 503。
 
+### 6.3 权限中继:微信里替终端拍板(两家都有 `PermissionRequest` hook)
+
+```
+终端 claude / codex ── PermissionRequest hook(同步,150 s)── wechat-cc hook <source>
+   ├─ POST /v1/cli/permission {source, session_id, cwd, tool_name, summary}
+   │     daemon:主人最近 3 min(PRESENT_WINDOW_MS)在这条会话敲过字 ⇒ {status: owner_present}(终端自己问)
+   │            否则 5 位随机码 + ilink.askUser(主人 chat, 卡片, 码, 120 s) ⇒ {status: pending, hash}
+   ├─ GET /v1/cli/permission?hash&wait_ms(每次最多挂 25 s,hook 循环到 125 s)
+   └─ allow / deny ⇒ stdout 写 {hookSpecificOutput: {hookEventName: "PermissionRequest", decision: {behavior}}}
+      其他(owner_present / timeout / undelivered / daemon 没跑)⇒ 什么都不写,终端自己弹提示;
+      顺手 POST 一条 kind=permission 的提醒(刚发过卡片的会被 daemon 压掉)
+```
+
+- 复用 `ilink.askUser` ⇒ 微信「y 码 / n 码」与桌宠权限卡都能拍板,只认主人 chat(`approverOf`)。
+- 卡片措辞:`✋ codex 等你批准 · tendhearth · 会话 9f0e1d\nBash: rm -rf ./tmp\n回「y k3x9z」放行、「n k3x9z」拒绝;120 秒内有效,过期终端自己会问。`
+- 「没见过这条会话的 prompt」(daemon 刚重启、hooks 刚装)按不在场处理:宁可让在场的主人多等一次
+  (手机上答掉即可),也不漏掉真正走开的那次。
+- 登记 + 轮询而不是一次长连接:hook 子进程自己掐总时限,不依赖 HTTP 空闲超时的默契。
+
 ### 6.2 CLI
 
 - `wechat-cc hook claude` / `wechat-cc hook codex`:从 stdin 读 hook JSON,归一化后 POST;永远 exit 0。
@@ -103,7 +125,6 @@ interface CliEvent {
 
 ## 7. 非目标(本轮不做)
 
-- 微信里回答终端会话的权限(要 PreToolUse 阻塞 + PendingPermissions 登记,是下一轮)。
 - 微信消息进终端会话(Claude channels / Codex app-server steer)。
 - 桌宠对终端会话的感知(PetSignals 加 hook 入口)。
 - 参与者能力矩阵的抽象升级(见对话 2026-09-09 的「统一架构」讨论)。
@@ -111,5 +132,6 @@ interface CliEvent {
 ## 8. 验收
 
 - 单测:hub 的压/撤/清/替换/上限;措辞;项目名解析;两家 payload 归一化;安装器幂等与不动他人条目;路由 tier + schema。
-- 真机:本机 `wechat-cc hook install` 后,在终端跑 `claude -p "说一句话"`,45 s 后微信收到一条;期间再敲一句则不收。
-  daemon 自己的回合不推(回环守卫)。
+- 真机:本机 `wechat-cc hook install` 后,在终端跑一个超过 90 s 的任务,Stop 后 45 s 微信收到一条;期间再敲一句则不收。
+  daemon 自己的回合不推(回环守卫)。权限:3 分钟没敲字后触发一次需要批准的工具,微信收到卡片,回「y 码」终端放行。
+- 已在真机 daemon(自重启到本分支)上验过:`/v1/cli/event` 压/撤/清、`/v1/cli/permission` 在场短路与轮询状态。

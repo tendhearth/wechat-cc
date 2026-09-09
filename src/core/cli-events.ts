@@ -29,6 +29,15 @@ export const STOP_HOLD_MS = 45_000
 export const PERMISSION_HOLD_MS = 20_000
 /** 最多同时跟踪的会话数;超出丢最旧的。 */
 export const MAX_TRACKED_SESSIONS = 64
+/**
+ * 从主人敲下 prompt 到 Stop 不足这么久 ⇒ 「快问快答」,主人多半还在屏幕前,不推。
+ * Anthropic 自家 PushNotification 的准则也是 quick task 不打扰。
+ */
+export const MIN_TURN_MS = 90_000
+/** 最近这么久内敲过 prompt ⇒ 在场(权限走终端自己的提示,不去微信问)。 */
+export const PRESENT_WINDOW_MS = 180_000
+/** 刚在微信里问过这条会话的权限(卡片就是通知)⇒ 这段时间内的「等你批准」提醒不重复推。 */
+export const RELAY_SUPPRESS_MS = 60_000
 const SUMMARY_MAX = 120
 
 export interface CliEventHubDeps {
@@ -37,21 +46,47 @@ export interface CliEventHubDeps {
   projectName: (cwd: string) => string
   log: (tag: string, line: string) => void
   holds?: { stop?: number; permission?: number }
+  now?: () => number
 }
+
+export type CliPresence = 'present' | 'away' | 'unknown'
 
 export interface CliEventHub {
   ingest(ev: CliEvent): CliEventAction
+  /** 主人最近有没有在这条会话敲过字(PRESENT_WINDOW_MS 内)。没见过 prompt ⇒ unknown。 */
+  presence(sessionId: string): CliPresence
+  /** 权限中继刚在微信里问过这条会话 ⇒ 之后 RELAY_SUPPRESS_MS 内的 permission 提醒不推。 */
+  notePermissionRelay(sessionId: string): void
   pending(): { session_id: string; kind: CliEventKind }[]
   dispose(): void
 }
 
 interface Pending { kind: CliEventKind; timer: ReturnType<typeof setTimeout> }
+/** 每条会话记三样:主人最近一次敲字、这次敲字之后推没推过「完成了」、最近一次微信里问权限。 */
+interface SessionState { lastPromptAt?: number; pushedSincePrompt: boolean; lastRelayAt?: number }
+const MAX_SESSION_STATES = 256
 
 export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
   const stopHold = deps.holds?.stop ?? STOP_HOLD_MS
   const permissionHold = deps.holds?.permission ?? PERMISSION_HOLD_MS
+  const now = deps.now ?? (() => Date.now())
   // Map 保持插入顺序 ⇒ 第一个就是最旧的。
   const pending = new Map<string, Pending>()
+  const sessions = new Map<string, SessionState>()
+
+  function state(sessionId: string): SessionState {
+    let st = sessions.get(sessionId)
+    if (!st) {
+      st = { pushedSincePrompt: false }
+      while (sessions.size >= MAX_SESSION_STATES) {
+        const oldest = sessions.keys().next().value
+        if (oldest === undefined) break
+        sessions.delete(oldest)
+      }
+      sessions.set(sessionId, st)
+    }
+    return st
+  }
 
   function cancel(sessionId: string): boolean {
     const p = pending.get(sessionId)
@@ -67,7 +102,10 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
     try {
       const ok = await deps.send(text)
       if (!ok) deps.log('CLI_PUSH', `dropped ${ev.source}/${ev.kind} ${short(ev.session_id)}: no operator chat or no sender`)
-      else deps.log('CLI_PUSH', `sent ${ev.source}/${ev.kind} ${short(ev.session_id)}`)
+      else {
+        deps.log('CLI_PUSH', `sent ${ev.source}/${ev.kind} ${short(ev.session_id)}`)
+        if (ev.kind === 'stop') state(ev.session_id).pushedSincePrompt = true
+      }
     } catch (err) {
       // 不重试:外发那一层自己有退避;这里排队只会在断线时堆成风暴。
       deps.log('CLI_PUSH', `send failed ${ev.source}/${ev.kind} ${short(ev.session_id)}: ${err instanceof Error ? err.message : String(err)}`)
@@ -89,12 +127,45 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
 
   return {
     ingest(ev) {
+      const t = now()
       switch (ev.kind) {
-        case 'stop': return schedule(ev, stopHold)
-        case 'permission': return schedule(ev, permissionHold)
-        case 'prompt': return cancel(ev.session_id) ? 'cancelled' : 'noop'
-        case 'session_end': return cancel(ev.session_id) ? 'cleared' : 'noop'
+        case 'stop': {
+          const st = state(ev.session_id)
+          // 这次敲字之后已经推过「完成了」:再多的 Stop(自动续跑、循环 tick)
+          // 都不是新消息 —— 主人没说话,就最多告诉他一次。
+          if (st.pushedSincePrompt) { deps.log('CLI_PUSH', `skip stop ${short(ev.session_id)}: already pushed since last prompt`); return 'noop' }
+          if (st.lastPromptAt !== undefined && t - st.lastPromptAt < MIN_TURN_MS) {
+            deps.log('CLI_PUSH', `skip stop ${short(ev.session_id)}: quick turn (${Math.round((t - st.lastPromptAt) / 1000)}s)`)
+            return 'noop'
+          }
+          return schedule(ev, stopHold)
+        }
+        case 'permission': {
+          const st = state(ev.session_id)
+          if (st.lastRelayAt !== undefined && t - st.lastRelayAt < RELAY_SUPPRESS_MS) {
+            deps.log('CLI_PUSH', `skip permission ${short(ev.session_id)}: relayed to wechat ${Math.round((t - st.lastRelayAt) / 1000)}s ago`)
+            return 'noop'
+          }
+          return schedule(ev, permissionHold)
+        }
+        case 'prompt': {
+          const st = state(ev.session_id)
+          st.lastPromptAt = t
+          st.pushedSincePrompt = false
+          return cancel(ev.session_id) ? 'cancelled' : 'noop'
+        }
+        case 'session_end':
+          sessions.delete(ev.session_id)
+          return cancel(ev.session_id) ? 'cleared' : 'noop'
       }
+    },
+    presence(sessionId) {
+      const st = sessions.get(sessionId)
+      if (!st || st.lastPromptAt === undefined) return 'unknown'
+      return now() - st.lastPromptAt < PRESENT_WINDOW_MS ? 'present' : 'away'
+    },
+    notePermissionRelay(sessionId) {
+      state(sessionId).lastRelayAt = now()
     },
     pending() {
       return [...pending.entries()].map(([session_id, p]) => ({ session_id, kind: p.kind }))
@@ -102,6 +173,7 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
     dispose() {
       for (const p of pending.values()) clearTimeout(p.timer)
       pending.clear()
+      sessions.clear()
     },
   }
 }

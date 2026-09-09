@@ -16,6 +16,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from '
 import { dirname, join } from 'node:path'
 import { readJsonFile } from '../lib/read-json-file'
 import type { CliEvent, CliSource } from '../core/cli-events'
+import type { CliPermissionRequest, CliPermissionStatus } from '../core/cli-permission-relay'
 
 export type HookSource = CliSource
 
@@ -74,20 +75,27 @@ export function normalizeHookPayload(source: HookSource, raw: unknown): CliEvent
       return { ...base, kind: 'prompt' }
     case 'SessionEnd':
       return { ...base, kind: 'session_end' }
-    case 'Notification': {
-      if (source !== 'claude') return null
-      if (r['notification_type'] !== 'permission_prompt') return null
-      return withText('permission', str(r['message']))
-    }
-    case 'PermissionRequest': {
-      if (source !== 'codex') return null
-      const tool = str(r['tool_name']) ?? 'tool'
-      const summary = summarizeToolInput(r['tool_input'])
-      return withText('permission', summary ? `${tool}: ${summary}` : tool)
-    }
+    // PermissionRequest 不是「事件」,是要答复的问题 —— 走 parsePermissionRequest。
     default:
       return null
   }
+}
+
+/**
+ * 两家的 PermissionRequest hook JSON(形状相同:tool_name / tool_input)→ 中继请求。
+ * 只有 hook 直接调的那一路会用;不是 PermissionRequest / 子代理 / 缺字段 → null。
+ */
+export function parsePermissionRequest(source: HookSource, raw: unknown): CliPermissionRequest | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Raw
+  if (r['hook_event_name'] !== 'PermissionRequest') return null
+  if (str(r['agent_id'])) return null
+  const session_id = str(r['session_id'])
+  const cwd = str(r['cwd'])
+  const tool_name = str(r['tool_name'])
+  if (!session_id || !cwd || !tool_name) return null
+  const summary = summarizeToolInput(r['tool_input'])
+  return summary ? { source, session_id, cwd, tool_name, summary } : { source, session_id, cwd, tool_name }
 }
 
 // ── 2. POST 给 daemon ─────────────────────────────────────────────────────────
@@ -101,23 +109,28 @@ export type PostCliEventResult =
   | { ok: true; action?: string }
   | { ok: false; reason: string }
 
+/** 读 `<stateDir>/internal-api-info.json`(与 `wechat-cc agent` 同源)拿 baseUrl + FILE token。 */
+function readApiInfo(stateDir: string): { baseUrl: string; token: string } | { reason: string } {
+  const infoPath = join(stateDir, 'internal-api-info.json')
+  if (!existsSync(infoPath)) return { reason: 'daemon_not_running' }
+  let info: { baseUrl?: string; tokenFilePath?: string }
+  try { info = readJsonFile(infoPath) } catch { return { reason: 'info_malformed' } }
+  if (!info.baseUrl || !info.tokenFilePath) return { reason: 'info_incomplete' }
+  try { return { baseUrl: info.baseUrl, token: readFileSync(info.tokenFilePath, 'utf8').trim() } }
+  catch { return { reason: 'token_unreadable' } }
+}
+
 /**
- * 读 `<stateDir>/internal-api-info.json`(与 `wechat-cc agent` 同源)拿 baseUrl + FILE token,
  * POST /v1/cli/event。永远不抛:daemon 没跑、超时、非 2xx 都只是 ok:false。
  */
 export async function postCliEvent(stateDir: string, ev: CliEvent, opts: PostCliEventOpts = {}): Promise<PostCliEventResult> {
-  const infoPath = join(stateDir, 'internal-api-info.json')
-  if (!existsSync(infoPath)) return { ok: false, reason: 'daemon_not_running' }
-  let info: { baseUrl?: string; tokenFilePath?: string }
-  try { info = readJsonFile(infoPath) } catch { return { ok: false, reason: 'info_malformed' } }
-  if (!info.baseUrl || !info.tokenFilePath) return { ok: false, reason: 'info_incomplete' }
-  let token: string
-  try { token = readFileSync(info.tokenFilePath, 'utf8').trim() } catch { return { ok: false, reason: 'token_unreadable' } }
+  const api = readApiInfo(stateDir)
+  if ('reason' in api) return { ok: false, reason: api.reason }
   const f = opts.fetchImpl ?? fetch
   try {
-    const res = await f(`${info.baseUrl}/v1/cli/event`, {
+    const res = await f(`${api.baseUrl}/v1/cli/event`, {
       method: 'POST',
-      headers: { 'authorization': `Bearer ${token}`, 'content-type': 'application/json' },
+      headers: { 'authorization': `Bearer ${api.token}`, 'content-type': 'application/json' },
       body: JSON.stringify(ev),
       signal: AbortSignal.timeout(opts.timeoutMs ?? 3000),
     })
@@ -128,6 +141,80 @@ export async function postCliEvent(stateDir: string, ev: CliEvent, opts: PostCli
   } catch (err) {
     return { ok: false, reason: err instanceof Error ? err.message : String(err) }
   }
+}
+
+// ── 2b. 权限中继(§6.3):登记 + 轮询,总时限 hook 自己掐 ───────────────────────
+
+/** hook 这头的总时限:比 daemon 侧 CLI_PERMISSION_WAIT_MS(120s)多一点,好把「过期」也轮到。 */
+export const RELAY_TOTAL_MS = 125_000
+/** 一次 GET 最多挂多久(daemon 封顶 25s)。 */
+export const RELAY_POLL_MS = 20_000
+
+export interface RelayPermissionOpts {
+  fetchImpl?: typeof fetch
+  totalMs?: number
+  pollMs?: number
+  now?: () => number
+}
+
+export interface RelayPermissionResult {
+  decision: 'allow' | 'deny' | null
+  /** 为什么没拿到决定:owner_present / timeout / undelivered / daemon_not_running / http_xxx / deadline … */
+  status: string
+}
+
+/**
+ * 把一条 PermissionRequest 送去微信问主人。拿到 allow / deny 才算有决定;其他一律
+ * decision:null,让终端自己弹提示(hook 什么都不输出)。永远不抛。
+ */
+export async function relayPermission(stateDir: string, req: CliPermissionRequest, opts: RelayPermissionOpts = {}): Promise<RelayPermissionResult> {
+  const api = readApiInfo(stateDir)
+  if ('reason' in api) return { decision: null, status: api.reason }
+  const f = opts.fetchImpl ?? fetch
+  const now = opts.now ?? (() => Date.now())
+  const totalMs = opts.totalMs ?? RELAY_TOTAL_MS
+  const pollMs = opts.pollMs ?? RELAY_POLL_MS
+  const headers = { 'authorization': `Bearer ${api.token}`, 'content-type': 'application/json' }
+  const deadline = now() + totalMs
+  let hash: string
+  try {
+    const res = await f(`${api.baseUrl}/v1/cli/permission`, {
+      method: 'POST', headers, body: JSON.stringify(req), signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) return { decision: null, status: `http_${res.status}` }
+    const body = await res.json() as { status?: string; hash?: string }
+    if (body.status !== 'pending' || !body.hash) return { decision: null, status: body.status ?? 'bad_response' }
+    hash = body.hash
+  } catch (err) {
+    return { decision: null, status: err instanceof Error ? err.message : String(err) }
+  }
+  while (now() < deadline) {
+    const waitMs = Math.max(1, Math.min(pollMs, deadline - now()))
+    let status: CliPermissionStatus
+    try {
+      const res = await f(`${api.baseUrl}/v1/cli/permission?hash=${encodeURIComponent(hash)}&wait_ms=${waitMs}`, {
+        method: 'GET', headers, signal: AbortSignal.timeout(waitMs + 5000),
+      })
+      if (!res.ok) return { decision: null, status: `http_${res.status}` }
+      status = (await res.json() as { status?: CliPermissionStatus }).status ?? 'unknown'
+    } catch (err) {
+      return { decision: null, status: err instanceof Error ? err.message : String(err) }
+    }
+    if (status === 'allow' || status === 'deny') return { decision: status, status }
+    if (status !== 'pending') return { decision: null, status }
+  }
+  return { decision: null, status: 'deadline' }
+}
+
+/**
+ * hook 往 stdout 写的答复。两家形状一致(Codex 照抄了 Claude 的):
+ * hookSpecificOutput.decision.behavior = allow | deny。
+ */
+export function permissionDecisionOutput(decision: 'allow' | 'deny'): string {
+  const d = decision === 'allow'
+    ? { behavior: 'allow' }
+    : { behavior: 'deny', message: '主人在微信里拒绝了这次操作' }
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: d } })
 }
 
 // ── 3. 安装 / 卸载 / 状态 ─────────────────────────────────────────────────────
@@ -156,17 +243,23 @@ interface HookHandler { type: string; command?: string; statusMessage?: string; 
 interface MatcherGroup { matcher?: string; hooks: HookHandler[]; [k: string]: unknown }
 interface HooksFile { hooks?: Record<string, MatcherGroup[]>; [k: string]: unknown }
 
-/** 每家要挂的事件;Claude 的权限通知要 matcher 过滤,别的通知(登录成功之类)不关我们事。 */
-const EVENTS: Record<HookSource, { event: string; matcher?: string }[]> = {
+/** PermissionRequest 要等答复,所以是同步的;时限要盖过 RELAY_TOTAL_MS。 */
+const PERMISSION_HOOK_TIMEOUT_SEC = 150
+
+/**
+ * 两家要挂的事件一样:三个事件 fire-and-forget(async),PermissionRequest 同步等微信。
+ * Claude 的 Notification(permission_prompt)不挂 —— PermissionRequest 已经覆盖,再挂会重复提醒。
+ */
+const EVENTS: Record<HookSource, { event: string; matcher?: string; sync?: boolean }[]> = {
   claude: [
     { event: 'Stop' },
-    { event: 'Notification', matcher: 'permission_prompt' },
+    { event: 'PermissionRequest', sync: true },
     { event: 'UserPromptSubmit' },
     { event: 'SessionEnd' },
   ],
   codex: [
     { event: 'Stop' },
-    { event: 'PermissionRequest' },
+    { event: 'PermissionRequest', sync: true },
     { event: 'UserPromptSubmit' },
     { event: 'SessionEnd' },
   ],
@@ -223,8 +316,10 @@ export function installHooks(file: string, source: HookSource, command: string):
   const before = JSON.stringify(cfg)
   stripOurs(cfg, source)
   cfg.hooks ??= {}
-  for (const { event, matcher } of EVENTS[source]) {
-    const handler: HookHandler = { type: 'command', command, timeout: HOOK_TIMEOUT_SEC, async: true, statusMessage: HOOK_STATUS_MESSAGE }
+  for (const { event, matcher, sync } of EVENTS[source]) {
+    const handler: HookHandler = sync
+      ? { type: 'command', command, timeout: PERMISSION_HOOK_TIMEOUT_SEC, async: false, statusMessage: HOOK_STATUS_MESSAGE }
+      : { type: 'command', command, timeout: HOOK_TIMEOUT_SEC, async: true, statusMessage: HOOK_STATUS_MESSAGE }
     const group: MatcherGroup = matcher ? { matcher, hooks: [handler] } : { hooks: [handler] }
     ;(cfg.hooks[event] ??= []).push(group)
   }

@@ -362,6 +362,10 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       deps.cliEvents = hub
     },
 
+    setCliPermissions(relay) {
+      deps.cliPermissions = relay
+    },
+
     getPresence() {
       return computePresence(deps)
     },
