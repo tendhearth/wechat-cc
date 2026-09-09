@@ -124,6 +124,10 @@ interface CliEvent {
   只动带 `wechat-cc` 标记的条目,别人的 hook 原样保留。命令行用当前可执行文件的绝对路径
   (源码模式 `bun cli.ts hook claude`,编译包 `wechat-cc-cli hook claude`),与 MCP stdio spec 同一套判断。
 - `wechat-cc hook uninstall`:只删自己的条目。
+- 命令行统一写成 `"<可执行文件>" ["<cli.ts>"] hook <source>`(双引号包路径)。Claude Code 的 hook 在所有平台
+  走 bash(Windows 上是 Git Bash;`shell: powershell` 是逐条 opt-in,我们不用);Codex 在 Windows 走
+  `cmd.exe /C`(源码 `command_runner.rs` 读 COMSPEC)—— 两边都认这个写法。不写 `commandWindows`。
+- `wechat-cc doctor` 不并入 hook 状态:桌面端解析 doctor JSON,加字段不值得冒险;`hook status` 已够。
 - `wechat-cc hook status`:两家各自装没装、命令行是什么。
 
 ## 7. 非目标(本轮不做)
