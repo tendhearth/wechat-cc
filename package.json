@@ -30,6 +30,7 @@
     "start": "bun install --no-summary && bun src/daemon/main.ts",
     "test": "bun --bun vitest run",
     "test:e2e": "bun --bun vitest run -c vitest.e2e.config.ts",
+    "test:live-cli": "WECHAT_CC_LIVE_CLI=1 bun --bun vitest run src/core/external-cli-contract.live.test.ts",
     "eval:companion": "bun eval/companion/run.ts",
     "spike:atelier-renderer": "bun scripts/atelier-renderer-spike.ts",
     "smoke:atelier-sidecar": "bun scripts/atelier-sidecar-smoke.ts",

@@ -123,12 +123,13 @@ function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | typ
 
 /** Base args shared by turn dispatch AND one-shot evals. `--trust` is the
  *  headless requirement (see file header). */
-function baseArgs(prompt: string, model: string): string[] {
+/** 生产 spawn 用的参数;导出给 external-cli-contract.live.test 用同一份。 */
+export function cursorBaseArgs(prompt: string, model: string): string[] {
   return ['-p', prompt, '--output-format', 'stream-json', '--model', model, '--trust']
 }
 
 async function oneShotEval(spawnFn: CursorSpawnFn, model: string, prompt: string): Promise<string> {
-  const proc = spawnFn(baseArgs(prompt, model), { cwd: tmpdir() })
+  const proc = spawnFn(cursorBaseArgs(prompt, model), { cwd: tmpdir() })
   const parser = makeCursorStreamParser()
   const texts: string[] = []
   let sawResult = false
@@ -197,7 +198,7 @@ export function createCursorCliProvider(opts: CursorCliProviderOptions): AgentPr
                 dispatchedText = `${appendInstructions}\n\n---\n\n${text}`
                 instructionsInjected = true
               }
-              const args = baseArgs(dispatchedText, model)
+              const args = cursorBaseArgs(dispatchedText, model)
               if (sessionId) args.push('--resume', sessionId)
               if (ctx.permissionMode === 'dangerously') args.push('--yolo')
 

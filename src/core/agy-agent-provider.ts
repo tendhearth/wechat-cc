@@ -240,7 +240,8 @@ function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | typ
 }
 
 /** Base args shared by every invocation (turn dispatch AND one-shot evals). */
-function baseArgs(prompt: string, model: string, turnTimeoutMs: number): string[] {
+/** 生产 spawn 用的参数;导出给 external-cli-contract.live.test 用同一份。 */
+export function agyBaseArgs(prompt: string, model: string, turnTimeoutMs: number): string[] {
   return ['-p', prompt, '--output-format', 'stream-json', '--model', model, '--print-timeout', msToPrintTimeout(turnTimeoutMs)]
 }
 
@@ -252,7 +253,7 @@ function baseArgs(prompt: string, model: string, turnTimeoutMs: number): string[
  * cwd is `tmpdir()` since these calls never touch the daemon's project tree.
  */
 async function oneShotEval(spawnFn: AgySpawnFn, model: string, prompt: string, turnTimeoutMs: number): Promise<string> {
-  const proc = spawnFn(baseArgs(prompt, model, turnTimeoutMs), { cwd: tmpdir() })
+  const proc = spawnFn(agyBaseArgs(prompt, model, turnTimeoutMs), { cwd: tmpdir() })
   const parser = makeAgyStreamParser()
   const texts: string[] = []
   let sawResult = false
@@ -371,7 +372,7 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
                 dispatchedText = `${appendInstructions}\n\n---\n\n${text}`
                 instructionsInjected = true
               }
-              const args = baseArgs(dispatchedText, model, turnTimeoutMs)
+              const args = agyBaseArgs(dispatchedText, model, turnTimeoutMs)
               // CONTROLLER RULING 1: agy's tool execution follows its
               // internal project binding, not process cwd — the FIRST
               // dispatch of a brand-new conversation must claim one via
