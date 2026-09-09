@@ -9,7 +9,7 @@ const reduced = new URLSearchParams(location.search).has('reduced');
 /** @type {HTMLInputElement} */ ($('lab-reduced')).checked = reduced
 $('lab-reduced').addEventListener('change', (e) => { location.search = /** @type {HTMLInputElement} */ (e.target).checked ? '?reduced' : '' })
 
-const pet = await createPet({ stage: $('pet-stage'), img: $('pet-sprite'), props: $('pet-props'), hint: $('pet-hint') }, { manifestUrl: './assets/pet/manifest.json', reducedMotion: reduced });
+const pet = await createPet({ stage: $('pet-stage'), img: $('pet-sprite'), props: $('pet-props'), hint: $('pet-hint') }, { manifestUrl: './assets/pet/cc-v1/manifest.json', reducedMotion: reduced });
 /** @type {any} */ (window).__pet = pet
 
 const btn = (/** @type {string} */ label, /** @type {() => void} */ onClick) => { const b = document.createElement('button'); b.textContent = label; b.addEventListener('click', onClick); return b }
@@ -17,6 +17,7 @@ for (const f of /** @type {const} */ (['unlit', 'lit'])) $('lab-forms').appendCh
 for (const b of BEHAVIORS) $('lab-behaviors').appendChild(btn(b, () => { const r = pet.setState(b); console.log('setState', b, r) }))
 /** @type {Set<string>} */ const on = new Set()
 for (const p of PROPS) {
+  if (p === 'sprout') continue // Deprecated: absent from the CC v1 manifest.
   const l = document.createElement('label'); const c = document.createElement('input'); c.type = 'checkbox'
   c.addEventListener('change', () => { c.checked ? on.add(p) : on.delete(p); pet.setProps([...on], on.has('envelope') ? 3 : 0) })
   l.append(c, ` ${p}`); $('lab-props').appendChild(l)

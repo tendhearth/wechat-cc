@@ -1,3 +1,5 @@
+// 真实 CSSStyleDeclaration 只认 setProperty 写自定义属性;fake 也只开这一条路,防止回到 style['--x'] 的静默 no-op。
+function fakeStyle() { const rec: Record<string, string> = {}; return Object.assign(rec, { setProperty(k: string, v: string) { rec[k] = v } }) }
 import { describe, it, expect } from 'vitest'
 import { PROP_SLOTS, SLOTS, renderProps } from './prop-layer.js'
 import { PROPS } from '../domain/types.js'
@@ -7,7 +9,7 @@ function makeEl(tag: string) {
   const kids: any[] = []
   const classes = new Set<string>()
   return {
-    tag, style: {} as Record<string, string>, textContent: '', src: '', attrs: {} as Record<string, string>,
+    tag, style: fakeStyle(), textContent: '', src: '', attrs: {} as Record<string, string>,
     classList: { add: (c: string) => { classes.add(c) }, remove: (c: string) => { classes.delete(c) }, contains: (c: string) => classes.has(c) },
     setAttribute(k: string, v: string) { this.attrs[k] = v }, getAttribute(k: string) { return this.attrs[k] ?? null },
     appendChild(c: any) { kids.push(c) }, replaceChildren(...c: any[]) { kids.splice(0, kids.length, ...c) }, children: kids,

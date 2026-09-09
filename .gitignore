@@ -59,3 +59,8 @@ test-results/
 
 # never track node_modules (dir or stray symlink)
 node_modules
+
+# CC 角色设计板是品牌资产,不进公开仓库(私有目录 ~/Documents/tendhearth/cc-design/;manifest 只留 sha256)
+apps/desktop/src/assets/pet/cc-v1/CC_MASTER_V1.png
+apps/desktop/src/assets/pet/cc-v1/CC_DESIGN_SHEET_V1.png
+apps/desktop/art/cc-v1/comparison.png

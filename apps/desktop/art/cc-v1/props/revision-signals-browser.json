@@ -1,0 +1,50 @@
+[
+  {
+    "form": "lit",
+    "name": "exclamation",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/exclamation.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "lit",
+    "name": "micro-light",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/micro-light.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "unlit",
+    "name": "exclamation",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/exclamation.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "unlit",
+    "name": "micro-light",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/micro-light.png",
+        "width": 384
+      }
+    ]
+  }
+]

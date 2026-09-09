@@ -45,9 +45,9 @@ export function renderProps(container, props, badge, manifest, makeEl) {
     const wrap = makeEl('div')
     wrap.classList.add('pet-prop')
     wrap.setAttribute('data-prop', name)
-    wrap.style['--slot-dx'] = String(slot.dx)
-    wrap.style['--slot-dy'] = String(slot.dy)
-    wrap.style['--slot-scale'] = String(slot.scale)
+    wrap.style.setProperty('--slot-dx', String(slot.dx))
+    wrap.style.setProperty('--slot-dy', String(slot.dy))
+    wrap.style.setProperty('--slot-scale', String(slot.scale))
     const img = makeEl('img')
     img.src = src
     img.setAttribute('alt', '')

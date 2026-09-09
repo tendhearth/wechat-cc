@@ -1,6 +1,11 @@
 # CC Desktop Pet Assets v1
 
-Production-ready raster starter pack for Tauri. The two supplied boards are the only canonical references.
+> **Historical legacy pack — superseded by [CC Asset Kit v1.0-alpha](cc-v1/README.md).**
+> The ear/mouth/sprout rules below are obsolete and contradict the latest character standard.
+> These files remain only for legacy loader regression fixtures. The desktop window and pet-lab
+> now load `cc-v1/manifest.json`; never select these legacy character images as new-kit fallback.
+
+Historical raster starter pack for Tauri. The following text records its former design, not current approval.
 
 ## Non-negotiable character rules
 

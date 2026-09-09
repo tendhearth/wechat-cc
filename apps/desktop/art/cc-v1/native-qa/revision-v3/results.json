@@ -1,0 +1,27 @@
+{
+  "checkedAt": "2026-09-09T05:16:12.722406+00:00",
+  "manifestSha256": "c83f4d17532768aa75ffde6a6e1baed04461145d0272d48dad42bcb014db7416",
+  "sizesCssPx": [
+    48,
+    96,
+    128,
+    256
+  ],
+  "loadedFramesPerWindow": 16,
+  "imageLoadErrors": 0,
+  "observedLoop": 4,
+  "completedLoopsAtLeast": 3,
+  "backdropMethod": "QA CSS backdrops in four actual transparent Tauri windows",
+  "externalDesktopComposite": "not verified",
+  "screenshots": {
+    "dark-128.png": "668c2b8cfa06ce323edd94e84a21ffa752a412acec9cca78035ec20137779ec7",
+    "dark-256.png": "abcc016df39ad6b09e692ee34ebd2f7eaef5f3b8de35ef1ac5f51041d51dd6a4",
+    "dark-48.png": "c8cb6ba081b8ef9c4d2ef2eb5e38bc61c439cb97114c28dba95a6a9c30bb1308",
+    "dark-96.png": "b3a13540c73d44ce146295ce05f7adaa25c80d5bafde71c5be3356ccd1516f69",
+    "light-128.png": "c9d72e2f59293fad6d4bd85b260177be6b3ad2c2556dfe17abdbd46dd46d074b",
+    "light-256.png": "443aba697c41326b6b4ed1ee5562c4f487ad36a9a7da5729692e745d21a435d6",
+    "light-48.png": "8e1b23f7bcd16594ce35f47890b38f27655093eb2ab4df3c969d5bd316147713",
+    "light-96.png": "8b10ce816b16dd3bd38909e73b9c73b2b2fcf26a60024c8396a472d350a8a4db",
+    "native-review.png": "9fa8abb859513cd8d7762f368969e28f43a7d1c729bd31e243108628c446e5d1"
+  }
+}
