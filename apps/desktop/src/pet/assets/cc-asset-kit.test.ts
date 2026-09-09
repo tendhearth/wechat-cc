@@ -213,8 +213,9 @@ describe('CC Asset Kit v1.0-alpha', () => {
       expect(frames[k]!.alpha.every((a, i) => a >= frames[k - 1]!.alpha[i]!)).toBe(true)
     }
   })
-  it('missing/empty states fail soft with same-form idle; reverse transition uses existing fade', () => {
+  it('missing/empty states and explicitly missing reverse transition retain safe fallbacks', () => {
     const broken = structuredClone(raw)
+    delete broken.transitions['lit-to-unlit']
     delete broken.forms.lit.states.permission
     broken.forms.unlit.states.working.frames = []
     const loaded = normalizeManifest(broken)
@@ -436,6 +437,21 @@ it('records native owner acceptance without promoting SVG placeholders', () => {
   for (const form of Object.values(raw.forms) as any[]) for (const state of Object.values(form.states) as any[]) expect(state.artStatus).toBe('reviewed-production')
   for (const [path, asset] of Object.entries(raw.assets) as [string, any][]) {
     if (path.endsWith('.svg')) expect(asset.artStatus).toBe('normative-placeholder')
-    else expect(asset.artStatus).toBe('reviewed-production')
+    else expect(asset.artStatus).toBe(path.startsWith('transitions/light-to-dark/') ? 'production-candidate' : 'reviewed-production')
   }
+})
+
+it('plays a slower independently rendered extinguish with exact endpoints and shared coverage', () => {
+  const transition = raw.transitions['lit-to-unlit']
+  expect(transition.fps).toBe(6)
+  expect(transition.loop).toBe(false)
+  expect(transition.frames).toHaveLength(8)
+  expect(transition.artStatus).toBe('production-candidate')
+  const frames = transition.frames.map((p: string) => readRGBA(readFileSync(join(root,p))))
+  for (const [index, form] of [[0,'lit'],[7,'unlit']] as const) expect(readFileSync(join(root,transition.frames[index])).equals(readFileSync(join(root,`canonical/${form}/front.png`)))).toBe(true)
+  for (let i=1;i<8;i++) expect(frames[i].alpha.every((a: number,k: number)=>a<=frames[i-1].alpha[k])).toBe(true)
+  expect(readFileSync(join(root,transition.frames[3])).equals(readFileSync(join(root,raw.transitions['unlit-to-lit'].frames[4])))).toBe(false)
+  const loaded=normalizeManifest(raw)
+  if (!loaded.ok) throw Error(loaded.reason)
+  expect(resolveTransition(loaded.manifest,'lit-to-unlit','unlit').kind).toBe('frames')
 })
