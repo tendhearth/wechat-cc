@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { extractImagePaths, loadImageParts } from './openai-vision'
+import { extractImagePaths, prepareImageParts, appendImageNotes } from './openai-vision'
 import {
   type AgentProvider,
   type AgentSession,
@@ -93,8 +93,6 @@ function makeOpenAiSession(args: {
 
   return {
     dispatch(text: string): AsyncIterable<AgentEvent> {
-      // 入站图片:提示词里只剩 `[image:path]` 一行,这里读成字节随消息送(openai-vision)。
-      messages.push(chatModel.userMessage(text, loadImageParts(extractImagePaths(text))))
       // Hoisted out of the generator body: an async generator FUNCTION's
       // code doesn't run until the caller's first `.next()` — constructing
       // the controller inside `run()` would leave `activeAbort` null/stale
@@ -107,6 +105,11 @@ function makeOpenAiSession(args: {
       activeAbort = abort
       return (async function* run(): AsyncIterable<AgentEvent> {
         if (firstRef.first) { firstRef.first = false; yield { kind: 'init', sessionId } }
+        // 入站图片:提示词里只剩 `[image:path]` 一行,这里整理(超宽缩、超大拒)成 image 分块
+        // 随用户消息送;缩过 / 没带上的都在文字里说一句(openai-vision)。要起外部缩图进程,
+        // 所以放在生成器里而不是 dispatch() 的同步体里。
+        const prepared = await prepareImageParts(extractImagePaths(text))
+        messages.push(chatModel.userMessage(appendImageNotes(text, prepared.notes), prepared.parts))
         const em = makeTurnEmitter()
         try {
           let steps = 0
@@ -155,6 +158,7 @@ function makeOpenAiSession(args: {
             const { messages: assistantMsgs, toolCalls } = await turn.finished
             messages.push(...assistantMsgs)
             if (toolCalls.length === 0) break
+            const followUps: ChatMessage[] = []
             for (const tc of toolCalls) {
               const mcpServer = bridge.serverOf(tc.name)
               const decision = gateTool({
@@ -169,9 +173,21 @@ function makeOpenAiSession(args: {
                 result = `Permission denied: tool "${tc.name}" is not allowed for this chat.`
               } else {
                 try {
-                  result = mcpServer !== undefined
-                    ? await bridge.call(tc.name, tc.input)
-                    : await builtinByName.get(tc.name)!.execute((tc.input ?? {}) as Record<string, unknown>)
+                  if (mcpServer !== undefined) {
+                    result = await bridge.call(tc.name, tc.input)
+                  } else {
+                    const builtin = builtinByName.get(tc.name)!
+                    const input = (tc.input ?? {}) as Record<string, unknown>
+                    if (builtin.executeRich) {
+                      // 带图的结果(view_image):文字当工具结果,图另起一条用户消息紧跟其后 ——
+                      // Chat Completions 的 tool 消息装不下图。
+                      const rich = await builtin.executeRich(input)
+                      result = rich.text
+                      if (rich.images.length > 0) followUps.push(chatModel.userMessage(`[${tc.name} 的结果]`, rich.images))
+                    } else {
+                      result = await builtin.execute(input)
+                    }
+                  }
                 } catch (err) {
                   result = `Tool error: ${err instanceof Error ? err.message : String(err)}`
                 }
@@ -185,6 +201,7 @@ function makeOpenAiSession(args: {
               yield em.errorText('cancelled', { code: 'cancelled' })
               break
             }
+            messages.push(...followUps)
             if (steps >= maxSteps) {
               yield em.errorText(`step budget ${maxSteps} exhausted`, { code: 'step_budget' })
               break

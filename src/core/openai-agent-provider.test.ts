@@ -44,6 +44,42 @@ const guestSpawn = {
 }
 
 describe('openai provider loop', () => {
+  it('view_image:工具结果是文字,图另起一条用户消息紧跟其后再进下一轮', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'oai-view-'))
+    try {
+      const png = new Uint8Array(33); png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); const dv = new DataView(png.buffer)
+      dv.setUint32(8, 13); png.set([0x49, 0x48, 0x44, 0x52], 12); dv.setUint32(16, 8); dv.setUint32(20, 8)
+      writeFileSync(join(dir, 'shot.png'), png)
+      const turns: any[][] = []
+      let n = 0
+      const model = {
+        streamTurn(messages: any[]) {
+          n++; turns.push([...messages])
+          const first = n === 1
+          const toolCalls = first ? [{ id: 'v1', name: 'view_image', input: { path: 'shot.png' } }] : []
+          async function* deltas() { if (first) yield { kind: 'tool_call' as const, id: 'v1', name: 'view_image', input: { path: 'shot.png' } }; else yield { kind: 'text' as const, text: '看到了' } }
+          return { deltas: deltas(), finished: Promise.resolve({ messages: [{ role: 'assistant', content: '' }], toolCalls }) }
+        },
+        async generate() { return 'ok' },
+        userMessage: (t: string, images?: unknown[]) => ({ role: 'user', content: images?.length ? [{ type: 'text', text: t }, ...images.map(() => ({ type: 'image' }))] : t }),
+        systemMessage: (t: string) => ({ role: 'system', content: t }),
+        toolResultMessage: (_id: string, name: string, r: unknown) => ({ role: 'tool', content: `${name}:${String(r)}` }),
+      } as any
+      const provider = createOpenAiAgentProvider({ makeChatModel: () => model, makeMcpBridge: async () => fakeBridge([]) })
+      const session = await provider.spawn({ alias: 'a', path: dir }, { ...guestSpawn, tierProfile: { allow: new Set(['reply', 'fs_read']), relay: new Set(), deny: new Set() } } as any)
+      const summary = await collectTurn(session.dispatch('看看 shot.png'))
+      expect(summary.assistantText.join('')).toContain('看到了')
+      const second = turns[1]!
+      const toolIdx = second.findIndex((m: any) => m.role === 'tool' && String(m.content).includes('Loaded image'))
+      expect(toolIdx).toBeGreaterThan(0)
+      expect(second[toolIdx + 1]).toMatchObject({ role: 'user', content: [{ type: 'text', text: '[view_image 的结果]' }, { type: 'image' }] })
+      await session.close()
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
   it('dispatch 文本里的 [image:path] 会读成图块随用户消息送(openai-vision)', async () => {
     const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs')
     const { tmpdir } = await import('node:os')

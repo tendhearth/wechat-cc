@@ -178,3 +178,16 @@ interface CliEvent {
 - 真机:本机 `wechat-cc hook install` 后,在终端跑一个超过 90 s 的任务,Stop 后 45 s 微信收到一条;期间再敲一句则不收。
   daemon 自己的回合不推(回环守卫)。权限:3 分钟没敲字后触发一次需要批准的工具,微信收到卡片,回「y 码」终端放行。
 - 已在真机 daemon(自重启到本分支)上验过:`/v1/cli/event` 压/撤/清、`/v1/cli/permission` 在场短路与轮询状态。
+
+## 附:openai 兼容那条路的看图(2026-09-10,同分支)
+
+不在 hook 主题里,但同一轮做掉。照 Codex `image_preparation` / `view_image` 的形状:
+
+- 用户发的图:`[image:path]` → `lib/image-prep` 量尺寸,最长边 > 2048 或 > 8MB 就用系统工具缩成 JPEG
+  (macOS sips / Windows System.Drawing / Linux ImageMagick;都没有就原图照发,超字节才拒)→ image 分块随
+  用户消息送。缩过 / 没带上 / 超 4 张的,在同一条用户消息末尾的 `<image_notes>` 里说一句(Codex 用 developer
+  消息,Chat Completions 没这层)。
+- 模型自己想看:`view_image` 内置工具(fs_read 档)。Chat Completions 的 tool 消息装不下图,所以文字当工具结果,
+  图另起一条用户消息 `[view_image 的结果]` 紧跟其后再进下一轮。
+- 真机:经本链路给 GLM-FLASH 发 64x64 红图回「红色」,3000x2200 蓝图被 sips 缩到 2048x1502 后回「蓝色」。
+- 没做:上下文压缩时给图片单独算预算(Codex 有);detail 分档。

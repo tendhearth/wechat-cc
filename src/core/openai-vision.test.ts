@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { extractImagePaths, imageMediaType, loadImageParts, MAX_IMAGES_PER_TURN, MAX_IMAGE_BYTES } from './openai-vision'
+import { extractImagePaths, prepareImageParts, appendImageNotes, MAX_IMAGES_PER_TURN } from './openai-vision'
+import type { PreparedImage } from '../lib/image-prep'
 
 describe('openai-vision', () => {
   it('从提示词里挖 [image:path],去重,忽略别的附件行', () => {
@@ -7,20 +8,21 @@ describe('openai-vision', () => {
     expect(extractImagePaths(text)).toEqual(['/inbox/a/1.jpg', '/inbox/a/2.png'])
     expect(extractImagePaths('没有图')).toEqual([])
   })
-  it('后缀 → mime;不认识的 → null', () => {
-    expect(imageMediaType('/x/a.JPG')).toBe('image/jpeg')
-    expect(imageMediaType('/x/a.webp')).toBe('image/webp')
-    expect(imageMediaType('/x/a.bmp')).toBeNull()
-  })
-  it('loadImageParts:读得到的带上;缺文件 / 超限 / 不认识的后缀 / 读抛错 跳过;最多 4 张', () => {
-    const files: Record<string, number> = { '/a.jpg': 10, '/big.png': MAX_IMAGE_BYTES + 1, '/c.gif': 5, '/d.webp': 5, '/e.png': 5, '/f.png': 5, '/boom.png': 5 }
-    const parts = loadImageParts(['/a.jpg', '/missing.jpg', '/big.png', '/x.bmp', '/boom.png', '/c.gif', '/d.webp', '/e.png', '/f.png'], {
-      exists: (p) => p in files,
-      size: (p) => files[p]!,
-      read: (p) => { if (p === '/boom.png') throw new Error('EACCES'); return new Uint8Array([1, 2, 3]) },
-    })
-    expect(parts.map(p => p.mediaType)).toEqual(['image/jpeg', 'image/gif', 'image/webp', 'image/png'])
+  it('prepareImageParts:带上的 / 缩过的 / 没带上的 / 超张数的各留一句', async () => {
+    const fake = async (p: string): Promise<PreparedImage> => {
+      if (p.endsWith('big.png')) return { ok: true, data: new Uint8Array([1]), mediaType: 'image/jpeg', dims: { w: 2048, h: 1536 }, resized: { from: { w: 4000, h: 3000 }, to: { w: 2048, h: 1536 } } }
+      if (p.endsWith('bad.png')) return { ok: false, reason: '读不到文件' }
+      return { ok: true, data: new Uint8Array([2]), mediaType: 'image/png', dims: { w: 10, h: 10 } }
+    }
+    const { parts, notes } = await prepareImageParts(['/a.png', '/big.png', '/bad.png', '/c.png', '/d.png', '/e.png'], {}, fake)
+    expect(parts.map(p => p.mediaType)).toEqual(['image/png', 'image/jpeg', 'image/png', 'image/png'])
     expect(parts).toHaveLength(MAX_IMAGES_PER_TURN)
-    expect(parts[0]!.data).toEqual(new Uint8Array([1, 2, 3]))
+    expect(notes).toEqual([
+      '第 2 张图(big.png)从 4000x3000 缩到 2048x1536',
+      '第 3 张图(bad.png)未附上:读不到文件',
+      '第 6 张图(e.png)未附上:一条消息最多带 4 张',
+    ])
+    expect(appendImageNotes('hi', [])).toBe('hi')
+    expect(appendImageNotes('hi', ['x'])).toBe('hi\n<image_notes>\nx\n</image_notes>')
   })
 })
