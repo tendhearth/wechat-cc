@@ -45,3 +45,16 @@ below (x143–153, y469–473) changes from 232.4 to 211.1: contrast increases
 from 3.4 to 24.7 levels. Samples are screenshot-specific, not a universal
 contrast guarantee for every size. Four targeted files / 84 tests and repository
 typecheck pass. No frozen character files changed.
+
+## Homepage glow clipping experiment
+
+The homepage now prepares one offscreen sprite using the shared `masks/front.png`
+with `destination-in`. This removes the exterior desktop glow over paper and
+foliage; original PNGs and the native pet rendering remain unchanged. No new
+halo is added. `glow-before.png` / `glow-after.png` show the same viewport (fish
+and greetings remain animated). Visual decision: retain clipping; the outer
+haze is reduced while body shading and the scene contact shadow remain.
+Antialiased edge alpha is multiplied, not replaced, by destination-in. If the
+mask fails to load or dimensions disagree, the original sprite remains usable.
+Browser reports no console errors; four test files / 84 tests and repository
+typecheck pass. This experiment is a separate commit from the contact shadow.

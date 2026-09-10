@@ -40,7 +40,28 @@ fishAtlas.onload = () => {
 }
 fishAtlas.src = "./assets/home-cc-fish-atlas.png"
 const ccCharacter = new Image()
+const ccMask = new Image()
+const ccSceneSprite = document.createElement("canvas")
+let ccSceneSpriteReady = false
+function prepareSceneCC() {
+  if (!ccCharacter.naturalWidth || !ccMask.naturalWidth) return
+  if (ccCharacter.naturalWidth !== ccMask.naturalWidth || ccCharacter.naturalHeight !== ccMask.naturalHeight) return
+  ccSceneSprite.width = ccCharacter.naturalWidth
+  ccSceneSprite.height = ccCharacter.naturalHeight
+  const sceneContext = ccSceneSprite.getContext("2d")
+  sceneContext.drawImage(ccCharacter, 0, 0)
+  // Homepage-only composition: retain the solid character, remove the desktop
+  // glow over the paper and foliage. Frozen files remain unchanged. The mask
+  // includes antialiasing, so destination-in also softens its subpixel edge.
+  sceneContext.globalCompositeOperation = "destination-in"
+  sceneContext.drawImage(ccMask, 0, 0)
+  sceneContext.globalCompositeOperation = "source-over"
+  ccSceneSpriteReady = true
+}
+ccCharacter.addEventListener("load", prepareSceneCC)
+ccMask.addEventListener("load", prepareSceneCC)
 ccCharacter.src = "./assets/pet/cc-v1/canonical/lit/front.png"
+ccMask.src = "./assets/pet/cc-v1/masks/front.png"
 // Keep the frozen sprite square in physical canvas pixels. Never stretch it to
 // the illustration aspect ratio: that makes the round body look flattened.
 
@@ -694,7 +715,7 @@ function drawBearPuppet(time) {
   ctx.fillRect(-1, -1, 2, 2)
   ctx.restore()
   ctx.rotate(Number.isFinite(nod) ? nod : 0)
-  ctx.drawImage(ccCharacter, -side / 2, -side * 470 / 512, side, side)
+  ctx.drawImage(ccSceneSpriteReady ? ccSceneSprite : ccCharacter, -side / 2, -side * 470 / 512, side, side)
   ctx.restore()
 }
 
