@@ -681,6 +681,18 @@ function drawBearPuppet(time) {
   const nod = Math.sin((time - bearWaveStartedAt) * .008) * .025 * greeting
   ctx.save()
   ctx.translate(canvas.width * ccGround.x, canvas.height * ccGround.y)
+  // Scene-only contact shadow: the warm pool in the background otherwise
+  // merges with the pale feet. Keep it grounded while CC nods above it.
+  ctx.save()
+  ctx.translate(0, side * .008)
+  ctx.scale(side * .32, side * .045)
+  const contact = ctx.createRadialGradient(0, 0, 0, 0, 0, 1)
+  contact.addColorStop(0, "rgba(91, 66, 43, .20)")
+  contact.addColorStop(.45, "rgba(91, 66, 43, .14)")
+  contact.addColorStop(1, "rgba(91, 66, 43, 0)")
+  ctx.fillStyle = contact
+  ctx.fillRect(-1, -1, 2, 2)
+  ctx.restore()
   ctx.rotate(Number.isFinite(nod) ? nod : 0)
   ctx.drawImage(ccCharacter, -side / 2, -side * 470 / 512, side, side)
   ctx.restore()

@@ -34,3 +34,14 @@ been diagnosed by this homepage change.
   errors. `preview.png` records the shared scene renderer at a 663px viewport.
 - This is a browser scene check, not a native transparent-window acceptance or
   a connected production homepage session.
+
+## Contact shadow revision
+
+Adds a warm, soft elliptical shadow behind the unchanged canonical sprite,
+anchored to the floor independently of the nod. Same-viewport screenshots:
+`contact-before.png` and `contact-after.png`. At the left foot sample
+(x143–153, y455–461), Rec.709 luminance remains 235.8. The floor immediately
+below (x143–153, y469–473) changes from 232.4 to 211.1: contrast increases
+from 3.4 to 24.7 levels. Samples are screenshot-specific, not a universal
+contrast guarantee for every size. Four targeted files / 84 tests and repository
+typecheck pass. No frozen character files changed.
