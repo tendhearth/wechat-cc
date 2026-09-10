@@ -1,3 +1,4 @@
+import { loadAquariumAtlas } from "./aquarium-atlas.js"
 import { CC_GROUND as ccGround, ccBox, ccContains, WATER, waterContains } from "./aquarium-layout.js"
 const canvas = document.getElementById("companion-stage")
 const ctx = canvas.getContext("2d")
@@ -67,15 +68,15 @@ ccMask.src = "./assets/pet/cc-v1/masks/front.png"
 
 
 const lotusLeaves = new Image()
-lotusLeaves.src = "./assets/animation/lotus-leaves-cropped.png"
 const lotusPetal = new Image()
-lotusPetal.src = "./assets/animation/lotus-petal-cropped.png"
 const lotusBud = new Image()
-lotusBud.src = "./assets/animation/lotus-bud-cropped.png"
-const crabSprite = new Image()
-crabSprite.src = "./assets/animation/crab-watercolor-v1.png"
-const crabWalkSheet = new Image()
-crabWalkSheet.src = "./assets/animation/crab-walk-sheet-v1.png"
+const crabFrames = Array.from({ length: 3 }, () => new Image())
+const crabSprite = crabFrames[0]
+loadAquariumAtlas("./assets/animation/lotus-watercolor-atlas.png", [lotusLeaves, lotusPetal, lotusBud])
+  .catch(error => console.error("Lotus artwork unavailable", error))
+loadAquariumAtlas("./assets/animation/crab-watercolor-atlas.png", crabFrames, true)
+  .then(() => { crabEscapeOverlay.src = crabSprite.src })
+  .catch(error => console.error("Crab artwork unavailable", error))
 
 const fish = []
 const bubbles = []
@@ -492,25 +493,9 @@ function crabCanvasPose(time) {
 }
 
 function drawCrabWalkingFrame(width, motionTime) {
-  if (!crabWalkSheet.complete || !crabWalkSheet.naturalWidth) {
-    ctx.drawImage(crabSprite, -width / 2, -width / 2, width, width)
-    return
-  }
-  // Each frame is an actual illustrated leg pose. A calm 8fps cadence reads
-  // as a short sideways scuttle, without vibrating the whole crab.
-  const frame = Math.floor(motionTime / 125) % 3
-  const frameWidth = crabWalkSheet.naturalWidth / 3
-  ctx.drawImage(
-    crabWalkSheet,
-    frame * frameWidth,
-    0,
-    frameWidth,
-    crabWalkSheet.naturalHeight,
-    -width / 2,
-    -width / 2,
-    width,
-    width,
-  )
+  const frame = crabFrames[Math.floor(motionTime / 125) % 3]
+  const sprite = frame.complete && frame.naturalWidth ? frame : crabSprite
+  ctx.drawImage(sprite, -width / 2, -width / 2, width, width)
 }
 
 function drawCrab(time, behindPlants) {
@@ -569,6 +554,8 @@ function updateCrabEscapeOverlay(time) {
   const x = from.x + (to.x - from.x) * segmentProgress - size / 2
   const y = from.y + (to.y - from.y) * segmentProgress - size / 2 + Math.sin(elapsed * .031) * size * .022
   const rotation = Math.atan2(to.y - from.y, to.x - from.x)
+  const walkFrame = crabFrames[Math.floor(elapsed / 125) % 3]
+  if (walkFrame.complete && walkFrame.naturalWidth && crabEscapeOverlay.src !== walkFrame.src) crabEscapeOverlay.src = walkFrame.src
   crabEscapeOverlay.style.width = `${size}px`
   crabEscapeOverlay.style.opacity = String(Math.min(1, progress / .08) * (1 - Math.max(0, progress - .9) / .1))
   crabEscapeOverlay.style.transform = `translate3d(${x}px, ${y}px, 0) rotate(${rotation}rad)`

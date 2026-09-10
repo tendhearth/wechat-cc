@@ -58,3 +58,24 @@ Antialiased edge alpha is multiplied, not replaced, by destination-in. If the
 mask fails to load or dimensions disagree, the original sprite remains usable.
 Browser reports no console errors; four test files / 84 tests and repository
 typecheck pass. This experiment is a separate commit from the contact shadow.
+
+## Watercolor interactive props
+
+The owner approved the warm watercolor lotus/crab sheet on 2026-09-09.
+Two transparent 3-cell atlases were generated from that reference:
+`animation/lotus-watercolor-atlas.png` (pads, one upright petal, stamens) and
+`animation/crab-watercolor-atlas.png` (neutral, alternating leg poses).
+No source design sheet is included in the public runtime tree.
+
+`aquarium-atlas.js` decodes each atlas once. Lotus parts trim independently;
+crab frames share a union crop padded to a square, preserving frame scale and
+registration. The 4px outer cell gutter is excluded from sampling. Existing
+petal pivot animation, hover closing, crab route/timing and click decisions
+remain. The escape overlay uses these same walk frames instead of the old crab.
+
+Browser check: narrow and wide animation-lab renders, no console errors; crab
+click starts a walking route and shows the hide feedback. Screenshot:
+`watercolor-props.png`. This is a visual candidate for owner playback review;
+AI-generated walk frames are not a guarantee of pixel-identical body texture.
+Desktop 39 files / 628 tests and repository typecheck pass. Frozen CC assets
+and model have no diff. Actual native desktop-window playback was not rerun.
