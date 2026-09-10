@@ -6583,3 +6583,51 @@ input { font: inherit; color: inherit; }
 .atelier-pane-head p { margin: 8px 0 26px; color: rgba(89, 63, 44, .62); }
 .atelier-gallery-page { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); max-width: 980px; }
 @media (max-width: 700px) { .atelier-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* CC chat: warm paper, one composer, restrained controls. */
+.converse-page { background: #faf8f3; color: #302d29; }
+.converse-scroll { padding: 28px max(24px, calc((100% - 780px) / 2)); gap: 24px; }
+.converse-empty { padding: 20px 0; min-height: 320px; height: auto; flex: 1; }
+.converse-empty-art { object-fit: contain; width: 190px; height: 190px; }
+.converse-empty h2 { color: #39332c; font-size: 24px; }
+.converse-empty p { color: #796f63; font-size: 14px; }
+.converse-starters { gap: 10px; justify-content: center; }
+.converse-starter { background: #fffdf9; border: 1px solid #e4ddd2; border-radius: 12px; padding: 12px 16px; color: #705b43; box-shadow: none; font-size: 13px; }
+.converse-starter:hover { transform: none; background: #f5eddf; }
+.converse-bubble { max-width: 85%; padding: 13px 17px; font-size: 15px; line-height: 1.75; border-radius: 16px; box-shadow: none; }
+.converse-msg-user .converse-bubble { background: #f2e8d7; color: #3c342b; border: 1px solid transparent; }
+.converse-msg-cc .converse-bubble { background: #fffdfa; color: #302d29; border: 1px solid #ece6dc; }
+.converse-compose { align-items: stretch; flex: none; width: min(780px, calc(100% - 48px)); margin: 12px auto 24px; padding: 14px; display: flex; flex-direction: column; gap: 8px; border: 1px solid #ded6ca; border-radius: 18px; background: #fffdf9; box-shadow: 0 4px 18px #60452008; box-sizing: border-box; }
+.converse-compose:focus-within { border-color: #b99463; }
+.converse-textarea { width: 100%; min-height: 58px; max-height: 180px; padding: 4px 6px; border: 0; border-radius: 0; background: transparent; color: #302d29; font-size: 15px; line-height: 1.6; resize: vertical; box-sizing: border-box; }
+.converse-textarea:focus { border: 0; box-shadow: none; outline: none; }
+.converse-toolbar { display: flex; align-items: center; gap: 10px; }
+.converse-toolbar button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent; color: #725e48; font: inherit; font-size: 13px; }
+.converse-toolbar svg, .voice-replay-btn svg { width: 19px; height: 19px; }
+.converse-toolbar .converse-send-btn { margin-left: auto; background: #a77b40; color: #fff; min-width: 74px; }
+.converse-toolbar .converse-send-btn:hover { background: #916833; }
+.converse-toolbar button:disabled { opacity: .45; cursor: default; }
+.converse-toolbar .converse-voice-toggle.is-on { background: #f3eadc; color: #664d2d; }
+.converse-switch { width: 24px; height: 14px; background: #d9d4cb; border-radius: 10px; position: relative; }
+.converse-switch::after { content: ''; position: absolute; width: 10px; height: 10px; top: 2px; left: 2px; border-radius: 50%; background: #fff; }
+.is-on .converse-switch { background: #a77b40; }
+.is-on .converse-switch::after { left: 12px; }
+.converse-recording { display: flex; align-items: center; gap: 12px; min-height: 58px; color: #725638; }
+.converse-recording button { border: 1px solid #e4ddd2; border-radius: 10px; background: #fffdf9; padding: 10px 14px; color: #725638; cursor: pointer; }
+.converse-recording-dot { width: 9px; height: 9px; border-radius: 50%; background: #b88840; }
+#converse-recording-time { margin-left: auto; font-variant-numeric: tabular-nums; }
+.converse-recording-hint { margin: 0; text-align: center; color: #7e7161; font-size: 12px; }
+.converse-compose [hidden] { display: none !important; }
+.converse-page button:focus-visible { outline: 2px solid #a77b40; outline-offset: 3px; }
+.voice-replay-btn { opacity: .35; }
+.converse-msg:hover .voice-replay-btn, .voice-replay-btn:focus-visible { opacity: 1; }
+@media (max-width: 600px) {
+  .converse-scroll { padding: 18px 16px; }
+  .converse-compose { width: calc(100% - 24px); margin-bottom: 12px; }
+  .converse-empty-art { width: 140px; height: 140px; }
+  .converse-starters { flex-direction: column; }
+  .converse-toolbar { gap: 3px; }
+  .converse-toolbar button { padding: 8px; font-size: 12px; }
+}
+
+.converse-avatar { width: 32px; height: 32px; object-fit: contain; align-self: flex-start; margin-top: 8px; flex: none; }
