@@ -78,3 +78,23 @@
 .cc-portrait-placeholder svg { width: 32px; height: 32px; color: var(--cc-muted); }
 .profile-panel h2 { border: 0; padding: 8px 12px; min-height: 40px; top: -22px; background: var(--cc-surface); border-radius: 8px; }
 .memory-profile-tags span { border-image: none; border: 1px solid var(--cc-line); border-radius: 12px; padding: 6px 16px; background: var(--cc-surface-soft); }
+/* Foraging is a reading list; give the discoveries priority over the masthead. */
+.fd-wrap { padding-top: 18px; }
+.fd-hero { margin-bottom: 28px; padding-bottom: 20px; border-bottom: 1px solid var(--cc-line); }
+.fd-h1 { font-size: 26px; line-height: 1.3; font-weight: 700; }
+.fd-eyebrow { font-size: 13px; letter-spacing: 0; text-transform: none; color: var(--cc-muted); }
+.hb-card { border-left-width: 1px; box-shadow: none; padding: 18px 20px; }
+.hb-foot { border-top-style: solid; }
+.hb-chip.on[data-hb-status="new"], .hb-chip.on[data-hb-status="new"]:hover { background: var(--cc-surface-soft); border-color: var(--cc-line); color: #705b43; box-shadow: none; }
+.hb-description { margin-top: 10px; color: var(--cc-muted); font-size: 14px; line-height: 1.7; }
+.hb-description summary { cursor: pointer; }
+.hb-description summary span { color: #8c6431; white-space: nowrap; }
+.hb-description[open] summary { color: #705b43; }
+.hb-link a { overflow-wrap: anywhere; }
+.hb-status-menu summary { cursor: pointer; font-size: 12px; color: var(--cc-muted); padding: 4px 0; }
+.hb-status-menu .hb-chips { padding-top: 8px; }
+.hb-status-menu summary:focus-visible, .hb-description summary:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 3px; }
+
+.hb-description summary .hb-excerpt { color: inherit; white-space: normal; }
+.hb-description .hb-collapse-label, .hb-description[open] .hb-excerpt, .hb-description[open] .hb-expand-label { display: none; }
+.hb-description[open] .hb-collapse-label { display: inline; }

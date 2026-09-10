@@ -36,7 +36,7 @@ const TITLE_MAX = 32
  * 什么都挑不出来(整段就是个链接)时回落到域名。
  */
 export function deriveTitle(note: string, url: string | null): string {
-  const stripped = note.replace(URL_RE, ' ').replace(BULLET_RE, '').trim()
+  const stripped = note.replace(URL_RE, ' ').replace(/[*#`]/g, '').replace(BULLET_RE, '').trim()
   // 句读处断开;「——」「:」常被用来分隔「是什么」和「为什么」,也算断点。
   const head = stripped.split(/[。！？\n]|——|:|：/)[0]?.trim() ?? ''
   if (head.length > 0) return head.length > TITLE_MAX ? `${head.slice(0, TITLE_MAX)}…` : head
@@ -90,7 +90,12 @@ export function parseCatch(text: string): CatchItem[] {
     const url = urls[0] ?? null
     const note = unit.replace(BULLET_RE, '').trim()
     if (note === '') continue
-    items.push({ title: deriveTitle(note, url), url, note })
+    const previous = items[items.length - 1]
+    if (!url && previous?.url && /^(?:[*#\s]*)(?:为什么你会感兴趣|推荐理由|为什么推荐|对你有什么用|适合你|怎么用)[：:\s*]/.test(note)) {
+      previous.note += `\n\n${note}`
+    } else {
+      items.push({ title: deriveTitle(note, url), url, note })
+    }
   }
   return items
 }
