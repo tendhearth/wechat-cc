@@ -1,4 +1,4 @@
-import { ccPageArt } from "../cc-page-art.js"
+import { icon } from "./icons.js"
 // @ts-check
 /// <reference lib="dom" />
 //
@@ -38,13 +38,17 @@ let sending = false
 let voiceOut = localStorage.getItem("cc.voiceOut") === "1"
 let voiceConfigWarned = false
 
-// Voice-in (Stage 2): push-to-talk mic capture → agent_transcribe → auto-send.
+// Voice-in (Stage 2): push-to-talk mic capture → agent_transcribe → editable draft.
 /** @type {MediaRecorder|null} */
 let mediaRecorder = null
 /** @type {Blob[]} */
 let recordedChunks = []
 let recording = false
 let transcribing = false
+let requestingMic = false
+let discardRecording = false
+let recordingStarted = 0
+let recordingTimer = null
 
 // ── skeleton ───────────────────────────────────────────────────────────
 
@@ -53,10 +57,19 @@ function renderSkeleton(root) {
   root.innerHTML = `
     <div id="converse-scroll" class="converse-scroll"></div>
     <div class="converse-compose">
-      <button id="converse-voice-toggle" class="converse-voice-toggle" type="button" aria-pressed="false" title="自动朗读 CC 的回复">🔊 语音</button>
-      <button id="converse-mic" class="converse-mic" type="button" aria-pressed="false" title="按一下开始说，再按一下结束（语音转文字）">🎤 说话</button>
-      <textarea id="converse-input" class="converse-textarea" placeholder="跟 CC 说点什么…" rows="1"></textarea>
-      <button id="converse-send" class="btn primary converse-send-btn" type="button">发送</button>
+      <textarea id="converse-input" class="converse-textarea" aria-label="消息" placeholder="跟 CC 说点什么…" rows="2"></textarea>
+      <div id="converse-recording" class="converse-recording" hidden>
+        <button id="converse-cancel-recording" type="button">取消</button>
+        <span class="converse-recording-dot" aria-hidden="true"></span>
+        <span id="converse-recording-label" role="status">正在听…</span>
+        <span id="converse-recording-time">00:00</span>
+      </div>
+      <div class="converse-toolbar">
+        <button id="converse-mic" class="converse-mic" type="button" aria-pressed="false">${icon("mic-01")}<span>语音输入</span></button>
+        <button id="converse-voice-toggle" class="converse-voice-toggle" type="button" aria-pressed="false" title="自动朗读 CC 的回复"><span class="converse-switch" aria-hidden="true"></span>朗读回复</button>
+        <button id="converse-send" class="btn primary converse-send-btn" type="button">${icon("sent")}<span>发送</span></button>
+      </div>
+      <p id="converse-recording-hint" class="converse-recording-hint" hidden>结束后可检查文字再发送</p>
     </div>
   `
 }
@@ -91,9 +104,10 @@ function messageHtml(m) {
   // Replay is only meaningful for a real CC reply — not the "…" placeholder
   // and not the user's own bubble.
   const replayBtn = m.role === "cc" && !m.pending
-    ? `<button class="voice-replay-btn" type="button" data-msg-id="${m.id}" title="朗读">▶</button>`
+    ? `<button class="voice-replay-btn" type="button" data-msg-id="${m.id}" aria-label="朗读这条回复" title="朗读">${icon("play")} </button>`
     : ""
   return `<div class="converse-msg ${roleCls}${pendingCls}">
+    ${m.role === "cc" ? '<img class="converse-avatar" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="CC" width="32" height="32" />' : ""}
     <div class="converse-bubble">${escapeHtml(m.text)}</div>
     ${replayBtn}
   </div>`
@@ -121,9 +135,9 @@ async function speakAndPlay(deps, text) {
     if (/no_voice_config/.test(raw)) {
       if (voiceConfigWarned) return
       voiceConfigWarned = true
-      messages.push({ id: nextId++, role: "system", text: "🔇 未配置语音" })
+      messages.push({ id: nextId++, role: "system", text: "尚未配置朗读服务" })
     } else {
-      messages.push({ id: nextId++, role: "system", text: "🔇 语音失败" })
+      messages.push({ id: nextId++, role: "system", text: "暂时无法朗读" })
     }
     renderMessages()
     return
@@ -151,7 +165,7 @@ async function speakAndPlay(deps, text) {
   }
 }
 
-// ── voice-in (mic capture → transcribe → auto-send) ─────────────────────
+// ── voice-in (mic capture → transcribe → editable draft) ─────────────────────
 
 /** Reflect recording/transcribing state on the mic button. */
 function reflectMic() {
@@ -159,8 +173,22 @@ function reflectMic() {
   if (!btn) return
   btn.classList.toggle("is-recording", recording)
   btn.setAttribute("aria-pressed", String(recording))
-  btn.textContent = transcribing ? "⏳ 识别中" : recording ? "⏹ 结束" : "🎤 说话"
-  btn.toggleAttribute("disabled", transcribing)
+  const busy = recording || transcribing || requestingMic
+  btn.innerHTML = `${icon(recording ? "stop" : "mic-01")}<span>${transcribing ? "识别中…" : requestingMic ? "等待麦克风…" : recording ? "结束录音" : "语音输入"}</span>`
+  btn.toggleAttribute("disabled", transcribing || requestingMic || sending)
+  const panel = document.getElementById("converse-recording")
+  if (panel) panel.hidden = !busy
+  const label = document.getElementById("converse-recording-label")
+  if (label) label.textContent = transcribing ? "正在转成文字…" : requestingMic ? "等待麦克风权限…" : "正在听…"
+  const cancel = document.getElementById("converse-cancel-recording")
+  if (cancel) cancel.hidden = !recording
+  const hint = document.getElementById("converse-recording-hint")
+  if (hint) hint.hidden = !busy
+  const input = document.getElementById("converse-input")
+  if (input) input.hidden = busy
+  const send = document.getElementById("converse-send")
+  if (send) send.toggleAttribute("disabled", busy || sending)
+
 }
 
 /** Read a Blob as bare base64 (no data: prefix). @param {Blob} blob */
@@ -176,13 +204,13 @@ function blobToBase64(blob) {
 /**
  * Toggle mic capture. First press starts recording; second press stops and
  * transcribes the clip via `agent_transcribe`, drops the text into the compose
- * box, and auto-sends it. All failures surface as a muted system/error note —
+ * box for review before sending. All failures surface as a muted system/error note —
  * never a crash. `deps.media` is injectable for tests (defaults to the
  * browser's navigator.mediaDevices + MediaRecorder).
  * @param {Deps} deps
  */
 async function toggleMic(deps) {
-  if (transcribing) return
+  if (transcribing || requestingMic || sending) return
   if (recording) { try { mediaRecorder?.stop() } catch { /* already stopped */ } return }
 
   const md = deps.media ?? {
@@ -190,16 +218,28 @@ async function toggleMic(deps) {
     makeRecorder: (s) => new MediaRecorder(s),
   }
   let stream
+  requestingMic = true
+  reflectMic()
   try {
     stream = await md.getUserMedia({ audio: true })
   } catch (err) {
+    requestingMic = false
+    reflectMic()
     messages.push({ id: nextId++, role: "system", text: "麦克风用不了（权限或设备问题）" })
     renderMessages()
     return
   }
 
+  requestingMic = false
+  discardRecording = false
   recordedChunks = []
-  mediaRecorder = md.makeRecorder(stream)
+  try { mediaRecorder = md.makeRecorder(stream) } catch {
+    stream.getTracks().forEach(t => t.stop())
+    reflectMic()
+    messages.push({ id: nextId++, role: "error", text: "无法启动录音，请检查设备后重试" })
+    renderMessages()
+    return
+  }
   mediaRecorder.addEventListener("dataavailable", (ev) => {
     const e = /** @type {BlobEvent} */ (ev)
     if (e.data && e.data.size > 0) recordedChunks.push(e.data)
@@ -207,6 +247,8 @@ async function toggleMic(deps) {
   mediaRecorder.addEventListener("stop", async () => {
     stream.getTracks().forEach(t => t.stop())
     recording = false
+    clearInterval(recordingTimer)
+    if (discardRecording) { recordedChunks = []; reflectMic(); return }
     const type = mediaRecorder?.mimeType || "audio/webm"
     const blob = new Blob(recordedChunks, { type })
     if (blob.size === 0) { reflectMic(); return }
@@ -223,8 +265,10 @@ async function toggleMic(deps) {
         return
       }
       const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById("converse-input"))
-      if (input) input.value = text
-      await sendMessage(deps)   // auto-send the transcript
+      if (input) {
+        input.value = [input.value.trim(), text.trim()].filter(Boolean).join("\n")
+        input.focus()
+      }
     } catch (err) {
       transcribing = false
       reflectMic()
@@ -234,8 +278,22 @@ async function toggleMic(deps) {
       renderMessages()
     }
   })
-  mediaRecorder.start()
+  try { mediaRecorder.start() } catch {
+    stream.getTracks().forEach(t => t.stop())
+    reflectMic()
+    messages.push({ id: nextId++, role: "error", text: "无法启动录音，请重试" })
+    renderMessages()
+    return
+  }
   recording = true
+  recordingStarted = Date.now()
+  const updateTime = () => {
+    const seconds = Math.floor((Date.now() - recordingStarted) / 1000)
+    const clock = document.getElementById("converse-recording-time")
+    if (clock) clock.textContent = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`
+  }
+  updateTime()
+  recordingTimer = setInterval(updateTime, 1000)
   reflectMic()
 }
 
@@ -252,9 +310,9 @@ const STARTERS = [
 
 function emptyStateHtml() {
   return `<div class="converse-empty">
-    ${ccPageArt("chat")}
+    <img class="converse-empty-art" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="CC" width="190" height="190" />
     <h2>CC 在这儿</h2>
-    <p>直接在这里聊，不走微信。想不好开场？挑一个：</p>
+    <p>想说什么都可以。</p>
     <div class="converse-starters">
       ${STARTERS.map(t => `<button class="converse-starter" type="button" data-starter="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join("")}
     </div>
@@ -274,7 +332,7 @@ function renderMessages() {
 
 /** @param {Deps} deps */
 async function sendMessage(deps) {
-  if (sending) return
+  if (sending || recording || transcribing || requestingMic) return
   const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById("converse-input"))
   const sendBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById("converse-send"))
   if (!input || !sendBtn) return
@@ -285,6 +343,7 @@ async function sendMessage(deps) {
   const pendingId = nextId++
   messages.push({ id: pendingId, role: "cc", text: "…", pending: true })
   sending = true
+  reflectMic()
   sendBtn.disabled = true
   input.disabled = true
   renderMessages()
@@ -333,6 +392,7 @@ async function sendMessage(deps) {
     messages.push({ id: nextId++, role: "error", text: friendly })
   } finally {
     sending = false
+    reflectMic()
     sendBtn.disabled = false
     input.disabled = false
     renderMessages()
@@ -350,7 +410,7 @@ function wireEvents(root, deps) {
 
   const input = /** @type {HTMLTextAreaElement|null} */ (root.querySelector("#converse-input"))
   input?.addEventListener("keydown", (ev) => {
-    if (ev instanceof KeyboardEvent && ev.key === "Enter" && !ev.shiftKey) {
+    if (ev instanceof KeyboardEvent && ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
       ev.preventDefault()
       sendMessage(deps).catch(err => console.error("converse send failed", err))
     }
@@ -358,6 +418,12 @@ function wireEvents(root, deps) {
 
   root.querySelector("#converse-voice-toggle")?.addEventListener("click", () => {
     setVoiceOut(!voiceOut)
+  })
+
+  root.querySelector("#converse-cancel-recording")?.addEventListener("click", () => {
+    if (!recording) return
+    discardRecording = true
+    mediaRecorder?.stop()
   })
 
   root.querySelector("#converse-mic")?.addEventListener("click", () => {
@@ -369,7 +435,7 @@ function wireEvents(root, deps) {
   // per-bubble.
   root.querySelector("#converse-scroll")?.addEventListener("click", (ev) => {
     const target = ev.target
-    if (!(target instanceof HTMLElement)) return
+    if (!(target instanceof Element)) return
     const starter = target.closest(".converse-starter")
     if (starter instanceof HTMLElement) {
       const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById("converse-input"))
