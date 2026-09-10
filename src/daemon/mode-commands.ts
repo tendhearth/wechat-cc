@@ -111,6 +111,20 @@ const KNOWN_SLASH_COMMANDS = new Set([
 // unchanged below — the user might genuinely be mid-sentence.
 const UNKNOWN_SLASH_RE = /^\/[a-zA-Z]{2,16}$/
 
+/** 小型 Levenshtein:只给 /api 打错字时找近似项用,名字都很短。 */
+function editDistance(a: string, b: string): number {
+  const dp: number[] = Array.from({ length: b.length + 1 }, (_, j) => j)
+  for (let i = 1; i <= a.length; i++) {
+    let prev = dp[0]!; dp[0] = i
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = dp[j]!
+      dp[j] = Math.min(dp[j]! + 1, dp[j - 1]! + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1))
+      prev = tmp
+    }
+  }
+  return dp[b.length]!
+}
+
 export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
   function isProviderCommand(slashWord: string): ProviderId | null {
     const lower = slashWord.toLowerCase()
@@ -195,6 +209,36 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     const slash = (id: ProviderId) => id === 'claude' ? '/cc' : id === 'openai' ? '/api' : `/${id}`
     const have = order.filter(id => deps.registry.has(id)).map(slash)
     return have.length ? have.join(' ') : '(一个都没注册)'
+  }
+
+  /**
+   * `/api <名字>` 的核对:别名与网关列表里都找不到就是打错了。
+   *  ok        → 网关认的拼法(大小写按网关归一)
+   *  unknown   → 不在网关上;suggestions 是近似项(编辑距离 ≤ 2 或同前缀),最多 3 个
+   *  unverified→ 网关列表拿不到(没接线 / 报错),调用方原样透传并说明
+   */
+  async function resolveOpenaiModel(name: string): Promise<{ kind: 'ok'; model: string } | { kind: 'unknown'; suggestions: string[] } | { kind: 'unverified' }> {
+    if (!deps.openaiModels) return { kind: 'unverified' }
+    let listed: string[]
+    try {
+      const r = await deps.openaiModels.list()
+      if (r.error) return { kind: 'unverified' }
+      listed = r.models
+    } catch { return { kind: 'unverified' } }
+    const aliases = deps.readConfig?.().openaiAliases ?? {}
+    const lower = name.toLowerCase()
+    const exact = listed.find(m => m === name) ?? listed.find(m => m.toLowerCase() === lower)
+    if (exact) return { kind: 'ok', model: exact }
+    const aliasCI = Object.keys(aliases).find(a => a.toLowerCase() === lower)
+    if (aliasCI) return { kind: 'ok', model: aliases[aliasCI]! }
+    const candidates = [...new Set([...Object.keys(aliases), ...listed])]
+    const near = candidates
+      .map(c => ({ c, d: editDistance(lower, c.toLowerCase()) }))
+      .filter(x => x.d <= 2 || (lower.length >= 3 && x.c.toLowerCase().startsWith(lower.slice(0, 3))))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, 3)
+      .map(x => x.c)
+    return { kind: 'unknown', suggestions: near }
   }
 
   /** `/api list`:本对话当前 · 全局默认 · 别名 · 网关现有(用户主动触发才拨)。 */
@@ -450,16 +494,28 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
             await reply(msg.chatId, `❌ provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
             return true
           }
-          // 别名先解(只对 openai):ds → DeepSeek。解不到就原样透传 —— 网关
-          // 上的原名本来就能直接用。
+          // 别名先解(只对 openai):ds → DeepSeek。解不到再问网关:名字在网关列表里才切,
+          // 不在就拒绝并给近似项 —— 2026-09-10 主人手滑 `/api jimi`,原样透传把对话钉到了
+          // 一个不存在的模型,要到下一条消息报错才知道。大小写不同(Kimi vs KIMI)按网关的
+          // 拼法归一。网关列表拿不到(没接线 / 超时)时才退回原样透传,并在回复里说明没核对。
           const aliased = providerId === 'openai' ? deps.readConfig?.().openaiAliases?.[tail] : undefined
-          const model = aliased ?? tail
+          let model = aliased ?? tail
+          let unverified = false
+          if (providerId === 'openai' && !aliased) {
+            const r = await resolveOpenaiModel(tail)
+            if (r.kind === 'unknown') {
+              await reply(msg.chatId, `❓ 网关上没有 \`${tail}\`${r.suggestions.length ? `,你是不是想说:${r.suggestions.map(s => `\`${s}\``).join(' / ')}` : ''}。看全部:/api list`)
+              return true
+            }
+            if (r.kind === 'ok') model = r.model
+            else unverified = true
+          }
           // 按对话钉(Mode.solo.model),不再改全局 agent-config —— 这个群
           // 钉 DeepSeek 不该把别的群也换了。全局默认走 /set / 设置面板。
           deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: providerId, model })
           const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
-          const shown = aliased ? `${model}(别名 ${tail})` : model
-          await reply(msg.chatId, `✅ 这个对话切到 ${dn} (solo)，模型 = ${shown}（只对这个对话）。下条消息开始生效。`)
+          const shown = aliased ? `${model}(别名 ${tail})` : model !== tail ? `${model}(按网关拼法,你输的是 ${tail})` : model
+          await reply(msg.chatId, `✅ 这个对话切到 ${dn} (solo)，模型 = ${shown}（只对这个对话）。下条消息开始生效。${unverified ? '(网关列表拿不到,没核对这个名字;下条消息报错就换一个)' : ''}`)
           deps.log('MODE_CMD', `chat=${msg.chatId} → solo+${providerId} model=${model}`)
           return true
         }
