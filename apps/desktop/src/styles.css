@@ -3225,12 +3225,13 @@ input { font: inherit; color: inherit; }
   display: block;
 }
 .sub-user-empty {
-  min-height: 142px;
-  width: 100%;
+  min-height: 40px;
+  width: fit-content;
+  padding: 8px 12px;
   display: flex;
-  flex-direction: column;
+  gap: 6px;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -6631,3 +6632,26 @@ input { font: inherit; color: inherit; }
 }
 
 .converse-avatar { width: 32px; height: 32px; object-fit: contain; align-self: flex-start; margin-top: 8px; flex: none; }
+
+/* Connection controls stay beside the account; recovered incidents remain available. */
+.connection-options,
+.connection-history {
+  margin-top: 10px;
+  color: #795f49;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.connection-options summary,
+.connection-history summary {
+  width: fit-content;
+  cursor: pointer;
+  padding: 4px 0;
+}
+.connection-options summary:focus-visible,
+.connection-history summary:focus-visible {
+  outline: 2px solid #b98148;
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+.connection-options .btn { margin-top: 6px; }
+.connection-history p { margin: 4px 0 10px; }

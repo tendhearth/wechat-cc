@@ -102,6 +102,11 @@ export function renderDashboard(report) {
   const rebindBtn = document.getElementById("dash-rebind")
   const testConnBtn = document.getElementById("dash-test-conn")
   if (stopBtn) stopBtn.hidden = hero.state !== "connected"
+  const connectionOptions = document.getElementById("dash-connection-options")
+  if (connectionOptions) {
+    connectionOptions.hidden = hero.state !== "connected"
+    if (connectionOptions.hidden) connectionOptions.open = false
+  }
   if (restartBtn) restartBtn.hidden = hero.state !== "recovering"
   if (rebindBtn) rebindBtn.hidden = hero.state !== "taken_over"
   // "测试本机连接" is only useful when the state is NOT already a confirmed
@@ -171,9 +176,8 @@ export function renderDashboard(report) {
     if (subRows.length === 0) {
       tbody.innerHTML = `
         <button class="sub-user-empty sub-user-empty-trigger" type="button" data-action="add-sub-user">
-          <span class="sub-user-empty-icon" aria-hidden="true">${icon("user-add-01", { size: 28 })}</span>
-          <div class="sub-user-empty-title">还没有子用户</div>
-          <div class="sub-user-empty-copy">点击这里添加一位</div>
+          <span aria-hidden="true">＋</span>
+          <span>添加使用者</span>
         </button>
       `
     } else {
@@ -918,16 +922,28 @@ export async function loadLastIncident(deps) {
   const banner = document.getElementById("dash-health-banner")
   if (!banner) return
   const latest = list[0]
-  if (!latest) { banner.hidden = true; return }
+  const history = document.getElementById("dash-health-history")
+  const historyDetail = document.getElementById("dash-health-history-detail")
+  if (!latest) {
+    banner.hidden = true
+    if (history) { history.hidden = true; history.open = false }
+    return
+  }
 
   const started = new Date(latest.startedAt)
   const ended = latest.endedAt ? new Date(latest.endedAt) : null
   const mins = ended ? Math.round((ended.getTime() - started.getTime()) / 60000) : null
   const span = mins === null ? "仍在进行" : mins >= 60 ? `约 ${Math.round(mins / 60)} 小时` : `约 ${mins} 分钟`
-  banner.textContent = ended
+  const message = ended
     ? `你的 bot 在 ${started.toLocaleString()} 前后断开过 ${span}，现已恢复。`
     : `你的 bot 从 ${started.toLocaleString()} 起处于断开状态（${span}）。`
-  banner.hidden = false
+  banner.hidden = Boolean(ended && history && historyDetail)
+  banner.textContent = banner.hidden ? "" : message
+  if (history && historyDetail) {
+    history.hidden = !ended
+    if (!ended) history.open = false
+    historyDetail.textContent = ended ? message : ""
+  }
 
   let lastSeen = null
   try { lastSeen = globalThis.localStorage?.getItem(LAST_SEEN_INCIDENT_KEY) ?? null } catch { /* no localStorage (non-browser test host) — treat as first run */ }
@@ -955,7 +971,7 @@ export async function loadLastIncident(deps) {
   try {
     await deps.invoke("notify_user", {
       title: ended ? "wechat-cc: bot 已恢复" : "wechat-cc: bot 当前处于断开状态",
-      body: banner.textContent,
+      body: message,
     })
   } catch (err) {
     // 通知投递失败不重试、不阻塞 —— 桌面没开、系统通知权限被拒都是正常情况;
