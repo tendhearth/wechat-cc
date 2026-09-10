@@ -134,11 +134,24 @@ interface CliEvent {
   已知代价:终端 TUI 若还开着,两个进程共用一份记录 —— 回复里不提醒,主人回终端时 Claude 自己会说。
 - 那边(别的机器)的会话:v1 回「这台机接不上」,转发见 §6.5。
 
-### 6.5 这边 / 那边(一脑多手)—— 待做
+### 6.5 这边 / 那边(一脑多手)
 
-手上的 daemon 没有微信,要把 hook 事件与权限请求经 A2A 转给脑;脑按信封里的机器与空闲时长选面。
-「看」「@」对那边的会话要脑再转给手执行。配对流程要给手一把能叫脑的 key(现在只有脑叫手的)。
+```
+手(没有微信)                                            脑(绑微信)
+ hook → 本机 daemon ── 有能叫回去的脑? ──是──→ POST <脑>/a2a/cli/event      → 脑的 hub(machine=手名,origin_agent=手 id)
+                          │                     POST <脑>/a2a/cli/permission → 脑的权限中继(微信卡片写「那边(手)」)
+                          │                     POST 同路径带 hash           → 轮询状态
+                          否 → 本机照旧
+ 人就在这只手前(idle_s 小)→ 本机桌面通知 / 终端自己问,不惊动脑(脑够不着这块屏幕)
+ 「看 / @」那边的会话 ←── 脑 POST <手>/a2a/cli/reply(派活钥匙,may_exec 门)──  看:手回 markdown,脑做页面
+                                                                                说:手起 resume,跑完 POST <脑>/a2a/notify 送回(主人看到 [A2A:手] …)
+```
 
+- **配对时把「怎么叫回脑」交给手**:`hand join` 的 /a2a/pair 多带 `brain_url`(脑的 a2a-info.json)与
+  `callback_key`(脑侧那条手记录的 inbound key);手把它们存在脑记录的 url / outbound_api_key 上。
+  老脑不带 ⇒ 手记录仍是 `unused` 哨兵,只能被派活。**已有的手要重新 `hand join` 一次**才有回叫。
+- 手侧判「有没有脑」:registry 里 may_exec、url 不是占位、outbound_api_key 不是 'unused' 的那条。
+- 脑侧 origin_agent 只认已验证的 Bearer 身份,永远不信 body 里写的。
 ### 6.2 CLI
 
 - `wechat-cc hook claude` / `wechat-cc hook codex`:从 stdin 读 hook JSON,归一化后 POST;永远 exit 0。

@@ -220,7 +220,7 @@ export interface InternalApiDeps {
    * main.ts 在 bootstrap 之后 setCliEvents —— hub 要 boot.sendAssistantText。
    * 没设之前 POST /v1/cli/event 503。
    */
-  cliEvents?: Pick<import('../../core/cli-events').CliEventHub, 'ingest'>
+  cliEvents?: { ingest(ev: import('../../core/cli-events').CliEvent): import('../../core/cli-events').CliEventAction | Promise<import('../../core/cli-events').CliEventAction> }
   /** 终端会话权限 → 微信 y/n(spec 2026-09-09-cli-hook-push §6.3)。main.ts setCliPermissions。 */
   cliPermissions?: Pick<import('../../core/cli-permission-relay').CliPermissionRelay, 'open' | 'status' | 'wait'>
   /**

@@ -19,7 +19,7 @@ export function cliEventRoutes(deps: InternalApiDeps): RouteTable {
   return {
     'POST /v1/cli/event': async (_q, body) => {
       if (!deps.cliEvents) return { status: 503, body: { error: 'cli_events_not_wired' } }
-      const action = deps.cliEvents.ingest(body as CliEvent)
+      const action = await deps.cliEvents.ingest(body as CliEvent)
       return { status: 200, body: { ok: true, action } }
     },
     // 权限中继(§6.3):PermissionRequest hook 先 POST 登记(主人在场就直接回

@@ -48,7 +48,12 @@ import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
 import { makeCliEventHub, makeProjectNamer } from '../core/cli-events'
 import { makeCliPermissionRelay } from '../core/cli-permission-relay'
-import { makeCliReplyHandler } from './cli-reply-handler'
+import { makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor } from './cli-reply-handler'
+import { makeBrainForwarder } from './cli-brain-forward'
+import { makeRemoteReply } from './cli-remote-reply'
+import { CliEventRequest, CliPermissionRequest } from './internal-api/schema'
+import type { CliEvent } from '../core/cli-events'
+import type { CliPermissionRequest as CliPermissionRequestT } from '../core/cli-permission-relay'
 import { machineIdleSeconds } from '../lib/machine-idle'
 import { notifyDesktop } from '../lib/desktop-notify'
 import { hostname as osHostname } from 'node:os'
@@ -553,7 +558,6 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       },
       localMachine: osHostname(),
     })
-    internalApi.setCliEvents(cliEvents)
     lc.register({ name: 'cli-events', stop: async () => cliEvents.dispose() })
     // 终端会话的权限 → 微信 y/n(同 spec §6.3)。复用 ilink.askUser,所以微信「y 码」、
     // 桌宠权限卡都能拍板 —— 一个权限,几个呈现面。主人在场(3 分钟内敲过字)就不问。
@@ -569,8 +573,52 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       log: (t, l) => log(t, l),
       localMachine: osHostname(),
     })
-    internalApi.setCliPermissions(cliPermissions)
     lc.register({ name: 'cli-permissions', stop: async () => cliPermissions.dispose() })
+    // 这边 / 那边(§6.5)。手侧:配对时脑留了回叫的 url + key ⇒ 本机终端事件与权限请求
+    // 转给脑,由脑决定发不发、发到哪;人就在这只手前的除外(本机桌面说一声)。
+    // 脑侧:a2a 服务多三条路 —— 收手的事件 / 权限、把「看 / 说」派给手。
+    const a2a = boot.a2aDeps
+    const forwarder = a2a ? makeBrainForwarder({
+      registry: a2a.registry, client: a2a.client, selfId: boot.selfId,
+      notifyDesktop: (t, b) => notifyDesktop(t, b),
+      projectName: makeProjectNamer(() => ilink.projects.list()),
+      log: (t, l) => log(t, l),
+    }) : null
+    internalApi.setCliEvents({
+      ingest: (ev) => forwarder?.brain() ? forwarder.event(ev) : cliEvents.ingest(ev),
+    })
+    internalApi.setCliPermissions({
+      open: async (req) => (forwarder?.brain() ? await forwarder.permissionOpen(req) : null) ?? cliPermissions.open(req),
+      status: (h) => cliPermissions.status(h),
+      wait: (h, ms) => forwarder?.ownsHash(h) ? forwarder.permissionWait(h, ms) : cliPermissions.wait(h, ms),
+    })
+    const replyCore = makeCliReplyCore({ hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously })
+    const handExecutor = makeHandReplyExecutor(replyCore, {
+      hub: cliEvents,
+      notifyBrain: async (text) => {
+        const link = forwarder?.brain()
+        if (!link || !a2a) throw new Error('no brain to notify')
+        const r = await a2a.client.send({ url: `${link.url}/a2a/notify`, bearer: link.key, body: { agent_id: boot.selfId, text } })
+        if (!r.ok) throw new Error(r.error ?? `http_${r.http_status ?? '?'}`)
+      },
+      log: (t, l) => log(t, l),
+    })
+    boot.a2aServer?.setCliHandlers({
+      onEvent: async (agent, raw) => {
+        const parsed = CliEventRequest.safeParse(raw)
+        if (!parsed.success) return { ok: false, error: 'invalid_body' }
+        const ev: CliEvent = { ...parsed.data, origin_agent: agent.id, machine: parsed.data.machine || agent.name }
+        return { ok: true, action: cliEvents.ingest(ev) }
+      },
+      onPermissionOpen: async (agent, raw) => {
+        const parsed = CliPermissionRequest.safeParse(raw)
+        if (!parsed.success) return { error: 'invalid_body' }
+        const req: CliPermissionRequestT = { ...parsed.data, machine: parsed.data.machine || agent.name }
+        return cliPermissions.open(req)
+      },
+      onPermissionWait: async (_agent, hash, waitMs) => ({ hash, status: await cliPermissions.wait(hash, waitMs) }),
+      onReply: async (_agent, req) => handExecutor(req),
+    })
     // 「看 码」「@码 文本」:主人对某条终端会话说话。只认主人;那边的会话 v1 先说明。
     const cliReplyHandler = makeCliReplyHandler({
       hub: cliEvents,
@@ -581,6 +629,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       log: (t, l) => log(t, l),
       dangerously,
       localMachine: osHostname(),
+      ...(a2a ? { remote: makeRemoteReply({ registry: a2a.registry, client: a2a.client, selfId: boot.selfId }) } : {}),
     })
     const wired = wireMain({
       cliReply: cliReplyHandler,

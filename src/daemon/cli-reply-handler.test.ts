@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeCliReplyHandler, readTail, defaultRunner, RESUME_TIMEOUT_MS, type Runner } from './cli-reply-handler'
+import { makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor, readTail, defaultRunner, RESUME_TIMEOUT_MS, type Runner } from './cli-reply-handler'
 import type { CliSessionInfo } from '../core/cli-events'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -53,13 +53,31 @@ describe('cli-reply-handler', () => {
     await a.h.handle('看 a1b2c3', 'c')
     expect(a.sent[0]).toContain('没见过会话码「a1b2c3」')
     expect(a.sent[0]).toContain('zzzzzz(codex)')
-    const b = harness({ sessions: [sess({ machine: 'win-test' })] })
+    const b = harness({ sessions: [sess({ machine: 'win-test', origin_agent: 'win-test' })] })
     await b.h.handle('@a1b2c3 继续', 'c')
     expect(b.sent[0]).toContain('那边(win-test)')
     expect(b.sent[0]).toContain('接不上')
     const c = harness({ sessions: [sess({ transcript_path: undefined })] })
     await c.h.handle('看 a1b2c3', 'c')
     expect(c.sent[0]).toContain('没报过记录路径')
+  })
+
+  it('那边的会话:看 → remote.view 拿 markdown 做页面;说 → remote.say 转过去', async () => {
+    const remoteView = vi.fn(async () => ({ ok: true as const, markdown: '# 那边\n\n**你**:x' }))
+    const remoteSay = vi.fn(async () => ({ ok: true }))
+    const sent: string[] = []
+    const s = sess({ origin_agent: 'win-test', machine: 'WIN-PC' })
+    const h = makeCliReplyHandler({
+      hub: { lookup: () => s, sessions: () => [s] }, isOwner: () => true,
+      sendMessage: async (_c, t) => { sent.push(t) }, sharePage: async () => 'https://x/docs/r',
+      log: () => {}, dangerously: false, localMachine: 'here', remote: { view: remoteView, say: remoteSay },
+    })
+    await h.handle('看 a1b2c3', 'c')
+    expect(remoteView).toHaveBeenCalledWith(s)
+    expect(sent[0]).toBe('claude · 会话 a1b2c3 · 那边(WIN-PC) 最近的对话:https://x/docs/r')
+    await h.handle('@a1b2c3 继续', 'c')
+    expect(remoteSay).toHaveBeenCalledWith(s, '继续')
+    expect(sent[1]).toContain('在那边接着跑')
   })
 
   it('@码 文本:先回「接着跑」,起 resume 进程(带 dangerously 旗),结果回来;busy 有始有终', async () => {
@@ -77,7 +95,7 @@ describe('cli-reply-handler', () => {
   it('跑失败 / 超时 / 超长输出各有说法', async () => {
     const fail = harness({ run: async () => ({ code: 1, stdout: '', stderr: 'boom', timedOut: false }) })
     await fail.h.handle('@a1b2c3 x', 'c'); await tick(); await tick()
-    expect(fail.sent[1]).toContain('没跑起来(exit 1):boom')
+    expect(fail.sent[1]).toContain('没跑起来(exit 1:boom)')
     const slow = harness({ run: async () => ({ code: null, stdout: '一半', stderr: '', timedOut: true }) })
     await slow.h.handle('@a1b2c3 x', 'c'); await tick(); await tick()
     expect(slow.sent[1]).toContain('还没完,先停了')
@@ -108,5 +126,21 @@ describe('defaultRunner(真起进程)', () => {
     const missing = await defaultRunner('definitely-not-a-command-xyz', [], process.cwd(), 1000)
     expect(missing.code).toBeNull()
     expect(missing.stderr).toMatch(/ENOENT|not found/)
+  })
+})
+
+describe('手侧 A2A 面(makeHandReplyExecutor)', () => {
+  it('view → markdown;say → 起 resume,跑完 notifyBrain;不认识的会话 → session_unknown', async () => {
+    const s = sess()
+    const core = makeCliReplyCore({ hub: { lookup: () => s, sessions: () => [s] }, run: async () => ({ code: 0, stdout: '那边改好了', stderr: '', timedOut: false }), log: () => {}, dangerously: false, readFile: () => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: '尾巴' }] } }) })
+    const brain: string[] = []
+    const exec = makeHandReplyExecutor(core, { hub: { lookup: (p) => p === 'nope' ? null : s }, notifyBrain: async (t) => { brain.push(t) }, log: () => {} })
+    const v = await exec({ kind: 'view', session_id: s.session_id })
+    expect(v.ok).toBe(true); expect(v.markdown).toContain('尾巴')
+    expect(await exec({ kind: 'say', session_id: s.session_id, text: '继续' })).toEqual({ ok: true })
+    await tick(); await tick()
+    expect(brain[0]).toBe('🔔 claude · 会话 a1b2c3 回来了\n那边改好了')
+    expect(await exec({ kind: 'view', session_id: 'nope' })).toEqual({ ok: false, error: 'session_unknown' })
+    expect(await exec({ kind: 'say', session_id: s.session_id })).toEqual({ ok: false, error: 'text_required' })
   })
 })

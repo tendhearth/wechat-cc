@@ -34,6 +34,8 @@ export interface CliEvent {
   idle_s?: number
   /** hook 那头的主机名。与 daemon 所在机器不同 ⇒ 「那边」。 */
   machine?: string
+  /** 经 A2A 从哪只手转来的(脑侧由已验证的 agent id 填,永远不信 body 里的)。 */
+  origin_agent?: string
 }
 
 export type CliEventAction = 'scheduled' | 'cancelled' | 'cleared' | 'noop'
@@ -69,6 +71,7 @@ export interface CliSessionInfo {
   cwd: string
   machine?: string
   transcript_path?: string
+  origin_agent?: string
   lastSeenAt: number
 }
 
@@ -126,7 +129,7 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
   let outbox: string[] = []
   let flushTimer: ReturnType<typeof setTimeout> | null = null
 
-  function state(ev: Pick<CliEvent, 'session_id' | 'source' | 'cwd' | 'machine' | 'transcript_path'>): SessionState {
+  function state(ev: Pick<CliEvent, 'session_id' | 'source' | 'cwd' | 'machine' | 'transcript_path' | 'origin_agent'>): SessionState {
     let st = sessions.get(ev.session_id)
     if (!st) {
       st = { info: { session_id: ev.session_id, source: ev.source, cwd: ev.cwd, lastSeenAt: now() }, pushedSincePrompt: false }
@@ -141,6 +144,7 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
     st.info.cwd = ev.cwd
     if (ev.machine) st.info.machine = ev.machine
     if (ev.transcript_path) st.info.transcript_path = ev.transcript_path
+    if (ev.origin_agent) st.info.origin_agent = ev.origin_agent
     return st
   }
 

@@ -579,3 +579,43 @@ describe('POST /a2a/exec —— 只有我授权过的大脑能派活', () => {
     } finally { server.stop() }
   })
 })
+
+describe('终端会话桥 /a2a/cli/* (spec 2026-09-09-cli-hook-push §6.5)', () => {
+  const post = (baseUrl: string, path: string, bearer: string, body: unknown) => fetch(`${baseUrl}${path}`, {
+    method: 'POST', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
+  })
+  it('没挂处理器 → 501;认证同 notify(缺 / 错 Bearer → 401);挂上后按路径分发', async () => {
+    const { server, baseUrl } = await startServer()
+    try {
+      const key = rec('alpha').inbound_api_key
+      expect((await post(baseUrl, '/a2a/cli/event', key, { agent_id: 'alpha', kind: 'stop' })).status).toBe(501)
+      expect((await post(baseUrl, '/a2a/cli/event', 'wrong', { agent_id: 'alpha' })).status).toBe(401)
+      expect((await fetch(`${baseUrl}/a2a/cli/event`, { method: 'POST', body: '{"agent_id":"alpha"}' })).status).toBe(401)
+      const seen: unknown[] = []
+      server.setCliHandlers({
+        onEvent: async (agent, ev) => { seen.push({ agent: agent.id, ev }); return { ok: true, action: 'scheduled' } },
+        onPermissionOpen: async (_a, req) => ({ status: 'pending', hash: 'k3x9z', got: req['tool_name'] }),
+        onPermissionWait: async (_a, hash, waitMs) => ({ hash, status: 'allow', waitMs }),
+        onReply: async (_a, req) => ({ ok: true, echo: req }),
+      })
+      const e = await post(baseUrl, '/a2a/cli/event', key, { agent_id: 'alpha', source: 'claude', kind: 'stop', session_id: 's', cwd: '/w' })
+      expect(await e.json()).toEqual({ ok: true, action: 'scheduled' })
+      expect(seen[0]).toMatchObject({ agent: 'alpha', ev: { kind: 'stop', session_id: 's' } })
+      const o = await post(baseUrl, '/a2a/cli/permission', key, { agent_id: 'alpha', tool_name: 'Bash' })
+      expect(await o.json()).toEqual({ status: 'pending', hash: 'k3x9z', got: 'Bash' })
+      const w = await post(baseUrl, '/a2a/cli/permission', key, { agent_id: 'alpha', hash: 'k3x9z', wait_ms: 99999 })
+      expect(await w.json()).toEqual({ hash: 'k3x9z', status: 'allow', waitMs: 25_000 })
+    } finally { await server.stop() }
+  })
+  it('/a2a/cli/reply 只让 may_exec 的脑调;坏 kind → 400', async () => {
+    const brain = { ...rec('brain'), may_exec: true }
+    const { server, baseUrl } = await startServer({ agents: [rec('alpha'), brain] })
+    try {
+      server.setCliHandlers({ onReply: async (_a, req) => ({ ok: true, echo: req }) })
+      expect((await post(baseUrl, '/a2a/cli/reply', rec('alpha').inbound_api_key, { agent_id: 'alpha', kind: 'view', session_id: 's' })).status).toBe(403)
+      const ok = await post(baseUrl, '/a2a/cli/reply', brain.inbound_api_key, { agent_id: 'brain', kind: 'say', session_id: 's', text: '继续' })
+      expect(await ok.json()).toEqual({ ok: true, echo: { kind: 'say', session_id: 's', text: '继续' } })
+      expect((await post(baseUrl, '/a2a/cli/reply', brain.inbound_api_key, { agent_id: 'brain', kind: 'nope', session_id: 's' })).status).toBe(400)
+    } finally { await server.stop() }
+  })
+})
