@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CC 聊天三状态预览</title>
+<base href="../../src/">
+<link rel="stylesheet" href="styles.css">
+<style>body{margin:0;height:100vh;display:flex;flex-direction:column;background:#faf8f3}.review-nav{display:flex;gap:20px;align-items:center;padding:18px 24px;border-bottom:1px solid #e8dfd1;color:#78654f;font:14px system-ui}.review-nav a{color:inherit}.review-nav span{margin-left:auto;font-size:12px}.converse-page{flex:1;overflow:hidden}#converse-root{display:flex;flex-direction:column;min-height:0}</style></head>
+<body><nav class="review-nav"><strong>CC</strong><a href="../art/cc-chat/preview.html">空白</a><a href="../art/cc-chat/preview.html?state=chat">对话中</a><a href="../art/cc-chat/preview.html?state=recording">录音中</a><span>交互样板 · 模拟消息与录音</span></nav><main id="converse-root" class="converse-page"></main>
+<script type="module">
+import { initConversePage } from './modules/converse.js';
+let count=0;
+initConversePage({invoke:async(cmd)=>cmd==='agent_transcribe'?'明天要交的方案，还没整理好。':cmd==='agent_converse'?(count++===0?'我们先挑一件最需要照顾的事。\n你现在最挂心的是什么？':'那就从方案开始。\n先告诉我，它要解决什么问题？'):{},media:{getUserMedia:async()=>({getTracks:()=>[{stop(){}}]}),makeRecorder:()=>{const handlers={};return {mimeType:'audio/webm',addEventListener:(name,fn)=>handlers[name]=fn,start(){},stop(){handlers.dataavailable({data:new Blob(['preview'])});handlers.stop()}}}}});
+const state=new URLSearchParams(location.search).get('state');
+async function send(text){document.querySelector('#converse-input').value=text;document.querySelector('#converse-send').click();await new Promise(r=>setTimeout(r,20))}
+if(state){await send('今天事情有点多，不知道先做哪个。');await send('明天要交的方案，还没整理好。')}
+if(state==='recording')document.querySelector('#converse-mic').click();
+</script></body></html>
