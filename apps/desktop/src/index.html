@@ -413,10 +413,6 @@
                 </div>
                 <div class="moment-actions">
                   <span class="pending" id="dash-pending"></span>
-                  <button id="dash-stop" class="moment-connect-btn">
-                    <span class="ic" data-hg-icon="plug-01"></span>
-                    断开连接
-                  </button>
                   <button id="dash-restart" class="moment-connect-btn">
                     <span class="ic" data-hg-icon="refresh"></span>
                     重新连接
@@ -433,14 +429,8 @@
 
               <aside class="moment-side" aria-label="连接状态">
               <section class="moment-users" aria-label="用户连接状态">
-                <!-- 上次故障横幅(Task 8, spec 2026-08-03-connection-health §8):
-                     桌面没开着时通知无处可去 —— 2026-08-02 那次断了 10.5 小时,
-                     主人只有翻日志才发现。只要有故障记录就显示最新一条,不受
-                     "未读"影响;见 modules/dashboard.js 的 loadLastIncident。
-                     Lives INSIDE the right column on purpose: as a direct
-                     grid child it grabbed the (1,2) cell whenever it became
-                     visible, shoving .moment-users to a second row and
-                     pushing 添加用户 below the fold. -->
+                <!-- Ongoing incidents stay prominent; recovered records remain
+                     expandable below the account, regardless of read status. -->
                 <p id="dash-health-banner" class="dash-health-banner" hidden></p>
                 <!-- 文件访问(macOS TCC,2026-09-04):daemon 自己读不到主人的文件夹时在这儿说,
                      并带去系统设置。权限缺失此前是静默的 —— 主人只会觉得 bot 变笨了。 -->
@@ -450,6 +440,14 @@
                 </div>
                 <h2>当前连接中的用户</h2>
                 <div id="accounts-current" class="current-user-card"></div>
+                <details id="dash-connection-options" class="connection-options" hidden>
+                  <summary>连接选项</summary>
+                  <button id="dash-stop" class="btn ghost" type="button">断开连接</button>
+                </details>
+                <details id="dash-health-history" class="connection-history" hidden>
+                  <summary>上次连接中断已恢复</summary>
+                  <p id="dash-health-history-detail"></p>
+                </details>
                 <div id="brain-health" class="brain-health" hidden></div>
                 <button id="open-phone-settings" class="phone-settings-btn" type="button" title="生成二维码,手机扫码打开设置页(10 分钟内有效)"><span aria-hidden="true">↗</span> 手机扫码改设置</button>
                 <div class="moment-subhead" id="accounts-subhead">

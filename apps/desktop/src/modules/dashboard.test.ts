@@ -110,6 +110,9 @@ function installDashboardDom() {
     accountsCurrent: fakeEl(),
     accountsMeta: fakeEl(),
     dashHealthBanner: { ...fakeEl(), hidden: true },
+    dashHealthHistory: { ...fakeEl(), hidden: true, open: false },
+    dashHealthHistoryDetail: fakeEl(),
+    connectionOptions: { ...fakeEl(), hidden: true, open: false },
   }
   const byId: Record<string, any> = {
     'hero-card': els.heroCard,
@@ -123,6 +126,9 @@ function installDashboardDom() {
     'accounts-current': els.accountsCurrent,
     'accounts-meta': els.accountsMeta,
     'dash-health-banner': els.dashHealthBanner,
+    'dash-health-history': els.dashHealthHistory,
+    'dash-health-history-detail': els.dashHealthHistoryDetail,
+    'dash-connection-options': els.connectionOptions,
   }
   const fakeDocument = {
     getElementById: (id: string) => byId[id] ?? null,
@@ -337,6 +343,9 @@ describe('dashboard button state', () => {
     expect(els.heroHeadline.textContent).toBe('此刻，陪你一起看鱼')
     expect(els.heroMeta.textContent).toBe('把鼠标轻轻移进鱼缸，看看谁会先回应你')
     expect(els.dashStop.hidden).toBe(false)
+    expect(els.connectionOptions.hidden).toBe(false)
+    expect(els.accountsBody.innerHTML).toContain('添加使用者')
+    expect(els.accountsBody.innerHTML).toContain('data-action="add-sub-user"')
     expect(els.dashRestart.hidden).toBe(true)
   })
 
@@ -366,6 +375,8 @@ describe('dashboard button state', () => {
     expect(els.heroHeadline.textContent).toBe('CC 暂时失去连接')
     expect(els.heroMeta.textContent).toBe('可能暂时无法接收微信消息')
     expect(els.dashStop.hidden).toBe(true)
+    expect(els.connectionOptions.hidden).toBe(true)
+    expect(els.connectionOptions.open).toBe(false)
     expect(els.dashRestart.hidden).toBe(false)
   })
 
@@ -384,6 +395,8 @@ describe('dashboard button state', () => {
     expect(els.heroHeadline.textContent).toBe('CC 暂时失去连接')
     expect(els.heroMeta.textContent).toBe('可能暂时无法接收微信消息')
     expect(els.dashStop.hidden).toBe(true)
+    expect(els.connectionOptions.hidden).toBe(true)
+    expect(els.connectionOptions.open).toBe(false)
     expect(els.dashRestart.hidden).toBe(false)
   })
 })
@@ -1344,15 +1357,17 @@ describe('loadLastIncident', () => {
     expect(invoke).not.toHaveBeenCalled()
   })
 
-  it('已恢复的故障 → 横幅显示时长与"现已恢复"文案', async () => {
+  it('已恢复的故障 → 折叠历史保留时长与恢复文案，隐藏警告', async () => {
     const els = installDashboardDom()
     const invoke = vi.fn(async () => ({}))
     const invokeApi = vi.fn(async () => ({ incidents: [CLOSED] }))
     globalThis.localStorage = fakeLocalStorage() as any
     await loadLastIncident({ invoke, invokeApi })
-    expect(els.dashHealthBanner.hidden).toBe(false)
-    expect(els.dashHealthBanner.textContent).toContain('现已恢复')
-    expect(els.dashHealthBanner.textContent).toContain('小时')
+    expect(els.dashHealthBanner.hidden).toBe(true)
+    expect(els.dashHealthHistory.hidden).toBe(false)
+    expect(els.dashHealthHistory.open).toBe(false)
+    expect(els.dashHealthHistoryDetail.textContent).toContain('现已恢复')
+    expect(els.dashHealthHistoryDetail.textContent).toContain('小时')
   })
 
   it('仍在进行的故障 → 横幅文案标"仍在进行"/断开状态,不写"现已恢复"', async () => {
@@ -1362,8 +1377,27 @@ describe('loadLastIncident', () => {
     globalThis.localStorage = fakeLocalStorage() as any
     await loadLastIncident({ invoke, invokeApi })
     expect(els.dashHealthBanner.hidden).toBe(false)
+    expect(els.dashHealthHistory.hidden).toBe(true)
     expect(els.dashHealthBanner.textContent).toContain('断开状态')
     expect(els.dashHealthBanner.textContent).not.toContain('现已恢复')
+  })
+
+  it('恢复记录遇到新故障或空记录时收起，避免留下过期的恢复提示', async () => {
+    const els = installDashboardDom()
+    globalThis.localStorage = fakeLocalStorage() as any
+    let incidents: any[] = [CLOSED]
+    const deps = { invoke: vi.fn(async () => ({})), invokeApi: vi.fn(async () => ({ incidents })) }
+    await loadLastIncident(deps)
+    els.dashHealthHistory.open = true
+    incidents = [ONGOING]
+    await loadLastIncident(deps)
+    expect(els.dashHealthHistory.hidden).toBe(true)
+    expect(els.dashHealthHistory.open).toBe(false)
+    expect(els.dashHealthBanner.hidden).toBe(false)
+    incidents = []
+    await loadLastIncident(deps)
+    expect(els.dashHealthHistory.hidden).toBe(true)
+    expect(els.dashHealthBanner.hidden).toBe(true)
   })
 
   it('首次运行(localStorage 里没有存过)→ 不弹通知,只记录当前最新的复合 key', async () => {
