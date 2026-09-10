@@ -647,6 +647,9 @@ export const CliEventRequest = z.object({
   cwd: z.string().min(1).max(1000),
   text: z.string().max(4000).optional(),
   automated: z.boolean().optional(),
+  transcript_path: z.string().max(1000).optional(),
+  idle_s: z.number().min(0).optional(),
+  machine: z.string().max(200).optional(),
 })
 export type CliEventRequestT = z.infer<typeof CliEventRequest>
 
@@ -656,6 +659,8 @@ export const CliPermissionRequest = z.object({
   cwd: z.string().min(1).max(1000),
   tool_name: z.string().min(1).max(200),
   summary: z.string().max(2000).optional(),
+  idle_s: z.number().min(0).optional(),
+  machine: z.string().max(200).optional(),
 })
 export const CliPermissionQuery = z.object({
   hash: z.string().min(1).max(16),

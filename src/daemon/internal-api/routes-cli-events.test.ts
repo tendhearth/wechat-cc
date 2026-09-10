@@ -40,7 +40,7 @@ describe('/v1/cli/permission(spec §6.3)', () => {
   it('没接线 → 503;POST → relay.open;GET 不带 wait → status;带 wait → wait(封顶 25s)', async () => {
     const off = cliEventRoutes(deps())
     expect(await off['POST /v1/cli/permission']!(qs(), preq)).toEqual({ status: 503, body: { error: 'cli_permissions_not_wired' } })
-    const open = vi.fn(() => ({ status: 'pending' as const, hash: 'k3x9z' }))
+    const open = vi.fn(async () => ({ status: 'pending' as const, hash: 'k3x9z' }))
     const status = vi.fn(() => 'pending' as const)
     const wait = vi.fn(async () => 'allow' as const)
     const on = cliEventRoutes(deps(undefined, { open, status, wait }))

@@ -48,6 +48,9 @@ import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
 import { makeCliEventHub, makeProjectNamer } from '../core/cli-events'
 import { makeCliPermissionRelay } from '../core/cli-permission-relay'
+import { machineIdleSeconds } from '../lib/machine-idle'
+import { notifyDesktop } from '../lib/desktop-notify'
+import { hostname as osHostname } from 'node:os'
 import { makeAtelierStore } from './atelier-store'
 import { companionOfferEligible } from './companion/offer-eligibility'
 import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
@@ -561,6 +564,16 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       },
       projectName: makeProjectNamer(() => ilink.projects.list()),
       log: (t, l) => log(t, l),
+      // 在场的主信号:这台电脑上次键鼠输入距今多久。人在 ⇒ 系统通知;走了 ⇒ 微信。
+      machineIdle: () => machineIdleSeconds(),
+      notifyDesktop: (title, body) => notifyDesktop(title, body),
+      // 超长的最后一句:全文进 share_page,微信里只放前一段 + 链接。
+      sharePage: async (title, markdown) => {
+        const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+        const r = await ilink.sharePage(title, markdown, owner ? { chat_id: owner } : undefined)
+        return r.url
+      },
+      localMachine: osHostname(),
     })
     internalApi.setCliEvents(cliEvents)
     lc.register({ name: 'cli-events', stop: async () => cliEvents.dispose() })
@@ -572,10 +585,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         if (!owner) return Promise.resolve('undelivered' as const)
         return ilink.askUser(owner, prompt, hash, ms)
       },
-      presence: (s) => cliEvents.presence(s),
+      presence: (s, idle) => cliEvents.presence(s, idle),
       projectName: makeProjectNamer(() => ilink.projects.list()),
       onRelayed: (s) => cliEvents.notePermissionRelay(s),
       log: (t, l) => log(t, l),
+      localMachine: osHostname(),
     })
     internalApi.setCliPermissions(cliPermissions)
     lc.register({ name: 'cli-permissions', stop: async () => cliPermissions.dispose() })

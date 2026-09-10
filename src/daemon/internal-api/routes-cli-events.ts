@@ -26,7 +26,7 @@ export function cliEventRoutes(deps: InternalApiDeps): RouteTable {
     // owner_present,终端自己问),再 GET 轮询到 y/n 或过期。
     'POST /v1/cli/permission': async (_q, body) => {
       if (!deps.cliPermissions) return { status: 503, body: { error: 'cli_permissions_not_wired' } }
-      return { status: 200, body: deps.cliPermissions.open(body as CliPermissionRequest) }
+      return { status: 200, body: await deps.cliPermissions.open(body as CliPermissionRequest) }
     },
     'GET /v1/cli/permission': async (q) => {
       if (!deps.cliPermissions) return { status: 503, body: { error: 'cli_permissions_not_wired' } }

@@ -18,6 +18,10 @@ export interface CliPermissionRequest {
   tool_name: string
   /** 工具参数摘要(hook 侧已压好)。 */
   summary?: string
+  /** hook 那头探到的本机空闲秒数(在场判断的主信号)。 */
+  idle_s?: number
+  /** hook 那头的主机名;与 daemon 不同 ⇒ 卡片写「那边」。 */
+  machine?: string
 }
 
 export type CliPermissionStatus = 'pending' | 'allow' | 'deny' | 'timeout' | 'undelivered' | 'unknown'
@@ -32,16 +36,17 @@ const HASH_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
 export interface CliPermissionRelayDeps {
   /** = ilink.askUser 对主人 chat 的封装;没有主人 chat 时应 resolve 'undelivered'。 */
   ask: (prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
-  presence: (sessionId: string) => CliPresence
+  presence: (sessionId: string, idleS?: number | null) => Promise<CliPresence>
   projectName: (cwd: string) => string
   /** 卡片发出去了 —— hub 据此压掉紧随其后的「等你批准」提醒。 */
   onRelayed: (sessionId: string) => void
   log: (tag: string, line: string) => void
   waitMs?: number
+  localMachine?: string
 }
 
 export interface CliPermissionRelay {
-  open(req: CliPermissionRequest): CliPermissionOpen
+  open(req: CliPermissionRequest): Promise<CliPermissionOpen>
   status(hash: string): CliPermissionStatus
   /** 等到状态离开 pending 或 maxMs 到点;返回当时的状态。 */
   wait(hash: string, maxMs: number): Promise<CliPermissionStatus>
@@ -58,8 +63,9 @@ export function newPermissionHash(): string {
   return out
 }
 
-export function formatCliPermissionPrompt(req: CliPermissionRequest, projectName: string, hash: string, waitMs: number): string {
-  const head = `✋ ${req.source} 等你批准 · ${projectName} · 会话 ${req.session_id.slice(0, 6)}`
+export function formatCliPermissionPrompt(req: CliPermissionRequest, projectName: string, hash: string, waitMs: number, localMachine?: string): string {
+  const remote = req.machine && localMachine && req.machine !== localMachine ? ` · 那边(${req.machine})` : ''
+  const head = `✋ ${req.source} 等你批准${remote} · ${projectName} · 会话 ${req.session_id.slice(0, 6)}`
   const what = req.summary ? `${req.tool_name}: ${req.summary}` : req.tool_name
   return `${head}\n${what}\n回「y ${hash}」放行、「n ${hash}」拒绝;${Math.round(waitMs / 1000)} 秒内有效,过期终端自己会问。`
 }
@@ -79,8 +85,8 @@ export function makeCliPermissionRelay(deps: CliPermissionRelayDeps): CliPermiss
   }
 
   return {
-    open(req) {
-      if (deps.presence(req.session_id) === 'present') {
+    async open(req) {
+      if (await deps.presence(req.session_id, req.idle_s) === 'present') {
         deps.log('CLI_PERMISSION', `owner present for ${req.session_id.slice(0, 6)}: leave it to the terminal`)
         return { status: 'owner_present' }
       }
@@ -89,7 +95,7 @@ export function makeCliPermissionRelay(deps: CliPermissionRelayDeps): CliPermiss
       entries.set(hash, { status: 'pending', waiters: [] })
       let projectName: string
       try { projectName = deps.projectName(req.cwd) } catch { projectName = req.cwd }
-      const prompt = formatCliPermissionPrompt(req, projectName, hash, waitMs)
+      const prompt = formatCliPermissionPrompt(req, projectName, hash, waitMs, deps.localMachine)
       deps.onRelayed(req.session_id)
       deps.log('CLI_PERMISSION', `asking wechat for ${req.source}/${req.session_id.slice(0, 6)} ${req.tool_name} hash=${hash}`)
       deps.ask(prompt, hash, waitMs).then(

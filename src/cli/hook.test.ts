@@ -5,8 +5,9 @@ import { join } from 'node:path'
 import {
   normalizeHookPayload, shouldSkipHook, postCliEvent, hookCommandLine,
   installHooks, uninstallHooks, hookStatus, claudeSettingsPath, codexHooksPath, summarizeToolInput,
-  parsePermissionRequest, relayPermission, permissionDecisionOutput, isAutomatedPrompt,
+  parsePermissionRequest, relayPermission, permissionDecisionOutput, isAutomatedPrompt, withMachineContext,
 } from './hook'
+import { hostname } from 'node:os'
 
 const tmpDirs: string[] = []
 let dir: string
@@ -16,16 +17,21 @@ afterAll(() => { for (const d of tmpDirs) { try { rmSync(d, { recursive: true, f
 const common = { session_id: 'abc-123', transcript_path: '/t.jsonl', cwd: '/w/p', permission_mode: 'default' }
 
 describe('normalizeHookPayload — claude', () => {
-  it('Stop → stop 带 last_assistant_message', () => {
+  it('Stop → stop 带 last_assistant_message 与 transcript_path', () => {
     expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: '搞定' }))
-      .toEqual({ source: 'claude', kind: 'stop', session_id: 'abc-123', cwd: '/w/p', text: '搞定' })
+      .toEqual({ source: 'claude', kind: 'stop', session_id: 'abc-123', cwd: '/w/p', text: '搞定', transcript_path: '/t.jsonl' })
+  })
+  it('withMachineContext:主机名 + 取整的空闲秒数;探不到就只有主机名', async () => {
+    expect(await withMachineContext({ a: 1 }, async () => 12.6)).toEqual({ a: 1, machine: hostname(), idle_s: 13 })
+    expect(await withMachineContext({ a: 1 }, async () => null)).toEqual({ a: 1, machine: hostname() })
+    expect(await withMachineContext({ a: 1 }, async () => { throw new Error('x') })).toEqual({ a: 1, machine: hostname() })
   })
   it('Notification / PermissionRequest 不是事件 → null(PermissionRequest 走 parsePermissionRequest)', () => {
     expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'x' })).toBeNull()
     expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: {} })).toBeNull()
   })
   it('UserPromptSubmit → prompt;harness 塞的 prompt 标 automated;SessionEnd → session_end;其他事件 → null', () => {
-    expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'UserPromptSubmit', prompt: 'hi' })).toEqual({ source: 'claude', kind: 'prompt', session_id: 'abc-123', cwd: '/w/p' })
+    expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'UserPromptSubmit', prompt: 'hi' })).toEqual({ source: 'claude', kind: 'prompt', session_id: 'abc-123', cwd: '/w/p', transcript_path: '/t.jsonl' })
     expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'UserPromptSubmit', prompt: '/loop 完善这部分' })?.automated).toBe(true)
     expect(normalizeHookPayload('claude', { ...common, hook_event_name: 'UserPromptSubmit', prompt: '<task-notification>\n<task-id>x</task-id>' })?.automated).toBe(true)
     expect(isAutomatedPrompt('  <system-reminder>x')).toBe(true)
@@ -47,7 +53,7 @@ describe('normalizeHookPayload — codex', () => {
   const cx = { ...common, turn_id: 't1', model: 'gpt', permission_mode: 'default' }
   it('Stop → stop;last_assistant_message 为 null 时 text 省略', () => {
     expect(normalizeHookPayload('codex', { ...cx, hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: null }))
-      .toEqual({ source: 'codex', kind: 'stop', session_id: 'abc-123', cwd: '/w/p' })
+      .toEqual({ source: 'codex', kind: 'stop', session_id: 'abc-123', cwd: '/w/p', transcript_path: '/t.jsonl' })
   })
   it('PermissionRequest 不进 normalize', () => {
     expect(normalizeHookPayload('codex', { ...cx, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'rm -rf ./tmp' } })).toBeNull()

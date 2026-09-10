@@ -1740,7 +1740,7 @@ function hookRelayCmd(source: 'claude' | 'codex') {
   return defineCommand({
     meta: { name: source, description: `${source} 的 hook 出口(stdin 收 hook JSON,转给本机 daemon)` },
     async run() {
-      const { shouldSkipHook, normalizeHookPayload, postCliEvent, parsePermissionRequest, relayPermission, permissionDecisionOutput } = await import('./src/cli/hook.ts')
+      const { shouldSkipHook, normalizeHookPayload, postCliEvent, parsePermissionRequest, relayPermission, permissionDecisionOutput, withMachineContext } = await import('./src/cli/hook.ts')
       const debug = process.env['WECHAT_CC_HOOK_DEBUG'] === '1'
       try {
         // 回环守卫:daemon 自己拉起的 claude / codex 也会触发同一份 hooks。
@@ -1753,15 +1753,16 @@ function hookRelayCmd(source: 'claude' | 'codex') {
         // 压一条「等你批准」提醒(刚发过卡片的话 daemon 那头会压掉)。
         const perm = parsePermissionRequest(source, parsed)
         if (perm) {
-          const r = await relayPermission(STATE_DIR, perm)
+          const r = await relayPermission(STATE_DIR, await withMachineContext(perm))
           if (debug) console.error(`hook: permission ${JSON.stringify(r)}`)
           if (r.decision) { process.stdout.write(permissionDecisionOutput(r.decision) + '\n'); return }
-          await postCliEvent(STATE_DIR, { source, kind: 'permission', session_id: perm.session_id, cwd: perm.cwd, text: perm.summary ? `${perm.tool_name}: ${perm.summary}` : perm.tool_name })
+          await postCliEvent(STATE_DIR, await withMachineContext({ source, kind: 'permission' as const, session_id: perm.session_id, cwd: perm.cwd, text: perm.summary ? `${perm.tool_name}: ${perm.summary}` : perm.tool_name }))
           return
         }
         const ev = normalizeHookPayload(source, parsed)
         if (!ev) { if (debug) console.error('hook: event ignored'); return }
-        const r = await postCliEvent(STATE_DIR, ev)
+        // prompt / session_end 不用探空闲(它们本身就说明有人在);stop / permission 要。
+        const r = await postCliEvent(STATE_DIR, ev.kind === 'stop' || ev.kind === 'permission' ? await withMachineContext(ev) : ev)
         if (debug) console.error(`hook: ${JSON.stringify(r)}`)
       } catch (err) {
         if (debug) console.error(`hook: ${err instanceof Error ? err.message : String(err)}`)

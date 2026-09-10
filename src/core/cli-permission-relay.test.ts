@@ -17,7 +17,7 @@ function harness(opts: { presence?: 'present' | 'away' | 'unknown'; answer?: 'al
   })
   const relay = makeCliPermissionRelay({
     ask,
-    presence: () => opts.presence ?? 'away',
+    presence: async () => opts.presence ?? 'away',
     projectName: (cwd) => cwd.split('/').pop() ?? cwd,
     onRelayed: (s) => relayed.push(s),
     log: (t, l) => logs.push(`${t} ${l}`),
@@ -29,15 +29,15 @@ describe('CliPermissionRelay(spec 2026-09-09-cli-hook-push §6.3)', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 
-  it('主人在场 → owner_present,不去微信问', () => {
+  it('主人在场 → owner_present,不去微信问', async () => {
     const { relay, ask } = harness({ presence: 'present' })
-    expect(relay.open(req())).toEqual({ status: 'owner_present' })
+    expect(await relay.open(req())).toEqual({ status: 'owner_present' })
     expect(ask).not.toHaveBeenCalled()
   })
 
   it('不在场 / 不知道 → 发卡片,回 5 位码;pending → 答 allow 后 status=allow;onRelayed 记一笔', async () => {
     const { relay, asked, relayed } = harness({ presence: 'unknown', answer: 'allow' })
-    const r = relay.open(req())
+    const r = await relay.open(req())
     expect(r.status).toBe('pending')
     const hash = (r as { hash: string }).hash
     expect(hash).toMatch(/^[a-z0-9]{5}$/)
@@ -53,7 +53,7 @@ describe('CliPermissionRelay(spec 2026-09-09-cli-hook-push §6.3)', () => {
 
   it('wait:状态一变就返回;到时限还没变就返回 pending', async () => {
     const { relay } = harness({ answer: 'deny', answerAfterMs: 5000 })
-    const { hash } = relay.open(req()) as { hash: string }
+    const { hash } = await relay.open(req()) as { hash: string }
     const early = relay.wait(hash, 2000)
     await vi.advanceTimersByTimeAsync(2000)
     expect(await early).toBe('pending')
@@ -64,14 +64,14 @@ describe('CliPermissionRelay(spec 2026-09-09-cli-hook-push §6.3)', () => {
 
   it('timeout / undelivered 原样透出;不认识的 hash → unknown;ask 抛错 → undelivered', async () => {
     const a = harness({ answer: 'timeout' })
-    const { hash } = a.relay.open(req()) as { hash: string }
+    const { hash } = await a.relay.open(req()) as { hash: string }
     await vi.advanceTimersByTimeAsync(1000)
     expect(a.relay.status(hash)).toBe('timeout')
     expect(a.relay.status('zzzzz')).toBe('unknown')
 
     const b = harness()
     b.ask.mockImplementationOnce(() => Promise.reject(new Error('ilink down')))
-    const { hash: h2 } = b.relay.open(req()) as { hash: string }
+    const { hash: h2 } = await b.relay.open(req()) as { hash: string }
     await vi.advanceTimersByTimeAsync(0)
     expect(b.relay.status(h2)).toBe('undelivered')
     expect(b.logs.some(l => l.includes('ilink down'))).toBe(true)
@@ -79,20 +79,28 @@ describe('CliPermissionRelay(spec 2026-09-09-cli-hook-push §6.3)', () => {
 
   it('已决的条目保留一段时间供轮询,之后清掉;dispose 全清', async () => {
     const { relay } = harness({ answer: 'allow' })
-    const { hash } = relay.open(req()) as { hash: string }
+    const { hash } = await relay.open(req()) as { hash: string }
     await vi.advanceTimersByTimeAsync(1000)
     expect(relay.status(hash)).toBe('allow')
     await vi.advanceTimersByTimeAsync(5 * 60_000)
     expect(relay.status(hash)).toBe('unknown')
-    const { hash: h2 } = relay.open(req()) as { hash: string }
+    const { hash: h2 } = await relay.open(req()) as { hash: string }
     relay.dispose()
     expect(relay.status(h2)).toBe('unknown')
   })
 })
 
 describe('formatCliPermissionPrompt', () => {
-  it('四要素 + 怎么回', () => {
+  it('四要素 + 怎么回;那边的会话写机器名', () => {
     expect(formatCliPermissionPrompt(req({ source: 'codex', session_id: '9f0e1d22' }), 'tendhearth', 'k3x9z', 120_000))
       .toBe('✋ codex 等你批准 · tendhearth · 会话 9f0e1d\nBash: rm -rf ./tmp\n回「y k3x9z」放行、「n k3x9z」拒绝;120 秒内有效,过期终端自己会问。')
+    expect(formatCliPermissionPrompt(req({ machine: 'win-test' }), 'p', 'k3x9z', 1000, 'mac-here')).toContain('等你批准 · 那边(win-test) · p')
+    expect(formatCliPermissionPrompt(req({ machine: 'mac-here' }), 'p', 'k3x9z', 1000, 'mac-here')).not.toContain('那边')
+  })
+  it('open 把请求里的 idle_s 交给 presence', async () => {
+    const presence = vi.fn(async (_s: string, idle?: number | null) => (idle ?? 999) < 120 ? 'present' as const : 'away' as const)
+    const relay = makeCliPermissionRelay({ ask: async () => 'timeout', presence, projectName: (c) => c, onRelayed: () => {}, log: () => {} })
+    expect(await relay.open(req({ idle_s: 3 }))).toEqual({ status: 'owner_present' })
+    expect((await relay.open(req({ idle_s: 900 }))).status).toBe('pending')
   })
 })

@@ -14,7 +14,9 @@
  */
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { hostname } from 'node:os'
 import { readJsonFile } from '../lib/read-json-file'
+import { machineIdleSeconds } from '../lib/machine-idle'
 import type { CliEvent, CliSource } from '../core/cli-events'
 import type { CliPermissionRequest, CliPermissionStatus } from '../core/cli-permission-relay'
 
@@ -78,7 +80,8 @@ export function normalizeHookPayload(source: HookSource, raw: unknown): CliEvent
   const cwd = str(r['cwd'])
   const event = str(r['hook_event_name'])
   if (!session_id || !cwd || !event) return null
-  const base = { source, session_id, cwd }
+  const transcript = str(r['transcript_path'])
+  const base: Omit<CliEvent, 'kind'> = transcript ? { source, session_id, cwd, transcript_path: transcript } : { source, session_id, cwd }
   const withText = (kind: CliEvent['kind'], text: string | undefined): CliEvent =>
     text ? { ...base, kind, text } : { ...base, kind }
 
@@ -110,6 +113,16 @@ export function parsePermissionRequest(source: HookSource, raw: unknown): CliPer
   if (!session_id || !cwd || !tool_name) return null
   const summary = summarizeToolInput(r['tool_input'])
   return summary ? { source, session_id, cwd, tool_name, summary } : { source, session_id, cwd, tool_name }
+}
+
+/**
+ * 给事件 / 权限请求补上「这台机是谁、有没有人在用」:主机名 + 本机空闲秒数。
+ * 空闲探不到就不带(daemon 那头回落到别的信号)。
+ */
+export async function withMachineContext<T extends object>(payload: T, probe: () => Promise<number | null> = () => machineIdleSeconds()): Promise<T & { machine: string; idle_s?: number }> {
+  let idle: number | null = null
+  try { idle = await probe() } catch { idle = null }
+  return idle === null ? { ...payload, machine: hostname() } : { ...payload, machine: hostname(), idle_s: Math.round(idle) }
 }
 
 // ── 2. POST 给 daemon ─────────────────────────────────────────────────────────
