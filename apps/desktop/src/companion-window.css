@@ -20,7 +20,16 @@ button { font: inherit; }
 .pet-stage:active { cursor: grabbing; }
 .pet-sprite { position: absolute; left: 50%; top: 0; width: 100%; height: 100%; transform: translateX(-50%); transform-origin: var(--pet-origin-x) var(--pet-origin-y); object-fit: contain; pointer-events: none; user-select: none; transition: opacity 240ms ease; }
 .pet-sprite.pet-fading { opacity: 0; }
+/* 交叉淡化的 ghost:平时透明,行为切换时 renderer 把上一帧放上来、加一个淡出类。
+   两套同样的 keyframes 交替用,因为同名 animation 不会重启。主体 <img> 在 DOM 后面,永远压在 ghost 上。 */
+.pet-ghost { opacity: 0; transition: none; }
+.pet-ghost.pet-ghost-out-a { animation: pet-ghost-out-a 160ms ease-out forwards; }
+.pet-ghost.pet-ghost-out-b { animation: pet-ghost-out-b 160ms ease-out forwards; }
+@keyframes pet-ghost-out-a { from { opacity: 1; } to { opacity: 0; } }
+@keyframes pet-ghost-out-b { from { opacity: 1; } to { opacity: 0; } }
 .pet-breathing .pet-sprite { animation: pet-breathe 2.8s ease-in-out infinite; }
+.pet-breathing .pet-ghost.pet-ghost-out-a { animation: pet-breathe 2.8s ease-in-out infinite, pet-ghost-out-a 160ms ease-out forwards; }
+.pet-breathing .pet-ghost.pet-ghost-out-b { animation: pet-breathe 2.8s ease-in-out infinite, pet-ghost-out-b 160ms ease-out forwards; }
 @keyframes pet-breathe { 0%, 100% { transform: translateX(-50%) scale(1); } 50% { transform: translateX(-50%) scale(1.02); } }
 /* 道具:相对 anchor 点的比例偏移(prop-layer.js 的槽位表),以舞台边长为 1。 */
 .pet-props { position: absolute; inset: 0; pointer-events: none; }
@@ -48,4 +57,4 @@ button { font: inherit; }
 .pet-shell:hover .pet-controls, .pet-controls:focus-within { opacity: 1; }
 .pet-controls button { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: rgba(255, 253, 247, .8); color: rgba(111, 78, 49, .8); cursor: pointer; font-size: 14px; line-height: 22px; }
 .pet-controls button:focus-visible { outline: 2px solid #d9773b; outline-offset: 1px; }
-@media (prefers-reduced-motion: reduce) { .pet-breathing .pet-sprite { animation: none; } .pet-sprite { transition: opacity 400ms ease; } }
+@media (prefers-reduced-motion: reduce) { .pet-breathing .pet-sprite { animation: none; } .pet-sprite { transition: opacity 400ms ease; } .pet-ghost { animation: none !important; opacity: 0; } }

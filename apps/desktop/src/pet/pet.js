@@ -42,7 +42,13 @@ export async function createPet(root, opts) {
   // renderer 在 manifest 到手之前就建好了(它只管画),坏帧回调先挂个空的,加载完再接上。
   /** @type {(url: string) => void} */
   let onFrameError = () => {}
-  const renderer = createSpriteRenderer({ img: root.img, stage: root.stage, schedule, cancel, preload: opts.preload, reducedMotion: opts.reducedMotion, onFrameError: (url) => onFrameError(url) })
+  // ghost:交叉淡化用的第二张 <img>,开窗时建好一次、常驻(不重建),这样它和主体一起拿到呼吸动画、
+  // 相位一致。DOM 顺序放主体前面,主体永远画在上层。测试里的假 stage 没有 insertBefore,那就只挂逻辑不进树。
+  const ghost = makeEl('img')
+  ghost.classList.add('pet-sprite'); ghost.classList.add('pet-ghost')
+  ghost.setAttribute('alt', ''); ghost.setAttribute('aria-hidden', 'true'); ghost.setAttribute('draggable', 'false')
+  root.stage.insertBefore?.(ghost, root.img)
+  const renderer = createSpriteRenderer({ img: root.img, stage: root.stage, ghost, schedule, cancel, preload: opts.preload, reducedMotion: opts.reducedMotion, onFrameError: (url) => onFrameError(url) })
   const machine = createPetStateMachine()
   /** @type {string[]} */
   const warnings = []
