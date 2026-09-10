@@ -21,7 +21,7 @@ const COMPANION_HERO_COPIES = [
   { headline: "此刻，陪你一起看鱼", meta: "把鼠标轻轻移进鱼缸，看看谁会先回应你" },
   { headline: "给忙碌留一小片水光", meta: "在这里慢慢游一会儿，也没关系" },
   { headline: "小鱼们正在等你靠近", meta: "把鼠标轻轻移进水面，看看谁先回应你" },
-  { headline: "有小鱼陪着，慢一点也没关系", meta: "点一点水草，或向小熊打声招呼" },
+  { headline: "有小鱼陪着，慢一点也没关系", meta: "点一点水草，或向 CC 打声招呼" },
   { headline: "这里有一缸安静的陪伴", meta: "留一点时间给自己，也留一点给小鱼" },
 ]
 let companionHeroCopy = null

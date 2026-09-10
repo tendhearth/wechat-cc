@@ -25,7 +25,7 @@ button, a { font: inherit; }
   position: relative; overflow: hidden; border: 1px solid rgba(111,85,58,.12); border-radius: 28px;
   background: rgba(255,255,255,.35); box-shadow: 0 30px 80px rgba(85,61,38,.10), inset 0 1px rgba(255,255,255,.8);
 }
-#companion-stage { width: 100%; height: auto; aspect-ratio: 3 / 2; display: block; cursor: crosshair; }
+#companion-stage { width: 100%; height: auto; aspect-ratio: 4 / 3; display: block; cursor: crosshair; }
 .stage-hint, .bear-message {
   position: absolute; left: 50%; opacity: 0; transform: translate(-50%, 8px); pointer-events: none;
   transition: opacity .35s ease, transform .35s ease;
