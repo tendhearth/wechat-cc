@@ -18,4 +18,11 @@ describe('mwPermissionReply', () => {
     await mw({ msg: { chatId: 'c1', text: 'hi' } as InboundCtx['msg'], receivedAtMs: 0, requestId: 'r' }, next)
     expect(next).toHaveBeenCalledOnce()
   })
+
+  it('把引用的原文一起交给处理器', async () => {
+    const handle = vi.fn(() => true)
+    const mw = makeMwPermissionReply({ handlePermissionReply: handle, log: () => {} })
+    await mw({ msg: { chatId: 'c1', text: 'y', quote: { type: 'text', text: '✋ 卡片原文' } } as InboundCtx['msg'], receivedAtMs: 0, requestId: 'r' }, vi.fn())
+    expect(handle).toHaveBeenCalledWith('y', 'c1', '✋ 卡片原文')
+  })
 })

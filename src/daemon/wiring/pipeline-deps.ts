@@ -657,7 +657,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     mode: { modeHandler },
     onboarding: { onboardingHandler },
     permissionReply: {
-      handlePermissionReply: (text: string, fromChatId?: string) => ilink.handlePermissionReply(text, fromChatId),
+      handlePermissionReply: (text: string, fromChatId?: string, quoted?: string) => ilink.handlePermissionReply(text, fromChatId, quoted),
       log,
     },
     ...(opts.cliReply ? { cliReply: { handle: (t: string, c: string) => opts.cliReply!.handle(t, c), log } } : {}),

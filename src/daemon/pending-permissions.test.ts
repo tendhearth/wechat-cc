@@ -119,3 +119,27 @@ describe('parsePermissionReply', () => {
     expect(parsePermissionReply('hello world')).toBeNull()
   })
 })
+
+describe('hashOfQuote:主人引用卡片回「y」', () => {
+  it('引用原文里有两位数码 → 按码;有旧 hash → 按 hash', () => {
+    const p = new PendingPermissions()
+    void p.register('abc12', 60_000, { chatId: 'o', prompt: 'Bash: run 12 tests' })
+    void p.register('h2', 60_000, { chatId: 'o', prompt: 'Write: notes.md' })
+    expect(p.hashOfQuote('Write: notes.md\n回「y」放行、「n」拒绝;同时有几条待批时带码:「y 02」。60 秒内有效。')).toBe('h2')
+    expect(p.hashOfQuote('老卡片\n回「y abc12」放行')).toBe('abc12')
+    // 正文里的「run 12」不是码 12;这条引用按首行认回 abc12
+    expect(p.hashOfQuote('Bash: run 12 tests')).toBe('abc12')
+  })
+  it('引用被截断只剩正文 → 按 prompt 首行认;对上多条或对不上 → null', () => {
+    const p = new PendingPermissions()
+    void p.register('h1', 60_000, { chatId: 'o', prompt: '✋ claude 等你批准 · wechat-cc · 会话 abc123\nBash: rm -rf ./tmp' })
+    void p.register('h2', 60_000, { chatId: 'o', prompt: '✋ codex 等你批准 · hearth · 会话 9f0e1d\nEdit: a.ts' })
+    expect(p.hashOfQuote('✋ claude 等你批准 · wechat-cc · 会话 abc123')).toBe('h1')
+    expect(p.hashOfQuote('✋ codex 等你批准 · hearth · 会话 9f0e1d\nEdit: a.ts')).toBe('h2')
+    expect(p.hashOfQuote('随便一条别的消息')).toBeNull()
+    void p.register('h3', 60_000, { chatId: 'o', prompt: '✋ claude 等你批准 · wechat-cc · 会话 abc123\nBash: ls' })
+    expect(p.hashOfQuote('✋ claude 等你批准 · wechat-cc · 会话 abc123')).toBeNull()   // 两条同首行,不猜
+    expect(p.hashOfQuote('')).toBeNull()
+  })
+})
+

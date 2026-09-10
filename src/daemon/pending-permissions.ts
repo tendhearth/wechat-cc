@@ -56,6 +56,29 @@ export class PendingPermissions {
   }
 
   /**
+   * 主人引用了哪张卡片 → hash。先从引用文本里抠「y 07」/「y k3x9z」;微信引用可能把长卡片截断、
+   * 把「怎么回」那行截掉,那就退回按卡片正文认:哪条待批的 prompt 开头和引用文本对得上。
+   * 都对不上返回 null;对上多条(prompt 完全相同)也返回 null,宁可让主人带码。
+   */
+  hashOfQuote(quoted: string): string | null {
+    const q = quoted.trim()
+    if (!q) return null
+    // 只认卡片自己写的「y 07」/「y k3x9z」这种带书名号的形式:正文里的「run 12 tests」不能当成码 12。
+    const byCode = /「[yn]\s*([0-9]{2})」/i.exec(q)
+    if (byCode) { const h = this.hashOfCode(byCode[1]!); if (h) return h }
+    const byHash = /「[yn]\s+([a-z0-9]{5})」/i.exec(q)
+    if (byHash && this.entries.has(byHash[1]!)) return byHash[1]!
+    const head = q.split('\n')[0]!.trim()
+    const matches = Array.from(this.entries.entries()).filter(([, e]) => {
+      const p = (e.meta?.prompt ?? '').trim()
+      if (!p) return false
+      const firstLine = p.split('\n')[0]!.trim()
+      return firstLine === head || p.startsWith(q) || q.startsWith(firstLine)
+    })
+    return matches.length === 1 ? matches[0]![0] : null
+  }
+
+  /**
    * Snapshot of all pending asks, for the desktop pet to display the same
    * approval queue that WeChat sees. Sorted by since ascending (oldest
    * first). Entries registered before this Phase B meta param existed carry
