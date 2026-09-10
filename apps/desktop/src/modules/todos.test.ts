@@ -124,3 +124,38 @@ describe('提醒选择器 — 点外面/Esc 自动关掉', () => {
     expect(removed).toBe(1)                       // 点外部,收起来
   })
 })
+
+describe('todo page recovery and actions', () => {
+  it('keeps completion outside the secondary disclosure', async () => {
+    const { itemHtml } = await import('./todos.js')
+    const html = itemHtml(row(12, 'a', '交方案', 100) as never)
+    expect(html.indexOf('data-todo-action="resolve"')).toBeLessThan(html.indexOf('<details'))
+    expect(html.slice(html.indexOf('<details'), html.indexOf('</details>'))).toContain('data-todo-action="remind"')
+    expect(html.slice(html.indexOf('<details'), html.indexOf('</details>'))).toContain('data-todo-action="reject"')
+    expect(html).toContain('data-fact-id="12"')
+  })
+  it('offers a retry after a failed read and then renders the recovered list', async () => {
+    const { initTodosPage } = await import('./todos.js')
+    let retry: () => Promise<void> = async () => {}
+    const button = { disabled: false, addEventListener: (_: string, cb: typeof retry) => { retry = cb } }
+    const list = { innerHTML: '', addEventListener: vi.fn(), querySelector: () => button }
+    const root = { dataset: {}, innerHTML: '', querySelector: (selector: string) => selector === '#todos-list' ? list : null }
+    const oldDocument = globalThis.document
+    vi.stubGlobal('document', { getElementById: (id: string) => id === 'todos-root' ? root : id === 'todos-list' ? list : null })
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let offline = true
+    const api = vi.fn(async (_method, _path, body) => {
+      if (offline) throw new Error('private internal path')
+      return { results: body?.status === 'active' ? [row(12, 'a', '交方案', 100)] : [], contacts: [] }
+    })
+    try {
+      initTodosPage({ invoke: vi.fn() }, { api: api as never })
+      await vi.waitFor(() => expect(list.innerHTML).toContain('重新加载'))
+      expect(list.innerHTML).not.toContain('private internal path')
+      offline = false
+      await retry()
+      expect(list.innerHTML).toContain('交方案')
+      expect(list.innerHTML).not.toContain('暂时无法读取')
+    } finally { vi.stubGlobal('document', oldDocument); log.mockRestore() }
+  })
+})

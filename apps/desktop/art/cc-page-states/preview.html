@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><base href="../../src/"><title>CC · 待办与页面提示</title><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="cc-surfaces.css"><style>body{padding:32px;overflow:auto}.samples{max-width:1000px;margin:auto}.sample{margin:32px 0}.sample>h2{font-size:14px;color:var(--cc-muted);margin-bottom:16px}.todos-list ul{list-style:none;padding:0}.preview-note{color:var(--cc-muted);line-height:1.7}h1{font-size:26px}</style></head>
+<body><main class="samples"><h1>待办与页面提示</h1><p class="preview-note">视觉样板 · 使用正式页面的组件。待办操作仅展示，不会更改真实记录；可展开“更多”，或试一下失败提示的“重新加载”。</p><section class="sample todos-page"><h2>有待办时</h2><div class="todos-list"><ul id="sample-todos"></ul></div></section><section class="sample"><h2>没有待办时</h2><div id="sample-empty"></div></section><section class="sample"><h2>读取失败时</h2><div id="sample-error"></div></section><section class="sample"><h2>后厨 · 还没有消息</h2><div id="sample-chat"></div></section></main>
+<script type="module">
+import { itemHtml } from './modules/todos.js';
+import { showPageStatus } from './modules/page-status.js';
+document.getElementById('sample-todos').innerHTML = itemHtml({id:12,contact:'sample',kind:'obligation',predicate:'约定',value:'明天下午，把整理好的方案发给小林',time_ref:null,confidence:'high',updated_at:0});
+showPageStatus(document.getElementById('sample-empty'), {title:'暂时没有待办',detail:'聊天里答应过、约好过的事会整理在这里。有新的约定时，再来看看。'});
+showPageStatus(document.getElementById('sample-error'), {title:'暂时无法读取记忆',detail:'已有记忆不会因此丢失。请检查连接后重试。',actionLabel:'重新加载'}, async()=>{showPageStatus(document.getElementById('sample-error'),{title:'重新加载完成',detail:'这是样板中的恢复演示，没有读取或修改真实记忆。'});});
+showPageStatus(document.getElementById('sample-chat'),{title:'还没有对话',detail:'与 CC 聊几句，消息会出现在这里。'});
+</script></body></html>
