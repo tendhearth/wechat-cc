@@ -126,3 +126,22 @@ describe('createSpriteRenderer', () => {
     expect(preload.mock.calls.map(x => x[0]).sort()).toEqual(['a.png', 'b.png'])
   })
 })
+
+describe('交叉淡化 ghost(renderer 层)', () => {
+  it('新动画的第 0 帧和当前帧不同才把上一帧交给 ghost;fadeTo 淡出后不交叉;stop 撤掉 ghost 计时器', () => {
+    const c = clock(); const img = el(); const stage = el(); const ghost = el()
+    const r = createSpriteRenderer({ img, stage, ghost, schedule: c.schedule, cancel: c.cancel, preload: () => {} })
+    r.play(anim(['a.png'], 4, true))
+    expect(ghost.src).toBe('')                                  // 没有上一帧,没什么可淡
+    r.play(anim(['a.png'], 4, true))
+    expect(ghost.src).toBe('')                                  // 同一帧重放不淡
+    r.play(anim(['b.png'], 4, true))
+    expect(ghost.src).toBe('a.png'); expect(ghost.classList.contains('pet-ghost-out-a')).toBe(true)
+    c.tick(200); expect(ghost.classList.contains('pet-ghost-out-a')).toBe(false)
+    r.fadeTo(anim(['c.png'], 4, true)); c.tick(600)
+    expect(img.src).toBe('c.png'); expect(ghost.src).toBe('a.png') // 淡出淡入那条路不走 ghost
+    r.play(anim(['d.png'], 4, true)); expect(ghost.classList.contains('pet-ghost-out-b')).toBe(true)
+    r.stop(); expect(c.pending()).toBe(0)
+  })
+})
+

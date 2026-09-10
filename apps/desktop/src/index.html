@@ -6,6 +6,8 @@
     <title>wechat-cc</title>
     <link rel="icon" href="./wechat-cc-logo.png" />
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./cc-page-art.css" />
+    <link rel="stylesheet" href="./cc-surfaces.css" />
   </head>
   <body>
 
@@ -41,7 +43,11 @@
             <div class="launch-grid">
               <div class="launch-hero">
                 <div class="launch-illus launch-illus-missing" aria-hidden="true">
-                  <img src="./assets/onboarding-missing.png" alt="" />
+                  <span class="cc-page-art cc-page-art-onboarding">
+                    <img class="cc-page-background" src="./assets/home-cc-aquarium-base.png" alt="" />
+                    <span class="cc-page-ground"></span>
+                    <img class="cc-page-character" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" />
+                  </span>
                 </div>
                 <h2>还差一步就能见面了</h2>
                 <p>还没检测到 Claude Code 或 Codex，安装任意一个就能继续。</p>
@@ -120,7 +126,11 @@
             <div class="launch-grid">
               <div class="launch-hero">
                 <div class="launch-illus launch-illus-ready" aria-hidden="true">
-                  <img src="./assets/onboarding-success.png" alt="" />
+                  <span class="cc-page-art cc-page-art-onboarding">
+                    <img class="cc-page-background" src="./assets/home-cc-aquarium-base.png" alt="" />
+                    <span class="cc-page-ground"></span>
+                    <img class="cc-page-character cc-page-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" />
+                  </span>
                 </div>
                 <h2>环境检测成功</h2>
                 <p>一切准备就绪，开启你的体验之旅吧！</p>
@@ -392,14 +402,17 @@
                     <div class="stage-hint" id="stage-hint">把鼠标轻轻移进鱼缸水面下方</div>
                     <div class="bear-message" id="bear-message" aria-live="polite">你好呀，今天也在陪你。</div>
                   </div>
-                  <img class="moment-illustration moment-illustration-offline" src="./assets/moment-ai-offline.png" alt="" />
+                  <div class="moment-illustration moment-illustration-offline" role="img" aria-label="CC 安静地坐在鱼缸旁，连接暂时离线">
+                    <img class="offline-aquarium" src="./assets/home-cc-aquarium-base.png" alt="" />
+                    <span class="offline-fish offline-fish-gold" aria-hidden="true"></span>
+                    <span class="offline-fish offline-fish-coral" aria-hidden="true"></span>
+                    <span class="offline-fish offline-fish-blue" aria-hidden="true"></span>
+                    <span class="offline-cc-shadow" aria-hidden="true"></span>
+                    <img class="offline-cc" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" />
+                  </div>
                 </div>
                 <div class="moment-actions">
                   <span class="pending" id="dash-pending"></span>
-                  <button id="dash-stop" class="moment-connect-btn">
-                    <span class="ic" data-hg-icon="plug-01"></span>
-                    断开连接
-                  </button>
                   <button id="dash-restart" class="moment-connect-btn">
                     <span class="ic" data-hg-icon="refresh"></span>
                     重新连接
@@ -416,14 +429,8 @@
 
               <aside class="moment-side" aria-label="连接状态">
               <section class="moment-users" aria-label="用户连接状态">
-                <!-- 上次故障横幅(Task 8, spec 2026-08-03-connection-health §8):
-                     桌面没开着时通知无处可去 —— 2026-08-02 那次断了 10.5 小时,
-                     主人只有翻日志才发现。只要有故障记录就显示最新一条,不受
-                     "未读"影响;见 modules/dashboard.js 的 loadLastIncident。
-                     Lives INSIDE the right column on purpose: as a direct
-                     grid child it grabbed the (1,2) cell whenever it became
-                     visible, shoving .moment-users to a second row and
-                     pushing 添加用户 below the fold. -->
+                <!-- Ongoing incidents stay prominent; recovered records remain
+                     expandable below the account, regardless of read status. -->
                 <p id="dash-health-banner" class="dash-health-banner" hidden></p>
                 <!-- 文件访问(macOS TCC,2026-09-04):daemon 自己读不到主人的文件夹时在这儿说,
                      并带去系统设置。权限缺失此前是静默的 —— 主人只会觉得 bot 变笨了。 -->
@@ -433,6 +440,14 @@
                 </div>
                 <h2>当前连接中的用户</h2>
                 <div id="accounts-current" class="current-user-card"></div>
+                <details id="dash-connection-options" class="connection-options" hidden>
+                  <summary>连接选项</summary>
+                  <button id="dash-stop" class="btn ghost" type="button">断开连接</button>
+                </details>
+                <details id="dash-health-history" class="connection-history" hidden>
+                  <summary>上次连接中断已恢复</summary>
+                  <p id="dash-health-history-detail"></p>
+                </details>
                 <div id="brain-health" class="brain-health" hidden></div>
                 <button id="open-phone-settings" class="phone-settings-btn" type="button" title="生成二维码,手机扫码打开设置页(10 分钟内有效)"><span aria-hidden="true">↗</span> 手机扫码改设置</button>
                 <div class="moment-subhead" id="accounts-subhead">
@@ -660,21 +675,21 @@
                      心愿(wishes.js)替掉了原来「派心愿 / 回声」两个折叠子块 —— 输入 → 预览 → 派,
                      没有匿名觅食网、没有揭晓牵线仪式。信箱仍折叠留着;所有 id 不变(模块测试 + e2e 依赖)。 -->
 
-                <!-- 🎒 带回来的 -->
+                <!-- <span class="ic" data-hg-icon="archive"></span> 带回来的 -->
                 <section class="fd-section">
-                  <div class="fd-sec-head"><h2>🎒 带回来的</h2><span class="fd-count" id="fd-catch-count"></span><span class="fd-hint">上网找的东西 · 串门听来的见闻 · 明信片</span></div>
+                  <div class="fd-sec-head"><h2><span class="ic" data-hg-icon="archive"></span> 带回来的</h2><span class="fd-count" id="fd-catch-count"></span><span class="fd-hint">上网找的东西 · 串门听来的见闻 · 明信片</span></div>
                   <div class="hb-list" id="fd-catch"></div>
                 </section>
 
-                <!-- 👥 认识的人 -->
+                <!-- <span class="ic" data-hg-icon="user-group"></span> 认识的人 -->
                 <section class="fd-section">
-                  <div class="fd-sec-head"><h2>👥 认识的人</h2><span class="fd-count" id="fd-people-count"></span><span class="fd-hint">朋友的伙伴 · 邻居 · 来找过我的人</span></div>
+                  <div class="fd-sec-head"><h2><span class="ic" data-hg-icon="user-group"></span> 认识的人</h2><span class="fd-count" id="fd-people-count"></span><span class="fd-hint">朋友的伙伴 · 邻居 · 来找过我的人</span></div>
                   <div class="fd-people" id="fd-people"></div>
                 </section>
 
-                <!-- 📮 心愿：伙伴替你去问认识的人,回信在「带回来的」里 -->
+                <!-- <span class="ic" data-hg-icon="mail-01"></span> 心愿：伙伴替你去问认识的人,回信在「带回来的」里 -->
                 <section class="fd-section" id="fd-wish">
-                  <div class="fd-sec-head"><h2>📮 心愿</h2><span class="fd-count" id="fd-wish-count"></span><span class="fd-hint">伙伴替你去问认识的人 · 回信在「带回来的」里</span></div>
+                  <div class="fd-sec-head"><h2><span class="ic" data-hg-icon="mail-01"></span> 心愿</h2><span class="fd-count" id="fd-wish-count"></span><span class="fd-hint">伙伴替你去问认识的人 · 回信在「带回来的」里</span></div>
                   <form class="wsh-compose" id="fd-wish-form">
                     <input id="fd-wish-text" type="text" maxlength="140" placeholder="想让伙伴帮你打听什么？" autocomplete="off">
                     <button id="fd-wish-submit" type="submit">先看看怎么问</button>
@@ -842,8 +857,8 @@
         <div class="lightbox-body" id="lightbox-body"></div>
       </div>
 
-    <img class="crab-escape" id="crab-escape" src="./assets/animation/crab-watercolor-v1.png" alt="" aria-hidden="true">
-    <script src="./animation-lab.js"></script>
+    <img class="crab-escape" id="crab-escape" alt="" aria-hidden="true">
+    <script type="module" src="./animation-lab.js"></script>
     <script type="module" src="./main.js"></script>
   </body>
 </html>

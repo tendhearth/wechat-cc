@@ -1,3 +1,4 @@
+import { ccPageArt } from "../cc-page-art.js"
 // @ts-check
 /// <reference lib="dom" />
 /** @typedef {import('../../../../src/cli/schema').MemoryListOutputT} MemoryList */
@@ -716,7 +717,7 @@ function renderCcPortrait(portrait) {
   }
   return `
     <figure class="cc-portrait-card cc-portrait-empty">
-      <div class="cc-portrait-frame"><span>🖌️</span></div>
+      <div class="cc-portrait-frame"><span class="cc-portrait-placeholder" aria-hidden="true">${icon("edit-02")}</span></div>
       <figcaption>点「更新画像」,CC 会顺手给你画一张小像</figcaption>
     </figure>`
 }
@@ -837,7 +838,7 @@ function renderMemoryEmbryo(embryo) {
   return `
     <div class="memory-profile-companion">
       <button class="memory-embryo memory-embryo-illustration" type="button" data-action="toggle-memory-embryo" aria-expanded="false" aria-label="${escapeHtml(embryo.stage)}，${escapeHtml(embryo.stageHint)}">
-        <img src="./assets/memory-embryo-illustration.png" alt="" aria-hidden="true" />
+        ${ccPageArt("memory")}
       </button>
       <div class="memory-embryo-panel" id="memory-embryo-panel" hidden>
         <div class="embryo-panel-head">
@@ -1221,7 +1222,11 @@ function clamp(n, min, max) {
 /** @param {Deps} deps */
 export async function loadMemoryTopZone(deps) {
   const chatId = await currentChatId(deps)
-  if (!chatId) return  // no chat configured yet — leave empty-state visible
+  if (!chatId) {
+    const root = document.getElementById("memory-profile-content")
+    if (root) root.innerHTML = '<div class="cc-page-status"><h2>还没有可用的会话</h2><p>先在首页连接微信，与 CC 聊几句，再回来查看记忆。</p></div>'
+    return
+  }
 
   const obsBox = document.getElementById("memory-observations")
   const msBox = document.getElementById("memory-milestones")
@@ -1252,6 +1257,8 @@ export async function loadMemoryTopZone(deps) {
     }
     msBox.innerHTML = (msResp.milestones || []).slice(-2).map(milestoneCard).join("")
   } catch (err) {
+    const root = document.getElementById("memory-profile-content")
+    if (root) root.innerHTML = '<div class="cc-page-status" role="status"><h2>暂时无法读取记忆</h2><p>已有记忆不会因此丢失。请到首页检查连接，再重新打开记忆页。</p></div>'
     console.error("memory top zone load failed", err)
   }
 }

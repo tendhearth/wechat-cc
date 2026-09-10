@@ -148,7 +148,7 @@ export function renderHuntBag(data) {
 
   if (data.items == null) {
     if (count) count.textContent = ''
-    host.innerHTML = '<div class="fd-empty">读不到背包 —— daemon 没在跑?</div>'
+    host.innerHTML = '<div class="fd-empty">暂时无法读取带回来的内容，请到首页检查连接后重试。</div>'
     return
   }
   const { kept, dropped } = splitByStatus(data.items)

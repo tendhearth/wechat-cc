@@ -145,3 +145,17 @@ describe('newestTimestamp', () => {
     expect(newestTimestamp(undefined, undefined)).toBeUndefined()
   })
 })
+
+describe('memory page availability', () => {
+  it('replaces the initial loading message when there is no usable conversation', async () => {
+    vi.resetModules()
+    const { loadMemoryTopZone } = await import('./memory.js')
+    const root = fakeEl()
+    root.innerHTML = '正在整理 CC 眼中的你…'
+    ;(globalThis as any).document.getElementById = (id: string) => id === 'memory-profile-content' ? root : null
+    await loadMemoryTopZone(makeDeps({ invoke: vi.fn().mockResolvedValue({ users: [] }) }) as any)
+    expect(root.innerHTML).toContain('还没有可用的会话')
+    expect(root.innerHTML).toContain('首页')
+    expect(root.innerHTML).not.toContain('正在整理')
+  })
+})

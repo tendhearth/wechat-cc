@@ -2,8 +2,8 @@
   "productName": "CC Native QA",
   "identifier": "com.tendhearth.cc-native-qa",
   "build": {
-    "beforeBuildCommand": "",
-    "frontendDist": "../src"
+    "beforeBuildCommand": "bun scripts/prepare-cc-native-qa.mjs",
+    "frontendDist": "../art/cc-v1/native-qa/dist"
   },
   "app": {
     "windows": [

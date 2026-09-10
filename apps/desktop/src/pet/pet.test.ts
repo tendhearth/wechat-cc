@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { createPet } from './pet.js'
 import { fallbackFrame } from '../assets/pet/cc-v1/placeholder.js'
 
-const realRaw = readFileSync(join(__dirname, '../assets/pet/manifest.json'), 'utf8')
+// 旧的 v1 扁平 manifest 只剩测试夹具的身份(旧猫化位图已从正式包删掉);帧路径在这里从不真的加载。
+const realRaw = readFileSync(join(__dirname, 'assets/fixtures/legacy-v1-manifest.json'), 'utf8')
 const fetchReal = (async () => new Response(realRaw, { status: 200 })) as unknown as typeof fetch
 
 function el(tag = 'div') {
@@ -13,7 +14,8 @@ function el(tag = 'div') {
   return { tag, style: fakeStyle(), src: '', textContent: '', hidden: false, attrs: {} as Record<string, string>,
     classList: { add: (c: string) => { classes.add(c) }, remove: (c: string) => { classes.delete(c) }, contains: (c: string) => classes.has(c) },
     setAttribute(k: string, v: string) { this.attrs[k] = v }, getAttribute(k: string) { return this.attrs[k] ?? null },
-    appendChild(c: any) { kids.push(c) }, replaceChildren(...c: any[]) { kids.splice(0, kids.length, ...c) }, children: kids }
+    appendChild(c: any) { kids.push(c) }, replaceChildren(...c: any[]) { kids.splice(0, kids.length, ...c) }, children: kids,
+    insertBefore(c: any, ref: any) { const i = kids.indexOf(ref); kids.splice(i < 0 ? kids.length : i, 0, c) } }
 }
 function clock() {
   let now = 0; let seq = 0; const q: Array<{ at: number, id: number, fn: () => void }> = []
@@ -155,6 +157,7 @@ describe('createPet(组装)', () => {
     expect(pet.machine.snapshot().behavior).toBe('idle')
     expect(root.img.src).toBe('./assets/pet/reference/master-lit.png')
     pet.setState('working')
+    c.tick(200)                               // 换帧的交叉淡化 160ms 有自己的计时器,让它走完
     expect(c.pending()).toBe(0)               // 忙起来就没有待发的 blink / look 了
   })
   it('working 不排空闲小动作:12 秒里一动不动', async () => {
@@ -236,3 +239,39 @@ describe('CC v1 kit runtime and terminal fallback', () => {
     pet.destroy(); expect(c.pending()).toBe(0)
   })
 })
+
+describe('交叉淡化(ghost)', () => {
+  it('开窗建一张常驻 ghost,插在主体前面;行为切换时上一帧放到 ghost 上淡出,序列内逐帧不淡', async () => {
+    const { pet, root, c } = await boot()
+    root.stage.appendChild(root.img)
+    // boot 里 createPet 早于 appendChild,ghost 是 insertBefore(ghost, img) 进来的:img 不在树里时落到末尾。
+    const ghost = root.stage.children.find((k: any) => k.classList.contains('pet-ghost'))
+    expect(ghost).toBeTruthy()
+    expect(ghost.classList.contains('pet-sprite')).toBe(true)
+    pet.setForm('lit'); c.tick(1100)
+    const idle = root.img.src
+    pet.setState('thinking')
+    expect(ghost.src).toBe(idle)                                  // 上一帧留在 ghost 上
+    expect(ghost.classList.contains('pet-ghost-out-a')).toBe(true)
+    expect(root.img.src).not.toBe(idle)                           // 主体已经是新帧
+    c.tick(200)
+    expect(ghost.classList.contains('pet-ghost-out-a')).toBe(false) // 淡完摘类
+    const thinking = root.img.src
+    pet.setState('working')
+    expect(ghost.src).toBe(thinking)
+    expect(ghost.classList.contains('pet-ghost-out-b')).toBe(true) // 交替类名,让 animation 重启
+    c.tick(200)
+    pet.setState('blink'); const first = root.img.src; c.tick(130)  // 8fps 序列走一帧
+    expect(root.img.src).not.toBe(first)
+    expect(ghost.src).not.toBe(first)                              // 序列内换帧不进 ghost
+  })
+  it('reduced motion 不做交叉淡化:ghost 不接帧', async () => {
+    const { pet, root, c } = await boot(fetchReal, true)
+    const ghost = root.stage.children.find((k: any) => k.classList.contains('pet-ghost'))
+    pet.setForm('lit'); c.tick(1100)
+    pet.setState('thinking')
+    expect(ghost.src).toBe('')
+    expect(ghost.classList.contains('pet-ghost-out-a') || ghost.classList.contains('pet-ghost-out-b')).toBe(false)
+  })
+})
+

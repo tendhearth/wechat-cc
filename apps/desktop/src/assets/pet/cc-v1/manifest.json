@@ -3,7 +3,7 @@
   "kitId": "cc-v1",
   "name": "CC Asset Kit",
   "version": "1.0.0-alpha",
-  "artStatus": "normative-placeholder",
+  "artStatus": "reviewed-production",
   "basedOnDevCommit": "7a0633368f1569b22f2b5637051c1154dfd73be0",
   "reference": {
     "path": "CC_MASTER_V1.png",
@@ -95,7 +95,12 @@
           "fps": 4,
           "loop": true,
           "next": null,
-          "artStatus": "production-candidate"
+          "artStatus": "reviewed-production",
+          "visualReview": {
+            "owner": "ggshr9",
+            "reviewedAt": "2026-09-09",
+            "method": "native transparent window on real wallpaper"
+          }
         },
         "working": {
           "frames": [
@@ -229,7 +234,12 @@
           "fps": 4,
           "loop": true,
           "next": null,
-          "artStatus": "production-candidate"
+          "artStatus": "reviewed-production",
+          "visualReview": {
+            "owner": "ggshr9",
+            "reviewedAt": "2026-09-09",
+            "method": "native transparent window on real wallpaper"
+          }
         },
         "done": {
           "frames": [
@@ -340,7 +350,33 @@
       "fps": 8,
       "loop": false,
       "next": "idle",
-      "artStatus": "production-candidate"
+      "artStatus": "production-candidate",
+      "visualReview": {
+        "reviewer": "Codex / eye-only revision; previous owner acceptance covers original sequence",
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "lit-to-unlit": {
+      "frames": [
+        "transitions/light-to-dark/000.png",
+        "transitions/light-to-dark/001.png",
+        "transitions/light-to-dark/002.png",
+        "transitions/light-to-dark/003.png",
+        "transitions/light-to-dark/004.png",
+        "transitions/light-to-dark/005.png",
+        "transitions/light-to-dark/006.png",
+        "transitions/light-to-dark/007.png"
+      ],
+      "fps": 6,
+      "loop": false,
+      "next": "idle",
+      "artStatus": "production-candidate",
+      "visualReview": {
+        "reviewer": "Codex / eye-only revision; previous owner acceptance covers original sequence",
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
     }
   },
   "props": {
@@ -640,24 +676,36 @@
       "sha256": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
       "view": "three-quarter",
       "expression": "idle",
-      "artStatus": "production-candidate"
+      "artStatus": "reviewed-production",
+      "visualReview": {
+        "owner": "ggshr9",
+        "reviewedAt": "2026-09-09",
+        "method": "native transparent window on real wallpaper"
+      }
     },
     "masks/sleep.png": {
       "sha256": "0e77e4d1e266466e2ba955a8a59d1e4ec854390e9edf974f90b179992824e0e6",
       "view": "three-quarter",
       "expression": "sleep",
-      "artStatus": "production-candidate"
+      "artStatus": "reviewed-production",
+      "visualReview": {
+        "owner": "ggshr9",
+        "reviewedAt": "2026-09-09",
+        "method": "native transparent window on real wallpaper"
+      }
     },
     "sprites/lit/rest.png": {
       "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
       "view": "three-quarter",
       "expression": "idle",
-      "artStatus": "production-candidate",
+      "artStatus": "reviewed-production",
       "geometryMask": "masks/front.png",
       "visualReview": {
         "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
-        "reviewedAt": "2026-09-09T11:35:49.429353+00:00",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "owner": "ggshr9",
+        "method": "native transparent window on real wallpaper"
       }
     },
     "sprites/lit/blink-half.png": {
@@ -700,12 +748,14 @@
       "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
       "view": "three-quarter",
       "expression": "idle",
-      "artStatus": "production-candidate",
+      "artStatus": "reviewed-production",
       "geometryMask": "masks/front.png",
       "visualReview": {
         "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
-        "reviewedAt": "2026-09-09T11:35:49.429602+00:00",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "owner": "ggshr9",
+        "method": "native transparent window on real wallpaper"
       }
     },
     "sprites/unlit/blink-half.png": {
@@ -748,83 +798,85 @@
       "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
       "view": "three-quarter",
       "expression": "idle",
-      "artStatus": "production-candidate",
+      "artStatus": "reviewed-production",
       "geometryMask": "masks/front.png",
       "visualReview": {
         "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
-        "reviewedAt": "2026-09-09T11:35:49.429824+00:00",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "owner": "ggshr9",
+        "method": "native transparent window on real wallpaper"
       }
     },
     "transitions/dark-to-light/001.png": {
-      "sha256": "71052b103afe289560dca22a95ae40fdead00ee7baeaa3af04bc12af37c39daf",
+      "sha256": "2c51ebe4ba0ec40e0eca3fe0285698d707d57ef931b0f626b197dace68b96824",
       "view": "three-quarter",
       "expression": "idle",
       "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
-        "reviewedAt": "2026-09-09T11:35:49.429880+00:00",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
+        "reviewedAt": "2026-09-09",
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/dark-to-light/002.png": {
-      "sha256": "296fc220651b83f522bc384f99816cb1379e48df4b1bd67a136d02f8cd4cf914",
+      "sha256": "dc6c4578a8a21620d233e1bb26be429efea434e25bc5f061a923e867cd1a4dec",
       "view": "three-quarter",
       "expression": "idle",
       "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
-        "reviewedAt": "2026-09-09T11:35:49.429933+00:00",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
+        "reviewedAt": "2026-09-09",
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/dark-to-light/003.png": {
-      "sha256": "47cb6bdf6db3e41eb1b4527076ebdaac3b50d2461c3c959a702368c7dfa1b78d",
+      "sha256": "e4b93dbb166e320af785cef2f21cebfe17039a7e0ab6d5571e563d632631b683",
       "view": "three-quarter",
       "expression": "idle",
       "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
-        "reviewedAt": "2026-09-09T11:35:49.429988+00:00",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
+        "reviewedAt": "2026-09-09",
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/dark-to-light/004.png": {
-      "sha256": "43dd5553f29d04ed731f3a95eb340ddd8ad141eeeaa3507dfeb6b5c761dc921e",
+      "sha256": "8c5e23671b92dccf9a450cb619f97da73f449e8a4a611ad9662c489b28e43c44",
       "view": "three-quarter",
       "expression": "idle",
       "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
-        "reviewedAt": "2026-09-09T11:35:49.430042+00:00",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
+        "reviewedAt": "2026-09-09",
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/dark-to-light/005.png": {
-      "sha256": "7dd5abd662ec8a16c79f0bf30141b96f242fefaba5ef56055afff7f93f9aa491",
+      "sha256": "9bafab4426279fb023ac96558bc9d2b4f47e1480ca078aa531fc6f6d84528fdb",
       "view": "three-quarter",
       "expression": "idle",
       "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
-        "reviewedAt": "2026-09-09T11:35:49.430095+00:00",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
+        "reviewedAt": "2026-09-09",
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/dark-to-light/006.png": {
-      "sha256": "520891a78d6b76d9bd3748dcfa249005bd9e10987860ee38c3986f44c4d7ae89",
+      "sha256": "9f302c58c1445ecf8b7882f0e1bbc4998012c586cf73848b856b02d84fd70352",
       "view": "three-quarter",
       "expression": "idle",
       "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
-        "reviewedAt": "2026-09-09T11:35:49.430149+00:00",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
+        "reviewedAt": "2026-09-09",
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
@@ -832,56 +884,85 @@
       "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
       "view": "three-quarter",
       "expression": "idle",
-      "artStatus": "production-candidate",
+      "artStatus": "reviewed-production",
       "geometryMask": "masks/front.png",
       "visualReview": {
         "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
-        "reviewedAt": "2026-09-09T11:35:49.430204+00:00",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "owner": "ggshr9",
+        "method": "native transparent window on real wallpaper"
       }
     },
     "masks/thinking.png": {
       "sha256": "c6980b399ce508a57539a85c5cdc0bc5fe0c4e9a65fcfc199f1897b90bfdb45d",
       "view": "three-quarter",
       "expression": "thinking",
-      "artStatus": "production-candidate"
+      "artStatus": "reviewed-production",
+      "visualReview": {
+        "owner": "ggshr9",
+        "reviewedAt": "2026-09-09",
+        "method": "native transparent window on real wallpaper"
+      }
     },
     "masks/listening.png": {
       "sha256": "fa9929ef6c3d0a49c604be79690dd9630216d3dced62d14d2caf531fb8316449",
       "view": "three-quarter",
       "expression": "listening",
-      "artStatus": "production-candidate"
+      "artStatus": "reviewed-production",
+      "visualReview": {
+        "owner": "ggshr9",
+        "reviewedAt": "2026-09-09",
+        "method": "native transparent window on real wallpaper"
+      }
     },
     "masks/excited.png": {
       "sha256": "4e9d645c85571c13427be72ad8f98fd09489aa7abeed21edd495c1776b98f5ae",
       "view": "three-quarter",
       "expression": "excited",
-      "artStatus": "production-candidate"
+      "artStatus": "reviewed-production",
+      "visualReview": {
+        "owner": "ggshr9",
+        "reviewedAt": "2026-09-09",
+        "method": "native transparent window on real wallpaper"
+      }
     },
     "masks/happy.png": {
       "sha256": "51efbdeaae4b78acd09d1691aaf1d9a2b49ec85a4969c1dbaf1bd08233ddf2ab",
       "view": "three-quarter",
       "expression": "happy",
-      "artStatus": "production-candidate"
+      "artStatus": "reviewed-production",
+      "visualReview": {
+        "owner": "ggshr9",
+        "reviewedAt": "2026-09-09",
+        "method": "native transparent window on real wallpaper"
+      }
     },
     "masks/confused.png": {
       "sha256": "01df6c8840b38659a8ba040bfb4fe4669d1a3c0b240ce50f514a40cdf7a22202",
       "view": "three-quarter",
       "expression": "confused",
-      "artStatus": "production-candidate"
+      "artStatus": "reviewed-production",
+      "visualReview": {
+        "owner": "ggshr9",
+        "reviewedAt": "2026-09-09",
+        "method": "native transparent window on real wallpaper"
+      }
     },
     "sprites/lit/thinking.png": {
       "sha256": "7a399d4d87e9b830620d989c857ee935ef6c060996b198fa192011b14958fcfe",
       "view": "three-quarter",
       "expression": "thinking",
-      "artStatus": "production-candidate",
+      "artStatus": "reviewed-production",
       "geometryMask": "masks/listening.png",
       "cPose": "listening",
       "eyePose": "squint",
       "visualReview": {
         "reviewer": "Codex / raised forward C compared with sleep at 96px; owner correction review pending",
-        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "owner": "ggshr9",
+        "method": "native transparent window on real wallpaper"
       }
     },
     "sprites/lit/working.png": {
@@ -986,14 +1067,16 @@
       "sha256": "4f0058e269cb88bc7b84aab94750e76ff04947da298c1f3937ba3a0822cf6718",
       "view": "three-quarter",
       "expression": "thinking",
-      "artStatus": "production-candidate",
+      "artStatus": "reviewed-production",
       "geometryMask": "masks/listening.png",
       "cPose": "listening",
       "eyePose": "squint",
       "visualReview": {
         "reviewer": "Codex / raised forward C compared with sleep at 96px; owner correction review pending",
-        "reviewedAt": "2026-09-09T12:19:07.643810+00:00",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "owner": "ggshr9",
+        "method": "native transparent window on real wallpaper"
       }
     },
     "sprites/unlit/working.png": {
@@ -1097,70 +1180,180 @@
     "../props/micro-light.png": {
       "sha256": "25bcc10287a275b1c492aa531a60ee6022b0ae82dcf56d2a2b228a90237a8613",
       "kind": "prop",
-      "artStatus": "production-candidate",
+      "artStatus": "reviewed-production",
       "visualReview": {
         "reviewer": "Codex / revised warm signal and HDR bloom on light/dark sheets; owner wallpaper review pending",
-        "reviewedAt": "2026-09-09T13:39:22.345536+00:00",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "owner": "ggshr9",
+        "method": "native transparent window on real wallpaper"
       }
     },
     "../props/laptop.png": {
       "sha256": "3f14632af1baba51f9278618d0a06ffcd6b14af08bbd585e1b0839db7bb87b14",
       "kind": "prop",
-      "artStatus": "production-candidate",
+      "artStatus": "reviewed-production",
       "visualReview": {
         "reviewer": "Codex / seven Blender props on light/dark review sheets; owner approval pending",
-        "reviewedAt": "2026-09-09T12:26:42.383544+00:00",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "owner": "ggshr9",
+        "method": "native transparent window on real wallpaper"
       }
     },
     "../props/envelope.png": {
       "sha256": "c7c22736c065bbdf2ec7710d67bb6eadea007908693041ad4846fb3e1a31f12b",
       "kind": "prop",
-      "artStatus": "production-candidate",
+      "artStatus": "reviewed-production",
       "visualReview": {
         "reviewer": "Codex / seven Blender props on light/dark review sheets; owner approval pending",
-        "reviewedAt": "2026-09-09T12:26:42.383544+00:00",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "owner": "ggshr9",
+        "method": "native transparent window on real wallpaper"
       }
     },
     "../props/speech-bubble.png": {
       "sha256": "56a0ca796a95638fb48f39cd76fe741e7d8e8e6ae30b6e4f154a3586d512474c",
       "kind": "prop",
-      "artStatus": "production-candidate",
+      "artStatus": "reviewed-production",
       "visualReview": {
         "reviewer": "Codex / seven Blender props on light/dark review sheets; owner approval pending",
-        "reviewedAt": "2026-09-09T12:26:42.383544+00:00",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "owner": "ggshr9",
+        "method": "native transparent window on real wallpaper"
       }
     },
     "../props/thought-bubble.png": {
       "sha256": "fb398d469aa1523b6d094497b3e827d7ab445ad5ba70b2f72664124f49500949",
       "kind": "prop",
-      "artStatus": "production-candidate",
+      "artStatus": "reviewed-production",
       "visualReview": {
         "reviewer": "Codex / seven Blender props on light/dark review sheets; owner approval pending",
-        "reviewedAt": "2026-09-09T12:26:42.383544+00:00",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "owner": "ggshr9",
+        "method": "native transparent window on real wallpaper"
       }
     },
     "../props/exclamation.png": {
       "sha256": "3a5fbc3a8907a910b031b9b147db2f1fc100526bfa27500ea6f7cc127afa1cb5",
       "kind": "prop",
-      "artStatus": "production-candidate",
+      "artStatus": "reviewed-production",
       "visualReview": {
         "reviewer": "Codex / revised warm signal and HDR bloom on light/dark sheets; owner wallpaper review pending",
-        "reviewedAt": "2026-09-09T13:39:22.346147+00:00",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "owner": "ggshr9",
+        "method": "native transparent window on real wallpaper"
       }
     },
     "../props/mug.png": {
       "sha256": "1146ef0c4240df7c894ac25cc610b973f1dedd0e4a70db3b9e0db899f9f22311",
       "kind": "prop",
-      "artStatus": "production-candidate",
+      "artStatus": "reviewed-production",
       "visualReview": {
         "reviewer": "Codex / seven Blender props on light/dark review sheets; owner approval pending",
-        "reviewedAt": "2026-09-09T12:26:42.383544+00:00",
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "owner": "ggshr9",
+        "method": "native transparent window on real wallpaper"
+      }
+    },
+    "transitions/light-to-dark/000.png": {
+      "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / frozen shader interpolation, new extinguish pending owner review",
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "transitions/light-to-dark/001.png": {
+      "sha256": "6b42455353b055022274640d7b736f517b5a8d1852888565b73543ab6087717b",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "transitions/light-to-dark/002.png": {
+      "sha256": "7e732d653c95f39150dc64b506e3e6284a9610f3b21c3375dcd1b4d468f70429",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "transitions/light-to-dark/003.png": {
+      "sha256": "337e792a0e4b8b5e7f90d6b50d016ffd761a82a5d4c8ef501382eae2bc440383",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "transitions/light-to-dark/004.png": {
+      "sha256": "8fa842cdf17b0eb53c7563152f3e2185428c3c4d3a064c5b1df4ac0a33c10ce8",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "transitions/light-to-dark/005.png": {
+      "sha256": "5b93e04f55d6e3209dffae2dcffeff80b83cd3ca2448f081743f83a66edcf245",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "transitions/light-to-dark/006.png": {
+      "sha256": "fe0884a4474a65efd129a98a4cc15bc7bc5a2b0b48d58e899636e7c19c3680c6",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
+        "reviewedAt": "2026-09-09",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
+      }
+    },
+    "transitions/light-to-dark/007.png": {
+      "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+      "view": "three-quarter",
+      "expression": "idle",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/front.png",
+      "visualReview": {
+        "reviewer": "Codex / frozen shader interpolation, new extinguish pending owner review",
+        "reviewedAt": "2026-09-09",
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     }
@@ -1172,5 +1365,10 @@
       "role": "approved-design-reference-only",
       "storage": "private-outside-repo"
     }
-  ]
+  ],
+  "visualReview": {
+    "owner": "ggshr9",
+    "reviewedAt": "2026-09-09",
+    "method": "native transparent window on real wallpaper"
+  }
 }

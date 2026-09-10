@@ -142,7 +142,8 @@ describe('makeModeCommands', () => {
   })
 
   it('/api deepseek-chat pins the model AND switches to solo+openai', async () => {
-    const { cmds, set, sentMessages, pinModel } = setup({ registered: ['claude', 'codex', 'openai'] })
+    // 名字要在网关列表里才切(2026-09-10 起);这里把它放进列表。
+    const { cmds, set, sentMessages, pinModel } = setup({ registered: ['claude', 'codex', 'openai'], models: { models: ['deepseek-chat', 'DeepSeek', 'KIMI'] } })
     const consumed = await cmds.handle(inbound('/api deepseek-chat'))
     expect(consumed).toBe(true)
     // 按对话钉:写进 Mode.solo.model,不再动全局 agent-config(pinModel)。
@@ -160,8 +161,9 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/api Kimi'))
     expect(consumed).toBe(true)
     expect(pinModel).not.toHaveBeenCalled()
-    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'openai', model: 'Kimi' })
-    expect(sentMessages[0]?.[1]).toContain('Kimi')
+    // 网关列表里的拼法是 KIMI:大小写不同按网关归一,回复里说明主人输的是什么。
+    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'openai', model: 'KIMI' })
+    expect(sentMessages[0]?.[1]).toContain('KIMI(按网关拼法,你输的是 Kimi)')
   })
 
   it('/api bad name rejects a model id containing a space — no switch, no pin', async () => {
@@ -1194,10 +1196,41 @@ describe('/api list / alias / unalias', () => {
     expect(sentMessages[1]![1]).toContain('没有叫')
     expect(sentMessages[1]![1]).toContain('k')
   })
-  it('an unaliased name still passes through verbatim (gateway原名照样能用)', async () => {
-    const { cmds, set } = setup({ registered: reg, config: { openaiAliases: { ds: 'DeepSeek' } } })
+  it('an unaliased name that the gateway lists passes through verbatim (gateway原名照样能用)', async () => {
+    const { cmds, set } = setup({ registered: reg, config: { openaiAliases: { ds: 'DeepSeek' } }, models: { models: ['DeepSeek', 'GLM-FLASH'] } })
     await cmds.handle(inbound('/api GLM-FLASH'))
     expect(set).toHaveBeenLastCalledWith('chat-1', { kind: 'solo', provider: 'openai', model: 'GLM-FLASH' })
+  })
+
+  // ── 打错字(2026-09-10 主人 `/api jimi` 被原样钉上,下一条消息才报错)──
+  it('a typo that is neither an alias nor on the gateway is rejected with near matches; no switch', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: reg, config: { openaiAliases: { kimi: 'KIMI', ds: 'DeepSeek' } }, models: { models: ['DeepSeek', 'KIMI', 'Qwen3.8'] } })
+    const consumed = await cmds.handle(inbound('/api jimi'))
+    expect(consumed).toBe(true)
+    expect(set).not.toHaveBeenCalled()
+    const text = sentMessages[0]?.[1] ?? ''
+    expect(text).toContain('网关上没有 `jimi`')
+    expect(text).toContain('`kimi`')          // 别名,编辑距离 1
+    expect(text).toContain('`KIMI`')          // 网关名,编辑距离 1
+    expect(text).not.toContain('DeepSeek')    // 不相近的不列
+    expect(text).toContain('/api list')
+  })
+  it('a typo with nothing near it still says so, without inventing suggestions', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: reg, models: { models: ['DeepSeek', 'KIMI'] } })
+    await cmds.handle(inbound('/api zzzzzz'))
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]?.[1]).toContain('网关上没有 `zzzzzz`。看全部:/api list')
+  })
+  it('an alias typed in the wrong case resolves to the alias target', async () => {
+    const { cmds, set } = setup({ registered: reg, config: { openaiAliases: { ds: 'DeepSeek' } }, models: { models: ['DeepSeek', 'KIMI'] } })
+    await cmds.handle(inbound('/api DS'))
+    expect(set).toHaveBeenLastCalledWith('chat-1', { kind: 'solo', provider: 'openai', model: 'DeepSeek' })
+  })
+  it('when the gateway list is unavailable the name passes through, and the reply says it was not verified', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: reg, models: { models: [], error: 'timeout' } })
+    await cmds.handle(inbound('/api GLM-FLASH'))
+    expect(set).toHaveBeenLastCalledWith('chat-1', { kind: 'solo', provider: 'openai', model: 'GLM-FLASH' })
+    expect(sentMessages[0]?.[1]).toContain('没核对这个名字')
   })
 })
 

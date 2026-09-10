@@ -28,7 +28,7 @@ describe('renderPeople', () => {
     expect(els.get('fd-people-count')!.textContent).toBe('1 位')
   })
   it('**读不到 ≠ 谁都不认识**', () => {
-    renderPeople({ relationships: null }); expect(host().innerHTML).toContain('读不到')
+    renderPeople({ relationships: null }); expect(host().innerHTML).toContain('暂时无法读取')
     renderPeople({ relationships: [] }); expect(host().innerHTML).toContain('还谁都不认识')
   })
   it('人类朋友没有串门按钮(人不是驱动)', () => {

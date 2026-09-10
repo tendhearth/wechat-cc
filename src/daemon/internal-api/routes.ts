@@ -145,7 +145,7 @@ const onlineStickerCursor = new Map<string, number>()
     // First-enable paint-set download progress (checking/downloading/ready/
     // failed). null means the atelier has never been turned on yet.
     'GET /v1/atelier/model-status': () => {
-      return { status: 200, body: { status: readModelStatus(deps.stateDir) } }
+      return { status: 200, body: { status: readModelStatus(deps.stateDir), mode: loadCompanionConfig(deps.stateDir).atelier_mode } }
     },
 
     // Explicit owner-initiated share from the desktop atelier. The target is

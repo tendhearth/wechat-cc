@@ -1,0 +1,20 @@
+/* Decorative layers use the same frozen CC as the homepage and desktop pet. */
+.cc-page-art { display: block; position: relative; width: 100%; aspect-ratio: 3 / 2; isolation: isolate; pointer-events: none; }
+.cc-page-art > .cc-page-background { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
+.cc-page-art > .cc-page-character { position: absolute; width: 40%; height: auto; left: 5%; top: 26.922%; display: block; }
+.cc-page-light { mask: url('./assets/pet/cc-v1/masks/front.png') center / contain no-repeat; -webkit-mask: url('./assets/pet/cc-v1/masks/front.png') center / contain no-repeat; }
+.cc-page-ground { position: absolute; left: 12.2%; top: 79.8%; width: 25.6%; height: 5.4%; background: radial-gradient(ellipse,rgba(91,66,43,.20),rgba(91,66,43,.12) 45%,transparent 72%); }
+.cc-page-art > .cc-page-prop { position: absolute; width: 22%; height: auto; left: 65%; top: 54%; }
+.cc-page-art-chat { width: min(230px,55vw); margin: 0 auto 10px; }
+.cc-page-art-chat > .cc-page-character { width: 64%; left: 12%; top: -6.125%; }
+.cc-page-art-chat > .cc-page-ground { left: 23.5%; top: 78%; width: 41%; height: 8%; }
+/* The approved aquarium has a 4:3 canvas and a pixel-470 ground anchor. */
+.cc-page-art-onboarding { aspect-ratio: 4 / 3; }
+.cc-page-art-onboarding > .cc-page-character { width: 34%; left: 8.8%; top: 38.986%; }
+.cc-page-art-onboarding > .cc-page-ground { left: 14.92%; top: 78.923%; width: 21.76%; height: 4.08%; }
+.memory-embryo-illustration > .cc-page-art { max-width: 760px; margin: auto; transition: transform 180ms ease-out; }
+.memory-embryo-illustration:hover > .cc-page-art, .memory-embryo-illustration:focus-visible > .cc-page-art { transform: translateY(-3px); }
+@media (prefers-reduced-motion: reduce) { .memory-embryo-illustration > .cc-page-art { transition: none; } }
+/* Bring the first-run shell onto the same paper surface as the main app. */
+.wizard-window { background: #fffaf0; }
+.qr-login-card { border: 1px solid #d9c4a7; background: rgba(255,253,247,.65); }

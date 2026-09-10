@@ -213,8 +213,9 @@ describe('CC Asset Kit v1.0-alpha', () => {
       expect(frames[k]!.alpha.every((a, i) => a >= frames[k - 1]!.alpha[i]!)).toBe(true)
     }
   })
-  it('missing/empty states fail soft with same-form idle; reverse transition uses existing fade', () => {
+  it('missing/empty states and explicitly missing reverse transition retain safe fallbacks', () => {
     const broken = structuredClone(raw)
+    delete broken.transitions['lit-to-unlit']
     delete broken.forms.lit.states.permission
     broken.forms.unlit.states.working.frames = []
     const loaded = normalizeManifest(broken)
@@ -402,11 +403,12 @@ it('renders two readable crescent/squint eyes, enlarged eyes and a shifted gaze'
   }
 })
 
-it('registers seven standalone prop candidates as padded 384px RGBA, without sprout', () => {
+it('registers seven owner-reviewed standalone props as padded 384px RGBA, without sprout', () => {
   expect(Object.keys(raw.props).sort()).toEqual(['envelope','exclamation','laptop','micro-light','mug','speech-bubble','thought-bubble'])
   for (const path of Object.values(raw.props) as string[]) {
     expect(raw.assets[path]?.kind).toBe('prop')
-    expect(raw.assets[path]?.artStatus).toBe('production-candidate')
+    expect(raw.assets[path]?.artStatus).toBe('reviewed-production')
+    expect(raw.assets[path]?.visualReview).toMatchObject({owner: 'ggshr9', reviewedAt: '2026-09-09', method: 'native transparent window on real wallpaper'})
     const { alpha, width, height } = readRGBA(readFileSync(join(root, path)), 384)
     expect([width, height]).toEqual([384,384])
     expect(alpha.some(a => a > 0)).toBe(true)
@@ -429,3 +431,51 @@ it('rejects standalone prop dimensions and missing registration independently of
     expect(validateAssetKit(target).errors).toContain(`prop_as_character:${path}`)
   })
 }, 30_000)
+
+it('records native owner acceptance without promoting SVG placeholders', () => {
+  expect(raw.artStatus).toBe('reviewed-production')
+  for (const form of Object.values(raw.forms) as any[]) for (const state of Object.values(form.states) as any[]) expect(state.artStatus).toBe('reviewed-production')
+  for (const [path, asset] of Object.entries(raw.assets) as [string, any][]) {
+    if (path.endsWith('.svg')) expect(asset.artStatus).toBe('normative-placeholder')
+    else expect(asset.artStatus).toBe((path.startsWith('transitions/light-to-dark/') || /^transitions\/dark-to-light\/00[1-6]\.png$/.test(path)) ? 'production-candidate' : 'reviewed-production')
+  }
+})
+
+it('plays a slower independently rendered extinguish with exact endpoints and shared coverage', () => {
+  const transition = raw.transitions['lit-to-unlit']
+  expect(transition.fps).toBe(6)
+  expect(transition.loop).toBe(false)
+  expect(transition.frames).toHaveLength(8)
+  expect(transition.artStatus).toBe('production-candidate')
+  const frames = transition.frames.map((p: string) => readRGBA(readFileSync(join(root,p))))
+  for (const [index, form] of [[0,'lit'],[7,'unlit']] as const) expect(readFileSync(join(root,transition.frames[index])).equals(readFileSync(join(root,`canonical/${form}/front.png`)))).toBe(true)
+  for (let i=1;i<8;i++) expect(frames[i].alpha.every((a: number,k: number)=>a<=frames[i-1].alpha[k])).toBe(true)
+  expect(readFileSync(join(root,transition.frames[3])).equals(readFileSync(join(root,raw.transitions['unlit-to-lit'].frames[4])))).toBe(false)
+  const loaded=normalizeManifest(raw)
+  if (!loaded.ok) throw Error(loaded.reason)
+  expect(resolveTransition(loaded.manifest,'lit-to-unlit','unlit').kind).toBe('frames')
+})
+
+it('hard-cuts canonical eyes at frame 004 in both directions, preserving all other pixels', () => {
+  const art = resolve(__dirname, '../../../art/cc-v1')
+  const support = readRGBA(readFileSync(join(art,'transition-eyes-mask.png'))).alpha
+  const records = JSON.parse(readFileSync(join(art,'transition-eyes-verification.json'),'utf8'))
+  expect(records.switchFrame).toBe(4)
+  expect(records.frames).toHaveLength(12)
+  expect(support.filter((a: number) => a > 0)).toHaveLength(records.supportPixels)
+  for (const record of records.frames) {
+    const index = Number(record.path.match(/(\d+)\.png$/)[1])
+    const lighting = record.path.includes('dark-to-light')
+    const expectedForm = index < 4 ? (lighting ? 'unlit' : 'lit') : (lighting ? 'lit' : 'unlit')
+    expect(record.eyeForm).toBe(expectedForm)
+    const frame=readRGBA(readFileSync(join(root,record.path)))
+    const canonical=readRGBA(readFileSync(join(root,`canonical/${expectedForm}/front.png`))).rgba
+    const outside:number[]=[]
+    for (let i=0;i<support.length;i++) {
+      if (support[i]) expect(frame.rgba.subarray(i*4,i*4+3)).toEqual(canonical.subarray(i*4,i*4+3))
+      else for(let c=0;c<4;c++) outside.push(frame.rgba[i*4+c]!)
+    }
+    expect(createHash('sha256').update(Buffer.from(outside)).digest('hex')).toBe(record.outsideEyeSha256)
+    expect(createHash('sha256').update(frame.alpha).digest('hex')).toBe(record.alphaSha256)
+  }
+})
