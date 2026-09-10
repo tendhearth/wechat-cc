@@ -327,6 +327,14 @@ export function makeIlinkAdapter(opts: {
     async askUser(chatId, prompt, hash, timeoutMs) {
       // Register pending entry first so timeout can fire even if send fails.
       const resultPromise = pending.register(hash, timeoutMs, { chatId, prompt })
+      // 怎么回的那一行在这里统一加,调用方(工具权限 / 终端 hook / gemini)只描述「要批什么」。
+      // 两位数码由登记处分配;手机上回「y」即可,同时几条待批才要带码。
+      const code = pending.codeOf(hash)
+      const seconds = Math.round(timeoutMs / 1000)
+      const howToReply = code
+        ? `回「y」放行、「n」拒绝;同时有几条待批时带码:「y ${code}」。${seconds} 秒内有效。`
+        : `回「y ${hash}」放行、「n ${hash}」拒绝;${seconds} 秒内有效。`
+      const card = `${prompt}\n${howToReply}`
       // Schedule a sweep at the timeout boundary so the promise resolves
       // with 'timeout' even when the global 30s sweep interval hasn't fired.
       // Using setTimeout so fake-timer tests can advance past the timeout.
@@ -339,7 +347,7 @@ export function makeIlinkAdapter(opts: {
       // reply can EVER come. Don't dead-wait the full 10-min timeout (which
       // races the turn's own no-activity kill → user gets nothing). Resolve
       // 'undelivered' at once so the turn ends now with an honest reason.
-      adapter.sendMessage(chatId, prompt).then(
+      adapter.sendMessage(chatId, card).then(
         (res) => {
           const err = (res as { error?: string } | null | undefined)?.error
           if (err) {
@@ -390,11 +398,24 @@ export function makeIlinkAdapter(opts: {
     handlePermissionReply(text, fromChatId) {
       const parsed = parsePermissionReply(text)
       if (!parsed) return false
+      // 没带码:看这个 chat 名下现在有几条待批。一条 → 就是它;零条 → 这不是拍板,
+      // 是普通聊天(比如「y」是在回别的事),放行给后面的中间件;多条 → 列出来让主人带码。
+      if (!parsed.ref) {
+        const mine = pending.list().filter(p => p.chatId === fromChatId)
+        if (mine.length === 0) return false
+        if (mine.length === 1) return pending.consume(mine[0]!.hash, parsed.decision)
+        const lines = mine.map(p => `${p.code}:${(p.prompt.split('\n')[0] ?? '').slice(0, 40)}`)
+        void adapter.sendMessage(fromChatId ?? mine[0]!.chatId, `有 ${mine.length} 条在等你,带上码回:\n${lines.join('\n')}\n例如「y ${mine[0]!.code}」`)
+        log('PERMISSION', `bare reply with ${mine.length} pending for chat=${fromChatId}: asked for a code`)
+        return true
+      }
+      const hash = parsed.ref.kind === 'code' ? pending.hashOfCode(parsed.ref.value) : parsed.ref.value
+      if (!hash) return false
       // 拍板权归当初被问的那个 chat。approverOf 返回 null = 没 meta(老条目
       // 或 hash 根本不存在)⇒ 走旧路径:不存在的 hash 由 consume 报 false。
-      const approver = pending.approverOf(parsed.hash)
+      const approver = pending.approverOf(hash)
       if (approver !== null && approver !== fromChatId) return false
-      return pending.consume(parsed.hash, parsed.decision)
+      return pending.consume(hash, parsed.decision)
     },
 
     listPendingPermissions() { return pending.list() },
