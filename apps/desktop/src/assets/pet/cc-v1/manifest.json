@@ -350,11 +350,11 @@
       "fps": 8,
       "loop": false,
       "next": "idle",
-      "artStatus": "reviewed-production",
+      "artStatus": "production-candidate",
       "visualReview": {
-        "owner": "ggshr9",
+        "reviewer": "Codex / eye-only revision; previous owner acceptance covers original sequence",
         "reviewedAt": "2026-09-09",
-        "method": "native transparent window on real wallpaper"
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "lit-to-unlit": {
@@ -373,7 +373,7 @@
       "next": "idle",
       "artStatus": "production-candidate",
       "visualReview": {
-        "reviewer": "Codex / frozen shader interpolation, new extinguish pending owner review",
+        "reviewer": "Codex / eye-only revision; previous owner acceptance covers original sequence",
         "reviewedAt": "2026-09-09",
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
@@ -809,87 +809,75 @@
       }
     },
     "transitions/dark-to-light/001.png": {
-      "sha256": "71052b103afe289560dca22a95ae40fdead00ee7baeaa3af04bc12af37c39daf",
+      "sha256": "2c51ebe4ba0ec40e0eca3fe0285698d707d57ef931b0f626b197dace68b96824",
       "view": "three-quarter",
       "expression": "idle",
-      "artStatus": "reviewed-production",
+      "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
         "reviewedAt": "2026-09-09",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
-        "owner": "ggshr9",
-        "method": "native transparent window on real wallpaper"
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/dark-to-light/002.png": {
-      "sha256": "296fc220651b83f522bc384f99816cb1379e48df4b1bd67a136d02f8cd4cf914",
+      "sha256": "dc6c4578a8a21620d233e1bb26be429efea434e25bc5f061a923e867cd1a4dec",
       "view": "three-quarter",
       "expression": "idle",
-      "artStatus": "reviewed-production",
+      "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
         "reviewedAt": "2026-09-09",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
-        "owner": "ggshr9",
-        "method": "native transparent window on real wallpaper"
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/dark-to-light/003.png": {
-      "sha256": "47cb6bdf6db3e41eb1b4527076ebdaac3b50d2461c3c959a702368c7dfa1b78d",
+      "sha256": "e4b93dbb166e320af785cef2f21cebfe17039a7e0ab6d5571e563d632631b683",
       "view": "three-quarter",
       "expression": "idle",
-      "artStatus": "reviewed-production",
+      "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
         "reviewedAt": "2026-09-09",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
-        "owner": "ggshr9",
-        "method": "native transparent window on real wallpaper"
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/dark-to-light/004.png": {
-      "sha256": "43dd5553f29d04ed731f3a95eb340ddd8ad141eeeaa3507dfeb6b5c761dc921e",
+      "sha256": "8c5e23671b92dccf9a450cb619f97da73f449e8a4a611ad9662c489b28e43c44",
       "view": "three-quarter",
       "expression": "idle",
-      "artStatus": "reviewed-production",
+      "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
         "reviewedAt": "2026-09-09",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
-        "owner": "ggshr9",
-        "method": "native transparent window on real wallpaper"
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/dark-to-light/005.png": {
-      "sha256": "7dd5abd662ec8a16c79f0bf30141b96f242fefaba5ef56055afff7f93f9aa491",
+      "sha256": "9bafab4426279fb023ac96558bc9d2b4f47e1480ca078aa531fc6f6d84528fdb",
       "view": "three-quarter",
       "expression": "idle",
-      "artStatus": "reviewed-production",
+      "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
         "reviewedAt": "2026-09-09",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
-        "owner": "ggshr9",
-        "method": "native transparent window on real wallpaper"
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/dark-to-light/006.png": {
-      "sha256": "520891a78d6b76d9bd3748dcfa249005bd9e10987860ee38c3986f44c4d7ae89",
+      "sha256": "9f302c58c1445ecf8b7882f0e1bbc4998012c586cf73848b856b02d84fd70352",
       "view": "three-quarter",
       "expression": "idle",
-      "artStatus": "reviewed-production",
+      "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / broad Facing response and C cross-section review; owner approval pending",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
         "reviewedAt": "2026-09-09",
-        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
-        "owner": "ggshr9",
-        "method": "native transparent window on real wallpaper"
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/dark-to-light/007.png": {
@@ -1286,73 +1274,73 @@
       }
     },
     "transitions/light-to-dark/001.png": {
-      "sha256": "3826feb1f033946a4751827acd5a9dba173ec8da5a54dd0e9be10072fb8ddda6",
+      "sha256": "6b42455353b055022274640d7b736f517b5a8d1852888565b73543ab6087717b",
       "view": "three-quarter",
       "expression": "idle",
       "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / frozen shader interpolation, new extinguish pending owner review",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
         "reviewedAt": "2026-09-09",
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/light-to-dark/002.png": {
-      "sha256": "fadb8215f793447b760554c523052a5875f551cb35b2e1793f7fe85eb20c1f69",
+      "sha256": "7e732d653c95f39150dc64b506e3e6284a9610f3b21c3375dcd1b4d468f70429",
       "view": "three-quarter",
       "expression": "idle",
       "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / frozen shader interpolation, new extinguish pending owner review",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
         "reviewedAt": "2026-09-09",
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/light-to-dark/003.png": {
-      "sha256": "76b77a985cd3701cd5b284262804205fd5b7b1e824b415caaaa12e54f74f371d",
+      "sha256": "337e792a0e4b8b5e7f90d6b50d016ffd761a82a5d4c8ef501382eae2bc440383",
       "view": "three-quarter",
       "expression": "idle",
       "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / frozen shader interpolation, new extinguish pending owner review",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
         "reviewedAt": "2026-09-09",
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/light-to-dark/004.png": {
-      "sha256": "74840f55e2caa897f5fa9294b400c5e015aea62ae242f50cbf027a2c45698689",
+      "sha256": "8fa842cdf17b0eb53c7563152f3e2185428c3c4d3a064c5b1df4ac0a33c10ce8",
       "view": "three-quarter",
       "expression": "idle",
       "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / frozen shader interpolation, new extinguish pending owner review",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
         "reviewedAt": "2026-09-09",
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/light-to-dark/005.png": {
-      "sha256": "381a616ed3767d14e5f2bc91740682fe06c276f9306e06bd40b92150ceeee3f5",
+      "sha256": "5b93e04f55d6e3209dffae2dcffeff80b83cd3ca2448f081743f83a66edcf245",
       "view": "three-quarter",
       "expression": "idle",
       "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / frozen shader interpolation, new extinguish pending owner review",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
         "reviewedAt": "2026-09-09",
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
     },
     "transitions/light-to-dark/006.png": {
-      "sha256": "22042e4c4710793246ec13d4119ea3b278162b418c3dcba3212824e9e35e28a8",
+      "sha256": "fe0884a4474a65efd129a98a4cc15bc7bc5a2b0b48d58e899636e7c19c3680c6",
       "view": "three-quarter",
       "expression": "idle",
       "artStatus": "production-candidate",
       "geometryMask": "masks/front.png",
       "visualReview": {
-        "reviewer": "Codex / frozen shader interpolation, new extinguish pending owner review",
+        "reviewer": "Codex / canonical eye hard cut at frame 004; owner review pending",
         "reviewedAt": "2026-09-09",
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072"
       }
