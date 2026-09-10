@@ -45,7 +45,7 @@ Light / Dark 对应 canonical 与按 state / view / expression 对应的 PNG spr
 - 仓库：`tendhearth/wechat-cc`，远端 `dev` commit **`7a0633368f1569b22f2b5637051c1154dfd73be0`**。本轮在全新 clone 的 `feat/cc-asset-kit-v1-alpha` 分支修改，未覆盖已有工作。
 - 已读取 `docs/superpowers/specs/2026-09-05-cc-desktop-pet-design.md`、`2026-09-03-companion-presence-design.md`、`src/core/pet-turn.ts`，并核对 loader / resolver / renderer / state machine / bridge / 测试。
 - 母版来源：对话 `6a9d19cc-8a14-83ea-8af8-330402ca67db`，附件 `CC Master v1 Character Design Sheet.png`。`manifest.reference.sha256` 记录原始文件摘要。设计板个别表情小图出现疑似嘴线、C 形变等，不作为运行帧；本轮用户的最新无嘴、同构硬约束优先。
-- 旧 spec 与 `../README.md` 中耳朵、嘴、双叶芽、猫化参考已失效。旧包留存供历史兼容测试；正式窗口与 pet-lab 已切换本包，不会回退到旧图。
+- 旧 spec 与 `../README.md` 中耳朵、嘴、双叶芽、猫化参考已失效。旧猫化位图包已从正式包删掉（2026-09-10），其扁平 manifest 只作为 loader 历史兼容的测试夹具保留在 `src/pet/assets/fixtures/legacy-v1-manifest.json`。
 - 业务 form 继续使用 **`lit` = Light、`unlit` = Dark**；state machine 使用 `behavior`，对外仍是 `setState()`。不新增第二套 Light/Dark 业务枚举。
 - manifest 使用既有 `forms.<form>.states.<behavior>`、`canonical.<form>`、`transitions`、`props` 形状。业务只消费形态/状态，道具仍独立；具体帧路径只存在于 manifest 和资产工具。
 - 遵循真实注册点：**512×512，anchor `[0.5, 0.91796875]` = `(256,470)`，baseline 470，safe bbox `[80,28,432,470]`**。没有盲用历史建议的 y466。全帧同 canvas；禁止逐帧 bbox 裁切、offset、自动缩放修图。renderer 既有呼吸以同一 anchor 为变换原点。
