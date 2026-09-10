@@ -124,3 +124,15 @@ describe('generate() token budget', () => {
     expect(seen.at(-1)).toBe(123)
   })
 })
+
+describe('userMessage 带图(openai-vision)', () => {
+  it('没图是纯字符串;有图是 text + image 分块', async () => {
+    const { createChatModelFromLanguageModel } = await import('./openai-chat-model')
+    const client = createChatModelFromLanguageModel({ specificationVersion: 'v2', provider: 'test', modelId: 'm' } as never)
+    expect(client.userMessage('hi')).toEqual({ role: 'user', content: 'hi' })
+    const img = new Uint8Array([1, 2])
+    expect(client.userMessage('看图 [image:/a.png]', [{ data: img, mediaType: 'image/png' }])).toEqual({
+      role: 'user', content: [{ type: 'text', text: '看图 [image:/a.png]' }, { type: 'image', image: img, mediaType: 'image/png' }],
+    })
+  })
+})

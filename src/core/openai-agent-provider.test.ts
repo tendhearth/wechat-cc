@@ -44,6 +44,29 @@ const guestSpawn = {
 }
 
 describe('openai provider loop', () => {
+  it('dispatch 文本里的 [image:path] 会读成图块随用户消息送(openai-vision)', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'oai-vision-'))
+    try {
+      const img = join(dir, 'poster.png')
+      writeFileSync(img, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+      const seen: unknown[][] = []
+      const model = scriptedModel()
+      model.userMessage = ((t: string, images?: unknown[]) => { seen.push([t, images]); return { role: 'user', content: t } as any }) as any
+      const provider = createOpenAiAgentProvider({ makeChatModel: () => model, makeMcpBridge: async () => fakeBridge([]) })
+      const session = await provider.spawn({ alias: 'a', path: '/tmp' }, guestSpawn as any)
+      await collectTurn(session.dispatch(`帮我做成 html [image:${img}] 海报`))
+      expect(seen[0]![0]).toContain('[image:')
+      const parts = seen[0]![1] as { mediaType: string; data: Uint8Array }[]
+      expect(parts).toHaveLength(1)
+      expect(parts[0]!.mediaType).toBe('image/png')
+      expect(parts[0]!.data.length).toBe(4)
+      await session.close()
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
   it('runs the tool loop: executes reply, then produces final text', async () => {
     const calls: string[] = []
     const provider = createOpenAiAgentProvider({

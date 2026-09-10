@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { extractImagePaths, loadImageParts } from './openai-vision'
 import {
   type AgentProvider,
   type AgentSession,
@@ -92,7 +93,8 @@ function makeOpenAiSession(args: {
 
   return {
     dispatch(text: string): AsyncIterable<AgentEvent> {
-      messages.push(chatModel.userMessage(text))
+      // 入站图片:提示词里只剩 `[image:path]` 一行,这里读成字节随消息送(openai-vision)。
+      messages.push(chatModel.userMessage(text, loadImageParts(extractImagePaths(text))))
       // Hoisted out of the generator body: an async generator FUNCTION's
       // code doesn't run until the caller's first `.next()` — constructing
       // the controller inside `run()` would leave `activeAbort` null/stale
