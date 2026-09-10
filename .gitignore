@@ -64,3 +64,6 @@ node_modules
 apps/desktop/src/assets/pet/cc-v1/CC_MASTER_V1.png
 apps/desktop/src/assets/pet/cc-v1/CC_DESIGN_SHEET_V1.png
 apps/desktop/art/cc-v1/comparison.png
+
+# Generated native QA frontend, never part of production src
+apps/desktop/art/cc-v1/native-qa/dist/
