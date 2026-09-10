@@ -1,3 +1,4 @@
+import { CC_GROUND as ccGround, ccBox, ccContains, WATER, waterContains } from "./aquarium-layout.js"
 const canvas = document.getElementById("companion-stage")
 const ctx = canvas.getContext("2d")
 const hint = document.getElementById("stage-hint")
@@ -5,46 +6,66 @@ const bearMessage = document.getElementById("bear-message")
 const crabEscapeOverlay = document.getElementById("crab-escape")
 const calmToggle = document.getElementById("calm-toggle")
 const background = new Image()
-background.src = "./assets/moment-cc-companion-animation-base-clean.png"
-const fishSpriteSources = [
-  "./assets/animation/fish-yellow-left.png",
-  "./assets/animation/fish-yellow-right.png",
-  "./assets/animation/fish-blue.png",
-  "./assets/animation/fish-orange.png",
-  "./assets/animation/fish-pink.png",
-  "./assets/companion-fish.png",
-  "./assets/animation/fish-dialogue-orange.png",
-  "./assets/animation/fish-dialogue-bluegray.png",
-]
-const fishSprites = fishSpriteSources.map(source => {
-  const image = new Image()
-  image.src = source
-  return image
-})
-const bearBody = new Image()
-const bearBodyWarped = document.createElement("canvas")
-const bearBodyMeshPadding = 64
-let bearBodyWarpedReady = false
-bearBody.addEventListener("load", buildBearBodyMesh)
-bearBody.src = "./assets/animation/bear-rig-body-cute-v3-cropped.png"
-const bearFishArm = new Image()
-const bearFishArmWarped = document.createElement("canvas")
-const bearFishArmMeshPadding = 96
-let bearFishArmWarpedReady = false
-bearFishArm.addEventListener("load", buildBearFishArmMesh)
-bearFishArm.src = "./assets/animation/bear-rig-fish-arm-cropped.png"
-const plantLayers = [
-  { source: "./assets/animation/plant-round-ai.png", box: [.365, .5352, .1032, .2448], offsetX: -20, phase: 1.2, amplitude: .0042 },
-  { source: "./assets/animation/plant-small-ai.png", box: [.625, .684, .066, .076], phase: 3.4, amplitude: .0022 },
-  { source: "./assets/animation/plant-round-ai.png", box: [.695, .541, .092, .224], phase: 4.4, amplitude: .0046 },
-  // Keep the root on the sand and right glass, while giving this long-leaf
-  // plant more vertical presence than the surrounding round leaves.
-  { source: "./assets/animation/plant-grass-ai.png", box: [.767, .4626, .1232, .3224], offsetX: 20, offsetY: -10, compactAnchor: true, phase: 5.2, amplitude: .014 },
-].map(layer => {
-  const image = new Image()
-  image.src = layer.source
-  return { ...layer, image }
-})
+background.src = "./assets/home-cc-aquarium-base.png"
+// Three equally spaced, left-facing fish. Trim transparent padding at load
+// time so swimming sizes describe the fish rather than the atlas cell.
+const fishSprites = []
+const fishAtlas = new Image()
+fishAtlas.onload = () => {
+  const colors = Array.from({ length: 3 }, (_, index) => {
+    const cell = document.createElement("canvas")
+    cell.width = Math.floor(fishAtlas.naturalWidth / 3)
+    cell.height = fishAtlas.naturalHeight
+    const context = cell.getContext("2d")
+    context.drawImage(fishAtlas, -index * cell.width, 0)
+    const pixels = context.getImageData(0, 0, cell.width, cell.height).data
+    let left = cell.width, top = cell.height, right = 0, bottom = 0
+    for (let y = 0; y < cell.height; y++) {
+      for (let x = 0; x < cell.width; x++) {
+        if (pixels[(y * cell.width + x) * 4 + 3] > 8) {
+          left = Math.min(left, x); right = Math.max(right, x)
+          top = Math.min(top, y); bottom = Math.max(bottom, y)
+        }
+      }
+    }
+    const crop = document.createElement("canvas")
+    crop.width = right - left + 1
+    crop.height = bottom - top + 1
+    crop.getContext("2d").drawImage(cell, left, top, crop.width, crop.height, 0, 0, crop.width, crop.height)
+    const sprite = new Image()
+    sprite.src = crop.toDataURL()
+    return sprite
+  })
+  fishSprites.push(...[0, 0, 2, 1, 0, 2, 1, 2].map(index => colors[index]))
+}
+fishAtlas.src = "./assets/home-cc-fish-atlas.png"
+const ccCharacter = new Image()
+const ccMask = new Image()
+const ccSceneSprite = document.createElement("canvas")
+let ccSceneSpriteReady = false
+function prepareSceneCC() {
+  if (!ccCharacter.naturalWidth || !ccMask.naturalWidth) return
+  if (ccCharacter.naturalWidth !== ccMask.naturalWidth || ccCharacter.naturalHeight !== ccMask.naturalHeight) return
+  ccSceneSprite.width = ccCharacter.naturalWidth
+  ccSceneSprite.height = ccCharacter.naturalHeight
+  const sceneContext = ccSceneSprite.getContext("2d")
+  sceneContext.drawImage(ccCharacter, 0, 0)
+  // Homepage-only composition: retain the solid character, remove the desktop
+  // glow over the paper and foliage. Frozen files remain unchanged. The mask
+  // includes antialiasing, so destination-in also softens its subpixel edge.
+  sceneContext.globalCompositeOperation = "destination-in"
+  sceneContext.drawImage(ccMask, 0, 0)
+  sceneContext.globalCompositeOperation = "source-over"
+  ccSceneSpriteReady = true
+}
+ccCharacter.addEventListener("load", prepareSceneCC)
+ccMask.addEventListener("load", prepareSceneCC)
+ccCharacter.src = "./assets/pet/cc-v1/canonical/lit/front.png"
+ccMask.src = "./assets/pet/cc-v1/masks/front.png"
+// Keep the frozen sprite square in physical canvas pixels. Never stretch it to
+// the illustration aspect ratio: that makes the round body look flattened.
+
+
 const lotusLeaves = new Image()
 lotusLeaves.src = "./assets/animation/lotus-leaves-cropped.png"
 const lotusPetal = new Image()
@@ -116,7 +137,7 @@ let nextLotusAutoCycleAt = performance.now() + lotusAutoCycleInterval
 const crabHideSpots = [
   // Keep the crab in the middle of the foliage: the lower part remains
   // occluded by leaves instead of appearing at the roots in the sand.
-  { x: .846, y: .690, rotation: -.10 }, // tall right-hand grass
+  { x: .795, y: .690, rotation: -.10 }, // tall right-hand grass
   { x: .724, y: .704, rotation: -.30 }, // right round water plant
   { x: .658, y: .708, rotation: -.22 }, // small middle water plant
   { x: .414, y: .703, rotation: -.12 }, // left round water plant
@@ -142,8 +163,8 @@ let lastFleePointer = { x: -1, y: -1 }
 // keeps the speech bubble attached to the character when its overall size
 // changes instead of leaving it at an old canvas coordinate.
 const bearRig = {
-  anchorX: .215,
-  anchorY: .89,
+  anchorX: .258,
+  anchorY: .806,
   baseScale: .765,
   // Shoulder position in the original bear coordinate space. It is converted
   // through the exact same ground-anchored transform as the body, so scaling
@@ -166,23 +187,20 @@ function scaleFromBearGround(x, y, scale = bearRig.baseScale) {
 }
 
 function positionBearMessage() {
-  const point = scaleFromBearGround(bearRig.messageOriginX, bearRig.messageOriginY)
-  bearMessage.style.setProperty("--bear-message-x", `${point.x * 100}%`)
-  bearMessage.style.setProperty("--bear-message-y", `${point.y * 100}%`)
-  // The speech bubble had already been deliberately reduced to 90%. Keep it
-  // in the same scaled character group when the bear itself gets resized.
-  bearMessage.style.setProperty("--bear-message-scale", String(.9 * bearRig.baseScale / .85))
+  bearMessage.style.setProperty("--bear-message-x", `${ccGround.x * 100}%`)
+  bearMessage.style.setProperty("--bear-message-y", "43%")
+  bearMessage.style.setProperty("--bear-message-scale", ".9")
 }
 
 function seedFish() {
   fish.length = 0
   // Give each colour room to read. Yellow is now deliberately a minority
   // rather than the repeating default in the aquarium.
-  const fishKindPlan = [0, 1, 2, 3, 4, 5, 6, 7, 2, 3, 4, 5, 6]
+  const fishKindPlan = [0, 1, 2, 3, 4, 5, 6]
   for (const kind of fishKindPlan) {
     const trait = fishTraits[kind]
     fish.push({
-      x: .39 + Math.random() * .45,
+      x: .39 + Math.random() * .40,
       y: .44 + Math.random() * .21,
       vx: (Math.random() - .5) * .000035,
       vy: (Math.random() - .5) * .000026,
@@ -200,7 +218,7 @@ function seedFish() {
 }
 
 function resetBubble(bubble, startInWater = false) {
-  bubble.x = .39 + Math.random() * .47
+  bubble.x = .34 + Math.random() * .47
   bubble.y = startInWater ? .43 + Math.random() * .25 : .71 + Math.random() * .08
   bubble.radius = .0024 + Math.random() * .0058
   bubble.speed = .000014 + Math.random() * .000024
@@ -230,21 +248,14 @@ function resize() {
 
 // This is the water volume, not the whole glass tank.  Fish and mouse
 // interaction stay beneath the visible waterline and above the sand.
-function waterContains(x, y) { return x > .365 && x < .89 && y > .405 && y < .69 }
 function bearLocalOffsetX() {
   const displayScale = Math.min(devicePixelRatio || 1, 2)
   return 20 * displayScale / canvas.width
 }
 function bearContains(x, y) {
-  if (!sceneState.bearPresent) return false
-  const offsetX = bearLocalOffsetX()
-  const anchorX = bearRig.anchorX + offsetX
-  const scale = bearRig.baseScale
-  return x > anchorX + (.09 + offsetX - anchorX) * scale
-    && x < anchorX + (.43 + offsetX - anchorX) * scale
-    && y > bearRig.anchorY + (.34 - bearRig.anchorY) * scale
-    && y < .90
+  return sceneState.bearPresent && ccContains(x, y, canvas.width, canvas.height)
 }
+
 function lotusContains(x, y) { return x > .455 && x < .545 && y > .655 && y < .79 }
 function canvasXForCssPixels(pixels) {
   return pixels * Math.min(devicePixelRatio || 1, 2) / canvas.width
@@ -292,10 +303,10 @@ function swimBounds(f) {
   const horizontalPadding = width / canvas.width / 2 + .008
   const verticalPadding = width * aspect / canvas.height / 2 + f.size * scale * canvas.width * .15 / canvas.height + .008
   return {
-    left: .365 + horizontalPadding,
-    right: .89 - horizontalPadding,
-    top: .405 + verticalPadding,
-    bottom: .69 - verticalPadding,
+    left: WATER.left + horizontalPadding,
+    right: WATER.right - horizontalPadding,
+    top: WATER.top + verticalPadding,
+    bottom: WATER.bottom - verticalPadding,
   }
 }
 
@@ -338,45 +349,7 @@ function triggerFishEscape(time, school) {
 function drawSceneBackground() {
   const w = canvas.width
   const h = canvas.height
-  if (background.complete) ctx.drawImage(background, 0, 0, w, h)
-}
-
-function drawPlantLayer(layer, time) {
-  const { image, box, offsetX = 0, offsetY = 0, compactAnchor = false, phase, amplitude } = layer
-  if (!image.complete || !image.naturalWidth) return
-  const w = canvas.width
-  const h = canvas.height
-  const displayScale = Math.min(devicePixelRatio || 1, 2)
-  // Fixed CSS-pixel offsets look disproportionately large in the compact
-  // window. Fade the long right plant's decorative offset to zero there so
-  // its root remains in the sand and its leaves stay inside the glass.
-  const compactOffset = compactAnchor ? clamp((canvasCssWidth() - 300) / 180, 0, 1) : 1
-  const slices = 18
-  const [x, y, width, height] = box
-  for (let index = 0; index < slices; index += 1) {
-    const progress = index / slices
-    const sourceY = progress * image.naturalHeight
-    const sourceHeight = image.naturalHeight / slices + 1
-    const destinationY = (y + height * progress) * h + offsetY * displayScale * compactOffset
-    const destinationHeight = height / slices * h + 1
-    const flexibility = 1 - progress
-    const offset = Math.sin(time * .00135 + phase + progress * 1.45) * amplitude * w * flexibility
-    ctx.drawImage(
-      image,
-      0,
-      sourceY,
-      image.naturalWidth,
-      sourceHeight,
-      x * w + offsetX * displayScale * compactOffset + offset,
-      destinationY,
-      width * w,
-      destinationHeight,
-    )
-  }
-}
-
-function drawAquariumPlants(time) {
-  for (const layer of plantLayers) drawPlantLayer(layer, time)
+  if (background.complete && background.naturalWidth) ctx.drawImage(background, 0, 0, w, h)
 }
 
 function drawLotusSprite(image, pivotX, pivotY, width, rotation = 0, flip = false, opacity = 1) {
@@ -486,7 +459,7 @@ function crabCanvasPose(time) {
     }
     const progress = smoothstep(560, crabEscapeCanvasDuration, routeElapsed)
     return {
-      x: .874,
+      x: .818,
       y: escapeStart.y - .070 + (innerRailTop - (escapeStart.y - .070)) * progress,
       rotation: -.24 - progress * 1.22,
       opacity: 1,
@@ -577,7 +550,7 @@ function updateCrabEscapeOverlay(time) {
   // Same illustrated route as the original escape: cross the top rim, crawl
   // down the true outer rail, then leave the page to the right.
   const path = [
-    { x: stageRect.left + stageRect.width * .874, y: innerRailTop },
+    { x: stageRect.left + stageRect.width * .818, y: innerRailTop },
     { x: outerRailX, y: innerRailTop },
     { x: outerRailX, y: outerRailBottom },
     { x: window.innerWidth + size, y: outerRailBottom },
@@ -720,243 +693,30 @@ function armPlumpWeight(progress) {
   return .26 * (1 - smoothstep(.06, .58, progress))
 }
 
-function drawWarpedTriangle(context, image, source, destination) {
-  const [s0, s1, s2] = source
-  const [d0, d1, d2] = destination
-  const sx1 = s1.x - s0.x
-  const sy1 = s1.y - s0.y
-  const sx2 = s2.x - s0.x
-  const sy2 = s2.y - s0.y
-  const determinant = sx1 * sy2 - sx2 * sy1
-  if (Math.abs(determinant) < .0001) return
-  const dx1 = d1.x - d0.x
-  const dy1 = d1.y - d0.y
-  const dx2 = d2.x - d0.x
-  const dy2 = d2.y - d0.y
-  const a = (dx1 * sy2 - dx2 * sy1) / determinant
-  const b = (dy1 * sy2 - dy2 * sy1) / determinant
-  const c = (dx2 * sx1 - dx1 * sx2) / determinant
-  const d = (dy2 * sx1 - dy1 * sx2) / determinant
-  const e = d0.x - a * s0.x - c * s0.y
-  const f = d0.y - b * s0.x - d * s0.y
-
-  context.save()
-  context.beginPath()
-  context.moveTo(d0.x, d0.y)
-  context.lineTo(d1.x, d1.y)
-  context.lineTo(d2.x, d2.y)
-  context.closePath()
-  context.clip()
-  context.setTransform(a, b, c, d, e, f)
-  context.drawImage(image, 0, 0)
-  context.restore()
-}
-
-function buildBearFishArmMesh() {
-  const sourceWidth = bearFishArm.naturalWidth
-  const sourceHeight = bearFishArm.naturalHeight
-  if (!sourceWidth || !sourceHeight) return
-  const padding = bearFishArmMeshPadding
-  bearFishArmWarped.width = sourceWidth + padding * 2
-  bearFishArmWarped.height = sourceHeight + padding * 2
-  const meshContext = bearFishArmWarped.getContext("2d")
-  meshContext.imageSmoothingEnabled = true
-
-  const shoulder = { x: 0, y: sourceHeight }
-  const direction = { x: sourceWidth, y: -sourceHeight }
-  const lengthSquared = direction.x ** 2 + direction.y ** 2
-  const length = Math.sqrt(lengthSquared)
-  const normal = { x: -direction.y / length, y: direction.x / length }
-  const warpPoint = (x, y) => {
-    const relativeX = x - shoulder.x
-    const relativeY = y - shoulder.y
-    const progress = clamp((relativeX * direction.x + relativeY * direction.y) / lengthSquared, 0, 1)
-    const lateral = relativeX * normal.x + relativeY * normal.y
-    const amount = armPlumpWeight(progress)
-    return {
-      x: x + normal.x * lateral * amount + padding,
-      y: y + normal.y * lateral * amount + padding,
-    }
-  }
-
-  const columns = 14
-  const rows = 12
-  const sourceGrid = []
-  const destinationGrid = []
-  for (let row = 0; row <= rows; row += 1) {
-    sourceGrid[row] = []
-    destinationGrid[row] = []
-    for (let column = 0; column <= columns; column += 1) {
-      const point = { x: column / columns * sourceWidth, y: row / rows * sourceHeight }
-      sourceGrid[row][column] = point
-      destinationGrid[row][column] = warpPoint(point.x, point.y)
-    }
-  }
-  for (let row = 0; row < rows; row += 1) {
-    for (let column = 0; column < columns; column += 1) {
-      const topLeft = sourceGrid[row][column]
-      const topRight = sourceGrid[row][column + 1]
-      const bottomLeft = sourceGrid[row + 1][column]
-      const bottomRight = sourceGrid[row + 1][column + 1]
-      const targetTopLeft = destinationGrid[row][column]
-      const targetTopRight = destinationGrid[row][column + 1]
-      const targetBottomLeft = destinationGrid[row + 1][column]
-      const targetBottomRight = destinationGrid[row + 1][column + 1]
-      drawWarpedTriangle(meshContext, bearFishArm, [topLeft, topRight, bottomRight], [targetTopLeft, targetTopRight, targetBottomRight])
-      drawWarpedTriangle(meshContext, bearFishArm, [topLeft, bottomRight, bottomLeft], [targetTopLeft, targetBottomRight, targetBottomLeft])
-    }
-  }
-  bearFishArmWarpedReady = true
-}
-
-function buildBearBodyMesh() {
-  const sourceWidth = bearBody.naturalWidth
-  const sourceHeight = bearBody.naturalHeight
-  if (!sourceWidth || !sourceHeight) return
-  const padding = bearBodyMeshPadding
-  bearBodyWarped.width = sourceWidth + padding * 2
-  bearBodyWarped.height = sourceHeight + padding * 2
-  const meshContext = bearBodyWarped.getContext("2d")
-  meshContext.imageSmoothingEnabled = true
-
-  const warpPoint = (x, y) => {
-    const nx = x / sourceWidth
-    const ny = y / sourceHeight
-    // A fuller local belly: the mesh expands the middle torso more strongly,
-    // then feathers out before the face, feet and side seams.
-    const verticalWeight = smoothstep(.58, .67, ny) * (1 - smoothstep(.87, .95, ny))
-    const horizontalWeight = smoothstep(.14, .31, nx) * (1 - smoothstep(.69, .86, nx))
-    // Do not pull the centre down: that made the torso read flattened. The
-    // rounded read comes from an even, symmetric expansion of its silhouette.
-    const outward = Math.sign(nx - .5) * 94 * verticalWeight * horizontalWeight
-    return { x: x + outward + padding, y: y + padding }
-  }
-
-  const columns = 20
-  const rows = 26
-  const sourceGrid = []
-  const destinationGrid = []
-  for (let row = 0; row <= rows; row += 1) {
-    sourceGrid[row] = []
-    destinationGrid[row] = []
-    for (let column = 0; column <= columns; column += 1) {
-      const point = { x: column / columns * sourceWidth, y: row / rows * sourceHeight }
-      sourceGrid[row][column] = point
-      destinationGrid[row][column] = warpPoint(point.x, point.y)
-    }
-  }
-  for (let row = 0; row < rows; row += 1) {
-    for (let column = 0; column < columns; column += 1) {
-      const topLeft = sourceGrid[row][column]
-      const topRight = sourceGrid[row][column + 1]
-      const bottomLeft = sourceGrid[row + 1][column]
-      const bottomRight = sourceGrid[row + 1][column + 1]
-      const targetTopLeft = destinationGrid[row][column]
-      const targetTopRight = destinationGrid[row][column + 1]
-      const targetBottomLeft = destinationGrid[row + 1][column]
-      const targetBottomRight = destinationGrid[row + 1][column + 1]
-      drawWarpedTriangle(meshContext, bearBody, [topLeft, topRight, bottomRight], [targetTopLeft, targetTopRight, targetBottomRight])
-      drawWarpedTriangle(meshContext, bearBody, [topLeft, bottomRight, bottomLeft], [targetTopLeft, targetBottomRight, targetBottomLeft])
-    }
-  }
-  bearBodyWarpedReady = true
-}
-
-function drawBearBody(box, pivot, rotation, lift, scale) {
-  const image = bearBodyWarpedReady ? bearBodyWarped : bearBody
-  if (!bearBody.complete || !bearBody.naturalWidth) return
-  const padding = bearBodyWarpedReady ? bearBodyMeshPadding : 0
-  const w = canvas.width
-  const h = canvas.height
-  const paddingX = padding / bearBody.naturalWidth * box[2] * w
-  const paddingY = padding / bearBody.naturalHeight * box[3] * h
-  ctx.save()
-  ctx.translate(pivot[0] * w, pivot[1] * h + lift)
-  ctx.rotate(rotation)
-  ctx.scale(scale, scale)
-  // The unwarped body is a seamless watercolor underlay. It fills the tiny
-  // anti-aliased joins between mesh triangles while the warped layer changes
-  // only the belly silhouette above it.
-  if (bearBodyWarpedReady) {
-    ctx.drawImage(
-      bearBody,
-      (box[0] - pivot[0]) * w,
-      (box[1] - pivot[1]) * h,
-      box[2] * w,
-      box[3] * h,
-    )
-  }
-  ctx.drawImage(
-    image,
-    (box[0] - pivot[0]) * w - paddingX,
-    (box[1] - pivot[1]) * h - paddingY,
-    box[2] * w + paddingX * 2,
-    box[3] * h + paddingY * 2,
-  )
-  ctx.restore()
-}
-
-function drawBearArm(time, lift, scale) {
-  if (!bearFishArm.complete || !bearFishArm.naturalWidth) return
-  const w = canvas.width
-  const h = canvas.height
-  const elapsed = time - bearWaveStartedAt
-  const waving = elapsed >= 0 && elapsed < bearWaveDuration
-  const progress = waving ? elapsed / bearWaveDuration : 0
-  // The source arm already points from its lower-left shoulder joint to the
-  // upper-right fish. Keep that direction intact: no horizontal mirroring.
-  // 钓鱼(觅食中):手臂持续微抬、慢慢上下 —— 复用现成的钓鱼手臂,不加素材。
-  const fishing = sceneState.bearPose === "fishing"
-  const liftAmount = waving ? Math.sin(progress * Math.PI) : fishing ? .55 + Math.sin(time * .003) * .1 : 0
-  const wave = waving ? Math.sin(progress * Math.PI * 7) * .16 * liftAmount : 0
-  // Keep the fish visibly held up, but lower the relaxed pose so it rests
-  // closer to the cheek/chest instead of appearing raised beside the ear.
-  const rotation = .11 - liftAmount * .18 + wave
-  // The arm uses the same grounded character transform as the body. Keeping
-  // this anchor in bear-local coordinates prevents scale-dependent drift.
-  const pivot = scaleFromBearGround(bearRig.armPivotX, bearRig.armPivotY, scale)
-  const pivotX = pivot.x
-  const pivotY = pivot.y + canvasYForCssPixels(5)
-  const armWidth = .146 * w * scale
-  const armHeight = armWidth * (bearFishArm.naturalHeight / bearFishArm.naturalWidth)
-
-  ctx.save()
-  ctx.translate(pivotX * w, pivotY * h + lift)
-  ctx.rotate(rotation)
-  if (bearFishArmWarpedReady) {
-    const scaleX = armWidth / bearFishArm.naturalWidth
-    const scaleY = armHeight / bearFishArm.naturalHeight
-    const paddingX = bearFishArmMeshPadding * scaleX
-    const paddingY = bearFishArmMeshPadding * scaleY
-    ctx.drawImage(
-      bearFishArmWarped,
-      -paddingX,
-      -armHeight - paddingY,
-      armWidth + paddingX * 2,
-      armHeight + paddingY * 2,
-    )
-  } else ctx.drawImage(bearFishArm, 0, -armHeight, armWidth, armHeight)
-  ctx.restore()
-}
-
 function drawBearPuppet(time) {
-  if (!bearBody.complete || !bearBody.naturalWidth) return
-  const horizontalAttention = pointer.active ? Math.max(-1, Math.min(1, (pointer.x - (.25 + bearLocalOffsetX())) * 6)) : 0
-  const verticalAttention = pointer.active ? Math.max(-1, Math.min(1, (pointer.y - .52) * 5)) : 0
-  const breathing = Math.sin(time * .004) * .003
-  const attention = bearAwake * (horizontalAttention * .018 + breathing)
-  const baseScale = bearRig.baseScale
-  const lift = bearAwake * (-2.8 - verticalAttention * 1.2) * (canvas.height / 660) * baseScale
-  const scale = baseScale * (1 + breathing * .65 + bearAwake * .012)
-  // Preserve the native body ratio. This layer contains no arm or fish,
-  // leaving a clean surface for the independently rigged front arm.
-  const box = [.10 + bearLocalOffsetX(), .365, .23, .526]
-  // Shrink from the feet, rather than the centre, so the seated bear remains
-  // naturally grounded on the aquarium floor.
-  const pivot = [bearRig.anchorX + bearLocalOffsetX(), bearRig.anchorY]
-
-  drawBearBody(box, pivot, attention, lift, scale)
-  drawBearArm(time, lift, scale)
+  // Retain the bridge's bearPresent/bearPose keys for compatibility; the visible
+  // character is now CC. Greeting gestures are a small grounded nod, never an arm.
+  if (!ccCharacter.complete || !ccCharacter.naturalWidth) return
+  const side = ccBox(canvas.width, canvas.height).width
+  const greeting = Math.max(0, 1 - (time - bearWaveStartedAt) / bearWaveDuration)
+  const nod = Math.sin((time - bearWaveStartedAt) * .008) * .025 * greeting
+  ctx.save()
+  ctx.translate(canvas.width * ccGround.x, canvas.height * ccGround.y)
+  // Scene-only contact shadow: the warm pool in the background otherwise
+  // merges with the pale feet. Keep it grounded while CC nods above it.
+  ctx.save()
+  ctx.translate(0, side * .008)
+  ctx.scale(side * .32, side * .045)
+  const contact = ctx.createRadialGradient(0, 0, 0, 0, 0, 1)
+  contact.addColorStop(0, "rgba(91, 66, 43, .20)")
+  contact.addColorStop(.45, "rgba(91, 66, 43, .14)")
+  contact.addColorStop(1, "rgba(91, 66, 43, 0)")
+  ctx.fillStyle = contact
+  ctx.fillRect(-1, -1, 2, 2)
+  ctx.restore()
+  ctx.rotate(Number.isFinite(nod) ? nod : 0)
+  ctx.drawImage(ccSceneSpriteReady ? ccSceneSprite : ccCharacter, -side / 2, -side * 470 / 512, side, side)
+  ctx.restore()
 }
 
 // ── 桌宠状态的三样新东西:牌子、道具、遮罩(spec §3.3:唯一新画的素材)──
@@ -1029,7 +789,7 @@ function drawFish(f, time) {
   if (!fishSprite?.complete || !fishSprite.naturalWidth) return
   const w = canvas.width
   const speed = Math.hypot(f.vx, f.vy)
-  const facing = f.vx < 0 ? -1 : 1
+  const facing = f.vx < 0 ? 1 : -1
   const s = f.size * compactFishScale() * w
   const fishWidth = s * (f.kind === 5 ? 5.45 : 5.1)
   const fishHeight = fishWidth * (fishSprite.naturalHeight / fishSprite.naturalWidth)
@@ -1141,7 +901,6 @@ function frame(time) {
   drawSceneBackground()
   drawBubbles(time, dt)
   drawCrab(time, true)
-  drawAquariumPlants(time)
   drawInteractiveLotus()
   drawPointerSignal(time)
   const school = activeFish()
@@ -1156,7 +915,7 @@ function frame(time) {
     bearAwake = Math.max(0, bearAwake - dt / 1100)
     const pulse = Math.sin(time * .012) * 5 + 16
     ctx.strokeStyle = `rgba(238,176,106,${bearAwake * .35})`; ctx.lineWidth = 2
-    ctx.beginPath(); ctx.arc(canvas.width * (.285 + bearLocalOffsetX()), canvas.height * .54, pulse, 0, Math.PI * 2); ctx.stroke()
+    ctx.beginPath(); ctx.arc(canvas.width * ccGround.x, canvas.height * .58, pulse, 0, Math.PI * 2); ctx.stroke()
   }
   drawSceneTint()
   requestAnimationFrame(frame)

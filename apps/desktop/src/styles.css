@@ -2666,15 +2666,15 @@ input { font: inherit; color: inherit; }
 }
 
 .ai-orbit-visual {
-  width: min(500px, 48vw, calc((100vh - 320px) * 1.5));
+  width: min(500px, 48vw, calc((100vh - 320px) * 4 / 3));
   min-width: 0;
-  aspect-ratio: 3 / 2;
+  aspect-ratio: 4 / 3;
   position: relative;
   margin-bottom: 14px;
 }
 
 .companion-intro {
-  width: min(500px, 48vw, calc((100vh - 320px) * 1.5));
+  width: min(500px, 48vw, calc((100vh - 320px) * 4 / 3));
   min-width: 0;
   align-self: center;
   margin-bottom: 15px;
