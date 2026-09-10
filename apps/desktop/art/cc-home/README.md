@@ -79,3 +79,13 @@ click starts a walking route and shows the hide feedback. Screenshot:
 AI-generated walk frames are not a guarantee of pixel-identical body texture.
 Desktop 39 files / 628 tests and repository typecheck pass. Frozen CC assets
 and model have no diff. Actual native desktop-window playback was not rerun.
+
+## Offline scene
+
+The disconnected homepage now composes the same aquarium background with
+frozen canonical Dark CC, a CSS ground shadow and three faint static fish.
+Positioning matches the online 4:3 stage and foot anchor. The existing warn
+class still selects the offline illustration; presence/behavior mapping is
+unchanged. No old bear image is referenced by index.html.
+`offline-cc.png` records the local homepage offline view; narrow and immersive
+views were also inspected. Live WeChat disconnect/reconnect was not triggered.
