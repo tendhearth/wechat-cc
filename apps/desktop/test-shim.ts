@@ -129,6 +129,11 @@ const __mockState: {
   // shape so dropdown writes (mode set) stay consistent with subsequent
   // poller reads. Lazily seeded from the real CLI on first read.
   conversations: DaemonConversation[] | null
+  // Companion presence served at GET /v1/companion/presence in dry-run. Without
+  // it the presence poller publishes DOWN and the homepage scene draws no CC
+  // (sign 「离线」) — which is why the hover-greeting spec could never pass.
+  // Seed with demo.seed { presence: {...} }; default = daemon up, WeChat ok, idle.
+  presence: { presence: 'ok' | 'degraded' | 'offline'; activity: { kind: string; label: string; since: string | null }; news: { unread: number; latest_kind: string | null; latest_title: string | null } }
   // A2A mock state — seeded by `a2a.seed` test-control command.
   a2aAgents: A2AAgent[]
   a2aEvents: A2AEvent[]
@@ -169,7 +174,7 @@ const __mockState: {
   //                         本机未连接 (exercisable without a real bot).
   //                         Valid values: 'taken_over' | 'connected' | 'inconclusive'
   connectionProbeState: 'taken_over' | 'connected' | 'inconclusive'
-} = { chats: [], observations: [], milestones: [], sessions: [], daemonAlive: true, installProgress: null, installSimulationStep: 0, conversations: null, a2aAgents: [], a2aEvents: [], doctorOverride: null, doctorErrorOnce: false, serviceInvokes: [], healthProbeResult: true, logCalls: [], providerInvokes: [], dialogueMessages: [], dialogueThreads: [], dialoguePassphrase: '1234', dialogueUnlocked: false, connectionProbeState: 'taken_over' }
+} = { chats: [], observations: [], milestones: [], sessions: [], daemonAlive: true, installProgress: null, installSimulationStep: 0, conversations: null, presence: { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }, a2aAgents: [], a2aEvents: [], doctorOverride: null, doctorErrorOnce: false, serviceInvokes: [], healthProbeResult: true, logCalls: [], providerInvokes: [], dialogueMessages: [], dialogueThreads: [], dialoguePassphrase: '1234', dialogueUnlocked: false, connectionProbeState: 'taken_over' }
 
 // ─── A2A mock credentials ─────────────────────────────────────────────────────
 // The A2A routes (/v1/a2a/*) are served by the SAME Bun.serve instance as the
@@ -603,9 +608,11 @@ Bun.serve({
             daemonAlive?: boolean
             withSessions?: boolean
             oneContact?: boolean
+            presence?: typeof __mockState.presence
           } | undefined
           const chatId = args?.chat_id ?? 'test_chat'
           __mockState.daemonAlive = args?.daemonAlive ?? true
+          __mockState.presence = args?.presence ?? { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }
           __mockState.chats = [{ id: chatId, name: 'Test User', last_active: Date.now() }]
           // Seeding = known state. The shim process outlives individual
           // playwright tests, so per-test mutations (dialogue.set-no-lock's
@@ -1471,6 +1478,11 @@ Bun.serve({
     // same-origin and never blocked by Chromium's CORS policy.
     // The `daemon api-info` intercept above returns baseUrl=http://127.0.0.1:PORT
     // and token=A2A_TOKEN, so api.js routes all fetch() here.
+    // Companion presence (dry-run): the dashboard scene and the pet window both
+    // poll this; serve the seeded state instead of 404 (= DOWN).
+    if (dryRun && url.pathname === '/v1/companion/presence' && req.method === 'GET') {
+      return Response.json(__mockState.presence)
+    }
     if (dryRun && url.pathname.startsWith('/v1/a2a/')) {
       const authHeader = req.headers.get('authorization') ?? ''
       if (authHeader !== `Bearer ${A2A_TOKEN}`) {

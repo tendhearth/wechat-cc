@@ -105,6 +105,8 @@ window.__companionScene = {
   getState() { return { ...sceneState } },
   /** 点脚边道具时调;由 companion-presence.js 赋值。 */
   onPropClick: null,
+  /** 螃蟹此刻藏在哪(画布比例坐标)。给 e2e 用:场景换图后位置会变,测试不该写死像素。 */
+  crabSpot() { return { x: crabHideSpot.x, y: crabHideSpot.y } },
 }
 function applySceneBubble() {
   if (sceneState.bubble) {
