@@ -48,6 +48,8 @@ const BOUNDARY: Record<string, string> = {
   defaultProbeGemini: 'spawns the gemini CLI to read its version (src/cli/doctor.ts)',
   defaultSpawnFn: 'spawns the agy (Antigravity) CLI child process per turn (src/core/agy-agent-provider.ts)',
   defaultConnect: 'opens an outbound WebSocket to the remote relay (src/daemon/tunnel-client.ts)',
+  defaultRunner: 'spawns claude / codex to resume a terminal session from a WeChat reply (src/daemon/cli-reply-handler.ts)',
+  defaultExec: 'spawns sips / powershell / convert to shrink an image before it goes to the model (src/lib/image-prep.ts)',
 }
 
 /** Seams whose default is a plain value or a pure computation — injecting one

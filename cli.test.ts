@@ -71,6 +71,7 @@ describe('citty migrated commands', () => {
       'federated-source',
       'guard',
       'hand',
+      'hook',
       'install',
       'install-progress',
       'license',

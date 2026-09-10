@@ -293,7 +293,7 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
   if (toolName.startsWith('mcp__')) return 'plugin_tool'
 
   // Built-in Claude Code tools
-  if (toolName === 'Read' || toolName === 'Glob' || toolName === 'Grep' || toolName === 'LS') return 'fs_read'
+  if (toolName === 'Read' || toolName === 'Glob' || toolName === 'Grep' || toolName === 'LS' || toolName === 'view_image') return 'fs_read'
   if (toolName === 'Write' || toolName === 'Edit' || toolName === 'NotebookEdit') return 'fs_write'
   if (toolName === 'Bash') {
     const cmd = typeof input.command === 'string' ? input.command : ''

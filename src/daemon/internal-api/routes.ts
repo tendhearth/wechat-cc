@@ -25,6 +25,7 @@ import { probeFsAccess, describeFsAccess } from '../../lib/fs-access'
 import { journalRoutes } from './routes-journal'
 import { presenceRoutes } from './routes-presence'
 import { petRoutes } from './routes-pet'
+import { cliEventRoutes } from './routes-cli-events'
 import { permissionRoutes } from './routes-permissions'
 import { socialRoutes } from './routes-social'
 import { knowledgeRoutes } from './routes-knowledge'
@@ -957,6 +958,7 @@ const onlineStickerCursor = new Map<string, number>()
     ...presenceRoutes(deps),
     ...petRoutes(deps),
     ...permissionRoutes(deps),
+    ...cliEventRoutes(deps),
     ...knowledgeRoutes(deps),
     ...configRoutes(deps),
     ...pairRoutes(deps),

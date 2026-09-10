@@ -102,7 +102,7 @@ export async function wireA2aServer(deps: A2aServerDeps): Promise<A2aServerWirin
       // itself as an allowed delegator. Verify+consume the one-time secret,
       // then register the brain with the exec key it minted (re-pair refreshes
       // the key). Same record shape as `hand accept`, just no manual token copy.
-      onPair: async ({ secret, brainId, execKey }) => {
+      onPair: async ({ secret, brainId, execKey, brainUrl, callbackKey }) => {
         if (!verifyAndConsumeInvite(deps.stateDir, secret, Date.now())) {
           return { ok: false, error: 'invalid_or_expired_invite' }
         }
@@ -113,14 +113,15 @@ export async function wireA2aServer(deps: A2aServerDeps): Promise<A2aServerWirin
           // 只刷 inbound_api_key 的话,一个此前以社交身份(may_exec=false)
           // 登记过的 id 重新配成手之后仍然派不了活,而且没有任何提示:
           // 2026-09-02 真机上就是这样,re-pair 完照旧 403。
-          a2aRegistry.update(brainId, { inbound_api_key: execKey, may_exec: true })
+          // 新脑会带上「怎么叫回它」(url + key):终端会话桥用。老脑不带就原样。
+          a2aRegistry.update(brainId, { inbound_api_key: execKey, may_exec: true, ...(brainUrl && callbackKey ? { url: brainUrl, outbound_api_key: callbackKey } : {}) })
         } else {
           a2aRegistry.add({
             id: brainId,
             name: brainId,
-            url: 'http://brain.local/a2a',   // placeholder; exec replies inline, no callback needed
+            url: brainUrl ?? 'http://brain.local/a2a',   // 老脑:占位;新脑:真地址(终端会话桥回叫)
             inbound_api_key: execKey,        // brain presents this → hand verifies
-            outbound_api_key: 'unused',      // hand → brain unused for exec; schema needs ≥1
+            outbound_api_key: callbackKey ?? 'unused',    // hand → brain:cli 桥的钥匙;老脑 'unused'
             capabilities: [],
             paused: false,
             transport: 'push',

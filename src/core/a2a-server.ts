@@ -70,6 +70,22 @@ export interface PairEvent {
   secret: string
   brainId: string
   execKey: string
+  /** 脑自己的 a2a 地址 + 手→脑的钥匙(spec 2026-09-09-cli-hook-push §6.5);老脑不带。 */
+  brainUrl?: string
+  callbackKey?: string
+}
+
+/**
+ * 终端会话桥(§6.5):手把本机 claude / codex 的 hook 事件与权限请求转给脑;
+ * 脑把「看 / 说」转给手执行。由 main.ts 在 hub 建好后 setCliHandlers 挂上。
+ */
+export interface A2ACliHandlers {
+  /** 脑侧:收手转来的事件。origin 是**已验证**的手 id(不信 body 里的)。 */
+  onEvent?: (agent: A2AAgentRecord, ev: Record<string, unknown>) => Promise<unknown>
+  onPermissionOpen?: (agent: A2AAgentRecord, req: Record<string, unknown>) => Promise<unknown>
+  onPermissionWait?: (agent: A2AAgentRecord, hash: string, waitMs: number) => Promise<unknown>
+  /** 手侧:脑要看 / 说某条本机会话。只有 may_exec 的脑能调。 */
+  onReply?: (agent: A2AAgentRecord, req: { kind: 'view' | 'say'; session_id: string; text?: string }) => Promise<unknown>
 }
 
 /**
@@ -133,6 +149,8 @@ export interface A2AServer {
   start(): Promise<void>
   stop(): Promise<void>
   baseUrl(): string
+  /** 终端会话桥的处理器,晚绑定(hub 在 main.ts 里比 a2a 服务晚建)。 */
+  setCliHandlers(h: A2ACliHandlers): void
   port(): number
 }
 
@@ -188,6 +206,8 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       }] : []),
     ],
   }
+
+  let cli: A2ACliHandlers = {}
 
   async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url)
@@ -306,6 +326,52 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         return new Response(JSON.stringify({ ok: false, reason: msg }), { status: 200 })
       }
     }
+    if (url.pathname === '/a2a/cli/event' || url.pathname === '/a2a/cli/permission' || url.pathname === '/a2a/cli/reply') {
+      // 终端会话桥(§6.5)。认证与 notify 同款:body.agent_id + Bearer = registry 里那把钥匙。
+      const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+      let body: Record<string, unknown>
+      if (req.method === 'GET') {
+        body = Object.fromEntries(url.searchParams.entries())
+      } else if (req.method === 'POST') {
+        try { body = await req.json() as Record<string, unknown> } catch { return json(400, { error: 'invalid_json' }) }
+      } else return new Response('method not allowed', { status: 405 })
+      if (!body || typeof body !== 'object' || typeof body['agent_id'] !== 'string') return json(400, { error: 'invalid_body' })
+      const claimedId = body['agent_id']
+      const auth = req.headers.get('authorization')
+      if (!auth?.startsWith('Bearer ')) { emitAuthFailed({ agent_id_claimed: claimedId, reason: 'missing_bearer' }); return json(401, { error: 'missing_bearer' }) }
+      const agent = opts.registry.verifyBearer(claimedId, auth.slice('Bearer '.length).trim())
+      if (!agent) { emitAuthFailed({ agent_id_claimed: claimedId, reason: 'wrong_bearer' }); return json(401, { error: 'unauthorized' }) }
+      if (agent.id !== claimedId) { emitAuthFailed({ agent_id_claimed: claimedId, reason: 'agent_id_mismatch' }); return json(403, { error: 'agent_id_mismatch' }) }
+      if (agent.paused) return json(202, { ok: false, reason: 'paused' })
+      try {
+        if (url.pathname === '/a2a/cli/event') {
+          if (!cli.onEvent) return json(501, { error: 'cli_bridge_not_wired' })
+          return json(200, await cli.onEvent(agent, body))
+        }
+        if (url.pathname === '/a2a/cli/permission') {
+          // 同一个路径两件事:带 hash 是轮询,不带是登记(a2a-client 只会 POST)。
+          if (typeof body['hash'] !== 'string') {
+            if (!cli.onPermissionOpen) return json(501, { error: 'cli_bridge_not_wired' })
+            return json(200, await cli.onPermissionOpen(agent, body))
+          }
+          if (!cli.onPermissionWait) return json(501, { error: 'cli_bridge_not_wired' })
+          const hash = typeof body['hash'] === 'string' ? body['hash'] : ''
+          const waitRaw = Number(body['wait_ms'] ?? '0')
+          const waitMs = Math.max(0, Math.min(Number.isFinite(waitRaw) ? waitRaw : 0, 25_000))
+          return json(200, await cli.onPermissionWait(agent, hash, waitMs))
+        }
+        // /a2a/cli/reply:在这台机上看 / 接着跑某条会话 —— 只有我授权过的脑能调(与 exec 同一道门)。
+        if (!agent.may_exec) { emitAuthFailed({ agent_id_claimed: claimedId, reason: 'exec_not_authorized' }); return json(403, { error: 'exec_not_authorized' }) }
+        if (!cli.onReply) return json(501, { error: 'cli_bridge_not_wired' })
+        const kind = body['kind']
+        const sessionId = body['session_id']
+        if ((kind !== 'view' && kind !== 'say') || typeof sessionId !== 'string' || !sessionId) return json(400, { error: 'invalid_body' })
+        const text = typeof body['text'] === 'string' ? body['text'] : undefined
+        return json(200, await cli.onReply(agent, { kind, session_id: sessionId, ...(text ? { text } : {}) }))
+      } catch (err) {
+        return json(500, { error: 'cli_bridge_failed', detail: err instanceof Error ? err.message : String(err) })
+      }
+    }
     if (url.pathname === '/a2a/letter') {
       if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
       if (!opts.onLetter) return new Response(JSON.stringify({ error: 'letter_not_supported' }), { status: 501 })
@@ -372,7 +438,10 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
       }
       try {
-        const result = await opts.onPair({ secret: body.secret, brainId: body.brain_id, execKey: body.exec_key })
+        const extra = body as { brain_url?: unknown; callback_key?: unknown }
+        const brainUrl = typeof extra.brain_url === 'string' && extra.brain_url ? extra.brain_url : undefined
+        const callbackKey = typeof extra.callback_key === 'string' && extra.callback_key.length >= 16 ? extra.callback_key : undefined
+        const result = await opts.onPair({ secret: body.secret, brainId: body.brain_id, execKey: body.exec_key, ...(brainUrl && callbackKey ? { brainUrl, callbackKey } : {}) })
         return result.ok
           ? new Response(JSON.stringify({ ok: true }), { status: 200 })
           : new Response(JSON.stringify({ ok: false, error: result.error ?? 'pairing_rejected' }), { status: 401 })
@@ -409,6 +478,9 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
     port() {
       if (!server) throw new Error('a2a-server not started')
       return server.port!
+    },
+    setCliHandlers(h) {
+      cli = h
     },
   }
 }

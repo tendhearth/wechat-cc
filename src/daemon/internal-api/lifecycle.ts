@@ -10,6 +10,8 @@ export interface InternalApiLifecycle extends Lifecycle {
   setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
   setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
   setPetTurn(fn: NonNullable<InternalApiDeps['petTurn']>): void
+  setCliEvents(hub: NonNullable<InternalApiDeps['cliEvents']>): void
+  setCliPermissions(relay: NonNullable<InternalApiDeps['cliPermissions']>): void
   getPresence(): Promise<import('../../core/companion-presence').Presence | null>
   setCustomerReview(service: NonNullable<InternalApiDeps['customerReview']>): void
   setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
@@ -54,6 +56,8 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     setConversation: (c) => api.setConversation(c),
     setCompanionConverse: (fn) => api.setCompanionConverse(fn),
     setPetTurn: (fn) => api.setPetTurn(fn),
+    setCliEvents: (hub) => api.setCliEvents(hub),
+    setCliPermissions: (relay) => api.setCliPermissions(relay),
     getPresence: () => api.getPresence(),
     setCustomerReview: (service) => api.setCustomerReview(service),
     setA2A: (a2a) => api.setA2A(a2a),

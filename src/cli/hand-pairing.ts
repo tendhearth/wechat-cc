@@ -15,6 +15,8 @@
  * the record shapes here are the final ones.
  */
 import { randomBytes } from 'node:crypto'
+import { join } from 'node:path'
+import { readJsonFile } from '../lib/read-json-file'
 import { createA2ARegistry } from '../core/a2a-registry'
 import { createA2AClient } from '../core/a2a-client'
 import { decodeInvite, pairUrl, slugifyHandName } from '../lib/a2a-pairing'
@@ -70,16 +72,19 @@ export function planHandInvite(args: {
 }
 
 /** Run on the BRAIN: register a hand the brain can delegate to. */
-export function addHand(stateDir: string, opts: { id: string; url: string; name?: string; token: string }): void {
+export function addHand(stateDir: string, opts: { id: string; url: string; name?: string; token: string; inboundKey?: string }): { inbound_api_key: string } {
   assertSlug('hand id', opts.id)
   assertToken(opts.token)
   if (!opts.url) throw new Error('hand url is required')
+  // hand → brain 的钥匙:配对时随 /a2a/pair 一起交给手(callback_key),手用它把
+  // 终端会话的事件 / 权限请求转回脑(spec 2026-09-09-cli-hook-push §6.5)。
+  const inbound_api_key = opts.inboundKey ?? randomBytes(16).toString('hex')
   createA2ARegistry({ stateDir }).add({
     id: opts.id,
     name: opts.name || opts.id,
     url: opts.url,
     outbound_api_key: opts.token,                       // brain → hand exec bearer
-    inbound_api_key: randomBytes(16).toString('hex'),   // hand → brain (unused for exec; schema needs ≥16)
+    inbound_api_key,                                    // hand → brain (cli events / permission relay)
     capabilities: ['exec'],
     paused: false,
     transport: 'push',
@@ -87,6 +92,7 @@ export function addHand(stateDir: string, opts: { id: string; url: string; name?
     // may_exec 只描述「谁能在我这台机器上跑东西」,所以这里是 false。
     may_exec: false,
   })
+  return { inbound_api_key }
 }
 
 export interface Pairings {
@@ -112,7 +118,8 @@ export function listPairings(stateDir: string): Pairings {
     // serve as a hand even if it happens to carry the 'exec' capability.
     // Falls through to `others` instead of being miscategorized.
     if (a.capabilities?.includes('exec') && a.url) result.hands.push({ id: a.id, name: a.name, url: a.url, paused: a.paused })
-    else if (a.outbound_api_key === 'unused') result.brains.push({ id: a.id, name: a.name })
+    // 脑:能在我这台机器上派活的对端。老记录只有 'unused' 哨兵;新配的还带着回叫的 url + key。
+    else if (a.may_exec === true || a.outbound_api_key === 'unused') result.brains.push({ id: a.id, name: a.name })
     else result.others.push({ id: a.id, name: a.name, capabilities: a.capabilities ?? [] })
   }
   return result
@@ -158,10 +165,20 @@ export interface JoinResult { ok: boolean; id: string; url: string; error?: stri
  * Rolls back the local hand record if the callback fails, so a rejected pair
  * doesn't leave a half-configured hand. Never throws on network error.
  */
+/** 脑自己的 a2a 地址 —— daemon 起 a2a 服务时写的 a2a-info.json;没开就 null。 */
+export function readBrainUrl(stateDir: string): string | null {
+  try {
+    const info = readJsonFile<{ enabled?: boolean; base_url?: string | null }>(join(stateDir, 'a2a-info.json'))
+    return info.enabled && info.base_url ? info.base_url : null
+  } catch { return null }
+}
+
 export async function joinHand(stateDir: string, opts: {
   /** 省略 ⇒ 从邀请码里带来的机器名推(手自己知道它叫什么);推不出来才报错
    *  要求显式指定 —— 绝不替用户编一个。 */
   code: string; id?: string; selfId: string; name?: string; timeoutMs?: number
+  /** 测试注入;省略 ⇒ 读 a2a-info.json。null ⇒ 明确不带。 */
+  brainUrl?: string | null
 }): Promise<JoinResult> {
   assertSlug('brain self-id', opts.selfId)
   const { handUrl, secret, handName } = decodeInvite(opts.code)
@@ -178,13 +195,16 @@ export async function joinHand(stateDir: string, opts: {
 
   const registry = createA2ARegistry({ stateDir })
   if (registry.get(id)) registry.remove(id)   // re-join overwrites
-  addHand(stateDir, { id, url: handUrl, name: displayName, token: execKey })
+  const { inbound_api_key: callbackKey } = addHand(stateDir, { id, url: handUrl, name: displayName, token: execKey })
 
+  // 把「怎么叫回脑」一起交给手:脑自己的 a2a 地址(a2a-info.json)+ 手→脑的钥匙。
+  // 脑没开 a2a 服务就不带 —— 手照旧只能被派活,报不回终端事件。
+  const brainUrl = opts.brainUrl === undefined ? readBrainUrl(stateDir) : opts.brainUrl
   const client = createA2AClient({ timeoutMs: opts.timeoutMs ?? 15_000 })
   const r = await client.send({
     url: pairUrl(handUrl),
     bearer: secret,   // endpoint authenticates on the body `secret`, not this header
-    body: { secret, brain_id: opts.selfId, exec_key: execKey },
+    body: { secret, brain_id: opts.selfId, exec_key: execKey, ...(brainUrl ? { brain_url: brainUrl, callback_key: callbackKey } : {}) },
   })
   const resp = r.response as { ok?: unknown; error?: unknown } | undefined
   if (!r.ok || !resp || resp.ok !== true) {

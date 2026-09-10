@@ -162,6 +162,32 @@ describe('internal-api', () => {
 
   // ─── memory_* routes (RFC 03 P1.B B2) ─────────────────────────────────
 
+  describe('cli hook events route (spec 2026-09-09-cli-hook-push)', () => {
+    const body = { source: 'claude', kind: 'stop', session_id: 'abc-123', cwd: '/w/p', text: 'done' }
+    it('FILE token(trusted)POST /v1/cli/event → 转给 hub;没接线 503;坏 body 400', async () => {
+      const ingest = vi.fn(() => 'scheduled' as const)
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      const post = (b: unknown) => fetch(`http://127.0.0.1:${port}/v1/cli/event`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(b),
+      })
+      const off = await post(body)
+      expect(off.status).toBe(503)
+      expect(await off.json()).toEqual({ error: 'cli_events_not_wired' })
+
+      api.setCliEvents({ ingest })
+      const on = await post(body)
+      expect(on.status).toBe(200)
+      expect(await on.json()).toEqual({ ok: true, action: 'scheduled' })
+      expect(ingest).toHaveBeenCalledWith(body)
+
+      const bad = await post({ ...body, kind: 'idle' })
+      expect(bad.status).toBe(400)
+      expect(ingest).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('memory routes', () => {
     let memoryRoot: string
     async function startWithMemory(): Promise<{ port: number; token: string }> {

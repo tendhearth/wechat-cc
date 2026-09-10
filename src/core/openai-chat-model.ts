@@ -33,7 +33,8 @@ export interface StreamedTurn {
 export interface ChatModelClient {
   streamTurn(messages: ChatMessage[], tools: ToolSpec[]): StreamedTurn
   generate(messages: ChatMessage[]): Promise<string>
-  userMessage(text: string): ChatMessage
+  /** 带图就是分块消息(text + image);openai-compatible 会把 image 变成 image_url 的 data URL。 */
+  userMessage(text: string, images?: { data: Uint8Array; mediaType: string }[]): ChatMessage
   systemMessage(text: string): ChatMessage
   toolResultMessage(toolCallId: string, toolName: string, result: unknown): ChatMessage
 }
@@ -137,8 +138,15 @@ export function createChatModelFromLanguageModel(model: LanguageModel, opts: { e
       }
     },
 
-    userMessage(text) {
-      return { role: 'user', content: text }
+    userMessage(text, images) {
+      if (!images || images.length === 0) return { role: 'user', content: text }
+      return {
+        role: 'user',
+        content: [
+          { type: 'text', text },
+          ...images.map(i => ({ type: 'image' as const, image: i.data, mediaType: i.mediaType })),
+        ],
+      }
     },
     systemMessage(text) {
       return { role: 'system', content: text }
