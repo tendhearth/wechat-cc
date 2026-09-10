@@ -1,0 +1,58 @@
+/* Shared paper surfaces. Status colors and artwork retain their own meaning. */
+:root {
+  --cc-surface: #fffdf8;
+  --cc-surface-soft: #f7efdf;
+  --cc-line: #dfceb6;
+  --cc-line-strong: #b99a74;
+  --cc-muted: #806d5c;
+  --cc-focus: #8a5a36;
+  --paper: var(--cc-surface);
+  --paper-2: var(--cc-surface-soft);
+  --paper-3: #efe2cd;
+  --hair: #e8dccb;
+  --hair-2: var(--cc-line);
+  --ink-3: var(--cc-muted);
+  --ink-4: #9b8771;
+}
+[data-pane="a2a-agents"] {
+  --fd-ground: var(--app-bg);
+  --fd-ground-2: var(--cc-surface-soft);
+  --fd-card: var(--cc-surface);
+  --fd-ink: var(--ink);
+  --fd-ink-soft: var(--cc-muted);
+  --fd-line: var(--cc-line);
+  --fd-line-soft: #e8dccb;
+}
+.atelier-work, .todo-item:not(.todo-item-settled) {
+  background: var(--cc-surface);
+  border: 1px solid var(--cc-line);
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(89,63,44,.045);
+}
+.atelier-empty, .todos-empty {
+  padding: 28px 20px;
+  border: 1px dashed var(--cc-line);
+  border-radius: 12px;
+  background: var(--cc-surface);
+  color: var(--cc-muted);
+}
+.todos-page .btn, .atelier-share-open:not(:disabled), .settings-drawer .btn:not(.danger):not(.primary) {
+  min-height: 32px;
+  border-color: var(--cc-line-strong);
+  border-radius: 8px;
+  background: var(--cc-surface);
+  color: var(--ink);
+}
+.todos-page .btn:hover:not(:disabled), .atelier-share-open:hover:not(:disabled) {
+  background: var(--cc-surface-soft);
+}
+.dialogue-workspace-tabs { border-color: var(--cc-line); background: var(--cc-surface); }
+.dialogue-workspace-tab { color: var(--cc-muted); min-height: 32px; }
+.dialogue-workspace-tab.is-active { background: var(--cc-surface-soft); color: var(--ink); }
+.fd-wrap { font-family: var(--sans); }
+.fd-empty { border-radius: 12px; color: var(--cc-muted); }
+/* Keep focus explicit on controls whose older styles removed outlines. */
+:is(.todos-page, .settings-drawer, .fd-wrap, .atelier-gallery-panel, .dialogue-workspace-tabs) :is(button, input, textarea, select, summary):focus-visible {
+  outline: 2px solid var(--cc-focus);
+  outline-offset: 3px;
+}
