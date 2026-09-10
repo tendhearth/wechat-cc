@@ -388,15 +388,27 @@ wechat-cc hook status             # what's installed, which command line
 wechat-cc hook uninstall          # removes only wechat-cc's own entries
 ```
 
+- **Presence is a machine signal, not a setting.** The hook reports how long
+  ago the last keyboard/mouse input was on that machine. Under 2 min → you're
+  there: a native desktop notification, nothing on WeChat. Otherwise → WeChat.
+  Activity on your phone is deliberately *not* a signal (you may not reply for
+  hours).
 - **Long turn finished while you were away** → one WeChat message: which CLI,
-  which project, session short-id, last assistant line. Held 45 s and dropped
-  if you type again; quick turns (< 90 s) and repeated stops without a new
-  prompt from you never notify (harness-generated prompts such as `/loop`
-  wake-ups or task notifications don't count as you typing).
-- **Waiting for approval** → if you haven't typed in that session for 3 min,
-  the request goes to WeChat as a card: reply `y <code>` / `n <code>` and the
-  terminal proceeds (120 s window; then the terminal asks as usual). If you're
-  clearly at the keyboard, the terminal asks directly.
+  which machine (`那边(win-test)` when it's another box), which project,
+  session short-id, and the full last assistant message (markdown stripped;
+  very long ones get a `share_page` link). Held 45 s and dropped if you type
+  again; quick turns (< 90 s) and repeated stops without a new prompt from
+  you never notify (harness-generated prompts such as `/loop` wake-ups don't
+  count as you typing). Several sessions finishing together → one digest.
+- **Waiting for approval** → the request goes to WeChat as a card: reply
+  `y <code>` / `n <code>` and the terminal proceeds (120 s window; then the
+  terminal asks as usual).
+- **Talk back**: `看 <code>` renders that session's recent turns to a page;
+  `@<code> <text>` resumes the session (`claude -p --resume` /
+  `codex exec resume`) with your text and posts the result back.
+- **Brain / hands**: on a hand (paired with `hand join`, re-pair once to get
+  the callback), all of the above is forwarded to the brain, which owns the
+  WeChat side; `看` / `@` for a hand's session are dispatched back to it.
 - Sessions spawned by the daemon itself never loop back (`WECHAT_CC_DAEMON_CHILD=1`).
   The hook never blocks the CLI: no daemon, no network → silent exit 0.
 
