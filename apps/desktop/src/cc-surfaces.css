@@ -56,3 +56,25 @@
   outline: 2px solid var(--cc-focus);
   outline-offset: 3px;
 }
+
+/* Shared controls aligned with the CC chat sample. */
+:root { --app-bg: #faf8f3; --cc-surface: #fffdf9; --cc-surface-soft: #f2e8d7; --cc-line: #e4ddd2; --cc-line-strong: #b99463; --cc-muted: #796f63; --cc-focus: #a77b40; }
+.dash-rail::before { background: none; height: 1px; background-color: var(--cc-line); }
+.dash-nav-link.active { background: var(--cc-surface-soft); border-radius: 10px; box-shadow: none; }
+.dash-nav-link:hover { background-color: #f5efe4; border-radius: 10px; }
+.dash-nav-link:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 3px; }
+:is(.drawer-section h3, .memory-profile-kicker, .profile-panel h2) { border-image: none; background: none; transform: none; }
+.drawer-section h3 { border: 0; padding: 0 0 10px; min-height: 0; height: auto; }
+.memory-profile-kicker { padding: 12px 0; min-height: 0; border: 0; }
+.profile-panel-tall, .profile-panel-preferences, .profile-panel-snippets { background: var(--cc-surface); border: 1px solid var(--cc-line); border-radius: 16px; }
+:is(.settings-drawer, .todos-page, .fd-wrap, .atelier-gallery-panel) :is(input:not([type=checkbox]):not([type=radio]), textarea, select) { border: 1px solid var(--cc-line); border-radius: 10px; background: var(--cc-surface); color: #39332c; }
+.atelier-empty, .todos-empty, .cc-page-status { border: 1px solid var(--cc-line); border-radius: 14px; padding: 28px; background: var(--cc-surface); color: var(--cc-muted); }
+.cc-page-status h2 { margin: 0 0 10px; color: #39332c; font-size: 20px; }
+.cc-page-status p { margin: 0 0 16px; line-height: 1.7; }
+.cc-page-status button { padding: 9px 14px; min-height: 40px; border: 1px solid var(--cc-line-strong); border-radius: 10px; color: #705b43; background: var(--cc-surface); cursor: pointer; }
+.cc-page-status button:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 3px; }
+.fd-sec-head h2 { display: inline-flex; align-items: center; gap: 8px; }
+.fd-sec-head .ic svg, .wechat-voice-stub svg, .jsonl-turn > svg { width: 19px; height: 19px; vertical-align: middle; }
+.cc-portrait-placeholder svg { width: 32px; height: 32px; color: var(--cc-muted); }
+.profile-panel h2 { border: 0; padding: 8px 12px; min-height: 40px; top: -22px; background: var(--cc-surface); border-radius: 8px; }
+.memory-profile-tags span { border-image: none; border: 1px solid var(--cc-line); border-radius: 12px; padding: 6px 16px; background: var(--cc-surface-soft); }

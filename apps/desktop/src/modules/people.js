@@ -72,7 +72,7 @@ export function renderPeople(data) {
   if (!host) return
   if (data.relationships == null) {
     if (count) count.textContent = ''
-    host.innerHTML = '<div class="fd-empty">读不到 —— daemon 没在跑?</div>'
+    host.innerHTML = '<div class="fd-empty">暂时无法读取联系人，请到首页检查连接后重试。</div>'
     return
   }
   const rels = data.relationships

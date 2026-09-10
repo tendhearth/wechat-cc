@@ -220,7 +220,9 @@ describe('turnHtml', () => {
 
   it('renders attachment compactly', () => {
     const html = turnHtml({ type: 'attachment', attachment: { path: '/tmp/img.png' } })
-    expect(html).toContain('📎')
+    expect(html).toContain('<svg')
+    expect(html).toContain('aria-hidden="true"')
+    expect(html).not.toContain('📎')
     expect(html).toContain('/tmp/img.png')
   })
 

@@ -26,12 +26,31 @@ async function apiGet(deps, path) {
   }
 }
 
+export function atelierEmptyState(data) {
+  if (!data) return { title: "暂时无法确认画室状态", detail: "请检查首页连接后重试。已有作品仍保存在这台 Mac。", action: "retry" }
+  if (data.mode === "off") return { title: "画室尚未开启", detail: "到首页点击「手机扫码改设置」，开启「让 CC 自己画画」。首次需下载约 5GB 的画笔。", action: "home" }
+  const state = data.status?.state
+  if (state === "checking" || state === "downloading") return { title: "正在准备画笔", detail: "准备完成后，CC 才能开始创作。下载进度会在这里更新。", action: "retry" }
+  if (state === "failed") return { title: "画笔暂时没准备好", detail: "请检查网络，稍后刷新状态；也可以到手机设置中重新准备画笔。", action: "retry" }
+  if (state === "ready") return { title: "画笔就绪，等待第一幅作品", detail: "CC 会根据相处中的观察决定是否创作，开启后不会立即出画。作品会留在这里。", action: "retry" }
+  return { title: "还没有作品", detail: "暂时无法确认画笔是否就绪。请到首页的手机设置检查画室开关。", action: "home" }
+}
+
+function renderAtelierEmpty(data) {
+  const box = document.getElementById("atelier-gallery")
+  if (!box || box.dataset.empty !== "1") return
+  const state = atelierEmptyState(data)
+  box.innerHTML = `<div class="cc-page-status" role="status"><h2>${escapeHtml(state.title)}</h2><p>${escapeHtml(state.detail)}</p><button type="button" data-atelier-status-action="${state.action}">${state.action === "home" ? "去首页设置" : "重新检查"}</button></div>`
+}
+
 let atelierStatusTimer = null
 async function loadAtelierModelStatus(deps) {
   const el = document.getElementById("atelier-model-status")
   if (!el) return
-  let st = null
-  try { st = (await apiGet(deps, "/v1/atelier/model-status"))?.status ?? null } catch { st = null }
+  let data = null
+  try { data = await apiGet(deps, "/v1/atelier/model-status") } catch { /* show recoverable state */ }
+  const st = data?.mode === "off" ? null : data?.status ?? null
+  renderAtelierEmpty(data)
   const r = atelierModelLabel(st)
   el.hidden = !r.label
   el.textContent = r.label
@@ -133,7 +152,15 @@ export async function loadAtelierGallery(deps) {
   const box = document.getElementById("atelier-gallery")
   if (!box) return
   bindAtelierSharing(box, deps)
-  loadAtelierModelStatus(deps)
+  if (box.dataset.statusBound !== "1") {
+    box.dataset.statusBound = "1"
+    box.addEventListener("click", event => {
+      const action = event.target instanceof Element ? event.target.closest("[data-atelier-status-action]") : null
+      if (!action) return
+      if (action.getAttribute("data-atelier-status-action") === "home") document.querySelector('.dash-nav-link[data-pane="overview"]')?.click()
+      else loadAtelierGallery(deps)
+    })
+  }
   const toggle = document.getElementById("atelier-gallery-toggle")
   if (toggle && toggle.dataset.bound !== "1") {
     toggle.dataset.bound = "1"
@@ -157,9 +184,12 @@ export async function loadAtelierGallery(deps) {
     }
     const works = Array.isArray(result?.works) ? result.works : []
     if (!works.length) {
-      box.innerHTML = '<p class="atelier-empty">还没有作品。等 CC 有了创作冲动，它会把画留在这里。</p>'
+      box.dataset.empty = "1"
+      await loadAtelierModelStatus(deps)
       return
     }
+    box.dataset.empty = "0"
+    loadAtelierModelStatus(deps)
     box.innerHTML = works.map((work) => {
       const image = typeof work.image_data === "string" ? `<img src="${work.image_data}" alt="CC Atelier 作品" loading="lazy" />` : ""
       const medium = escapeHtml(work.impulse?.medium || "自由表达")
@@ -195,6 +225,7 @@ export async function loadAtelierGallery(deps) {
       </details>`
     }).join("")
   } catch {
-    box.innerHTML = '<p class="atelier-empty">作品集暂时不可用。</p>'
+    box.dataset.empty = "1"
+    renderAtelierEmpty(null)
   }
 }
