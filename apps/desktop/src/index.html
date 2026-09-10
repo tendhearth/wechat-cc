@@ -6,6 +6,7 @@
     <title>wechat-cc</title>
     <link rel="icon" href="./wechat-cc-logo.png" />
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./cc-page-art.css" />
     <link rel="stylesheet" href="./cc-surfaces.css" />
   </head>
   <body>
@@ -42,7 +43,11 @@
             <div class="launch-grid">
               <div class="launch-hero">
                 <div class="launch-illus launch-illus-missing" aria-hidden="true">
-                  <img src="./assets/onboarding-missing.png" alt="" />
+                  <span class="cc-page-art cc-page-art-onboarding">
+                    <img class="cc-page-background" src="./assets/home-cc-aquarium-base.png" alt="" />
+                    <span class="cc-page-ground"></span>
+                    <img class="cc-page-character" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" />
+                  </span>
                 </div>
                 <h2>还差一步就能见面了</h2>
                 <p>还没检测到 Claude Code 或 Codex，安装任意一个就能继续。</p>
@@ -121,7 +126,11 @@
             <div class="launch-grid">
               <div class="launch-hero">
                 <div class="launch-illus launch-illus-ready" aria-hidden="true">
-                  <img src="./assets/onboarding-success.png" alt="" />
+                  <span class="cc-page-art cc-page-art-onboarding">
+                    <img class="cc-page-background" src="./assets/home-cc-aquarium-base.png" alt="" />
+                    <span class="cc-page-ground"></span>
+                    <img class="cc-page-character cc-page-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" />
+                  </span>
                 </div>
                 <h2>环境检测成功</h2>
                 <p>一切准备就绪，开启你的体验之旅吧！</p>
@@ -393,7 +402,14 @@
                     <div class="stage-hint" id="stage-hint">把鼠标轻轻移进鱼缸水面下方</div>
                     <div class="bear-message" id="bear-message" aria-live="polite">你好呀，今天也在陪你。</div>
                   </div>
-                  <img class="moment-illustration moment-illustration-offline" src="./assets/moment-ai-offline.png" alt="" />
+                  <div class="moment-illustration moment-illustration-offline" role="img" aria-label="CC 安静地坐在鱼缸旁，连接暂时离线">
+                    <img class="offline-aquarium" src="./assets/home-cc-aquarium-base.png" alt="" />
+                    <span class="offline-fish offline-fish-gold" aria-hidden="true"></span>
+                    <span class="offline-fish offline-fish-coral" aria-hidden="true"></span>
+                    <span class="offline-fish offline-fish-blue" aria-hidden="true"></span>
+                    <span class="offline-cc-shadow" aria-hidden="true"></span>
+                    <img class="offline-cc" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" />
+                  </div>
                 </div>
                 <div class="moment-actions">
                   <span class="pending" id="dash-pending"></span>
@@ -843,7 +859,7 @@
         <div class="lightbox-body" id="lightbox-body"></div>
       </div>
 
-    <img class="crab-escape" id="crab-escape" src="./assets/animation/crab-watercolor-v1.png" alt="" aria-hidden="true">
+    <img class="crab-escape" id="crab-escape" alt="" aria-hidden="true">
     <script type="module" src="./animation-lab.js"></script>
     <script type="module" src="./main.js"></script>
   </body>

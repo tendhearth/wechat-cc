@@ -1,3 +1,4 @@
+import { ccPageArt } from "../cc-page-art.js"
 // @ts-check
 /// <reference lib="dom" />
 /** @typedef {import('../../../../src/cli/schema').MemoryListOutputT} MemoryList */
@@ -837,7 +838,7 @@ function renderMemoryEmbryo(embryo) {
   return `
     <div class="memory-profile-companion">
       <button class="memory-embryo memory-embryo-illustration" type="button" data-action="toggle-memory-embryo" aria-expanded="false" aria-label="${escapeHtml(embryo.stage)}，${escapeHtml(embryo.stageHint)}">
-        <img src="./assets/memory-embryo-illustration.png" alt="" aria-hidden="true" />
+        ${ccPageArt("memory")}
       </button>
       <div class="memory-embryo-panel" id="memory-embryo-panel" hidden>
         <div class="embryo-panel-head">

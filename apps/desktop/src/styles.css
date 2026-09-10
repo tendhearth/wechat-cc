@@ -2823,6 +2823,22 @@ input { font: inherit; color: inherit; }
 
 .moment-illustration-offline {
   display: none;
+  transform: scale(1.1);
+  transform-origin: center;
+}
+.offline-aquarium { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* Same 4:3 stage, square sprite and pixel-470 foot anchor as the live canvas. */
+.offline-fish {
+  position: absolute; width: 10%; aspect-ratio: 1; opacity: .65;
+  background: url('./assets/home-cc-fish-atlas.png') no-repeat; background-size: 300% 100%;
+}
+.offline-fish-gold { left: 48%; top: 46%; background-position: 0 0; }
+.offline-fish-coral { left: 62%; top: 55%; background-position: 50% 0; }
+.offline-fish-blue { left: 72%; top: 44%; background-position: 100% 0; }
+.offline-cc { position: absolute; width: 34%; height: auto; left: 8.8%; top: 38.986%; }
+.offline-cc-shadow {
+  position: absolute; left: 14.92%; top: 78.923%; width: 21.76%; height: 4.08%;
+  background: radial-gradient(ellipse, rgba(91,66,43,.20), rgba(91,66,43,.14) 45%, transparent 72%);
 }
 
 .moment-animation-stage {
@@ -3977,17 +3993,6 @@ input { font: inherit; color: inherit; }
   padding: 0;
   display: block;
   border-radius: 0;
-}
-.memory-embryo-illustration img {
-  width: 100%;
-  display: block;
-  pointer-events: none;
-  transition: transform 180ms ease-out, filter 180ms ease-out;
-}
-.memory-embryo-illustration:hover img,
-.memory-embryo-illustration:focus-visible img {
-  transform: translateY(-3px);
-  filter: drop-shadow(0 10px 14px rgba(150, 125, 85, .14));
 }
 .memory-embryo:hover .embryo-core {
   transform: scale(1.06);

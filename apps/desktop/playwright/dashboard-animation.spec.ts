@@ -1,7 +1,8 @@
 import { test, expect } from './fixtures'
 
 test('inline companion animation replaces the overview illustration', async ({ page, shimUrl, shim }) => {
-  await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
+  // 场景里要有 CC 才能测悬停问候:presence 由 shim 的 /v1/companion/presence 提供,默认在线空闲。
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true, presence: { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } } })
   await page.goto(shimUrl)
   await page.waitForFunction(() => document.documentElement.dataset.mode === 'dashboard')
 
@@ -18,10 +19,13 @@ test('inline companion animation replaces the overview illustration', async ({ p
   await page.mouse.move(box.x + box.width * .72, box.y + box.height * .52)
   await expect(page.locator('#stage-hint')).toContainText('它们发现你了')
 
-  await page.mouse.move(box.x + box.width * .846, box.y + box.height * .754)
+  // 螃蟹的位置由场景决定(#102 换了插画后它挪了家),从场景读,不写死像素。
+  const crab = await page.evaluate(() => (window as any).__companionScene.crabSpot() as { x: number, y: number })
+  await page.mouse.move(box.x + box.width * crab.x, box.y + box.height * crab.y)
   await expect(page.locator('#stage-hint')).toContainText('点点小螃蟹')
-  await page.mouse.click(box.x + box.width * .846, box.y + box.height * .754)
-  await expect(page.locator('#stage-hint')).toContainText('它要换个地方藏起来')
+  await page.mouse.click(box.x + box.width * crab.x, box.y + box.height * crab.y)
+  // 被点后要么换个地方藏,要么沿鱼缸逃走 —— 哪一种由场景随机决定,两种都是「它动了」。
+  await expect(page.locator('#stage-hint')).toHaveText(/换个地方藏起来|沿着鱼缸逃走/)
   await page.waitForTimeout(1250)
   await expect(page.locator('#crab-escape')).toHaveCSS('opacity', '0')
 
