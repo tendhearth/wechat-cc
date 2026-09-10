@@ -13,14 +13,52 @@
     "apps/desktop/src/assets/pet/cc-v1/canonical/lit/front.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
     "apps/desktop/src/assets/pet/cc-v1/canonical/unlit/front.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
     "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/000.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
-    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/001.png": "71052b103afe289560dca22a95ae40fdead00ee7baeaa3af04bc12af37c39daf",
-    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/002.png": "296fc220651b83f522bc384f99816cb1379e48df4b1bd67a136d02f8cd4cf914",
-    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/003.png": "47cb6bdf6db3e41eb1b4527076ebdaac3b50d2461c3c959a702368c7dfa1b78d",
-    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/004.png": "43dd5553f29d04ed731f3a95eb340ddd8ad141eeeaa3507dfeb6b5c761dc921e",
-    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/005.png": "7dd5abd662ec8a16c79f0bf30141b96f242fefaba5ef56055afff7f93f9aa491",
-    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/006.png": "520891a78d6b76d9bd3748dcfa249005bd9e10987860ee38c3986f44c4d7ae89",
+    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/001.png": "2c51ebe4ba0ec40e0eca3fe0285698d707d57ef931b0f626b197dace68b96824",
+    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/002.png": "dc6c4578a8a21620d233e1bb26be429efea434e25bc5f061a923e867cd1a4dec",
+    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/003.png": "e4b93dbb166e320af785cef2f21cebfe17039a7e0ab6d5571e563d632631b683",
+    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/004.png": "8c5e23671b92dccf9a450cb619f97da73f449e8a4a611ad9662c489b28e43c44",
+    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/005.png": "9bafab4426279fb023ac96558bc9d2b4f47e1480ca078aa531fc6f6d84528fdb",
+    "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/006.png": "9f302c58c1445ecf8b7882f0e1bbc4998012c586cf73848b856b02d84fd70352",
     "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/007.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
     "apps/desktop/src/assets/pet/cc-v1/masks/front.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
     "apps/desktop/src/assets/pet/cc-v1/masks/sleep.png": "0e77e4d1e266466e2ba955a8a59d1e4ec854390e9edf974f90b179992824e0e6"
-  }
+  },
+  "amendments": [
+    {
+      "reason": "Owner requested discrete eye switch at frame 004; alpha and all non-eye pixels unchanged",
+      "baseCommit": "3513628c",
+      "changes": [
+        {
+          "path": "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/001.png",
+          "previousSha256": "71052b103afe289560dca22a95ae40fdead00ee7baeaa3af04bc12af37c39daf",
+          "sha256": "2c51ebe4ba0ec40e0eca3fe0285698d707d57ef931b0f626b197dace68b96824"
+        },
+        {
+          "path": "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/002.png",
+          "previousSha256": "296fc220651b83f522bc384f99816cb1379e48df4b1bd67a136d02f8cd4cf914",
+          "sha256": "dc6c4578a8a21620d233e1bb26be429efea434e25bc5f061a923e867cd1a4dec"
+        },
+        {
+          "path": "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/003.png",
+          "previousSha256": "47cb6bdf6db3e41eb1b4527076ebdaac3b50d2461c3c959a702368c7dfa1b78d",
+          "sha256": "e4b93dbb166e320af785cef2f21cebfe17039a7e0ab6d5571e563d632631b683"
+        },
+        {
+          "path": "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/004.png",
+          "previousSha256": "43dd5553f29d04ed731f3a95eb340ddd8ad141eeeaa3507dfeb6b5c761dc921e",
+          "sha256": "8c5e23671b92dccf9a450cb619f97da73f449e8a4a611ad9662c489b28e43c44"
+        },
+        {
+          "path": "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/005.png",
+          "previousSha256": "7dd5abd662ec8a16c79f0bf30141b96f242fefaba5ef56055afff7f93f9aa491",
+          "sha256": "9bafab4426279fb023ac96558bc9d2b4f47e1480ca078aa531fc6f6d84528fdb"
+        },
+        {
+          "path": "apps/desktop/src/assets/pet/cc-v1/transitions/dark-to-light/006.png",
+          "previousSha256": "520891a78d6b76d9bd3748dcfa249005bd9e10987860ee38c3986f44c4d7ae89",
+          "sha256": "9f302c58c1445ecf8b7882f0e1bbc4998012c586cf73848b856b02d84fd70352"
+        }
+      ]
+    }
+  ]
 }
