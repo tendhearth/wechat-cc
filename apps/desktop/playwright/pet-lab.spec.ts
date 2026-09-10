@@ -85,9 +85,15 @@ shimTest.describe('CC 桌宠(真浏览器)', () => {
       return { name: el.dataset.prop!, cx: r.left + r.width / 2, cy: r.top + r.height / 2, w: r.width }
     }))
     const rel = Object.fromEntries(props.map((p) => [p.name, { x: (p.cx - sq.left) / sq.side, y: (p.cy - sq.top) / sq.side, w: p.w / sq.side }]))
-    // 脚底正中 (0.5, 0.918) 是 2026-09-09 那个 bug 的签名:三个道具都不许在那附近。
+    // 2026-09-09 那个 bug 的签名是**所有道具叠在同一点**(anchor = 脚底正中)。笔记本的槽位本来就在脚前,
+    // 所以不按「离脚底多远」判,而是:三个道具两两分开,且头顶 / 身侧两个明显不在脚底。
+    const names = Object.keys(rel)
+    for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
+      const a = rel[names[i]], b = rel[names[j]]
+      expect(Math.hypot(a.x - b.x, a.y - b.y), `${names[i]} 和 ${names[j]} 叠在一起`).toBeGreaterThan(0.15)
+    }
+    for (const name of ['exclamation', 'envelope']) expect(Math.hypot(rel[name].x - 0.5, rel[name].y - 0.918), `${name} 掉在脚底`).toBeGreaterThan(0.2)
     for (const [name, p] of Object.entries(rel)) {
-      expect(Math.hypot(p.x - 0.5, p.y - 0.918), `${name} 掉在脚底`).toBeGreaterThan(0.12)
       expect(p.w, `${name} 尺寸没按舞台边长算`).toBeGreaterThan(0.2)
       expect(p.w).toBeLessThan(0.6)
     }
