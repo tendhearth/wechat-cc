@@ -162,7 +162,7 @@ export async function refresh() {
  */
 function renderServerBanner(info, banner) {
   if (!info) {
-    banner.innerHTML = '<span class="dot off"></span> 连不上你的 bot——daemon 没在跑？'
+    banner.innerHTML = '<span class="dot off"></span> 暂时连不上 CC，请到首页检查连接。'
   } else if (!info.enabled) {
     banner.innerHTML = '<span class="dot off"></span> 觅食网还没开通 — 在 <code>agent-config.json</code> 加 <code>"a2a_listen": { "port": 8717 }</code> 后重启 daemon'
   } else {
@@ -258,7 +258,7 @@ export function renderForageDesk(data) {
   const note = document.getElementById('fd-social-note')
   if (note) {
     if (socialWired) { note.hidden = true; note.textContent = '' }
-    else { note.hidden = false; note.textContent = '社交功能未启用 —— 在 §③ 打开「让朋友的 bot 能找到我」并重启守护进程即可。' }
+    else { note.hidden = false; note.textContent = '社交功能尚未开启。展开下方「你的觅食网」，开启「让朋友的 bot 能找到我」，再重新连接 CC。' }
   }
 
   // ── ✉️ mailbox ───────────────────────────────────────────────────────

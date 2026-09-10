@@ -46,7 +46,7 @@ describe('renderHuntBag', () => {
 
   it('**读不到 ≠ 空背包** —— 把读取失败显示成空清单等于告诉主人 CC 什么都没找到', () => {
     renderHuntBag({ items: null })
-    expect(host().innerHTML).toContain('读不到背包')
+    expect(host().innerHTML).toContain('暂时无法读取')
     renderHuntBag({ items: [] })
     expect(host().innerHTML).toContain('背包还是空的')
   })
