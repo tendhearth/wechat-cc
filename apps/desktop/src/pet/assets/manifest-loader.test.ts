@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { normalizeManifest, loadManifest } from './manifest-loader.js'
 
-const realRaw = JSON.parse(readFileSync(join(__dirname, '../../assets/pet/manifest.json'), 'utf8'))
+// v1 扁平形状只剩夹具:旧猫化位图包已从正式包删掉,loader 仍要认这种形状(历史兼容)。
+const realRaw = JSON.parse(readFileSync(join(__dirname, 'fixtures/legacy-v1-manifest.json'), 'utf8'))
+const kitRaw = JSON.parse(readFileSync(join(__dirname, '../../assets/pet/cc-v1/manifest.json'), 'utf8').replace(/^\uFEFF/, ''))
 
 describe('normalizeManifest — v1 扁平形状(资产包现状)', () => {
   it('states 全归到 lit;unlit 只有 master 的 idle;anchor 是比例;路径拼上 baseUrl', () => {
@@ -24,17 +26,17 @@ describe('normalizeManifest — v1 扁平形状(资产包现状)', () => {
     expect(m.props.envelope).toBe('./assets/pet/props/envelope.png')
     expect(m.warnings).toEqual([])
   })
-  it('每张引用到的文件都真的存在(资产包完整性)', () => {
-    const r = normalizeManifest(realRaw, join(__dirname, '../../assets/pet'))
+  it('正式包(cc-v1)引用到的每张文件都真的存在,且只引用 PNG', () => {
+    // 完整性检查对着**真正随 app 出厂的** manifest 做;旧扁平包只是夹具,不再有磁盘文件可查。
+    const r = normalizeManifest(kitRaw, join(__dirname, '../../assets/pet/cc-v1'))
     if (!r.ok) throw new Error(r.reason)
     const all = new Set<string>()
     for (const f of Object.values(r.manifest.forms)) { all.add(f.master); for (const a of Object.values(f.states)) a.frames.forEach(x => all.add(x)) }
     for (const a of Object.values(r.manifest.transitions)) a.frames.forEach(x => all.add(x))
     Object.values(r.manifest.props).forEach(x => all.add(x))
-    for (const p of all) expect(() => readFileSync(p)).not.toThrow()
-    // 资产包里就 31 张 png,全被 manifest 引用(两张没人引用的 reference/canonical-reference-*.png
-    // 已经删掉,原图仍在外部资产包里);不是任务书里假设的 36(见 task-1-report.md 的偏差记录)。
-    expect(all.size).toBe(31)
+    for (const p of all) expect(() => readFileSync(p), p).not.toThrow()
+    for (const p of all) expect(p, '运行帧只认 PNG,SVG 占位不该被任何状态引用').toMatch(/\.png$/)
+    expect(all.size).toBeGreaterThan(30)
   })
 })
 

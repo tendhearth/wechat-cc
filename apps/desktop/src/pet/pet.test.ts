@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { createPet } from './pet.js'
 import { fallbackFrame } from '../assets/pet/cc-v1/placeholder.js'
 
-const realRaw = readFileSync(join(__dirname, '../assets/pet/manifest.json'), 'utf8')
+// 旧的 v1 扁平 manifest 只剩测试夹具的身份(旧猫化位图已从正式包删掉);帧路径在这里从不真的加载。
+const realRaw = readFileSync(join(__dirname, 'assets/fixtures/legacy-v1-manifest.json'), 'utf8')
 const fetchReal = (async () => new Response(realRaw, { status: 200 })) as unknown as typeof fetch
 
 function el(tag = 'div') {
