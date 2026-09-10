@@ -162,6 +162,8 @@ export interface PipelineDepsOpts {
   turns?: { recent(limit: number): readonly { chatId: string; endedAt: number; outcome: string; mode: string; startedAt: number }[] }
   /** 三轴 presence 共用入口(internal-api lifecycle.getPresence)。main.ts 传入。 */
   presence?: () => Promise<import('../../core/companion-presence').Presence | null>
+  /** 「看 码」「@码 文本」的执行者(daemon/cli-reply-handler)。main.ts 传入。 */
+  cliReply?: { handle(text: string, chatId: string): Promise<boolean> }
 }
 
 export interface PipelineDepsRefs {
@@ -658,6 +660,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       handlePermissionReply: (text: string, fromChatId?: string) => ilink.handlePermissionReply(text, fromChatId),
       log,
     },
+    ...(opts.cliReply ? { cliReply: { handle: (t: string, c: string) => opts.cliReply!.handle(t, c), log } } : {}),
     guard: {
       guardEnabled: () => loadGuardConfig(stateDir).enabled,
       guardState: () => refs.guard.current?.current() ?? { reachable: true, ip: null },

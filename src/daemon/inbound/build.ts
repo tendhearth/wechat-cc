@@ -10,6 +10,7 @@ import { makeMwAdmin, type AdminMwDeps } from './mw-admin'
 import { makeMwMode, type ModeMwDeps } from './mw-mode'
 import { makeMwOnboarding, type OnboardingMwDeps } from './mw-onboarding'
 import { makeMwPermissionReply, type PermissionReplyMwDeps } from './mw-permission-reply'
+import { makeMwCliReply, type CliReplyMwDeps } from './mw-cli-reply'
 import { makeMwGuard, type GuardMwDeps } from './mw-guard'
 import { makeMwAttachments, type AttachmentsMwDeps } from './mw-attachments'
 import { makeMwTranscribeVoice, type TranscribeVoiceMwDeps } from './mw-transcribe-voice'
@@ -32,6 +33,8 @@ export interface InboundPipelineDeps {
   mode: ModeMwDeps
   onboarding: OnboardingMwDeps
   permissionReply: PermissionReplyMwDeps
+  /** 「看 码」「@码 文本」;缺席 ⇒ 不挂(测试 / 最小嵌入)。 */
+  cliReply?: CliReplyMwDeps
   guard: GuardMwDeps
   attachments: AttachmentsMwDeps
   transcribeVoice: TranscribeVoiceMwDeps
@@ -72,6 +75,7 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     // the network we just lost.
     makeMwGuard(d.guard),
     makeMwPermissionReply(d.permissionReply),
+    ...(d.cliReply ? [makeMwCliReply(d.cliReply)] : []),
     makeMwAttachments(d.attachments),
     makeMwTranscribeVoice(d.transcribeVoice),
     makeMwActivity(d.activity),

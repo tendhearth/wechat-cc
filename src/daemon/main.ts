@@ -48,6 +48,7 @@ import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
 import { makeCliEventHub, makeProjectNamer } from '../core/cli-events'
 import { makeCliPermissionRelay } from '../core/cli-permission-relay'
+import { makeCliReplyHandler } from './cli-reply-handler'
 import { machineIdleSeconds } from '../lib/machine-idle'
 import { notifyDesktop } from '../lib/desktop-notify'
 import { hostname as osHostname } from 'node:os'
@@ -529,29 +530,6 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       })
     }
     // 3. main-wiring builds all deps for pipeline + lifecycles
-    const wired = wireMain({
-      stickers: stickerLib,
-      requestRestart: (reason) => requestRestart(reason),
-      llmHealth,
-      stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,
-      outboundTaps, huntStore, petSignals,
-      // 随身 CC 首屏:聊天日摘要读 turn_records;presence 走 internal-api 的共用入口。
-      turns: turnRecordStore,
-      presence: () => internalApi.getPresence(),
-      // Task 11 — tick-bodies pass this to resolveTier() when computing
-      // the companion's tierProfile. Same singleton import the bootstrap
-      // coordinator uses; 5s TTL cache inside `loadAccess` keeps the
-      // per-tick lookup cheap.
-      loadAccess,
-      log: (t, l) => log(t, l),
-      schedulerIntervalMs: opts.schedulerIntervalMs,
-    })
-    // Wire companion-converse dep now that the coordinator (via boot) and
-    // the pipeline wiring are available. Routes access deps.companionConverse
-    // at request time, so this late assignment is safe (mirrors setConversation).
-    internalApi.setCompanionConverse(wired.companionConverse)
-    // 同上,桌宠的「在做什么」—— 组装闭包在 pipeline-deps(那里才有 boot)。
-    internalApi.setPetTurn(wired.petTurn)
     // 终端 claude / codex 会话的 hook 事件(spec 2026-09-09-cli-hook-push):压一段
     // 再推给主人,同会话再敲一句就撤。发到哪:与权限卡、A2A notify 同一个主人
     // chat;怎么发:boot.sendAssistantText(同一条外发,断线时它自己退避、这里不重试)。
@@ -593,6 +571,41 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     })
     internalApi.setCliPermissions(cliPermissions)
     lc.register({ name: 'cli-permissions', stop: async () => cliPermissions.dispose() })
+    // 「看 码」「@码 文本」:主人对某条终端会话说话。只认主人;那边的会话 v1 先说明。
+    const cliReplyHandler = makeCliReplyHandler({
+      hub: cliEvents,
+      isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
+      sendMessage: (c, t) => ilink.sendMessage(c, t),
+      sharePage: async (title, md, chatId) => (await ilink.sharePage(title, md, { chat_id: chatId })).url,
+      holdBusy: (l) => boot.holdBusy(l),
+      log: (t, l) => log(t, l),
+      dangerously,
+      localMachine: osHostname(),
+    })
+    const wired = wireMain({
+      cliReply: cliReplyHandler,
+      stickers: stickerLib,
+      requestRestart: (reason) => requestRestart(reason),
+      llmHealth,
+      stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,
+      outboundTaps, huntStore, petSignals,
+      // 随身 CC 首屏:聊天日摘要读 turn_records;presence 走 internal-api 的共用入口。
+      turns: turnRecordStore,
+      presence: () => internalApi.getPresence(),
+      // Task 11 — tick-bodies pass this to resolveTier() when computing
+      // the companion's tierProfile. Same singleton import the bootstrap
+      // coordinator uses; 5s TTL cache inside `loadAccess` keeps the
+      // per-tick lookup cheap.
+      loadAccess,
+      log: (t, l) => log(t, l),
+      schedulerIntervalMs: opts.schedulerIntervalMs,
+    })
+    // Wire companion-converse dep now that the coordinator (via boot) and
+    // the pipeline wiring are available. Routes access deps.companionConverse
+    // at request time, so this late assignment is safe (mirrors setConversation).
+    internalApi.setCompanionConverse(wired.companionConverse)
+    // 同上,桌宠的「在做什么」—— 组装闭包在 pipeline-deps(那里才有 boot)。
+    internalApi.setPetTurn(wired.petTurn)
     ticksRef = wired.ticks
     internalApi.setSettingsLink(wired.settingsPanelLink)
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
