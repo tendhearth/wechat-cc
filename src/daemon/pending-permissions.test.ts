@@ -72,65 +72,50 @@ describe('PendingPermissions', () => {
   })
 })
 
-describe('parsePermissionReply', () => {
-  it('parses strict form: "y abc12"', () => {
-    expect(parsePermissionReply('y abc12')).toEqual({ decision: 'allow', hash: 'abc12' })
-    expect(parsePermissionReply('n xyz99')).toEqual({ decision: 'deny', hash: 'xyz99' })
+describe('两位数码(主人在手机上回的那个)', () => {
+  it('register 按滚动顺序发 01、02…;consume 后不立刻复用,99 才回头', () => {
+    const p = new PendingPermissions()
+    void p.register('h1', 60_000); void p.register('h2', 60_000)
+    expect(p.codeOf('h1')).toBe('01'); expect(p.codeOf('h2')).toBe('02')
+    expect(p.hashOfCode('02')).toBe('h2'); expect(p.hashOfCode('03')).toBeNull()
+    p.consume('h1', 'allow')
+    void p.register('h3', 60_000)
+    expect(p.codeOf('h3')).toBe('03')       // 刚过期 / 刚批的 01 不马上给下一条
+    expect(p.hashOfCode('01')).toBeNull()
   })
-
-  it('is case-insensitive on the y/n letter', () => {
-    expect(parsePermissionReply('Y abc12')).toEqual({ decision: 'allow', hash: 'abc12' })
-    expect(parsePermissionReply('N xyz99')).toEqual({ decision: 'deny', hash: 'xyz99' })
-  })
-
-  it('tolerates leading/trailing whitespace', () => {
-    expect(parsePermissionReply('  y abc12  ')).toEqual({ decision: 'allow', hash: 'abc12' })
-  })
-
-  it('returns null for non-matching input', () => {
-    expect(parsePermissionReply('yes')).toBeNull()
-    expect(parsePermissionReply('y')).toBeNull()
-    expect(parsePermissionReply('allow abc12')).toBeNull()
-    expect(parsePermissionReply('y abc12 extra')).toBeNull()
-  })
-
-  it('expects a 5-char hash', () => {
-    expect(parsePermissionReply('y abcd')).toBeNull()   // 4 chars
-    expect(parsePermissionReply('y abcdef')).toBeNull() // 6 chars
-    expect(parsePermissionReply('y abc12')).not.toBeNull()
+  it('跳过仍在用的码', () => {
+    const p = new PendingPermissions()
+    for (let i = 1; i <= 99; i++) void p.register(`h${i}`, 60_000)
+    p.consume('h5', 'allow')
+    void p.register('again', 60_000)
+    expect(p.codeOf('again')).toBe('05')    // 转了一圈,只有 05 空着
   })
 })
 
-describe('PendingPermissions.list (CC 桌宠 Phase B)', () => {
-  it('register 带 meta → list 返回 hash / chatId / prompt / since / expires_at,按 since 升序;consume 后消失', () => {
-    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-05T10:00:00.000Z'))
-    try {
-      const p = new PendingPermissions()
-      void p.register('bbbbb', 60_000, { chatId: 'owner', prompt: 'Bash: rm -rf ./tmp' })
-      vi.setSystemTime(new Date('2026-09-05T10:00:01.000Z'))
-      void p.register('aaaaa', 30_000, { chatId: 'owner', prompt: 'Write: notes.md' })
-      expect(p.list()).toEqual([
-        { hash: 'bbbbb', chatId: 'owner', prompt: 'Bash: rm -rf ./tmp', since: '2026-09-05T10:00:00.000Z', expires_at: '2026-09-05T10:01:00.000Z' },
-        { hash: 'aaaaa', chatId: 'owner', prompt: 'Write: notes.md', since: '2026-09-05T10:00:01.000Z', expires_at: '2026-09-05T10:00:31.000Z' },
-      ])
-      expect(p.consume('bbbbb', 'allow')).toBe(true)
-      expect(p.list().map(x => x.hash)).toEqual(['aaaaa'])
-    } finally { vi.useRealTimers() }
+describe('parsePermissionReply', () => {
+  it('不带码:「y」「n」「同意」「拒绝」,ref 为 null,由调用方按待批条数决定', () => {
+    expect(parsePermissionReply('y')).toEqual({ decision: 'allow', ref: null })
+    expect(parsePermissionReply('N')).toEqual({ decision: 'deny', ref: null })
+    expect(parsePermissionReply('同意')).toEqual({ decision: 'allow', ref: null })
+    expect(parsePermissionReply('  放行 ')).toEqual({ decision: 'allow', ref: null })
+    expect(parsePermissionReply('拒绝')).toEqual({ decision: 'deny', ref: null })
+    expect(parsePermissionReply('不允许')).toEqual({ decision: 'deny', ref: null })
   })
-  it('没传 meta 的老调用方:list 仍有这一条,prompt 与 chatId 为空串', () => {
-    const p = new PendingPermissions()
-    void p.register('ccccc', 1000)
-    expect(p.list()).toMatchObject([{ hash: 'ccccc', chatId: '', prompt: '' }])
+  it('两位数码:「y 07」「y07」「Y 7」都是 07', () => {
+    expect(parsePermissionReply('y 07')).toEqual({ decision: 'allow', ref: { kind: 'code', value: '07' } })
+    expect(parsePermissionReply('y07')).toEqual({ decision: 'allow', ref: { kind: 'code', value: '07' } })
+    expect(parsePermissionReply('Y 7')).toEqual({ decision: 'allow', ref: { kind: 'code', value: '07' } })
+    expect(parsePermissionReply('n 12')).toEqual({ decision: 'deny', ref: { kind: 'code', value: '12' } })
   })
-
-  it('approverOf:带 meta 返回当初被问的那个 chat;没 meta 与不存在的 hash 都是 null', () => {
-    const p = new PendingPermissions()
-    void p.register('ddddd', 60_000, { chatId: 'owner', prompt: 'Bash: ls' })
-    void p.register('eeeee', 60_000)
-    expect(p.approverOf('ddddd')).toBe('owner')
-    expect(p.approverOf('eeeee')).toBeNull()   // 老条目 ⇒ 调用方走旧行为
-    expect(p.approverOf('nope1')).toBeNull()
-    p.consume('ddddd', 'allow')
-    expect(p.approverOf('ddddd')).toBeNull()
+  it('旧的 5 位 hash 仍认(桌面卡片、老截图)', () => {
+    expect(parsePermissionReply('y abc12')).toEqual({ decision: 'allow', ref: { kind: 'hash', value: 'abc12' } })
+    expect(parsePermissionReply('  N xyz99  ')).toEqual({ decision: 'deny', ref: { kind: 'hash', value: 'xyz99' } })
+  })
+  it('日常用语不算拍板:「好」「不」「yes please」「y abc」都不认', () => {
+    expect(parsePermissionReply('好')).toBeNull()
+    expect(parsePermissionReply('不')).toBeNull()
+    expect(parsePermissionReply('yes please')).toBeNull()
+    expect(parsePermissionReply('n abc')).toBeNull()
+    expect(parsePermissionReply('hello world')).toBeNull()
   })
 })

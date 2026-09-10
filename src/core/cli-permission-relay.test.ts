@@ -44,7 +44,9 @@ describe('CliPermissionRelay(spec 2026-09-09-cli-hook-push §6.3)', () => {
     expect(asked[0]!.timeoutMs).toBe(CLI_PERMISSION_WAIT_MS)
     expect(asked[0]!.prompt).toContain('claude 等你批准 · wechat-cc · 会话 abc123')
     expect(asked[0]!.prompt).toContain('Bash: rm -rf ./tmp')
-    expect(asked[0]!.prompt).toContain(`y ${hash}`)
+    // 「怎么回」那一行由 ilink-glue.askUser 统一加(两位数码在那里分配),relay 的文案只说过期后会怎样。
+    expect(asked[0]!.prompt).not.toContain(`y ${hash}`)
+    expect(asked[0]!.prompt).toContain('过期终端自己会问')
     expect(relay.status(hash)).toBe('pending')
     await vi.advanceTimersByTimeAsync(1000)
     expect(relay.status(hash)).toBe('allow')
@@ -93,7 +95,7 @@ describe('CliPermissionRelay(spec 2026-09-09-cli-hook-push §6.3)', () => {
 describe('formatCliPermissionPrompt', () => {
   it('四要素 + 怎么回;那边的会话写机器名', () => {
     expect(formatCliPermissionPrompt(req({ source: 'codex', session_id: '9f0e1d22' }), 'tendhearth', 'k3x9z', 120_000))
-      .toBe('✋ codex 等你批准 · tendhearth · 会话 9f0e1d\nBash: rm -rf ./tmp\n回「y k3x9z」放行、「n k3x9z」拒绝;120 秒内有效,过期终端自己会问。')
+      .toBe('✋ codex 等你批准 · tendhearth · 会话 9f0e1d\nBash: rm -rf ./tmp\n过期终端自己会问。')
     expect(formatCliPermissionPrompt(req({ machine: 'win-test' }), 'p', 'k3x9z', 1000, 'mac-here')).toContain('等你批准 · 那边(win-test) · p')
     expect(formatCliPermissionPrompt(req({ machine: 'mac-here' }), 'p', 'k3x9z', 1000, 'mac-here')).not.toContain('那边')
   })

@@ -67,7 +67,9 @@ export function formatCliPermissionPrompt(req: CliPermissionRequest, projectName
   const remote = req.machine && localMachine && req.machine !== localMachine ? ` · 那边(${req.machine})` : ''
   const head = `✋ ${req.source} 等你批准${remote} · ${projectName} · 会话 ${req.session_id.slice(0, 6)}`
   const what = req.summary ? `${req.tool_name}: ${req.summary}` : req.tool_name
-  return `${head}\n${what}\n回「y ${hash}」放行、「n ${hash}」拒绝;${Math.round(waitMs / 1000)} 秒内有效,过期终端自己会问。`
+  // 「怎么回」那一行由 ilink-glue.askUser 统一加(两位数码在那里分配);这里只说过期后会怎样。
+  void hash; void waitMs
+  return `${head}\n${what}\n过期终端自己会问。`
 }
 
 export function makeCliPermissionRelay(deps: CliPermissionRelayDeps): CliPermissionRelay {

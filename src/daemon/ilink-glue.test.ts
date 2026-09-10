@@ -396,3 +396,54 @@ describe('makeIlinkAdapter (composed)', () => {
     })
   })
 })
+
+describe('微信拍板的省事路径(2026-09-10:手机上「y og0ez」太难打)', () => {
+  function newStateDir(): string { return mkdtempSync(join(tmpdir(), 'wcc-state-')) }
+  const acct: Account = { id: 'A1', botId: 'b', userId: 'ubot', baseUrl: 'https://x', token: 'T', syncBuf: '' }
+  it('卡片统一带「怎么回」一行,码是两位数', async () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    const sent: string[] = []
+    const spy = vi.spyOn(a, 'sendMessage').mockImplementation(async (_c, text) => { sent.push(text); return { msgId: 'm' } })
+    void a.askUser('chat-1', '✋ 要批这个', 'k3x9z', 120_000)
+    expect(sent[0]).toContain('✋ 要批这个')
+    expect(sent[0]).toContain('回「y」放行、「n」拒绝')
+    expect(sent[0]).toMatch(/「y 0[1-9]」/)
+    expect(sent[0]).toContain('120 秒内有效')
+    spy.mockRestore(); await a.flush()
+  })
+  it('只有一条待批:回「y」不带码就放行;别的 chat 回「y」不算', async () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    vi.spyOn(a, 'sendMessage').mockResolvedValue({ msgId: 'm' })
+    const p = a.askUser('chat-1', 'p', 'aaaaa', 60_000)
+    expect(a.handlePermissionReply('y', 'chat-2')).toBe(false)   // chat-2 名下没有待批 → 当普通消息
+    expect(a.handlePermissionReply('同意', 'chat-1')).toBe(true)
+    expect(await p).toBe('allow')
+    await a.flush()
+  })
+  it('没有待批时「y」不是拍板,交给后面的中间件', () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    expect(a.handlePermissionReply('y', 'chat-1')).toBe(false)
+  })
+  it('多条待批:不带码 → 回一条清单让主人带码,两条都还挂着;「n 02」按码拒绝第二条', async () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    const sent: string[] = []
+    vi.spyOn(a, 'sendMessage').mockImplementation(async (_c, text) => { sent.push(text); return { msgId: 'm' } })
+    const p1 = a.askUser('chat-1', 'Bash: rm -rf ./tmp', 'h0001', 60_000)
+    const p2 = a.askUser('chat-1', 'Write: notes.md', 'h0002', 60_000)
+    expect(a.handlePermissionReply('y', 'chat-1')).toBe(true)      // 吃掉了,但没批
+    expect(sent[sent.length - 1]).toContain('有 2 条在等你')
+    expect(sent[sent.length - 1]).toContain('01:Bash: rm -rf ./tmp')
+    expect(sent[sent.length - 1]).toContain('02:Write: notes.md')
+    expect(a.listPendingPermissions()).toHaveLength(2)
+    expect(a.handlePermissionReply('n 02', 'chat-1')).toBe(true)
+    expect(await p2).toBe('deny')
+    expect(a.handlePermissionReply('y01', 'chat-1')).toBe(true)
+    expect(await p1).toBe('allow')
+    await a.flush()
+  })
+  it('未知的码不认', () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    expect(a.handlePermissionReply('y 42', 'chat-1')).toBe(false)
+  })
+})
+

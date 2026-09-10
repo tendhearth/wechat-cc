@@ -29,7 +29,7 @@ const fakeHealth = {
 } as unknown as Bootstrap['health']
 
 const perm = (hash: string, chatId: string): PendingPermissionView =>
-  ({ hash, chatId, prompt: 'Bash: ls', since: '2026-09-05T10:00:00.000Z', expires_at: '2026-09-05T10:01:00.000Z' })
+  ({ hash, code: '01', chatId, prompt: 'Bash: ls', since: '2026-09-05T10:00:00.000Z', expires_at: '2026-09-05T10:01:00.000Z' })
 
 describe('petTurn / 回合起止配对 (CC 桌宠 Phase B, fix round 1)', () => {
   let stateDir: string
