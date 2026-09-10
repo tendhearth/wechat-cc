@@ -3994,17 +3994,6 @@ input { font: inherit; color: inherit; }
   display: block;
   border-radius: 0;
 }
-.memory-embryo-illustration img {
-  width: 100%;
-  display: block;
-  pointer-events: none;
-  transition: transform 180ms ease-out, filter 180ms ease-out;
-}
-.memory-embryo-illustration:hover img,
-.memory-embryo-illustration:focus-visible img {
-  transform: translateY(-3px);
-  filter: drop-shadow(0 10px 14px rgba(150, 125, 85, .14));
-}
 .memory-embryo:hover .embryo-core {
   transform: scale(1.06);
 }
