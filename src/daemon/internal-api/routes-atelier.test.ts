@@ -44,7 +44,14 @@ describe('GET /v1/atelier/model-status', () => {
   it('reports null before the atelier has ever been enabled', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'wcc-atelier-status-'))
     const res = await routesWithState(stateDir)['GET /v1/atelier/model-status']!(new URLSearchParams(), undefined)
-    expect(res).toEqual({ status: 200, body: { status: null } })
+    expect(res).toEqual({ status: 200, body: { status: null, mode: 'off' } })
+  })
+
+  it('reports the persisted atelier switch independently of download history', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'wcc-atelier-mode-'))
+    await saveCompanionConfig(stateDir, { ...defaultCompanionConfig(), atelier_mode: 'private' })
+    const res = await routesWithState(stateDir)['GET /v1/atelier/model-status']!(new URLSearchParams(), undefined)
+    expect(res.body).toEqual({ status: null, mode: 'private' })
   })
 
   it('surfaces the recorded paint-set download progress', async () => {
@@ -53,7 +60,7 @@ describe('GET /v1/atelier/model-status', () => {
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, JSON.stringify({ state: 'downloading', attempt: 1, received: 10, total: 100 }))
     const res = await routesWithState(stateDir)['GET /v1/atelier/model-status']!(new URLSearchParams(), undefined)
-    expect(res.body).toEqual({ status: { state: 'downloading', attempt: 1, received: 10, total: 100 } })
+    expect(res.body).toEqual({ status: { state: 'downloading', attempt: 1, received: 10, total: 100 }, mode: 'off' })
   })
 })
 
