@@ -18,9 +18,9 @@ function makeEl(tag: string) {
 const manifest = { canvas: { width: 512, height: 512, anchor: [0.5, 0.9] }, forms: {} as any, transitions: {}, props: { envelope: 'p/envelope.png', mug: 'p/mug.png' }, warnings: [] } as PetManifest
 
 describe('prop-layer', () => {
-  it('8 个道具都有槽位;3 个槽位都有偏移与缩放', () => {
+  it('8 个道具都有槽位;4 个槽位都有偏移与缩放', () => {
     for (const p of PROPS) expect(SLOTS[PROP_SLOTS[p]]).toBeDefined()
-    expect(Object.keys(SLOTS).sort()).toEqual(['above-head', 'beside-right', 'in-front'])
+    expect(Object.keys(SLOTS).sort()).toEqual(['above-head', 'above-left', 'beside-right', 'in-front'])
   })
   it('renderProps:每个道具一个 img(src 来自 manifest)+ 槽位 CSS 变量;envelope 带 badge;manifest 没有的道具跳过', () => {
     const c = makeEl('div')
@@ -40,4 +40,14 @@ describe('prop-layer', () => {
     renderProps(c, [], 0, manifest, makeEl)
     expect(c.children).toHaveLength(0)
   })
+})
+
+it.each([96,256])('keeps simultaneous stars and permission signal apart at %ipx', side => {
+  const star=SLOTS[PROP_SLOTS['micro-light']], signal=SLOTS[PROP_SLOTS.exclamation]
+  expect((signal.dx-star.dx)*side).toBeGreaterThan((star.scale+signal.scale)*side/2)
+  for (const slot of Object.values(SLOTS)) {
+    expect(.5+slot.dx-slot.scale/2).toBeGreaterThanOrEqual(0)
+    expect(.5+slot.dx+slot.scale/2).toBeLessThanOrEqual(1)
+    expect(470/512+slot.dy-slot.scale/2).toBeGreaterThanOrEqual(0)
+  }
 })

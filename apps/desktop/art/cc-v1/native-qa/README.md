@@ -10,6 +10,14 @@ windows load the real `createPet` runtime and the committed manifest through
 `tauri://localhost`. Each has two 48 / 96 / 128 / 256 CSS-pixel sprites. A fifth
 window controls the test and receives real image-load and state reports.
 
+## Packaging isolation
+
+The three `cc-native-qa.*` source files live here, outside production `src/`.
+`tauri.qa.json` runs `scripts/prepare-cc-native-qa.mjs`, which stages this page,
+the real pet runtime, assets and font into the ignored `native-qa/dist/` folder.
+Only the QA build uses that frontend. Production still uses `src/`; pet-lab is unchanged.
+Private design boards are explicitly excluded even if locally restored.
+
 ## Reproduce
 
 From `apps/desktop`:
