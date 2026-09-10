@@ -100,7 +100,7 @@ export interface IlinkAdapter {
    * trusted 调用方可见,不校验来源等于谁看到 hash 谁就能替主人批准)。
    * 老条目(无 meta)保持原行为。
    */
-  handlePermissionReply(text: string, fromChatId?: string): boolean
+  handlePermissionReply(text: string, fromChatId?: string, quoted?: string): boolean
   /** Desktop pet permission queue (CC 桌宠 Phase B) — same registry as WeChat. */
   listPendingPermissions(): PendingPermissionView[]
   /** Resolve a pending permission from the desktop. = pending.consume(hash, decision). */
@@ -395,9 +395,19 @@ export function makeIlinkAdapter(opts: {
 
     sessionState,
 
-    handlePermissionReply(text, fromChatId) {
+    handlePermissionReply(text, fromChatId, quoted) {
       const parsed = parsePermissionReply(text)
       if (!parsed) return false
+      // 引用了卡片回「y」:最顺手的手机操作。引用的原文里有码就按码,截断了就按卡片正文认。
+      if (!parsed.ref && quoted) {
+        const hash = pending.hashOfQuote(quoted)
+        if (hash) {
+          const approver = pending.approverOf(hash)
+          if (approver !== null && approver !== fromChatId) return false
+          return pending.consume(hash, parsed.decision)
+        }
+        // 引用的不是待批卡片(或已经过期):按没引用处理,下面看待批条数。
+      }
       // 没带码:看这个 chat 名下现在有几条待批。一条 → 就是它;零条 → 这不是拍板,
       // 是普通聊天(比如「y」是在回别的事),放行给后面的中间件;多条 → 列出来让主人带码。
       if (!parsed.ref) {

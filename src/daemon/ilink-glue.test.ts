@@ -447,3 +447,32 @@ describe('微信拍板的省事路径(2026-09-10:手机上「y og0ez」太难打
   })
 })
 
+describe('引用卡片回「y」', () => {
+  function newStateDir(): string { return mkdtempSync(join(tmpdir(), 'wcc-state-')) }
+  const acct: Account = { id: 'A1', botId: 'b', userId: 'ubot', baseUrl: 'https://x', token: 'T', syncBuf: '' }
+  it('多条待批时引用其中一张回「y」,批的就是那张;引用的不是卡片则退回按条数处理', async () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    const sent: string[] = []
+    vi.spyOn(a, 'sendMessage').mockImplementation(async (_c, text) => { sent.push(text); return { msgId: 'm' } })
+    const p1 = a.askUser('chat-1', 'Bash: rm -rf ./tmp', 'h0001', 60_000)
+    const p2 = a.askUser('chat-1', 'Write: notes.md', 'h0002', 60_000)
+    const card2 = sent[1]!
+    expect(a.handlePermissionReply('y', 'chat-1', card2)).toBe(true)
+    expect(await p2).toBe('allow')
+    expect(a.listPendingPermissions().map(x => x.hash)).toEqual(['h0001'])
+    // 引用的是无关消息:名下只剩一条,照「一条就是它」
+    expect(a.handlePermissionReply('n', 'chat-1', '昨天的天气真好')).toBe(true)
+    expect(await p1).toBe('deny')
+    await a.flush()
+  })
+  it('引用卡片但从别的 chat 回,不算', async () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    const sent: string[] = []
+    vi.spyOn(a, 'sendMessage').mockImplementation(async (_c, text) => { sent.push(text); return { msgId: 'm' } })
+    void a.askUser('chat-1', 'Bash: ls', 'h0009', 60_000)
+    expect(a.handlePermissionReply('y', 'chat-2', sent[0])).toBe(false)
+    expect(a.listPendingPermissions()).toHaveLength(1)
+    await a.flush()
+  })
+})
+
