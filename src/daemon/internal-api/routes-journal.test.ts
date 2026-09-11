@@ -118,3 +118,22 @@ describe('POST /v1/journal/seen —— 主人打开觅食台,水位推到现在'
     expect(minTierFor('POST /v1/journal/seen')).toBe('trusted')
   })
 })
+
+describe('postcard album API', () => {
+  it('lists image and narration together; favorites persist and are filterable', async () => {
+    const svg='<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>'
+    const id=deps.hunt!.recordVisit({chatId:'owner',text:'猫睡得很香',peerLabel:'去朋友家',imageSvg:svg})!
+    expect((await routes['POST /v1/journal/favorite']!(qs(),{id,favorite:true})).body).toEqual({ok:true})
+    const r=await routes['GET /v1/journal/postcards']!(qs('favorites=true&limit=1'),undefined)
+    expect(r.body).toMatchObject({total:1,items:[{id,note:'猫睡得很香',image_svg:svg,favorite:1}]})
+    expect(minTierFor('GET /v1/journal/postcards')).toBe('trusted')
+    expect(minTierFor('POST /v1/journal/favorite')).toBe('trusted')
+  })
+  it('rejects invalid favorite values, missing rows and sanitizes stored markup', async () => {
+    expect((await routes['POST /v1/journal/favorite']!(qs(),{id:'x',favorite:'true'})).status).toBe(400)
+    expect((await routes['POST /v1/journal/favorite']!(qs(),{id:'x',favorite:true})).body).toEqual({ok:false})
+    deps.hunt!.recordVisit({chatId:'owner',text:'retained',peerLabel:'friend',imageSvg:'<svg onload="alert(1)"></svg>'})
+    const r=await routes['GET /v1/journal/postcards']!(qs('offset=-1&limit=bad'),undefined)
+    expect(r.body).toMatchObject({items:[{note:'retained',image_svg:null}]})
+  })
+})

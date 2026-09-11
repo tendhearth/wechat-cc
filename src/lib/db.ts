@@ -1094,6 +1094,14 @@ export const migrations: Migration[] = [
     if (cols.some(c => c.name === 'mode_model')) return
     db.exec('ALTER TABLE conversations ADD COLUMN mode_model TEXT;')
   },
+  // v45 — explicit postcard favorites survive journal retention.
+  (db) => {
+    const cols = db.query<{ name: string }, []>('PRAGMA table_info(journal)').all()
+    if (cols.length && !cols.some(c => c.name === 'favorite')) {
+      db.exec('ALTER TABLE journal ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1))')
+    }
+  },
+
 ]
 
 export interface OpenDbOpts {

@@ -130,3 +130,42 @@ describe('recordPostcard —— 别人回心愿的明信片', () => {
     expect(j.summary(null).latest?.kind).toBe('postcard')
   })
 })
+
+describe('postcard album', () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>'
+  it('finds old illustrated visits independently of recent hunt entries and paginates', () => {
+    const a = store.recordVisit({ chatId: 'c', text: 'first', peerLabel: '去朋友家', nowIso: '2020-01-01', imageSvg: svg })!
+    store.recordVisit({ chatId: 'c', text: 'second', peerLabel: '另一家', nowIso: '2020-01-02', imageSvg: svg })
+    store.recordVisit({ chatId: 'c', text: 'text only', peerLabel: '来客' })
+    for (let i=0;i<205;i++) store.recordHunt({ chatId:'c', text:`link https://example.com/${i}` })
+    expect(store.list().some(x=>x.id===a)).toBe(false)
+    expect(store.listPostcards({ limit:1, offset:0 }).items[0]?.note).toBe('second')
+    expect(store.listPostcards({ limit:1, offset:1 }).items[0]?.id).toBe(a)
+    expect(store.listPostcards({}).total).toBe(2)
+  })
+  it('favorites survive pruning and reopening the store; uncollected entries still expire', () => {
+    const id=store.recordVisit({chatId:'c',text:'keep me',peerLabel:'friend',nowIso:'2020-01-01',imageSvg:svg})!
+    const dropped=store.recordVisit({chatId:'c',text:'old',peerLabel:'friend',nowIso:'2020-01-02',imageSvg:svg})!
+    expect(store.setFavorite(id,true)).toBe(true)
+    for(let i=0;i<501;i++)store.recordHunt({chatId:'c',text:`link https://example.com/${i}`})
+    const reopened=makeJournal(db)
+    expect(reopened.listPostcards({favoritesOnly:true}).items.map(x=>x.id)).toEqual([id])
+    expect(reopened.list(1000).some(x=>x.id===dropped)).toBe(false)
+    expect(reopened.setFavorite(id,false)).toBe(true)
+    expect(reopened.listPostcards({favoritesOnly:true}).total).toBe(0)
+    expect(reopened.setFavorite('missing',true)).toBe(false)
+    expect(reopened.setFavorite(reopened.list()[0]!.id,true)).toBe(false)
+  })
+})
+
+it('upgrades an existing v44 journal without losing its picture and narration', async () => {
+  const { Database } = await import('bun:sqlite')
+  const { runMigrations } = await import('../lib/db')
+  const old = new Database(':memory:')
+  old.exec("CREATE TABLE journal(id TEXT PRIMARY KEY, image_svg TEXT, note TEXT); INSERT INTO journal VALUES ('old','<svg></svg>','the story'); PRAGMA user_version=44;")
+  runMigrations(old)
+  expect(old.query('SELECT * FROM journal').get()).toEqual({id:'old',image_svg:'<svg></svg>',note:'the story',favorite:0})
+  runMigrations(old)
+  expect(old.query('SELECT COUNT(*) AS n FROM journal').get()).toEqual({n:1})
+  old.close()
+})

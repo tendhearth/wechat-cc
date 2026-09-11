@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 768 512">
+<title>烘豆机旁，睡着的橘猫</title>
+<rect width="768" height="512" fill="#fafbf8"/>
+<path d="M0 350H768V512H0Z" fill="#edf2ed"/>
+<path d="M52 44H272V296H52Z" fill="#e0f0ed"/>
+<path d="M62 54H158V286H62ZM168 54H262V286H168Z" fill="#f5fcfa"/>
+<path d="M62 224L154 132V286H62ZM168 119L262 54V211L187 286H168Z" fill="#e5f3f0"/>
+<path d="M46 295H282" stroke="#b4cbc6" stroke-width="8" stroke-linecap="round"/>
+<path d="M53 354L276 302L491 450H239Z" fill="#f8faf1"/>
+<ellipse cx="570" cy="394" rx="150" ry="17" fill="#d7e0da"/>
+<rect x="472" y="206" width="174" height="167" rx="33" fill="#344e59"/>
+<path d="M496 207V159H624V207" fill="#496670"/>
+<path d="M484 129H636L617 169H504Z" fill="#daa562"/>
+<ellipse cx="560" cy="130" rx="76" ry="12" fill="#af7e43"/>
+<ellipse cx="560" cy="128" rx="64" ry="7" fill="#75583c"/>
+<circle cx="559" cy="265" r="41" fill="#dfb578"/>
+<circle cx="559" cy="265" r="29" fill="#233f49"/>
+<circle cx="559" cy="265" r="19" fill="#bc8450"/>
+<path d="M549 258Q560 248 571 258" stroke="#efc58e" stroke-width="4" fill="none" stroke-linecap="round"/>
+<path d="M645 253H680V88H659" stroke="#536d75" stroke-width="17" fill="none" stroke-linejoin="round"/>
+<path d="M496 370V395M621 370V395" stroke="#344e59" stroke-width="12" stroke-linecap="round"/>
+<path d="M516 323H612L632 362H496Z" fill="#b6c6c7"/>
+<ellipse cx="564" cy="360" rx="70" ry="14" fill="#8dabae"/>
+<ellipse cx="564" cy="356" rx="62" ry="10" fill="#c2a17e"/>
+<g fill="#876147"><ellipse cx="543" cy="354" rx="6" ry="3"/><ellipse cx="564" cy="359" rx="6" ry="3"/><ellipse cx="584" cy="351" rx="5" ry="3"/><ellipse cx="595" cy="358" rx="5" ry="3"/><ellipse cx="525" cy="358" rx="5" ry="3"/></g>
+<ellipse cx="273" cy="437" rx="161" ry="15" fill="#d5dfd7"/>
+<path d="M118 406Q118 378 164 377H379Q426 379 426 409Q426 435 377 438H161Q118 435 118 406Z" fill="#8dbab0"/>
+<path d="M125 407Q213 428 418 407" stroke="#6a9c91" stroke-width="3" fill="none"/>
+<path d="M173 383C155 333 193 281 266 281C340 281 383 324 374 369C369 397 317 410 261 406Z" fill="#edaa61"/>
+<path d="M232 286Q214 306 221 326M260 283Q246 302 250 319M289 287Q278 302 281 315" stroke="#cf7c3e" stroke-width="11" fill="none" stroke-linecap="round"/>
+<path d="M210 328L178 307L172 345Q152 358 162 384Q174 411 220 404Q259 399 259 370Q256 346 235 340L234 313Z" fill="#f2b574"/>
+<path d="M179 319L195 335L178 339ZM227 326L216 342L231 341Z" fill="#d98c62"/>
+<path d="M195 351L199 358M212 350L213 357" stroke="#cb783d" stroke-width="5" stroke-linecap="round"/>
+<path d="M176 372Q184 381 192 373M217 374Q225 381 233 373" stroke="#604d40" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+<path d="M199 380L206 380L203 385Z" fill="#9b6956"/>
+<path d="M203 385Q201 391 195 388M203 385Q205 391 211 388" stroke="#9b6956" stroke-width="2" fill="none"/>
+<path d="M343 338C396 390 336 407 276 395" stroke="#d78643" stroke-width="28" fill="none" stroke-linecap="round"/>
+<path d="M276 395L261 392" stroke="#f7cf9b" stroke-width="28" stroke-linecap="round"/>
+<path d="M145 376L164 379M146 390L164 385M239 382L257 379" stroke="#ad794f" stroke-width="2" stroke-linecap="round"/>
+</svg>

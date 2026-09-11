@@ -27,6 +27,7 @@ export interface CatchRow {
   kind: CatchKind
   /** 明信片(v38):已 safeSvg 的 SVG 文本;没有就 null。 */
   image_svg: string | null
+  favorite?: number
 }
 
 export interface Journal {
@@ -51,6 +52,8 @@ export interface Journal {
   /** 明信片画得慢(又一次模型调用 + 栅格化),先记见闻再补图。 */
   attachImage(id: string, svg: string): void
   list(limit?: number): CatchRow[]
+  listPostcards(options: { limit?: number; offset?: number; favoritesOnly?: boolean }): { items: CatchRow[]; total: number }
+  setFavorite(id: string, favorite: boolean): boolean
   setStatus(id: string, status: CatchStatus): boolean
   remove(id: string): boolean
   /**
@@ -84,7 +87,7 @@ export function makeJournal(db: Db): Journal {
   const del = db.query<unknown, [string]>('DELETE FROM journal WHERE id = ?')
   const exists = db.query<{ cnt: number }, [string]>('SELECT COUNT(*) AS cnt FROM journal WHERE id = ?')
   const prune = db.query<unknown, [number]>(
-    'DELETE FROM journal WHERE id NOT IN (SELECT id FROM journal ORDER BY ts DESC, rowid DESC LIMIT ?)',
+    'DELETE FROM journal WHERE favorite = 0 AND id NOT IN (SELECT id FROM journal WHERE favorite = 0 ORDER BY ts DESC, rowid DESC LIMIT ?)',
   )
   const cntAll = db.query<{ cnt: number }, []>('SELECT COUNT(*) AS cnt FROM journal')
   const cntAfter = db.query<{ cnt: number }, [string]>('SELECT COUNT(*) AS cnt FROM journal WHERE ts > ?')
@@ -125,6 +128,16 @@ export function makeJournal(db: Db): Journal {
     },
     attachImage(id, svg) { setImage.run(svg, id) },
     list(limit = 200) { return selAll.all(limit) },
+    listPostcards({ limit = 24, offset = 0, favoritesOnly = false }) {
+      const where = "kind = 'visit' AND image_svg IS NOT NULL AND trim(image_svg) != ''" + (favoritesOnly ? ' AND favorite = 1' : '')
+      const items = db.query<CatchRow, [number, number]>(`SELECT * FROM journal WHERE ${where} ORDER BY ts DESC, rowid DESC LIMIT ? OFFSET ?`).all(limit, offset)
+      const total = db.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM journal WHERE ${where}`).get()?.n ?? 0
+      return { items, total }
+    },
+    setFavorite(id, favorite) {
+      const result = db.query("UPDATE journal SET favorite = ? WHERE id = ? AND kind = 'visit' AND image_svg IS NOT NULL AND trim(image_svg) != ''").run(favorite ? 1 : 0, id)
+      return result.changes > 0
+    },
     setStatus(id, status) {
       if ((exists.get(id)?.cnt ?? 0) === 0) return false
       upd.run(status, id)

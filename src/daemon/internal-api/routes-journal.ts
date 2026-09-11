@@ -9,6 +9,7 @@
  * api-info`),admin 会让每一次真实的桌面读 403 —— 觅食台的读路由 2026-07-22
  * 正是这么静默坏了一个多月。
  */
+import { safeSvg } from '../../lib/svg-sanitize'
 import { CATCH_STATUSES, type CatchStatus } from '../../core/journal-store'
 import { writeJournalSeen } from '../../core/journal-seen'
 import type { InternalApiDeps, RouteTable } from './types'
@@ -20,6 +21,24 @@ export function journalRoutes(deps: InternalApiDeps): RouteTable {
       const raw = Number(q.get('limit'))
       const limit = Number.isFinite(raw) && raw > 0 ? Math.min(Math.trunc(raw), 500) : 200
       return { status: 200, body: { items: deps.hunt.list(limit) } }
+    },
+
+    'GET /v1/journal/postcards': async (q) => {
+      if (!deps.hunt) return { status: 503, body: { error: 'journal_not_wired' } }
+      const rawLimit = Number(q.get('limit'))
+      const rawOffset = Number(q.get('offset'))
+      const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.trunc(rawLimit), 100) : 24
+      const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0
+      const result = deps.hunt.listPostcards({ limit, offset, favoritesOnly: q.get('favorites') === 'true' })
+      return { status: 200, body: { ...result, items: result.items.map(row => ({ ...row, image_svg: row.image_svg ? safeSvg(row.image_svg) : null })) } }
+    },
+
+    'POST /v1/journal/favorite': async (_q, body) => {
+      if (!deps.hunt) return { status: 503, body: { error: 'journal_not_wired' } }
+      const { id, favorite } = (body ?? {}) as { id?: unknown; favorite?: unknown }
+      if (typeof id !== 'string' || !id.trim()) return { status: 400, body: { error: 'missing_id' } }
+      if (typeof favorite !== 'boolean') return { status: 400, body: { error: 'bad_favorite' } }
+      return { status: 200, body: { ok: deps.hunt.setFavorite(id, favorite) } }
     },
 
     'POST /v1/journal/status': async (_q, body) => {

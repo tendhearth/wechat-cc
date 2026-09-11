@@ -153,6 +153,8 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // 路由 2026-07-22 正是这么静默坏了一个多月。写的两个也是 trusted:它们
   // 只改主人自己那份清单的状态,不外发、不触网。
   'GET /v1/journal': 'trusted',
+  'GET /v1/journal/postcards': 'trusted',
+  'POST /v1/journal/favorite': 'trusted',
   'POST /v1/journal/status': 'trusted',
   'POST /v1/journal/seen': 'trusted',
   'POST /v1/journal/remove': 'trusted',
