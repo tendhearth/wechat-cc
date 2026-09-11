@@ -356,7 +356,7 @@ const onlineStickerCursor = new Map<string, number>()
       if (!deps.llmHealth) return { status: 503, body: { error: 'llm_health_not_wired' } }
       const { unconfiguredHints } = await import('../llm-health')
       const fresh = q.get('fresh') === '1'
-      const report = fresh ? await deps.llmHealth.dial() : deps.llmHealth.cached()
+      const report = fresh ? await deps.llmHealth.dial(q.get('scope') === 'current' ? 'current' : undefined) : deps.llmHealth.cached()
       const registered = deps.llmRegistered?.() ?? []
       return { status: 200, body: {
         ok: true,

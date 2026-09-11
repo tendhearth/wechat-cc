@@ -56,7 +56,7 @@ export interface LlmHealth {
   /** Last user-initiated report, or null. NEVER dials. */
   cached(): LlmHealthReport | null
   /** One user-initiated dial round (concurrent callers coalesce). */
-  dial(): Promise<LlmHealthReport>
+  dial(scope?: 'current'): Promise<LlmHealthReport>
 }
 
 /** 人话 setup hints for providers that are NOT registered — surfaces in the
@@ -91,7 +91,7 @@ export function makeLlmHealth(deps: LlmHealthDeps): LlmHealth {
   const timeoutMs = deps.timeoutMs ?? 45_000
   const now = deps.now ?? (() => Date.now())
   let cached: LlmHealthReport | null = null
-  let inFlight: Promise<LlmHealthReport> | null = null
+  const inFlight = new Map<string, Promise<LlmHealthReport>>()
 
   async function probeOne(id: ProviderId): Promise<LlmProbeResult> {
     const entry = deps.registry.get(id)
@@ -122,8 +122,8 @@ export function makeLlmHealth(deps: LlmHealthDeps): LlmHealth {
     }
   }
 
-  async function runProbe(): Promise<LlmHealthReport> {
-    const results = await Promise.all(deps.registry.list().map(probeOne))
+  async function runProbe(scope?: 'current'): Promise<LlmHealthReport> {
+    const results = await Promise.all((scope === 'current' ? [deps.defaultProviderId] : deps.registry.list()).map(probeOne))
     const report: LlmHealthReport = {
       checked_at: new Date().toISOString(),
       default_provider: deps.defaultProviderId,
@@ -140,12 +140,13 @@ export function makeLlmHealth(deps: LlmHealthDeps): LlmHealth {
     cached() {
       return cached
     },
-    async dial() {
-      // Coalesce concurrent callers onto one dial round.
-      if (!inFlight) {
-        inFlight = runProbe().finally(() => { inFlight = null })
+    async dial(scope) {
+      const key = scope ?? 'all'
+      if (!inFlight.has(key)) {
+        inFlight.set(key, runProbe(scope).finally(() => { inFlight.delete(key) }))
       }
-      return inFlight
+      return inFlight.get(key)!
+
     },
   }
 }

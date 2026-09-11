@@ -15,8 +15,16 @@ import { icon } from "./icons.js"
 // 由 renderBrainHealth 更新;拿到前用保守兜底。owner 2026-08-26:「切换
 // 只有三个,底下大脑有这么多,很怪」—— 两处必须同源。
 let _registeredProviders = null
-const FALLBACK_PROVIDERS = ["claude", "codex", "cursor"]
-const menuProviders = () => (_registeredProviders && _registeredProviders.length ? _registeredProviders : FALLBACK_PROVIDERS)
+const menuProviders = () => _registeredProviders || []
+async function refreshServiceChoices(deps) {
+  const r = await deps.invokeApi?.("GET", "/v1/llm/health").catch(() => null)
+  _registeredProviders = r?.ok && Array.isArray(r.registered) ? r.registered : []
+}
+function serviceChoicesMarkup(current) {
+  return `<div class="service-menu-heading">已配置的 AI 服务</div>` + menuProviders().map(p =>
+    `<button class="${p === current ? "provider-menu-active" : ""}" data-provider="${escapeHtml(p)}">${escapeHtml(PROVIDER_LABELS[p] || p)}<small>${p === current ? "当前使用" : "切换使用"}</small></button>`
+  ).join("") + `<p class="service-menu-note">已配置不代表已验证回复。</p><button type="button" data-action="connect-ai">＋ 连接其他 AI 服务</button>`
+}
 const COMPANION_HERO_COPIES = [
   { headline: "此刻，陪你一起看鱼", meta: "把鼠标轻轻移进鱼缸，看看谁会先回应你" },
   { headline: "给忙碌留一小片水光", meta: "在这里慢慢游一会儿，也没关系" },
@@ -138,7 +146,7 @@ export function renderDashboard(report) {
           <div class="user-name">还没有连接用户</div>
           <div class="user-sub">打开设置添加微信账号</div>
         </div>
-        <span class="provider-chip">${escapeHtml(report.checks.provider.provider || "codex")}</span>
+        <span class="provider-chip">${escapeHtml(PROVIDER_LABELS[report.checks.provider.provider] || "未连接")}</span>
       `
       tbody.innerHTML = ""
     } else {
@@ -159,8 +167,8 @@ export function renderDashboard(report) {
           <div class="user-name">${escapeHtml(currentRow.name)} <span class="role-pill">管理员</span></div>
           <div class="user-sub">微信私聊，${currentSub}</div>
         </div>
-        <button class="provider-switch" aria-haspopup="true" aria-label="切换 provider">
-          <span class="provider-chip">${escapeHtml(report.checks.provider.provider || "codex")}</span>
+        <button class="provider-switch" aria-haspopup="true" aria-label="更换 AI 服务">
+          <span class="provider-chip">${escapeHtml(PROVIDER_LABELS[report.checks.provider.provider] || "未连接")}</span>
           <span class="provider-chevron">⌄</span>
         </button>
       `
@@ -529,6 +537,8 @@ export function __resetDashboardState() {
   _providerMenuOutsideHandler = null
   _providerMenuKeyHandler = null
   _lastIncidentsCheckAt = 0
+  _registeredProviders = null
+  _troubleshootOpen = false
 }
 
 // Smart reconnect: diagnose internally, then execute the matching recovery
@@ -661,10 +671,13 @@ export async function toggleProviderMenu(deps, report) {
 
   const currentProvider = report?.checks?.provider?.provider || "codex"
 
-  menu.innerHTML = menuProviders().map(p => {
-    const active = p === currentProvider
-    return `<button class="${active ? "provider-menu-active" : ""}" data-provider="${escapeHtml(p)}">${escapeHtml(PROVIDER_LABELS[p] || p)}</button>`
-  }).join("")
+  await refreshServiceChoices(deps)
+  menu.innerHTML = serviceChoicesMarkup(currentProvider)
+  menu.querySelector?.('[data-action="connect-ai"]')?.addEventListener('click', () => {
+    closeProviderMenu()
+    renderNoBrain(deps, true)
+    document.getElementById("brain-health")?.scrollIntoView?.({ block: "nearest" })
+  })
 
   // Position: fixed, anchored below the .provider-switch button.
   // Using getBoundingClientRect so it works regardless of scroll position.
@@ -693,7 +706,7 @@ export async function toggleProviderMenu(deps, report) {
         // the wizard's commitProvider path in main.js).
         await deps.invoke("wechat_cli_text", { args: ["provider", "set", name] })
       } catch {
-        setPending(`切换 provider 失败`)
+        setPending(`切换 AI 服务失败`)
         setTimeout(() => setPending(""), 3000)
         _providerSwitchInflight = false
         closeProviderMenu()
@@ -701,7 +714,7 @@ export async function toggleProviderMenu(deps, report) {
       }
       closeProviderMenu()
       await runRestartSequence(deps)
-      setPending(`已切换到 ${name}`)
+      setPending(`已切换到 ${PROVIDER_LABELS[name] || name}`)
       setTimeout(() => setPending(""), 2500)
       _providerSwitchInflight = false
     })
@@ -739,10 +752,13 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
   // No chat_id yet (freshly bound, no conversation) → switch provider UI-only.
   const noChat = !chatId
 
-  menu.innerHTML = menuProviders().map(p => {
-    const active = p === currentProvider
-    return `<button class="${active ? "provider-menu-active" : ""}" data-provider="${escapeHtml(p)}">${escapeHtml(PROVIDER_LABELS[p] || p)}</button>`
-  }).join("")
+  await refreshServiceChoices(deps)
+  menu.innerHTML = serviceChoicesMarkup(currentProvider)
+  menu.querySelector?.('[data-action="connect-ai"]')?.addEventListener('click', () => {
+    closeProviderMenu()
+    renderNoBrain(deps, true)
+    document.getElementById("brain-health")?.scrollIntoView?.({ block: "nearest" })
+  })
 
   const rect = anchor.getBoundingClientRect()
   menu.style.top = `${rect.bottom + 4}px`
@@ -781,7 +797,7 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
       }
       row.dataset.currentProvider = name
       closeProviderMenu()
-      setPending(`已切换到 ${name}`)
+      setPending(`已切换到 ${PROVIDER_LABELS[name] || name}`)
       setTimeout(() => setPending(""), 2500)
       _providerSwitchInflight = false
       await deps.doctorPoller?.refresh?.()
@@ -1024,7 +1040,7 @@ let _lastBrainCheckAt = 0
 let _troubleshootOpen = false
 let _lastNetRows = ""   // 第一步网络结果,留给用户点「叫醒大脑」时第二步复用
 
-const PROVIDER_LABELS = { claude: "Claude", codex: "Codex", cursor: "Cursor", agy: "Gemini(agy)", openai: "OpenAI", gemini: "Gemini" }
+const PROVIDER_LABELS = { claude: "Claude", codex: "Codex", cursor: "Cursor", agy: "Gemini · 账号连接", openai: "自定义 AI 服务", gemini: "Gemini · 密钥连接" }
 
 // 每个大脑自己的小图标(内联 SVG,自包含无外链)。不是像素级复刻官方 logo,
 // 而是用各家品牌色 + 简洁标记做到一眼可辨(Anthropic 珊瑚色星芒 / OpenAI 绿
@@ -1054,17 +1070,17 @@ export async function loadBrainHealth(deps, fresh) {
   const r = await deps.invokeApi("GET", "/v1/llm/health", undefined, { timeoutMs: 30_000 }).catch(() => null)
   if (!r || r.ok !== true) { if (!_troubleshootOpen) el.hidden = true; return }
   const registered = Array.isArray(r.registered) ? r.registered : []
-  if (registered.length) _registeredProviders = registered
+  _registeredProviders = registered
   if (_troubleshootOpen) return   // 排障面板开着时不覆盖它
   // 还没接任何大脑(新装机常态:没装 CLI、没填 key)—— 这不是「病」是
   // 「还没开始」,必须显眼引导,否则用户被卡死(owner 2026-08-26)。
   if (registered.length === 0) { renderNoBrain(deps); return }
   const results = Array.isArray(r.results) ? r.results : []
-  const broken = results.filter(x => x.ok === false)
+  const broken = results.filter(x => x.provider === r.default_provider && x.ok === false)
   if (broken.length === 0) { el.hidden = true; return }   // 没病不翻病历
   // 告警条:一句人话 + 入口,不铺技术细节
   el.innerHTML = `
-    <span class="brain-alert-text">CC 最近有几句话没接住,可能是脑子的事</span>
+    <span class="brain-alert-text">CC 的 AI 服务最近回复失败，可以检查连接</span>
     <button class="brain-recheck" type="button" data-action="brain-troubleshoot">看看怎么回事</button>`
   el.hidden = false
 }
@@ -1074,21 +1090,23 @@ export async function loadBrainHealth(deps, fresh) {
  * 的路,还能接任何 OpenAI 兼容端点(OpenAI/Kimi/DeepSeek/本地…),不锁死
  * 在某家订阅 CLI。想用订阅的走第二条(装 CLI)。owner 2026-08-26。
  */
-export function renderNoBrain(deps) {
+export function renderNoBrain(deps, manual = false) {
+  if (manual) _troubleshootOpen = true
   const el = document.getElementById("brain-health")
   if (!el) return
   el.hidden = false
   el.innerHTML = `
     <div class="brain-nobrain">
-      <div class="nb-head"><b>先给 CC 接上大脑</b><small>CC 需要一个大模型来思考 —— 挑一种接上就能聊</small></div>
+      ${manual ? `<button class="brain-close" type="button" data-action="brain-close">收起</button>` : ""}
+      <div class="nb-head"><b>连接 AI 服务</b><small>CC 需要连接一个 AI 服务才能与你聊天。选择你已有的账号或服务密钥。</small></div>
       <div class="nb-opts">
         <button class="nb-opt nb-primary" type="button" data-action="nb-apikey">
-          <span class="nb-ico">🔑</span>
-          <span class="nb-txt"><b>用 API Key 接入</b><small>最快 · 免安装 · OpenAI / Kimi / DeepSeek / 本地都行</small></span>
+
+          <span class="nb-txt"><b>使用服务密钥</b><small>已有服务商提供的密钥？在这里连接；费用由对应服务商收取。</small></span>
         </button>
         <button class="nb-opt" type="button" data-action="nb-cli">
-          <span class="nb-ico">💳</span>
-          <span class="nb-txt"><b>用订阅登录</b><small>已有 Claude / Codex / Cursor 订阅?装它的登录工具</small></span>
+
+          <span class="nb-txt"><b>登录已有账号</b><small>Claude / Codex / Cursor · 需要相应登录工具，账号支持情况以服务商为准。</small></span>
         </button>
       </div>
       <div class="brain-setup" id="brain-setup" hidden></div>
@@ -1110,9 +1128,10 @@ export async function runTroubleshoot(deps) {
 
   // ── 第一步:网络体检(daemon 侧视角,不带 key,零费用零风险)──
   const net = await deps.invokeApi("POST", "/v1/net/probe", {}, { timeoutMs: 20_000 }).catch(() => null)
-  const netRows = net && net.ok
+  const rawNetRows = net && net.ok
     ? net.results.map(x => `<div class="brain-net-row ${x.ok ? "ok" : "bad"}">${x.ok ? "✓" : "✗"} ${escapeHtml(x.label)}${x.ok ? ` <span class="brain-when">${x.latency_ms}ms</span>` : " 不通"}</div>`).join("")
     : `<div class="brain-net-row bad">✗ 网络检查没跑起来</div>`
+  const netRows = `<details class="service-details"><summary>查看网络详细结果</summary>${rawNetRows}</details>`
   const verdict = net && net.ok ? net.verdict : "offline"
   // 国际通 → 照旧真拨(不回归国际大脑的常见路径)。国际不通时,只要有一个
   // 已注册大脑的端点可达(dial_advisable)也真拨 —— 救国内/本地自配大脑,
@@ -1121,7 +1140,7 @@ export async function runTroubleshoot(deps) {
 
   if (!proceed) {
     const advice = verdict === "no_international"
-      ? "基础网络是通的,但你配的大脑端点连不上 —— Claude / OpenAI 这些在国内要代理才能连;开好代理,或换个能直连的大脑(国内/本地端点),再点下面重试。"
+      ? "基础网络是通的,但当前 AI 服务连不上 —— Claude / OpenAI 这些在国内要代理才能连;开好代理,或换个能直连的服务(国内/本地端点),再点下面重试。"
       : "网络好像整个断了,先看看 Wi-Fi / 网线,再回来重试。"
     steps.innerHTML = `
       <div class="brain-step-title">网络</div>${netRows}
@@ -1135,9 +1154,9 @@ export async function runTroubleshoot(deps) {
   _lastNetRows = netRows
   steps.innerHTML = `
     <div class="brain-step-title">网络</div>${netRows}
-    <div class="brain-net-row ok">✓ 网络没问题</div>
-    <div class="brain-hint">要逐个叫醒大脑、确认每个都能应答吗?(真拨号,最长约 1 分钟)</div>
-    <button class="brain-recheck" type="button" data-action="brain-dial">叫醒大脑</button>
+    <div class="brain-net-row ok">✓ 网络检查完成，尚未验证回复</div>
+    <div class="brain-hint">测试当前 AI 服务能否回复。会发送一条简短测试请求，可能产生用量，最长约 1 分钟。</div>
+    <button class="brain-recheck" type="button" data-action="brain-dial">测试当前服务回复</button>
     <button class="brain-recheck brain-quiet" type="button" data-action="brain-troubleshoot">重测网络</button>`
 }
 
@@ -1153,45 +1172,16 @@ export async function runBrainDial(deps) {
   const steps = el.querySelector("#brain-steps")
   if (!steps) return
   const netRows = _lastNetRows
-  steps.innerHTML = `
-    <div class="brain-step-title">网络</div>${netRows}
-    <div class="brain-checking">正在逐个叫醒大脑…(最长约 1 分钟)</div>`
-  const r = await deps.invokeApi("GET", "/v1/llm/health?fresh=1", undefined, { timeoutMs: 150_000 }).catch(() => null)
-  if (!r || r.ok !== true) {
-    steps.innerHTML = `<div class="brain-step-title">网络</div>${netRows}<div class="brain-hint">大脑测试没跑起来,稍后再试。</div><button class="brain-recheck" type="button" data-action="brain-dial">再试一次</button>`
-    return
-  }
-  const results = Array.isArray(r.results) ? r.results : []
-  const byId = new Map(results.map(x => [x.provider, x]))
-  const registered = Array.isArray(r.registered) ? r.registered : []
-  if (registered.length) _registeredProviders = registered
-  const chips = registered.map(id => {
-    const label = PROVIDER_LABELS[id] || id
-    const x = byId.get(id)
-    const isDefault = id === r.default_provider
-    if (!x) return `<span class="brain-chip brain-meh${isDefault ? " brain-default" : ""}" title="没探测到">${brainLabelWithIcon(id)} ?</span>`
-    const cls = x.ok === true ? "ok" : x.ok === false ? "bad" : "meh"
-    const mark = x.ok === true ? "✓" : x.ok === false ? "✗" : "—"
-    const title = x.ok === true
-      ? `${label} 正常 · ${Math.round(x.latency_ms / 1000)}s`
-      : x.ok === false ? (x.hint || x.error || "不可用") : "无法探测"
-    return `<span class="brain-chip brain-${cls}${isDefault ? " brain-default" : ""}" title="${escapeHtml(title)}">${brainLabelWithIcon(id)} ${mark}</span>`
-  }).join("")
-  const unconfigured = Array.isArray(r.unconfigured) ? r.unconfigured : []
-  const moreChips = unconfigured.map(u =>
-    `<button class="brain-chip brain-off" type="button" data-brain-setup="${escapeHtml(u.provider)}" title="${escapeHtml(u.how)}">${brainLabelWithIcon(u.provider)} +</button>`,
-  ).join("")
-  const broken = results.filter(x => x.ok === false)
-  const hintLine = broken.length
-    ? `<div class="brain-hint">${escapeHtml(broken.map(b => `${PROVIDER_LABELS[b.provider] || b.provider}:${b.hint || (b.auth_failed ? "登录失效" : b.error === "timeout" ? "超时没应答" : "连不上")}`).join(" · "))}</div>`
-    : `<div class="brain-net-row ok">✓ 大脑都醒着,一切正常</div>`
-  steps.innerHTML = `
-    <div class="brain-step-title">网络</div>${netRows}
-    <div class="brain-step-title">大脑</div>
-    <div>${chips}${moreChips}</div>
-    ${hintLine}
+  steps.innerHTML = `${netRows}<div class="brain-checking">正在等待当前 AI 服务回复…</div>`
+  const r = await deps.invokeApi("GET", "/v1/llm/health?fresh=1&scope=current", undefined, { timeoutMs: 150_000 }).catch(() => null)
+  const result = r?.results?.find(x => x.provider === r.default_provider)
+  const label = PROVIDER_LABELS[r?.default_provider] || "当前 AI 服务"
+  const message = result?.ok === true ? `${label} 可以回复` : result?.ok === false ? `${label} 暂时无法回复` : "尚未验证回复，请稍后重试"
+  steps.innerHTML = `${netRows}<div class="brain-net-row ${result?.ok === true ? "ok" : "bad"}">${escapeHtml(message)}</div>
+    ${result?.ok === false ? `<details><summary>查看原因</summary>${escapeHtml(result.hint || result.error || "连接失败")}</details>` : ""}
     <button class="brain-recheck" type="button" data-action="brain-dial">再测一次</button>
-    <div class="brain-setup" id="brain-setup" hidden></div>`
+    <button class="brain-recheck" type="button" data-action="connect-ai">连接其他 AI 服务</button>`
+
 }
 
 /** 收起排障面板;若缓存里仍有红,回到告警条。 */
@@ -1241,11 +1231,11 @@ export function openBrainSetup(_deps, provider) {
   if (provider === "openai" || provider === "gemini") {
     const isOpenai = provider === "openai"
     box.innerHTML = `
-      <div class="brain-setup-title">接入 ${isOpenai ? "OpenAI 兼容接口" : "Gemini(API Key)"}</div>
+      <div class="brain-setup-title">连接 ${isOpenai ? "自定义 AI 服务" : "Gemini"}</div>
       <div class="brain-setup-form">
-        <input type="password" id="brain-key" placeholder="API Key(粘贴到这里)" autocomplete="off" />
-        ${isOpenai ? `<input type="text" id="brain-baseurl" placeholder="接口地址,如 https://api.openai.com/v1" autocomplete="off" />
-        <input type="text" id="brain-model" placeholder="模型名,如 gpt-5" autocomplete="off" />` : `<input type="text" id="brain-model" placeholder="模型名,可留空" autocomplete="off" />`}
+        <input type="password" id="brain-key" placeholder="服务密钥" aria-label="服务密钥" autocomplete="off" />
+        ${isOpenai ? `<details open><summary>高级连接：服务地址与模型</summary><input type="text" id="brain-baseurl" placeholder="接口地址,如 https://api.openai.com/v1" autocomplete="off" />
+        <input type="text" id="brain-model" placeholder="模型名（由服务商提供）" autocomplete="off" /></details>` : `<input type="text" id="brain-model" placeholder="模型名,可留空" autocomplete="off" />`}
         <button class="brain-recheck" type="button" data-action="brain-save-key" data-provider="${provider}">保存</button>
         <span class="brain-setup-status" id="brain-setup-status"></span>
       </div>`
@@ -1269,7 +1259,7 @@ export function openBrainSetup(_deps, provider) {
 export async function saveBrainKey(deps, provider) {
   const status = document.getElementById("brain-setup-status")
   const key = /** @type {HTMLInputElement|null} */ (document.getElementById("brain-key"))?.value.trim() ?? ""
-  if (!key) { if (status) status.textContent = "先粘贴 Key"; return }
+  if (!key) { if (status) status.textContent = "请先填写服务密钥"; return }
   const baseUrl = /** @type {HTMLInputElement|null} */ (document.getElementById("brain-baseurl"))?.value.trim()
   const model = /** @type {HTMLInputElement|null} */ (document.getElementById("brain-model"))?.value.trim()
   // openai 兼容接口:daemon 要 key+base_url+model 三样齐才注册(providers.ts)。

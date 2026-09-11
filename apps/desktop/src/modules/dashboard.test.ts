@@ -1177,7 +1177,7 @@ describe('provider menu', () => {
   it('toggleProviderMenu populates menu with claude, codex, cursor buttons', async () => {
     const { menuButtons } = installProviderMenuDom()
     await toggleProviderMenu(
-      { invoke: vi.fn(async () => ({ ok: true })), doctorPoller: { current: null } },
+      { invoke: vi.fn(async () => ({ ok: true })), invokeApi: vi.fn(async () => ({ok:true,registered:['claude','codex','cursor']})), doctorPoller: { current: null } },
       makeProviderReport('claude'),
     )
     const providers = menuButtons.map(b => b.dataset.provider)
@@ -1190,7 +1190,7 @@ describe('provider menu', () => {
   it('active provider button has provider-menu-active class', async () => {
     const { menuButtons } = installProviderMenuDom()
     await toggleProviderMenu(
-      { invoke: vi.fn(async () => ({ ok: true })), doctorPoller: { current: null } },
+      { invoke: vi.fn(async () => ({ ok: true })), invokeApi: vi.fn(async () => ({ok:true,registered:['claude','codex','cursor']})), doctorPoller: { current: null } },
       makeProviderReport('codex'),
     )
     const activeBtn = menuButtons.find(b => b.className === 'provider-menu-active')
@@ -1210,7 +1210,7 @@ describe('provider menu', () => {
       waitForCondition: vi.fn(async (pred: (r: any) => boolean) => makeProviderReport('codex')),
       lastError: null,
     }
-    await toggleProviderMenu({ invoke, doctorPoller }, makeProviderReport('claude'))
+    await toggleProviderMenu({ invoke, invokeApi: vi.fn(async () => ({ok:true,registered:["claude","codex","cursor"]})), doctorPoller }, makeProviderReport('claude'))
     // providerMenu is open — click 'codex' button
     const codexBtn = menuButtons.find(b => b.dataset.provider === 'codex')
     expect(codexBtn).toBeDefined()
@@ -1230,7 +1230,7 @@ describe('provider menu', () => {
   it('clicking the same provider closes menu without invoking CLI', async () => {
     const { menuButtons, providerMenu } = installProviderMenuDom()
     const invoke = vi.fn(async () => ({ ok: true }))
-    await toggleProviderMenu({ invoke, doctorPoller: { current: null } }, makeProviderReport('claude'))
+    await toggleProviderMenu({ invoke, invokeApi: vi.fn(async () => ({ok:true,registered:['claude','codex','cursor']})), doctorPoller: { current: null } }, makeProviderReport('claude'))
     const claudeBtn = menuButtons.find(b => b.dataset.provider === 'claude')
     expect(claudeBtn).toBeDefined()
     for (const handler of claudeBtn!._clickHandlers) {
@@ -1249,7 +1249,7 @@ describe('provider menu', () => {
   it('closeProviderMenu hides the menu', async () => {
     const { providerMenu } = installProviderMenuDom()
     await toggleProviderMenu(
-      { invoke: vi.fn(async () => ({ ok: true })), doctorPoller: { current: null } },
+      { invoke: vi.fn(async () => ({ ok: true })), invokeApi: vi.fn(async () => ({ok:true,registered:['claude','codex','cursor']})), doctorPoller: { current: null } },
       makeProviderReport('claude'),
     )
     expect(providerMenu.hidden).toBe(false)
@@ -1268,7 +1268,7 @@ describe('provider menu', () => {
       }
       return { ok: true }
     })
-    await toggleProviderMenu({ invoke, doctorPoller: { current: null } }, makeProviderReport('claude'))
+    await toggleProviderMenu({ invoke, invokeApi: vi.fn(async () => ({ok:true,registered:['claude','codex','cursor']})), doctorPoller: { current: null } }, makeProviderReport('claude'))
     const codexBtn = menuButtons.find(b => b.dataset.provider === 'codex')
     for (const handler of codexBtn!._clickHandlers) {
       await handler({ stopPropagation: () => {} })
@@ -1280,7 +1280,7 @@ describe('provider menu', () => {
     })
     expect(serviceStopCall).toBeUndefined()
     // Error toast should be visible
-    expect(els.dashPending.textContent).toBe('切换 provider 失败')
+    expect(els.dashPending.textContent).toBe('切换 AI 服务失败')
   })
 
   it('toggleUserProviderMenu populates card menu from the registered-provider fallback', async () => {
@@ -1294,7 +1294,7 @@ describe('provider menu', () => {
     }
 
     await toggleUserProviderMenu(
-      { invoke: vi.fn(async () => ({ ok: true })), doctorPoller: { current: null } },
+      { invoke: vi.fn(async () => ({ ok: true })), invokeApi: vi.fn(async () => ({ok:true,registered:['claude','codex','cursor']})), doctorPoller: { current: null } },
       anchor,
       makeProviderReport('claude'),
     )
@@ -1314,7 +1314,7 @@ describe('provider menu', () => {
     }
     const invoke = vi.fn(async () => ({ ok: true }))
 
-    await toggleUserProviderMenu({ invoke, doctorPoller: { refresh: vi.fn(async () => null) } }, anchor, makeProviderReport('claude'))
+    await toggleUserProviderMenu({ invoke, invokeApi: vi.fn(async () => ({ok:true,registered:['claude','codex','cursor']})), doctorPoller: { refresh: vi.fn(async () => null) } }, anchor, makeProviderReport('claude'))
     const geminiBtn = menuButtons.find(b => b.dataset.provider === 'cursor')
     expect(geminiBtn).toBeDefined()
     for (const handler of geminiBtn!._clickHandlers) {

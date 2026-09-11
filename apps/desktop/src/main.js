@@ -28,7 +28,7 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkFsAccessOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkFsAccessOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
@@ -536,15 +536,21 @@ function wireEvents() {
     }
     if (t.closest('[data-action="brain-close"]')) { closeTroubleshoot(deps); return }
     // 接大脑引导:API Key 直开 OpenAI 兼容表单;订阅登录列 CLI 选项
+    if (t.closest('[data-action="connect-ai"]')) {
+      closeProviderMenu()
+      renderNoBrain(deps, true)
+      document.getElementById("brain-health")?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+      return
+    }
     if (t.closest('[data-action="nb-apikey"]')) { openBrainSetup(deps, "openai"); return }
     if (t.closest('[data-action="nb-cli"]')) {
       const box = document.getElementById("brain-setup")
       if (box) {
         box.hidden = false
-        box.innerHTML = '<div class="brain-setup-title">用哪家订阅?点一个看安装方法</div>'
+        box.innerHTML = '<div class="brain-setup-title">选择已有账号，查看连接步骤</div>'
           + '<div class="nb-cli-row">'
-          + ['claude','codex','cursor'].map(function(pv){ return '<button class="brain-chip brain-off" type="button" data-brain-setup="'+pv+'">'+pv+'</button>' }).join('')
-          + '</div><div id="brain-setup" style="margin-top:8px"></div>'
+          + ['claude','codex','cursor'].map(function(pv){ return '<button class="brain-chip brain-off" type="button" data-brain-setup="'+pv+'">'+({claude:'Claude',codex:'Codex',cursor:'Cursor'}[pv])+'</button>' }).join('')
+          + '</div>'
       }
       return
     }
