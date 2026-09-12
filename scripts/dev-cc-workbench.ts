@@ -7,20 +7,23 @@ import {homedir} from 'node:os'
 import {join,resolve} from 'node:path'
 import {openDb} from '../src/lib/db'
 import {findCodexBinary} from '../src/lib/find-codex-binary'
-import {codexSessionJsonlPaths} from '../src/daemon/bootstrap/session-paths'
+import {codexSessionJsonlPaths,claudeSessionJsonlPath} from '../src/daemon/bootstrap/session-paths'
 import {createProviderRegistry} from '../src/core/provider-registry'
-import {createCodexAgentProvider} from '../src/core/codex-agent-provider'
+import {createWorkbenchCodexProvider} from '../src/core/workbench/codex-app-server'
+import {createClaudeAgentProvider,makeWorkbenchClaudeCanUseTool} from '../src/core/claude-agent-provider'
+import {workbenchClaudeOptions} from '../src/daemon/bootstrap/wire-workbench'
 import {makeWorkbenchStore} from '../src/core/workbench/store'
 import {makeWorkbenchService} from '../src/core/workbench/service'
 import {createInternalApi,type InternalApiDeps} from '../src/daemon/internal-api'
-import {Codex} from '@openai/codex-sdk'
-import {workbenchCodexConfig} from './workbench-codex-config'
+import {workbenchClaudeAuthEnv} from './workbench-claude-config'
 
 const root=resolve(import.meta.dir,'..')
 const stateDir=join(homedir(),'.claude','channels','wechat-workbench-dev')
 const infoPath=join(stateDir,'internal-api-info.json')
 const binary=findCodexBinary()
-if(!binary)throw new Error('Codex 未安装，请先安装并登录 Codex。')
+const claudeCandidate=process.env.CLAUDE_CODE_EXECUTABLE || Bun.which('claude') || join(homedir(),'.local','bin','claude')
+const claudeBinary=existsSync(claudeCandidate) ? claudeCandidate : null
+if(!binary && !claudeBinary)throw new Error('尚未发现 Claude Code 或 Codex，请先安装并登录其中一个。')
 mkdirSync(stateDir,{recursive:true,mode:0o700})
 if(existsSync(infoPath)) {
   const previous=JSON.parse(readFileSync(infoPath,'utf8'))
@@ -32,24 +35,23 @@ if(existsSync(infoPath)) {
 }
 const db=openDb({path:join(stateDir,'workbench.db')})
 const registry=createProviderRegistry()
-registry.register('codex',{
-  async spawn(project, context) {
-    // Resolve the selected folder's configuration each turn, including project
-    // overrides. Discovery only lists configuration; it never calls MCP tools.
-    const probe=Bun.spawn([binary,'-c','features.plugins=false','-c','features.apps=false',
-      '-c','features.hooks=false','mcp','list','--json'],{
-      cwd:project.path,stdout:'pipe',stderr:'pipe',timeout:15_000,
-    })
-    const [stdout]=await Promise.all([new Response(probe.stdout).text(),new Response(probe.stderr).text()])
-    if(await probe.exited!==0)throw new Error('无法核实 Codex 的工具配置；暂不启动任务。')
-    const isolatedConfig=workbenchCodexConfig(JSON.parse(stdout))
-    return createCodexAgentProvider({
-      codexPathOverride:binary,dangerouslyBypassApprovalsAndSandbox:false,
-      codexFactory:args=>new Codex({...args,config:{...args?.config,...isolatedConfig}}),
-    }).spawn(project,context)
+if(binary)registry.register('codex',createWorkbenchCodexProvider({codexPathOverride:binary}),
+  {displayName:'Codex',canResume:(_cwd,id)=>codexSessionJsonlPaths(homedir(),id).some(existsSync)})
+if(claudeBinary)registry.register('claude',createClaudeAgentProvider({
+  sdkOptionsForProject(_alias,path,_tier,_chatId,_env,instructions,context) {
+    // Reuse login only; task sessions do not import CLI hooks or private MCPs.
+    const settingsPath=join(homedir(),'.claude','settings.json')
+    let settings:unknown={}
+    if(existsSync(settingsPath)) {
+      try { settings=JSON.parse(readFileSync(settingsPath,'utf8')) }
+      catch { throw new Error('无法读取 Claude 登录设置，请检查设置文件格式。') }
+    }
+    return workbenchClaudeOptions({cwd:path,pathToClaudeCodeExecutable:claudeBinary,
+      env:{...process.env,...workbenchClaudeAuthEnv(settings,process.env)}},
+      instructions ?? '',makeWorkbenchClaudeCanUseTool(context?.requestPermission))
   },
-},{displayName:'Codex',canResume:(_cwd,id)=>codexSessionJsonlPaths(homedir(),id).some(existsSync)})
-// Unused companion dependencies are deliberately absent. Only the seven
+}),{displayName:'Claude Code',canResume:(cwd,id)=>existsSync(claudeSessionJsonlPath(homedir(),cwd,id))})
+// Unused companion dependencies are deliberately absent. Only the explicit
 // workbench routes are reachable through the frontend proxy in this runner.
 const api=createInternalApi({stateDir,daemonPid:process.pid} as InternalApiDeps)
 const workbench=makeWorkbenchService({
@@ -68,7 +70,7 @@ const shim=Bun.spawn(['bun','apps/desktop/test-shim.ts'],{
     WECHAT_CC_WORKBENCH_STATE_DIR:stateDir,
   },
 })
-console.log(`一起做：真实 Codex 执行，独立任务库 ${stateDir}\n页面：http://127.0.0.1:${port}/`)
+console.log(`一起做：${[binary?'Codex':null,claudeBinary?'Claude Code':null].filter(Boolean).join(' / ')}，独立任务库 ${stateDir}\n页面：http://127.0.0.1:${port}/`)
 let stopping=false
 async function stop() {
   if(stopping)return;stopping=true

@@ -1,6 +1,7 @@
-import { query, type Options, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { query, type CanUseTool, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
-import type { TierProfile, ToolKind } from './user-tier'
+import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind } from './user-tier'
+import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TOOL_MAX } from './workbench/permissions'
 import { log } from '../lib/log'
 import { AsyncQueue } from './async-queue'
 import { isAuthFail } from './auth-fail'
@@ -101,7 +102,7 @@ export interface ClaudeAgentProviderOptions {
    * `lastActiveChatId` ref, which under concurrent dispatch could read
    * another chat's id mid-call and cross-resolve the tier.
    */
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: SpawnContext) => Options
   /**
    * Path to the `claude` binary, threaded into cheapEval's query() call.
    * Optional — when omitted the SDK's bundled discovery runs. Used in
@@ -116,6 +117,74 @@ export interface ClaudeAgentProviderOptions {
    * `currentClaudeModel`. Omitted → strongEval is not offered.
    */
   strongModel?: () => string
+}
+
+function taskInputPreview(input: Record<string, unknown>): string | null {
+  if (typeof input.command === 'string') return `command=${input.command}`
+  try {
+    const json=JSON.stringify(input)
+    return json === '{}' ? '' : `input=${json}`
+  } catch {
+    return null
+  }
+}
+
+/** Claude's task-only permission gate. Workbench has no messaging or memory
+ * MCP surface; local built-ins retain the existing trusted/solo/strict
+ * allow/relay/deny policy, with relay decisions owned by the active task run. */
+export function makeWorkbenchClaudeCanUseTool(
+  requestPermission?: SpawnContext['requestPermission'],
+): CanUseTool {
+  return async (toolName, input, options) => {
+    if (options.signal.aborted) {
+      return { behavior:'deny', message:'This task tool call was cancelled.' } satisfies PermissionResult
+    }
+    if (toolName.startsWith('mcp__')) {
+      return { behavior: 'deny', message: 'Task sessions cannot use messaging, memory, or other MCP tools.' } satisfies PermissionResult
+    }
+    const kind = classifyToolUse(toolName, input)
+    // Load after provider module initialization. permission-relay depends on
+    // capability-matrix, whose provider declarations include this module.
+    // A static import here would evaluate that cycle before the declarations
+    // exist and fail closed by crashing startup instead of denying a tool.
+    const [{ effectivePolicy }, { lookup }] = await Promise.all([
+      import('./permission-relay'),
+      import('./capability-matrix'),
+    ])
+    if (options.signal.aborted) {
+      return { behavior:'deny', message:'This task tool call was cancelled.' } satisfies PermissionResult
+    }
+    const decision = effectivePolicy(
+      lookup('solo','claude','strict'),
+      TIER_PROFILES.trusted,
+      kind,
+    )
+    if (decision === 'allow') return { behavior: 'allow' } satisfies PermissionResult
+    if (decision === 'deny') {
+      return { behavior: 'deny', message: `Tool '${toolName}' (${kind}) is unavailable in this task.` } satisfies PermissionResult
+    }
+    if (!requestPermission || options.signal.aborted) {
+      return { behavior: 'deny', message: 'This task permission request is no longer active.' } satisfies PermissionResult
+    }
+    const inputPreview=taskInputPreview(input)
+    const context=options.title?.trim() || options.description?.trim() || options.decisionReason?.trim() || ''
+    const description=[context,inputPreview].filter(Boolean).join('\n') || `Run ${toolName}`
+    if (toolName.length > WORKBENCH_PERMISSION_TOOL_MAX || inputPreview === null || description.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX) {
+      return { behavior:'deny', message:'The complete permission detail is too large to review safely.' } satisfies PermissionResult
+    }
+    let allowed = false
+    try {
+      allowed = await requestPermission({
+        tool: toolName.slice(0, WORKBENCH_PERMISSION_TOOL_MAX),
+        description,
+      }, options.signal)
+    } catch {
+      allowed = false
+    }
+    return allowed && !options.signal.aborted
+      ? { behavior: 'allow' } satisfies PermissionResult
+      : { behavior: 'deny', message: 'The task permission request was denied or expired.' } satisfies PermissionResult
+  }
 }
 
 /**
@@ -267,7 +336,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // chatId is threaded into sdkOptionsForProject so the builder can
       // produce a canUseTool whose tier/mode closures are bound to THIS
       // session — see bootstrap/index.ts:buildCanUseTool().
-      const options = opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId, spawnOpts.mcpEnv, spawnOpts.appendInstructions)
+      const options = opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId, spawnOpts.mcpEnv, spawnOpts.appendInstructions, spawnOpts)
       if (spawnOpts.resumeSessionId) {
         ;(options as Options & { resume?: string }).resume = spawnOpts.resumeSessionId
       }

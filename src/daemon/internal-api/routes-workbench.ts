@@ -4,6 +4,7 @@ import type { InternalApiDeps, RouteHandler, RouteTable } from './types'
 const TASK_ID = /^[a-f0-9]{8}$/
 const ARTIFACT_ID = /^[a-f0-9-]{8,64}$/
 const SHA256 = /^[a-f0-9]{64}$/
+const REQUEST_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
 const PROVIDERS = new Set(['claude', 'codex'])
 
 type JsonObject = Record<string, unknown>
@@ -23,7 +24,7 @@ function errorCode(err: unknown): string {
 
 function mappedError(err: unknown): ReturnType<RouteHandler> {
   const code = errorCode(err)
-  if (code === 'workbench_busy' || code === 'artifact_changed') return { status: 409, body: { error: code } }
+  if (code === 'workbench_busy' || code === 'artifact_changed' || code === 'permission_stale') return { status: 409, body: { error: code } }
   if (code === 'not_found') return { status: 404, body: { error: code } }
   if (code === 'unavailable_provider') return { status: 422, body: { error: code } }
   if (code.startsWith('invalid_')) return { status: 400, body: { error: code } }
@@ -124,6 +125,21 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
       try {
         await deps.workbench.approve(id, artifactId, sha256)
+        return { status: 200, body: { ok: true } }
+      } catch (err) {
+        return mappedError(err)
+      }
+    },
+
+    'POST /v1/workbench/permission': async (_query, body) => {
+      const value = objectBody(body)
+      const id = typeof value?.id === 'string' ? value.id : ''
+      const requestId = typeof value?.requestId === 'string' ? value.requestId : ''
+      const decision = value?.decision
+      if (!TASK_ID.test(id) || !REQUEST_ID.test(requestId) || (decision !== 'allow' && decision !== 'deny')) return invalid()
+      if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
+      try {
+        await deps.workbench.resolvePermission(id, requestId, decision)
         return { status: 200, body: { ok: true } }
       } catch (err) {
         return mappedError(err)

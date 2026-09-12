@@ -320,7 +320,7 @@
     <main class="dashboard">
       <div class="dash-window">
 
-        <aside class="dash-rail">
+        <aside id="dash-global-rail" class="dash-rail">
           <div class="dash-brand">
             <span class="name">CC</span>
             <span class="cc-brand-note">一起生活，也一起做事</span>
@@ -381,6 +381,8 @@
             </button>
           </div>
         </aside>
+
+        <div id="workbench-nav-scrim" class="workbench-nav-scrim" aria-hidden="true" hidden></div>
 
         <section class="dash-main">
 
@@ -671,7 +673,7 @@
 
           <!-- ── pane: workbench ───────────────────────────────────── -->
           <article class="dash-pane workbench-pane" data-pane="workbench" hidden>
-            <header class="cc-life-topline"><span>一起做</span><span>每件事，都有自己的位置</span></header>
+            <header class="cc-life-topline"><span class="workbench-topline-start"><button id="workbench-nav-toggle" class="workbench-nav-toggle" type="button" aria-label="打开主导航" aria-controls="dash-global-rail" aria-expanded="false">CC</button><span>一起做</span></span><span>每件事，都有自己的位置</span></header>
             <div id="workbench-root" class="workbench-root"><p class="empty-state">正在打开工作台…</p></div>
           </article>
 

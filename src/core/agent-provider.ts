@@ -133,6 +133,12 @@ export interface SpawnContext {
    * just injects it. (Claude has an equivalent per-spawn reader of its own.)
    */
   model?: string
+  /** A task-local approval bridge. It is bound to one active run and fails
+   * closed after that run is cancelled, completed, or restarted. */
+  requestPermission?: (
+    request: { tool: string; description: string },
+    signal?: AbortSignal,
+  ) => Promise<boolean>
 }
 
 /**

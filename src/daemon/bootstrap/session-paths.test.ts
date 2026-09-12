@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { codexSessionJsonlPaths } from './session-paths.js'
+import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths.js'
 
 const homes: string[] = []
 afterEach(() => { for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }) })
@@ -13,6 +13,27 @@ function fixture() {
   mkdirSync(day, { recursive: true })
   return { home, day }
 }
+describe('Claude session discovery', () => {
+  it('uses the native project encoding for punctuation, spaces and Unicode', () => {
+    const { home } = fixture()
+    const cwd = '/Users/test_user/hello.world/画 室'
+    const directory = join(home, '.claude/projects/-Users-test-user-hello-world----')
+    mkdirSync(directory, { recursive: true })
+    const file = join(directory, 'session-one.jsonl')
+    writeFileSync(file, '')
+    expect(claudeSessionJsonlPath(home, cwd, 'session-one')).toBe(file)
+    expect(existsSync(claudeSessionJsonlPath(home, cwd, 'session-one'))).toBe(true)
+    expect(existsSync(claudeSessionJsonlPath(home, cwd, 'session-two'))).toBe(false)
+  })
+  it('matches the native 200-character prefix and original-path hash for long paths', () => {
+    expect(claudeSessionJsonlPath('/home', '/' + 'a'.repeat(210), 'session'))
+      .toBe(join('/home/.claude/projects', '-' + 'a'.repeat(199) + '-djaaup', 'session.jsonl'))
+  })
+  it('preserves ordinary native project paths', () => {
+    expect(claudeSessionJsonlPath('/home', '/work/project', 'session'))
+      .toBe('/home/.claude/projects/-work-project/session.jsonl')
+  })
+})
 describe('Codex session discovery', () => {
   it('finds actual rollout filenames for only the requested thread', () => {
     const { home, day } = fixture()

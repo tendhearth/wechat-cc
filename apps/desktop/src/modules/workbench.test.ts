@@ -26,20 +26,72 @@ describe('workbench rendering', () => {
     expect(html).not.toContain('<img src=x onerror=alert(1)>')
   })
 
-  it('leads with the latest real reply and discloses the complete execution record', async () => {
+  it('renders every user and provider message in chronological order while tool logs stay collapsed', async () => {
     const { renderWorkbench } = await import('./workbench.js')
     const html = renderWorkbench({tasks:[], providers:[{id:'codex',displayName:'Codex'}], defaultProvider:'codex',canWechat:false,selectedId:'A', selectedArtifactId:null,error:'',preview:null,
       detail:{task:{id:'A',title:'整理资料',path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null},artifacts:[],events:[
-        {id:'1',taskId:'A',kind:'tool_call',text:'读取文件',createdAt:1},
-        {id:'2',taskId:'A',kind:'text',text:'已整理出三项结论。',createdAt:2}
+        {id:'1',taskId:'A',kind:'user',text:'先整理访谈。',createdAt:1},
+        {id:'2',taskId:'A',kind:'text',text:'Codex 第一轮回复。',createdAt:2},
+        {id:'3',taskId:'A',kind:'tool_call',text:'读取文件',createdAt:3},
+        {id:'4',taskId:'A',kind:'user',text:'再补充引用。',createdAt:4},
+        {id:'5',taskId:'A',kind:'text',text:'Codex 第二轮回复。',createdAt:5}
       ]}})
-    expect(html).toContain('class="wb-report"')
-    expect(html.indexOf('已整理出三项结论。')).toBeLessThan(html.indexOf('查看过程与记录'))
-    expect(html).toMatch(/<details[^>]*id="wb-process"[^>]*>/)
-    expect(html).not.toMatch(/<details[^>]*id="wb-process"[^>]* open/)
+    expect(html.indexOf('先整理访谈。')).toBeLessThan(html.indexOf('Codex 第一轮回复。'))
+    expect(html.indexOf('Codex 第一轮回复。')).toBeLessThan(html.indexOf('再补充引用。'))
+    expect(html.indexOf('再补充引用。')).toBeLessThan(html.indexOf('Codex 第二轮回复。'))
+    expect(html).toMatch(/<details[^>]*id="wb-tools"[^>]*>/)
+    expect(html).not.toMatch(/<details[^>]*id="wb-tools"[^>]* open/)
     expect(html).toContain('读取文件')
-    expect(html).toContain('Codex 的回复')
-    expect(html).not.toContain('复核通过')
+    expect(html).toContain('Codex')
+    expect(html).not.toContain('alt="CC"')
+  })
+
+  it('renders provider Markdown and code without admitting raw HTML or unsafe links', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const html = renderWorkbench({tasks:[],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:'A',selectedArtifactId:null,error:'',preview:null,
+      detail:{task:{id:'A',title:'Review',path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null},artifacts:[],events:[
+        {id:'1',taskId:'A',kind:'text',text:'# Result\n\nUse **safe** output.\n\n```ts\nconst answer = 42\n```\n\n<script>bad()</script>\n\n[bad](javascript:alert(1))',createdAt:3}
+      ]}})
+    expect(html).toContain('<h1>Result</h1>')
+    expect(html).toContain('<strong>safe</strong>')
+    expect(html).toContain('<code class="language-ts">const answer = 42')
+    expect(html).toContain('&lt;script&gt;bad()&lt;/script&gt;')
+    expect(html).not.toContain('<script>bad()</script>')
+    expect(html).not.toContain('href="javascript:')
+  })
+
+  it('groups tasks by their exact project path and disambiguates matching folder names', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const task = (id: string, path: string) => ({id,title:`Task ${id}`,path,providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null})
+    const html = renderWorkbench({tasks:[task('A','/clients/alpha/app'),task('B','/clients/beta/app'),task('C','/clients/alpha/app')],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
+    expect(html.match(/class="wb-project"/g)).toHaveLength(2)
+    expect(html).toContain('/clients/alpha/app')
+    expect(html).toContain('/clients/beta/app')
+    expect(html).toContain('app · /clients/alpha')
+    expect(html).toContain('app · /clients/beta')
+  })
+
+  it('marks only tasks with pending permission requests as waiting for confirmation', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const task = (id:string,pendingPermissionCount?:number) => ({id,title:`Task ${id}`,path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount})
+    const html=renderWorkbench({tasks:[task('WAITING',2),task('ZERO',0),task('ABSENT')],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
+    expect(html).toMatch(/data-task-id="WAITING"[\s\S]*?aria-label="2 项权限请求等你确认"[\s\S]*?等你确认[\s\S]*?<\/button>/)
+    expect(html.match(/class="wb-task-attention"/g)).toHaveLength(1)
+  })
+
+  it('escapes pending permission text and binds each decision to its request id', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const state = {tasks:[],providers:[{id:'claude',displayName:'Claude'}],defaultProvider:'claude',canWechat:false,selectedId:'TASK',selectedArtifactId:null,error:'',preview:null,
+      detail:{task:{id:'TASK',title:'Deploy',path:'/work',providerId:'claude',status:'running',createdAt:1,updatedAt:2,error:null},events:[],artifacts:[],permissions:[{id:'REQ<1>',taskId:'TASK',tool:'Shell <unsafe>',description:'Run <img src=x onerror=alert(1)>',createdAt:3}]}}
+    const html = renderWorkbench(state)
+    expect(html).toContain('Run &lt;img src=x onerror=alert(1)&gt;')
+    expect(html).toContain('Shell &lt;unsafe&gt;')
+    expect(html).toContain('data-request-id="REQ&lt;1&gt;"')
+    expect(html).toContain('data-action="allow-permission"')
+    expect(html).toContain('data-action="deny-permission"')
+    expect(html.indexOf('class="wb-permissions"')).toBeLessThan(html.indexOf('class="wb-controls"'))
+    expect(html).not.toContain('<img src=x onerror=alert(1)>')
+    expect(renderWorkbench({...state,error:'offline'})).toMatch(/data-action="allow-permission"[^>]* disabled/)
   })
 
   it('keeps optional service and title fields in a closed disclosure, retaining their form values', async () => {
@@ -55,8 +107,25 @@ describe('workbench rendering', () => {
     const { renderTaskControls } = await import('./workbench.js')
     expect(renderTaskControls('running')).toContain('data-action="cancel"')
     expect(renderTaskControls('running')).not.toContain('data-action="continue"')
+    expect(renderTaskControls('running')).toContain('id="wb-followup-text"')
+    expect(renderTaskControls('running')).toContain('本轮结束后可发送')
+    expect(renderTaskControls('running')).toMatch(/<button[^>]*disabled[^>]*>本轮结束后可发送/)
     expect(renderTaskControls('completed')).toContain('data-action="continue"')
     expect(renderTaskControls('completed')).not.toContain('data-action="cancel"')
+  })
+
+  it('explains that no task can start when no supported provider is installed', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const html = renderWorkbench({tasks:[],providers:[],defaultProvider:'',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
+    expect(html).toContain('没有检测到可用的 Claude Code 或 Codex')
+    expect(html).toMatch(/<button[^>]*type="submit"[^>]*disabled/)
+  })
+
+  it('shows a loading surface instead of the new-task form while opening a task from an empty view', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const html=renderWorkbench({tasks:[],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,loadingId:'TASK',detail:null,selectedArtifactId:null,error:'',preview:null})
+    expect(html).toContain('正在打开任务')
+    expect(html).not.toContain('id="wb-create-form"')
   })
 
   it('keeps the selected artifact version when a newer poll arrives', async () => {
@@ -74,6 +143,8 @@ describe('workbench rendering', () => {
     const artifact = { id: 'a1', taskId: 'TASK', name: 'report.md', mime: 'text/markdown', size: 2, sha256: 'hash', createdAt: 2, approvedAt: null }
     const html = renderWorkbench({ tasks: [], providers: [], defaultProvider: 'codex', canWechat: false, selectedId: 'TASK', selectedArtifactId: 'a1', error: '', preview: { artifactId: 'a1', html: '<pre>safe preview</pre>' }, detail: { task: { id: 'TASK', title: 'Report', path: '/tmp', providerId: 'codex', status: 'completed', createdAt: 1, updatedAt: 2, error: null }, events: [], artifacts: [artifact] } })
     expect(html).toContain('<pre>safe preview</pre>')
+    expect(html).toMatch(/<details[^>]*id="wb-artifacts"[^>]*>/)
+    expect(html).not.toMatch(/<details[^>]*id="wb-artifacts"[^>]* open/)
     expect(html).toContain('data-action="download-artifact"')
     expect(html).toContain('data-action="approve-artifact"')
   })
@@ -134,6 +205,407 @@ describe('workbench request ordering', () => {
     await pending
     expect(renders.at(-1).selectedId).toBe('SECOND')
     expect(renders.at(-1).detail.task.id).toBe('SECOND')
+  })
+
+})
+
+describe('workbench mutations', () => {
+  class FakeElement {
+    id = ''
+    tagName = ''
+    value = ''
+    selectionStart: number | null = null
+    selectionEnd: number | null = null
+    dataset: Record<string, string> = {}
+    innerHTML = ''
+    scrollTop = 0
+    scrollHeight = 0
+    listeners = new Map<string, Set<(event: any) => void>>()
+    addEventListener(name: string, fn: (event: any) => void) { const set = this.listeners.get(name) ?? new Set(); set.add(fn); this.listeners.set(name, set) }
+    removeEventListener(name: string, fn: (event: any) => void) { this.listeners.get(name)?.delete(fn) }
+    closest(selector?: string) { return selector === 'button' || selector === 'summary' ? this : null }
+    contains(element: unknown) { return element !== null }
+    querySelector() { return null }
+    focus() {}
+    setSelectionRange(start: number, end: number) { this.selectionStart=start; this.selectionEnd=end }
+  }
+
+  function installFakePage(fields: Record<string, FakeElement> = {}, main?: FakeElement) {
+    const page = new FakeElement()
+    if(main)(page as any).querySelector=(selector:string)=>selector==='.wb-main'?main:null
+    root.document = {getElementById:(id:string)=>id==='workbench-root'?page:fields[id]??null,activeElement:null,createElement:()=>new FakeElement()}
+    root.window = {}
+    vi.stubGlobal('Element',FakeElement)
+    return page
+  }
+
+  it('does not surface a rejected stale detail request on the newly selected task', async () => {
+    vi.useFakeTimers()
+    const page=installFakePage()
+    const first={id:'FIRST',title:'First',path:'/one',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const second={...first,id:'SECOND',title:'Second',path:'/two'}
+    let rejectFirst!:(reason?:unknown)=>void
+    const pendingFirst=new Promise((_resolve,reject)=>{rejectFirst=reject})
+    const invokeWorkbenchApi=vi.fn((_method:string,path:string)=>path==='/v1/workbench'?Promise.resolve({tasks:[second,first],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}):path.includes('FIRST')?pendingFirst:Promise.resolve({task:second,events:[],artifacts:[]}))
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    const click=[...(page.listeners.get('click')??[])][0]!
+    const firstButton=new FakeElement();firstButton.dataset.taskId='FIRST'
+    const stale=click({target:firstButton});await Promise.resolve()
+    const secondButton=new FakeElement();secondButton.dataset.taskId='SECOND'
+    await click({target:secondButton})
+    rejectFirst(new Error('FIRST detail failed'));await stale
+    expect(controller.state.detail?.task.id).toBe('SECOND')
+    expect(controller.state.error).toBe('')
+    stopWorkbenchPolling()
+  })
+
+  it('keeps the visible task and its control target atomic while another detail loads', async () => {
+    vi.useFakeTimers()
+    const page=installFakePage()
+    const first={id:'FIRST',title:'First',path:'/one',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
+    const second={...first,id:'SECOND',title:'Second',path:'/two'}
+    let finishSecond!:(value:unknown)=>void
+    const pendingSecond=new Promise(resolve=>{finishSecond=resolve})
+    let finishCancel!:(value:unknown)=>void
+    const pendingCancel=new Promise(resolve=>{finishCancel=resolve})
+    const invokeWorkbenchApi=vi.fn((method:string,path:string,body?:unknown)=>method==='POST'?pendingCancel:path==='/v1/workbench'?Promise.resolve({tasks:[first,second],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}):path.includes('SECOND')?pendingSecond:Promise.resolve({task:first,events:[],artifacts:[]}))
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    const click=[...(page.listeners.get('click')??[])][0]!
+    const secondButton=new FakeElement();secondButton.dataset.taskId='SECOND'
+    const selecting=click({target:secondButton});await Promise.resolve()
+    const cancel=new FakeElement();cancel.dataset.action='cancel'
+    const cancelling=click({target:cancel});await Promise.resolve()
+    expect(controller.state.selectedId).toBe('FIRST')
+    expect(invokeWorkbenchApi).toHaveBeenCalledWith('POST','/v1/workbench/cancel',{id:'FIRST'})
+    finishSecond({task:second,events:[],artifacts:[]});await selecting
+    finishCancel({task:first});await cancelling
+    expect(controller.state.selectedId).toBe('SECOND')
+    expect(controller.state.detail?.task.id).toBe('SECOND')
+    stopWorkbenchPolling()
+  })
+
+  it('keeps a new-task draft while the create form is replaced by task loading', async () => {
+    vi.useFakeTimers()
+    const pathField=new FakeElement();pathField.id='wb-path'
+    const textField=new FakeElement();textField.id='wb-create-text'
+    const titleField=new FakeElement();titleField.id='wb-title'
+    const providerField=new FakeElement();providerField.id='wb-provider'
+    const fields:Record<string,FakeElement>={'wb-create-form':new FakeElement(),'wb-path':pathField,'wb-create-text':textField,'wb-title':titleField,'wb-provider':providerField}
+    const page=new FakeElement()
+    root.document={
+      getElementById:(id:string)=>id==='workbench-root'?page:page.innerHTML.includes(`id="${id}"`)?fields[id]??null:null,
+      activeElement:null,
+      createElement:()=>new FakeElement(),
+    }
+    root.window={}
+    vi.stubGlobal('Element',FakeElement)
+    const task={id:'TASK',title:'Existing task',path:'/existing',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    let finishDetail!:(value:unknown)=>void
+    const pendingDetail=new Promise(resolve=>{finishDetail=resolve})
+    const invokeWorkbenchApi=vi.fn((_method:string,path:string)=>path==='/v1/workbench'?Promise.resolve({tasks:[],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}):pendingDetail)
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000});for(let i=0;i<5;i++)await Promise.resolve()
+    pathField.value='/draft/project';textField.value='Prepare a report';titleField.value='Draft title';providerField.value='codex'
+    const click=[...(page.listeners.get('click')??[])][0]!
+    const taskButton=new FakeElement();taskButton.dataset.taskId='TASK'
+    const selecting=click({target:taskButton});await Promise.resolve()
+    expect(page.innerHTML).toContain('正在打开任务')
+    pathField.value='';textField.value='';titleField.value='';providerField.value=''
+    finishDetail({task,events:[],artifacts:[]});await selecting
+    const newButton=new FakeElement();newButton.dataset.action='new-task';await click({target:newButton})
+    expect(pathField.value).toBe('/draft/project')
+    expect(textField.value).toBe('Prepare a report')
+    expect(titleField.value).toBe('Draft title')
+    expect(providerField.value).toBe('codex')
+    stopWorkbenchPolling()
+  })
+
+  it('posts the selected permission request and task decision', async () => {
+    vi.useFakeTimers()
+    const page=installFakePage()
+    const task={id:'TASK',title:'Task',path:'/tmp',providerId:'claude',status:'running',createdAt:1,updatedAt:2,error:null}
+    const permission={id:'REQ-2',taskId:'TASK',tool:'Shell',description:'Run tests',createdAt:3}
+    const invokeWorkbenchApi=vi.fn(async(method:string,path:string)=>method==='POST'?{task}:path==='/v1/workbench'?{tasks:[task],providers:[{id:'claude',displayName:'Claude'}],defaultProvider:'claude',canWechat:false}:{task,events:[],artifacts:[],permissions:[permission]})
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    expect(controller.state.selectedId).toBe('TASK')
+    const button=new FakeElement();button.dataset={action:'allow-permission',requestId:'REQ-2'}
+    page.listeners.get('click')?.forEach(fn=>fn({target:button}));await vi.runAllTicks()
+    expect(invokeWorkbenchApi).toHaveBeenCalledWith('POST','/v1/workbench/permission',{id:'TASK',requestId:'REQ-2',decision:'allow'})
+    stopWorkbenchPolling()
+  })
+
+  it('ignores an artifact response after another task is selected', async () => {
+    vi.useFakeTimers()
+    const page=installFakePage()
+    const firstTask={id:'FIRST',title:'First',path:'/one',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const secondTask={...firstTask,id:'SECOND',title:'Second',path:'/two'}
+    const artifact={id:'FILE',taskId:'FIRST',name:'report.txt',mime:'text/plain',size:4,sha256:'hash',createdAt:3,approvedAt:null}
+    let finishArtifact!:(value:unknown)=>void
+    const pendingArtifact=new Promise(resolve=>{finishArtifact=resolve})
+    const invokeWorkbenchApi=vi.fn((_method:string,path:string)=>{
+      if(path==='/v1/workbench')return Promise.resolve({tasks:[firstTask,secondTask],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false})
+      if(path.includes('/artifact'))return pendingArtifact
+      if(path.includes('SECOND'))return Promise.resolve({task:secondTask,events:[],artifacts:[]})
+      return Promise.resolve({task:firstTask,events:[],artifacts:[artifact]})
+    })
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!
+    for(let i=0;i<5;i++)await Promise.resolve()
+    expect(controller.state.selectedArtifactId).toBe('FILE')
+    const click=[...(page.listeners.get('click')??[])][0]!
+    const preview=new FakeElement();preview.dataset.action='preview-artifact'
+    const previewing=click({target:preview});await Promise.resolve()
+    const second=new FakeElement();second.dataset.taskId='SECOND'
+    await click({target:second})
+    finishArtifact({name:'report.txt',mime:'text/plain',contentBase64:'ZGF0YQ==',size:4,sha256:'hash'});await previewing
+    expect(controller.state.detail?.task.id).toBe('SECOND')
+    expect(controller.state.preview).toBeNull()
+    stopWorkbenchPolling()
+  })
+
+  it('does not surface a rejected stale artifact request on the newly selected task', async () => {
+    vi.useFakeTimers()
+    const page=installFakePage()
+    const first={id:'FIRST',title:'First',path:'/one',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const second={...first,id:'SECOND',title:'Second',path:'/two'}
+    const artifact={id:'FILE',taskId:'FIRST',name:'report.txt',mime:'text/plain',size:4,sha256:'hash',createdAt:3,approvedAt:null}
+    let rejectArtifact!:(reason?:unknown)=>void
+    const pendingArtifact=new Promise((_resolve,reject)=>{rejectArtifact=reject})
+    const invokeWorkbenchApi=vi.fn((_method:string,path:string)=>path==='/v1/workbench'?Promise.resolve({tasks:[first,second],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}):path.includes('/artifact')?pendingArtifact:path.includes('SECOND')?Promise.resolve({task:second,events:[],artifacts:[]}):Promise.resolve({task:first,events:[],artifacts:[artifact]}))
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    const click=[...(page.listeners.get('click')??[])][0]!
+    const preview=new FakeElement();preview.dataset.action='preview-artifact'
+    const stale=click({target:preview});await Promise.resolve()
+    const secondButton=new FakeElement();secondButton.dataset.taskId='SECOND'
+    await click({target:secondButton})
+    rejectArtifact(new Error('FIRST artifact failed'));await stale
+    expect(controller.state.detail?.task.id).toBe('SECOND')
+    expect(controller.state.error).toBe('')
+    stopWorkbenchPolling()
+  })
+
+  it('keeps the user on a task selected while an earlier mutation completes', async () => {
+    vi.useFakeTimers()
+    const followup=new FakeElement();followup.id='wb-followup-text';followup.value='continue A'
+    const page=installFakePage({'wb-followup-text':followup})
+    const first={id:'FIRST',title:'First',path:'/one',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const second={...first,id:'SECOND',title:'Second',path:'/two'}
+    let finishMutation!:(value:unknown)=>void
+    const pendingMutation=new Promise(resolve=>{finishMutation=resolve})
+    const invokeWorkbenchApi=vi.fn((method:string,path:string)=>method==='POST'?pendingMutation:path==='/v1/workbench'?Promise.resolve({tasks:[first,second],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}):path.includes('SECOND')?Promise.resolve({task:second,events:[],artifacts:[]}):Promise.resolve({task:first,events:[],artifacts:[]}))
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    const submit=[...(page.listeners.get('submit')??[])][0]!
+    const form=new FakeElement();form.tagName='FORM';form.dataset.action='continue'
+    const mutation=submit({target:form,preventDefault(){}});await Promise.resolve()
+    const click=[...(page.listeners.get('click')??[])][0]!
+    const secondButton=new FakeElement();secondButton.dataset.taskId='SECOND'
+    await click({target:secondButton})
+    finishMutation({task:first});await mutation
+    expect(controller.state.selectedId).toBe('SECOND')
+    expect(controller.state.detail?.task.id).toBe('SECOND')
+    stopWorkbenchPolling()
+  })
+
+  it('does not surface an earlier task mutation rejection after navigation', async () => {
+    vi.useFakeTimers()
+    const followup=new FakeElement();followup.id='wb-followup-text';followup.value='continue A'
+    const page=installFakePage({'wb-followup-text':followup})
+    const first={id:'FIRST',title:'First',path:'/one',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const second={...first,id:'SECOND',title:'Second',path:'/two'}
+    let rejectMutation!:(reason?:unknown)=>void
+    const pendingMutation=new Promise((_resolve,reject)=>{rejectMutation=reject})
+    const invokeWorkbenchApi=vi.fn((method:string,path:string)=>method==='POST'?pendingMutation:path==='/v1/workbench'?Promise.resolve({tasks:[first,second],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}):path.includes('SECOND')?Promise.resolve({task:second,events:[],artifacts:[]}):Promise.resolve({task:first,events:[],artifacts:[]}))
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    const submit=[...(page.listeners.get('submit')??[])][0]!
+    const form=new FakeElement();form.tagName='FORM';form.dataset.action='continue'
+    const mutation=submit({target:form,preventDefault(){}});await Promise.resolve()
+    const click=[...(page.listeners.get('click')??[])][0]!
+    const secondButton=new FakeElement();secondButton.dataset.taskId='SECOND';await click({target:secondButton})
+    rejectMutation(new Error('FIRST continue failed'));await mutation
+    expect(controller.state.detail?.task.id).toBe('SECOND')
+    expect(controller.state.error).toBe('')
+    stopWorkbenchPolling()
+  })
+
+  it('uses navigation generation to avoid an extra A reload after A to B to A navigation', async () => {
+    vi.useFakeTimers()
+    const followup=new FakeElement();followup.id='wb-followup-text';followup.value='continue A'
+    const page=installFakePage({'wb-followup-text':followup})
+    const first={id:'FIRST',title:'First',path:'/one',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const second={...first,id:'SECOND',title:'Second',path:'/two'}
+    let finishMutation!:(value:unknown)=>void
+    const pendingMutation=new Promise(resolve=>{finishMutation=resolve})
+    const invokeWorkbenchApi=vi.fn((method:string,path:string)=>method==='POST'?pendingMutation:path==='/v1/workbench'?Promise.resolve({tasks:[first,second],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}):path.includes('SECOND')?Promise.resolve({task:second,events:[],artifacts:[]}):Promise.resolve({task:first,events:[],artifacts:[]}))
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000});for(let i=0;i<5;i++)await Promise.resolve()
+    const submit=[...(page.listeners.get('submit')??[])][0]!
+    const form=new FakeElement();form.tagName='FORM';form.dataset.action='continue'
+    const mutation=submit({target:form,preventDefault(){}});await Promise.resolve()
+    const click=[...(page.listeners.get('click')??[])][0]!
+    const secondButton=new FakeElement();secondButton.dataset.taskId='SECOND';await click({target:secondButton})
+    const firstButton=new FakeElement();firstButton.dataset.taskId='FIRST';await click({target:firstButton})
+    finishMutation({task:first});await mutation
+    expect(invokeWorkbenchApi.mock.calls.filter(([method,path])=>method==='GET'&&String(path).includes('id=FIRST'))).toHaveLength(3)
+    stopWorkbenchPolling()
+  })
+
+  it('clears only the submitted followup so text typed during the request survives', async () => {
+    vi.useFakeTimers()
+    const followup=new FakeElement();followup.id='wb-followup-text';followup.value='first request'
+    const page=installFakePage({'wb-followup-text':followup})
+    const task={id:'TASK',title:'Task',path:'/tmp',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    let finishContinue!:(value:unknown)=>void
+    const pendingContinue=new Promise(resolve=>{finishContinue=resolve})
+    const invokeWorkbenchApi=vi.fn((method:string,path:string)=>method==='POST'?pendingContinue:path==='/v1/workbench'?Promise.resolve({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}):Promise.resolve({task,events:[],artifacts:[]}))
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000});await vi.runAllTicks()
+    const form=new FakeElement();form.tagName='FORM';form.dataset.action='continue'
+    page.listeners.get('submit')?.forEach(fn=>fn({target:form,preventDefault(){}}));await vi.runAllTicks()
+    followup.value='second request'
+    finishContinue({task});await vi.runAllTicks()
+    expect(followup.value).toBe('second request')
+    stopWorkbenchPolling()
+  })
+
+  it('clears a successfully submitted followup when it has not been edited', async () => {
+    vi.useFakeTimers()
+    const followup=new FakeElement();followup.id='wb-followup-text';followup.value='send this'
+    const page=installFakePage({'wb-followup-text':followup})
+    const task={id:'TASK',title:'Task',path:'/tmp',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const invokeWorkbenchApi=vi.fn(async(method:string,path:string)=>method==='POST'?{task}:path==='/v1/workbench'?{tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}:{task,events:[],artifacts:[]})
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000});for(let i=0;i<5;i++)await Promise.resolve()
+    const form=new FakeElement();form.tagName='FORM';form.dataset.action='continue'
+    const submit=[...(page.listeners.get('submit')??[])][0]!
+    await submit({target:form,preventDefault(){}})
+    expect(followup.value).toBe('')
+    stopWorkbenchPolling()
+  })
+
+  it('retains a followup when submission fails so it can be retried', async () => {
+    vi.useFakeTimers()
+    const followup=new FakeElement();followup.id='wb-followup-text';followup.value='retry me'
+    const page=installFakePage({'wb-followup-text':followup})
+    const task={id:'TASK',title:'Task',path:'/tmp',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const invokeWorkbenchApi=vi.fn(async(method:string,path:string)=>{if(method==='POST')throw new Error('offline');return path==='/v1/workbench'?{tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}:{task,events:[],artifacts:[]}})
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    const form=new FakeElement();form.tagName='FORM';form.dataset.action='continue'
+    const submit=[...(page.listeners.get('submit')??[])][0]!
+    await submit({target:form,preventDefault(){}})
+    expect(followup.value).toBe('retry me')
+    expect(controller.state.error).toBe('offline')
+    stopWorkbenchPolling()
+  })
+
+  it('opens an unseen task at the latest messages and preserves reading positions thereafter', async () => {
+    vi.useFakeTimers()
+    const main=new FakeElement();main.scrollHeight=1200
+    installFakePage({},main)
+    const first={id:'FIRST',title:'First',path:'/one',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const second={...first,id:'SECOND',title:'Second',path:'/two'}
+    let revision=0
+    const invokeWorkbenchApi=vi.fn(async(_method:string,path:string)=>path==='/v1/workbench'?{tasks:[first,second],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}:path.includes('SECOND')?{task:second,events:[{id:`b${revision++}`,taskId:'SECOND',kind:'text',text:'B',createdAt:3}],artifacts:[]}:{task:first,events:[{id:`a${revision++}`,taskId:'FIRST',kind:'text',text:'A',createdAt:3}],artifacts:[]})
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    expect(main.scrollTop).toBe(1200)
+    main.scrollTop=210
+    await controller.refresh()
+    expect(main.scrollTop).toBe(210)
+    await controller.selectTask('SECOND')
+    expect(main.scrollTop).toBe(1200)
+    main.scrollTop=430
+    await controller.selectTask('FIRST')
+    expect(main.scrollTop).toBe(210)
+    stopWorkbenchPolling()
+  })
+
+  it('restores focused draft fields without moving the saved conversation scroll', async () => {
+    vi.useFakeTimers()
+    const main=new FakeElement();main.scrollHeight=1200
+    const followup=new FakeElement();followup.id='wb-followup-text';followup.value='working draft'
+    installFakePage({'wb-followup-text':followup},main)
+    const task={id:'TASK',title:'Task',path:'/tmp',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    let revision=0
+    const invokeWorkbenchApi=vi.fn(async(_method:string,path:string)=>path==='/v1/workbench'?{tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}:{task,events:[{id:`reply-${revision++}`,taskId:'TASK',kind:'text',text:'Reply',createdAt:3}],artifacts:[]})
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    main.scrollTop=175
+    ;(root.document as any).activeElement=followup
+    let focusOptions:FocusOptions|undefined
+    ;(followup as any).focus=(options?:FocusOptions)=>{focusOptions=options;if(!options?.preventScroll)main.scrollTop=main.scrollHeight}
+    await controller.refresh()
+    expect(focusOptions).toEqual({preventScroll:true})
+    expect(main.scrollTop).toBe(175)
+    stopWorkbenchPolling()
+  })
+
+  it('does not move followup focus from one task to another task with the same field id', async () => {
+    vi.useFakeTimers()
+    const followup=new FakeElement();followup.id='wb-followup-text';followup.value='Draft for A'
+    const page=installFakePage({'wb-followup-text':followup})
+    const first={id:'FIRST',title:'First',path:'/one',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const second={...first,id:'SECOND',title:'Second',path:'/two'}
+    const invokeWorkbenchApi=vi.fn(async(_method:string,path:string)=>path==='/v1/workbench'?{tasks:[first,second],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}:path.includes('SECOND')?{task:second,events:[],artifacts:[]}:{task:first,events:[],artifacts:[]})
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    ;(root.document as any).activeElement=followup
+    let focusCalls=0
+    ;(followup as any).focus=()=>{focusCalls++}
+    const click=[...(page.listeners.get('click')??[])][0]!
+    const secondButton=new FakeElement();secondButton.dataset.taskId='SECOND';await click({target:secondButton})
+    expect(controller.state.selectedId).toBe('SECOND')
+    expect(focusCalls).toBe(0)
+    stopWorkbenchPolling()
+  })
+
+  it('restores the selected task and its latest draft after leaving and returning to workbench', async () => {
+    vi.useFakeTimers()
+    const followup=new FakeElement();followup.id='wb-followup-text'
+    const page=installFakePage({'wb-followup-text':followup})
+    const first={id:'FIRST',title:'First',path:'/one',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const second={...first,id:'SECOND',title:'Second',path:'/two'}
+    const invokeWorkbenchApi=vi.fn(async(_method:string,path:string)=>path==='/v1/workbench'?{tasks:[first,second],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}:path.includes('SECOND')?{task:second,events:[],artifacts:[]}:{task:first,events:[],artifacts:[]})
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const firstMount=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    await firstMount.selectTask('SECOND')
+    followup.value='Keep this B draft'
+    stopWorkbenchPolling()
+    followup.value=''
+
+    const secondMount=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    expect(secondMount.state.selectedId).toBe('SECOND')
+    expect(followup.value).toBe('Keep this B draft')
+    stopWorkbenchPolling()
+  })
+
+  it('restores new-task mode and its latest draft after leaving and returning to workbench', async () => {
+    vi.useFakeTimers()
+    const form=new FakeElement();form.id='wb-create-form'
+    const pathField=new FakeElement();pathField.id='wb-path'
+    const textField=new FakeElement();textField.id='wb-create-text'
+    const page=installFakePage({'wb-create-form':form,'wb-path':pathField,'wb-create-text':textField})
+    const task={id:'TASK',title:'Task',path:'/one',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const invokeWorkbenchApi=vi.fn(async(_method:string,path:string)=>path==='/v1/workbench'?{tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}:{task,events:[],artifacts:[]})
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const firstMount=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    firstMount.newTask()
+    pathField.value='/new/project';textField.value='New task draft'
+    stopWorkbenchPolling()
+    pathField.value='';textField.value=''
+
+    const secondMount=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    expect(secondMount.state.selectedId).toBeNull()
+    expect(secondMount.state.detail).toBeNull()
+    expect(pathField.value).toBe('/new/project')
+    expect(textField.value).toBe('New task draft')
+    stopWorkbenchPolling()
   })
 })
 

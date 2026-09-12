@@ -3,9 +3,9 @@ import type { Db } from '../../lib/db'
 import { loadAgentConfig, modelForProvider } from '../../lib/agent-config'
 import { findCodexBinary } from '../../lib/find-codex-binary'
 import { createProviderRegistry } from '../../core/provider-registry'
-import { createClaudeAgentProvider, tierProfileToClaudeSdkOpts } from '../../core/claude-agent-provider'
-import { createCodexAgentProvider } from '../../core/codex-agent-provider'
-import { makeCanUseTool, type PermissionRelayDeps } from '../../core/permission-relay'
+import { createClaudeAgentProvider, tierProfileToClaudeSdkOpts, makeWorkbenchClaudeCanUseTool } from '../../core/claude-agent-provider'
+import { createWorkbenchCodexProvider } from '../../core/workbench/codex-app-server'
+import type { PermissionRelayDeps } from '../../core/permission-relay'
 import { TIER_PROFILES } from '../../core/user-tier'
 import { makeWorkbenchStore } from '../../core/workbench/store'
 import { makeWorkbenchService } from '../../core/workbench/service'
@@ -37,23 +37,19 @@ export function wireWorkbench(opts: {
   const registry=createProviderRegistry()
   const claude=opts.boot.registry.get('claude')
   if (claude) registry.register('claude',createClaudeAgentProvider({
-    sdkOptionsForProject(alias,path,tier,chatId,env,instructions) {
+    sdkOptionsForProject(alias,path,tier,chatId,env,instructions,context) {
       const base=opts.boot.sdkOptionsForProject(alias,path,tier,chatId,env,instructions)
-      const permit=makeCanUseTool({
-        askUser:opts.askUser,initiatingChatId:() => chatId,
-        adminChatId:() => ownerChatId() === chatId ? chatId : null,
-        resolveTier:() => 'trusted',mode:() => 'solo',provider:'claude',permissionMode:'strict',log:opts.log,
-      })
+      const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission)
       return workbenchClaudeOptions(base,instructions ?? '',permit)
     },
   }),claude.opts)
   const codex=opts.boot.registry.get('codex')
   const binary=codex ? findCodexBinary() : null
-  if (codex && binary) registry.register('codex',createCodexAgentProvider({
+  if (codex && binary) registry.register('codex',createWorkbenchCodexProvider({
     codexPathOverride:binary,
     model:modelForProvider(loadAgentConfig(opts.stateDir),'codex'),
-    // Task sessions do not receive the daemon's messaging/private-memory MCPs.
-    mcpServers:{},dangerouslyBypassApprovalsAndSandbox:false,
+    // The adapter discovers and explicitly disables inherited MCPs before
+    // starting a private app-server with native task-scoped approval requests.
   }),codex.opts)
   return makeWorkbenchService({
     store:makeWorkbenchStore(opts.db),registry,stateDir:opts.stateDir,ownerChatId,

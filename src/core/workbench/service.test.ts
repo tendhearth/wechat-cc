@@ -10,11 +10,11 @@ import { makeWorkbenchService, type WorkbenchService } from './service'
 
 let root: string, project: string, db: Db, service: WorkbenchService
 const result: AgentEvent = { kind: 'result', sessionId: 'session-one', numTurns: 1, durationMs: 1 }
-function setup(provider: AgentProvider, owner = () => 'owner') {
+function setup(provider: AgentProvider, owner: () => string | null = () => 'owner', permissionTimeoutMs?: number) {
   const registry = createProviderRegistry()
   registry.register('claude', provider, { displayName: 'Claude', canResume: () => true })
   registry.register('codex', provider, { displayName: 'Codex', canResume: () => true })
-  service = makeWorkbenchService({ store: makeWorkbenchStore(db), registry, stateDir: root, ownerChatId: owner })
+  service = makeWorkbenchService({ store: makeWorkbenchStore(db), registry, stateDir: root, ownerChatId: owner, permissionTimeoutMs })
   return service
 }
 function create(text = '整理周报') { return service.create({ path: project, providerId: 'claude', text }) }
@@ -144,8 +144,118 @@ describe('persistent workbench', () => {
     const two = create(); await settle(two.id)
     expect(contexts.map(c => c.resumeSessionId)).toEqual([undefined, 'session-one', undefined])
     expect(contexts.every(c => c.permissionMode === 'strict')).toBe(true)
+    expect(contexts[0]!.requestPermission).not.toBe(contexts[1]!.requestPermission)
+    await expect(contexts[0]!.requestPermission!({tool:'Bash',description:'stale run'})).resolves.toBe(false)
     expect(contexts[0]!.appendInstructions).toContain(one.id)
     expect(contexts[2]!.appendInstructions).not.toContain(one.id)
+  })
+
+  it('lets the admin desktop resolve an ownerless active request once', async () => {
+    let requestPermission: NonNullable<SpawnContext['requestPermission']> | undefined
+    setup({ async spawn(_p, ctx) { requestPermission=ctx.requestPermission; return {
+      async *dispatch() {
+        const allowed = await requestPermission!({ tool:'Bash', description:'remove generated output' })
+        yield { kind:'text', text:allowed ? 'allowed' : 'denied' }
+        yield result
+      }, async close() {},
+    } } }, () => null)
+    const task=create()
+    await expect.poll(() => service.detail(task.id).permissions).toHaveLength(1)
+    const requestId=service.detail(task.id).permissions[0]!.id
+    expect(service.resolvePermission(task.id,requestId,'allow')).toBeUndefined()
+    expect(() => service.resolvePermission(task.id,requestId,'deny')).toThrow('permission_stale')
+    await settle(task.id)
+    expect(service.detail(task.id).events.some(e => e.kind==='text' && e.text==='allowed')).toBe(true)
+  })
+
+  it('shows only the active task permission count in the list and clears it after resolve or cancel', async () => {
+    setup({ async spawn(_p, ctx) { return {
+      async *dispatch() {
+        await ctx.requestPermission!({ tool:'Bash', description:'remove generated output' })
+        yield result
+      }, async cancel() {}, async close() {},
+    } } }, () => null)
+
+    const resolved=create()
+    await expect.poll(() => service.list().tasks.find(task => task.id===resolved.id)?.pendingPermissionCount).toBe(1)
+    const requestId=service.detail(resolved.id).permissions[0]!.id
+    service.resolvePermission(resolved.id,requestId,'allow')
+    expect(service.list().tasks.find(task => task.id===resolved.id)?.pendingPermissionCount).toBe(0)
+    await settle(resolved.id)
+
+    const cancelled=create()
+    await expect.poll(() => service.list().tasks.find(task => task.id===cancelled.id)?.pendingPermissionCount).toBe(1)
+    expect(service.list().tasks.find(task => task.id===resolved.id)?.pendingPermissionCount).toBe(0)
+    await service.cancel(cancelled.id)
+    expect(service.list().tasks.every(task => task.pendingPermissionCount===0)).toBe(true)
+    await settle(cancelled.id)
+  })
+
+  it('denies, audits, and clears a pending request on explicit denial and expiry', async () => {
+    setup({ async spawn(_p, ctx) { return { async *dispatch() {
+      const allowed=await ctx.requestPermission!({tool:'Bash',description:'remove output'})
+      yield {kind:'text',text:allowed?'allowed':'denied'}; yield result
+    },async close(){} } } }, () => null, 5)
+    const task=create()
+    await settle(task.id)
+    const detail=service.detail(task.id)
+    expect(detail.permissions).toEqual([])
+    expect(detail.events.filter(e=>e.kind==='system').map(e=>e.text).join('\n')).toMatch(/权限请求[\s\S]*权限结果.*expired/)
+    expect(detail.events.some(e=>e.kind==='text'&&e.text==='denied')).toBe(true)
+  })
+
+  it('records an explicit denial and never persists the pending card', async () => {
+    setup({ async spawn(_p, ctx) { return { async *dispatch() {
+      const allowed=await ctx.requestPermission!({tool:'Bash',description:'remove output'})
+      yield {kind:'text',text:allowed?'allowed':'denied'}; yield result
+    },async close(){} } } }, () => null)
+    const task=create()
+    await expect.poll(() => service.detail(task.id).permissions).toHaveLength(1)
+    service.resolvePermission(task.id,service.detail(task.id).permissions[0]!.id,'deny')
+    await settle(task.id)
+    const detail=service.detail(task.id)
+    expect(detail.permissions).toEqual([])
+    expect(detail.events.some(e=>e.kind==='system'&&e.text.includes('deny'))).toBe(true)
+    expect(detail.events.some(e=>e.kind==='text'&&e.text==='denied')).toBe(true)
+    await service.shutdown()
+    const reopened=makeWorkbenchService({
+      store:makeWorkbenchStore(db),registry:createProviderRegistry(),stateDir:root,ownerChatId:()=>null,
+    })
+    expect(reopened.detail(task.id).permissions).toEqual([])
+    expect(() => reopened.resolvePermission(task.id,'123e4567-e89b-42d3-a456-426614174000','allow')).toThrow('permission_stale')
+    await reopened.shutdown()
+  })
+
+  it('denies a detached pending callback when the provider finishes', async () => {
+    let answer: Promise<boolean> | undefined
+    setup({ async spawn(_p, ctx) { return { async *dispatch() {
+      answer=ctx.requestPermission!({tool:'Bash',description:'late request'})
+      yield result
+    },async close(){} } } }, () => null)
+    const task=create(); await settle(task.id)
+    await expect(answer!).resolves.toBe(false)
+    expect(service.detail(task.id).permissions).toEqual([])
+    expect(service.detail(task.id).events.some(e=>e.kind==='system'&&e.text.includes('ended'))).toBe(true)
+  })
+
+  it('rejects cross-task, stale-run, and cancelled permission responses', async () => {
+    let firstRequest: string | undefined
+    setup({ async spawn(_p, ctx) { return { async *dispatch() {
+      await ctx.requestPermission!({tool:'Bash',description:'remove output'})
+      yield result
+    },async cancel(){},async close(){} } } }, () => null)
+    const one=create()
+    await expect.poll(() => service.detail(one.id).permissions).toHaveLength(1)
+    firstRequest=service.detail(one.id).permissions[0]!.id
+    await service.cancel(one.id); await settle(one.id)
+    expect(service.detail(one.id).permissions).toEqual([])
+    expect(() => service.resolvePermission(one.id,firstRequest!,'allow')).toThrow('permission_stale')
+
+    const two=create()
+    await expect.poll(() => service.detail(two.id).permissions).toHaveLength(1)
+    const secondRequest=service.detail(two.id).permissions[0]!.id
+    expect(() => service.resolvePermission(one.id,secondRequest,'allow')).toThrow('permission_stale')
+    await service.cancel(two.id); await settle(two.id)
   })
 
   it('replays only prior task history when a failed turn never supplied a session id', async () => {

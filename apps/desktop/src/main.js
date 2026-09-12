@@ -50,6 +50,7 @@ import { loadAtelierGallery } from "./modules/atelier-gallery.js"
 import { mountCurrentActivity, createLifeArchive } from "./modules/cc-life.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
 import { initWorkbenchPage, stopWorkbenchPolling } from "./modules/workbench.js"
+import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
 
 const state = {
   setup: /** @type {SetupQrJson | null} */ (null),
@@ -70,6 +71,14 @@ const state = {
   updateProbed: false,
   connectionIntent: /** @type {"disconnected" | null} */ (null),
 }
+
+const dashWindow = /** @type {HTMLElement|null} */ (document.querySelector('.dash-window'))
+const dashRail = /** @type {HTMLElement|null} */ (document.getElementById('dash-global-rail'))
+const workbenchNavToggle = /** @type {HTMLElement|null} */ (document.getElementById('workbench-nav-toggle'))
+const workbenchNavScrim = /** @type {HTMLElement|null} */ (document.getElementById('workbench-nav-scrim'))
+const workbenchNavigation = dashWindow && dashRail && workbenchNavToggle && workbenchNavScrim
+  ? createWorkbenchNavigation({ shell: dashWindow, rail: dashRail, toggle: workbenchNavToggle, scrim: workbenchNavScrim })
+  : null
 
 // window.__TAURI__ is injected by the Tauri runtime and not part of the
 // standard Window type. Cast to any to access optional Tauri fields.
@@ -450,6 +459,12 @@ function switchPane(name) {
     name = "overview"
     document.querySelector(".cc-home-details")?.removeAttribute("open")
   }
+  const currentPane = /** @type {HTMLElement|null} */ (document.querySelector('.dash-pane[data-pane]:not([hidden])'))
+  if (isCurrentWorkbenchPane(name, currentPane)) {
+    workbenchNavigation?.setWorkbenchActive(true)
+    return
+  }
+  workbenchNavigation?.setWorkbenchActive(name === "workbench")
   document.querySelector(".cc-life-nav-more")?.removeAttribute("open")
   const overviewWasHidden = name === "overview" && !!(/** @type {HTMLElement | null} */ (document.querySelector('.dash-pane[data-pane="overview"]')))?.hidden
   const backstagePanes = new Set(["sessions", "plugins", "logs"])

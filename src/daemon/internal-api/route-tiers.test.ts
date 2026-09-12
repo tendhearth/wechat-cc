@@ -20,6 +20,10 @@ describe('route-tiers', () => {
     expect(minTierFor('GET /v1/model')).toBe('admin')
   })
 
+  it('task permission decisions require admin', () => {
+    expect(minTierFor('POST /v1/workbench/permission')).toBe('admin')
+  })
+
   it('reply/health/memory-read are guest; broadcast/a2a are trusted', () => {
     expect(minTierFor('GET /v1/health')).toBe('guest')
     expect(minTierFor('POST /v1/wechat/reply')).toBe('guest')

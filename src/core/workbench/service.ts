@@ -3,6 +3,7 @@ import type { ProviderRegistry } from '../provider-registry'
 import { TIER_PROFILES, sessionAuthEnv } from '../user-tier'
 import { canonicalProject, collectArtifacts, outputDirectory, readArtifactSnapshot } from './artifacts'
 import { publicTask, type StoredTask, type Task, type TaskStatus, type WorkbenchStore } from './store'
+import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
 
 interface Options {
   store: WorkbenchStore
@@ -14,8 +15,9 @@ interface Options {
   revokeSessionToken?: (sessionKey: string) => void
   holdBusy?: (label: string) => () => void
   timeoutMs?: number
+  permissionTimeoutMs?: number
 }
-interface Active { id: string; cancelled: boolean; session?: AgentSession; done: Promise<void>; stop: Promise<null>; signalStop: () => void }
+interface Active { id: string; cancelled: boolean; session?: AgentSession; done: Promise<void>; stop: Promise<null>; signalStop: () => void; permissions: RunPermissions }
 export interface CreateTask { title?: string; path: string; providerId: string; text: string }
 
 function checkedText(text: string): string {
@@ -105,6 +107,7 @@ export function makeWorkbenchService(opts: Options) {
         ...(resume ? { resumeSessionId:resume } : {}),
         mcpEnv: sessionAuthEnv('trusted',token),
         appendInstructions:instructions,
+        requestPermission:(request,signal) => running.permissions.request(request,signal),
       })
       let spawnTimer: ReturnType<typeof setTimeout> | undefined
       let accepted = false
@@ -144,6 +147,7 @@ export function makeWorkbenchService(opts: Options) {
       finalStatus=running.cancelled ? 'cancelled' : 'failed'; finalError=running.cancelled ? null : message
       if (!running.cancelled) store.addEvent(task.id,'error',message)
     } finally {
+      running.permissions.rejectAll(running.cancelled ? 'cancelled' : 'ended')
       // Close the writer before capturing outputs; cancelled or failed runs can
       // still have useful partial files. Never release the lock while closing.
       let closeTimer: ReturnType<typeof setTimeout> | undefined
@@ -168,7 +172,18 @@ export function makeWorkbenchService(opts: Options) {
     store.update(task.id,'queued')
     let signalStop!: () => void
     const stop=new Promise<null>(resolve => { signalStop=() => resolve(null) })
-    const running: Active = { id:task.id,cancelled:false,done:Promise.resolve(),stop,signalStop }
+    const permissions=makeRunPermissions({
+      taskId:task.id,
+      timeoutMs:opts.permissionTimeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS,
+      audit:event => {
+        if (event.type === 'request') {
+          store.addEvent(task.id,'system',`权限请求：${event.permission.tool} · ${event.permission.description} · ${event.permission.id}`)
+        } else {
+          store.addEvent(task.id,'system',`权限结果：${event.permission.tool} · ${event.outcome} · ${event.permission.id}`)
+        }
+      },
+    })
+    const running: Active = { id:task.id,cancelled:false,done:Promise.resolve(),stop,signalStop,permissions }
     active = running
     // Reserve before yielding. Work begins after the HTTP acceptance response
     // can read the queued row; page lifetime never owns this coroutine.
@@ -178,9 +193,17 @@ export function makeWorkbenchService(opts: Options) {
   const service = {
     list() {
       const providers = SUPPORTED.flatMap(id => { const p=opts.registry.get(id); return p ? [{id,displayName:p.opts.displayName}] : [] })
-      return { tasks:store.list(), providers, defaultProvider:providers.find(p => p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null, canWechat:!!opts.ownerChatId() }
+      const pendingPermissionCount=active?.permissions.pending().length ?? 0
+      const tasks:Array<Task & {pendingPermissionCount?:number}>=store.list().map(task => ({
+        ...task,
+        pendingPermissionCount:active?.id===task.id ? pendingPermissionCount : 0,
+      }))
+      return { tasks, providers, defaultProvider:providers.find(p => p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null, canWechat:!!opts.ownerChatId() }
     },
-    detail(id: string) { return store.detail(id) },
+    detail(id: string) {
+      const detail=store.detail(id)
+      return { ...detail, permissions:active?.id === id ? active.permissions.pending() : [] }
+    },
     create(input: CreateTask): Task {
       ensureIdle()
       const text = checkedText(input.text)
@@ -202,6 +225,7 @@ export function makeWorkbenchService(opts: Options) {
       if (active?.id !== id) return publicTask(store.get(id))
       const running=active
       running.cancelled = true
+      running.permissions.rejectAll('cancelled')
       store.update(id,'cancelling')
       running.signalStop()
       // Best-effort interrupt; retain the lock until dispatch + close unwind.
@@ -219,6 +243,11 @@ export function makeWorkbenchService(opts: Options) {
       // Verify stored bytes as well as requested version before approval.
       service.artifact(id,artifactId)
       store.approve(id,artifactId,sha256)
+    },
+    resolvePermission(id: string, requestId: string, decision: PermissionDecision): void {
+      store.get(id)
+      if (decision !== 'allow' && decision !== 'deny') throw new Error('invalid_decision')
+      if (active?.id !== id || !active.permissions.resolve(requestId,decision)) throw new Error('permission_stale')
     },
     async handleWechat(chatId: string, text: string): Promise<string | null> {
       if (!opts.ownerChatId() || chatId !== opts.ownerChatId()) return null

@@ -19,6 +19,7 @@ function service(overrides: Record<string, unknown> = {}) {
     cancel: vi.fn(async () => ({ ...TASK, status: 'cancelling' })),
     artifact: vi.fn(() => ({ name: 'draft.md', mime: 'text/markdown', size: 5, sha256: 'a'.repeat(64), contentBase64: 'aGVsbG8=' })),
     approve: vi.fn(() => undefined),
+    resolvePermission: vi.fn(() => undefined),
     ...overrides,
   }
 }
@@ -56,6 +57,7 @@ describe('Workbench internal HTTP API', () => {
       'GET /v1/workbench', 'GET /v1/workbench/task', 'POST /v1/workbench/create',
       'POST /v1/workbench/continue', 'POST /v1/workbench/cancel',
       'GET /v1/workbench/artifact', 'POST /v1/workbench/approve',
+      'POST /v1/workbench/permission',
     ]
     for (const key of keys) expect(minTierFor(key)).toBe('admin')
     const response = await request('/v1/workbench', {}, trustedToken)
@@ -87,7 +89,7 @@ describe('Workbench internal HTTP API', () => {
     expect(await create.json()).toEqual({ task: TASK })
   })
 
-  it('serves all seven routes with the documented wire shapes and 202 mutations', async () => {
+  it('serves all eight routes with the documented wire shapes and 202 mutations', async () => {
     const workbench = service()
     const { request } = await start(workbench)
     const calls: Array<[string, RequestInit, number]> = [
@@ -98,11 +100,13 @@ describe('Workbench internal HTTP API', () => {
       ['/v1/workbench/cancel', { method: 'POST', body: JSON.stringify({ id: 'deadbeef' }) }, 202],
       ['/v1/workbench/artifact?id=deadbeef&artifactId=123e4567-e89b-12d3-a456-426614174000', {}, 200],
       ['/v1/workbench/approve', { method: 'POST', body: JSON.stringify({ id: 'deadbeef', artifactId: '123e4567-e89b-12d3-a456-426614174000', sha256: 'a'.repeat(64) }) }, 200],
+      ['/v1/workbench/permission', { method: 'POST', body: JSON.stringify({ id: 'deadbeef', requestId: '123e4567-e89b-42d3-a456-426614174000', decision: 'deny' }) }, 200],
     ]
     for (const [path, init, status] of calls) expect((await request(path, init)).status).toBe(status)
     expect(workbench.create).toHaveBeenCalledWith({ title: 'Draft', path: '/tmp/project', providerId: 'codex', text: 'write it' })
     expect(workbench.continueTask).toHaveBeenCalledWith('deadbeef', 'revise')
     expect(workbench.approve).toHaveBeenCalledWith('deadbeef', '123e4567-e89b-12d3-a456-426614174000', 'a'.repeat(64))
+    expect(workbench.resolvePermission).toHaveBeenCalledWith('deadbeef', '123e4567-e89b-42d3-a456-426614174000', 'deny')
   })
 
   it('rejects malformed identifiers and bounded create fields before calling the service', async () => {
@@ -114,6 +118,7 @@ describe('Workbench internal HTTP API', () => {
       ['/v1/workbench/create', { method: 'POST', body: JSON.stringify({ title: '', path: 'relative', providerId: 'other', text: ' ' }) }],
       ['/v1/workbench/create', { method: 'POST', body: JSON.stringify({ title: 'x'.repeat(121), path: '/tmp', providerId: 'claude', text: 'x'.repeat(20_001) }) }],
       ['/v1/workbench/approve', { method: 'POST', body: JSON.stringify({ id: 'deadbeef', artifactId: '123e4567-e89b-12d3-a456-426614174000', sha256: 'abc' }) }],
+      ['/v1/workbench/permission', { method: 'POST', body: JSON.stringify({ id: 'deadbeef', requestId: '../wrong', decision: 'always' }) }],
     ]
     for (const [path, init] of badRequests) {
       const response = await request(path, init)
@@ -124,16 +129,27 @@ describe('Workbench internal HTTP API', () => {
     expect(workbench.detail).not.toHaveBeenCalled()
     expect(workbench.artifact).not.toHaveBeenCalled()
     expect(workbench.approve).not.toHaveBeenCalled()
+    expect(workbench.resolvePermission).not.toHaveBeenCalled()
   })
 
   it.each([
     ['workbench_busy', 409], ['not_found', 404], ['unavailable_provider', 422],
-    ['invalid_text', 400], ['invalid_path', 400], ['artifact_changed', 409],
+    ['invalid_text', 400], ['invalid_path', 400], ['artifact_changed', 409], ['permission_stale', 409],
     ['secret backend detail', 500],
   ])('maps service error %s to %i without exposing unknown details', async (code, expected) => {
     const { request } = await start(service({ list: vi.fn(() => { throw new Error(code) }) }))
     const response = await request('/v1/workbench')
     expect(response.status).toBe(expected)
     expect(await response.json()).toEqual(expected === 500 ? { error: 'internal' } : { error: code })
+  })
+
+  it('returns 409 for a stale task permission response', async () => {
+    const workbench=service({resolvePermission:vi.fn(() => {throw new Error('permission_stale')})})
+    const {request}=await start(workbench)
+    const response=await request('/v1/workbench/permission',{
+      method:'POST',body:JSON.stringify({id:'deadbeef',requestId:'123e4567-e89b-42d3-a456-426614174000',decision:'allow'}),
+    })
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({error:'permission_stale'})
   })
 })

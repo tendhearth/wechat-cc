@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { createClaudeAgentProvider, tierProfileToClaudeSdkOpts } from './claude-agent-provider'
+import { createClaudeAgentProvider, makeWorkbenchClaudeCanUseTool, tierProfileToClaudeSdkOpts } from './claude-agent-provider'
 import type { AgentEvent } from './agent-provider'
 import { TIER_PROFILES } from './user-tier'
 
@@ -101,11 +101,71 @@ describe('claude-agent-provider', () => {
       mcpEnv: { WECHAT_SESSION_TIER: 'admin' },
       appendInstructions: 'SELF-HEAL-PROMPT',
     })
-    // (alias, path, tierProfile, chatId, mcpEnv, appendInstructions)
+    // The final context lets a task-only options builder consume its local
+    // permission callback without changing ordinary chat builders.
     expect(seen[0]).toEqual([
       'foo', '/tmp', TIER_PROFILES.admin, '_test',
       { WECHAT_SESSION_TIER: 'admin' }, 'SELF-HEAL-PROMPT',
+      expect.objectContaining({ chatId: '_test', appendInstructions: 'SELF-HEAL-PROMPT' }),
     ])
+  })
+
+  it('builds a task-only gate that preserves trusted solo strict policy and SDK abort', async () => {
+    const signal = new AbortController().signal
+    const requestPermission = vi.fn(async () => true)
+    const gate = makeWorkbenchClaudeCanUseTool(requestPermission)
+
+    await expect(gate('Read', { file_path: '/tmp/report.md' }, { signal } as never)).resolves.toEqual({ behavior: 'allow' })
+    await expect(gate('Bash', { command: 'rm -rf build' }, { signal, title: 'Remove build output' } as never)).resolves.toEqual({ behavior: 'allow' })
+    expect(requestPermission).toHaveBeenCalledWith({ tool: 'Bash', description: 'Remove build output\ncommand=rm -rf build' }, signal)
+  })
+
+  it('denies task MCP tools and relay requests without an active callback', async () => {
+    const signal = new AbortController().signal
+    const gate = makeWorkbenchClaudeCanUseTool()
+    await expect(gate('mcp__wechat__reply', {}, { signal } as never)).resolves.toMatchObject({ behavior: 'deny' })
+    await expect(gate('Bash', { command: 'git reset --hard HEAD' }, { signal } as never)).resolves.toMatchObject({ behavior: 'deny' })
+  })
+
+  it('fails closed when the full destructive input cannot fit in the bounded permission detail', async () => {
+    const signal = new AbortController().signal
+    const requestPermission = vi.fn(async () => false)
+    const gate = makeWorkbenchClaudeCanUseTool(requestPermission)
+    await expect(gate('Bash', { command: `rm -rf ${'secret'.repeat(4000)}`, ignored: 'x'.repeat(1000) }, { signal } as never)).resolves.toMatchObject({ behavior: 'deny' })
+    expect(requestPermission).not.toHaveBeenCalled()
+  })
+
+  it('denies an already-aborted tool call before any policy branch can allow it', async () => {
+    const controller=new AbortController(); controller.abort()
+    const requestPermission=vi.fn(async()=>true)
+    const gate=makeWorkbenchClaudeCanUseTool(requestPermission)
+    await expect(gate('Read',{file_path:'/tmp/report.md'},{signal:controller.signal} as never)).resolves.toMatchObject({behavior:'deny'})
+    expect(requestPermission).not.toHaveBeenCalled()
+  })
+
+  it('denies an allow-policy tool when the SDK aborts while policy modules load', async () => {
+    const controller = new AbortController()
+    const gate = makeWorkbenchClaudeCanUseTool(vi.fn(async () => true))
+    const decision = gate('Read', { file_path: '/tmp/report.md' }, { signal: controller.signal } as never)
+    controller.abort()
+    await expect(decision).resolves.toMatchObject({ behavior: 'deny' })
+  })
+
+  it('denies an approved relay when the SDK aborts before the approval continuation', async () => {
+    const controller = new AbortController()
+    let approve!: (allowed: boolean) => void
+    let markStarted!: () => void
+    const started = new Promise<void>(resolve => { markStarted = resolve })
+    const requestPermission = vi.fn(() => {
+      markStarted()
+      return new Promise<boolean>(resolve => { approve = resolve })
+    })
+    const gate = makeWorkbenchClaudeCanUseTool(requestPermission)
+    const decision = gate('Bash', { command: 'rm -rf build' }, { signal: controller.signal } as never)
+    await started
+    approve(true)
+    controller.abort()
+    await expect(decision).resolves.toMatchObject({ behavior: 'deny' })
   })
 
   it('yields init then text then result for a simple turn', async () => {

@@ -27,10 +27,11 @@ it('only explicit task writes pass; cross-origin and unknown routes are refused'
  const upstream=vi.fn(async()=>Response.json({task:{id:'deadbeef'}},{status:202}))
  const proxy=createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})
  expect((await proxy(req('/v1/workbench/create','POST')))?.status).toBe(202)
+ expect((await proxy(req('/v1/workbench/permission','POST')))?.status).toBe(202)
  expect((await proxy(req('/v1/workbench/create','POST',{origin:'http://localhost:9999'})))?.status).toBe(403)
  expect((await proxy(req('/v1/workbench/task/extra')))?.status).toBe(405)
  expect(await proxy(req('/v1/memory'))).toBeNull()
- expect(upstream).toHaveBeenCalledTimes(1)
+ expect(upstream).toHaveBeenCalledTimes(2)
 })
 it('distinguishes an old upstream from missing local routing',async()=>{
  const proxy=createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:false,fetch:vi.fn(async()=>Response.json({error:'not_found'},{status:404}))})

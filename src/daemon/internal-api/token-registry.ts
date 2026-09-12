@@ -172,7 +172,7 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           'POST /v1/federation/mint',
           // Owner Workbench (2026-09-11) — the Tauri host proxies these
           // requests with this operator credential; the webview never sees
-          // the token. Keep the grant to the exact seven Workbench methods.
+          // the token. Keep the grant to the exact Workbench methods.
           'GET /v1/workbench',
           'GET /v1/workbench/task',
           'POST /v1/workbench/create',
@@ -180,6 +180,7 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           'POST /v1/workbench/cancel',
           'GET /v1/workbench/artifact',
           'POST /v1/workbench/approve',
+          'POST /v1/workbench/permission',
         ]),
       })
     },

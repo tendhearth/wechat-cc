@@ -950,11 +950,12 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/workbench/continue")
             | ("POST", "/v1/workbench/cancel")
             | ("POST", "/v1/workbench/approve")
+            | ("POST", "/v1/workbench/permission")
     )
 }
 
 // Workbench owns admin-only folder tasks and artifact snapshots. Keep its
-// operator token in Rust and expose only the seven contract routes above.
+// operator token in Rust and expose only the exact contract routes above.
 #[tauri::command]
 async fn workbench_api(method: String, path: String, body: Option<String>) -> Result<String, String> {
     use std::time::Duration;
@@ -1210,6 +1211,7 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/continue"),
             ("POST", "/v1/workbench/cancel"),
             ("POST", "/v1/workbench/approve"),
+            ("POST", "/v1/workbench/permission"),
         ] {
             assert!(workbench_request_allowed(method, path), "expected {method} {path} to be allowed");
         }
