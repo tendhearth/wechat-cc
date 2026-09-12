@@ -9,8 +9,8 @@
     <link rel="stylesheet" href="./cc-page-art.css" />
     <link rel="stylesheet" href="./cc-surfaces.css" />
     <link rel="stylesheet" href="./postcard-album.css" />
-    <link rel="stylesheet" href="./cc-life.css" />
     <link rel="stylesheet" href="./styles/workbench.css" />
+    <link rel="stylesheet" href="./cc-life.css" />
   </head>
   <body>
 
@@ -33,8 +33,8 @@
       <div class="wizard-window">
         <div class="wz-top">
           <div class="wz-brand">
-            <span class="mark"><img src="./wechat-cc-logo.png" alt="" /></span>
-            <span class="name">wechat-cc</span>
+            <span class="name">CC</span>
+            <span class="cc-brand-note">一起生活，也一起做事</span>
           </div>
           <button class="wz-back" data-action="open-dashboard" title="关闭启动页" aria-label="关闭启动页"><span data-hg-icon="cancel-01" data-hg-size="18"></span></button>
         </div>
@@ -322,22 +322,36 @@
 
         <aside class="dash-rail">
           <div class="dash-brand">
-            <span class="mark"><img src="./wechat-cc-logo.png" alt="" /></span>
-            <span class="name">wechat-cc</span>
+            <span class="name">CC</span>
+            <span class="cc-brand-note">一起生活，也一起做事</span>
             <span class="ver" id="dash-version">v0.6.2</span>
           </div>
 
           <nav class="dash-nav" aria-label="主导航">
             <button class="dash-nav-link active" data-pane="overview">
-              <span class="ic" data-hg-icon="power" data-hg-size="16"></span><span>此刻</span>
+              <span class="ic" data-hg-icon="heart-check" data-hg-size="16"></span><span>此刻</span>
             </button>
             <button class="dash-nav-link" data-pane="workbench">
-              <span class="ic" data-hg-icon="folder-01" data-hg-size="16"></span><span>一起做</span>
+              <span class="ic" data-hg-icon="archive" data-hg-size="16"></span><span>一起做</span>
             </button>
             <button class="dash-nav-link" data-pane="recollections">
-              <span class="ic" data-hg-icon="archive" data-hg-size="16"></span><span>回忆</span>
+              <span class="ic" data-hg-icon="time-02" data-hg-size="16"></span><span>回忆</span>
             </button>
-            <details class="cc-life-nav-more">
+
+          </nav>
+
+          <div class="dash-rail-foot">
+            <span id="dash-rail-dot" class="dot"></span>
+            <span id="dash-rail-text">未运行</span>
+            <span id="dash-rail-clock" class="clock"></span>
+          </div>
+
+          <!-- Settings gear: master wires the click handler via
+               getElementById('settings-open'); we keep that id so the
+               settings drawer opens. moxiuwen's [data-action='open-wizard']
+               hook is unused here but main.js handles it elsewhere
+               (e.g. on the add-user card). -->
+          <details class="cc-life-nav-more">
               <summary>生活与工具</summary>
               <div>
                 <button class="dash-nav-link" aria-label="画室" data-pane="atelier">
@@ -360,23 +374,10 @@
                 </button>
               </div>
             </details>
-          </nav>
-
-          <div class="dash-rail-foot">
-            <span id="dash-rail-dot" class="dot"></span>
-            <span id="dash-rail-text">未运行</span>
-            <span id="dash-rail-clock" class="clock"></span>
-          </div>
-
-          <!-- Settings gear: master wires the click handler via
-               getElementById('settings-open'); we keep that id so the
-               settings drawer opens. moxiuwen's [data-action='open-wizard']
-               hook is unused here but main.js handles it elsewhere
-               (e.g. on the add-user card). -->
           <div class="dash-utilities">
             <button id="settings-open" class="rail-gear" type="button" title="设置" aria-label="设置" data-tooltip="设置">
               <span class="ic" data-hg-icon="settings-01" data-hg-size="18"></span>
-              <span>设置</span>
+              <span>连接与设置</span>
             </button>
           </div>
         </aside>
@@ -385,7 +386,9 @@
 
           <!-- ── pane: overview ─────────────────────────────────────── -->
           <article class="dash-pane cc-now-pane" data-pane="overview">
+            <header class="cc-life-topline"><span>此刻</span><span>CC 的小空间</span></header>
             <section id="cc-current-activity" class="cc-current-activity" aria-live="polite"></section>
+            <div id="converse-root" class="converse-page"></div>
             <details class="cc-home-details"><summary>鱼缸与连接</summary>
             <div class="moment-body">
               <section class="moment-ai" id="hero-card" aria-live="polite">
@@ -636,10 +639,7 @@
             <div id="todos-root" class="todos-page"></div>
           </article>
 
-          <!-- ── pane: converse (in-app compose UI) ─────────────────── -->
-          <article class="dash-pane" data-pane="converse" hidden>
-            <div id="converse-root" class="converse-page"></div>
-          </article>
+          <!-- Conversation lives in 此刻; old converse navigation resolves there. -->
 
           <!-- ── pane: logs ─────────────────────────────────────────── -->
           <article class="dash-pane" data-pane="logs" hidden>
@@ -671,6 +671,7 @@
 
           <!-- ── pane: workbench ───────────────────────────────────── -->
           <article class="dash-pane workbench-pane" data-pane="workbench" hidden>
+            <header class="cc-life-topline"><span>一起做</span><span>每件事，都有自己的位置</span></header>
             <div id="workbench-root" class="workbench-root"><p class="empty-state">正在打开工作台…</p></div>
           </article>
 

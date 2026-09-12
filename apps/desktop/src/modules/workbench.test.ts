@@ -26,6 +26,31 @@ describe('workbench rendering', () => {
     expect(html).not.toContain('<img src=x onerror=alert(1)>')
   })
 
+  it('leads with the latest real reply and discloses the complete execution record', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const html = renderWorkbench({tasks:[], providers:[{id:'codex',displayName:'Codex'}], defaultProvider:'codex',canWechat:false,selectedId:'A', selectedArtifactId:null,error:'',preview:null,
+      detail:{task:{id:'A',title:'整理资料',path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null},artifacts:[],events:[
+        {id:'1',taskId:'A',kind:'tool_call',text:'读取文件',createdAt:1},
+        {id:'2',taskId:'A',kind:'text',text:'已整理出三项结论。',createdAt:2}
+      ]}})
+    expect(html).toContain('class="wb-report"')
+    expect(html.indexOf('已整理出三项结论。')).toBeLessThan(html.indexOf('查看过程与记录'))
+    expect(html).toMatch(/<details[^>]*id="wb-process"[^>]*>/)
+    expect(html).not.toMatch(/<details[^>]*id="wb-process"[^>]* open/)
+    expect(html).toContain('读取文件')
+    expect(html).toContain('Codex 的回复')
+    expect(html).not.toContain('复核通过')
+  })
+
+  it('keeps optional service and title fields in a closed disclosure, retaining their form values', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const html = renderWorkbench({tasks:[],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
+    expect(html).toMatch(/<details[^>]*id="wb-options"[^>]*>/)
+    expect(html).toContain('id="wb-provider"')
+    expect(html).toContain('value="codex" selected')
+    expect(html).toContain('id="wb-title"')
+  })
+
   it('shows stop only while active and continuation only after a turn ends', async () => {
     const { renderTaskControls } = await import('./workbench.js')
     expect(renderTaskControls('running')).toContain('data-action="cancel"')
@@ -85,6 +110,14 @@ describe('workbench request ordering', () => {
     expect(controller.state.detail?.task.id).toBe('RECENT')
   })
 
+  it('clears a previous read error when reconnecting to an empty task list', async () => {
+    const { createWorkbenchController } = await import('./workbench.js')
+    const controller = createWorkbenchController({invokeWorkbenchApi:vi.fn(async()=>({tasks:[],providers:[],defaultProvider:'',canWechat:false})),render:vi.fn()})
+    controller.state.error='连接失败'
+    await controller.refresh()
+    expect(controller.state.error).toBe('')
+  })
+
   it('ignores a stale detail response after the user selects another task', async () => {
     const { createWorkbenchController } = await import('./workbench.js')
     let finishFirst!: (value: unknown) => void
@@ -138,4 +171,16 @@ describe('workbench lifecycle', () => {
     expect(invokeWorkbenchApi.mock.calls.filter(([method, path]) => method === 'POST' && path === '/v1/workbench/cancel')).toHaveLength(1)
     stopWorkbenchPolling()
   })
+})
+
+it('the collapsed execution label follows the selected service rather than the default', async () => {
+  const { syncWorkbenchProviderLabel } = await import('./workbench.js')
+  const label = {textContent:''}
+  const select = {selectedOptions:[{textContent:'Claude'}]}
+  const host = {querySelector:(s:string)=>s==='#wb-provider'?select:label}
+  syncWorkbenchProviderLabel(host as any)
+  expect(label.textContent).toBe('当前使用 Claude')
+  select.selectedOptions[0]!.textContent='Codex'
+  syncWorkbenchProviderLabel(host as any)
+  expect(label.textContent).toBe('当前使用 Codex')
 })

@@ -23,7 +23,7 @@ export function mountCurrentActivity(host, poller, navigate) {
   function draw(p) {
     clearTimeout(expires)
     const a=currentActivity(p)
-    host.innerHTML=`<div class="cc-now-scene"><img src="./assets/pet/cc-v1/canonical/${a.kind==='unknown'?'unlit':'lit'}/front.png" alt="CC"></div><span class="cc-life-kicker">此刻</span><h1>${esc(a.title)}</h1><p>${esc(a.detail)}</p><div class="cc-now-actions"><button type="button" data-life-go="converse">和 CC 说说话</button>${a.pane&&a.pane!=='converse'?`<button type="button" data-life-go="${a.pane}">去看看 →</button>`:''}</div>`
+    host.innerHTML=`<div class="cc-now-scene"><img src="./assets/pet/cc-v1/canonical/${a.kind==='unknown'?'unlit':'lit'}/front.png" alt="CC"></div><span class="cc-life-kicker">${a.kind==='unknown'?'等一等连接':a.kind==='idle'?'在这里':'这一会儿'}</span><h1>${esc(a.title)}</h1><p>${esc(a.detail)}</p><div class="cc-now-actions">${a.pane&&a.pane!=='converse'?`<button type="button" data-life-go="${a.pane}">凑近看看 →</button>`:''}</div>`
     if(p)expires=setTimeout(()=>draw(null),60000)
   }
   host.addEventListener('click',e=>{const b=e.target.closest?.('[data-life-go]');if(b)navigate(b.dataset.lifeGo)})

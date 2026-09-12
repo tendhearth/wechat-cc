@@ -67,7 +67,7 @@ function renderSkeleton(root) {
       <div class="converse-toolbar">
         <button id="converse-mic" class="converse-mic" type="button" aria-pressed="false">${icon("mic-01")}<span>语音输入</span></button>
         <button id="converse-voice-toggle" class="converse-voice-toggle" type="button" aria-pressed="false" title="自动朗读 CC 的回复"><span class="converse-switch" aria-hidden="true"></span>朗读回复</button>
-        <button id="converse-send" class="btn primary converse-send-btn" type="button">${icon("sent")}<span>发送</span></button>
+        <button id="converse-send" aria-label="发送消息" class="btn primary converse-send-btn" type="button">${icon("sent")}<span>发送</span></button>
       </div>
       <p id="converse-recording-hint" class="converse-recording-hint" hidden>结束后可检查文字再发送</p>
     </div>
@@ -463,12 +463,12 @@ function wireEvents(root, deps) {
  * message list. On first init it renders the skeleton and wires events.
  * @param {Deps} deps
  */
-export function initConversePage(deps) {
+export function initConversePage(deps, { focus = true } = {}) {
   const root = document.getElementById("converse-root")
   if (!root) return
   if (root.dataset.ready === "true") {
     const input = document.getElementById("converse-input")
-    if (input instanceof HTMLElement) input.focus()
+    if (focus && input instanceof HTMLElement) input.focus()
     return
   }
   root.dataset.ready = "true"
@@ -477,5 +477,5 @@ export function initConversePage(deps) {
   syncVoiceToggleUI()
   renderMessages()
   const input = document.getElementById("converse-input")
-  if (input instanceof HTMLElement) input.focus()
+  if (focus && input instanceof HTMLElement) input.focus()
 }

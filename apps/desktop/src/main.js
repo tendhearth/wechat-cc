@@ -445,6 +445,11 @@ function setToggle(id, on) {
 
 /** @param {string} name */
 function switchPane(name) {
+  const focusConversation = name === "converse"
+  if (focusConversation) {
+    name = "overview"
+    document.querySelector(".cc-home-details")?.removeAttribute("open")
+  }
   document.querySelector(".cc-life-nav-more")?.removeAttribute("open")
   const overviewWasHidden = name === "overview" && !!(/** @type {HTMLElement | null} */ (document.querySelector('.dash-pane[data-pane="overview"]')))?.hidden
   const backstagePanes = new Set(["sessions", "plugins", "logs"])
@@ -500,8 +505,8 @@ function switchPane(name) {
     stopDialogueAutoRefresh()
     stopCustomerReviewPolling()
   }
-  if (name === "converse") {
-    initConversePage(deps)
+  if (name === "overview") {
+    initConversePage(deps, { focus: focusConversation })
   }
   if (name === "a2a-agents") {
     refreshA2AAgents().catch(err => console.error("a2a-agents refresh failed", err))
@@ -1385,6 +1390,7 @@ async function boot() {
   mountHugeicons()
   wireDoctorSubscribers()
   wireEvents()
+  initConversePage(deps, { focus: false })
   startAppUpdateChecks()
   // Refresh an already-configured local WeChat archive on every desktop
   // launch. Keep it off the critical render path: decrypting larger archives
