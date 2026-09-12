@@ -52,7 +52,9 @@ describe('persistent workbench', () => {
     const first = service.detail(task.id).artifacts[0]!
     expect(Buffer.from(service.artifact(task.id, first.id).contentBase64, 'base64').toString()).toBe('第 1 版')
     service.approve(task.id, first.id, first.sha256)
-    service.continueTask(task.id, '简短一点'); await settle(task.id)
+    const continued=service.continueTask(task.id, '简短一点')
+    expect(continued.status).toBe('queued')
+    await settle(task.id)
     const detail = service.detail(task.id)
     expect(detail.artifacts).toHaveLength(2)
     expect(detail.artifacts.filter(a => a.approvedAt !== null)).toHaveLength(1)
@@ -344,6 +346,22 @@ describe('persistent workbench', () => {
     closeGate.resolve()
   })
 
+  it('starts and settles an accepted run without reading it again in the scheduler', async () => {
+    const registry=createProviderRegistry(),gate=deferred();let dispatches=0
+    registry.register('claude',{async spawn(){return{async *dispatch(){dispatches++;await gate.promise;yield result},async close(){}}}},{displayName:'Claude',canResume:()=>true})
+    const base=makeWorkbenchStore(db)
+    const unavailableRead={...base,get(){throw new Error('task read unavailable')}}
+    service=makeWorkbenchService({store:unavailableRead,registry,stateDir:root,ownerChatId:()=>null})
+    let task:{id:string}|undefined,creationError:unknown
+    try { task=service.create({path:project,providerId:'claude',text:'accepted'}) }
+    catch(error) { creationError=error }
+    if (creationError) service=makeWorkbenchService({store:base,registry,stateDir:root,ownerChatId:()=>null})
+    expect(creationError).toBeUndefined()
+    await expect.poll(()=>dispatches).toBe(1)
+    gate.resolve()
+    await expect.poll(()=>base.get(task!.id).status).toBe('completed')
+  })
+
   it('fails a queued run when its accepted directory identity was replaced', async () => {
     const child=join(project,'child'),oldChild=join(project,'child-old');mkdirSync(child)
     const gate=deferred();const spawned:string[]=[]
@@ -586,6 +604,40 @@ describe('persistent workbench', () => {
     expect(service.detail(two.id).task.status).toBe('cancelled')
     expect(new Set(cancelled)).toEqual(new Set([project,other]))
     expect(new Set(closed)).toEqual(new Set([project,other]))
+  })
+
+  it('signals every run during shutdown even when serializing the first cancellation fails', async () => {
+    const other=join(root,'shutdown-read-other');mkdirSync(other)
+    const registry=createProviderRegistry(),gates=new Map([[project,deferred()],[other,deferred()]])
+    const started:string[]=[],cancelled:string[]=[],closed:string[]=[],permissionAnswers:Promise<boolean>[]=[]
+    registry.register('claude',{async spawn(p,ctx){return{
+      async *dispatch(){
+        started.push(p.path)
+        permissionAnswers.push(ctx.requestPermission!({tool:'Bash',description:`approve ${p.path}`}))
+        await gates.get(p.path)!.promise;yield result
+      },
+      async cancel(){cancelled.push(p.path)},async close(){closed.push(p.path)},
+    }}},{displayName:'Claude',canResume:()=>true})
+    const base=makeWorkbenchStore(db);let unreadableTask=''
+    const store={...base,get(id:string){if(id===unreadableTask)throw new Error('task read unavailable');return base.get(id)}}
+    service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null})
+    const one=createAt(project,'one'),two=createAt(other,'two')
+    await expect.poll(()=>new Set(started)).toEqual(new Set([project,other]))
+    await expect.poll(()=>service.detail(two.id).permissions).toHaveLength(1)
+    unreadableTask=one.id
+    const shutdown=service.shutdown()
+    await Promise.resolve()
+    const cancelledBeforeCleanup=[...cancelled]
+    const secondPendingBeforeCleanup=service.detail(two.id).permissions.length
+    for(const gate of gates.values())gate.resolve()
+    let shutdownError:unknown
+    try { await shutdown } catch(error) { shutdownError=error }
+    await expect.poll(()=>new Set(closed)).toEqual(new Set([project,other]))
+    if (shutdownError) { unreadableTask='';service=makeWorkbenchService({store:base,registry,stateDir:root,ownerChatId:()=>null}) }
+    expect(shutdownError).toBeUndefined()
+    expect(new Set(cancelledBeforeCleanup)).toEqual(new Set([project,other]))
+    expect(secondPendingBeforeCleanup).toBe(0)
+    await expect(Promise.all(permissionAnswers)).resolves.toEqual([false,false])
   })
 
   it('captures artifacts from a confirmed close before shutdown releases the folder', async () => {

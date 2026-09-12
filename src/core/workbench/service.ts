@@ -22,6 +22,7 @@ interface Options {
   permissionTimeoutMs?: number
 }
 interface Active extends PathReservation {
+  task: StoredTask
   directoryIdentity: string
   cancelled: boolean
   session?: AgentSession
@@ -256,8 +257,7 @@ export function makeWorkbenchService(opts: Options) {
     }
     for (const running of launch) queue.splice(queue.indexOf(running),1)
     for (const running of launch) {
-      const task=store.get(running.taskId)
-      void Promise.resolve().then(() => execute(task,runningText.get(running.identity)!,running)).catch(() => {
+      void Promise.resolve().then(() => execute(running.task,runningText.get(running.identity)!,running)).catch(() => {
         if (running.publicFinished) return
         try { running.permissions.rejectAll(running.cancelled ? 'cancelled' : 'ended') } catch { /* fail closed */ }
         revokeCredentials(running)
@@ -281,14 +281,14 @@ export function makeWorkbenchService(opts: Options) {
         : store.addEvent(task.id,'system',`权限结果：${event.permission.tool} · ${event.outcome} · ${event.permission.id}`),
     })
     const running:Active={
-      identity:randomUUID(),taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',directoryIdentity:acceptedDirectoryIdentity,
+      identity:randomUUID(),taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,credentialsMinted:false,credentialsRevoked:false,
     }
     runsByTask.set(task.id,running); runningText.set(running.identity,text); queue.push(running); pump()
-    return publicTask(store.get(task.id))
+    return publicTask({...task,status:'queued',error:null})
   }
 
-  function cancelRun(running:Active):Task {
+  function cancelRun(running:Active):void {
     if (running.state==='queued') {
       running.cancelled=true; running.permissions.rejectAll('cancelled'); running.signalStop()
       const index=queue.indexOf(running); if (index>=0) queue.splice(index,1)
@@ -297,16 +297,15 @@ export function makeWorkbenchService(opts: Options) {
       running.publicFinished=true; running.resolveDone()
       if (runsByTask.get(running.taskId)===running) runsByTask.delete(running.taskId)
       if (!stopping) pump()
-      return publicTask(store.get(running.taskId))
+      return
     }
-    if (running.state==='uncertain') return publicTask(store.get(running.taskId))
+    if (running.state==='uncertain') return
     if (!running.cancelled) {
       running.cancelled=true; running.permissions.rejectAll('cancelled'); revokeCredentials(running); running.signalStop()
       try { store.update(running.taskId,'cancelling') } catch { /* stop the writer even when persistence is unavailable */ }
       try { if (running.session?.cancel) void running.session.cancel().catch(() => {}) }
       catch { try { store.addEvent(running.taskId,'system','已请求停止，正在等待执行程序退出。') } catch { /* cancellation remains active */ } }
     }
-    return publicTask(store.get(running.taskId))
   }
 
   const service={
@@ -334,8 +333,9 @@ export function makeWorkbenchService(opts: Options) {
       return start(task,checkedText(text),directoryIdentity(task.path))
     },
     async cancel(id:string):Promise<Task> {
-      const task=store.get(id),running=runsByTask.get(id)
-      return running ? cancelRun(running) : publicTask(task)
+      const running=runsByTask.get(id)
+      if (running) cancelRun(running)
+      return publicTask(store.get(id))
     },
     artifact(id:string,artifactId:string) {
       const a=store.artifact(id,artifactId),bytes=readArtifactSnapshot(a.storagePath,opts.stateDir,a.sha256)
@@ -368,7 +368,15 @@ export function makeWorkbenchService(opts: Options) {
       stopping=true
       shutdownPromise=(async () => {
         const snapshot=[...runsByTask.values()]
-        for (const running of snapshot) cancelRun(running)
+        for (const running of snapshot) {
+          try { cancelRun(running) }
+          catch {
+            running.cancelled=true
+            try { running.permissions.rejectAll('cancelled') } catch { /* fail closed */ }
+            revokeCredentials(running); running.signalStop()
+            try { if (running.session?.cancel) void running.session.cancel().catch(() => {}) } catch { /* close still follows */ }
+          }
+        }
         await Promise.allSettled(snapshot.map(running => running.done))
         shutdownComplete=true
         for (const running of [...runsByTask.values()]) releaseReservation(running)
