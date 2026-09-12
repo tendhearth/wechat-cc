@@ -1,0 +1,60 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { createHash } from 'node:crypto'
+import { collectArtifacts, MAX_ARTIFACT_BYTES, readAnchoredRegular } from './artifacts'
+
+let root: string
+beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'workbench-artifacts-')) })
+afterEach(() => { rmSync(root, { recursive: true, force: true }) })
+
+describe('anchored artifact reads', () => {
+  it('reads a valid nested regular file relative to the opened root', () => {
+    mkdirSync(join(root, 'nested'))
+    writeFileSync(join(root, 'nested', 'result.md'), 'safe result')
+    expect(readAnchoredRegular(root, 'nested/result.md').toString()).toBe('safe result')
+  })
+
+  it('never follows a symlink in a parent component', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'workbench-outside-'))
+    try {
+      writeFileSync(join(outside, 'secret.txt'), 'secret')
+      symlinkSync(outside, join(root, 'swapped-parent'))
+      expect(() => readAnchoredRegular(root, 'swapped-parent/secret.txt')).toThrow('invalid_artifact_path')
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('bounds the actual read to 8 MiB plus one byte', () => {
+    writeFileSync(join(root, 'large.bin'), Buffer.alloc(MAX_ARTIFACT_BYTES + 1))
+    expect(() => readAnchoredRegular(root, 'large.bin')).toThrow('invalid_artifact_size')
+  })
+
+  it('rejects traversal and absolute names before opening', () => {
+    expect(() => readAnchoredRegular(root, '../secret.txt')).toThrow('invalid_artifact_path')
+    expect(() => readAnchoredRegular(root, join(root, 'file.txt'))).toThrow('invalid_artifact_path')
+  })
+})
+
+it('old artifact versions do not consume the per-turn 100-new-version budget', () => {
+  const project = join(root, 'project')
+  const output = join(project, '.cc-workbench', 'deadbeef')
+  mkdirSync(output, { recursive: true })
+  const known: Array<{ name: string; sha256: string }> = []
+  for (let i = 0; i < 100; i++) {
+    const name = `${String(i).padStart(3, '0')}.txt`
+    const content = `old-${i}`
+    writeFileSync(join(output, name), content)
+    known.push({ name, sha256: createHash('sha256').update(content).digest('hex') })
+  }
+  writeFileSync(join(output, '100.txt'), 'new version')
+  const added: Array<{ name: string }> = []
+  const store = {
+    artifacts: () => known,
+    addArtifact: (artifact: { name: string }) => { added.push(artifact) },
+  }
+  collectArtifacts(store as never, 'deadbeef', project, root)
+  expect(added.map(a => a.name)).toContain('100.txt')
+})
