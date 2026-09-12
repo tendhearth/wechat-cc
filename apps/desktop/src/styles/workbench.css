@@ -31,6 +31,7 @@
 .wb-task-head h2 { display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .wb-path { margin: 7px 0 0; color: var(--ink-3); font: 12px/1.4 var(--mono); overflow-wrap: anywhere; }
 .wb-dialogue { display: grid; gap: 24px; padding: 28px 0 18px; }
+.wb-queue-guidance { margin: 0 0 18px; border-left: 2px solid #c5964f; padding: 7px 10px; background: var(--amber-soft); color: var(--amber); font-size: 12px; line-height: 1.55; }
 .wb-message { max-width: 720px; }
 .wb-message[data-kind="user"] { justify-self: end; width: min(620px, 88%); border-radius: 14px; padding: 13px 16px; background: #f2ecdf; }
 .wb-message header { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--ink-3); font-size: 11px; }

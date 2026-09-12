@@ -83,7 +83,9 @@ describe('workbench rendering', () => {
     const { renderWorkbench } = await import('./workbench.js')
     const waitingFor={taskId:'BLOCKER',title:'Build <unsafe>',reason:'same_path'} as const
     const task={id:'WAITING',title:'Waiting task',path:'/work',providerId:'codex',status:'queued',createdAt:1,updatedAt:2,error:null,waitingFor}
-    const html=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:'WAITING',detail:{task,events:[],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
+    const html=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:'WAITING',detail:{task,events:[
+      {id:'u1',taskId:'WAITING',kind:'user',text:'Continue this queued work',createdAt:1},
+    ],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
     expect(html).toContain('data-status="queued">等待中')
     expect(html).toContain('等待「Build &lt;unsafe&gt;」结束')
     expect(html).toContain('使用同一个文件夹')
@@ -95,7 +97,10 @@ describe('workbench rendering', () => {
     const { renderWorkbench } = await import('./workbench.js')
     const waitingFor={taskId:'PARENT',title:'Parent task',reason:'nested_path'} as const
     const task={id:'CHILD',title:'Child task',path:'/work/child',providerId:'claude',status:'queued',createdAt:1,updatedAt:2,error:null,waitingFor}
-    const html=renderWorkbench({tasks:[task],providers:[{id:'claude',displayName:'Claude'}],defaultProvider:'claude',canWechat:false,selectedId:'CHILD',detail:{task,events:[],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
+    const html=renderWorkbench({tasks:[task],providers:[{id:'claude',displayName:'Claude'}],defaultProvider:'claude',canWechat:false,selectedId:'CHILD',detail:{task,events:[
+      {id:'u1',taskId:'CHILD',kind:'user',text:'Start in the child folder',createdAt:1},
+      {id:'h1',taskId:'CHILD',kind:'system',text:'Queued after path check',createdAt:2},
+    ],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
     expect(html).toContain('等待「Parent task」结束')
     expect(html).toContain('文件夹彼此包含')
     expect(html).not.toMatch(/预计|进度|第\s*\d+\s*位/)
@@ -104,7 +109,10 @@ describe('workbench rendering', () => {
   it('distinguishes an unconfirmed writer exit from ordinary waiting and retains the metadata-absent fallback', async () => {
     const { renderWorkbench } = await import('./workbench.js')
     const blocked={id:'BLOCKED',title:'Blocked task',path:'/work',providerId:'codex',status:'queued',createdAt:1,updatedAt:2,error:null,waitingFor:{taskId:'OLD',title:'Old task',reason:'writer_not_closed'} as const}
-    const blockedHtml=renderWorkbench({tasks:[blocked],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:'BLOCKED',detail:{task:blocked,events:[],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
+    const blockedHtml=renderWorkbench({tasks:[blocked],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:'BLOCKED',detail:{task:blocked,events:[
+      {id:'u1',taskId:'BLOCKED',kind:'user',text:'Continue after the previous run',createdAt:1},
+      {id:'t1',taskId:'BLOCKED',kind:'text',text:'Previous response remains visible',createdAt:2},
+    ],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
     expect(blockedHtml).toContain('等待执行程序退出确认')
     expect(blockedHtml).toContain('队列不会继续')
     expect(blockedHtml).toContain('检查原进程和输出')

@@ -6,7 +6,7 @@ The existing two-column workbench now consumes backend-provided `waitingFor` met
 
 Task operations are isolated by mutation key. Duplicate or conflicting requests for one task remain suppressed while requests for another task can proceed. List reads use a request generation so older successes and failures cannot replace a newer task snapshot. Permission decisions remain available when an unrelated preview error is visible.
 
-The mutation scopes are explicit: all create requests share the `create` key, while continue, stop, and permission decisions share `task:<taskId>` for their target task. This prevents conflicting writes within one task without coupling unrelated tasks. Each controller instance owns a monotonically increasing list-request generation; only the newest `GET /v1/workbench/tasks` response or rejection may update that controller, and destroy invalidates any remaining list request. Existing detail and artifact generations continue to guard selected-task content independently.
+The mutation scopes are explicit: all create requests share the `create` key, while continue, stop, and permission decisions share `task:<taskId>` for their target task. This prevents conflicting writes within one task without coupling unrelated tasks. Each controller instance owns a monotonically increasing list-request generation; only the newest `GET /v1/workbench` response or rejection may update that controller, and destroy invalidates any remaining list request. Existing detail and artifact generations continue to guard selected-task content independently.
 
 ## Red
 
@@ -36,6 +36,10 @@ The remaining 39 tests stayed green. Existing behavior already covered multiple 
 - JavaScript syntax and scoped diff checks are run immediately before commit.
 
 Vitest continues to print the pre-existing warning that `apps/desktop/src/vendor/marked.bundle.mjs.map` is absent. The tests themselves pass.
+
+## Review fix evidence
+
+Review exposed that detailed queue guidance was part of the empty-dialogue fallback. Real creates and continuations already include a user event, so the selected task could hide why it was waiting. Three same-path, nested-path, and unconfirmed-writer tests were changed to include real user/history events; all three failed before the fix. Queued tasks with `waitingFor` now render one compact guidance row after their dialogue regardless of event count, while the composer retains only the stop action guidance to avoid repeating the blocker title. The focused regression run passes 3 of 3 tests, and the full verification above covers the remaining workbench and navigation behavior.
 
 ## Risks and limits
 

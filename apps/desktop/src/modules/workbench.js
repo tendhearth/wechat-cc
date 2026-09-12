@@ -76,7 +76,7 @@ export function renderTaskControls(status, waitingFor) {
   if (status === 'queued') {
     const waitingCopy = waitingFor?.reason === 'writer_not_closed'
       ? '执行程序尚未确认退出；可以停止这项排队任务。'
-      : waitingFor ? `等待「${escapeWorkbenchHtml(waitingFor.title)}」结束后开始；现在可以停止这个任务。` : '任务正在等待开始；现在可以停止这个任务。'
+      : waitingFor ? '任务仍在排队；现在可以停止这个任务。' : '任务正在等待开始；现在可以停止这个任务。'
     return `<form class="wb-followup wb-followup-waiting">
     <label for="wb-followup-text">补充要求</label><textarea id="wb-followup-text" rows="3" placeholder="可以先写在这里"></textarea>
     <div class="wb-control-actions"><small>${waitingCopy}</small><button class="wb-btn" type="button" disabled>本轮结束后可发送</button><button class="wb-btn wb-btn-danger" type="button" data-action="cancel">停止任务</button></div>
@@ -154,6 +154,9 @@ export function renderWorkbench(state) {
       : detail?.task.waitingFor?.reason === 'nested_path'
         ? `正在等待「${escapeWorkbenchHtml(detail.task.waitingFor.title)}」结束；任务文件夹彼此包含。`
         : '任务已记下，正在等待执行。'
+  const queuedGuidance = detail?.task.status === 'queued' && detail.task.waitingFor
+    ? `<p class="wb-queue-guidance" role="status">${queuedCopy}</p>`
+    : ''
   const dialogueHtml = dialogue.length ? dialogue.map(event => `<article class="wb-message" data-kind="${escapeWorkbenchHtml(event.kind)}">
     <header><span>${event.kind === 'user' ? '你' : `<span class="wb-provider-badge">${escapeWorkbenchHtml(helper)}</span>`}</span><time>${escapeWorkbenchHtml(time(event.createdAt))}</time></header>
     ${event.kind === 'text' ? `<div class="wb-message-body wb-markdown">${renderWorkbenchMarkdown(event.text)}</div>` : `<p class="wb-message-body">${escapeWorkbenchHtml(event.text)}</p>`}
@@ -163,6 +166,7 @@ export function renderWorkbench(state) {
   const center = detail ? `
     <header class="wb-task-head"><div><p class="wb-kicker">${escapeWorkbenchHtml(helper)} · 任务 ${escapeWorkbenchHtml(detail.task.id)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2><p class="wb-path">${escapeWorkbenchHtml(detail.task.path)}</p></div><span class="wb-status" data-status="${escapeWorkbenchHtml(detail.task.status)}">${escapeWorkbenchHtml(statusLabel(detail.task.status))}</span></header>
     <section class="wb-dialogue" aria-live="polite">${dialogueHtml}</section>
+    ${queuedGuidance}
     ${operationHtml}
     ${permissionHtml}
     ${detail.task.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(detail.task.error)}</div>` : ''}
