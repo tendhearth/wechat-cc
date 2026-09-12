@@ -25,30 +25,34 @@
 Files: `src/core/workbench/{store,artifacts,service}.ts` plus their tests, append migration to `src/lib/db.ts`.
 Interfaces: `makeWorkbenchStore(db)`, `makeWorkbenchService({store,registry,stateDir,ownerChatId,mintSessionToken,revokeSessionToken,holdBusy})`; public `list`, `detail`, `create`, `continueTask`, `cancel`, `artifact`, `approve`, `handleWechat`, `shutdown`.
 
-- [ ] Write tests using an actual temporary SQLite database and directory. Create a task, complete a controlled generator, reopen the store, assert persisted text/artifact bytes. Assert a second task has no first-task session ID.
-- [ ] Add tests that hold spawn/dispatch open: duplicate runs reject, cancel during spawn never dispatches, missing result fails, restart running tasks become interrupted. Assert symbolically linked files are excluded and approval of one hash does not approve another version.
-- [ ] Run tests red; implement the migration, store, snapshot collector and service. Use synchronous reservation before async spawn to close race windows.
-- [ ] Add owner command tests: `任务 <id>` reads only bound-owner task; followup uses same service lock; a nonowner gets no task data. Run covering tests green.
-- [ ] Commit runtime and test evidence.
+- [x] Write tests using an actual temporary SQLite database and directory. Create a task, complete a controlled generator, reopen the store, assert persisted text/artifact bytes. Assert a second task has no first-task session ID.
+- [x] Add tests that hold spawn/dispatch open: duplicate runs reject, cancel during spawn never dispatches, missing result fails, restart running tasks become interrupted. Assert symbolically linked files are excluded and approval of one hash does not approve another version.
+- [x] Run tests red; implement the migration, store, snapshot collector and service. Use synchronous reservation before async spawn to close race windows.
+- [x] Add owner command tests: `任务 <id>` reads only bound-owner task; followup uses same service lock; a nonowner gets no task data. Run covering tests green.
+- [x] Commit runtime and test evidence.
 
 ## Task 2: Desktop workbench and host proxy
 
 Files: `apps/desktop/src/modules/workbench.js`, `workbench.test.ts`, `styles/workbench.css`, `main.js`, `index.html`, `api.js`; host changes in `src-tauri/src/lib.rs`, `test-shim.ts`; preview in `art/cc-workbench/`.
 Consumes exact API/data fields in spec. Exports `initWorkbenchPage(deps)` and `stopWorkbenchPolling()`.
 
-- [ ] Write behavior tests for escaped task/event content, task status controls, stable artifact-version selection and stale response suppression.
-- [ ] Implement accessible task form, progress view, scoped artifact view/download/confirmation and followup form. Keep drafts during polling, reject double submit, show errors without clearing input.
-- [ ] Wire native folder selection and a strict method/path allowlist host proxy. Add proxy boundary tests. Wire navigation without changing existing panes.
-- [ ] Create explicitly labeled fixture preview using production module. Check 1280px and 760px widths and capture screenshots. Run desktop tests.
-- [ ] Commit only desktop files.
+- [x] Write behavior tests for escaped task/event content, task status controls, stable artifact-version selection and stale response suppression.
+- [x] Implement accessible task form, progress view, scoped artifact view/download/confirmation and followup form. Keep drafts during polling, reject double submit, show errors without clearing input.
+- [x] Wire native folder selection and a strict method/path allowlist host proxy. Add proxy boundary tests. Wire navigation without changing existing panes.
+- [x] Create explicitly labeled fixture preview using production module. Check 1280px and 760px widths and capture screenshots. Run desktop tests.
+- [x] Commit only desktop files.
 
 ## Task 3: Daemon API and owner ingress integration
 
 Files: `src/daemon/internal-api/routes-workbench.ts`, tests, `types.ts`, `index.ts`, `routes.ts`, `route-tiers.ts`; `wiring/pipeline-deps.ts`, `main.ts`, `bootstrap/wire-workbench.ts` and tests.
 Consumes Task 1 service and serves Task 2 contract.
 
-- [ ] Test real route table via HTTP: unconfigured 503, trusted 403, admin can create/read, malformed IDs/text/path are rejected, known task failure is distinguishable from empty results.
-- [ ] Late-bind WorkbenchService after bootstrap, pass same instance into inbound path before ordinary agent dispatch; register lifecycle shutdown and busy hold.
-- [ ] Use task-only append instructions, scoped session auth and original backend resume checks. No main owner session mutation.
-- [ ] Run API, runtime, pipeline and desktop tests, then full typecheck. Review diff for credential leakage, lifecycle races and artifact path handling.
-- [ ] Commit integration and validation report; show preview. Leave local branch unpushed unless separately authorized.
+- [x] Test real route table via HTTP: unconfigured 503, trusted 403, admin can create/read, malformed IDs/text/path are rejected, known task failure is distinguishable from empty results.
+- [x] Late-bind WorkbenchService after bootstrap, pass same instance into inbound path before ordinary agent dispatch; register lifecycle shutdown and busy hold.
+- [x] Use task-only append instructions, scoped session auth and original backend resume checks. No main owner session mutation.
+- [x] Run API, runtime, pipeline and desktop tests, then full typecheck. Review diff for credential leakage, lifecycle races and artifact path handling.
+- [x] Commit integration and validation report; show preview. Leave local branch unpushed unless separately authorized.
+
+## Validation record
+
+See `docs/superpowers/reports/2026-09-11-cc-workbench-validation.md`. The first integration targets macOS. Linux artifact traversal is implemented but was not machine-tested; Windows artifact collection is not supported. Crash recovery preserves already captured versions and pending files on disk rather than automatically inspecting an unconfirmed writer.

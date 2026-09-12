@@ -18,7 +18,7 @@
 
 ## 成果
 
-完成/失败/取消后的已生成文件均可查。仅收集成果目录中的常规文件，拒绝符号链接和越界路径；每件最多 8 MiB，每轮最多 100 件。按 SHA-256 在应用状态目录中保存不可变快照，任务记录显示所有版本。支持文本/Markdown/CSV、PNG/JPEG/WebP、PDF、DOCX/XLSX/PPTX 的预览或下载；不执行生成的 HTML/SVG/脚本。文本用转义文本展示，Office 文件下载查看，不能假称有完整 Office 编辑器。
+在执行程序确认退出后，完成/失败/取消的已生成文件均可查。服务异常退出时，已保存快照仍可查，尚未收集的文件保留在原成果目录，事件显示完整路径；不假设子进程随服务一起退出，也不自动重跑或收集。仅收集成果目录中的常规文件，拒绝符号链接和越界路径；每件最多 8 MiB，每轮最多 100 件。按 SHA-256 在应用状态目录中保存不可变快照，任务记录显示所有版本。支持文本/Markdown/CSV、PNG/JPEG/WebP、PDF、DOCX/XLSX/PPTX 的预览或下载；不执行生成的 HTML/SVG/脚本。文本用转义文本展示，Office 文件下载查看，不能假称有完整 Office 编辑器。
 
 「确认这份成果」只确认指定文件快照与哈希，后续新版本仍待确认。读取、确认、下载只凭已登记的 task/artifact ID，不接受任意文件路径。候选文件不自动发微信。
 
@@ -42,7 +42,7 @@ Task: `{id,title,path,providerId,status,createdAt,updatedAt,error:string|null}`�
 Event: `{id,taskId,kind:'user'|'text'|'tool_call'|'system'|'error',text,createdAt}`。
 Artifact: `{id,taskId,name,mime,size,sha256,createdAt,approvedAt:number|null}`。
 
-布局：左侧最近任务，中间对话/进展，右侧成果（窄屏折叠）。空态只有文件夹、任务要求和已连接服务选择。桌面提供原生文件夹选择，浏览器预览保留路径输入。录入不因轮询重绘丢失。加载失败不展示为“没有任务”。
+布局：左侧最近任务，中间对话/进展，右侧成果（窄屏折叠）。空态只有文件夹、任务要求和已连接服务选择。macOS 桌面提供原生文件夹选择，其他平台与浏览器预览保留路径输入。首轮端到端验收以 macOS 为准；Linux 的安全文件读取已实现但未做实机验证，Windows 成果收集尚不支持。录入不因轮询重绘丢失。加载失败不展示为“没有任务”。
 
 ## 验收
 

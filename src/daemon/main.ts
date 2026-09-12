@@ -65,6 +65,7 @@ import { SUPERVISED_ENV } from '../core/supervised-env'
 import { SubsystemSupervisor } from './subsystems'
 import { removeAgyGlobalMcp } from './bootstrap/agy-mcp-config'
 import { removeCursorGlobalMcp } from './bootstrap/cursor-mcp-config'
+import { wireWorkbench } from './bootstrap/wire-workbench'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -631,7 +632,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       localMachine: osHostname(),
       ...(a2a ? { remote: makeRemoteReply({ registry: a2a.registry, client: a2a.client, selfId: boot.selfId }) } : {}),
     })
+    const workbench = wireWorkbench({ db, stateDir, boot, internalApi, askUser: ilink.askUser, log: (t,l) => log(t,l) })
+    internalApi.setWorkbench(workbench)
+    lc.register({ name: 'workbench', stop: () => workbench.shutdown() })
     const wired = wireMain({
+      workbench,
       cliReply: cliReplyHandler,
       stickers: stickerLib,
       requestRestart: (reason) => requestRestart(reason),
