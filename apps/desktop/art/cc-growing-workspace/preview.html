@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'">
+<title>CC · 一张慢慢变顺手的桌子</title>
+<link rel="stylesheet" href="./preview.css">
+</head>
+<body>
+<header class="review-bar"><div><span class="review-dot"></span><strong>设计研究 04</strong><span class="review-label">一起做 · 随事情生长的工作空间</span></div><button data-action="design">读设计说明 <span>↗</span></button></header>
+<section class="scenario-bar" aria-label="设计稿场景切换"><div class="scenario-projects" role="group" aria-label="示例项目"><button data-project="music" aria-pressed="true">一首歌</button><button data-project="game" aria-pressed="false">一个小游戏</button></div><div class="stages" role="group" aria-label="合作阶段"><button data-stage="0" aria-pressed="true"><span>01</span> 一个念头</button><i></i><button data-stage="1" aria-pressed="false"><span>02</span> 第一版</button><i></i><button data-stage="2" aria-pressed="false"><span>03</span> 越来越顺手</button></div><span class="demo-label">可点击样稿 · 合成内容 · 未连接模型</span></section>
+<div id="app"></div>
+<footer class="review-footer"><span id="design-caption"></span><button data-action="advance">看看下一步 <span>→</span></button></footer>
+<dialog id="dialog" aria-labelledby="dialog-title"><header><span class="eyebrow">CC · 设计样稿</span><button data-action="close" aria-label="关闭">×</button></header><div id="dialog-content"></div></dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="./preview.js"></script>
+</body></html>
