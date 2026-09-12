@@ -184,3 +184,11 @@ it('the collapsed execution label follows the selected service rather than the d
   syncWorkbenchProviderLabel(host as any)
   expect(label.textContent).toBe('当前使用 Codex')
 })
+
+it('does not rebuild unchanged task UI on each poll while the user types',async()=>{
+  const {createWorkbenchController}=await import('./workbench.js')
+  const render=vi.fn()
+  const controller=createWorkbenchController({invokeWorkbenchApi:vi.fn(async()=>({tasks:[],providers:[],defaultProvider:'',canWechat:false})),render})
+  await controller.refresh();await controller.refresh()
+  expect(render).toHaveBeenCalledTimes(1)
+})

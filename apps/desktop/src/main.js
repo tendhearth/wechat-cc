@@ -1379,7 +1379,9 @@ function showDevBannerIfShim() {
     ? `<b>演示模式 (DRY_RUN)</b> · 界面状态是假的，但未被拦下的命令仍会走真实 CLI`
     : allowMut
       ? `<b>开发模式 · 安全阀已关闭</b> · 删账号 / service / setup / update 会真实生效`
-      : `<b>开发模式</b> · 操作走真实 CLI 与真实 daemon；只放行已知只读的命令`
+      : w.__WECHAT_CC_WORKBENCH_WRITES__
+        ? `<b>开发模式</b> · 一起做已连接真实执行 · 其他页面保持只读`
+        : `<b>开发模式</b> · 操作走真实 CLI 与真实 daemon；只放行已知只读的命令`
   // 关阀是唯一能毁掉真实状态的模式，颜色上必须一眼可辨（spec §3）。
   banner.classList.toggle("is-unsafe", Boolean(allowMut) && !w.__WECHAT_CC_DRY_RUN__)
   banner.hidden = false

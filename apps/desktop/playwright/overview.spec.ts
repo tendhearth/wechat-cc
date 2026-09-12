@@ -21,6 +21,13 @@ import { test, expect } from './fixtures'
 // actually runs (it bails when state.mode !== 'dashboard' even if the
 // DOM data-mode attr says otherwise).
 
+async function openConnections(page: import('@playwright/test').Page) {
+  const panel = page.locator('.cc-home-details')
+  await expect(panel).not.toHaveAttribute('open', '')
+  await panel.locator(':scope > summary').click()
+  await expect(panel).toHaveAttribute('open', '')
+}
+
 // ── Hero tone (daemon alive vs dead) ────────────────────────────────────
 //
 // To exercise the hero render path, the page must boot INTO dashboard mode
@@ -48,6 +55,7 @@ async function bootAndForceDashboardRender(page: import('@playwright/test').Page
     // Trigger any visibility-listener path the app uses for fresh data.
     document.dispatchEvent(new Event('visibilitychange'))
   })
+  await openConnections(page)
 }
 
 // NOTE on the 3-state dashboardHero logic in view.js::dashboardHero —
@@ -121,12 +129,13 @@ test('current-user card renders bound account name + 管理员 pill', async ({ p
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await page.goto(shimUrl)
   await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 10_000 })
+  await openConnections(page)
   const current = page.locator('#accounts-current')
   // Friendly name comes from userNames[userId] in the doctor response.
   // demo.seed seeds userNames = { test_chat: 'Test User' }.
   await expect(current).toContainText(/Test User/, { timeout: 10_000 })
   await expect(current.locator('.role-pill')).toContainText(/管理员/)
-  await expect(current.locator('.provider-chip')).toContainText(/claude/)
+  await expect(current.locator('.provider-chip')).toContainText('Claude')
 })
 
 // ── Sub-user grid ───────────────────────────────────────────────────────
@@ -135,6 +144,7 @@ test('sub-user grid shows a truthful empty state when only the admin is bound', 
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await page.goto(shimUrl)
   await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 10_000 })
+  await openConnections(page)
   await expect(page.locator('#accounts-body .sub-user-card')).toHaveCount(0)
   // #109 起空状态是一个紧凑的「＋ 添加使用者」入口,不再是大块占位。
   await expect(page.locator('#accounts-body .sub-user-empty')).toBeVisible({ timeout: 10_000 })
@@ -147,6 +157,7 @@ test('empty sub-user area opens the add-user page', async ({ page, shimUrl, shim
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await page.goto(shimUrl)
   await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 10_000 })
+  await openConnections(page)
   const trigger = page.locator('#accounts-body .sub-user-empty-trigger')
   await expect(trigger).toBeVisible()
   await trigger.click()

@@ -4,7 +4,7 @@
  * we ask it to resume.
  *
  *   Claude:  ~/.claude/projects/<encoded-cwd>/<session_id>.jsonl
- *   Codex:   ~/.codex/sessions/<YYYY>/<MM>/<DD>/<thread_id>.jsonl  (sharded)
+ *   Codex:   ~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<timestamp>-<thread_id>.jsonl
  *
  * Codex's sharding caused RFC 03 P5 review #9: the original P0 impl
  * checked only the unsharded path which never matched real Codex output,
@@ -44,6 +44,11 @@ export function codexSessionJsonlPaths(home: string, threadId: string): string[]
             join(dayDir, `${threadId}.jsonl`),
             join(dayDir, `${threadId}.json`),
           )
+          for (const file of safeReaddir(dayDir, readdirSync)) {
+            if (file.startsWith('rollout-') && file.endsWith(`-${threadId}.jsonl`)) {
+              candidates.push(join(dayDir, file))
+            }
+          }
         }
       }
     }

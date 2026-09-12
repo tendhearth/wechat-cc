@@ -27,6 +27,7 @@ import { thoughtRoutes } from '../../src/daemon/internal-api/routes-thoughts'
 // against the real .app, but in seconds and with DOM-aware selectors.
 
 import { spawn } from 'bun'
+import { createWorkbenchProxy } from './workbench-proxy'
 import { join, resolve, relative, isAbsolute } from 'node:path'
 import { guardCliInvoke } from './dev-guard'
 import { makeLiveReload, injectReloadScript } from './dev-reload'
@@ -45,6 +46,13 @@ const dryRun = process.env.WECHAT_CC_DRY_RUN === '1'
 // live 模式默认不跑会改真实状态的 CLI 命令(spec 2026-07-26 §3)。
 const allowMutations = process.env.WECHAT_CC_DEV_ALLOW_MUTATIONS === '1'
   || process.argv.includes('--allow-mutations')
+
+// Optional isolated workbench runtime. Other pages keep using the existing daemon.
+const workbenchWrites = process.env.WECHAT_CC_DEV_WORKBENCH_WRITES === '1'
+const workbenchProxy = createWorkbenchProxy({
+  stateDir: process.env.WECHAT_CC_WORKBENCH_STATE_DIR ?? STATE_DIR,
+  dryRun, allowWrites: allowMutations || workbenchWrites,
+})
 
 // ─── Playwright mock state ────────────────────────────────────────────────────
 // Shared mutable bag for test-controlled data. Playwright tests seed this via
@@ -230,6 +238,7 @@ window.__TAURI__ = window.__TAURI__ ?? { core: {
   getCurrentWindow: () => ({ startDragging: async () => {} })
 }}
 window.__WECHAT_CC_DRY_RUN__ = ${dryRun ? 'true' : 'false'}
+window.__WECHAT_CC_WORKBENCH_WRITES__ = ${workbenchWrites && !dryRun ? 'true' : 'false'}
 window.__WECHAT_CC_ALLOW_MUTATIONS__ = ${allowMutations ? 'true' : 'false'}
 `
 const POLYFILL_INLINE = `<script>${POLYFILL_BODY}</script>`
@@ -371,6 +380,9 @@ Bun.serve({
       if (!(await file.exists())) return new Response('not found', { status: 404 })
       return new Response(file)
     }
+
+    const workbenchResponse = await workbenchProxy(req)
+    if (workbenchResponse) return workbenchResponse
 
     // Owner-only workspace proxy, same contract as lib.rs's customer_review_api:
     // the admin operator token is read HERE and never handed to the page.

@@ -101,7 +101,13 @@ export function createWorkbenchController(deps) {
   let detailRequest = 0
   let composingNewTask = false
   let alive = true
-  const paint = () => deps.render(state)
+  let lastPaint = ''
+  const paint = () => {
+    const snapshot = JSON.stringify(state)
+    if (snapshot === lastPaint) return
+    lastPaint = snapshot
+    deps.render(state)
+  }
   return {
     state,
     async refresh() {
@@ -200,7 +206,7 @@ export function initWorkbenchPage(deps) {
     if (nextFocus) { nextFocus.focus(); if (focused && focused.start !== null && focused.end !== null && 'setSelectionRange' in nextFocus) nextFocus.setSelectionRange(focused.start, focused.end) }
   } })
   /** @param {unknown} error */
-  const fail = error => { if (!alive) return; const message = error instanceof Error ? error.message : String(error); controller.state.error = message === 'HTTP 404' ? '当前运行的后台还没有提供这个接口，请更新后台后重试。' : message; controller.paint() }
+  const fail = error => { if (!alive) return; const message = error instanceof Error ? error.message : String(error); controller.state.error = ['HTTP 404','workbench_endpoint_missing'].includes(message) ? '当前运行的后台还没有提供这个接口，请更新后台后重试。' : message === 'workbench_read_only_preview' ? '当前预览只允许查看任务，请使用已启用执行的桌面端。' : message === 'workbench_connection_unavailable' ? '暂时连不上任务服务，请检查后台是否运行。' : message; controller.paint() }
   /** @param {'GET'|'POST'} method @param {string} path @param {Record<string,unknown>} body */
   const mutate = async (method, path, body) => {
     if (busy || !alive) return
