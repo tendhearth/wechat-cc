@@ -38,6 +38,7 @@
 .wb-folder-row { display: flex; gap: 8px; }
 .wb-folder-row input { min-width: 0; }
 .wb-optional { color: var(--ink-3); font-weight: 400; }
+.wb-field-help { color: var(--ink-3); font-size: 11px; font-weight: 400; }
 .wb-btn { width: fit-content; border: 1px solid var(--hair-2); border-radius: 8px; padding: 9px 13px; background: #fff; color: var(--ink); font-weight: 650; cursor: pointer; }
 .wb-btn-primary { border-color: var(--green-2); background: var(--green-2); color: #fff; }
 .wb-btn-danger { border-color: #dcb7ad; color: var(--rouge); }

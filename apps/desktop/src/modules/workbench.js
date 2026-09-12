@@ -76,7 +76,7 @@ export function renderWorkbench(state) {
     <div class="wb-controls">${renderTaskControls(detail.task.status)}</div>` : `
     <div class="wb-welcome"><p class="wb-kicker">新的文件夹任务</p><h1>把一件事交给 CC</h1><p>原始文件默认保留不动；待交付文件会集中放进任务成果目录。</p>
       <form id="wb-create-form" class="wb-create-form">
-        <label>文件夹<div class="wb-folder-row"><input id="wb-path" name="path" required placeholder="选择一个本机文件夹"><button type="button" class="wb-btn" data-action="choose-folder">选择…</button></div></label>
+        <label>文件夹<div class="wb-folder-row"><input id="wb-path" name="path" required aria-describedby="wb-folder-help" placeholder="选择或粘贴一个本机文件夹"><button type="button" class="wb-btn" data-action="choose-folder">选择…</button></div><small id="wb-folder-help" class="wb-field-help">也可以直接粘贴完整路径；原生选择目前只在 macOS 提供。</small></label>
         <label>要做什么<textarea id="wb-create-text" name="text" rows="7" required placeholder="例如：整理这些访谈记录，做一份主题摘要和引用表"></textarea></label>
         <label>执行服务<select id="wb-provider" name="providerId">${(state.providers ?? []).map((p) => `<option value="${escapeWorkbenchHtml(p.id)}" ${p.id === state.defaultProvider ? 'selected' : ''}>${escapeWorkbenchHtml(p.displayName)}</option>`).join('')}</select></label>
         <label>任务名称 <span class="wb-optional">可选</span><input id="wb-title" name="title" placeholder="留空时使用任务要求的前 40 个字"></label>
