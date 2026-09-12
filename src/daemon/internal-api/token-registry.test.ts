@@ -48,9 +48,36 @@ describe('token-registry', () => {
       'POST /v1/reminders/schedule',
       'POST /v1/permissions/resolve',
       'POST /v1/federation/mint',
+      'GET /v1/workbench',
+      'GET /v1/workbench/task',
+      'POST /v1/workbench/create',
+      'POST /v1/workbench/continue',
+      'POST /v1/workbench/cancel',
+      'GET /v1/workbench/artifact',
+      'POST /v1/workbench/approve',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
+  })
+
+  it('operator token grants exactly the seven Workbench routes without widening agent tokens', () => {
+    const r = makeTokenRegistry(() => 'ee'.repeat(32))
+    r.registerOperatorToken('dd'.repeat(32))
+    r.registerFileToken('cc'.repeat(32))
+    const session = r.mint('trusted', 'codex/default/contact')
+    const workbenchRoutes = [...(r.resolve('dd'.repeat(32))?.routeAllow ?? [])].filter(route => route.includes('/v1/workbench'))
+    expect(workbenchRoutes).toEqual([
+      'GET /v1/workbench',
+      'GET /v1/workbench/task',
+      'POST /v1/workbench/create',
+      'POST /v1/workbench/continue',
+      'POST /v1/workbench/cancel',
+      'GET /v1/workbench/artifact',
+      'POST /v1/workbench/approve',
+    ])
+    expect(r.resolve('cc'.repeat(32))?.routeAllow).toBeUndefined()
+    expect(r.resolve(session)?.routeAllow).toBeUndefined()
+    expect(r.resolve(session)?.tier).toBe('trusted')
   })
 
   // 桌宠卡片上的「允许 / 拒绝」只有这一个 admin 档凭据够得着(Tauri 的

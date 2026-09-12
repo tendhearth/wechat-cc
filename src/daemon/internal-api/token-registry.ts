@@ -57,7 +57,7 @@ import type { UserTier } from '../../core/user-tier'
  *     its tier; the dispatcher enforces this as a second gate after the
  *     tier check (see index.ts). registerOperatorToken sets
  *     to the desktop application's owner-only surfaces: companion converse /
- *     voice, Customer Review, 待办, plus the pet window's permission
+ *     voice, Customer Review, 待办, Workbench, plus the pet window's permission
  *     resolve. It still cannot restart the daemon, list
  *     sessions, or locate arbitrary files. That residual owner-surface access
  *     is accepted and documented: closing it
@@ -168,6 +168,16 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           // the operator token alone is not enough; readGrant(stateDir) must
           // also be non-null (explicit owner authorization, design option B).
           'POST /v1/federation/mint',
+          // Owner Workbench (2026-09-11) — the Tauri host proxies these
+          // requests with this operator credential; the webview never sees
+          // the token. Keep the grant to the exact seven Workbench methods.
+          'GET /v1/workbench',
+          'GET /v1/workbench/task',
+          'POST /v1/workbench/create',
+          'POST /v1/workbench/continue',
+          'POST /v1/workbench/cancel',
+          'GET /v1/workbench/artifact',
+          'POST /v1/workbench/approve',
         ]),
       })
     },

@@ -40,13 +40,14 @@ describe('Workbench internal HTTP API', () => {
   async function start(initial?: ReturnType<typeof service>) {
     api = createInternalApi({ stateDir, daemonPid: 1, workbench: initial } as never)
     const adminToken = api.mintSessionToken('admin', 'codex/default/owner')
-    const { port, tokenFilePath } = await api.start()
+    const { port, tokenFilePath, operatorTokenFilePath } = await api.start()
     const trustedToken = readFileSync(tokenFilePath, 'utf8').trim()
+    const operatorToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
     const request = (path: string, init: RequestInit = {}, token = adminToken) => fetch(`http://127.0.0.1:${port}${path}`, {
       ...init,
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...init.headers },
     })
-    return { request, trustedToken }
+    return { request, trustedToken, operatorToken }
   }
 
   it('declares every Workbench route admin-only and rejects the trusted file token', async () => {
@@ -70,6 +71,20 @@ describe('Workbench internal HTTP API', () => {
     const response = await request('/v1/workbench')
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual(await workbench.list())
+  })
+
+  it('allows the generated desktop operator token to read and mutate Workbench tasks', async () => {
+    const workbench = service()
+    const { request, operatorToken } = await start(workbench)
+    const list = await request('/v1/workbench', {}, operatorToken)
+    expect(list.status).toBe(200)
+    expect(await list.json()).toEqual(await workbench.list())
+    const create = await request('/v1/workbench/create', {
+      method: 'POST',
+      body: JSON.stringify({ path: '/tmp/project', providerId: 'claude', text: 'draft this' }),
+    }, operatorToken)
+    expect(create.status).toBe(202)
+    expect(await create.json()).toEqual({ task: TASK })
   })
 
   it('serves all seven routes with the documented wire shapes and 202 mutations', async () => {
