@@ -15,7 +15,7 @@
 // subscribers + invokes refresh from action handlers.
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
-import { invokeApi } from "./api.js"
+import { invokeApi, invokeWorkbenchApi } from "./api.js"
 import { initialMode, restartButtonState, afterScanTarget , showToast } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
 import { startCompanionPresence } from "./companion-presence.js"
@@ -47,6 +47,7 @@ import { mountHugeicons } from "./modules/icons.js"
 import { pingHealth } from "./health-probe.js"
 import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
 import { loadAtelierGallery } from "./modules/atelier-gallery.js"
+import { initWorkbenchPage, stopWorkbenchPolling } from "./modules/workbench.js"
 
 const state = {
   setup: /** @type {SetupQrJson | null} */ (null),
@@ -125,6 +126,7 @@ const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 1000
 const deps = {
   invoke,
   invokeApi,
+  invokeWorkbenchApi,
   formatInvokeError,
   doctorPoller,
   mock,
@@ -460,6 +462,11 @@ function switchPane(name) {
   }
   if (name === "todos") {
     initTodosPage(deps)
+  }
+  if (name === "workbench") {
+    initWorkbenchPage(deps)
+  } else {
+    stopWorkbenchPolling()
   }
   if (name === "sessions") {
     activateDialogueWorkspace()

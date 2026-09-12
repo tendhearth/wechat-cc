@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="./cc-page-art.css" />
     <link rel="stylesheet" href="./cc-surfaces.css" />
     <link rel="stylesheet" href="./postcard-album.css" />
+    <link rel="stylesheet" href="./styles/workbench.css" />
   </head>
   <body>
 
@@ -343,6 +344,10 @@
               <span class="ic" data-hg-icon="smile" data-hg-size="16"></span>
               <span>跟 CC 说</span>
             </button>
+            <button class="dash-nav-link" data-pane="workbench">
+              <span class="ic" data-hg-icon="folder-01" data-hg-size="16"></span>
+              <span>工作台</span>
+            </button>
             <button class="dash-nav-link" data-pane="todos">
               <span class="ic" data-hg-icon="checkmark-circle-02" data-hg-size="16"></span>
               <span>待办</span>
@@ -640,6 +645,11 @@
             <div class="logs-body" id="logs-body">
               <p class="empty-state">加载中…</p>
             </div>
+          </article>
+
+          <!-- ── pane: workbench ───────────────────────────────────── -->
+          <article class="dash-pane workbench-pane" data-pane="workbench" hidden>
+            <div id="workbench-root" class="workbench-root"><p class="empty-state">正在打开工作台…</p></div>
           </article>
 
           <!-- ── pane: a2a-agents → 觅食台 (forager's desk) ─────────────── -->

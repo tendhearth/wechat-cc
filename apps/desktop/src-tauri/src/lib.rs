@@ -935,6 +935,90 @@ async fn customer_review_api(
     Ok(body_text)
 }
 
+fn workbench_request_allowed(method: &str, path: &str) -> bool {
+    if path.contains("..") {
+        return false;
+    }
+    let route = path.split('?').next().unwrap_or("");
+    matches!(
+        (method, route),
+        ("GET", "/v1/workbench")
+            | ("GET", "/v1/workbench/task")
+            | ("GET", "/v1/workbench/artifact")
+            | ("POST", "/v1/workbench/create")
+            | ("POST", "/v1/workbench/continue")
+            | ("POST", "/v1/workbench/cancel")
+            | ("POST", "/v1/workbench/approve")
+    )
+}
+
+// Workbench owns admin-only folder tasks and artifact snapshots. Keep its
+// operator token in Rust and expose only the seven contract routes above.
+#[tauri::command]
+async fn workbench_api(method: String, path: String, body: Option<String>) -> Result<String, String> {
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    if !workbench_request_allowed(&method, &path) {
+        return Err(format!("workbench_api refuses request: {method} {path}"));
+    }
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|e| format!("cannot resolve home dir: {e}"))?;
+    let state_dir = std::env::var("WECHAT_STATE_DIR").unwrap_or_else(|_| {
+        PathBuf::from(home).join(".claude").join("channels").join("wechat").to_string_lossy().to_string()
+    });
+    let info_path = PathBuf::from(state_dir).join("internal-api-info.json");
+    let info: Value = serde_json::from_str(&std::fs::read_to_string(&info_path)
+        .map_err(|e| format!("read {}: {e}", info_path.display()))?)
+        .map_err(|e| format!("invalid JSON in {}: {e}", info_path.display()))?;
+    let base_url = info.get("baseUrl").and_then(Value::as_str)
+        .ok_or_else(|| format!("missing baseUrl in {}", info_path.display()))?;
+    let token_path = info.get("operatorTokenFilePath").and_then(Value::as_str)
+        .ok_or_else(|| "operator token unavailable — daemon too old".to_string())?;
+    let token = std::fs::read_to_string(token_path).map(|s| s.trim().to_string())
+        .map_err(|e| format!("token read error: {e}"))?;
+    let url = format!("{base_url}{path}");
+    let response = timeout(Duration::from_secs(30), async {
+        let client = reqwest::Client::new();
+        let request = if method == "GET" { client.get(url) } else {
+            client.post(url).header("Content-Type", "application/json").body(body.unwrap_or_else(|| "{}".into()))
+        };
+        request.bearer_auth(token).send().await
+    }).await.map_err(|_| "request timed out".to_string())?
+      .map_err(|e| format!("request error: {e}"))?;
+    let status = response.status();
+    let response_body = response.text().await.map_err(|e| format!("failed to read response body ({status}): {e}"))?;
+    if !status.is_success() {
+        let message = serde_json::from_str::<Value>(&response_body).ok()
+            .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned))
+            .unwrap_or_else(|| format!("HTTP {status}"));
+        return Err(message);
+    }
+    serde_json::from_str::<Value>(&response_body)
+        .map_err(|e| format!("invalid JSON response ({status}): {e}"))?;
+    Ok(response_body)
+}
+
+#[tauri::command]
+fn choose_workbench_folder() -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("osascript")
+            .args(["-e", "POSIX path of (choose folder with prompt \"选择工作台文件夹\")"])
+            .output().map_err(|e| format!("open folder chooser: {e}"))?;
+        if !output.status.success() {
+            // AppleScript reports user cancellation on stderr; cancellation is
+            // a normal empty result rather than a page error.
+            return Ok(None);
+        }
+        let path = String::from_utf8(output.stdout).map_err(|e| format!("folder path is not UTF-8: {e}"))?;
+        return Ok(Some(path.trim_end_matches(['\r', '\n']).to_string()));
+    }
+    #[cfg(not(target_os = "macos"))]
+    Ok(None)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Open a URL with the system handler. Used for the macOS System Settings
 /// deep link when the daemon reports it cannot read the owner's folders
@@ -1089,7 +1173,9 @@ pub fn run() {
             agent_converse,
             agent_speak,
             agent_transcribe,
-            customer_review_api
+            customer_review_api,
+            workbench_api,
+            choose_workbench_folder
         ])
         .build(tauri::generate_context!())
         .expect("error while building wechat-cc desktop")
@@ -1107,4 +1193,34 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod workbench_proxy_tests {
+    use super::workbench_request_allowed;
+
+    #[test]
+    fn allows_only_the_exact_workbench_method_route_pairs() {
+        for (method, path) in [
+            ("GET", "/v1/workbench"),
+            ("GET", "/v1/workbench/task?id=A1B2C3D4"),
+            ("GET", "/v1/workbench/artifact?id=A1B2C3D4&artifactId=file-1"),
+            ("POST", "/v1/workbench/create"),
+            ("POST", "/v1/workbench/continue"),
+            ("POST", "/v1/workbench/cancel"),
+            ("POST", "/v1/workbench/approve"),
+        ] {
+            assert!(workbench_request_allowed(method, path), "expected {method} {path} to be allowed");
+        }
+        for (method, path) in [
+            ("POST", "/v1/workbench"),
+            ("GET", "/v1/workbench/create"),
+            ("GET", "/v1/workbench/task/extra"),
+            ("GET", "/v1/workbench/../companion/presence"),
+            ("DELETE", "/v1/workbench/task?id=A1B2C3D4"),
+            ("GET", "/v1/customer-review"),
+        ] {
+            assert!(!workbench_request_allowed(method, path), "expected {method} {path} to be refused");
+        }
+    }
 }

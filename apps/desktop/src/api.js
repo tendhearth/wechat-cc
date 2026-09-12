@@ -105,6 +105,24 @@ export async function invokeApi(method, path, body, opts) {
 }
 
 /**
+ * Workbench admin calls always stay in the native host. The renderer receives
+ * response JSON, never the operator credential.
+ * @param {'GET' | 'POST'} method
+ * @param {string} path
+ * @param {Record<string, unknown>} [body]
+ */
+export async function invokeWorkbenchApi(method, path, body) {
+  const raw = /** @type {string} */ (await ipcInvoke('workbench_api', {
+    method,
+    path,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  }, undefined))
+  if (typeof raw !== 'string') return raw
+  try { return JSON.parse(raw) }
+  catch { throw new Error(`workbench returned a non-JSON response: ${raw.slice(0, 120)}`) }
+}
+
+/**
  * Send one internal API request. A daemon restart rotates the local token;
  * retry once with newly read credentials on 401/403 instead of leaving the
  * desktop on a generic failure message.
