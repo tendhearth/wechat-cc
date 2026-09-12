@@ -29,6 +29,9 @@
 .wb-event-meta { display: flex; gap: 10px; color: var(--ink-3); font-size: 11px; }
 .wb-event p { margin: 7px 0 0; white-space: pre-wrap; line-height: 1.65; }
 .wb-controls { border-top: 1px solid var(--hair); padding-top: 20px; }
+.wb-wechat { display: flex; align-items: center; gap: 10px; margin: 0 0 18px; border-radius: 9px; padding: 10px 12px; background: var(--green-soft); color: var(--green-ink); font-size: 12px; }
+.wb-wechat code { font: 600 12px/1.4 var(--mono); user-select: all; }
+.wb-wechat .wb-btn { margin-left: auto; padding: 6px 10px; }
 .wb-create-form, .wb-followup { display: grid; gap: 17px; max-width: 720px; margin-top: 28px; }
 .wb-create-form label, .wb-followup label { display: grid; gap: 8px; color: var(--ink-2); font-size: 13px; font-weight: 650; }
 .wb-create-form input, .wb-create-form textarea, .wb-create-form select, .wb-followup textarea { width: 100%; border: 1px solid var(--hair-2); border-radius: 8px; padding: 11px 12px; background: #fff; color: var(--ink); font: inherit; resize: vertical; }
