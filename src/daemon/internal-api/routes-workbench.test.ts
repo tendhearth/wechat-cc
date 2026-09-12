@@ -109,6 +109,24 @@ describe('Workbench internal HTTP API', () => {
     expect(workbench.resolvePermission).toHaveBeenCalledWith('deadbeef', '123e4567-e89b-42d3-a456-426614174000', 'deny')
   })
 
+  it('keeps per-task waiting and permission information intact through list and detail', async () => {
+    const running = { ...TASK, status: 'running', waitingFor: null, pendingPermissionCount: 2 }
+    const waitingFor = { taskId: TASK.id, title: 'Draft', reason: 'nested_path' }
+    const queued = { ...TASK, id: 'cafefeed', path: '/tmp/project/docs', waitingFor, pendingPermissionCount: 0 }
+    const workbench = service({
+      list: vi.fn(() => ({ tasks: [running, queued], providers: [], defaultProvider: null, canWechat: false })),
+      detail: vi.fn((id: string) => ({ task: id === queued.id ? queued : running, events: [], artifacts: [], permissions: [] })),
+    })
+    const { request } = await start(workbench)
+    expect(await (await request('/v1/workbench')).json()).toMatchObject({ tasks: [running, queued] })
+    expect(await (await request(`/v1/workbench/task?id=${queued.id}`)).json()).toMatchObject({ task: queued, permissions: [] })
+    expect(workbench.detail).toHaveBeenCalledWith(queued.id)
+    queued.waitingFor.reason = 'writer_not_closed'
+    expect(await (await request(`/v1/workbench/task?id=${queued.id}`)).json()).toMatchObject({
+      task: { waitingFor: { taskId: TASK.id, reason: 'writer_not_closed' } },
+    })
+  })
+
   it('rejects malformed identifiers and bounded create fields before calling the service', async () => {
     const workbench = service()
     const { request } = await start(workbench)
