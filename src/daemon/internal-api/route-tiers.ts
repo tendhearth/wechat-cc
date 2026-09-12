@@ -17,6 +17,14 @@ export function tierMeets(have: UserTier, need: UserTier): boolean {
 }
 
 export const ROUTE_MIN_TIER: Record<string, UserTier> = {
+  // Owner Workbench: task instructions and generated artifacts are private.
+  'GET /v1/workbench': 'admin',
+  'GET /v1/workbench/task': 'admin',
+  'POST /v1/workbench/create': 'admin',
+  'POST /v1/workbench/continue': 'admin',
+  'POST /v1/workbench/cancel': 'admin',
+  'GET /v1/workbench/artifact': 'admin',
+  'POST /v1/workbench/approve': 'admin',
   // guest — liveness + read/reply
   'GET /v1/health': 'guest',
   'POST /v1/wechat/reply': 'guest',

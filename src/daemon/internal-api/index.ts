@@ -346,6 +346,10 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       lateDelegate = d
     },
 
+    setWorkbench(service) {
+      deps.workbench = service
+    },
+
     setConversation(c) {
       deps.conversation = c
     },

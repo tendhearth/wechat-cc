@@ -41,6 +41,7 @@ import { fileRoutes } from './routes-files'
 import { customerReviewRoutes } from './routes-customer-review'
 import { federationRoutes } from './routes-federation'
 import { remindersRoutes } from './routes-reminders'
+import { workbenchRoutes } from './routes-workbench'
 import { countForTag, ONLINE_STICKER_K } from '../stickers'
 import { makeCooldown } from '../sticker-source'
 import type {
@@ -101,6 +102,7 @@ const onlineStickerCooldown = makeCooldown(5 * 60_000)
 // always pick the first (often identical) GIPHY result.
 const onlineStickerCursor = new Map<string, number>()
   return {
+    ...workbenchRoutes(deps),
     'GET /v1/health': () => ({
       status: 200,
       body: {

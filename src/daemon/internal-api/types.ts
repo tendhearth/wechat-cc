@@ -15,6 +15,7 @@ import type { ConversationStore } from '../../core/conversation-store'
 import type { ProviderId } from '../../core/conversation'
 import type { PermissionMode } from '../../core/capability-matrix'
 import type { UserTier } from '../../core/user-tier'
+import type { WorkbenchService } from '../../core/workbench/service'
 
 /**
  * RFC 03 P3: when conversation mode is parallel (or chatroom), the
@@ -94,6 +95,8 @@ export interface InternalApiDeps {
   atelier?: import('../atelier-store').AtelierStore
   /** Daemon process pid — exposed by /v1/health for smoke tests. */
   daemonPid: number
+  /** Owner-only Workbench service; late-bound after provider bootstrap. */
+  workbench?: WorkbenchService
   /**
    * Sandbox FS for memory_read / memory_write / memory_list (RFC 03 P1.B
    * B2). The same MemoryFS instance is shared with the legacy in-process
@@ -518,6 +521,8 @@ export interface InternalApi {
   port(): number
   /** Filesystem path of the token file. */
   tokenFilePath(): string
+  /** Late-bind the owner-only Workbench after provider bootstrap. */
+  setWorkbench(service: WorkbenchService): void
   /**
    * RFC 03 P4 — late-bind the delegate dispatcher after bootstrap has
    * constructed the bare delegate providers. /v1/delegate route returns
