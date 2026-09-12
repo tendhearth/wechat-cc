@@ -71,26 +71,23 @@ function statusLabel(status) {
   return ({ queued: '等待中', running: '进行中', cancelling: '正在停止', completed: '已完成', failed: '未完成', cancelled: '已停止', interrupted: '已中断' })[status] ?? status
 }
 
-/** @param {string} status @param {WaitingFor|null|undefined} [waitingFor] */
-export function renderTaskControls(status, waitingFor) {
+/** @param {string} status */
+export function renderTaskControls(status) {
   if (status === 'queued') {
-    const waitingCopy = waitingFor?.reason === 'writer_not_closed'
-      ? '执行程序尚未确认退出；可以停止这项排队任务。'
-      : waitingFor ? '任务仍在排队；现在可以停止这个任务。' : '任务正在等待开始；现在可以停止这个任务。'
-    return `<form class="wb-followup wb-followup-waiting">
-    <label for="wb-followup-text">补充要求</label><textarea id="wb-followup-text" rows="3" placeholder="可以先写在这里"></textarea>
-    <div class="wb-control-actions"><small>${waitingCopy}</small><button class="wb-btn" type="button" disabled>本轮结束后可发送</button><button class="wb-btn wb-btn-danger" type="button" data-action="cancel">停止任务</button></div>
+    return `<form class="wb-followup wb-followup-waiting" aria-label="任务补充草稿">
+    <label class="wb-sr-only" for="wb-followup-text">补充要求</label><textarea id="wb-followup-text" rows="2" aria-describedby="wb-followup-timing" placeholder="可以先写在这里"></textarea>
+    <div class="wb-control-actions"><small id="wb-followup-timing">草稿只保存在当前任务；本轮结束后可发送。</small><button class="wb-btn wb-btn-danger" type="button" data-action="cancel">停止任务</button></div>
   </form>`
   }
-  if (status === 'running') return `<form class="wb-followup wb-followup-waiting">
-    <label for="wb-followup-text">补充要求</label><textarea id="wb-followup-text" rows="3" placeholder="可以先写在这里"></textarea>
-    <div class="wb-control-actions"><small>草稿只保存在当前任务；本轮结束后才能发送。</small><button class="wb-btn" type="button" disabled>本轮结束后可发送</button><button class="wb-btn wb-btn-danger" type="button" data-action="cancel">停止任务</button></div>
+  if (status === 'running') return `<form class="wb-followup wb-followup-waiting" aria-label="任务补充草稿">
+    <label class="wb-sr-only" for="wb-followup-text">补充要求</label><textarea id="wb-followup-text" rows="2" aria-describedby="wb-followup-timing" placeholder="可以先写在这里"></textarea>
+    <div class="wb-control-actions"><small id="wb-followup-timing">草稿只保存在当前任务；本轮结束后可发送。</small><button class="wb-btn wb-btn-danger" type="button" data-action="cancel">停止任务</button></div>
   </form>`
-  if (status === 'cancelling') return `<form class="wb-followup wb-followup-waiting">
-    <label for="wb-followup-text">补充要求</label><textarea id="wb-followup-text" rows="3" placeholder="可以先写在这里"></textarea>
+  if (status === 'cancelling') return `<form class="wb-followup wb-followup-waiting" aria-label="任务补充草稿">
+    <label class="wb-sr-only" for="wb-followup-text">补充要求</label><textarea id="wb-followup-text" rows="2" placeholder="可以先写在这里"></textarea>
     <div class="wb-control-actions"><small>正在等待执行程序确认退出。</small><button class="wb-btn" type="button" disabled>正在停止…</button></div>
   </form>`
-  return '<form class="wb-followup" data-action="continue"><label for="wb-followup-text">继续这个任务</label><textarea id="wb-followup-text" rows="3" placeholder="补充要求，仍会续接同一个任务"></textarea><button class="wb-btn wb-btn-primary" type="submit">继续</button></form>'
+  return '<form class="wb-followup" data-action="continue"><label class="wb-sr-only" for="wb-followup-text">继续这个任务</label><textarea id="wb-followup-text" rows="2" placeholder="继续这个任务…"></textarea><button class="wb-btn wb-btn-primary" type="submit">继续</button></form>'
 }
 
 /** @param {Artifact[]} artifacts @param {string|null} current */
@@ -123,13 +120,20 @@ export function groupWorkbenchTasks(tasks) {
 function renderTask(task, providers, selectedId) {
   const provider = providers.find(item => item.id === task.providerId)?.displayName || task.providerId || '未知执行者'
   const pendingPermissionCount = task.pendingPermissionCount ?? 0
-  const waitingLabel = task.waitingFor?.reason === 'writer_not_closed' ? '等待执行程序退出确认' : task.waitingFor ? `等待「${escapeWorkbenchHtml(task.waitingFor.title)}」结束` : ''
-  return `<button type="button" class="wb-task ${task.id === selectedId ? 'is-selected' : ''}" data-task-id="${escapeWorkbenchHtml(task.id)}">
-    <span class="wb-task-title">${escapeWorkbenchHtml(task.title || '未命名任务')}</span>
-    <span class="wb-task-meta"><span class="wb-status" data-status="${escapeWorkbenchHtml(task.status)}">${escapeWorkbenchHtml(statusLabel(task.status))}</span><time>${escapeWorkbenchHtml(time(task.updatedAt))}</time></span>
-    <span class="wb-task-provider">${escapeWorkbenchHtml(provider)}</span>
-    ${waitingLabel ? `<span class="wb-task-waiting">${waitingLabel}</span>` : ''}
-    ${pendingPermissionCount > 0 ? `<span class="wb-task-attention" aria-label="${escapeWorkbenchHtml(pendingPermissionCount)} 项权限请求等你确认">等你确认</span>` : ''}
+  const title = task.title || '未命名任务'
+  const updated = time(task.updatedAt)
+  const waitingLabel = task.waitingFor?.reason === 'writer_not_closed' ? '等待执行程序退出确认' : task.waitingFor ? '等待前项任务' : ''
+  const attention = pendingPermissionCount > 0 ? `，${pendingPermissionCount} 项权限请求等你确认` : ''
+  const waiting = task.waitingFor?.reason === 'writer_not_closed'
+    ? `，等待执行程序退出确认，阻塞任务「${task.waitingFor.title}」`
+    : task.waitingFor ? `，等待「${task.waitingFor.title}」` : ''
+  const accessibleLabel = `${title}，${provider}，${statusLabel(task.status)}${attention}${waiting}${updated ? `，更新于 ${updated}` : ''}`
+  const stateHtml = pendingPermissionCount > 0
+    ? `<span class="wb-task-attention" data-status="${escapeWorkbenchHtml(task.status)}" aria-label="${escapeWorkbenchHtml(statusLabel(task.status))}，${escapeWorkbenchHtml(pendingPermissionCount)} 项权限请求等你确认">等你确认 · ${escapeWorkbenchHtml(pendingPermissionCount)}</span>`
+    : `<span class="wb-status" data-status="${escapeWorkbenchHtml(task.status)}">${escapeWorkbenchHtml(waitingLabel || statusLabel(task.status))}</span>`
+  return `<button type="button" class="wb-task ${task.id === selectedId ? 'is-selected' : ''}" data-task-id="${escapeWorkbenchHtml(task.id)}" aria-label="${escapeWorkbenchHtml(accessibleLabel)}"${updated ? ` title="${escapeWorkbenchHtml(`${title} · ${updated}`)}"` : ''}>
+    <span class="wb-task-title" title="${escapeWorkbenchHtml(title)}">${escapeWorkbenchHtml(title)}</span>
+    <span class="wb-task-meta"><span class="wb-task-provider">${escapeWorkbenchHtml(provider)}</span>${stateHtml}</span>
   </button>`
 }
 
@@ -139,7 +143,7 @@ export function renderWorkbench(state) {
   const detail = state.detail
   const selectedArtifact = detail?.artifacts?.find(a => a.id === state.selectedArtifactId)
   const taskList = tasks.length ? groupWorkbenchTasks(tasks).map((project, index) => `<section class="wb-project" aria-labelledby="wb-project-${index}">
-    <header><h3 id="wb-project-${index}">${escapeWorkbenchHtml(project.label)}</h3><p title="${escapeWorkbenchHtml(project.path)}">${escapeWorkbenchHtml(project.path)}</p></header>
+    <header title="${escapeWorkbenchHtml(project.path)}"><h3 id="wb-project-${index}">${escapeWorkbenchHtml(project.label)}</h3></header>
     <div>${project.tasks.map(task => renderTask(task, state.providers, state.loadingId ?? state.selectedId)).join('')}</div>
   </section>`).join('') : `<p class="wb-empty-copy">${state.error ? '暂时没能读取任务列表。' : '还没有任务。选一个文件夹，把要做的事交给执行者。'}</p>`
   const helper = state.providers.find(p => p.id === detail?.task.providerId)?.displayName || detail?.task.providerId || '执行助手'
@@ -163,14 +167,16 @@ export function renderWorkbench(state) {
   </article>`).join('') : `<p class="wb-empty-copy">${detail?.task.status === 'running' ? `${escapeWorkbenchHtml(helper)} 正在处理，有回复时会按顺序显示在这里。` : detail?.task.status === 'queued' ? queuedCopy : '这项任务还没有对话记录。'}</p>`
   const operationHtml = operations.length ? `<details id="wb-tools" class="wb-disclosure wb-tools"><summary>工具与运行记录 <span>${operations.length} 条</span></summary><div class="wb-events">${operations.map(event => `<article class="wb-event" data-kind="${escapeWorkbenchHtml(event.kind)}"><div class="wb-event-meta"><span>${escapeWorkbenchHtml(event.kind === 'tool_call' ? '工具' : event.kind === 'error' ? '错误' : '系统')}</span><time>${escapeWorkbenchHtml(time(event.createdAt))}</time></div><p>${escapeWorkbenchHtml(event.text)}</p></article>`).join('')}</div></details>` : ''
   const permissionHtml = permissions.length ? `<section class="wb-permissions" aria-label="等待处理的权限请求"><header><h3>需要你的决定</h3><span>${permissions.length} 项</span></header>${permissions.map(permission => `<article class="wb-permission"><div><span class="wb-permission-tool">${escapeWorkbenchHtml(permission.tool)}</span><p>${escapeWorkbenchHtml(permission.description)}</p><time>${escapeWorkbenchHtml(time(permission.createdAt))}</time></div><div class="wb-permission-actions"><button class="wb-btn" type="button" data-action="deny-permission" data-request-id="${escapeWorkbenchHtml(permission.id)}">拒绝</button><button class="wb-btn wb-btn-primary" type="button" data-action="allow-permission" data-request-id="${escapeWorkbenchHtml(permission.id)}">允许</button></div></article>`).join('')}</section>` : ''
-  const center = detail ? `
-    <header class="wb-task-head"><div><p class="wb-kicker">${escapeWorkbenchHtml(helper)} · 任务 ${escapeWorkbenchHtml(detail.task.id)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2><p class="wb-path">${escapeWorkbenchHtml(detail.task.path)}</p></div><span class="wb-status" data-status="${escapeWorkbenchHtml(detail.task.status)}">${escapeWorkbenchHtml(statusLabel(detail.task.status))}</span></header>
+  const artifacts = detail?.artifacts?.length ? detail.artifacts.map(artifact => `<button type="button" class="wb-artifact ${artifact.id === state.selectedArtifactId ? 'is-selected' : ''}" data-artifact-id="${escapeWorkbenchHtml(artifact.id)}"><span>${escapeWorkbenchHtml(artifact.name)}</span><small>${escapeWorkbenchHtml((artifact.size / 1024).toFixed(1))} KB · ${artifact.approvedAt ? '已确认' : '待确认'}</small></button>`).join('') : ''
+  const previewContent = selectedArtifact && state.preview?.artifactId === selectedArtifact.id ? state.preview.html : '<p class="wb-preview-hint">选择“打开预览”读取这份不可变快照。</p>'
+  const artifactHtml = detail?.artifacts?.length ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><div class="wb-artifact-list">${artifacts}</div><div id="wb-preview" class="wb-preview">${selectedArtifact ? `<p class="wb-preview-name">${escapeWorkbenchHtml(selectedArtifact.name)}</p><div class="wb-preview-content">${previewContent}</div><button type="button" class="wb-btn" data-action="preview-artifact">打开预览</button><button type="button" class="wb-btn" data-action="download-artifact">下载</button>${selectedArtifact.approvedAt ? '<p class="wb-approved">已确认此版本</p>' : '<button type="button" class="wb-btn wb-btn-primary" data-action="approve-artifact">确认这份成果</button>'}` : ''}</div></details>` : ''
+  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${escapeWorkbenchHtml(pathParts(detail.task.path).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2></div><div class="wb-task-head-actions"><span class="wb-status" data-status="${escapeWorkbenchHtml(detail.task.status)}">${escapeWorkbenchHtml(statusLabel(detail.task.status))}</span><details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div></dl>${state.canWechat ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
+  const content = detail ? `
     <section class="wb-dialogue" aria-live="polite">${dialogueHtml}</section>
     ${queuedGuidance}
     ${operationHtml}
-    ${permissionHtml}
     ${detail.task.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(detail.task.error)}</div>` : ''}
-    ${state.canWechat ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}` : state.loadingId ? `
+    ${artifactHtml}` : state.loadingId ? `
     <div class="wb-welcome wb-task-loading" role="status"><p class="wb-kicker">打开任务</p><h1>正在打开任务…</h1><p>正在读取这项任务的对话和成果。</p></div>` : `
     ${state.error && !state.providers.length ? '<div class="wb-welcome"><p class="wb-kicker">一起做</p><h1>暂时没能打开手头的事。</h1><p>连接恢复后，就能继续查看任务和交代新事情。</p><button class="wb-btn" type="button" data-action="refresh">重新连接</button></div>' : ''}
     <div class="wb-welcome" ${state.error && !state.providers.length ? 'hidden' : ''}><p class="wb-kicker">新的一件事</p><h1>我们一起做点什么？</h1><p>说说你想做的事，再选一个放材料的文件夹。</p>
@@ -182,9 +188,8 @@ export function renderWorkbench(state) {
         <label>任务名称 <span class="wb-optional">可选</span><input id="wb-title" name="title" placeholder="留空时使用任务要求的前 40 个字"></label></details>
         <button class="wb-btn wb-btn-primary" type="submit"${state.providers.length ? '' : ' disabled'}>开始任务</button>
       </form></div>`
-  const artifacts = detail?.artifacts?.length ? detail.artifacts.map(artifact => `<button type="button" class="wb-artifact ${artifact.id === state.selectedArtifactId ? 'is-selected' : ''}" data-artifact-id="${escapeWorkbenchHtml(artifact.id)}"><span>${escapeWorkbenchHtml(artifact.name)}</span><small>${escapeWorkbenchHtml((artifact.size / 1024).toFixed(1))} KB · ${artifact.approvedAt ? '已确认' : '待确认'}</small></button>`).join('') : '<p class="wb-empty-copy">成果文件会在这里出现。失败或停止后，已经生成的文件仍可查看。</p>'
-  const previewContent = selectedArtifact && state.preview?.artifactId === selectedArtifact.id ? state.preview.html : '<p class="wb-preview-hint">选择“打开预览”读取这份不可变快照。</p>'
-  return `<div class="workbench-shell"><aside class="wb-sidebar"><header><p class="wb-kicker">项目与任务</p><button type="button" class="wb-new" data-action="new-task">＋ 新任务</button></header><div class="wb-task-list">${taskList}</div></aside><main class="wb-main">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${center}${detail ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail?.artifacts?.length ?? 0} 件</small></summary><div class="wb-artifact-list">${artifacts}</div><div id="wb-preview" class="wb-preview">${selectedArtifact ? `<p class="wb-preview-name">${escapeWorkbenchHtml(selectedArtifact.name)}</p><div class="wb-preview-content">${previewContent}</div><button type="button" class="wb-btn" data-action="preview-artifact">打开预览</button><button type="button" class="wb-btn" data-action="download-artifact">下载</button>${selectedArtifact.approvedAt ? '<p class="wb-approved">已确认此版本</p>' : '<button type="button" class="wb-btn wb-btn-primary" data-action="approve-artifact">确认这份成果</button>'}` : ''}</div></details><div class="wb-controls">${renderTaskControls(detail.task.status,detail.task.waitingFor)}</div>` : ''}</main></div>`
+  const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderTaskControls(detail.task.status)}</div></div>` : ''
+  return `<div class="workbench-shell"><aside class="wb-sidebar"><header><p class="wb-kicker">任务</p><button type="button" class="wb-new" data-action="new-task">＋ 新建</button></header><div class="wb-task-list">${taskList}</div></aside><main class="wb-main">${taskHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${content}</div></div>${controls}</main></div>`
 }
 
 /** @param {{invokeWorkbenchApi:WorkbenchDeps['invokeWorkbenchApi'],render:(state:WorkbenchState)=>void,initialScope?:string|null}} deps */
@@ -292,7 +297,12 @@ export function initWorkbenchPage(deps) {
   const disclosures = new Map()
   /** @type {Map<string, number>} */
   const scrollPositions = new Map()
+  /** @type {Map<string, {signature:string,scrollTop:number}>} */
+  const permissionScrollPositions = new Map()
+  /** @type {Map<string, number>} */
+  const taskInfoScrollPositions = new Map()
   const scopeFor = (/** @type {WorkbenchState} */ state) => state.selectedId ? `task:${state.selectedId}` : 'new'
+  const permissionSignatureFor = (/** @type {WorkbenchState} */ state) => JSON.stringify((state.detail?.permissions ?? []).filter(permission => permission.taskId === state.detail?.task.id).map(permission => permission.id).sort())
   const captureDraft = () => {
     if (!document.getElementById('wb-create-form') && !input('wb-followup-text')) return
     pageDrafts.set(renderedScope, { path: input('wb-path')?.value ?? '', text: input('wb-create-text')?.value ?? '', title: input('wb-title')?.value ?? '', providerId: input('wb-provider')?.value ?? '', followup: input('wb-followup-text')?.value ?? '' })
@@ -317,16 +327,31 @@ export function initWorkbenchPage(deps) {
       : null
     const nextScope = scopeFor(state)
     const hasStoredScroll = scrollPositions.has(nextScope) || renderedScope === nextScope
-    const openState = new Map(['wb-tools', 'wb-artifacts', 'wb-options'].map(id => [id, !!root.querySelector(`#${id}[open]`)]))
+    const openState = new Map(['wb-tools', 'wb-artifacts', 'wb-options', 'wb-task-info'].map(id => [id, !!root.querySelector(`#${id}[open]`)]))
     disclosures.set(renderedScope, openState)
-    const mainScroll = root.querySelector('.wb-main')?.scrollTop ?? 0
-    scrollPositions.set(renderedScope, mainScroll)
+    const contentScroll = root.querySelector('.wb-content')?.scrollTop ?? 0
+    scrollPositions.set(renderedScope, contentScroll)
+    const currentPermissionScroll = root.querySelector('.wb-permissions')?.scrollTop
+    const currentPermissionState = permissionScrollPositions.get(renderedScope)
+    if (currentPermissionScroll !== undefined && currentPermissionState) currentPermissionState.scrollTop = currentPermissionScroll
+    const currentTaskInfoScroll = root.querySelector('.wb-task-info-body')?.scrollTop
+    if (currentTaskInfoScroll !== undefined) taskInfoScrollPositions.set(renderedScope, currentTaskInfoScroll)
+    const nextPermissionSignature = permissionSignatureFor(state)
     const sameScope = renderedScope === scopeFor(state)
     root.innerHTML = renderWorkbench(state)
     hasPainted = true
     for (const [id, open] of disclosures.get(scopeFor(state)) ?? []) root.querySelector(`#${id}`)?.toggleAttribute('open', open)
-    const main = root.querySelector('.wb-main')
-    if (main) main.scrollTop = hasStoredScroll ? (scrollPositions.get(nextScope) ?? 0) : nextScope.startsWith('task:') ? main.scrollHeight : 0
+    const content = root.querySelector('.wb-content')
+    if (content) content.scrollTop = hasStoredScroll ? (scrollPositions.get(nextScope) ?? 0) : nextScope.startsWith('task:') ? content.scrollHeight : 0
+    const permissionPanel = root.querySelector('.wb-permissions')
+    if (permissionPanel) {
+      const saved = permissionScrollPositions.get(nextScope)
+      const scrollTop = saved?.signature === nextPermissionSignature ? saved.scrollTop : 0
+      permissionPanel.scrollTop = scrollTop
+      permissionScrollPositions.set(nextScope, { signature: nextPermissionSignature, scrollTop })
+    } else permissionScrollPositions.delete(nextScope)
+    const taskInfoBody = root.querySelector('.wb-task-info-body')
+    if (taskInfoBody) taskInfoBody.scrollTop = taskInfoScrollPositions.get(nextScope) ?? 0
     renderedScope = scopeFor(state)
     restoreDraft(renderedScope)
     syncWorkbenchProviderLabel(root)

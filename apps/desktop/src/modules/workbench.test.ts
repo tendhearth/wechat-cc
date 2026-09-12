@@ -75,8 +75,18 @@ describe('workbench rendering', () => {
     const { renderWorkbench } = await import('./workbench.js')
     const task = (id:string,pendingPermissionCount?:number) => ({id,title:`Task ${id}`,path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount})
     const html=renderWorkbench({tasks:[task('WAITING',2),task('ZERO',0),task('ABSENT')],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
-    expect(html).toMatch(/data-task-id="WAITING"[\s\S]*?aria-label="2 项权限请求等你确认"[\s\S]*?等你确认[\s\S]*?<\/button>/)
+    expect(html).toMatch(/data-task-id="WAITING"[\s\S]*?aria-label="[^"]*进行中[^"]*2 项权限请求等你确认[^"]*"[\s\S]*?等你确认[\s\S]*?<\/button>/)
     expect(html.match(/class="wb-task-attention"/g)).toHaveLength(1)
+  })
+
+  it('keeps task rows to a title and one provider-state line while retaining full date and status accessibly', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const task={id:'TASK',title:'A complete task title',path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
+    const html=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
+    expect(html).toMatch(/data-task-id="TASK"[^>]*aria-label="[^"]*A complete task title[^"]*Codex[^"]*进行中[^"]*更新于[^"]*"/)
+    expect(html).toMatch(/class="wb-task-title"[^>]*title="A complete task title"/)
+    expect(html).toMatch(/class="wb-task-meta"[\s\S]*class="wb-task-provider"[\s\S]*class="wb-status"[\s\S]*<\/span>\s*<\/button>/)
+    expect(html).not.toMatch(/class="wb-task-meta"[\s\S]*?<time>/)
   })
 
   it('shows an escaped same-folder blocker without changing the queued task status', async () => {
@@ -114,6 +124,7 @@ describe('workbench rendering', () => {
       {id:'t1',taskId:'BLOCKED',kind:'text',text:'Previous response remains visible',createdAt:2},
     ],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
     expect(blockedHtml).toContain('等待执行程序退出确认')
+    expect(blockedHtml).toMatch(/data-task-id="BLOCKED"[^>]*aria-label="[^"]*等待执行程序退出确认[^"]*"/)
     expect(blockedHtml).toContain('队列不会继续')
     expect(blockedHtml).toContain('检查原进程和输出')
     expect(blockedHtml).toContain('其他文件夹的任务仍可继续')
@@ -129,8 +140,8 @@ describe('workbench rendering', () => {
     const { renderWorkbench } = await import('./workbench.js')
     const task=(id:string,count:number)=>({id,title:id,path:`/${id}`,providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount:count})
     const html=renderWorkbench({tasks:[task('A',1),task('B',2)],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
-    expect(html).toContain('aria-label="1 项权限请求等你确认"')
-    expect(html).toContain('aria-label="2 项权限请求等你确认"')
+    expect(html).toContain('aria-label="进行中，1 项权限请求等你确认"')
+    expect(html).toContain('aria-label="进行中，2 项权限请求等你确认"')
     expect(html.match(/class="wb-task-attention"/g)).toHaveLength(2)
   })
 
@@ -144,7 +155,8 @@ describe('workbench rendering', () => {
     expect(html).toContain('data-request-id="REQ&lt;1&gt;"')
     expect(html).toContain('data-action="allow-permission"')
     expect(html).toContain('data-action="deny-permission"')
-    expect(html.indexOf('class="wb-permissions"')).toBeLessThan(html.indexOf('class="wb-controls"'))
+    expect(html.indexOf('class="wb-controls"')).toBeLessThan(html.indexOf('class="wb-permissions"'))
+    expect(html.indexOf('class="wb-permissions"')).toBeLessThan(html.indexOf('class="wb-followup'))
     expect(html).not.toContain('<img src=x onerror=alert(1)>')
     expect(renderWorkbench({...state,error:'offline'})).not.toMatch(/data-action="allow-permission"[^>]* disabled/)
   })
@@ -164,9 +176,50 @@ describe('workbench rendering', () => {
     expect(renderTaskControls('running')).not.toContain('data-action="continue"')
     expect(renderTaskControls('running')).toContain('id="wb-followup-text"')
     expect(renderTaskControls('running')).toContain('本轮结束后可发送')
-    expect(renderTaskControls('running')).toMatch(/<button[^>]*disabled[^>]*>本轮结束后可发送/)
-    expect(renderTaskControls('completed')).toContain('data-action="continue"')
-    expect(renderTaskControls('completed')).not.toContain('data-action="cancel"')
+    expect(renderTaskControls('running')).not.toMatch(/<button[^>]*disabled/)
+    expect(renderTaskControls('running')).not.toContain('type="submit"')
+    expect(renderTaskControls('queued')).toContain('data-action="cancel"')
+    expect(renderTaskControls('queued')).not.toMatch(/<button[^>]*disabled/)
+    expect(renderTaskControls('queued')).not.toContain('data-action="continue"')
+    expect(renderTaskControls('queued')).not.toContain('type="submit"')
+    const completed=renderTaskControls('completed')
+    expect(completed).toContain('data-action="continue"')
+    expect(completed).not.toContain('data-action="cancel"')
+    expect(completed).toContain('<label class="wb-sr-only" for="wb-followup-text">继续这个任务</label>')
+    expect(completed).toContain('placeholder="继续这个任务…"')
+    for(const status of ['running','queued','cancelling','completed'])expect(renderTaskControls(status)).toContain('rows="2"')
+  })
+
+  it('puts full identity and optional WeChat continuation in closed task details', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const task={id:'TASK1234',title:'Focused task',path:'/clients/alpha/project',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const html=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:true,selectedId:'TASK1234',detail:{task,events:[],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
+    expect(html).toMatch(/<header class="wb-task-head">[\s\S]*?<details id="wb-task-info" class="wb-task-info">/)
+    expect(html).not.toMatch(/<details id="wb-task-info"[^>]* open/)
+    expect(html).toContain('<summary>任务详情</summary>')
+    expect(html).toContain('class="wb-task-context">project · Codex')
+    expect(html).toContain('/clients/alpha/project')
+    expect(html).toContain('TASK1234')
+    expect(html).toContain('在微信继续')
+    expect(html).toContain('data-action="copy-wechat-command"')
+  })
+
+  it('uses one conversation scroller and keeps the permission card with the composer dock', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const task={id:'TASK',title:'Focused task',path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
+    const permission={id:'REQ',taskId:'TASK',tool:'Shell',description:'Run tests',createdAt:3}
+    const html=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:'TASK',detail:{task,events:[{id:'u1',taskId:'TASK',kind:'user',text:'Please test',createdAt:1}],artifacts:[],permissions:[permission]},selectedArtifactId:null,error:'',preview:null})
+    expect(html).toMatch(/<main class="wb-main">[\s\S]*?<header class="wb-task-head">[\s\S]*?<div class="wb-content">[\s\S]*?class="wb-dialogue"[\s\S]*?<\/div>\s*<div class="wb-controls">/)
+    expect(html.indexOf('class="wb-controls"')).toBeLessThan(html.indexOf('class="wb-permissions"'))
+    expect(html.indexOf('class="wb-permissions"')).toBeLessThan(html.indexOf('id="wb-followup-text"'))
+  })
+
+  it('does not render an empty artifact disclosure', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const task={id:'TASK',title:'No artifacts',path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const html=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:'TASK',detail:{task,events:[],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
+    expect(html).not.toContain('id="wb-artifacts"')
+    expect(html).not.toContain('成果文件会在这里出现')
   })
 
   it('explains that no task can start when no supported provider is installed', async () => {
@@ -310,6 +363,8 @@ describe('workbench mutations', () => {
     innerHTML = ''
     scrollTop = 0
     scrollHeight = 0
+    parentElement: FakeElement | null = null
+    attributes = new Map<string, string>()
     listeners = new Map<string, Set<(event: any) => void>>()
     addEventListener(name: string, fn: (event: any) => void) { const set = this.listeners.get(name) ?? new Set(); set.add(fn); this.listeners.set(name, set) }
     removeEventListener(name: string, fn: (event: any) => void) { this.listeners.get(name)?.delete(fn) }
@@ -318,11 +373,15 @@ describe('workbench mutations', () => {
     querySelector() { return null }
     focus() {}
     setSelectionRange(start: number, end: number) { this.selectionStart=start; this.selectionEnd=end }
+    setAttribute(name:string,value:string) { this.attributes.set(name,value) }
+    removeAttribute(name:string) { this.attributes.delete(name) }
+    hasAttribute(name:string) { return this.attributes.has(name) }
+    toggleAttribute(name:string,force?:boolean) { const next=force ?? !this.hasAttribute(name); if(next)this.setAttribute(name,'');else this.removeAttribute(name);return next }
   }
 
-  function installFakePage(fields: Record<string, FakeElement> = {}, main?: FakeElement) {
+  function installFakePage(fields: Record<string, FakeElement> = {}, content?: FakeElement) {
     const page = new FakeElement()
-    if(main)(page as any).querySelector=(selector:string)=>selector==='.wb-main'?main:null
+    if(content)(page as any).querySelector=(selector:string)=>selector==='.wb-content'?content:null
     root.document = {getElementById:(id:string)=>id==='workbench-root'?page:fields[id]??null,activeElement:null,createElement:()=>new FakeElement()}
     root.window = {}
     vi.stubGlobal('Element',FakeElement)
@@ -723,6 +782,95 @@ describe('workbench mutations', () => {
     await controller.refresh()
     expect(focusOptions).toEqual({preventScroll:true})
     expect(main.scrollTop).toBe(175)
+    stopWorkbenchPolling()
+  })
+
+  it('preserves task-details disclosure and conversation scroll independently for each task', async () => {
+    vi.useFakeTimers()
+    const page=new FakeElement()
+    let markup=''
+    const surface:{content:FakeElement|null,info:FakeElement|null,summary:FakeElement|null}={content:null,info:null,summary:null}
+    Object.defineProperty(page,'innerHTML',{get:()=>markup,set:(value:string)=>{
+      markup=value
+      surface.content=new FakeElement();surface.content.scrollHeight=1200
+      surface.info=value.includes('id="wb-task-info"')?new FakeElement():null
+      surface.summary=surface.info?new FakeElement():null
+      if(surface.summary)surface.summary.parentElement=surface.info
+    }})
+    ;(page as any).querySelector=(selector:string)=>{
+      if(selector==='.wb-content')return surface.content
+      if(selector==='#wb-task-info')return surface.info
+      if(selector==='#wb-task-info[open]')return surface.info?.hasAttribute('open')?surface.info:null
+      if(selector==='#wb-task-info > summary')return surface.summary
+      return null
+    }
+    root.document={getElementById:(id:string)=>id==='workbench-root'?page:null,activeElement:null,createElement:()=>new FakeElement()}
+    root.window={}
+    vi.stubGlobal('Element',FakeElement)
+    const first={id:'FIRST',title:'First',path:'/one',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const second={...first,id:'SECOND',title:'Second',path:'/two'}
+    let revision=0
+    const invokeWorkbenchApi=vi.fn(async(_method:string,path:string)=>path==='/v1/workbench'?{tasks:[first,second],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}:path.includes('SECOND')?{task:second,events:[{id:`b${revision++}`,taskId:'SECOND',kind:'text',text:'B',createdAt:3}],artifacts:[]}:{task:first,events:[{id:`a${revision++}`,taskId:'FIRST',kind:'text',text:'A',createdAt:3}],artifacts:[]})
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    surface.info?.toggleAttribute('open',true)
+    if(surface.content)surface.content.scrollTop=180
+    await controller.refresh()
+    expect(surface.info?.hasAttribute('open')).toBe(true)
+    expect(surface.content?.scrollTop).toBe(180)
+    await controller.selectTask('SECOND')
+    expect(surface.info?.hasAttribute('open')).toBe(false)
+    if(surface.content)surface.content.scrollTop=360
+    await controller.selectTask('FIRST')
+    expect(surface.info?.hasAttribute('open')).toBe(true)
+    expect(surface.content?.scrollTop).toBe(180)
+    stopWorkbenchPolling()
+  })
+
+  it('preserves permission scroll for the same request set, resets for new requests, and scopes it by task', async () => {
+    vi.useFakeTimers()
+    const page=new FakeElement()
+    let markup=''
+    const surface:{content:FakeElement|null,permissions:FakeElement|null,taskInfoBody:FakeElement|null}={content:null,permissions:null,taskInfoBody:null}
+    Object.defineProperty(page,'innerHTML',{get:()=>markup,set:(value:string)=>{
+      markup=value
+      surface.content=new FakeElement();surface.content.scrollHeight=1200
+      surface.permissions=value.includes('class="wb-permissions"')?new FakeElement():null
+      surface.taskInfoBody=value.includes('class="wb-task-info-body"')?new FakeElement():null
+    }})
+    ;(page as any).querySelector=(selector:string)=>selector==='.wb-content'?surface.content:selector==='.wb-permissions'?surface.permissions:selector==='.wb-task-info-body'?surface.taskInfoBody:null
+    root.document={getElementById:(id:string)=>id==='workbench-root'?page:null,activeElement:null,createElement:()=>new FakeElement()}
+    root.window={}
+    vi.stubGlobal('Element',FakeElement)
+    const first={id:'FIRST',title:'First',path:'/one',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
+    const second={...first,id:'SECOND',title:'Second',path:'/two'}
+    const permission=(id:string,taskId:string)=>({id,taskId,tool:'Shell',description:`Permission ${id}`,createdAt:3})
+    let firstHasNewRequest=false
+    let revision=0
+    const invokeWorkbenchApi=vi.fn(async(_method:string,path:string)=>{
+      if(path==='/v1/workbench')return {tasks:[first,second],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}
+      const task=path.includes('SECOND')?second:first
+      const permissions=task.id==='SECOND'?[permission('B-1','SECOND')]:[permission('A-1','FIRST'),permission('A-2','FIRST'),...(firstHasNewRequest?[permission('A-3','FIRST')]:[])]
+      return {task,events:[{id:`event-${revision++}`,taskId:task.id,kind:'text',text:'Updated',createdAt:4}],artifacts:[],permissions}
+    })
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    if(surface.permissions)surface.permissions.scrollTop=140
+    if(surface.taskInfoBody)surface.taskInfoBody.scrollTop=60
+    await controller.refresh()
+    expect(surface.permissions?.scrollTop).toBe(140)
+    expect(surface.taskInfoBody?.scrollTop).toBe(60)
+    firstHasNewRequest=true
+    await controller.refresh()
+    expect(surface.permissions?.scrollTop).toBe(0)
+    if(surface.permissions)surface.permissions.scrollTop=90
+    await controller.selectTask('SECOND')
+    expect(surface.permissions?.scrollTop).toBe(0)
+    if(surface.permissions)surface.permissions.scrollTop=35
+    await controller.selectTask('FIRST')
+    expect(surface.permissions?.scrollTop).toBe(90)
+    await controller.selectTask('SECOND')
+    expect(surface.permissions?.scrollTop).toBe(35)
     stopWorkbenchPolling()
   })
 
