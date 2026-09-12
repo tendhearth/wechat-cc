@@ -42,11 +42,13 @@ export function makeWorkbenchStore(db: Db) {
     },
     session(id: string, sessionId: string | null) { db.query('UPDATE workbench_tasks SET session_id=? WHERE id=?').run(sessionId,id) },
     recover() {
-      const rows = db.query<{ id: string; path: string }, []>("SELECT id,path FROM workbench_tasks WHERE status IN ('queued','running','cancelling')").all()
+      const rows = db.query<{ id: string; path: string; status: TaskStatus }, []>("SELECT id,path,status FROM workbench_tasks WHERE status IN ('queued','running','cancelling')").all()
       db.transaction(() => {
-        for (const { id,path } of rows) {
+        for (const { id,path,status } of rows) {
           db.query("UPDATE workbench_tasks SET status='interrupted',error='daemon_restarted',updated_at=? WHERE id=?").run(Date.now(),id)
-          addEvent(id, 'system', `服务重启，任务已中断，未自动重跑。已保存的成果版本仍可查看；中断前尚未收集的文件保留在 ${join(path,'.cc-workbench',id)}。请先确认原执行程序已退出并检查该文件夹，再补充要求继续。`)
+          addEvent(id, 'system', status === 'queued'
+            ? '服务重启时任务仍在等待，未自动派发。原请求已保留，请补充要求后手动继续。'
+            : `服务重启，任务已中断，未自动重跑。已保存的成果版本仍可查看；中断前尚未收集的文件保留在 ${join(path,'.cc-workbench',id)}。请先确认原执行程序已退出并检查该文件夹，再补充要求继续。`)
         }
       })()
     },
