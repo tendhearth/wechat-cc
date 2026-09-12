@@ -17,6 +17,7 @@
 .wb-task-title, .wb-artifact span { display: block; overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .wb-task-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 7px 0 4px; color: var(--ink-3); font-size: 11px; }
 .wb-task-provider { display: block; color: var(--ink-3); font-size: 11px; }
+.wb-task-waiting { display: block; overflow: hidden; margin-top: 5px; color: var(--amber); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .wb-task-attention { display: inline-flex; margin-top: 6px; border-radius: 999px; padding: 3px 7px; background: var(--amber-soft); color: var(--amber); font-size: 10px; font-weight: 650; white-space: nowrap; }
 .wb-status { display: inline-flex; flex: none; border-radius: 999px; padding: 4px 8px; background: var(--paper-3); color: var(--ink-3); font-size: 11px; font-weight: 650; white-space: nowrap; }
 .wb-status[data-status="running"], .wb-status[data-status="queued"] { background: var(--green-soft); color: var(--green-ink); }

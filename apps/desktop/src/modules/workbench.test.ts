@@ -79,6 +79,53 @@ describe('workbench rendering', () => {
     expect(html.match(/class="wb-task-attention"/g)).toHaveLength(1)
   })
 
+  it('shows an escaped same-folder blocker without changing the queued task status', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const waitingFor={taskId:'BLOCKER',title:'Build <unsafe>',reason:'same_path'} as const
+    const task={id:'WAITING',title:'Waiting task',path:'/work',providerId:'codex',status:'queued',createdAt:1,updatedAt:2,error:null,waitingFor}
+    const html=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:'WAITING',detail:{task,events:[],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
+    expect(html).toContain('data-status="queued">等待中')
+    expect(html).toContain('等待「Build &lt;unsafe&gt;」结束')
+    expect(html).toContain('使用同一个文件夹')
+    expect(html).not.toContain('Build <unsafe>')
+    expect(html).toContain('data-action="cancel"')
+  })
+
+  it('explains nested-folder waiting without inventing progress', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const waitingFor={taskId:'PARENT',title:'Parent task',reason:'nested_path'} as const
+    const task={id:'CHILD',title:'Child task',path:'/work/child',providerId:'claude',status:'queued',createdAt:1,updatedAt:2,error:null,waitingFor}
+    const html=renderWorkbench({tasks:[task],providers:[{id:'claude',displayName:'Claude'}],defaultProvider:'claude',canWechat:false,selectedId:'CHILD',detail:{task,events:[],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
+    expect(html).toContain('等待「Parent task」结束')
+    expect(html).toContain('文件夹彼此包含')
+    expect(html).not.toMatch(/预计|进度|第\s*\d+\s*位/)
+  })
+
+  it('distinguishes an unconfirmed writer exit from ordinary waiting and retains the metadata-absent fallback', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const blocked={id:'BLOCKED',title:'Blocked task',path:'/work',providerId:'codex',status:'queued',createdAt:1,updatedAt:2,error:null,waitingFor:{taskId:'OLD',title:'Old task',reason:'writer_not_closed'} as const}
+    const blockedHtml=renderWorkbench({tasks:[blocked],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:'BLOCKED',detail:{task:blocked,events:[],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
+    expect(blockedHtml).toContain('等待执行程序退出确认')
+    expect(blockedHtml).toContain('队列不会继续')
+    expect(blockedHtml).toContain('检查原进程和输出')
+    expect(blockedHtml).toContain('其他文件夹的任务仍可继续')
+    expect(blockedHtml).toContain('data-action="cancel"')
+
+    const ordinary={...blocked,id:'ORDINARY',waitingFor:null}
+    const ordinaryHtml=renderWorkbench({tasks:[ordinary],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:'ORDINARY',detail:{task:ordinary,events:[],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
+    expect(ordinaryHtml).toContain('任务已记下，正在等待执行。')
+    expect(ordinaryHtml).not.toContain('等待执行程序退出确认')
+  })
+
+  it('shows genuine pending permission counts for more than one running task', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const task=(id:string,count:number)=>({id,title:id,path:`/${id}`,providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount:count})
+    const html=renderWorkbench({tasks:[task('A',1),task('B',2)],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
+    expect(html).toContain('aria-label="1 项权限请求等你确认"')
+    expect(html).toContain('aria-label="2 项权限请求等你确认"')
+    expect(html.match(/class="wb-task-attention"/g)).toHaveLength(2)
+  })
+
   it('escapes pending permission text and binds each decision to its request id', async () => {
     const { renderWorkbench } = await import('./workbench.js')
     const state = {tasks:[],providers:[{id:'claude',displayName:'Claude'}],defaultProvider:'claude',canWechat:false,selectedId:'TASK',selectedArtifactId:null,error:'',preview:null,
@@ -91,7 +138,7 @@ describe('workbench rendering', () => {
     expect(html).toContain('data-action="deny-permission"')
     expect(html.indexOf('class="wb-permissions"')).toBeLessThan(html.indexOf('class="wb-controls"'))
     expect(html).not.toContain('<img src=x onerror=alert(1)>')
-    expect(renderWorkbench({...state,error:'offline'})).toMatch(/data-action="allow-permission"[^>]* disabled/)
+    expect(renderWorkbench({...state,error:'offline'})).not.toMatch(/data-action="allow-permission"[^>]* disabled/)
   })
 
   it('keeps optional service and title fields in a closed disclosure, retaining their form values', async () => {
@@ -205,6 +252,41 @@ describe('workbench request ordering', () => {
     await pending
     expect(renders.at(-1).selectedId).toBe('SECOND')
     expect(renders.at(-1).detail.task.id).toBe('SECOND')
+  })
+
+  it('ignores an older list response that arrives after a newer refresh', async () => {
+    const { createWorkbenchController } = await import('./workbench.js')
+    const oldTask={id:'OLD',title:'Old',path:'/old',providerId:'codex',status:'running',createdAt:1,updatedAt:1,error:null,pendingPermissionCount:0}
+    const freshTask={id:'FRESH',title:'Fresh',path:'/fresh',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount:2}
+    let finishOld!:(value:unknown)=>void
+    const oldList=new Promise(resolve=>{finishOld=resolve})
+    let listCalls=0
+    const invokeWorkbenchApi=vi.fn((_method:string,path:string)=>{
+      if(path==='/v1/workbench')return ++listCalls===1?oldList:Promise.resolve({tasks:[freshTask],providers:[],defaultProvider:'codex',canWechat:false})
+      return Promise.resolve({task:freshTask,events:[],artifacts:[]})
+    })
+    const controller=createWorkbenchController({invokeWorkbenchApi,render:vi.fn()})
+    const oldRefresh=controller.refresh()
+    await controller.refresh()
+    finishOld({tasks:[oldTask],providers:[],defaultProvider:'codex',canWechat:false})
+    await oldRefresh
+    expect(controller.state.tasks.map(task=>task.id)).toEqual(['FRESH'])
+    expect(controller.state.tasks[0]?.pendingPermissionCount).toBe(2)
+  })
+
+  it('does not surface a stale list error after a newer refresh succeeds', async () => {
+    const { createWorkbenchController } = await import('./workbench.js')
+    const task={id:'FRESH',title:'Fresh',path:'/fresh',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    let rejectOld!:(reason?:unknown)=>void
+    const oldList=new Promise((_resolve,reject)=>{rejectOld=reject})
+    let listCalls=0
+    const invokeWorkbenchApi=vi.fn((_method:string,path:string)=>path==='/v1/workbench'?(++listCalls===1?oldList:Promise.resolve({tasks:[task],providers:[],defaultProvider:'codex',canWechat:false})):Promise.resolve({task,events:[],artifacts:[]}))
+    const controller=createWorkbenchController({invokeWorkbenchApi,render:vi.fn()})
+    const oldRefresh=controller.refresh()
+    await controller.refresh()
+    rejectOld(new Error('stale list failed'))
+    await expect(oldRefresh).resolves.toBeUndefined()
+    expect(controller.state.selectedId).toBe('FRESH')
   })
 
 })
@@ -334,6 +416,96 @@ describe('workbench mutations', () => {
     const button=new FakeElement();button.dataset={action:'allow-permission',requestId:'REQ-2'}
     page.listeners.get('click')?.forEach(fn=>fn({target:button}));await vi.runAllTicks()
     expect(invokeWorkbenchApi).toHaveBeenCalledWith('POST','/v1/workbench/permission',{id:'TASK',requestId:'REQ-2',decision:'allow'})
+    stopWorkbenchPolling()
+  })
+
+  it('keeps valid permission decisions available when an unrelated preview error is shown', async () => {
+    vi.useFakeTimers()
+    const page=installFakePage()
+    const task={id:'TASK',title:'Task',path:'/tmp',providerId:'claude',status:'running',createdAt:1,updatedAt:2,error:null}
+    const permission={id:'REQ-2',taskId:'TASK',tool:'Shell',description:'Run tests',createdAt:3}
+    const posts:Array<{path:string,body:unknown}>=[]
+    const invokeWorkbenchApi=vi.fn(async(method:string,path:string,body?:unknown)=>{
+      if(method==='POST'){posts.push({path,body});return {ok:true}}
+      return path==='/v1/workbench'?{tasks:[task],providers:[{id:'claude',displayName:'Claude'}],defaultProvider:'claude',canWechat:false}:{task,events:[],artifacts:[],permissions:[permission]}
+    })
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    controller.state.error='preview failed';controller.paint()
+    const button=new FakeElement();button.dataset={action:'allow-permission',requestId:'REQ-2'}
+    const click=[...(page.listeners.get('click')??[])][0]!;await click({target:button})
+    expect(posts).toEqual([{path:'/v1/workbench/permission',body:{id:'TASK',requestId:'REQ-2',decision:'allow'}}])
+    stopWorkbenchPolling()
+  })
+
+  it('allows mutations on A and B to overlap while suppressing a duplicate mutation on A', async () => {
+    vi.useFakeTimers()
+    const followup=new FakeElement();followup.id='wb-followup-text';followup.value='Continue A'
+    const page=installFakePage({'wb-followup-text':followup})
+    const first={id:'FIRST',title:'First',path:'/one',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const second={...first,id:'SECOND',title:'Second',path:'/two'}
+    const posts:Array<{id:unknown,text:unknown}>=[]
+    const finishes=new Map<string,(value:unknown)=>void>()
+    const invokeWorkbenchApi=vi.fn((method:string,path:string,body?:Record<string,unknown>)=>{
+      if(method==='POST'){
+        posts.push({id:body?.id,text:body?.text})
+        return new Promise(resolve=>{finishes.set(String(body?.id),resolve)})
+      }
+      if(path==='/v1/workbench')return Promise.resolve({tasks:[first,second],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false})
+      return Promise.resolve({task:path.includes('SECOND')?second:first,events:[],artifacts:[]})
+    })
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000});for(let i=0;i<5;i++)await Promise.resolve()
+    const submit=[...(page.listeners.get('submit')??[])][0]!
+    const form=new FakeElement();form.tagName='FORM';form.dataset.action='continue'
+    const firstRequest=submit({target:form,preventDefault(){}});await Promise.resolve()
+    await submit({target:form,preventDefault(){}})
+    const click=[...(page.listeners.get('click')??[])][0]!
+    const secondButton=new FakeElement();secondButton.dataset.taskId='SECOND';await click({target:secondButton})
+    followup.value='Continue B'
+    const secondRequest=submit({target:form,preventDefault(){}});await Promise.resolve()
+    expect(posts).toEqual([{id:'FIRST',text:'Continue A'},{id:'SECOND',text:'Continue B'}])
+    finishes.get('SECOND')?.({task:second});await secondRequest
+    finishes.get('FIRST')?.({task:first});await firstRequest
+    stopWorkbenchPolling()
+  })
+
+  it('preserves A and B edits when overlapping completions settle out of order', async () => {
+    vi.useFakeTimers()
+    const followup=new FakeElement();followup.id='wb-followup-text';followup.value='Send A'
+    const page=installFakePage({'wb-followup-text':followup})
+    const first={id:'FIRST',title:'First',path:'/one',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const second={...first,id:'SECOND',title:'Second',path:'/two'}
+    const finishes=new Map<string,(value:unknown)=>void>()
+    const invokeWorkbenchApi=vi.fn((method:string,path:string,body?:Record<string,unknown>)=>method==='POST'?new Promise(resolve=>{finishes.set(String(body?.id),resolve)}):path==='/v1/workbench'?Promise.resolve({tasks:[first,second],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}):Promise.resolve({task:path.includes('SECOND')?second:first,events:[],artifacts:[]}))
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    const submit=[...(page.listeners.get('submit')??[])][0]!
+    const click=[...(page.listeners.get('click')??[])][0]!
+    const form=new FakeElement();form.tagName='FORM';form.dataset.action='continue'
+    const requestA=submit({target:form,preventDefault(){}});await Promise.resolve();followup.value='Keep A edit'
+    const secondButton=new FakeElement();secondButton.dataset.taskId='SECOND';await click({target:secondButton});followup.value='Send B'
+    const requestB=submit({target:form,preventDefault(){}});await Promise.resolve();followup.value='Keep B edit'
+    finishes.get('FIRST')?.({task:first});await requestA
+    finishes.get('SECOND')?.({task:second});await requestB
+    expect(controller.state.selectedId).toBe('SECOND')
+    expect(followup.value).toBe('Keep B edit')
+    const firstButton=new FakeElement();firstButton.dataset.taskId='FIRST';await click({target:firstButton})
+    expect(followup.value).toBe('Keep A edit')
+    stopWorkbenchPolling()
+  })
+
+  it('cancels a queued task by its selected task id', async () => {
+    vi.useFakeTimers()
+    const page=installFakePage()
+    const task={id:'QUEUED',title:'Queued',path:'/tmp',providerId:'codex',status:'queued',createdAt:1,updatedAt:2,error:null,waitingFor:{taskId:'RUNNING',title:'Running',reason:'same_path'}}
+    const posts:Array<{path:string,body:unknown}>=[]
+    const invokeWorkbenchApi=vi.fn(async(method:string,path:string,body?:unknown)=>{if(method==='POST'){posts.push({path,body});return {task:{...task,status:'cancelled'}}}return path==='/v1/workbench'?{tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}:{task,events:[],artifacts:[]}})
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000});for(let i=0;i<5;i++)await Promise.resolve()
+    const cancel=new FakeElement();cancel.dataset.action='cancel'
+    const click=[...(page.listeners.get('click')??[])][0]!;await click({target:cancel})
+    expect(posts).toEqual([{path:'/v1/workbench/cancel',body:{id:'QUEUED'}}])
     stopWorkbenchPolling()
   })
 
