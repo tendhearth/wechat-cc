@@ -769,6 +769,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/voice/save_config': VoiceSaveConfigResponse,
   'GET /v1/companion/status': CompanionStatusResponse,
   'GET /v1/companion/presence': PresenceResponse,
+  'GET /v1/companion/thoughts': z.object({ items: z.array(z.object({ id: z.string(), ts: z.string(), title: z.string(), note: z.string() })) }),
   'POST /v1/companion/enable': CompanionEnableResponse,
   'POST /v1/companion/disable': CompanionDisableResponse,
   'POST /v1/companion/snooze': CompanionSnoozeResponse,

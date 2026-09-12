@@ -152,6 +152,8 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           // writes, contact display names, reminder scheduling.
           'POST /v1/knowledge/facts/find_facts',
           'POST /v1/llm/keys',
+          // Owner's retained thoughts, read through the desktop host only.
+          'GET /v1/companion/thoughts',
           'POST /v1/knowledge/facts/set_fact_status',
           'POST /v1/knowledge/graph/top_contacts',
           'POST /v1/reminders/schedule',

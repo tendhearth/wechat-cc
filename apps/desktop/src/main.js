@@ -47,6 +47,8 @@ import { mountHugeicons } from "./modules/icons.js"
 import { pingHealth } from "./health-probe.js"
 import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
 import { loadAtelierGallery } from "./modules/atelier-gallery.js"
+import { mountCurrentActivity, createLifeArchive } from "./modules/cc-life.js"
+import { refreshPostcardAlbum } from "./modules/postcard-album.js"
 import { initWorkbenchPage, stopWorkbenchPolling } from "./modules/workbench.js"
 
 const state = {
@@ -118,6 +120,23 @@ const doctorPoller = createDoctorPoller({ invoke, intervalMs: 5000 })
 // 桌宠状态(spec 2026-09-03-companion-presence):首页鱼缸跟浮窗共用一套推导。
 // 点脚边道具 → 切到觅食台(带回来的在那儿)。switchPane 是函数声明,提升可用。
 const presencePoller = startCompanionPresence({ onOpenJournal: () => switchPane("a2a-agents") })
+const currentActivityHost = document.getElementById("cc-current-activity")
+if (currentActivityHost) mountCurrentActivity(currentActivityHost, presencePoller, switchPane)
+const memoryRecordsHost = document.getElementById("cc-memory-records")
+const lifeArchive = memoryRecordsHost ? createLifeArchive(memoryRecordsHost, { call: invokeApi }) : null
+let lifeCategory = "postcards"
+/** @param {string} category */
+async function loadLifeCategory(category) {
+  lifeCategory = category
+  lifeArchive?.cancel()
+  document.querySelectorAll("[data-life-category]").forEach(el => el.setAttribute("aria-pressed", String(el.getAttribute("data-life-category") === category)))
+  const postcards = document.getElementById("cc-memory-postcards")
+  if (postcards) postcards.hidden = category !== "postcards"
+  if (memoryRecordsHost) memoryRecordsHost.hidden = category === "postcards"
+  if (category === "postcards") await refreshPostcardAlbum()
+  else await lifeArchive?.load(category)
+}
+
 const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 10000 })
 
 // Bag passed to module functions instead of imported singletons. Keeps each
@@ -351,7 +370,7 @@ function renderDashboardIfActive(report) {
   if (state.mode !== "dashboard") return
   const displayReport = dashboardDisplayReport(report)
   renderDashboard(displayReport)
-  loadAtelierGallery({ invokeApi }).catch(() => {})
+  if (!document.querySelector('.dash-pane[data-pane="atelier"]')?.hasAttribute("hidden")) loadAtelierGallery({ invokeApi }).catch(() => {})
 }
 
 /** @param {any} report */
@@ -426,6 +445,7 @@ function setToggle(id, on) {
 
 /** @param {string} name */
 function switchPane(name) {
+  document.querySelector(".cc-life-nav-more")?.removeAttribute("open")
   const overviewWasHidden = name === "overview" && !!(/** @type {HTMLElement | null} */ (document.querySelector('.dash-pane[data-pane="overview"]')))?.hidden
   const backstagePanes = new Set(["sessions", "plugins", "logs"])
   document.querySelectorAll(".dash-nav-link[data-pane]").forEach(el => {
@@ -460,6 +480,10 @@ function switchPane(name) {
     })
     loadMemoryTopZone(deps).catch(err => console.error("memory top zone failed", err))
   }
+  if (name === "recollections") void loadLifeCategory(lifeCategory)
+  else lifeArchive?.cancel()
+  if (name === "atelier") void loadAtelierGallery({ invokeApi })
+  if (name === "overview") void presencePoller.refresh()
   if (name === "todos") {
     initTodosPage(deps)
   }
@@ -501,6 +525,17 @@ function activateDialogueWorkspace() {
 // ─── DOM event wiring ────────────────────────────────────────────────
 
 function wireEvents() {
+  document.addEventListener("click", ev => {
+    const target = ev.target instanceof Element ? ev.target : null
+    const go = target?.closest("[data-life-pane]")
+    const category = target?.closest("[data-life-category]")
+    if (go) {
+      if (go.getAttribute("data-life-start") === "postcards") lifeCategory = "postcards"
+      switchPane(go.getAttribute("data-life-pane") || "overview")
+    }
+    if (category) void loadLifeCategory(category.getAttribute("data-life-category") || "postcards")
+  })
+
   // 手机上改设置 — 拿一条新鲜的面板链接,渲染成二维码弹层(手机扫码直开)
   document.getElementById("open-phone-settings")?.addEventListener("click", async () => {
     try {

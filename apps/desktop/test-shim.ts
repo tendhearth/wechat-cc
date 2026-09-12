@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { thoughtRoutes } from '../../src/daemon/internal-api/routes-thoughts'
 // Test/dev shim for the desktop installer's frontend (apps/desktop/src/*).
 //
 // Why this exists:
@@ -448,6 +449,13 @@ Bun.serve({
     // status write (resolve/reject a promise), contact display names, and
     // reminder scheduling. Nothing else under /v1/knowledge or /v1/reminders
     // passes through the shim.
+    if (url.pathname === '/v1/companion/thoughts' && req.method === 'GET') {
+      if (isCrossSiteRequest(req)) return new Response('forbidden', { status: 403 })
+      if (dryRun) return Response.json({ items: [] })
+      const handler = thoughtRoutes({ stateDir: STATE_DIR } as import('../../src/daemon/internal-api/types').InternalApiDeps)['GET /v1/companion/thoughts']!
+      const result = await handler(url.searchParams, undefined)
+      return Response.json(result.body, { status: result.status })
+    }
     const TODOS_PROXY_ROUTES = new Set([
       '/v1/knowledge/facts/find_facts',
       '/v1/llm/keys',

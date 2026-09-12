@@ -157,7 +157,12 @@ export async function loadAtelierGallery(deps) {
     box.addEventListener("click", event => {
       const action = event.target instanceof Element ? event.target.closest("[data-atelier-status-action]") : null
       if (!action) return
-      if (action.getAttribute("data-atelier-status-action") === "home") document.querySelector('.dash-nav-link[data-pane="overview"]')?.click()
+      if (action.getAttribute("data-atelier-status-action") === "home") {
+        document.querySelector('.dash-nav-link[data-pane="overview"]')?.click()
+        const connection = document.querySelector('.cc-home-details')
+        connection?.setAttribute('open', '')
+        connection?.scrollIntoView({ block: 'start' })
+      }
       else loadAtelierGallery(deps)
     })
   }

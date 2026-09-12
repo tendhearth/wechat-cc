@@ -70,6 +70,7 @@ async function getApiCredentials() {
 const OWNER_WORKSPACE_PATHS = new Set([
   '/v1/knowledge/facts/find_facts',
   '/v1/llm/keys',
+  '/v1/companion/thoughts',
   '/v1/knowledge/facts/set_fact_status',
   '/v1/knowledge/graph/top_contacts',
   '/v1/reminders/schedule',

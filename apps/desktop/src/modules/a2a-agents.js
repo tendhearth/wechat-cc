@@ -12,7 +12,6 @@ import { showToast } from "../view.js"
 
 import { invokeApi } from '../api.js'
 import { initHuntBag, renderHuntBag } from './journal.js'
-import { initPostcardAlbum, refreshPostcardAlbum } from './postcard-album.js'
 import { initPeople, renderPeople } from './people.js'
 import { initWishes, refreshWishes } from './wishes.js'
 
@@ -114,7 +113,6 @@ export async function initA2AAgentsTab() {
   document.getElementById('fd-pair-accept')?.addEventListener('click', onPairAccept)
   document.getElementById('fd-mailbox')?.addEventListener('click', onMailboxAction)
   initHuntBag()
-  initPostcardAlbum()
   initPeople()
   initWishes()
 }
@@ -143,7 +141,6 @@ export async function refresh() {
   // 背包自己渲染 —— 打猎和社交觅食是两条独立的链路,社交没启用时背包
   // 照样有东西(它不依赖任何 peer)。
   renderHuntBag({ items: huntResp ? (huntResp.items ?? []) : null })
-  void refreshPostcardAlbum()
   renderPeople({ relationships: peopleResp ? (peopleResp.relationships ?? []) : null })
   // 心愿自己拉自己的:回信是**别人**什么时候回就什么时候到,不刷这一块的话,
   // 「几张回信」会一直停在派出去那一刻的 0。

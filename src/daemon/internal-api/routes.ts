@@ -22,6 +22,7 @@ import { readModelStatus } from '../atelier-provision'
 import { loadCompanionConfig } from '../companion/config'
 import { a2aRoutes } from './routes-a2a'
 import { probeFsAccess, describeFsAccess } from '../../lib/fs-access'
+import { thoughtRoutes } from './routes-thoughts'
 import { journalRoutes } from './routes-journal'
 import { presenceRoutes } from './routes-presence'
 import { petRoutes } from './routes-pet'
@@ -957,6 +958,7 @@ const onlineStickerCursor = new Map<string, number>()
     ...a2aRoutes(deps),
     ...socialRoutes(deps),
     ...journalRoutes(deps),
+    ...thoughtRoutes(deps),
     ...presenceRoutes(deps),
     ...petRoutes(deps),
     ...permissionRoutes(deps),

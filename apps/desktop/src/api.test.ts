@@ -79,6 +79,17 @@ describe('invokeApi', () => {
     expect(invoke.mock.calls.every(c => c[0] === 'customer_review_api')).toBe(true)
   })
 
+  it('keeps private thought credentials in the native host', async () => {
+    const invoke=vi.fn(async()=>JSON.stringify({items:[]}))
+    root.window={__TAURI__:{core:{invoke}}}
+    const fetchMock=vi.fn();globalThis.fetch=fetchMock as unknown as typeof fetch
+    vi.resetModules()
+    const {invokeApi}=await import('./api.js')
+    await expect(invokeApi('GET','/v1/companion/thoughts')).resolves.toEqual({items:[]})
+    expect(invoke).toHaveBeenCalledWith('customer_review_api',{method:'GET',path:'/v1/companion/thoughts'})
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('does NOT replay a POST after a transport failure', async () => {
     // A transport rejection does not prove the daemon never acted, and this is
     // shared code: replaying would send the same pen-pal letter twice, run a

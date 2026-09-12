@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="./cc-page-art.css" />
     <link rel="stylesheet" href="./cc-surfaces.css" />
     <link rel="stylesheet" href="./postcard-album.css" />
+    <link rel="stylesheet" href="./cc-life.css" />
     <link rel="stylesheet" href="./styles/workbench.css" />
   </head>
   <body>
@@ -326,41 +327,39 @@
             <span class="ver" id="dash-version">v0.6.2</span>
           </div>
 
-          <nav class="dash-nav" aria-label="Dashboard">
+          <nav class="dash-nav" aria-label="主导航">
             <button class="dash-nav-link active" data-pane="overview">
-              <span class="ic" data-hg-icon="power" data-hg-size="16"></span>
-              <span>此刻</span>
-            </button>
-            <button class="dash-nav-link" data-pane="atelier">
-              <span class="ic" data-hg-icon="brush" data-hg-size="16"></span>
-              <span>画室</span>
-            </button>
-            <button class="dash-nav-link" data-pane="memory">
-              <span class="ic" data-hg-icon="archive" data-hg-size="16"></span>
-              <span>记忆</span>
-              <span class="count" id="memory-count"></span>
-            </button>
-            <button class="dash-nav-link" data-pane="converse">
-              <span class="ic" data-hg-icon="smile" data-hg-size="16"></span>
-              <span>跟 CC 说</span>
+              <span class="ic" data-hg-icon="power" data-hg-size="16"></span><span>此刻</span>
             </button>
             <button class="dash-nav-link" data-pane="workbench">
-              <span class="ic" data-hg-icon="folder-01" data-hg-size="16"></span>
-              <span>工作台</span>
+              <span class="ic" data-hg-icon="folder-01" data-hg-size="16"></span><span>一起做</span>
             </button>
-            <button class="dash-nav-link" data-pane="todos">
-              <span class="ic" data-hg-icon="checkmark-circle-02" data-hg-size="16"></span>
-              <span>待办</span>
+            <button class="dash-nav-link" data-pane="recollections">
+              <span class="ic" data-hg-icon="archive" data-hg-size="16"></span><span>回忆</span>
             </button>
-            <button class="dash-nav-link" data-pane="a2a-agents">
-              <span class="ic" data-hg-icon="settings-01" data-hg-size="16"></span>
-              <span>觅食</span>
-            </button>
-            <button class="dash-nav-link" data-pane="sessions" data-backstage-entry="true">
-              <span class="ic" data-hg-icon="plug-01" data-hg-size="16"></span>
-              <span>后厨</span>
-              <span class="count" id="sessions-count"></span>
-            </button>
+            <details class="cc-life-nav-more">
+              <summary>生活与工具</summary>
+              <div>
+                <button class="dash-nav-link" aria-label="画室" data-pane="atelier">
+                  <span class="ic" data-hg-icon="brush" data-hg-size="16"></span><span>画室</span>
+                </button>
+                <button class="dash-nav-link" aria-label="记忆" data-pane="memory">
+                  <span class="ic" data-hg-icon="archive" data-hg-size="16"></span><span>记忆</span><span class="count" id="memory-count"></span>
+                </button>
+                <button class="dash-nav-link" aria-label="跟 CC 说" data-pane="converse">
+                  <span class="ic" data-hg-icon="smile" data-hg-size="16"></span><span>跟 CC 说</span>
+                </button>
+                <button class="dash-nav-link" aria-label="待办" data-pane="todos">
+                  <span class="ic" data-hg-icon="checkmark-circle-02" data-hg-size="16"></span><span>待办</span>
+                </button>
+                <button class="dash-nav-link" aria-label="觅食" data-pane="a2a-agents">
+                  <span class="ic" data-hg-icon="settings-01" data-hg-size="16"></span><span>觅食</span>
+                </button>
+                <button class="dash-nav-link" aria-label="后厨" data-pane="sessions" data-backstage-entry="true">
+                  <span class="ic" data-hg-icon="plug-01" data-hg-size="16"></span><span>后厨</span><span class="count" id="sessions-count"></span>
+                </button>
+              </div>
+            </details>
           </nav>
 
           <div class="dash-rail-foot">
@@ -385,7 +384,9 @@
         <section class="dash-main">
 
           <!-- ── pane: overview ─────────────────────────────────────── -->
-          <article class="dash-pane" data-pane="overview">
+          <article class="dash-pane cc-now-pane" data-pane="overview">
+            <section id="cc-current-activity" class="cc-current-activity" aria-live="polite"></section>
+            <details class="cc-home-details"><summary>鱼缸与连接</summary>
             <div class="moment-body">
               <section class="moment-ai" id="hero-card" aria-live="polite">
                 <div class="companion-intro">
@@ -487,6 +488,27 @@
                 </div>
               </div>
             </div>
+            </details>
+          </article>
+
+
+          <article class="dash-pane cc-recollections" data-pane="recollections" hidden>
+            <header><span class="cc-life-kicker">回忆</span><h1>留下来的小事。</h1><p>画过的画、寄来的明信片，还有当时的想法。</p></header>
+            <nav class="cc-memory-tabs" aria-label="回忆分类">
+              <button type="button" data-life-category="postcards" aria-pressed="true">明信片</button>
+              <button type="button" data-life-category="paintings" aria-pressed="false">画作</button>
+              <button type="button" data-life-category="thoughts" aria-pressed="false">日记与想法</button>
+              <button type="button" data-life-category="stories" aria-pressed="false">串门见闻</button>
+              <button type="button" data-life-pane="memory">关于你 ↗</button>
+            </nav>
+            <section id="cc-memory-postcards">
+                <section class="fd-section" aria-labelledby="postcard-album-title">
+                  <div class="fd-sec-head"><h2 id="postcard-album-title">明信片册</h2><span class="fd-hint">CC 寄来的图和话，一起收好</span></div>
+                  <div id="postcard-album"></div>
+                </section>
+            </section>
+            <section id="cc-memory-records" hidden></section>
+            <footer><button type="button" data-life-pane="atelier">去 CC 的画室 →</button><button type="button" data-life-pane="a2a-agents">去觅食 →</button></footer>
           </article>
 
           <!-- ── pane: atelier ─────────────────────────────────────── -->
@@ -686,10 +708,7 @@
                      心愿(wishes.js)替掉了原来「派心愿 / 回声」两个折叠子块 —— 输入 → 预览 → 派,
                      没有匿名觅食网、没有揭晓牵线仪式。信箱仍折叠留着;所有 id 不变(模块测试 + e2e 依赖)。 -->
 
-                <section class="fd-section" aria-labelledby="postcard-album-title">
-                  <div class="fd-sec-head"><h2 id="postcard-album-title">明信片册</h2><span class="fd-hint">CC 寄来的图和话，一起收好</span></div>
-                  <div id="postcard-album"></div>
-                </section>
+                <p class="cc-life-redirect">寄回的图和话已经收进回忆。<button type="button" data-life-pane="recollections" data-life-start="postcards">打开明信片册 →</button></p>
 
                 <!-- <span class="ic" data-hg-icon="archive"></span> 带回来的 -->
                 <section class="fd-section">

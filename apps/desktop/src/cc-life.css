@@ -1,0 +1,49 @@
+.cc-life-nav-more{position:relative;align-self:center;color:var(--cc-text-secondary,#756958);font-size:13px}
+.dash-rail:has(.cc-life-nav-more[open]){overflow:visible;z-index:70}
+.dash-nav:has(.cc-life-nav-more[open]){overflow:visible}
+.cc-life-nav-more summary{cursor:pointer;padding:12px;list-style:none}
+.cc-life-nav-more summary::after{content:' ⌄'}
+.cc-life-nav-more>div{position:absolute;right:0;top:100%;width:190px;background:#fffdf8;z-index:60;border:1px solid #e4dbcd;border-radius:14px;padding:8px;box-shadow:0 12px 30px #40362417}
+.cc-life-nav-more .dash-nav-link{display:flex;width:100%;justify-content:flex-start;min-width:0;margin:2px 0}
+.cc-current-activity{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:min(690px,75vh);padding:48px 24px 32px;text-align:center;color:#40392f}
+.cc-now-scene{position:relative;width:250px;margin-bottom:22px}
+.cc-now-scene::before{content:'';position:absolute;left:22%;right:18%;bottom:12%;height:12%;background:radial-gradient(ellipse,#9a806133,transparent 68%);filter:blur(4px)}
+.cc-now-scene img{display:block;width:100%;position:relative;mask-image:url('./assets/pet/cc-v1/masks/front.png');mask-size:100% 100%}
+.cc-life-kicker{font-size:12px;letter-spacing:.12em;color:#857a69}
+.cc-current-activity h1{font-size:30px;line-height:1.5;margin:16px 0 8px}
+.cc-current-activity p{color:#807564;font-size:15px;margin:0;max-width:460px;line-height:1.8}
+.cc-now-actions{display:flex;gap:16px;margin-top:32px;flex-wrap:wrap;justify-content:center}
+.cc-now-actions button,.cc-recollections button,.cc-life-redirect button{font:inherit;cursor:pointer;color:#7b5c37;background:#fffdfa;border:1px solid #e2d9cb;border-radius:12px;padding:10px 16px}
+.cc-home-details{margin:0 30px 30px;border-top:1px solid #e6e0d6}
+.cc-home-details>summary{padding:20px 0;color:#847762;font-size:13px;cursor:pointer;text-align:center}
+.cc-home-details[open]>.moment-body{min-height:650px}
+.cc-recollections{padding:40px clamp(22px,6vw,100px);color:#40392f}
+.cc-recollections header h1{font-size:30px;margin:12px 0}
+.cc-recollections header p,.cc-life-note{font-size:14px;color:#827665;line-height:1.8}
+.cc-memory-tabs{display:flex;flex-wrap:wrap;gap:10px;margin:30px 0}
+.cc-memory-tabs button{background:transparent;border-color:transparent}
+.cc-memory-tabs button[aria-pressed=true]{background:#efe5d5;color:#56442d}
+.cc-memory-entry{display:grid;grid-template-columns:100px 1fr 160px;gap:26px;padding:30px 0;border-top:1px solid #e6e0d6}
+.cc-memory-entry time,.cc-memory-entry small{font-size:12px;color:#8b806e}
+.cc-memory-entry h2{font-size:18px;font-weight:600;margin:0 0 14px}
+.cc-memory-entry p{font-size:15px;line-height:1.9;white-space:pre-wrap;overflow-wrap:anywhere;color:#665b4e}
+.cc-memory-entry img{width:160px;max-height:200px;object-fit:contain;border-radius:8px}
+.cc-memory-entry details{font-size:13px;color:#83715a}
+.cc-recollections>footer{border-top:1px solid #e6e0d6;padding-top:24px;margin-top:30px;display:flex;gap:15px}
+.cc-recollections>footer button{border:0;background:transparent}
+.cc-life-empty{padding:46px 12px;color:#837764;line-height:2}
+.cc-life-empty button{display:block;margin-top:18px}
+.cc-recollections [hidden]{display:none!important}
+.cc-life-redirect{color:#84765f;font-size:14px}
+.cc-life-redirect button{margin-left:15px}
+@media(max-width:760px){.cc-memory-entry{grid-template-columns:1fr;gap:12px}.cc-memory-entry img{width:100%;max-width:280px}.cc-current-activity{min-height:65vh}.cc-current-activity h1{font-size:24px}.cc-now-scene{width:210px}.cc-home-details{margin:0 16px 20px}}
+
+.cc-thought-day{border-top:1px solid #e6e0d6;padding:26px 0}
+.cc-thought-day>summary{display:flex;gap:32px;cursor:pointer;list-style:none}
+.cc-thought-day time{width:100px;flex-shrink:0;font-size:13px;color:#8b806e}
+.cc-thought-day h2{font-size:18px;margin:0 0 12px}
+.cc-thought-day summary p{font-size:14px;color:#756858;line-height:1.8;max-width:620px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.cc-thought-day small{font-size:12px;color:#967d59}
+.cc-thought-notes{margin:22px 0 0 132px;border-left:2px solid #e9dfcf;padding:0 24px}
+.cc-thought-notes article{margin-bottom:24px}.cc-thought-notes h3{font-size:15px}.cc-thought-notes p{white-space:pre-wrap;font-size:14px;line-height:1.9;color:#756858}
+@media(max-width:760px){.cc-thought-day>summary{flex-direction:column;gap:14px}.cc-thought-notes{margin-left:0}}
