@@ -92,3 +92,36 @@ it('rechecks an accepted native source after waiting for another task in the pro
  expect(f.spawn).toHaveBeenCalledTimes(1);expect(f.mint).toHaveBeenCalledTimes(1)
  expect(service.detail(task.id).task.error).toBe('external_close_confirmation_stale');expect(f.store.get(task.id).sessionId).toBe('original')
 })
+
+it('retains native defaults on imported continuation and records only observed model evidence',async()=>{
+ const f=fixture(),{task}=await service.importNativeHistory(await f.input())
+ const choice={defaults:'native',model:null,reasoningEffort:null}
+ expect(service.detail(task.id).execution).toEqual(choice)
+ const p=await service.prepareNativeResume(task.id)
+ await service.continueNativeTask(task.id,'continue',p.token);await settled(task.id)
+ expect(f.spawn.mock.calls[0]?.[1]).toMatchObject({resumeSessionId:'original',execution:choice})
+ expect(service.detail(task.id).lastExecution?.effective).toBeNull()
+ service.continueTask(task.id,'again');await settled(task.id)
+ expect(f.spawn.mock.calls[1]?.[1].execution).toEqual(choice)
+})
+
+it('binds the native preparation to an immutable choice and rejects a changed submission',async()=>{
+ const f=fixture(),{task}=await service.importNativeHistory(await f.input())
+ const choice={defaults:'native' as const,model:'selected',reasoningEffort:'high'}
+ const p=await service.prepareNativeResume(task.id,'native_resume',choice)
+ // The returned preview is client-owned; editing it cannot rewrite the server decision.
+ ;(p as typeof p&{execution:typeof choice}).execution.model='changed'
+ await expect(service.continueNativeTask(task.id,'continue',p.token,undefined,{execution:{...choice,model:'changed'}})).rejects.toThrow('external_close_confirmation_stale')
+ expect(f.spawn).not.toHaveBeenCalled();expect(service.detail(task.id).events).toHaveLength(2)
+ await service.continueNativeTask(task.id,'continue',p.token,undefined,{execution:choice});await settled(task.id)
+ expect(f.spawn.mock.calls[0]?.[1].execution).toEqual(choice)
+})
+
+it('preserves the selected native configuration through an explicit fresh-context restart',async()=>{
+ const f=fixture(),{task}=await service.importNativeHistory(await f.input());f.resumable(false)
+ const choice={defaults:'native' as const,model:'selected',reasoningEffort:'high'}
+ const p=await service.prepareNativeResume(task.id,'fresh_context',choice),restart=service.detail(task.id).continuation!.restart!
+ await service.continueNativeTask(task.id,'restart',p.token,restart.token,{execution:choice});await settled(task.id)
+ expect(f.spawn.mock.calls[0]?.[1].execution).toEqual(choice)
+ expect(f.spawn.mock.calls[0]?.[1].resumeSessionId).toBeUndefined()
+})

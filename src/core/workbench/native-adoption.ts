@@ -39,8 +39,9 @@ export async function readNativeImport(reader:NativeHistoryReader,raw:NativeImpo
 export interface NativeResumeDecision {
  token:string;taskId:string;sourceId:string;providerId:NativeHistoryProvider;nativeId:string;path:string
  mode:'native_resume'|'fresh_context';expiresAt:number;context:string;truncated:boolean;changedSinceImport:boolean
+ execution?:import('../agent-provider').AgentExecutionChoice
 }
-export interface AcceptedNativeResume extends NativeResumeDecision {pages:ImportPage[];taskVersion:string;directoryIdentity:string;restartToken?:string}
+export interface AcceptedNativeResume extends NativeResumeDecision {pages:ImportPage[];taskVersion:string;directoryIdentity:string;restartToken?:string;execution:import('../agent-provider').AgentExecutionChoice}
 /** An opaque approval is kept server-side, bound to the displayed decision and short lived. */
 export const nativeResumeToken=()=>randomBytes(32).toString('hex')
 export const pageInput=(p:ImportPage):NativeHistoryReadInput=>({limit:p.limit,...(p.cursor===null?{}:{cursor:p.cursor})})

@@ -53,6 +53,7 @@ describe('token-registry', () => {
       'GET /v1/workbench/attachment',
       'POST /v1/workbench/discard-attachment',
       'GET /v1/workbench',
+      'GET /v1/workbench/models',
       'GET /v1/workbench/sessions',
       'GET /v1/workbench/session',
       'GET /v1/workbench/task',
@@ -65,6 +66,7 @@ describe('token-registry', () => {
       'POST /v1/workbench/archive',
       'POST /v1/workbench/import',
       'POST /v1/workbench/prepare-resume',
+      'POST /v1/workbench/prepare-continuation',
       'POST /v1/workbench/handoff-preview',
       'POST /v1/workbench/handoff',
       'GET /v1/workbench/handoff',
@@ -88,6 +90,7 @@ describe('token-registry', () => {
       'GET /v1/workbench/attachment',
       'POST /v1/workbench/discard-attachment',
       'GET /v1/workbench',
+      'GET /v1/workbench/models',
       'GET /v1/workbench/sessions',
       'GET /v1/workbench/session',
       'GET /v1/workbench/task',
@@ -100,6 +103,7 @@ describe('token-registry', () => {
       'POST /v1/workbench/archive',
       'POST /v1/workbench/import',
       'POST /v1/workbench/prepare-resume',
+      'POST /v1/workbench/prepare-continuation',
       'POST /v1/workbench/handoff-preview',
       'POST /v1/workbench/handoff',
       'GET /v1/workbench/handoff',
@@ -111,6 +115,10 @@ describe('token-registry', () => {
     expect(r.resolve('cc'.repeat(32))?.routeAllow).toBeUndefined()
     expect(r.resolve(session)?.routeAllow).toBeUndefined()
     expect(r.resolve(session)?.tier).toBe('trusted')
+    expect(r.resolve('dd'.repeat(32))?.routeAllow?.has('POST /v1/workbench/models')).toBe(false)
+    expect(r.resolve('dd'.repeat(32))?.routeAllow?.has('GET /v1/workbench/models/extra')).toBe(false)
+    expect(r.resolve('dd'.repeat(32))?.routeAllow?.has('GET /v1/workbench/prepare-continuation')).toBe(false)
+    expect(r.resolve('dd'.repeat(32))?.routeAllow?.has('POST /v1/workbench/prepare-continuation/extra')).toBe(false)
   })
 
   // 桌宠卡片上的「允许 / 拒绝」只有这一个 admin 档凭据够得着(Tauri 的

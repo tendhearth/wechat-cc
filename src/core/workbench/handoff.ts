@@ -12,6 +12,7 @@ export interface HandoffPreview {
  token:string;sourceTaskId:string;targetProviderId:string;targetTaskId:string|null;purpose:'review'|'revision'
  request:string;context:string;artifacts:ArtifactSelection[];quote:ReviewQuote|null;truncated:boolean
  attachments?:AttachmentSelection[]
+ targetExecution?:import('../agent-provider').AgentExecutionChoice
  targetContinuation?:Continuation;nativeResume?:NativeResumeDecision
 }
 export const handoffToken=()=>randomBytes(32).toString('hex')

@@ -4,7 +4,8 @@ import {normalizeInputRequestId,sameAttachments} from './live-inputs'
 import type {Attachment} from './attachments'
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
-import type { AgentEvent, AgentSession } from '../agent-provider'
+import type { AgentEvent, AgentSession, AgentExecutionChoice, AgentModelCatalog } from '../agent-provider'
+import {executionFailureMessage,normalizeExecutionChoice,PROVIDER_EXECUTION_CHOICE,sameExecutionChoice} from './execution-settings'
 import type { ProviderRegistry } from '../provider-registry'
 import { TIER_PROFILES, sessionAuthEnv } from '../user-tier'
 import { canonicalProject, collectArtifacts, outputDirectory, readArtifactSnapshot, saveArtifactSnapshot } from './artifacts'
@@ -36,6 +37,7 @@ interface Options {
 }
 type AcceptedContinuation = { mode: 'new' } | { mode: 'resume'; sessionId: string } | { mode: 'restart'; preview: RestartPreview }
 interface Active extends PathReservation {
+  execution:AgentExecutionChoice
   attachments:Attachment[]
   handoffId?:string
   handoffArtifacts?:ArtifactSelection[]
@@ -64,7 +66,7 @@ interface Active extends PathReservation {
   credentialsMinted: boolean
   credentialsRevoked: boolean
 }
-export interface InputMaterials {attachmentIds?:string[];draftId?:string}
+export interface InputMaterials {attachmentIds?:string[];draftId?:string;execution?:unknown}
 export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string }
 export interface WorkbenchTaskView extends Task { importedOnly?:boolean; canArchive:boolean; waitingFor: WaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number }
 
@@ -156,13 +158,13 @@ export function makeWorkbenchService(opts: Options) {
     try { return !!task.sessionId && !!provider(task.providerId).opts.canResume(task.path,task.sessionId) }
     catch { return false }
   }
-  function continuation(task:StoredTask):Continuation {
+  function continuation(task:StoredTask,execution:AgentExecutionChoice=store.execution.choice(task.id)):Continuation {
     const events=store.events(task.id)
     if (!events.some(event => event.kind==='user' || event.kind==='text')) return {mode:'new'}
     if (canResume(task)) return {mode:'resume'}
-    return {mode:'restart_required',restart:restartPreview(task,events)}
+    return {mode:'restart_required',restart:restartPreview(task,events,execution,store.execution.choice(task.id))}
   }
-  function taskVersion(task:StoredTask){return snapshotHash(JSON.stringify({updatedAt:task.updatedAt,status:task.status,sessionId:task.sessionId,events:store.events(task.id),source:store.source(task.id)?.firstDispatchedAt}))}
+  function taskVersion(task:StoredTask){return snapshotHash(JSON.stringify({updatedAt:task.updatedAt,status:task.status,sessionId:task.sessionId,events:store.events(task.id),source:store.source(task.id)?.firstDispatchedAt,execution:store.execution.choice(task.id)}))}
   function nativeReader(id:string){const reader=opts.nativeHistory?.[id as NativeHistoryProvider];if(!reader)throw new Error('native_history_unsupported');return reader}
   async function currentNativePages(task:StoredTask,pages:ImportPage[]) {
     const call=historyDeadline(),key=Buffer.from(JSON.stringify({v:1,providerId:task.providerId,nativeId:store.source(task.id)!.nativeId})).toString('base64url')
@@ -305,6 +307,12 @@ export function makeWorkbenchService(opts: Options) {
       if (running.cancelled) { finalStatus='cancelled'; return }
       spawning=entry.provider.spawn({alias:`workbench:${task.id}`,path:running.path},{
         workbenchTimeline:true,
+        execution:{...running.execution},
+        reportExecution:value=>{
+          if(runsByTask.get(task.id)!==running||running.cancelled||running.finishing)return
+          if(resume&&value.sessionId&&value.sessionId!==resume)throw Error('native_session_identity_mismatch')
+          store.execution.observe(task.id,running.identity,value)
+        },
         reportNotice:message=>{
           if(runsByTask.get(task.id)!==running||running.cancelled||running.finishing)return
           const notice=message.trim().slice(0,2000)
@@ -349,12 +357,12 @@ export function makeWorkbenchService(opts: Options) {
       if (running.cancelled) finalStatus='cancelled'
       else if (summary.error || !summary.result) {
         const error=summary.error ?? 'stream_ended_without_result'
-        finalStatus='failed'; finalError=error; store.addEvent(task.id,'error',error)
+        finalStatus='failed'; finalError=error; store.addEvent(task.id,'error',executionFailureMessage(error))
       } else finalStatus='completed'
     } catch (error) {
       const message=error instanceof Error ? error.message : 'task_failed'
       finalStatus=running.cancelled ? 'cancelled' : 'failed'; finalError=running.cancelled ? null : message
-      if (!running.cancelled) store.addEvent(task.id,'error',message==='restart_confirmation_required' ? RECOVERY_MESSAGE : message)
+      if (!running.cancelled) store.addEvent(task.id,'error',message==='restart_confirmation_required' ? RECOVERY_MESSAGE : executionFailureMessage(message))
     } finally {
       running.finishing=true;running.questions.close()
       running.permissions.rejectAll(running.cancelled ? 'cancelled' : 'ended')
@@ -392,7 +400,8 @@ export function makeWorkbenchService(opts: Options) {
       if(decision.mode!=='resume')throw Error('原会话需要你确认恢复方式，补充尚未发送。')
       const path=canonicalProject(task.path);if(path!==task.path||directoryIdentity(path)!==expectedDirectoryIdentity)throw Error('invalid_path')
       store.liveInputs.set(next.id,'sending')
-      start(task,next.text,expectedDirectoryIdentity,{mode:'resume',sessionId:task.sessionId!},undefined,undefined,undefined,next.id,next.attachments)
+      const execution=next.execution??store.execution.run(id,next.runId)?.choice??store.execution.choice(id)
+      start(task,next.text,expectedDirectoryIdentity,{mode:'resume',sessionId:task.sessionId!},undefined,undefined,undefined,next.id,next.attachments,undefined,execution)
     }catch(error){holdInputs(id,error instanceof Error?error.message:'input_not_delivered')}
   }
 
@@ -418,19 +427,21 @@ export function makeWorkbenchService(opts: Options) {
     }
   }
 
-  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string):WorkbenchTaskView {
+  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     if(opts.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
     if([...runsByTask.values()].some(run=>task.sessionId&&run.task.providerId===task.providerId&&run.task.sessionId===task.sessionId))throw new Error('native_session_busy')
     const runId=randomUUID()
+    const execution=normalizeExecutionChoice(executionChoice,store.execution.choice(task.id))
     const dispatchAttachments=combinedAttachments(attachments,acceptedContinuation.mode==='restart'?acceptedContinuation.preview.attachments:[])
     const addRunEvent=(kind:'user'|'system',text:string)=>store.addEvent(task.id,kind,text,null,runId)
     store.atomic(()=>{
+      store.execution.accept(task.id,runId,execution)
       const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId)
       if(!sameAttachments(bound,attachments))throw Error('invalid_attachment_changed')
       // A queued receipt keeps the ORIGINAL accepted run, even when this is a new dispatch run.
       if(queuedInputId&&!store.liveInputs.get(queuedInputId)){
-        store.liveInputs.add({id:queuedInputId,taskId:task.id,runId,text,attachments})
+        store.liveInputs.add({id:queuedInputId,taskId:task.id,runId,text,attachments,execution})
         store.liveInputs.set(queuedInputId,'sending')
       }
       if(nativeResume)addRunEvent('system',`用户声明原 ${task.providerId} 执行程序已关闭，选择${nativeResume.mode==='native_resume'?'恢复原会话':'带已确认的记录新开一轮'}。原会话：${nativeResume.nativeId}。`)
@@ -453,6 +464,7 @@ export function makeWorkbenchService(opts: Options) {
       else addRunEvent('system',`问题已结束，未提交回答：${event.request.id}`)
     }})
     const running:Active={
+      execution,
       attachments:dispatchAttachments,
       interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,credentialsMinted:false,credentialsRevoked:false,
@@ -502,6 +514,7 @@ export function makeWorkbenchService(opts: Options) {
     },
     async submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials){
       ensureAccepting()
+      if(Object.hasOwn(input,'execution'))throw Error('invalid_execution')
       const attachments=selectAttachments(input,id),text=checkedText(input.text,attachments)
       if(autoContinueBlocked.has(id))throw Error('input_storage_unavailable')
       const requestId=normalizeInputRequestId(input.requestId)
@@ -513,7 +526,7 @@ export function makeWorkbenchService(opts: Options) {
       if(store.liveInputs.count(id)>=10)throw Error('input_limit')
       const saved=store.atomic(()=>{
         store.attachments.bind(attachments.map(a=>a.id),id,input.draftId)
-        return store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments})
+        return store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments,execution:running.execution})
       })
       if(!running.session?.steer)return saved
       running.delivering=true;store.liveInputs.set(saved.id,'sending')
@@ -556,7 +569,7 @@ export function makeWorkbenchService(opts: Options) {
       const packet=handoffContext({...input,attachments},source,store.events(source.id),files,materials)
       ensureAccepting()
       if(taskVersion(store.get(source.id))!==version)throw new Error('handoff_changed')
-      const preview:HandoffPreview={token:handoffToken(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:input.targetProviderId,purpose:input.purpose,request:input.request,...packet,artifacts,...(attachments.length?{attachments}:{}),quote:input.quote??null,...(targetContinuation?{targetContinuation}:{}),...(nativeResume?{nativeResume}:{})}
+      const preview:HandoffPreview={token:handoffToken(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:input.targetProviderId,purpose:input.purpose,request:input.request,...packet,artifacts,targetExecution:target?store.execution.choice(target.id):{...PROVIDER_EXECUTION_CHOICE},...(attachments.length?{attachments}:{}),quote:input.quote??null,...(targetContinuation?{targetContinuation}:{}),...(nativeResume?{nativeResume}:{})}
       for(const [token,d] of handoffDecisions)if(d.expiresAt<Date.now()||d.preview.sourceTaskId===source.id)handoffDecisions.delete(token)
       if(handoffDecisions.size>=100)handoffDecisions.delete(handoffDecisions.keys().next().value!)
       handoffDecisions.set(preview.token,{preview:structuredClone(preview),sourceVersion:version,targetVersion:target?taskVersion(target):null,directoryIdentity:identity,expiresAt:Date.now()+5*60_000})
@@ -601,7 +614,7 @@ export function makeWorkbenchService(opts: Options) {
           if(nativeDecisions.get(native.token)!==native)throw new Error('external_close_confirmation_stale')
         }
       }
-      const packetJson=JSON.stringify({context:p.context,request:p.request,artifacts:p.artifacts,attachments:p.attachments??[],quote:p.quote,truncated:p.truncated,continuation:accepted})
+      const packetJson=JSON.stringify({context:p.context,request:p.request,artifacts:p.artifacts,attachments:p.attachments??[],quote:p.quote,truncated:p.truncated,continuation:accepted,execution:p.targetExecution})
       const record=store.createHandoff({id:randomUUID(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:p.targetProviderId,path:source.path,title:`检查 · ${source.title}`.slice(0,120),ownerChatId:source.ownerChatId,purpose:p.purpose,request:p.request,packetSha256:snapshotHash(packetJson),packetJson,artifactRefsJson:JSON.stringify(p.artifacts),quoteJson:p.quote?JSON.stringify(p.quote):null,sourceNativeId:source.sessionId,tokenHash:hash})
       handoffDecisions.delete(input.token)
       if(native)nativeDecisions.delete(native.token)
@@ -610,7 +623,7 @@ export function makeWorkbenchService(opts: Options) {
         const materials=target
           ?handoffAttachments(p.attachments??[],target.id)
           :store.attachments.copyToTask(source.id,(p.attachments??[]).map(a=>a.attachmentId),record.targetTaskId)
-        task=start(store.get(record.targetTaskId),p.context,decision.directoryIdentity,accepted,native,p.artifacts,record.id,undefined,materials)
+        task=start(store.get(record.targetTaskId),p.context,decision.directoryIdentity,accepted,native,p.artifacts,record.id,undefined,materials,undefined,p.targetExecution)
       }
       catch(error){
         if(!target)store.update(record.targetTaskId,'failed',error instanceof Error?error.message:'task_failed')
@@ -622,7 +635,7 @@ export function makeWorkbenchService(opts: Options) {
     handoffRecord(taskId:string,id:string){
       const record=store.handoffRecord(taskId,id)
       if(snapshotHash(record.packetJson)!==record.packetSha256)throw new Error('artifact_changed')
-      return{id:record.id,sourceTaskId:record.sourceTaskId,targetTaskId:record.targetTaskId,createdAt:record.createdAt,sourceNativeId:record.sourceNativeId,targetNativeId:record.targetNativeId,packetSha256:record.packetSha256,packet:JSON.parse(record.packetJson) as {context:string;request:string;truncated:boolean;artifacts:ArtifactSelection[];attachments?:AttachmentSelection[];continuation:AcceptedContinuation}}
+      return{id:record.id,sourceTaskId:record.sourceTaskId,targetTaskId:record.targetTaskId,createdAt:record.createdAt,sourceNativeId:record.sourceNativeId,targetNativeId:record.targetNativeId,packetSha256:record.packetSha256,packet:JSON.parse(record.packetJson) as {context:string;request:string;truncated:boolean;artifacts:ArtifactSelection[];attachments?:AttachmentSelection[];continuation:AcceptedContinuation;execution?:AgentExecutionChoice}}
     },
     conflictsExternal(path:string,providerId:string,nativeId:string|null):boolean {
       let canonical:string
@@ -645,12 +658,13 @@ export function makeWorkbenchService(opts: Options) {
       const result=store.importSource({providerId,nativeId,cwd:path,title:read.session.title.slice(0,120),ownerChatId:opts.ownerChatId(),messages:read.messages,snapshotJson:read.snapshotJson,snapshotSha256:read.snapshotSha256,pagesJson:read.pagesJson,observedFingerprint:read.observedFingerprint,truncated:read.truncated})
       return{...result,task:taskView(publicTask(result.task))}
     },
-    async prepareNativeResume(id:string,mode:'native_resume'|'fresh_context'='native_resume'):Promise<NativeResumeDecision> {
+    async prepareNativeResume(id:string,mode:'native_resume'|'fresh_context'='native_resume',executionChoice?:unknown):Promise<NativeResumeDecision> {
       ensureAccepting()
       const task=store.get(id),source=store.source(id)
       if(!source||source.firstDispatchedAt!==null)throw new Error('invalid_request')
       if(mode!=='native_resume'&&mode!=='fresh_context')throw new Error('invalid_request')
       if(runsByTask.has(id)||task.archivedAt!==null)throw new Error('workbench_busy')
+      const execution=normalizeExecutionChoice(executionChoice,store.execution.choice(id))
       provider(task.providerId)
       const identity=directoryIdentity(task.path),version=taskVersion(task),pages=JSON.parse(source.pagesJson) as ImportPage[]
       if(opts.executionConflict?.(task.path,task.providerId,source.nativeId))throw new Error('native_session_busy')
@@ -660,24 +674,26 @@ export function makeWorkbenchService(opts: Options) {
       if(mode==='fresh_context'&&recovery.mode!=='restart_required')throw new Error('invalid_request')
       ensureAccepting()
       if(taskVersion(store.get(id))!==version||runsByTask.has(id))throw new Error('external_close_confirmation_stale')
-      const preview=restartPreview(task,store.events(id))
-      const decision:AcceptedNativeResume={token:nativeResumeToken(),taskId:id,sourceId:source.id,providerId:source.providerId,nativeId:source.nativeId,path:task.path,mode,expiresAt:Date.now()+5*60_000,context:mode==='fresh_context'?preview.context:'',truncated:source.truncated,changedSinceImport:JSON.stringify(current)!==JSON.stringify(pages),pages:current,taskVersion:version,directoryIdentity:identity,...(mode==='fresh_context'?{restartToken:preview.token}:{})}
+      const preview=restartPreview(task,store.events(id),store.execution.choice(id))
+      const decision:AcceptedNativeResume={token:nativeResumeToken(),taskId:id,sourceId:source.id,providerId:source.providerId,nativeId:source.nativeId,path:task.path,mode,expiresAt:Date.now()+5*60_000,context:mode==='fresh_context'?preview.context:'',truncated:source.truncated,changedSinceImport:JSON.stringify(current)!==JSON.stringify(pages),pages:current,taskVersion:version,directoryIdentity:identity,execution,...(mode==='fresh_context'?{restartToken:preview.token}:{})}
       for(const [token,value] of nativeDecisions)if(value.expiresAt<Date.now()||value.taskId===id)nativeDecisions.delete(token)
       if(nativeDecisions.size>=100)nativeDecisions.delete(nativeDecisions.keys().next().value!)
       nativeDecisions.set(decision.token,decision)
-      const {pages:_pages,taskVersion:_version,directoryIdentity:_identity,restartToken:_restart,...result}=decision;return result
+      const {pages:_pages,taskVersion:_version,directoryIdentity:_identity,restartToken:_restart,...result}=decision;return structuredClone(result)
     },
     async continueNativeTask(id:string,text:string,sourceClosedToken:string,restartToken?:string,materials:InputMaterials={}):Promise<WorkbenchTaskView> {
       ensureAccepting();const task=store.get(id),decision=nativeDecisions.get(sourceClosedToken),attachments=selectAttachments(materials,id),request=checkedText(text,attachments)
       if(!decision)throw new Error('external_close_confirmation_stale')
+      const execution=normalizeExecutionChoice(materials.execution,store.execution.choice(id))
+      if(!sameExecutionChoice(execution,decision.execution))throw Error('external_close_confirmation_stale')
       if(runsByTask.has(id)||task.archivedAt!==null)throw new Error('workbench_busy')
       await validateNativeDecision(task,decision)
       ensureAccepting()
       if(taskVersion(store.get(id))!==decision.taskVersion||runsByTask.has(id)||nativeDecisions.get(sourceClosedToken)!==decision)throw new Error('external_close_confirmation_stale')
-      const accepted:AcceptedContinuation=decision.mode==='native_resume'?{mode:'resume',sessionId:decision.nativeId}:{mode:'restart',preview:restartPreview(task,store.events(id))}
+      const accepted:AcceptedContinuation=decision.mode==='native_resume'?{mode:'resume',sessionId:decision.nativeId}:{mode:'restart',preview:restartPreview(task,store.events(id),store.execution.choice(id))}
       if(accepted.mode==='restart'&&(restartToken!==accepted.preview.token||restartToken!==decision.restartToken))throw new Error('restart_confirmation_stale')
       nativeDecisions.delete(sourceClosedToken)
-      return start(task,request,decision.directoryIdentity,accepted,decision,undefined,undefined,undefined,attachments,materials.draftId)
+      return start(task,request,decision.directoryIdentity,accepted,decision,undefined,undefined,undefined,attachments,materials.draftId,execution)
     },
     async listNativeHistory(providerId:NativeHistoryProvider,input:NativeHistoryListInput) {
       const reader=opts.nativeHistory?.[providerId]
@@ -697,9 +713,25 @@ export function makeWorkbenchService(opts: Options) {
       const projectProviders=Object.fromEntries([...new Set(result.tasks.map(task=>task.path))].map(path=>[path,store.projectProvider(path)]))
       return {tasks:result.tasks.map(task => taskView(task,true)),page:result.page,projectProviders,providers,historyProviders:Object.keys(opts.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!opts.ownerChatId()}
     },
+    async modelCatalog(providerId:string,path:string):Promise<AgentModelCatalog>{
+      const entry=provider(providerId),canonical=canonicalProject(path)
+      if(!entry.provider.modelCatalog)throw Error('model_catalog_unavailable')
+      // Discovery providers own one bounded lifecycle, including process cleanup.
+      // A second race here would abandon (rather than cancel) their work.
+      try{return await entry.provider.modelCatalog({alias:'workbench:model-catalog',path:canonical})}
+      catch(error){throw Error(error instanceof Error&&error.message==='model_catalog_invalid'?'model_catalog_invalid':'model_catalog_unavailable')}
+    },
+    prepareContinuation(id:string,executionChoice?:unknown):Continuation{
+      ensureAccepting()
+      const task=store.get(id)
+      if(runsByTask.has(id)||!TERMINAL_TASK_STATUSES.includes(task.status))throw Error('workbench_busy')
+      if(task.archivedAt!==null)throw Error('workbench_archived')
+      if(store.source(id)?.firstDispatchedAt===null)throw Error('external_close_confirmation_required')
+      return continuation(task,normalizeExecutionChoice(executionChoice,store.execution.choice(id)))
+    },
     detail(id:string) {
       const detail=store.detail(id),running=runsByTask.get(id)
-      return {...detail,attachments:store.attachments.list(id),task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
+      return {...detail,execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
         // The timeline stays live through cancellation and process cleanup;
         // accepting supplemental input is a separate, narrower capability.
         ...(running?{runId:running.identity}:{}),
@@ -708,12 +740,13 @@ export function makeWorkbenchService(opts: Options) {
     },
     create(input:CreateTask):WorkbenchTaskView {
       ensureAccepting()
+      const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
       const attachments=selectAttachments(input),text=checkedText(input.text,attachments); provider(input.providerId)
       if (input.title!==undefined && (typeof input.title!=='string' || !input.title.trim() || input.title.length>120)) throw new Error('invalid_title')
       const path=canonicalProject(input.path)
       const acceptedDirectoryIdentity=directoryIdentity(path)
       if(opts.executionConflict?.(path,input.providerId,null))throw new Error('native_session_busy')
-      return store.atomic(()=>start(store.create({title:input.title?.trim() ?? (text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:opts.ownerChatId()}),text,acceptedDirectoryIdentity,undefined,undefined,undefined,undefined,undefined,attachments,input.draftId))
+      return store.atomic(()=>start(store.create({title:input.title?.trim() ?? (text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:opts.ownerChatId()}),text,acceptedDirectoryIdentity,undefined,undefined,undefined,undefined,undefined,attachments,input.draftId,execution))
     },
     continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials):WorkbenchTaskView {
       ensureAccepting()
@@ -721,10 +754,17 @@ export function makeWorkbenchService(opts: Options) {
       const inputRequestId=options?.inputRequestId===undefined?undefined:normalizeInputRequestId(options.inputRequestId)
       if(inputRequestId!==undefined){
         const prior=store.liveInputs.get(inputRequestId)
-        if(prior){if(prior.taskId!==id||prior.text!==checkedText(text,attachments)||!sameAttachments(prior.attachments,attachments))throw Error('input_conflict');return taskView(publicTask(store.get(id)))}
+        if(prior){
+          if(prior.taskId!==id||prior.text!==checkedText(text,attachments)||!sameAttachments(prior.attachments,attachments))throw Error('input_conflict')
+          // An omitted retry keeps its ORIGINAL choice, never later task defaults.
+          const original=prior.execution??store.execution.run(id,prior.runId)?.choice
+          if(options?.execution!==undefined&&(!original||!sameExecutionChoice(normalizeExecutionChoice(options.execution,original),original)))throw Error('input_conflict')
+          return taskView(publicTask(store.get(id)))
+        }
       }
       if (runsByTask.has(id)) throw new Error('workbench_busy')
       const task=store.get(id)
+      const execution=normalizeExecutionChoice(options?.execution,store.execution.choice(id))
       if(store.source(id)?.firstDispatchedAt===null)throw new Error('external_close_confirmation_required')
       if(task.archivedAt!==null)throw new Error('workbench_archived')
       provider(task.providerId)
@@ -732,13 +772,13 @@ export function makeWorkbenchService(opts: Options) {
       const request=checkedText(text,attachments),acceptedDirectoryIdentity=directoryIdentity(task.path)
       const restartToken=options?.restartToken
       if (restartToken!==undefined && (typeof restartToken!=='string' || !/^[a-f0-9]{64}$/.test(restartToken))) throw new Error('invalid_request')
-      const decision=continuation(task)
+      const decision=continuation(task,execution)
       if (restartToken!==undefined && (decision.mode!=='restart_required' || restartToken!==decision.restart.token)) throw new Error('restart_confirmation_stale')
       if (decision.mode==='restart_required' && restartToken===undefined) throw new Error('restart_confirmation_required')
       const accepted:AcceptedContinuation=decision.mode==='restart_required'
         ? {mode:'restart',preview:decision.restart}
         : decision.mode==='resume' ? {mode:'resume',sessionId:task.sessionId!} : {mode:'new'}
-      try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId)}
+      try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId,execution)}
       catch(error){
         if(inputRequestId&&store.liveInputs.get(inputRequestId))try{store.liveInputs.set(inputRequestId,'held','本轮未确认开始，补充内容已保留。')}catch{autoContinueBlocked.add(id)}
         throw error

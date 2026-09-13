@@ -6,6 +6,7 @@ import type {NativeHistoryMessage} from './native-history'
 import type { Db } from '../../lib/db'
 import {makeLiveInputStore} from './live-inputs'
 import {makeTaskAttachmentStore} from './attachments'
+import {makeExecutionSettingsStore,NATIVE_EXECUTION_CHOICE} from './execution-settings'
 import {makeControlReceiptStore} from './control-receipts'
 import {makeTimelineEvents} from './timeline-events'
 import type {AgentActivity} from '../agent-provider'
@@ -75,6 +76,7 @@ export function makeWorkbenchStore(db: Db) {
   return {
     atomic:<T>(operation:()=>T):T=>db.transaction(operation)(),
     attachments:makeTaskAttachmentStore(db),
+    execution:makeExecutionSettingsStore(db),
     liveInputs:makeLiveInputStore(db),
     controlReceipts:makeControlReceiptStore(db),
     get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,
@@ -101,6 +103,7 @@ export function makeWorkbenchStore(db: Db) {
         const existing=sourceByIdentity(input.providerId,input.nativeId)
         if(existing)return{task:get(existing.taskId),source:publicSource(existing),created:false}
         const task=this.create({title:input.title,path:input.cwd,providerId:input.providerId,ownerChatId:input.ownerChatId}),id=randomUUID(),now=Date.now()
+        db.query('UPDATE workbench_tasks SET execution_choice_json=? WHERE id=?').run(JSON.stringify(NATIVE_EXECUTION_CHOICE),task.id)
         db.query('INSERT INTO workbench_sources(id,task_id,provider_id,native_id,cwd,imported_at,snapshot_sha256,observed_fingerprint,selected_message_count,truncated,snapshot_json,pages_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(id,task.id,input.providerId,input.nativeId,input.cwd,now,input.snapshotSha256,input.observedFingerprint,input.messages.length,input.truncated?1:0,input.snapshotJson,input.pagesJson)
         for(const message of input.messages)addEvent(task.id,message.role==='user'?'user':'text',message.text,id)
         this.session(task.id,input.nativeId);this.update(task.id,'interrupted')

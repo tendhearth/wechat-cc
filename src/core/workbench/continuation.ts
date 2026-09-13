@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { StoredTask, TaskEvent } from './store'
+import type {AgentExecutionChoice} from '../agent-provider'
+import {PROVIDER_EXECUTION_CHOICE} from './execution-settings'
 
 export interface RestartPreview {
   token: string
@@ -13,7 +15,7 @@ export interface RestartPreview {
 export type Continuation = { mode: 'new' | 'resume'; restart?: never } | { mode: 'restart_required'; restart: RestartPreview }
 
 /** Keep the newest conversation, including part of an oversized event with its role intact. */
-export function restartPreview(task: StoredTask, events: TaskEvent[]): RestartPreview {
+export function restartPreview(task: StoredTask, events: TaskEvent[],execution:AgentExecutionChoice=PROVIDER_EXECUTION_CHOICE,retainedExecution:AgentExecutionChoice=execution): RestartPreview {
   const source=events.filter(event => event.kind==='user' || event.kind==='text')
   const selected=source.slice(-12)
   const parts:string[]=[]
@@ -43,7 +45,7 @@ export function restartPreview(task: StoredTask, events: TaskEvent[]): RestartPr
   // Bind original source IDs and full text, including omitted history, so edits and
   // added history invalidate a preview even if the visible suffix stays identical.
   const token=createHash('sha256').update(JSON.stringify({
-    taskId:task.id,path:task.path,providerId:task.providerId,sessionId:task.sessionId,
+    taskId:task.id,path:task.path,providerId:task.providerId,sessionId:task.sessionId,execution,retainedExecution,
     source:source.map(({id,kind,text,attachments}) => ({id,kind,text,attachments})),context,attachments,
   })).digest('hex')
   return {token,context:context+material,eventCount:source.length,includedEventCount:parts.length,truncated:partial || parts.length<source.length || omittedAttachmentCount>0,...(seen.size?{attachments,omittedAttachmentCount}:{})}

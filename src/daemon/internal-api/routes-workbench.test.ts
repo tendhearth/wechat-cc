@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os'
 import { request as httpRequest } from 'node:http'
 import { createInternalApi, type InternalApi } from './index'
 import { minTierFor } from './route-tiers'
+import {openDb} from '../../lib/db'
+import {makeWorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchService} from '../../core/workbench/service'
+import {createProviderRegistry} from '../../core/provider-registry'
+import type {AgentExecutionChoice} from '../../core/agent-provider'
 
 const TASK = {
   id: 'deadbeef', title: 'Draft', path: '/tmp/project', providerId: 'codex',
@@ -27,6 +32,100 @@ function service(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Workbench internal HTTP API', () => {
+  it('prepares continuation only on its exact operator route and preserves absent versus explicit execution',async()=>{
+    const continuation={mode:'restart_required',restart:{token:'a'.repeat(64),context:'history'}}
+    const prepareContinuation=vi.fn(()=>continuation),{request,operatorToken,trustedToken}=await start(service({prepareContinuation}))
+    const route='/v1/workbench/prepare-continuation',execution={defaults:'provider',model:'chosen',reasoningEffort:null}
+    const post=(body:unknown,token=operatorToken)=>request(route,{method:'POST',body:JSON.stringify(body)},token)
+    expect((await post({id:TASK.id,execution},trustedToken)).status).toBe(403)
+    const response=await post({id:TASK.id,execution})
+    expect(response.status).toBe(200);expect(await response.json()).toEqual({continuation})
+    expect(prepareContinuation).toHaveBeenLastCalledWith(TASK.id,execution)
+    expect((await post({id:TASK.id})).status).toBe(200)
+    expect(prepareContinuation).toHaveBeenLastCalledWith(TASK.id)
+    expect((await post({id:TASK.id,execution:null})).status).toBe(200)
+    expect(prepareContinuation).toHaveBeenLastCalledWith(TASK.id,null)
+    for(const body of [null,{}, {id:'bad'}])expect((await post(body)).status).toBe(400)
+    expect((await request(route,{},operatorToken)).status).toBe(404)
+    expect((await request(route+'/extra',{method:'POST',body:JSON.stringify({id:TASK.id})},operatorToken)).status).toBe(404)
+    expect(prepareContinuation).toHaveBeenCalledTimes(3)
+  })
+  it('binds restart tokens to the selected execution through real HTTP, service and SQLite',async()=>{
+    const db=openDb({path:join(stateDir,'execution.sqlite')}),registry=createProviderRegistry(),seen:AgentExecutionChoice[]=[]
+    registry.register('codex',{async spawn(_project,context){seen.push(context.execution!);return{async *dispatch(){yield{kind:'text' as const,text:'completed fixture'};yield{kind:'result' as const,sessionId:'fixture-native',numTurns:1,durationMs:1}},async close(){}}}},{displayName:'Codex',canResume:()=>false})
+    const actual=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir,ownerChatId:()=>null})
+    try{
+      const {request,operatorToken}=await start(actual as never)
+      const a:AgentExecutionChoice={defaults:'provider',model:'model-a',reasoningEffort:null},b={...a,model:'model-b'}
+      const task=actual.create({path:stateDir,providerId:'codex',text:'initial',execution:a})
+      await vi.waitFor(()=>expect(actual.detail(task.id).task.status).toBe('completed'))
+      const post=(path:string,body:unknown)=>request(path,{method:'POST',body:JSON.stringify(body)},operatorToken)
+      const prepare=await post('/v1/workbench/prepare-continuation',{id:task.id,execution:b})
+      expect(prepare.status).toBe(200)
+      const tokenB=(await prepare.json()).continuation.restart.token,tokenA=actual.detail(task.id).continuation!.restart!.token
+      expect(tokenB).not.toBe(tokenA)
+      const rejected=await post('/v1/workbench/continue',{id:task.id,text:'next',execution:b,restartToken:tokenA})
+      expect(rejected.status).toBe(409);expect(await rejected.json()).toEqual({error:'restart_confirmation_stale'})
+      expect(seen).toEqual([a])
+      expect((await post('/v1/workbench/continue',{id:task.id,text:'next',execution:b,restartToken:tokenB})).status).toBe(202)
+      await vi.waitFor(()=>expect(actual.detail(task.id).task.status).toBe('completed'))
+      expect(seen).toEqual([a,b])
+    }finally{await actual.shutdown();db.close()}
+  })
+  it('discovers models through the exact operator route and rejects other credentials, methods and malformed queries',async()=>{
+    const catalog={source:'native',models:[{id:'model-a',displayName:'Model A',reasoningEfforts:['high']}]}
+    const modelCatalog=vi.fn(async()=>catalog),{request,operatorToken,trustedToken}=await start(service({modelCatalog}))
+    const route='/v1/workbench/models?providerId=codex&path=%2Ftmp%2Fproject'
+    const response=await request(route,{},operatorToken)
+    expect(response.status).toBe(200);expect(await response.json()).toEqual({catalog})
+    expect(modelCatalog).toHaveBeenCalledExactlyOnceWith('codex','/tmp/project')
+    expect((await request(route,{},trustedToken)).status).toBe(403)
+    expect((await request(route,{},'invalid')).status).toBe(401)
+    expect((await request(route,{method:'POST'},operatorToken)).status).toBe(404)
+    expect((await request('/v1/workbench/models/extra?providerId=codex&path=/tmp',{},operatorToken)).status).toBe(404)
+    for(const suffix of ['', 'providerId=codex','providerId=unknown&path=/tmp','providerId=codex&path=relative','providerId=codex&path=/tmp&path=/other','providerId=codex&providerId=claude&path=/tmp','providerId=claude&path=%2Ftmp%00bad','providerId=claude&path=%2F'+'x'.repeat(4096)]){
+      expect((await request('/v1/workbench/models?'+suffix,{},operatorToken)).status).toBe(400)
+    }
+    expect(modelCatalog).toHaveBeenCalledTimes(1)
+  })
+  it('forwards explicitly supplied execution choices through create, continue and native preparation without attachments',async()=>{
+    const prepareNativeResume=vi.fn(async()=>({token:'a'.repeat(64)})),continueNativeTask=vi.fn(async()=>TASK)
+    const workbench=service({prepareNativeResume,continueNativeTask}),{request,operatorToken}=await start(workbench)
+    const execution={defaults:'native',model:null,reasoningEffort:'high'},post=(path:string,body:unknown)=>request(path,{method:'POST',body:JSON.stringify(body)},operatorToken)
+    expect((await post('/v1/workbench/create',{path:'/tmp/project',providerId:'codex',text:'new',execution})).status).toBe(202)
+    expect(workbench.create).toHaveBeenCalledWith({path:'/tmp/project',providerId:'codex',text:'new',execution})
+    expect((await post('/v1/workbench/continue',{id:TASK.id,text:'next',execution})).status).toBe(202)
+    expect(workbench.continueTask).toHaveBeenCalledWith(TASK.id,'next',{execution})
+    expect((await post('/v1/workbench/prepare-resume',{id:TASK.id,execution})).status).toBe(200)
+    expect(prepareNativeResume).toHaveBeenCalledWith(TASK.id,'native_resume',execution)
+    expect((await post('/v1/workbench/continue',{id:TASK.id,text:'native',sourceClosedToken:'a'.repeat(64),execution})).status).toBe(202)
+    expect(continueNativeTask).toHaveBeenCalledWith(TASK.id,'native','a'.repeat(64),undefined,{execution})
+    // A supplied null reaches service validation; omission must remain omission.
+    expect((await post('/v1/workbench/continue',{id:TASK.id,text:'null',execution:null})).status).toBe(202)
+    expect(workbench.continueTask).toHaveBeenCalledWith(TASK.id,'null',{execution:null})
+    expect((await post('/v1/workbench/prepare-resume',{id:TASK.id})).status).toBe(200)
+    expect(prepareNativeResume).toHaveBeenLastCalledWith(TASK.id,'native_resume')
+  })
+  it('rejects execution overrides on live input instead of silently steering with changed settings',async()=>{
+    const submitInput=vi.fn(),{request}=await start(service({submitInput}))
+    for(const execution of [null,{defaults:'native',model:'model-a',reasoningEffort:null}]){
+      expect((await request('/v1/workbench/input',{method:'POST',body:JSON.stringify({id:TASK.id,text:'change',requestId:crypto.randomUUID(),runId:crypto.randomUUID(),execution})})).status).toBe(400)
+    }
+    expect(submitInput).not.toHaveBeenCalled()
+  })
+  it('maps discovery and execution validation failures without downgrading them to internal errors',async()=>{
+    const modelCatalog=vi.fn(),create=vi.fn(),{request,operatorToken}=await start(service({modelCatalog,create}))
+    for(const code of ['model_catalog_unavailable','model_catalog_invalid']){
+      modelCatalog.mockImplementationOnce(()=>{throw Error(code)})
+      const response=await request('/v1/workbench/models?providerId=codex&path=/tmp',{},operatorToken)
+      expect(response.status).toBe(503);expect(await response.json()).toEqual({error:code})
+    }
+    for(const [code,status] of [['invalid_execution',400],['execution_model_unsupported',400],['execution_model_unknown',400],['execution_effort_unsupported',400],['execution_conflict',409]] as const){
+      create.mockImplementationOnce(()=>{throw Error(code)})
+      const response=await request('/v1/workbench/create',{method:'POST',body:JSON.stringify({path:'/tmp',providerId:'claude',text:'start',execution:null})},operatorToken)
+      expect(response.status).toBe(status);expect(await response.json()).toEqual({error:code})
+    }
+  })
   it('accepts attachment-only messages and forwards scoped material through create, continue and live input',async()=>{
     const submitInput=vi.fn(async()=>({status:'pending'})),workbench=service({submitInput}),{request}=await start(workbench)
     const material={draftId:crypto.randomUUID(),attachmentIds:[crypto.randomUUID()]}
