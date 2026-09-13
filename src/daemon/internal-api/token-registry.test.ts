@@ -49,6 +49,9 @@ describe('token-registry', () => {
       'POST /v1/reminders/schedule',
       'POST /v1/permissions/resolve',
       'POST /v1/federation/mint',
+      'POST /v1/workbench/attachment',
+      'GET /v1/workbench/attachment',
+      'POST /v1/workbench/discard-attachment',
       'GET /v1/workbench',
       'GET /v1/workbench/sessions',
       'GET /v1/workbench/session',
@@ -81,6 +84,9 @@ describe('token-registry', () => {
     const session = r.mint('trusted', 'codex/default/contact')
     const workbenchRoutes = [...(r.resolve('dd'.repeat(32))?.routeAllow ?? [])].filter(route => route.includes('/v1/workbench'))
     expect(workbenchRoutes).toEqual([
+      'POST /v1/workbench/attachment',
+      'GET /v1/workbench/attachment',
+      'POST /v1/workbench/discard-attachment',
       'GET /v1/workbench',
       'GET /v1/workbench/sessions',
       'GET /v1/workbench/session',

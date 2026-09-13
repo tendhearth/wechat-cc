@@ -173,6 +173,9 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           // Owner Workbench (2026-09-11) — the Tauri host proxies these
           // requests with this operator credential; the webview never sees
           // the token. Keep the grant to the exact Workbench methods.
+          'POST /v1/workbench/attachment',
+          'GET /v1/workbench/attachment',
+          'POST /v1/workbench/discard-attachment',
           'GET /v1/workbench',
           'GET /v1/workbench/sessions','GET /v1/workbench/session','GET /v1/workbench/task',
           'POST /v1/workbench/create',

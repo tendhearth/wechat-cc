@@ -1,6 +1,7 @@
 import {makeRunUserInput,type RunUserInput} from './user-input'
 import {makeWechatWorkbenchControl,type WechatMessageIdentity} from './wechat-control'
-import {normalizeInputRequestId} from './live-inputs'
+import {normalizeInputRequestId,sameAttachments} from './live-inputs'
+import type {Attachment} from './attachments'
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import type { AgentEvent, AgentSession } from '../agent-provider'
@@ -11,7 +12,7 @@ import { captureGitBaseline, finishGitReview, serializeGitReview, GIT_REVIEW_MIM
 import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryReader, type NativeHistoryProvider, type NativeHistoryListInput, type NativeHistoryReadInput } from './native-history'
 import {readNativeImport,nativeImportInput,publicSource,pageInput,nativeResumeToken,snapshotHash,type ImportPage,type NativeImportInput,type NativeResumeDecision,type AcceptedNativeResume} from './native-adoption'
 import {historyDeadline} from './native-history'
-import {handoffToken,handoffTokenHash,validateHandoffInput,handoffArtifactText,handoffContext,type HandoffInput,type HandoffPreview,type ArtifactSelection} from './handoff'
+import {handoffToken,handoffTokenHash,validateHandoffInput,handoffArtifactText,handoffContext,type HandoffInput,type HandoffPreview,type ArtifactSelection,type AttachmentSelection} from './handoff'
 import {pathsConflict} from './scheduler'
 import { restartPreview, type Continuation, type RestartPreview } from './continuation'
 import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
@@ -35,6 +36,7 @@ interface Options {
 }
 type AcceptedContinuation = { mode: 'new' } | { mode: 'resume'; sessionId: string } | { mode: 'restart'; preview: RestartPreview }
 interface Active extends PathReservation {
+  attachments:Attachment[]
   handoffId?:string
   handoffArtifacts?:ArtifactSelection[]
   nativeResume?:AcceptedNativeResume
@@ -62,11 +64,12 @@ interface Active extends PathReservation {
   credentialsMinted: boolean
   credentialsRevoked: boolean
 }
-export interface CreateTask { title?: string; path: string; providerId: string; text: string }
+export interface InputMaterials {attachmentIds?:string[];draftId?:string}
+export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string }
 export interface WorkbenchTaskView extends Task { importedOnly?:boolean; canArchive:boolean; waitingFor: WaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number }
 
-function checkedText(text: string): string {
-  if (typeof text !== 'string' || !text.trim() || text.length > 20_000) throw new Error('invalid_text')
+function checkedText(text: string,attachments:readonly Attachment[]=[]): string {
+  if (typeof text !== 'string' || (!text.trim()&&!attachments.length) || text.length > 20_000) throw new Error('invalid_text')
   return text.trim()
 }
 function directoryIdentity(path:string):string {
@@ -109,6 +112,22 @@ async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Pro
 
 export function makeWorkbenchService(opts: Options) {
   const { store } = opts
+  const selectAttachments=(input:InputMaterials={},taskId?:string)=>store.attachments.select(input.attachmentIds??[],taskId,input.draftId)
+  function combinedAttachments(current:readonly Attachment[],previous:readonly Attachment[]=[]){
+    const unique=new Map<string,Attachment>()
+    for(const a of [...previous,...current])unique.set(a.id,{...a})
+    const refs=[...unique.values()]
+    if(refs.length>8||refs.reduce((n,a)=>n+a.size,0)>24*1024*1024)throw Error('invalid_attachment_context_limit')
+    return refs
+  }
+  function handoffAttachments(refs:AttachmentSelection[],expectedTaskId:string){
+    const files=store.attachments.select(refs.map(a=>a.attachmentId),expectedTaskId)
+    for(let i=0;i<refs.length;i++){
+      if(refs[i]!.taskId!==expectedTaskId||refs[i]!.sha256!==files[i]!.sha256)throw Error('invalid_handoff_attachment')
+      store.attachments.read(expectedTaskId,refs[i]!.attachmentId,opts.stateDir)
+    }
+    return files
+  }
   const autoContinueBlocked=new Set<string>()
   function holdInputs(id:string,error:string){
     autoContinueBlocked.add(id)
@@ -316,7 +335,8 @@ export function makeWorkbenchService(opts: Options) {
       }
       if (running.cancelled) { finalStatus='cancelled'; return }
       store.markSourceDispatched(task.id)
-      const stream=running.session.dispatch(history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n本轮要求：\n${text}` : text)
+      const material=store.attachments.prepare(task.id,running.attachments,running.path,opts.stateDir)
+      const stream=running.session.dispatch(history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n本轮要求：\n${text}` : text,material)
       const summary=await collectWorkbenchTurn(stream,running.stop,opts.timeoutMs ?? 10*60_000,
         ev => {
           if (running.cancelled) return
@@ -372,7 +392,7 @@ export function makeWorkbenchService(opts: Options) {
       if(decision.mode!=='resume')throw Error('原会话需要你确认恢复方式，补充尚未发送。')
       const path=canonicalProject(task.path);if(path!==task.path||directoryIdentity(path)!==expectedDirectoryIdentity)throw Error('invalid_path')
       store.liveInputs.set(next.id,'sending')
-      start(task,next.text,expectedDirectoryIdentity,{mode:'resume',sessionId:task.sessionId!},undefined,undefined,undefined,next.id)
+      start(task,next.text,expectedDirectoryIdentity,{mode:'resume',sessionId:task.sessionId!},undefined,undefined,undefined,next.id,next.attachments)
     }catch(error){holdInputs(id,error instanceof Error?error.message:'input_not_delivered')}
   }
 
@@ -398,22 +418,26 @@ export function makeWorkbenchService(opts: Options) {
     }
   }
 
-  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string):WorkbenchTaskView {
+  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     if(opts.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
     if([...runsByTask.values()].some(run=>task.sessionId&&run.task.providerId===task.providerId&&run.task.sessionId===task.sessionId))throw new Error('native_session_busy')
     const runId=randomUUID()
-    // A phone continuation may be redelivered after its transport reply fails.
-    // Reserve the same durable input receipt before a run can be dispatched.
-    if(queuedInputId&&!store.liveInputs.get(queuedInputId)){
-      store.liveInputs.add({id:queuedInputId,taskId:task.id,runId,text})
-      store.liveInputs.set(queuedInputId,'sending')
-    }
+    const dispatchAttachments=combinedAttachments(attachments,acceptedContinuation.mode==='restart'?acceptedContinuation.preview.attachments:[])
     const addRunEvent=(kind:'user'|'system',text:string)=>store.addEvent(task.id,kind,text,null,runId)
-    if(nativeResume)addRunEvent('system',`用户声明原 ${task.providerId} 执行程序已关闭，选择${nativeResume.mode==='native_resume'?'恢复原会话':'带已确认的记录新开一轮'}。原会话：${nativeResume.nativeId}。`)
-    const requestEventId=addRunEvent('user',text)
-    if(handoffId)store.recordHandoffEvent(handoffId,requestEventId)
-    store.update(task.id,'queued')
+    store.atomic(()=>{
+      const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId)
+      if(!sameAttachments(bound,attachments))throw Error('invalid_attachment_changed')
+      // A queued receipt keeps the ORIGINAL accepted run, even when this is a new dispatch run.
+      if(queuedInputId&&!store.liveInputs.get(queuedInputId)){
+        store.liveInputs.add({id:queuedInputId,taskId:task.id,runId,text,attachments})
+        store.liveInputs.set(queuedInputId,'sending')
+      }
+      if(nativeResume)addRunEvent('system',`用户声明原 ${task.providerId} 执行程序已关闭，选择${nativeResume.mode==='native_resume'?'恢复原会话':'带已确认的记录新开一轮'}。原会话：${nativeResume.nativeId}。`)
+      const requestEventId=store.addEvent(task.id,'user',text,null,runId,attachments)
+      if(handoffId)store.recordHandoffEvent(handoffId,requestEventId)
+      store.update(task.id,'queued')
+    })
     let signalStop!:()=>void,resolveDone!:()=>void
     const stop=new Promise<null>(resolve => { signalStop=() => resolve(null) })
     const done=new Promise<void>(resolve => { resolveDone=resolve })
@@ -429,6 +453,7 @@ export function makeWorkbenchService(opts: Options) {
       else addRunEvent('system',`问题已结束，未提交回答：${event.request.id}`)
     }})
     const running:Active={
+      attachments:dispatchAttachments,
       interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,credentialsMinted:false,credentialsRevoked:false,
     }
@@ -475,25 +500,30 @@ export function makeWorkbenchService(opts: Options) {
       if(!input||input.taskId!==id||input.status!=='pending')throw Error('input_stale')
       store.liveInputs.set(requestId,'withdrawn')
     },
-    async submitInput(id:string,input:{runId:string;requestId:string;text:string}){
+    async submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials){
       ensureAccepting()
-      const text=checkedText(input.text)
+      const attachments=selectAttachments(input,id),text=checkedText(input.text,attachments)
       if(autoContinueBlocked.has(id))throw Error('input_storage_unavailable')
       const requestId=normalizeInputRequestId(input.requestId)
       const prior=store.liveInputs.get(requestId)
-      if(prior){if(prior.taskId!==id||prior.runId!==input.runId||prior.text!==text)throw Error('input_conflict');return prior}
+      if(prior){if(prior.taskId!==id||prior.runId!==input.runId||prior.text!==text||!sameAttachments(prior.attachments,attachments))throw Error('input_conflict');return prior}
       const running=runsByTask.get(id)
       if(!running||running.identity!==input.runId||running.cancelled||running.finishing||running.uncertain)throw Error('input_stale')
       if(running.delivering)throw Error('input_delivery_busy')
       if(store.liveInputs.count(id)>=10)throw Error('input_limit')
-      const saved=store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text})
+      const saved=store.atomic(()=>{
+        store.attachments.bind(attachments.map(a=>a.id),id,input.draftId)
+        return store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments})
+      })
       if(!running.session?.steer)return saved
       running.delivering=true;store.liveInputs.set(saved.id,'sending')
       try{
-        await running.session.steer(text)
+        if(canonicalProject(running.path)!==running.path||directoryIdentity(running.path)!==running.directoryIdentity)throw Error('invalid_path')
+        const material=store.attachments.prepare(id,attachments,running.path,opts.stateDir)
+        await running.session.steer(text,material)
         running.interactionAt=Date.now()
         store.liveInputs.set(saved.id,'delivered')
-        store.addEvent(id,'user',text)
+        store.addEvent(id,'user',text,null,running.identity,attachments)
       }catch(error){store.liveInputs.set(saved.id,'held',`未确认执行者收到，请检查当前对话后再决定是否重发。${error instanceof Error?' '+error.message:''}`)}
       finally{running.delivering=false}
       return store.liveInputs.get(saved.id)!
@@ -505,7 +535,7 @@ export function makeWorkbenchService(opts: Options) {
       if(source.providerId===input.targetProviderId)throw new Error('invalid_request')
       if(canonicalProject(source.path)!==source.path)throw new Error('invalid_path')
       const identity=directoryIdentity(source.path)
-      let artifacts=input.artifacts,target:StoredTask|null=null,targetContinuation:Continuation|undefined,nativeResume:NativeResumeDecision|undefined
+      let artifacts=input.artifacts,attachments=input.attachments??[],target:StoredTask|null=null,targetContinuation:Continuation|undefined,nativeResume:NativeResumeDecision|undefined
       if(input.purpose==='revision') {
         target=store.get(input.targetTaskId!)
         if(target.archivedAt!==null)throw new Error('workbench_archived')
@@ -515,14 +545,18 @@ export function makeWorkbenchService(opts: Options) {
         const event=store.events(source.id).find(e=>e.id===input.quote!.eventId&&e.kind==='text')
         if(!origin||!event?.text.includes(input.quote!.text))throw new Error('invalid_handoff_quote')
         artifacts=origin.artifacts
+        const original=store.handoffRecord(source.id,origin.id)
+        if(snapshotHash(original.packetJson)!==original.packetSha256)throw Error('artifact_changed')
+        attachments=(JSON.parse(original.packetJson) as {attachments?:AttachmentSelection[]}).attachments??[]
         targetContinuation=continuation(target)
         if(store.source(target.id)?.firstDispatchedAt===null)nativeResume=await service.prepareNativeResume(target.id,targetContinuation.mode==='restart_required'?'fresh_context':'native_resume')
       }
       const files=artifacts.map(a=>handoffArtifactText(store,a,target?.id??source.id,opts.stateDir))
-      const packet=handoffContext(input,source,store.events(source.id),files)
+      const materials=handoffAttachments(attachments,target?.id??source.id)
+      const packet=handoffContext({...input,attachments},source,store.events(source.id),files,materials)
       ensureAccepting()
       if(taskVersion(store.get(source.id))!==version)throw new Error('handoff_changed')
-      const preview:HandoffPreview={token:handoffToken(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:input.targetProviderId,purpose:input.purpose,request:input.request,...packet,artifacts,quote:input.quote??null,...(targetContinuation?{targetContinuation}:{}),...(nativeResume?{nativeResume}:{})}
+      const preview:HandoffPreview={token:handoffToken(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:input.targetProviderId,purpose:input.purpose,request:input.request,...packet,artifacts,...(attachments.length?{attachments}:{}),quote:input.quote??null,...(targetContinuation?{targetContinuation}:{}),...(nativeResume?{nativeResume}:{})}
       for(const [token,d] of handoffDecisions)if(d.expiresAt<Date.now()||d.preview.sourceTaskId===source.id)handoffDecisions.delete(token)
       if(handoffDecisions.size>=100)handoffDecisions.delete(handoffDecisions.keys().next().value!)
       handoffDecisions.set(preview.token,{preview:structuredClone(preview),sourceVersion:version,targetVersion:target?taskVersion(target):null,directoryIdentity:identity,expiresAt:Date.now()+5*60_000})
@@ -547,6 +581,7 @@ export function makeWorkbenchService(opts: Options) {
       }
       assertCurrent();provider(p.targetProviderId)
       for(const ref of p.artifacts)handoffArtifactText(store,ref,target?.id??source.id,opts.stateDir)
+      handoffAttachments(p.attachments??[],target?.id??source.id)
       let accepted:AcceptedContinuation={mode:'new'},native:AcceptedNativeResume|undefined
       if(target){
         const current=continuation(target)
@@ -566,12 +601,17 @@ export function makeWorkbenchService(opts: Options) {
           if(nativeDecisions.get(native.token)!==native)throw new Error('external_close_confirmation_stale')
         }
       }
-      const packetJson=JSON.stringify({context:p.context,request:p.request,artifacts:p.artifacts,quote:p.quote,truncated:p.truncated,continuation:accepted})
+      const packetJson=JSON.stringify({context:p.context,request:p.request,artifacts:p.artifacts,attachments:p.attachments??[],quote:p.quote,truncated:p.truncated,continuation:accepted})
       const record=store.createHandoff({id:randomUUID(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:p.targetProviderId,path:source.path,title:`检查 · ${source.title}`.slice(0,120),ownerChatId:source.ownerChatId,purpose:p.purpose,request:p.request,packetSha256:snapshotHash(packetJson),packetJson,artifactRefsJson:JSON.stringify(p.artifacts),quoteJson:p.quote?JSON.stringify(p.quote):null,sourceNativeId:source.sessionId,tokenHash:hash})
       handoffDecisions.delete(input.token)
       if(native)nativeDecisions.delete(native.token)
       let task:WorkbenchTaskView
-      try{task=start(store.get(record.targetTaskId),p.context,decision.directoryIdentity,accepted,native,p.artifacts,record.id)}
+      try{
+        const materials=target
+          ?handoffAttachments(p.attachments??[],target.id)
+          :store.attachments.copyToTask(source.id,(p.attachments??[]).map(a=>a.attachmentId),record.targetTaskId)
+        task=start(store.get(record.targetTaskId),p.context,decision.directoryIdentity,accepted,native,p.artifacts,record.id,undefined,materials)
+      }
       catch(error){
         if(!target)store.update(record.targetTaskId,'failed',error instanceof Error?error.message:'task_failed')
         store.addEvent(record.targetTaskId,'system','交接已记录，但本轮未启动。请查看任务状态，手动决定是否继续。')
@@ -582,7 +622,7 @@ export function makeWorkbenchService(opts: Options) {
     handoffRecord(taskId:string,id:string){
       const record=store.handoffRecord(taskId,id)
       if(snapshotHash(record.packetJson)!==record.packetSha256)throw new Error('artifact_changed')
-      return{id:record.id,sourceTaskId:record.sourceTaskId,targetTaskId:record.targetTaskId,createdAt:record.createdAt,sourceNativeId:record.sourceNativeId,targetNativeId:record.targetNativeId,packetSha256:record.packetSha256,packet:JSON.parse(record.packetJson) as {context:string;request:string;truncated:boolean;artifacts:ArtifactSelection[];continuation:AcceptedContinuation}}
+      return{id:record.id,sourceTaskId:record.sourceTaskId,targetTaskId:record.targetTaskId,createdAt:record.createdAt,sourceNativeId:record.sourceNativeId,targetNativeId:record.targetNativeId,packetSha256:record.packetSha256,packet:JSON.parse(record.packetJson) as {context:string;request:string;truncated:boolean;artifacts:ArtifactSelection[];attachments?:AttachmentSelection[];continuation:AcceptedContinuation}}
     },
     conflictsExternal(path:string,providerId:string,nativeId:string|null):boolean {
       let canonical:string
@@ -627,8 +667,8 @@ export function makeWorkbenchService(opts: Options) {
       nativeDecisions.set(decision.token,decision)
       const {pages:_pages,taskVersion:_version,directoryIdentity:_identity,restartToken:_restart,...result}=decision;return result
     },
-    async continueNativeTask(id:string,text:string,sourceClosedToken:string,restartToken?:string):Promise<WorkbenchTaskView> {
-      ensureAccepting();const task=store.get(id),decision=nativeDecisions.get(sourceClosedToken),request=checkedText(text)
+    async continueNativeTask(id:string,text:string,sourceClosedToken:string,restartToken?:string,materials:InputMaterials={}):Promise<WorkbenchTaskView> {
+      ensureAccepting();const task=store.get(id),decision=nativeDecisions.get(sourceClosedToken),attachments=selectAttachments(materials,id),request=checkedText(text,attachments)
       if(!decision)throw new Error('external_close_confirmation_stale')
       if(runsByTask.has(id)||task.archivedAt!==null)throw new Error('workbench_busy')
       await validateNativeDecision(task,decision)
@@ -637,7 +677,7 @@ export function makeWorkbenchService(opts: Options) {
       const accepted:AcceptedContinuation=decision.mode==='native_resume'?{mode:'resume',sessionId:decision.nativeId}:{mode:'restart',preview:restartPreview(task,store.events(id))}
       if(accepted.mode==='restart'&&(restartToken!==accepted.preview.token||restartToken!==decision.restartToken))throw new Error('restart_confirmation_stale')
       nativeDecisions.delete(sourceClosedToken)
-      return start(task,request,decision.directoryIdentity,accepted,decision)
+      return start(task,request,decision.directoryIdentity,accepted,decision,undefined,undefined,undefined,attachments,materials.draftId)
     },
     async listNativeHistory(providerId:NativeHistoryProvider,input:NativeHistoryListInput) {
       const reader=opts.nativeHistory?.[providerId]
@@ -659,7 +699,7 @@ export function makeWorkbenchService(opts: Options) {
     },
     detail(id:string) {
       const detail=store.detail(id),running=runsByTask.get(id)
-      return {...detail,task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
+      return {...detail,attachments:store.attachments.list(id),task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
         // The timeline stays live through cancellation and process cleanup;
         // accepting supplemental input is a separate, narrower capability.
         ...(running?{runId:running.identity}:{}),
@@ -668,19 +708,20 @@ export function makeWorkbenchService(opts: Options) {
     },
     create(input:CreateTask):WorkbenchTaskView {
       ensureAccepting()
-      const text=checkedText(input.text); provider(input.providerId)
+      const attachments=selectAttachments(input),text=checkedText(input.text,attachments); provider(input.providerId)
       if (input.title!==undefined && (typeof input.title!=='string' || !input.title.trim() || input.title.length>120)) throw new Error('invalid_title')
       const path=canonicalProject(input.path)
       const acceptedDirectoryIdentity=directoryIdentity(path)
       if(opts.executionConflict?.(path,input.providerId,null))throw new Error('native_session_busy')
-      return start(store.create({title:input.title?.trim() ?? text.slice(0,40),path,providerId:input.providerId,ownerChatId:opts.ownerChatId()}),text,acceptedDirectoryIdentity)
+      return store.atomic(()=>start(store.create({title:input.title?.trim() ?? (text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:opts.ownerChatId()}),text,acceptedDirectoryIdentity,undefined,undefined,undefined,undefined,undefined,attachments,input.draftId))
     },
-    continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}):WorkbenchTaskView {
+    continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials):WorkbenchTaskView {
       ensureAccepting()
+      const attachments=selectAttachments(options,id)
       const inputRequestId=options?.inputRequestId===undefined?undefined:normalizeInputRequestId(options.inputRequestId)
       if(inputRequestId!==undefined){
         const prior=store.liveInputs.get(inputRequestId)
-        if(prior){if(prior.taskId!==id||prior.text!==checkedText(text))throw Error('input_conflict');return taskView(publicTask(store.get(id)))}
+        if(prior){if(prior.taskId!==id||prior.text!==checkedText(text,attachments)||!sameAttachments(prior.attachments,attachments))throw Error('input_conflict');return taskView(publicTask(store.get(id)))}
       }
       if (runsByTask.has(id)) throw new Error('workbench_busy')
       const task=store.get(id)
@@ -688,7 +729,7 @@ export function makeWorkbenchService(opts: Options) {
       if(task.archivedAt!==null)throw new Error('workbench_archived')
       provider(task.providerId)
       if (canonicalProject(task.path)!==task.path) throw new Error('invalid_path')
-      const request=checkedText(text),acceptedDirectoryIdentity=directoryIdentity(task.path)
+      const request=checkedText(text,attachments),acceptedDirectoryIdentity=directoryIdentity(task.path)
       const restartToken=options?.restartToken
       if (restartToken!==undefined && (typeof restartToken!=='string' || !/^[a-f0-9]{64}$/.test(restartToken))) throw new Error('invalid_request')
       const decision=continuation(task)
@@ -697,12 +738,15 @@ export function makeWorkbenchService(opts: Options) {
       const accepted:AcceptedContinuation=decision.mode==='restart_required'
         ? {mode:'restart',preview:decision.restart}
         : decision.mode==='resume' ? {mode:'resume',sessionId:task.sessionId!} : {mode:'new'}
-      try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId)}
+      try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId)}
       catch(error){
         if(inputRequestId&&store.liveInputs.get(inputRequestId))try{store.liveInputs.set(inputRequestId,'held','本轮未确认开始，补充内容已保留。')}catch{autoContinueBlocked.add(id)}
         throw error
       }
     },
+    uploadAttachment(input:Parameters<typeof store.attachments.upload>[0]){ensureAccepting();if(input.taskId&&store.get(input.taskId).archivedAt!==null)throw Error('workbench_archived');return store.attachments.upload(input,opts.stateDir)},
+    readAttachment(taskId:string,id:string){store.get(taskId);return store.attachments.read(taskId,id,opts.stateDir)},
+    discardAttachment(id:string,draftId:string){return store.attachments.discard(id,draftId)},
     setArchived(id:string,archived:boolean):WorkbenchTaskView {
       if(typeof archived!=='boolean')throw new Error('invalid_request')
       const task=store.get(id)

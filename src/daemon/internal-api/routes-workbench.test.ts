@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { request as httpRequest } from 'node:http'
 import { createInternalApi, type InternalApi } from './index'
 import { minTierFor } from './route-tiers'
 
@@ -26,6 +27,55 @@ function service(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Workbench internal HTTP API', () => {
+  it('accepts attachment-only messages and forwards scoped material through create, continue and live input',async()=>{
+    const submitInput=vi.fn(async()=>({status:'pending'})),workbench=service({submitInput}),{request}=await start(workbench)
+    const material={draftId:crypto.randomUUID(),attachmentIds:[crypto.randomUUID()]}
+    expect((await request('/v1/workbench/create',{method:'POST',body:JSON.stringify({path:'/tmp/project',providerId:'claude',text:'',...material})})).status).toBe(202)
+    expect(workbench.create).toHaveBeenCalledWith({path:'/tmp/project',providerId:'claude',text:'',...material})
+    const inputRequestId=crypto.randomUUID()
+    expect((await request('/v1/workbench/continue',{method:'POST',body:JSON.stringify({id:TASK.id,text:'',inputRequestId,...material})})).status).toBe(202)
+    expect(workbench.continueTask).toHaveBeenCalledWith(TASK.id,'',{inputRequestId,...material})
+    const live={id:TASK.id,text:'',requestId:crypto.randomUUID(),runId:crypto.randomUUID(),...material}
+    expect((await request('/v1/workbench/input',{method:'POST',body:JSON.stringify(live)})).status).toBe(200)
+    const {id,...expected}=live;expect(submitInput).toHaveBeenCalledWith(id,expected)
+    for(const attachmentIds of [null,'not-array',[material.attachmentIds[0],material.attachmentIds[0]],['invalid']])expect((await request('/v1/workbench/create',{method:'POST',body:JSON.stringify({path:'/tmp/project',providerId:'claude',text:'x',...material,attachmentIds})})).status).toBe(400)
+  })
+  it('limits upload bodies before decoding and keeps uploads and reads behind exact admin routes',async()=>{
+    const attachment={id:crypto.randomUUID(),name:'a.txt',mime:'text/plain',size:1,sha256:'a'.repeat(64)},draftId=crypto.randomUUID()
+    const uploadAttachment=vi.fn(()=>attachment),readAttachment=vi.fn(()=>({attachment,base64:'eA=='})),discardAttachment=vi.fn()
+    const {request,trustedToken,operatorToken}=await start(service({uploadAttachment,readAttachment,discardAttachment}))
+    const input={...attachment,draftId,base64:'eA=='}
+    expect((await request('/v1/workbench/attachment',{method:'POST',body:JSON.stringify(input)},trustedToken)).status).toBe(403)
+    const response=await request('/v1/workbench/attachment',{method:'POST',body:JSON.stringify(input)},operatorToken)
+    expect(response.status).toBe(200);expect(await response.json()).toEqual({attachment})
+    expect((await request('/v1/workbench/attachment?taskId='+TASK.id+'&id='+attachment.id,{},operatorToken)).status).toBe(200)
+    expect(readAttachment).toHaveBeenCalledWith(TASK.id,attachment.id)
+    expect((await request('/v1/workbench/discard-attachment',{method:'POST',body:JSON.stringify({id:attachment.id,draftId})},operatorToken)).status).toBe(200)
+    expect((await request('/v1/workbench/attachment',{method:'POST',body:' '.repeat(12*1024*1024+1)})).status).toBe(413)
+    expect(uploadAttachment).toHaveBeenCalledTimes(1)
+  })
+  it('distinguishes foreign, changed and over-limit attachments from internal errors',async()=>{
+    const uploadAttachment=vi.fn(),{request}=await start(service({uploadAttachment}))
+    for(const [error,status] of [['attachment_scope',404],['attachment_conflict',409],['attachment_changed',409],['attachment_storage_limit',413],['invalid_attachment_size',413],['attachment_platform_unsupported',422]] as const){
+      uploadAttachment.mockImplementationOnce(()=>{throw Error(error)})
+      expect((await request('/v1/workbench/attachment',{method:'POST',body:JSON.stringify({id:crypto.randomUUID(),draftId:crypto.randomUUID(),name:'x.txt',mime:'text/plain',base64:'eA=='})})).status).toBe(status)
+    }
+  })
+  it('bounds chunked uploads without trusting a content length and keeps the API usable',async()=>{
+    const uploadAttachment=vi.fn(),{port,adminToken,request}=await start(service({uploadAttachment}))
+    const result=await new Promise<{status:number;body:string}>((resolve,reject)=>{
+      const req=httpRequest({host:'127.0.0.1',port,path:'/v1/workbench/attachment',method:'POST',headers:{authorization:`Bearer ${adminToken}`,'content-type':'application/json','transfer-encoding':'chunked'}},res=>{
+        let body='';res.setEncoding('utf8');res.on('data',chunk=>{body+=chunk});res.on('end',()=>resolve({status:res.statusCode!,body}));res.on('error',reject)
+      })
+      req.on('error',reject)
+      for(let i=0;i<13;i++)req.write(Buffer.alloc(1024*1024,32))
+      req.end()
+    })
+    expect(result.status).toBe(413)
+    expect(JSON.parse(result.body)).toEqual({error:'request_body_too_large'})
+    expect(uploadAttachment).not.toHaveBeenCalled()
+    expect((await request('/v1/workbench')).status).toBe(200)
+  })
   it('gates live input, question answers and unpaginated attention behind exact admin routes',async()=>{
     const submitInput=vi.fn(async()=>({status:'pending'})),resolveAnswer=vi.fn(),withdrawInput=vi.fn(),attention=vi.fn(()=>({tasks:[]}))
     const {request,trustedToken}=await start(service({submitInput,resolveAnswer,withdrawInput,attention}))
@@ -68,7 +118,7 @@ describe('Workbench internal HTTP API', () => {
       ...init,
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...init.headers },
     })
-    return { request, trustedToken, operatorToken }
+    return { request, trustedToken, operatorToken, port, adminToken }
   }
 
   it('reads native history only through exact admin routes with bounded query input',async()=>{

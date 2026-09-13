@@ -115,7 +115,23 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     maybePrefix,
   })
 
-  async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  async function readJsonBody(req: IncomingMessage,maxBytes?:number): Promise<unknown> {
+    if(maxBytes!==undefined){
+      if(Number(req.headers['content-length'])>maxBytes){req.resume();throw Error('request_body_too_large')}
+      return new Promise((resolve,reject)=>{
+        const chunks:Buffer[]= [];let bytes=0
+        const cleanup=()=>{req.off('data',onData);req.off('end',onEnd);req.off('error',onError);req.off('aborted',onAborted)}
+        const onError=(error:Error)=>{cleanup();reject(error)}
+        const onAborted=()=>onError(Error('request_aborted'))
+        const onData=(chunk:Buffer)=>{
+          bytes+=chunk.length
+          if(bytes>maxBytes){cleanup();chunks.length=0;req.resume();reject(Error('request_body_too_large'));return}
+          chunks.push(chunk)
+        }
+        const onEnd=()=>{cleanup();try{const text=Buffer.concat(chunks).toString('utf8');resolve(text?JSON.parse(text):null)}catch(error){reject(error)}}
+        req.on('data',onData);req.on('end',onEnd);req.on('error',onError);req.on('aborted',onAborted)
+      })
+    }
     const chunks: Buffer[] = []
     for await (const c of req) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c as string))
     const text = Buffer.concat(chunks).toString('utf8')
@@ -208,8 +224,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     let body: unknown = null
     if (method === 'POST') {
       try {
-        body = await readJsonBody(req)
+        body = await readJsonBody(req,url.pathname==='/v1/workbench/attachment'?12*1024*1024:url.pathname.startsWith('/v1/workbench/')?128*1024:undefined)
       } catch (err) {
+        if(err instanceof Error&&err.message==='request_body_too_large')return send(res,413,{error:'request_body_too_large'},origin)
         return send(res, 400, { error: 'malformed_json', detail: errMsg(err) }, origin)
       }
     }

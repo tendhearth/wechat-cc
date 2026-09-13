@@ -25,6 +25,9 @@ describe('route-tiers', () => {
     expect(ROUTE_MIN_TIER['POST /v1/workbench/archive']).toBe('admin')
     expect(ROUTE_MIN_TIER['GET /v1/workbench/sessions']).toBe('admin')
     expect(ROUTE_MIN_TIER['GET /v1/workbench/session']).toBe('admin')
+    expect(ROUTE_MIN_TIER['POST /v1/workbench/attachment']).toBe('admin')
+    expect(ROUTE_MIN_TIER['GET /v1/workbench/attachment']).toBe('admin')
+    expect(ROUTE_MIN_TIER['POST /v1/workbench/discard-attachment']).toBe('admin')
   })
 
   it('reply/health/memory-read are guest; broadcast/a2a are trusted', () => {

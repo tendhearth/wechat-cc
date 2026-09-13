@@ -3,6 +3,7 @@ import {nativeImportInput,type NativeImportInput} from '../../core/workbench/nat
 import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryProvider } from '../../core/workbench/native-history'
 import { isAbsolute } from 'node:path'
 import type { WorkbenchListQuery } from '../../core/workbench/store'
+import type {InputMaterials} from '../../core/workbench/service'
 import type { InternalApiDeps, RouteHandler, RouteTable } from './types'
 
 const TASK_ID = /^[a-f0-9]{8}$/
@@ -20,6 +21,11 @@ function objectBody(body: unknown): JsonObject | null {
 function invalid(): ReturnType<RouteHandler> {
   return { status: 400, body: { error: 'invalid_request' } }
 }
+function materials(value:JsonObject):InputMaterials|null{
+  if(value.draftId!==undefined&&(typeof value.draftId!=='string'||!REQUEST_ID.test(value.draftId)))return null
+  if(value.attachmentIds!==undefined&&(!Array.isArray(value.attachmentIds)||value.attachmentIds.length>8||value.attachmentIds.some(id=>typeof id!=='string'||!REQUEST_ID.test(id))||new Set(value.attachmentIds).size!==value.attachmentIds.length))return null
+  return {...(value.draftId!==undefined?{draftId:value.draftId as string}:{}),...(value.attachmentIds!==undefined?{attachmentIds:value.attachmentIds as string[]}: {})}
+}
 
 function errorCode(err: unknown): string {
   if (err && typeof err === 'object' && 'code' in err && typeof err.code === 'string') return err.code
@@ -28,6 +34,10 @@ function errorCode(err: unknown): string {
 
 function mappedError(err: unknown): ReturnType<RouteHandler> {
   const code = errorCode(err)
+  if(['attachment_limit','attachment_storage_limit','invalid_attachment_size','request_body_too_large'].includes(code))return{status:413,body:{error:code}}
+  if(['attachment_conflict','attachment_changed'].includes(code))return{status:409,body:{error:code}}
+  if(code==='attachment_scope')return{status:404,body:{error:'not_found'}}
+  if(code==='attachment_platform_unsupported')return{status:422,body:{error:code}}
   if (['input_stale','input_conflict','input_delivery_busy','question_stale','input_limit'].includes(code))return{status:409,body:{error:code}}
   if (code === 'invalid_question'||code === 'invalid_answer')return{status:400,body:{error:code}}
   if (code === 'workbench_archived' || code === 'workbench_busy' || code === 'artifact_changed' || code === 'permission_stale' || code === 'restart_confirmation_required' || code === 'restart_confirmation_stale') return { status: 409, body: { error: code } }
@@ -44,15 +54,34 @@ function mappedError(err: unknown): ReturnType<RouteHandler> {
 
 export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
   return {
+    'POST /v1/workbench/attachment':async(_query,body)=>{
+      const value=objectBody(body)
+      if(!value||typeof value.id!=='string'||!REQUEST_ID.test(value.id)||typeof value.draftId!=='string'||!REQUEST_ID.test(value.draftId)||typeof value.name!=='string'||typeof value.mime!=='string'||typeof value.base64!=='string'||(value.taskId!==undefined&&(typeof value.taskId!=='string'||!TASK_ID.test(value.taskId))))return invalid()
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{return{status:200,body:{attachment:deps.workbench.uploadAttachment({id:value.id,draftId:value.draftId,name:value.name,mime:value.mime,base64:value.base64,...(value.taskId?{taskId:value.taskId as string}:{})})}}}catch(error){return mappedError(error)}
+    },
+    'GET /v1/workbench/attachment':async query=>{
+      const taskId=query.get('taskId'),id=query.get('id')
+      if(query.getAll('taskId').length!==1||query.getAll('id').length!==1||!taskId||!TASK_ID.test(taskId)||!id||!REQUEST_ID.test(id))return invalid()
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{return{status:200,body:deps.workbench.readAttachment(taskId,id)}}catch(error){return mappedError(error)}
+    },
+    'POST /v1/workbench/discard-attachment':async(_query,body)=>{
+      const value=objectBody(body)
+      if(!value||typeof value.id!=='string'||!REQUEST_ID.test(value.id)||typeof value.draftId!=='string'||!REQUEST_ID.test(value.draftId))return invalid()
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{deps.workbench.discardAttachment(value.id,value.draftId);return{status:200,body:{ok:true}}}catch(error){return mappedError(error)}
+    },
     'GET /v1/workbench/attention':async()=>{
       if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
       try{return{status:200,body:deps.workbench.attention()}}catch(err){return mappedError(err)}
     },
     'POST /v1/workbench/input':async(_query,body)=>{
       const value=objectBody(body)
-      if(!value||typeof value.id!=='string'||!TASK_ID.test(value.id)||typeof value.runId!=='string'||!REQUEST_ID.test(value.runId)||typeof value.requestId!=='string'||!REQUEST_ID.test(value.requestId)||typeof value.text!=='string'||!value.text.trim()||value.text.length>20_000)return invalid()
+      const files=value?materials(value):null
+      if(!value||!files||typeof value.id!=='string'||!TASK_ID.test(value.id)||typeof value.runId!=='string'||!REQUEST_ID.test(value.runId)||typeof value.requestId!=='string'||!REQUEST_ID.test(value.requestId)||typeof value.text!=='string'||(!value.text.trim()&&!files.attachmentIds?.length)||value.text.length>20_000)return invalid()
       if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
-      try{return{status:200,body:{input:await deps.workbench.submitInput(value.id,{runId:value.runId,requestId:value.requestId,text:value.text})}}}catch(err){return mappedError(err)}
+      try{return{status:200,body:{input:await deps.workbench.submitInput(value.id,{runId:value.runId,requestId:value.requestId,text:value.text,...files})}}}catch(err){return mappedError(err)}
     },
     'POST /v1/workbench/answer':async(_query,body)=>{
       const value=objectBody(body)
@@ -150,11 +179,12 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       const path = typeof value.path === 'string' ? value.path.trim() : ''
       const providerId = typeof value.providerId === 'string' ? value.providerId : ''
       const text = typeof value.text === 'string' ? value.text.trim() : ''
+      const files=materials(value)
       if ((value.title !== undefined && (!title || title.length > 120)) ||
-          !path || !isAbsolute(path) || !PROVIDERS.has(providerId) || !text || text.length > 20_000) return invalid()
+          !files || !path || !isAbsolute(path) || !PROVIDERS.has(providerId) || (!text&&!files.attachmentIds?.length) || text.length > 20_000) return invalid()
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
       try {
-        const task = await deps.workbench.create({ ...(title ? { title } : {}), path, providerId: providerId as 'claude' | 'codex', text })
+        const task = await deps.workbench.create({ ...(title ? { title } : {}), path, providerId: providerId as 'claude' | 'codex', text,...files })
         return { status: 202, body: { task } }
       } catch (err) {
         return mappedError(err)
@@ -168,13 +198,16 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       const sourceClosedToken=value?.sourceClosedToken
       if(sourceClosedToken!==undefined&&(typeof sourceClosedToken!=='string'||!SHA256.test(sourceClosedToken)))return invalid()
       const restartToken = value?.restartToken
-      if (!TASK_ID.test(id) || !text || text.length > 20_000 ||
+      const files=value?materials(value):null,inputRequestId=value?.inputRequestId
+      if(inputRequestId!==undefined&&(typeof inputRequestId!=='string'||!REQUEST_ID.test(inputRequestId)))return invalid()
+      if (!files || !TASK_ID.test(id) || (!text&&!files.attachmentIds?.length) || text.length > 20_000 ||
           (restartToken !== undefined && (typeof restartToken !== 'string' || !SHA256.test(restartToken)))) return invalid()
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
       try {
-        const task = sourceClosedToken!==undefined ? await deps.workbench.continueNativeTask(id,text,sourceClosedToken as string,restartToken as string|undefined) : restartToken === undefined
-          ? await deps.workbench.continueTask(id, text)
-          : await deps.workbench.continueTask(id, text, { restartToken: restartToken as string })
+        const options={...files,...(restartToken!==undefined?{restartToken:restartToken as string}:{}),...(inputRequestId!==undefined?{inputRequestId:inputRequestId as string}:{})}
+        const task = sourceClosedToken!==undefined
+          ? await deps.workbench.continueNativeTask(id,text,sourceClosedToken as string,restartToken as string|undefined,...(Object.keys(files).length?[files] as const:[]))
+          : Object.keys(options).length?await deps.workbench.continueTask(id,text,options):await deps.workbench.continueTask(id,text)
         return { status: 202, body: { task } }
       } catch (err) {
         return mappedError(err)
