@@ -10,6 +10,29 @@ function setup() {
 }
 
 describe('threads extractor', () => {
+  it('excludes explicit workbench provenance from both new messages and context tail, preserving other commands',async()=>{
+    const {db,messages,threads}=setup()
+    try{
+      const rows=[['1','workbench','private old input'],['2','live','ordinary old chat'],['3','workbench','private result'],['4','live','/ordinary-command'],['5','workbench','private latest']]
+      for(const [id,source,text] of rows)await messages.append({id:id!,chatId:'c1',ts:`2026-06-11T01:00:0${id}Z`,direction:id==='3'?'out':'in',kind:'command',text:text!,source:source!})
+      await threads.setWatermark('c1','2026-06-11T01:00:02Z')
+      let prompt=''
+      await runThreadsExtraction({chatId:'c1',messages,threads,log:()=>{},recordEvent:async()=>{},sdkEval:async value=>{prompt=value;return '{"ops":[]}'}})
+      for(const marker of ['private old input','private result','private latest'])expect(prompt).not.toContain(marker);expect(prompt).toContain('ordinary old chat');expect(prompt).toContain('/ordinary-command')
+      expect(await threads.getWatermark('c1')).toBe('2026-06-11T01:00:05Z')
+      expect(await messages.listSince('c1','1970',10)).toHaveLength(5)
+    }finally{db.close()}
+  })
+
+  it('advances an all-workbench batch without calling the personal-memory model',async()=>{
+    const {db,messages,threads}=setup()
+    try{
+      await messages.append({id:'private',chatId:'c1',ts:'2026-06-11T01:00:01Z',direction:'out',kind:'text',text:'private task result',source:'workbench'})
+      let calls=0
+      await runThreadsExtraction({chatId:'c1',messages,threads,log:()=>{},recordEvent:async()=>{},sdkEval:async()=>{calls++;return '{"ops":[]}'}})
+      expect(calls).toBe(0);expect(await threads.getWatermark('c1')).toBe('2026-06-11T01:00:01Z')
+    }finally{db.close()}
+  })
   it('applies create ops and advances watermark to last message ts', async () => {
     const { messages, threads } = setup()
     await messages.append({ id: '1', chatId: 'c1', ts: '2026-06-11T01:00:00Z', direction: 'in', kind: 'text', text: '排产', source: 'live' })

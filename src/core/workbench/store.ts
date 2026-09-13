@@ -5,6 +5,7 @@ import {publicSource,type StoredNativeSource} from './native-adoption'
 import type {NativeHistoryMessage} from './native-history'
 import type { Db } from '../../lib/db'
 import {makeLiveInputStore} from './live-inputs'
+import {makeControlReceiptStore} from './control-receipts'
 import {makeTimelineEvents} from './timeline-events'
 import type {AgentActivity} from '../agent-provider'
 
@@ -72,6 +73,7 @@ export function makeWorkbenchStore(db: Db) {
   })
   return {
     liveInputs:makeLiveInputStore(db),
+    controlReceipts:makeControlReceiptStore(db),
     get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,
     recordHandoffNative:(id:string,nativeId:string)=>db.query('UPDATE workbench_handoffs SET target_native_id=? WHERE id=? AND target_native_id IS NULL').run(nativeId,id),
     recordHandoffEvent:(id:string,eventId:number)=>db.query('UPDATE workbench_handoffs SET request_event_id=? WHERE id=?').run(eventId,id),
@@ -104,6 +106,7 @@ export function makeWorkbenchStore(db: Db) {
     },
     projectProvider: (path:string) => db.query<{providerId:string},[string]>('SELECT provider_id AS providerId FROM workbench_tasks WHERE path=? ORDER BY updated_at DESC,id DESC LIMIT 1').get(path)?.providerId ?? null,
     list: () => db.query<StoredTask, []>(`${TASK_SELECT} ORDER BY updated_at DESC,rowid DESC LIMIT 200`).all().map(publicTask),
+    listOwned:(ownerChatId:string,limit=8)=>db.query<StoredTask,[string,number]>(`${TASK_SELECT} WHERE owner_chat_id=? AND archived_at IS NULL ORDER BY updated_at DESC,id DESC LIMIT ?`).all(ownerChatId,Math.max(1,Math.min(20,limit))).map(publicTask),
     /** Real-time keyset paging, not a snapshot: updated tasks can move before a cursor. */
     listPage(query:WorkbenchListQuery={}):TaskPage {
       const {q,archived,limit,filterHash,cursor}=listFilters(query)

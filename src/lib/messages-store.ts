@@ -16,7 +16,7 @@ export interface MessageRecord {
   kind: string          // text | image | file | voice | command
   text: string
   provider?: string
-  source: string        // live | backfill:claude | backfill:codex
+  source: string        // live | workbench | backfill:claude | backfill:codex
 }
 
 export interface ListRangeOpts {

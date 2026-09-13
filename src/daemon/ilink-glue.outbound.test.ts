@@ -24,6 +24,7 @@ import { makeIlinkAdapter, type Account } from './ilink-glue'
 import { openTestDb, type Db } from '../lib/db'
 import { makeConversationStore, type ConversationStore } from '../core/conversation-store'
 import { startFakeIlink, type FakeIlinkHandle } from './__e2e__/fake-ilink-server'
+import {makeMessagesStore} from '../lib/messages-store'
 
 function newAdapterDeps(): { db: Db; conversationStore: ConversationStore } {
   const db = openTestDb()
@@ -51,6 +52,18 @@ describe('ilink-glue sendMessage → outboundHealth', () => {
   it('starts unknown before any send', () => {
     const a = newAdapter()
     expect(a.outboundHealth()).toMatchObject({ state: 'unknown', consecutiveFailures: 0 })
+  })
+
+  it('preserves explicit workbench origin in the full outbound audit while splitting transport text',async()=>{
+    const deps=newAdapterDeps(),stateDir=mkdtempSync(join(tmpdir(),'wcc-workbench-outbound-'))
+    const adapter=makeIlinkAdapter({stateDir,accounts:[{id:'A1',botId:'b',userId:'ubot',baseUrl:fake.baseUrl,token:'T',syncBuf:''}],...deps})
+    try{
+      adapter.captureContextToken('chat-1','tok-1')
+      const text='original private tool details '.repeat(220)
+      expect((await adapter.sendMessage('chat-1',text,{source:'workbench'})).error).toBeUndefined()
+      const rows=await makeMessagesStore(deps.db).listRange('chat-1',{limit:5})
+      expect(rows).toHaveLength(1);expect(rows[0]).toMatchObject({source:'workbench',text})
+    }finally{await adapter.flush();deps.db.close()}
   })
 
   it('a successful wire send flips state to ok', async () => {

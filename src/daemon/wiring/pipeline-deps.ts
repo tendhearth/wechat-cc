@@ -654,6 +654,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       captureContextToken: (c, t) => ilink.captureContextToken(c, t),
     },
     typing: { sendTyping: (c, a) => ilink.sendTyping(c, a) },
+    ...(opts.workbench?{workbench:{handleWechat:opts.workbench.handleWechat,sendMessage:(chatId:string,text:string)=>ilink.sendMessage(chatId,text,{source:'workbench'})}}:{}),
     admin: { adminHandler: adminCommandsHandler },
     mode: { modeHandler },
     onboarding: { onboardingHandler },
@@ -753,11 +754,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         // 管理员控制命令(揭晓/回信/配对/派/访客许可)由 command-router 处理;
         // 命中即止,否则落到正常 agent 分发。逻辑本体见 command-router.ts。
         dispatch: async (msg) => {
-          const workbenchReply = await opts.workbench?.handleWechat(msg.chatId,msg.text)
-          if (workbenchReply != null) {
-            await ilink.sendMessage(msg.chatId,workbenchReply)
-            return
-          }
           if (await commandRouter.tryHandle(msg)) return
           // 桌宠「起飞了」的时刻(spec §5.1)。定义:一个「回合」= 从入站分发
           // 或 converse 进来的那一趟。所以记在命令路由**之后** —— 一句「待批准」

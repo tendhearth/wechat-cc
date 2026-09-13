@@ -8,6 +8,13 @@ afterEach(()=>db.close())
 function task(title='task') { const row=store.create({title,path:'/tmp/project',providerId:'claude',ownerChatId:'owner'});store.update(row.id,'completed');return row }
 
 describe('workbench full history and archive storage',()=>{
+  it('filters the phone owner before limiting recent tasks and omits archived tasks',()=>{
+    const mine=task('mine'),archived=task('archived');store.setArchived(archived.id,true)
+    db.query('UPDATE workbench_tasks SET updated_at=1 WHERE id=?').run(mine.id)
+    for(let i=0;i<205;i++)store.create({title:'other owner',path:'/tmp/other',providerId:'claude',ownerChatId:'other'})
+    expect(store.listOwned('owner',8).map(t=>t.id)).toEqual([mine.id])
+    expect(store.listOwned('nobody',8)).toEqual([])
+  })
   it('paginates beyond 200 rows with identical timestamps without gaps or duplicates',()=>{
     const ids=Array.from({length:251},(_,i)=>task(`task ${i}`).id).sort().reverse()
     db.query('UPDATE workbench_tasks SET updated_at=1234').run()

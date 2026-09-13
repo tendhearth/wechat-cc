@@ -617,3 +617,23 @@ it('upgrades a real v46 database retaining task history, native identity and app
     }
   } finally {rmSync(dir,{recursive:true,force:true})}
 })
+
+
+it('upgrades v51 with separate durable control receipts while preserving task history and text inputs',()=>{
+  const db=new Database(':memory:')
+  try{
+    for(const migration of migrations.slice(0,51))migration(db)
+    db.exec('PRAGMA user_version=51')
+    db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run('deadbeef','task','/project','claude','owner','completed',1,2)
+    db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,run_id) VALUES(?,?,?,?,?)').run('deadbeef','user','original input',3,'run-original')
+    db.query('INSERT INTO workbench_live_inputs(id,task_id,run_id,text,status,created_at) VALUES(?,?,?,?,?,?)').run('input-one','deadbeef','run-original','supplement','delivered',4)
+    const tasks=db.query('SELECT * FROM workbench_tasks').all(),events=db.query('SELECT * FROM workbench_events').all(),inputs=db.query('SELECT * FROM workbench_live_inputs').all()
+    runMigrations(db)
+    db.query('INSERT INTO workbench_control_receipts(id,task_id,run_id,action,text_hash,created_at) VALUES(?,?,?,?,?,?)').run('stop-one','deadbeef','run-original','stop','hash',5)
+    runMigrations(db)
+    expect(db.query('SELECT * FROM workbench_tasks').all()).toEqual(tasks)
+    expect(db.query('SELECT * FROM workbench_events').all()).toEqual(events)
+    expect(db.query('SELECT * FROM workbench_live_inputs').all()).toEqual(inputs)
+    expect(db.query('SELECT * FROM workbench_control_receipts').all()).toHaveLength(1)
+  }finally{db.close()}
+})

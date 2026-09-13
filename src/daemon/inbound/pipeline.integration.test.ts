@@ -63,6 +63,52 @@ const mkCtx = (): InboundCtx => ({
 })
 
 describe('inbound pipeline (integration)', () => {
+  it('handles an authorized task before personal recall and unrelated companion LLM health',async()=>{
+    const {deps,spy}=fakeDeps(),replies:string[]=[],recall=vi.fn(async()=>[])
+    deps.workbench={handleWechat:async(_chat,text)=>text.startsWith('任务')?'任务结果':null,sendMessage:async(_chat,text)=>{replies.push(text)}}
+    deps.recall={isAdmin:()=>true,recall,log:()=>{}}
+    deps.llmHealth.health.shouldSuspend=()=>true
+    const ctx=mkCtx();ctx.msg.text='任务 deadbeef'
+    await buildInboundPipeline(deps)(ctx)
+    expect(replies).toEqual(['任务结果']);expect(ctx.consumedBy).toBe('workbench')
+    expect(recall).not.toHaveBeenCalled();expect(spy.dispatch).not.toHaveBeenCalled()
+  })
+
+  it('keeps access control ahead of phone task handling and leaves plain chat on its original path',async()=>{
+    const {deps,spy}=fakeDeps(),handle=vi.fn(async()=>null),send=vi.fn(async()=>{})
+    deps.workbench={handleWechat:handle,sendMessage:send}
+    const denied=mkCtx();denied.msg.chatId='stranger';denied.msg.text='任务 deadbeef'
+    await buildInboundPipeline(deps)(denied)
+    expect(handle).not.toHaveBeenCalled();expect(send).not.toHaveBeenCalled()
+    await buildInboundPipeline(deps)(mkCtx())
+    expect(spy.dispatch).toHaveBeenCalledOnce();expect(send).not.toHaveBeenCalled()
+  })
+
+  it('does not route an allowlisted non-owner task command into ordinary conversation',async()=>{
+    const {deps,spy}=fakeDeps(),send=vi.fn(async()=>{})
+    deps.workbench={handleWechat:async()=>null,sendMessage:send}
+    const ctx=mkCtx();ctx.msg.text='任务 deadbeef 允许 stale'
+    await buildInboundPipeline(deps)(ctx)
+    expect(ctx.consumedBy).toBe('workbench');expect(spy.dispatch).not.toHaveBeenCalled()
+    expect(send).toHaveBeenCalledWith('c1',expect.stringContaining('主人'))
+  })
+
+  it('does not drop distinct same-millisecond task commands and retries a transport error response',async()=>{
+    const {deps,spy}=fakeDeps(),handled:string[]=[],replies:string[]=[],records:string[]=[]
+    let fail=true
+    deps.messages.append=async rec=>{records.push(rec.id);return 1}
+    deps.workbench={handleWechat:async(_chat,text)=>{handled.push(text);return 'received'},sendMessage:async(_chat,text)=>{if(fail){fail=false;return{error:'send failed'}}replies.push(text);return{msgId:'sent'}}}
+    const ctx=(text:string)=>({...mkCtx(),msg:{...mkCtx().msg,userId:'c1',createTimeMs:123,text}})
+    const pipeline=buildInboundPipeline(deps)
+    await pipeline(ctx('任务 deadbeef 补充 one'))
+    await pipeline(ctx('任务 deadbeef 补充 one'))
+    await pipeline(ctx('任务 deadbeef 补充 two'))
+    await pipeline(ctx('任务 deadbeef 补充 two'))
+    expect(handled).toEqual(['任务 deadbeef 补充 one','任务 deadbeef 补充 one','任务 deadbeef 补充 two'])
+    expect(records[0]).toBe(records[1]);expect(records[1]).not.toBe(records[2]);expect(replies).toHaveLength(2)
+    expect(spy.dispatch).not.toHaveBeenCalled()
+  })
+
   it('full happy path: dispatch + W-tier all fire', async () => {
     const { deps, spy } = fakeDeps()
     const run = buildInboundPipeline(deps)

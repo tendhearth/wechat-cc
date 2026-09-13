@@ -16,6 +16,7 @@ import type { Mode } from '../../core/conversation'
 import { makeWorkbenchStore } from '../../core/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from '../../core/workbench/service'
 import { createProviderRegistry } from '../../core/provider-registry'
+import {makeMwWorkbench} from '../inbound/mw-workbench'
 
 // Task 2 HIGH-severity fix (app-conversation-channel spec §3): companionConverse
 // must refuse to start an app turn while a WeChat turn is already in flight on
@@ -191,8 +192,9 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     store.update(task.id,'completed'); store.addEvent(task.id,'text','合计为 500')
     const workbench=makeWorkbenchService({store,registry:createProviderRegistry(),stateDir,ownerChatId:()=> 'owner_chat'})
     const {pipelineDeps,dispatch,dispatchInner,ilink}=setup({inFlight:false,workbench})
-    await pipelineDeps.dispatch.coordinator.dispatch({chatId:'owner_chat',text:`任务 ${task.id}`} as InboundMsg)
-    expect(ilink.sendMessage).toHaveBeenCalledWith('owner_chat',expect.stringContaining('合计为 500'))
+    const msg={chatId:'owner_chat',text:`任务 ${task.id}`,userId:'owner_chat',accountId:'account',createTimeMs:1,msgType:'text'}
+    await makeMwWorkbench(pipelineDeps.workbench!)({msg,receivedAtMs:1,requestId:'request'},()=>pipelineDeps.dispatch.coordinator.dispatch(msg))
+    expect(ilink.sendMessage).toHaveBeenCalledWith('owner_chat',expect.stringContaining('合计为 500'),{source:'workbench'})
     expect(dispatch).not.toHaveBeenCalled()
     expect(dispatchInner).not.toHaveBeenCalled()
     await workbench.shutdown()

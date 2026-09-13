@@ -23,6 +23,7 @@
  */
 import type { Middleware } from './types'
 import { inboundMessageId, inboundFallbackMessageId } from '../../lib/messages-store'
+import {wechatTaskMessageKey} from '../../core/workbench/wechat-control'
 
 /** Default give-up threshold for a persistently-throwing ("poison") message. */
 export const DEFAULT_MAX_ATTEMPTS = 5
@@ -43,9 +44,9 @@ export interface DedupMwDeps {
 
 export function makeMwDedup(deps: DedupMwDeps): Middleware {
   return async (ctx, next) => {
-    const id = ctx.msg.createTimeMs
+    const id = wechatTaskMessageKey(ctx.msg) ?? (ctx.msg.createTimeMs
       ? inboundMessageId(ctx.msg.userId, ctx.msg.createTimeMs)
-      : inboundFallbackMessageId(ctx.msg.userId, ctx.msg.text)
+      : inboundFallbackMessageId(ctx.msg.userId, ctx.msg.text))
 
     if (!ctx.redispatch && await deps.isHandled(id)) {
       deps.log('DEDUP', `skip redelivered message ${id} (${ctx.msg.chatId}) — already handled`)

@@ -21,6 +21,7 @@ import { makeMwWelcome, type WelcomeMwDeps } from './mw-welcome'
 import { makeMwRecall, type RecallMwDeps } from './mw-recall'
 import { makeMwLlmHealth, type MwLlmHealthDeps } from './mw-llm-health'
 import { makeMwDispatch, type DispatchMwDeps } from './mw-dispatch'
+import {makeMwWorkbench,type WorkbenchMwDeps} from './mw-workbench'
 
 export interface InboundPipelineDeps {
   trace: TraceMwDeps
@@ -28,6 +29,7 @@ export interface InboundPipelineDeps {
   access: AccessMwDeps
   dedup: DedupMwDeps
   capture: CaptureCtxMwDeps
+  workbench?:WorkbenchMwDeps
   typing: TypingMwDeps
   admin: AdminMwDeps
   mode: ModeMwDeps
@@ -65,6 +67,9 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     makeMwDedup(d.dedup),
     makeMwMessages(d.messages),
     makeMwCaptureCtx(d.capture),
+    // Explicit local task controls need sender authorization and reply context,
+    // but must not enter companion memory, permission selection or LLM health.
+    ...(d.workbench?[makeMwWorkbench(d.workbench)]:[]),
     makeMwTyping(d.typing),
     makeMwAdmin(d.admin),
     makeMwMode(d.mode),

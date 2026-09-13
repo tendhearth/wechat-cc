@@ -51,7 +51,7 @@ export type { Account } from './ilink/context'
 export type IlinkAccount = import('./ilink/context').Account
 
 export interface IlinkAdapter {
-  sendMessage(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
+  sendMessage(chatId: string, text: string, metadata?: {source:'workbench'}): Promise<{ msgId: string; error?: string }>
   sendFile(chatId: string, path: string): Promise<void>
   /** Passive outbound link health (spec 2026-08-22-outbound-health). */
   outboundHealth(): OutboundHealth
@@ -175,7 +175,7 @@ export function makeIlinkAdapter(opts: {
   })
 
   const adapter: IlinkAdapter = {
-    async sendMessage(chatId, text) {
+    async sendMessage(chatId, text, metadata) {
       if (!text) return { msgId: `err:${Date.now()}`, error: 'empty text' }
       let reachedWire = false
       try {
@@ -207,7 +207,7 @@ export function makeIlinkAdapter(opts: {
           // send primitive called from many paths (admin, mode, onboarding,
           // AI reply). Recorded as undefined — can be enriched later if needed.
           provider: undefined,
-          source: 'live',
+          source: metadata?.source ?? 'live',
         }).catch(err => log('MESSAGES', `outbound record failed: ${err instanceof Error ? err.message : err}`))
         return { msgId: `sent:${Date.now()}` }
       } catch (err) {

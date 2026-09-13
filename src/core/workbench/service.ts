@@ -1,4 +1,6 @@
 import {makeRunUserInput,type RunUserInput} from './user-input'
+import {makeWechatWorkbenchControl,type WechatMessageIdentity} from './wechat-control'
+import {normalizeInputRequestId} from './live-inputs'
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import type { AgentEvent, AgentSession } from '../agent-provider'
@@ -74,9 +76,6 @@ function directoryIdentity(path:string):string {
 }
 const RECOVERY_MESSAGE='原执行会话暂时无法恢复。请打开桌面工作台，查看恢复选项并确认是否带此前记录重新开始。'
 const SUPPORTED = ['claude','codex']
-const STATUS_NAMES: Record<string,string> = {
-  queued:'准备开始',running:'正在处理',cancelling:'正在停止',completed:'这一轮已完成',failed:'需要处理',cancelled:'已停止',interrupted:'已中断',
-}
 
 /** Cancellation must clear the idle timer even if a broken adapter leaves next() pending. */
 async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Promise<null>, timeoutMs: number, observe: (event: AgentEvent) => void, waiting:()=>boolean=()=>false,interactionAt:()=>number=()=>0) {
@@ -404,6 +403,12 @@ export function makeWorkbenchService(opts: Options) {
     if(opts.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
     if([...runsByTask.values()].some(run=>task.sessionId&&run.task.providerId===task.providerId&&run.task.sessionId===task.sessionId))throw new Error('native_session_busy')
     const runId=randomUUID()
+    // A phone continuation may be redelivered after its transport reply fails.
+    // Reserve the same durable input receipt before a run can be dispatched.
+    if(queuedInputId&&!store.liveInputs.get(queuedInputId)){
+      store.liveInputs.add({id:queuedInputId,taskId:task.id,runId,text})
+      store.liveInputs.set(queuedInputId,'sending')
+    }
     const addRunEvent=(kind:'user'|'system',text:string)=>store.addEvent(task.id,kind,text,null,runId)
     if(nativeResume)addRunEvent('system',`用户声明原 ${task.providerId} 执行程序已关闭，选择${nativeResume.mode==='native_resume'?'恢复原会话':'带已确认的记录新开一轮'}。原会话：${nativeResume.nativeId}。`)
     const requestEventId=addRunEvent('user',text)
@@ -474,14 +479,14 @@ export function makeWorkbenchService(opts: Options) {
       ensureAccepting()
       const text=checkedText(input.text)
       if(autoContinueBlocked.has(id))throw Error('input_storage_unavailable')
-      if(!/^[a-f0-9-]{36}$/.test(input.requestId))throw Error('invalid_request')
-      const prior=store.liveInputs.get(input.requestId)
+      const requestId=normalizeInputRequestId(input.requestId)
+      const prior=store.liveInputs.get(requestId)
       if(prior){if(prior.taskId!==id||prior.runId!==input.runId||prior.text!==text)throw Error('input_conflict');return prior}
       const running=runsByTask.get(id)
       if(!running||running.identity!==input.runId||running.cancelled||running.finishing||running.uncertain)throw Error('input_stale')
       if(running.delivering)throw Error('input_delivery_busy')
       if(store.liveInputs.count(id)>=10)throw Error('input_limit')
-      const saved=store.liveInputs.add({id:input.requestId,taskId:id,runId:input.runId,text})
+      const saved=store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text})
       if(!running.session?.steer)return saved
       running.delivering=true;store.liveInputs.set(saved.id,'sending')
       try{
@@ -670,8 +675,13 @@ export function makeWorkbenchService(opts: Options) {
       if(opts.executionConflict?.(path,input.providerId,null))throw new Error('native_session_busy')
       return start(store.create({title:input.title?.trim() ?? text.slice(0,40),path,providerId:input.providerId,ownerChatId:opts.ownerChatId()}),text,acceptedDirectoryIdentity)
     },
-    continueTask(id:string,text:string,options?:{restartToken?:string}):WorkbenchTaskView {
+    continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}):WorkbenchTaskView {
       ensureAccepting()
+      const inputRequestId=options?.inputRequestId===undefined?undefined:normalizeInputRequestId(options.inputRequestId)
+      if(inputRequestId!==undefined){
+        const prior=store.liveInputs.get(inputRequestId)
+        if(prior){if(prior.taskId!==id||prior.text!==checkedText(text))throw Error('input_conflict');return taskView(publicTask(store.get(id)))}
+      }
       if (runsByTask.has(id)) throw new Error('workbench_busy')
       const task=store.get(id)
       if(store.source(id)?.firstDispatchedAt===null)throw new Error('external_close_confirmation_required')
@@ -687,7 +697,11 @@ export function makeWorkbenchService(opts: Options) {
       const accepted:AcceptedContinuation=decision.mode==='restart_required'
         ? {mode:'restart',preview:decision.restart}
         : decision.mode==='resume' ? {mode:'resume',sessionId:task.sessionId!} : {mode:'new'}
-      return start(task,request,acceptedDirectoryIdentity,accepted)
+      try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId)}
+      catch(error){
+        if(inputRequestId&&store.liveInputs.get(inputRequestId))try{store.liveInputs.set(inputRequestId,'held','本轮未确认开始，补充内容已保留。')}catch{autoContinueBlocked.add(id)}
+        throw error
+      }
     },
     setArchived(id:string,archived:boolean):WorkbenchTaskView {
       if(typeof archived!=='boolean')throw new Error('invalid_request')
@@ -695,8 +709,9 @@ export function makeWorkbenchService(opts: Options) {
       if(archived && !taskView(publicTask(task)).canArchive)throw new Error('workbench_busy')
       return taskView(publicTask(store.setArchived(id,archived)))
     },
-    async cancel(id:string):Promise<WorkbenchTaskView> {
+    async cancel(id:string,expectedRunId?:string):Promise<WorkbenchTaskView> {
       const running=runsByTask.get(id)
+      if(expectedRunId!==undefined&&running?.identity!==expectedRunId)throw new Error('control_stale')
       if (running) cancelRun(running)
       return taskView(publicTask(store.get(id)))
     },
@@ -711,26 +726,7 @@ export function makeWorkbenchService(opts: Options) {
       const running=runsByTask.get(id)
       if (!running || !running.permissions.resolve(requestId,decision)) throw new Error('permission_stale')
     },
-    async handleWechat(chatId:string,text:string):Promise<string|null> {
-      if (!opts.ownerChatId() || chatId!==opts.ownerChatId()) return null
-      const m=/^(?:任务|\/task)\s+([a-f0-9]{8})(?:\s+([\s\S]+))?$/i.exec(text.trim())
-      if (!m) return null
-      const id=m[1]!.toLowerCase(); let task:StoredTask
-      try { task=store.get(id) } catch { return '没有找到这个任务，请在桌面工作台核对编号。' }
-      if (task.ownerChatId!==chatId) return '没有找到这个任务，请在桌面工作台核对编号。'
-      const followup=m[2]?.trim()
-      try {
-        if (followup==='停止') { await service.cancel(id); return `任务 ${id}：已请求停止。` }
-        if (followup) { service.continueTask(id,followup); return `任务 ${id}：已收到补充要求，继续处理。稍后发送「任务 ${id}」查看进展。` }
-        const detail=store.detail(id),last=detail.events.filter(e => e.kind==='text' || e.kind==='error').at(-1)?.text ?? ''
-        return [`${task.title} · ${id}`,STATUS_NAMES[task.status] ?? task.status,last.slice(0,1500),detail.artifacts.length ? `已保存 ${detail.artifacts.length} 份成果版本，可在桌面工作台查看。` : '',`继续：任务 ${id} <补充要求>`].filter(Boolean).join('\n')
-      } catch (err) {
-        const code=(err as Error).message
-        if (code==='workbench_archived') return '这项任务已归档。请在桌面工作台恢复任务后再继续。'
-        if (code==='restart_confirmation_required' || code==='restart_confirmation_stale') return RECOVERY_MESSAGE
-        return code==='workbench_busy' ? '这项任务正在处理，请等待完成或先停止它。' : '暂时无法继续，请在桌面工作台查看任务状态。'
-      }
-    },
+    async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<string|null>{return wechatControl(chatId,text,identity)},
     shutdown():Promise<void> {
       if (shutdownPromise) return shutdownPromise
       stopping=true
@@ -753,6 +749,7 @@ export function makeWorkbenchService(opts: Options) {
       return shutdownPromise
     },
   }
+  const wechatControl=makeWechatWorkbenchControl({store,ownerChatId:opts.ownerChatId,actions:service})
   return service
 }
 export type WorkbenchService=ReturnType<typeof makeWorkbenchService>

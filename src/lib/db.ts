@@ -1187,6 +1187,14 @@ export const migrations: Migration[] = [
     }
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS workbench_events_native_item ON workbench_events(task_id,run_id,event_key) WHERE event_key IS NOT NULL')
   },
+  // v52 — durable run-bound receipts for phone control actions, separate from task inputs.
+  (db) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS workbench_control_receipts (
+      id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+      run_id TEXT, action TEXT NOT NULL CHECK(action IN ('stop')),
+      text_hash TEXT NOT NULL, result TEXT, created_at INTEGER NOT NULL
+    ) STRICT;`)
+  },
 ]
 
 export interface OpenDbOpts {

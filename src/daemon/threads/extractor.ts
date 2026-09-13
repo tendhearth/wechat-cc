@@ -22,11 +22,20 @@ export interface ExtractorDeps {
 
 export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ applied: number; skipped: number }> {
   const since = (await deps.threads.getWatermark(deps.chatId)) ?? '1970-01-01T00:00:00Z'
-  const batch = await deps.messages.listSince(deps.chatId, since, BATCH_LIMIT)
-  if (batch.length === 0) return { applied: 0, skipped: 0 }
+  const recorded = await deps.messages.listSince(deps.chatId, since, BATCH_LIMIT)
+  if (recorded.length === 0) return { applied: 0, skipped: 0 }
+  const lastTs = recorded[recorded.length - 1]!.ts
+  // Task inputs and results belong to the workbench journal, not personal memory.
+  // Advance over excluded rows too, so a task-only batch cannot stall extraction.
+  const batch = recorded.filter(m => m.source !== 'workbench')
+  if (batch.length === 0) {
+    await deps.threads.setWatermark(deps.chatId, lastTs)
+    return { applied: 0, skipped: 0 }
+  }
 
-  // context tail: last N messages at-or-before the watermark (use listRange beforeTs=batch[0].ts)
-  const tail = await deps.messages.listRange(deps.chatId, { limit: CONTEXT_TAIL, beforeTs: batch[0]!.ts })
+  // Context tail stays before the original batch; task-origin rows are excluded here too.
+  const tail = (await deps.messages.listRange(deps.chatId, { limit: CONTEXT_TAIL, beforeTs: recorded[0]!.ts }))
+    .filter(m => m.source !== 'workbench')
 
   const existing = await deps.threads.list(deps.chatId)
   const prompt = buildExtractPrompt({
@@ -43,7 +52,6 @@ export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ appli
   }
 
   let applied = 0, skipped = 0
-  const lastTs = batch[batch.length - 1]!.ts
   for (const op of ops) {
     if (op.op === 'create') {
       await deps.threads.create({ chatId: deps.chatId, title: op.title, summary: op.summary, facets: op.facets, tags: op.tags, private: op.private, episodes: [op.episode] })
